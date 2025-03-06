@@ -428,7 +428,7 @@ namespace XREngine.Rendering.OpenGL
 
             //private static object HashLock = new();
             private static readonly ConcurrentBag<ulong> Failed = [];
-            public bool Link()
+            public bool Link(bool force = false)
             {
                 if (IsLinked)
                 {
@@ -436,7 +436,7 @@ namespace XREngine.Rendering.OpenGL
                     return s != 0;
                 }
 
-                if (!LinkReady)
+                if (!LinkReady && !force)
                     return false;
 
                 //if (!IsGenerated)
@@ -445,8 +445,8 @@ namespace XREngine.Rendering.OpenGL
                 //    return false;
                 //}
 
-                if (IsLinked)
-                    return true;
+                //if (IsLinked)
+                //    return true;
 
                 if (_shaderCache.IsEmpty/* || _shaderCache.Values.Any(x => !x.IsCompiled)*/)
                     return false;

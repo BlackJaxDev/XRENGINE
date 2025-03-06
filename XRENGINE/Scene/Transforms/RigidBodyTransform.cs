@@ -52,7 +52,11 @@ namespace XREngine.Scene.Transforms
         public Vector3 Position
         {
             get => _position;
-            private set => SetField(ref _position, value);
+            private set
+            {
+                SetField(ref _position, value);
+                MarkWorldModified();
+            }
         }
 
         private Quaternion _rotation;
@@ -63,7 +67,18 @@ namespace XREngine.Scene.Transforms
         public Quaternion Rotation
         {
             get => _rotation;
-            private set => SetField(ref _rotation, value);
+            private set
+            {
+                SetField(ref _rotation, value);
+                MarkWorldModified();
+            }
+        }
+
+        public void SetPositionAndRotation(Vector3 position, Quaternion rotation)
+        {
+            SetField(ref _position, position, nameof(Position));
+            SetField(ref _rotation, rotation, nameof(Rotation));
+            MarkWorldModified();
         }
 
         private Quaternion _preRotationOffset = Quaternion.Identity;
@@ -121,10 +136,10 @@ namespace XREngine.Scene.Transforms
             base.OnPropertyChanged(propName, prev, field);
             switch (propName)
             {
-                case nameof(Position):
-                case nameof(Rotation):
-                    MarkWorldModified();
-                    break;
+                //case nameof(Position):
+                //case nameof(Rotation):
+                //    MarkWorldModified();
+                //    break;
                 case nameof(RigidBody):
                     if (RigidBody is not null)
                         OnPhysicsStepped();
@@ -142,6 +157,9 @@ namespace XREngine.Scene.Transforms
         private float _accumulatedTime = 0.0f;
         private void OnUpdate()
         {
+            if (RigidBody is null || RigidBody.IsSleeping)
+                return;
+
             float updateDelta = Engine.Delta;
             float fixedDelta = Engine.Time.Timer.FixedUpdateDelta;
             if (InterpolationMode == EInterpolationMode.Discrete || updateDelta > fixedDelta)
@@ -155,20 +173,24 @@ namespace XREngine.Scene.Transforms
             {
                 case EInterpolationMode.Interpolate:
                     {
-                        Position = Vector3.Lerp(LastPosition, lastPosUpdate, alpha);
-                        Rotation = Quaternion.Slerp(LastRotation, lastRotUpdate, alpha);
+                        SetPositionAndRotation(
+                            Vector3.Lerp(LastPosition, lastPosUpdate, alpha),
+                            Quaternion.Slerp(LastRotation, lastRotUpdate, alpha));
                         break;
                     }
                 case EInterpolationMode.Extrapolate:
                     {
                         Vector3 posDelta = LastPhysicsLinearVelocity * _accumulatedTime;
-                        Position = posDelta.Length() > float.Epsilon ? lastPosUpdate + posDelta : lastPosUpdate;
-
                         float angle = LastPhysicsAngularVelocity.Length() * _accumulatedTime;
-                        Rotation = angle > float.Epsilon
-                            ? Quaternion.CreateFromAxisAngle(LastPhysicsAngularVelocity.Normalized(), angle) * lastRotUpdate
-                            : lastRotUpdate;
 
+                        bool posMoved = posDelta.Length() > float.Epsilon;
+                        bool rotMoved = angle > float.Epsilon;
+                        if (!posMoved && !rotMoved)
+                            break;
+                        
+                        SetPositionAndRotation(
+                            posMoved ? lastPosUpdate + posDelta : lastPosUpdate,
+                            rotMoved ? Quaternion.CreateFromAxisAngle(LastPhysicsAngularVelocity.Normalized(), angle) * lastRotUpdate : lastRotUpdate);
                         break;
                     }
             }
@@ -244,8 +266,8 @@ namespace XREngine.Scene.Transforms
             float fixedDelta = Engine.Time.Timer.FixedUpdateDelta;
             if (InterpolationMode == EInterpolationMode.Discrete || updateDelta > fixedDelta)
             {
-                Position = LastPhysicsTransform.position;
-                Rotation = LastPhysicsTransform.rotation;
+                if (!RigidBody.IsSleeping)
+                    SetPositionAndRotation(LastPhysicsTransform.position, LastPhysicsTransform.rotation);
             }
             else
             {

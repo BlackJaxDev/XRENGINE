@@ -79,7 +79,7 @@ namespace XREngine.Components
         /// <summary>
         /// This is the transform that will be used to pull forward and right vectors from for orienting movement.
         /// </summary>
-        public TransformBase? ViewTransform
+        public TransformBase? InputOrientationTransform
         {
             get => _viewTransform;
             set => SetField(ref _viewTransform, value);
@@ -89,7 +89,7 @@ namespace XREngine.Components
         /// <summary>
         /// This is the transform that will be rotated by player inputs.
         /// </summary>
-        public Transform? RotationTransform
+        public Transform? ViewRotationTransform
         {
             get => _rotationTransform;
             set => SetField(ref _rotationTransform, value);
@@ -140,7 +140,7 @@ namespace XREngine.Components
         {
             var cam = GetCamera();
             GetDirectionalVectorsFromView(
-                ViewTransform ?? cam?.Transform ?? Transform,
+                InputOrientationTransform ?? cam?.Transform ?? Transform,
                 out Vector3 forward,
                 out Vector3 right);
             AddMovement(forward, right);
@@ -171,7 +171,7 @@ namespace XREngine.Components
 
         private void UpdateViewRotation(CameraComponent? cam)
         {
-            var rotTfm = RotationTransform ?? cam?.SceneNode.GetTransformAs<Transform>(false);
+            var rotTfm = ViewRotationTransform ?? cam?.SceneNode.GetTransformAs<Transform>(false);
             if (rotTfm is null)
                 return;
 

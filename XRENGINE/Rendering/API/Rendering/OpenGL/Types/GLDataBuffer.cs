@@ -40,101 +40,126 @@ namespace XREngine.Rendering.OpenGL
                         Debug.LogWarning($"{GetDescribingName()} generated without a mesh renderer.");
                     return;
                 }
-                BindBuffer(rend);
+                BindToProgram(rend.GetVertexProgram(), rend);
             }
 
-            private void BindBuffer(GLMeshRenderer renderer)
+            public void BindToProgram(GLRenderProgram vertexProgram, GLMeshRenderer? arrayBufferLink, bool pushDataNow = true)
             {
                 try
                 {
-                    //TODO: get GL version
-                    int glVer = 2;
-                    uint index = GetBindingLocation(renderer);
-                    if (index == uint.MaxValue)
+                    if (!TryGetBindingIndex(vertexProgram, out uint index))
                     {
-                        Debug.LogWarning($"Failed to bind buffer {GetDescribingName()} to mesh renderer {renderer.GetDescribingName()}.");
-                        renderer.VertexProgram.Data.Shaders.ForEach(x => Debug.Out(x?.Source?.Text ?? string.Empty));
+                        Debug.LogWarning($"Failed to bind buffer {GetDescribingName()}.");
+                        vertexProgram.Data.Shaders.ForEach(x => Debug.Out(x?.Source?.Text ?? string.Empty));
                         return;
                     }
+
                     int componentType = (int)Data.ComponentType;
                     uint componentCount = Data.ComponentCount;
                     bool integral = Data.Integral;
 
-                    switch (glVer)
-                    {
-                        case 0:
-                            Bind();
-                            if (Data.Target == EBufferTarget.ArrayBuffer)
-                            {
-                                Api.EnableVertexAttribArray(index);
-                                void* addr = Data.Address;
-                                if (integral)
-                                    Api.VertexAttribIPointer(index, (int)componentCount, GLEnum.Byte + componentType, 0, addr);
-                                else
-                                    Api.VertexAttribPointer(index, (int)componentCount, GLEnum.Byte + componentType, Data.Normalize, 0, addr);
-                            }
-                            Unbind();
-                            break;
-
-                        case 1:
-
-                            Api.BindVertexBuffer(index, BindingId, IntPtr.Zero, Data.ElementSize);
-
-                            if (Data.Target == EBufferTarget.ArrayBuffer)
-                            {
-                                Api.EnableVertexAttribArray(index);
-                                Api.VertexAttribBinding(index, index);
-                                if (integral)
-                                    Api.VertexAttribIFormat(index, (int)componentCount, GLEnum.Byte + componentType, 0);
-                                else
-                                    Api.VertexAttribFormat(index, (int)componentCount, GLEnum.Byte + componentType, Data.Normalize, 0);
-                            }
-
-                            break;
-
-                        default:
-                        case 2:
-
-                            switch (Data.Target)
-                            {
-                                case EBufferTarget.ArrayBuffer:
-                                    {
-                                        uint vaoId = renderer.BindingId;
-                                        Api.EnableVertexArrayAttrib(vaoId, index);
-                                        Api.VertexArrayBindingDivisor(vaoId, index, Data.InstanceDivisor);
-                                        Api.VertexArrayAttribBinding(vaoId, index, index);
-                                        if (integral)
-                                            Api.VertexArrayAttribIFormat(vaoId, index, (int)componentCount, GLEnum.Byte + componentType, 0);
-                                        else
-                                            Api.VertexArrayAttribFormat(vaoId, index, (int)componentCount, GLEnum.Byte + componentType, Data.Normalize, 0);
-                                        Api.VertexArrayVertexBuffer(vaoId, index, BindingId, 0, Data.ElementSize);
-                                    }
-                                    break;
-                                case EBufferTarget.ShaderStorageBuffer:
-                                case EBufferTarget.UniformBuffer:
-                                    Bind();
-                                    //Api.BufferData(ToGLEnum(Data.Target), Data.Length, Data.Address.Pointer, ToGLEnum(Data.Usage));
-                                    Api.BindBufferBase(ToGLEnum(Data.Target), index, BindingId);
-                                    //Api.ShaderStorageBlockBinding(renderer.VertexProgram.BindingId, index, BindingId);
-                                    Unbind();
-                                    break;
-                            }
-
-                            break;
-                    }
+                    //const int glVer = 2;
+                    //switch (glVer)
+                    //{
+                    //    case 0:
+                    //        BindV0(index, componentType, componentCount, integral);
+                    //        break;
+                    //    case 1:
+                    //        BindV1(index, componentType, componentCount, integral);
+                    //        break;
+                    //    default:
+                    //    case 2:
+                    BindV2(index, componentType, componentCount, integral, arrayBufferLink);
+                    //        break;
+                    //}
                 }
                 catch (Exception e)
                 {
                     Debug.LogException(e, "Error binding buffer.");
                 }
 
-                if (Data.Mapped)
-                    MapBufferData();
-                else
-                    PushData();
+                if (pushDataNow)
+                {
+                    if (Data.Mapped)
+                        MapBufferData();
+                    else
+                        PushData();
+                }
             }
 
-            private uint GetBindingLocation(GLMeshRenderer renderer)
+            public bool TryGetBindingIndex(GLRenderProgram vertexProgram, out uint index)
+            {
+                index = GetBindingLocation(vertexProgram);
+                return index != uint.MaxValue;
+            }
+
+            private void BindV2(uint index, int componentType, uint componentCount, bool integral, GLMeshRenderer? arrayBufferLink)
+            {
+                switch (Data.Target)
+                {
+                    case EBufferTarget.ArrayBuffer:
+                        {
+                            uint vaoId = arrayBufferLink?.BindingId ?? 0;
+                            if (vaoId == 0)
+                            {
+                                Debug.LogWarning($"Failed to bind buffer {GetDescribingName()} to mesh renderer.");
+                                return;
+                            }
+                            Api.EnableVertexArrayAttrib(vaoId, index);
+                            Api.VertexArrayBindingDivisor(vaoId, index, Data.InstanceDivisor);
+                            Api.VertexArrayAttribBinding(vaoId, index, index);
+                            if (integral)
+                                Api.VertexArrayAttribIFormat(vaoId, index, (int)componentCount, GLEnum.Byte + componentType, 0);
+                            else
+                                Api.VertexArrayAttribFormat(vaoId, index, (int)componentCount, GLEnum.Byte + componentType, Data.Normalize, 0);
+                            Api.VertexArrayVertexBuffer(vaoId, index, BindingId, 0, Data.ElementSize);
+                        }
+                        break;
+                    case EBufferTarget.ShaderStorageBuffer:
+                    case EBufferTarget.UniformBuffer:
+                        Bind();
+                        //Api.BufferData(ToGLEnum(Data.Target), Data.Length, Data.Address.Pointer, ToGLEnum(Data.Usage));
+                        Api.BindBufferBase(ToGLEnum(Data.Target), index, BindingId);
+                        //Api.ShaderStorageBlockBinding(renderer.VertexProgram.BindingId, index, BindingId);
+                        Unbind();
+                        break;
+                }
+            }
+
+            //private void BindV1(uint index, int componentType, uint componentCount, bool integral)
+            //{
+            //    Api.BindVertexBuffer(index, BindingId, IntPtr.Zero, Data.ElementSize);
+            //    switch (Data.Target)
+            //    {
+            //        case EBufferTarget.ArrayBuffer:
+            //            Api.EnableVertexAttribArray(index);
+            //            Api.VertexAttribBinding(index, index);
+            //            if (integral)
+            //                Api.VertexAttribIFormat(index, (int)componentCount, GLEnum.Byte + componentType, 0);
+            //            else
+            //                Api.VertexAttribFormat(index, (int)componentCount, GLEnum.Byte + componentType, Data.Normalize, 0);
+            //            break;
+            //    }
+            //}
+
+            //private void BindV0(uint index, int componentType, uint componentCount, bool integral)
+            //{
+            //    Bind();
+            //    switch (Data.Target)
+            //    {
+            //        case EBufferTarget.ArrayBuffer:
+            //            Api.EnableVertexAttribArray(index);
+            //            void* addr = Data.Address;
+            //            if (integral)
+            //                Api.VertexAttribIPointer(index, (int)componentCount, GLEnum.Byte + componentType, 0, addr);
+            //            else
+            //                Api.VertexAttribPointer(index, (int)componentCount, GLEnum.Byte + componentType, Data.Normalize, 0, addr);
+            //            break;
+            //    }
+            //    Unbind();
+            //}
+
+            private uint GetBindingLocation(GLRenderProgram vertexProgram)
             {
                 uint index = 0u;
                 string bindingName = Data.BindingName;
@@ -142,22 +167,20 @@ namespace XREngine.Rendering.OpenGL
                 if (string.IsNullOrWhiteSpace(bindingName))
                     Debug.LogWarning($"{GetDescribingName()} has no binding name.");
 
-                var vtx = renderer.VertexProgram;
-
                 switch (Data.Target)
                 {
                     case EBufferTarget.ArrayBuffer:
 
-                        int location = vtx.GetAttributeLocation(bindingName);
+                        int location = vertexProgram.GetAttributeLocation(bindingName);
                         if (location >= 0)
                             index = (uint)location;
 
                         break;
                     case EBufferTarget.ShaderStorageBuffer:
-                        index = Data.BindingIndexOverride ?? Api.GetProgramResourceIndex(vtx.BindingId, GLEnum.ShaderStorageBlock, bindingName);
+                        index = Data.BindingIndexOverride ?? Api.GetProgramResourceIndex(vertexProgram.BindingId, GLEnum.ShaderStorageBlock, bindingName);
                         break;
                     case EBufferTarget.UniformBuffer:
-                        index = Data.BindingIndexOverride ?? Api.GetProgramResourceIndex(vtx.BindingId, GLEnum.UniformBlock, bindingName);
+                        index = Data.BindingIndexOverride ?? Api.GetProgramResourceIndex(vertexProgram.BindingId, GLEnum.UniformBlock, bindingName);
                         break;
                     default:
                         return 0;

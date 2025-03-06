@@ -301,15 +301,15 @@ namespace XREngine.Scene.Transforms
         public void RecalculateMatrices()
         {
             //if (_localMatrix.NeedsRecalc)
-            {
+            //{
                 _localMatrix.NeedsRecalc = false;
                 RecalcLocal();
-            }
+            //}
             //if (_worldMatrix.NeedsRecalc)
-            {
+            //{
                 _worldMatrix.NeedsRecalc = false;
                 RecalcWorld(false);
-            }
+            //}
         }
 
         /// <summary>
@@ -319,47 +319,51 @@ namespace XREngine.Scene.Transforms
         /// </summary>
         /// <param name="recalcChildrenNow"></param>
         /// <returns></returns>
-        public virtual bool RecalculateMatrixHeirarchy(bool recalcChildrenNow = false, bool parallel = true)
+        public virtual bool RecalculateMatrixHeirarchy(bool parallel = true)
         {
             RecalculateMatrices();
             return parallel
-                ? ParallelChildrenRecalc(recalcChildrenNow)
-                : SequentialChildrenRecalc(recalcChildrenNow);
+                ? ParallelChildrenRecalc(/*recalcChildrenNow, depthKeys*/)
+                : SequentialChildrenRecalc(/*recalcChildrenNow, depthKeys*/);
         }
 
-        private bool SequentialChildrenRecalc(bool recalcChildrenNow)
+        private bool SequentialChildrenRecalc(/*bool recalcChildrenNow, List<int>? depthKeys*/)
         {
-            var world = World;
-            if (!recalcChildrenNow && world is null)
-                return false;
+            //var world = World;
+            //if (!recalcChildrenNow && world is null)
+            //    return false;
 
             bool wasDepthAdded = false;
 
-            if (recalcChildrenNow)
+            //if (recalcChildrenNow)
                 foreach (var child in _children)
-                    child.RecalculateMatrixHeirarchy(recalcChildrenNow, false);
-            else
-                foreach (var child in _children)
-                    wasDepthAdded |= world!.AddDirtyTransform(child, false);
+                    child.RecalculateMatrixHeirarchy(/*recalcChildrenNow, false, depthKeys*/);
+            //else
+            //    foreach (var child in _children)
+            //        wasDepthAdded |= world!.AddDirtyTransform(child, false, depthKeys);
 
             return wasDepthAdded;
         }
 
-        private bool ParallelChildrenRecalc(bool recalcChildrenNow)
+        private bool ParallelChildrenRecalc(/*bool recalcChildrenNow, List<int>? depthKeys*/)
         {
-            var world = World;
-            if (!recalcChildrenNow && world is null)
-                return false;
+            //var world = World;
+            //if (!recalcChildrenNow && world is null)
+            //    return false;
 
             int wasDepthAddedInt = 0;
 
-            Task.WaitAll(recalcChildrenNow
-                ? _children.Select(child => Task.Run(() => child.RecalculateMatrixHeirarchy(true, true)))
-                : _children.Select(child => Task.Run(() =>
-                {
-                    if (world!.AddDirtyTransform(child, true))
-                        Interlocked.Exchange(ref wasDepthAddedInt, 1);
-                })));
+            Task.WaitAll(//recalcChildrenNow
+               // ? 
+                _children.Select(child => Task.Run(() => child.RecalculateMatrixHeirarchy(/*true, true, depthKeys*/)))
+                //: _children.Select(child => Task.Run(() =>
+                //{
+                //    if (world!.AddDirtyTransform(child, true, depthKeys))
+                //    {
+                //        //Interlocked.Exchange(ref wasDepthAddedInt, 1);
+                //    }
+                //}))
+                );
 
             return wasDepthAddedInt != 0;
         }
@@ -707,7 +711,7 @@ namespace XREngine.Scene.Transforms
             //lock (_children)
             //    foreach (TransformBase child in _children)
             //        child.MarkWorldModified();
-            World?.AddDirtyTransform(this, false);
+            World?.AddDirtyTransform(this);
             HasChanged = true;
         }
 

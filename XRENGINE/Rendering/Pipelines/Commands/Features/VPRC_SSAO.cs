@@ -11,24 +11,35 @@ namespace XREngine.Rendering.Pipelines.Commands
     /// <param name="pipeline"></param>
     public class VPRC_SSAO : ViewportRenderCommand
     {
+        private string SSAOBlurShaderName()
+            => 
+            //Stereo ? "SSAOBlurStereo.fs" : 
+            "SSAOBlur.fs";
+
+        private string SSAOGenShaderName()
+            =>
+            //Stereo ? "SSAOGenStereo.fs" : 
+            "SSAOGen.fs";
+
         public string SSAONoiseTextureName { get; set; } = "SSAONoiseTexture";
         public string SSAOIntensityTextureName { get; set; } = "SSAOFBOTexture";
         public string SSAOFBOName { get; set; } = "SSAOFBO";
         public string SSAOBlurFBOName { get; set; } = "SSAOBlurFBO";
         public string GBufferFBOFBOName { get; set; } = "GBufferFBO";
 
-        const int DefaultSamples = 128;
-        const uint DefaultNoiseWidth = 4u, DefaultNoiseHeight = 4u;
-        const float DefaultMinSampleDist = 0.1f, DefaultMaxSampleDist = 1.0f;
+        public const int DefaultSamples = 128;
+        public const uint DefaultNoiseWidth = 4u, DefaultNoiseHeight = 4u;
+        public const float DefaultMinSampleDist = 0.1f, DefaultMaxSampleDist = 1.0f;
 
         public Vector2[]? Noise { get; private set; }
         public Vector3[]? Kernel { get; private set; }
 
-        public int Samples { get; private set; } = DefaultSamples;
-        public uint NoiseWidth { get; private set; } = DefaultNoiseWidth;
-        public uint NoiseHeight { get; private set; } = DefaultNoiseHeight;
-        public float MinSampleDist { get; private set; } = DefaultMinSampleDist;
-        public float MaxSampleDist { get; private set; } = DefaultMaxSampleDist;
+        public int Samples { get; set; } = DefaultSamples;
+        public uint NoiseWidth { get; set; } = DefaultNoiseWidth;
+        public uint NoiseHeight { get; set; } = DefaultNoiseHeight;
+        public float MinSampleDist { get; set; } = DefaultMinSampleDist;
+        public float MaxSampleDist { get; set; } = DefaultMaxSampleDist;
+        public bool Stereo { get; set; } = false;
 
         private XRTexture2D? NoiseTexture { get; set; } = null;
 
@@ -68,13 +79,14 @@ namespace XREngine.Rendering.Pipelines.Commands
         public string RMSITextureName { get; set; } = "RMSI";
         public string DepthStencilTextureName { get; set; } = "DepthStencil";
 
-        public void SetOptions(int samples, uint noiseWidth, uint noiseHeight, float minSampleDist, float maxSampleDist)
+        public void SetOptions(int samples, uint noiseWidth, uint noiseHeight, float minSampleDist, float maxSampleDist, bool stereo)
         {
             Samples = samples;
             NoiseWidth = noiseWidth;
             NoiseHeight = noiseHeight;
             MinSampleDist = minSampleDist;
             MaxSampleDist = maxSampleDist;
+            Stereo = stereo;
         }
         public void SetGBufferInputTextureNames(string normal, string depthView, string albedo, string rmsi, string depthStencil)
         {
@@ -95,11 +107,11 @@ namespace XREngine.Rendering.Pipelines.Commands
 
         protected override void Execute()
         {
-            XRTexture2D? normalTex = Pipeline.GetTexture<XRTexture2D>(NormalTextureName);
-            XRTexture2DView? depthViewTex = Pipeline.GetTexture<XRTexture2DView>(DepthViewTextureName);
-            XRTexture2D? albedoTex = Pipeline.GetTexture<XRTexture2D>(AlbedoTextureName);
-            XRTexture2D? rmsiTex = Pipeline.GetTexture<XRTexture2D>(RMSITextureName);
-            XRTexture2D? depthStencilTex = Pipeline.GetTexture<XRTexture2D>(DepthStencilTextureName);
+            XRTexture? normalTex = Pipeline.GetTexture<XRTexture>(NormalTextureName);
+            XRTexture? depthViewTex = Pipeline.GetTexture<XRTexture>(DepthViewTextureName);
+            XRTexture? albedoTex = Pipeline.GetTexture<XRTexture>(AlbedoTextureName);
+            XRTexture? rmsiTex = Pipeline.GetTexture<XRTexture>(RMSITextureName);
+            XRTexture? depthStencilTex = Pipeline.GetTexture<XRTexture>(DepthStencilTextureName);
 
             if (normalTex is null ||
                 depthViewTex is null ||
@@ -125,7 +137,14 @@ namespace XREngine.Rendering.Pipelines.Commands
                 height);
         }
 
-        private void RegenerateFBOs(XRTexture2D normalTex, XRTexture2DView depthViewTex, XRTexture2D albedoTex, XRTexture2D rmsiTex, XRTexture2D depthStencilTex, int width, int height)
+        private void RegenerateFBOs(
+            XRTexture normalTex,
+            XRTexture depthViewTex,
+            XRTexture albedoTex,
+            XRTexture rmsiTex,
+            XRTexture depthStencilTex,
+            int width,
+            int height)
         {
             //Debug.Out($"SSAO: Regenerating FBOs for {width}x{height}");
             _lastWidth = width;
@@ -137,18 +156,42 @@ namespace XREngine.Rendering.Pipelines.Commands
                 (float)width / NoiseWidth,
                 (float)height / NoiseHeight);
 
-            XRTexture2D ssaoTex = XRTexture2D.CreateFrameBufferTexture(
-                (uint)width,
-                (uint)height,
-                EPixelInternalFormat.R16f,
-                EPixelFormat.Red,
-                EPixelType.HalfFloat,
-                EFrameBufferAttachment.ColorAttachment0);
-            ssaoTex.Name = SSAOIntensityTextureName;
-            ssaoTex.MinFilter = ETexMinFilter.Nearest;
-            ssaoTex.MagFilter = ETexMagFilter.Nearest;
-            ssaoTex.UWrap = ETexWrapMode.ClampToEdge;
-            ssaoTex.VWrap = ETexWrapMode.ClampToEdge;
+            XRTexture ssaoTex;
+            if (Stereo)
+            {
+                var t = XRTexture2DArray.CreateFrameBufferTexture(
+                    (uint)width,
+                    (uint)height,
+                    2,
+                    EPixelInternalFormat.R16f,
+                    EPixelFormat.Red,
+                    EPixelType.HalfFloat,
+                    EFrameBufferAttachment.ColorAttachment0);
+                t.OVRMultiViewParameters = new(0, 2u);
+                t.Name = SSAOIntensityTextureName;
+                t.MinFilter = ETexMinFilter.Nearest;
+                t.MagFilter = ETexMagFilter.Nearest;
+                t.UWrap = ETexWrapMode.ClampToEdge;
+                t.VWrap = ETexWrapMode.ClampToEdge;
+                ssaoTex = t;
+            }
+            else
+            {
+                var t = XRTexture2D.CreateFrameBufferTexture(
+                    (uint)width,
+                    (uint)height,
+                    EPixelInternalFormat.R16f,
+                    EPixelFormat.Red,
+                    EPixelType.HalfFloat,
+                    EFrameBufferAttachment.ColorAttachment0);
+                t.Name = SSAOIntensityTextureName;
+                t.MinFilter = ETexMinFilter.Nearest;
+                t.MagFilter = ETexMagFilter.Nearest;
+                t.UWrap = ETexWrapMode.ClampToEdge;
+                t.VWrap = ETexWrapMode.ClampToEdge;
+                ssaoTex = t;
+            }
+
             Pipeline.SetTexture(ssaoTex);
 
             RenderingParameters renderParams = new()
@@ -161,8 +204,8 @@ namespace XREngine.Rendering.Pipelines.Commands
                 }
             };
 
-            var ssaoGenShader = XRShader.EngineShader(Path.Combine(SceneShaderPath, "SSAOGen.fs"), EShaderType.Fragment);
-            var ssaoBlurShader = XRShader.EngineShader(Path.Combine(SceneShaderPath, "SSAOBlur.fs"), EShaderType.Fragment);
+            var ssaoGenShader = XRShader.EngineShader(Path.Combine(SceneShaderPath, SSAOGenShaderName()), EShaderType.Fragment);
+            var ssaoBlurShader = XRShader.EngineShader(Path.Combine(SceneShaderPath, SSAOBlurShaderName()), EShaderType.Fragment);
 
             XRTexture[] ssaoGenTexRefs =
             [
@@ -178,22 +221,37 @@ namespace XREngine.Rendering.Pipelines.Commands
             XRMaterial ssaoGenMat = new(ssaoGenTexRefs, ssaoGenShader) { RenderOptions = renderParams };
             XRMaterial ssaoBlurMat = new(ssaoBlurTexRefs, ssaoBlurShader) { RenderOptions = renderParams };
 
-            XRQuadFrameBuffer ssaoGenFBO = new(ssaoGenMat, true, 
-                (albedoTex, EFrameBufferAttachment.ColorAttachment0, 0, -1),
-                (normalTex, EFrameBufferAttachment.ColorAttachment1, 0, -1),
-                (rmsiTex, EFrameBufferAttachment.ColorAttachment2, 0, -1),
-                (depthStencilTex, EFrameBufferAttachment.DepthStencilAttachment, 0, -1))
+            if (albedoTex is not IFrameBufferAttachement albedoAttach)
+                throw new ArgumentException("Albedo texture must be an IFrameBufferAttachement");
+
+            if (normalTex is not IFrameBufferAttachement normalAttach)
+                throw new ArgumentException("Normal texture must be an IFrameBufferAttachement");
+
+            if (rmsiTex is not IFrameBufferAttachement rmsiAttach)
+                throw new ArgumentException("RMSI texture must be an IFrameBufferAttachement");
+
+            if (depthStencilTex is not IFrameBufferAttachement depthStencilAttach)
+                throw new ArgumentException("DepthStencil texture must be an IFrameBufferAttachement");
+
+            XRQuadFrameBuffer ssaoGenFBO = new(ssaoGenMat, true,
+                (albedoAttach, EFrameBufferAttachment.ColorAttachment0, 0, -1),
+                (normalAttach, EFrameBufferAttachment.ColorAttachment1, 0, -1),
+                (rmsiAttach, EFrameBufferAttachment.ColorAttachment2, 0, -1),
+                (depthStencilAttach, EFrameBufferAttachment.DepthStencilAttachment, 0, -1))
             {
                 Name = SSAOFBOName
             };
             ssaoGenFBO.SettingUniforms += SSAOGen_SetUniforms;
 
-            XRQuadFrameBuffer ssaoBlurFBO = new(ssaoBlurMat, true, (ssaoTex, EFrameBufferAttachment.ColorAttachment0, 0, -1))
+            if (ssaoTex is not IFrameBufferAttachement ssaoAttach)
+                throw new ArgumentException("SSAO texture must be an IFrameBufferAttachement");
+
+            XRQuadFrameBuffer ssaoBlurFBO = new(ssaoBlurMat, true, (ssaoAttach, EFrameBufferAttachment.ColorAttachment0, 0, -1))
             {
                 Name = SSAOBlurFBOName
             };
 
-            XRFrameBuffer gbufferFBO = new((ssaoTex, EFrameBufferAttachment.ColorAttachment0, 0, -1)) 
+            XRFrameBuffer gbufferFBO = new((ssaoAttach, EFrameBufferAttachment.ColorAttachment0, 0, -1))
             {
                 Name = GBufferFBOFBOName
             };
@@ -215,8 +273,9 @@ namespace XREngine.Rendering.Pipelines.Commands
             rc.SetUniforms(program);
             rc.SetAmbientOcclusionUniforms(program);
 
-            program.Uniform(EEngineUniform.ScreenWidth.ToString(), Pipeline.RenderState.CurrentRenderRegion.Width);
-            program.Uniform(EEngineUniform.ScreenHeight.ToString(), Pipeline.RenderState.CurrentRenderRegion.Height);
+            var region = Pipeline.RenderState.CurrentRenderRegion;
+            program.Uniform(EEngineUniform.ScreenWidth.ToString(), region.Width);
+            program.Uniform(EEngineUniform.ScreenHeight.ToString(), region.Height);
             program.Uniform(EEngineUniform.ScreenOrigin.ToString(), 0.0f);
         }
 

@@ -241,6 +241,14 @@ namespace XREngine
                 public bool RemapBlendshapeDeltas { get; set; } = true;
                 public bool UseAbsoluteBlendshapePositions { get; set; } = false;
                 public bool LogVRFrameTimes { get; set; } = false;
+                /// <summary>
+                /// If true, the engine will prefer NVidia stereo rendering over OVR_MultiView2.
+                /// NV supports geometry, tess eval, and tess control shaders in stereo mode, but only supports 2 layers.
+                /// OVR does not support extra shaders, but supports more layers.
+                /// </summary>
+                public bool PreferNVStereo { get; set; } = true;
+                public bool RenderVRSinglePassStereo { get; set; } = true;
+                //public bool SubmitOpenVRTextureArrayAsTwoViews { get; set; } = false;
             }
         }
     }

@@ -153,10 +153,10 @@ namespace XREngine.Components
             if (pipeline is null)
                 return;
 
-            var albedoOpacityTexture = pipeline.GetTexture<XRTexture2D>(DefaultRenderPipeline.AlbedoOpacityTextureName);
-            var normalTexture = pipeline.GetTexture<XRTexture2D>(DefaultRenderPipeline.NormalTextureName);
-            var rmsiTexture = pipeline.GetTexture<XRTexture2D>(DefaultRenderPipeline.RMSITextureName);
-            var depthViewTexture = pipeline.GetTexture<XRTexture2DView>(DefaultRenderPipeline.DepthViewTextureName);
+            var albedoOpacityTexture = pipeline.GetTexture<XRTexture>(DefaultRenderPipeline.AlbedoOpacityTextureName);
+            var normalTexture = pipeline.GetTexture<XRTexture>(DefaultRenderPipeline.NormalTextureName);
+            var rmsiTexture = pipeline.GetTexture<XRTexture>(DefaultRenderPipeline.RMSITextureName);
+            var depthViewTexture = pipeline.GetTexture<XRTexture>(DefaultRenderPipeline.DepthViewTextureName);
 
             if (albedoOpacityTexture is null || normalTexture is null || rmsiTexture is null || depthViewTexture is null)
                 return;

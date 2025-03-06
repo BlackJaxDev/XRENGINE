@@ -62,8 +62,10 @@ namespace XREngine.Rendering
             TickLists.Add(ETickGroup.Late, []);
             TickLists.Add(ETickGroup.PrePhysics, []);
             TickLists.Add(ETickGroup.PostPhysics, []);
-        }
 
+            _updateBuckets = _circularTransformBuckets[0];
+            _bucketsIndex = 0;
+        }
         public XRWorldInstance(XRWorld world) : this()
             => TargetWorld = world;
         public XRWorldInstance(XRWorld world, VisualScene3D visualScene, AbstractPhysicsScene physicsScene) : this(visualScene, physicsScene)
@@ -93,7 +95,7 @@ namespace XREngine.Rendering
 
             //Recalculate all transforms before activating nodes
             foreach (SceneNode node in RootNodes)
-                node.Transform.RecalculateMatrixHeirarchy(true, Engine.Rendering.Settings.RecalcChildMatricesInParallel);
+                node.Transform.RecalculateMatrixHeirarchy(/*true, */Engine.Rendering.Settings.RecalcChildMatricesInParallel);
             
             foreach (SceneNode node in RootNodes)
                 if (node.IsActiveSelf)
@@ -120,7 +122,9 @@ namespace XREngine.Rendering
 
         private void LinkTimeCallbacks()
         {
+            Time.Timer.PreUpdateFrame += PreUpdate;
             Time.Timer.UpdateFrame += Update;
+            Time.Timer.PostUpdateFrame += PostUpdate;
             Time.Timer.FixedUpdate += FixedUpdate;
             Time.Timer.SwapBuffers += GlobalSwapBuffers;
             Time.Timer.CollectVisible += GlobalCollectVisible;
@@ -129,7 +133,9 @@ namespace XREngine.Rendering
 
         private void UnlinkTimeCallbacks()
         {
+            Time.Timer.PreUpdateFrame -= PreUpdate;
             Time.Timer.UpdateFrame -= Update;
+            Time.Timer.PostUpdateFrame -= PostUpdate;
             Time.Timer.FixedUpdate -= FixedUpdate;
             Time.Timer.SwapBuffers -= GlobalSwapBuffers;
             Time.Timer.CollectVisible -= GlobalCollectVisible;
@@ -171,74 +177,55 @@ namespace XREngine.Rendering
             //Lights.CaptureLightProbes();
         }
 
-        private void SwapTransformQueues()
+        private ManualResetEventSlim _doneUpdating = new(false);
+        private ManualResetEventSlim _copying = new(false);
+        private void PreUpdate()
         {
-            (_transformBucketsByDepthRendering, _transformBucketsByDepthUpdating) = (_transformBucketsByDepthUpdating, _transformBucketsByDepthRendering);
+            SwapUpdateWithUnused();
+            //IncrementBucketsIndex();
+        }
 
-            foreach (var bag in _transformBucketsByDepthUpdating.Values)
-                bag.Clear();
+        private void PostUpdate()
+        {
+            _doneUpdating.Set();
         }
 
         private void ProcessTransformQueue()
         {
-            SwapTransformQueues();
-            //using var d = Profiler.Start();
+            if (!_doneUpdating.IsSet)
+                return;
+            var copy = CopyRenderFromUpdate();
+            _doneUpdating.Reset();
 
-            //This method updates transforms in breadth-first order of appearance in the scene.
-            //Right now, it's operating in sequential order and could be subject to never finishing if transforms are added faster than they are processed.
-            //Ideally, we'll want to add transforms to a bucket, then here we can take a snapshot, sort by depth and then process each depth in parallel.
-            //Also, prioritize transforms that are visible according to bounding boxes of meshes that use them.
-
-            List<int> depthKeys = [.. _transformBucketsByDepthRendering.Keys]; //Snapshot of current depths
-            depthKeys.Sort(); //Sort by depth. TODO: use sorted dictionary with thread safety
-
-            bool parallel = Engine.Rendering.Settings.RecalcChildMatricesInParallel;
-            Action<List<int>, ConcurrentHashSet<TransformBase>> recalc = parallel 
+            Action<TransformBase[]> recalc = Engine.Rendering.Settings.RecalcChildMatricesInParallel
                 ? RecalcTransformsParallelTasks
                 : RecalcTransformsSequential;
 
-            for (int i = 0; i < depthKeys.Count; i++)
-                if (_transformBucketsByDepthRendering.TryGetValue(depthKeys[i], out var bag))
-                    recalc(depthKeys, bag);
+            copy.ForEach(recalc);
         }
 
-        private static void RecalcTransformsSequential(List<int> depthKeys, ConcurrentHashSet<TransformBase> bag)
+        private static void RecalcTransformsSequential(TransformBase[] bag)
         {
             foreach (var transform in bag)
-                if (transform.RecalculateMatrixHeirarchy(true, false))
-                {
-                    int depthPlusOne = transform.Depth + 1;
-                    if (!depthKeys.Contains(depthPlusOne))
-                        depthKeys.Add(depthPlusOne);
-                }
+                transform.RecalculateMatrixHeirarchy(false);
         }
 
-        private static void RecalcTransformsParallel(List<int> depthKeys, ConcurrentHashSet<TransformBase> bag)
-        {
-            Parallel.ForEach(bag, transform =>
-            {
-                if (!transform.RecalculateMatrixHeirarchy(false))
-                    return;
+        //private static void RecalcTransformsParallel(List<int> depthKeys, ConcurrentHashSet<TransformBase> bag)
+        //{
+        //    Parallel.ForEach(bag, transform =>
+        //    {
+        //        if (!transform.RecalculateMatrixHeirarchy(false))
+        //            return;
 
-                lock (depthKeys)
-                    depthKeys.Add(transform.Depth + 1);
-            });
-        }
+        //        lock (depthKeys)
+        //            depthKeys.Add(transform.Depth + 1);
+        //    });
+        //}
 
-        private static void RecalcTransformsParallelTasks(List<int> depthKeys, ConcurrentHashSet<TransformBase> bag)
+        private static void RecalcTransformsParallelTasks(TransformBase[] bag)
         {
             void Calc(TransformBase tfm)
-            {
-                if (!tfm.RecalculateMatrixHeirarchy(false, true))
-                    return;
-
-                int depthPlusOne = tfm.Depth + 1;
-                lock (depthKeys)
-                {
-                    if (!depthKeys.Contains(depthPlusOne))
-                        depthKeys.Add(depthPlusOne);
-                }
-            }
+                => tfm.RecalculateMatrixHeirarchy(true);
 
             Task AsCalcTask(TransformBase tfm)
             {
@@ -249,32 +236,50 @@ namespace XREngine.Rendering
             Task.WaitAll([.. bag.Select(AsCalcTask)]);
         }
 
-        private ConcurrentDictionary<int, ConcurrentHashSet<TransformBase>> _transformBucketsByDepthUpdating = new();
-        private ConcurrentDictionary<int, ConcurrentHashSet<TransformBase>> _transformBucketsByDepthRendering = new();
+        private int _bucketsIndex = 0;
+        private readonly ConcurrentDictionary<int, ConcurrentHashSet<TransformBase>>[] _circularTransformBuckets =
+        [
+            new ConcurrentDictionary<int, ConcurrentHashSet<TransformBase>>(),
+            new ConcurrentDictionary<int, ConcurrentHashSet<TransformBase>>(),
+            new ConcurrentDictionary<int, ConcurrentHashSet<TransformBase>>()
+        ];
+
+        private void SwapUpdateWithUnused()
+        {
+            //Update becomes unused, and unused becomes update
+            _updateBuckets = _circularTransformBuckets[UnusedBucketIndex];
+            (_circularTransformBuckets[UnusedBucketIndex], _circularTransformBuckets[UpdateBucketIndex]) = (_circularTransformBuckets[UpdateBucketIndex], _circularTransformBuckets[UnusedBucketIndex]);
+            foreach (var kv in _updateBuckets)
+                kv.Value.Clear();
+        }
+
+        private IEnumerable<TransformBase[]> CopyRenderFromUpdate()
+        {
+            var copy = _updateBuckets.OrderBy(x => x.Key).Select(x => x.Value.Where(x => x is not null).ToArray());
+            return copy;
+        }
+
+        private int UnusedBucketIndex => _bucketsIndex == 0 ? _circularTransformBuckets.Length - 1 : _bucketsIndex - 1;
+        private int RenderBucketIndex => _bucketsIndex == _circularTransformBuckets.Length - 1 ? 0 : _bucketsIndex + 1;
+        private int UpdateBucketIndex => _bucketsIndex;
+
+        private void IncrementBucketsIndex()
+        {
+            _bucketsIndex = _bucketsIndex == _circularTransformBuckets.Length - 1 ? 0 : _bucketsIndex + 1;
+        }
+
+        private ConcurrentDictionary<int, ConcurrentHashSet<TransformBase>> _updateBuckets;
 
         /// <summary>
         /// Enqueues a transform to be recalculated at the end of the update after user code has been executed.
         /// Returns true if a new depth was added to the queue.
         /// </summary>
-        /// <param name="transform"></param>
-        /// <param name="wasDepthAdded"></param>
-        /// <param name="directToRender"></param>
-        public bool AddDirtyTransform(TransformBase transform, bool directToRender)
+        public void AddDirtyTransform(TransformBase transform)
         {
             if (transform.ForceManualRecalc)
-                return false;
+                return;
 
-            bool added = false;
-            ConcurrentDictionary<int, ConcurrentHashSet<TransformBase>> dict = directToRender 
-                ? _transformBucketsByDepthRendering 
-                : _transformBucketsByDepthUpdating;
-            ConcurrentHashSet<TransformBase> AddDepth(int depth)
-            {
-                added = true;
-                return [];
-            }
-            dict.GetOrAdd(transform.Depth, AddDepth).Add(transform);
-            return added;
+            _updateBuckets.GetOrAdd(transform.Depth, i => []).Add(transform);
         }
 
         private XRWorld? _targetWorld;

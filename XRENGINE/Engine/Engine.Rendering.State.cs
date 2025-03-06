@@ -73,11 +73,12 @@ namespace XREngine
                 /// </summary>
                 public static bool IsShadowPass => RenderingPipelineState?.ShadowPass ?? false;
                 /// <summary>
-                /// If true, the current render is a stereo pass - all meshes are rendered twice to layers 0 and 1 with a geometry shader.
+                /// If true, the current render is a stereo pass - all meshes are rendered twice to layers 0 and 1 with either OVR_MultiView2 or a geometry shader.
                 /// </summary>
                 public static bool IsStereoPass => RenderingPipelineState?.StereoPass ?? false;
 
-                public static bool HasOvrMultiViewExtension { get; set; } = false;
+                public static bool HasOvrMultiViewExtension { get; internal set; } = false;
+                public static bool HasNVStereoExtension { get; internal set; } = false;
 
                 //public static XRRenderPipelineInstance? CurrentCollectingVisiblePipeline => CollectingVisiblePipelineStack.Count > 0 ? CollectingVisiblePipelineStack.Peek() : null;
                 //public static XRRenderPipelineInstance.RenderingState? CollectingVisiblePipelineState => CurrentCollectingVisiblePipeline?.RenderState;
@@ -150,13 +151,26 @@ namespace XREngine
                 public static void DepthFunc(EComparison always)
                     => AbstractRenderer.Current?.DepthFunc(always);
 
-                public static bool TryCalculateDotLuminance(XRTexture2D texture, out float dotLuminance, bool genMipmapsNow)
+                public static bool TryCalculateDotLuminance(XRTexture2D texture, out float dotLuminance, bool generateMipmapsNow)
                 {
                     dotLuminance = 1.0f;
-                    return AbstractRenderer.Current?.CalcDotLuminance(texture, out dotLuminance, genMipmapsNow) ?? false;
+                    return AbstractRenderer.Current?.CalcDotLuminance(texture, out dotLuminance, generateMipmapsNow) ?? false;
                 }
                 public static float CalculateDotLuminance(XRTexture2D texture, bool generateMipmapsNow)
                     => TryCalculateDotLuminance(texture, out float dotLum, generateMipmapsNow) ? dotLum : 1.0f;
+
+                public static bool TryCalculateDotLuminance(XRTexture2DArray texture, out float dotLuminance, bool generateMipmapsNow)
+                {
+                    dotLuminance = 1.0f;
+                    return AbstractRenderer.Current?.CalcDotLuminance(texture, out dotLuminance, generateMipmapsNow) ?? false;
+                }
+                public static float CalculateDotLuminance(XRTexture2DArray texture, bool generateMipmapsNow)
+                    => TryCalculateDotLuminance(texture, out float dotLum, generateMipmapsNow) ? dotLum : 1.0f;
+
+                public static void CalculateDotLuminanceAsync(XRTexture2D texture, bool generateMipmapsNow, Action<bool, float> callback)
+                    => AbstractRenderer.Current?.CalcDotLuminanceAsync(texture, callback, Settings.DefaultLuminance, generateMipmapsNow);
+                public static void CalculateDotLuminanceAsync(XRTexture2DArray texture, bool generateMipmapsNow, Action<bool, float> callback)
+                    => AbstractRenderer.Current?.CalcDotLuminanceAsync(texture, callback, Settings.DefaultLuminance, generateMipmapsNow);
             }
         }
     }

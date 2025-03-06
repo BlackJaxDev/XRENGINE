@@ -36,12 +36,12 @@ namespace XREngine.Rendering
             if (state is not null)
             {
                 using (state.PushRenderingCamera(cam))
-                    FullScreenCubeMesh.Render();
+                    FullScreenCubeMesh.Render(Matrix4x4.Identity, null, 1, true);
             }
             else
             {
                 Engine.Rendering.State.RenderingCameraOverride = cam;
-                FullScreenCubeMesh.Render();
+                FullScreenCubeMesh.Render(Matrix4x4.Identity, null, 1, true);
                 Engine.Rendering.State.RenderingCameraOverride = null;
             }
         }

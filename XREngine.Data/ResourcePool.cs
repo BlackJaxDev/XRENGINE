@@ -58,8 +58,8 @@ namespace XREngine.Core
         {
             if (_objects.Count < _capacity)
             {
-                _objects.Add(item);
                 item.OnPoolableReleased();
+                _objects.Add(item);
             }
             else
                 item.OnPoolableDestroyed();

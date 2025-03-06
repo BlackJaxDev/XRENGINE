@@ -8,6 +8,10 @@ namespace XREngine.Rendering.Shaders.Generator
     {
         public override bool UseOVRMultiView => true;
     }
+    public class NVStereoVertexShaderGenerator(XRMesh mesh) : DefaultVertexShaderGenerator(mesh)
+    {
+        public override bool UseNVStereo => true;
+    }
 
     /// <summary>
     /// Generates a typical vertex shader for use with most models.
@@ -33,6 +37,7 @@ namespace XREngine.Rendering.Shaders.Generator
         public const string FinalBinormalName = "finalBinormal";
 
         public virtual bool UseOVRMultiView => false;
+        public virtual bool UseNVStereo => false;
 
         /// <summary>
         /// Adjoint is a faster way to calculate the inverse of a matrix when the matrix is orthogonal.
@@ -99,21 +104,10 @@ namespace XREngine.Rendering.Shaders.Generator
             if (UseOVRMultiView)
                 Line("layout(num_views = 2) in;");
 
-            //Write header in fields (from buffers)
             WriteBuffers();
-            Line();
-
-            //Write header uniforms
             WriteBufferBlocks();
-            Line();
-
-            //Write single uniforms
             WriteUniforms();
-            Line();
-
-            //Write header out fields (to fragment shader)
             WriteOutData();
-            Line();
 
             //For some reason, this is necessary when using shader pipelines
             if (Engine.Rendering.Settings.AllowShaderPipelines)
@@ -189,6 +183,7 @@ namespace XREngine.Rendering.Shaders.Generator
 
                 WriteInVar(location++, intVarType, ECommonBufferType.BlendshapeCount.ToString());
             }
+            Line();
         }
 
         private void WriteUniforms()
@@ -218,9 +213,11 @@ namespace XREngine.Rendering.Shaders.Generator
 
             if (!UseOVRMultiView) //Include toggle for manual stereo VR calculations in shader if not using OVR multi-view
                 WriteUniform(EShaderVarType._bool, EEngineUniform.VRMode.ToString());
-            
+
             //if (Mesh.HasSkinning && Engine.Rendering.Settings.AllowSkinning)
             //    WriteUniform(EShaderVarType._mat4, EEngineUniform.RootInvModelMatrix.ToString());
+
+            Line();
         }
 
         /// <summary>
@@ -229,6 +226,8 @@ namespace XREngine.Rendering.Shaders.Generator
         private void WriteBufferBlocks()
         {
             //These buffers have to be in this order to work - GPU boundary alignment is picky as f
+
+            bool wroteAnything = false;
 
             int binding = 0;
             if (Mesh.BlendshapeCount > 0 && !Engine.Rendering.Settings.CalculateBlendshapesInComputeShader && Engine.Rendering.Settings.AllowBlendshapes)
@@ -245,6 +244,8 @@ namespace XREngine.Rendering.Shaders.Generator
 
                 using (StartShaderStorageBufferBlock($"{ECommonBufferType.BlendshapeWeights}Buffer", binding++))
                     WriteUniform(EShaderVarType._float, ECommonBufferType.BlendshapeWeights.ToString(), true);
+
+                wroteAnything = true;
             }
             bool skinning = Mesh.HasSkinning && Engine.Rendering.Settings.AllowSkinning;
             if (skinning)
@@ -264,7 +265,12 @@ namespace XREngine.Rendering.Shaders.Generator
                     using (StartShaderStorageBufferBlock($"{ECommonBufferType.BoneMatrixWeights}Buffer", binding++))
                         WriteUniform(EShaderVarType._float, ECommonBufferType.BoneMatrixWeights.ToString(), true);
                 }
+
+                wroteAnything = true;
             }
+
+            if (wroteAnything)
+                Line();
         }
 
         /// <summary>
@@ -292,6 +298,8 @@ namespace XREngine.Rendering.Shaders.Generator
                     WriteOutVar(12 + i, EShaderVarType._vec4, string.Format(FragColorName, i));
 
             WriteOutVar(20, EShaderVarType._vec3, FragPosLocalName);
+
+            Line();
         }
 
         /// <summary>
@@ -560,10 +568,14 @@ namespace XREngine.Rendering.Shaders.Generator
                 Line($"{glPosName} = {ViewProjMatrixName} * {rotatedWorldPosName};");
             }
 
+            //VR shaders will multiply the view and projection matrices in the geometry shader
             void AssignVR()
                 => Line($"{glPosName} = {rotatedWorldPosName};");
 
-            IfElse(EEngineUniform.VRMode.ToString(), AssignVR, AssignNoVR);
+            if (UseOVRMultiView)
+                AssignNoVR(); //Multiply by view and projection right now - not in geometry shader
+            else
+                IfElse(EEngineUniform.VRMode.ToString(), AssignVR, AssignNoVR);
         }
 
         /// <summary>
@@ -582,12 +594,17 @@ namespace XREngine.Rendering.Shaders.Generator
                 Line($"{finalPositionName} = {ModelViewProjMatrixName} * {localInputPositionName};");
             }
 
+            //VR shaders will multiply the view and projection matrices in the geometry shader
             void AssignVR()
                 => Line($"{finalPositionName} = {EEngineUniform.ModelMatrix} * {localInputPositionName};");
 
-            //VR shaders will multiply the view and projection matrices in the geometry shader
             void NoBillboardCalc()
-                => IfElse(EEngineUniform.VRMode.ToString(), AssignVR, AssignNoVR);
+            {
+                if (UseOVRMultiView)
+                    AssignNoVR(); //Multiply by view and projection right now - not in geometry shader
+                else
+                    IfElse(EEngineUniform.VRMode.ToString(), AssignVR, AssignNoVR);
+            }
 
             if (Mesh.SupportsBillboarding)
                 IfElse($"{EEngineUniform.BillboardMode} != 0", () => BillboardCalc(localInputPositionName, finalPositionName), NoBillboardCalc);

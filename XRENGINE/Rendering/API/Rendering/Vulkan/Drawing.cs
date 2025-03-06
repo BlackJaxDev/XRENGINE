@@ -9,6 +9,14 @@ namespace XREngine.Rendering.Vulkan
 {
     public unsafe partial class VulkanRenderer
     {
+        public override void CalcDotLuminanceAsync(XRTexture2D texture, Action<bool, float> callback, Vector3 luminance, bool genMipmapsNow = true)
+        {
+            throw new NotImplementedException();
+        }
+        public override void CalcDotLuminanceAsync(XRTexture2DArray texture, Action<bool, float> callback, Vector3 luminance, bool genMipmapsNow = true)
+        {
+            throw new NotImplementedException();
+        }
         public override float GetDepth(int x, int y)
         {
             throw new NotImplementedException();
@@ -80,6 +88,10 @@ namespace XREngine.Rendering.Vulkan
             throw new NotImplementedException();
         }
         public override void ClearColor(ColorF4 color)
+        {
+            throw new NotImplementedException();
+        }
+        public override bool CalcDotLuminance(XRTexture2DArray texture, Vector3 luminance, out float dotLuminance, bool genMipmapsNow)
         {
             throw new NotImplementedException();
         }

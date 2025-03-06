@@ -43,25 +43,33 @@ namespace XREngine.Rendering.OpenGL
         {
             base.SetParameters();
 
-            if (Data is not XRTexture2DView t2d)
-                return;
-            
-            int dsmode = t2d.DepthStencilViewFormat == EDepthStencilFmt.Stencil ? (int)GLEnum.StencilIndex : (int)GLEnum.DepthComponent;
-            Api.TextureParameterI(BindingId, GLEnum.DepthStencilTextureMode, in dsmode);
+            if (Data is XRTexture2DView t2d)
+            {
+                int dsmode = t2d.DepthStencilViewFormat == EDepthStencilFmt.Stencil ? (int)GLEnum.StencilIndex : (int)GLEnum.DepthComponent;
+                Api.TextureParameterI(BindingId, GLEnum.DepthStencilTextureMode, in dsmode);
+            }
+            else if (Data is XRTexture2DArrayView t2da)
+            {
+                int dsmode = t2da.DepthStencilViewFormat == EDepthStencilFmt.Stencil ? (int)GLEnum.StencilIndex : (int)GLEnum.DepthComponent;
+                Api.TextureParameterI(BindingId, GLEnum.DepthStencilTextureMode, in dsmode);
+            }
 
-            Api.TextureParameter(BindingId, GLEnum.TextureLodBias, Data.LodBias);
+            if (!IsMultisampleTarget)
+            {
+                Api.TextureParameter(BindingId, GLEnum.TextureLodBias, Data.LodBias);
 
-            int magFilter = (int)ToGLEnum(Data.MagFilter);
-            Api.TextureParameterI(BindingId, GLEnum.TextureMagFilter, in magFilter);
+                int magFilter = (int)ToGLEnum(Data.MagFilter);
+                Api.TextureParameterI(BindingId, GLEnum.TextureMagFilter, in magFilter);
 
-            int minFilter = (int)ToGLEnum(Data.MinFilter);
-            Api.TextureParameterI(BindingId, GLEnum.TextureMinFilter, in minFilter);
+                int minFilter = (int)ToGLEnum(Data.MinFilter);
+                Api.TextureParameterI(BindingId, GLEnum.TextureMinFilter, in minFilter);
 
-            int uWrap = (int)ToGLEnum(Data.UWrap);
-            Api.TextureParameterI(BindingId, GLEnum.TextureWrapS, in uWrap);
+                int uWrap = (int)ToGLEnum(Data.UWrap);
+                Api.TextureParameterI(BindingId, GLEnum.TextureWrapS, in uWrap);
 
-            int vWrap = (int)ToGLEnum(Data.VWrap);
-            Api.TextureParameterI(BindingId, GLEnum.TextureWrapT, in vWrap);
+                int vWrap = (int)ToGLEnum(Data.VWrap);
+                Api.TextureParameterI(BindingId, GLEnum.TextureWrapT, in vWrap);
+            }
         }
 
         public override void PushData()

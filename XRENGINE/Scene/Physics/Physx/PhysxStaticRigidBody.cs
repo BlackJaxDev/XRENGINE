@@ -80,6 +80,7 @@ namespace XREngine.Rendering.Physics.Physx
 
         public override Vector3 LinearVelocity { get; } = Vector3.Zero;
         public override Vector3 AngularVelocity { get; } = Vector3.Zero;
+        public override bool IsSleeping => true;
 
         private StaticRigidBodyComponent? _owningComponent;
         public StaticRigidBodyComponent? OwningComponent

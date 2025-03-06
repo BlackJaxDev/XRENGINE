@@ -19,10 +19,9 @@ namespace XREngine
         public void OnPoolableReleased() => OnStateEnded = null;
         public void OnPoolableReset() => OnStateEnded = null;
 
-#pragma warning disable CA1816 // Dispose methods should call SuppressFinalize
         public void Dispose()
-#pragma warning restore CA1816 // Dispose methods should call SuppressFinalize
         {
+            GC.SuppressFinalize(this);
             OnStateEnded?.Invoke();
             _statePool.Release(this);
         }

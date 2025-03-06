@@ -39,11 +39,11 @@ namespace XREngine.Rendering.Pipelines.Commands
 
         protected override void Execute()
         {
-            XRTexture2D? normalTex = Pipeline.GetTexture<XRTexture2D>(NormalTextureName);
-            XRTexture2DView? depthViewTex = Pipeline.GetTexture<XRTexture2DView>(DepthViewTextureName);
-            XRTexture2D? albedoTex = Pipeline.GetTexture<XRTexture2D>(AlbedoTextureName);
-            XRTexture2D? rmsiTex = Pipeline.GetTexture<XRTexture2D>(RMSITextureName);
-            XRTexture2D? depthStencilTex = Pipeline.GetTexture<XRTexture2D>(DepthStencilTextureName);
+            XRTexture? normalTex = Pipeline.GetTexture<XRTexture>(NormalTextureName);
+            XRTexture? depthViewTex = Pipeline.GetTexture<XRTexture>(DepthViewTextureName);
+            XRTexture? albedoTex = Pipeline.GetTexture<XRTexture>(AlbedoTextureName);
+            XRTexture? rmsiTex = Pipeline.GetTexture<XRTexture>(RMSITextureName);
+            XRTexture? depthStencilTex = Pipeline.GetTexture<XRTexture>(DepthStencilTextureName);
 
             if (normalTex is null ||
                 depthViewTex is null ||
@@ -69,7 +69,14 @@ namespace XREngine.Rendering.Pipelines.Commands
                 height);
         }
 
-        private void RegenerateFBOs(XRTexture2D normalTex, XRTexture2DView depthViewTex, XRTexture2D albedoTex, XRTexture2D rmsiTex, XRTexture2D depthStencilTex, int width, int height)
+        private void RegenerateFBOs(
+            XRTexture normalTex,
+            XRTexture depthViewTex,
+            XRTexture albedoTex,
+            XRTexture rmsiTex,
+            XRTexture depthStencilTex,
+            int width,
+            int height)
         {
             Debug.Out($"MSVO: Regenerating FBOs for {width}x{height}");
             _lastWidth = width;
@@ -107,11 +114,23 @@ namespace XREngine.Rendering.Pipelines.Commands
 
             XRMaterial ssaoGenMat = new(msvoGenTexRefs, ssaoGenShader) { RenderOptions = renderParams };
 
+            if (albedoTex is not IFrameBufferAttachement albedoAttach)
+                throw new ArgumentException("Albedo texture must be an IFrameBufferAttachement");
+
+            if (normalTex is not IFrameBufferAttachement normalAttach)
+                throw new ArgumentException("Normal texture must be an IFrameBufferAttachement");
+
+            if (rmsiTex is not IFrameBufferAttachement rmsiAttach)
+                throw new ArgumentException("RMSI texture must be an IFrameBufferAttachement");
+
+            if (depthStencilTex is not IFrameBufferAttachement depthStencilAttach)
+                throw new ArgumentException("DepthStencil texture must be an IFrameBufferAttachement");
+
             XRQuadFrameBuffer msvoGenFBO = new(ssaoGenMat, true,
-                (albedoTex, EFrameBufferAttachment.ColorAttachment0, 0, -1),
-                (normalTex, EFrameBufferAttachment.ColorAttachment1, 0, -1),
-                (rmsiTex, EFrameBufferAttachment.ColorAttachment2, 0, -1),
-                (depthStencilTex, EFrameBufferAttachment.DepthStencilAttachment, 0, -1))
+                (albedoAttach, EFrameBufferAttachment.ColorAttachment0, 0, -1),
+                (normalAttach, EFrameBufferAttachment.ColorAttachment1, 0, -1),
+                (rmsiAttach, EFrameBufferAttachment.ColorAttachment2, 0, -1),
+                (depthStencilAttach, EFrameBufferAttachment.DepthStencilAttachment, 0, -1))
             {
                 Name = MSVOFBOName
             };

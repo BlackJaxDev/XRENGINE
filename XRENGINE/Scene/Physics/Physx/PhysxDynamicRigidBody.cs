@@ -19,6 +19,7 @@ namespace XREngine.Rendering.Physics.Physx
 
         public override Vector3 AngularVelocity => _obj->GetAngularVelocity();
         public override Vector3 LinearVelocity => _obj->GetLinearVelocity();
+        public override bool IsSleeping => _obj->IsSleeping();
 
         public void SetAngularVelocity(Vector3 value, bool wake = true)
         {
@@ -59,8 +60,6 @@ namespace XREngine.Rendering.Physics.Physx
             get => _obj->GetContactReportThreshold();
             set => _obj->SetContactReportThresholdMut(value);
         }
-
-        public bool IsSleeping => _obj->IsSleeping();
 
         public (Vector3 position, Quaternion rotation)? KinematicTarget
         {

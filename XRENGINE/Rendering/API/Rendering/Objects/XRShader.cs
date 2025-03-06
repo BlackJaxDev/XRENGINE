@@ -96,5 +96,60 @@ namespace XREngine.Rendering
             Source = file;
             return true;
         }
+
+        public enum EExtensionBehavior
+        {
+            Enable,
+            Require,
+            Warn,
+            Disable
+        }
+
+        /// <summary>
+        /// Checks if the shader utilizes a specific extension.
+        /// </summary>
+        /// <param name="name"></param>
+        /// <param name="allowedBehaviors"></param>
+        /// <returns></returns>
+        public bool HasExtension(string name, params EExtensionBehavior[] allowedBehaviors)
+        {
+            if (Source is null)
+                return false;
+
+            string? text = Source.Text;
+            if (text is null)
+                return false;
+
+            int index = text.IndexOf($"#extension {name}", StringComparison.OrdinalIgnoreCase);
+            if (index == -1)
+                return false;
+
+            //If the user passes no behaviors, then any behavior is allowed
+            if (allowedBehaviors.Length == 0)
+                return true;
+
+            int end = text.IndexOf('\n', index);
+            if (end == -1)
+                return false;
+
+            string line = text[index..end];
+
+            //#extension extension_name​ : behavior​
+            string[] parts = line.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+            if (parts.Length < 4)
+                return false;
+
+            string behavior = parts[3];
+            EExtensionBehavior behaviorEnum = behavior switch
+            {
+                "enable" => EExtensionBehavior.Enable,
+                "require" => EExtensionBehavior.Require,
+                "warn" => EExtensionBehavior.Warn,
+                "disable" => EExtensionBehavior.Disable,
+                _ => EExtensionBehavior.Disable
+            };
+
+            return allowedBehaviors.Contains(behaviorEnum);
+        }
     }
 }

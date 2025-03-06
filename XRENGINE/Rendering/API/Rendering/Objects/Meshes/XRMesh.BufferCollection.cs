@@ -16,7 +16,7 @@ namespace XREngine.Rendering
             set => SetField(ref _maxBlendshapeAccumulation, value);
         }
 
-        private bool _supportsBillboarding = true;
+        private bool _supportsBillboarding = false;
         /// <summary>
         /// If true, the vertex shader will include billboarding code.
         /// Use the 'BillboardMode' engine uniform to set the type of billboarding.

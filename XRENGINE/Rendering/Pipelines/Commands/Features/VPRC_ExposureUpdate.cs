@@ -15,7 +15,7 @@ namespace XREngine.Rendering.Pipelines.Commands
         public bool GenerateMipmapsHere { get; set; } = true;
 
         protected override void Execute()
-            => Pipeline.RenderState.SceneCamera?.PostProcessing?.ColorGrading?.UpdateExposure(Pipeline.GetTexture<XRTexture2D>(HDRSceneTextureName)!, GenerateMipmapsHere);
+            => Pipeline.RenderState.SceneCamera?.PostProcessing?.ColorGrading?.UpdateExposure(Pipeline.GetTexture<XRTexture>(HDRSceneTextureName)!, GenerateMipmapsHere);
 
         public void SetOptions(string hdrSceneTextureName, bool generateMipmapsHere)
         {

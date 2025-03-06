@@ -1,9 +1,6 @@
-﻿using Assimp;
-using Microsoft.VisualBasic;
-using OpenVR.NET;
+﻿using OpenVR.NET;
 using OpenVR.NET.Devices;
 using OpenVR.NET.Manifest;
-using System;
 using System.Diagnostics;
 using System.Diagnostics.CodeAnalysis;
 using System.IO.Pipes;
@@ -13,12 +10,10 @@ using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using Valve.VR;
-using XREngine.Components;
 using XREngine.Data.Rendering;
 using XREngine.Rendering;
 using XREngine.Rendering.Models.Materials;
 using XREngine.Rendering.OpenGL;
-using XREngine.Scene;
 using ETextureType = Valve.VR.ETextureType;
 
 namespace XREngine
@@ -139,9 +134,9 @@ namespace XREngine
                 return true;
             }
 
-            private const bool Stereo = true;
-            private const bool StereoUseTextureViews = true;
-
+            private static bool Stereo => Rendering.Settings.RenderVRSinglePassStereo;
+            //private static bool StereoUseTextureViews => Rendering.Settings.SubmitOpenVRTextureArrayAsTwoViews;
+            
             private static void InitRender(XRWindow window)
             {
                 window.RenderViewportsCallback += Render;
@@ -165,22 +160,26 @@ namespace XREngine
                 if (Stereo)
                 {
                     SetViewportParameters(rW, rH, StereoViewport = new XRViewport(window));
+                    StereoViewport.RenderPipeline = new DefaultRenderPipeline(true);
                     var arr = new XRTexture2DArray(left, right)
                     {
                         Resizable = false,
                         SizedInternalFormat = ESizedInternalFormat.Rgb8,
-                        OVRMultiViewParameters = new XRTexture2DArray.OVRMultiView(0, 2u)
+                        OVRMultiViewParameters = new XRTexture2DArray.OVRMultiView(0, 2u),
+                        FrameBufferAttachment = EFrameBufferAttachment.ColorAttachment0
                     };
                     VRStereoViewTextureArray = arr;
                     VRStereoRenderTarget = new XRMaterialFrameBuffer(new XRMaterial([arr], ShaderHelper.UnlitTextureFragForward()!));
-                    if (StereoUseTextureViews)
-                    {
+                    //if (StereoUseTextureViews)
+                    //{
                         StereoLeftViewTexture = new XRTexture2DArrayView(arr, 0u, 1u, 0u, 1u, EPixelInternalFormat.Rgb8, false, false);
                         StereoRightViewTexture = new XRTexture2DArrayView(arr, 0u, 1u, 1u, 1u, EPixelInternalFormat.Rgb8, false, false);
-                    }
+                    //}
                 }
                 else
                 {
+                    left.FrameBufferAttachment = EFrameBufferAttachment.ColorAttachment0;
+                    right.FrameBufferAttachment = EFrameBufferAttachment.ColorAttachment0;
                     VRLeftEyeRenderTarget = MakeFBO(rW, rH, VRLeftEyeViewTexture = left, LeftEyeViewport = new XRViewport(window) { Index = 0 });
                     VRRightEyeRenderTarget = MakeFBO(rW, rH, VRRightEyeViewTexture = right, RightEyeViewport = new XRViewport(window) { Index = 1 });
 
@@ -220,8 +219,7 @@ namespace XREngine
                     rW, rH,
                     EPixelInternalFormat.Rgb,
                     EPixelFormat.Bgr,
-                    EPixelType.UnsignedByte,
-                    EFrameBufferAttachment.ColorAttachment0);
+                    EPixelType.UnsignedByte);
 
             /// <summary>
             /// This method initializes the VR system in client mode.
@@ -329,19 +327,19 @@ namespace XREngine
                     null);
 
                 //Submit the rendered frames to the headset
-                if (StereoUseTextureViews)
-                {
+                //if (StereoUseTextureViews)
+                //{
                     nint? leftHandle = StereoLeftViewTexture?.APIWrappers?.FirstOrDefault()?.GetHandle();
                     nint? rightHandle = StereoRightViewTexture?.APIWrappers?.FirstOrDefault()?.GetHandle();
                     if (leftHandle is not null && rightHandle is not null)
                         SubmitRenders(leftHandle.Value, rightHandle.Value);
-                }
-                else
-                {
-                    nint? arrayHandle = VRStereoViewTextureArray?.APIWrappers?.FirstOrDefault()?.GetHandle();
-                    if (arrayHandle is not null)
-                        SubmitRender(arrayHandle.Value);
-                }
+                //}
+                //else
+                //{
+                //    nint? arrayHandle = VRStereoViewTextureArray?.APIWrappers?.FirstOrDefault()?.GetHandle();
+                //    if (arrayHandle is not null)
+                //        SubmitRender(arrayHandle.Value);
+                //}
             }
 
             public static XRViewport? LeftEyeViewport { get; private set; }
@@ -402,22 +400,22 @@ namespace XREngine
                 comp.PostPresentHandoff();
             }
 
-            public static void SubmitRender(
-                IntPtr eyesHandle,
-                ETextureType apiType = ETextureType.OpenGL,
-                EColorSpace colorSpace = EColorSpace.Auto,
-                EVRSubmitFlags flags = EVRSubmitFlags.Submit_GlArrayTexture)
-            {
-                _eyeTex.eColorSpace = colorSpace;
-                _eyeTex.handle = eyesHandle;
-                _eyeTex.eType = apiType;
+            //public static void SubmitRender(
+            //    IntPtr eyesHandle,
+            //    ETextureType apiType = ETextureType.OpenGL,
+            //    EColorSpace colorSpace = EColorSpace.Auto,
+            //    EVRSubmitFlags flags = EVRSubmitFlags.Submit_GlArrayTexture)
+            //{
+            //    _eyeTex.eColorSpace = colorSpace;
+            //    _eyeTex.handle = eyesHandle;
+            //    _eyeTex.eType = apiType;
 
-                var comp = Valve.VR.OpenVR.Compositor;
-                CheckError(comp.Submit(EVREye.Eye_Left, ref _eyeTex, ref _singleTexBounds, flags));
-                CheckError(comp.Submit(EVREye.Eye_Right, ref _eyeTex, ref _singleTexBounds, flags));
+            //    var comp = Valve.VR.OpenVR.Compositor;
+            //    CheckError(comp.Submit(EVREye.Eye_Left, ref _eyeTex, ref _singleTexBounds, flags));
+            //    CheckError(comp.Submit(EVREye.Eye_Right, ref _eyeTex, ref _singleTexBounds, flags));
 
-                comp.PostPresentHandoff();
-            }
+            //    comp.PostPresentHandoff();
+            //}
 
             //enum EVRSubmitFlags
             //{

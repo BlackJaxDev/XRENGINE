@@ -81,6 +81,7 @@ namespace XREngine.Rendering.Physics.Physx
 
         public abstract Vector3 LinearVelocity { get; }
         public abstract Vector3 AngularVelocity { get; }
+        public abstract bool IsSleeping { get; }
 
         public PxConstraint*[] GetConstraints()
         {

@@ -1,11 +1,12 @@
 ﻿using ImageMagick;
 using XREngine.Data;
 using XREngine.Data.Rendering;
+using XREngine.Data.Vectors;
 
 namespace XREngine.Rendering
 {
     [XR3rdPartyExtensions("gif")]
-    public class XRTexture2DArray : XRTexture
+    public class XRTexture2DArray : XRTexture, IFrameBufferAttachement
     {
         private bool _multiSample;
         private XRTexture2D[] _textures = [];
@@ -14,6 +15,13 @@ namespace XREngine.Rendering
 
         public XRTexture2DArray(params XRTexture2D[] textures)
         {
+            Textures = textures;
+        }
+        public XRTexture2DArray(uint count, uint width, uint height, EPixelInternalFormat internalFormat, EPixelFormat format, EPixelType type, bool allocateData = false)
+        {
+            var textures = new XRTexture2D[count];
+            for (int i = 0; i < count; i++)
+                textures[i] = new XRTexture2D(width, height, internalFormat, format, type, allocateData);
             Textures = textures;
         }
 
@@ -63,6 +71,43 @@ namespace XREngine.Rendering
         {
             get => _ovrMultiViewParameters;
             set => SetField(ref _ovrMultiViewParameters, value);
+        }
+
+        public ETexMinFilter MinFilter
+        {
+            get => Textures.Length > 0 ? Textures[0].MinFilter : ETexMinFilter.Nearest;
+            set
+            {
+                foreach (XRTexture2D texture in Textures)
+                    texture.MinFilter = value;
+            }
+        }
+        public ETexMagFilter MagFilter
+        {
+            get => Textures.Length > 0 ? Textures[0].MagFilter : ETexMagFilter.Nearest;
+            set
+            {
+                foreach (XRTexture2D texture in Textures)
+                    texture.MagFilter = value;
+            }
+        }
+        public ETexWrapMode UWrap
+        {
+            get => Textures.Length > 0 ? Textures[0].UWrap : ETexWrapMode.ClampToEdge;
+            set
+            {
+                foreach (XRTexture2D texture in Textures)
+                    texture.UWrap = value;
+            }
+        }
+        public ETexWrapMode VWrap
+        {
+            get => Textures.Length > 0 ? Textures[0].VWrap : ETexWrapMode.ClampToEdge;
+            set
+            {
+                foreach (XRTexture2D texture in Textures)
+                    texture.VWrap = value;
+            }
         }
 
         public event Action? Resized = null;
@@ -129,5 +174,58 @@ namespace XREngine.Rendering
             => AttachToFBORequested_OVRMultiView?.Invoke(fbo, attachment, mipLevel, offset, numViews);
         public void DetachFromFBO_OVRMultiView(XRFrameBuffer fbo, EFrameBufferAttachment attachment, int mipLevel, int offset, uint numViews)
             => DetachFromFBORequested_OVRMultiView?.Invoke(fbo, attachment, mipLevel, offset, numViews);
+
+        /// <summary>
+        /// Creates a new texture specifically for attaching to a framebuffer.
+        /// </summary>
+        /// <param name="name">The name of the texture.</param>
+        /// <param name="width">The texture's width.</param>
+        /// <param name="height">The texture's height.</param>
+        /// <param name="internalFmt">The internal texture storage format.</param>
+        /// <param name="format">The format of the texture's pixels.</param>
+        /// <param name="pixelType">How pixels are stored.</param>
+        /// <param name="bufAttach">Where to attach to the framebuffer for rendering to.</param>
+        /// <returns>A new 2D texture reference.</returns>
+        public static XRTexture2DArray CreateFrameBufferTexture(uint count, uint width, uint height,
+            EPixelInternalFormat internalFmt, EPixelFormat format, EPixelType type, EFrameBufferAttachment bufAttach)
+            => new(count, width, height, internalFmt, format, type, false)
+            {
+                MinFilter = ETexMinFilter.Nearest,
+                MagFilter = ETexMagFilter.Nearest,
+                UWrap = ETexWrapMode.ClampToEdge,
+                VWrap = ETexWrapMode.ClampToEdge,
+                AutoGenerateMipmaps = false,
+                FrameBufferAttachment = bufAttach,
+            };
+        /// <summary>
+        /// Creates a new texture specifically for attaching to a framebuffer.
+        /// </summary>
+        /// <param name="name"></param>
+        /// <param name="bounds"></param>
+        /// <param name="internalFormat"></param>
+        /// <param name="format"></param>
+        /// <param name="pixelType"></param>
+        /// <returns></returns>
+        public static XRTexture2DArray CreateFrameBufferTexture(uint count, IVector2 bounds, EPixelInternalFormat internalFormat, EPixelFormat format, EPixelType type)
+            => CreateFrameBufferTexture(count, (uint)bounds.X, (uint)bounds.Y, internalFormat, format, type);
+        /// <summary>
+        /// Creates a new texture specifically for attaching to a framebuffer.
+        /// </summary>
+        /// <param name="name">The name of the texture.</param>
+        /// <param name="width">The texture's width.</param>
+        /// <param name="height">The texture's height.</param>
+        /// <param name="internalFmt">The internal texture storage format.</param>
+        /// <param name="format">The format of the texture's pixels.</param>
+        /// <param name="pixelType">How pixels are stored.</param>
+        /// <returns>A new 2D texture reference.</returns>
+        public static XRTexture2DArray CreateFrameBufferTexture(uint count, uint width, uint height, EPixelInternalFormat internalFormat, EPixelFormat format, EPixelType type)
+            => new(count,width, height, internalFormat, format, type, false)
+            {
+                MinFilter = ETexMinFilter.Nearest,
+                MagFilter = ETexMagFilter.Nearest,
+                UWrap = ETexWrapMode.ClampToEdge,
+                VWrap = ETexWrapMode.ClampToEdge,
+                AutoGenerateMipmaps = false,
+            };
     }
 }

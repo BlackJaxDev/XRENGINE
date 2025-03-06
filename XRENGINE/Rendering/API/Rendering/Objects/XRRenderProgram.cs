@@ -18,7 +18,7 @@ namespace XREngine.Rendering
         /// <summary>
         /// Call this once all shaders have been added to the Shaders list to finalize the program.
         /// </summary>
-        public void Link()
+        public void AllowLink()
             => LinkReady = true;
 
         public event Action<string, Matrix4x4>? UniformSetMatrix4x4Requested = null;
@@ -123,7 +123,7 @@ namespace XREngine.Rendering
         {
             Shaders.AddRange(shaders);
             if (linkNow)
-                Link();
+                AllowLink();
         }
 
         public IEnumerator<XRShader> GetEnumerator()

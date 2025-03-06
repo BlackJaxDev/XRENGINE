@@ -3,7 +3,6 @@ using Silk.NET.OpenGL;
 using XREngine.Data;
 using XREngine.Data.Core;
 using XREngine.Data.Rendering;
-using static XREngine.Rendering.OpenGL.GLTexture2D;
 
 namespace XREngine.Rendering.OpenGL
 {

@@ -19,10 +19,10 @@ namespace XREngine.Rendering.Pipelines.Commands
             DepthViewTexture = depthViewTexture;
         }
 
-        private XRTexture2D? _albedoOpacityTextureCache = null;
-        private XRTexture2D? _normalTextureCache = null;
-        private XRTexture2D? _rmsiTextureCache = null;
-        private XRTexture2DView? _depthViewTextureCache = null;
+        private XRTexture? _albedoOpacityTextureCache = null;
+        private XRTexture? _normalTextureCache = null;
+        private XRTexture? _rmsiTextureCache = null;
+        private XRTexture? _depthViewTextureCache = null;
 
         public XRMeshRenderer? PointLightRenderer { get; private set; }
         public XRMeshRenderer? SpotLightRenderer { get; private set; }
@@ -33,10 +33,10 @@ namespace XREngine.Rendering.Pipelines.Commands
             if (Pipeline.RenderState.Scene is null)
                 return;
 
-            var albOpacTex = Pipeline.GetTexture<XRTexture2D>(AlbedoOpacityTexture);
-            var normTex = Pipeline.GetTexture<XRTexture2D>(NormalTexture);
-            var rmsiTex = Pipeline.GetTexture<XRTexture2D>(RMSITexture);
-            var depthViewTex = Pipeline.GetTexture<XRTexture2DView>(DepthViewTexture);
+            var albOpacTex = Pipeline.GetTexture<XRTexture>(AlbedoOpacityTexture);
+            var normTex = Pipeline.GetTexture<XRTexture>(NormalTexture);
+            var rmsiTex = Pipeline.GetTexture<XRTexture>(RMSITexture);
+            var depthViewTex = Pipeline.GetTexture<XRTexture>(DepthViewTexture);
             if (albOpacTex is null || normTex is null || rmsiTex is null || depthViewTex is null)
                 throw new Exception("One or more required textures are missing.");
 
@@ -91,10 +91,10 @@ namespace XREngine.Rendering.Pipelines.Commands
         }
 
         private void CreateLightRenderers(
-            XRTexture2D albOpacTex,
-            XRTexture2D normTex,
-            XRTexture2D rmsiTex,
-            XRTexture2DView depthViewTex)
+            XRTexture albOpacTex,
+            XRTexture normTex,
+            XRTexture rmsiTex,
+            XRTexture depthViewTex)
         {
             XRTexture[] lightRefs =
             [

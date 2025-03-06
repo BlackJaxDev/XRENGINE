@@ -1,11 +1,13 @@
 ﻿using System.Diagnostics.CodeAnalysis;
 using System.Numerics;
+using XREngine.Core.Files;
 using XREngine.Data.Colors;
 using XREngine.Data.Core;
 using XREngine.Data.Rendering;
 using XREngine.Rendering.Models.Materials;
 using XREngine.Rendering.Models.Materials.Shaders.Parameters;
 using XREngine.Rendering.Shaders.Generator;
+using static XREngine.Rendering.OpenGL.OpenGLRenderer;
 using static XREngine.Rendering.XRMesh;
 
 namespace XREngine.Rendering
@@ -13,22 +15,120 @@ namespace XREngine.Rendering
     /// <summary>
     /// A mesh renderer takes a mesh and a material and renders it.
     /// </summary>
-    public class XRMeshRenderer : GenericRenderObject
+    public class XRMeshRenderer : XRAsset
     {
+        /// <summary>
+        /// This class holds specific information about rendering the mesh depending on the type of pass.
+        /// For example:
+        /// normal pass
+        /// using OVR_multiview
+        /// using NV_stereo_view_rendering
+        /// </summary>
+        public abstract class BaseVersion(XRMeshRenderer parent, Func<XRShader, bool> vertexShaderSelector) : GenericRenderObject
+        {
+            public XRMeshRenderer Parent
+            {
+                get => parent;
+                //set => SetField(ref parent, value);
+            }
+            public Func<XRShader, bool> VertexShaderSelector
+            {
+                get => vertexShaderSelector;
+                //set => SetField(ref vertexShaderSelector, value);
+            }
+
+            private string? _vertexShaderSource;
+            public string? VertexShaderSource => _vertexShaderSource ??= GenerateVertexShaderSource();
+
+            public void ResetVertexShaderSource()
+                => _vertexShaderSource = null;
+
+            protected abstract string? GenerateVertexShaderSource();
+
+            public delegate void DelRenderRequested(Matrix4x4 worldMatrix, XRMaterial? materialOverride, uint instances, EMeshBillboardMode billboardMode);
+            /// <summary>
+            /// Tells all renderers to render this mesh.
+            /// </summary>
+            public event DelRenderRequested? RenderRequested;
+
+            /// <summary>
+            /// Use this to render the mesh.
+            /// </summary>
+            /// <param name="modelMatrix"></param>
+            /// <param name="materialOverride"></param>
+            public void Render(Matrix4x4 modelMatrix, XRMaterial? materialOverride, uint instances, EMeshBillboardMode billboardMode)
+                => RenderRequested?.Invoke(modelMatrix, materialOverride, instances, billboardMode);
+        }
+
+        public class Version<[DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicConstructors)] T>(XRMeshRenderer renderer, Func<XRShader, bool> vertexShaderSelector) : BaseVersion(renderer, vertexShaderSelector) where T : ShaderGeneratorBase
+        {
+            protected override string? GenerateVertexShaderSource()
+            {
+                var m = Parent?.Mesh;
+                if (m is null)
+                    return null;
+
+                return ((T)Activator.CreateInstance(typeof(T), m)!).Generate();
+            }
+        }
+
+        public Dictionary<int, BaseVersion> Versions { get; set; } = [];
+
+        public BaseVersion GetDefaultVersion() => Versions[0];
+        public BaseVersion GetOVRMultiViewVersion() => Versions[1];
+        public BaseVersion GetNVStereoVersion() => Versions[2];
+
+        private static bool HasNVStereoViewRendering(XRShader x)
+            => x.HasExtension(GLShader.EXT_GL_NV_STEREO_VIEW_RENDERING, XRShader.EExtensionBehavior.Require);
+        private static bool HasOvrMultiView2(XRShader x)
+            => x.HasExtension(GLShader.EXT_GL_OVR_MULTIVIEW2, XRShader.EExtensionBehavior.Require);
+        private static bool NoSpecialExtensions(XRShader x) => 
+            !x.HasExtension(GLShader.EXT_GL_OVR_MULTIVIEW2, XRShader.EExtensionBehavior.Require) && 
+            !x.HasExtension(GLShader.EXT_GL_NV_STEREO_VIEW_RENDERING, XRShader.EExtensionBehavior.Require);
+
         public XRMeshRenderer(XRMesh? mesh, XRMaterial? material)
         {
             _mesh = mesh;
             _material = material;
             ReinitializeBones();
+
+            Versions.Add(0, new Version<DefaultVertexShaderGenerator>(this, NoSpecialExtensions));
+            Versions.Add(1, new Version<OVRMultiViewVertexShaderGenerator>(this, HasOvrMultiView2));
+            Versions.Add(2, new Version<NVStereoVertexShaderGenerator>(this, HasNVStereoViewRendering));
+        }
+
+        /// <summary>
+        /// Use this to render the mesh with an identity transform matrix.
+        /// </summary>
+        public void Render(XRMaterial? materialOverride = null, uint instances = 1u)
+            => Render(Matrix4x4.Identity, materialOverride, instances);
+
+        /// <summary>
+        /// Use this to render the mesh.
+        /// </summary>
+        /// <param name="modelMatrix"></param>
+        /// <param name="materialOverride"></param>
+        public void Render(Matrix4x4 modelMatrix, XRMaterial? materialOverride = null, uint instances = 1u, bool forceNoStereo = false)
+            => GetVersion(forceNoStereo).Render(modelMatrix, materialOverride, instances, Material?.BillboardMode ?? EMeshBillboardMode.None);
+
+        private BaseVersion GetVersion(bool forceNoStereo = false)
+        {
+            bool stereoPass = !forceNoStereo && Engine.Rendering.State.IsStereoPass;
+
+            BaseVersion ver;
+            bool preferNV = Engine.Rendering.Settings.PreferNVStereo;
+            if (stereoPass && preferNV && Engine.Rendering.State.HasNVStereoExtension)
+                ver = GetNVStereoVersion();
+            else if (stereoPass && Engine.Rendering.State.HasOvrMultiViewExtension)
+                ver = GetOVRMultiViewVersion();
+            else
+                ver = GetDefaultVersion(); //Default version can still do VR - VRMode is set to 1 and uses VR geometry duplication shader during stereo pass
+
+            return ver;
         }
 
         private XRMesh? _mesh;
         private XRMaterial? _material;
-        private string? _vertexShaderSource;
-        private string? _ovrMultiViewVertexShaderSource;
-
-        public string? GeneratedVertexShaderSource => _vertexShaderSource ??= GenerateVertexShaderSource<DefaultVertexShaderGenerator>();
-        public string? GeneratedOvrMultiViewVertexShaderSource => _ovrMultiViewVertexShaderSource ??= GenerateVertexShaderSource<OVRMultiViewVertexShaderGenerator>();
 
         public class SubMesh : XRBase
         {
@@ -63,24 +163,6 @@ namespace XREngine.Rendering
         private RenderBone[]? _bones;
         //private ConcurrentDictionary<uint, Matrix4x4> _modifiedBonesRendering = [];
         //private ConcurrentDictionary<uint, Matrix4x4> _modifiedBonesUpdating = [];
-
-        public string? GenerateVertexShaderSource<[DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicConstructors)] T>() where T : ShaderGeneratorBase
-        {
-            if (Mesh is null)
-                return null;
-
-            return ((T)Activator.CreateInstance(typeof(T), Mesh)!).Generate();
-        }
-
-        //private TransformBase? _singleBind = null;
-        ///// <summary>
-        ///// This is the one bone affecting the transform of this mesh, and is handled differently than if there were multiple.
-        ///// </summary>
-        //public TransformBase? SingleBind
-        //{
-        //    get => _singleBind;
-        //    private set => SetField(ref _singleBind, value);
-        //}
 
         private void ReinitializeBones()
         {
@@ -216,27 +298,7 @@ namespace XREngine.Rendering
         /// </summary>
         public event DelSetUniforms? SettingUniforms;
 
-        public delegate void DelRenderRequested(Matrix4x4 worldMatrix, XRMaterial? materialOverride, uint instances, EMeshBillboardMode billboardMode);
         public delegate ShaderVar DelParameterRequested(int index);
-
-        /// <summary>
-        /// Tells all renderers to render this mesh.
-        /// </summary>
-        public event DelRenderRequested? RenderRequested;
-
-        /// <summary>
-        /// Use this to render the mesh with an identity transform matrix.
-        /// </summary>
-        public void Render(XRMaterial? materialOverride = null, uint instances = 1u)
-            => Render(Matrix4x4.Identity, materialOverride, instances);
-
-        /// <summary>
-        /// Use this to render the mesh.
-        /// </summary>
-        /// <param name="modelMatrix"></param>
-        /// <param name="materialOverride"></param>
-        public void Render(Matrix4x4 modelMatrix, XRMaterial? materialOverride = null, uint instances = 1u)
-            => RenderRequested?.Invoke(modelMatrix, materialOverride, instances, Material?.BillboardMode ?? EMeshBillboardMode.None);
 
         public T? Parameter<T>(int index) where T : ShaderVar 
             => Material?.Parameter<T>(index);

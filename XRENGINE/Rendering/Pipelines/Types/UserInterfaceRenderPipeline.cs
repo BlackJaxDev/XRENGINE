@@ -17,12 +17,12 @@ public class UserInterfaceRenderPipeline : RenderPipeline
     protected override Dictionary<int, IComparer<RenderCommand>?> GetPassIndicesAndSorters()
         => new()
         {
-            { (int)EDefaultRenderPass.PreRender, _nearToFarSorter },
+            { (int)EDefaultRenderPass.PreRender, null },
             { (int)EDefaultRenderPass.Background, null },
             { (int)EDefaultRenderPass.OpaqueForward, _nearToFarSorter },
             { (int)EDefaultRenderPass.TransparentForward, _farToNearSorter },
             { (int)EDefaultRenderPass.OnTopForward, null },
-            { (int)EDefaultRenderPass.PostRender, _nearToFarSorter }
+            { (int)EDefaultRenderPass.PostRender, null }
         };
 
     protected override Lazy<XRMaterial> InvalidMaterialFactory => new(MakeInvalidMaterial, LazyThreadSafetyMode.PublicationOnly);

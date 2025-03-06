@@ -85,6 +85,7 @@ namespace XREngine.Scene
         (Vector3 position, Quaternion rotation) Transform { get; }
         Vector3 LinearVelocity { get; }
         Vector3 AngularVelocity { get; }
+        bool IsSleeping { get; }
     }
     public interface IAbstractRigidBody : IAbstractRigidPhysicsActor
     {

@@ -1,6 +1,7 @@
 ﻿
 using Extensions;
 using System.ComponentModel;
+using System.Runtime.Intrinsics.X86;
 using XREngine.Data;
 using XREngine.Data.Colors;
 using XREngine.Data.Core;
@@ -142,12 +143,47 @@ uniform ColorGradeStruct ColorGrade;";
         [Browsable(false)]
         public bool RequiresAutoExposure => AutoExposure || Exposure < MinExposure || Exposure > MaxExposure;
 
-        public unsafe void UpdateExposure(XRTexture2D hdrSceneTexture, bool generateMipmapsNow)
+        private float _secBetweenExposureUpdates = 1.0f;
+        public float SecondsBetweenExposureUpdates
+        {
+            get => _secBetweenExposureUpdates;
+            set => SetField(ref _secBetweenExposureUpdates, value);
+        }
+
+        private float _lastUpdateTime = 0.0f;
+        private float _lastLumDot = 0.0f;
+
+        public void UpdateExposure(XRTexture hdrSceneTexture, bool generateMipmapsNow)
         {
             if (!RequiresAutoExposure)
                 return;
 
-            float lumDot = Engine.Rendering.State.CalculateDotLuminance(hdrSceneTexture, generateMipmapsNow);
+            float time = Engine.ElapsedTime;
+            if (time - _lastUpdateTime < _secBetweenExposureUpdates)
+                return;
+
+            _lastUpdateTime = time;
+
+            //"blocking" non-PBO version seems to be faster than the async version when it comes to just one pixel
+            switch (hdrSceneTexture)
+            {
+                case XRTexture2D t2d:
+                    //Engine.Rendering.State.CalculateDotLuminanceAsync(t2d, generateMipmapsNow, LerpExposure);
+                    _lastLumDot = Engine.Rendering.State.CalculateDotLuminance(t2d, generateMipmapsNow);
+                    break;
+                case XRTexture2DArray t2da:
+                    //Engine.Rendering.State.CalculateDotLuminanceAsync(t2da, generateMipmapsNow, LerpExposure);
+                    _lastLumDot = Engine.Rendering.State.CalculateDotLuminance(t2da, generateMipmapsNow);
+                    break;
+            }
+
+            LerpExposure(true, _lastLumDot);
+        }
+
+        private void LerpExposure(bool success, float lumDot)
+        {
+            if (!success)
+                return;
 
             //If the dot factor is zero, this means the screen is perfectly black.
             //Usually that means nothing is being rendered, so don't update the exposure now.

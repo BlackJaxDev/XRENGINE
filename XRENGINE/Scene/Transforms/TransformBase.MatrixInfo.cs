@@ -156,11 +156,6 @@ namespace XREngine.Scene.Transforms
                 return _children.LastOrDefault();
         }
 
-        internal void RecalculateMatrixHeirarchy(bool v, object recalcChildMatricesInParallel)
-        {
-            throw new NotImplementedException();
-        }
-
         private class MatrixInfo
         {
             private readonly ReaderWriterLockSlim _modifiedLock = new();
