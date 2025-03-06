@@ -40,6 +40,7 @@ namespace XREngine.Rendering.OpenGL
         {
             var api = Api;
             OVRMultiView = api.TryGetExtension(out OvrMultiview ext7) ? ext7 : null;
+            Engine.Rendering.State.HasOvrMultiViewExtension = OVRMultiView is not null;
 
             ESApi = Silk.NET.OpenGLES.GL.GetApi(Window.GLContext);
             EXTMemoryObject = ESApi.TryGetExtension<ExtMemoryObject>(out var ext) ? ext : null;

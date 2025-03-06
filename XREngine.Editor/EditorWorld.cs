@@ -51,9 +51,9 @@ public static class EditorWorld
     public const bool StaticModel = true; //Imports a scene model to be rendered.
     public const bool AnimatedModel = true; //Imports a character model to be animated.
     public const bool AddEditorUI = false; //Adds the full editor UI to the camera. Probably don't use this one a character pawn.
-    public const bool VRPawn = false; //Enables VR input and pawn.
+    public const bool VRPawn = true; //Enables VR input and pawn.
     public const bool CharacterPawn = true; //Enables the player to physically locomote in the world. Requires a physical floor.
-    public const bool ThirdPersonPawn = true; //If on desktop and character pawn is enabled, this will add a third person camera instead of first person.
+    public const bool ThirdPersonPawn = false; //If on desktop and character pawn is enabled, this will add a third person camera instead of first person.
     public const bool TestAnimation = false; //Adds test animations to the character pawn.
     public const bool PhysicsChain = false; //Adds a jiggle physics chain to the character pawn.
     public const bool TransformTool = false; //Adds the transform tool to the scene for testing dragging and rotating etc.
@@ -90,7 +90,7 @@ public static class EditorWorld
         //if (headTfm is not null)
         //    headTfm.Scale = Vector3.Zero;
 
-        if (VRPawn)
+        if (VRPawn && CharacterPawn)
         {
             var rotationNode = rootNode.Parent!;
             var playspaceNode = rotationNode.Parent!;
@@ -180,7 +180,7 @@ public static class EditorWorld
         s.AllowSkinning = true;
         s.RenderTransformLines = true;
         s.RenderTransformDebugInfo = false;
-        s.RecalcChildMatricesInParallel = true;
+        s.RecalcChildMatricesInParallel = false;
         s.TickGroupedItemsInParallel = true;
 
         string desktopDir = Environment.GetFolderPath(Environment.SpecialFolder.DesktopDirectory);

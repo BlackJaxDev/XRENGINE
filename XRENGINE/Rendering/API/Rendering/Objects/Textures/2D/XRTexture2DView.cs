@@ -2,6 +2,15 @@
 
 namespace XREngine.Rendering
 {
+    /// <summary>
+    /// Views into a 2D texture
+    /// </summary>
+    /// <param name="viewedTexture"></param>
+    /// <param name="minLevel"></param>
+    /// <param name="numLevels"></param>
+    /// <param name="internalFormat"></param>
+    /// <param name="array"></param>
+    /// <param name="multisample"></param>
     public class XRTexture2DView(
         XRTexture2D viewedTexture,
         uint minLevel,

@@ -5,9 +5,11 @@
 layout(triangles) in;
 layout(triangle_strip, max_vertices = 6) out;
 
-uniform mat4 ProjMatrix;
 uniform mat4 LeftEyeInverseViewMatrix;
 uniform mat4 RightEyeInverseViewMatrix;
+
+uniform mat4 LeftEyeProjMatrix;
+uniform mat4 RightEyeProjMatrix;
 
 void main()
 {
@@ -17,7 +19,7 @@ void main()
     {
         vec4 worldPos = gl_in[j].gl_Position;
         vec4 viewPos = LeftEyeInverseViewMatrix * worldPos;
-        gl_Position = ProjMatrix * viewPos;
+        gl_Position = LeftEyeProjMatrix * viewPos;
         EmitVertex();
     }
     EndPrimitive();
@@ -28,7 +30,7 @@ void main()
     {
         vec4 worldPos = gl_in[j].gl_Position;
         vec4 viewPos = RightEyeInverseViewMatrix * worldPos;
-        gl_Position = ProjMatrix * viewPos;
+        gl_Position = RightEyeProjMatrix * viewPos;
         EmitVertex();
     }
     EndPrimitive();

@@ -25,12 +25,13 @@ public abstract class RenderPipeline : XRBase
         set => SetField(ref _isShadowPass, value);
     }
 
-    public ViewportRenderCommandContainer CommandChain { get; }
-    public Dictionary<int, IComparer<RenderCommand>?> PassIndicesAndSorters { get; }
+    public ViewportRenderCommandContainer CommandChain { get; protected set; }
+    public Dictionary<int, IComparer<RenderCommand>?> PassIndicesAndSorters { get; protected set; }
 
-    public RenderPipeline()
+    protected RenderPipeline(bool deferCommandChainGeneration = false)
     {
-        CommandChain = GenerateCommandChain();
+        if (!deferCommandChainGeneration)
+            CommandChain = GenerateCommandChain();
         PassIndicesAndSorters = GetPassIndicesAndSorters();
     }
 
@@ -155,7 +156,7 @@ public abstract class RenderPipeline : XRBase
             {
                 //ClearColor(new ColorF4(0.0f, 0.0f, 0.0f, 1.0f));
                 //Clear(true, true, false);
-                fbo.Render();
+                fbo.Render(null, true);
             }
         }
         return brdf;

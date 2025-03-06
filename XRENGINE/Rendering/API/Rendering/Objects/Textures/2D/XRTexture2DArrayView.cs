@@ -2,6 +2,17 @@
 
 namespace XREngine.Rendering
 {
+    /// <summary>
+    /// Views into a 2D texture array.
+    /// </summary>
+    /// <param name="viewedTexture"></param>
+    /// <param name="minLevel"></param>
+    /// <param name="numLevels"></param>
+    /// <param name="minLayer"></param>
+    /// <param name="numLayers"></param>
+    /// <param name="internalFormat"></param>
+    /// <param name="array"></param>
+    /// <param name="multisample"></param>
     public class XRTexture2DArrayView(
         XRTexture2DArray viewedTexture,
         uint minLevel,
@@ -40,6 +51,9 @@ namespace XREngine.Rendering
 
         public override bool HasAlphaChannel => ViewedTexture.HasAlphaChannel;
 
-        public override ETextureTarget TextureTarget { get; } = ETextureTarget.Texture2D;
+        public override ETextureTarget TextureTarget
+            => NumLayers == 1 
+            ? ETextureTarget.Texture2D
+            : ETextureTarget.Texture2DArray;
     }
 }

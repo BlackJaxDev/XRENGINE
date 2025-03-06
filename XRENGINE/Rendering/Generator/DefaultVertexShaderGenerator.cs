@@ -96,7 +96,10 @@ namespace XREngine.Rendering.Shaders.Generator
         private void WriteExtensions()
         {
             if (UseOVRMultiView)
+            {
                 Line("#extension GL_OVR_multiview2 : require");
+                //Line("#extension GL_EXT_multiview_tessellation_geometry_shader : enable");
+            }
         }
 
         private void WriteInputs()

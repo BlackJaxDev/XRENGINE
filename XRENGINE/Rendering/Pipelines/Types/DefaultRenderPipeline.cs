@@ -11,37 +11,33 @@ using static XREngine.Engine.Rendering.State;
 
 namespace XREngine.Rendering;
 
-public class DefaultRenderPipeline(bool stereo = false) : RenderPipeline
+public class DefaultRenderPipeline : RenderPipeline
 {
     public const string SceneShaderPath = "Scene3D";
 
     private readonly NearToFarRenderCommandSorter _nearToFarSorter = new();
     private readonly FarToNearRenderCommandSorter _farToNearSorter = new();
 
-    private string BrightPassShaderName()
-        => 
-        //Stereo ? "BrightPassStereo.fs" : 
+    private string BrightPassShaderName() => 
+        Stereo ? "BrightPassStereo.fs" : 
         "BrightPass.fs";
 
-    private string HudFBOShaderName()
-        => 
-        //Stereo ? "HudFBOStereo.fs" : 
+    private string HudFBOShaderName() => 
+        Stereo ? "HudFBOStereo.fs" : 
         "HudFBO.fs";
 
-    private string PostProcessShaderName()
-        => 
-        //Stereo ? "PostProcessStereo.fs" : 
+    private string PostProcessShaderName() => 
+        Stereo ? "PostProcessStereo.fs" : 
         "PostProcess.fs";
 
-    private string DeferredLightCombineShaderName()
-        => 
-        //Stereo ? "DeferredLightCombineStereo.fs" : 
+    private string DeferredLightCombineShaderName() => 
+        Stereo ? "DeferredLightCombineStereo.fs" : 
         "DeferredLightCombine.fs";
 
     /// <summary>
     /// Affects how textures and FBOs are created for single-pass stereo rendering.
     /// </summary>
-    public bool Stereo { get; } = stereo;
+    public bool Stereo { get; }
 
     protected override Dictionary<int, IComparer<RenderCommand>?> GetPassIndicesAndSorters()
         => new()
@@ -86,6 +82,12 @@ public class DefaultRenderPipeline(bool stereo = false) : RenderPipeline
     public const string BloomBlurTextureName = "BloomBlurTexture";
     public const string UserInterfaceTextureName = "HUDTex";
     public const string BRDFTextureName = "BRDF";
+
+    public DefaultRenderPipeline(bool stereo = false) : base(true)
+    {
+        Stereo = stereo;
+        CommandChain = GenerateCommandChain();
+    }
 
     protected override ViewportRenderCommandContainer GenerateCommandChain()
     {
@@ -223,7 +225,8 @@ public class DefaultRenderPipeline(bool stereo = false) : RenderPipeline
 
             c.Add<VPRC_BloomPass>().SetTargetFBONames(
                 ForwardPassFBOName,
-                BloomBlurTextureName);
+                BloomBlurTextureName,
+                Stereo);
 
             //PostProcess FBO
             //This FBO is created here because it relies on BloomBlurTextureName, which is created in the BloomPass.
@@ -353,7 +356,7 @@ public class DefaultRenderPipeline(bool stereo = false) : RenderPipeline
             return new XRTexture2DArrayView(
                 GetTexture<XRTexture2DArray>(DepthStencilTextureName)!,
                 0u, 1u,
-                1u, 2u, //Viewing both eyes, so 2 layers
+                0u, 2u, //Viewing both eyes, so 2 layers
                 EPixelInternalFormat.Depth24Stencil8,
                 false, false)
             {

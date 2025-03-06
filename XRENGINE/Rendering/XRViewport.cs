@@ -248,6 +248,41 @@ namespace XREngine.Rendering
                 false,
                 forcedMaterial);
         }
+        /// <summary>
+        /// Renders this camera's view to the FBO in stereo.
+        /// </summary>
+        /// <param name="vp"></param>
+        /// <param name="targetFbo"></param>
+        public void RenderStereo(
+            XRFrameBuffer? targetFbo,
+            XRCamera? leftCamera,
+            XRCamera? rightCamera,
+            XRWorldInstance? worldOverride = null)
+        {
+            var world = worldOverride ?? World;
+            if (world is null)
+            {
+                Debug.LogWarning("No world is set to this viewport.");
+                return;
+            }
+
+            if (State.RenderingPipelineState?.ViewportStack.Contains(this) ?? false)
+            {
+                Debug.LogWarning("Render recursion: Viewport is already currently rendering.");
+                return;
+            }
+
+            _renderPipeline.Render(
+                world.VisualScene,
+                leftCamera,
+                rightCamera,
+                this,
+                targetFbo,
+                AllowUIRender ? CameraComponent?.GetUserInterfaceOverlay() : null,
+                false,
+                true,
+                null);
+        }
 
         private CameraComponent? _cameraComponent = null;
         public CameraComponent? CameraComponent

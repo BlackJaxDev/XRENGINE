@@ -145,14 +145,7 @@ namespace XREngine
                 uint rW = 0u, rH = 0u;
                 Api.CVR.GetRecommendedRenderTargetSize(ref rW, ref rH);
 
-                ETrackedPropertyError error = ETrackedPropertyError.TrackedProp_Success;
-                float hz = Api.CVR.GetFloatTrackedDeviceProperty(0, ETrackedDeviceProperty.Prop_DisplayFrequency_Float, ref error);
-                if (error == ETrackedPropertyError.TrackedProp_Success && hz > 0.0f)
-                {
-                    Time.Timer.TargetRenderFrequency = hz;
-                    Time.Timer.TargetUpdateFrequency = hz;
-                    Time.Timer.FixedUpdateFrequency = hz / 3;
-                }
+                SetNormalUpdate();
 
                 var left = MakeFBOTexture(rW, rH);
                 var right = MakeFBOTexture(rW, rH);
@@ -163,17 +156,17 @@ namespace XREngine
                     StereoViewport.RenderPipeline = new DefaultRenderPipeline(true);
                     var arr = new XRTexture2DArray(left, right)
                     {
-                        Resizable = false,
-                        SizedInternalFormat = ESizedInternalFormat.Rgb8,
-                        OVRMultiViewParameters = new XRTexture2DArray.OVRMultiView(0, 2u),
+                        Resizable = false, //GL_INVALID_OPERATION is generated if the value of GL_TEXTURE_IMMUTABLE_FORMAT for origtexture is not GL_TRUE. 
+                        SizedInternalFormat = ESizedInternalFormat.Rgba8,
+                        OVRMultiViewParameters = new(0, 2u),
                         FrameBufferAttachment = EFrameBufferAttachment.ColorAttachment0
                     };
                     VRStereoViewTextureArray = arr;
                     VRStereoRenderTarget = new XRMaterialFrameBuffer(new XRMaterial([arr], ShaderHelper.UnlitTextureFragForward()!));
                     //if (StereoUseTextureViews)
                     //{
-                        StereoLeftViewTexture = new XRTexture2DArrayView(arr, 0u, 1u, 0u, 1u, EPixelInternalFormat.Rgb8, false, false);
-                        StereoRightViewTexture = new XRTexture2DArrayView(arr, 0u, 1u, 1u, 1u, EPixelInternalFormat.Rgb8, false, false);
+                    StereoLeftViewTexture = new XRTexture2DArrayView(arr, 0u, 1u, 0u, 1u, EPixelInternalFormat.Rgba8, false, false);
+                    StereoRightViewTexture = new XRTexture2DArrayView(arr, 0u, 1u, 1u, 1u, EPixelInternalFormat.Rgba8, false, false);
                     //}
                 }
                 else
@@ -185,15 +178,54 @@ namespace XREngine
 
                     if (ViewInformation.LeftEyeCamera is not null)
                         LeftEyeViewport.Camera = ViewInformation.LeftEyeCamera;
-                    
+
                     if (ViewInformation.RightEyeCamera is not null)
                         RightEyeViewport.Camera = ViewInformation.RightEyeCamera;
-                    
+
                     if (ViewInformation.World is not null)
                     {
                         LeftEyeViewport.WorldInstanceOverride = ViewInformation.World;
                         RightEyeViewport.WorldInstanceOverride = ViewInformation.World;
                     }
+                }
+            }
+
+            private static bool _powerSaving = false;
+            public static bool IsPowerSaving
+            {
+                get => _powerSaving;
+                set
+                {
+                    if (_powerSaving == value)
+                        return;
+                    _powerSaving = value;
+                    if (_powerSaving)
+                        SetPowerSavingUpdate();
+                    else
+                        SetNormalUpdate();
+                }
+            }
+
+            private static void SetNormalUpdate()
+            {
+                ETrackedPropertyError error = ETrackedPropertyError.TrackedProp_Success;
+                float hz = Api.CVR.GetFloatTrackedDeviceProperty(0, ETrackedDeviceProperty.Prop_DisplayFrequency_Float, ref error);
+                if (error == ETrackedPropertyError.TrackedProp_Success && hz > 0.0f)
+                {
+                    Time.Timer.TargetRenderFrequency = hz;
+                    Time.Timer.TargetUpdateFrequency = hz;
+                    Time.Timer.FixedUpdateFrequency = hz / 3;
+                }
+            }
+            private static void SetPowerSavingUpdate()
+            {
+                ETrackedPropertyError error = ETrackedPropertyError.TrackedProp_Success;
+                float hz = Api.CVR.GetFloatTrackedDeviceProperty(0, ETrackedDeviceProperty.Prop_DisplayFrequency_Float, ref error);
+                if (error == ETrackedPropertyError.TrackedProp_Success && hz > 0.0f)
+                {
+                    Time.Timer.TargetRenderFrequency = hz / 2;
+                    Time.Timer.TargetUpdateFrequency = hz / 4;
+                    Time.Timer.FixedUpdateFrequency = hz / 3;
                 }
             }
 
@@ -284,6 +316,8 @@ namespace XREngine
                 //Update VR-related transforms
                 RecalcMatrixOnDraw?.Invoke();
 
+                IsPowerSaving = Api.CVR.ShouldApplicationReduceRenderingWork();
+
                 if (Stereo)
                     RenderSinglePass();
                 else
@@ -315,16 +349,7 @@ namespace XREngine
                     return;
 
                 //Render the scene to left and right eyes stereoscopically
-                StereoViewport?.RenderPipelineInstance?.Render(
-                    world.VisualScene,
-                    left,
-                    right,
-                    null,
-                    VRStereoRenderTarget,
-                    null,
-                    false,
-                    true,
-                    null);
+                StereoViewport?.RenderStereo(VRStereoRenderTarget, left, right, world);
 
                 //Submit the rendered frames to the headset
                 //if (StereoUseTextureViews)

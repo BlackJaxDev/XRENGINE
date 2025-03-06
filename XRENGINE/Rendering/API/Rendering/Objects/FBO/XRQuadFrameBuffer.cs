@@ -73,17 +73,17 @@ namespace XREngine.Rendering
         /// <summary>
         /// Renders the FBO to the entire region set by Engine.Rendering.State.PushRenderArea().
         /// </summary>
-        public void Render(XRFrameBuffer? target = null)
+        public void Render(XRFrameBuffer? target = null, bool forceNoStereo = false)
         {
             target?.BindForWriting();
             var state = Engine.Rendering.State.RenderingPipelineState;
             if (state != null)
             {
                 using (state.PushRenderingCamera(null))
-                    FullScreenMesh.Render();
+                    FullScreenMesh.Render(Matrix4x4.Identity, null, 1, forceNoStereo);
             }
             else
-                FullScreenMesh.Render();
+                FullScreenMesh.Render(Matrix4x4.Identity, null, 1, forceNoStereo);
             target?.UnbindFromWriting();
         }
     }
