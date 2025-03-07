@@ -9,7 +9,7 @@ namespace XREngine.Rendering.Pipelines.Commands
     /// Generates the necessary textures and framebuffers for SSAO in the render pipeline depending on the current render area.
     /// </summary>
     /// <param name="pipeline"></param>
-    public class VPRC_SSAO : ViewportRenderCommand
+    public class VPRC_SSAOPass : ViewportRenderCommand
     {
         private string SSAOBlurShaderName() => 
             Stereo ? "SSAOBlurStereo.fs" : 
@@ -158,13 +158,15 @@ namespace XREngine.Rendering.Pipelines.Commands
             if (Stereo)
             {
                 var t = XRTexture2DArray.CreateFrameBufferTexture(
+                    2,
                     (uint)width,
                     (uint)height,
-                    2,
                     EPixelInternalFormat.R16f,
                     EPixelFormat.Red,
                     EPixelType.HalfFloat,
                     EFrameBufferAttachment.ColorAttachment0);
+                t.Resizable = false;
+                t.SizedInternalFormat = ESizedInternalFormat.R16f;
                 t.OVRMultiViewParameters = new(0, 2u);
                 t.Name = SSAOIntensityTextureName;
                 t.MinFilter = ETexMinFilter.Nearest;
@@ -182,6 +184,8 @@ namespace XREngine.Rendering.Pipelines.Commands
                     EPixelFormat.Red,
                     EPixelType.HalfFloat,
                     EFrameBufferAttachment.ColorAttachment0);
+                //t.Resizable = false;
+                //t.SizedInternalFormat = ESizedInternalFormat.R16f;
                 t.Name = SSAOIntensityTextureName;
                 t.MinFilter = ETexMinFilter.Nearest;
                 t.MagFilter = ETexMagFilter.Nearest;
@@ -269,6 +273,10 @@ namespace XREngine.Rendering.Pipelines.Commands
                 return;
             
             rc.SetUniforms(program);
+
+            if (Engine.Rendering.State.IsStereoPass)
+                Pipeline.RenderState.StereoRightEyeCamera?.SetUniforms(program, false);
+
             rc.SetAmbientOcclusionUniforms(program);
 
             var region = Pipeline.RenderState.CurrentRenderRegion;

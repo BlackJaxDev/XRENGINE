@@ -91,6 +91,7 @@
     <PackageReference Include="Silk.NET.Windowing.Glfw" Version="2.22.0" />
     <PackageReference Include="Silk.NET.Windowing.Sdl" Version="2.22.0" />
     <PackageReference Include="Silk.NET.XInput" Version="2.22.0" />
+    <PackageReference Include="SixLabors.ImageSharp" Version="3.1.7" />
     <PackageReference Include="SkiaSharp" Version="3.116.1" />
     <PackageReference Include="Steamworks.NET" Version="2024.8.0" />
     <PackageReference Include="System.Text.Json" Version="9.0.2" />

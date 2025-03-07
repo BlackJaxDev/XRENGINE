@@ -2,7 +2,6 @@
 using System.Numerics;
 using XREngine.Data.Rendering;
 using XREngine.Data.Vectors;
-using XREngine.Rendering.OpenGL;
 
 namespace XREngine.Rendering
 {
@@ -14,6 +13,13 @@ namespace XREngine.Rendering
         public EventList<XRShader> Shaders { get; } = [];
 
         public bool LinkReady { get; private set; } = false;
+
+        private bool _separable = true;
+        public bool Separable
+        {
+            get => _separable;
+            set => SetField(ref _separable, value);
+        }
 
         /// <summary>
         /// Call this once all shaders have been added to the Shaders list to finalize the program.

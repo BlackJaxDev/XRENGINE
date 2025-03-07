@@ -18,7 +18,7 @@ namespace XREngine.Rendering.OpenGL
                 set => SetField(ref _secondsLive, value);
             }
 
-            public GLRenderProgram? Program => Renderer.GenericToAPI<GLRenderProgram>(Data.ShaderPipelineProgram);
+            public GLRenderProgram? SeparableProgram => Renderer.GenericToAPI<GLRenderProgram>(Data.ShaderPipelineProgram);
 
             protected override void LinkData()
             {
@@ -51,22 +51,24 @@ namespace XREngine.Rendering.OpenGL
 
             }
 
-            public void SetUniforms(GLRenderProgram? program)
+            public void SetUniforms(GLRenderProgram? materialProgram)
             {
                 //Apply special rendering parameters
                 if (Data.RenderOptions != null)
                     Renderer.ApplyRenderParameters(Data.RenderOptions);
 
-                program ??= Program;
-                if (program is null)
+                if (Engine.Rendering.Settings.AllowShaderPipelines)
+                    materialProgram ??= SeparableProgram;
+
+                if (materialProgram is null)
                     return;
 
                 foreach (ShaderVar param in Data.Parameters)
-                    param.SetUniform(program.Data);
+                    param.SetUniform(materialProgram.Data);
 
-                SetTextureUniforms(program);
-                SetEngineUniforms(program);
-                Data.OnSettingUniforms(program.Data);
+                SetTextureUniforms(materialProgram);
+                SetEngineUniforms(materialProgram);
+                Data.OnSettingUniforms(materialProgram.Data);
             }
 
             private void SetEngineUniforms(GLRenderProgram program)

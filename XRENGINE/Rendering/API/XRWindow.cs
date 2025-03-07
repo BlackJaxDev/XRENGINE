@@ -206,7 +206,8 @@ namespace XREngine.Rendering
 
                 TargetWorldInstance?.GlobalPreRender();
                 RenderViewportsCallback?.Invoke();
-                RenderViewports();
+                if (!Engine.VRState.IsInVR || Engine.Rendering.Settings.RenderWindowsWhileInVR)
+                    RenderViewports();
                 TargetWorldInstance?.GlobalPostRender();
             }
             finally

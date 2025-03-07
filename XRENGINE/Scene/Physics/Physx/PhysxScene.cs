@@ -132,28 +132,28 @@ namespace XREngine.Rendering.Physics.Physx
             VisualizeEnabled = true;
             VisualizeWorldAxes = true;
             VisualizeBodyAxes = true;
-            VisualizeBodyMassAxes = false;
+            VisualizeBodyMassAxes = true;
             VisualizeBodyLinearVelocity = true;
             VisualizeBodyAngularVelocity = true;
             VisualizeContactPoint = true;
             VisualizeContactNormal = true;
-            VisualizeContactError = false;
-            VisualizeContactForce = false;
+            VisualizeContactError = true;
+            VisualizeContactForce = true;
             VisualizeActorAxes = true;
             VisualizeCollisionAabbs = true;
             VisualizeCollisionShapes = true;
             VisualizeCollisionAxes = true;
-            VisualizeCollisionCompounds = false;
-            VisualizeCollisionFaceNormals = false;
-            VisualizeCollisionEdges = false;
-            VisualizeCollisionStatic = false;
-            VisualizeCollisionDynamic = false;
-            VisualizeJointLocalFrames = false;
-            VisualizeJointLimits = false;
-            VisualizeCullBox = false;
-            VisualizeMbpRegions = false;
-            VisualizeSimulationMesh = false;
-            VisualizeSdf = false;
+            VisualizeCollisionCompounds = true;
+            VisualizeCollisionFaceNormals = true;
+            VisualizeCollisionEdges = true;
+            VisualizeCollisionStatic = true;
+            VisualizeCollisionDynamic = true;
+            VisualizeJointLocalFrames = true;
+            VisualizeJointLimits = true;
+            VisualizeCullBox = true;
+            VisualizeMbpRegions = true;
+            VisualizeSimulationMesh = true;
+            VisualizeSdf = true;
         }
 
         public DataSource? _scratchBlock = new(32000, true);
@@ -186,6 +186,7 @@ namespace XREngine.Rendering.Physics.Physx
             _debugPoints = rb->GetPoints();
             _debugLines = rb->GetLines();
             _debugTriangles = rb->GetTriangles();
+
             CreateOrResizeDebugBuffers();
             PopulateBuffers();
         }
@@ -279,21 +280,18 @@ namespace XREngine.Rendering.Physics.Physx
         private void CreateOrResizeDebugBuffers()
         {
             if (_debugPointsBuffer is null)
-                UpdatePoints(_debugPointCount);
+                CreateOrResizePoints(_debugPointCount);
 
             if (_debugLinesBuffer is null)
-                UpdateLines(_debugLineCount);
+                CreateOrResizeLines(_debugLineCount);
 
             if (_debugTrianglesBuffer is null)
-                UpdateTriangles(_debugTriangleCount);
-
-            _debugPointsRenderer?.Material?.SetFloat(0, PointSize);
-            _debugLinesRenderer?.Material?.SetFloat(0, LineWidth);
+                CreateOrResizeTriangles(_debugTriangleCount);
         }
 
-        private void UpdateTriangles(uint count)
+        private void CreateOrResizeTriangles(uint count)
         {
-            _debugTrianglesRenderer ??= new XRMeshRenderer(CreateDebugMesh(), CreateDebugTriangleMaterial());
+            _debugTrianglesRenderer ??= MakeTrianglesRenderer();
             //16 floats: 3 for position0, 1 for padding, 3 for position1, 1 for padding, 3 for position2, 1 for padding, 4 for color
             if (_debugTrianglesBuffer is not null)
                 _debugTrianglesBuffer.Resize(count, true, true);
@@ -319,14 +317,22 @@ namespace XREngine.Rendering.Physics.Physx
             }
         }
 
+        private XRMeshRenderer MakeTrianglesRenderer()
+        {
+            var rend = new XRMeshRenderer(CreateDebugMesh(), CreateDebugTriangleMaterial());
+            //rend.GetDefaultVersion().AllowShaderPipelines = false;
+            return rend;
+        }
+
         private void _debugTrianglesRenderer_SettingUniforms(XRRenderProgram vertexProgram, XRRenderProgram materialProgram)
         {
             _debugTrianglesBuffer?.PushSubData();
+            materialProgram.Uniform("TotalTriangles", (int)_debugTriangleCount);
         }
 
-        private void UpdateLines(uint count)
+        private void CreateOrResizeLines(uint count)
         {
-            _debugLinesRenderer ??= new XRMeshRenderer(CreateDebugMesh(), CreateDebugLineMaterial());
+            _debugLinesRenderer ??= MakeLineRenderer();
             //12 floats: 3 for position0, 1 for padding, 3 for position1, 1 for padding, 4 for color
             if (_debugLinesBuffer is not null)
                 _debugLinesBuffer.Resize(count * 3, true, true);
@@ -352,14 +358,22 @@ namespace XREngine.Rendering.Physics.Physx
             }
         }
 
+        private XRMeshRenderer MakeLineRenderer()
+        {
+            var rend = new XRMeshRenderer(CreateDebugMesh(), CreateDebugLineMaterial());
+            //rend.GetDefaultVersion().AllowShaderPipelines = false;
+            return rend;
+        }
+
         private void _debugLinesRenderer_SettingUniforms(XRRenderProgram vertexProgram, XRRenderProgram materialProgram)
         {
             _debugLinesBuffer?.PushSubData();
+            materialProgram.Uniform("TotalLines", (int)_debugLineCount);
         }
 
-        private void UpdatePoints(uint count)
+        private void CreateOrResizePoints(uint count)
         {
-            _debugPointsRenderer ??= new XRMeshRenderer(CreateDebugMesh(), CreateDebugPointMaterial());
+            _debugPointsRenderer ??= MakePointsRenderer();
             //8 floats: 3 for position, 1 for padding, 4 for color
             if (_debugPointsBuffer is not null)
                 _debugPointsBuffer.Resize(count, true, true);
@@ -385,19 +399,27 @@ namespace XREngine.Rendering.Physics.Physx
             }
         }
 
+        private XRMeshRenderer MakePointsRenderer()
+        {
+            var rend = new XRMeshRenderer(CreateDebugMesh(), CreateDebugPointMaterial());
+            //rend.GetDefaultVersion().AllowShaderPipelines = false;
+            return rend;
+        }
+
         private void _debugPointsRenderer_SettingUniforms(XRRenderProgram vertexProgram, XRRenderProgram materialProgram)
         {
             _debugPointsBuffer?.PushSubData();
+            materialProgram.Uniform("TotalPoints", (int)_debugPointCount);
         }
 
-        private float _pointSize = 10f;
+        private float _pointSize = 0.001f;
         public float PointSize
         {
             get => _pointSize;
             set => SetField(ref _pointSize, value);
         }
 
-        private float _lineWidth = 10f;
+        private float _lineWidth = 0.001f;
         public float LineWidth
         {
             get => _lineWidth;
@@ -420,28 +442,40 @@ namespace XREngine.Rendering.Physics.Physx
             }
         }
 
-        private static XRMaterial? CreateDebugPointMaterial()
+        private XRMaterial? CreateDebugPointMaterial()
         {
             XRShader vertShader = ShaderHelper.LoadEngineShader(Path.Combine("Common", "Debug", "InstancedDebugPrimitive.vs"), EShaderType.Vertex);
             XRShader geomShader = ShaderHelper.LoadEngineShader(Path.Combine("Common", "Debug", "PointInstance.gs"), EShaderType.Geometry);
             XRShader fragShader = ShaderHelper.LoadEngineShader(Path.Combine("Common", "Debug", "InstancedDebugPrimitivePoint.fs"), EShaderType.Fragment);
-            ShaderVar[] vars = [new ShaderFloat(1f, "PointSize")];
+            ShaderVar[] vars = 
+            [
+                new ShaderFloat(PointSize, "PointSize"),
+                new ShaderInt(0, "TotalPoints"),
+            ];
             var mat = new XRMaterial(vars, vertShader, geomShader, fragShader);
             mat.RenderOptions.RequiredEngineUniforms = EUniformRequirements.Camera;
             mat.RenderOptions.CullMode = ECullMode.None;
-            mat.EnableTransparency();
+            mat.RenderOptions.DepthTest.Enabled = ERenderParamUsage.Disabled;
+            mat.RenderPass = (int)EDefaultRenderPass.OnTopForward;
+            //mat.EnableTransparency();
             return mat;
         }
-        private static XRMaterial? CreateDebugLineMaterial()
+        private XRMaterial? CreateDebugLineMaterial()
         {
             XRShader vertShader = ShaderHelper.LoadEngineShader(Path.Combine("Common", "Debug", "InstancedDebugPrimitive.vs"), EShaderType.Vertex);
             XRShader geomShader = ShaderHelper.LoadEngineShader(Path.Combine("Common", "Debug", "LineInstance.gs"), EShaderType.Geometry);
             XRShader fragShader = ShaderHelper.LoadEngineShader(Path.Combine("Common", "Debug", "InstancedDebugPrimitive.fs"), EShaderType.Fragment);
-            ShaderVar[] vars = [new ShaderFloat(10f, "LineWidth")];
+            ShaderVar[] vars = 
+            [
+                new ShaderFloat(LineWidth, "LineWidth"),
+                new ShaderInt(0, "TotalLines"),
+            ];
             var mat = new XRMaterial(vars, vertShader, geomShader, fragShader);
             mat.RenderOptions.RequiredEngineUniforms = EUniformRequirements.Camera;
             mat.RenderOptions.CullMode = ECullMode.None;
-            mat.EnableTransparency();
+            mat.RenderOptions.DepthTest.Enabled = ERenderParamUsage.Disabled;
+            mat.RenderPass = (int)EDefaultRenderPass.OnTopForward;
+            //mat.EnableTransparency();
             return mat;
         }
         private static XRMaterial? CreateDebugTriangleMaterial()
@@ -449,11 +483,16 @@ namespace XREngine.Rendering.Physics.Physx
             XRShader vertShader = ShaderHelper.LoadEngineShader(Path.Combine("Common", "Debug", "InstancedDebugPrimitive.vs"), EShaderType.Vertex);
             XRShader geomShader = ShaderHelper.LoadEngineShader(Path.Combine("Common", "Debug", "TriangleInstance.gs"), EShaderType.Geometry);
             XRShader fragShader = ShaderHelper.LoadEngineShader(Path.Combine("Common", "Debug", "InstancedDebugPrimitive.fs"), EShaderType.Fragment);
-            ShaderVar[] vars = [];
+            ShaderVar[] vars = 
+            [
+                new ShaderInt(0, "TotalTriangles"),
+            ];
             var mat = new XRMaterial(vars, vertShader, geomShader, fragShader);
             mat.RenderOptions.RequiredEngineUniforms = EUniformRequirements.Camera;
             mat.RenderOptions.CullMode = ECullMode.None;
-            mat.EnableTransparency();
+            mat.RenderOptions.DepthTest.Enabled = ERenderParamUsage.Disabled;
+            mat.RenderPass = (int)EDefaultRenderPass.OnTopForward;
+            //mat.EnableTransparency();
             return mat;
         }
 

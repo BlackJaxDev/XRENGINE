@@ -1,8 +1,10 @@
 ﻿using Extensions;
 using ImageMagick;
 using Silk.NET.OpenGL;
+using Silk.NET.OpenGL.Extensions.NV;
 using Silk.NET.OpenGL.Extensions.OVR;
 using Silk.NET.OpenGLES.Extensions.EXT;
+using Silk.NET.OpenGLES.Extensions.NV;
 using System.Numerics;
 using XREngine.Data.Colors;
 using XREngine.Data.Geometry;
@@ -16,7 +18,10 @@ namespace XREngine.Rendering.OpenGL
     public partial class OpenGLRenderer : AbstractRenderer<GL>
     {
         public OvrMultiview? OVRMultiView { get; }
+        public Silk.NET.OpenGL.Extensions.NV.NVMeshShader? NVMeshShader { get; }
+        public Silk.NET.OpenGL.Extensions.NV.NVGpuShader5? NVGpuShader5 { get; }
         public Silk.NET.OpenGLES.GL ESApi { get; }
+        public NVViewportArray? NVViewportArray { get; }
         public ExtMemoryObject? EXTMemoryObject { get; }
         public ExtSemaphore? EXTSemaphore { get; }
         public ExtMemoryObjectWin32? EXTMemoryObjectWin32 { get; }
@@ -39,16 +44,20 @@ namespace XREngine.Rendering.OpenGL
         public OpenGLRenderer(XRWindow window, bool shouldLinkWindow = true) : base(window, shouldLinkWindow)
         {
             var api = Api;
-            OVRMultiView = api.TryGetExtension(out OvrMultiview ext7) ? ext7 : null;
-            Engine.Rendering.State.HasOvrMultiViewExtension = OVRMultiView is not null;
-
             ESApi = Silk.NET.OpenGLES.GL.GetApi(Window.GLContext);
+
+            NVViewportArray = ESApi.TryGetExtension(out NVViewportArray ext10) ? ext10 : null;
             EXTMemoryObject = ESApi.TryGetExtension<ExtMemoryObject>(out var ext) ? ext : null;
             EXTSemaphore = ESApi.TryGetExtension<ExtSemaphore>(out var ext2) ? ext2 : null;
             EXTMemoryObjectWin32 = ESApi.TryGetExtension<ExtMemoryObjectWin32>(out var ext3) ? ext3 : null;
             EXTSemaphoreWin32 = ESApi.TryGetExtension<ExtSemaphoreWin32>(out var ext4) ? ext4 : null;
             EXTMemoryObjectFd = ESApi.TryGetExtension<ExtMemoryObjectFd>(out var ext5) ? ext5 : null;
             EXTSemaphoreFd = ESApi.TryGetExtension<ExtSemaphoreFd>(out var ext6) ? ext6 : null;
+
+            OVRMultiView = api.TryGetExtension(out OvrMultiview ext7) ? ext7 : null;
+            Engine.Rendering.State.HasOvrMultiViewExtension |= OVRMultiView is not null;
+            NVMeshShader = api.TryGetExtension(out Silk.NET.OpenGL.Extensions.NV.NVMeshShader ext8) ? ext8 : null;
+            NVGpuShader5 = api.TryGetExtension(out Silk.NET.OpenGL.Extensions.NV.NVGpuShader5 ext9) ? ext9 : null;
         }
 
         private static void InitGL(GL api)

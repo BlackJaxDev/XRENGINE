@@ -85,8 +85,8 @@ namespace XREngine
                 ActionsChanged?.Invoke(_actions);
             }
 
-            public static XRTexture2DArray? VRStereoViewTextureArray { get; private set; } = null;
-            public static XRMaterialFrameBuffer? VRStereoRenderTarget { get; private set; } = null;
+            //public static XRTexture2DArray? VRStereoViewTextureArray { get; private set; } = null;
+            public static XRFrameBuffer? VRStereoRenderTarget { get; private set; } = null;
             public static XRTexture2DArrayView? StereoLeftViewTexture { get; private set; } = null;
             public static XRTexture2DArrayView? StereoRightViewTexture { get; private set; } = null;
             private static XRViewport? StereoViewport { get; set; } = null;
@@ -112,6 +112,7 @@ namespace XREngine
                 vr.SetActionManifest(actionManifest);
                 CreateActions(actionManifest, vr);
                 Time.Timer.UpdateFrame += Update;
+                IsInVR = true;
                 return true;
             }
 
@@ -154,27 +155,22 @@ namespace XREngine
                 {
                     SetViewportParameters(rW, rH, StereoViewport = new XRViewport(window));
                     StereoViewport.RenderPipeline = new DefaultRenderPipeline(true);
-                    var arr = new XRTexture2DArray(left, right)
+                    var outputTextures = new XRTexture2DArray(left, right)
                     {
-                        Resizable = false, //GL_INVALID_OPERATION is generated if the value of GL_TEXTURE_IMMUTABLE_FORMAT for origtexture is not GL_TRUE. 
-                        SizedInternalFormat = ESizedInternalFormat.Rgba8,
+                        Resizable = false,
+                        SizedInternalFormat = ESizedInternalFormat.Rgb8,
                         OVRMultiViewParameters = new(0, 2u),
-                        FrameBufferAttachment = EFrameBufferAttachment.ColorAttachment0
                     };
-                    VRStereoViewTextureArray = arr;
-                    VRStereoRenderTarget = new XRMaterialFrameBuffer(new XRMaterial([arr], ShaderHelper.UnlitTextureFragForward()!));
-                    //if (StereoUseTextureViews)
-                    //{
-                    StereoLeftViewTexture = new XRTexture2DArrayView(arr, 0u, 1u, 0u, 1u, EPixelInternalFormat.Rgba8, false, false);
-                    StereoRightViewTexture = new XRTexture2DArrayView(arr, 0u, 1u, 1u, 1u, EPixelInternalFormat.Rgba8, false, false);
-                    //}
+                    VRStereoRenderTarget = new XRFrameBuffer((outputTextures, EFrameBufferAttachment.ColorAttachment0, 0, -1));
+                    StereoLeftViewTexture = new XRTexture2DArrayView(outputTextures, 0u, 1u, 0u, 1u, EPixelInternalFormat.Rgb8, false, false);
+                    StereoRightViewTexture = new XRTexture2DArrayView(outputTextures, 0u, 1u, 1u, 1u, EPixelInternalFormat.Rgb8, false, false);
                 }
                 else
                 {
                     left.FrameBufferAttachment = EFrameBufferAttachment.ColorAttachment0;
                     right.FrameBufferAttachment = EFrameBufferAttachment.ColorAttachment0;
-                    VRLeftEyeRenderTarget = MakeFBO(rW, rH, VRLeftEyeViewTexture = left, LeftEyeViewport = new XRViewport(window) { Index = 0 });
-                    VRRightEyeRenderTarget = MakeFBO(rW, rH, VRRightEyeViewTexture = right, RightEyeViewport = new XRViewport(window) { Index = 1 });
+                    VRLeftEyeRenderTarget = MakeTwoPassFBO(rW, rH, VRLeftEyeViewTexture = left, LeftEyeViewport = new XRViewport(window) { Index = 0 });
+                    VRRightEyeRenderTarget = MakeTwoPassFBO(rW, rH, VRRightEyeViewTexture = right, RightEyeViewport = new XRViewport(window) { Index = 1 });
 
                     if (ViewInformation.LeftEyeCamera is not null)
                         LeftEyeViewport.Camera = ViewInformation.LeftEyeCamera;
@@ -229,7 +225,7 @@ namespace XREngine
                 }
             }
 
-            private static XRMaterialFrameBuffer MakeFBO(uint rW, uint rH, XRTexture2D tex, XRViewport vp)
+            private static XRMaterialFrameBuffer MakeTwoPassFBO(uint rW, uint rH, XRTexture2D tex, XRViewport vp)
             {
                 var rt = new XRMaterialFrameBuffer(new XRMaterial([tex], ShaderHelper.UnlitTextureFragForward()!));
                 tex.Resizable = false;
@@ -567,6 +563,7 @@ namespace XREngine
             public static float TotalFrametime { get; private set; } = 0;
             public static float Framerate { get; private set; } = 0;
             public static float MaxFrametime { get; private set; } = 0;
+            public static bool IsInVR { get; private set; } = false;
 
             #region Separated Client
 

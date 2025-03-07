@@ -43,8 +43,8 @@ namespace XREngine.Rendering.OpenGL
                 if (_combinedProgram is not null)
                     return _combinedProgram;
 
-                if (Material?.Program?.Data.GetShaderTypeMask().HasFlag(EProgramStageMask.VertexShaderBit) ?? false)
-                    return Material.Program!;
+                if (Material?.SeparableProgram?.Data.GetShaderTypeMask().HasFlag(EProgramStageMask.VertexShaderBit) ?? false)
+                    return Material.SeparableProgram!;
 
                 return _separatedVertexProgram!;
             }
@@ -260,7 +260,7 @@ namespace XREngine.Rendering.OpenGL
                 GLMaterial material,
                 [MaybeNullWhen(false)] out GLRenderProgram? vertexProgram,
                 [MaybeNullWhen(false)] out GLRenderProgram? materialProgram)
-                => Engine.Rendering.Settings.AllowShaderPipelines
+                => Engine.Rendering.Settings.AllowShaderPipelines && Data.AllowShaderPipelines
                     ? GetPipelinePrograms(material, out vertexProgram, out materialProgram)
                     : GetCombinedProgram(out vertexProgram, out materialProgram);
 
@@ -285,7 +285,7 @@ namespace XREngine.Rendering.OpenGL
                 _pipeline.Bind();
                 _pipeline.Clear(EProgramStageMask.AllShaderBits);
 
-                materialProgram = material.Program;
+                materialProgram = material.SeparableProgram;
                 var mask = materialProgram?.Data?.GetShaderTypeMask() ?? EProgramStageMask.None;
                 bool includesVertexShader = mask.HasFlag(EProgramStageMask.VertexShaderBit);
                 //bool includesGeometryShader = mask.HasFlag(EProgramStageMask.GeometryShaderBit);
@@ -400,7 +400,7 @@ namespace XREngine.Rendering.OpenGL
                 var material = Material;
                 //Debug.LogWarning("No material found for mesh renderer, using invalid material.");
                 //Don't use GetRenderMaterial here, global and local override materials are for current render only
-                material ??= Renderer.GenericToAPI<GLMaterial>(Engine.Rendering.State.CurrentRenderingPipeline!.InvalidMaterial);
+                //material ??= Renderer.GenericToAPI<GLMaterial>(Engine.Rendering.State.CurrentRenderingPipeline!.InvalidMaterial);
                 if (material is null)
                 {
                     Debug.LogWarning("Failed to retrieve material or produce the invalid material.");
@@ -412,7 +412,7 @@ namespace XREngine.Rendering.OpenGL
                 CollectBuffers();
 
                 //Determine how we're combining the material and vertex shader here
-                if (Engine.Rendering.Settings.AllowShaderPipelines)
+                if (Engine.Rendering.Settings.AllowShaderPipelines && Data.AllowShaderPipelines)
                 {
                     _combinedProgram = null;
 
@@ -455,7 +455,7 @@ namespace XREngine.Rendering.OpenGL
 
                 shaders = shaders.Append(vertexShader);
                 
-                program = Renderer.GenericToAPI<GLRenderProgram>(new XRRenderProgram(shaders, false))!;
+                program = Renderer.GenericToAPI<GLRenderProgram>(new XRRenderProgram(shaders, false) { Separable = false })!;
                 program.PropertyChanged += CheckProgramLinked;
                 InitiateLink(program);
             }
@@ -471,7 +471,7 @@ namespace XREngine.Rendering.OpenGL
                     ? GenerateVertexShader(vertexSourceGenerator)
                     : vertexShaders.FirstOrDefault(vertexShaderSelector) ?? GenerateVertexShader(vertexSourceGenerator);
 
-                vertexProgram = Renderer.GenericToAPI<GLRenderProgram>(new XRRenderProgram(false, vertexShader))!;
+                vertexProgram = Renderer.GenericToAPI<GLRenderProgram>(new XRRenderProgram(false, vertexShader) { Separable = true})!;
                 vertexProgram.PropertyChanged += CheckProgramLinked;
                 InitiateLink(vertexProgram);
             }

@@ -113,7 +113,7 @@ namespace XREngine.Rendering.Shaders.Generator
             WriteOutData();
 
             //For some reason, this is necessary when using shader pipelines
-            if (Engine.Rendering.Settings.AllowShaderPipelines)
+            //if (Engine.Rendering.Settings.AllowShaderPipelines)
                 WriteGLPerVertexOut();
         }
 

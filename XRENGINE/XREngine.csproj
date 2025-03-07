@@ -81,13 +81,16 @@
     <PackageReference Include="Silk.NET.OpenAL.Extensions.Soft" Version="2.22.0" />
     <PackageReference Include="Silk.NET.OpenAL.Soft.Native" Version="1.23.1" />
     <PackageReference Include="Silk.NET.OpenGL" Version="2.22.0" />
+    <PackageReference Include="Silk.NET.OpenGL.Extensions.AMD" Version="2.22.0" />
     <PackageReference Include="Silk.NET.OpenGL.Extensions.ARB" Version="2.22.0" />
     <PackageReference Include="Silk.NET.OpenGL.Extensions.EXT" Version="2.22.0" />
     <PackageReference Include="Silk.NET.OpenGL.Extensions.ImGui" Version="2.22.0" />
     <PackageReference Include="Silk.NET.OpenGL.Extensions.INTEL" Version="2.22.0" />
     <PackageReference Include="Silk.NET.OpenGL.Extensions.KHR" Version="2.22.0" />
+    <PackageReference Include="Silk.NET.OpenGL.Extensions.NV" Version="2.22.0" />
     <PackageReference Include="Silk.NET.OpenGL.Extensions.OVR" Version="2.22.0" />
     <PackageReference Include="Silk.NET.OpenGLES.Extensions.EXT" Version="2.22.0" />
+    <PackageReference Include="Silk.NET.OpenGLES.Extensions.NV" Version="2.22.0" />
     <PackageReference Include="Silk.NET.OpenXR" Version="2.22.0" />
     <PackageReference Include="Silk.NET.OpenXR.Extensions.EXT" Version="2.22.0" />
     <PackageReference Include="Silk.NET.OpenXR.Extensions.HTC" Version="2.22.0" />
@@ -116,7 +119,7 @@
     <PackageReference Include="Silk.NET.Windowing.Glfw" Version="2.22.0" />
     <PackageReference Include="Silk.NET.Windowing.Sdl" Version="2.22.0" />
     <PackageReference Include="Silk.NET.XInput" Version="2.22.0" />
-    <PackageReference Include="SixLabors.ImageSharp" Version="3.1.6" />
+    <PackageReference Include="SixLabors.ImageSharp" Version="3.1.7" />
     <PackageReference Include="SkiaSharp" Version="3.116.1" />
     <PackageReference Include="Steamworks.NET" Version="2024.8.0" />
     <PackageReference Include="System.IdentityModel.Tokens.Jwt" Version="8.6.0" />

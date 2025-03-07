@@ -127,6 +127,8 @@ void main()
             => LoadEngineShader(Path.Combine("Common", "ColoredDeferred.fs"));
         public static XRShader? UnlitTextureFragForward()
              => LoadEngineShader(Path.Combine("Common", "UnlitTexturedForward.fs"));
+        public static XRShader? UnlitTextureStereoFragForward()
+             => LoadEngineShader(Path.Combine("Common", "UnlitTexturedStereoForward.fs"));
         public static XRShader? UnlitAlphaTextureFragForward()
             => LoadEngineShader(Path.Combine("Common", "UnlitAlphaTexturedForward.fs"));
         public static XRShader? UnlitColorFragForward()

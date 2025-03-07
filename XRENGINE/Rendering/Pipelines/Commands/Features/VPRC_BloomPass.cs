@@ -78,6 +78,8 @@ namespace XREngine.Rendering.Pipelines.Commands
                     EPixelInternalFormat.Rgb8,
                     EPixelFormat.Rgb,
                     EPixelType.UnsignedByte);
+                t.Resizable = false;
+                t.SizedInternalFormat = ESizedInternalFormat.Rgb8;
                 t.OVRMultiViewParameters = new(0, 2u);
                 t.Name = BloomOutputTextureName;
                 t.MagFilter = ETexMagFilter.Linear;
@@ -94,6 +96,8 @@ namespace XREngine.Rendering.Pipelines.Commands
                     EPixelInternalFormat.Rgb8,
                     EPixelFormat.Rgb,
                     EPixelType.UnsignedByte);
+                //t.Resizable = false;
+                //t.SizedInternalFormat = ESizedInternalFormat.Rgb8;
                 t.Name = BloomOutputTextureName;
                 t.MagFilter = ETexMagFilter.Linear;
                 t.MinFilter = ETexMinFilter.LinearMipmapLinear;

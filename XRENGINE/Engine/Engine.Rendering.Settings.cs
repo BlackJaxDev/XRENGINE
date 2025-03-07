@@ -68,6 +68,7 @@ namespace XREngine
                 /// <summary>
                 /// Shader pipelines allow for dynamic combination of shaders at runtime, such as mixing and matching vertex and fragment shaders.
                 /// When this is off, a new shader program must be compiled for each unique combination of shaders.
+                /// Note that some mesh rendering versions may not support this feature anyways, like when using OVR_MultiView2.
                 /// </summary>
                 public bool AllowShaderPipelines
                 {
@@ -248,6 +249,7 @@ namespace XREngine
                 /// </summary>
                 public bool PreferNVStereo { get; set; } = true;
                 public bool RenderVRSinglePassStereo { get; set; } = true;
+                public bool RenderWindowsWhileInVR { get; set; } = true;
                 //public bool SubmitOpenVRTextureArrayAsTwoViews { get; set; } = false;
             }
         }

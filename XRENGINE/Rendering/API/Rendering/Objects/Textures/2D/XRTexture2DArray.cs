@@ -10,7 +10,7 @@ namespace XREngine.Rendering
     {
         private bool _multiSample;
         private XRTexture2D[] _textures = [];
-        private bool _resizable = true;
+        private bool _resizable = false;
         private ESizedInternalFormat _sizedInternalFormat = ESizedInternalFormat.Rgba8;
 
         public XRTexture2DArray(params XRTexture2D[] textures)
@@ -219,7 +219,7 @@ namespace XREngine.Rendering
         /// <param name="pixelType">How pixels are stored.</param>
         /// <returns>A new 2D texture reference.</returns>
         public static XRTexture2DArray CreateFrameBufferTexture(uint count, uint width, uint height, EPixelInternalFormat internalFormat, EPixelFormat format, EPixelType type)
-            => new(count,width, height, internalFormat, format, type, false)
+            => new(count, width, height, internalFormat, format, type, false)
             {
                 MinFilter = ETexMinFilter.Nearest,
                 MagFilter = ETexMagFilter.Nearest,

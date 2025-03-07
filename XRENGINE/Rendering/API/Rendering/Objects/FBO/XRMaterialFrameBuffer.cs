@@ -2,7 +2,7 @@
 
 namespace XREngine.Rendering
 {
-    public delegate void DelSetUniforms(XRRenderProgram program);
+    public delegate void DelSetUniforms(XRRenderProgram materialProgram);
     /// <summary>
     /// Sets this FBO's render targets to the textures in the provided material using their FrameBufferAttachment properties.
     /// </summary>

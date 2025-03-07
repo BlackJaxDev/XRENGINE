@@ -415,13 +415,13 @@ namespace XREngine.Rendering.OpenGL
 
             public ulong Hash { get; private set; }
             private BinaryProgram? _cachedProgram = null;
+
             protected override uint CreateObject()
             {
                 Reset();
 
                 uint handle = Api.CreateProgram();
-                bool separable = Engine.Rendering.Settings.AllowShaderPipelines;
-                Api.ProgramParameter(handle, GLEnum.ProgramSeparable, separable ? 1 : 0);
+                Api.ProgramParameter(handle, GLEnum.ProgramSeparable, Data.Separable ? 1 : 0);
 
                 return handle;
             }

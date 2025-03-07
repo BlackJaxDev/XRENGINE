@@ -31,14 +31,14 @@ namespace XREngine.Components
         private float _volumeGrowth = 1.5f;
         private bool _slideOnSteepSlopes = true;
         private PhysxMaterial _material = new(0.9f, 0.9f, 0.1f);
-        private float _radius = 0.1f;
-        private float _standingHeight = new FeetInches(5, 8.0f).ToMeters() - 0.344f * 2.0f;
+        private float _radius = 0.6f;
+        private float _standingHeight = new FeetInches(5, 2.0f).ToMeters();
         private float _crouchedHeight = new FeetInches(3, 0.0f).ToMeters();
         private float _proneHeight = new FeetInches(1, 0.0f).ToMeters();
         private bool _constrainedClimbing = false;
         private CapsuleController? _controller;
         private float _minMoveDistance = 0.001f;
-        private float _contactOffset = 0.01f;
+        private float _contactOffset = 0.001f;
         private Vector3 _upDirection = Globals.Up;
         private Vector3 _spawnPosition = Vector3.Zero;
         private Vector3 _velocity = Vector3.Zero;

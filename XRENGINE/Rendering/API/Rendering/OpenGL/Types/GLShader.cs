@@ -112,7 +112,7 @@ namespace XREngine.Rendering.OpenGL
                 if (lineNumbers)
                 {
                     //Split the source by new lines
-                    string[]? s = trueScript?.Split(new string[] { Environment.NewLine }, StringSplitOptions.None);
+                    string[]? s = trueScript?.Split([Environment.NewLine], StringSplitOptions.None);
 
                     //Add the line number to the source so we can go right to errors on specific lines
                     if (s != null)

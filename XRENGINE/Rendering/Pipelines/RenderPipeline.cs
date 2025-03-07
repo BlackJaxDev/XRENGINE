@@ -145,7 +145,7 @@ public abstract class RenderPipeline : XRBase
             }
         };
 
-        XRQuadFrameBuffer fbo = new(mat, false);
+        XRQuadFrameBuffer fbo = new(mat);
         fbo.SetRenderTargets((brdf, EFrameBufferAttachment.ColorAttachment0, 0, -1));
         BoundingRectangle region = new(IVector2.Zero, new IVector2((int)width, (int)height));
 

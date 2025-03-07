@@ -137,7 +137,7 @@ namespace XREngine.Rendering.OpenGL
         /// If true, this texture's data has been updated and needs to be pushed to the GPU.
         /// </summary>
         /// <returns></returns>
-        public bool IsInvalidated { get; private set; } = true;
+        public bool IsInvalidated { get; protected set; } = true;
         /// <summary>
         /// Informs the renderer that this texture's data has been updated and needs to be pushed to the GPU.
         /// </summary>

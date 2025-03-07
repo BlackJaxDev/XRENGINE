@@ -24,7 +24,7 @@ namespace XREngine.Rendering
         /// using OVR_multiview
         /// using NV_stereo_view_rendering
         /// </summary>
-        public abstract class BaseVersion(XRMeshRenderer parent, Func<XRShader, bool> vertexShaderSelector) : GenericRenderObject
+        public abstract class BaseVersion(XRMeshRenderer parent, Func<XRShader, bool> vertexShaderSelector, bool allowShaderPipelines) : GenericRenderObject
         {
             public XRMeshRenderer Parent
             {
@@ -39,6 +39,12 @@ namespace XREngine.Rendering
 
             private string? _vertexShaderSource;
             public string? VertexShaderSource => _vertexShaderSource ??= GenerateVertexShaderSource();
+
+            public bool AllowShaderPipelines
+            {
+                get => allowShaderPipelines;
+                set => SetField(ref allowShaderPipelines, value);
+            }
 
             public void ResetVertexShaderSource()
                 => _vertexShaderSource = null;
@@ -60,7 +66,7 @@ namespace XREngine.Rendering
                 => RenderRequested?.Invoke(modelMatrix, materialOverride, instances, billboardMode);
         }
 
-        public class Version<[DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicConstructors)] T>(XRMeshRenderer renderer, Func<XRShader, bool> vertexShaderSelector) : BaseVersion(renderer, vertexShaderSelector) where T : ShaderGeneratorBase
+        public class Version<[DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicConstructors)] T>(XRMeshRenderer renderer, Func<XRShader, bool> vertexShaderSelector, bool allowShaderPipelines) : BaseVersion(renderer, vertexShaderSelector, allowShaderPipelines) where T : ShaderGeneratorBase
         {
             protected override string? GenerateVertexShaderSource()
             {
@@ -92,9 +98,9 @@ namespace XREngine.Rendering
             _material = material;
             ReinitializeBones();
 
-            Versions.Add(0, new Version<DefaultVertexShaderGenerator>(this, NoSpecialExtensions));
-            Versions.Add(1, new Version<OVRMultiViewVertexShaderGenerator>(this, HasOvrMultiView2));
-            Versions.Add(2, new Version<NVStereoVertexShaderGenerator>(this, HasNVStereoViewRendering));
+            Versions.Add(0, new Version<DefaultVertexShaderGenerator>(this, NoSpecialExtensions, true));
+            Versions.Add(1, new Version<OVRMultiViewVertexShaderGenerator>(this, HasOvrMultiView2, false));
+            Versions.Add(2, new Version<NVStereoVertexShaderGenerator>(this, HasNVStereoViewRendering, false));
         }
 
         /// <summary>

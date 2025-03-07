@@ -86,7 +86,7 @@ namespace XREngine.Components.Scene.Transforms
         protected internal override void OnSceneNodeActivated()
         {
             base.OnSceneNodeActivated();
-            RegisterTick(ETickGroup.PostPhysics, (int)ETickOrder.Scene, Tick);
+            RegisterTick(ETickGroup.Late, (int)ETickOrder.Scene, Tick);
         }
         //protected internal override void OnSceneNodeDeactivated()
         //{
@@ -114,8 +114,8 @@ namespace XREngine.Components.Scene.Transforms
                     newLength = _traceOutput.Keys.First();
             }
 
-            if (newLength.EqualTo(_currentLength, 0.001f))
-                return;
+            //if (newLength.EqualTo(_currentLength, 0.001f))
+            //    return;
             
             if (newLength < _currentLength)
                 _currentLength = newLength; //Moving closer to the character, meaning something is obscuring the view. Need to jump to the right position.

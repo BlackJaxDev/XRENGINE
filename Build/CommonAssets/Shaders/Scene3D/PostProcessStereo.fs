@@ -31,27 +31,26 @@ float rand(vec2 coord)
 
 void main()
 {
-  vec2 uv = FragPos.xy;
-  if (uv.x > 1.0f || uv.y > 1.0f)
-      discard;
-  //Normalize uv from [-1, 1] to [0, 1]
-  uv = uv * 0.5f + 0.5f;
-  vec3 uvi = vec3(uv, gl_ViewID_OVR);
+    vec2 uv = FragPos.xy;
+    if (uv.x > 1.0 || uv.y > 1.0)
+        discard;
+    // uv is now normalized to [0, 1]
+    vec3 uvi = vec3(uv, gl_ViewID_OVR);
 
-	vec3 hdrSceneColor = texture(HDRSceneTex, uvi).rgb;
+    vec3 hdrSceneColor = texture(HDRSceneTex, uvi).rgb;
 
-  //Add each blurred bloom mipmap
-  //Starts at 1/2 size lod because original image is not blurred (and doesn't need to be)
-  for (float lod = 1.0f; lod < 5.0f; lod += 1.0f)
-    hdrSceneColor += textureLod(Texture1, uvi, lod).rgb;
+    // Add each blurred bloom mipmap
+    // Starts at 1/2 size lod because original image is not blurred (and doesn't need to be)
+    for (float lod = 1.0; lod < 5.0; lod += 1.0)
+      hdrSceneColor += textureLod(Texture1, uvi, lod).rgb;
 
-  //Tone mapping
-	vec3 ldrSceneColor = vec3(1.0f) - exp(-hdrSceneColor * ColorGrade.Exposure);
+    // Tone mapping
+    vec3 ldrSceneColor = vec3(1.0) - exp(-hdrSceneColor * ColorGrade.Exposure);
 
-	//Gamma-correct
-	ldrSceneColor = pow(ldrSceneColor, vec3(1.0f / ColorGrade.Gamma));
-  //Fix subtle banding by applying fine noise
-  ldrSceneColor += mix(-0.5f / 255.0f, 0.5f / 255.0f, rand(uv));
+    // Gamma-correct
+    ldrSceneColor = pow(ldrSceneColor, vec3(1.0 / ColorGrade.Gamma));
+    // Fix subtle banding by applying fine noise
+    ldrSceneColor += mix(-0.5 / 255.0, 0.5 / 255.0, rand(uv));
 
-	OutColor = vec4(ldrSceneColor, 1.0f);
+    OutColor = vec4(ldrSceneColor, 1.0);
 }

@@ -77,7 +77,7 @@ namespace XREngine.Rendering.OpenGL
             base.DataPropertyChanged(sender, e);
             switch (e.PropertyName)
             {
-                case nameof(XRTexture2D.Mipmaps):
+                case nameof(XRTexture2DArray.Mipmaps):
                     {
                         UpdateMipmaps();
                         break;
