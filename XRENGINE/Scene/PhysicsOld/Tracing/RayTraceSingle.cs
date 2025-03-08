@@ -23,8 +23,8 @@ namespace XREngine.Physics.RayTracing
         public override void Render()
         {
             Vector3 end = Result?.HitPointWorld ?? EndPointWorld;
-            Engine.Rendering.Debug.RenderLine(StartPointWorld, end, DebugColor, false);
-            Engine.Rendering.Debug.RenderPoint(end, HasHit ? new ColorF4(1.0f, 0.0f, 0.0f) : DebugColor, false);
+            Engine.Rendering.Debug.RenderLine(StartPointWorld, end, DebugColor);
+            Engine.Rendering.Debug.RenderPoint(end, HasHit ? new ColorF4(1.0f, 0.0f, 0.0f) : DebugColor);
         }
     }
 }

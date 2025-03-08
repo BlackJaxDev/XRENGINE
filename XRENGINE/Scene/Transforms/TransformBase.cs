@@ -111,18 +111,15 @@ namespace XREngine.Scene.Transforms
                 Engine.Rendering.Debug.RenderLine(
                     Parent?.WorldTranslation ?? Vector3.Zero,
                     WorldTranslation,
-                    settings.TransformLineColor,
-                    false,
-                    1);
+                    settings.TransformLineColor);
 
             if (settings.RenderTransformPoints)
                 Engine.Rendering.Debug.RenderPoint(
                     WorldTranslation,
-                    settings.TransformPointColor,
-                    false);
+                    settings.TransformPointColor);
 
             if (settings.RenderTransformCapsules)
-                Engine.Rendering.Debug.RenderCapsule(Capsule, settings.TransformCapsuleColor, false);
+                Engine.Rendering.Debug.RenderCapsule(Capsule, settings.TransformCapsuleColor);
         }
 
         private void ChildAdded(TransformBase e)
@@ -319,54 +316,23 @@ namespace XREngine.Scene.Transforms
         /// </summary>
         /// <param name="recalcChildrenNow"></param>
         /// <returns></returns>
-        public virtual bool RecalculateMatrixHeirarchy(bool parallel = true)
+        public virtual void RecalculateMatrixHeirarchy(bool parallel = true)
         {
             RecalculateMatrices();
-            return parallel
-                ? ParallelChildrenRecalc(/*recalcChildrenNow, depthKeys*/)
-                : SequentialChildrenRecalc(/*recalcChildrenNow, depthKeys*/);
+            if (parallel)
+                ParallelChildrenRecalc();
+            else
+                SequentialChildrenRecalc();
         }
 
-        private bool SequentialChildrenRecalc(/*bool recalcChildrenNow, List<int>? depthKeys*/)
+        private void SequentialChildrenRecalc()
         {
-            //var world = World;
-            //if (!recalcChildrenNow && world is null)
-            //    return false;
-
-            bool wasDepthAdded = false;
-
-            //if (recalcChildrenNow)
-                foreach (var child in _children)
-                    child.RecalculateMatrixHeirarchy(/*recalcChildrenNow, false, depthKeys*/);
-            //else
-            //    foreach (var child in _children)
-            //        wasDepthAdded |= world!.AddDirtyTransform(child, false, depthKeys);
-
-            return wasDepthAdded;
+            foreach (var child in _children)
+                child.RecalculateMatrixHeirarchy();
         }
 
-        private bool ParallelChildrenRecalc(/*bool recalcChildrenNow, List<int>? depthKeys*/)
-        {
-            //var world = World;
-            //if (!recalcChildrenNow && world is null)
-            //    return false;
-
-            int wasDepthAddedInt = 0;
-
-            Task.WaitAll(//recalcChildrenNow
-               // ? 
-                _children.Select(child => Task.Run(() => child.RecalculateMatrixHeirarchy(/*true, true, depthKeys*/)))
-                //: _children.Select(child => Task.Run(() =>
-                //{
-                //    if (world!.AddDirtyTransform(child, true, depthKeys))
-                //    {
-                //        //Interlocked.Exchange(ref wasDepthAddedInt, 1);
-                //    }
-                //}))
-                );
-
-            return wasDepthAddedInt != 0;
-        }
+        private void ParallelChildrenRecalc()
+            => Task.WaitAll(_children.Select(child => Task.Run(() => child.RecalculateMatrixHeirarchy())));
 
         public TransformBase? FindChild(string name, StringComparison comp = StringComparison.Ordinal)
         {

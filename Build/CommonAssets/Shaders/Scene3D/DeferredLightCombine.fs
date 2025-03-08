@@ -19,7 +19,6 @@ layout(binding = 6) uniform sampler2D BRDF;
 layout(binding = 7) uniform samplerCube Irradiance;
 layout(binding = 8) uniform samplerCube Prefilter;
 
-uniform vec3 CameraPosition;
 uniform mat4 InverseViewMatrix;
 uniform mat4 ProjMatrix;
 
@@ -63,6 +62,7 @@ void main()
   	float metallic = rms.y;
 	float specularIntensity = rms.z;
 
+	vec3 CameraPosition = InverseViewMatrix[3].xyz;
 	vec3 V = normalize(CameraPosition - fragPosWS);
 	float NoV = max(dot(normal, V), 0.0f);
 	vec3 F0 = mix(vec3(0.04f), albedoColor, metallic);

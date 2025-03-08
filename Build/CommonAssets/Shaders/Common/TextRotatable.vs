@@ -18,8 +18,8 @@ layout(std430, binding = 1) buffer GlyphRotationsBuffer
 };
 
 uniform mat4 ModelMatrix;
-uniform mat4 InverseViewMatrix;
-uniform mat4 ProjMatrix;
+uniform mat4 InverseViewMatrix_VTX;
+uniform mat4 ProjMatrix_VTX;
 
 layout (location = 0) out vec3 FragPos;
 layout (location = 1) out vec3 FragNorm;
@@ -58,10 +58,10 @@ void main()
     vec4 uv = GlyphTexCoords[gl_InstanceID];
 	float rot = GlyphRotations[gl_InstanceID];
 
-	mat4 ViewMatrix = inverse(InverseViewMatrix);
+	mat4 ViewMatrix = inverse(InverseViewMatrix_VTX);
 	mat4 mvMatrix = ViewMatrix * ModelMatrix;
-	mat4 mvpMatrix = ProjMatrix * mvMatrix;
-	mat4 vpMatrix = ProjMatrix * ViewMatrix;
+	mat4 mvpMatrix = ProjMatrix_VTX * mvMatrix;
+	mat4 vpMatrix = ProjMatrix_VTX * ViewMatrix;
 	mat3 normalMatrix = adjoint(ModelMatrix);
 	
 	vec4 position = vec4((tfm.xy + (TexCoord0.xy * tfm.zw)) * rotationMatrix(rot), 0.0f, 1.0f);

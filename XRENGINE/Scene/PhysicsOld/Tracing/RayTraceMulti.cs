@@ -26,12 +26,13 @@ namespace XREngine.Physics.RayTracing
 
         public override void Render()
         {
-            Engine.Rendering.Debug.RenderLine(StartPointWorld, EndPointWorld, DebugColor, false);
+            Engine.Rendering.Debug.RenderLine(StartPointWorld, EndPointWorld, DebugColor);
+
             if (Results.Count == 0)
-                Engine.Rendering.Debug.RenderPoint(EndPointWorld, DebugColor, false);
+                Engine.Rendering.Debug.RenderPoint(EndPointWorld, DebugColor);
             else
                 foreach (var result in Results)
-                    Engine.Rendering.Debug.RenderPoint(result.HitPointWorld, new ColorF4(1.0f, 0.0f, 0.0f), false);
+                    Engine.Rendering.Debug.RenderPoint(result.HitPointWorld, new ColorF4(1.0f, 0.0f, 0.0f));
         }
     }
 }

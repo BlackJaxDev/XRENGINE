@@ -53,8 +53,7 @@ namespace XREngine.Data.Components
                     false,
                     intersects
                         ? Engine.Rendering.Settings.OctreeIntersectedBoundsColor
-                        : Engine.Rendering.Settings.OctreeContainedBoundsColor,
-                    false);
+                        : Engine.Rendering.Settings.OctreeContainedBoundsColor);
         }
     }
 }

@@ -6,9 +6,8 @@ using System.Runtime.InteropServices;
 using XREngine.Components;
 using XREngine.Data;
 using XREngine.Data.Colors;
+using XREngine.Data.Core;
 using XREngine.Data.Geometry;
-using XREngine.Data.Rendering;
-using XREngine.Rendering.Models.Materials;
 using XREngine.Rendering.Physics.Physx.Joints;
 using XREngine.Scene;
 using static MagicPhysX.NativeMethods;
@@ -30,6 +29,10 @@ namespace XREngine.Rendering.Physics.Physx
         {
             Init();
         }
+        public PhysxScene()
+        {
+            _visualizer = new(GetPoint, GetLine, GetTriangle);
+        }
 
         public static void Init()
         {
@@ -45,6 +48,8 @@ namespace XREngine.Rendering.Physics.Physx
 
         private PxCpuDispatcher* _dispatcher;
         private PxScene* _scene;
+
+        private readonly InstancedDebugVisualizer _visualizer;
 
         //public PxPhysics* PhysicsPtr => _scene->GetPhysicsMut();
 
@@ -63,6 +68,8 @@ namespace XREngine.Rendering.Physics.Physx
 
         public override void Destroy()
         {
+            UnlinkVisualizationSettings();
+
             if (_scene is not null)
             {
                 Scenes.Remove((nint)_scene);
@@ -120,45 +127,26 @@ namespace XREngine.Rendering.Physics.Physx
             var filterShaderCallback = (delegate* unmanaged[Cdecl]<FilterShaderCallbackInfo*, PxFilterFlags>)Marshal.GetFunctionPointerForDelegate(CustomFilterShaderInstance).ToPointer();
             enable_custom_filter_shader(&sceneDesc, filterShaderCallback, 1u);
 
-            sceneDesc.flags |= PxSceneFlags.EnableCcd | PxSceneFlags.EnableGpuDynamics;
+            sceneDesc.flags =
+                PxSceneFlags.EnableCcd |
+                PxSceneFlags.EnableGpuDynamics |
+                PxSceneFlags.EnableActiveActors |
+                PxSceneFlags.EnableStabilization |
+                PxSceneFlags.EnableEnhancedDeterminism;
             sceneDesc.broadPhaseType = PxBroadPhaseType.Gpu;
             //sceneDesc.gpuDynamicsConfig = new PxgDynamicsMemoryConfig()
             //{
-                
+
             //};
             _scene = _physicsPtr->CreateSceneMut(&sceneDesc);
             Scenes.Add((nint)_scene, this);
 
-            VisualizeEnabled = true;
-            VisualizeWorldAxes = true;
-            VisualizeBodyAxes = true;
-            VisualizeBodyMassAxes = true;
-            VisualizeBodyLinearVelocity = true;
-            VisualizeBodyAngularVelocity = true;
-            VisualizeContactPoint = true;
-            VisualizeContactNormal = true;
-            VisualizeContactError = true;
-            VisualizeContactForce = true;
-            VisualizeActorAxes = true;
-            VisualizeCollisionAabbs = true;
-            VisualizeCollisionShapes = true;
-            VisualizeCollisionAxes = true;
-            VisualizeCollisionCompounds = true;
-            VisualizeCollisionFaceNormals = true;
-            VisualizeCollisionEdges = true;
-            VisualizeCollisionStatic = true;
-            VisualizeCollisionDynamic = true;
-            VisualizeJointLocalFrames = true;
-            VisualizeJointLimits = true;
-            VisualizeCullBox = true;
-            VisualizeMbpRegions = true;
-            VisualizeSimulationMesh = true;
-            VisualizeSdf = true;
+            LinkVisualizationSettings();
         }
 
         public DataSource? _scratchBlock = new(32000, true);
 
-        public override void StepSimulation()
+        public override unsafe void StepSimulation()
         {
             Simulate(Engine.Time.Timer.FixedUpdateDelta, null, true);
             if (!FetchResults(true, out uint error))
@@ -166,368 +154,28 @@ namespace XREngine.Rendering.Physics.Physx
                 Debug.Out($"PhysX FetchResults error: {error}");
                 return;
             }
+
             if (VisualizeEnabled)
                 PopulateDebugBuffers();
+
+            uint count;
+            var ptr = _scene->GetActiveActorsMut(&count);
+            for (int i = 0; i < count; i++)
+            {
+                var actor = PhysxActor.Get(ptr[i]);
+                switch (actor)
+                {
+                    case PhysxDynamicRigidBody dynamicActor:
+                        dynamicActor.OwningComponent?.RigidBodyTransform.OnPhysicsStepped();
+                        break;
+                    case PhysxStaticRigidBody staticActor:
+                        staticActor.OwningComponent?.RigidBodyTransform.OnPhysicsStepped();
+                        break;
+                }
+            }
+
             NotifySimulationStepped();
         }
-
-        private XRMeshRenderer? _debugPointsRenderer = null;
-        private XRMeshRenderer? _debugLinesRenderer = null;
-        private XRMeshRenderer? _debugTrianglesRenderer = null;
-
-        private void PopulateDebugBuffers()
-        {
-            var rb = RenderBuffer;
-
-            _debugPointCount = rb->GetNbPoints();
-            _debugLineCount = rb->GetNbLines();
-            _debugTriangleCount = rb->GetNbTriangles();
-
-            _debugPoints = rb->GetPoints();
-            _debugLines = rb->GetLines();
-            _debugTriangles = rb->GetTriangles();
-
-            CreateOrResizeDebugBuffers();
-            PopulateBuffers();
-        }
-
-        private void PopulateBuffers()
-        {
-            var destPoints = (float*)_debugPointsBuffer!.Address;
-            var destLines = (float*)_debugLinesBuffer!.Address;
-            var destTriangles = (float*)_debugTrianglesBuffer!.Address;
-            void SetPointsAt(int i)
-            {
-                if (i >= _debugPointCount)
-                    return;
-                
-                var point = _debugPoints[i];
-                var pos = point.pos;
-                var color = ToColorF4(point.color);
-                var x = i * 8;
-                destPoints[x + 0] = pos.x;
-                destPoints[x + 1] = pos.y;
-                destPoints[x + 2] = pos.z;
-                destPoints[x + 3] = 0.0f;
-                destPoints[x + 4] = color.R;
-                destPoints[x + 5] = color.G;
-                destPoints[x + 6] = color.B;
-                destPoints[x + 7] = color.A;
-            }
-            void SetLinesAt(int i)
-            {
-                var line = _debugLines[i];
-                var pos0 = line.pos0;
-                var pos1 = line.pos1;
-                var color = ToColorF4(line.color0);
-                var x = i * 12;
-                destLines[x + 0] = pos0.x;
-                destLines[x + 1] = pos0.y;
-                destLines[x + 2] = pos0.z;
-                destLines[x + 3] = 0.0f;
-                destLines[x + 4] = pos1.x;
-                destLines[x + 5] = pos1.y;
-                destLines[x + 6] = pos1.z;
-                destLines[x + 7] = 0.0f;
-                destLines[x + 8] = color.R;
-                destLines[x + 9] = color.G;
-                destLines[x + 10] = color.B;
-                destLines[x + 11] = color.A;
-            }
-            void SetTrianglesAt(int i)
-            {
-                if (i >= _debugTriangleCount)
-                    return;
-                
-                var triangle = _debugTriangles[i];
-                var pos0 = triangle.pos0;
-                var pos1 = triangle.pos1;
-                var pos2 = triangle.pos2;
-                var color = ToColorF4(triangle.color0);
-                var x = i * 16;
-                destTriangles[x + 0] = pos0.x;
-                destTriangles[x + 1] = pos0.y;
-                destTriangles[x + 2] = pos0.z;
-                destTriangles[x + 3] = 0.0f;
-                destTriangles[x + 4] = pos1.x;
-                destTriangles[x + 5] = pos1.y;
-                destTriangles[x + 6] = pos1.z;
-                destTriangles[x + 7] = 0.0f;
-                destTriangles[x + 8] = pos2.x;
-                destTriangles[x + 9] = pos2.y;
-                destTriangles[x + 10] = pos2.z;
-                destTriangles[x + 11] = 0.0f;
-                destTriangles[x + 12] = color.R;
-                destTriangles[x + 13] = color.G;
-                destTriangles[x + 14] = color.B;
-                destTriangles[x + 15] = color.A;
-            }
-
-            ////Set sequential
-            //for (int i = 0; i < _debugPointCount; i++)
-            //    SetPointsAt(i);
-            //for (int i = 0; i < _debugLineCount; i++)
-            //    SetLinesAt(i);
-            //for (int i = 0; i < _debugTriangleCount; i++)
-            //    SetTrianglesAt(i);
-
-            Task t0 = Task.Run(() => Parallel.For(0, (int)_debugPointCount, SetPointsAt));
-            Task t1 = Task.Run(() => Parallel.For(0, (int)_debugLineCount, SetLinesAt));
-            Task t2 = Task.Run(() => Parallel.For(0, (int)_debugTriangleCount, SetTrianglesAt));
-            Task.WaitAll(t0, t1, t2);
-        }
-
-        private void CreateOrResizeDebugBuffers()
-        {
-            if (_debugPointsBuffer is null)
-                CreateOrResizePoints(_debugPointCount);
-
-            if (_debugLinesBuffer is null)
-                CreateOrResizeLines(_debugLineCount);
-
-            if (_debugTrianglesBuffer is null)
-                CreateOrResizeTriangles(_debugTriangleCount);
-        }
-
-        private void CreateOrResizeTriangles(uint count)
-        {
-            _debugTrianglesRenderer ??= MakeTrianglesRenderer();
-            //16 floats: 3 for position0, 1 for padding, 3 for position1, 1 for padding, 3 for position2, 1 for padding, 4 for color
-            if (_debugTrianglesBuffer is not null)
-                _debugTrianglesBuffer.Resize(count, true, true);
-            else
-            {
-                _debugTrianglesBuffer = new XRDataBuffer(
-                    "TrianglesBuffer",
-                    EBufferTarget.ShaderStorageBuffer,
-                    count,
-                    EComponentType.Float,
-                    16,
-                    false,
-                    false,
-                    true)
-                {
-                    BindingIndexOverride = 0,
-                    Usage = EBufferUsage.StreamDraw,
-                };
-                _debugTrianglesRenderer.Buffers?.Add(_debugTrianglesBuffer.BindingName, _debugTrianglesBuffer);
-                _debugTrianglesRenderer.SettingUniforms += _debugTrianglesRenderer_SettingUniforms;
-                _debugTrianglesRenderer.GenerateAsync = false;
-                //_debugTrianglesBuffer.PushData();
-            }
-        }
-
-        private XRMeshRenderer MakeTrianglesRenderer()
-        {
-            var rend = new XRMeshRenderer(CreateDebugMesh(), CreateDebugTriangleMaterial());
-            //rend.GetDefaultVersion().AllowShaderPipelines = false;
-            return rend;
-        }
-
-        private void _debugTrianglesRenderer_SettingUniforms(XRRenderProgram vertexProgram, XRRenderProgram materialProgram)
-        {
-            _debugTrianglesBuffer?.PushSubData();
-            materialProgram.Uniform("TotalTriangles", (int)_debugTriangleCount);
-        }
-
-        private void CreateOrResizeLines(uint count)
-        {
-            _debugLinesRenderer ??= MakeLineRenderer();
-            //12 floats: 3 for position0, 1 for padding, 3 for position1, 1 for padding, 4 for color
-            if (_debugLinesBuffer is not null)
-                _debugLinesBuffer.Resize(count * 3, true, true);
-            else
-            {
-                _debugLinesBuffer = new XRDataBuffer(
-                    "LinesBuffer",
-                    EBufferTarget.ShaderStorageBuffer,
-                    count * 3,
-                    EComponentType.Float,
-                    4,
-                    false,
-                    false,
-                    true)
-                {
-                    BindingIndexOverride = 0,
-                    Usage = EBufferUsage.StreamDraw,
-                };
-                _debugLinesRenderer.Buffers?.Add(_debugLinesBuffer.BindingName, _debugLinesBuffer);
-                _debugLinesRenderer.SettingUniforms += _debugLinesRenderer_SettingUniforms;
-                _debugLinesRenderer.GenerateAsync = false;
-                //_debugLinesBuffer.PushData();
-            }
-        }
-
-        private XRMeshRenderer MakeLineRenderer()
-        {
-            var rend = new XRMeshRenderer(CreateDebugMesh(), CreateDebugLineMaterial());
-            //rend.GetDefaultVersion().AllowShaderPipelines = false;
-            return rend;
-        }
-
-        private void _debugLinesRenderer_SettingUniforms(XRRenderProgram vertexProgram, XRRenderProgram materialProgram)
-        {
-            _debugLinesBuffer?.PushSubData();
-            materialProgram.Uniform("TotalLines", (int)_debugLineCount);
-        }
-
-        private void CreateOrResizePoints(uint count)
-        {
-            _debugPointsRenderer ??= MakePointsRenderer();
-            //8 floats: 3 for position, 1 for padding, 4 for color
-            if (_debugPointsBuffer is not null)
-                _debugPointsBuffer.Resize(count, true, true);
-            else
-            {
-                _debugPointsBuffer = new XRDataBuffer(
-                    "PointsBuffer",
-                    EBufferTarget.ShaderStorageBuffer,
-                    count,
-                    EComponentType.Float,
-                    8,
-                    false,
-                    false,
-                    true)
-                {
-                    BindingIndexOverride = 0,
-                    Usage = EBufferUsage.StreamDraw,
-                };
-                _debugPointsRenderer.Buffers.Add(_debugPointsBuffer.BindingName, _debugPointsBuffer);
-                _debugPointsRenderer.SettingUniforms += _debugPointsRenderer_SettingUniforms;
-                _debugPointsRenderer.GenerateAsync = false;
-                //_debugPointsBuffer.PushData();
-            }
-        }
-
-        private XRMeshRenderer MakePointsRenderer()
-        {
-            var rend = new XRMeshRenderer(CreateDebugMesh(), CreateDebugPointMaterial());
-            //rend.GetDefaultVersion().AllowShaderPipelines = false;
-            return rend;
-        }
-
-        private void _debugPointsRenderer_SettingUniforms(XRRenderProgram vertexProgram, XRRenderProgram materialProgram)
-        {
-            _debugPointsBuffer?.PushSubData();
-            materialProgram.Uniform("TotalPoints", (int)_debugPointCount);
-        }
-
-        private float _pointSize = 0.001f;
-        public float PointSize
-        {
-            get => _pointSize;
-            set => SetField(ref _pointSize, value);
-        }
-
-        private float _lineWidth = 0.001f;
-        public float LineWidth
-        {
-            get => _lineWidth;
-            set => SetField(ref _lineWidth, value);
-        }
-
-        protected override void OnPropertyChanged<T>(string? propName, T prev, T field)
-        {
-            base.OnPropertyChanged(propName, prev, field);
-            switch (propName)
-            {
-                //case nameof(VisualizeEnabled):
-                //    break;
-                case nameof(PointSize):
-                    _debugPointsRenderer?.Material?.SetFloat(0, PointSize);
-                    break;
-                case nameof(LineWidth):
-                    _debugLinesRenderer?.Material?.SetFloat(0, LineWidth);
-                    break;
-            }
-        }
-
-        private XRMaterial? CreateDebugPointMaterial()
-        {
-            XRShader vertShader = ShaderHelper.LoadEngineShader(Path.Combine("Common", "Debug", "InstancedDebugPrimitive.vs"), EShaderType.Vertex);
-            XRShader geomShader = ShaderHelper.LoadEngineShader(Path.Combine("Common", "Debug", "PointInstance.gs"), EShaderType.Geometry);
-            XRShader fragShader = ShaderHelper.LoadEngineShader(Path.Combine("Common", "Debug", "InstancedDebugPrimitivePoint.fs"), EShaderType.Fragment);
-            ShaderVar[] vars = 
-            [
-                new ShaderFloat(PointSize, "PointSize"),
-                new ShaderInt(0, "TotalPoints"),
-            ];
-            var mat = new XRMaterial(vars, vertShader, geomShader, fragShader);
-            mat.RenderOptions.RequiredEngineUniforms = EUniformRequirements.Camera;
-            mat.RenderOptions.CullMode = ECullMode.None;
-            mat.RenderOptions.DepthTest.Enabled = ERenderParamUsage.Disabled;
-            mat.RenderPass = (int)EDefaultRenderPass.OnTopForward;
-            //mat.EnableTransparency();
-            return mat;
-        }
-        private XRMaterial? CreateDebugLineMaterial()
-        {
-            XRShader vertShader = ShaderHelper.LoadEngineShader(Path.Combine("Common", "Debug", "InstancedDebugPrimitive.vs"), EShaderType.Vertex);
-            XRShader geomShader = ShaderHelper.LoadEngineShader(Path.Combine("Common", "Debug", "LineInstance.gs"), EShaderType.Geometry);
-            XRShader fragShader = ShaderHelper.LoadEngineShader(Path.Combine("Common", "Debug", "InstancedDebugPrimitive.fs"), EShaderType.Fragment);
-            ShaderVar[] vars = 
-            [
-                new ShaderFloat(LineWidth, "LineWidth"),
-                new ShaderInt(0, "TotalLines"),
-            ];
-            var mat = new XRMaterial(vars, vertShader, geomShader, fragShader);
-            mat.RenderOptions.RequiredEngineUniforms = EUniformRequirements.Camera;
-            mat.RenderOptions.CullMode = ECullMode.None;
-            mat.RenderOptions.DepthTest.Enabled = ERenderParamUsage.Disabled;
-            mat.RenderPass = (int)EDefaultRenderPass.OnTopForward;
-            //mat.EnableTransparency();
-            return mat;
-        }
-        private static XRMaterial? CreateDebugTriangleMaterial()
-        {
-            XRShader vertShader = ShaderHelper.LoadEngineShader(Path.Combine("Common", "Debug", "InstancedDebugPrimitive.vs"), EShaderType.Vertex);
-            XRShader geomShader = ShaderHelper.LoadEngineShader(Path.Combine("Common", "Debug", "TriangleInstance.gs"), EShaderType.Geometry);
-            XRShader fragShader = ShaderHelper.LoadEngineShader(Path.Combine("Common", "Debug", "InstancedDebugPrimitive.fs"), EShaderType.Fragment);
-            ShaderVar[] vars = 
-            [
-                new ShaderInt(0, "TotalTriangles"),
-            ];
-            var mat = new XRMaterial(vars, vertShader, geomShader, fragShader);
-            mat.RenderOptions.RequiredEngineUniforms = EUniformRequirements.Camera;
-            mat.RenderOptions.CullMode = ECullMode.None;
-            mat.RenderOptions.DepthTest.Enabled = ERenderParamUsage.Disabled;
-            mat.RenderPass = (int)EDefaultRenderPass.OnTopForward;
-            //mat.EnableTransparency();
-            return mat;
-        }
-
-        private static XRMesh? CreateDebugMesh()
-            => new(new Vertex[] { new Vertex(Vector3.Zero) });
-
-        private XRDataBuffer? _debugPointsBuffer = null;
-        private XRDataBuffer? _debugLinesBuffer = null;
-        private XRDataBuffer? _debugTrianglesBuffer = null;
-
-        public override void DebugRender()
-        {
-            if (_debugPointCount > 0)
-                _debugPointsRenderer?.Render(null, _debugPointCount);
-            
-            if (_debugLineCount > 0)
-                _debugLinesRenderer?.Render(null, _debugLineCount);
-            
-            if (_debugTriangleCount > 0)
-                _debugTrianglesRenderer?.Render(null, _debugTriangleCount);
-        }
-
-        private PxDebugPoint* _debugPoints;
-        private PxDebugLine* _debugLines;
-        private PxDebugTriangle* _debugTriangles;
-
-        private uint _debugPointCount = 0;
-        private uint _debugLineCount = 0;
-        private uint _debugTriangleCount = 0;
-
-        private static ColorF4 ToColorF4(uint c) => new(
-            ((c >> 00) & 0xFF) / 255.0f,
-            ((c >> 08) & 0xFF) / 255.0f,
-            ((c >> 16) & 0xFF) / 255.0f,
-            ((c >> 24) & 0xFF) / 255.0f);
 
         public void Simulate(float elapsedTime, PxBaseTask* completionTask, bool controlSimulation)
             => _scene->SimulateMut(elapsedTime, completionTask, _scratchBlock is null ? null : _scratchBlock.Address.Pointer, _scratchBlock?.Length ?? 0, controlSimulation);
@@ -1786,6 +1434,200 @@ namespace XREngine.Rendering.Physics.Physx
         {
             set => _scene->SetVisualizationParameterMut(PxVisualizationParameter.Sdf, value ? 1.0f : 0.0f);
             get => _scene->GetVisualizationParameter(PxVisualizationParameter.Sdf) > 0.0f;
+        }
+
+        private void LinkVisualizationSettings()
+        {
+            var s = Engine.Rendering.Settings;
+            s.PropertyChanging += Settings_PropertyChanging;
+            s.PropertyChanged += Settings_PropertyChanged;
+            s.PhysicsVisualizeSettings.PropertyChanged += PhysicsVisualizeSettings_PropertyChanged;
+            CopyVisualizeSettings();
+        }
+
+        private void UnlinkVisualizationSettings()
+        {
+            var s = Engine.Rendering.Settings;
+            s.PhysicsVisualizeSettings.PropertyChanged -= PhysicsVisualizeSettings_PropertyChanged;
+            s.PropertyChanging -= Settings_PropertyChanging;
+            s.PropertyChanged -= Settings_PropertyChanged;
+        }
+
+        private void Settings_PropertyChanging(object? sender, IXRPropertyChangingEventArgs e)
+        {
+            switch (e.PropertyName)
+            {
+                case nameof(Engine.Rendering.Settings.PhysicsVisualizeSettings):
+                    Engine.Rendering.Settings.PhysicsVisualizeSettings.PropertyChanged -= PhysicsVisualizeSettings_PropertyChanged;
+                    break;
+            }
+        }
+
+        private void Settings_PropertyChanged(object? sender, IXRPropertyChangedEventArgs e)
+        {
+            switch (e.PropertyName)
+            {
+                case nameof(Engine.Rendering.Settings.PhysicsVisualizeSettings):
+                    CopyVisualizeSettings();
+                    Engine.Rendering.Settings.PhysicsVisualizeSettings.PropertyChanged += PhysicsVisualizeSettings_PropertyChanged;
+                    break;
+            }
+        }
+
+        private void CopyVisualizeSettings()
+        {
+            var s = Engine.Rendering.Settings.PhysicsVisualizeSettings;
+            VisualizeEnabled = s.VisualizeEnabled;
+            VisualizeWorldAxes = s.VisualizeWorldAxes;
+            VisualizeBodyAxes = s.VisualizeBodyAxes;
+            VisualizeBodyMassAxes = s.VisualizeBodyMassAxes;
+            VisualizeBodyLinearVelocity = s.VisualizeBodyLinearVelocity;
+            VisualizeBodyAngularVelocity = s.VisualizeBodyAngularVelocity;
+            VisualizeContactPoint = s.VisualizeContactPoint;
+            VisualizeContactNormal = s.VisualizeContactNormal;
+            VisualizeContactError = s.VisualizeContactError;
+            VisualizeContactForce = s.VisualizeContactForce;
+            VisualizeActorAxes = s.VisualizeActorAxes;
+            VisualizeCollisionAabbs = s.VisualizeCollisionAabbs;
+            VisualizeCollisionShapes = s.VisualizeCollisionShapes;
+            VisualizeCollisionAxes = s.VisualizeCollisionAxes;
+            VisualizeCollisionCompounds = s.VisualizeCollisionCompounds;
+            VisualizeCollisionFaceNormals = s.VisualizeCollisionFaceNormals;
+            VisualizeCollisionEdges = s.VisualizeCollisionEdges;
+            VisualizeCollisionStatic = s.VisualizeCollisionStatic;
+            VisualizeCollisionDynamic = s.VisualizeCollisionDynamic;
+            VisualizeJointLocalFrames = s.VisualizeJointLocalFrames;
+            VisualizeJointLimits = s.VisualizeJointLimits;
+            VisualizeCullBox = s.VisualizeCullBox;
+            VisualizeMbpRegions = s.VisualizeMbpRegions;
+            VisualizeSimulationMesh = s.VisualizeSimulationMesh;
+            VisualizeSdf = s.VisualizeSdf;
+        }
+
+        private void PhysicsVisualizeSettings_PropertyChanged(object? sender, IXRPropertyChangedEventArgs e)
+        {
+            switch (e.PropertyName)
+            {
+                case nameof(Engine.Rendering.Settings.PhysicsVisualizeSettings.VisualizeEnabled):
+                    VisualizeEnabled = Engine.Rendering.Settings.PhysicsVisualizeSettings.VisualizeEnabled;
+                    break;
+                case nameof(Engine.Rendering.Settings.PhysicsVisualizeSettings.VisualizeWorldAxes):
+                    VisualizeWorldAxes = Engine.Rendering.Settings.PhysicsVisualizeSettings.VisualizeWorldAxes;
+                    break;
+                case nameof(Engine.Rendering.Settings.PhysicsVisualizeSettings.VisualizeBodyAxes):
+                    VisualizeBodyAxes = Engine.Rendering.Settings.PhysicsVisualizeSettings.VisualizeBodyAxes;
+                    break;
+                case nameof(Engine.Rendering.Settings.PhysicsVisualizeSettings.VisualizeBodyMassAxes):
+                    VisualizeBodyMassAxes = Engine.Rendering.Settings.PhysicsVisualizeSettings.VisualizeBodyMassAxes;
+                    break;
+                case nameof(Engine.Rendering.Settings.PhysicsVisualizeSettings.VisualizeBodyLinearVelocity):
+                    VisualizeBodyLinearVelocity = Engine.Rendering.Settings.PhysicsVisualizeSettings.VisualizeBodyLinearVelocity;
+                    break;
+                case nameof(Engine.Rendering.Settings.PhysicsVisualizeSettings.VisualizeBodyAngularVelocity):
+                    VisualizeBodyAngularVelocity = Engine.Rendering.Settings.PhysicsVisualizeSettings.VisualizeBodyAngularVelocity;
+                    break;
+                case nameof(Engine.Rendering.Settings.PhysicsVisualizeSettings.VisualizeContactPoint):
+                    VisualizeContactPoint = Engine.Rendering.Settings.PhysicsVisualizeSettings.VisualizeContactPoint;
+                    break;
+                case nameof(Engine.Rendering.Settings.PhysicsVisualizeSettings.VisualizeContactNormal):
+                    VisualizeContactNormal = Engine.Rendering.Settings.PhysicsVisualizeSettings.VisualizeContactNormal;
+                    break;
+                case nameof(Engine.Rendering.Settings.PhysicsVisualizeSettings.VisualizeContactError):
+                    VisualizeContactError = Engine.Rendering.Settings.PhysicsVisualizeSettings.VisualizeContactError;
+                    break;
+                case nameof(Engine.Rendering.Settings.PhysicsVisualizeSettings.VisualizeContactForce):
+                    VisualizeContactForce = Engine.Rendering.Settings.PhysicsVisualizeSettings.VisualizeContactForce;
+                    break;
+                case nameof(Engine.Rendering.Settings.PhysicsVisualizeSettings.VisualizeActorAxes):
+                    VisualizeActorAxes = Engine.Rendering.Settings.PhysicsVisualizeSettings.VisualizeActorAxes;
+                    break;
+                case nameof(Engine.Rendering.Settings.PhysicsVisualizeSettings.VisualizeCollisionAabbs):
+                    VisualizeCollisionAabbs = Engine.Rendering.Settings.PhysicsVisualizeSettings.VisualizeCollisionAabbs;
+                    break;
+                case nameof(Engine.Rendering.Settings.PhysicsVisualizeSettings.VisualizeCollisionShapes):
+                    VisualizeCollisionShapes = Engine.Rendering.Settings.PhysicsVisualizeSettings.VisualizeCollisionShapes;
+                    break;
+                case nameof(Engine.Rendering.Settings.PhysicsVisualizeSettings.VisualizeCollisionAxes):
+                    VisualizeCollisionAxes = Engine.Rendering.Settings.PhysicsVisualizeSettings.VisualizeCollisionAxes;
+                    break;
+                case nameof(Engine.Rendering.Settings.PhysicsVisualizeSettings.VisualizeCollisionCompounds):
+                    VisualizeCollisionCompounds = Engine.Rendering.Settings.PhysicsVisualizeSettings.VisualizeCollisionCompounds;
+                    break;
+                case nameof(Engine.Rendering.Settings.PhysicsVisualizeSettings.VisualizeCollisionFaceNormals):
+                    VisualizeCollisionFaceNormals = Engine.Rendering.Settings.PhysicsVisualizeSettings.VisualizeCollisionFaceNormals;
+                    break;
+                case nameof(Engine.Rendering.Settings.PhysicsVisualizeSettings.VisualizeCollisionEdges):
+                    VisualizeCollisionEdges = Engine.Rendering.Settings.PhysicsVisualizeSettings.VisualizeCollisionEdges;
+                    break;
+                case nameof(Engine.Rendering.Settings.PhysicsVisualizeSettings.VisualizeCollisionStatic):
+                    VisualizeCollisionStatic = Engine.Rendering.Settings.PhysicsVisualizeSettings.VisualizeCollisionStatic;
+                    break;
+                case nameof(Engine.Rendering.Settings.PhysicsVisualizeSettings.VisualizeCollisionDynamic):
+                    VisualizeCollisionDynamic = Engine.Rendering.Settings.PhysicsVisualizeSettings.VisualizeCollisionDynamic;
+                    break;
+                case nameof(Engine.Rendering.Settings.PhysicsVisualizeSettings.VisualizeJointLocalFrames):
+                    VisualizeJointLocalFrames = Engine.Rendering.Settings.PhysicsVisualizeSettings.VisualizeJointLocalFrames;
+                    break;
+                case nameof(Engine.Rendering.Settings.PhysicsVisualizeSettings.VisualizeJointLimits):
+                    VisualizeJointLimits = Engine.Rendering.Settings.PhysicsVisualizeSettings.VisualizeJointLimits;
+                    break;
+                case nameof(Engine.Rendering.Settings.PhysicsVisualizeSettings.VisualizeCullBox):
+                    VisualizeCullBox = Engine.Rendering.Settings.PhysicsVisualizeSettings.VisualizeCullBox;
+                    break;
+                case nameof(Engine.Rendering.Settings.PhysicsVisualizeSettings.VisualizeMbpRegions):
+                    VisualizeMbpRegions = Engine.Rendering.Settings.PhysicsVisualizeSettings.VisualizeMbpRegions;
+                    break;
+                case nameof(Engine.Rendering.Settings.PhysicsVisualizeSettings.VisualizeSimulationMesh):
+                    VisualizeSimulationMesh = Engine.Rendering.Settings.PhysicsVisualizeSettings.VisualizeSimulationMesh;
+                    break;
+                case nameof(Engine.Rendering.Settings.PhysicsVisualizeSettings.VisualizeSdf):
+                    VisualizeSdf = Engine.Rendering.Settings.PhysicsVisualizeSettings.VisualizeSdf;
+                    break;
+            }
+        }
+
+        private PxDebugPoint* _debugPoints;
+        private PxDebugLine* _debugLines;
+        private PxDebugTriangle* _debugTriangles;
+
+        private static ColorF4 ToColorF4(uint c) => new(
+            ((c >> 00) & 0xFF) / 255.0f,
+            ((c >> 08) & 0xFF) / 255.0f,
+            ((c >> 16) & 0xFF) / 255.0f,
+            ((c >> 24) & 0xFF) / 255.0f);
+
+        private void PopulateDebugBuffers()
+        {
+            var rb = RenderBuffer;
+
+            _visualizer.PointCount = rb->GetNbPoints();
+            _visualizer.LineCount = rb->GetNbLines();
+            _visualizer.TriangleCount = rb->GetNbTriangles();
+
+            _debugPoints = rb->GetPoints();
+            _debugLines = rb->GetLines();
+            _debugTriangles = rb->GetTriangles();
+
+            _visualizer.PopulateBuffers();
+        }
+
+        public override void DebugRender()
+            => _visualizer.Render();
+
+        private (Vector3 pos, ColorF4 color) GetPoint(int i)
+        {
+            var p = _debugPoints[i];
+            return ((Vector3)p.pos, ToColorF4(p.color));
+        }
+        private (Vector3 pos0, Vector3 pos1, ColorF4 color) GetLine(int i)
+        {
+            var p = _debugLines[i];
+            return ((Vector3)p.pos0, (Vector3)p.pos1, ToColorF4(p.color0));
+        }
+        private (Vector3 pos0, Vector3 pos1, Vector3 pos2, ColorF4 color) GetTriangle(int i)
+        {
+            var p = _debugTriangles[i];
+            return ((Vector3)p.pos0, (Vector3)p.pos1, (Vector3)p.pos2, ToColorF4(p.color0));
         }
     }
 }

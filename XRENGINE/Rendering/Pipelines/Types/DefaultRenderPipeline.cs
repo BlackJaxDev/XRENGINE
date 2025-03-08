@@ -1,5 +1,4 @@
 ﻿using Extensions;
-using Silk.NET.Vulkan;
 using XREngine.Components.Lights;
 using XREngine.Components.Scene.Mesh;
 using XREngine.Data.Colors;

@@ -166,9 +166,9 @@ namespace XREngine.Components.Scene.Volumes
                 var aPos = contact.Value.Contact.PositionWorldOnA;
                 var bPos = contact.Value.Contact.PositionWorldOnB;
 
-                Engine.Rendering.Debug.RenderPoint(aPos, Color.Red, false);
-                Engine.Rendering.Debug.RenderPoint(bPos, Color.Green, false);
-                Engine.Rendering.Debug.RenderLine(aPos, bPos, Color.Magenta, false);
+                Engine.Rendering.Debug.RenderPoint(aPos, Color.Red);
+                Engine.Rendering.Debug.RenderPoint(bPos, Color.Green);
+                Engine.Rendering.Debug.RenderLine(aPos, bPos, Color.Magenta);
             }
         }
     }

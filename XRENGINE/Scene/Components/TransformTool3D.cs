@@ -1169,11 +1169,14 @@ namespace XREngine.Actors.Types
             if ((!_hiCam && !_hiSphere && !_hiAxis.Any) || Engine.Rendering.State.IsShadowPass)
                 return;
             
-            Engine.Rendering.Debug.RenderPoint(_lastPointWorld, ColorF4.Black, false);
-            Vector3 worldNormal = Vector3.TransformNormal(_localDragPlaneNormal, Transform.WorldMatrix);
+            Engine.Rendering.Debug.RenderPoint(_lastPointWorld, ColorF4.Black);
+
             var camera = Engine.Rendering.State.RenderingCamera;
             if (camera != null)
-                Engine.Rendering.Debug.RenderLine(_lastPointWorld, _lastPointWorld + worldNormal * camera.DistanceScaleOrthographic(Transform.WorldTranslation, 2.0f), ColorF4.Black, false);
+                Engine.Rendering.Debug.RenderLine(
+                    _lastPointWorld,
+                    _lastPointWorld + Vector3.TransformNormal(_localDragPlaneNormal, Transform.WorldMatrix) * camera.DistanceScaleOrthographic(Transform.WorldTranslation, 2.0f),
+                    ColorF4.Black);
         }
     }
 }

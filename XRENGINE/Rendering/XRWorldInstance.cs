@@ -151,8 +151,6 @@ namespace XREngine.Rendering
 
         private void GlobalSwapBuffers()
         {
-            ProcessTransformQueue();
-
             VisualScene.GlobalSwapBuffers();
             //PhysicsScene.SwapDebugBuffers();
             Lights.SwapBuffers();
@@ -177,34 +175,26 @@ namespace XREngine.Rendering
             //Lights.CaptureLightProbes();
         }
 
-        private ManualResetEventSlim _doneUpdating = new(false);
-        private ManualResetEventSlim _copying = new(false);
         private void PreUpdate()
         {
-            SwapUpdateWithUnused();
-            //IncrementBucketsIndex();
+
         }
 
         private void PostUpdate()
         {
-            _doneUpdating.Set();
-        }
-
-        private void ProcessTransformQueue()
-        {
-            if (!_doneUpdating.IsSet)
-                return;
-            var copy = CopyRenderFromUpdate();
-            _doneUpdating.Reset();
-
-            Action<TransformBase[]> recalc = Engine.Rendering.Settings.RecalcChildMatricesInParallel
+            Action<IEnumerable<TransformBase>> recalc = Engine.Rendering.Settings.RecalcChildMatricesInParallel
                 ? RecalcTransformsParallelTasks
                 : RecalcTransformsSequential;
 
-            copy.ForEach(recalc);
+            var ordered = _updateBuckets.OrderBy(x => x.Key).Select(x => x.Value.Where(x => x is not null));
+            foreach (var item in ordered) 
+                recalc(item);
+
+            SwapUpdateWithUnused();
+            IncrementBucketsIndex();
         }
 
-        private static void RecalcTransformsSequential(TransformBase[] bag)
+        private static void RecalcTransformsSequential(IEnumerable<TransformBase> bag)
         {
             foreach (var transform in bag)
                 transform.RecalculateMatrixHeirarchy(false);
@@ -222,7 +212,7 @@ namespace XREngine.Rendering
         //    });
         //}
 
-        private static void RecalcTransformsParallelTasks(TransformBase[] bag)
+        private static void RecalcTransformsParallelTasks(IEnumerable<TransformBase> bag)
         {
             void Calc(TransformBase tfm)
                 => tfm.RecalculateMatrixHeirarchy(true);
@@ -251,12 +241,6 @@ namespace XREngine.Rendering
             (_circularTransformBuckets[UnusedBucketIndex], _circularTransformBuckets[UpdateBucketIndex]) = (_circularTransformBuckets[UpdateBucketIndex], _circularTransformBuckets[UnusedBucketIndex]);
             foreach (var kv in _updateBuckets)
                 kv.Value.Clear();
-        }
-
-        private IEnumerable<TransformBase[]> CopyRenderFromUpdate()
-        {
-            var copy = _updateBuckets.OrderBy(x => x.Key).Select(x => x.Value.Where(x => x is not null).ToArray());
-            return copy;
         }
 
         private int UnusedBucketIndex => _bucketsIndex == 0 ? _circularTransformBuckets.Length - 1 : _bucketsIndex - 1;

@@ -55,6 +55,25 @@ namespace XREngine
             => _mainThreadTaskQueue.Enqueue(task);
 
         /// <summary>
+        /// Invokes the task on the main thread if the current thread is not the render thread.
+        /// Returns true if the task was enqueued, false if not.
+        /// </summary>
+        /// <param name="task"></param>
+        /// <returns></returns>
+        public static bool InvokeOnMainThread(Action task, bool executeNowIfFalse = false)
+        {
+            if (IsRenderThread)
+            {
+                if (executeNowIfFalse)
+                    task();
+                return false;
+            }
+            
+            EnqueueMainThreadTask(task);
+            return true;
+        }
+
+        /// <summary>
         /// Indicates the engine is currently starting up and might be still initializing objects.
         /// </summary>
         public static bool StartingUp { get; private set; }
@@ -210,15 +229,8 @@ namespace XREngine
 
         private static void DequeueMainThreadTasks()
         {
-            Stopwatch sw = new();
-            sw.Start();
             while (_mainThreadTaskQueue.TryDequeue(out var task))
-            {
                 task.Invoke();
-                if (sw.ElapsedMilliseconds > 1)
-                    break;
-            }
-            sw.Stop();
         }
 
         public static void InitializeWindows(List<GameWindowStartupSettings> windows)

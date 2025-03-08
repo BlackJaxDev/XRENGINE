@@ -105,10 +105,10 @@ namespace XREngine.Components.Scene.Mesh
 
             var box = (RenderInfo as IOctreeItem)?.WorldCullingVolume;
             if (box is not null)
-                Engine.Rendering.Debug.RenderBox(box.Value.LocalHalfExtents, box.Value.LocalCenter, box.Value.Transform, false, ColorF4.White, true);
+                Engine.Rendering.Debug.RenderBox(box.Value.LocalHalfExtents, box.Value.LocalCenter, box.Value.Transform, false, ColorF4.White);
 
             if (RootBone is not null)
-                Engine.Rendering.Debug.RenderPoint(RootBone.WorldTranslation, ColorF4.Red, false);
+                Engine.Rendering.Debug.RenderPoint(RootBone.WorldTranslation, ColorF4.Red);
         }
 
         private void SettingUniforms(XRRenderProgram vertexProgram, XRRenderProgram materialProgram)

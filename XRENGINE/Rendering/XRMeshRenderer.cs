@@ -1,4 +1,5 @@
-﻿using System.Diagnostics.CodeAnalysis;
+﻿using Extensions;
+using System.Diagnostics.CodeAnalysis;
 using System.Numerics;
 using XREngine.Core.Files;
 using XREngine.Data.Colors;
@@ -96,7 +97,7 @@ namespace XREngine.Rendering
         {
             _mesh = mesh;
             _material = material;
-            ReinitializeBones();
+            InitializeDrivableBuffers();
 
             Versions.Add(0, new Version<DefaultVertexShaderGenerator>(this, NoSpecialExtensions, true));
             Versions.Add(1, new Version<OVRMultiViewVertexShaderGenerator>(this, HasOvrMultiView2, false));
@@ -167,31 +168,53 @@ namespace XREngine.Rendering
         }
 
         private RenderBone[]? _bones;
-        //private ConcurrentDictionary<uint, Matrix4x4> _modifiedBonesRendering = [];
-        //private ConcurrentDictionary<uint, Matrix4x4> _modifiedBonesUpdating = [];
+        public RenderBone[]? Bones => _bones;
 
-        private void ReinitializeBones()
+        public float GetBlendshapeWeight(uint index)
+            => BlendshapeWeights?.GetFloat(index) ?? 0.0f;
+        public void SetBlendshapeWeight(uint index, float weight)
         {
-            //using var timer = Engine.Profiler.Start();
-
-            ResetBoneInfo();
-
-            if ((Mesh?.HasSkinning ?? false) && Engine.Rendering.Settings.AllowSkinning)
-            {
-                PopulateBoneMatrixBuffers();
-                //Engine.Time.Timer.SwapBuffers += SwapBuffers;
-            }
+            BlendshapeWeights?.SetFloat(index, weight);
+            _blendshapesInvalidated = true;
         }
 
-        private void ResetBoneInfo()
+        private void InitializeDrivableBuffers()
         {
-            //Engine.Time.Timer.SwapBuffers -= SwapBuffers;
+            ResetDrivableBuffers();
+
+            if ((Mesh?.HasSkinning ?? false) && Engine.Rendering.Settings.AllowSkinning)
+                PopulateBoneMatrixBuffers();
+            
+            if ((Mesh?.HasBlendshapes ?? false) && Engine.Rendering.Settings.AllowBlendshapes)
+                PopulateBlendshapeWeightsBuffer();
+        }
+
+        private void PopulateBlendshapeWeightsBuffer()
+        {
+            uint blendshapeCount = Mesh?.BlendshapeCount ?? 0;
+            BlendshapeWeights = new XRDataBuffer($"{ECommonBufferType.BlendshapeWeights}Buffer", EBufferTarget.ShaderStorageBuffer, blendshapeCount.Align(4), EComponentType.Float, 1, false, false)
+            {
+                Usage = EBufferUsage.DynamicDraw
+            };
+
+            for (uint i = 0; i < blendshapeCount; i++)
+                BlendshapeWeights.Set(i, 0.0f);
+
+            Buffers.Add(BlendshapeWeights.BindingName, BlendshapeWeights);
+        }
+
+        private void ResetDrivableBuffers()
+        {
             _bones = null;
-            //SingleBind = null;
+
             BoneMatricesBuffer?.Destroy();
             BoneMatricesBuffer = null;
+
             BoneInvBindMatricesBuffer?.Destroy();
             BoneInvBindMatricesBuffer = null;
+
+            BlendshapeWeights?.Destroy();
+            BlendshapeWeights = null;
         }
 
         public BufferCollection Buffers { get; private set; } = [];
@@ -206,6 +229,11 @@ namespace XREngine.Rendering
         /// All bone inverse bind matrices for the mesh.
         /// </summary>
         public XRDataBuffer? BoneInvBindMatricesBuffer { get; private set; }
+
+        /// <summary>
+        /// All blendshape weights for the mesh.
+        /// </summary>
+        public XRDataBuffer? BlendshapeWeights { get; private set; }
 
         private void PopulateBoneMatrixBuffers()
         {
@@ -246,19 +274,13 @@ namespace XREngine.Rendering
         }
 
         private bool _bonesInvalidated = false;
+        private bool _blendshapesInvalidated = false;
+
         private void BoneTransformUpdated(RenderBone bone)
         {
             BoneMatricesBuffer?.Set(bone.Index, bone.Transform.WorldMatrix);
             _bonesInvalidated = true;
-            //This swapping method seems to be overkill, just set directly to the buffer
-            //_modifiedBonesUpdating.AddOrUpdate(bone.Index, x => bone.Transform.WorldMatrix, (x, y) => bone.Transform.WorldMatrix);
         }
-
-        //public void SwapBuffers()
-        //{
-        //    //(_modifiedBonesRendering, _modifiedBonesUpdating) = (_modifiedBonesUpdating, _modifiedBonesRendering);
-        //    //_modifiedBonesUpdating.Clear();
-        //}
 
         //TODO: use mapped buffer for constant streaming
         public void PushBoneMatricesToGPU()
@@ -266,18 +288,16 @@ namespace XREngine.Rendering
             if (BoneMatricesBuffer is null || !_bonesInvalidated)
                 return;
 
-            ////TODO: what's faster, pushing sub data per matrix, or pushing all? or mapping?
-            //foreach (var bone in _modifiedBonesRendering)
-            //{
-            //    BoneMatricesBuffer.Set(bone.Key, bone.Value);
-
-            //    //This doesn't work, and I don't know why
-            //    //var elemSize = BoneMatricesBuffer.ElementSize;
-            //    //BoneMatricesBuffer.PushSubData((int)(bone.Key * elemSize), elemSize);
-            //}
-
             _bonesInvalidated = false;
             BoneMatricesBuffer.PushSubData();
+        }
+        public void PushBlendshapeWeightsToGPU()
+        {
+            if (BlendshapeWeights is null || !_blendshapesInvalidated)
+                return;
+
+            _blendshapesInvalidated = false;
+            BlendshapeWeights.PushSubData();
         }
 
         private bool _generateAsync = false;
@@ -293,7 +313,7 @@ namespace XREngine.Rendering
             switch (propName)
             {
                 case nameof(Mesh):
-                    ReinitializeBones();
+                    InitializeDrivableBuffers();
                     break;
             }
         }

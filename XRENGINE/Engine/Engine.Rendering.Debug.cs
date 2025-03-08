@@ -1,14 +1,10 @@
 ﻿using Extensions;
 using System.Collections.Concurrent;
 using System.Numerics;
-using System.Transactions;
 using XREngine.Data.Colors;
-using XREngine.Data.Core;
 using XREngine.Data.Geometry;
-using XREngine.Data.Rendering;
 using XREngine.Data.Transforms.Rotations;
-using XREngine.Rendering;
-using XREngine.Rendering.Models.Materials;
+using XREngine.Rendering.Physics.Physx;
 
 namespace XREngine
 {
@@ -25,259 +21,156 @@ namespace XREngine
                 public static readonly Vector3 UIPositionBias = new(0.0f, 0.0f, 0.1f);
                 public static readonly Rotator UIRotation = new(90.0f, 0.0f, 0.0f, ERotationOrder.YPR);
 
-                public const float DefaultPointSize = 10.0f;
-                public const float DefaultLineSize = 1.0f;
+                private static readonly ConcurrentBag<(Vector3 pos, ColorF4 color)> _debugPoints = [];
+                private static readonly ConcurrentBag<(Vector3 pos0, Vector3 pos1, ColorF4 color)> _debugLines = [];
+                private static readonly ConcurrentBag<(Vector3 pos0, Vector3 pos1, Vector3 pos2, ColorF4 color)> _debugTriangles = [];
 
-                private static ConcurrentQueue<IShapeData> _debugShapesRendering = new();
-                private static ConcurrentQueue<IShapeData> _debugShapesUpdating = new();
-
-                public static void EnqueueShape(IShapeData shape)
-                {
-                    _debugShapesUpdating.Enqueue(shape);
-                }
+                private static readonly InstancedDebugVisualizer _instancedDebugVisualizer = new();
 
                 public static void SwapBuffers()
                 {
-                    _debugShapesRendering.Clear();
-                    (_debugShapesUpdating, _debugShapesRendering) = (_debugShapesRendering, _debugShapesUpdating);
+                    Task tp = Task.Run(PopulatePoints);
+                    Task tl = Task.Run(PopulateLines);
+                    Task tt = Task.Run(PopulateTriangles);
+                    Task.WaitAll(tp, tl, tt);
+                }
+
+                private static void PopulateTriangles()
+                {
+                    _instancedDebugVisualizer.TriangleCount = (uint)_debugTriangles.Count;
+
+                    int i = 0;
+                    foreach (var (pos0, pos1, pos2, color) in _debugTriangles)
+                        _instancedDebugVisualizer.SetTriangleAt(i++, pos0, pos1, pos2, color);
+
+                    _debugTriangles.Clear();
+                }
+
+                private static void PopulateLines()
+                {
+                    _instancedDebugVisualizer.LineCount = (uint)_debugLines.Count;
+
+                    int i = 0;
+                    foreach (var (pos0, pos1, color) in _debugLines)
+                        _instancedDebugVisualizer.SetLineAt(i++, pos0, pos1, color);
+
+                    _debugLines.Clear();
+                }
+
+                private static void PopulatePoints()
+                {
+                    _instancedDebugVisualizer.PointCount = (uint)_debugPoints.Count;
+
+                    int i = 0;
+                    foreach (var (pos, color) in _debugPoints)
+                        _instancedDebugVisualizer.SetPointAt(i++, pos, color);
+
+                    _debugPoints.Clear();
                 }
 
                 public static void RenderShapes()
+                    => _instancedDebugVisualizer.Render();
+
+                private static bool InCamera(Vector3 position)
                 {
-                    foreach (IShapeData shape in _debugShapesRendering)
-                    {
-                        switch (shape)
-                        {
-                            case PointData p:
-                                RenderPoint(p.Position, p.Color, p.DepthTestEnabled);
-                                break;
-                            case LineData l:
-                                RenderLine(l.Start, l.End, l.Color, l.DepthTestEnabled);
-                                break;
-                            case CircleData c:
-                                RenderCircle(c.Center, c.Rotation, c.Radius, c.Solid, c.Color, c.DepthTestEnabled);
-                                break;
-                            case QuadData q:
-                                RenderQuad(q.Center, q.Rotation, q.Extents, q.Solid, q.Color, q.DepthTestEnabled);
-                                break;
-                            case SphereData s:
-                                RenderSphere(s.Center, s.Radius, s.Solid, s.Color, s.DepthTestEnabled);
-                                break;
-                            case AABBData a:
-                                RenderAABB(a.HalfExtents, a.Translation, a.Solid, a.Color, a.DepthTestEnabled);
-                                break;
-                            case BoxData b:
-                                RenderBox(b.HalfExtents, b.Center, b.Transform, b.Solid, b.Color, b.DepthTestEnabled);
-                                break;
-                            case CapsuleData c:
-                                RenderCapsule(c.Capsule, c.Color, c.DepthTestEnabled);
-                                break;
-                            case TriangleData t:
-                                RenderTriangle(t.Value, t.Color, t.Solid, t.DepthTestEnabled);
-                                break;
-                            case CylinderData c:
-                                RenderCylinder(c.Transform, c.LocalUpAxis, c.Radius, c.HalfHeight, c.Solid, c.Color);
-                                break;
-                            case ConeData c:
-                                RenderCone(c.Center, c.UpAxis, c.Radius, c.Height, c.Solid, c.Color);
-                                break;
-                        }
-                    }
+                    return true;
+                    //var playerCam = Engine.State.MainPlayer.ControlledPawn?.GetCamera()?.Camera;
+                    //if (playerCam is null)
+                    //    return false;
+
+                    ////Transform to clip space
+                    //Vector3 vpPos = playerCam.WorldToNormalizedViewportCoordinate(position);
+
+                    //return 
+                    //    vpPos.X >= 0 && 
+                    //    vpPos.X <= 1 && 
+                    //    vpPos.Y >= 0 && 
+                    //    vpPos.Y <= 1 && 
+                    //    vpPos.Z >= 0 && 
+                    //    vpPos.Z <= 1;
                 }
 
-                public interface IShapeData
+                public static void RenderPoint(Vector3 position, ColorF4 color)
                 {
-                    public ColorF4 Color { get; }
-                    public bool DepthTestEnabled { get; }
-                    public bool Solid { get; }
-                }
-                public struct PointData(Vector3 position, ColorF4 color, bool depthTestEnabled = true) : IShapeData
-                {
-                    public Vector3 Position = position;
-                    public ColorF4 Color { get; } = color;
-                    public bool DepthTestEnabled { get; } = depthTestEnabled;
-                    public bool Solid { get; } = false;
-                }
-                public struct LineData(Vector3 start, Vector3 end, ColorF4 color, bool depthTestEnabled = true) : IShapeData
-                {
-                    public Vector3 Start = start;
-                    public Vector3 End = end;
-                    public ColorF4 Color { get; } = color;
-                    public bool DepthTestEnabled { get; } = depthTestEnabled;
-                    public bool Solid { get; } = false;
-                }
-                public struct CircleData(bool solid, Vector3 center, Rotator rotation, float radius, ColorF4 color, bool depthTestEnabled = true) : IShapeData
-                {
-                    public Vector3 Center = center;
-                    public Rotator Rotation = rotation;
-                    public float Radius = radius;
-                    public ColorF4 Color { get; } = color;
-                    public bool Solid { get; } = solid;
-                    public bool DepthTestEnabled { get; } = depthTestEnabled;
-                }
-                public struct QuadData(bool solid, Vector3 center, Rotator rotation, Vector2 extents, ColorF4 color, bool depthTestEnabled = true) : IShapeData
-                {
-                    public Vector3 Center = center;
-                    public Rotator Rotation = rotation;
-                    public Vector2 Extents = extents;
-                    public ColorF4 Color { get; } = color;
-                    public bool Solid { get; } = solid;
-                    public bool DepthTestEnabled { get; } = depthTestEnabled;
-                }
-                public struct SphereData(bool solid, Vector3 center, float radius, ColorF4 color, bool depthTestEnabled = true) : IShapeData
-                {
-                    public Vector3 Center = center;
-                    public float Radius = radius;
-                    public ColorF4 Color { get; } = color;
-                    public bool Solid { get; } = solid;
-                    public bool DepthTestEnabled { get; } = depthTestEnabled;
-                }
-                public struct AABBData(bool solid, Vector3 halfExtents, Vector3 translation, ColorF4 color, bool depthTestEnabled = true) : IShapeData
-                {
-                    public Vector3 HalfExtents = halfExtents;
-                    public Vector3 Translation = translation;
-                    public ColorF4 Color { get; } = color;
-                    public bool Solid { get; } = solid;
-                    public bool DepthTestEnabled { get; } = depthTestEnabled;
-                }
-                public struct BoxData(bool solid, Vector3 halfExtents, Vector3 center, Matrix4x4 transform, ColorF4 color, bool depthTestEnabled = true) : IShapeData
-                {
-                    public Vector3 HalfExtents = halfExtents;
-                    public Vector3 Center = center;
-                    public Matrix4x4 Transform = transform;
-                    public ColorF4 Color { get; } = color;
-                    public bool Solid { get; } = solid;
-                    public bool DepthTestEnabled { get; } = depthTestEnabled;
-                }
-                public struct CapsuleData(bool solid, Capsule capsule, ColorF4 color, bool depthTestEnabled = true) : IShapeData
-                {
-                    public Capsule Capsule = capsule;
-                    public ColorF4 Color { get; } = color;
-                    public bool DepthTestEnabled { get; } = depthTestEnabled;
-                    public bool Solid { get; } = solid;
-                }
-                public struct TriangleData(bool solid, Vector3 A, Vector3 B, Vector3 C, ColorF4 color, bool depthTestEnabled = true) : IShapeData
-                {
-                    public Triangle Value = new(A, B, C);
-                    public ColorF4 Color { get; } = color;
-                    public bool Solid { get; } = solid;
-                    public bool DepthTestEnabled { get; } = depthTestEnabled;
-                }
-                public struct CylinderData(bool solid, Matrix4x4 transform, Vector3 localUpAxis, float radius, float halfHeight, ColorF4 color, bool depthTestEnabled = true) : IShapeData
-                {
-                    public Matrix4x4 Transform = transform;
-                    public Vector3 LocalUpAxis = localUpAxis;
-                    public float Radius = radius;
-                    public float HalfHeight = halfHeight;
-                    public ColorF4 Color { get; } = color;
-                    public bool Solid { get; } = solid;
-                    public bool DepthTestEnabled { get; } = depthTestEnabled;
-                }
-                public struct ConeData(bool solid, Vector3 center, Vector3 upAxis, float radius, float height, ColorF4 color, bool depthTestEnabled = true) : IShapeData
-                {
-                    public Vector3 Center = center;
-                    public Vector3 UpAxis = upAxis;
-                    public float Radius = radius;
-                    public float Height = height;
-                    public ColorF4 Color { get; } = color;
-                    public bool Solid { get; } = solid;
-                    public bool DepthTestEnabled { get; } = depthTestEnabled;
+                    if (InCamera(position))
+                        _debugPoints.Add((position, color));
                 }
 
-                private static unsafe void SetOptions(bool? depthTestEnabled, float? lineWidth, float? pointSize, XRMeshRenderer renderer)
+                public static unsafe void RenderLine(Vector3 start, Vector3 end, ColorF4 color)
                 {
-                    var mat = renderer.Material;
-                    if (mat is null)
-                        return;
-
-                    var opts = mat.RenderOptions;
-
-                    //if (lineWidth.HasValue)
-                    //    opts.LineWidth = lineWidth.Value;
-
-                    //if (pointSize.HasValue)
-                    //    opts.PointSize = pointSize.Value;
-
-                    if (depthTestEnabled.HasValue)
-                    {
-                        var enabled = depthTestEnabled.Value;
-                        if (enabled)
-                        {
-                            opts.DepthTest.Enabled = ERenderParamUsage.Enabled;
-                            mat.RenderPass = (int)EDefaultRenderPass.OpaqueForward;
-                        }
-                        else
-                        {
-                            opts.DepthTest.Enabled = ERenderParamUsage.Disabled;
-                            mat.RenderPass = (int)EDefaultRenderPass.OnTopForward;
-                        }
-                    }
+                    if (InCamera(start) || InCamera(end))
+                        _debugLines.Add((start, end, color));
                 }
 
-                public static void RenderPoint(
-                    Vector3 position,
+                public static void RenderTriangle(Triangle triangle, ColorF4 color, bool solid)
+                    => RenderTriangle(triangle.A, triangle.B, triangle.C, color, solid);
+                public static void RenderTriangle(
+                    Vector3 A,
+                    Vector3 B,
+                    Vector3 C,
                     ColorF4 color,
-                    bool depthTestEnabled = true,
-                    float pointSize = DefaultPointSize)
+                    bool solid)
                 {
-                    if (!IsRenderThread)
-                    {
-                        _debugShapesUpdating.Enqueue(new PointData(position, color, depthTestEnabled));
+                    if (!(InCamera(A) || InCamera(B) || InCamera(C)))
                         return;
-                    }
 
-                    XRMeshRenderer renderer = GetDebugPrimitive(EDebugPrimitiveType.Point, out _);
-                    SetOptions(depthTestEnabled, null, pointSize, renderer);
-                    renderer.SetParameter(0, color);
-                    renderer.Render(Matrix4x4.CreateTranslation(position));
-                }
-
-                public static unsafe void RenderLine(
-                    Vector3 start,
-                    Vector3 end,
-                    ColorF4 color,
-                    bool depthTestEnabled = true,
-                    float lineWidth = DefaultLineSize)
-                {
-                    if (!IsRenderThread)
+                    if (solid)
+                        _debugTriangles.Add((A, B, C, color));
+                    else
                     {
-                        _debugShapesUpdating.Enqueue(new LineData(start, end, color, depthTestEnabled));
-                        return;
+                        RenderLine(A, B, color);
+                        RenderLine(B, C, color);
+                        RenderLine(C, A, color);
                     }
-
-                    XRMeshRenderer renderer = GetDebugPrimitive(EDebugPrimitiveType.Line, out _);
-                    SetOptions(depthTestEnabled, lineWidth, null, renderer);
-                    renderer.SetParameter(0, color);
-                    Vector3 dir = (end - start).Normalized();
-                    Vector3 arb = Vector3.UnitX;
-                    if (Vector3.Dot(dir, Vector3.UnitX) > 0.99f || Vector3.Dot(dir, Vector3.UnitX) < -0.99f)
-                        arb = Vector3.UnitZ;
-                    Vector3 perp = Vector3.Cross(dir, arb).Normalized();
-                    renderer.Render(Matrix4x4.CreateScale(Vector3.Distance(start, end)) * Matrix4x4.CreateWorld(start, dir, perp));
                 }
 
                 public static void RenderCircle(
-                    Vector3 centerTranslation,
+                    Vector3 centerPosition,
                     Rotator rotation,
                     float radius,
                     bool solid,
-                    ColorF4 color,
-                    bool depthTestEnabled = true,
-                    float lineWidth = DefaultLineSize)
+                    ColorF4 color)
                 {
-                    if (!IsRenderThread)
-                    {
-                        _debugShapesUpdating.Enqueue(new CircleData(solid, centerTranslation, rotation, radius, color, depthTestEnabled));
-                        return;
-                    }
+                    const int segments = 20;
 
-                    XRMeshRenderer renderer = GetDebugPrimitive(solid ? EDebugPrimitiveType.SolidCircle : EDebugPrimitiveType.WireCircle, out _);
-                    SetOptions(depthTestEnabled, lineWidth, null, renderer);
-                    renderer.SetParameter(0, color);
-                    renderer.Render(
-                        Matrix4x4.CreateScale(radius, 1.0f, radius) *
-                        rotation.GetMatrix() *
-                        Matrix4x4.CreateTranslation(centerTranslation));
+                    Matrix4x4 rotMatrix = rotation.GetMatrix();
+                    if (solid)
+                    {
+                        // Generate circle points for a triangle fan.
+                        Vector3[] circlePoints = new Vector3[segments + 1];
+                        for (int i = 0; i <= segments; i++)
+                        {
+                            float angle = 2 * MathF.PI * i / segments;
+                            float x = MathF.Cos(angle) * radius;
+                            float z = MathF.Sin(angle) * radius;
+                            Vector3 localPoint = new(x, 0, z);
+                            circlePoints[i] = Vector3.Transform(localPoint, rotMatrix) + centerPosition;
+                        }
+
+                        // Build triangle fan: center + each adjacent edge.
+                        for (int i = 0; i < segments; i++)
+                        {
+                            Vector3 pos0 = centerPosition;
+                            Vector3 pos1 = circlePoints[i];
+                            Vector3 pos2 = circlePoints[i + 1];
+                            RenderTriangle(pos0, pos1, pos2, color, true);
+                        }
+                    }
+                    else
+                    {
+                        // Render circle outline using lines.
+                        Vector3[] circlePoints = new Vector3[segments + 1];
+                        for (int i = 0; i <= segments; i++)
+                        {
+                            float angle = 2 * MathF.PI * i / segments;
+                            float x = MathF.Cos(angle) * radius;
+                            float z = MathF.Sin(angle) * radius;
+                            Vector3 localPoint = new Vector3(x, 0, z);
+                            circlePoints[i] = Vector3.Transform(localPoint, rotMatrix) + centerPosition;
+                        }
+                        for (int i = 0; i < segments; i++)
+                            RenderLine(circlePoints[i], circlePoints[i + 1], color);
+                    }
                 }
 
                 public static void RenderQuad(
@@ -285,330 +178,408 @@ namespace XREngine
                     Rotator rotation,
                     Vector2 extents,
                     bool solid,
-                    ColorF4 color,
-                    bool depthTestEnabled = true,
-                    float lineWidth = DefaultLineSize)
+                    ColorF4 color)
                 {
-                    if (!IsRenderThread)
+                    if (solid)
                     {
-                        _debugShapesUpdating.Enqueue(new QuadData(solid, centerTranslation, rotation, extents, color, depthTestEnabled));
-                        return;
+                        Vector3[] quadPoints =
+                        [
+                            new Vector3(-extents.X, 0, -extents.Y),
+                            new Vector3(extents.X, 0, -extents.Y),
+                            new Vector3(extents.X, 0, extents.Y),
+                            new Vector3(-extents.X, 0, extents.Y),
+                        ];
+                        Matrix4x4 rotMatrix = rotation.GetMatrix();
+                        for (int i = 0; i < 4; i++)
+                            quadPoints[i] = Vector3.Transform(quadPoints[i], rotMatrix) + centerTranslation;
+                        RenderTriangle(quadPoints[0], quadPoints[1], quadPoints[2], color, true);
+                        RenderTriangle(quadPoints[0], quadPoints[2], quadPoints[3], color, true);
                     }
-
-                    var renderer = GetDebugPrimitive(solid ? EDebugPrimitiveType.SolidQuad : EDebugPrimitiveType.WireQuad, out _);
-                    SetOptions(depthTestEnabled, lineWidth, null, renderer);
-                    renderer.SetParameter(0, color);
-                    renderer.Render(
-                        Matrix4x4.CreateScale(extents.X, 1.0f, extents.Y) *
-                        rotation.GetMatrix() *
-                        Matrix4x4.CreateTranslation(centerTranslation));
+                    else
+                    {
+                        Vector3[] quadPoints =
+                        [
+                            new Vector3(-extents.X, 0, -extents.Y),
+                            new Vector3(extents.X, 0, -extents.Y),
+                            new Vector3(extents.X, 0, extents.Y),
+                            new Vector3(-extents.X, 0, extents.Y),
+                        ];
+                        Matrix4x4 rotMatrix = rotation.GetMatrix();
+                        for (int i = 0; i < 4; i++)
+                            quadPoints[i] = Vector3.Transform(quadPoints[i], rotMatrix) + centerTranslation;
+                        RenderLine(quadPoints[0], quadPoints[1], color);
+                        RenderLine(quadPoints[1], quadPoints[2], color);
+                        RenderLine(quadPoints[2], quadPoints[3], color);
+                        RenderLine(quadPoints[3], quadPoints[0], color);
+                    }
                 }
 
                 public static void RenderSphere(
                     Vector3 center,
                     float radius,
                     bool solid,
-                    ColorF4 color,
-                    bool depthTestEnabled = true,
-                    float lineWidth = DefaultLineSize)
+                    ColorF4 color)
                 {
-                    if (!IsRenderThread)
+                    const int segments = 20;
+                    const int rings = 20;
+
+                    Vector3[] spherePoints = new Vector3[segments * rings];
+                    for (int i = 0; i < rings; i++)
                     {
-                        _debugShapesUpdating.Enqueue(new SphereData(solid, center, radius, color, depthTestEnabled));
-                        return;
+                        float theta = MathF.PI * i / rings;
+                        float sinTheta = MathF.Sin(theta);
+                        float cosTheta = MathF.Cos(theta);
+                        for (int j = 0; j < segments; j++)
+                        {
+                            float phi = 2 * MathF.PI * j / segments;
+                            float sinPhi = MathF.Sin(phi);
+                            float cosPhi = MathF.Cos(phi);
+                            Vector3 localPoint = new(cosPhi * sinTheta, cosTheta, sinPhi * sinTheta);
+                            spherePoints[i * segments + j] = localPoint * radius + center;
+                        }
                     }
 
-                    XRMeshRenderer renderer = GetDebugPrimitive(solid ? EDebugPrimitiveType.SolidSphere : EDebugPrimitiveType.WireSphere, out _);
-                    SetOptions(depthTestEnabled, lineWidth, null, renderer);
-                    renderer.SetParameter(0, color);
-                    //radius doesn't need to be multiplied by 2.0f; the sphere is already 2.0f in diameter
-                    renderer.Render(
-                        Matrix4x4.CreateScale(radius) * 
-                        Matrix4x4.CreateTranslation(center));
+                    if (solid)
+                    {
+                        // Build triangle fan: center + each adjacent edge.
+                        for (int i = 0; i < rings - 1; i++)
+                        {
+                            for (int j = 0; j < segments - 1; j++)
+                            {
+                                Vector3 pos0 = spherePoints[i * segments + j];
+                                Vector3 pos1 = spherePoints[i * segments + j + 1];
+                                Vector3 pos2 = spherePoints[(i + 1) * segments + j];
+                                RenderTriangle(pos0, pos1, pos2, color, true);
+
+                                pos0 = spherePoints[i * segments + j + 1];
+                                pos1 = spherePoints[(i + 1) * segments + j + 1];
+                                pos2 = spherePoints[(i + 1) * segments + j];
+                                RenderTriangle(pos0, pos1, pos2, color, true);
+                            }
+                        }
+                    }
+                    else
+                    {
+                        for (int i = 0; i < rings; i++)
+                        {
+                            for (int j = 0; j < segments; j++)
+                            {
+                                Vector3 pos0 = spherePoints[i * segments + j];
+                                Vector3 pos1 = spherePoints[i * segments + (j + 1) % segments];
+                                RenderLine(pos0, pos1, color);
+                                if (i < rings - 1)
+                                {
+                                    Vector3 pos2 = spherePoints[(i + 1) * segments + j];
+                                    RenderLine(pos0, pos2, color);
+                                }
+                            }
+                        }
+                    }
                 }
 
-                public static void RenderRect2D(BoundingRectangleF bounds, bool solid, ColorF4 color, bool depthTestEnabled = true)
-                {
-                    RenderQuad(
+                public static void RenderRect2D(
+                    BoundingRectangleF bounds,
+                    bool solid,
+                    ColorF4 color)
+                    => RenderQuad(
                         new Vector3(bounds.Center.X, bounds.Center.Y, 0.0f),
                         Rotator.GetZero(),
                         new Vector2(bounds.Extents.X, bounds.Extents.Y),
                         solid,
-                        color,
-                        depthTestEnabled);
-                }
+                        color);
 
                 public static void RenderAABB(
                     Vector3 halfExtents,
                     Vector3 translation,
                     bool solid,
-                    ColorF4 color,
-                    bool depthTestEnabled = true,
-                    float lineWidth = DefaultLineSize)
+                    ColorF4 color)
                     => RenderBox(
                         halfExtents,
                         translation,
                         Matrix4x4.Identity,
                         solid,
-                        color,
-                        depthTestEnabled,
-                        lineWidth);
+                        color);
 
                 public static void RenderBox(
                     Vector3 halfExtents,
                     Vector3 center,
                     Matrix4x4 transform,
                     bool solid,
-                    ColorF4 color,
-                    bool depthTestEnabled = true,
-                    float lineWidth = DefaultLineSize)
+                    ColorF4 color)
                 {
-                    if (!IsRenderThread)
+                    Vector3[] boxPoints =
                     {
-                        _debugShapesUpdating.Enqueue(new BoxData(solid, halfExtents, center, transform, color, depthTestEnabled));
-                        return;
-                    }
+                        new(-halfExtents.X, -halfExtents.Y, -halfExtents.Z),
+                        new(halfExtents.X, -halfExtents.Y, -halfExtents.Z),
+                        new(halfExtents.X, -halfExtents.Y, halfExtents.Z),
+                        new(-halfExtents.X, -halfExtents.Y, halfExtents.Z),
+                        new(-halfExtents.X, halfExtents.Y, -halfExtents.Z),
+                        new(halfExtents.X, halfExtents.Y, -halfExtents.Z),
+                        new(halfExtents.X, halfExtents.Y, halfExtents.Z),
+                        new(-halfExtents.X, halfExtents.Y, halfExtents.Z),
+                    };
 
-                    var renderer = GetDebugPrimitive(solid ? EDebugPrimitiveType.SolidBox : EDebugPrimitiveType.WireBox, out _);
-                    SetOptions(depthTestEnabled, lineWidth, null, renderer);
-                    renderer.SetParameter(0, color);
-                    //halfExtents doesn't need to be multiplied by 2.0f; the box is already 1.0f in each direction of each dimension (2.0f extents)
-                    renderer.Render(
-                        Matrix4x4.CreateScale(halfExtents) *
-                        Matrix4x4.CreateTranslation(center) *
-                        transform);
+                    for (int i = 0; i < 8; i++)
+                        boxPoints[i] = Vector3.Transform(boxPoints[i], transform) + center;
+
+                    if (solid)
+                    {
+                        RenderTriangle(boxPoints[0], boxPoints[1], boxPoints[2], color, true);
+                        RenderTriangle(boxPoints[0], boxPoints[2], boxPoints[3], color, true);
+                        RenderTriangle(boxPoints[4], boxPoints[5], boxPoints[6], color, true);
+                        RenderTriangle(boxPoints[4], boxPoints[6], boxPoints[7], color, true);
+                        RenderTriangle(boxPoints[0], boxPoints[1], boxPoints[5], color, true);
+                        RenderTriangle(boxPoints[0], boxPoints[5], boxPoints[4], color, true);
+                        RenderTriangle(boxPoints[2], boxPoints[3], boxPoints[7], color, true);
+                        RenderTriangle(boxPoints[2], boxPoints[7], boxPoints[6], color, true);
+                        RenderTriangle(boxPoints[1], boxPoints[2], boxPoints[6], color, true);
+                        RenderTriangle(boxPoints[1], boxPoints[6], boxPoints[5], color, true);
+                        RenderTriangle(boxPoints[0], boxPoints[3], boxPoints[7], color, true);
+                        RenderTriangle(boxPoints[0], boxPoints[7], boxPoints[4], color, true);
+                    }
+                    else
+                    {
+                        RenderLine(boxPoints[0], boxPoints[1], color);
+                        RenderLine(boxPoints[1], boxPoints[2], color);
+                        RenderLine(boxPoints[2], boxPoints[3], color);
+                        RenderLine(boxPoints[3], boxPoints[0], color);
+                        RenderLine(boxPoints[4], boxPoints[5], color);
+                        RenderLine(boxPoints[5], boxPoints[6], color);
+                        RenderLine(boxPoints[6], boxPoints[7], color);
+                        RenderLine(boxPoints[7], boxPoints[4], color);
+                        RenderLine(boxPoints[0], boxPoints[4], color);
+                        RenderLine(boxPoints[1], boxPoints[5], color);
+                        RenderLine(boxPoints[2], boxPoints[6], color);
+                        RenderLine(boxPoints[3], boxPoints[7], color);
+                    }
                 }
+
                 public static void RenderCapsule(
                     Capsule capsule,
-                    ColorF4 color,
-                    bool depthTestEnabled = true)
+                    ColorF4 color)
                     => RenderCapsule(
                         capsule.Center,
                         capsule.UpAxis,
                         capsule.Radius,
                         capsule.HalfHeight,
                         false,
-                        color,
-                        depthTestEnabled);
+                        color);
+
                 public static void RenderCapsule(
                     Vector3 start,
                     Vector3 end,
                     float radius,
                     bool solid,
-                    ColorF4 color,
-                    bool depthTestEnabled = true,
-                    float lineWidth = DefaultLineSize)
+                    ColorF4 color)
                     => RenderCapsule(
                         (start + end) * 0.5f,
                         (end - start).Normalized(),
                         radius,
                         Vector3.Distance(start, end) * 0.5f,
                         solid,
-                        color,
-                        depthTestEnabled,
-                        lineWidth);
+                        color);
+
                 public static void RenderCapsule(
                     Vector3 center,
                     Vector3 localUpAxis,
                     float radius,
                     float halfHeight,
                     bool solid,
-                    ColorF4 color,
-                    bool depthTestEnabled = true,
-                    float lineWidth = DefaultLineSize)
+                    ColorF4 color)
                 {
-                    if (!IsRenderThread)
+                    const int segments = 10;
+                    const int rings = 10;
+
+                    Vector3[] capsulePoints = new Vector3[segments * rings];
+                    for (int i = 0; i < rings; i++)
                     {
-                        _debugShapesUpdating.Enqueue(new CapsuleData(solid, new Capsule(center, localUpAxis, radius, halfHeight), color, depthTestEnabled));
-                        return;
+                        float theta = MathF.PI * i / rings;
+                        float sinTheta = MathF.Sin(theta);
+                        float cosTheta = MathF.Cos(theta);
+                        for (int j = 0; j < segments; j++)
+                        {
+                            float phi = 2 * MathF.PI * j / segments;
+                            float sinPhi = MathF.Sin(phi);
+                            float cosPhi = MathF.Cos(phi);
+                            Vector3 localPoint = new(cosPhi * sinTheta, cosTheta, sinPhi * sinTheta);
+                            capsulePoints[i * segments + j] = localPoint * radius + center + localUpAxis * halfHeight;
+                        }
                     }
 
-                    string cylStr = "_CYLINDER";
-                    string topStr = "_TOPHALF";
-                    string botStr = "_BOTTOMHALF";
-
-                    _debugPrimitives.TryGetValue(cylStr, out XRMeshRenderer? mCyl);
-                    _debugPrimitives.TryGetValue(topStr, out XRMeshRenderer? mTop);
-                    _debugPrimitives.TryGetValue(botStr, out XRMeshRenderer? mBot);
-
-                    if (mCyl is null || mTop is null || mBot is null)
-                    {
-                        XRMesh.Shapes.WireframeCapsuleParts(Vector3.Zero, Globals.Up, 1.0f, 1.0f, 30,
-                            out XRMesh cylData, out XRMesh topData, out XRMesh botData);
-                        mCyl ??= AssignDebugPrimitive(cylStr, new XRMeshRenderer(cylData, XRMaterial.CreateUnlitColorMaterialForward()));
-                        mTop ??= AssignDebugPrimitive(topStr, new XRMeshRenderer(topData, XRMaterial.CreateUnlitColorMaterialForward()));
-                        mBot ??= AssignDebugPrimitive(botStr, new XRMeshRenderer(botData, XRMaterial.CreateUnlitColorMaterialForward()));
-                    }
-                    Vector3 arb = Vector3.UnitX;
-                    if (Vector3.Dot(localUpAxis, Vector3.UnitX) > 0.99f || Vector3.Dot(localUpAxis, Vector3.UnitX) < -0.99f)
-                        arb = Vector3.UnitZ;
-                    Vector3 perp = Vector3.Cross(localUpAxis, arb).Normalized();
-                    Matrix4x4 tfm = Matrix4x4.CreateWorld(center, perp, localUpAxis);
-                    Matrix4x4 radiusMtx = Matrix4x4.CreateScale(radius);
-                    Matrix4x4 cylTransform = Matrix4x4.CreateScale(radius, halfHeight, radius) * tfm;
-                    Matrix4x4 topTransform = radiusMtx * Matrix4x4.CreateTranslation(0.0f, halfHeight, 0.0f) * tfm;
-                    Matrix4x4 botTransform = radiusMtx * Matrix4x4.CreateTranslation(0.0f, -halfHeight, 0.0f) * tfm;
-
-                    SetOptions(depthTestEnabled, lineWidth, null, mCyl);
-                    SetOptions(depthTestEnabled, lineWidth, null, mTop);
-                    SetOptions(depthTestEnabled, lineWidth, null, mBot);
-                    mCyl.SetParameter(0, color);
-                    mTop.SetParameter(0, color);
-                    mBot.SetParameter(0, color);
-                    mCyl.Render(cylTransform);
-                    mTop.Render(topTransform);
-                    mBot.Render(botTransform);
-                }
-                public static void RenderTriangle(
-                    Triangle triangle,
-                    ColorF4 color,
-                    bool solid,
-                    bool depthTestEnabled = true)
-                    => RenderTriangle(triangle.A, triangle.B, triangle.C, color, solid, depthTestEnabled);
-                public static void RenderTriangle(
-                    Vector3 A,
-                    Vector3 B,
-                    Vector3 C,
-                    ColorF4 color,
-                    bool solid,
-                    bool depthTestEnabled = true)
-                {
-                    if (!IsRenderThread)
-                    {
-                        _debugShapesUpdating.Enqueue(new TriangleData(solid, A, B, C, color, depthTestEnabled));
-                        return;
-                    }
-
-                    EDebugPrimitiveType type = solid ? EDebugPrimitiveType.SolidTriangle : EDebugPrimitiveType.WireTriangle;
-                    XRMeshRenderer renderer = GetDebugPrimitive(type, out bool created);
-                    if (created)
-                    {
-                        renderer.Mesh!.PositionsBuffer!.Usage = EBufferUsage.DynamicDraw;
-                        renderer.GenerateAsync = false;
-                        renderer.Generate();
-                    }
-                    SetOptions(depthTestEnabled, 1.0f, null, renderer);
-                    renderer.Parameter<ShaderVector4>(0)!.Value = color;
-                    var posBuf = renderer.Mesh!.PositionsBuffer!;
                     if (solid)
                     {
-                        posBuf.Set(0, A);
-                        posBuf.Set(0, B);
-                        posBuf.Set(0, C);
+                        // Build triangle fan: center + each adjacent edge.
+                        for (int i = 0; i < rings - 1; i++)
+                        {
+                            for (int j = 0; j < segments - 1; j++)
+                            {
+                                Vector3 pos0 = capsulePoints[i * segments + j];
+                                Vector3 pos1 = capsulePoints[i * segments + j + 1];
+                                Vector3 pos2 = capsulePoints[(i + 1) * segments + j];
+                                RenderTriangle(pos0, pos1, pos2, color, true);
+
+                                pos0 = capsulePoints[i * segments + j + 1];
+                                pos1 = capsulePoints[(i + 1) * segments + j + 1];
+                                pos2 = capsulePoints[(i + 1) * segments + j];
+                                RenderTriangle(pos0, pos1, pos2, color, true);
+                            }
+                        }
+                        // Build top and bottom caps.
+                        Vector3 topCenter = center + localUpAxis * halfHeight;
+                        Vector3 bottomCenter = center - localUpAxis * halfHeight;
+                        for (int i = 0; i < rings - 1; i++)
+                        {
+                            Vector3 topPos0 = capsulePoints[i * segments];
+                            Vector3 topPos1 = capsulePoints[(i + 1) * segments];
+
+                            Vector3 bottomPos0 = capsulePoints[i * segments + segments - 1];
+                            Vector3 bottomPos1 = capsulePoints[(i + 1) * segments];
+
+                            RenderTriangle(topCenter, topPos0, topPos1, color, true);
+                            RenderTriangle(bottomCenter, bottomPos0, bottomPos1, color, true);
+                        }
                     }
                     else
                     {
-                        posBuf.Set(0, A);
-                        posBuf.Set(0, B);
+                        for (int i = 0; i < rings; i++)
+                        {
+                            for (int j = 0; j < segments; j++)
+                            {
+                                Vector3 pos0 = capsulePoints[i * segments + j];
+                                Vector3 pos1 = capsulePoints[i * segments + (j + 1) % segments];
+                                RenderLine(pos0, pos1, color);
 
-                        posBuf.Set(0, B);
-                        posBuf.Set(0, C);
+                                if (i < rings - 1)
+                                {
+                                    Vector3 pos2 = capsulePoints[(i + 1) * segments + j];
+                                    RenderLine(pos0, pos2, color);
+                                }
+                            }
+                        }
 
-                        posBuf.Set(0, C);
-                        posBuf.Set(0, A);
+                        // Build top and bottom caps.
+                        Vector3 topCenter = center + localUpAxis * halfHeight;
+                        Vector3 bottomCenter = center - localUpAxis * halfHeight;
+                        for (int i = 0; i < rings - 1; i++)
+                        {
+                            Vector3 topPos0 = capsulePoints[i * segments];
+                            Vector3 topPos1 = capsulePoints[(i + 1) * segments];
+                            Vector3 bottomPos0 = capsulePoints[i * segments + segments - 1];
+                            Vector3 bottomPos1 = capsulePoints[(i + 1) * segments];
+                            RenderLine(topCenter, topPos0, color);
+                            RenderLine(topCenter, topPos1, color);
+                            RenderLine(bottomCenter, bottomPos0, color);
+                            RenderLine(bottomCenter, bottomPos1, color);
+                        }
                     }
-                    posBuf.PushSubData();
-                    renderer.Render();
                 }
 
-                public static void RenderCylinder(Matrix4x4 transform, Vector3 localUpAxis, float radius, float halfHeight, bool solid, ColorF4 color, float lineWidth = DefaultLineSize)
+                public static void RenderCylinder(
+                    Matrix4x4 transform,
+                    Vector3 localUpAxis,
+                    float radius,
+                    float halfHeight,
+                    bool solid,
+                    ColorF4 color)
                 {
-                    if (!IsRenderThread)
+                    const int segments = 20;
+
+                    Vector3[] cylinderPoints = new Vector3[segments * 2];
+                    for (int i = 0; i < segments; i++)
                     {
-                        _debugShapesUpdating.Enqueue(new CylinderData(solid, transform, localUpAxis, radius, halfHeight, color));
-                        return;
+                        float angle = 2 * MathF.PI * i / segments;
+                        float x = MathF.Cos(angle) * radius;
+                        float z = MathF.Sin(angle) * radius;
+                        Vector3 localPoint = new(x, 0, z);
+                        cylinderPoints[i] = Vector3.Transform(localPoint, transform) + localUpAxis * halfHeight;
+                        cylinderPoints[i + segments] = Vector3.Transform(localPoint, transform) - localUpAxis * halfHeight;
                     }
 
-                    throw new NotImplementedException();
-                }
-                public static void RenderCone(Vector3 center, Vector3 localUpAxis, float radius, float height, bool solid, ColorF4 color, float lineWidth = DefaultLineSize)
-                {
-                    if (!IsRenderThread)
+                    if (solid)
                     {
-                        _debugShapesUpdating.Enqueue(new ConeData(solid, center, localUpAxis, radius, height, color));
-                        return;
+                        // Build triangle fan: center + each adjacent edge.
+                        for (int i = 0; i < segments - 1; i++)
+                        {
+                            Vector3 pos0 = cylinderPoints[i];
+                            Vector3 pos1 = cylinderPoints[i + 1];
+                            Vector3 pos2 = cylinderPoints[i + segments];
+                            RenderTriangle(pos0, pos1, pos2, color, true);
+                            pos0 = cylinderPoints[i + 1];
+                            pos1 = cylinderPoints[i + segments + 1];
+                            pos2 = cylinderPoints[i + segments];
+                            RenderTriangle(pos0, pos1, pos2, color, true);
+                        }
+                        // Build top and bottom caps.
+                        Vector3 topCenter = localUpAxis * halfHeight;
+                        Vector3 bottomCenter = -localUpAxis * halfHeight;
+                        for (int i = 0; i < segments - 1; i++)
+                        {
+                            Vector3 topPos0 = cylinderPoints[i];
+                            Vector3 topPos1 = cylinderPoints[i + 1];
+                            Vector3 bottomPos0 = cylinderPoints[i + segments];
+                            Vector3 bottomPos1 = cylinderPoints[i + segments + 1];
+                            RenderTriangle(topCenter, topPos0, topPos1, color, true);
+                            RenderTriangle(bottomCenter, bottomPos0, bottomPos1, color, true);
+                        }
                     }
-
-                    //SetLineSize(lineWidth);
-                    XRMeshRenderer m = GetDebugPrimitive(solid ? EDebugPrimitiveType.SolidCone : EDebugPrimitiveType.WireCone, out _);
-                    m.Parameter<ShaderVector4>(0)!.Value = color;
-                    m.Render(Matrix4x4.CreateScale(radius, radius, height) * XRMath.LookatAngles(localUpAxis).GetMatrix() * Matrix4x4.CreateTranslation(center));
-                }
-
-                private static XRMeshRenderer AssignDebugPrimitive(string name, XRMeshRenderer m)
-                {
-                    if (!_debugPrimitives.TryAdd(name, m))
-                        _debugPrimitives[name] = m;
-                    return m;
-                }
-
-                public enum EDebugPrimitiveType
-                {
-                    Point,
-                    Line,
-
-                    WireTriangle,
-                    SolidTriangle,
-
-                    WireQuad,
-                    SolidQuad,
-
-                    WireCircle,
-                    SolidCircle,
-
-                    WireSphere,
-                    SolidSphere,
-
-                    WireBox,
-                    SolidBox,
-
-
-                    WireCylinder,
-                    SolidCylinder,
-
-                    WireCone,
-                    SolidCone,
-                }
-
-                private static readonly Dictionary<string, XRMeshRenderer> _debugPrimitives = [];
-                private static readonly XRMeshRenderer[] _debugPrims = new XRMeshRenderer[14];
-
-                public static XRMeshRenderer GetDebugPrimitive(EDebugPrimitiveType type, out bool created, Func<XRMaterial>? materialFactory = null)
-                {
-                    created = false;
-                    XRMeshRenderer mesh = _debugPrims[(int)type];
-                    if (mesh != null)
-                        return mesh;
                     else
                     {
-                        created = true;
-                        XRMaterial mat = materialFactory?.Invoke() ?? XRMaterial.CreateUnlitColorMaterialForward();
-                        RenderingParameters p = new();
-                        p.DepthTest.Enabled = ERenderParamUsage.Enabled;
-                        mat.RenderOptions = p;
-                        return _debugPrims[(int)type] = new XRMeshRenderer(GetMesh(type), mat);
+                        for (int i = 0; i < segments; i++)
+                        {
+                            Vector3 pos0 = cylinderPoints[i];
+                            Vector3 pos1 = cylinderPoints[(i + 1) % segments];
+                            RenderLine(pos0, pos1, color);
+
+                            Vector3 pos2 = cylinderPoints[i + segments];
+                            RenderLine(pos0, pos2, color);
+                            RenderLine(pos1, pos2, color);
+                        }
                     }
                 }
 
-                public static XRMesh GetMesh(EDebugPrimitiveType type)
-                    => type switch
+                public static void RenderCone(
+                    Vector3 center,
+                    Vector3 localUpAxis,
+                    float radius,
+                    float height,
+                    bool solid,
+                    ColorF4 color)
+                {
+                    const int segments = 20;
+
+                    Vector3[] conePoints = new Vector3[segments + 1];
+                    for (int i = 0; i <= segments; i++)
                     {
-                        EDebugPrimitiveType.Point => XRMesh.CreatePoints(Vector3.Zero),
-                        EDebugPrimitiveType.Line => XRMesh.CreateLines(Vector3.Zero, Globals.Forward),
-                        EDebugPrimitiveType.WireTriangle => XRMesh.CreateLinestrip(true, Vector3.Zero, Vector3.Zero, Vector3.Zero),
-                        EDebugPrimitiveType.SolidTriangle => XRMesh.CreateTriangles(Vector3.Zero, Vector3.Zero, Vector3.Zero),
-                        EDebugPrimitiveType.WireSphere => XRMesh.Shapes.WireframeSphere(Vector3.Zero, 1.0f, 60),//Diameter is set to 2.0f on purpose
-                        EDebugPrimitiveType.SolidSphere => XRMesh.Shapes.SolidSphere(Vector3.Zero, 1.0f, 30),//Diameter is set to 2.0f on purpose
-                        EDebugPrimitiveType.WireBox => XRMesh.Shapes.WireframeBox(new Vector3(-1.0f), new Vector3(1.0f)),
-                        EDebugPrimitiveType.SolidBox => XRMesh.Shapes.SolidBox(new Vector3(-1.0f), new Vector3(1.0f)),
-                        EDebugPrimitiveType.WireCircle => XRMesh.Shapes.WireframeCircle(1.0f, Vector3.UnitY, Vector3.Zero, 20),//Diameter is set to 2.0f on purpose
-                        EDebugPrimitiveType.SolidCircle => XRMesh.Shapes.SolidCircle(1.0f, Vector3.UnitY, Vector3.Zero, 20),//Diameter is set to 2.0f on purpose
-                        EDebugPrimitiveType.WireQuad => XRMesh.Create(VertexQuad.PosY(1.0f, false, false).ToLines()),
-                        EDebugPrimitiveType.SolidQuad => XRMesh.Create(VertexQuad.PosY(1.0f, false, false)),
-                        EDebugPrimitiveType.WireCone => XRMesh.Shapes.WireframeCone(Vector3.Zero, Globals.Forward, 1.0f, 1.0f, 20),
-                        EDebugPrimitiveType.SolidCone => XRMesh.Shapes.SolidCone(Vector3.Zero, Globals.Forward, 1.0f, 1.0f, 20, true),
-                        _ => throw new InvalidOperationException(),
-                    };
+                        float angle = 2 * MathF.PI * i / segments;
+                        float x = MathF.Cos(angle) * radius;
+                        float z = MathF.Sin(angle) * radius;
+                        Vector3 localPoint = new(x, 0, z);
+                        conePoints[i] = localPoint + center + localUpAxis * height;
+                    }
+
+                    if (solid)
+                    {
+                        // Build triangle fan: center + each adjacent edge.
+                        for (int i = 0; i < segments; i++)
+                        {
+                            Vector3 pos0 = center;
+                            Vector3 pos1 = conePoints[i];
+                            Vector3 pos2 = conePoints[i + 1];
+                            RenderTriangle(pos0, pos1, pos2, color, true);
+                        }
+                    }
+                    else
+                    {
+                        for (int i = 0; i < segments; i++)
+                        {
+                            Vector3 pos0 = conePoints[i];
+                            Vector3 pos1 = conePoints[i + 1];
+                            RenderLine(center, pos0, color);
+                            RenderLine(pos0, pos1, color);
+                            RenderLine(pos1, center, color);
+                        }
+                    }
+                }
 
                 public static void RenderFrustum(Frustum frustum, ColorF4 color)
                 {

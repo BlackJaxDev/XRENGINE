@@ -69,16 +69,16 @@ namespace XREngine.Components.Scene.Transforms
             }
         }
 
-        protected override void RenderDebug()
-        {
-            //base.RenderDebug();
+        //protected override void RenderDebug()
+        //{
+        //    //base.RenderDebug();
 
-            if (Engine.Rendering.State.IsShadowPass)
-                return;
+        //    if (Engine.Rendering.State.IsShadowPass)
+        //        return;
 
-            Engine.Rendering.Debug.RenderSphere(WorldTranslation, TraceRadius, false, Color.Black);
-            Engine.Rendering.Debug.RenderLine(ParentWorldMatrix.Translation, WorldTranslation, Color.Black);
-        }
+        //    Engine.Rendering.Debug.RenderSphere(WorldTranslation, TraceRadius, false, Color.Black);
+        //    Engine.Rendering.Debug.RenderLine(ParentWorldMatrix.Translation, WorldTranslation, Color.Black);
+        //}
 
         protected override Matrix4x4 CreateLocalMatrix()
             => Matrix4x4.CreateTranslation(0.0f, 0.0f, _currentLength);

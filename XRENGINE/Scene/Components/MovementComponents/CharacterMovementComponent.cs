@@ -13,16 +13,16 @@ namespace XREngine.Components
     [RequiresTransform(typeof(RigidBodyTransform))]
     public class CharacterMovement3DComponent : PlayerMovementComponentBase
     {
-        public RigidBodyTransform RigidBodyTransform
-            => SceneNode.GetTransformAs<RigidBodyTransform>(true)!;
+        //public RigidBodyTransform RigidBodyTransform
+        //    => SceneNode.GetTransformAs<RigidBodyTransform>(true)!;
         //public Transform ControllerTransform
         //    => SceneNode.GetTransformAs<Transform>(true)!;
 
         private float _stepOffset = 0.0f;
         private float _slopeLimitCosine = 0.707f;
-        private float _walkingMovementSpeed = 0.07f;
-        private float _airMovementAcceleration = 0.5f;
-        private float _jumpSpeed = 20.0f;
+        private float _walkingMovementSpeed = 70f;
+        private float _airMovementAcceleration = 0.3f;
+        private float _jumpSpeed = 7.0f;
         private Func<Vector3, Vector3>? _subUpdateTick;
         private ECrouchState _crouchState = ECrouchState.Standing;
         private float _invisibleWallHeight = 0.0f;
@@ -269,8 +269,8 @@ namespace XREngine.Components
             set => SetField(ref _jumpSpeed, value);
         }
 
-        public PhysxDynamicRigidBody? RigidBody => Controller?.Actor;
-
+        public PhysxDynamicRigidBody? RigidBodyReference => Controller?.Actor;
+        
         public void GetState(
             out Vector3 deltaXP,
             out PhysxShape? touchedShape,
@@ -364,7 +364,7 @@ namespace XREngine.Components
         protected internal unsafe override void OnComponentActivated()
         {
             _subUpdateTick = GroundMovementTick;
-            RegisterTick(ETickGroup.Normal, (int)ETickOrder.Scene, MainUpdateTick);
+            RegisterTick(ETickGroup.Normal, (int)ETickOrder.Logic, MainUpdateTick);
 
             var scene = World?.PhysicsScene as PhysxScene;
             var manager = scene?.CreateOrCreateControllerManager();
@@ -398,12 +398,24 @@ namespace XREngine.Components
 
             //Wrap the hidden actor and apply to the transform
             //The constructor automatically caches the actor
+            //We have to construct the rigid body with the hidden reference manually
             var rb = new PhysxDynamicRigidBody(Controller.ControllerPtr->GetActor());
-            //rb.Flags |= PxRigidBodyFlags.EnableCcd | PxRigidBodyFlags.EnableSpeculativeCcd | PxRigidBodyFlags.EnableCcdFriction;
-            //RigidBodyTransform.InterpolationMode = RigidBodyTransform.EInterpolationMode.Discrete;
-            RigidBodyTransform.RigidBody = rb;
+            //var rb = RigidBodyReference;
 
-            //World.PhysicsScene.AddActor(rb);
+            if (rb is not null)
+            {
+                rb.OwningComponent = this;
+                RigidBody = rb;
+                //rb.Flags |= PxRigidBodyFlags.EnableCcd | PxRigidBodyFlags.EnableSpeculativeCcd | PxRigidBodyFlags.EnableCcdFriction;
+
+                var tfm = RigidBodyTransform;
+                tfm.InterpolationMode = RigidBodyTransform.EInterpolationMode.Interpolate;
+                tfm.RigidBody = rb;
+            }
+            else
+            {
+                Debug.LogWarning("Failed to create character controller.");
+            }
         }
 
         protected internal override void OnComponentDeactivated()
@@ -428,7 +440,7 @@ namespace XREngine.Components
             if (manager is null)
                 return;
 
-            var moveDelta = _subUpdateTick?.Invoke(ConsumeInput()) ?? Vector3.Zero;
+            var moveDelta = (_subUpdateTick?.Invoke(ConsumeInput()) ?? Vector3.Zero);
             Controller.Move(moveDelta, MinMoveDistance, Engine.Delta, manager.ControllerFilters, null);
             if (Controller.CollidingDown)
             {
@@ -496,7 +508,7 @@ namespace XREngine.Components
         public void AddForce(Vector3 force)
         {
             //Calculate acceleration from force
-            float mass = RigidBody?.Mass ?? 0.0f;
+            float mass = RigidBodyReference?.Mass ?? 0.0f;
             if (mass > 0.0f)
                 Velocity += force / mass;
         }
@@ -528,9 +540,11 @@ namespace XREngine.Components
             if (Controller is null || World?.PhysicsScene is not PhysxScene scene)
                 return Vector3.Zero;
 
-            //Start with the current velocity
-            //Dampen the velocity with friction
-            Vector3 delta = Velocity * Engine.Delta * (1.0f - GroundFriction);
+            float dt = Engine.Delta;
+
+            //Start with the change in position, which is the velocity * change in time
+            //Dampen with ground friction
+            Vector3 delta = Velocity * dt * (1.0f - GroundFriction);
 
             //Apply movement input aligned movement to the ground normal
             Vector3 groundNormal = Globals.Up;
@@ -559,12 +573,15 @@ namespace XREngine.Components
 
             float dt = Engine.Delta;
 
-            //Start with the current velocity
-            Vector3 delta = Velocity * dt; //No friction in the air
+            //Start with the change in position, which is the velocity * change in time
+            //No friction in the air, so don't dampen
+            Vector3 delta = Velocity * dt;
+
+            movementInput *= AirMovementAcceleration;
 
             //Apply movement input
-            delta.X += movementInput.X * AirMovementAcceleration * dt;
-            delta.Z += movementInput.Z * AirMovementAcceleration * dt;
+            delta.X += movementInput.X;
+            delta.Z += movementInput.Z;
 
             ClampSpeed(ref delta);
 

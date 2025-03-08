@@ -84,19 +84,19 @@ namespace XREngine.Scene.Components.Animation
                 return;
 
             foreach (var bone in GetHipToHeadChain())
-                Engine.Rendering.Debug.RenderPoint(bone.WorldPosSolve, ColorF4.Red, false);
+                Engine.Rendering.Debug.RenderPoint(bone.WorldPosSolve, ColorF4.Red);
 
             foreach (var bone in GetLeftShoulderToWristChain())
-                Engine.Rendering.Debug.RenderPoint(bone.WorldPosSolve, ColorF4.Red, false);
+                Engine.Rendering.Debug.RenderPoint(bone.WorldPosSolve, ColorF4.Red);
 
             foreach (var bone in GetRightShoulderToWristChain())
-                Engine.Rendering.Debug.RenderPoint(bone.WorldPosSolve, ColorF4.Red, false);
+                Engine.Rendering.Debug.RenderPoint(bone.WorldPosSolve, ColorF4.Red);
 
             foreach (var bone in GetLeftLegToAnkleChain())
-                Engine.Rendering.Debug.RenderPoint(bone.WorldPosSolve, ColorF4.Red, false);
+                Engine.Rendering.Debug.RenderPoint(bone.WorldPosSolve, ColorF4.Red);
 
             foreach (var bone in GetRightLegToAnkleChain())
-                Engine.Rendering.Debug.RenderPoint(bone.WorldPosSolve, ColorF4.Red, false);
+                Engine.Rendering.Debug.RenderPoint(bone.WorldPosSolve, ColorF4.Red);
         }
 
         public class BoneDef : XRBase

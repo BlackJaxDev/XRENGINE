@@ -60,7 +60,7 @@ namespace XREngine
                 /// This is the render pipeline that's currently rendering a scene.
                 /// Use this to retrieve FBOs and textures from the render pipeline.
                 /// </summary>
-                public static XRRenderPipelineInstance? CurrentRenderingPipeline => RenderingPipelineStack.Count > 0 ? RenderingPipelineStack.Peek() : null;
+                public static XRRenderPipelineInstance? CurrentRenderingPipeline => RenderingPipelineStack.TryPeek(out var result) ? result : null;
 
                 /// <summary>
                 /// This is the state of the render pipeline that's currently rendering a scene.

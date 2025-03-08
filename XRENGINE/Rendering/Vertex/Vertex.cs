@@ -8,10 +8,9 @@ namespace XREngine.Data.Rendering
 {
     public class Vertex : VertexData, IEquatable<Vertex>
     {
-        private Dictionary<TransformBase, (float weight, Matrix4x4 bindInvWorldMatrix)>? _weights;
-
         public override FaceType Type => FaceType.Points;
 
+        private Dictionary<TransformBase, (float weight, Matrix4x4 bindInvWorldMatrix)>? _weights;
         /// <summary>
         /// Contains weights for each bone that influences the position of this vertex.
         /// </summary>
@@ -21,60 +20,28 @@ namespace XREngine.Data.Rendering
             set => SetField(ref _weights, value);
         }
 
-        public Vector3 GetWorldPosition()
-        {
-            if (Weights is null || Weights.Count == 0)
-                return Position;
-
-            Vector3 pos = Vector3.Zero;
-            foreach ((TransformBase bone, (float weight, Matrix4x4 bindInvWorldMatrix) pair) in Weights)
-                pos += Vector3.Transform(Position, pair.bindInvWorldMatrix * bone.WorldMatrix) * pair.weight;
-
-            return pos;
-        }
-
-        public Matrix4x4 GetBoneTransformMatrix()
-        {
-            if (Weights is null || Weights.Count == 0)
-                return Matrix4x4.Identity;
-
-            Matrix4x4 matrix = new();
-            foreach ((TransformBase bone, (float weight, Matrix4x4 bindInvWorldMatrix) pair) in Weights)
-                matrix += (pair.bindInvWorldMatrix * bone.WorldMatrix) * pair.weight;
-
-            return matrix;
-        }
-        public Matrix4x4 GetInverseBoneTransformMatrix()
-        {
-            if (Weights is null || Weights.Count == 0)
-                return Matrix4x4.Identity;
-
-            Matrix4x4 matrix = new();
-            foreach ((TransformBase bone, (float weight, Matrix4x4 bindInvWorldMatrix) pair) in Weights)
-                matrix += (bone.InverseWorldMatrix * pair.bindInvWorldMatrix.Inverted()) * pair.weight;
-
-            return matrix;
-        }
-
+        private List<(string name, VertexData data)>? _blendshapes;
         /// <summary>
         /// Data this vertex can morph to, indexed by blendshape name.
         /// Data here is absolute, not deltas, for simplicity.
         /// </summary>
-        public List<(string name, VertexData data)>? Blendshapes { get; set; }
+        public List<(string name, VertexData data)>? Blendshapes
+        {
+            get => _blendshapes;
+            set => SetField(ref _blendshapes, value);
+        }
 
-        public Vertex() { }
+        public Vertex()
+            => _vertices.Add(this);
 
         public Vertex(Dictionary<TransformBase, (float weight, Matrix4x4 bindInvWorldMatrix)>? weights)
-            => Weights = weights;
+            : this() => Weights = weights;
 
         public Vertex(Vector3 position)
-            => Position = position;
+            : this() => Position = position;
 
         public Vertex(Vector3 position, Vector4 color)
-        {
-            Position = position;
-            ColorSets.Add(color);
-        }
+            : this(position) => ColorSets.Add(color);
 
         public Vertex(Vector3 position, Dictionary<TransformBase, (float weight, Matrix4x4 bindInvWorldMatrix)>? weights)
             : this(position) => Weights = weights;
@@ -141,6 +108,42 @@ namespace XREngine.Data.Rendering
                 ColorSets = [.. ColorSets],
                 Blendshapes = Blendshapes is null ? null : new(Blendshapes),
             };
+
+        public Vector3 GetWorldPosition()
+        {
+            if (Weights is null || Weights.Count == 0)
+                return Position;
+
+            Vector3 pos = Vector3.Zero;
+            foreach ((TransformBase bone, (float weight, Matrix4x4 bindInvWorldMatrix) pair) in Weights)
+                pos += Vector3.Transform(Position, pair.bindInvWorldMatrix * bone.WorldMatrix) * pair.weight;
+
+            return pos;
+        }
+
+        public Matrix4x4 GetBoneTransformMatrix()
+        {
+            if (Weights is null || Weights.Count == 0)
+                return Matrix4x4.Identity;
+
+            Matrix4x4 matrix = new();
+            foreach ((TransformBase bone, (float weight, Matrix4x4 bindInvWorldMatrix) pair) in Weights)
+                matrix += (pair.bindInvWorldMatrix * bone.WorldMatrix) * pair.weight;
+
+            return matrix;
+        }
+
+        public Matrix4x4 GetInverseBoneTransformMatrix()
+        {
+            if (Weights is null || Weights.Count == 0)
+                return Matrix4x4.Identity;
+
+            Matrix4x4 matrix = new();
+            foreach ((TransformBase bone, (float weight, Matrix4x4 bindInvWorldMatrix) pair) in Weights)
+                matrix += (bone.InverseWorldMatrix * pair.bindInvWorldMatrix.Inverted()) * pair.weight;
+
+            return matrix;
+        }
 
         public static unsafe Vertex FromAssimp(Mesh mesh, int vertexIndex)
         {

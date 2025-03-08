@@ -14,7 +14,7 @@ namespace XREngine.Data.Rendering
         protected List<Vertex> _vertices = [];
         
         public VertexPrimitive(IEnumerable<Vertex> vertices)
-            => _vertices = vertices.ToList();
+            => _vertices = [.. vertices];
         public VertexPrimitive(params Vertex[] vertices)
             => _vertices = [.. vertices];
 

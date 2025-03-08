@@ -122,12 +122,12 @@ public static class EditorWorld
             {
                 comp.SceneNode.RegisterAnimationTick<SceneNode>(t =>
                 {
-                    var meshes = comp.Meshes.SelectMany(x => x.LODs).Select(x => x.Renderer.Mesh).Where(x => x?.HasBlendshapes ?? false);
-                    foreach (var xrMesh in meshes)
+                    var renderers = comp.Meshes.SelectMany(x => x.LODs).Select(x => x.Renderer).Where(x => x?.Mesh?.HasBlendshapes ?? false);
+                    foreach (var renderer in renderers)
                     {
                         //for (int r = 0; r < xrMesh!.BlendshapeCount; r++)
                         int r = 0;
-                        xrMesh?.BlendshapeWeights?.Set((uint)r, MathF.Sin(Engine.ElapsedTime) * 0.5f + 0.5f);
+                        renderer?.SetBlendshapeWeight((uint)r, MathF.Sin(Engine.ElapsedTime) * 0.5f + 0.5f);
                     }
                 });
             }, true);
@@ -178,12 +178,15 @@ public static class EditorWorld
         var s = Engine.Rendering.Settings;
         s.AllowBlendshapes = true;
         s.AllowSkinning = true;
-        s.RenderTransformLines = true;
+        //s.RenderMesh3DBounds = true;
         s.RenderTransformDebugInfo = false;
-        s.RecalcChildMatricesInParallel = false;
+        //s.RenderTransformCapsules = true;
+        s.RenderTransformPoints = true;
+        s.RecalcChildMatricesInParallel = true;
         s.TickGroupedItemsInParallel = true;
         s.RenderWindowsWhileInVR = true;
         s.AllowShaderPipelines = false;
+        //s.PhysicsVisualizeSettings.SetAllTrue();
 
         string desktopDir = Environment.GetFolderPath(Environment.SpecialFolder.DesktopDirectory);
         //UnityPackageExtractor.ExtractAsync(Path.Combine(desktopDir, "Animations.unitypackage"), Path.Combine(desktopDir, "Extracted"), true);
@@ -303,7 +306,7 @@ public static class EditorWorld
     {
         SceneNode vrPlayspaceNode = rootNode.NewChild("VRPlayspaceNode");
         var characterTfm = vrPlayspaceNode.SetTransform<RigidBodyTransform>();
-        characterTfm.InterpolationMode = EInterpolationMode.Interpolate;
+        characterTfm.InterpolationMode = EInterpolationMode.Discrete;
 
         var characterComp = vrPlayspaceNode.AddComponent<CharacterPawnComponent>("TestPawn")!;
         var vrInput = vrPlayspaceNode.AddComponent<VRPlayerInputSet>()!;

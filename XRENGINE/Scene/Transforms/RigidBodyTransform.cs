@@ -121,11 +121,7 @@ namespace XREngine.Scene.Transforms
                 switch (propName)
                 {
                     case nameof(World):
-                        if (World is not null)
-                        {
-                            World.PhysicsScene.OnSimulationStep -= OnPhysicsStepped;
-                            World.UnregisterTick(ETickGroup.Late, (int)ETickOrder.Scene, OnUpdate);
-                        }
+                        World?.UnregisterTick(ETickGroup.Normal, (int)ETickOrder.Scene, OnUpdate);
                         break;
                 }
             }
@@ -145,11 +141,7 @@ namespace XREngine.Scene.Transforms
                         OnPhysicsStepped();
                     break;
                 case nameof(World):
-                    if (World is not null)
-                    {
-                        World.PhysicsScene.OnSimulationStep += OnPhysicsStepped;
-                        World.RegisterTick(ETickGroup.Late, (int)ETickOrder.Scene, OnUpdate);
-                    }
+                    World?.RegisterTick(ETickGroup.Normal, (int)ETickOrder.Scene, OnUpdate);
                     break;
             }
         }
@@ -160,17 +152,24 @@ namespace XREngine.Scene.Transforms
             if (RigidBody is null || RigidBody.IsSleeping)
                 return;
 
+            var mode = InterpolationMode;
             float updateDelta = Engine.Delta;
             float fixedDelta = Engine.Time.Timer.FixedUpdateDelta;
-            if (InterpolationMode == EInterpolationMode.Discrete || updateDelta > fixedDelta)
-                return;
 
-            _accumulatedTime += Engine.Delta;
-            float alpha = _accumulatedTime / Engine.Time.Timer.FixedUpdateDelta;
+            //if (updateDelta > fixedDelta)
+            //    mode = EInterpolationMode.Discrete;
+
+            _accumulatedTime += updateDelta;
+            float alpha = _accumulatedTime / fixedDelta;
 
             var (lastPosUpdate, lastRotUpdate) = LastPhysicsTransform;
-            switch (InterpolationMode)
+            switch (mode)
             {
+                case EInterpolationMode.Discrete:
+                    {
+                        SetPositionAndRotation(lastPosUpdate, lastRotUpdate);
+                        break;
+                    }
                 case EInterpolationMode.Interpolate:
                     {
                         SetPositionAndRotation(
@@ -253,7 +252,7 @@ namespace XREngine.Scene.Transforms
             private set => SetField(ref _lastRotation, value);
         }
 
-        private void OnPhysicsStepped()
+        internal void OnPhysicsStepped()
         {
             if (RigidBody is null)
                 return;
@@ -262,19 +261,23 @@ namespace XREngine.Scene.Transforms
             LastPhysicsLinearVelocity = RigidBody.LinearVelocity;
             LastPhysicsAngularVelocity = RigidBody.AngularVelocity;
 
-            float updateDelta = Engine.Delta;
-            float fixedDelta = Engine.Time.Timer.FixedUpdateDelta;
-            if (InterpolationMode == EInterpolationMode.Discrete || updateDelta > fixedDelta)
-            {
-                if (!RigidBody.IsSleeping)
-                    SetPositionAndRotation(LastPhysicsTransform.position, LastPhysicsTransform.rotation);
-            }
-            else
-            {
-                LastPosition = Position;
-                LastRotation = Rotation;
-                _accumulatedTime = 0;
-            }
+            LastPosition = Position;
+            LastRotation = Rotation;
+            _accumulatedTime = 0;
+
+            //float updateDelta = Engine.Delta;
+            //float fixedDelta = Engine.Time.Timer.FixedUpdateDelta;
+            //if (InterpolationMode == EInterpolationMode.Discrete || updateDelta > fixedDelta)
+            //{
+            //    if (!RigidBody.IsSleeping)
+            //        SetPositionAndRotation(LastPhysicsTransform.position, LastPhysicsTransform.rotation);
+            //}
+            //else
+            //{
+            //    LastPosition = Position;
+            //    LastRotation = Rotation;
+            //    _accumulatedTime = 0;
+            //}
         }
 
         protected override Matrix4x4 CreateLocalMatrix()

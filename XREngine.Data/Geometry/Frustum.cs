@@ -1,7 +1,9 @@
-﻿using System.Collections;
+﻿using Silk.NET.Maths;
+using System.Collections;
 using System.Numerics;
 using XREngine.Data.Core;
 using XREngine.Data.Rendering;
+using Plane = System.Numerics.Plane;
 
 namespace XREngine.Data.Geometry
 {
@@ -475,7 +477,11 @@ namespace XREngine.Data.Geometry
 
         public bool ContainedWithin(AABB boundingBox)
         {
-            throw new NotImplementedException();
+            for (int i = 0; i < 8; i++)
+                if (!boundingBox.ContainsPoint(_corners[i]))
+                    return false;
+            
+            return true;
         }
 
         public EContainment ContainsCapsule(Capsule shape)

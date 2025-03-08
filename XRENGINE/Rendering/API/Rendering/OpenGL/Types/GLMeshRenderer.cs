@@ -6,6 +6,7 @@ using XREngine.Data;
 using XREngine.Data.Core;
 using XREngine.Data.Rendering;
 using XREngine.Rendering.Models.Materials;
+using XREngine.Rendering.Shaders.Generator;
 
 namespace XREngine.Rendering.OpenGL
 {
@@ -218,9 +219,7 @@ namespace XREngine.Rendering.OpenGL
                     BindSSBOs(vtx!);
 
                     MeshRenderer.PushBoneMatricesToGPU();
-
-                    //TODO: only push this data if changed
-                    Mesh?.BlendshapeWeights?.PushSubData();
+                    MeshRenderer.PushBlendshapeWeightsToGPU();
 
                     SetMeshUniforms(modelMatrix, vtx!, materialOverride?.BillboardMode ?? billboardMode);
                     material.SetUniforms(mat);
@@ -341,16 +340,16 @@ namespace XREngine.Rendering.OpenGL
             private static void SetMeshUniforms(Matrix4x4 modelMatrix, GLRenderProgram vertexProgram, EMeshBillboardMode billboardMode)
             {
                 bool stereoPass = Engine.Rendering.State.IsStereoPass;
+                var cam = Engine.Rendering.State.RenderingCamera;
                 if (stereoPass)
                 {
-                    PassCameraUniforms(vertexProgram, Engine.Rendering.State.RenderingCamera, EEngineUniform.LeftEyeInverseViewMatrix, EEngineUniform.LeftEyeProjMatrix);
-                    PassCameraUniforms(vertexProgram, Engine.Rendering.State.RenderingStereoRightEyeCamera, EEngineUniform.RightEyeInverseViewMatrix, EEngineUniform.RightEyeProjMatrix);
+                    var rightCam = Engine.Rendering.State.RenderingStereoRightEyeCamera;
+                    PassCameraUniforms(vertexProgram, cam, EEngineUniform.LeftEyeInverseViewMatrix, EEngineUniform.LeftEyeProjMatrix);
+                    PassCameraUniforms(vertexProgram, rightCam, EEngineUniform.RightEyeInverseViewMatrix, EEngineUniform.RightEyeProjMatrix);
                 }
                 else
-                {
-                    PassCameraUniforms(vertexProgram, Engine.Rendering.State.RenderingCamera, EEngineUniform.InverseViewMatrix, EEngineUniform.ProjMatrix);
-                }
-
+                    PassCameraUniforms(vertexProgram, cam, EEngineUniform.InverseViewMatrix, EEngineUniform.ProjMatrix);
+                
                 vertexProgram.Uniform(EEngineUniform.ModelMatrix, modelMatrix);
                 vertexProgram.Uniform(EEngineUniform.VRMode, stereoPass);
                 vertexProgram.Uniform(EEngineUniform.BillboardMode, (int)billboardMode);
@@ -373,13 +372,9 @@ namespace XREngine.Rendering.OpenGL
                     inverseViewMatrix = Matrix4x4.Identity;
                     projMatrix = Matrix4x4.Identity;
                 }
-                vertexProgram.Uniform(invView, inverseViewMatrix);
-                vertexProgram.Uniform(proj, projMatrix);
 
-                //vertexProgram.Uniform(EEngineUniform.CameraPosition, inverseViewMatrix.Translation);
-                //vertexProgram.Uniform(EEngineUniform.CameraForward, inverseViewMatrix.Forward());
-                //vertexProgram.Uniform(EEngineUniform.CameraUp, inverseViewMatrix.Up());
-                //vertexProgram.Uniform(EEngineUniform.CameraRight, inverseViewMatrix.Right());
+                vertexProgram.Uniform($"{invView}{DefaultVertexShaderGenerator.VertexUniformSuffix}", inverseViewMatrix);
+                vertexProgram.Uniform($"{proj}{DefaultVertexShaderGenerator.VertexUniformSuffix}", projMatrix);
             }
 
             private void OnSettingUniforms(GLRenderProgram vertexProgram, GLRenderProgram materialProgram)

@@ -189,21 +189,23 @@ namespace XREngine.Rendering.Shaders.Generator
             Line();
         }
 
+        public const string VertexUniformSuffix = "_VTX";
+
         private void WriteUniforms()
         {
             WriteUniform(EShaderVarType._mat4, EEngineUniform.ModelMatrix.ToString());
 
             if (UseOVRMultiView)
             {
-                WriteUniform(EShaderVarType._mat4, EEngineUniform.LeftEyeInverseViewMatrix.ToString());
-                WriteUniform(EShaderVarType._mat4, EEngineUniform.RightEyeInverseViewMatrix.ToString());
-                WriteUniform(EShaderVarType._mat4, EEngineUniform.LeftEyeProjMatrix.ToString());
-                WriteUniform(EShaderVarType._mat4, EEngineUniform.RightEyeProjMatrix.ToString());
+                WriteUniform(EShaderVarType._mat4, $"{EEngineUniform.LeftEyeInverseViewMatrix}{VertexUniformSuffix}");
+                WriteUniform(EShaderVarType._mat4, $"{EEngineUniform.RightEyeInverseViewMatrix}{VertexUniformSuffix}");
+                WriteUniform(EShaderVarType._mat4, $"{EEngineUniform.LeftEyeProjMatrix}{VertexUniformSuffix}");
+                WriteUniform(EShaderVarType._mat4, $"{EEngineUniform.RightEyeProjMatrix}{VertexUniformSuffix}");
             }
             else
             {
-                WriteUniform(EShaderVarType._mat4, EEngineUniform.InverseViewMatrix.ToString());
-                WriteUniform(EShaderVarType._mat4, EEngineUniform.ProjMatrix.ToString());
+                WriteUniform(EShaderVarType._mat4, $"{EEngineUniform.InverseViewMatrix}{VertexUniformSuffix}");
+                WriteUniform(EShaderVarType._mat4, $"{EEngineUniform.ProjMatrix}{VertexUniformSuffix}");
             }
 
             //WriteUniform(EShaderVarType._vec3, EEngineUniform.CameraPosition.ToString());
@@ -511,8 +513,8 @@ namespace XREngine.Rendering.Shaders.Generator
             if (UseOVRMultiView)
             {
                 Line("bool leftEye = gl_ViewID_OVR == 0;");
-                Line($"mat4 {EEngineUniform.InverseViewMatrix} = leftEye ? {EEngineUniform.LeftEyeInverseViewMatrix} : {EEngineUniform.RightEyeInverseViewMatrix};");
-                Line($"mat4 {EEngineUniform.ProjMatrix} = leftEye ? {EEngineUniform.LeftEyeProjMatrix} : {EEngineUniform.RightEyeProjMatrix};");
+                Line($"mat4 {EEngineUniform.InverseViewMatrix}{VertexUniformSuffix} = leftEye ? {EEngineUniform.LeftEyeInverseViewMatrix}{VertexUniformSuffix} : {EEngineUniform.RightEyeInverseViewMatrix}{VertexUniformSuffix};");
+                Line($"mat4 {EEngineUniform.ProjMatrix}{VertexUniformSuffix} = leftEye ? {EEngineUniform.LeftEyeProjMatrix}{VertexUniformSuffix} : {EEngineUniform.RightEyeProjMatrix}{VertexUniformSuffix};");
             }
 
             const string finalPosName = "outPos";
@@ -538,8 +540,8 @@ namespace XREngine.Rendering.Shaders.Generator
             const string camPositionName = "camPosition";
             const string camForwardName = "camForward";
 
-            Line($"vec3 {camPositionName} = {EEngineUniform.InverseViewMatrix}[3].xyz;");
-            Line($"vec3 {camForwardName} = normalize({EEngineUniform.InverseViewMatrix}[2].xyz);");
+            Line($"vec3 {camPositionName} = {EEngineUniform.InverseViewMatrix}{VertexUniformSuffix}[3].xyz;");
+            Line($"vec3 {camForwardName} = normalize({EEngineUniform.InverseViewMatrix}{VertexUniformSuffix}[2].xyz);");
 
             //Extract rotation pivot from ModelMatrix
             Line($"vec3 {pivotName} = {EEngineUniform.ModelMatrix}[3].xyz;");
@@ -653,8 +655,8 @@ namespace XREngine.Rendering.Shaders.Generator
             //}
             //else
             //{
-                Line($"mat4 {ViewMatrixName} = inverse({EEngineUniform.InverseViewMatrix});");
-                Line($"mat4 {ViewProjMatrixName} = {EEngineUniform.ProjMatrix} * {ViewMatrixName};");
+                Line($"mat4 {ViewMatrixName} = inverse({EEngineUniform.InverseViewMatrix}{VertexUniformSuffix});");
+                Line($"mat4 {ViewProjMatrixName} = {EEngineUniform.ProjMatrix}{VertexUniformSuffix} * {ViewMatrixName};");
             //}
         }
 
@@ -671,9 +673,9 @@ namespace XREngine.Rendering.Shaders.Generator
             //}
             //else
             //{
-                Line($"mat4 {ViewMatrixName} = inverse({EEngineUniform.InverseViewMatrix});");
+                Line($"mat4 {ViewMatrixName} = inverse({EEngineUniform.InverseViewMatrix}{VertexUniformSuffix});");
                 Line($"mat4 {ModelViewMatrixName} = {ViewMatrixName} * {EEngineUniform.ModelMatrix};");
-                Line($"mat4 {ModelViewProjMatrixName} = {EEngineUniform.ProjMatrix} * {ModelViewMatrixName};");
+                Line($"mat4 {ModelViewProjMatrixName} = {EEngineUniform.ProjMatrix}{VertexUniformSuffix} * {ModelViewMatrixName};");
             //}
         }
     }

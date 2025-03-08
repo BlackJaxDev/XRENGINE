@@ -508,25 +508,25 @@ namespace XREngine.Rendering
         }
 
         public void SetDataRawAtIndex<T>(uint index, T data) where T : struct
-        {
-            Marshal.StructureToPtr(data, _clientSideSource!.Address[index, ElementSize], true);
-        }
-        public unsafe void SetDataRawAtIndex(uint index, float data)
-        {
-            ((float*)_clientSideSource!.Address.Pointer)[index] = data;
-        }
-        public unsafe void SetDataRawAtIndex(uint index, Vector2 data)
-        {
-            ((Vector2*)_clientSideSource!.Address.Pointer)[index] = data;
-        }
-        public unsafe void SetDataRawAtIndex(uint index, Vector3 data)
-        {
-            ((Vector3*)_clientSideSource!.Address.Pointer)[index] = data;
-        }
-        public unsafe void SetDataRawAtIndex(uint index, Vector4 data)
-        {
-            ((Vector4*)_clientSideSource!.Address.Pointer)[index] = data;
-        }
+            => Marshal.StructureToPtr(data, _clientSideSource!.Address[index, ElementSize], true);
+        public T GetDataRawAtIndex<T>(uint index) where T : struct
+            => Marshal.PtrToStructure<T>(_clientSideSource!.Address[index, ElementSize]);
+        public unsafe void SetFloat(uint index, float data)
+            => ((float*)_clientSideSource!.Address.Pointer)[index] = data;
+        public unsafe float GetFloat(uint index)
+            => ((float*)_clientSideSource!.Address.Pointer)[index];
+        public unsafe void SetVector2(uint index, Vector2 data)
+            => ((Vector2*)_clientSideSource!.Address.Pointer)[index] = data;
+        public unsafe Vector2 GetVector2(uint index)
+            => ((Vector2*)_clientSideSource!.Address.Pointer)[index];
+        public unsafe void SetVector3(uint index, Vector3 data)
+            => ((Vector3*)_clientSideSource!.Address.Pointer)[index] = data;
+        public unsafe Vector3 GetVector3(uint index)
+            => ((Vector3*)_clientSideSource!.Address.Pointer)[index];
+        public unsafe void SetVector4(uint index, Vector4 data)
+            => ((Vector4*)_clientSideSource!.Address.Pointer)[index] = data;
+        public unsafe Vector4 GetVector4(uint index)
+            => ((Vector4*)_clientSideSource!.Address.Pointer)[index];
 
         public Remapper? SetDataRaw<T>(IList<T> list, bool remap = false) where T : struct
         {
@@ -799,23 +799,30 @@ namespace XREngine.Rendering
             return clone;
         }
 
-        public void Resize(uint elementCount, bool copyData = true, bool alignClientSourceToPowerOf2 = false)
+        /// <summary>
+        /// Resizes the buffer to the given element count.
+        /// If copyData is true, the data will be copied to the new buffer.
+        /// If alignClientSourceToPowerOf2 is true, the new length of the buffer will be rounded up to the next power of 2.
+        /// This can help mitigate constantly resizing the actual internal buffer.
+        /// Returns true if the buffer was resized, false if the buffer was already the correct size.
+        /// </summary>
+        /// <param name="elementCount"></param>
+        /// <param name="copyData"></param>
+        /// <param name="alignClientSourceToPowerOf2"></param>
+        public bool Resize(uint elementCount, bool copyData = true, bool alignClientSourceToPowerOf2 = false)
         {
             if (ElementCount == elementCount)
-                return;
+                return false;
 
             uint oldLength = Length;
             ElementCount = elementCount;
             uint newLength = Length;
 
             if (alignClientSourceToPowerOf2)
-            {
-                elementCount = XRMath.NextPowerOfTwo(elementCount);
-                newLength = elementCount * ElementSize;
-            }
-
+                newLength = XRMath.NextPowerOfTwo(newLength);
+            
             if (_clientSideSource?.Length == newLength)
-                return;
+                return false;
 
             DataSource newSource = DataSource.Allocate(newLength);
             uint minMatch = Math.Min(oldLength, newLength);
@@ -824,6 +831,7 @@ namespace XREngine.Rendering
 
             _clientSideSource?.Dispose();
             _clientSideSource = newSource;
+            return true;
         }
 
         public unsafe void Print()

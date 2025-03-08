@@ -159,7 +159,7 @@ namespace XREngine.Rendering.Physics.Physx
             set => ControllerPtr->SetStepOffsetMut(value);
         }
 
-        public PhysxDynamicRigidBody Actor => PhysxDynamicRigidBody.AllDynamic[(nint)ControllerPtr->GetActor()];
+        public PhysxDynamicRigidBody? Actor => PhysxDynamicRigidBody.AllDynamic.TryGetValue((nint)ControllerPtr->GetActor(), out var value) ? value : null;
 
         public bool CollidingSides
         {

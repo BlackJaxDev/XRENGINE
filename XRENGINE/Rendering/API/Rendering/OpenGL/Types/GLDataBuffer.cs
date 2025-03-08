@@ -189,6 +189,8 @@ namespace XREngine.Rendering.OpenGL
                 return index;
             }
 
+            private uint _lastPushedLength = 0u;
+
             /// <summary>
             /// Allocates and pushes the buffer to the GPU.
             /// </summary>
@@ -197,8 +199,12 @@ namespace XREngine.Rendering.OpenGL
                 if (Data.ActivelyMapping.Contains(this))
                     return;
 
+                if (Engine.InvokeOnMainThread(PushData))
+                    return;
+
                 void* addr = Data.Address;
                 Api.NamedBufferData(BindingId, Data.Length, addr, ToGLEnum(Data.Usage));
+                _lastPushedLength = Data.Length;
             }
 
             public static GLEnum ToGLEnum(EBufferUsage usage) => usage switch
@@ -229,10 +235,27 @@ namespace XREngine.Rendering.OpenGL
                 if (Data.ActivelyMapping.Contains(this))
                     return;
 
+                if (Engine.InvokeOnMainThread(() => PushSubData(offset, length)))
+                    return;
+                
                 if (!IsGenerated)
                     Generate();
                 else
                 {
+                    uint lastPushed = _lastPushedLength;
+                    if (offset + length > lastPushed)
+                    {
+                        int clamped = (int)lastPushed - offset;
+                        if (clamped <= 0)
+                        {
+                            Debug.LogWarning($"PushSubData called with offset {offset} and length {length}, with an offset that exceeds the last fully-pushed length of {lastPushed}. Ignoring call.");
+                            return;
+                        }
+
+                        //Debug.LogWarning($"PushSubData called with offset {offset} and length {length} that exceeds the last fully-pushed length of {lastPushed}. Clamping length to {clamped}.");
+                        length = (uint)clamped;
+                    }
+
                     void* addr = Data.Address;
                     Api.NamedBufferSubData(BindingId, offset, length, addr);
                 }
@@ -242,7 +265,10 @@ namespace XREngine.Rendering.OpenGL
             {
                 if (Data.ActivelyMapping.Contains(this))
                     return;
-                
+
+                if (Engine.InvokeOnMainThread(MapBufferData))
+                    return;
+                                
                 uint id = BindingId;
                 uint length = Data.Source!.Length;
 
@@ -297,7 +323,10 @@ namespace XREngine.Rendering.OpenGL
             {
                 if (!Data.ActivelyMapping.Contains(this))
                     return;
-                
+
+                if (Engine.InvokeOnMainThread(UnmapBufferData))
+                    return;
+
                 Api.UnmapNamedBuffer(BindingId);
                 Data.ActivelyMapping.Remove(this);
             }
@@ -312,6 +341,9 @@ namespace XREngine.Rendering.OpenGL
                 if (bindingID == InvalidBindingId)
                     return;
 
+                if (Engine.InvokeOnMainThread(() => SetUniformBlockName(program, blockName)))
+                    return;
+
                 Bind();
                 SetBlockIndex(Api.GetUniformBlockIndex(bindingID, blockName));
                 Unbind();
@@ -320,6 +352,9 @@ namespace XREngine.Rendering.OpenGL
             public void SetBlockIndex(uint blockIndex)
             {
                 if (blockIndex == uint.MaxValue)
+                    return;
+
+                if (Engine.InvokeOnMainThread(() => SetBlockIndex(blockIndex)))
                     return;
 
                 Bind();
@@ -331,9 +366,19 @@ namespace XREngine.Rendering.OpenGL
                 => UnmapBufferData();
 
             public void Bind()
-                => Api.BindBuffer(ToGLEnum(Data.Target), BindingId);
+            {
+                if (Engine.InvokeOnMainThread(Bind))
+                    return;
+
+                Api.BindBuffer(ToGLEnum(Data.Target), BindingId);
+            }
             public void Unbind()
-                => Api.BindBuffer(ToGLEnum(Data.Target), 0);
+            {
+                if (Engine.InvokeOnMainThread(Unbind))
+                    return;
+
+                Api.BindBuffer(ToGLEnum(Data.Target), 0);
+            }
         }
     }
 }

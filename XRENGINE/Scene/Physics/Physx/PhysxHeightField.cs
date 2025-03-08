@@ -1,14 +1,52 @@
-﻿using MagicPhysX;
-using System.Drawing.Imaging;
-using System.Drawing;
+﻿using ImageMagick;
+using MagicPhysX;
 using System.Numerics;
+using XREngine.Components;
+using XREngine.Core.Attributes;
 using XREngine.Data;
+using XREngine.Scene.Components.Physics;
 using static MagicPhysX.NativeMethods;
-using ImageMagick;
-using static XREngine.Rendering.Physics.Physx.IPhysicsGeometry;
 
 namespace XREngine.Rendering.Physics.Physx
 {
+    [RequireComponents(typeof(DynamicRigidBodyComponent))]
+    public class PhysxHeightFieldComponent : XRComponent
+    {
+        public DynamicRigidBodyComponent RigidBodyComponent => GetSiblingComponent<DynamicRigidBodyComponent>(true)!;
+
+        public PhysxHeightField? HeightField { get; set; }
+        public void LoadHeightField(string imagePath)
+        {
+            HeightField = new PhysxHeightField(imagePath);
+        }
+        public void ReleaseHeightField()
+        {
+            HeightField?.Release();
+            HeightField = null;
+        }
+
+        public float HeightScale { get; set; } = 1.0f;
+        public float RowScale { get; set; } = 1.0f;
+        public float ColumnScale { get; set; } = 1.0f;
+
+        public bool TightBounds { get; set; }
+        public bool DoubleSided { get; set; }
+
+        protected internal unsafe override void OnComponentActivated()
+        {
+            base.OnComponentActivated();
+            if (HeightField is not null)
+            {
+                var mat = new PhysxMaterial(0.5f, 0.5f, 0.1f);
+                IPhysicsGeometry.HeightField hf = new(HeightField.HeightFieldPtr, HeightScale, RowScale, ColumnScale, TightBounds, DoubleSided);
+                RigidBodyComponent.RigidBody = new PhysxDynamicRigidBody(mat, hf, 1.0f);
+            }
+        }
+        protected internal override void OnComponentDeactivated()
+        {
+            base.OnComponentDeactivated();
+        }
+    }
     public unsafe class PhysxHeightField : PhysxBase
     {
         public PxHeightField* HeightFieldPtr { get; }
@@ -64,9 +102,6 @@ namespace XREngine.Rendering.Physics.Physx
         public void Release()
             => HeightFieldPtr->ReleaseMut();
 
-        public unsafe PxHeightFieldGeometry NewGeometry(PxMeshGeometryFlags flags, float heightScale = 1.0f, float rowScale = 1.0f, float columnScale = 1.0f)
-            => PxHeightFieldGeometry_new(HeightFieldPtr, flags, heightScale, rowScale, columnScale);
-
         public unsafe bool ModifySamplesMut(int startCol, int startRow, PxHeightFieldDesc* subfieldDesc, bool shrinkBounds)
             => HeightFieldPtr->ModifySamplesMut(startCol, startRow, subfieldDesc, shrinkBounds);
 
@@ -85,7 +120,7 @@ namespace XREngine.Rendering.Physics.Physx
         public unsafe uint GetTimestamp()
             => HeightFieldPtr->GetTimestamp();
 
-        public PxHeightFieldGeometry GetGeometry(
+        public PxHeightFieldGeometry NewGeometry(
             float heightScale = 1.0f,
             float rowScale = 1.0f,
             float columnScale = 1.0f,

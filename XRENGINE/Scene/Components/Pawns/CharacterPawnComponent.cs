@@ -133,7 +133,7 @@ namespace XREngine.Components
         protected internal override void OnComponentActivated()
         {
             base.OnComponentActivated();
-            RegisterTick(ETickGroup.Normal, ETickOrder.Logic, TickMovementInput);
+            RegisterTick(ETickGroup.Normal, ETickOrder.Input, TickMovementInput);
         }
 
         protected virtual void TickMovementInput()

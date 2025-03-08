@@ -501,12 +501,12 @@ public partial class PhysicsChainComponent : XRComponent, IRenderable
             if (p.ParentIndex >= 0)
             {
                 Particle p0 = pt.Particles[p.ParentIndex];
-                Engine.Rendering.Debug.RenderLine(p.Position, p0.Position, ColorF4.Orange, false);
+                Engine.Rendering.Debug.RenderLine(p.Position, p0.Position, ColorF4.Orange);
             }
             if (p.Radius > 0)
             {
                 float radius = p.Radius * _objectScale;
-                Engine.Rendering.Debug.RenderSphere(p.Position, radius, false, ColorF4.Yellow, false);
+                Engine.Rendering.Debug.RenderSphere(p.Position, radius, false, ColorF4.Yellow);
             }
         }
     }

@@ -660,12 +660,6 @@ namespace XREngine.Rendering
         //    OnBufferInfoChanged();
         //}
 
-        /// <summary>
-        /// Weight values from 0.0 to 1.0 for each blendshape that affects each vertex.
-        /// Same length as BlendshapeIndices, stream-write buffer.
-        /// </summary>
-        public XRDataBuffer? BlendshapeWeights { get; private set; }
-
         #region Non-Per-Facepoint Buffers
 
         #region Bone Weighting Buffers
@@ -850,10 +844,10 @@ namespace XREngine.Rendering
                 bounds = bounds is null ? new AABB(v.Position, v.Position) : bounds.Value.ExpandedToInclude(v.Position);
 
                 if (v.Normal is not null && !vertexActions.ContainsKey(1))
-                    vertexActions.TryAdd(1, (i, x, vtx) => NormalsBuffer!.SetDataRawAtIndex((uint)i, vtx?.Normal ?? Vector3.Zero));
+                    vertexActions.TryAdd(1, (i, x, vtx) => NormalsBuffer!.SetVector3((uint)i, vtx?.Normal ?? Vector3.Zero));
 
                 if (v.Tangent is not null && !vertexActions.ContainsKey(2))
-                    vertexActions.TryAdd(2, (i, x, vtx) => TangentsBuffer!.SetDataRawAtIndex((uint)i, vtx?.Tangent ?? Vector3.Zero));
+                    vertexActions.TryAdd(2, (i, x, vtx) => TangentsBuffer!.SetVector3((uint)i, vtx?.Tangent ?? Vector3.Zero));
 
                 Interlocked.Exchange(ref maxTexCoordCount, Math.Max(maxTexCoordCount, v.TextureCoordinateSets.Count));
                 if (v.TextureCoordinateSets is not null && v.TextureCoordinateSets.Count > 0 && !vertexActions.ContainsKey(3))
@@ -861,7 +855,7 @@ namespace XREngine.Rendering
                     vertexActions.TryAdd(3, (i, x, vtx) =>
                     {
                         for (int texCoordIndex = 0; texCoordIndex < v.TextureCoordinateSets.Count; ++texCoordIndex)
-                            TexCoordBuffers![texCoordIndex].SetDataRawAtIndex((uint)i, vtx?.TextureCoordinateSets != null && texCoordIndex < (vtx?.TextureCoordinateSets?.Count ?? 0)
+                            TexCoordBuffers![texCoordIndex].SetVector2((uint)i, vtx?.TextureCoordinateSets != null && texCoordIndex < (vtx?.TextureCoordinateSets?.Count ?? 0)
                                 ? vtx!.TextureCoordinateSets[texCoordIndex]
                                 : Vector2.Zero);
                     });
@@ -873,7 +867,7 @@ namespace XREngine.Rendering
                     vertexActions.TryAdd(4, (i, x, vtx) =>
                     {
                         for (int colorIndex = 0; colorIndex < v.ColorSets.Count; ++colorIndex)
-                            ColorBuffers![colorIndex].SetDataRawAtIndex((uint)i, vtx?.ColorSets != null && colorIndex < (vtx?.ColorSets?.Count ?? 0)
+                            ColorBuffers![colorIndex].SetVector4((uint)i, vtx?.ColorSets != null && colorIndex < (vtx?.ColorSets?.Count ?? 0)
                                 ? vtx!.ColorSets[colorIndex]
                                 : Vector4.Zero);
                     });
@@ -916,7 +910,7 @@ namespace XREngine.Rendering
                 maxColorCount,
                 maxTexCoordCount);
 
-            vertexActions.TryAdd(6, (i, x, vtx) => PositionsBuffer!.SetDataRawAtIndex((uint)i, vtx?.Position ?? Vector3.Zero));
+            vertexActions.TryAdd(6, (i, x, vtx) => PositionsBuffer!.SetVector3((uint)i, vtx?.Position ?? Vector3.Zero));
 
             //Fill the buffers with the vertex data using the command list
             //We can do this in parallel since each vertex is independent
@@ -961,10 +955,10 @@ namespace XREngine.Rendering
                 bounds = bounds is null ? new AABB(v.Position, v.Position) : bounds.Value.ExpandedToInclude(v.Position);
 
                 if (v.Normal is not null && !vertexActions.ContainsKey(1))
-                    vertexActions.TryAdd(1, (i, x, vtx) => NormalsBuffer!.SetDataRawAtIndex((uint)i, vtx?.Normal ?? Vector3.Zero));
+                    vertexActions.TryAdd(1, (i, x, vtx) => NormalsBuffer!.SetVector3((uint)i, vtx?.Normal ?? Vector3.Zero));
 
                 if (v.Tangent is not null && !vertexActions.ContainsKey(2))
-                    vertexActions.TryAdd(2, (i, x, vtx) => TangentsBuffer!.SetDataRawAtIndex((uint)i, vtx?.Tangent ?? Vector3.Zero));
+                    vertexActions.TryAdd(2, (i, x, vtx) => TangentsBuffer!.SetVector3((uint)i, vtx?.Tangent ?? Vector3.Zero));
 
                 Interlocked.Exchange(ref maxTexCoordCount, Math.Max(maxTexCoordCount, v.TextureCoordinateSets.Count));
                 if (v.TextureCoordinateSets is not null && v.TextureCoordinateSets.Count > 0 && !vertexActions.ContainsKey(3))
@@ -972,7 +966,7 @@ namespace XREngine.Rendering
                     vertexActions.TryAdd(3, (i, x, vtx) =>
                     {
                         for (int texCoordIndex = 0; texCoordIndex < v.TextureCoordinateSets.Count; ++texCoordIndex)
-                            TexCoordBuffers![texCoordIndex].SetDataRawAtIndex((uint)i, vtx?.TextureCoordinateSets != null && texCoordIndex < (vtx?.TextureCoordinateSets?.Count ?? 0)
+                            TexCoordBuffers![texCoordIndex].SetVector2((uint)i, vtx?.TextureCoordinateSets != null && texCoordIndex < (vtx?.TextureCoordinateSets?.Count ?? 0)
                                 ? vtx!.TextureCoordinateSets[texCoordIndex]
                                 : Vector2.Zero);
                     });
@@ -984,7 +978,7 @@ namespace XREngine.Rendering
                     vertexActions.TryAdd(4, (i, x, vtx) =>
                     {
                         for (int colorIndex = 0; colorIndex < v.ColorSets.Count; ++colorIndex)
-                            ColorBuffers![colorIndex].SetDataRawAtIndex((uint)i, vtx?.ColorSets != null && colorIndex < (vtx?.ColorSets?.Count ?? 0)
+                            ColorBuffers![colorIndex].SetVector4((uint)i, vtx?.ColorSets != null && colorIndex < (vtx?.ColorSets?.Count ?? 0)
                                 ? vtx!.ColorSets[colorIndex]
                                 : Vector4.Zero);
                     });
@@ -1095,7 +1089,7 @@ namespace XREngine.Rendering
                 maxColorCount,
                 maxTexCoordCount);
             
-            vertexActions.TryAdd(6, (i, x, vtx) => PositionsBuffer!.SetDataRawAtIndex((uint)i, vtx?.Position ?? Vector3.Zero));
+            vertexActions.TryAdd(6, (i, x, vtx) => PositionsBuffer!.SetVector3((uint)i, vtx?.Position ?? Vector3.Zero));
 
             //MakeFaceIndices(weights, firstAppearanceArray.Length);
 
@@ -1157,10 +1151,10 @@ namespace XREngine.Rendering
                     });
 
                 if (v.Normal is not null && !vertexActions.ContainsKey(1))
-                    vertexActions.TryAdd(1, (i, x, vtx) => NormalsBuffer!.SetDataRawAtIndex((uint)i, Vector3.TransformNormal(vtx?.Normal ?? Vector3.Zero, dataTransform).Normalized()));
+                    vertexActions.TryAdd(1, (i, x, vtx) => NormalsBuffer!.SetVector3((uint)i, Vector3.TransformNormal(vtx?.Normal ?? Vector3.Zero, dataTransform).Normalized()));
 
                 if (v.Tangent is not null && !vertexActions.ContainsKey(2))
-                    vertexActions.TryAdd(2, (i, x, vtx) => TangentsBuffer!.SetDataRawAtIndex((uint)i, Vector3.TransformNormal(vtx?.Tangent ?? Vector3.Zero, dataTransform).Normalized()));
+                    vertexActions.TryAdd(2, (i, x, vtx) => TangentsBuffer!.SetVector3((uint)i, Vector3.TransformNormal(vtx?.Tangent ?? Vector3.Zero, dataTransform).Normalized()));
 
                 Interlocked.Exchange(ref maxTexCoordCount, Math.Max(maxTexCoordCount, v.TextureCoordinateSets.Count));
                 if (v.TextureCoordinateSets is not null && v.TextureCoordinateSets.Count > 0 && !vertexActions.ContainsKey(3))
@@ -1168,7 +1162,7 @@ namespace XREngine.Rendering
                     vertexActions.TryAdd(3, (i, x, vtx) =>
                     {
                         for (int texCoordIndex = 0; texCoordIndex < v.TextureCoordinateSets.Count; ++texCoordIndex)
-                            TexCoordBuffers![texCoordIndex].SetDataRawAtIndex((uint)i, vtx?.TextureCoordinateSets != null && texCoordIndex < (vtx?.TextureCoordinateSets?.Count ?? 0)
+                            TexCoordBuffers![texCoordIndex].SetVector2((uint)i, vtx?.TextureCoordinateSets != null && texCoordIndex < (vtx?.TextureCoordinateSets?.Count ?? 0)
                                 ? FlipYCoord(vtx!.TextureCoordinateSets[texCoordIndex])
                                 : Vector2.Zero);
                     });
@@ -1180,7 +1174,7 @@ namespace XREngine.Rendering
                     vertexActions.TryAdd(4, (i, x, vtx) =>
                     {
                         for (int colorIndex = maxColorCount; colorIndex < v.ColorSets.Count; ++colorIndex)
-                            ColorBuffers![colorIndex].SetDataRawAtIndex((uint)i, vtx?.ColorSets != null && colorIndex < (vtx?.ColorSets?.Count ?? 0)
+                            ColorBuffers![colorIndex].SetVector4((uint)i, vtx?.ColorSets != null && colorIndex < (vtx?.ColorSets?.Count ?? 0)
                                 ? vtx!.ColorSets[colorIndex]
                                 : Vector4.Zero);
                     });
@@ -1366,7 +1360,7 @@ namespace XREngine.Rendering
             //    }
             //}
 
-            vertexActions.TryAdd(6, (i, x, vtx) => PositionsBuffer!.SetDataRawAtIndex((uint)i, Vector3.Transform(vtx?.Position ?? Vector3.Zero, dataTransform)));
+            vertexActions.TryAdd(6, (i, x, vtx) => PositionsBuffer!.SetVector3((uint)i, Vector3.Transform(vtx?.Position ?? Vector3.Zero, dataTransform)));
 
             //MakeFaceIndices(weights, count);
 
@@ -1389,6 +1383,13 @@ namespace XREngine.Rendering
             private set => SetField(ref _vertices, value);
         }
 
+        private float[] _defaultBlendshapeValues = [];
+        public float[] DefaultBlendshapeValues
+        {
+            get => _defaultBlendshapeValues;
+            private set => SetField(ref _defaultBlendshapeValues, value);
+        }
+
         private unsafe void PopulateBlendshapeBuffers(
             List<Vertex> sourceList,
             Mesh mesh)//,
@@ -1399,14 +1400,10 @@ namespace XREngine.Rendering
             bool intVarType = Engine.Rendering.Settings.UseIntegerUniformsInShaders;
 
             BlendshapeCounts = new XRDataBuffer(ECommonBufferType.BlendshapeCount.ToString(), EBufferTarget.ArrayBuffer, (uint)sourceList.Count, intVarType ? EComponentType.Int : EComponentType.Float, 2, false, intVarType);
-            BlendshapeWeights = new XRDataBuffer($"{ECommonBufferType.BlendshapeWeights}Buffer", EBufferTarget.ShaderStorageBuffer, BlendshapeCount.Align(4), EComponentType.Float, 1, false, false)
-            {
-                Usage = EBufferUsage.StreamDraw
-            };
 
-            //TODO: move this buffer to the XRMeshRenderer
-            for (int i = 0; i < mesh.MeshAnimationAttachments.Count; i++)
-                BlendshapeWeights!.Set((uint)i, 0.0f);
+            DefaultBlendshapeValues = new float[mesh.MeshAnimationAttachmentCount];
+            for (int i = 0; i < mesh.MeshAnimationAttachmentCount; i++)
+                DefaultBlendshapeValues[i] = 0.0f;
 
             List<Vector3> deltas = [Vector3.Zero]; //0 index is reserved for 0 delta
             List<IVector4> blendshapeIndices = [];
@@ -1562,7 +1559,6 @@ namespace XREngine.Rendering
             }
 
             Buffers.Add(BlendshapeCounts.BindingName, BlendshapeCounts);
-            Buffers.Add(BlendshapeWeights.BindingName, BlendshapeWeights);
             Buffers.Add(BlendshapeIndices.BindingName, BlendshapeIndices);
             Buffers.Add(BlendshapeDeltas.BindingName, BlendshapeDeltas);
         }

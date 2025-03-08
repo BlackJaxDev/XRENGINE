@@ -30,7 +30,7 @@ namespace XREngine.Scene
             => RenderTree.DebugRender(camera?.WorldFrustum(), onlyContainingItems, RenderAABB);
 
         private void RenderAABB(Vector3 extents, Vector3 center, Color color)
-            => Engine.Rendering.Debug.RenderAABB(extents, center, false, color, true);
+            => Engine.Rendering.Debug.RenderAABB(extents, center, false, color);
 
         public void Raycast<T>(
             Segment worldSegment,

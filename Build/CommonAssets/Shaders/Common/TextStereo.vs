@@ -1,4 +1,6 @@
 #version 460
+#extension GL_OVR_multiview2 : require
+//#extension GL_EXT_multiview_tessellation_geometry_shader : enable
 
 layout (location = 0) in vec3 Position;
 layout (location = 1) in vec3 Normal;
@@ -14,8 +16,10 @@ layout(std430, binding = 1) buffer GlyphTexCoordsBuffer
 };
 
 uniform mat4 ModelMatrix;
-uniform mat4 InverseViewMatrix_VTX;
-uniform mat4 ProjMatrix_VTX;
+uniform mat4 LeftEyeInverseViewMatrix_VTX;
+uniform mat4 RigthEyeInverseViewMatrix_VTX;
+uniform mat4 LeftEyeProjMatrix_VTX;
+uniform mat4 RightEyeProjMatrix_VTX;
 
 layout (location = 0) out vec3 FragPos;
 layout (location = 1) out vec3 FragNorm;
@@ -44,6 +48,9 @@ void main()
 {
     vec4 tfm = GlyphTransforms[gl_InstanceID];
     vec4 uv = GlyphTexCoords[gl_InstanceID];
+	bool left = gl_ViewID_OVR == 0;
+	mat4 InverseViewMatrix_VTX = left ? LeftEyeInverseViewMatrix_VTX : RigthEyeInverseViewMatrix_VTX;
+	mat4 ProjMatrix_VTX = left ? LeftEyeProjMatrix_VTX : RightEyeProjMatrix_VTX;
 
 	mat4 ViewMatrix = inverse(InverseViewMatrix_VTX);
 	mat4 mvMatrix = ViewMatrix * ModelMatrix;

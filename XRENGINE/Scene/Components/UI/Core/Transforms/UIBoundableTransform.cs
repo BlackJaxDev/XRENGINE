@@ -630,30 +630,26 @@ namespace XREngine.Rendering.UI
             
             var region = AxisAlignedRegion;
             ColorF4 color = Engine.Rendering.Settings.Bounds2DColor;
+
             Engine.Rendering.Debug.RenderLine(
                 new Vector3(region.TopLeft, 0.0f) + Engine.Rendering.Debug.UIPositionBias,
                 new Vector3(region.TopRight, 0.0f) + Engine.Rendering.Debug.UIPositionBias,
-                color,
-                false,
-                1);
+                color);
+
             Engine.Rendering.Debug.RenderLine(
                 new Vector3(region.TopRight, 0.0f) + Engine.Rendering.Debug.UIPositionBias,
                 new Vector3(region.BottomRight, 0.0f) + Engine.Rendering.Debug.UIPositionBias,
-                color,
-                false,
-                1);
+                color);
+
             Engine.Rendering.Debug.RenderLine(
                 new Vector3(region.BottomRight, 0.0f) + Engine.Rendering.Debug.UIPositionBias,
                 new Vector3(region.BottomLeft, 0.0f) + Engine.Rendering.Debug.UIPositionBias,
-                color,
-                false,
-                1);
+                color);
+
             Engine.Rendering.Debug.RenderLine(
                 new Vector3(region.BottomLeft, 0.0f) + Engine.Rendering.Debug.UIPositionBias,
                 new Vector3(region.TopLeft, 0.0f) + Engine.Rendering.Debug.UIPositionBias,
-                color,
-                false,
-                1);
+                color);
         }
 
         protected virtual void RemakeAxisAlignedRegion(Vector2 actualSize)

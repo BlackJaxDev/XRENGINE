@@ -1,12 +1,13 @@
 ﻿using System.Numerics;
 using XREngine.Data;
+using XREngine.Scene.Components.Physics;
 
 namespace XREngine.Components
 {
     /// <summary>
     /// Base component for all components that move a player scene node.
     /// </summary>
-    public abstract class PlayerMovementComponentBase : XRComponent
+    public abstract class PlayerMovementComponentBase : DynamicRigidBodyComponent
     {
         private Vector3 _frameInputDirection = Vector3.Zero;
         private Vector3 _currentFrameInputDirection = Vector3.Zero;
@@ -52,7 +53,7 @@ namespace XREngine.Components
             }
 
             TargetFrameInputDirection = Vector3.Zero;
-            return ConstantInputDirection + CurrentFrameInputDirection;
+            return (ConstantInputDirection + CurrentFrameInputDirection) * Engine.Delta;
         }
     }
 }

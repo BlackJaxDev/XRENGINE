@@ -1,4 +1,6 @@
 #version 460
+#extension GL_OVR_multiview2 : require
+//#extension GL_EXT_multiview_tessellation_geometry_shader : enable
 
 layout (location = 0) in vec3 Position;
 layout (location = 1) in vec3 Normal;
@@ -12,10 +14,16 @@ layout(std430, binding = 1) buffer GlyphTexCoordsBuffer
 {
     vec4 GlyphTexCoords[];
 };
+layout(std430, binding = 1) buffer GlyphRotationsBuffer
+{
+    float GlyphRotations[];
+};
 
 uniform mat4 ModelMatrix;
-uniform mat4 InverseViewMatrix_VTX;
-uniform mat4 ProjMatrix_VTX;
+uniform mat4 LeftEyeInverseViewMatrix_VTX;
+uniform mat4 RigthEyeInverseViewMatrix_VTX;
+uniform mat4 LeftEyeProjMatrix_VTX;
+uniform mat4 RightEyeProjMatrix_VTX;
 
 layout (location = 0) out vec3 FragPos;
 layout (location = 1) out vec3 FragNorm;
@@ -40,10 +48,22 @@ mat3 adjoint(mat4 m)
 
 const float PI = 3.14f;
 
+mat2 rotationMatrix(float angle)
+{
+	angle *= PI / 180.0f;
+    float sine = sin(angle), cosine = cos(angle);
+    return mat2(cosine, -sine,
+                sine,    cosine);
+}
+
 void main()
 {
     vec4 tfm = GlyphTransforms[gl_InstanceID];
     vec4 uv = GlyphTexCoords[gl_InstanceID];
+	float rot = GlyphRotations[gl_InstanceID];
+	bool left = gl_ViewID_OVR == 0;
+	mat4 InverseViewMatrix_VTX = left ? LeftEyeInverseViewMatrix_VTX : RigthEyeInverseViewMatrix_VTX;
+	mat4 ProjMatrix_VTX = left ? LeftEyeProjMatrix_VTX : RightEyeProjMatrix_VTX;
 
 	mat4 ViewMatrix = inverse(InverseViewMatrix_VTX);
 	mat4 mvMatrix = ViewMatrix * ModelMatrix;
@@ -51,7 +71,7 @@ void main()
 	mat4 vpMatrix = ProjMatrix_VTX * ViewMatrix;
 	mat3 normalMatrix = adjoint(ModelMatrix);
 	
-	vec4 position = vec4((tfm.xy + (TexCoord0.xy * tfm.zw)), 0.0f, 1.0f);
+	vec4 position = vec4((tfm.xy + (TexCoord0.xy * tfm.zw)) * rotationMatrix(rot), 0.0f, 1.0f);
 
 	vec3 normal = Normal;
 	

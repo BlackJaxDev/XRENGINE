@@ -26,7 +26,7 @@ namespace XREngine.Scene
             => RenderTree.DebugRender(camera?.GetOrthoCameraBounds(), onlyContainingItems, RenderAABB);
 
         private void RenderAABB(Vector2 extents, Vector2 center, ColorF4 color)
-            => Engine.Rendering.Debug.RenderQuad(new Vector3(center, 0.0f) + AbstractRenderer.UIPositionBias, AbstractRenderer.UIRotation, extents, false, color, false, 1.0f);
+            => Engine.Rendering.Debug.RenderQuad(new Vector3(center, 0.0f) + AbstractRenderer.UIPositionBias, AbstractRenderer.UIRotation, extents, false, color);
 
         public override IRenderTree GenericRenderTree => RenderTree;
 

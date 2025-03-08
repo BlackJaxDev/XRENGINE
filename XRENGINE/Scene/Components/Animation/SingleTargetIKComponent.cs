@@ -28,7 +28,7 @@ namespace XREngine.Scene.Components.Animation
                 return;
 
             if (TargetTransform is not null)
-                Engine.Rendering.Debug.RenderPoint(TargetTransform.WorldTranslation, ColorF4.Red, false);
+                Engine.Rendering.Debug.RenderPoint(TargetTransform.WorldTranslation, ColorF4.Red);
         }
 
         private TransformBase? _targetTransform;

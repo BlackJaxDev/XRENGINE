@@ -379,8 +379,9 @@ namespace XREngine.Rendering.UI
         protected virtual XRMaterial CreateMaterial(XRTexture2D atlas)
         {
             XRShader vertexShader = XRShader.EngineShader(Path.Combine("Common", AnimatableTransforms ? "TextRotatable.vs" : "Text.vs"), EShaderType.Vertex);
+            XRShader stereoVertexShader = XRShader.EngineShader(Path.Combine("Common", AnimatableTransforms ? "TextRotatableStereo.vs" : "TextStereo.vs"), EShaderType.Vertex);
             XRShader[] nonVertexShaders = NonVertexShadersOverride ?? [XRShader.EngineShader(Path.Combine("Common", "Text.fs"), EShaderType.Fragment)];
-            return new([new ShaderVector4(Color, TextColorUniformName)], [atlas], new XRShader[] { vertexShader }.Concat(nonVertexShaders))
+            return new([new ShaderVector4(Color, TextColorUniformName)], [atlas], new XRShader[] { vertexShader, stereoVertexShader }.Concat(nonVertexShaders))
             {
                 RenderPass = RenderPass,
                 RenderOptions = RenderParameters
