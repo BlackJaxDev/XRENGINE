@@ -9,6 +9,7 @@ using XREngine.Scene.Components.Animation;
 using XREngine.Scene.Transforms;
 
 namespace XREngine.Scene.Components;
+
 /// <summary>
 /// Receives and processes VMC motion capture information.
 /// </summary>
@@ -89,6 +90,11 @@ public class VMCCaptureComponent : VMCComponent
         Server.TryAddMethod(CMD_RelativeTime, ParseRelativeTime);
         //Server.AddMonitorCallback(PropogateCommand);
         RegisterTick(ETickGroup.Normal, ETickOrder.Input, Update);
+    }
+
+    private void PrintCommand(BlobString address, OscMessageValues values)
+    {
+        Debug.Out($"Received command: {address}");
     }
 
     private void ParseRelativeTime(OscMessageValues values)

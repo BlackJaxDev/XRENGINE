@@ -202,7 +202,7 @@ namespace XREngine
             return change;
         }
 
-        private readonly List<(ETickGroup group, int order, Engine.TickList.DelTick tick)> _tickCache = [];
+        private readonly ConcurrentHashSet<(ETickGroup group, int order, Engine.TickList.DelTick tick)> _tickCache = [];
 
         public void RegisterTick(ETickGroup group, int order, Engine.TickList.DelTick tick)
         {
@@ -211,17 +211,15 @@ namespace XREngine
         }
         public void UnregisterTick(ETickGroup group, int order, Engine.TickList.DelTick tick)
         {
-            _tickCache.Remove((group, order, tick));
+            _tickCache.TryRemove((group, order, tick));
             World?.UnregisterTick(group, order, tick);
         }
 
         protected internal void ClearTicks()
         {
-            while (_tickCache.Count > 0)
-            {
-                (ETickGroup group, int order, Engine.TickList.DelTick tick) tick = _tickCache[0];
-                UnregisterTick(tick.group, tick.order, tick.tick);
-            }
+            foreach (var (group, order, tick) in _tickCache)
+                World?.UnregisterTick(group, order, tick);
+            _tickCache.Clear();
         }
 
         public void RegisterTick(ETickGroup group, ETickOrder order, Engine.TickList.DelTick tick)

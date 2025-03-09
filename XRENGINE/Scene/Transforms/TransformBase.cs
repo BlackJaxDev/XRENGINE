@@ -309,6 +309,15 @@ namespace XREngine.Scene.Transforms
             //}
         }
 
+        public void RecalculateInverseMatrices()
+        {
+            _inverseLocalMatrix.NeedsRecalc = false;
+            RecalcLocalInv();
+
+            _inverseWorldMatrix.NeedsRecalc = false;
+            RecalcWorldInv(false);
+        }
+
         /// <summary>
         /// Recalculates the local and world matrices for this transform and all children.
         /// If recalcChildrenNow is true, all children will be recalculated immediately.
@@ -766,13 +775,13 @@ namespace XREngine.Scene.Transforms
         /// Used by the physics system to derive a world matrix from a physics body into the components used by this transform.
         /// </summary>
         /// <param name="value"></param>
-        public void DeriveWorldMatrix(Matrix4x4 value)
-            => DeriveLocalMatrix(ParentInverseWorldMatrix * value);
+        public void DeriveWorldMatrix(Matrix4x4 value, bool networkSmoothed = false)
+            => DeriveLocalMatrix(ParentInverseWorldMatrix * value, networkSmoothed);
         /// <summary>
         /// Derives components to create the local matrix from the given matrix.
         /// </summary>
         /// <param name="value"></param>
-        public virtual void DeriveLocalMatrix(Matrix4x4 value) { }
+        public virtual void DeriveLocalMatrix(Matrix4x4 value, bool networkSmoothed = false) { }
 
         [UnconditionalSuppressMessage("Trimming", "IL2026:Members annotated with 'RequiresUnreferencedCodeAttribute' require dynamic access otherwise can break functionality when trimming application code", Justification = "<Pending>")]
         public static Type[] TransformTypes { get; } = GetAllTransformTypes();

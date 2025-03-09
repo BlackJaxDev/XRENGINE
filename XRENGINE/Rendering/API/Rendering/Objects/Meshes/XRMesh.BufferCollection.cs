@@ -1,4 +1,5 @@
-﻿using System.Collections;
+﻿using Extensions;
+using System.Collections;
 using System.Diagnostics.CodeAnalysis;
 using System.Runtime.Serialization;
 using XREngine.Data.Core;
@@ -197,6 +198,16 @@ namespace XREngine.Rendering
             XRDataBuffer IReadOnlyDictionary<string, XRDataBuffer>.this[string key] => ((IReadOnlyDictionary<string, XRDataBuffer>)_buffers)[key];
             public XRDataBuffer this[string key] { get => ((IDictionary<string, XRDataBuffer>)_buffers)[key]; set => ((IDictionary<string, XRDataBuffer>)_buffers)[key] = value; }
             public object? this[object key] { get => ((IDictionary)_buffers)[key]; set => ((IDictionary)_buffers)[key] = value; }
+        }
+
+        public bool GetBlendshapeIndex(string name, out uint index)
+        {
+            index = 0;
+            int i = BlendshapeNames.IndexOf(name);
+            if (i == -1)
+                return false;
+            index = (uint)i;
+            return true;
         }
     }
 }

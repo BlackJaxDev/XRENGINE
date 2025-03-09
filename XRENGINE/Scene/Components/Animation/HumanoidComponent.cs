@@ -607,8 +607,8 @@ namespace XREngine.Scene.Components.Animation
         /// Sets the value of a blendshape on all meshes in the model.
         /// </summary>
         /// <param name="blendshapeName"></param>
-        /// <param name="value"></param>
-        public void SetBlendshapeValue(string blendshapeName, float value)
+        /// <param name="weight"></param>
+        public void SetBlendshapeValue(string blendshapeName, float weight, bool normalizedWeight = true)
         {
             //For all model components, find meshes with a matching blendshape name and set the value
             SceneNode.IterateComponents<ModelComponent>(comp =>
@@ -619,10 +619,10 @@ namespace XREngine.Scene.Components.Animation
                 var renderers = comp.GetAllRenderersWhere(HasMatchingBlendshape);
                 foreach (var renderer in renderers)
                 {
-                    int r = renderer.Mesh?.BlendshapeNames.IndexOf(blendshapeName) ?? -1;
-                    if (r >= 0)
-                        renderer.SetBlendshapeWeight((uint)r, value);
+                    var func = normalizedWeight ? (Action<string, float>)renderer.SetBlendshapeWeightNormalized : renderer.SetBlendshapeWeight;
+                    func(blendshapeName, weight);
                 }
+                
             }, true);
         }
 

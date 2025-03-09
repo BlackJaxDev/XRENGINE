@@ -117,12 +117,11 @@ namespace XREngine.Scene.Transforms
             set => SetField(ref _order, value);
         }
 
-        private float _smoothingSpeed = 0.1f;
+        private float _smoothingSpeed = 0.4f;
         /// <summary>
         /// How fast to interpolate to the target values.
-        /// A value of 0.0f will snap to the target, whereas 1.0f will take 1 second to reach the target.
         /// </summary>
-        [DefaultValue(0.1f)]
+        [DefaultValue(0.4f)]
         public float SmoothingSpeed
         {
             get => _smoothingSpeed;
@@ -208,7 +207,7 @@ namespace XREngine.Scene.Transforms
 
         private void InterpolateToTarget()
         {
-            float delta = SmoothingSpeed * Engine.Time.Timer.Update.SmoothedDilatedDelta;
+            float delta = SmoothingSpeed * Engine.Time.Timer.TargetUpdateFrequency * Engine.Time.Timer.Update.SmoothedDilatedDelta;
             if (TargetScale.HasValue)
             {
                 Scale = Vector3.Lerp(Scale, TargetScale.Value, delta);
@@ -283,19 +282,25 @@ namespace XREngine.Scene.Transforms
         public void LookAt(Vector3 worldSpaceTarget)
             => Rotation = Quaternion.CreateFromRotationMatrix(Matrix4x4.CreateLookAt(Translation, Vector3.Transform(worldSpaceTarget, ParentInverseWorldMatrix), Globals.Up));
 
-        public override void DeriveLocalMatrix(Matrix4x4 value)
+        public override void DeriveLocalMatrix(Matrix4x4 value, bool networkSmoothed = false)
         {
             Order = EOrder.TRS;
+
             if (!Matrix4x4.Decompose(value, out Vector3 scale, out Quaternion rotation, out Vector3 translation))
                 Debug.Out("Failed to decompose matrix.");
-            //Debug.Out($"Scale: {scale}, Rotation: {rotation}, Translation: {translation}");
-            Scale = scale;
-            Translation = translation;
-            Rotation = rotation;
 
-            //Translation = value.Translation;
-            //Scale = new Vector3(value.M11, value.M22, value.M33);
-            //Rotation = Quaternion.CreateFromRotationMatrix(value);
+            if (networkSmoothed)
+            {
+                TargetScale = scale;
+                TargetTranslation = translation;
+                TargetRotation = rotation;
+            }
+            else
+            {
+                Scale = scale;
+                Translation = translation;
+                Rotation = rotation;
+            }
         }
 
         private Vector3 _prevScale = Vector3.One;
@@ -450,10 +455,23 @@ namespace XREngine.Scene.Transforms
         //    }
         //}
 
-        public void SetWorldRotation(Quaternion value)
-            => Rotation = Quaternion.Normalize(ParentInverseWorldRotation * value);
-        public void SetWorldTranslation(Vector3 value)
-            => Translation = Vector3.Transform(value, ParentInverseWorldMatrix);
+        public void SetWorldRotation(Quaternion value, bool networkSmoothed = false)
+        {
+            Quaternion rotation = Quaternion.Normalize(ParentInverseWorldRotation * value);
+            if (networkSmoothed)
+                TargetRotation = rotation;
+            else
+                Rotation = rotation;
+        }
+
+        public void SetWorldTranslation(Vector3 value, bool networkSmoothed = false)
+        {
+            var translation = Vector3.Transform(value, ParentInverseWorldMatrix);
+            if (networkSmoothed)
+                TargetTranslation = translation;
+            else
+                Translation = translation;
+        }
 
         public Quaternion ParentWorldRotation
             => Parent?.WorldRotation ?? Quaternion.Identity;

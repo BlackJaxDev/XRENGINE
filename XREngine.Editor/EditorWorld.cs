@@ -62,7 +62,8 @@ public static class EditorWorld
     public const bool AddCameraVRPickup = true;
     public const bool IKTest = false; //Adds an simple IK test tree to the scene.
     public const bool Microphone = false; //Adds a microphone to the scene for testing audio capture.
-    public const bool VMC = true; //Adds a VMC capture component to the scene for testing.
+    public const bool VMC = false; //Adds a VMC capture component to the avatar for testing.
+    public const bool FaceMotion3D = true; //Adds a face motion 3D capture component to the avatar for testing.
 
     private static readonly Queue<float> _fpsAvg = new();
     private static void TickFPS(UITextComponent t)
@@ -129,7 +130,7 @@ public static class EditorWorld
                     {
                         //for (int r = 0; r < xrMesh!.BlendshapeCount; r++)
                         int r = 0;
-                        renderer?.SetBlendshapeWeight((uint)r, MathF.Sin(Engine.ElapsedTime) * 0.5f + 0.5f);
+                        renderer?.SetBlendshapeWeightNormalized((uint)r, MathF.Sin(Engine.ElapsedTime) * 0.5f + 0.5f);
                     }
                 });
             }, true);
@@ -172,8 +173,14 @@ public static class EditorWorld
 
         if (VMC)
         {
-            var vmc = rootNode.AddComponent<VMCCaptureComponent>();
+            var vmc = rootNode.AddComponent<VMCCaptureComponent>()!;
             vmc.Humanoid = humanComp;
+        }
+
+        if (FaceMotion3D)
+        {
+            var face = rootNode.AddComponent<FaceMotion3DCaptureComponent>()!;
+            face.Humanoid = humanComp;
         }
     }
 
@@ -188,8 +195,9 @@ public static class EditorWorld
         s.AllowSkinning = true;
         //s.RenderMesh3DBounds = true;
         s.RenderTransformDebugInfo = false;
+        s.RenderTransformLines = true;
         //s.RenderTransformCapsules = true;
-        s.RenderTransformPoints = true;
+        s.RenderTransformPoints = false;
         s.RecalcChildMatricesInParallel = true;
         s.TickGroupedItemsInParallel = true;
         s.RenderWindowsWhileInVR = true;

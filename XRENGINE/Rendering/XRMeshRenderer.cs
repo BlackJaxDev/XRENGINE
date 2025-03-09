@@ -205,7 +205,64 @@ namespace XREngine.Rendering
         public void Render(Matrix4x4 modelMatrix, XRMaterial? materialOverride = null, uint instances = 1u, bool forceNoStereo = false)
             => GetVersion(forceNoStereo).Render(modelMatrix, materialOverride, instances, Material?.BillboardMode ?? EMeshBillboardMode.None);
 
+        /// <summary>
+        /// Get the weight of a blendshape by name, with the weight returned being a percentage from 0 to 100.
+        /// </summary>
+        /// <param name="name"></param>
+        /// <returns></returns>
+        public float GetBlendshapeWeight(string name)
+            => GetBlendshapeIndex(name, out uint index) ? GetBlendshapeWeight(index) : 0.0f;
+
+        /// <summary>
+        /// Get the weight of a blendshape by name, with the weight returned being a normalized value from 0 to 1.
+        /// </summary>
+        /// <param name="name"></param>
+        /// <returns></returns>
+        public float GetBlendshapeWeightNormalized(string name)
+            => GetBlendshapeIndex(name, out uint index) ? GetBlendshapeWeightNormalized(index) : 0.0f;
+
+        /// <summary>
+        /// Set the weight of a blendshape by name, with weight being a percentage from 0 to 100. Exceeding this range is allowed.
+        /// </summary>
+        /// <param name="name"></param>
+        /// <param name="weight"></param>
+        public void SetBlendshapeWeight(string name, float weight)
+        {
+            if (GetBlendshapeIndex(name, out uint index))
+                SetBlendshapeWeight(index, weight);
+        }
+
+        /// <summary>
+        /// Set the weight of a blendshape by name, with weight being a normalized value from 0 to 1. Exceeding this range is allowed.
+        /// </summary>
+        /// <param name="name"></param>
+        /// <param name="weight"></param>
+        public void SetBlendshapeWeightNormalized(string name, float weight)
+        {
+            if (GetBlendshapeIndex(name, out uint index))
+                SetBlendshapeWeightNormalized(index, weight);
+        }
+
+        public bool GetBlendshapeIndex(string name, out uint index)
+        {
+            index = 0;
+            return Mesh is not null && Mesh.GetBlendshapeIndex(name, out index);
+        }
+
+        /// <summary>
+        /// Get the weight of a blendshape by index, with the weight returned being a percentage from 0 to 100.
+        /// </summary>
+        /// <param name="index"></param>
+        /// <returns></returns>
         public float GetBlendshapeWeight(uint index)
+            => GetBlendshapeWeightNormalized(index) * 100.0f;
+
+        /// <summary>
+        /// Get the weight of a blendshape by index, with the weight returned being a normalized value from 0 to 1.
+        /// </summary>
+        /// <param name="index"></param>
+        /// <returns></returns>
+        public float GetBlendshapeWeightNormalized(uint index)
         {
             if (BlendshapeWeights is null || index >= (Mesh?.BlendshapeCount ?? 0u))
                 return 0.0f;
@@ -213,7 +270,20 @@ namespace XREngine.Rendering
             return BlendshapeWeights.GetFloat(index);
         }
 
+        /// <summary>
+        /// Set the weight of a blendshape by index, with weight being a percentage from 0 to 100. Exceeding this range is allowed.
+        /// </summary>
+        /// <param name="index"></param>
+        /// <param name="weight"></param>
         public void SetBlendshapeWeight(uint index, float weight)
+            => SetBlendshapeWeightNormalized(index, weight / 100.0f);
+
+        /// <summary>
+        /// Set the weight of a blendshape by index, with weight being a normalized value from 0 to 1. Exceeding this range is allowed.
+        /// </summary>
+        /// <param name="index"></param>
+        /// <param name="weight"></param>
+        public void SetBlendshapeWeightNormalized(uint index, float weight)
         {
             if (BlendshapeWeights is null || index >= (Mesh?.BlendshapeCount ?? 0u))
                 return;

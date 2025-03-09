@@ -395,13 +395,13 @@ namespace XREngine.Rendering
         /// </summary>
         private TickList GetTickList(ETickGroup group, int order)
         {
-            lock (_lock)
-            {
+            //lock (_lock)
+            //{
                 SortedDictionary<int, TickList> dic = TickLists[group];
                 if (!dic.TryGetValue(order, out TickList? list))
                     dic.Add(order, list = new TickList(Engine.Rendering.Settings.TickGroupedItemsInParallel));
                 return list;
-            }
+            //}
         }
 
         /// <summary>
@@ -409,8 +409,8 @@ namespace XREngine.Rendering
         /// </summary>
         public void TickGroup(ETickGroup group)
         {
-            lock (_lock)
-            {
+            //lock (_lock)
+            //{
                 var tickListDic = TickLists[group];
                 List<int> toRemove = [];
                 foreach (var kv in tickListDic)
@@ -421,10 +421,10 @@ namespace XREngine.Rendering
                 }
                 foreach (int key in toRemove)
                     tickListDic.Remove(key);
-            }
+            //}
         }
 
-        private readonly object _lock = new();
+        //private readonly object _lock = new();
 
         /// <summary>
         /// Ticks the before, during, and after physics groups. Also steps the physics simulation during the during physics tick group.
