@@ -577,10 +577,10 @@ namespace XREngine.Scene.Transforms
         {
             //VerifyLocalMatrix();
 
-            if (!_inverseLocalMatrix.NeedsRecalc)
-                return;
+            //if (!_inverseLocalMatrix.NeedsRecalc)
+            //    return;
             
-            _inverseLocalMatrix.NeedsRecalc = false;
+            //_inverseLocalMatrix.NeedsRecalc = false;
             RecalcLocalInv();
         }
 
@@ -617,10 +617,10 @@ namespace XREngine.Scene.Transforms
         {
             //VerifyWorldMatrix();
 
-            if (!_inverseWorldMatrix.NeedsRecalc)
-                return;
+            //if (!_inverseWorldMatrix.NeedsRecalc)
+            //    return;
             
-            _inverseWorldMatrix.NeedsRecalc = false;
+            //_inverseWorldMatrix.NeedsRecalc = false;
             RecalcWorldInv(false);
         }
 

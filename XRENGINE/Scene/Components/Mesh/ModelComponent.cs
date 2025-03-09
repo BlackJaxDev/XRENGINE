@@ -1,6 +1,8 @@
 ﻿using System.Collections.Concurrent;
 using System.Diagnostics.CodeAnalysis;
+using System.Linq;
 using XREngine.Data.Geometry;
+using XREngine.Rendering;
 using XREngine.Rendering.Models;
 
 namespace XREngine.Components.Scene.Mesh
@@ -110,5 +112,8 @@ namespace XREngine.Components.Scene.Mesh
             }
             return closest;
         }
+
+        public IEnumerable<XRMeshRenderer> GetAllRenderersWhere(Predicate<XRMeshRenderer> predicate)
+            => Meshes.SelectMany(x => x.LODs).Select(x => x.Renderer).Where(x => predicate(x));
     }
 }

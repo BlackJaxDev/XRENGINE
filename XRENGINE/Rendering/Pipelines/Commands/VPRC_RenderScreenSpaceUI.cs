@@ -45,13 +45,14 @@
         protected override void Execute()
         {
             var ui = Pipeline.RenderState.UserInterface;
-            if (ui is null)
+            if (ui is null || !ui.IsActive)
                 return;
             
             var fbo = UserInterfaceFBOName is null ? null : Pipeline.GetFBO<XRFrameBuffer>(UserInterfaceFBOName);
             if (FailRenderIfNoFBO && fbo is null)
                 return;
-            ui?.Render(Pipeline.RenderState.RenderingViewport, fbo);
+
+            ui.RenderScreenSpace(Pipeline.RenderState.RenderingViewport, fbo);
         }
     }
 }

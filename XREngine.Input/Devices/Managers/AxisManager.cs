@@ -14,7 +14,7 @@
         public float Value => Math.Abs(_value) > DeadZoneThreshold ? _value : 0.0f;
 
         public float PressedThreshold { get; set; } = 0.9f;
-        public float DeadZoneThreshold { get; set; } = 0.15f;
+        public float DeadZoneThreshold { get; set; } = 0.1f;
         public float UpdateThreshold { get; set; } = 0.0001f;
 
         #region Registration

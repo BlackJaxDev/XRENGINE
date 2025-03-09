@@ -230,7 +230,8 @@ namespace XREngine.Rendering
 
         public bool IsSingleBound => UtilizedBones.Length == 1;
         public bool IsUnskinned => UtilizedBones.Length == 0;
-        public uint BlendshapeCount { get; set; } = 0u;
+        public uint BlendshapeCount => (uint)(BlendshapeNames?.Length ?? 0);
+        public string[] BlendshapeNames { get; set; } = [];
         public bool HasBlendshapes => BlendshapeCount > 0;
 
         private (TransformBase tfm, Matrix4x4 invBindWorldMtx)[] _utilizedBones = [];
@@ -1338,9 +1339,6 @@ namespace XREngine.Rendering
                 faceRemap,
                 sourceList);
 
-            bool hasBlendshapes = Engine.Rendering.Settings.AllowBlendshapes && mesh.HasMeshAnimationAttachments;
-            BlendshapeCount = hasBlendshapes ? (uint)mesh.MeshAnimationAttachmentCount : 0u;
-
             InitMeshBuffers(
                 vertexActions.ContainsKey(1),
                 vertexActions.ContainsKey(2),
@@ -1368,7 +1366,7 @@ namespace XREngine.Rendering
             //We can do this in parallel since each vertex is independent
             PopulateVertexData(vertexActions.Values, sourceList, count, true);
 
-            if (hasBlendshapes)
+            if (Engine.Rendering.Settings.AllowBlendshapes && mesh.HasMeshAnimationAttachments)
                 PopulateBlendshapeBuffers(sourceList, mesh/*, positionDeltas, normalDeltas, tangentDeltas*/);
 
             _bounds = bounds ?? new AABB(Vector3.Zero, Vector3.Zero);
@@ -1383,13 +1381,6 @@ namespace XREngine.Rendering
             private set => SetField(ref _vertices, value);
         }
 
-        private float[] _defaultBlendshapeValues = [];
-        public float[] DefaultBlendshapeValues
-        {
-            get => _defaultBlendshapeValues;
-            private set => SetField(ref _defaultBlendshapeValues, value);
-        }
-
         private unsafe void PopulateBlendshapeBuffers(
             List<Vertex> sourceList,
             Mesh mesh)//,
@@ -1401,9 +1392,9 @@ namespace XREngine.Rendering
 
             BlendshapeCounts = new XRDataBuffer(ECommonBufferType.BlendshapeCount.ToString(), EBufferTarget.ArrayBuffer, (uint)sourceList.Count, intVarType ? EComponentType.Int : EComponentType.Float, 2, false, intVarType);
 
-            DefaultBlendshapeValues = new float[mesh.MeshAnimationAttachmentCount];
+            BlendshapeNames = new string[mesh.MeshAnimationAttachmentCount];
             for (int i = 0; i < mesh.MeshAnimationAttachmentCount; i++)
-                DefaultBlendshapeValues[i] = 0.0f;
+                BlendshapeNames[i] = mesh.MeshAnimationAttachments[i].Name;
 
             List<Vector3> deltas = [Vector3.Zero]; //0 index is reserved for 0 delta
             List<IVector4> blendshapeIndices = [];

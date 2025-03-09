@@ -24,6 +24,7 @@ using XREngine.Rendering.Models.Materials;
 using XREngine.Rendering.Physics.Physx;
 using XREngine.Rendering.UI;
 using XREngine.Scene;
+using XREngine.Scene.Components;
 using XREngine.Scene.Components.Animation;
 using XREngine.Scene.Components.Physics;
 using XREngine.Scene.Components.VR;
@@ -48,11 +49,11 @@ public static class EditorWorld
     public const bool Skybox = true;
     public const bool Spline = false; //Adds a 3D spline to the scene.
     public const bool DeferredDecal = false; //Adds a deferred decal to the scene.
-    public const bool StaticModel = true; //Imports a scene model to be rendered.
+    public const bool StaticModel = false; //Imports a scene model to be rendered.
     public const bool AnimatedModel = true; //Imports a character model to be animated.
-    public const bool AddEditorUI = false; //Adds the full editor UI to the camera. Probably don't use this one a character pawn.
+    public const bool AddEditorUI = true; //Adds the full editor UI to the camera. Probably don't use this one a character pawn.
     public const bool VRPawn = false; //Enables VR input and pawn.
-    public const bool CharacterPawn = true; //Enables the player to physically locomote in the world. Requires a physical floor.
+    public const bool CharacterPawn = false; //Enables the player to physically locomote in the world. Requires a physical floor.
     public const bool ThirdPersonPawn = true; //If on desktop and character pawn is enabled, this will add a third person camera instead of first person.
     public const bool TestAnimation = false; //Adds test animations to the character pawn.
     public const bool PhysicsChain = false; //Adds a jiggle physics chain to the character pawn.
@@ -61,6 +62,7 @@ public static class EditorWorld
     public const bool AddCameraVRPickup = true;
     public const bool IKTest = false; //Adds an simple IK test tree to the scene.
     public const bool Microphone = false; //Adds a microphone to the scene for testing audio capture.
+    public const bool VMC = true; //Adds a VMC capture component to the scene for testing.
 
     private static readonly Queue<float> _fpsAvg = new();
     private static void TickFPS(UITextComponent t)
@@ -167,6 +169,12 @@ public static class EditorWorld
             EnableTransformToolForNode(head);
             return;
         }
+
+        if (VMC)
+        {
+            var vmc = rootNode.AddComponent<VMCCaptureComponent>();
+            vmc.Humanoid = humanComp;
+        }
     }
 
     /// <summary>
@@ -209,13 +217,15 @@ public static class EditorWorld
         {
             if (CharacterPawn)
             {
-                characterPawnModelParentNode = CreateCharacterVRPawn(rootNode, setUI, out _, out _, out _);
+                characterPawnModelParentNode = CreateCharacterVRPawn(rootNode, setUI, out var pawn, out _, out var leftHand, out var rightHand);
+                if (setUI)
+                    CreateEditorUI(characterPawnModelParentNode, null, pawn);
+
                 if (AllowEditingInVR || AddCameraVRPickup)
                 {
                     SceneNode cameraNode = CreateCamera(rootNode, out var camComp);
-                    var pawn = CreateDesktopCamera(cameraNode, isServer, AllowEditingInVR && !AddCameraVRPickup, AddCameraVRPickup, false);
-                    //if (setUI)
-                    //    CreateEditorUI(rootNode, camComp!, pawn);
+                    var pawn2 = CreateDesktopCamera(cameraNode, isServer, AllowEditingInVR && !AddCameraVRPickup, AddCameraVRPickup, false);
+                    //TODO: swap editor ui between desktop and vr depending on how it was opened
                 }
             }
             else
@@ -302,13 +312,21 @@ public static class EditorWorld
 
     #region VR
 
-    private static SceneNode CreateCharacterVRPawn(SceneNode rootNode, bool setUI, out VRHeadsetTransform hmdTfm, out VRControllerTransform leftTfm, out VRControllerTransform rightTfm)
+    private static SceneNode CreateCharacterVRPawn(
+        SceneNode rootNode,
+        bool setUI,
+        out CharacterPawnComponent pawn,
+        out VRHeadsetTransform hmdTfm,
+        out VRControllerTransform leftTfm,
+        out VRControllerTransform rightTfm)
     {
         SceneNode vrPlayspaceNode = rootNode.NewChild("VRPlayspaceNode");
         var characterTfm = vrPlayspaceNode.SetTransform<RigidBodyTransform>();
         characterTfm.InterpolationMode = EInterpolationMode.Discrete;
 
         var characterComp = vrPlayspaceNode.AddComponent<CharacterPawnComponent>("TestPawn")!;
+        pawn = characterComp;
+        characterComp.PauseToggled += ShowVRMenu;
         var vrInput = vrPlayspaceNode.AddComponent<VRPlayerInputSet>()!;
         vrInput.LeftHandOverlapChanged += OnLeftHandOverlapChanged;
         vrInput.RightHandOverlapChanged += OnRightHandOverlapChanged;
@@ -419,6 +437,7 @@ public static class EditorWorld
                 firstPersonCam.SetAsPlayerView(ELocalPlayerIndex.One);
             else
                 pawn.CameraComponent = firstPersonCam;
+
             if (setUI)
                 CreateEditorUI(vrHeadsetNode, firstPersonCam);
         }
@@ -510,6 +529,7 @@ public static class EditorWorld
         listener.SpeedOfSound = 343.3f;
 
         var characterComp = characterNode.AddComponent<CharacterPawnComponent>("TestPawn")!;
+        characterComp.PauseToggled += ShowDesktopMenu;
         characterComp.CameraComponent = camComp;
         characterComp.InputOrientationTransform = cameraNode.Transform;
         characterComp.ViewRotationTransform = cameraOffsetTfm;
@@ -520,7 +540,10 @@ public static class EditorWorld
         characterComp.EnqueuePossessionByLocalPlayer(ELocalPlayerIndex.One);
 
         if (camComp is not null && setUI)
-            CreateEditorUI(characterNode, camComp);
+        {
+            UICanvasComponent canvas = CreateEditorUI(characterNode, camComp);
+            canvas.IsActive = false;
+        }
 
         var footNode = characterNode.NewChild("Foot Position Node");
         var footTfm = footNode.SetTransform<Transform>();
@@ -736,8 +759,17 @@ public static class EditorWorld
         return text;
     }
 
+    private static void ShowVRMenu()
+    {
+
+    }
+    private static void ShowDesktopMenu()
+    {
+
+    }
+
     //The full editor UI - includes a toolbar, inspector, viewport and scene hierarchy.
-    private static void CreateEditorUI(SceneNode parent, CameraComponent camComp, PawnComponent? pawnForInput = null)
+    private static UICanvasComponent CreateEditorUI(SceneNode parent, CameraComponent? screenSpaceCamera, PawnComponent? pawnForInput = null)
     {
         var rootCanvasNode = new SceneNode(parent) { Name = "TestUINode" };
         var canvas = rootCanvasNode.AddComponent<UICanvasComponent>()!;
@@ -751,8 +783,8 @@ public static class EditorWorld
         if (VisualizeQuadtree)
             rootCanvasNode.AddComponent<DebugVisualizeQuadtreeComponent>();
 
-        if (camComp is not null)
-            camComp.UserInterface = canvas;
+        if (screenSpaceCamera is not null)
+            screenSpaceCamera.UserInterface = canvas;
 
         AddFPSText(null, rootCanvasNode);
 
@@ -765,15 +797,18 @@ public static class EditorWorld
             //This will take care of editor UI arrangement operations for us
             var mainUINode = rootCanvasNode.NewChild<UIEditorComponent>(out var editorComp);
             editorComp.MenuOptions = GenerateRootMenu();
-            if (editorComp.UITransform is not UIBoundableTransform tfm)
-                return;
-            tfm.MinAnchor = new Vector2(0.0f, 0.0f);
-            tfm.MaxAnchor = new Vector2(1.0f, 1.0f);
-            tfm.NormalizedPivot = new Vector2(0.0f, 0.0f);
-            tfm.Translation = new Vector2(0.0f, 0.0f);
-            tfm.Width = null;
-            tfm.Height = null;
+            if (editorComp.UITransform is UIBoundableTransform tfm)
+            {
+                tfm.MinAnchor = new Vector2(0.0f, 0.0f);
+                tfm.MaxAnchor = new Vector2(1.0f, 1.0f);
+                tfm.NormalizedPivot = new Vector2(0.0f, 0.0f);
+                tfm.Translation = new Vector2(0.0f, 0.0f);
+                tfm.Width = null;
+                tfm.Height = null;
+            }
         }
+
+        return canvas;
     }
 
     //Signals the camera to take a picture of the current view.

@@ -28,18 +28,22 @@ namespace XREngine.Rendering.UI
             RenderInfo3D.PreAddRenderCommandsCallback = ShouldRender3D;
             RenderInfo2D.PreAddRenderCommandsCallback = ShouldRender2D;
         }
+
+        //TODO: register callback on canvas to set RenderInfo3D/2D Visible property so no quadtree/octree culling is done if the canvas is not visible
+
         protected virtual bool ShouldRender3D(RenderInfo info, RenderCommandCollection passes, XRCamera? camera)
         {
             var tfm = BoundableTransform;
-            if (!tfm.IsVisibleInHierarchy)
+            if (!(tfm.ParentCanvas?.SceneNode?.IsActiveInHierarchy ?? false) || !tfm.IsVisibleInHierarchy)
                 return false;
             var canvas = tfm.ParentCanvas;
             return canvas is not null && canvas.DrawSpace != ECanvasDrawSpace.Screen;
         }
+
         protected virtual bool ShouldRender2D(RenderInfo info, RenderCommandCollection passes, XRCamera? camera)
         {
             var tfm = BoundableTransform;
-            if (!tfm.IsVisibleInHierarchy)
+            if (!(tfm.ParentCanvas?.SceneNode?.IsActiveInHierarchy ?? false) || !tfm.IsVisibleInHierarchy)
                 return false;
             var canvas = tfm.ParentCanvas;
             return canvas is not null && canvas.DrawSpace == ECanvasDrawSpace.Screen;

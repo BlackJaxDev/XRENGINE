@@ -102,7 +102,7 @@ namespace XREngine.Components
         /// <returns></returns>
         public UIInputComponent? GetInputComponent() => GetSiblingComponent<UIInputComponent>();
 
-        public void Render(XRViewport? viewport, XRFrameBuffer? outputFBO)
+        public void RenderScreenSpace(XRViewport? viewport, XRFrameBuffer? outputFBO)
             => _renderPipeline.Render(
                 VisualScene2D,
                 Camera2D,
@@ -134,7 +134,7 @@ namespace XREngine.Components
         private void UpdateLayoutWorldSpace()
         {
             //If in world space, no camera will be calling this method so we have to do it here.
-            if (CanvasTransform.DrawSpace != ECanvasDrawSpace.Screen)
+            if (CanvasTransform.DrawSpace != ECanvasDrawSpace.Screen && IsActive)
                 CanvasTransform.UpdateLayout();
         }
 
@@ -154,7 +154,7 @@ namespace XREngine.Components
         public UIComponent?[] FindDeepestComponents(Vector2 normalizedViewportPosition)
         {
             var results = VisualScene2D.RenderTree.Collect(x => x.Bounds.Contains(normalizedViewportPosition), y => y?.CullingVolume?.Contains(normalizedViewportPosition) ?? true);
-            return OrderQuadtreeResultsByDepth(results).ToArray();
+            return [.. OrderQuadtreeResultsByDepth(results)];
         }
 
         private static IEnumerable<UIComponent?> OrderQuadtreeResultsByDepth(SortedDictionary<int, List<RenderInfo2D>> results)

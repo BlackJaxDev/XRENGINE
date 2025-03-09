@@ -54,7 +54,7 @@ namespace XREngine.Timers
 
         private ManualResetEventSlim
             _renderDone = new(false),
-            _collectVisibleDone = new(true);//,
+            _swapDone = new(true);//,
             //_updateDone = new(false);
 
         public bool IsRunning => _watch.IsRunning;
@@ -94,7 +94,7 @@ namespace XREngine.Timers
 
             _watch.Start();
             _renderDone = new ManualResetEventSlim(false);
-            _collectVisibleDone = new ManualResetEventSlim(true);
+            _swapDone = new ManualResetEventSlim(true);
 
             UpdateTask = Task.Run(UpdateThread);
             CollectVisibleTask = Task.Run(CollectVisibleThread);
@@ -135,12 +135,16 @@ namespace XREngine.Timers
         {
             while (IsRunning)
             {
-                //Dispatch prerender, which collects visible objects and generates render commands for the game's current state.
+                //Collects visible object and generates render commands for the game's current state
                 DispatchCollectVisible();
+
+                //Wait for the render thread to swap update buffers with render buffers
                 _renderDone.Wait();
                 _renderDone.Reset();
                 DispatchSwapBuffers();
-                _collectVisibleDone.Set();
+
+                //Inform the render thread that the swap is done
+                _swapDone.Set();
             }
         }
         /// <summary>
@@ -168,20 +172,23 @@ namespace XREngine.Timers
         /// </summary>
         public void RenderThread()
         {
-            //Wait for prerender to finish
-            _collectVisibleDone.Wait();
-            _collectVisibleDone.Reset();
+            //Wait for swapping to finish
+            _swapDone.Wait();
+            _swapDone.Reset();
+
             //Suspend this thread until a render is dispatched
             while (!DispatchRender()) ;
+
+            //Inform the update thread that the render is done
             _renderDone.Set();
         }
 
         public bool IsCollectVisibleDone
-            => _collectVisibleDone.IsSet;
+            => _swapDone.IsSet;
 
         public void ResetCollectVisible()
         {
-            _collectVisibleDone.Reset();
+            _swapDone.Reset();
         }
 
         public void SetRenderDone()
@@ -193,7 +200,7 @@ namespace XREngine.Timers
         {
             _watch.Stop();
 
-            _collectVisibleDone?.Set();
+            _swapDone?.Set();
             _renderDone?.Set();
             //_updatingDone?.Set();
 

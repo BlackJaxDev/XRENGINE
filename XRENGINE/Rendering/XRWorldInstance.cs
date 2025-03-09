@@ -177,7 +177,8 @@ namespace XREngine.Rendering
 
         private void PreUpdate()
         {
-
+            SwapUpdateWithUnused();
+            IncrementBucketsIndex();
         }
 
         private void PostUpdate()
@@ -189,9 +190,6 @@ namespace XREngine.Rendering
             var ordered = _updateBuckets.OrderBy(x => x.Key).Select(x => x.Value.Where(x => x is not null));
             foreach (var item in ordered) 
                 recalc(item);
-
-            SwapUpdateWithUnused();
-            IncrementBucketsIndex();
         }
 
         private static void RecalcTransformsSequential(IEnumerable<TransformBase> bag)

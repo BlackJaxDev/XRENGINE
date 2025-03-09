@@ -223,9 +223,11 @@ namespace XREngine.Components
 
             input.RegisterMouseMove(MouseLook, EMouseMoveType.Relative);
 
-            input.RegisterAxisUpdate(EGamePadAxis.LeftThumbstickX, MoveRight, true);
-            input.RegisterAxisUpdate(EGamePadAxis.LeftThumbstickY, MoveForward, true);
+            //Movement doesn't need to be continuous, because we're setting the movement input direction directly
+            input.RegisterAxisUpdate(EGamePadAxis.LeftThumbstickX, MoveRight, false);
+            input.RegisterAxisUpdate(EGamePadAxis.LeftThumbstickY, MoveForward, false);
 
+            //Looking is a continuous update, because we're adding deltas to the view rotation
             input.RegisterAxisUpdate(EGamePadAxis.RightThumbstickX, LookRight, true);
             input.RegisterAxisUpdate(EGamePadAxis.RightThumbstickY, LookUp, true);
 
@@ -245,7 +247,7 @@ namespace XREngine.Components
             input.RegisterKeyEvent(EKey.C, EButtonInputType.Pressed, ToggleCrouch);
             input.RegisterKeyEvent(EKey.Z, EButtonInputType.Pressed, ToggleProne);
 
-            input.RegisterKeyEvent(EKey.Escape, EButtonInputType.Pressed, Quit);
+            input.RegisterKeyEvent(EKey.Escape, EButtonInputType.Pressed, TogglePause);
             input.RegisterKeyEvent(EKey.Backspace, EButtonInputType.Pressed, ToggleMouseCapture);
         }
 
@@ -257,8 +259,10 @@ namespace XREngine.Components
             LocalInput.HideCursor = !LocalInput.HideCursor;
         }
 
-        protected virtual void Quit()
-            => Engine.ShutDown();
+        public event Action? PauseToggled;
+
+        protected virtual void TogglePause()
+            => PauseToggled?.Invoke();
 
         public void Jump(bool pressed)
             => Movement.Jump(pressed);

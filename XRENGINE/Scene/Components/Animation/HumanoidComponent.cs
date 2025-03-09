@@ -1,4 +1,5 @@
-﻿using System.Numerics;
+﻿using Extensions;
+using System.Numerics;
 using XREngine.Components;
 using XREngine.Components.Scene.Mesh;
 using XREngine.Data.Colors;
@@ -158,6 +159,7 @@ namespace XREngine.Scene.Components.Animation
             public BoneDef Knee { get; } = new();
             public BoneDef Foot { get; } = new();
             public BoneDef Toes { get; } = new();
+            public BoneDef Eye { get; } = new();
         }
 
         public BodySide Left { get; } = new();
@@ -244,6 +246,13 @@ namespace XREngine.Scene.Components.Animation
             if (Neck.Node is not null && Head.Node is null)
                 FindChildrenFor(Neck, [
                     (Head, ByName("Head")),
+                ]);
+
+            //Find eye bones
+            if (Head.Node is not null)
+                FindChildrenFor(Head, [
+                    (Left.Eye, ByPosition("Eye", x => x.X > 0.0f)),
+                    (Right.Eye, ByPosition("Eye", x => x.X < 0.0f)),
                 ]);
 
             //Find shoulder bones
@@ -535,6 +544,101 @@ namespace XREngine.Scene.Components.Animation
                 return true;
 
             return name.Contains("eye", StringComparison.OrdinalIgnoreCase);
+        }
+
+        /// <summary>
+        /// Sets the position and rotation of the root node of the model.
+        /// </summary>
+        /// <param name="boneName"></param>
+        /// <param name="position"></param>
+        /// <param name="rotation"></param>
+        /// <param name="worldSpace"></param>
+        /// <param name="forceConvertTransform"></param>
+        public void SetRootPositionAndRotation(Vector3 position, Quaternion rotation, bool worldSpace, bool forceConvertTransform = false)
+        {
+            SceneNode bone = SceneNode;
+
+            var tfm = bone.GetTransformAs<Transform>(forceConvertTransform);
+            if (tfm is null)
+                return;
+
+            if (worldSpace)
+            {
+                tfm.SetWorldTranslation(position);
+                tfm.SetWorldRotation(rotation);
+            }
+            else
+            {
+                tfm.Translation = position;
+                tfm.Rotation = rotation;
+            }
+        }
+
+        /// <summary>
+        /// Sets the position and rotation of a bone in the model.
+        /// </summary>
+        /// <param name="boneName"></param>
+        /// <param name="position"></param>
+        /// <param name="rotation"></param>
+        /// <param name="worldSpacePosition"></param>
+        /// <param name="forceConvertTransform"></param>
+        public void SetBonePositionAndRotation(string boneName, Vector3 position, Quaternion rotation, bool worldSpacePosition, bool worldSpaceRotation, bool forceConvertTransform = false)
+        {
+            SceneNode? bone = SceneNode.FindDescendantByName(boneName, StringComparison.InvariantCultureIgnoreCase);
+            if (bone is null)
+                return;
+
+            var tfm = bone.GetTransformAs<Transform>(forceConvertTransform);
+            if (tfm is null)
+                return;
+
+            if (worldSpacePosition)
+                tfm.SetWorldTranslation(position);
+            else
+                tfm.Translation = position;
+
+            if (worldSpaceRotation)
+                tfm.SetWorldRotation(rotation);
+            else
+                tfm.Rotation = rotation;
+        }
+
+        /// <summary>
+        /// Sets the value of a blendshape on all meshes in the model.
+        /// </summary>
+        /// <param name="blendshapeName"></param>
+        /// <param name="value"></param>
+        public void SetBlendshapeValue(string blendshapeName, float value)
+        {
+            //For all model components, find meshes with a matching blendshape name and set the value
+            SceneNode.IterateComponents<ModelComponent>(comp =>
+            {
+                bool HasMatchingBlendshape(Rendering.XRMeshRenderer x) 
+                    => (x?.Mesh?.HasBlendshapes ?? false) && x.Mesh!.BlendshapeNames.Contains(blendshapeName);
+
+                var renderers = comp.GetAllRenderersWhere(HasMatchingBlendshape);
+                foreach (var renderer in renderers)
+                {
+                    int r = renderer.Mesh?.BlendshapeNames.IndexOf(blendshapeName) ?? -1;
+                    if (r >= 0)
+                        renderer.SetBlendshapeWeight((uint)r, value);
+                }
+            }, true);
+        }
+
+        public void SetEyesLookat(Vector3 worldTargetPosition)
+        {
+            SetEyeLookat(worldTargetPosition, Left);
+            SetEyeLookat(worldTargetPosition, Right);
+        }
+        public void SetEyeLookat(Vector3 worldTargetPosition, bool leftEye)
+            => SetEyeLookat(worldTargetPosition, leftEye ? Left : Right);
+
+        private static void SetEyeLookat(Vector3 worldTargetPosition, BodySide side)
+        {
+            var tfm = side.Eye.Node?.GetTransformAs<Transform>(true)!;
+            Matrix4x4 leftLookat = Matrix4x4.CreateLookAt(tfm.WorldTranslation, worldTargetPosition, Globals.Up);
+            tfm.SetWorldRotation(Quaternion.CreateFromRotationMatrix(leftLookat));
         }
     }
 }

@@ -81,6 +81,27 @@ namespace XREngine.Rendering
 
         public Dictionary<int, BaseVersion> Versions { get; set; } = [];
 
+        /// <summary>
+        /// Automatically selects the correct version of this mesh to render based on the current rendering state.
+        /// </summary>
+        /// <param name="forceNoStereo"></param>
+        /// <returns></returns>
+        private BaseVersion GetVersion(bool forceNoStereo = false)
+        {
+            bool stereoPass = !forceNoStereo && Engine.Rendering.State.IsStereoPass;
+
+            BaseVersion ver;
+            bool preferNV = Engine.Rendering.Settings.PreferNVStereo;
+            if (stereoPass && preferNV && Engine.Rendering.State.HasNVStereoExtension)
+                ver = GetNVStereoVersion();
+            else if (stereoPass && Engine.Rendering.State.HasOvrMultiViewExtension)
+                ver = GetOVRMultiViewVersion();
+            else
+                ver = GetDefaultVersion(); //Default version can still do VR - VRMode is set to 1 and uses VR geometry duplication shader during stereo pass
+
+            return ver;
+        }
+
         public BaseVersion GetDefaultVersion() => Versions[0];
         public BaseVersion GetOVRMultiViewVersion() => Versions[1];
         public BaseVersion GetNVStereoVersion() => Versions[2];
@@ -104,35 +125,24 @@ namespace XREngine.Rendering
             Versions.Add(2, new Version<NVStereoVertexShaderGenerator>(this, HasNVStereoViewRendering, false));
         }
 
+        private bool _generateAsync = false;
         /// <summary>
-        /// Use this to render the mesh with an identity transform matrix.
+        /// If true, the mesh will be generated for rendering asynchronously.
+        /// False by default.
         /// </summary>
-        public void Render(XRMaterial? materialOverride = null, uint instances = 1u)
-            => Render(Matrix4x4.Identity, materialOverride, instances);
-
-        /// <summary>
-        /// Use this to render the mesh.
-        /// </summary>
-        /// <param name="modelMatrix"></param>
-        /// <param name="materialOverride"></param>
-        public void Render(Matrix4x4 modelMatrix, XRMaterial? materialOverride = null, uint instances = 1u, bool forceNoStereo = false)
-            => GetVersion(forceNoStereo).Render(modelMatrix, materialOverride, instances, Material?.BillboardMode ?? EMeshBillboardMode.None);
-
-        private BaseVersion GetVersion(bool forceNoStereo = false)
+        public bool GenerateAsync
         {
-            bool stereoPass = !forceNoStereo && Engine.Rendering.State.IsStereoPass;
-
-            BaseVersion ver;
-            bool preferNV = Engine.Rendering.Settings.PreferNVStereo;
-            if (stereoPass && preferNV && Engine.Rendering.State.HasNVStereoExtension)
-                ver = GetNVStereoVersion();
-            else if (stereoPass && Engine.Rendering.State.HasOvrMultiViewExtension)
-                ver = GetOVRMultiViewVersion();
-            else
-                ver = GetDefaultVersion(); //Default version can still do VR - VRMode is set to 1 and uses VR geometry duplication shader during stereo pass
-
-            return ver;
+            get => _generateAsync;
+            set => SetField(ref _generateAsync, value);
         }
+
+        public delegate void DelSetUniforms(XRRenderProgram vertexProgram, XRRenderProgram materialProgram);
+        /// <summary>
+        /// Subscribe to this event to send your own uniforms to the material.
+        /// </summary>
+        public event DelSetUniforms? SettingUniforms;
+
+        public delegate ShaderVar DelParameterRequested(int index);
 
         private XRMesh? _mesh;
         private XRMaterial? _material;
@@ -156,7 +166,7 @@ namespace XREngine.Rendering
 
         public SubMesh[] Submeshes { get; set; } = [];
 
-        public XRMesh? Mesh 
+        public XRMesh? Mesh
         {
             get => _mesh;
             set => SetField(ref _mesh, value);
@@ -170,11 +180,45 @@ namespace XREngine.Rendering
         private RenderBone[]? _bones;
         public RenderBone[]? Bones => _bones;
 
+        protected override void OnPropertyChanged<T>(string? propName, T prev, T field)
+        {
+            base.OnPropertyChanged(propName, prev, field);
+            switch (propName)
+            {
+                case nameof(Mesh):
+                    InitializeDrivableBuffers();
+                    break;
+            }
+        }
+
+        /// <summary>
+        /// Use this to render the mesh with an identity transform matrix.
+        /// </summary>
+        public void Render(XRMaterial? materialOverride = null, uint instances = 1u)
+            => Render(Matrix4x4.Identity, materialOverride, instances);
+
+        /// <summary>
+        /// Use this to render the mesh.
+        /// </summary>
+        /// <param name="modelMatrix"></param>
+        /// <param name="materialOverride"></param>
+        public void Render(Matrix4x4 modelMatrix, XRMaterial? materialOverride = null, uint instances = 1u, bool forceNoStereo = false)
+            => GetVersion(forceNoStereo).Render(modelMatrix, materialOverride, instances, Material?.BillboardMode ?? EMeshBillboardMode.None);
+
         public float GetBlendshapeWeight(uint index)
-            => BlendshapeWeights?.GetFloat(index) ?? 0.0f;
+        {
+            if (BlendshapeWeights is null || index >= (Mesh?.BlendshapeCount ?? 0u))
+                return 0.0f;
+
+            return BlendshapeWeights.GetFloat(index);
+        }
+
         public void SetBlendshapeWeight(uint index, float weight)
         {
-            BlendshapeWeights?.SetFloat(index, weight);
+            if (BlendshapeWeights is null || index >= (Mesh?.BlendshapeCount ?? 0u))
+                return;
+
+            BlendshapeWeights.SetFloat(index, weight);
             _blendshapesInvalidated = true;
         }
 
@@ -299,32 +343,6 @@ namespace XREngine.Rendering
             _blendshapesInvalidated = false;
             BlendshapeWeights.PushSubData();
         }
-
-        private bool _generateAsync = false;
-        public bool GenerateAsync
-        {
-            get => _generateAsync;
-            set => SetField(ref _generateAsync, value);
-        }
-
-        protected override void OnPropertyChanged<T>(string? propName, T prev, T field)
-        {
-            base.OnPropertyChanged(propName, prev, field);
-            switch (propName)
-            {
-                case nameof(Mesh):
-                    InitializeDrivableBuffers();
-                    break;
-            }
-        }
-
-        public delegate void DelSetUniforms(XRRenderProgram vertexProgram, XRRenderProgram materialProgram);
-        /// <summary>
-        /// Subscribe to this event to send your own uniforms to the material.
-        /// </summary>
-        public event DelSetUniforms? SettingUniforms;
-
-        public delegate ShaderVar DelParameterRequested(int index);
 
         public T? Parameter<T>(int index) where T : ShaderVar 
             => Material?.Parameter<T>(index);
