@@ -102,7 +102,7 @@ public class VMCCaptureComponent : VMCComponent
         if (values.ElementCount != 1)
             return;
 
-        //Debug.Out($"Relative time: {values.ReadFloat64Element(0)}");
+        //Debug.Out($"Relative time: {values.ReadFloatElement(0)}");
     }
 
     private void ParseAvailable(OscMessageValues values)
@@ -140,9 +140,9 @@ public class VMCCaptureComponent : VMCComponent
         ApplyEyeTrackingPosition(
             values.ReadIntElement(0) != 0,
             new Vector3(
-                (float)values.ReadFloat64Element(1),
-                (float)values.ReadFloat64Element(2),
-                (float)values.ReadFloat64Element(3)));
+                (float)values.ReadFloatElement(1),
+                (float)values.ReadFloatElement(2),
+                (float)values.ReadFloatElement(3)));
     }
 
     private void ApplyEyeTrackingPosition(bool active, Vector3 target)
@@ -162,14 +162,14 @@ public class VMCCaptureComponent : VMCComponent
         ApplyRootPosition(
             values.ReadStringElement(0),
             new Vector3(
-                (float)values.ReadFloat64Element(1),
-                (float)values.ReadFloat64Element(2),
-                (float)values.ReadFloat64Element(3)),
+                (float)values.ReadFloatElement(1),
+                (float)values.ReadFloatElement(2),
+                (float)values.ReadFloatElement(3)),
             new Quaternion(
-                (float)values.ReadFloat64Element(4),
-                (float)values.ReadFloat64Element(5),
-                (float)values.ReadFloat64Element(6),
-                (float)values.ReadFloat64Element(7)));
+                (float)values.ReadFloatElement(4),
+                (float)values.ReadFloatElement(5),
+                (float)values.ReadFloatElement(6),
+                (float)values.ReadFloatElement(7)));
 
         if (values.ElementCount < 14)
             return;
@@ -205,39 +205,39 @@ public class VMCCaptureComponent : VMCComponent
         ApplyLightTransform(
             values.ReadStringElement(0),
             new Vector3(
-                (float)values.ReadFloat64Element(1),
-                (float)values.ReadFloat64Element(2),
-                (float)values.ReadFloat64Element(3)),
+                (float)values.ReadFloatElement(1),
+                (float)values.ReadFloatElement(2),
+                (float)values.ReadFloatElement(3)),
             new Quaternion(
-                (float)values.ReadFloat64Element(4),
-                (float)values.ReadFloat64Element(5),
-                (float)values.ReadFloat64Element(6),
-                (float)values.ReadFloat64Element(7)),
+                (float)values.ReadFloatElement(4),
+                (float)values.ReadFloatElement(5),
+                (float)values.ReadFloatElement(6),
+                (float)values.ReadFloatElement(7)),
             new ColorF4(
-                (float)values.ReadFloat64Element(8),
-                (float)values.ReadFloat64Element(9),
-                (float)values.ReadFloat64Element(10),
-                (float)values.ReadFloat64Element(11)));
+                (float)values.ReadFloatElement(8),
+                (float)values.ReadFloatElement(9),
+                (float)values.ReadFloatElement(10),
+                (float)values.ReadFloatElement(11)));
     }
 
     private void ParseBlendshapeValue(OscMessageValues values)
     {
-        _blendshapeQueue.Enqueue((values.ReadStringElement(0), (float)values.ReadFloat64Element(1)));
+        _blendshapeQueue.Enqueue((values.ReadStringElement(0), (float)values.ReadFloatElement(1)));
     }
 
     private void ParseCameraTransform(OscMessageValues values)
     {
         ApplyCameraTransform(
             new Vector3(
-                (float)values.ReadFloat64Element(1),
-                (float)values.ReadFloat64Element(2),
-                (float)values.ReadFloat64Element(3)),
+                (float)values.ReadFloatElement(1),
+                (float)values.ReadFloatElement(2),
+                (float)values.ReadFloatElement(3)),
             new Quaternion(
-                (float)values.ReadFloat64Element(4),
-                (float)values.ReadFloat64Element(5),
-                (float)values.ReadFloat64Element(6),
-                (float)values.ReadFloat64Element(7)),
-            (float)values.ReadFloat64Element(8));
+                (float)values.ReadFloatElement(4),
+                (float)values.ReadFloatElement(5),
+                (float)values.ReadFloatElement(6),
+                (float)values.ReadFloatElement(7)),
+            (float)values.ReadFloatElement(8));
     }
 
     private void ParseMidiCCButton(OscMessageValues values)
@@ -251,7 +251,7 @@ public class VMCCaptureComponent : VMCComponent
     {
         ApplyMidiCCRadial(
             values.ReadIntElement(0),
-            (float)values.ReadFloat64Element(1));
+            (float)values.ReadFloatElement(1));
     }
 
     private void ParseMidiNote(OscMessageValues values)
@@ -260,7 +260,7 @@ public class VMCCaptureComponent : VMCComponent
             values.ReadIntElement(0) != 0,
             values.ReadIntElement(1),
             values.ReadIntElement(2),
-            (float)values.ReadFloat64Element(3));
+            (float)values.ReadFloatElement(3));
     }
 
     private void ParseTrackerPosLocal(OscMessageValues values)
@@ -268,14 +268,14 @@ public class VMCCaptureComponent : VMCComponent
         ApplyTrackerPos(
             values.ReadStringElement(0),
             new Vector3(
-                (float)values.ReadFloat64Element(1),
-                (float)values.ReadFloat64Element(2),
-                (float)values.ReadFloat64Element(3)),
+                (float)values.ReadFloatElement(1),
+                (float)values.ReadFloatElement(2),
+                (float)values.ReadFloatElement(3)),
             new Quaternion(
-                (float)values.ReadFloat64Element(4),
-                (float)values.ReadFloat64Element(5),
-                (float)values.ReadFloat64Element(6),
-                (float)values.ReadFloat64Element(7)),
+                (float)values.ReadFloatElement(4),
+                (float)values.ReadFloatElement(5),
+                (float)values.ReadFloatElement(6),
+                (float)values.ReadFloatElement(7)),
             true);
     }
 
@@ -284,14 +284,14 @@ public class VMCCaptureComponent : VMCComponent
         ApplyControllerPos(
             values.ReadStringElement(0),
             new Vector3(
-                (float)values.ReadFloat64Element(1),
-                (float)values.ReadFloat64Element(2),
-                (float)values.ReadFloat64Element(3)),
+                (float)values.ReadFloatElement(1),
+                (float)values.ReadFloatElement(2),
+                (float)values.ReadFloatElement(3)),
             new Quaternion(
-                (float)values.ReadFloat64Element(4),
-                (float)values.ReadFloat64Element(5),
-                (float)values.ReadFloat64Element(6),
-                (float)values.ReadFloat64Element(7)),
+                (float)values.ReadFloatElement(4),
+                (float)values.ReadFloatElement(5),
+                (float)values.ReadFloatElement(6),
+                (float)values.ReadFloatElement(7)),
             true);
     }
 
@@ -300,14 +300,14 @@ public class VMCCaptureComponent : VMCComponent
         ApplyHMDPos(
             values.ReadStringElement(0),
             new Vector3(
-                (float)values.ReadFloat64Element(1),
-                (float)values.ReadFloat64Element(2),
-                (float)values.ReadFloat64Element(3)),
+                (float)values.ReadFloatElement(1),
+                (float)values.ReadFloatElement(2),
+                (float)values.ReadFloatElement(3)),
             new Quaternion(
-                (float)values.ReadFloat64Element(4),
-                (float)values.ReadFloat64Element(5),
-                (float)values.ReadFloat64Element(6),
-                (float)values.ReadFloat64Element(7)),
+                (float)values.ReadFloatElement(4),
+                (float)values.ReadFloatElement(5),
+                (float)values.ReadFloatElement(6),
+                (float)values.ReadFloatElement(7)),
             true);
     }
 
@@ -316,14 +316,14 @@ public class VMCCaptureComponent : VMCComponent
         ApplyTrackerPos(
             values.ReadStringElement(0),
             new Vector3(
-                (float)values.ReadFloat64Element(1),
-                (float)values.ReadFloat64Element(2),
-                (float)values.ReadFloat64Element(3)),
+                (float)values.ReadFloatElement(1),
+                (float)values.ReadFloatElement(2),
+                (float)values.ReadFloatElement(3)),
             new Quaternion(
-                (float)values.ReadFloat64Element(4),
-                (float)values.ReadFloat64Element(5),
-                (float)values.ReadFloat64Element(6),
-                (float)values.ReadFloat64Element(7)),
+                (float)values.ReadFloatElement(4),
+                (float)values.ReadFloatElement(5),
+                (float)values.ReadFloatElement(6),
+                (float)values.ReadFloatElement(7)),
             false);
     }
 
@@ -332,14 +332,14 @@ public class VMCCaptureComponent : VMCComponent
         ApplyControllerPos(
             values.ReadStringElement(0),
             new Vector3(
-                (float)values.ReadFloat64Element(1),
-                (float)values.ReadFloat64Element(2),
-                (float)values.ReadFloat64Element(3)),
+                (float)values.ReadFloatElement(1),
+                (float)values.ReadFloatElement(2),
+                (float)values.ReadFloatElement(3)),
             new Quaternion(
-                (float)values.ReadFloat64Element(4),
-                (float)values.ReadFloat64Element(5),
-                (float)values.ReadFloat64Element(6),
-                (float)values.ReadFloat64Element(7)),
+                (float)values.ReadFloatElement(4),
+                (float)values.ReadFloatElement(5),
+                (float)values.ReadFloatElement(6),
+                (float)values.ReadFloatElement(7)),
             false);
     }
 
@@ -348,14 +348,14 @@ public class VMCCaptureComponent : VMCComponent
         ApplyHMDPos(
             values.ReadStringElement(0),
             new Vector3(
-                (float)values.ReadFloat64Element(1),
-                (float)values.ReadFloat64Element(2),
-                (float)values.ReadFloat64Element(3)),
+                (float)values.ReadFloatElement(1),
+                (float)values.ReadFloatElement(2),
+                (float)values.ReadFloatElement(3)),
             new Quaternion(
-                (float)values.ReadFloat64Element(4),
-                (float)values.ReadFloat64Element(5),
-                (float)values.ReadFloat64Element(6),
-                (float)values.ReadFloat64Element(7)),
+                (float)values.ReadFloatElement(4),
+                (float)values.ReadFloatElement(5),
+                (float)values.ReadFloatElement(6),
+                (float)values.ReadFloatElement(7)),
             false);
     }
 
