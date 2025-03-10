@@ -128,23 +128,24 @@ namespace XREngine.Data
         public unsafe void LoadMp3(string filePath)
         {
             using Mp3FileReader reader = new(filePath);
-            byte[] bytes = new byte[reader.Length];
-            reader.Read(bytes, 0, bytes.Length);
+            using WaveStream pcmStream = WaveFormatConversionStream.CreatePcmStream(reader);
+
+            // Get total bytes needed for PCM data
+            long totalBytes = pcmStream.Length;
+            byte[] bytes = new byte[totalBytes];
+
+            // Read chunks until we have all data
+            int totalBytesRead = 0;
+            int bytesRead;
+            while ((bytesRead = pcmStream.Read(bytes, totalBytesRead, bytes.Length - totalBytesRead)) > 0)
+                totalBytesRead += bytesRead;
+            
             _data = new DataSource(bytes);
-            switch (reader.Mp3WaveFormat.BitsPerSample)
-            {
-                case 8:
-                    _type = EPCMType.Byte;
-                    break;
-                case 16:
-                    _type = EPCMType.Short;
-                    break;
-                case 32:
-                    _type = EPCMType.Float;
-                    break;
-            }
-            _frequency = reader.Mp3WaveFormat.SampleRate;
-            _channelCount = reader.Mp3WaveFormat.Channels;
+
+            // PCM format will always be 16-bit after conversion
+            _type = EPCMType.Short;
+            _frequency = pcmStream.WaveFormat.SampleRate;
+            _channelCount = pcmStream.WaveFormat.Channels;
         }
 
         public void LoadWav(string filePath)
@@ -200,6 +201,90 @@ namespace XREngine.Data
             }
             _channelCount = 1;
         }
+
+        public void IsolateLeftAsMono()
+        {
+            if (_data is null || _channelCount != 2)
+                return;
+            switch (_type)
+            {
+                case EPCMType.Byte:
+                    _data = new DataSource(GetOneChannelFromStereo(GetByteData(), true));
+                    break;
+                case EPCMType.Short:
+                    _data = DataSource.FromArray(GetOneChannelFromStereo(GetShortData(), true));
+                    break;
+                case EPCMType.Float:
+                    _data = DataSource.FromArray(GetOneChannelFromStereo(GetFloatData(), true));
+                    break;
+            }
+            _channelCount = 1;
+        }
+
+        public void IsolateRightAsMono()
+        {
+            if (_data is null || _channelCount != 2)
+                return;
+            switch (_type)
+            {
+                case EPCMType.Byte:
+                    _data = new DataSource(GetOneChannelFromStereo(GetByteData(), false));
+                    break;
+                case EPCMType.Short:
+                    _data = DataSource.FromArray(GetOneChannelFromStereo(GetShortData(), false));
+                    break;
+                case EPCMType.Float:
+                    _data = DataSource.FromArray(GetOneChannelFromStereo(GetFloatData(), false));
+                    break;
+            }
+            _channelCount = 1;
+        }
+
+        public AudioData AsMono()
+        {
+            if (Mono)
+                return this;
+            AudioData mono = new()
+            {
+                _data = _data,
+                _frequency = _frequency,
+                _channelCount = 1,
+                _type = _type
+            };
+            mono.ConvertToMono();
+            return mono;
+        }
+
+        public AudioData AsLeftMono()
+        {
+            if (Mono)
+                return this;
+            AudioData mono = new()
+            {
+                _data = _data,
+                _frequency = _frequency,
+                _channelCount = 1,
+                _type = _type
+            };
+            mono.IsolateLeftAsMono();
+            return mono;
+        }
+
+        public AudioData AsRightMono()
+        {
+            if (Mono)
+                return this;
+            AudioData mono = new()
+            {
+                _data = _data,
+                _frequency = _frequency,
+                _channelCount = 1,
+                _type = _type
+            };
+            mono.IsolateRightAsMono();
+            return mono;
+        }
+
         private static byte[] ConvertStereoToMono(byte[] stereoSamples)
         {
             int monoLength = stereoSamples.Length / 2;
@@ -252,6 +337,37 @@ namespace XREngine.Data
 
                 monoSamples[i] = mono;
             }
+
+            return monoSamples;
+        }
+
+        private static byte[] GetOneChannelFromStereo(byte[] stereoSamples, bool left)
+        {
+            int monoLength = stereoSamples.Length / 2;
+            byte[] monoSamples = new byte[monoLength];
+
+            for (int i = 0, j = 0; i < monoLength; i++, j += 2)
+                monoSamples[i] = left ? stereoSamples[j] : stereoSamples[j + 1];
+            
+            return monoSamples;
+        }
+        private static short[] GetOneChannelFromStereo(short[] stereoSamples, bool left)
+        {
+            int monoLength = stereoSamples.Length / 2;
+            short[] monoSamples = new short[monoLength];
+
+            for (int i = 0, j = 0; i < monoLength; i++, j += 2)
+                monoSamples[i] = left ? stereoSamples[j] : stereoSamples[j + 1];
+
+            return monoSamples;
+        }
+        private static float[] GetOneChannelFromStereo(float[] stereoSamples, bool left)
+        {
+            int monoLength = stereoSamples.Length / 2;
+            float[] monoSamples = new float[monoLength];
+
+            for (int i = 0, j = 0; i < monoLength; i++, j += 2)
+                monoSamples[i] = left ? stereoSamples[j] : stereoSamples[j + 1];
 
             return monoSamples;
         }

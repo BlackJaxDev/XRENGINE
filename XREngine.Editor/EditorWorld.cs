@@ -88,6 +88,10 @@ public static class EditorWorld
             return;
 
         var humanComp = rootNode.AddComponent<HumanoidComponent>()!;
+        humanComp.LeftArmIKEnabled = false;
+        humanComp.RightArmIKEnabled = false;
+        humanComp.LeftLegIKEnabled = false;
+        humanComp.RightLegIKEnabled = false;
 
         //var headTfm = humanComp.Head?.Node?.GetTransformAs<Transform>();
         //if (headTfm is not null)
@@ -989,15 +993,15 @@ public static class EditorWorld
     private static void AddSoundNode(SceneNode rootNode)
     {
         var sound = new SceneNode(rootNode) { Name = "TestSoundNode" };
-        //var soundTransform = sound.SetTransform<Transform>();
-        //soundTransform.Translation = new Vector3(0.0f, 0.0f, 0.0f);
         if (!sound.TryAddComponent<AudioSourceComponent>(out var soundComp))
             return;
 
         soundComp!.Name = "TestSound";
-        var data = Engine.Assets.LoadEngineAsset<AudioData>("Audio", "test16bit.wav");
-        data.ConvertToMono(); //Convert to mono for 3D audio - stereo will just play equally in both ears
-        soundComp.RelativeToListener = false;
+        var desktop = Environment.GetFolderPath(Environment.SpecialFolder.Desktop);
+        var data = Engine.Assets.Load<AudioData>(Path.Combine(desktop, "test.mp3"));
+        //var data = Engine.Assets.LoadEngineAsset<AudioData>("Audio", "test16bit.wav");
+        //data!.ConvertToMono(); //Convert to mono for 3D audio - stereo will just play equally in both ears
+        soundComp.RelativeToListener = true;
         //soundComp.ReferenceDistance = 1.0f;
         ////soundComp.MaxDistance = 100.0f;
         //soundComp.RolloffFactor = 1.0f;

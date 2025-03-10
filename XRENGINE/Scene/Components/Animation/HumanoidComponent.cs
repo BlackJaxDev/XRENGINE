@@ -18,13 +18,13 @@ namespace XREngine.Scene.Components.Animation
         {
             base.OnComponentActivated();
             if (SolveIK)
-                RegisterTick(ETickGroup.PrePhysics, ETickOrder.Scene, SolveFullBodyIK);
+                RegisterTick(ETickGroup.Normal, ETickOrder.Scene, SolveFullBodyIK);
         }
         protected internal override void OnComponentDeactivated()
         {
             base.OnComponentDeactivated();
             if (SolveIK)
-                UnregisterTick(ETickGroup.PrePhysics, ETickOrder.Scene, SolveFullBodyIK);
+                UnregisterTick(ETickGroup.Normal, ETickOrder.Scene, SolveFullBodyIK);
         }
 
         protected override void OnPropertyChanged<T>(string? propName, T prev, T field)
@@ -36,9 +36,9 @@ namespace XREngine.Scene.Components.Animation
                     if (IsActive)
                     {
                         if (SolveIK)
-                            RegisterTick(ETickGroup.PrePhysics, ETickOrder.Scene, SolveFullBodyIK);
+                            RegisterTick(ETickGroup.Normal, ETickOrder.Scene, SolveFullBodyIK);
                         else
-                            UnregisterTick(ETickGroup.PrePhysics, ETickOrder.Scene, SolveFullBodyIK);
+                            UnregisterTick(ETickGroup.Normal, ETickOrder.Scene, SolveFullBodyIK);
                     }
                     break;
             }
@@ -67,7 +67,7 @@ namespace XREngine.Scene.Components.Animation
             SetFromNode();
         }
 
-        private bool _solveIK = false;
+        private bool _solveIK = true;
         public bool SolveIK
         {
             get => _solveIK;
@@ -84,20 +84,37 @@ namespace XREngine.Scene.Components.Animation
             if (Engine.Rendering.State.IsShadowPass)
                 return;
 
-            foreach (var bone in GetHipToHeadChain())
-                Engine.Rendering.Debug.RenderPoint(bone.WorldPosSolve, ColorF4.Red);
+            var hipToHeadChain = GetHipToHeadChain();
+            if (hipToHeadChain is not null)
+                foreach (var bone in hipToHeadChain)
+                    Engine.Rendering.Debug.RenderPoint(bone.WorldPosSolve, ColorF4.Red);
 
-            foreach (var bone in GetLeftShoulderToWristChain())
-                Engine.Rendering.Debug.RenderPoint(bone.WorldPosSolve, ColorF4.Red);
+            var leftLegToAnkleChain = GetLeftLegToAnkleChain();
+            if (leftLegToAnkleChain is not null)
+                foreach (var bone in leftLegToAnkleChain)
+                    Engine.Rendering.Debug.RenderPoint(bone.WorldPosSolve, ColorF4.Red);
 
-            foreach (var bone in GetRightShoulderToWristChain())
-                Engine.Rendering.Debug.RenderPoint(bone.WorldPosSolve, ColorF4.Red);
+            var rightLegToAnkleChain = GetRightLegToAnkleChain();
+            if (rightLegToAnkleChain is not null)
+                foreach (var bone in rightLegToAnkleChain)
+                    Engine.Rendering.Debug.RenderPoint(bone.WorldPosSolve, ColorF4.Red);
 
-            foreach (var bone in GetLeftLegToAnkleChain())
-                Engine.Rendering.Debug.RenderPoint(bone.WorldPosSolve, ColorF4.Red);
+            var leftShoulderToWristChain = GetLeftShoulderToWristChain();
+            if (leftShoulderToWristChain is not null)
+                foreach (var bone in leftShoulderToWristChain)
+                    Engine.Rendering.Debug.RenderPoint(bone.WorldPosSolve, ColorF4.Red);
 
-            foreach (var bone in GetRightLegToAnkleChain())
-                Engine.Rendering.Debug.RenderPoint(bone.WorldPosSolve, ColorF4.Red);
+            var rightShoulderToWristChain = GetRightShoulderToWristChain();
+            if (rightShoulderToWristChain is not null)
+                foreach (var bone in rightShoulderToWristChain)
+                    Engine.Rendering.Debug.RenderPoint(bone.WorldPosSolve, ColorF4.Red);
+
+            Engine.Rendering.Debug.RenderPoint(GetMatrixForTarget(HeadTarget).Translation, ColorF4.Green);
+            Engine.Rendering.Debug.RenderPoint(GetMatrixForTarget(HipsTarget).Translation, ColorF4.Green);
+            Engine.Rendering.Debug.RenderPoint(GetMatrixForTarget(LeftHandTarget).Translation, ColorF4.Green);
+            Engine.Rendering.Debug.RenderPoint(GetMatrixForTarget(RightHandTarget).Translation, ColorF4.Green);
+            Engine.Rendering.Debug.RenderPoint(GetMatrixForTarget(LeftFootTarget).Translation, ColorF4.Green);
+            Engine.Rendering.Debug.RenderPoint(GetMatrixForTarget(RightFootTarget).Translation, ColorF4.Green);
         }
 
         public class BoneDef : XRBase
@@ -109,11 +126,40 @@ namespace XREngine.Scene.Components.Animation
                 set => SetField(ref _node, value);
             }
 
+            private Matrix4x4 _localBindPose = Matrix4x4.Identity;
+            public Matrix4x4 LocalBindPose
+            {
+                get => _localBindPose;
+                set => SetField(ref _localBindPose, value);
+            }
+
+            private Matrix4x4 _worldBindPose = Matrix4x4.Identity;
+            public Matrix4x4 WorldBindPose
+            {
+                get => _worldBindPose;
+                set => SetField(ref _worldBindPose, value);
+            }
+
             private BoneIKConstraints? _constraints;
             public BoneIKConstraints? Constraints
             {
                 get => _constraints;
                 set => SetField(ref _constraints, value);
+            }
+
+            protected override void OnPropertyChanged<T>(string? propName, T prev, T field)
+            {
+                base.OnPropertyChanged(propName, prev, field);
+                switch (propName)
+                {
+                    case nameof(Node):
+                        if (Node is not null)
+                        {
+                            LocalBindPose = Node.Transform.LocalMatrix;
+                            WorldBindPose = Node.Transform.WorldMatrix;
+                        }
+                        break;
+                }
             }
         }
 
@@ -170,22 +216,85 @@ namespace XREngine.Scene.Components.Animation
         public BoneChainItem[]? _rightLegToAnkleChain = null;
         public BoneChainItem[]? _leftShoulderToWristChain = null;
         public BoneChainItem[]? _rightShoulderToWristChain = null;
+        private bool _leftArmIKEnabled = true;
+        private bool _rightArmIKEnabled = true;
+        private bool _leftLegIKEnabled = true;
+        private bool _rightLegIKEnabled = true;
+        private bool _hipToHeadIKEnabled = true;
 
         private static BoneChainItem[] Link(BoneDef[] bones)
             => bones.Any(bone => bone.Node is null) 
             ? [] 
             : [.. bones.Select(bone => new BoneChainItem(bone.Node!, bone.Constraints))];
 
-        public BoneChainItem[] GetHipToHeadChain()
-            => _hipToHeadChain ??= Link([Hips, Spine, Chest, Neck, Head]);
-        public BoneChainItem[] GetLeftLegToAnkleChain()
-            => _leftLegToAnkleChain ??= Link([Left.Leg, Left.Knee, Left.Foot]);
-        public BoneChainItem[] GetRightLegToAnkleChain()
-            => _rightLegToAnkleChain ??= Link([Right.Leg, Right.Knee, Right.Foot]);
-        public BoneChainItem[] GetLeftShoulderToWristChain()
-            => _leftShoulderToWristChain ??= Link([Left.Shoulder, Left.Arm, Left.Elbow, Left.Wrist]);
-        public BoneChainItem[] GetRightShoulderToWristChain()
-            => _rightShoulderToWristChain ??= Link([Right.Shoulder, Right.Arm, Right.Elbow, Right.Wrist]);
+        public bool LeftArmIKEnabled
+        {
+            get => _leftArmIKEnabled;
+            set => SetField(ref _leftArmIKEnabled, value);
+        }
+        public bool RightArmIKEnabled
+        {
+            get => _rightArmIKEnabled;
+            set => SetField(ref _rightArmIKEnabled, value);
+        }
+        public bool LeftLegIKEnabled
+        {
+            get => _leftLegIKEnabled;
+            set => SetField(ref _leftLegIKEnabled, value);
+        }
+        public bool RightLegIKEnabled
+        {
+            get => _rightLegIKEnabled;
+            set => SetField(ref _rightLegIKEnabled, value);
+        }
+        public bool HipToHeadIKEnabled
+        {
+            get => _hipToHeadIKEnabled;
+            set => SetField(ref _hipToHeadIKEnabled, value);
+        }
+
+        public BoneChainItem[]? GetHipToHeadChain()
+        {
+            if (!_hipToHeadIKEnabled)
+                return null;
+
+            return _hipToHeadChain ??= Link([Hips, Spine, Chest, Neck, Head]);
+        }
+
+        public BoneChainItem[]? GetLeftLegToAnkleChain()
+        {
+            if (!_leftLegIKEnabled)
+                return null;
+
+            return _leftLegToAnkleChain ??= Link([Left.Leg, Left.Knee, Left.Foot]);
+        }
+
+        public BoneChainItem[]? GetRightLegToAnkleChain()
+        {
+            if (!_rightLegIKEnabled)
+                return null;
+
+            return _rightLegToAnkleChain ??= Link([Right.Leg, Right.Knee, Right.Foot]);
+        }
+
+        public BoneChainItem[]? GetLeftShoulderToWristChain()
+        {
+            if (!_leftArmIKEnabled)
+                return null;
+
+            return _leftShoulderToWristChain ??= Link([Left.Shoulder, Left.Arm, Left.Elbow, Left.Wrist]);
+        }
+
+        public BoneChainItem[]? GetRightShoulderToWristChain()
+        {
+            if (!_rightArmIKEnabled)
+                return null;
+
+            return _rightShoulderToWristChain ??= Link([Right.Shoulder, Right.Arm, Right.Elbow, Right.Wrist]);
+        }
+
+        public static Matrix4x4 GetMatrixForTarget((TransformBase? tfm, Matrix4x4 offset) target)
+            => target.offset * (target.tfm?.WorldMatrix ?? Matrix4x4.Identity);
 
         public (TransformBase? tfm, Matrix4x4 offset) HeadTarget { get; set; } = (null, Matrix4x4.Identity);
         public (TransformBase? tfm, Matrix4x4 offset) HipsTarget { get; set; } = (null, Matrix4x4.Identity);
@@ -367,6 +476,29 @@ namespace XREngine.Scene.Components.Animation
                 FindChildrenFor(Right.Foot, [
                     (Right.Toes, ByNameContainsAll("Toe")),
                 ]);
+
+            //Assign initial solve targets to current bone positions
+
+            //Center
+            HipsTarget = (Hips.Node?.Transform, Matrix4x4.Identity);
+            ChestTarget = (Chest.Node?.Transform, Matrix4x4.Identity);
+            HeadTarget = (Head.Node?.Transform, Matrix4x4.Identity);
+
+            //Hands
+            LeftHandTarget = (Left.Wrist.Node?.Transform, Matrix4x4.Identity);
+            RightHandTarget = (Right.Wrist.Node?.Transform, Matrix4x4.Identity);
+
+            //Feet
+            LeftFootTarget = (Left.Foot.Node?.Transform, Matrix4x4.Identity);
+            RightFootTarget = (Right.Foot.Node?.Transform, Matrix4x4.Identity);
+
+            //Elbows
+            LeftElbowTarget = (Left.Elbow.Node?.Transform, Matrix4x4.Identity);
+            RightElbowTarget = (Right.Elbow.Node?.Transform, Matrix4x4.Identity);
+
+            //Knees
+            LeftKneeTarget = (Left.Knee.Node?.Transform, Matrix4x4.Identity);
+            RightKneeTarget = (Right.Knee.Node?.Transform, Matrix4x4.Identity);
         }
 
         private static Func<SceneNode, bool> ByNameContainsAny(params string[] names)

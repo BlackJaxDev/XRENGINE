@@ -23,11 +23,11 @@ namespace XREngine.Scene.Components.Animation
         /// <param name="RightFootTarget"></param>
         /// <param name="maxIterations"></param>
         public static void SolveFullBodyIK(
-            BoneChainItem[] hipToHead,
-            BoneChainItem[] leftLegToAnkle,
-            BoneChainItem[] rightLegToAnkle,
-            BoneChainItem[] leftShoulderToWrist,
-            BoneChainItem[] rightShoulderToWrist,
+            BoneChainItem[]? hipToHead,
+            BoneChainItem[]? leftLegToAnkle,
+            BoneChainItem[]? rightLegToAnkle,
+            BoneChainItem[]? leftShoulderToWrist,
+            BoneChainItem[]? rightShoulderToWrist,
             (TransformBase? tfm, Matrix4x4 offset) HeadTarget,
             (TransformBase? tfm, Matrix4x4 offset) HipsTarget,
             (TransformBase? tfm, Matrix4x4 offset) LeftHandTarget,
@@ -75,11 +75,11 @@ namespace XREngine.Scene.Components.Animation
         /// <param name="ChestTarget"></param>
         /// <param name="maxIterations"></param>
         public static void SolveFullBodyIK(
-            BoneChainItem[] hipToHead,
-            BoneChainItem[] leftLegToAnkle,
-            BoneChainItem[] rightLegToAnkle,
-            BoneChainItem[] leftShoulderToWrist,
-            BoneChainItem[] rightShoulderToWrist,
+            BoneChainItem[]? hipToHead,
+            BoneChainItem[]? leftLegToAnkle,
+            BoneChainItem[]? rightLegToAnkle,
+            BoneChainItem[]? leftShoulderToWrist,
+            BoneChainItem[]? rightShoulderToWrist,
             (TransformBase? tfm, Matrix4x4 offset) HeadTarget,
             (TransformBase? tfm, Matrix4x4 offset) HipsTarget,
             (TransformBase? tfm, Matrix4x4 offset) LeftHandTarget,
@@ -113,20 +113,26 @@ namespace XREngine.Scene.Components.Animation
             Matrix4x4 rightKneeTarget = RightKneeTarget.offset * (RightKneeTarget.tfm?.WorldMatrix ?? Matrix4x4.Identity);
             Matrix4x4 chestTarget = ChestTarget.offset * (ChestTarget.tfm?.WorldMatrix ?? Matrix4x4.Identity);
 
-            //5 chains to solve
-            for (int i = 0; i < maxIterations; i++)
-            {
-                //1. Hips to Head (both hips and head are targets)
-                SolveDoubleEndedTargets(hipToHead, hipTarget, headTarget);
-                //2. Left Shoulder to Wrist
-                SolveSingleTarget(leftShoulderToWrist, leftHandTarget);
-                //3. Right Shoulder to Wrist
-                SolveSingleTarget(rightShoulderToWrist, rightHandTarget);
-                //4. Left Leg to Ankle
-                SolveSingleTarget(leftLegToAnkle, leftFootTarget);
-                //5. Right Leg to Ankle
-                SolveSingleTarget(rightLegToAnkle, rightFootTarget);
-            }
+            //Hips to Head (both hips and head are targets)
+            if (hipToHead is not null)
+                //SolveDoubleEndedTargets(hipToHead, hipTarget, headTarget, 0.001f, maxIterations);
+                SolveSingleTarget(hipToHead, headTarget, 0.001f, maxIterations);
+
+            //Left Shoulder to Wrist
+            if (leftShoulderToWrist is not null)
+                SolveSingleTarget(leftShoulderToWrist, leftHandTarget, 0.001f, maxIterations);
+
+            //Right Shoulder to Wrist
+            if (rightShoulderToWrist is not null)
+                SolveSingleTarget(rightShoulderToWrist, rightHandTarget, 0.001f, maxIterations);
+
+            //Left Leg to Ankle
+            if (leftLegToAnkle is not null)
+                SolveSingleTarget(leftLegToAnkle, leftFootTarget, 0.001f, maxIterations);
+
+            //Right Leg to Ankle
+            if (rightLegToAnkle is not null)
+                SolveSingleTarget(rightLegToAnkle, rightFootTarget, 0.001f, maxIterations);
         }
 
         /// <summary>

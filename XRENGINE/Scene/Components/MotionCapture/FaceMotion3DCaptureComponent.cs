@@ -156,17 +156,12 @@ public class FaceMotion3DCaptureComponent : XRComponent
         if (headTfm is null)
             return;
 
-        var parentTfm = headTfm.Parent;
         Vector3 worldPos = _headPosition;
-        if (parentTfm is not null)
-        {
-            parentTfm.RecalculateMatrices();
-            parentTfm.RecalculateInverseMatrices();
-            worldPos += parentTfm.WorldTranslation;
-        }
+        var neckWorldPose = Humanoid?.Neck.WorldBindPose ?? Matrix4x4.Identity;
+        worldPos += neckWorldPose.Translation;
 
         headTfm.SetWorldRotation(_headRotation, true);
-        headTfm.SetWorldTranslation(worldPos, true);
+        Humanoid!.HeadTarget = (null, Matrix4x4.CreateTranslation(worldPos));
     }
 
     private void OnUdpDataReceived(IAsyncResult result)
