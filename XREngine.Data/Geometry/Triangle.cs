@@ -1,4 +1,5 @@
-﻿using System.Diagnostics.CodeAnalysis;
+﻿using Extensions;
+using System.Diagnostics.CodeAnalysis;
 using System.Numerics;
 
 namespace XREngine.Data.Geometry
@@ -19,7 +20,7 @@ namespace XREngine.Data.Geometry
             => Plane.CreateFromVertices(A, B, C);
 
         public readonly Vector3 GetNormal()
-            => Vector3.Normalize(Vector3.Cross(B - A, C - A));
+            => Vector3.Cross(B - A, C - A).Normalized();
 
         public void Flip()
             => (C, A) = (A, C);

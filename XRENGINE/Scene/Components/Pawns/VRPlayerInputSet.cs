@@ -143,6 +143,9 @@ namespace XREngine.Components
             get => _springEnabled;
             set => SetField(ref _springEnabled, value);
         }
+        
+        public delegate void DelPauseToggled(bool leftHand);
+        public event DelPauseToggled? PauseToggled;
 
         public enum EVRActionCategory
         {
@@ -193,7 +196,11 @@ namespace XREngine.Components
             input.RegisterVRVector2Action(EVRActionCategory.Global, EVRGameAction.Turn, Turn);
             input.RegisterVRFloatAction(EVRActionCategory.Global, EVRGameAction.GrabLeft, GrabLeft);
             input.RegisterVRFloatAction(EVRActionCategory.Global, EVRGameAction.GrabRight, GrabRight);
+            input.RegisterVRBoolAction(EVRActionCategory.Global, EVRGameAction.ToggleQuickMenu, ToggleQuickMenu);
         }
+
+        private void ToggleQuickMenu(bool enabled)
+            => PauseToggled?.Invoke(enabled);
 
         private void GrabLeft(float lastGrabForce, float grabForce)
         {

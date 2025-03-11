@@ -1,4 +1,5 @@
-﻿using System.Numerics;
+﻿using Extensions;
+using System.Numerics;
 
 namespace XREngine.Data.BSP
 {
@@ -63,7 +64,7 @@ namespace XREngine.Data.BSP
         protected override void GenerateNormals()
         {
             for (int i = 0; i < Vertices.Count; i++)
-                Normals.Add(Vector3.Normalize(Vertices[i]));
+                Normals.Add(Vertices[i].Normalized());
         }
     }
 }

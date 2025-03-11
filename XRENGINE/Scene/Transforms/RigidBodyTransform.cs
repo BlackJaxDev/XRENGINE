@@ -121,7 +121,7 @@ namespace XREngine.Scene.Transforms
                 switch (propName)
                 {
                     case nameof(World):
-                        World?.UnregisterTick(ETickGroup.Normal, (int)ETickOrder.Scene, OnUpdate);
+                        World?.UnregisterTick(ETickGroup.Normal, (int)ETickOrder.Animation, OnUpdate);
                         break;
                 }
             }
@@ -141,7 +141,7 @@ namespace XREngine.Scene.Transforms
                         OnPhysicsStepped();
                     break;
                 case nameof(World):
-                    World?.RegisterTick(ETickGroup.Normal, (int)ETickOrder.Scene, OnUpdate);
+                    World?.RegisterTick(ETickGroup.Normal, (int)ETickOrder.Animation, OnUpdate);
                     break;
             }
         }
@@ -155,21 +155,20 @@ namespace XREngine.Scene.Transforms
             var mode = InterpolationMode;
             float updateDelta = Engine.Delta;
             float fixedDelta = Engine.Time.Timer.FixedUpdateDelta;
-
-            //if (updateDelta > fixedDelta)
-            //    mode = EInterpolationMode.Discrete;
+            if (fixedDelta < float.Epsilon)
+                return;
 
             _accumulatedTime += updateDelta;
-            float alpha = _accumulatedTime / fixedDelta;
+            float alpha = (_accumulatedTime / fixedDelta).Clamp(0.0f, 1.0f);
 
             var (lastPosUpdate, lastRotUpdate) = LastPhysicsTransform;
             switch (mode)
             {
-                case EInterpolationMode.Discrete:
-                    {
-                        SetPositionAndRotation(lastPosUpdate, lastRotUpdate);
-                        break;
-                    }
+                //case EInterpolationMode.Discrete:
+                //    {
+                //        SetPositionAndRotation(lastPosUpdate, lastRotUpdate);
+                //        break;
+                //    }
                 case EInterpolationMode.Interpolate:
                     {
                         SetPositionAndRotation(
@@ -265,19 +264,18 @@ namespace XREngine.Scene.Transforms
             LastRotation = Rotation;
             _accumulatedTime = 0;
 
-            //float updateDelta = Engine.Delta;
-            //float fixedDelta = Engine.Time.Timer.FixedUpdateDelta;
-            //if (InterpolationMode == EInterpolationMode.Discrete || updateDelta > fixedDelta)
-            //{
-            //    if (!RigidBody.IsSleeping)
-            //        SetPositionAndRotation(LastPhysicsTransform.position, LastPhysicsTransform.rotation);
-            //}
-            //else
-            //{
-            //    LastPosition = Position;
-            //    LastRotation = Rotation;
-            //    _accumulatedTime = 0;
-            //}
+            float updateDelta = Engine.Delta;
+            float fixedDelta = Engine.Time.Timer.FixedUpdateDelta;
+            if (InterpolationMode == EInterpolationMode.Discrete || updateDelta > fixedDelta)
+            {
+                if (!RigidBody.IsSleeping)
+                    SetPositionAndRotation(LastPhysicsTransform.position, LastPhysicsTransform.rotation);
+            }
+            else
+            {
+                LastPosition = Position;
+                LastRotation = Rotation;
+            }
         }
 
         protected override Matrix4x4 CreateLocalMatrix()

@@ -13,6 +13,8 @@ namespace XREngine.Rendering.OpenGL
             {
                 Data.PushDataRequested -= PushData;
                 Data.PushSubDataRequested -= PushSubData;
+                Data.FlushRequested -= Flush;
+                Data.FlushRangeRequested -= FlushRange;
                 Data.SetBlockNameRequested -= SetUniformBlockName;
                 Data.SetBlockIndexRequested -= SetBlockIndex;
                 Data.BindRequested -= Bind;
@@ -22,6 +24,8 @@ namespace XREngine.Rendering.OpenGL
             {
                 Data.PushDataRequested += PushData;
                 Data.PushSubDataRequested += PushSubData;
+                Data.FlushRequested += Flush;
+                Data.FlushRangeRequested += FlushRange;
                 Data.SetBlockNameRequested += SetUniformBlockName;
                 Data.SetBlockIndexRequested += SetBlockIndex;
                 Data.BindRequested += Bind;
@@ -259,6 +263,24 @@ namespace XREngine.Rendering.OpenGL
                     void* addr = Data.Address;
                     Api.NamedBufferSubData(BindingId, offset, length, addr);
                 }
+            }
+
+            public void Flush()
+            {
+                if (Data.ActivelyMapping.Contains(this))
+                    return;
+                if (Engine.InvokeOnMainThread(Flush))
+                    return;
+                Api.FlushMappedNamedBufferRange(BindingId, 0, Data.Length);
+            }
+
+            public void FlushRange(int offset, uint length)
+            {
+                if (Data.ActivelyMapping.Contains(this))
+                    return;
+                if (Engine.InvokeOnMainThread(() => FlushRange(offset, length)))
+                    return;
+                Api.FlushMappedNamedBufferRange(BindingId, offset, length);
             }
 
             public void MapBufferData()

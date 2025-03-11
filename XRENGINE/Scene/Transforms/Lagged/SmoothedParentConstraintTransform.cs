@@ -110,9 +110,23 @@ namespace XREngine.Components.Scene.Transforms
         private void CalcCurrentMatrix()
         {
             var currMatrix = _currentMatrix;
-            var destMatrix = ParentWorldMatrix;
-            Matrix4x4.Decompose(currMatrix, out var currScale, out var currRot, out var currTrans);
-            Matrix4x4.Decompose(destMatrix, out var destScale, out var destRot, out var destTrans);
+            var destMatrix = ParentRenderMatrix;
+
+            if (Matrix4x4.Decompose(currMatrix, out var currScale, out var currRot, out var currTrans))
+            {
+                if (float.IsNaN(currTrans.X) || float.IsNaN(currTrans.Y) || float.IsNaN(currTrans.Z))
+                    return;
+            }
+            else
+                return;
+
+            if (Matrix4x4.Decompose(destMatrix, out var destScale, out var destRot, out var destTrans))
+            {
+                if (float.IsNaN(destTrans.X) || float.IsNaN(destTrans.Y) || float.IsNaN(destTrans.Z))
+                    return;
+            }
+            else
+                return;
 
             if (TranslationInterpolationSpeed.HasValue)
                 currTrans = Vector3.Lerp(currTrans, destTrans, Engine.Delta * TranslationInterpolationSpeed.Value);

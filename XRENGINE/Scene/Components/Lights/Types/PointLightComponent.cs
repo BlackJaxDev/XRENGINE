@@ -119,10 +119,10 @@ namespace XREngine.Components.Lights
             base.OnTransformChanged();
         }
 
-        protected override void OnTransformWorldMatrixChanged(TransformBase transform)
+        protected override void OnTransformRenderWorldMatrixChanged(TransformBase transform)
         {
-            _influenceVolume.Center = Transform.WorldTranslation;
-            base.OnTransformWorldMatrixChanged(transform);
+            _influenceVolume.Center = Transform.RenderTranslation;
+            base.OnTransformRenderWorldMatrixChanged(transform);
         }
 
         protected internal override void OnComponentActivated()
@@ -182,7 +182,7 @@ namespace XREngine.Components.Lights
             for (int i = 0; i < ShadowCameras.Length; ++i)
             {
                 var cam = ShadowCameras[i];
-                program.Uniform($"InverseViewMatrices[{i}]", cam.Transform.WorldMatrix);
+                program.Uniform($"InverseViewMatrices[{i}]", cam.Transform.RenderMatrix);
                 program.Uniform($"ProjectionMatrices[{i}]", cam.ProjectionMatrix);
             }
         }

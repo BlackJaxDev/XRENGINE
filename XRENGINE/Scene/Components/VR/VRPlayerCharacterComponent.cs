@@ -364,7 +364,7 @@ namespace XREngine.Scene.Components.VR
                     break;
             }
             fwd.Y = 0.0f;
-            fwd = Vector3.Normalize(fwd);
+            fwd = fwd.Normalized();
             float yaw = (float)Math.Atan2(fwd.X, fwd.Z);
             rootNode.Transform.DeriveWorldMatrix(Matrix4x4.CreateRotationY(yaw) * rootPos);
         }

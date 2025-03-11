@@ -73,9 +73,9 @@ namespace XREngine.Data.Components
         protected override RenderCommand3D GetRenderCommand()
             => RenderCommand;
 
-        protected override void OnTransformWorldMatrixChanged(TransformBase transform)
+        protected override void OnTransformRenderWorldMatrixChanged(TransformBase transform)
         {
-            base.OnTransformWorldMatrixChanged(transform);
+            base.OnTransformRenderWorldMatrixChanged(transform);
             //_shape?.SetTransformMatrix(WorldMatrix);
         }
 

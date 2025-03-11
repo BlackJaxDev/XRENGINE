@@ -47,7 +47,7 @@ namespace XREngine.Components.Lights
                     }
                     break;
                 case nameof(MeshCenterAdjustMatrix):
-                    _lightMatrix = MeshCenterAdjustMatrix * Transform.WorldMatrix;
+                    _lightMatrix = MeshCenterAdjustMatrix * Transform.RenderMatrix;
                     break;
                 case nameof(ShadowMap):
                     if (ShadowMap?.Material is not null)
@@ -78,11 +78,10 @@ namespace XREngine.Components.Lights
 
         protected abstract XRMesh GetWireframeMesh();
 
-        protected override void OnTransformWorldMatrixChanged(TransformBase transform)
+        protected override void OnTransformRenderWorldMatrixChanged(TransformBase transform)
         {
-            _lightMatrix = MeshCenterAdjustMatrix * transform.WorldMatrix;
-            _shadowVolumeRC.WorldMatrix = _lightMatrix;
-            base.OnTransformWorldMatrixChanged(transform);
+            _shadowVolumeRC.WorldMatrix = _lightMatrix = MeshCenterAdjustMatrix * transform.RenderMatrix;
+            base.OnTransformRenderWorldMatrixChanged(transform);
         }
 
         public XRMaterialFrameBuffer? ShadowMap

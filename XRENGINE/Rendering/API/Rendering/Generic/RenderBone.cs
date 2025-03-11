@@ -19,7 +19,7 @@ namespace XREngine.Rendering
             get => _index;
             set => SetField(ref _index, value);
         }
-        public event Action<RenderBone>? TransformUpdated;
+        public event Action<RenderBone>? RenderTransformUpdated;
         public TransformBase Transform { get; }
         public Matrix4x4 InvBindMatrix { get; }
 
@@ -27,7 +27,7 @@ namespace XREngine.Rendering
         {
             Index = index;
             Transform = source;
-            Transform.WorldMatrixChanged += OnTransformChanged;
+            Transform.RenderWorldMatrixChanged += OnRenderTransformChanged;
             InvBindMatrix = invBindMtx;
         }
 
@@ -39,7 +39,7 @@ namespace XREngine.Rendering
                 switch (propName)
                 {
                     case nameof(Transform):
-                        Transform.WorldMatrixChanged -= OnTransformChanged;
+                        Transform.RenderWorldMatrixChanged -= OnRenderTransformChanged;
                         break;
                 }
             }
@@ -51,7 +51,7 @@ namespace XREngine.Rendering
             switch (propName)
             {
                 case nameof(Transform):
-                    Transform.WorldMatrixChanged += OnTransformChanged;
+                    Transform.RenderWorldMatrixChanged += OnRenderTransformChanged;
                     break;
             }
         }
@@ -72,7 +72,7 @@ namespace XREngine.Rendering
             set => SetField(ref _targetWeights, value);
         }
 
-        public void OnTransformChanged(TransformBase tfm)
-            => TransformUpdated?.Invoke(this);
+        public void OnRenderTransformChanged(TransformBase tfm)
+            => RenderTransformUpdated?.Invoke(this);
     }
 }

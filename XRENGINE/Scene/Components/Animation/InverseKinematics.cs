@@ -160,6 +160,12 @@ namespace XREngine.Scene.Components.Animation
             //TODO: use target rotation
             Matrix4x4.Decompose(target, out _, out Quaternion targetRot, out Vector3 targetPos);
 
+            //Verify for NaN
+            if (float.IsNaN(targetPos.X) || float.IsNaN(targetPos.Y) || float.IsNaN(targetPos.Z))
+                return;
+            if (float.IsNaN(targetRot.X) || float.IsNaN(targetRot.Y) || float.IsNaN(targetRot.Z) || float.IsNaN(targetRot.W))
+                return;
+
             float totalLength = PreSolve(chain);
             Vector3 originalRootPosition = chain[0].WorldPosSolve;
             float distanceToTarget = Vector3.DistanceSquared(originalRootPosition, targetPos);
@@ -225,6 +231,15 @@ namespace XREngine.Scene.Components.Animation
 
             Matrix4x4.Decompose(startTarget, out _, out Quaternion startTargetRot, out Vector3 startTargetPos);
             Matrix4x4.Decompose(endTarget, out _, out Quaternion endTargetRot, out Vector3 endTargetPos);
+
+            if (float.IsNaN(startTargetPos.X) || float.IsNaN(startTargetPos.Y) || float.IsNaN(startTargetPos.Z))
+                return;
+            if (float.IsNaN(endTargetPos.X) || float.IsNaN(endTargetPos.Y) || float.IsNaN(endTargetPos.Z))
+                return;
+            if (float.IsNaN(startTargetRot.X) || float.IsNaN(startTargetRot.Y) || float.IsNaN(startTargetRot.Z) || float.IsNaN(startTargetRot.W))
+                return;
+            if (float.IsNaN(endTargetRot.X) || float.IsNaN(endTargetRot.Y) || float.IsNaN(endTargetRot.Z) || float.IsNaN(endTargetRot.W))
+                return;
 
             float totalLength = PreSolve(chain);
             float distanceBetweenTargets = Vector3.DistanceSquared(startTargetPos, endTargetPos);

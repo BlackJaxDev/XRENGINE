@@ -1,4 +1,5 @@
-﻿using System.Numerics;
+﻿using Extensions;
+using System.Numerics;
 using XREngine.Data.Core;
 using XREngine.Data.Geometry;
 using XREngine.Data.Rendering;
@@ -20,7 +21,7 @@ namespace XREngine.Rendering
                 if (sides < 3)
                     throw new Exception("A (very low res) circle needs at least 3 sides.");
 
-                normal = Vector3.Normalize(normal);
+                normal = normal.Normalized();
 
                 Quaternion offset = XRMath.RotationBetweenVectors(Globals.Up, normal);
 
@@ -124,7 +125,8 @@ namespace XREngine.Rendering
             }
             public static XRMesh WireframeCone(Vector3 center, Vector3 up, float height, float radius, int sides)
             {
-                up = Vector3.Normalize(up);
+                up = up.Normalized();
+
                 VertexLine[] lines = new VertexLine[sides * 3];
 
                 Vector3 topPoint = center + (up * (height / 2.0f));
@@ -144,7 +146,8 @@ namespace XREngine.Rendering
             }
             public static XRMesh SolidCone(Vector3 center, Vector3 up, float height, float radius, int sides, bool closeBottom)
             {
-                up = Vector3.Normalize(up);
+                up = up.Normalized();
+
                 List<VertexTriangle> tris = new((sides * 3) * (closeBottom ? 2 : 1));
 
                 Vector3 topPoint = center + (up * (height / 2.0f));
@@ -157,7 +160,7 @@ namespace XREngine.Rendering
 
                 for (int i = 0; i < sides; ++i)
                 {
-                    diff = Vector3.Normalize(topPoint - sidePoints[i].Position);
+                    diff = (topPoint - sidePoints[i].Position).Normalized();
                     normal = Vector3.Cross(diff, Vector3.Cross(up, diff));
                     sidePoints[i].Normal = normal;
 
@@ -171,7 +174,7 @@ namespace XREngine.Rendering
                     {
                         VertexTriangle lastTri = tris[^2];
                         Vector3 startNormal = lastTri.Vertex0.Normal ?? Vector3.Zero;
-                        lastTri.Vertex0.Normal = Vector3.Normalize(startNormal + normal);
+                        lastTri.Vertex0.Normal = (startNormal + normal).Normalized();
                     }
                 }
 
@@ -197,7 +200,7 @@ namespace XREngine.Rendering
             }
             public static XRMesh WireframeCapsule(Vector3 center, Vector3 upAxis, float radius, float halfHeight, int pointCountHalfCircle)
             {
-                upAxis = Vector3.Normalize(upAxis);
+                upAxis = upAxis.Normalized();
 
                 Vector3 topPoint = center + upAxis * halfHeight;
                 Vector3 bottomPoint = center - upAxis * halfHeight;
@@ -275,7 +278,7 @@ namespace XREngine.Rendering
                 Vector3 center, Vector3 upAxis, float radius, float halfHeight, int pointCountHalfCircle,
                 out XRMesh cylinder, out XRMesh topSphereHalf, out XRMesh bottomSphereHalf)
             {
-                Vector3.Normalize(upAxis);
+                upAxis = upAxis.Normalized();
 
                 Vector3 topPoint = center + upAxis * halfHeight;
                 Vector3 bottomPoint = center - upAxis * halfHeight;
@@ -349,7 +352,7 @@ namespace XREngine.Rendering
                 Vector3 center, Vector3 upAxis, float radius, float halfHeight, int pointCountHalfCircle,
                 out XRMesh cylinder, out XRMesh topSphereHalf, out XRMesh bottomSphereHalf)
             {
-                Vector3.Normalize(upAxis);
+                upAxis = upAxis.Normalized();
 
                 Vector3 topPoint = center + upAxis * halfHeight;
                 Vector3 bottomPoint = center - upAxis * halfHeight;
@@ -607,9 +610,9 @@ namespace XREngine.Rendering
                 if (sides < 3)
                     throw new Exception("A (very low res) circle needs at least 3 sides.");
 
-                normal = Vector3.Normalize(normal);
+                normal = normal.Normalized();
 
-                List<Vertex> points = new(CirclePoints(radius, normal, center, sides));
+                List<Vertex> points = [.. CirclePoints(radius, normal, center, sides)];
                 points.Insert(0, new Vertex(center, normal, new Vector2(0.5f)));
                 VertexTriangleFan fan = new([.. points]);
 

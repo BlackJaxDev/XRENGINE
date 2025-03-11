@@ -31,7 +31,8 @@ namespace XREngine.Scene.Transforms
         public event Action<TransformBase>? InverseLocalMatrixChanged;
         public event Action<TransformBase>? WorldMatrixChanged;
         public event Action<TransformBase>? InverseWorldMatrixChanged;
-
+        public event Action<TransformBase>? RenderWorldMatrixChanged;
+        
         private float _selectionRadius = 0.01f;
         [YamlIgnore]
         public float SelectionRadius
@@ -96,7 +97,7 @@ namespace XREngine.Scene.Transforms
         {
             MakeCapsule();
             RenderInfo.LocalCullingVolume = Capsule.GetAABB(false);
-            RenderInfo.CullingOffsetMatrix = WorldMatrix;
+            RenderInfo.CullingOffsetMatrix = RenderMatrix;
             return [RenderInfo];
         }
 
@@ -109,13 +110,13 @@ namespace XREngine.Scene.Transforms
 
             if (settings.RenderTransformLines)
                 Engine.Rendering.Debug.RenderLine(
-                    Parent?.WorldTranslation ?? Vector3.Zero,
-                    WorldTranslation,
+                    Parent?.RenderTranslation ?? Vector3.Zero,
+                    RenderTranslation,
                     settings.TransformLineColor);
 
             if (settings.RenderTransformPoints)
                 Engine.Rendering.Debug.RenderPoint(
-                    WorldTranslation,
+                    RenderTranslation,
                     settings.TransformPointColor);
 
             if (settings.RenderTransformCapsules)
@@ -280,7 +281,19 @@ namespace XREngine.Scene.Transforms
                             }
                     }
                     break;
+                case nameof(SelectionRadius):
+                    MakeCapsule();
+                    break;
+                case nameof(RenderMatrix):
+                    OnRenderMatrixChanged();
+                    break;
             }
+        }
+
+        protected virtual void OnRenderMatrixChanged()
+        {
+            _inverseRenderMatrix = null;
+            RenderWorldMatrixChanged?.Invoke(this);
         }
 
         private static readonly Queue<(TransformBase child, TransformBase? newParent, bool preserveWorldTransform)> _parentsToReassign = [];
@@ -295,27 +308,34 @@ namespace XREngine.Scene.Transforms
         /// Recalculates the local and world matrices for this transform.
         /// Children are not recalculated.
         /// </summary>
-        public void RecalculateMatrices()
+        public void RecalculateMatrices(bool forceWorldRecalc = false, bool setRenderMatrixNow = false)
         {
-            //if (_localMatrix.NeedsRecalc)
-            //{
+            if (_localMatrix.NeedsRecalc)
+            {
                 _localMatrix.NeedsRecalc = false;
                 RecalcLocal();
-            //}
-            //if (_worldMatrix.NeedsRecalc)
-            //{
+            }
+            if (_worldMatrix.NeedsRecalc || forceWorldRecalc)
+            {
                 _worldMatrix.NeedsRecalc = false;
                 RecalcWorld(false);
-            //}
+            }
+            if (setRenderMatrixNow || World is null)
+                RenderMatrix = WorldMatrix;
         }
 
-        public void RecalculateInverseMatrices()
+        public void RecalculateInverseMatrices(bool forceInverseWorldRecalc = false)
         {
-            _inverseLocalMatrix.NeedsRecalc = false;
-            RecalcLocalInv();
-
-            _inverseWorldMatrix.NeedsRecalc = false;
-            RecalcWorldInv(false);
+            if (_inverseLocalMatrix.NeedsRecalc)
+            {
+                _inverseLocalMatrix.NeedsRecalc = false;
+                RecalcLocalInv();
+            }
+            if (_inverseWorldMatrix.NeedsRecalc || forceInverseWorldRecalc)
+            {
+                _inverseWorldMatrix.NeedsRecalc = false;
+                RecalcWorldInv(false);
+            }
         }
 
         /// <summary>
@@ -325,23 +345,23 @@ namespace XREngine.Scene.Transforms
         /// </summary>
         /// <param name="recalcChildrenNow"></param>
         /// <returns></returns>
-        public virtual void RecalculateMatrixHeirarchy(bool parallel = true)
+        public virtual void RecalculateMatrixHeirarchy(bool forceWorldRecalc, bool setRenderMatrixNow, bool parallel)
         {
-            RecalculateMatrices();
+            RecalculateMatrices(forceWorldRecalc, setRenderMatrixNow);
             if (parallel)
-                ParallelChildrenRecalc();
+                ParallelChildrenRecalc(setRenderMatrixNow);
             else
-                SequentialChildrenRecalc();
+                SequentialChildrenRecalc(setRenderMatrixNow);
         }
 
-        private void SequentialChildrenRecalc()
+        private void SequentialChildrenRecalc(bool setRenderMatrixNow)
         {
             foreach (var child in _children)
-                child.RecalculateMatrixHeirarchy();
+                child.RecalculateMatrixHeirarchy(true, setRenderMatrixNow, false);
         }
 
-        private void ParallelChildrenRecalc()
-            => Task.WaitAll(_children.Select(child => Task.Run(() => child.RecalculateMatrixHeirarchy())));
+        private void ParallelChildrenRecalc(bool setRenderMatrixNow)
+            => Task.WaitAll(_children.Select(child => Task.Run(() => child.RecalculateMatrixHeirarchy(true, setRenderMatrixNow, true))));
 
         public TransformBase? FindChild(string name, StringComparison comp = StringComparison.Ordinal)
         {
@@ -423,6 +443,14 @@ namespace XREngine.Scene.Transforms
         /// </summary>
         public Matrix4x4 ParentInverseWorldMatrix => Parent?.InverseWorldMatrix ?? Matrix4x4.Identity;
 
+        public Matrix4x4 ParentRenderMatrix => Parent?.RenderMatrix ?? Matrix4x4.Identity;
+        public Matrix4x4 ParentInverseRenderMatrix => Parent?.InverseRenderMatrix ?? Matrix4x4.Identity;
+        
+        public Vector3 RenderForward => Vector3.TransformNormal(Globals.Forward, RenderMatrix);
+        public Vector3 RenderUp => Vector3.TransformNormal(Globals.Up, RenderMatrix);
+        public Vector3 RenderRight => Vector3.TransformNormal(Globals.Right, RenderMatrix);
+        public Vector3 RenderTranslation => RenderMatrix.Translation;
+
         /// <summary>
         /// This transform's world up vector.
         /// </summary>
@@ -469,6 +497,16 @@ namespace XREngine.Scene.Transforms
             scale.Z = new Vector3(matrix.M31, matrix.M32, matrix.M33).Length();
             return scale;
         }
+
+        private Matrix4x4 _renderMatrix = Matrix4x4.Identity;
+        public Matrix4x4 RenderMatrix
+        {
+            get => _renderMatrix;
+            internal set => SetField(ref _renderMatrix, value);
+        }
+
+        private Matrix4x4? _inverseRenderMatrix = Matrix4x4.Identity;
+        public Matrix4x4 InverseRenderMatrix => _inverseRenderMatrix ??= Matrix4x4.Invert(RenderMatrix, out var inverted) ? inverted : Matrix4x4.Identity;
 
         #region Local Matrix
         private readonly MatrixInfo _localMatrix;
@@ -559,9 +597,12 @@ namespace XREngine.Scene.Transforms
 
         protected virtual void OnWorldMatrixChanged()
         {
+            //TODO: move to render matrix calculation
             MakeCapsule();
             RenderInfo.LocalCullingVolume = Capsule.GetAABB(false);
-            RenderInfo.CullingOffsetMatrix = WorldMatrix;
+            RenderInfo.CullingOffsetMatrix = RenderMatrix;
+
+            World?.EnqueueRenderTransformChange(this);
             WorldMatrixChanged?.Invoke(this);
         }
 
@@ -673,7 +714,6 @@ namespace XREngine.Scene.Transforms
         {
             _localMatrix.NeedsRecalc = true;
             MarkWorldModified();
-            //World?.AddDirtyTransform(this, out _, false);
             HasChanged = true;
         }
 
@@ -683,9 +723,6 @@ namespace XREngine.Scene.Transforms
         protected void MarkWorldModified()
         {
             _worldMatrix.NeedsRecalc = true;
-            //lock (_children)
-            //    foreach (TransformBase child in _children)
-            //        child.MarkWorldModified();
             World?.AddDirtyTransform(this);
             HasChanged = true;
         }

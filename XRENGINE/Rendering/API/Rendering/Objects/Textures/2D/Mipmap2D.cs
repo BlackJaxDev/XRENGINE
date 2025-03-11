@@ -13,7 +13,7 @@ namespace XREngine.Rendering
     /// </summary>
     public class Mipmap2D : XRBase
     {
-        private static object _lock = new();
+        //private static object _lock = new();
         
         public event Action? Invalidated;
         public void Invalidate() => Invalidated?.Invoke();
@@ -26,27 +26,27 @@ namespace XREngine.Rendering
         }
         public Mipmap2D(Mipmap2D mipmap)
         {
-            lock (_lock)
-            {
+            //lock (_lock)
+            //{
                 InternalFormat = mipmap.InternalFormat;
                 PixelFormat = mipmap.PixelFormat;
                 PixelType = mipmap.PixelType;
                 Data = mipmap.Data;
                 Width = mipmap.Width;
                 Height = mipmap.Height;
-            }
+            //}
         }
         public Mipmap2D(uint width, uint height, EPixelInternalFormat internalFormat, EPixelFormat pixelFormat, EPixelType pixelType, bool allocateData)
         {
-            lock (_lock)
-            {
+            //lock (_lock)
+            //{
                 Width = width;
                 Height = height;
                 InternalFormat = internalFormat;
                 PixelFormat = pixelFormat;
                 PixelType = pixelType;
                 Data = allocateData ? new DataSource(XRTexture.AllocateBytes(width, height, pixelFormat, pixelType)) : null;
-            }
+            //}
         }
         public Mipmap2D(Image<Rgba32> image)
         {
@@ -107,8 +107,8 @@ namespace XREngine.Rendering
 
         public unsafe void SetFromImage(Image<Rgba32> image)
         {
-            lock (_lock)
-            {
+            //lock (_lock)
+            //{
                 InternalFormat = EPixelInternalFormat.Rgba8;
                 PixelFormat = EPixelFormat.Rgba;
                 PixelType = EPixelType.UnsignedByte;
@@ -121,12 +121,12 @@ namespace XREngine.Rendering
 
                 Width = (uint)image.Width;
                 Height = (uint)image.Height;
-            }
+            //}
         }
         public unsafe void SetFromImage(MagickImage image)
         {
-            lock (_lock)
-            {
+            //lock (_lock)
+            //{
                 XRTexture.GetFormat(image, false, out EPixelInternalFormat internalFormat, out EPixelFormat format, out EPixelType type);
                 InternalFormat = internalFormat;
                 PixelFormat = format;
@@ -149,19 +149,19 @@ namespace XREngine.Rendering
 
                 Width = image.Width;
                 Height = image.Height;
-            }
+            //}
         }
 
         public MagickImage GetImage()
         {
-            lock (_lock)
-            {
+            //lock (_lock)
+            //{
                 MagickImage image = XRTexture.NewImage(Width, Height, PixelFormat, PixelType);
                 byte[]? bytes = Data?.GetBytes();
                 if (bytes != null)
                     image.Read(bytes);
                 return image;
-            }
+            //}
         }
 
         private EPixelType _pixelType = EPixelType.UnsignedByte;

@@ -86,28 +86,58 @@ namespace XREngine.Scene.Components.Animation
 
             var hipToHeadChain = GetHipToHeadChain();
             if (hipToHeadChain is not null)
-                foreach (var bone in hipToHeadChain)
+                for (int i = 0; i < hipToHeadChain.Length; i++)
+                {
+                    BoneChainItem? bone = hipToHeadChain[i];
+                    BoneChainItem? nextBone = i + 1 < hipToHeadChain.Length ? hipToHeadChain[i + 1] : null;
                     Engine.Rendering.Debug.RenderPoint(bone.WorldPosSolve, ColorF4.Red);
+                    if (nextBone is not null)
+                        Engine.Rendering.Debug.RenderLine(bone.WorldPosSolve, nextBone.WorldPosSolve, ColorF4.Red);
+                }
 
             var leftLegToAnkleChain = GetLeftLegToAnkleChain();
             if (leftLegToAnkleChain is not null)
-                foreach (var bone in leftLegToAnkleChain)
+                for (int i = 0; i < leftLegToAnkleChain.Length; i++)
+                {
+                    BoneChainItem? bone = leftLegToAnkleChain[i];
+                    BoneChainItem? nextBone = i + 1 < leftLegToAnkleChain.Length ? leftLegToAnkleChain[i + 1] : null;
                     Engine.Rendering.Debug.RenderPoint(bone.WorldPosSolve, ColorF4.Red);
+                    if (nextBone is not null)
+                        Engine.Rendering.Debug.RenderLine(bone.WorldPosSolve, nextBone.WorldPosSolve, ColorF4.Red);
+                }
 
             var rightLegToAnkleChain = GetRightLegToAnkleChain();
             if (rightLegToAnkleChain is not null)
-                foreach (var bone in rightLegToAnkleChain)
+                for (int i = 0; i < rightLegToAnkleChain.Length; i++)
+                {
+                    BoneChainItem? bone = rightLegToAnkleChain[i];
+                    BoneChainItem? nextBone = i + 1 < rightLegToAnkleChain.Length ? rightLegToAnkleChain[i + 1] : null;
                     Engine.Rendering.Debug.RenderPoint(bone.WorldPosSolve, ColorF4.Red);
+                    if (nextBone is not null)
+                        Engine.Rendering.Debug.RenderLine(bone.WorldPosSolve, nextBone.WorldPosSolve, ColorF4.Red);
+                }
 
             var leftShoulderToWristChain = GetLeftShoulderToWristChain();
             if (leftShoulderToWristChain is not null)
-                foreach (var bone in leftShoulderToWristChain)
+                for (int i = 0; i < leftShoulderToWristChain.Length; i++)
+                {
+                    BoneChainItem? bone = leftShoulderToWristChain[i];
+                    BoneChainItem? nextBone = i + 1 < leftShoulderToWristChain.Length ? leftShoulderToWristChain[i + 1] : null;
                     Engine.Rendering.Debug.RenderPoint(bone.WorldPosSolve, ColorF4.Red);
+                    if (nextBone is not null)
+                        Engine.Rendering.Debug.RenderLine(bone.WorldPosSolve, nextBone.WorldPosSolve, ColorF4.Red);
+                }
 
             var rightShoulderToWristChain = GetRightShoulderToWristChain();
             if (rightShoulderToWristChain is not null)
-                foreach (var bone in rightShoulderToWristChain)
+                for (int i = 0; i < rightShoulderToWristChain.Length; i++)
+                {
+                    BoneChainItem? bone = rightShoulderToWristChain[i];
+                    BoneChainItem? nextBone = i + 1 < rightShoulderToWristChain.Length ? rightShoulderToWristChain[i + 1] : null;
                     Engine.Rendering.Debug.RenderPoint(bone.WorldPosSolve, ColorF4.Red);
+                    if (nextBone is not null)
+                        Engine.Rendering.Debug.RenderLine(bone.WorldPosSolve, nextBone.WorldPosSolve, ColorF4.Red);
+                }
 
             Engine.Rendering.Debug.RenderPoint(GetMatrixForTarget(HeadTarget).Translation, ColorF4.Green);
             Engine.Rendering.Debug.RenderPoint(GetMatrixForTarget(HipsTarget).Translation, ColorF4.Green);
@@ -294,7 +324,7 @@ namespace XREngine.Scene.Components.Animation
         }
 
         public static Matrix4x4 GetMatrixForTarget((TransformBase? tfm, Matrix4x4 offset) target)
-            => target.offset * (target.tfm?.WorldMatrix ?? Matrix4x4.Identity);
+            => target.offset * (target.tfm?.RenderMatrix ?? Matrix4x4.Identity);
 
         public (TransformBase? tfm, Matrix4x4 offset) HeadTarget { get; set; } = (null, Matrix4x4.Identity);
         public (TransformBase? tfm, Matrix4x4 offset) HipsTarget { get; set; } = (null, Matrix4x4.Identity);

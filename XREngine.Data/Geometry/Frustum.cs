@@ -1,4 +1,5 @@
-﻿using Silk.NET.Maths;
+﻿using Extensions;
+using Silk.NET.Maths;
 using System.Collections;
 using System.Numerics;
 using XREngine.Data.Core;
@@ -403,9 +404,9 @@ namespace XREngine.Data.Geometry
         {
             Vector3 topPoint = XRMath.GetPlanePoint(first);
             Vector3 bottomPoint = XRMath.GetPlanePoint(second);
-            Vector3 normal = Vector3.Normalize(normalFacesFirst 
+            Vector3 normal = (normalFacesFirst 
                 ? second.Normal - first.Normal 
-                : first.Normal - second.Normal);
+                : first.Normal - second.Normal).Normalized();
             Vector3 midPoint = (topPoint + bottomPoint) / 2.0f;
             return XRMath.CreatePlaneFromPointAndNormal(midPoint, normal);
         }

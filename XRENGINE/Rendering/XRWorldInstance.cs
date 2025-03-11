@@ -61,20 +61,20 @@ namespace XREngine.Rendering
             TickLists.Add(ETickGroup.Normal, []);
             TickLists.Add(ETickGroup.Late, []);
             TickLists.Add(ETickGroup.PrePhysics, []);
+            TickLists.Add(ETickGroup.DuringPhysics, []);
             TickLists.Add(ETickGroup.PostPhysics, []);
-
-            _updateBuckets = _circularTransformBuckets[0];
-            _bucketsIndex = 0;
         }
         public XRWorldInstance(XRWorld world) : this()
             => TargetWorld = world;
         public XRWorldInstance(XRWorld world, VisualScene3D visualScene, AbstractPhysicsScene physicsScene) : this(visualScene, physicsScene)
             => TargetWorld = world;
 
+        private void TickDuring() 
+            => TickGroup(ETickGroup.DuringPhysics);
         public void FixedUpdate()
         {
             TickGroup(ETickGroup.PrePhysics);
-            PhysicsScene.StepSimulation();
+            Task.WaitAll(Task.Run(PhysicsScene.StepSimulation), Task.Run(TickDuring));
             TickGroup(ETickGroup.PostPhysics);
         }
 
@@ -95,8 +95,8 @@ namespace XREngine.Rendering
 
             //Recalculate all transforms before activating nodes
             foreach (SceneNode node in RootNodes)
-                node.Transform.RecalculateMatrixHeirarchy(/*true, */Engine.Rendering.Settings.RecalcChildMatricesInParallel);
-            
+                node.Transform.RecalculateMatrixHeirarchy(true, true, Engine.Rendering.Settings.RecalcChildMatricesInParallel);
+
             foreach (SceneNode node in RootNodes)
                 if (node.IsActiveSelf)
                     node.OnActivated();
@@ -149,8 +149,15 @@ namespace XREngine.Rendering
             Lights.CollectVisibleItems();
         }
 
+        private void ApplyRenderMatrixChanges()
+        {
+            while (_pushToRenderSnapshot.TryDequeue(out (TransformBase tfm, Matrix4x4 renderMatrix) item))
+                item.tfm.RenderMatrix = item.renderMatrix;
+        }
+
         private void GlobalSwapBuffers()
         {
+            ApplyRenderMatrixChanges();
             VisualScene.GlobalSwapBuffers();
             //PhysicsScene.SwapDebugBuffers();
             Lights.SwapBuffers();
@@ -177,8 +184,8 @@ namespace XREngine.Rendering
 
         private void PreUpdate()
         {
-            SwapUpdateWithUnused();
-            IncrementBucketsIndex();
+            _pushToRenderWrite.Clear();
+            _invalidTransforms.ForEach(x => x.Value.Clear());
         }
 
         private void PostUpdate()
@@ -187,15 +194,20 @@ namespace XREngine.Rendering
                 ? RecalcTransformsParallelTasks
                 : RecalcTransformsSequential;
 
-            var ordered = _updateBuckets.OrderBy(x => x.Key).Select(x => x.Value.Where(x => x is not null));
-            foreach (var item in ordered) 
-                recalc(item);
+            //Sequentially iterate through each depth of modified transforms, in order
+            foreach (var item in _invalidTransforms.OrderBy(x => x.Key)) 
+                recalc(item.Value);
+
+            _pushToRenderWrite = Interlocked.Exchange(ref _pushToRenderSnapshot, _pushToRenderWrite);
         }
+
+        public void EnqueueRenderTransformChange(TransformBase transform)
+            => _pushToRenderWrite.Enqueue((transform, transform.WorldMatrix));
 
         private static void RecalcTransformsSequential(IEnumerable<TransformBase> bag)
         {
             foreach (var transform in bag)
-                transform.RecalculateMatrixHeirarchy(false);
+                transform.RecalculateMatrixHeirarchy(false, false, false);
         }
 
         //private static void RecalcTransformsParallel(List<int> depthKeys, ConcurrentHashSet<TransformBase> bag)
@@ -213,7 +225,7 @@ namespace XREngine.Rendering
         private static void RecalcTransformsParallelTasks(IEnumerable<TransformBase> bag)
         {
             void Calc(TransformBase tfm)
-                => tfm.RecalculateMatrixHeirarchy(true);
+                => tfm.RecalculateMatrixHeirarchy(false, false, true);
 
             Task AsCalcTask(TransformBase tfm)
             {
@@ -224,33 +236,9 @@ namespace XREngine.Rendering
             Task.WaitAll([.. bag.Select(AsCalcTask)]);
         }
 
-        private int _bucketsIndex = 0;
-        private readonly ConcurrentDictionary<int, ConcurrentHashSet<TransformBase>>[] _circularTransformBuckets =
-        [
-            new ConcurrentDictionary<int, ConcurrentHashSet<TransformBase>>(),
-            new ConcurrentDictionary<int, ConcurrentHashSet<TransformBase>>(),
-            new ConcurrentDictionary<int, ConcurrentHashSet<TransformBase>>()
-        ];
-
-        private void SwapUpdateWithUnused()
-        {
-            //Update becomes unused, and unused becomes update
-            _updateBuckets = _circularTransformBuckets[UnusedBucketIndex];
-            (_circularTransformBuckets[UnusedBucketIndex], _circularTransformBuckets[UpdateBucketIndex]) = (_circularTransformBuckets[UpdateBucketIndex], _circularTransformBuckets[UnusedBucketIndex]);
-            foreach (var kv in _updateBuckets)
-                kv.Value.Clear();
-        }
-
-        private int UnusedBucketIndex => _bucketsIndex == 0 ? _circularTransformBuckets.Length - 1 : _bucketsIndex - 1;
-        private int RenderBucketIndex => _bucketsIndex == _circularTransformBuckets.Length - 1 ? 0 : _bucketsIndex + 1;
-        private int UpdateBucketIndex => _bucketsIndex;
-
-        private void IncrementBucketsIndex()
-        {
-            _bucketsIndex = _bucketsIndex == _circularTransformBuckets.Length - 1 ? 0 : _bucketsIndex + 1;
-        }
-
-        private ConcurrentDictionary<int, ConcurrentHashSet<TransformBase>> _updateBuckets;
+        private ConcurrentQueue<(TransformBase tfm, Matrix4x4 renderMatrix)> _pushToRenderWrite = new();
+        private ConcurrentQueue<(TransformBase tfm, Matrix4x4 renderMatrix)> _pushToRenderSnapshot = new();
+        private readonly ConcurrentDictionary<int, ConcurrentHashSet<TransformBase>> _invalidTransforms = [];
 
         /// <summary>
         /// Enqueues a transform to be recalculated at the end of the update after user code has been executed.
@@ -261,7 +249,7 @@ namespace XREngine.Rendering
             if (transform.ForceManualRecalc)
                 return;
 
-            _updateBuckets.GetOrAdd(transform.Depth, i => []).Add(transform);
+            _invalidTransforms.GetOrAdd(transform.Depth, i => []).Add(transform);
         }
 
         private XRWorld? _targetWorld;

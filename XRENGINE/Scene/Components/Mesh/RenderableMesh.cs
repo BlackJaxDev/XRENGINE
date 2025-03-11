@@ -56,18 +56,18 @@ namespace XREngine.Components.Scene.Mesh
         void ComponentPropertyChanged(object? s, IXRPropertyChangedEventArgs e)
         {
             if (e.PropertyName == nameof(RenderableComponent.Transform) && !Component.SceneNode.IsTransformNull)
-                Component.Transform.WorldMatrixChanged += Component_WorldMatrixChanged;
+                Component.Transform.RenderWorldMatrixChanged += Component_WorldMatrixChanged;
         }
         void ComponentPropertyChanging(object? s, IXRPropertyChangingEventArgs e)
         {
             if (e.PropertyName == nameof(RenderableComponent.Transform) && !Component.SceneNode.IsTransformNull)
-                Component.Transform.WorldMatrixChanged -= Component_WorldMatrixChanged;
+                Component.Transform.RenderWorldMatrixChanged -= Component_WorldMatrixChanged;
         }
 
         public RenderableMesh(SubMesh mesh, RenderableComponent component)
         {
             Component = component;
-            Component.Transform.WorldMatrixChanged += Component_WorldMatrixChanged;
+            Component.Transform.RenderWorldMatrixChanged += Component_WorldMatrixChanged;
             Component.PropertyChanged += ComponentPropertyChanged;
             Component.PropertyChanging += ComponentPropertyChanging;
             RootBone = mesh.RootBone;
@@ -108,7 +108,7 @@ namespace XREngine.Components.Scene.Mesh
                 Engine.Rendering.Debug.RenderBox(box.Value.LocalHalfExtents, box.Value.LocalCenter, box.Value.Transform, false, ColorF4.White);
 
             if (RootBone is not null)
-                Engine.Rendering.Debug.RenderPoint(RootBone.WorldTranslation, ColorF4.Red);
+                Engine.Rendering.Debug.RenderPoint(RootBone.RenderTranslation, ColorF4.Red);
         }
 
         private void SettingUniforms(XRRenderProgram vertexProgram, XRRenderProgram materialProgram)
@@ -121,7 +121,7 @@ namespace XREngine.Components.Scene.Mesh
             var rend = CurrentLODRenderer;
             bool skinned = (rend?.Mesh?.HasSkinning ?? false) && Engine.Rendering.Settings.AllowSkinning;
             TransformBase tfm = skinned ? RootBone ?? Component.Transform : Component.Transform;
-            float distance = camera?.DistanceFromNearPlane(tfm.WorldTranslation) ?? 0.0f;
+            float distance = camera?.DistanceFromNearPlane(tfm.RenderTranslation) ?? 0.0f;
 
             if (!passes.IsShadowPass)
                 UpdateLOD(distance);
@@ -140,7 +140,7 @@ namespace XREngine.Components.Scene.Mesh
         public record RenderableLOD(XRMeshRenderer Renderer, float MaxVisibleDistance);
 
         public void UpdateLOD(XRCamera camera)
-            => UpdateLOD(camera.DistanceFromNearPlane(Component.Transform.WorldTranslation));
+            => UpdateLOD(camera.DistanceFromNearPlane(Component.Transform.RenderTranslation));
         public void UpdateLOD(float distanceToCamera)
         {
             if (LODs.Count == 0)
@@ -201,12 +201,12 @@ namespace XREngine.Components.Scene.Mesh
                 {
                     case nameof(RootBone):
                         if (RootBone is not null)
-                            RootBone.WorldMatrixChanged -= RootBone_WorldMatrixChanged;
+                            RootBone.RenderWorldMatrixChanged -= RootBone_WorldMatrixChanged;
                         break;
 
                     case nameof(Component):
                         if (Component is not null)
-                            Component.Transform.WorldMatrixChanged -= Component_WorldMatrixChanged;
+                            Component.Transform.RenderWorldMatrixChanged -= Component_WorldMatrixChanged;
                         break;
                 }
             }
@@ -221,14 +221,14 @@ namespace XREngine.Components.Scene.Mesh
                 case nameof(RootBone):
                     if (RootBone is not null)
                     {
-                        RootBone.WorldMatrixChanged += RootBone_WorldMatrixChanged;
+                        RootBone.RenderWorldMatrixChanged += RootBone_WorldMatrixChanged;
                         RootBone_WorldMatrixChanged(RootBone);
                     }
                     break;
                 case nameof(Component):
                     if (Component is not null)
                     {
-                        Component.Transform.WorldMatrixChanged += RootBone_WorldMatrixChanged;
+                        Component.Transform.RenderWorldMatrixChanged += RootBone_WorldMatrixChanged;
                         Component_WorldMatrixChanged(Component.Transform);
                     }
                     break;
@@ -246,7 +246,7 @@ namespace XREngine.Components.Scene.Mesh
                     {
                         var rend = CurrentLODRenderer;
                         bool skinned = (rend?.Mesh?.HasSkinning ?? false) && Engine.Rendering.Settings.AllowSkinning;
-                        _rc.WorldMatrix = skinned ? Matrix4x4.Identity : Component.Transform.WorldMatrix;
+                        _rc.WorldMatrix = skinned ? Matrix4x4.Identity : Component.Transform.RenderMatrix;
                     }
                     break;
             }
@@ -262,7 +262,7 @@ namespace XREngine.Components.Scene.Mesh
             if (!hasSkinning)
                 return;
             
-            RenderInfo.CullingOffsetMatrix = rootBone.WorldMatrix;
+            RenderInfo.CullingOffsetMatrix = rootBone.RenderMatrix;
         }
 
         /// <summary>
@@ -278,7 +278,7 @@ namespace XREngine.Components.Scene.Mesh
             if (component is null)
                 return;
             
-            var mtx = component.WorldMatrix;
+            var mtx = component.RenderMatrix;
 
             if (_rc is not null)
                 _rc.WorldMatrix = mtx;

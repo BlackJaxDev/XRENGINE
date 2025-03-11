@@ -69,11 +69,16 @@ namespace XREngine.Data
             return result;
         }
 
+        /// <summary>
+        /// The frequency of the audio data in Hz.
+        /// Also known as the sample rate.
+        /// </summary>
         public int Frequency
         {
             get => _frequency;
             set => SetField(ref _frequency, value);
         }
+
         public bool Stereo => _channelCount == 2;
         public bool Mono => _channelCount == 1;
         public int ChannelCount
@@ -433,6 +438,84 @@ namespace XREngine.Data
             _frequency = 44100;
             _channelCount = 1;
             _type = EPCMType.Byte;
+        }
+
+        public bool GetSamples(float[] samples, int sampleOffset)
+        {
+            if (_data is null)
+                return false;
+
+            switch (_type)
+            {
+                case EPCMType.Byte:
+                    byte[] byteData = GetByteData();
+                    for (int i = 0; i < byteData.Length; i++)
+                        samples[sampleOffset + i] = byteData[i] / 128f - 1f;
+                    break;
+                case EPCMType.Short:
+                    short[] shortData = GetShortData();
+                    for (int i = 0; i < shortData.Length; i++)
+                        samples[sampleOffset + i] = shortData[i] / 32768f;
+                    break;
+                case EPCMType.Float:
+                    float[] floatData = GetFloatData();
+                    for (int i = 0; i < floatData.Length; i++)
+                        samples[sampleOffset + i] = floatData[i];
+                    break;
+            }
+            return true;
+        }
+
+        public bool GetSamples(short[] samples, int sampleOffset)
+        {
+            if (_data is null)
+                return false;
+
+            switch (_type)
+            {
+                case EPCMType.Byte:
+                    byte[] byteData = GetByteData();
+                    for (int i = 0; i < byteData.Length; i++)
+                        samples[sampleOffset + i] = (short)(byteData[i] * 256 - 32768);
+                    break;
+                case EPCMType.Short:
+                    short[] shortData = GetShortData();
+                    for (int i = 0; i < shortData.Length; i++)
+                        samples[sampleOffset + i] = shortData[i];
+                    break;
+                case EPCMType.Float:
+                    float[] floatData = GetFloatData();
+                    for (int i = 0; i < floatData.Length; i++)
+                        samples[sampleOffset + i] = (short)(floatData[i] * 32768);
+                    break;
+            }
+            return true;
+        }
+
+        public bool GetSamples(byte[] samples, int sampleOffset)
+        {
+            if (_data is null)
+                return false;
+
+            switch (_type)
+            {
+                case EPCMType.Byte:
+                    byte[] byteData = GetByteData();
+                    for (int i = 0; i < byteData.Length; i++)
+                        samples[sampleOffset + i] = byteData[i];
+                    break;
+                case EPCMType.Short:
+                    short[] shortData = GetShortData();
+                    for (int i = 0; i < shortData.Length; i++)
+                        samples[sampleOffset + i] = (byte)(shortData[i] / 256 + 128);
+                    break;
+                case EPCMType.Float:
+                    float[] floatData = GetFloatData();
+                    for (int i = 0; i < floatData.Length; i++)
+                        samples[sampleOffset + i] = (byte)((floatData[i] + 1f) * 128);
+                    break;
+            }
+            return true;
         }
     }
 }

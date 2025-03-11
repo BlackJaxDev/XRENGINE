@@ -1,7 +1,6 @@
 ﻿using Silk.NET.Maths;
 using Silk.NET.Windowing;
 using System.Collections.Concurrent;
-using System.Diagnostics;
 using System.Net;
 using XREngine.Audio;
 using XREngine.Data.Core;
@@ -222,7 +221,6 @@ namespace XREngine
 
         private static void SwapBuffers()
         {
-            Rendering.Debug.SwapBuffers();
             while (_asyncTaskQueue.TryDequeue(out var task))
                 task.Invoke();
         }

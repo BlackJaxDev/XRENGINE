@@ -106,6 +106,7 @@ namespace XREngine.Rendering
         public delegate void DelPushSubData(int offset, uint length);
         public delegate void DelSetBlockName(XRRenderProgram program, string blockName);
         public delegate void DelSetBlockIndex(uint blockIndex);
+        public delegate void DelFlushRange(int offset, uint length);
 
         public event Action? PushDataRequested;
         public event DelPushSubData? PushSubDataRequested;
@@ -116,6 +117,8 @@ namespace XREngine.Rendering
         public event Action<VoidPtr>? DataPointerSet;
         public event Action? BindRequested;
         public event Action? UnbindRequested;
+        public event Action? FlushRequested;
+        public event DelFlushRange? FlushRangeRequested;
 
         public XRDataBuffer() { }
         public XRDataBuffer(
@@ -395,6 +398,12 @@ namespace XREngine.Rendering
             => BindRequested?.Invoke();
         public void Unbind()
             => UnbindRequested?.Invoke();
+
+        public void FlushRange(int offset, uint length)
+            => FlushRangeRequested?.Invoke(offset, length);
+        public void Flush()
+            => FlushRequested?.Invoke();
+
 
         /// <summary>
         /// Reads the struct value at the given offset into the buffer.

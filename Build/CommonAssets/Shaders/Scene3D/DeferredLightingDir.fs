@@ -12,7 +12,6 @@ uniform sampler2D Texture2; //PBR: Roughness, Metallic, Specular, Index of refra
 uniform sampler2D Texture3; //Depth
 uniform sampler2D ShadowMap; //Directional Shadow Map
 
-uniform vec3 CameraPosition;
 uniform float ScreenWidth;
 uniform float ScreenHeight;
 uniform mat4 InverseViewMatrix;
@@ -187,6 +186,7 @@ in vec3 albedo,
 in vec3 rms)
 {
 	float metallic = rms.y;
+	vec3 CameraPosition = InverseViewMatrix[3].xyz;
 	vec3 V = normalize(CameraPosition - fragPosWS);
 	vec3 F0 = mix(vec3(0.04f), albedo, metallic);
 	return CalcLight(normal, V, fragPosWS, albedo, rms, F0);

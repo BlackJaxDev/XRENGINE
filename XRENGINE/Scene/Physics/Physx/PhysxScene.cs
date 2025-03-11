@@ -160,21 +160,22 @@ namespace XREngine.Rendering.Physics.Physx
 
             uint count;
             var ptr = _scene->GetActiveActorsMut(&count);
-            for (int i = 0; i < count; i++)
-            {
-                var actor = PhysxActor.Get(ptr[i]);
-                switch (actor)
-                {
-                    case PhysxDynamicRigidBody dynamicActor:
-                        dynamicActor.OwningComponent?.RigidBodyTransform.OnPhysicsStepped();
-                        break;
-                    case PhysxStaticRigidBody staticActor:
-                        staticActor.OwningComponent?.RigidBodyTransform.OnPhysicsStepped();
-                        break;
-                }
-            }
-
+            Task.WaitAll(Enumerable.Range(0, (int)count).Select(i => Task.Run(() => UpdatePhysicsActor(ptr, i))));
             NotifySimulationStepped();
+        }
+
+        private static void UpdatePhysicsActor(PxActor** ptr, int i)
+        {
+            var actor = PhysxActor.Get(ptr[i]);
+            switch (actor)
+            {
+                case PhysxDynamicRigidBody dynamicActor:
+                    dynamicActor.OwningComponent?.RigidBodyTransform.OnPhysicsStepped();
+                    break;
+                case PhysxStaticRigidBody staticActor:
+                    staticActor.OwningComponent?.RigidBodyTransform.OnPhysicsStepped();
+                    break;
+            }
         }
 
         public void Simulate(float elapsedTime, PxBaseTask* completionTask, bool controlSimulation)

@@ -30,9 +30,9 @@ namespace XREngine.Data.Components
         public AABB LocalCullingVolume { get; private set; } = new AABB(Vector3.Zero, Vector3.Zero);
         public Box WorldCullingVolume => LocalCullingVolume.ToBox(Transform.WorldMatrix);
 
-        protected override void OnTransformWorldMatrixChanged(TransformBase transform)
+        protected override void OnTransformRenderWorldMatrixChanged(TransformBase transform)
         {
-            base.OnTransformWorldMatrixChanged(transform);
+            base.OnTransformRenderWorldMatrixChanged(transform);
             ReflectionPlane = XRMath.CreatePlaneFromPointAndNormal(transform.WorldTranslation, transform.WorldForward);
             MakeReflectionMatrix();
         }

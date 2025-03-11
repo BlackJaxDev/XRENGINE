@@ -362,7 +362,7 @@ namespace XREngine.Rendering.OpenGL
 
                 if (camera != null)
                 {
-                    inverseViewMatrix = camera.Transform.WorldMatrix;
+                    inverseViewMatrix = camera.Transform.RenderMatrix;
                     projMatrix = camera.ProjectionMatrix;
                 }
                 else

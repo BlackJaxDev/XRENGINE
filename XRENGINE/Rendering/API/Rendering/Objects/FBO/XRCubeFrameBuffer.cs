@@ -85,8 +85,7 @@ namespace XREngine.Rendering
                     Translation = Vector3.Zero,
                     Scale = Vector3.One
                 };
-                tfm.RecalcLocal();
-                tfm.RecalcWorld(false);
+                tfm.RecalculateMatrices();
                 cameras[i] = new(tfm, p);
             }
             return cameras;

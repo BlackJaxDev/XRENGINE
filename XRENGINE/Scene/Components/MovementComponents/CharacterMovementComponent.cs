@@ -20,9 +20,9 @@ namespace XREngine.Components
 
         private float _stepOffset = 0.0f;
         private float _slopeLimitCosine = 0.707f;
-        private float _walkingMovementSpeed = 70f;
-        private float _airMovementAcceleration = 0.3f;
-        private float _jumpSpeed = 7.0f;
+        private float _walkingMovementSpeed = 50f;
+        private float _airMovementAcceleration = 10f;
+        private float _maxJumpHeight = 10.0f;
         private Func<Vector3, Vector3>? _subUpdateTick;
         private ECrouchState _crouchState = ECrouchState.Standing;
         private float _invisibleWallHeight = 0.0f;
@@ -43,6 +43,29 @@ namespace XREngine.Components
         private Vector3 _spawnPosition = Vector3.Zero;
         private Vector3 _velocity = Vector3.Zero;
         private Vector3? _gravityOverride = null;
+
+        private float _jumpForce = 15.0f;
+        private float _jumpHoldForce = 5.0f;
+        private float _jumpElapsed = 0.0f;
+        private float _maxJumpDuration = 0.3f;
+        private bool _isJumping = false;
+        private bool _canJump = true;
+        private float _coyoteTime = 0.2f;
+        private float _coyoteTimer = 0.0f;
+        private float _jumpBufferTime = 0.2f;
+        private float _jumpBufferTimer = 0.0f;
+
+        public float JumpForce
+        {
+            get => _jumpForce;
+            set => SetField(ref _jumpForce, value);
+        }
+
+        public float JumpHoldForce
+        {
+            get => _jumpHoldForce;
+            set => SetField(ref _jumpHoldForce, value);
+        }
 
         public float AirMovementAcceleration
         {
@@ -115,13 +138,14 @@ namespace XREngine.Components
         /// while he wouldn’t have reached that place by just walking.
         /// The ‘maxJumpHeight’ variable is used to extend the size of the collision volume downward.
         /// This way, all the non-walkable triangles are properly found by the collision queries and it becomes impossible to ‘jump over’ invisible walls.
-        /// If the character in your game can not jump, it is safe to use 0.0 here.Otherwise it is best to keep this value as small as possible, 
+        /// If the character in your game can not jump, it is safe to use 0.0 here.
+        /// Otherwise it is best to keep this value as small as possible, 
         /// since a larger collision volume means more triangles to process.
         /// </summary>
         public float MaxJumpHeight
         {
-            get => _jumpSpeed;
-            set => SetField(ref _jumpSpeed, value);
+            get => _maxJumpHeight;
+            set => SetField(ref _maxJumpHeight, value);
         }
         /// <summary>
         /// The contact offset used by the controller.
@@ -265,8 +289,8 @@ namespace XREngine.Components
         }
         public float JumpSpeed
         {
-            get => _jumpSpeed;
-            set => SetField(ref _jumpSpeed, value);
+            get => _maxJumpHeight;
+            set => SetField(ref _maxJumpHeight, value);
         }
 
         public PhysxDynamicRigidBody? RigidBodyReference => Controller?.Actor;
@@ -364,8 +388,8 @@ namespace XREngine.Components
         protected internal unsafe override void OnComponentActivated()
         {
             _subUpdateTick = GroundMovementTick;
-            RegisterTick(ETickGroup.Normal, (int)ETickOrder.Logic, MainUpdateTick);
-
+            RegisterTick(TickInputWithPhysics ? ETickGroup.PrePhysics : ETickGroup.Normal, (int)ETickOrder.Animation, MainUpdateTick);
+            
             var scene = World?.PhysicsScene as PhysxScene;
             var manager = scene?.CreateOrCreateControllerManager();
             if (manager is null)
@@ -440,8 +464,11 @@ namespace XREngine.Components
             if (manager is null)
                 return;
 
+            Velocity = RigidBodyTransform.RigidBody?.LinearVelocity ?? Vector3.Zero;
+            Acceleration = (Velocity - LastVelocity) / Delta;
+
             var moveDelta = (_subUpdateTick?.Invoke(ConsumeInput()) ?? Vector3.Zero);
-            Controller.Move(moveDelta, MinMoveDistance, Engine.Delta, manager.ControllerFilters, null);
+            Controller.Move(moveDelta, MinMoveDistance, Delta, manager.ControllerFilters, null);
             if (Controller.CollidingDown)
             {
                 if (_subUpdateTick == AirMovementTick)
@@ -455,8 +482,6 @@ namespace XREngine.Components
             //(Vector3 deltaXP, PhysxShape? touchedShape, PhysxRigidActor? touchedActor, uint touchedObstacleHandle, PxControllerCollisionFlags collisionFlags, bool standOnAnotherCCT, bool standOnObstacle, bool isMovingUp) state = Controller.State;
             //Debug.Out($"DeltaXP: {state.deltaXP}, TouchedShape: {state.touchedShape}, TouchedActor: {state.touchedActor}, TouchedObstacleHandle: {state.touchedObstacleHandle}, CollisionFlags: {state.collisionFlags}, StandOnAnotherCCT: {state.standOnAnotherCCT}, StandOnObstacle: {state.standOnObstacle}, IsMovingUp: {state.isMovingUp}");
             LastVelocity = Velocity;
-            Velocity = RigidBodyTransform.RigidBody?.LinearVelocity ?? Vector3.Zero;
-            Acceleration = (Velocity - LastVelocity) / Engine.Delta;
         }
 
         private Vector3 _acceleration;
@@ -492,7 +517,7 @@ namespace XREngine.Components
         //}
 
         // TODO: calculate friction based on this character's material and the current surface
-        private float _walkingFriction = 0.5f;
+        private float _walkingFriction = 0.1f;
         public float GroundFriction
         {
             get => _walkingFriction;
@@ -513,19 +538,15 @@ namespace XREngine.Components
                 Velocity += force / mass;
         }
 
-        private bool _isJumping = false;
         public bool IsJumping => _isJumping;
 
-        private float _maxSpeed = 0.311f;
+        private float _maxSpeed = 20.0f;
         public float MaxSpeed
         {
             get => _maxSpeed;
             set => SetField(ref _maxSpeed, value);
         }
 
-        private float _jumpElapsed = 0.0f;
-
-        private float _maxJumpDuration = 0.5f;
         /// <summary>
         /// How long jumping can be sustained.
         /// </summary>
@@ -535,83 +556,182 @@ namespace XREngine.Components
             set => SetField(ref _maxJumpDuration, value);
         }
 
-        protected virtual unsafe Vector3 GroundMovementTick(Vector3 movementInput)
+        private bool _tickInputWithPhysics = false; //Seems more responsive calculating on update, separate from physics
+        /// <summary>
+        /// Whether to tick input with physics or not.
+        /// </summary>
+        public bool TickInputWithPhysics
+        {
+            get => _tickInputWithPhysics;
+            set => SetField(ref _tickInputWithPhysics, value);
+        }
+
+        private float Delta => TickInputWithPhysics ? Engine.FixedDelta : Engine.Delta;
+
+        protected virtual Vector3 GroundMovementTick(Vector3 posDelta)
         {
             if (Controller is null || World?.PhysicsScene is not PhysxScene scene)
                 return Vector3.Zero;
 
-            float dt = Engine.Delta;
+            float dt = Delta;
 
-            //Start with the change in position, which is the velocity * change in time
-            //Dampen with ground friction
-            Vector3 delta = Velocity * dt * (1.0f - GroundFriction);
-
-            //Apply movement input aligned movement to the ground normal
-            Vector3 groundNormal = Globals.Up;
-            Vector3 up = Globals.Up;
-            Quaternion rotation = XRMath.RotationBetweenVectors(up, groundNormal);
-            movementInput = Vector3.Transform(movementInput, rotation);
-            delta += movementInput * WalkingMovementSpeed;
-
-            ClampSpeed(ref delta);
-            ApplyGravity(scene, ref delta);
-
-            //Set jump velocity in the Y axis
-            if (_isJumping && _jumpElapsed < 0.01f)
+            Vector3 moveDirection = Vector3.Zero;
+            if (posDelta != Vector3.Zero)
             {
-                delta.Y = JumpSpeed;
-                _jumpElapsed = 0.0f;
+                // Get ground normal and align movement
+                Vector3 groundNormal = Globals.Up;
+                Vector3 up = Globals.Up;
+
+                // Project movement onto ground plane
+                Quaternion rotation = XRMath.RotationBetweenVectors(up, groundNormal);
+                moveDirection = Vector3.Transform(posDelta.Normalized(), rotation);
             }
+
+            // Calculate target velocity
+            Vector3 targetVelocity = moveDirection * WalkingMovementSpeed;
+            Vector3 velocityDelta = targetVelocity - Velocity;
+            Vector3 newVelocity = Velocity + velocityDelta;
+            float friction = Controller.CollidingDown ? GroundFriction : 0.0f;
+            newVelocity *= (1.0f - friction);
+
+            // Convert to position delta
+            ClampSpeed(ref newVelocity);
+            Vector3 delta = newVelocity * dt;
+
+            HandleGroundJumping(dt, ref delta);
+
+            if (float.IsNaN(delta.X) || float.IsNaN(delta.Y) || float.IsNaN(delta.Z))
+                delta = Vector3.Zero;
 
             return delta;
         }
 
-        protected virtual unsafe Vector3 AirMovementTick(Vector3 movementInput)
+        private void HandleGroundJumping(float dt, ref Vector3 delta)
         {
-            if (Controller is null || World?.PhysicsScene is not PhysxScene scene)
-                return Vector3.Zero;
-
-            float dt = Engine.Delta;
-
-            //Start with the change in position, which is the velocity * change in time
-            //No friction in the air, so don't dampen
-            Vector3 delta = Velocity * dt;
-
-            movementInput *= AirMovementAcceleration;
-
-            //Apply movement input
-            delta.X += movementInput.X;
-            delta.Z += movementInput.Z;
-
-            ClampSpeed(ref delta);
-
-            //Set jump velocity in the Y axis
-            if (_isJumping && _jumpElapsed < MaxJumpDuration)
-                _jumpElapsed += dt;
+            if (Controller!.CollidingDown)
+            {
+                _canJump = true;
+                _coyoteTimer = _coyoteTime;
+            }
             else
+                _coyoteTimer -= dt;
+
+            if (_jumpBufferTimer > 0)
+                _jumpBufferTimer -= dt;
+
+            if (_isJumping)
             {
-                if (_jumpElapsed > 0.0f)
-                    _jumpElapsed = _maxJumpDuration;
-                ApplyGravity(scene, ref delta);
+                bool canInitiateJump = (_canJump && _coyoteTimer > 0.0f) || Controller.CollidingDown;
+                if (canInitiateJump)
+                {
+                    delta.Y = JumpForce * dt;
+                    _jumpElapsed = 0.0f;
+                    _canJump = false;
+                    _subUpdateTick = AirMovementTick;
+                }
+                else if (_jumpElapsed < MaxJumpDuration && !Controller.CollidingUp)
+                {
+                    delta.Y += JumpHoldForce * (1.0f - (_jumpElapsed / MaxJumpDuration)) * dt;
+                    _jumpElapsed += dt;
+                }
             }
+        }
+
+        protected virtual unsafe Vector3 AirMovementTick(Vector3 posDelta)
+        {
+            if (Controller is null || World?.PhysicsScene is not PhysxScene scene)
+                return Vector3.Zero;
+
+            float dt = Delta;
+
+            // Air control uses normalized input direction with reduced influence
+            Vector3 airControl = posDelta;
+            if (posDelta != Vector3.Zero)
+            {
+                airControl = new Vector3(
+                    posDelta.X,
+                    0,
+                    posDelta.Z
+                ).Normalized() * AirMovementAcceleration;
+            }
+
+            // Apply air control to current velocity
+            Vector3 newVelocity = Velocity + (airControl * dt);
+
+            // Handle sustained jump
+            HandleAirJumping(dt, ref newVelocity);
+
+            ApplyGravity(scene, ref newVelocity);
+
+            // Convert to position delta
+            ClampSpeed(ref newVelocity);
+            Vector3 delta = newVelocity * dt;
+
+            // Apply landing friction
+            if (Controller.CollidingDown)
+            {
+                delta *= (1.0f - GroundFriction);
+                _subUpdateTick = GroundMovementTick;
+            }
+
+            if (float.IsNaN(delta.X) || float.IsNaN(delta.Y) || float.IsNaN(delta.Z))
+                delta = Vector3.Zero;
 
             return delta;
         }
 
-        private void ClampSpeed(ref Vector3 delta)
+        private Vector3 HandleAirJumping(float dt, ref Vector3 newVelocity)
         {
-            if (delta.Length() > _maxSpeed)
-                delta = Vector3.Normalize(delta) * _maxSpeed;
+            if (_isJumping && _jumpElapsed < MaxJumpDuration)
+            {
+                float jumpFactor = 1.0f - (_jumpElapsed / MaxJumpDuration);
+                newVelocity.Y += JumpSpeed * jumpFactor * dt;
+                _jumpElapsed += dt;
+            }
+            return newVelocity;
+        }
+
+        private Vector3 VelocityToPositionDelta(Vector3 velocity)
+            => velocity * Delta;
+        private Vector3 AccelerationToVelocityDelta(Vector3 acceleration)
+            => acceleration * Delta;
+
+        private Vector3 PositionDeltaToVelocity(Vector3 delta)
+            => delta / Delta;
+        private Vector3 VelocityDeltaToAcceleration(Vector3 delta)
+            => delta / Delta;
+
+        private void ClampSpeed(ref Vector3 velocity)
+        {
+            // Separate vertical and horizontal movement for clamping
+            float verticalDelta = velocity.Y;
+            velocity.Y = 0;
+
+            if (velocity.Length() > MaxSpeed)
+                velocity = velocity.Normalized() * MaxSpeed;
+            
+            // Restore vertical movement
+            velocity.Y = verticalDelta;
         }
 
         private void ApplyGravity(PhysxScene scene, ref Vector3 delta)
-            => delta += (GravityOverride ?? scene.Gravity) * Engine.Delta;
+        {
+            Vector3 gravity = GravityOverride ?? scene.Gravity;
+            delta += gravity * Delta;
+        }
 
         public void Jump(bool pressed)
         {
-            if (_isJumping != pressed && _subUpdateTick == GroundMovementTick)
-                _jumpElapsed = 0.0f;
-            _isJumping = pressed;
+            if (pressed)
+            {
+                _jumpBufferTimer = _jumpBufferTime;
+                _isJumping = true;
+            }
+            else
+            {
+                _isJumping = false;
+                _jumpElapsed = MaxJumpDuration; // Cut the jump short when button is released
+            }
         }
     }
 }

@@ -95,10 +95,10 @@ namespace XREngine.Components.Lights
             program.Uniform($"{targetStructName}Color", _color);
             program.Uniform($"{targetStructName}DiffuseIntensity", _diffuseIntensity);
             program.Uniform($"{targetStructName}WorldToLightProjMatrix", ShadowCamera?.ProjectionMatrix ?? Matrix4x4.Identity);
-            program.Uniform($"{targetStructName}WorldToLightInvViewMatrix", ShadowCamera?.Transform.WorldMatrix ?? Matrix4x4.Identity);
+            program.Uniform($"{targetStructName}WorldToLightInvViewMatrix", ShadowCamera?.Transform.RenderMatrix ?? Matrix4x4.Identity);
 
-            program.Uniform($"{targetStructName}Position", Transform.WorldTranslation);
-            program.Uniform($"{targetStructName}Direction", Transform.WorldForward);
+            program.Uniform($"{targetStructName}Position", Transform.RenderTranslation);
+            program.Uniform($"{targetStructName}Direction", Transform.RenderForward);
             program.Uniform($"{targetStructName}Radius", Distance);
             program.Uniform($"{targetStructName}Brightness", Brightness);
             program.Uniform($"{targetStructName}Exponent", Exponent);
@@ -196,17 +196,17 @@ namespace XREngine.Components.Lights
             UpdateCones();
         }
 
-        protected override void OnTransformWorldMatrixChanged(TransformBase transform)
+        protected override void OnTransformRenderWorldMatrixChanged(TransformBase transform)
         {
             UpdateCones();
-            base.OnTransformWorldMatrixChanged(transform);
+            base.OnTransformRenderWorldMatrixChanged(transform);
         }
 
         private void UpdateCones()
         {
             float d = Distance;
-            Vector3 dir = Transform.WorldForward;
-            Vector3 coneOrigin = Transform.WorldTranslation + dir * (d * 0.5f);
+            Vector3 dir = Transform.RenderForward;
+            Vector3 coneOrigin = Transform.RenderTranslation + dir * (d * 0.5f);
 
             SetField(ref _outerCone, new(coneOrigin, -dir, d, MathF.Tan(DegToRad(OuterCutoffAngleDegrees)) * d));
             SetField(ref _innerCone, new(coneOrigin, -dir, d, MathF.Tan(DegToRad(InnerCutoffAngleDegrees)) * d));

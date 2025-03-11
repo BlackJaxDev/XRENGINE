@@ -76,13 +76,13 @@ public partial class UIEditorComponent : UIComponent
         listTfm.DisplayHorizontal = true;
         listTfm.ItemAlignment = EListAlignment.TopOrLeft;
 
-        listNode.NewChild<InspectorPanel>(out var hierarchy);
+        listNode.NewChild<HierarchyPanel>(out var inspector);
         //hierarchy.RootNodes.Clear();
         //if (World is not null)
         //    hierarchy.RootNodes.AddRange(World.RootNodes);
 
         //World.Name = "TestWorld";
-        hierarchy.InspectedObjects = [Engine.Rendering.Settings];
+        //inspector.InspectedObjects = [Engine.Rendering.Settings];
 
         ////Create the dockable windows transform for panels
         //var dockableNode = splitChild.NewChild<UIDockingRootComponent>(out var root);

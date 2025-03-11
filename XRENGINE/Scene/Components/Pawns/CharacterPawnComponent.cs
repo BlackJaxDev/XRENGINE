@@ -159,13 +159,13 @@ namespace XREngine.Components
             if (keyboardMovement)
             {
                 Vector3 input = forward * _keyboardMovementInput.Y + right * _keyboardMovementInput.X;
-                Movement.AddMovementInput(dt * KeyboardMovementInputMultiplier * Vector3.Normalize(input));
+                Movement.AddMovementInput(dt * KeyboardMovementInputMultiplier * input.Normalized());
             }
 
             if (gamepadMovement)
             {
                 Vector3 input = forward * _gamepadMovementInput.Y + right * _gamepadMovementInput.X;
-                Movement.AddMovementInput(dt * GamePadMovementInputMultiplier * Vector3.Normalize(input));
+                Movement.AddMovementInput(dt * GamePadMovementInputMultiplier * input.Normalized());
             }
         }
 
@@ -210,7 +210,7 @@ namespace XREngine.Components
                     : viewTransform.WorldUp;
             }
             forward.Y = 0.0f;
-            forward = Vector3.Normalize(forward);
+            forward = forward.Normalized();
             right = viewTransform.WorldRight;
         }
 

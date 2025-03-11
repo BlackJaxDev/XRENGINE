@@ -757,7 +757,7 @@ namespace XREngine.Actors.Types
             Vector3 localDragPoint, unit;
 
             var start = localRay.Start;
-            var dir = Vector3.Normalize(localRay.End - localRay.Start);
+            var dir = (localRay.End - localRay.Start).Normalized();
 
             switch (_mode)
             {
@@ -891,7 +891,7 @@ namespace XREngine.Actors.Types
         private bool HighlightRotation(XRCamera camera, Segment localRay)
         {
             var start = localRay.Start;
-            var dir = Vector3.Normalize(localRay.End - localRay.Start);
+            var dir = (localRay.End - localRay.Start).Normalized();
 
             if (!GeoUtil.RayIntersectsSphere(start, dir, Vector3.Zero, _circOrbScale, out Vector3 point))
             {
@@ -930,7 +930,7 @@ namespace XREngine.Actors.Types
         private bool HighlightTranslation(XRCamera camera, Segment localRay)
         {
             var start = localRay.Start;
-            var dir = Vector3.Normalize(localRay.End - localRay.Start);
+            var dir = (localRay.End - localRay.Start).Normalized();
 
             Vector3?[] intersectionPoints = new Vector3?[3];
 
@@ -988,7 +988,7 @@ namespace XREngine.Actors.Types
         private bool HighlightScale(XRCamera camera, Segment localRay)
         {
             var start = localRay.Start;
-            var dir = Vector3.Normalize(localRay.End - localRay.Start);
+            var dir = (localRay.End - localRay.Start).Normalized();
 
             Vector3?[] intersectionPoints = new Vector3?[3];
 

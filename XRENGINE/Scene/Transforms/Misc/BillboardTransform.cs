@@ -226,8 +226,16 @@ namespace XREngine.Scene.Transforms
             //Move the billboard to the parent's position
             if (Parent is not null)
             {
-                Matrix4x4.Decompose(Parent.WorldMatrix, out var pScale, out _, out var pPos);
-                worldMtx = Matrix4x4.CreateScale(pScale) * Matrix4x4.CreateTranslation(pPos);
+                if (Matrix4x4.Decompose(Parent.WorldMatrix, out var pScale, out _, out var pPos))
+                {
+                    if (float.IsNaN(pScale.X) || float.IsNaN(pScale.Y) || float.IsNaN(pScale.Z))
+                        pScale = Vector3.One;
+                    if (float.IsNaN(pPos.X) || float.IsNaN(pPos.Y) || float.IsNaN(pPos.Z))
+                        pPos = Vector3.Zero;
+                    worldMtx = Matrix4x4.CreateScale(pScale) * Matrix4x4.CreateTranslation(pPos);
+                }
+                else
+                    worldMtx = Matrix4x4.Identity;
             }
             else
                 worldMtx = Matrix4x4.Identity;

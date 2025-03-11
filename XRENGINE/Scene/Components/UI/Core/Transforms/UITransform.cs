@@ -390,9 +390,9 @@ namespace XREngine.Rendering.UI
             if (!Engine.Rendering.Settings.RenderUITransformCoordinate || Engine.Rendering.State.IsShadowPass)
                 return;
             
-            Vector3 endPoint = WorldTranslation + Engine.Rendering.Debug.UIPositionBias;
-            Vector3 up = WorldUp * 50.0f;
-            Vector3 right = WorldRight * 50.0f;
+            Vector3 endPoint = RenderTranslation + Engine.Rendering.Debug.UIPositionBias;
+            Vector3 up = RenderUp * 50.0f;
+            Vector3 right = RenderRight * 50.0f;
 
             Engine.Rendering.Debug.RenderLine(endPoint, endPoint + up, Color.Green);
             Engine.Rendering.Debug.RenderLine(endPoint, endPoint + right, Color.Red);

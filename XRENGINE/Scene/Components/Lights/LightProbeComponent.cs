@@ -116,12 +116,12 @@ namespace XREngine.Components.Lights
                 _ => _environmentTextureCubemap is not null ? "Scene3D\\Cubemap.fs" : "Scene3D\\Equirect.fs",
             };
 
-        protected override void OnTransformWorldMatrixChanged(TransformBase transform)
+        protected override void OnTransformRenderWorldMatrixChanged(TransformBase transform)
         {
             if (_visualRC != null)
-                _visualRC.WorldMatrix = Transform.WorldMatrix;
+                _visualRC.WorldMatrix = Transform.RenderMatrix;
             
-            base.OnTransformWorldMatrixChanged(transform);
+            base.OnTransformRenderWorldMatrixChanged(transform);
         }
 
         private uint _irradianceResolution = 128;
@@ -319,11 +319,11 @@ namespace XREngine.Components.Lights
             PreviewSphere = new XRMeshRenderer(mesh, mat);
 
             _visualRC.Mesh = PreviewSphere;
-            _visualRC.WorldMatrix = Transform.WorldMatrix;
+            _visualRC.WorldMatrix = Transform.RenderMatrix;
             _visualRC.RenderPass = pass;
 
             VisualRenderInfo.LocalCullingVolume = PreviewSphere?.Mesh?.Bounds;
-            VisualRenderInfo.CullingOffsetMatrix = Transform.WorldMatrix;
+            VisualRenderInfo.CullingOffsetMatrix = Transform.RenderMatrix;
         }
 
         protected internal override void OnComponentActivated()

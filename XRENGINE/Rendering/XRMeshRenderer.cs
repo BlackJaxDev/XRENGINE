@@ -376,7 +376,7 @@ namespace XREngine.Rendering
                 uint boneIndex = (uint)i + 1u;
 
                 var rb = new RenderBone(tfm, invBindWorldMtx, boneIndex);
-                rb.TransformUpdated += BoneTransformUpdated;
+                rb.RenderTransformUpdated += BoneRenderTransformUpdated;
                 _bones[i] = rb;
 
                 BoneMatricesBuffer.Set(boneIndex, tfm.WorldMatrix);
@@ -390,9 +390,9 @@ namespace XREngine.Rendering
         private bool _bonesInvalidated = false;
         private bool _blendshapesInvalidated = false;
 
-        private void BoneTransformUpdated(RenderBone bone)
+        private void BoneRenderTransformUpdated(RenderBone bone)
         {
-            BoneMatricesBuffer?.Set(bone.Index, bone.Transform.WorldMatrix);
+            BoneMatricesBuffer?.Set(bone.Index, bone.Transform.RenderMatrix);
             _bonesInvalidated = true;
         }
 

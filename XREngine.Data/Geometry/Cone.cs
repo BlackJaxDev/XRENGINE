@@ -1,4 +1,5 @@
-﻿using System.Numerics;
+﻿using Extensions;
+using System.Numerics;
 
 namespace XREngine.Data.Geometry
 {
@@ -79,7 +80,7 @@ namespace XREngine.Data.Geometry
             float dot = Vector3.Dot(dir, Up);
             if (dot < 0.0f || dot > Height)
                 return false;
-            Vector3 closest = Center + Up * dot + Vector3.Normalize(dir - Up * dot) * Radius;
+            Vector3 closest = Center + Up * dot + (dir - Up * dot).Normalized() * Radius;
             return Vector3.DistanceSquared(point, closest) <= Radius * Radius;
         }
 

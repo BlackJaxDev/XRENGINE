@@ -1,4 +1,5 @@
-﻿using System.Numerics;
+﻿using Extensions;
+using System.Numerics;
 using XREngine.Data;
 using XREngine.Data.Rendering;
 using XREngine.Rendering.Models.Materials;
@@ -53,10 +54,10 @@ namespace XREngine.Rendering.Pipelines.Commands
 
             for (int i = 0; i < Samples; ++i)
             {
-                sample = Vector3.Normalize(new Vector3(
+                sample = new Vector3(
                     (float)r.NextDouble() * 2.0f - 1.0f,
                     (float)r.NextDouble() * 2.0f - 1.0f,
-                    (float)r.NextDouble() + 0.1f));
+                    (float)r.NextDouble() + 0.1f).Normalized();
                 scale = i / (float)Samples;
                 sample *= Interp.Lerp(MinSampleDist, MaxSampleDist, scale * scale);
                 Kernel[i] = sample;

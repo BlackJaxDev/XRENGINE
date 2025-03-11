@@ -28,7 +28,7 @@ namespace XREngine.Components
         }
 
         public XREvent<(XRComponent, TransformBase)> LocalMatrixChanged;
-        public XREvent<(XRComponent, TransformBase)> WorldMatrixChanged;
+        public XREvent<(XRComponent, TransformBase)> RenderWorldMatrixChanged;
 
         //TODO: figure out how to disallow users from constructing xrcomponents
 #pragma warning disable CS8618 // Non-nullable field must contain a non-null value when exiting constructor. Consider declaring as nullable.
@@ -182,8 +182,7 @@ namespace XREngine.Components
             if (SceneNode.IsTransformNull)
                 return;
 
-            Transform.LocalMatrixChanged -= OnTransformLocalMatrixChanged;
-            Transform.WorldMatrixChanged -= OnTransformWorldMatrixChanged;
+            Transform.RenderWorldMatrixChanged -= OnTransformRenderWorldMatrixChanged;
         }
 
         /// <summary>
@@ -195,16 +194,12 @@ namespace XREngine.Components
             if (SceneNode.IsTransformNull)
                 return;
 
-            Transform.LocalMatrixChanged += OnTransformLocalMatrixChanged;
-            Transform.WorldMatrixChanged += OnTransformWorldMatrixChanged;
-            OnTransformLocalMatrixChanged(Transform);
-            OnTransformWorldMatrixChanged(Transform);
+            Transform.RenderWorldMatrixChanged += OnTransformRenderWorldMatrixChanged;
+            OnTransformRenderWorldMatrixChanged(Transform);
         }
 
-        protected virtual void OnTransformLocalMatrixChanged(TransformBase transform)
-            => LocalMatrixChanged.Invoke((this, transform));
-        protected virtual void OnTransformWorldMatrixChanged(TransformBase transform)
-            => WorldMatrixChanged.Invoke((this, transform));
+        protected virtual void OnTransformRenderWorldMatrixChanged(TransformBase transform)
+            => RenderWorldMatrixChanged.Invoke((this, transform));
 
         protected override bool OnPropertyChanging<T>(string? propName, T field, T @new)
         {
@@ -327,6 +322,10 @@ namespace XREngine.Components
         /// Fixed update tick, occurs before physics calculations.
         /// </summary>
         PrePhysics,
+        /// <summary>
+        /// Fixed update tick, occurs during physics calculations.
+        /// </summary>
+        DuringPhysics,
         /// <summary>
         /// Fixed update tick, occurs after physics calculations.
         /// </summary>

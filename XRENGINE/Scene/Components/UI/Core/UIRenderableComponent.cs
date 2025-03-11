@@ -49,18 +49,21 @@ namespace XREngine.Rendering.UI
             return canvas is not null && canvas.DrawSpace == ECanvasDrawSpace.Screen;
         }
 
-        protected override void OnTransformWorldMatrixChanged(TransformBase transform)
+        protected override void OnTransformRenderWorldMatrixChanged(TransformBase transform)
         {
-            base.OnTransformWorldMatrixChanged(transform);
+            base.OnTransformRenderWorldMatrixChanged(transform);
+
             if (transform is not UIBoundableTransform tfm)
                 return;
+
             tfm.UpdateRenderInfoBounds(RenderInfo2D, RenderInfo3D);
             var mtx = GetRenderWorldMatrix(tfm);
             RenderCommand3D.WorldMatrix = mtx;
             RenderCommand2D.WorldMatrix = mtx;
         }
 
-        protected virtual Matrix4x4 GetRenderWorldMatrix(UIBoundableTransform tfm) => tfm.WorldMatrix;
+        protected virtual Matrix4x4 GetRenderWorldMatrix(UIBoundableTransform tfm)
+            => tfm.RenderMatrix;
 
         /// <summary>
         /// The material used to render this UI component.

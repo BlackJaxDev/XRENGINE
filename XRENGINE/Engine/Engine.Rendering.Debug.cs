@@ -69,7 +69,10 @@ namespace XREngine
                 }
 
                 public static void RenderShapes()
-                    => _instancedDebugVisualizer.Render();
+                {
+                    SwapBuffers();
+                    _instancedDebugVisualizer.Render();
+                }
 
                 private static bool InCamera(Vector3 position)
                 {
@@ -81,12 +84,12 @@ namespace XREngine
                     ////Transform to clip space
                     //Vector3 vpPos = playerCam.WorldToNormalizedViewportCoordinate(position);
 
-                    //return 
-                    //    vpPos.X >= 0 && 
-                    //    vpPos.X <= 1 && 
-                    //    vpPos.Y >= 0 && 
-                    //    vpPos.Y <= 1 && 
-                    //    vpPos.Z >= 0 && 
+                    //return
+                    //    vpPos.X >= 0 &&
+                    //    vpPos.X <= 1 &&
+                    //    vpPos.Y >= 0 &&
+                    //    vpPos.Y <= 1 &&
+                    //    vpPos.Z >= 0 &&
                     //    vpPos.Z <= 1;
                 }
 

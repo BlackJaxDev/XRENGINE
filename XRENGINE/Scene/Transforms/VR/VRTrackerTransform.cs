@@ -22,6 +22,7 @@ namespace XREngine.Data.Components.Scene
         {
             _lastVRMatrixUpdate = Tracker?.RenderDeviceToAbsoluteTrackingMatrix ?? Matrix4x4.Identity;
             MarkLocalModified();
+            RecalculateMatrixHeirarchy(true, true, true);
         }
 
         private uint? _deviceIndex;

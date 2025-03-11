@@ -295,7 +295,7 @@ namespace XREngine.Rendering
         /// </summary>
         /// <returns></returns>
         public Frustum WorldFrustum()
-            => UntransformedFrustum().TransformedBy(Transform.WorldMatrix);
+            => UntransformedFrustum().TransformedBy(Transform.RenderMatrix);
 
         /// <summary>
         /// The projection frustum of this camera with no transformation applied.
@@ -374,7 +374,7 @@ namespace XREngine.Rendering
             if (depthRange == ERange.ZeroToOne)
                 clipSpacePos.Z = normalizedPointDepth.Z * 2.0f - 1.0f;
 
-            Vector4 viewSpacePos = Vector4.Transform(clipSpacePos, InverseProjectionMatrix * Transform.WorldMatrix);
+            Vector4 viewSpacePos = Vector4.Transform(clipSpacePos, InverseProjectionMatrix * Transform.RenderMatrix);
             if (viewSpacePos.W != 0.0f)
                 viewSpacePos /= viewSpacePos.W;
             return viewSpacePos.XYZ();
@@ -447,18 +447,18 @@ namespace XREngine.Rendering
             {
                 if (stereoLeftEye)
                 {
-                    program.Uniform(EEngineUniform.LeftEyeInverseViewMatrix.ToString(), Transform.WorldMatrix);
+                    program.Uniform(EEngineUniform.LeftEyeInverseViewMatrix.ToString(), Transform.RenderMatrix);
                     program.Uniform(EEngineUniform.LeftEyeProjMatrix.ToString(), ProjectionMatrix);
                 }
                 else
                 {
-                    program.Uniform(EEngineUniform.RightEyeInverseViewMatrix.ToString(), Transform.WorldMatrix);
+                    program.Uniform(EEngineUniform.RightEyeInverseViewMatrix.ToString(), Transform.RenderMatrix);
                     program.Uniform(EEngineUniform.RightEyeProjMatrix.ToString(), ProjectionMatrix);
                 }
             }
             else
             {
-                program.Uniform(EEngineUniform.InverseViewMatrix.ToString(), Transform.WorldMatrix);
+                program.Uniform(EEngineUniform.InverseViewMatrix.ToString(), Transform.RenderMatrix);
                 program.Uniform(EEngineUniform.ProjMatrix.ToString(), ProjectionMatrix);
             }
 

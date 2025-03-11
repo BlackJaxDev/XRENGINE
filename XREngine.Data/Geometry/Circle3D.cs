@@ -1,4 +1,5 @@
-﻿using System.Numerics;
+﻿using Extensions;
+using System.Numerics;
 using System.Runtime.InteropServices;
 using XREngine.Data.Core;
 
@@ -22,7 +23,7 @@ namespace XREngine.Data.Geometry
         }
         public Circle3D(float radius, Vector3 point)
         {
-            Vector3 normal = Vector3.Normalize(-point);
+            Vector3 normal = (-point).Normalized();
             float distance = XRMath.GetPlaneDistance(point, normal);
             _plane = new Plane(normal, distance);
             _radius = radius;

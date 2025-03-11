@@ -83,16 +83,16 @@ namespace XREngine.Components
             }
         }
 
-        protected override void OnTransformWorldMatrixChanged(TransformBase transform)
+        protected override void OnTransformRenderWorldMatrixChanged(TransformBase transform)
         {
             UpdateRenderCommandMatrix();
-            base.OnTransformWorldMatrixChanged(transform);
+            base.OnTransformRenderWorldMatrixChanged(transform);
         }
 
         private void UpdateRenderCommandMatrix()
         {
-            RenderCommandDecal.WorldMatrix = Matrix4x4.CreateScale(HalfExtents) * Transform.WorldMatrix;
-            RenderInfo.CullingOffsetMatrix = Transform.WorldMatrix;
+            RenderCommandDecal.WorldMatrix = Matrix4x4.CreateScale(HalfExtents) * Transform.RenderMatrix;
+            RenderInfo.CullingOffsetMatrix = Transform.RenderMatrix;
             RenderInfo.LocalCullingVolume = new AABB(-HalfExtents, HalfExtents);
         }
 
@@ -165,7 +165,7 @@ namespace XREngine.Components
             matProg.Sampler("Texture1", normalTexture, 1);
             matProg.Sampler("Texture2", rmsiTexture, 2);
             matProg.Sampler("Texture3", depthViewTexture, 3);
-            matProg.Uniform("BoxWorldMatrix", Transform.WorldMatrix);
+            matProg.Uniform("BoxWorldMatrix", Transform.RenderMatrix);
             matProg.Uniform("BoxHalfScale", HalfExtents);
         }
 
@@ -178,7 +178,7 @@ namespace XREngine.Components
             if (Engine.Rendering.State.IsShadowPass)
                 return;
 
-            Engine.Rendering.Debug.RenderBox(HalfExtents, Vector3.Zero, Transform.WorldMatrix, false, ColorF4.Red);
+            Engine.Rendering.Debug.RenderBox(HalfExtents, Vector3.Zero, Transform.RenderMatrix, false, ColorF4.Red);
         }
 
         public RenderInfo3D RenderInfo { get; }

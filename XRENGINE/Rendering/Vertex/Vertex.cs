@@ -222,15 +222,15 @@ namespace XREngine.Data.Rendering
                         Position = blendshape.Vertices[vertexIndex]
                     };
 
-                    if (blendshape.Normals != null)
+                    if (blendshape.Normals != null && blendshape.Normals.Count > vertexIndex)
                         data.Normal = blendshape.Normals[vertexIndex];
 
-                    if (blendshape.Tangents != null)
+                    if (blendshape.Tangents != null && blendshape.Tangents.Count > vertexIndex)
                         data.Tangent = blendshape.Tangents[vertexIndex];
 
                     for (int j = 0; j < blendshape.TextureCoordinateChannelCount; ++j)
                     {
-                        if (blendshape.TextureCoordinateChannels[j] == null)
+                        if (blendshape.TextureCoordinateChannels[j] is null || vertexIndex >= blendshape.TextureCoordinateChannels[j].Count)
                             break;
 
                         Vector3 uv = blendshape.TextureCoordinateChannels[j][vertexIndex];
@@ -238,7 +238,7 @@ namespace XREngine.Data.Rendering
                     }
                     for (int j = 0; j < blendshape.VertexColorChannelCount; ++j)
                     {
-                        if (blendshape.VertexColorChannels[j] == null)
+                        if (blendshape.VertexColorChannels[j] is null || vertexIndex >= blendshape.VertexColorChannels[j].Count)
                             break;
 
                         Vector4 color = blendshape.VertexColorChannels[j][vertexIndex];

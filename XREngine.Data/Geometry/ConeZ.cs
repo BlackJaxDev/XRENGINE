@@ -1,4 +1,5 @@
-﻿using System.Numerics;
+﻿using Extensions;
+using System.Numerics;
 
 namespace XREngine.Data.Geometry
 {
@@ -44,7 +45,7 @@ namespace XREngine.Data.Geometry
                 return Center;
             if (dot > Height)
                 return Center + Vector3.UnitY * Height;
-            return Center + Vector3.UnitY * dot + Vector3.Normalize(dir - Vector3.UnitY * dot) * Radius;
+            return Center + Vector3.UnitY * dot + (dir - Vector3.UnitY * dot).Normalized() * Radius;
         }
 
         public EContainment ContainsAABB(AABB box, float tolerance = float.Epsilon)

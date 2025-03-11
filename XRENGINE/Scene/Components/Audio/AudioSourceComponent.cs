@@ -1,4 +1,6 @@
-﻿using System.Collections.Concurrent;
+﻿using Extensions;
+using MathNet.Numerics;
+using System.Collections.Concurrent;
 using System.Numerics;
 using XREngine.Audio;
 using XREngine.Data;
@@ -642,6 +644,42 @@ namespace XREngine.Components.Scene
         {
             if (ActiveListeners.TryRemove(listener, out var source))
                 listener.ReleaseSource(source);
+        }
+
+        /// <summary>
+        /// Gets the current frequency analysis levels from playing audio.
+        /// Returns bass (20-250Hz), mids (250-2000Hz) and treble (2000-20000Hz) levels normalized between 0-1.
+        /// Returns (0,0,0) if no audio is playing or no valid samples could be retrieved.
+        /// </summary>
+        public (float bass, float mids, float treble) GetFFTLevels(int sampleCount = 2048)
+        {
+            if (_staticBuffer is null)
+                return (0f, 0f, 0f);
+
+            // Try to get samples from any active source
+            AudioSource source;
+            lock (ActiveListeners)
+                source = ActiveListeners.FirstOrDefault().Value;
+
+            if (source.SourceState != ESourceState.Playing || source.Buffer == null)
+                return (0f, 0f, 0f);
+
+            float[] samples = new float[sampleCount.CeilingToPowerOfTwo()];
+            if (!_staticBuffer.GetSamples(samples, source.SampleOffset))
+                return (0f, 0f, 0f);
+            
+            var bassRange = (250.0f, AudioBuffer.EMagAccumMethod.Average);
+            var midsRange = (2000.0f, AudioBuffer.EMagAccumMethod.Average);
+            var trebleRange = (20000.0f, AudioBuffer.EMagAccumMethod.Average);
+            var (bass, mids, treble) = AudioBuffer.FastFourier(
+                samples,
+                _staticBuffer.Frequency,
+                bassRange,
+                midsRange,
+                trebleRange
+            );
+
+            return (bass.Clamp(0f, 1f), mids.Clamp(0f, 1f), treble.Clamp(0f, 1f));
         }
     }
 }

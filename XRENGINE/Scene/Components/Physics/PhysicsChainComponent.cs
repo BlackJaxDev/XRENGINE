@@ -362,9 +362,9 @@ public partial class PhysicsChainComponent : XRComponent, IRenderable
                 Particle p = pt.Particles[j];
                 if (p.Transform is not null)
                 {
-                    p.TransformPosition = p.Transform.WorldTranslation;
+                    p.TransformPosition = p.Transform.RenderTranslation;
                     p.TransformLocalPosition = p.Transform.LocalTranslation;
-                    p.TransformLocalToWorldMatrix = p.Transform.WorldMatrix;
+                    p.TransformLocalToWorldMatrix = p.Transform.RenderMatrix;
                 }
             }
         }

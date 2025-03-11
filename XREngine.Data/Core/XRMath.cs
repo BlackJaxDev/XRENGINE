@@ -451,8 +451,8 @@ namespace XREngine.Data.Core
         /// </summary>
         public static float AngleBetween(Vector3 vector1, Vector3 vector2)
         {
-            vector1 = Vector3.Normalize(vector1);
-            vector2 = Vector3.Normalize(vector2);
+            vector1 = vector1.Normalized();
+            vector2 = vector2.Normalized();
 
             float dot = Vector3.Dot(vector1, vector2);
 
@@ -473,8 +473,8 @@ namespace XREngine.Data.Core
         /// </summary>
         public static Vector3 AxisBetween(Vector3 initialVector, Vector3 finalVector)
         {
-            initialVector = Vector3.Normalize(initialVector);
-            finalVector = Vector3.Normalize(finalVector);
+            initialVector = initialVector.Normalized();
+            finalVector = finalVector.Normalized();
 
             float dot = Vector3.Dot(initialVector, finalVector);
 
@@ -1048,9 +1048,7 @@ namespace XREngine.Data.Core
             Vector3 v = point1 - point0;
             Vector3 u = point2 - point0;
             //Cross them to get normal vector
-            Vector3 normal = Vector3.Cross(v, u);
-            Vector3.Normalize(normal);
-            return normal;
+            return Vector3.Cross(v, u).Normalized();
         }
 
         public static float AngleBetween(Vector3 vec1, Vector3 Vector2, bool returnRadians = false)
@@ -1156,7 +1154,7 @@ namespace XREngine.Data.Core
         /// <returns></returns>
         public static Plane CreatePlaneFromPointAndNormal(Vector3 point, Vector3 normal)
         {
-            normal = Vector3.Normalize(normal);
+            normal = normal.Normalized();
             return new(normal, -Vector3.Dot(normal, point));
         }
 

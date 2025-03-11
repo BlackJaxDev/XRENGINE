@@ -374,11 +374,11 @@ void main()
         //    _scale.SetValueSilent(s);
         //    _rotation.SetRotationsNoUpdate(r.ToRotator());
         //}
-        protected override void OnTransformWorldMatrixChanged(TransformBase transform)
+        protected override void OnTransformRenderWorldMatrixChanged(TransformBase transform)
         {
-            base.OnTransformWorldMatrixChanged(transform);
+            base.OnTransformRenderWorldMatrixChanged(transform);
 
-            var mtx = transform.WorldMatrix;
+            var mtx = transform.RenderMatrix;
             _rcKfLines.WorldMatrix = mtx;
             _rcSpline.WorldMatrix = mtx;
             _rcVelocityTangents.WorldMatrix = mtx;

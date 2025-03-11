@@ -1109,12 +1109,8 @@ namespace XREngine.Rendering
             Mesh mesh,
             AssimpContext assimp,
             Dictionary<string, List<SceneNode>> nodeCache,
-            Matrix4x4 invRootMatrix) : this()
+            Matrix4x4 dataTransform) : this()
         {
-            //using var t = Engine.Profiler.Start(null, true, "XRMesh Assimp Constructor");
-
-            Matrix4x4 dataTransform = Matrix4x4.Identity;//parentTransform.InverseWorldMatrix;
-
             ArgumentNullException.ThrowIfNull(mesh);
             ArgumentNullException.ThrowIfNull(assimp);
             ArgumentNullException.ThrowIfNull(nodeCache);
@@ -1345,29 +1341,14 @@ namespace XREngine.Rendering
                 maxColorCount,
                 maxTexCoordCount);
 
-            //if (hasBlendshapes)
-            //{
-            //    positionDeltas = new Vector3[mesh.MeshAnimationAttachmentCount][];
-            //    normalDeltas = new Vector3[mesh.MeshAnimationAttachmentCount][];
-            //    tangentDeltas = new Vector3[mesh.MeshAnimationAttachmentCount][];
-            //    for (int i = 0; i < mesh.MeshAnimationAttachmentCount; i++)
-            //    {
-            //        positionDeltas[i] = new Vector3[count];
-            //        normalDeltas[i] = new Vector3[count];
-            //        tangentDeltas[i] = new Vector3[count];
-            //    }
-            //}
-
             vertexActions.TryAdd(6, (i, x, vtx) => PositionsBuffer!.SetVector3((uint)i, Vector3.Transform(vtx?.Position ?? Vector3.Zero, dataTransform)));
-
-            //MakeFaceIndices(weights, count);
 
             //Fill the buffers with the vertex data using the command list
             //We can do this in parallel since each vertex is independent
             PopulateVertexData(vertexActions.Values, sourceList, count, true);
 
             if (Engine.Rendering.Settings.AllowBlendshapes && mesh.HasMeshAnimationAttachments)
-                PopulateBlendshapeBuffers(sourceList, mesh/*, positionDeltas, normalDeltas, tangentDeltas*/);
+                PopulateBlendshapeBuffers(sourceList, mesh, dataTransform);
 
             _bounds = bounds ?? new AABB(Vector3.Zero, Vector3.Zero);
 
@@ -1381,12 +1362,7 @@ namespace XREngine.Rendering
             private set => SetField(ref _vertices, value);
         }
 
-        private unsafe void PopulateBlendshapeBuffers(
-            List<Vertex> sourceList,
-            Mesh mesh)//,
-            //Vector3[][]? positionDeltas,
-            //Vector3[][]? normalDeltas,
-            //Vector3[][]? tangentDeltas)
+        private unsafe void PopulateBlendshapeBuffers(List<Vertex> sourceList, Mesh mesh, Matrix4x4 dataTransform)
         {
             bool intVarType = Engine.Rendering.Settings.UseIntegerUniformsInShaders;
 
@@ -1410,6 +1386,7 @@ namespace XREngine.Rendering
             {
                 int activeBlendshapeCountForThisVertex = 0;
                 Vertex vtx = sourceList[i];
+
                 if (vtx.Blendshapes is null)
                 {
                     if (intVarType)
@@ -1424,17 +1401,20 @@ namespace XREngine.Rendering
                     }
                     continue;
                 }
+                Vector3 vtxPos = PositionsBuffer!.GetVector3((uint)i); //vtx.Position;
+                Vector3 vtxNrm = NormalsBuffer?.GetVector3((uint)i) /*vtx.Normal*/ ?? Vector3.Zero;
+                Vector3 vtxTan = TangentsBuffer?.GetVector3((uint)i) /*vtx.Tangent*/ ?? Vector3.Zero;
                 for (int bsInd = 0; bsInd < blendshapeCount; bsInd++)
                 {
-                    var (_, data) = vtx.Blendshapes[bsInd];
+                    var (_, bsData) = vtx.Blendshapes[bsInd];
                     bool anyData = false;
                     int posInd = 0;
                     int nrmInd = 0;
                     int tanInd = 0;
 
-                    Vector3 posDt = data.Position - vtx.Position;
-                    Vector3 nrmDt = (data.Normal ?? Vector3.Zero) - (vtx.Normal ?? Vector3.Zero);
-                    Vector3 tanDt = (data.Tangent ?? Vector3.Zero) - (vtx.Tangent ?? Vector3.Zero);
+                    Vector3 posDt = Vector3.Transform(bsData.Position, dataTransform) - vtxPos;
+                    Vector3 nrmDt = Vector3.TransformNormal(bsData.Normal ?? Vector3.Zero, dataTransform).Normalized() - vtxNrm;
+                    Vector3 tanDt = Vector3.TransformNormal(bsData.Tangent ?? Vector3.Zero, dataTransform).Normalized() - vtxTan;
 
                     if (posDt.LengthSquared() > 0.0f)
                     {
@@ -1593,6 +1573,7 @@ namespace XREngine.Rendering
 
             int boneIndex = 0;
             Dictionary<TransformBase, int> boneToIndexTable = [];
+            MaxWeightCount = 0;
             for (int i = 0; i < boneCount; i++)
             {
                 Bone bone = mesh.Bones[i];
@@ -1608,7 +1589,9 @@ namespace XREngine.Rendering
                     continue;
                 }
 
-                Matrix4x4 invBind = bone.OffsetMatrix.Transposed();
+                //Dispose of the imported offset matrix and just use the initially-calculated inverse bind matrix (bind pose)
+                Matrix4x4 invBind = transform.InverseWorldMatrix; //bone.OffsetMatrix.Transposed();
+
                 invBindMatrices.Add(transform!, invBind);
 
                 int weightCount = bone.VertexWeightCount;
@@ -1621,15 +1604,18 @@ namespace XREngine.Rendering
                     var list = faceRemap[id];
                     foreach (var newId in list)
                     {
-                        weightsPerVertex![newId] ??= [];
-                        if (!weightsPerVertex[newId]!.TryGetValue(transform!, out (float weight, Matrix4x4 invBindMatrix) existingPair))
-                            weightsPerVertex[newId]!.Add(transform!, (weight, invBind));
+                        var wpv = weightsPerVertex![newId] ??= [];
+
+                        if (!wpv.TryGetValue(transform!, out (float weight, Matrix4x4 invBindMatrix) existingPair))
+                            wpv.Add(transform!, (weight, invBind));
                         else if (existingPair.weight != weight)
                         {
                             Debug.Out($"Vertex {newId} has multiple different weights for bone {name}.");
-                            weightsPerVertex[newId]![transform] = ((existingPair.weight + weight) / 2.0f, existingPair.invBindMatrix);
+                            wpv[transform] = ((existingPair.weight + weight) / 2.0f, existingPair.invBindMatrix);
                         }
-                        sourceList[newId].Weights ??= weightsPerVertex[newId];
+
+                        sourceList[newId].Weights ??= wpv;
+                        MaxWeightCount = Math.Max(MaxWeightCount, wpv.Count);
                     }
                 }
 

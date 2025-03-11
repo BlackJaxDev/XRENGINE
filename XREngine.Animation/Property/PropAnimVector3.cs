@@ -131,8 +131,8 @@ namespace XREngine.Animation
                     {
                         float inLength = InTangent.Length();
                         float outLength = OutTangent.Length();
-                        Vector3 inTan = Vector3.Normalize(InTangent);
-                        Vector3 outTan = Vector3.Normalize(OutTangent);
+                        Vector3 inTan = InTangent.Normalized();
+                        Vector3 outTan = OutTangent.Normalized();
                         Vector3 avg = (-inTan + outTan) * 0.5f;
                         avg.Normalized();
                         InTangent = -avg * inLength;

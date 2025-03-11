@@ -37,9 +37,10 @@ namespace XREngine.Editor;
 public static class EditorWorld
 {
     //Unit testing toggles
-    public const bool VisualizeOctree = false;
+    public const bool VisualizeOctree = true;
     public const bool VisualizeQuadtree = false;
     public const bool Physics = true;
+    public const int PhysicsBallCount = 100; //The number of physics balls to add to the scene.
     public const bool DirLight = true;
     public const bool SpotLight = false;
     public const bool DirLight2 = false;
@@ -92,6 +93,7 @@ public static class EditorWorld
         humanComp.RightArmIKEnabled = false;
         humanComp.LeftLegIKEnabled = false;
         humanComp.RightLegIKEnabled = false;
+        humanComp.HipToHeadIKEnabled = false;
 
         //var headTfm = humanComp.Head?.Node?.GetTransformAs<Transform>();
         //if (headTfm is not null)
@@ -198,15 +200,15 @@ public static class EditorWorld
         s.AllowBlendshapes = true;
         s.AllowSkinning = true;
         //s.RenderMesh3DBounds = true;
-        s.RenderTransformDebugInfo = false;
+        s.RenderTransformDebugInfo = true;
         s.RenderTransformLines = true;
         //s.RenderTransformCapsules = true;
         s.RenderTransformPoints = false;
         s.RecalcChildMatricesInParallel = true;
         s.TickGroupedItemsInParallel = true;
         s.RenderWindowsWhileInVR = true;
-        s.AllowShaderPipelines = false;
-        //s.PhysicsVisualizeSettings.SetAllTrue();
+        s.AllowShaderPipelines = false; //Somehow, this lowers performance
+        s.PhysicsVisualizeSettings.SetAllTrue();
 
         string desktopDir = Environment.GetFolderPath(Environment.SpecialFolder.DesktopDirectory);
         //UnityPackageExtractor.ExtractAsync(Path.Combine(desktopDir, "Animations.unitypackage"), Path.Combine(desktopDir, "Extracted"), true);
@@ -277,7 +279,7 @@ public static class EditorWorld
                 AddSkybox(rootNode, skyEquirect);
         }
         if (Physics)
-            AddPhysics(rootNode);
+            AddPhysics(rootNode, PhysicsBallCount);
         if (Spline)
             AddSpline(rootNode);
         if (DeferredDecal)
@@ -334,11 +336,10 @@ public static class EditorWorld
     {
         SceneNode vrPlayspaceNode = rootNode.NewChild("VRPlayspaceNode");
         var characterTfm = vrPlayspaceNode.SetTransform<RigidBodyTransform>();
-        characterTfm.InterpolationMode = EInterpolationMode.Discrete;
+        characterTfm.InterpolationMode = EInterpolationMode.Interpolate;
 
         var characterComp = vrPlayspaceNode.AddComponent<CharacterPawnComponent>("TestPawn")!;
         pawn = characterComp;
-        characterComp.PauseToggled += ShowVRMenu;
         var vrInput = vrPlayspaceNode.AddComponent<VRPlayerInputSet>()!;
         vrInput.LeftHandOverlapChanged += OnLeftHandOverlapChanged;
         vrInput.RightHandOverlapChanged += OnRightHandOverlapChanged;
@@ -353,10 +354,24 @@ public static class EditorWorld
         SceneNode localRotationNode = vrPlayspaceNode.NewChild("LocalRotationNode");
         characterComp.IgnoreViewTransformPitch = true;
         characterComp.ViewRotationTransform = localRotationNode.GetTransformAs<Transform>(true)!;
-        characterComp.InputOrientationTransform = AddHeadsetNode(out hmdTfm, out _, localRotationNode, setUI, characterComp).Transform;
+        characterComp.InputOrientationTransform = AddHeadsetNode(out hmdTfm, out _, localRotationNode, setUI, out var canvas, characterComp).Transform;
 
         AddHandControllerNode(out leftTfm, out _, localRotationNode, true);
         AddHandControllerNode(out rightTfm, out _, localRotationNode, false);
+
+        if (canvas is not null)
+        {
+            void ShowDesktopMenu()
+                => ShowMenu(canvas, true, vrPlayspaceNode.Transform);
+
+            characterComp.PauseToggled += ShowDesktopMenu;
+
+            void ShowVRMenu(bool leftHand)
+                => ShowMenu(canvas, false, leftHand ? vrInput.LeftHandTransform : vrInput.RightHandTransform);
+
+            vrInput.PauseToggled += ShowVRMenu;
+        }
+
         AddTrackerCollectionNode(localRotationNode);
         vrInput.LeftHandTransform = leftTfm;
         vrInput.RightHandTransform = rightTfm;
@@ -387,7 +402,7 @@ public static class EditorWorld
         movementComp.SpawnPosition = new Vector3(0.0f, 10.0f, 0.0f);
         movementComp.Velocity = new Vector3(0.0f, 0.0f, 0.0f);
         movementComp.JumpSpeed = 1.0f;
-        movementComp.GravityOverride = new Vector3(0.0f, -1.0f, 0.0f);
+        //movementComp.GravityOverride = new Vector3(0.0f, -1.0f, 0.0f);
         movementComp.InputLerpSpeed = 0.9f;
     }
 
@@ -406,7 +421,7 @@ public static class EditorWorld
     {
         SceneNode vrPlayspaceNode = new(rootNode) { Name = "VRPlayspaceNode" };
         var playspaceTfm = vrPlayspaceNode.SetTransform<Transform>();
-        AddHeadsetNode(out _, out _, vrPlayspaceNode, setUI);
+        AddHeadsetNode(out _, out _, vrPlayspaceNode, setUI, out _);
         AddHandControllerNode(out _, out _, vrPlayspaceNode, true);
         AddHandControllerNode(out _, out _, vrPlayspaceNode, false);
         AddTrackerCollectionNode(vrPlayspaceNode);
@@ -415,8 +430,10 @@ public static class EditorWorld
     private static void AddTrackerCollectionNode(SceneNode vrPlayspaceNode)
         => vrPlayspaceNode.NewChild<VRTrackerCollectionComponent>(out _, "VRTrackerCollectionNode");
 
-    private static SceneNode AddHeadsetNode(out VRHeadsetTransform hmdTfm, out VRHeadsetComponent hmdComp, SceneNode parentNode, bool setUI, PawnComponent? pawn = null)
+    private static SceneNode AddHeadsetNode(out VRHeadsetTransform hmdTfm, out VRHeadsetComponent hmdComp, SceneNode parentNode, bool setUI, out UICanvasComponent? canvas, PawnComponent? pawn = null)
     {
+        canvas = null;
+
         SceneNode vrHeadsetNode = parentNode.NewChild("VRHeadsetNode");
         var listener = vrHeadsetNode.AddComponent<AudioListenerComponent>("VR HMD Listener")!;
         listener.Gain = 1.0f;
@@ -451,7 +468,7 @@ public static class EditorWorld
                 pawn.CameraComponent = firstPersonCam;
 
             if (setUI)
-                CreateEditorUI(vrHeadsetNode, firstPersonCam);
+                canvas = CreateEditorUI(vrHeadsetNode, firstPersonCam);
         }
 
         return vrHeadsetNode;
@@ -532,7 +549,7 @@ public static class EditorWorld
         else
             cameraParentNode = cameraOffsetNode;
 
-        SceneNode cameraNode = CreateCamera(cameraParentNode, out CameraComponent? camComp, 15.0f, !ThirdPersonPawn);
+        SceneNode cameraNode = CreateCamera(cameraParentNode, out CameraComponent? camComp, null, !ThirdPersonPawn);
 
         var listener = cameraNode.AddComponent<AudioListenerComponent>("Desktop Character Listener")!;
         listener.Gain = 1.0f;
@@ -541,7 +558,6 @@ public static class EditorWorld
         listener.SpeedOfSound = 343.3f;
 
         var characterComp = characterNode.AddComponent<CharacterPawnComponent>("TestPawn")!;
-        characterComp.PauseToggled += ShowDesktopMenu;
         characterComp.CameraComponent = camComp;
         characterComp.InputOrientationTransform = cameraNode.Transform;
         characterComp.ViewRotationTransform = cameraOffsetTfm;
@@ -555,6 +571,7 @@ public static class EditorWorld
         {
             UICanvasComponent canvas = CreateEditorUI(characterNode, camComp);
             canvas.IsActive = false;
+            characterComp.PauseToggled += () => ShowMenu(canvas, true, characterNode.Transform);
         }
 
         var footNode = characterNode.NewChild("Foot Position Node");
@@ -771,13 +788,12 @@ public static class EditorWorld
         return text;
     }
 
-    private static void ShowVRMenu()
+    private static void ShowMenu(UICanvasComponent canvas, bool screenSpace, TransformBase? parent)
     {
-
-    }
-    private static void ShowDesktopMenu()
-    {
-
+        var canvasTfm = canvas.CanvasTransform;
+        canvasTfm.Parent = parent;
+        canvasTfm.DrawSpace = screenSpace ? ECanvasDrawSpace.Screen : ECanvasDrawSpace.World;
+        canvas.IsActive = !canvas.IsActive;
     }
 
     //The full editor UI - includes a toolbar, inspector, viewport and scene hierarchy.
@@ -872,16 +888,30 @@ public static class EditorWorld
     #region Physics Tests
 
     //Creates a floor and a bunch of balls that fall onto it.
-    private static void AddPhysics(SceneNode rootNode, int ballCount = 100)
+    private static void AddPhysics(SceneNode rootNode, int ballCount)
     {
-        float ballRadius = 0.5f;
+        AddPhysicsFloor(rootNode);
+        AddPhysicsSpheres(rootNode, ballCount);
+    }
 
+    private static void AddPhysicsSpheres(SceneNode rootNode, int count, float radius = 0.5f)
+    {
+        if (count <= 0)
+            return;
+        
+        Random random = new();
+        PhysxMaterial physMat = new(0.2f, 0.2f, 1.0f);
+        for (int i = 0; i < count; i++)
+            AddBall(rootNode, physMat, radius, random);
+    }
+
+    private static void AddPhysicsFloor(SceneNode rootNode)
+    {
         var floor = new SceneNode(rootNode) { Name = "Floor" };
         var floorTfm = floor.SetTransform<RigidBodyTransform>();
         var floorComp = floor.AddComponent<StaticRigidBodyComponent>()!;
 
         PhysxMaterial floorPhysMat = new(0.5f, 0.5f, 0.7f);
-        PhysxMaterial ballPhysMat = new(0.2f, 0.2f, 1.0f);
 
         var floorBody = PhysxStaticRigidBody.CreatePlane(Globals.Up, 0.0f, floorPhysMat);
         //new PhysxStaticRigidBody(floorMat, new PhysxGeometry.Box(new Vector3(100.0f, 2.0f, 100.0f)));
@@ -914,10 +944,6 @@ public static class EditorWorld
 
         var floorModel = floor.AddComponent<ModelComponent>()!;
         floorModel.Model = new Model([new SubMesh(XRMesh.Create(VertexQuad.PosY(10000.0f)), floorMat)]);
-
-        Random random = new();
-        for (int i = 0; i < ballCount; i++)
-            AddBall(rootNode, ballPhysMat, ballRadius, random);
     }
 
     //Spawns a ball with a random position, velocity and angular velocity.
@@ -1019,13 +1045,6 @@ public static class EditorWorld
     private static void ImportModels(string desktopDir, SceneNode rootNode, SceneNode characterParentNode)
     {
         var importedModelsNode = new SceneNode(rootNode) { Name = "TestImportedModelsNode" };
-        //importedModelsNode.GetTransformAs<Transform>()?.ApplyScale(new Vector3(0.1f));
-
-        //var orbitTransform2 = importedModelsNode.SetTransform<OrbitTransform>();
-        //orbitTransform2.Radius = 0.0f;
-        //orbitTransform2.IgnoreRotation = false;
-        //orbitTransform2.RegisterAnimationTick<OrbitTransform>(t => t.Angle += Engine.DilatedDelta * 0.5f);
-
         string fbxPathDesktop = Path.Combine(desktopDir, "misc", "jax.fbx");
 
         var flags = 
@@ -1037,19 +1056,19 @@ public static class EditorWorld
         PostProcessSteps.OptimizeMeshes |
         PostProcessSteps.SortByPrimitiveType |
         PostProcessSteps.ImproveCacheLocality |
+        PostProcessSteps.GenerateBoundingBoxes |
         PostProcessSteps.RemoveRedundantMaterials;
 
-        //TODO: skinned models don't propogate world matrix changed to the skinned matrix buffers per mesh
         if (AnimatedModel)
             ModelImporter.ImportAsync(fbxPathDesktop, flags, null, null, characterParentNode, 1.0f, false).ContinueWith(OnFinishedAvatar);
         if (StaticModel)
         {
-            string path = Path.Combine(Engine.Assets.EngineAssetsPath, "Models", "Sponza", "sponza.obj");
+            //string path = Path.Combine(Engine.Assets.EngineAssetsPath, "Models", "Sponza", "sponza.obj");
 
-            //string path2 = Path.Combine(Engine.Assets.EngineAssetsPath, "Models", "main1_sponza", "NewSponza_Main_Yup_003.fbx");
-            //var task2 = ModelImporter.ImportAsync(path2, flags, null, MaterialFactory, importedModelsNode, 1, false).ContinueWith(OnFinishedWorld);
+            string path2 = Path.Combine(Engine.Assets.EngineAssetsPath, "Models", "main1_sponza", "NewSponza_Main_Yup_003.fbx");
+            var task2 = ModelImporter.ImportAsync(path2, flags, null, null, importedModelsNode, 1, false).ContinueWith(OnFinishedWorld);
 
-            //string path = Path.Combine(Engine.Assets.EngineAssetsPath, "Models", "pkg_a_curtains", "NewSponza_Curtains_FBX_YUp.fbx");
+            string path = Path.Combine(Engine.Assets.EngineAssetsPath, "Models", "pkg_a_curtains", "NewSponza_Curtains_FBX_YUp.fbx");
             var task1 = ModelImporter.ImportAsync(path, flags, null, null, importedModelsNode, 1, false).ContinueWith(OnFinishedWorld);
 
             //await Task.WhenAll(task1, task2);

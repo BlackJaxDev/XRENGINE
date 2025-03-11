@@ -152,16 +152,21 @@ public class FaceMotion3DCaptureComponent : XRComponent
 
     private void ApplyHeadTransform()
     {
-        var headTfm = Humanoid?.Head?.Node?.GetTransformAs<Transform>(true);
+        if (Humanoid is null)
+            return;
+
+        var headTfm = Humanoid.Head?.Node?.GetTransformAs<Transform>(true);
         if (headTfm is null)
             return;
 
-        Vector3 worldPos = _headPosition;
-        var neckWorldPose = Humanoid?.Neck.WorldBindPose ?? Matrix4x4.Identity;
-        worldPos += neckWorldPose.Translation;
+        Vector3 headWorldTranslation = _headPosition;
+        var neckWorldPose = Humanoid.Neck.WorldBindPose;
+        headWorldTranslation += neckWorldPose.Translation;
 
         headTfm.SetWorldRotation(_headRotation, true);
-        Humanoid!.HeadTarget = (null, Matrix4x4.CreateTranslation(worldPos));
+        Humanoid.HeadTarget = (null, Matrix4x4.CreateTranslation(headWorldTranslation));
+
+        //Humanoid.Hips.Node?.Transform?.DeriveWorldMatrix(Matrix4x4.CreateTranslation(headWorldTranslation.X, Humanoid.Hips.WorldBindPose.Translation.Y, headWorldTranslation.Z), false);
     }
 
     private void OnUdpDataReceived(IAsyncResult result)

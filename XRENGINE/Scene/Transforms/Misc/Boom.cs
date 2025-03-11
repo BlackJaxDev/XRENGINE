@@ -114,9 +114,9 @@ namespace XREngine.Components.Scene.Transforms
                     newLength = _traceOutput.Keys.First();
             }
 
-            //if (newLength.EqualTo(_currentLength, 0.001f))
-            //    return;
-            
+            if (float.IsNaN(newLength))
+                return;
+
             if (newLength < _currentLength)
                 _currentLength = newLength; //Moving closer to the character, meaning something is obscuring the view. Need to jump to the right position.
             else //Nothing is now obscuring the view, so we can lerp out quickly to give the appearance of a clean camera zoom out

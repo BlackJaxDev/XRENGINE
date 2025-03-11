@@ -215,12 +215,13 @@ public class DefaultRenderPipeline : RenderPipeline
 
                 c.Add<VPRC_DepthTest>().Enable = true;
                 c.Add<VPRC_RenderMeshesPass>().RenderPass = (int)EDefaultRenderPass.OpaqueForward;
-                c.Add<VPRC_RenderDebugShapes>();
-                c.Add<VPRC_RenderDebugPhysics>();
 
                 //c.Add<VPRC_DepthTest>().Enable = true;
                 c.Add<VPRC_RenderMeshesPass>().RenderPass = (int)EDefaultRenderPass.TransparentForward;
                 c.Add<VPRC_RenderMeshesPass>().RenderPass = (int)EDefaultRenderPass.OnTopForward;
+
+                c.Add<VPRC_RenderDebugShapes>();
+                c.Add<VPRC_RenderDebugPhysics>();
             }
 
             c.Add<VPRC_DepthTest>().Enable = false;

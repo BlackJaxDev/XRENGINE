@@ -12,9 +12,6 @@ uniform sampler2D Texture2; //PBR: Roughness, Metallic, Specular, Index of refra
 uniform sampler2D Texture3; //Depth
 uniform sampler2D ShadowMap; //Spot Shadow Map
 
-uniform vec3 CameraPosition;
-uniform vec3 CameraForward;
-uniform float CameraNearZ;
 uniform float ScreenWidth;
 uniform float ScreenHeight;
 uniform mat4 InverseViewMatrix;
@@ -213,6 +210,7 @@ in vec3 F0)
 	return color * shadow;
 }
 vec3 CalcTotalLight(
+in vec3 CameraPosition,
 in vec3 fragPosWS,
 in vec3 normal,
 in vec3 albedo,
@@ -244,9 +242,8 @@ void main()
 	vec3 fragPosWS = WorldPosFromDepth(depth, uv);
 
   	float fadeRange = MaxFade - MinFade;
+	vec3 CameraPosition = vec3(InverseViewMatrix[3]);
   	float dist = length(CameraPosition - fragPosWS);
   	float strength = smoothstep(1.0f, 0.0f, clamp((dist - MinFade) / fadeRange, 0.0f, 1.0f));
-  	OutColor = 
-  	strength * 
-  	CalcTotalLight(fragPosWS, normal, albedo, rms);
+  	OutColor = strength * CalcTotalLight(CameraPosition, fragPosWS, normal, albedo, rms);
 }

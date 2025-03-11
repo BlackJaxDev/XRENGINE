@@ -18,7 +18,7 @@ namespace XREngine.Data.Geometry
         public Vector3 UpAxis
         {
             readonly get => _upAxis;
-            set => _upAxis = Vector3.Normalize(value);
+            set => _upAxis = value.Normalized();
         }
         public float Radius
         {
