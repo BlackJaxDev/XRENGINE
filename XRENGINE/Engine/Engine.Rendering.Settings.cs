@@ -278,7 +278,7 @@ namespace XREngine
                 /// OVR does not support extra shaders, but supports more layers.
                 /// </summary>
                 public bool PreferNVStereo { get; set; } = true;
-                public bool RenderVRSinglePassStereo { get; set; } = true;
+                public bool RenderVRSinglePassStereo { get; set; } = false;
                 public bool RenderWindowsWhileInVR { get; set; } = true;
 
                 private PhysicsVisualizeSettings _physicsVisualizeSettings = new();

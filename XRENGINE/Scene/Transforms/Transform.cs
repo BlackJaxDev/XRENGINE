@@ -211,19 +211,19 @@ namespace XREngine.Scene.Transforms
             if (TargetScale.HasValue)
             {
                 Scale = Vector3.Lerp(Scale, TargetScale.Value, delta);
-                if (Vector3.DistanceSquared(Scale, TargetScale.Value) < 0.0001f)
+                if (Vector3.DistanceSquared(Scale, TargetScale.Value) <= float.Epsilon)
                     TargetScale = null;
             }
             if (TargetTranslation.HasValue)
             {
                 Translation = Vector3.Lerp(Translation, TargetTranslation.Value, delta);
-                if (Vector3.DistanceSquared(Translation, TargetTranslation.Value) < 0.0001f)
+                if (Vector3.DistanceSquared(Translation, TargetTranslation.Value) <= float.Epsilon)
                     TargetTranslation = null;
             }
             if (TargetRotation.HasValue)
             {
                 Rotation = Quaternion.Slerp(Rotation, TargetRotation.Value, delta);
-                if (Quaternion.Dot(Rotation, TargetRotation.Value) > 0.9999f)
+                if (Quaternion.Dot(Rotation, TargetRotation.Value) >= 1.0f - float.Epsilon)
                     TargetRotation = null;
             }
         }

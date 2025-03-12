@@ -34,7 +34,10 @@ namespace XREngine.Rendering.OpenGL
             if (Invalidated)
             {
                 Invalidated = false;
-                Api.NamedRenderbufferStorage(BindingId, ToGLEnum(Data.Type), Data.Width, Data.Height);
+                if (Data.IsMultisample)
+                    Api.NamedRenderbufferStorageMultisample(BindingId, Data.MultisampleCount, ToGLEnum(Data.Type), Data.Width, Data.Height);
+                else
+                    Api.NamedRenderbufferStorage(BindingId, ToGLEnum(Data.Type), Data.Width, Data.Height);
             }
         }
         public void Unbind()

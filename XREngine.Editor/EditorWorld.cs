@@ -41,11 +41,11 @@ public static class EditorWorld
     public const bool VisualizeQuadtree = false;
     public const bool Physics = true;
     public const int PhysicsBallCount = 100; //The number of physics balls to add to the scene.
-    public const bool DirLight = true;
-    public const bool SpotLight = false;
+    public const bool DirLight = false;
+    public const bool SpotLight = true;
     public const bool DirLight2 = false;
     public const bool PointLight = false;
-    public const bool SoundNode = false;
+    public const bool SoundNode = true;
     public const bool LightProbe = true; //Adds a test light probe to the scene for PBR lighting.
     public const bool Skybox = true;
     public const bool Spline = false; //Adds a 3D spline to the scene.
@@ -54,7 +54,7 @@ public static class EditorWorld
     public const bool AnimatedModel = true; //Imports a character model to be animated.
     public const bool AddEditorUI = true; //Adds the full editor UI to the camera. Probably don't use this one a character pawn.
     public const bool VRPawn = false; //Enables VR input and pawn.
-    public const bool CharacterPawn = false; //Enables the player to physically locomote in the world. Requires a physical floor.
+    public const bool CharacterPawn = true; //Enables the player to physically locomote in the world. Requires a physical floor.
     public const bool ThirdPersonPawn = true; //If on desktop and character pawn is enabled, this will add a third person camera instead of first person.
     public const bool TestAnimation = false; //Adds test animations to the character pawn.
     public const bool PhysicsChain = false; //Adds a jiggle physics chain to the character pawn.
@@ -64,7 +64,7 @@ public static class EditorWorld
     public const bool IKTest = false; //Adds an simple IK test tree to the scene.
     public const bool Microphone = false; //Adds a microphone to the scene for testing audio capture.
     public const bool VMC = false; //Adds a VMC capture component to the avatar for testing.
-    public const bool FaceMotion3D = true; //Adds a face motion 3D capture component to the avatar for testing.
+    public const bool FaceMotion3D = false; //Adds a face motion 3D capture component to the avatar for testing.
 
     private static readonly Queue<float> _fpsAvg = new();
     private static void TickFPS(UITextComponent t)
@@ -89,11 +89,14 @@ public static class EditorWorld
             return;
 
         var humanComp = rootNode.AddComponent<HumanoidComponent>()!;
-        humanComp.LeftArmIKEnabled = false;
-        humanComp.RightArmIKEnabled = false;
-        humanComp.LeftLegIKEnabled = false;
-        humanComp.RightLegIKEnabled = false;
-        humanComp.HipToHeadIKEnabled = false;
+        if (!VRPawn)
+        {
+            humanComp.LeftArmIKEnabled = false;
+            humanComp.RightArmIKEnabled = false;
+            humanComp.LeftLegIKEnabled = false;
+            humanComp.RightLegIKEnabled = false;
+            humanComp.HipToHeadIKEnabled = false;
+        }
 
         //var headTfm = humanComp.Head?.Node?.GetTransformAs<Transform>();
         //if (headTfm is not null)
@@ -101,12 +104,16 @@ public static class EditorWorld
 
         if (VRPawn && CharacterPawn)
         {
-            var rotationNode = rootNode.Parent!;
+            var footNode = rootNode.Parent!;
+            var rotationNode = footNode.Parent!;
             var playspaceNode = rotationNode.Parent!;
             var player = playspaceNode.AddComponent<VRPlayerCharacterComponent>()!;
             player.HumanoidComponent = humanComp;
             player.EyeLBoneName = "Eye_L";
             player.EyeRBoneName = "Eye_R";
+            
+            VRPlayerInputSet input = playspaceNode.GetComponent<VRPlayerInputSet>()!;
+            input.MuteToggled += (enabled) => player.EndCalibration();
         }
 
         if (TestAnimation)
@@ -187,6 +194,10 @@ public static class EditorWorld
         {
             var face = rootNode.AddComponent<FaceMotion3DCaptureComponent>()!;
             face.Humanoid = humanComp;
+            //deactivate glasses node
+            var glasses = humanComp.SceneNode?.FindDescendant(x => x.Name?.Contains("glasses", StringComparison.InvariantCultureIgnoreCase) ?? false);
+            if (glasses != null)
+                glasses.IsActiveSelf = false;
         }
     }
 
@@ -200,7 +211,7 @@ public static class EditorWorld
         s.AllowBlendshapes = true;
         s.AllowSkinning = true;
         //s.RenderMesh3DBounds = true;
-        s.RenderTransformDebugInfo = true;
+        s.RenderTransformDebugInfo = false;
         s.RenderTransformLines = true;
         //s.RenderTransformCapsules = true;
         s.RenderTransformPoints = false;
@@ -208,6 +219,7 @@ public static class EditorWorld
         s.TickGroupedItemsInParallel = true;
         s.RenderWindowsWhileInVR = true;
         s.AllowShaderPipelines = false; //Somehow, this lowers performance
+        s.RenderVRSinglePassStereo = false;
         s.PhysicsVisualizeSettings.SetAllTrue();
 
         string desktopDir = Environment.GetFolderPath(Environment.SpecialFolder.DesktopDirectory);
@@ -376,8 +388,13 @@ public static class EditorWorld
         vrInput.LeftHandTransform = leftTfm;
         vrInput.RightHandTransform = rightTfm;
 
+        var footNode = localRotationNode.NewChild("Foot Position Node");
+        var footTfm = footNode.SetTransform<Transform>();
+        footTfm.Translation = new Vector3(0.0f, -movementComp.HalfHeight, 0.0f);
+        footTfm.Scale = new Vector3(movementComp.StandingHeight);
+
         //local rotation node only yaws to match the view yaw, so use it as the parent for the avatar
-        return localRotationNode;
+        return footNode;
     }
 
     private static void VrInput_HandGrabbed(VRPlayerInputSet sender, PhysxDynamicRigidBody item, bool left)
@@ -467,8 +484,8 @@ public static class EditorWorld
             else
                 pawn.CameraComponent = firstPersonCam;
 
-            if (setUI)
-                canvas = CreateEditorUI(vrHeadsetNode, firstPersonCam);
+            //if (setUI)
+            //    canvas = CreateEditorUI(vrHeadsetNode, firstPersonCam);
         }
 
         return vrHeadsetNode;
@@ -529,12 +546,12 @@ public static class EditorWorld
 
     private static SceneNode CreateDesktopCharacterPawn(SceneNode rootNode, bool setUI)
     {
-        SceneNode characterNode = new(rootNode) { Name = "TestPlayerNode" };
+        SceneNode characterNode = new(rootNode, "Player");
         var characterTfm = characterNode.SetTransform<RigidBodyTransform>();
         characterTfm.InterpolationMode = EInterpolationMode.Interpolate;
 
         //create node to translate camera up half the height of the character
-        SceneNode cameraOffsetNode = new(characterNode) { Name = "TestCameraOffsetNode" };
+        SceneNode cameraOffsetNode = new(characterNode, "Camera Offset");
         var cameraOffsetTfm = cameraOffsetNode.SetTransform<Transform>();
         cameraOffsetTfm.Translation = new Vector3(0.0f, 1.0f, 0.0f);
 
@@ -637,7 +654,7 @@ public static class EditorWorld
         probeComp.RealtimeCapture = true;
         probeComp.PreviewDisplay = LightProbeComponent.ERenderPreview.Irradiance;
         probeComp.RealTimeCaptureUpdateInterval = TimeSpan.FromMilliseconds(200.0f);
-        probeComp.StopRealtimeCaptureAfter = TimeSpan.FromSeconds(3.0f);
+        probeComp.StopRealtimeCaptureAfter = TimeSpan.FromSeconds(5.0f);
     }
 
     private static void AddDirLight(SceneNode rootNode)

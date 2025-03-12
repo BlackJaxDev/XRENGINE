@@ -139,10 +139,8 @@ namespace XREngine.Components
         protected virtual void TickMovementInput()
         {
             var cam = GetCamera();
-            GetDirectionalVectorsFromView(
-                InputOrientationTransform ?? cam?.Transform ?? Transform,
-                out Vector3 forward,
-                out Vector3 right);
+            var tfm = InputOrientationTransform ?? cam?.Transform ?? Transform;
+            tfm.GetDirectionsXZ(out Vector3 forward, out Vector3 right);
             AddMovement(forward, right);
             UpdateViewRotation(cam);
         }
@@ -196,23 +194,6 @@ namespace XREngine.Components
 
         private float _lastYaw = 0.0f;
         private float _lastPitch = 0.0f;
-
-        private static void GetDirectionalVectorsFromView(TransformBase viewTransform, out Vector3 forward, out Vector3 right)
-        {
-            forward = viewTransform.WorldForward;
-            float dot = forward.Dot(Globals.Up);
-            if (Math.Abs(dot) >= 0.5f)
-            {
-                //if dot is 1, looking straight up. need to use camera down for forward
-                //if dot is -1, looking straight down. need to use camera up for forward
-                forward = dot > 0.0f
-                    ? -viewTransform.WorldUp
-                    : viewTransform.WorldUp;
-            }
-            forward.Y = 0.0f;
-            forward = forward.Normalized();
-            right = viewTransform.WorldRight;
-        }
 
         public override void RegisterInput(InputInterface input)
         {

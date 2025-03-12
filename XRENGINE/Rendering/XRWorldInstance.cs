@@ -74,7 +74,8 @@ namespace XREngine.Rendering
         public void FixedUpdate()
         {
             TickGroup(ETickGroup.PrePhysics);
-            Task.WaitAll(Task.Run(PhysicsScene.StepSimulation), Task.Run(TickDuring));
+            PhysicsScene.StepSimulation();
+            //Task.WaitAll(Task.Run(PhysicsScene.StepSimulation), Task.Run(TickDuring));
             TickGroup(ETickGroup.PostPhysics);
         }
 
@@ -152,7 +153,7 @@ namespace XREngine.Rendering
         private void ApplyRenderMatrixChanges()
         {
             while (_pushToRenderSnapshot.TryDequeue(out (TransformBase tfm, Matrix4x4 renderMatrix) item))
-                item.tfm.RenderMatrix = item.renderMatrix;
+                item.tfm.SetRenderMatrix(item.renderMatrix, false);
         }
 
         private void GlobalSwapBuffers()
@@ -209,18 +210,6 @@ namespace XREngine.Rendering
             foreach (var transform in bag)
                 transform.RecalculateMatrixHeirarchy(false, false, false);
         }
-
-        //private static void RecalcTransformsParallel(List<int> depthKeys, ConcurrentHashSet<TransformBase> bag)
-        //{
-        //    Parallel.ForEach(bag, transform =>
-        //    {
-        //        if (!transform.RecalculateMatrixHeirarchy(false))
-        //            return;
-
-        //        lock (depthKeys)
-        //            depthKeys.Add(transform.Depth + 1);
-        //    });
-        //}
 
         private static void RecalcTransformsParallelTasks(IEnumerable<TransformBase> bag)
         {

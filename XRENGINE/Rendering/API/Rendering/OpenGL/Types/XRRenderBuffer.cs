@@ -9,13 +9,13 @@ namespace XREngine.Rendering
         private ERenderBufferStorage _type = ERenderBufferStorage.Rgba32f;
         private uint _width = 1u;
         private uint _height = 1u;
-        private int _multisampleCount = 1;
+        private uint _multisampleCount = 1u;
 
         public XRRenderBuffer()
         {
 
         }
-        public XRRenderBuffer(uint width, uint height, ERenderBufferStorage type, int multisampleCount = 1)
+        public XRRenderBuffer(uint width, uint height, ERenderBufferStorage type, uint multisampleCount = 1u)
         {
             Width = width;
             Height = height;
@@ -23,7 +23,7 @@ namespace XREngine.Rendering
             MultisampleCount = multisampleCount;
         }
 
-        public XRRenderBuffer(uint width, uint height, ERenderBufferStorage type, EFrameBufferAttachment attachment, int multisampleCount = 1)
+        public XRRenderBuffer(uint width, uint height, ERenderBufferStorage type, EFrameBufferAttachment attachment, uint multisampleCount = 1u)
             : this(width, height, type, multisampleCount) => FrameBufferAttachment = attachment;
 
         public ERenderBufferStorage Type
@@ -41,7 +41,10 @@ namespace XREngine.Rendering
             get => _height;
             set => SetField(ref _height, value);
         }
-        public int MultisampleCount
+
+        public bool IsMultisample => MultisampleCount > 1;
+
+        public uint MultisampleCount
         {
             get => _multisampleCount;
             set => SetField(ref _multisampleCount, value);

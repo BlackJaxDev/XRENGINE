@@ -147,6 +147,8 @@ namespace XREngine.Components
         public delegate void DelPauseToggled(bool leftHand);
         public event DelPauseToggled? PauseToggled;
 
+        public event Action<bool> MuteToggled;
+
         public enum EVRActionCategory
         {
             /// <summary>
@@ -197,7 +199,11 @@ namespace XREngine.Components
             input.RegisterVRFloatAction(EVRActionCategory.Global, EVRGameAction.GrabLeft, GrabLeft);
             input.RegisterVRFloatAction(EVRActionCategory.Global, EVRGameAction.GrabRight, GrabRight);
             input.RegisterVRBoolAction(EVRActionCategory.Global, EVRGameAction.ToggleQuickMenu, ToggleQuickMenu);
+            input.RegisterVRBoolAction(EVRActionCategory.Global, EVRGameAction.ToggleMute, ToggleMute);
         }
+
+        private void ToggleMute(bool enabled)
+            => MuteToggled?.Invoke(enabled);
 
         private void ToggleQuickMenu(bool enabled)
             => PauseToggled?.Invoke(enabled);

@@ -191,6 +191,9 @@ namespace XREngine.Scene.Components.Animation
                         break;
                 }
             }
+
+            public void ResetPose()
+                => Node?.Transform.DeriveLocalMatrix(LocalBindPose);
         }
 
         public BoneDef Hips { get; } = new();
@@ -217,6 +220,13 @@ namespace XREngine.Scene.Components.Animation
                     /// Last bone
                     /// </summary>
                     public BoneDef Distal { get; } = new();
+
+                    public void ResetPose()
+                    {
+                        Proximal.ResetPose();
+                        Intermediate.ResetPose();
+                        Distal.ResetPose();
+                    }
                 }
 
                 public Finger Pinky { get; } = new();
@@ -224,6 +234,15 @@ namespace XREngine.Scene.Components.Animation
                 public Finger Middle { get; } = new();
                 public Finger Index { get; } = new();
                 public Finger Thumb { get; } = new();
+
+                public void ResetPose()
+                {
+                    Pinky.ResetPose();
+                    Ring.ResetPose();
+                    Middle.ResetPose();
+                    Index.ResetPose();
+                    Thumb.ResetPose();
+                }
             }
 
             public BoneDef Shoulder { get; } = new();
@@ -236,6 +255,20 @@ namespace XREngine.Scene.Components.Animation
             public BoneDef Foot { get; } = new();
             public BoneDef Toes { get; } = new();
             public BoneDef Eye { get; } = new();
+
+            public void ResetPose()
+            {
+                Shoulder.ResetPose();
+                Arm.ResetPose();
+                Elbow.ResetPose();
+                Wrist.ResetPose();
+                Hand.ResetPose();
+                Leg.ResetPose();
+                Knee.ResetPose();
+                Foot.ResetPose();
+                Toes.ResetPose();
+                Eye.ResetPose();
+            }
         }
 
         public BodySide Left { get; } = new();
@@ -591,7 +624,14 @@ namespace XREngine.Scene.Components.Animation
         /// </summary>
         public void ResetPose()
         {
+            Head.ResetPose();
+            Neck.ResetPose();
+            Chest.ResetPose();
+            Spine.ResetPose();
+            Hips.ResetPose();
 
+            Left.ResetPose();
+            Right.ResetPose();
         }
 
         /// <summary>

@@ -341,32 +341,20 @@ namespace XREngine.Scene.Components.VR
             h.ClearIKTargets();
         }
 
-        private void UpdateRootTransform(TransformBase headsetEyeTfm)
+        private void UpdateRootTransform()
         {
             var h = GetHumanoid();
             if (h is null)
                 return;
+
             var headNode = h.Head.Node;
             if (headNode is null)
                 return;
-            var rootNode = h.SceneNode;
-            var rootToEye = headNode.Transform.WorldTranslation + EyeOffsetFromHead - rootNode.Transform.WorldTranslation;
-            Matrix4x4 rootPos = Matrix4x4.CreateTranslation(headsetEyeTfm.WorldTranslation - rootToEye);
-            //yaw to face the direction of the headset
-            var fwd = headNode.Transform.WorldForward;
-            switch (fwd.Dot(Globals.Up))
-            {
-                case > 0.5f:
-                    fwd = -headNode.Transform.WorldUp;
-                    break;
-                case < -0.5f:
-                    fwd = headNode.Transform.WorldUp;
-                    break;
-            }
-            fwd.Y = 0.0f;
-            fwd = fwd.Normalized();
-            float yaw = (float)Math.Atan2(fwd.X, fwd.Z);
-            rootNode.Transform.DeriveWorldMatrix(Matrix4x4.CreateRotationY(yaw) * rootPos);
+
+            var hmdMtx = Engine.VRState.Api.Headset?.DeviceToAbsoluteTrackingMatrix ?? Matrix4x4.Identity;
+            var rootPos = hmdMtx.Translation - h.Head.WorldBindPose.Translation;
+            TransformBase.GetDirectionsXZ(hmdMtx, out Vector3 forward, out _);
+            h.SceneNode.Transform.DeriveWorldMatrix(Matrix4x4.CreateWorld(rootPos, forward, Globals.Up));
         }
 
         public bool BeginCalibration()
@@ -389,7 +377,7 @@ namespace XREngine.Scene.Components.VR
             //Tell the humanoid to stop solving IK while we calibrate
 
             //Root transform should follow the headset
-            Headset.WorldMatrixChanged += UpdateRootTransform;
+            RegisterTick(ETickGroup.Normal, ETickOrder.Input, UpdateRootTransform);
 
             //Save the current targets before they're cleared
             LastHeadTarget = h.HeadTarget;
@@ -442,7 +430,7 @@ namespace XREngine.Scene.Components.VR
             IsCalibrating = false;
 
             if (Headset is not null)
-                Headset.WorldMatrixChanged -= UpdateRootTransform;
+                UnregisterTick(ETickGroup.Normal, ETickOrder.Input, UpdateRootTransform);
 
             var h = GetHumanoid();
             if (h is null)
@@ -527,7 +515,7 @@ namespace XREngine.Scene.Components.VR
             IsCalibrating = false;
 
             if (Headset is not null)
-                Headset.WorldMatrixChanged -= UpdateRootTransform;
+                UnregisterTick(ETickGroup.Normal, ETickOrder.Input, UpdateRootTransform);
 
             var h = GetHumanoid();
             if (h is null)

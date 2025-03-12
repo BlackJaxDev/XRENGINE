@@ -72,8 +72,8 @@ namespace XREngine.Scene.Transforms
 
         private void MakeCapsule()
         {
-            Vector3 parentPos = Parent?.WorldTranslation ?? Vector3.Zero;
-            Vector3 thisPos = WorldTranslation;
+            Vector3 parentPos = Parent?.RenderTranslation ?? Vector3.Zero;
+            Vector3 thisPos = RenderTranslation;
             Vector3 center = (parentPos + thisPos) / 2.0f;
             Vector3 dir = (thisPos - parentPos).Normalized();
             float halfHeight = Vector3.Distance(parentPos, thisPos) / 2.0f;
@@ -292,6 +292,10 @@ namespace XREngine.Scene.Transforms
 
         protected virtual void OnRenderMatrixChanged()
         {
+            MakeCapsule();
+            RenderInfo.LocalCullingVolume = Capsule.GetAABB(false);
+            RenderInfo.CullingOffsetMatrix = RenderMatrix;
+
             _inverseRenderMatrix = null;
             RenderWorldMatrixChanged?.Invoke(this);
         }
@@ -308,20 +312,26 @@ namespace XREngine.Scene.Transforms
         /// Recalculates the local and world matrices for this transform.
         /// Children are not recalculated.
         /// </summary>
-        public void RecalculateMatrices(bool forceWorldRecalc = false, bool setRenderMatrixNow = false)
+        public bool RecalculateMatrices(bool forceWorldRecalc = false, bool setRenderMatrixNow = false)
         {
-            if (_localMatrix.NeedsRecalc)
+            //'NeedsRecalc' doesn't work right
+
+            bool recalcChildren = false;
+            //if (_localMatrix.NeedsRecalc)
             {
                 _localMatrix.NeedsRecalc = false;
                 RecalcLocal();
+                forceWorldRecalc = true;
             }
-            if (_worldMatrix.NeedsRecalc || forceWorldRecalc)
+            //if (_worldMatrix.NeedsRecalc || forceWorldRecalc)
             {
                 _worldMatrix.NeedsRecalc = false;
                 RecalcWorld(false);
+                recalcChildren = true;
             }
             if (setRenderMatrixNow || World is null)
-                RenderMatrix = WorldMatrix;
+                SetRenderMatrix(WorldMatrix, false);
+            return recalcChildren;
         }
 
         public void RecalculateInverseMatrices(bool forceInverseWorldRecalc = false)
@@ -347,7 +357,9 @@ namespace XREngine.Scene.Transforms
         /// <returns></returns>
         public virtual void RecalculateMatrixHeirarchy(bool forceWorldRecalc, bool setRenderMatrixNow, bool parallel)
         {
-            RecalculateMatrices(forceWorldRecalc, setRenderMatrixNow);
+            if (!RecalculateMatrices(forceWorldRecalc, setRenderMatrixNow))
+                return;
+
             if (parallel)
                 ParallelChildrenRecalc(setRenderMatrixNow);
             else
@@ -502,8 +514,34 @@ namespace XREngine.Scene.Transforms
         public Matrix4x4 RenderMatrix
         {
             get => _renderMatrix;
-            internal set => SetField(ref _renderMatrix, value);
+            private set => SetField(ref _renderMatrix, value);
         }
+
+        public void SetRenderMatrix(Matrix4x4 matrix, bool recalcAllChildRenderMatrices = true)
+        {
+            RenderMatrix = matrix;
+            if (recalcAllChildRenderMatrices)
+                RecalculateRenderMatrixHierarchy(Engine.Rendering.Settings.RecalcChildMatricesInParallel);
+        }
+
+        private void RecalculateRenderMatrixHierarchy(bool parallel)
+        {
+            if (parallel)
+                ParallelChildrenRenderMatrixRecalc();
+            else
+                SequentialChildrenRenderMatrixRecalc();
+        }
+
+
+        private void SequentialChildrenRenderMatrixRecalc()
+        {
+            foreach (var child in _children)
+                child.SetRenderMatrix(child.LocalMatrix * RenderMatrix, false);
+        }
+
+        private void ParallelChildrenRenderMatrixRecalc()
+            => Task.WaitAll(_children.Select(child => Task.Run(() => child.SetRenderMatrix(child.LocalMatrix * RenderMatrix, true))));
+
 
         private Matrix4x4? _inverseRenderMatrix = Matrix4x4.Identity;
         public Matrix4x4 InverseRenderMatrix => _inverseRenderMatrix ??= Matrix4x4.Invert(RenderMatrix, out var inverted) ? inverted : Matrix4x4.Identity;
@@ -597,11 +635,6 @@ namespace XREngine.Scene.Transforms
 
         protected virtual void OnWorldMatrixChanged()
         {
-            //TODO: move to render matrix calculation
-            MakeCapsule();
-            RenderInfo.LocalCullingVolume = Capsule.GetAABB(false);
-            RenderInfo.CullingOffsetMatrix = RenderMatrix;
-
             World?.EnqueueRenderTransformChange(this);
             WorldMatrixChanged?.Invoke(this);
         }

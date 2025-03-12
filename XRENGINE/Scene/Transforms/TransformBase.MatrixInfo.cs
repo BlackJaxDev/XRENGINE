@@ -156,6 +156,42 @@ namespace XREngine.Scene.Transforms
                 return _children.LastOrDefault();
         }
 
+        public void GetDirectionsXZ(out Vector3 forward, out Vector3 right)
+        {
+            forward = WorldForward;
+            float dot = forward.Dot(Globals.Up);
+            if (Math.Abs(dot) >= 0.5f)
+            {
+                //if dot is 1, looking straight up. need to use camera down for forward
+                //if dot is -1, looking straight down. need to use camera up for forward
+                forward = dot > 0.0f
+                    ? -WorldUp
+                    : WorldUp;
+            }
+            forward.Y = 0.0f;
+            forward = forward.Normalized();
+            right = WorldRight;
+        }
+
+        public static void GetDirectionsXZ(Matrix4x4 matrix, out Vector3 forward, out Vector3 right)
+        {
+            right = Vector3.TransformNormal(Globals.Right, matrix);
+            forward = Vector3.TransformNormal(Globals.Forward, matrix);
+
+            float dot = forward.Dot(Globals.Up);
+            if (Math.Abs(dot) >= 0.5f)
+            {
+                Vector3 up = Vector3.TransformNormal(Globals.Up, matrix);
+                //if dot is 1, looking straight up. need to use camera down for forward
+                //if dot is -1, looking straight down. need to use camera up for forward
+                forward = dot > 0.0f
+                    ? -up
+                    : up;
+            }
+            forward.Y = 0.0f;
+            forward = forward.Normalized();
+        }
+
         private class MatrixInfo
         {
             private readonly ReaderWriterLockSlim _modifiedLock = new();

@@ -10,20 +10,24 @@ namespace XREngine.Data.Components.Scene
     /// <param name="parent"></param>
     public class VRTrackerTransform : TransformBase
     {
-        public VRTrackerTransform()
-            => Engine.VRState.RecalcMatrixOnDraw += VRState_RecalcMatrixOnDraw;
+        public VRTrackerTransform() { }
+        public VRTrackerTransform(TransformBase parent) : base(parent) { }
 
-        public VRTrackerTransform(TransformBase parent)
-            : base(parent)
-            => Engine.VRState.RecalcMatrixOnDraw += VRState_RecalcMatrixOnDraw;
-
-        private Matrix4x4 _lastVRMatrixUpdate = Matrix4x4.Identity;
-        private void VRState_RecalcMatrixOnDraw()
+        protected internal override void OnSceneNodeActivated()
         {
-            _lastVRMatrixUpdate = Tracker?.RenderDeviceToAbsoluteTrackingMatrix ?? Matrix4x4.Identity;
-            MarkLocalModified();
-            RecalculateMatrixHeirarchy(true, true, true);
+            base.OnSceneNodeActivated();
+            Engine.VRState.RecalcMatrixOnDraw += VRState_RecalcMatrixOnDraw;
+            Engine.Time.Timer.PreUpdateFrame += MarkLocalModified;
         }
+        protected internal override void OnSceneNodeDeactivated()
+        {
+            base.OnSceneNodeDeactivated();
+            Engine.VRState.RecalcMatrixOnDraw -= VRState_RecalcMatrixOnDraw;
+            Engine.Time.Timer.PreUpdateFrame -= MarkLocalModified;
+        }
+
+        private void VRState_RecalcMatrixOnDraw()
+            => SetRenderMatrix((Tracker?.RenderDeviceToAbsoluteTrackingMatrix ?? Matrix4x4.Identity) * ParentRenderMatrix, true);
 
         private uint? _deviceIndex;
         public uint? DeviceIndex
@@ -51,6 +55,6 @@ namespace XREngine.Data.Components.Scene
         }
 
         protected override Matrix4x4 CreateLocalMatrix()
-            => _lastVRMatrixUpdate;
+            => Tracker?.DeviceToAbsoluteTrackingMatrix ?? Matrix4x4.Identity;
     }
 }

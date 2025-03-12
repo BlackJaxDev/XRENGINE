@@ -10,19 +10,24 @@ namespace XREngine.Data.Components.Scene
     /// <param name="parent"></param>
     public class VRControllerTransform : TransformBase
     {
-        public VRControllerTransform()
-            => Engine.VRState.RecalcMatrixOnDraw += VRState_RecalcMatrixOnDraw;
+        public VRControllerTransform() { }
+        public VRControllerTransform(TransformBase parent) : base(parent) { }
 
-        public VRControllerTransform(TransformBase parent)
-            : base(parent)
-            => Engine.VRState.RecalcMatrixOnDraw += VRState_RecalcMatrixOnDraw;
+        protected internal override void OnSceneNodeActivated()
+        {
+            base.OnSceneNodeActivated();
+            Engine.VRState.RecalcMatrixOnDraw += VRState_RecalcMatrixOnDraw;
+            Engine.Time.Timer.PreUpdateFrame += MarkLocalModified;
+        }
+        protected internal override void OnSceneNodeDeactivated()
+        {
+            base.OnSceneNodeDeactivated();
+            Engine.VRState.RecalcMatrixOnDraw -= VRState_RecalcMatrixOnDraw;
+            Engine.Time.Timer.PreUpdateFrame -= MarkLocalModified;
+        }
 
         private void VRState_RecalcMatrixOnDraw()
-        {
-            _lastVRMatrixUpdate = Controller?.RenderDeviceToAbsoluteTrackingMatrix ?? Matrix4x4.Identity;
-            MarkLocalModified();
-            RecalculateMatrixHeirarchy(true, true, true);
-        }
+            => SetRenderMatrix((Controller?.RenderDeviceToAbsoluteTrackingMatrix ?? Matrix4x4.Identity) * ParentRenderMatrix, true);
 
         private bool _leftHand;
         public bool LeftHand

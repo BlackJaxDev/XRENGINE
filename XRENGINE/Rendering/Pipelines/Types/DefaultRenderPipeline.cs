@@ -587,6 +587,7 @@ public class DefaultRenderPipeline : RenderPipeline
             t.VWrap = ETexWrapMode.ClampToEdge;
             t.SamplerName = HDRSceneTextureName;
             t.Name = HDRSceneTextureName;
+            //t.MultiSampleCount = 4;
             return t;
         }
         else
@@ -604,6 +605,7 @@ public class DefaultRenderPipeline : RenderPipeline
             t.VWrap = ETexWrapMode.ClampToEdge;
             t.SamplerName = HDRSceneTextureName;
             t.Name = HDRSceneTextureName;
+            //t.MultiSampleCount = 4;
             return t;
         }
     }

@@ -63,6 +63,48 @@ public class FaceMotion3DCaptureComponent : XRComponent
         set => SetField(ref _humanoid, value);
     }
 
+    private float _headDepthScale = 0.01f;
+    public float HeadDepthScale
+    {
+        get => _headDepthScale;
+        set => SetField(ref _headDepthScale, value);
+    }
+
+    private float _headLeftRightScale = 0.1f;
+    public float HeadLeftRightScale
+    {
+        get => _headLeftRightScale;
+        set => SetField(ref _headLeftRightScale, value);
+    }
+
+    private float _headUpDownScale = 0.1f;
+    public float HeadUpDownScale
+    {
+        get => _headUpDownScale;
+        set => SetField(ref _headUpDownScale, value);
+    }
+
+    private float _headNodScale = 0.9f;
+    public float HeadNodScale
+    {
+        get => _headNodScale;
+        set => SetField(ref _headNodScale, value);
+    }
+
+    private float _headTiltScale = 0.9f;
+    public float HeadTiltScale
+    {
+        get => _headTiltScale;
+        set => SetField(ref _headTiltScale, value);
+    }
+
+    private float _headLookScale = 0.9f;
+    public float HeadLookScale
+    {
+        get => _headLookScale;
+        set => SetField(ref _headLookScale, value);
+    }
+
     protected internal override void OnComponentActivated()
     {
         base.OnComponentActivated();
@@ -353,6 +395,10 @@ public class FaceMotion3DCaptureComponent : XRComponent
 
             ParseBlendshape(parts, true);
         }
+        else
+        {
+            Debug.Out("Unknown frame data: " + frame);
+        }
     }
 
     private bool _isTracking;
@@ -373,7 +419,33 @@ public class FaceMotion3DCaptureComponent : XRComponent
         }
 
         if (float.TryParse(parts[1], out float percentage))
+        {
+            //Debug.Out($"Setting blendshape {blendShapeName} to {percentage} (&: {ampersand})");
             Humanoid?.SetBlendshapeValue(blendShapeName, percentage, false);
+        }
+        else
+            Debug.Out("Failed to parse blendshape percentage: " + parts[1]);
+    }
+
+    private float _eyeLeftRightScale = 1.0f;
+    public float EyeLeftRightScale
+    {
+        get => _eyeLeftRightScale;
+        set => SetField(ref _eyeLeftRightScale, value);
+    }
+
+    private float _eyeUpDownScale = 1.0f;
+    public float EyeUpDownScale
+    {
+        get => _eyeUpDownScale;
+        set => SetField(ref _eyeUpDownScale, value);
+    }
+
+    private float _eyeRotationScale = 0.1f;
+    public float EyeRotationScale
+    {
+        get => _eyeRotationScale;
+        set => SetField(ref _eyeRotationScale, value);
     }
 
     private void ParseEye(string data, bool rightEye)
@@ -389,7 +461,11 @@ public class FaceMotion3DCaptureComponent : XRComponent
             !float.TryParse(values[2], out float z))
             return;
 
-        var rot = Quaternion.CreateFromYawPitchRoll(float.DegreesToRadians(y), float.DegreesToRadians(x), float.DegreesToRadians(z));
+        var rot = Quaternion.CreateFromYawPitchRoll(
+            float.DegreesToRadians(y * EyeLeftRightScale),
+            float.DegreesToRadians(x * EyeUpDownScale),
+            float.DegreesToRadians(z * EyeRotationScale));
+
         if (rightEye)
         {
             _rightEyeRotation = rot;
@@ -419,7 +495,13 @@ public class FaceMotion3DCaptureComponent : XRComponent
             return;
 
         _headInvalidated = true;
-        _headRotation = Quaternion.CreateFromYawPitchRoll(float.DegreesToRadians(y), float.DegreesToRadians(x), float.DegreesToRadians(z));
-        _headPosition = new Vector3(px, py, pz);
+        _headRotation = Quaternion.CreateFromYawPitchRoll(
+            float.DegreesToRadians(y * HeadLookScale), 
+            float.DegreesToRadians(x * HeadNodScale),
+            float.DegreesToRadians(z * HeadTiltScale));
+        _headPosition = new Vector3(
+            px * HeadLeftRightScale,
+            py * HeadUpDownScale,
+            pz * HeadDepthScale);
     }
 }

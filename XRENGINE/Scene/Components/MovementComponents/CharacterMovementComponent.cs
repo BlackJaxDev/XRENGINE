@@ -4,7 +4,6 @@ using System.Numerics;
 using XREngine.Core.Attributes;
 using XREngine.Data.Core;
 using XREngine.Rendering.Physics.Physx;
-using XREngine.Scene;
 using XREngine.Scene.Transforms;
 
 namespace XREngine.Components
@@ -468,6 +467,9 @@ namespace XREngine.Components
             Acceleration = (Velocity - LastVelocity) / Delta;
 
             var moveDelta = (_subUpdateTick?.Invoke(ConsumeInput()) ?? Vector3.Zero);
+            if (moveDelta.LengthSquared() < MinMoveDistance * MinMoveDistance)
+                return;
+
             Controller.Move(moveDelta, MinMoveDistance, Delta, manager.ControllerFilters, null);
             if (Controller.CollidingDown)
             {

@@ -219,11 +219,11 @@ namespace XREngine.Components.Scene
             //if (Type == ESourceType.Streaming)
             //    throw new InvalidOperationException("Cannot set static buffer on a streaming source.");
 
-            lock (ActiveListeners)
-            {
+            //lock (ActiveListeners)
+            //{
                 foreach (var source in ActiveListeners.Values)
                     source.Buffer = buffer;
-            }
+            //}
         }
 
         public void EnqueueStreamingBuffers(int frequency, bool stereo, params float[][] buffers)
@@ -231,8 +231,8 @@ namespace XREngine.Components.Scene
             //if (Type == ESourceType.Static)
             //    throw new InvalidOperationException("Cannot queue streaming buffers on a static source.");
 
-            lock (ActiveListeners)
-            {
+            //lock (ActiveListeners)
+            //{
                 foreach (var source in ActiveListeners.Values)
                 {
                     foreach (var buffer in buffers)
@@ -242,15 +242,15 @@ namespace XREngine.Components.Scene
                         source.QueueBuffers(audioBuffer);
                     }
                 }
-            }
+            //}
         }
         public void EnqueueStreamingBuffers(int frequency, bool stereo, params short[][] buffers)
         {
             //if (Type == ESourceType.Static)
             //    throw new InvalidOperationException("Cannot queue streaming buffers on a static source.");
 
-            lock (ActiveListeners)
-            {
+            //lock (ActiveListeners)
+            //{
                 foreach (var source in ActiveListeners.Values)
                 {
                     foreach (var buffer in buffers)
@@ -260,15 +260,15 @@ namespace XREngine.Components.Scene
                         source.QueueBuffers(audioBuffer);
                     }
                 }
-            }
+            //}
         }
         public void EnqueueStreamingBuffers(int frequency, bool stereo, params byte[][] buffers)
         {
             //if (Type == ESourceType.Static)
             //    throw new InvalidOperationException("Cannot queue streaming buffers on a static source.");
 
-            lock (ActiveListeners)
-            {
+            //lock (ActiveListeners)
+            //{
                 foreach (var source in ActiveListeners.Values)
                 {
                     foreach (var buffer in buffers)
@@ -278,15 +278,15 @@ namespace XREngine.Components.Scene
                         source.QueueBuffers(audioBuffer);
                     }
                 }
-            }
+            //}
         }
         public void EnqueueStreamingBuffers(params AudioData[] buffers)
         {
             //if (Type == ESourceType.Static)
             //    throw new InvalidOperationException("Cannot queue streaming buffers on a static source.");
 
-            lock (ActiveListeners)
-            {
+            //lock (ActiveListeners)
+            //{
                 foreach (var source in ActiveListeners.Values)
                 {
                     foreach (var buffer in buffers)
@@ -296,15 +296,15 @@ namespace XREngine.Components.Scene
                         source.QueueBuffers(audioBuffer);
                     }
                 }
-            }
+            //}
         }
         public void DequeueConsumedBuffers()
         {
             if (Type != ESourceType.Streaming)
                 return;
 
-            lock (ActiveListeners)
-            {
+            //lock (ActiveListeners)
+            //{
                 //int min = ActiveListeners.Values.Min(x => x.BuffersProcessed);
                 //if (min == 0)
                 //    return;
@@ -316,7 +316,7 @@ namespace XREngine.Components.Scene
                         foreach (var buffer in buffers)
                             source.ParentListener.ReleaseBuffer(buffer);
                 }
-            }
+            //}
         }
 
         protected internal override void OnComponentActivated()
@@ -340,12 +340,12 @@ namespace XREngine.Components.Scene
         {
             base.OnComponentDeactivated();
 
-            lock (ActiveListeners)
-            {
+            //lock (ActiveListeners)
+            //{
                 foreach (var source in ActiveListeners.Values)
                     source.Dispose();
                 ActiveListeners.Clear();
-            }
+            //}
         }
 
         protected override void OnPropertyChanged<T>(string? propName, T prev, T field)
@@ -354,32 +354,32 @@ namespace XREngine.Components.Scene
             switch (propName)
             {
                 case nameof(RolloffFactor):
-                    lock (ActiveListeners)
-                    {
+                    //lock (ActiveListeners)
+                    //{
                         foreach (var source in ActiveListeners.Values)
                             source.RolloffFactor = RolloffFactor;
-                    }
+                    //}
                     break;
                 case nameof(ReferenceDistance):
-                    lock (ActiveListeners)
-                    {
+                    //lock (ActiveListeners)
+                    //{
                         foreach (var source in ActiveListeners.Values)
                             source.ReferenceDistance = ReferenceDistance;
-                    }
+                    //}
                     break;
                 case nameof(MaxDistance):
-                    lock (ActiveListeners)
-                    {
+                    //lock (ActiveListeners)
+                    //{
                         foreach (var source in ActiveListeners.Values)
                             source.MaxDistance = MaxDistance;
-                    }
+                    //}
                     break;
                 case nameof(RelativeToListener):
-                    lock (ActiveListeners)
-                    {
+                    //lock (ActiveListeners)
+                    //{
                         foreach (var source in ActiveListeners.Values)
                             source.RelativeToListener = RelativeToListener;
-                    }
+                    //}
                     break;
             case nameof(Type):
                 //lock (ActiveListeners)
@@ -389,60 +389,60 @@ namespace XREngine.Components.Scene
                 //}
                 break;
             case nameof(Loop):
-                    lock (ActiveListeners)
-                    {
+                    //lock (ActiveListeners)
+                    //{
                         foreach (var source in ActiveListeners.Values)
                             source.Looping = Loop;
-                    }
+                    //}
                     break;
                 case nameof(Pitch):
-                    lock (ActiveListeners)
-                    {
+                    //lock (ActiveListeners)
+                    //{
                         foreach (var source in ActiveListeners.Values)
                             source.Pitch = Pitch;
-                    }
+                    //}
                     break;
                 case nameof(MinGain):
-                    lock (ActiveListeners)
-                    {
+                    //lock (ActiveListeners)
+                    //{
                         foreach (var source in ActiveListeners.Values)
                             source.MinGain = MinGain;
-                    }
+                    //}
                     break;
                 case nameof(MaxGain):
-                    lock (ActiveListeners)
-                    {
+                    //lock (ActiveListeners)
+                    //{
                         foreach (var source in ActiveListeners.Values)
                             source.MaxGain = MaxGain;
-                    }
+                    //}
                     break;
                 case nameof(Gain):
-                    lock (ActiveListeners)
-                    {
+                    //lock (ActiveListeners)
+                    //{
                         foreach (var source in ActiveListeners.Values)
                             source.Gain = Gain;
-                    }
+                    //}
                     break;
                 case nameof(ConeInnerAngle):
-                    lock (ActiveListeners)
-                    {
+                    //lock (ActiveListeners)
+                    //{
                         foreach (var source in ActiveListeners.Values)
                             source.ConeInnerAngle = ConeInnerAngle;
-                    }
+                    //}
                     break;
                 case nameof(ConeOuterAngle):
-                    lock (ActiveListeners)
-                    {
+                    //lock (ActiveListeners)
+                    //{
                         foreach (var source in ActiveListeners.Values)
                             source.ConeOuterAngle = ConeOuterAngle;
-                    }
+                    //}
                     break;
                 case nameof(ConeOuterGain):
-                    lock (ActiveListeners)
-                    {
+                    //lock (ActiveListeners)
+                    //{
                         foreach (var source in ActiveListeners.Values)
                             source.ConeOuterGain = ConeOuterGain;
-                    }
+                    //}
                     break;
                 case nameof(State):
                     StateChanged();
@@ -455,8 +455,8 @@ namespace XREngine.Components.Scene
 
         private void StateChanged()
         {
-            lock (ActiveListeners)
-            {
+            //lock (ActiveListeners)
+            //{
                 switch (State)
                 {
                     case ESourceState.Playing:
@@ -476,7 +476,7 @@ namespace XREngine.Components.Scene
                             source.Rewind();
                         break;
                 }
-            }
+            //}
         }
 
         private void StateChanged(AudioSource source)
@@ -500,15 +500,15 @@ namespace XREngine.Components.Scene
 
         private void StaticBufferChanged()
         {
-            lock (ActiveListeners)
-            {
+            //lock (ActiveListeners)
+            //{
                 foreach (KeyValuePair<ListenerContext, AudioSource> pair in ActiveListeners)
                 {
                     ListenerContext listener = pair.Key;
                     AudioSource source = pair.Value;
                     StaticBufferChanged(listener, source);
                 }
-            }
+            //}
         }
 
         private void StaticBufferChanged(ListenerContext listener, AudioSource source)
@@ -542,8 +542,23 @@ namespace XREngine.Components.Scene
             DequeueConsumedBuffers();
         }
 
+        public bool IsStereo
+        {
+            get
+            {
+                return Type switch
+                {
+                    ESourceType.Static => StaticBuffer?.Stereo ?? false,
+                    _ => false,
+                };
+            }
+        }
+
         private void UpdateOrientation(Vector3 worldPosition)
         {
+            if (IsStereo)
+                return;
+
             Vector3 worldForward = Transform.WorldForward;
 
             float delta = Engine.Delta;
@@ -589,8 +604,8 @@ namespace XREngine.Components.Scene
             if (World is null || (DateTime.Now - _lastExistenceCheckTime) < ExistenceCheckInterval)
                 return;
 
-            lock (ActiveListeners)
-            {
+            //lock (ActiveListeners)
+            //{
                 _lastExistenceCheckTime = DateTime.Now;
                 //There will usually only be one listener, but we support multiple for future-proofing
                 //Check if listener is within range, add and remove sources as needed
@@ -604,7 +619,7 @@ namespace XREngine.Components.Scene
                         (gain > float.Epsilon ? (Action<ListenerContext>)AddSourceToListener : RemoveSourceFromListener)(listener);
                     }
                 }
-            }
+            //}
         }
 
         private DateTime _lastExistenceCheckTime = DateTime.MinValue;
@@ -658,7 +673,7 @@ namespace XREngine.Components.Scene
 
             // Try to get samples from any active source
             AudioSource source;
-            lock (ActiveListeners)
+            //lock (ActiveListeners)
                 source = ActiveListeners.FirstOrDefault().Value;
 
             if (source.SourceState != ESourceState.Playing || source.Buffer == null)

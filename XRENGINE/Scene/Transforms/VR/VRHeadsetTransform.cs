@@ -8,21 +8,26 @@ namespace XREngine.Scene.Transforms
     /// <param name="parent"></param>
     public class VRHeadsetTransform : TransformBase
     {
-        public VRHeadsetTransform()
-            => Engine.VRState.RecalcMatrixOnDraw += VRState_RecalcMatrixOnDraw;
-        public VRHeadsetTransform(TransformBase parent)
-            : base(parent)
-            => Engine.VRState.RecalcMatrixOnDraw += VRState_RecalcMatrixOnDraw;
+        public VRHeadsetTransform() { }
+        public VRHeadsetTransform(TransformBase parent) : base(parent) { }
 
-        private void VRState_RecalcMatrixOnDraw()
+        protected internal override void OnSceneNodeActivated()
         {
-            _lastVRMatrixUpdate = Engine.VRState.Api.Headset?.RenderDeviceToAbsoluteTrackingMatrix ?? Matrix4x4.Identity;
-            MarkLocalModified();
-            RecalculateMatrixHeirarchy(true, true, true);
+            base.OnSceneNodeActivated();
+            Engine.VRState.RecalcMatrixOnDraw += VRState_RecalcMatrixOnDraw;
+            Engine.Time.Timer.PreUpdateFrame += MarkLocalModified;
+        }
+        protected internal override void OnSceneNodeDeactivated()
+        {
+            base.OnSceneNodeDeactivated();
+            Engine.VRState.RecalcMatrixOnDraw -= VRState_RecalcMatrixOnDraw;
+            Engine.Time.Timer.PreUpdateFrame -= MarkLocalModified;
         }
 
-        private Matrix4x4 _lastVRMatrixUpdate = Matrix4x4.Identity;
+        private void VRState_RecalcMatrixOnDraw()
+            => SetRenderMatrix((Engine.VRState.Api.Headset?.RenderDeviceToAbsoluteTrackingMatrix ?? Matrix4x4.Identity) * ParentRenderMatrix, true);
+
         protected override Matrix4x4 CreateLocalMatrix()
-            => _lastVRMatrixUpdate;
+            => Engine.VRState.Api.Headset?.DeviceToAbsoluteTrackingMatrix ?? Matrix4x4.Identity;
     }
 }
