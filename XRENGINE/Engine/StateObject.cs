@@ -7,6 +7,7 @@ namespace XREngine
         private static readonly ResourcePool<StateObject> _statePool = new(() => new());
 
         public Action? OnStateEnded { get; set; }
+        private bool _disposed = false;
 
         public static StateObject New(Action? onStateEnded = null)
         {
@@ -16,13 +17,23 @@ namespace XREngine
         }
 
         public void OnPoolableDestroyed() => OnStateEnded = null;
-        public void OnPoolableReleased() => OnStateEnded = null;
-        public void OnPoolableReset() => OnStateEnded = null;
+        public void OnPoolableReleased()
+        {
+            OnStateEnded?.Invoke();
+            OnStateEnded = null;
+        }
+        public void OnPoolableReset()
+        {
+            OnStateEnded = null;
+            _disposed = false;
+        }
 
         public void Dispose()
         {
+            if (_disposed)
+                return;
+            _disposed = true;
             GC.SuppressFinalize(this);
-            OnStateEnded?.Invoke();
             _statePool.Release(this);
         }
     }

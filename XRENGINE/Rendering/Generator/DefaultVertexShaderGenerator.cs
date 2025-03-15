@@ -78,7 +78,7 @@ namespace XREngine.Rendering.Shaders.Generator
             using (StartMain())
             {
                 //Normal matrix is used to transform normals, tangents, and binormals in mesh transform calculations
-                if (Mesh.NormalsBuffer is not null)
+                if (Mesh.HasNormals)
                 {
                     Line($"mat3 {NormalMatrixName} = adjoint({EEngineUniform.ModelMatrix});");
                     Line();
@@ -119,19 +119,19 @@ namespace XREngine.Rendering.Shaders.Generator
 
         private void WriteTexCoordOutputs()
         {
-            if (Mesh.TexCoordBuffers is null)
+            if (Mesh.TexCoordCount == 0)
                 return;
 
-            for (int i = 0; i < Mesh.TexCoordBuffers.Length; ++i)
+            for (int i = 0; i < Mesh.TexCoordCount; ++i)
                 Line($"{string.Format(FragUVName, i)} = {ECommonBufferType.TexCoord}{i};");
         }
 
         private void WriteColorOutputs()
         {
-            if (Mesh.ColorBuffers is null)
+            if (Mesh.ColorCount == 0)
                 return;
 
-            for (int i = 0; i < Mesh.ColorBuffers.Length; ++i)
+            for (int i = 0; i < Mesh.ColorCount; ++i)
                 Line($"{string.Format(FragColorName, i)} = {ECommonBufferType.Color}{i};");
         }
 
@@ -142,18 +142,18 @@ namespace XREngine.Rendering.Shaders.Generator
 
             WriteInVar(location++, EShaderVarType._vec3, ECommonBufferType.Position.ToString());
 
-            if (Mesh.NormalsBuffer is not null)
+            if (Mesh.HasNormals)
                 WriteInVar(location++, EShaderVarType._vec3, ECommonBufferType.Normal.ToString());
 
-            if (Mesh.TangentsBuffer is not null)
+            if (Mesh.HasTangents)
                 WriteInVar(location++, EShaderVarType._vec3, ECommonBufferType.Tangent.ToString());
 
-            if (Mesh.TexCoordBuffers is not null)
-                for (uint i = 0; i < Mesh.TexCoordBuffers.Length; ++i)
+            if (Mesh.HasTexCoords)
+                for (uint i = 0; i < Mesh.TexCoordCount; ++i)
                     WriteInVar(location++, EShaderVarType._vec2, $"{ECommonBufferType.TexCoord}{i}");
 
-            if (Mesh.ColorBuffers is not null)
-                for (uint i = 0; i < Mesh.ColorBuffers.Length; ++i)
+            if (Mesh.HasColors)
+                for (uint i = 0; i < Mesh.ColorCount; ++i)
                     WriteInVar(location++, EShaderVarType._vec4, $"{ECommonBufferType.Color}{i}");
 
             if (Mesh.HasSkinning && Engine.Rendering.Settings.AllowSkinning)
@@ -285,21 +285,21 @@ namespace XREngine.Rendering.Shaders.Generator
         {
             WriteOutVar(0, EShaderVarType._vec3, FragPosName);
 
-            if (Mesh.NormalsBuffer is not null)
+            if (Mesh.HasNormals)
                 WriteOutVar(1, EShaderVarType._vec3, FragNormName);
 
-            if (Mesh.TangentsBuffer is not null)
+            if (Mesh.HasTangents)
             {
                 WriteOutVar(2, EShaderVarType._vec3, FragTanName);
                 WriteOutVar(3, EShaderVarType._vec3, FragBinormName);
             }
 
-            if (Mesh.TexCoordBuffers is not null)
-                for (int i = 0; i < Mesh.TexCoordBuffers.Length.ClampMax(8); ++i)
+            if (Mesh.HasTexCoords)
+                for (int i = 0; i < Mesh.TexCoordCount.ClampMax(8); ++i)
                     WriteOutVar(4 + i, EShaderVarType._vec2, string.Format(FragUVName, i));
 
-            if (Mesh.ColorBuffers is not null)
-                for (int i = 0; i < Mesh.ColorBuffers.Length.ClampMax(8); ++i)
+            if (Mesh.HasColors)
+                for (int i = 0; i < Mesh.ColorCount.ClampMax(8); ++i)
                     WriteOutVar(12 + i, EShaderVarType._vec4, string.Format(FragColorName, i));
 
             WriteOutVar(20, EShaderVarType._vec3, FragPosLocalName);
@@ -312,8 +312,8 @@ namespace XREngine.Rendering.Shaders.Generator
         /// </summary>
         private void WriteMeshTransforms(bool hasSkinning)
         {
-            bool hasNormals = Mesh.NormalsBuffer is not null;
-            bool hasTangents = Mesh.TangentsBuffer is not null;
+            bool hasNormals = Mesh.HasNormals;
+            bool hasTangents = Mesh.HasTangents;
 
             Line($"vec4 {FinalPositionName} = vec4(0.0f);");
             Line($"vec3 {BasePositionName} = {ECommonBufferType.Position};");

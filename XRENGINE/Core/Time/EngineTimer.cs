@@ -87,7 +87,7 @@ namespace XREngine.Timers
         /// <summary>
         /// Runs the timer until Stop() is called.
         /// </summary>
-        public void Run(Func<bool> runUntilPredicate)
+        public void RunGameLoop()
         {
             if (IsRunning)
                 return;
@@ -99,24 +99,24 @@ namespace XREngine.Timers
             UpdateTask = Task.Run(UpdateThread);
             CollectVisibleTask = Task.Run(CollectVisibleThread);
             FixedUpdateTask = Task.Run(FixedUpdateThread);
-            //There are 4 main threads: Update, PreRender, Render, and FixedUpdate.
+            //There are 4 main threads: Update, Collect Visible, Render, and FixedUpdate.
             //Update runs as fast as requested without fences.
-            //PreRender waits for Render to finish swapping buffers.
-            //Render waits for PreRender to finish so it can swap buffers and then render.
+            //Collect Visible waits for Render to finish swapping buffers.
+            //Render waits for Collect Visible to finish so it can swap buffers and then render.
             //FixedUpdate runs at a fixed framerate for physics stability.
 
             //SwapDone is set when the render thread finishes swapping buffers. This fence is set right before the render thread starts rendering.
             //PreRenderDone is set when the prerender thread finishes collecting render commands. This fence is set right before the render thread starts swapping buffers.
 
             Debug.Out($"Started game loop threads.");
+        }
 
-            //Stopwatch sw = Stopwatch.StartNew();
+        public void BlockForRendering(Func<bool> runUntilPredicate)
+        {
+            Debug.Out("Blocking for rendering.");
             while (runUntilPredicate())
-            {
-                RenderThread();
-                //Debug.Out($"Render took {sw.ElapsedMilliseconds}ms.");
-                //sw.Restart();
-            }
+                WaitToRender();
+            Debug.Out("No longer blocking main thread for rendering.");
         }
 
         /// <summary>
@@ -170,7 +170,7 @@ namespace XREngine.Timers
         /// <summary>
         /// Waits for the prerender to finish, then swaps buffers and dispatches a render.
         /// </summary>
-        public void RenderThread()
+        public void WaitToRender()
         {
             //Wait for swapping to finish
             _swapDone.Wait();

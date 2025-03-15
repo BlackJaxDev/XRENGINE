@@ -29,6 +29,9 @@ namespace XREngine
 
                 public static void SwapBuffers()
                 {
+                    if (!Engine.Rendering.State.DebugInstanceRenderingAvailable)
+                        return;
+
                     Task tp = Task.Run(PopulatePoints);
                     Task tl = Task.Run(PopulateLines);
                     Task tt = Task.Run(PopulateTriangles);
@@ -70,12 +73,36 @@ namespace XREngine
 
                 public static void RenderShapes()
                 {
-                    SwapBuffers();
-                    _instancedDebugVisualizer.Render();
+                    if (!Engine.Rendering.State.DebugInstanceRenderingAvailable)
+                    {
+                        foreach (var (pos, color) in _debugPoints)
+                        {
+
+                        }
+                        _debugPoints.Clear();
+                        foreach (var (pos0, pos1, color) in _debugLines)
+                        {
+
+                        }
+                        _debugLines.Clear();
+                        foreach (var (pos0, pos1, pos2, color) in _debugTriangles)
+                        {
+
+                        }
+                        _debugTriangles.Clear();
+                    }
+                    else
+                    {
+                        SwapBuffers();
+                        _instancedDebugVisualizer.Render();
+                    }
                 }
 
                 private static bool InCamera(Vector3 position)
                 {
+                    if (!Engine.Rendering.State.DebugInstanceRenderingAvailable)
+                        return false;
+
                     return true;
                     //var playerCam = Engine.State.MainPlayer.ControlledPawn?.GetCamera()?.Camera;
                     //if (playerCam is null)

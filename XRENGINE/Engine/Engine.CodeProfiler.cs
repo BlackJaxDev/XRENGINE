@@ -1,5 +1,6 @@
 ﻿using System.Collections.Concurrent;
 using System.Runtime.CompilerServices;
+using System.Text;
 using XREngine.Core;
 
 namespace XREngine
@@ -21,69 +22,104 @@ namespace XREngine
             {
                 public float StartTime { get; private set; } = new();
                 public float EndTime { get; private set; } = new();
-                public float ElapsedSec => MathF.Round(EndTime - StartTime, 2);
-                public float ElapsedMs => MathF.Round((EndTime - StartTime) * 1000.0f, 2);
+                public float ElapsedSec => MathF.Round(EndTime - StartTime, 5);
+                public float ElapsedMs => MathF.Round((EndTime - StartTime) * 1000.0f, 5);
                 public string? Name { get; set; } = name;
+                public int ThreadId { get; set; }
+                public int Depth { get; set; }
+
+                public void End()
+                    => EndTime = Time.Timer.Time();
 
                 public void OnPoolableDestroyed() { }
-                public void OnPoolableReleased()
-                    => EndTime = Time.Timer.Time();
+                public void OnPoolableReleased() { }
                 public void OnPoolableReset()
                     => StartTime = Time.Timer.Time();
             }
 
             public bool EnableFrameLogging { get; set; } = true;
-            public float DebugOutputMinElapsedMs { get; set; } = 0.0f;
-            public ConcurrentQueue<(int threadId, string methodName, float elapsedMs)> FrameLog { get; } = [];
+            public float DebugOutputMinElapsedMs { get; set; } = 1.0f;
 
+            public ConcurrentDictionary<int, ConcurrentBag<CodeProfilerTimer>> FrameLog { get; } = [];
+            private readonly ConcurrentDictionary<int, int> _depth = [];
+            
             public void ClearFrameLog()
-                => FrameLog.Clear();
-            private void LogForFrame(string? name, float elapsedMs)
-                => FrameLog.Enqueue((Environment.CurrentManagedThreadId, name ?? string.Empty, elapsedMs));
+            {
+                StringBuilder sb = new();
+                foreach (var queue in FrameLog)
+                {
+                    if (queue.Value.IsEmpty)
+                        continue;
+                    
+                    //sb.Append($"Frame log for thread with tid {queue.Key}:\n");
+                    var bag = queue.Value;
+                    var sorted = bag.OrderBy(x => x.StartTime).ThenBy(x => x.Depth);
+                    foreach (var log in sorted)
+                    {
+                        string indent = new(' ', log.Depth * 2);
+                        if (log.ElapsedMs >= DebugOutputMinElapsedMs)
+                            sb.Append($"{indent}{log.Name} took {FormatMs(log.ElapsedMs)}\n");
+                        _timerPool.Release(log);
+                    }
+                    string logStr = sb.ToString();
+                    if (!string.IsNullOrWhiteSpace(logStr))
+                        Debug.Out(logStr);
+                    sb.Clear();
+                }
+                FrameLog.Clear();
+            }
+
+            private static string FormatMs(float elapsedMs)
+            {
+                if (elapsedMs < 1.0f)
+                    return $"{MathF.Round(elapsedMs * 1000.0f, 2)}μs";
+                if (elapsedMs >= 1000.0f)
+                    return $"{MathF.Round(elapsedMs / 1000.0f, 2)}s";
+                return $"{MathF.Round(elapsedMs, 2)}ms";
+            }
+
+            private void PushEntry(CodeProfilerTimer entry)
+                => _depth.AddOrUpdate(entry.ThreadId, 1, (_, depth) => depth + 1);
+            private void PopEntry(CodeProfilerTimer entry)
+            {
+                entry.End();
+                entry.Depth = _depth.AddOrUpdate(entry.ThreadId, 0, (_, depth) => depth - 1);
+                FrameLog.GetOrAdd(entry.ThreadId, _ => []).Add(entry);
+            }
 
             private readonly ResourcePool<CodeProfilerTimer> _timerPool = new(() => new CodeProfilerTimer());
             private readonly ConcurrentDictionary<Guid, CodeProfilerTimer> _asyncTimers = [];
 
             public delegate void DelTimerCallback(string? methodName, float elapsedMs);
+
             /// <summary>
             /// Starts a timer and returns a StateObject that will stop the timer when it is disposed.
             /// </summary>
             /// <param name="callback"></param>
             /// <param name="methodName"></param>
             /// <returns></returns>
-            public StateObject Start(DelTimerCallback? callback = null, bool printDebugIfNoCallback = true, [CallerMemberName] string? methodName = null)
+            public StateObject Start(DelTimerCallback? callback, [CallerMemberName] string? methodName = null)
             {
-                var state = StateObject.New();
                 if (!EnableFrameLogging)
-                    return state;
+                    return StateObject.New();
 
                 var entry = _timerPool.Take();
                 entry.Name = methodName;
-                void onStateEnded() => Stop(state, entry, callback, printDebugIfNoCallback);
-                state.OnStateEnded = onStateEnded;
-                return state;
+                entry.ThreadId = Environment.CurrentManagedThreadId;
+                PushEntry(entry);
+                return StateObject.New(() => Stop(entry, callback));
             }
+            public StateObject Start([CallerMemberName] string? methodName = null)
+                => Start(null, methodName);
             /// <summary>
             /// Stops a timer and calls the callback if available.
             /// </summary>
             /// <param name="entry"></param>
             /// <param name="callback"></param>
-            private void Stop(StateObject state, CodeProfilerTimer entry, DelTimerCallback? callback, bool printDebugIfNoCallback = true)
+            private void Stop(CodeProfilerTimer entry, DelTimerCallback? callback)
             {
-                state.Dispose();
-                _timerPool.Release(entry);
-                if (callback is null)
-                {
-                    if (printDebugIfNoCallback)
-                    {
-                        float elapsedMs = entry.ElapsedMs;
-                        if (elapsedMs >= DebugOutputMinElapsedMs)
-                            Debug.Out($"{entry.Name} took {entry.ElapsedMs}ms");
-                    }
-                }
-                else
-                    callback.Invoke(entry.Name, entry.ElapsedMs);
-                LogForFrame(entry.Name, entry.ElapsedMs);
+                callback?.Invoke(entry.Name ?? string.Empty, entry.ElapsedMs);
+                PopEntry(entry);
             }
             /// <summary>
             /// Starts an async timer and returns the id of the timer.
@@ -108,7 +144,7 @@ namespace XREngine
             /// <param name="id"></param>
             /// <param name="methodName"></param>
             /// <returns></returns>
-            public float StopAsync(Guid id, out string? methodName, bool printDebug = true)
+            public float StopAsync(Guid id, out string? methodName)
             {
                 if (!EnableFrameLogging)
                 {
@@ -117,17 +153,9 @@ namespace XREngine
                 }
 
                 if (_asyncTimers.TryRemove(id, out var entry))
-                {
-                    LogForFrame(entry.Name, entry.ElapsedMs);
-                    _timerPool.Release(entry);
-                }
+                    PopEntry(entry);
+
                 methodName = entry?.Name;
-                if (printDebug)
-                {
-                    float elapsedMs = entry?.ElapsedMs ?? 0.0f;
-                    if (elapsedMs >= DebugOutputMinElapsedMs)
-                        Debug.Out($"{methodName} took {elapsedMs}ms");
-                }
                 return entry?.ElapsedMs ?? 0.0f;
             }
             /// <summary>
@@ -136,23 +164,14 @@ namespace XREngine
             /// <param name="id"></param>
             /// <param name="methodName"></param>
             /// <returns></returns>
-            public float StopAsync(Guid id, bool printDebug = true)
+            public float StopAsync(Guid id)
             {
                 if (!EnableFrameLogging)
                     return 0.0f;
 
                 if (_asyncTimers.TryRemove(id, out var entry))
-                {
-                    LogForFrame(entry.Name, entry.ElapsedMs);
-                    _timerPool.Release(entry);
-                }
-                string methodName = entry?.Name ?? string.Empty;
-                if (printDebug)
-                {
-                    float elapsedMs = entry?.ElapsedMs ?? 0.0f;
-                    if (elapsedMs >= DebugOutputMinElapsedMs)
-                        Debug.Out($"{methodName} took {elapsedMs}ms");
-                }
+                    PopEntry(entry);
+                
                 return entry?.ElapsedMs ?? 0.0f;
             }
         }

@@ -110,6 +110,9 @@ namespace XREngine.Rendering.Physics.Physx
         /// </summary>
         public void Render()
         {
+            if (!Engine.Rendering.State.DebugInstanceRenderingAvailable)
+                return;
+            
             if (PointCount > 0)
                 _debugPointsRenderer?.Render(null, PointCount);
 
@@ -381,7 +384,7 @@ namespace XREngine.Rendering.Physics.Physx
                     BindingIndexOverride = 0,
                     Usage = EBufferUsage.StreamDraw,
                 };
-                _debugPointsRenderer.Buffers.Add(_debugPointsBuffer.BindingName, _debugPointsBuffer);
+                _debugPointsRenderer.Buffers.Add(_debugPointsBuffer.AttributeName, _debugPointsBuffer);
                 //_debugPointsRenderer.GenerateAsync = false;
                 _debugPointsRenderer.SettingUniforms += _debugPointsRenderer_SettingUniforms;
                 _fullPushPoints = true;
@@ -420,7 +423,7 @@ namespace XREngine.Rendering.Physics.Physx
                     BindingIndexOverride = 0,
                     Usage = EBufferUsage.StreamDraw,
                 };
-                _debugLinesRenderer.Buffers?.Add(_debugLinesBuffer.BindingName, _debugLinesBuffer);
+                _debugLinesRenderer.Buffers?.Add(_debugLinesBuffer.AttributeName, _debugLinesBuffer);
                 //_debugLinesRenderer.GenerateAsync = false;
                 _debugLinesRenderer.SettingUniforms += _debugLinesRenderer_SettingUniforms;
                 _fullPushLines = true;
@@ -459,7 +462,7 @@ namespace XREngine.Rendering.Physics.Physx
                     BindingIndexOverride = 0,
                     Usage = EBufferUsage.StreamDraw,
                 };
-                _debugTrianglesRenderer.Buffers?.Add(_debugTrianglesBuffer.BindingName, _debugTrianglesBuffer);
+                _debugTrianglesRenderer.Buffers?.Add(_debugTrianglesBuffer.AttributeName, _debugTrianglesBuffer);
                 //_debugTrianglesRenderer.GenerateAsync = false;
                 _debugTrianglesRenderer.SettingUniforms += _debugTrianglesRenderer_SettingUniforms;
                 _fullPushTriangles = true;
@@ -518,57 +521,93 @@ namespace XREngine.Rendering.Physics.Physx
 
         private XRMaterial? CreateDebugPointMaterial()
         {
-            XRShader vertShader = ShaderHelper.LoadEngineShader(Path.Combine("Common", "Debug", "InstancedDebugPrimitive.vs"), EShaderType.Vertex);
-            XRShader stereoVertShader = ShaderHelper.LoadEngineShader(Path.Combine("Common", "Debug", "InstancedDebugPrimitiveStereo.vs"), EShaderType.Vertex);
-            XRShader geomShader = ShaderHelper.LoadEngineShader(Path.Combine("Common", "Debug", "PointInstance.gs"), EShaderType.Geometry);
-            XRShader fragShader = ShaderHelper.LoadEngineShader(Path.Combine("Common", "Debug", "InstancedDebugPrimitivePoint.fs"), EShaderType.Fragment);
-            ShaderVar[] vars =
-            [
-                new ShaderFloat(PointSize, "PointSize"),
-                new ShaderInt(0, "TotalPoints"),
-            ];
-            var mat = new XRMaterial(vars, vertShader, stereoVertShader, geomShader, fragShader);
-            mat.RenderOptions.RequiredEngineUniforms = EUniformRequirements.Camera;
-            mat.RenderOptions.CullMode = ECullMode.None;
-            mat.RenderOptions.DepthTest.Enabled = ERenderParamUsage.Disabled;
-            mat.RenderPass = (int)EDefaultRenderPass.OnTopForward;
-            //mat.EnableTransparency();
-            return mat;
+            if (!Engine.Rendering.State.DebugInstanceRenderingAvailable)
+                return null;
+
+            try
+            {
+                XRShader vertShader = ShaderHelper.LoadEngineShader(Path.Combine("Common", "Debug", "InstancedDebugPrimitive.vs"), EShaderType.Vertex);
+                XRShader stereoVertShader = ShaderHelper.LoadEngineShader(Path.Combine("Common", "Debug", "InstancedDebugPrimitiveStereo.vs"), EShaderType.Vertex);
+                XRShader geomShader = ShaderHelper.LoadEngineShader(Path.Combine("Common", "Debug", "PointInstance.gs"), EShaderType.Geometry);
+                XRShader fragShader = ShaderHelper.LoadEngineShader(Path.Combine("Common", "Debug", "InstancedDebugPrimitivePoint.fs"), EShaderType.Fragment);
+                ShaderVar[] vars =
+                [
+                    new ShaderFloat(PointSize, "PointSize"),
+                    new ShaderInt(0, "TotalPoints"),
+                ];
+                var mat = new XRMaterial(vars, vertShader, stereoVertShader, geomShader, fragShader);
+                mat.RenderOptions.RequiredEngineUniforms = EUniformRequirements.Camera;
+                mat.RenderOptions.CullMode = ECullMode.None;
+                mat.RenderOptions.DepthTest.Enabled = ERenderParamUsage.Disabled;
+                mat.RenderPass = (int)EDefaultRenderPass.OnTopForward;
+                //mat.EnableTransparency();
+                return mat;
+            }
+            catch (Exception e)
+            {
+                Debug.Out(e.Message);
+                Engine.Rendering.State.DebugInstanceRenderingAvailable = false;
+                return null;
+            }
         }
         private XRMaterial? CreateDebugLineMaterial()
         {
-            XRShader vertShader = ShaderHelper.LoadEngineShader(Path.Combine("Common", "Debug", "InstancedDebugPrimitive.vs"), EShaderType.Vertex);
-            XRShader geomShader = ShaderHelper.LoadEngineShader(Path.Combine("Common", "Debug", "LineInstance.gs"), EShaderType.Geometry);
-            XRShader fragShader = ShaderHelper.LoadEngineShader(Path.Combine("Common", "Debug", "InstancedDebugPrimitive.fs"), EShaderType.Fragment);
-            ShaderVar[] vars =
-            [
-                new ShaderFloat(LineWidth, "LineWidth"),
-                new ShaderInt(0, "TotalLines"),
-            ];
-            var mat = new XRMaterial(vars, vertShader, geomShader, fragShader);
-            mat.RenderOptions.RequiredEngineUniforms = EUniformRequirements.Camera;
-            mat.RenderOptions.CullMode = ECullMode.None;
-            mat.RenderOptions.DepthTest.Enabled = ERenderParamUsage.Disabled;
-            mat.RenderPass = (int)EDefaultRenderPass.OnTopForward;
-            //mat.EnableTransparency();
-            return mat;
+            if (!Engine.Rendering.State.DebugInstanceRenderingAvailable)
+                return null;
+
+            try
+            {
+                XRShader vertShader = ShaderHelper.LoadEngineShader(Path.Combine("Common", "Debug", "InstancedDebugPrimitive.vs"), EShaderType.Vertex);
+                XRShader geomShader = ShaderHelper.LoadEngineShader(Path.Combine("Common", "Debug", "LineInstance.gs"), EShaderType.Geometry);
+                XRShader fragShader = ShaderHelper.LoadEngineShader(Path.Combine("Common", "Debug", "InstancedDebugPrimitive.fs"), EShaderType.Fragment);
+                ShaderVar[] vars =
+                [
+                    new ShaderFloat(LineWidth, "LineWidth"),
+                    new ShaderInt(0, "TotalLines"),
+                ];
+                var mat = new XRMaterial(vars, vertShader, geomShader, fragShader);
+                mat.RenderOptions.RequiredEngineUniforms = EUniformRequirements.Camera;
+                mat.RenderOptions.CullMode = ECullMode.None;
+                mat.RenderOptions.DepthTest.Enabled = ERenderParamUsage.Disabled;
+                mat.RenderPass = (int)EDefaultRenderPass.OnTopForward;
+                //mat.EnableTransparency();
+                return mat;
+            }
+            catch (Exception e)
+            {
+                Debug.Out(e.Message);
+                Engine.Rendering.State.DebugInstanceRenderingAvailable = false;
+                return null;
+            }
         }
         private static XRMaterial? CreateDebugTriangleMaterial()
         {
-            XRShader vertShader = ShaderHelper.LoadEngineShader(Path.Combine("Common", "Debug", "InstancedDebugPrimitive.vs"), EShaderType.Vertex);
-            XRShader geomShader = ShaderHelper.LoadEngineShader(Path.Combine("Common", "Debug", "TriangleInstance.gs"), EShaderType.Geometry);
-            XRShader fragShader = ShaderHelper.LoadEngineShader(Path.Combine("Common", "Debug", "InstancedDebugPrimitive.fs"), EShaderType.Fragment);
-            ShaderVar[] vars =
-            [
-                new ShaderInt(0, "TotalTriangles"),
+            if (!Engine.Rendering.State.DebugInstanceRenderingAvailable)
+                return null;
+
+            try
+            {
+                XRShader vertShader = ShaderHelper.LoadEngineShader(Path.Combine("Common", "Debug", "InstancedDebugPrimitive.vs"), EShaderType.Vertex);
+                XRShader geomShader = ShaderHelper.LoadEngineShader(Path.Combine("Common", "Debug", "TriangleInstance.gs"), EShaderType.Geometry);
+                XRShader fragShader = ShaderHelper.LoadEngineShader(Path.Combine("Common", "Debug", "InstancedDebugPrimitive.fs"), EShaderType.Fragment);
+                ShaderVar[] vars =
+                [
+                    new ShaderInt(0, "TotalTriangles"),
             ];
-            var mat = new XRMaterial(vars, vertShader, geomShader, fragShader);
-            mat.RenderOptions.RequiredEngineUniforms = EUniformRequirements.Camera;
-            mat.RenderOptions.CullMode = ECullMode.None;
-            mat.RenderOptions.DepthTest.Enabled = ERenderParamUsage.Disabled;
-            mat.RenderPass = (int)EDefaultRenderPass.OnTopForward;
-            //mat.EnableTransparency();
-            return mat;
+                var mat = new XRMaterial(vars, vertShader, geomShader, fragShader);
+                mat.RenderOptions.RequiredEngineUniforms = EUniformRequirements.Camera;
+                mat.RenderOptions.CullMode = ECullMode.None;
+                mat.RenderOptions.DepthTest.Enabled = ERenderParamUsage.Disabled;
+                mat.RenderPass = (int)EDefaultRenderPass.OnTopForward;
+                //mat.EnableTransparency();
+                return mat;
+            }
+            catch (Exception e)
+            {
+                Debug.Out(e.Message);
+                Engine.Rendering.State.DebugInstanceRenderingAvailable = false;
+                return null;
+            }
         }
     }
 }

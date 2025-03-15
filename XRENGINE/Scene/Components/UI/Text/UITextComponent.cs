@@ -524,8 +524,8 @@ namespace XREngine.Rendering.UI
             lock (_glyphLock)
                 glyphsCopy = [.. _glyphs];
 
-            float* tfmPtr = (float*)_transformsBuffer.Source!.Address.Pointer;
-            float* uvsPtr = (float*)_uvsBuffer.Source!.Address.Pointer;
+            float* tfmPtr = (float*)_transformsBuffer.ClientSideSource!.Address.Pointer;
+            float* uvsPtr = (float*)_uvsBuffer.ClientSideSource!.Address.Pointer;
 
             for (int i = 0; i < glyphsCopy.Length; i++)
             {
@@ -539,7 +539,7 @@ namespace XREngine.Rendering.UI
                     transform.W *= relative.scale.Y;
 
                     if (_rotationsBuffer is not null)
-                        ((float*)_rotationsBuffer.Source!.Address.Pointer)[i] = relative.rotation;
+                        ((float*)_rotationsBuffer.ClientSideSource!.Address.Pointer)[i] = relative.rotation;
                 }
 
                 *tfmPtr++ = transform.X;

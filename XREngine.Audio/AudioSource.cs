@@ -21,9 +21,13 @@ namespace XREngine.Audio
 
         public void Dispose()
         {
+            if (Handle == 0u)
+                return;
+
             Api.SourceStop(Handle);
             Api.DeleteSource(Handle);
             Handle = 0u;
+
             GC.SuppressFinalize(this);
         }
 

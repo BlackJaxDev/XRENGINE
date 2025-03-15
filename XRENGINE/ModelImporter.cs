@@ -25,11 +25,10 @@ namespace XREngine
     /// </summary>
     public class ModelImporter : IDisposable
     {
-        protected ModelImporter(string path, bool async, Action? onCompleted, DelMaterialFactory? materialFactory)
+        protected ModelImporter(string path, Action? onCompleted, DelMaterialFactory? materialFactory)
         {
             _assimp = new AssimpContext();
             _path = path;
-            _async = async;
             _onCompleted = onCompleted;
             _materialFactory = materialFactory ?? MaterialFactory;
         }
@@ -162,7 +161,6 @@ namespace XREngine
 
         private readonly AssimpContext _assimp;
         private readonly string _path;
-        private readonly bool _async;
         private readonly Action? _onCompleted;
         
         public delegate XRMaterial DelMaterialFactory(
@@ -187,14 +185,13 @@ namespace XREngine
             PostProcessSteps options,
             out IReadOnlyCollection<XRMaterial> materials,
             out IReadOnlyCollection<XRMesh> meshes,
-            bool async,
             Action? onCompleted,
             DelMaterialFactory? materialFactory,
             SceneNode? parent,
             float scaleConversion = 1.0f,
             bool zUp = false)
         {
-            using var importer = new ModelImporter(path, async, onCompleted, materialFactory);
+            using var importer = new ModelImporter(path, onCompleted, materialFactory);
             var node = importer.Import(options, true, true, scaleConversion, zUp, true);
             materials = importer._materials;
             meshes = importer._meshes;
@@ -212,7 +209,7 @@ namespace XREngine
             bool zUp = false)
             => await Task.Run(() =>
             {
-                SceneNode? node = Import(path, options, out var materials, out var meshes, true, onCompleted, materialFactory, parent, scaleConversion, zUp);
+                SceneNode? node = Import(path, options, out var materials, out var meshes, onCompleted, materialFactory, parent, scaleConversion, zUp);
                 return (node, materials, meshes);
             });
 
@@ -226,71 +223,62 @@ namespace XREngine
             bool zUp = false,
             bool multiThread = true)
         {
-#if DEBUG
-            Debug.Out($"Importing model: {SourceFilePath} with options: {options}");
-            Stopwatch sw = new();
-            sw.Start();
-#endif
-            float rotate = zUp ? -90.0f : 0.0f;
-            _assimp.SetConfig(new BooleanPropertyConfig(AiConfigs.AI_CONFIG_IMPORT_FBX_PRESERVE_PIVOTS, preservePivots));
-            //_assimp.SetConfig(new BooleanPropertyConfig(AiConfigs.AI_CONFIG_IMPORT_FBX_READ_ALL_MATERIALS, true));
-            _assimp.SetConfig(new BooleanPropertyConfig(AiConfigs.AI_CONFIG_IMPORT_FBX_READ_MATERIALS, true));
-            _assimp.SetConfig(new BooleanPropertyConfig(AiConfigs.AI_CONFIG_IMPORT_FBX_READ_TEXTURES, true));
-            _assimp.SetConfig(new BooleanPropertyConfig(AiConfigs.AI_CONFIG_GLOB_MULTITHREADING, multiThread));
+            SetAssimpConfig(preservePivots, scaleConversion, zUp, multiThread);
 
-            _assimp.Scale = scaleConversion;
-            _assimp.XAxisRotation = rotate;
-            AScene scene = _assimp.ImportFile(SourceFilePath, options);
+            AScene scene;
+            using (Engine.Profiler.Start($"Assimp ImportFile: {SourceFilePath} with options: {options}"))
+                scene = _assimp.ImportFile(SourceFilePath, options);
 
             if (scene is null || scene.SceneFlags == SceneFlags.Incomplete || scene.RootNode is null)
                 return null;
 
-            Debug.Out($"Loaded scene in {sw.ElapsedMilliseconds / 1000.0f} sec from {SourceFilePath} with options: {options}");
-            SceneNode rootNode = new(Path.GetFileNameWithoutExtension(SourceFilePath));
-
-            ProcessNode(true, scene.RootNode, scene, rootNode, null, null, removeAssimpFBXNodes);
-            Debug.Out(rootNode.PrintTree());
-
-            //for (var i = 0; i < scene->MNumAnimations; i++)
-            //{
-            //    AAnimation* anim = scene->MAnimations[i];
-            //}
-
-#if DEBUG
-            Debug.Out($"Model hierarchy processed in {sw.ElapsedMilliseconds / 1000.0f} sec.");
-#endif
-
-            if (_async)
+            SceneNode rootNode;
+            using (Engine.Profiler.Start($"Assemble model hierarchy"))
             {
-                void Complete(object o)
-                {
-#if DEBUG
-                    sw.Stop();
-                    Debug.Out($"Model imported asynchronously in {sw.ElapsedMilliseconds / 1000.0f} sec.");
-#endif
-                    _onCompleted?.Invoke();
-                }
-                Task.Run(ProcessMeshesParallel).ContinueWith(Complete);
+                rootNode = new(Path.GetFileNameWithoutExtension(SourceFilePath));
+                ProcessNode(true, scene.RootNode, scene, rootNode, null, null, removeAssimpFBXNodes);
+                //Debug.Out(rootNode.PrintTree());
+            }
+
+            Action meshProcessAction = multiThread
+                ? ProcessMeshesParallel
+                : ProcessMeshesSequential;
+
+            if (Engine.Rendering.Settings.ProcessMeshImportsAsynchronously)
+            {
+                void Complete(object o) => _onCompleted?.Invoke();
+                Task.Run(meshProcessAction).ContinueWith(Complete);
             }
             else
             {
-                ProcessMeshesParallel();
-#if DEBUG
-                sw.Stop();
-                Debug.Out($"Model imported synchronously in {sw.ElapsedMilliseconds / 1000.0f} sec.");
-#endif
+                meshProcessAction();
                 _onCompleted?.Invoke();
             }
 
             return rootNode;
         }
 
+        private void SetAssimpConfig(bool preservePivots, float scaleConversion, bool zUp, bool multiThread)
+        {
+            float rotate = zUp ? -90.0f : 0.0f;
+            _assimp.SetConfig(new BooleanPropertyConfig(AiConfigs.AI_CONFIG_IMPORT_FBX_PRESERVE_PIVOTS, preservePivots));
+            _assimp.SetConfig(new BooleanPropertyConfig(AiConfigs.AI_CONFIG_IMPORT_FBX_READ_MATERIALS, true));
+            _assimp.SetConfig(new BooleanPropertyConfig(AiConfigs.AI_CONFIG_IMPORT_FBX_READ_TEXTURES, true));
+            _assimp.SetConfig(new BooleanPropertyConfig(AiConfigs.AI_CONFIG_GLOB_MULTITHREADING, multiThread));
+            _assimp.Scale = scaleConversion;
+            _assimp.XAxisRotation = rotate;
+        }
+
         //TODO: more extreme idea: allocate all initial meshes, and sequentially populate every mesh's buffers in parallel
-        private ParallelLoopResult ProcessMeshesParallel()
-            => Parallel.ForEach(_meshProcessActions, action => action());
+        private void ProcessMeshesParallel()
+        {
+            using var t = Engine.Profiler.Start("Processing meshes in parallel");
+            Parallel.ForEach(_meshProcessActions, action => action());
+        }
 
         private void ProcessMeshesSequential()
         {
+            using var t = Engine.Profiler.Start("Processing meshes sequentially");
             foreach (var action in _meshProcessActions)
                 action();
         }
@@ -329,7 +317,7 @@ namespace XREngine
                 bool assimpFBXNode = assimpFBXMagic != -1;
                 if (assimpFBXNode)
                 {
-                    Debug.Out($"Removing {name}");
+                    //Debug.Out($"Removing {name}");
                     name = name[..assimpFBXMagic];
                     bool affectsParent = parentSceneNode.Name?.StartsWith(name, StringComparison.InvariantCulture) ?? false;
                     if (affectsParent)
@@ -377,6 +365,7 @@ namespace XREngine
             SceneNode sceneNode = new(parentSceneNode, name);
             sceneNode.Transform.DeriveLocalMatrix(localTransform);
             sceneNode.Transform.RecalculateMatrices();
+            sceneNode.Transform.InverseBindMatrix = sceneNode.Transform.InverseWorldMatrix;
 
             if (_nodeCache.TryGetValue(name, out List<SceneNode>? nodes))
                 nodes.Add(sceneNode);
@@ -423,7 +412,7 @@ namespace XREngine
             Matrix4x4 dataTransform)
         {
             //Debug.Out($"Processing mesh: {mesh->MName}");
-            return (new(parentTransform, mesh, _assimp, _nodeCache, dataTransform), ProcessMaterial(mesh, scene));
+            return (new(mesh, _assimp, _nodeCache, dataTransform), ProcessMaterial(mesh, scene));
         }
 
         private unsafe XRMaterial ProcessMaterial(Mesh mesh, AScene scene)

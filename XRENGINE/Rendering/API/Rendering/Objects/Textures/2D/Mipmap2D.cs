@@ -1,6 +1,6 @@
 ﻿using ImageMagick;
-using SixLabors.ImageSharp.PixelFormats;
 using SixLabors.ImageSharp;
+using SixLabors.ImageSharp.PixelFormats;
 using XREngine.Data;
 using XREngine.Data.Core;
 using XREngine.Data.Rendering;
@@ -127,28 +127,25 @@ namespace XREngine.Rendering
         {
             //lock (_lock)
             //{
-                XRTexture.GetFormat(image, false, out EPixelInternalFormat internalFormat, out EPixelFormat format, out EPixelType type);
-                InternalFormat = internalFormat;
-                PixelFormat = format;
+            XRTexture.GetFormat(image, false, out EPixelInternalFormat internalFormat, out EPixelFormat format, out EPixelType type);
+            InternalFormat = internalFormat;
+            PixelFormat = format;
 
-                //PixelType = type;
-                //byte[]? bytes = image.GetPixels().ToByteArray(image.HasAlpha ? PixelMapping.RGBA : PixelMapping.RGB);
-                //Data = bytes is null ? null : new DataSource(bytes);
-                
-                var p = image.GetPixels();
-                //uint channels = p.Channels;
-                //uint colors = image.TotalColors;
-                PixelType = EPixelType.Float;
-                float[] pixels = [.. p.GetValues()];
-                //Why does magickimage not have a method to do this normalization? did I miss it?
-                Parallel.For(0, pixels.Length, i =>
-                {
-                    pixels[i] = pixels[i] / ushort.MaxValue;
-                });
-                Data = DataSource.FromArray(pixels);
+            //PixelType = type;
+            //byte[]? bytes = image.GetPixels().ToByteArray(image.HasAlpha ? PixelMapping.RGBA : PixelMapping.RGB);
+            //Data = bytes is null ? null : new DataSource(bytes);
 
-                Width = image.Width;
-                Height = image.Height;
+            var p = image.GetPixels().GetValues() ?? [];
+            //uint channels = p.Channels;
+            //uint colors = image.TotalColors;
+            PixelType = EPixelType.Float;
+            //Why does magickimage not have a method to do this normalization? did I miss it?
+            Data = DataSource.Allocate<float>((uint)p!.Length);
+            float* pixels = (float*)Data.Address;
+            Parallel.For(0, p.Length, i => pixels[i] = p[i] / ushort.MaxValue);
+
+            Width = image.Width;
+            Height = image.Height;
             //}
         }
 
@@ -182,11 +179,18 @@ namespace XREngine.Rendering
         private DataSource? _bytes = null;
         private uint _width = 0;
         private uint _height = 0;
+        public XRDataBuffer? _streamingPBO = null;
 
         public EPixelInternalFormat InternalFormat
         {
             get => _internalFormat;
             set => SetField(ref _internalFormat, value);
+        }
+
+        public XRDataBuffer? StreamingPBO
+        {
+            get => _streamingPBO;
+            set => SetField(ref _streamingPBO, value);
         }
 
         public void Resize(uint width, uint height, bool ignoreImage = false)
@@ -272,5 +276,20 @@ namespace XREngine.Rendering
                 Width = Width,
                 Height = Height
             };
+
+        public uint GetDataLength()
+            => Data?.Length ?? 0u;
+
+        public unsafe void FillData(void* ptr)
+        {
+            if (Data is null)
+                return;
+            
+            uint len = GetDataLength();
+            Buffer.MemoryCopy(Data.Address.Pointer, ptr, len, len);
+        }
+
+        public bool HasData()
+            => Data is not null && Data.Length != 0;
     }
 }

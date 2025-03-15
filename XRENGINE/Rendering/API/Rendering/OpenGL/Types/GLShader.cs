@@ -142,8 +142,8 @@ namespace XREngine.Rendering.OpenGL
                         Debug.LogWarning(info);
                     else if (!IsCompiled)
                         Debug.LogWarning("Unable to compile shader, but no error was returned.");
-                    else
-                        Debug.Out("Shader compiled successfully.");
+                    //else
+                    //    Debug.Out("Shader compiled successfully.");
                 }
                 return IsCompiled;
             }
@@ -194,13 +194,16 @@ namespace XREngine.Rendering.OpenGL
                     int startIndex;
                     if (first == '"')
                     {
+                        //Quoted path
                         startIndex = pathIndex + 1;
                         endIndex = sourceText.FindFirst(pathIndex + 1, '"');
                     }
                     else
                     {
+                        //Unquoted path, use newline to determine end
                         startIndex = pathIndex;
-                        endIndex = sourceText.FindFirst(pathIndex + 1, x => char.IsWhiteSpace(x));
+                        static bool IsNewline(char x) => x == '\n';
+                        endIndex = sourceText.FindFirst(pathIndex + 1, IsNewline);
                     }
                     string fileText;
                     string includePath = sourceText[startIndex..endIndex];

@@ -41,7 +41,7 @@ namespace XREngine.Data.Rendering
             : this() => Position = position;
 
         public Vertex(Vector3 position, Vector4 color)
-            : this(position) => ColorSets.Add(color);
+            : this(position) => ColorSets = [color];
 
         public Vertex(Vector3 position, Dictionary<TransformBase, (float weight, Matrix4x4 bindInvWorldMatrix)>? weights)
             : this(position) => Weights = weights;
@@ -50,28 +50,28 @@ namespace XREngine.Data.Rendering
             : this(position, weights) => Normal = normal;
 
         public Vertex(Vector3 position, Dictionary<TransformBase, (float weight, Matrix4x4 bindInvWorldMatrix)>? inf, Vector3 normal, Vector2 texCoord)
-            : this(position, inf, normal) => TextureCoordinateSets.Add(texCoord);
+            : this(position, inf, normal) => TextureCoordinateSets = [texCoord];
 
         public Vertex(Vector3 position, Dictionary<TransformBase, (float weight, Matrix4x4 bindInvWorldMatrix)>? inf, Vector3 normal, Vector2 texCoord, Vector4 color)
-            : this(position, inf, normal, texCoord) => ColorSets.Add(color);
+            : this(position, inf, normal, texCoord) => ColorSets = [color];
 
         public Vertex(Vector3 position, Dictionary<TransformBase, (float weight, Matrix4x4 bindInvWorldMatrix)>? inf, Vector3 normal, Vector3 tangent, Vector2 texCoord, Vector4 color)
             : this(position, inf, normal, texCoord, color) => Tangent = tangent;
 
         public Vertex(Vector3 position, Dictionary<TransformBase, (float weight, Matrix4x4 bindInvWorldMatrix)>? inf, Vector2 texCoord)
-            : this(position, inf) => TextureCoordinateSets.Add(texCoord);
+            : this(position, inf) => TextureCoordinateSets = [texCoord];
 
         public Vertex(Vector3 position, Vector2 texCoord)
-            : this(position) => TextureCoordinateSets.Add(texCoord);
+            : this(position) => TextureCoordinateSets = [texCoord];
 
         public Vertex(Vector3 position, Vector3 normal)
             : this(position, null, normal) { }
 
         public Vertex(Vector3 position, Vector3 normal, Vector2 texCoord)
-            : this(position, null, normal) => TextureCoordinateSets.Add(texCoord);
+            : this(position, null, normal) => TextureCoordinateSets = [texCoord];
 
         public Vertex(Vector3 position, Vector3 normal, Vector2 texCoord, Vector4 color)
-            : this(position, null, normal, texCoord) => ColorSets.Add(color);
+            : this(position, null, normal, texCoord) => ColorSets = [color];
 
         public Vertex(Vector3 position, Vector3 normal, Vector3 tangent, Vector2 texCoord, Vector4 color)
             : this(position, null, normal, texCoord, color) => Tangent = tangent;
@@ -104,8 +104,8 @@ namespace XREngine.Data.Rendering
                 Position = Position,
                 Normal = Normal,
                 Tangent = Tangent,
-                TextureCoordinateSets = [.. TextureCoordinateSets],
-                ColorSets = [.. ColorSets],
+                TextureCoordinateSets = TextureCoordinateSets is null ? null : new(TextureCoordinateSets),
+                ColorSets = ColorSets is null ? null : new(ColorSets),
                 Blendshapes = Blendshapes is null ? null : new(Blendshapes),
             };
 
@@ -157,30 +157,12 @@ namespace XREngine.Data.Rendering
             {
                 if (tangent != null && bitangent != null)
                     normal = Vector3.Cross(tangent.Value, bitangent.Value);
-                //else if (tangent != null)
-                //    normal = Vector3.Cross(tangent.Value, pos);
-                //else if (bitangent != null)
-                //    normal = Vector3.Cross(bitangent.Value, pos);
             }
             if (tangent == null)
             {
                 if (normal != null && bitangent != null)
                     tangent = Vector3.Cross(normal.Value, bitangent.Value);
-                //else if (normal != null)
-                //    tangent = Vector3.Cross(normal.Value, pos);
-                //else if (bitangent != null)
-                //    tangent = Vector3.Cross(bitangent.Value, pos);
             }
-            //We don't save the bitangent, as it can be calculated from the normal and tangent on the GPU.
-            //if (bitangent == null)
-            //{
-            //    if (normal != null && tangent != null)
-            //        bitangent = Vector3.Cross(normal.Value, tangent.Value);
-            //    else if (normal != null)
-            //        bitangent = Vector3.Cross(normal.Value, pos);
-            //    else if (tangent != null)
-            //        bitangent = Vector3.Cross(tangent.Value, pos);
-            //}
 
             Vertex v = new()
             {
@@ -196,7 +178,11 @@ namespace XREngine.Data.Rendering
                     break;
 
                 Vector3 uv = channel[vertexIndex];
-                v.TextureCoordinateSets.Add(new Vector2(uv.X, uv.Y));
+
+                if (v.TextureCoordinateSets is null)
+                    v.TextureCoordinateSets = [new Vector2(uv.X, uv.Y)];
+                else
+                    v.TextureCoordinateSets.Add(new Vector2(uv.X, uv.Y));
             }
 
             for (int i = 0; i < mesh.VertexColorChannelCount; ++i)
@@ -205,7 +191,10 @@ namespace XREngine.Data.Rendering
                 if (channel is null || vertexIndex >= channel.Count)
                     break;
 
-                v.ColorSets.Add(channel[vertexIndex]);
+                if (v.ColorSets is null)
+                    v.ColorSets = [channel[vertexIndex]];
+                else
+                    v.ColorSets.Add(channel[vertexIndex]);
             }
 
             //Blendshapes
@@ -234,7 +223,11 @@ namespace XREngine.Data.Rendering
                             break;
 
                         Vector3 uv = blendshape.TextureCoordinateChannels[j][vertexIndex];
-                        data.TextureCoordinateSets.Add(new Vector2(uv.X, uv.Y));
+
+                        if (data.TextureCoordinateSets is null)
+                            data.TextureCoordinateSets = [new Vector2(uv.X, uv.Y)];
+                        else
+                            data.TextureCoordinateSets.Add(new Vector2(uv.X, uv.Y));
                     }
                     for (int j = 0; j < blendshape.VertexColorChannelCount; ++j)
                     {
@@ -242,7 +235,11 @@ namespace XREngine.Data.Rendering
                             break;
 
                         Vector4 color = blendshape.VertexColorChannels[j][vertexIndex];
-                        data.ColorSets.Add(color);
+
+                        if (data.ColorSets is null)
+                            data.ColorSets = [color];
+                        else
+                            data.ColorSets.Add(color);
                     }
 
                     v.Blendshapes.Add((blendshape.Name, data));

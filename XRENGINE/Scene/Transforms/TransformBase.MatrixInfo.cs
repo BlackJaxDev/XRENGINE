@@ -31,6 +31,16 @@ namespace XREngine.Scene.Transforms
             set => SetField(ref _forceManualRecalc, value);
         }
 
+        private Matrix4x4 _inverseBindMatrix = Matrix4x4.Identity;
+        /// <summary>
+        /// Used for model skinning. The inverse model-space bind matrix for this transform, set during model import.
+        /// </summary>
+        public Matrix4x4 InverseBindMatrix
+        {
+            get => _inverseBindMatrix;
+            set => SetField(ref _inverseBindMatrix, value);
+        }
+
         private float _timeSinceLastKeyframe = 0;
 
         private Matrix4x4 _lastReplicatedMatrix = Matrix4x4.Identity;

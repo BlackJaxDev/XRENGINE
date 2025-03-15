@@ -132,8 +132,9 @@ namespace XREngine
         /// <param name="state"></param>
         public static void Run(GameStartupSettings startupSettings, GameState state)
         {
+            RunGameLoop();
             Initialize(startupSettings, state);
-            Run();
+            BlockForRendering();
             Cleanup();
         }
 
@@ -328,8 +329,10 @@ namespace XREngine
         private static bool RunAsLongAs()
             => Windows.Count > 0;
 
-        public static void Run()
-            => Time.Timer.Run(RunAsLongAs);
+        public static void RunGameLoop()
+            => Time.Timer.RunGameLoop();
+        public static void BlockForRendering()
+            => Time.Timer.BlockForRendering(RunAsLongAs);
 
         /// <summary>
         /// Closes all windows, resulting in the engine shutting down and the process ending.

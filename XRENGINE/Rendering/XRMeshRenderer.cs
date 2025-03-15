@@ -314,7 +314,7 @@ namespace XREngine.Rendering
             for (uint i = 0; i < blendshapeCount; i++)
                 BlendshapeWeights.Set(i, 0.0f);
 
-            Buffers.Add(BlendshapeWeights.BindingName, BlendshapeWeights);
+            Buffers.Add(BlendshapeWeights.AttributeName, BlendshapeWeights);
         }
 
         private void ResetDrivableBuffers()
@@ -383,8 +383,8 @@ namespace XREngine.Rendering
                 BoneInvBindMatricesBuffer.Set(boneIndex, invBindWorldMtx);
             }
 
-            Buffers.Add(BoneMatricesBuffer.BindingName, BoneMatricesBuffer);
-            Buffers.Add(BoneInvBindMatricesBuffer.BindingName, BoneInvBindMatricesBuffer);
+            Buffers.Add(BoneMatricesBuffer.AttributeName, BoneMatricesBuffer);
+            Buffers.Add(BoneInvBindMatricesBuffer.AttributeName, BoneInvBindMatricesBuffer);
         }
 
         private bool _bonesInvalidated = false;

@@ -40,23 +40,25 @@ public static class EditorWorld
     public const bool VisualizeOctree = true;
     public const bool VisualizeQuadtree = false;
     public const bool Physics = true;
-    public const int PhysicsBallCount = 100; //The number of physics balls to add to the scene.
+    public const int PhysicsBallCount = 10; //The number of physics balls to add to the scene.
     public const bool DirLight = false;
     public const bool SpotLight = true;
     public const bool DirLight2 = false;
     public const bool PointLight = false;
-    public const bool SoundNode = true;
+    public const bool SoundNode = false;
     public const bool LightProbe = true; //Adds a test light probe to the scene for PBR lighting.
     public const bool Skybox = true;
     public const bool Spline = false; //Adds a 3D spline to the scene.
     public const bool DeferredDecal = false; //Adds a deferred decal to the scene.
     public const bool StaticModel = false; //Imports a scene model to be rendered.
     public const bool AnimatedModel = true; //Imports a character model to be animated.
+    public const float ModelScale = 0.0254f; //The scale of the model when imported.
+    public const bool ModelZUp = false; //If true, the model will be rotated 90 degrees around the X axis.
     public const bool AddEditorUI = true; //Adds the full editor UI to the camera. Probably don't use this one a character pawn.
     public const bool VRPawn = false; //Enables VR input and pawn.
     public const bool CharacterPawn = true; //Enables the player to physically locomote in the world. Requires a physical floor.
     public const bool ThirdPersonPawn = true; //If on desktop and character pawn is enabled, this will add a third person camera instead of first person.
-    public const bool TestAnimation = false; //Adds test animations to the character pawn.
+    public const bool TestAnimation = true; //Adds test animations to the character pawn.
     public const bool PhysicsChain = false; //Adds a jiggle physics chain to the character pawn.
     public const bool TransformTool = false; //Adds the transform tool to the scene for testing dragging and rotating etc.
     public const bool AllowEditingInVR = false; //Allows the user to edit the scene from desktop in VR.
@@ -220,7 +222,7 @@ public static class EditorWorld
         s.RenderWindowsWhileInVR = true;
         s.AllowShaderPipelines = false; //Somehow, this lowers performance
         s.RenderVRSinglePassStereo = false;
-        s.PhysicsVisualizeSettings.SetAllTrue();
+        //s.PhysicsVisualizeSettings.SetAllTrue();
 
         string desktopDir = Environment.GetFolderPath(Environment.SpecialFolder.DesktopDirectory);
         //UnityPackageExtractor.ExtractAsync(Path.Combine(desktopDir, "Animations.unitypackage"), Path.Combine(desktopDir, "Extracted"), true);
@@ -1062,9 +1064,9 @@ public static class EditorWorld
     private static void ImportModels(string desktopDir, SceneNode rootNode, SceneNode characterParentNode)
     {
         var importedModelsNode = new SceneNode(rootNode) { Name = "TestImportedModelsNode" };
-        string fbxPathDesktop = Path.Combine(desktopDir, "misc", "jax.fbx");
+        string fbxPathDesktop = Path.Combine(desktopDir, "misc", "test2.fbx");
 
-        var flags = 
+        var animFlags = 
         PostProcessSteps.Triangulate |
         PostProcessSteps.JoinIdenticalVertices |
         PostProcessSteps.GenerateNormals |
@@ -1076,17 +1078,21 @@ public static class EditorWorld
         PostProcessSteps.GenerateBoundingBoxes |
         PostProcessSteps.RemoveRedundantMaterials;
 
+        var staticFlags = PostProcessSteps.None;
+            //PostProcessSteps.SplitLargeMeshes |
+            //PostProcessSteps.PreTransformVertices;
+
         if (AnimatedModel)
-            ModelImporter.ImportAsync(fbxPathDesktop, flags, null, null, characterParentNode, 1.0f, false).ContinueWith(OnFinishedAvatar);
+            ModelImporter.ImportAsync(fbxPathDesktop, animFlags, null, null, characterParentNode, ModelScale, ModelZUp).ContinueWith(OnFinishedAvatar);
         if (StaticModel)
         {
             //string path = Path.Combine(Engine.Assets.EngineAssetsPath, "Models", "Sponza", "sponza.obj");
 
             string path2 = Path.Combine(Engine.Assets.EngineAssetsPath, "Models", "main1_sponza", "NewSponza_Main_Yup_003.fbx");
-            var task2 = ModelImporter.ImportAsync(path2, flags, null, null, importedModelsNode, 1, false).ContinueWith(OnFinishedWorld);
+            var task2 = ModelImporter.ImportAsync(path2, staticFlags, null, null, importedModelsNode, 1, false).ContinueWith(OnFinishedWorld);
 
-            string path = Path.Combine(Engine.Assets.EngineAssetsPath, "Models", "pkg_a_curtains", "NewSponza_Curtains_FBX_YUp.fbx");
-            var task1 = ModelImporter.ImportAsync(path, flags, null, null, importedModelsNode, 1, false).ContinueWith(OnFinishedWorld);
+            //string path = Path.Combine(Engine.Assets.EngineAssetsPath, "Models", "pkg_a_curtains", "NewSponza_Curtains_FBX_YUp.fbx");
+            //var task1 = ModelImporter.ImportAsync(path, flags, null, null, importedModelsNode, 1, false).ContinueWith(OnFinishedWorld);
 
             //await Task.WhenAll(task1, task2);
         }
@@ -1122,12 +1128,18 @@ public static class EditorWorld
 
     private static void OnFinishedWorld(Task<(SceneNode? rootNode, IReadOnlyCollection<XRMaterial> materials, IReadOnlyCollection<XRMesh> meshes)> task)
     {
+        if (task.IsCanceled || task.IsFaulted)
+            return;
+
         (SceneNode? rootNode, IReadOnlyCollection<XRMaterial> materials, IReadOnlyCollection<XRMesh> meshes) = task.Result;
         rootNode?.GetTransformAs<Transform>()?.ApplyScale(new Vector3(0.01f));
     }
-    private static void OnFinishedAvatar(Task<(SceneNode? rootNode, IReadOnlyCollection<XRMaterial> materials, IReadOnlyCollection<XRMesh> meshes)> x)
+    private static void OnFinishedAvatar(Task<(SceneNode? rootNode, IReadOnlyCollection<XRMaterial> materials, IReadOnlyCollection<XRMesh> meshes)> task)
     {
-        (SceneNode? rootNode, IReadOnlyCollection<XRMaterial> materials, IReadOnlyCollection<XRMesh> meshes) = x.Result;
+        if (task.IsCanceled || task.IsFaulted)
+            return;
+
+        (SceneNode? rootNode, IReadOnlyCollection<XRMaterial> materials, IReadOnlyCollection<XRMesh> meshes) = task.Result;
         OnFinishedImportingAvatar(rootNode, materials, meshes);
     }
 

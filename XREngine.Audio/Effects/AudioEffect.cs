@@ -57,6 +57,9 @@ namespace XREngine.Audio.Effects
 
         void IPoolable.OnPoolableReleased()
         {
+            if (Handle == 0u)
+                return;
+
             ParentContext.Api.DeleteEffect(Handle);
             Handle = 0u;
         }

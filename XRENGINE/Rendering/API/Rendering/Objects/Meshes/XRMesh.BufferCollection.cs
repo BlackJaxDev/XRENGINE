@@ -27,6 +27,10 @@ namespace XREngine.Rendering
             get => _supportsBillboarding;
             set => SetField(ref _supportsBillboarding, value);
         }
+        public bool HasNormals => NormalsBuffer != null || (Interleaved && NormalOffset.HasValue);
+        public bool HasTangents => TangentsBuffer != null || (Interleaved && TangentOffset.HasValue);
+        public bool HasColors => ColorCount > 0;
+        public bool HasTexCoords => TexCoordCount > 0;
 
         public class BufferCollection : XRBase, IEventDictionary<string, XRDataBuffer>
         {

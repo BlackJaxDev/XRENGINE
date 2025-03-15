@@ -119,6 +119,9 @@ namespace XREngine.Data.Core
 
         void IDisposable.Dispose()
         {
+            if (IsDestroyed)
+                return;
+
             Destroy();
             GC.SuppressFinalize(this);
         }

@@ -5,7 +5,7 @@ namespace XREngine.Core
     public interface IPoolable
     {
         /// <summary>
-        /// Called when an already-existing object is taken from the pool.
+        /// Called when an object is taken from the pool.
         /// </summary>
         void OnPoolableReset();
         /// <summary>
@@ -46,21 +46,18 @@ namespace XREngine.Core
         }
         public T Take()
         {
-            if (_objects.TryTake(out T? item))
-            {
-                item.OnPoolableReset();
-                return item;
-            }
-            else
-                return _generator();
+            if (!_objects.TryTake(out T? item))
+                item = _generator();
+            
+            item.OnPoolableReset();
+            return item;
         }
         public void Release(T item)
         {
+            item.OnPoolableReleased();
+
             if (_objects.Count < _capacity)
-            {
-                item.OnPoolableReleased();
                 _objects.Add(item);
-            }
             else
                 item.OnPoolableDestroyed();
         }

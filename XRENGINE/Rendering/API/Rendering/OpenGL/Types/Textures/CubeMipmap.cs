@@ -255,12 +255,12 @@ namespace XREngine.Rendering.Models.Materials.Textures
             else
                 return false;
 
-            Sides = crops.Select(x =>
+            Sides = [.. crops.Select(x =>
             {
                 var clone = cubeCrossBmp.Clone();
                 clone.Crop(x);
                 return new Mipmap2D((MagickImage)clone);
-            }).ToArray();
+            })];
 
             return true;
         }

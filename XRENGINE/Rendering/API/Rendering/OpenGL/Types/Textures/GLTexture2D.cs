@@ -3,74 +3,25 @@ using Silk.NET.OpenGL;
 using XREngine.Data;
 using XREngine.Data.Core;
 using XREngine.Data.Rendering;
+using static XREngine.Rendering.OpenGL.OpenGLRenderer;
 
 namespace XREngine.Rendering.OpenGL
 {
-    public class GLTexture2D(OpenGLRenderer renderer, XRTexture2D data) : GLTexture<XRTexture2D>(renderer, data)
+    public partial class GLTexture2D(OpenGLRenderer renderer, XRTexture2D data) : GLTexture<XRTexture2D>(renderer, data)
     {
-        private bool _storageSet = false;
-
-        public class MipmapInfo : XRBase
+        private MipmapInfo[] _mipmaps = [];
+        public MipmapInfo[] Mipmaps
         {
-            private bool _hasPushedResizedData = false;
-            //private bool _hasPushedUpdateData = false;
-            private readonly Mipmap2D _mipmap;
-            private readonly GLTexture2D _texture;
-
-            public Mipmap2D Mipmap => _mipmap;
-
-            public MipmapInfo(GLTexture2D texture, Mipmap2D mipmap)
-            {
-                _texture = texture;
-                _mipmap = mipmap;
-                _mipmap.PropertyChanged += MipmapPropertyChanged;
-                _mipmap.Invalidated += MipmapInvalidated;
-            }
-
-            ~MipmapInfo()
-            {
-                _mipmap.PropertyChanged -= MipmapPropertyChanged;
-                _mipmap.Invalidated -= MipmapInvalidated;
-            }
-
-            private void MipmapInvalidated()
-            {
-                _texture.Invalidate();
-            }
-
-            private void MipmapPropertyChanged(object? sender, IXRPropertyChangedEventArgs e)
-            {
-                switch (e.PropertyName)
-                {
-                    case nameof(Mipmap.Data):
-                        //HasPushedUpdateData = false;
-                        _texture.Invalidate();
-                        break;
-                    case nameof(Mipmap.Width):
-                    case nameof(Mipmap.Height):
-                    case nameof(Mipmap.InternalFormat):
-                    case nameof(Mipmap.PixelFormat):
-                    case nameof(Mipmap.PixelType):
-                        HasPushedResizedData = false;
-                        //HasPushedUpdateData = false;
-                        _texture.Invalidate();
-                        break;
-                }
-            }
-
-            public bool HasPushedResizedData
-            {
-                get => _hasPushedResizedData;
-                set => SetField(ref _hasPushedResizedData, value);
-            }
-            //public bool HasPushedUpdateData
-            //{
-            //    get => _hasPushedUpdateData;
-            //    set => SetField(ref _hasPushedUpdateData, value);
-            //}
+            get => _mipmaps;
+            private set => SetField(ref _mipmaps, value);
         }
 
-        public MipmapInfo[] Mipmaps { get; private set; } = [];
+        private bool _storageSet = false;
+        public bool StorageSet
+        {
+            get => _storageSet;
+            private set => SetField(ref _storageSet, value);
+        }
 
         protected override void DataPropertyChanged(object? sender, IXRPropertyChangedEventArgs e)
         {
@@ -93,7 +44,10 @@ namespace XREngine.Rendering.OpenGL
             Invalidate();
         }
 
-        public override ETextureTarget TextureTarget => Data.MultiSample ? ETextureTarget.Texture2DMultisample : ETextureTarget.Texture2D;
+        public override ETextureTarget TextureTarget
+            => Data.MultiSample 
+            ? ETextureTarget.Texture2DMultisample
+            : ETextureTarget.Texture2D;
 
         protected override void UnlinkData()
         {
@@ -112,32 +66,15 @@ namespace XREngine.Rendering.OpenGL
 
         private void DataResized()
         {
-            _storageSet = false;
+            StorageSet = false;
             Mipmaps.ForEach(m =>
             {
-                m.HasPushedResizedData = false;
+                m.NeedsFullPush = true;
                 //m.HasPushedUpdateData = false;
             });
             Invalidate();
         }
 
-        protected internal override void PostGenerated()
-        {
-            Mipmaps.ForEach(m =>
-            {
-                m.HasPushedResizedData = false;
-                //m.HasPushedUpdateData = false;
-            });
-            _storageSet = false;
-            base.PostGenerated();
-        }
-        protected internal override void PostDeleted()
-        {
-            _storageSet = false;
-            base.PostDeleted();
-        }
-
-        //TODO: use PBO per texture for quick data updates
         public override unsafe void PushData()
         {
             if (IsPushing)
@@ -162,14 +99,14 @@ namespace XREngine.Rendering.OpenGL
                 Api.PixelStore(PixelStoreParameter.UnpackAlignment, 1);
 
                 EPixelInternalFormat? internalFormatForce = null;
-                if (!Data.Resizable && !_storageSet)
+                if (!Data.Resizable && !StorageSet)
                 {
                     if (Data.MultiSample)
                         Api.TextureStorage2DMultisample(BindingId, Data.MultiSampleCount, ToGLEnum(Data.SizedInternalFormat), Data.Width, Data.Height, Data.FixedSampleLocations);
                     else
                         Api.TextureStorage2D(BindingId, (uint)Data.SmallestMipmapLevel, ToGLEnum(Data.SizedInternalFormat), Data.Width, Data.Height);
                     internalFormatForce = ToBaseInternalFormat(Data.SizedInternalFormat);
-                    _storageSet = true;
+                    StorageSet = true;
                 }
 
                 if (Mipmaps is null || Mipmaps.Length == 0)
@@ -213,7 +150,7 @@ namespace XREngine.Rendering.OpenGL
 
         private unsafe void PushMipmap(GLEnum glTarget, int i, MipmapInfo? info, EPixelInternalFormat? internalFormatForce)
         {
-            if (!Data.Resizable && !_storageSet)
+            if (!Data.Resizable && !StorageSet)
             {
                 Debug.LogWarning("Texture storage not set on non-resizable texture, can't push mipmaps.");
                 return;
@@ -224,15 +161,16 @@ namespace XREngine.Rendering.OpenGL
             InternalFormat internalPixelFormat;
 
             DataSource? data;
-            bool hasPushedResized;
+            bool fullPush;
             Mipmap2D? mip = info?.Mipmap;
+            XRDataBuffer? pbo = null;
             if (mip is null)
             {
                 internalPixelFormat = ToInternalFormat(internalFormatForce ?? EPixelInternalFormat.Rgb);
                 pixelFormat = GLEnum.Rgb;
                 pixelType = GLEnum.UnsignedByte;
                 data = null;
-                hasPushedResized = false;
+                fullPush = false;
             }
             else
             {
@@ -240,53 +178,102 @@ namespace XREngine.Rendering.OpenGL
                 pixelType = ToGLEnum(mip.PixelType);
                 internalPixelFormat = ToInternalFormat(internalFormatForce ?? mip.InternalFormat);
                 data = mip.Data;
-                hasPushedResized = info!.HasPushedResizedData;
+                pbo = mip.StreamingPBO;
+                fullPush = info!.NeedsFullPush;
             }
 
             if (data is null || data.Length == 0)
-                Push(glTarget, i, Data.Width >> i, Data.Height >> i, pixelFormat, pixelType, internalPixelFormat, hasPushedResized);
+                PushWithNoData(glTarget, i, Data.Width >> i, Data.Height >> i, pixelFormat, pixelType, internalPixelFormat, fullPush);
             else
-            {
-                Push(glTarget, i, mip!.Width, mip.Height, pixelFormat, pixelType, internalPixelFormat, data, hasPushedResized);
-                data?.Dispose();
-            }
-
+                PushWithData(glTarget, i, mip!.Width, mip.Height, pixelFormat, pixelType, internalPixelFormat, data, pbo, fullPush);
+            
             if (info != null)
             {
-                info.HasPushedResizedData = true;
+                info.NeedsFullPush = false;
                 //info.HasPushedUpdateData = true;
             }
         }
 
-        private unsafe void Push(GLEnum glTarget, int i, uint w, uint h, GLEnum pixelFormat, GLEnum pixelType, InternalFormat internalPixelFormat, bool hasPushedResized)
+        private unsafe void PushWithNoData(
+            GLEnum glTarget,
+            int i,
+            uint w,
+            uint h,
+            GLEnum pixelFormat,
+            GLEnum pixelType,
+            InternalFormat internalPixelFormat,
+            bool fullPush)
         {
-            if (!hasPushedResized && Data.Resizable)
-            {
-                if (Data.MultiSample)
-                    Api.TexImage2DMultisample(glTarget, Data.MultiSampleCount, internalPixelFormat, w, h, Data.FixedSampleLocations);
-                else
-                    Api.TexImage2D(glTarget, i, internalPixelFormat, w, h, 0, pixelFormat, pixelType, IntPtr.Zero.ToPointer());
-            }
+            if (!fullPush || !Data.Resizable)
+                return;
+            
+            if (Data.MultiSample)
+                Api.TexImage2DMultisample(glTarget, Data.MultiSampleCount, internalPixelFormat, w, h, Data.FixedSampleLocations);
+            else
+                Api.TexImage2D(glTarget, i, internalPixelFormat, w, h, 0, pixelFormat, pixelType, IntPtr.Zero.ToPointer());
         }
-        private unsafe void Push(GLEnum glTarget, int i, uint w, uint h, GLEnum pixelFormat, GLEnum pixelType, InternalFormat internalPixelFormat, DataSource bmp, bool hasPushedResized)
+
+        /// <summary>
+        /// Pushes the data to the texture.
+        /// If data is null, the PBO is used to push the data.
+        /// </summary>
+        /// <param name="glTarget"></param>
+        /// <param name="i"></param>
+        /// <param name="w"></param>
+        /// <param name="h"></param>
+        /// <param name="pixelFormat"></param>
+        /// <param name="pixelType"></param>
+        /// <param name="internalPixelFormat"></param>
+        /// <param name="bmp"></param>
+        /// <param name="fullPush"></param>
+        private unsafe void PushWithData(
+            GLEnum glTarget,
+            int i,
+            uint w,
+            uint h,
+            GLEnum pixelFormat,
+            GLEnum pixelType,
+            InternalFormat internalPixelFormat,
+            DataSource? bmp,
+            XRDataBuffer? pbo,
+            bool fullPush)
         {
+            if (pbo is not null && pbo.Target != EBufferTarget.PixelUnpackBuffer)
+                throw new ArgumentException("PBO must be of type PixelUnpackBuffer.");
+
             // If a non-zero named buffer object is bound to the GL_PIXEL_UNPACK_BUFFER target (see glBindBuffer) while a texture image is specified,
             // the data ptr is treated as a byte offset into the buffer object's data store.
-            void* ptr = bmp.Address.Pointer;
-            if (ptr is null)
+            if (!fullPush || StorageSet)
             {
-                Debug.LogWarning("Texture data source is null.");
-                return;
+                if (bmp is null)
+                {
+                    pbo?.Bind();
+                    Api.TexSubImage2D(glTarget, i, 0, 0, w, h, pixelFormat, pixelType, null);
+                    pbo?.Unbind();
+                }
+                else
+                    Api.TexSubImage2D(glTarget, i, 0, 0, w, h, pixelFormat, pixelType, bmp.Address.Pointer);
             }
-
-            if (hasPushedResized || _storageSet)
-                Api.TexSubImage2D(glTarget, i, 0, 0, w, h, pixelFormat, pixelType, ptr);
             else
             {
                 if (Data.MultiSample)
+                {
+                    if (bmp is not null)
+                        Debug.LogWarning("Multisample textures do not support initial data, ignoring all mipmaps.");
+
                     Api.TexImage2DMultisample(glTarget, Data.MultiSampleCount, internalPixelFormat, w, h, Data.FixedSampleLocations);
+                }
                 else
-                    Api.TexImage2D(glTarget, i, internalPixelFormat, w, h, 0, pixelFormat, pixelType, ptr);
+                {
+                    if (bmp is not null)
+                        Api.TexImage2D(glTarget, i, internalPixelFormat, w, h, 0, pixelFormat, pixelType, bmp.Address.Pointer);
+                    else
+                    {
+                        pbo?.Bind();
+                        Api.TexImage2D(glTarget, i, internalPixelFormat, w, h, 0, pixelFormat, pixelType, null);
+                        pbo?.Unbind();
+                    }
+                }
             }
         }
 
@@ -317,8 +304,20 @@ namespace XREngine.Rendering.OpenGL
         }
 
         public override void PreSampling()
+            => Data.GrabPass?.Grab(XRFrameBuffer.BoundForWriting, Engine.Rendering.State.RenderingPipelineState?.WindowViewport);
+
+        protected internal override void PostGenerated()
         {
-            Data.GrabPass?.Grab(XRFrameBuffer.BoundForWriting, Engine.Rendering.State.RenderingPipelineState?.WindowViewport);
+            static void SetFullPush(MipmapInfo m)
+                => m.NeedsFullPush = true;
+            Mipmaps.ForEach(SetFullPush);
+            StorageSet = false;
+            base.PostGenerated();
+        }
+        protected internal override void PostDeleted()
+        {
+            StorageSet = false;
+            base.PostDeleted();
         }
     }
 }

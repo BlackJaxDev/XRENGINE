@@ -125,7 +125,6 @@ namespace XREngine.Rendering
             Mipmap2D[] mips = new Mipmap2D[mipmapCount];
             for (uint i = 0; i < mipmapCount; ++i)
             {
-                byte[] data = AllocateBytes(width, height, format, type);
                 Mipmap2D mipmap = new()
                 {
                     InternalFormat = internalFormat,
@@ -133,7 +132,7 @@ namespace XREngine.Rendering
                     PixelType = type,
                     Width = width,
                     Height = height,
-                    Data = new DataSource(data)
+                    Data = new DataSource(AllocateBytes(width, height, format, type))
                 };
                 width >>= 1;
                 height >>= 1;

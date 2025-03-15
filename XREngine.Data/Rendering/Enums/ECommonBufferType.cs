@@ -79,5 +79,7 @@
 
         GlyphTransforms,
         GlyphTexCoords,
+
+        InterleavedVertex,
     }
 }

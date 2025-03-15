@@ -27,11 +27,11 @@ namespace XREngine.Data.Rendering
         /// The texture coordinates of the vertex. Specifies how a texture is mapped to the vertex.
         /// This is a list because a mesh can have multiple texture coordinate sets.
         /// </summary>
-        public List<Vector2> TextureCoordinateSets { get; protected set; } = [];
+        public List<Vector2>? TextureCoordinateSets { get; set; }
 
         /// <summary>
         /// The color of the vertex. Can be used by the shader for various effects.
         /// </summary>
-        public List<Vector4> ColorSets { get; protected set; } = [];
+        public List<Vector4>? ColorSets { get; set; }
     }
 }

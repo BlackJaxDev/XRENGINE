@@ -501,7 +501,7 @@ namespace XREngine.Rendering.OpenGL
                             return false;
                         }
                         
-                        Debug.Out($"Compiled program with hash {Hash}.");
+                        //Debug.Out($"Compiled program with hash {Hash}.");
                         var shaderCache = _shaderCache.Values;
                         GLShader?[] attached = new GLShader?[shaderCache.Count];
                         int i = 0;

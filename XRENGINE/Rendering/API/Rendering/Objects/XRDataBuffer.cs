@@ -1,5 +1,4 @@
 ﻿using Extensions;
-using Silk.NET.SDL;
 using System.Diagnostics.CodeAnalysis;
 using System.Numerics;
 using System.Runtime.InteropServices;
@@ -131,7 +130,7 @@ namespace XREngine.Rendering
             bool integral,
             bool alignClientSourceToPowerOf2 = false)
         {
-            BindingName = bindingName;
+            AttributeName = bindingName;
             Target = target;
 
             _componentType = componentType;
@@ -151,7 +150,7 @@ namespace XREngine.Rendering
             EBufferTarget target,
             bool integral)
         {
-            BindingName = bindingName;
+            AttributeName = bindingName;
             Target = target;
             _integral = integral;
         }
@@ -170,8 +169,8 @@ namespace XREngine.Rendering
         /// If the buffer is not mapped, any updates will have to be pushed to the GPU using PushData or PushSubData.
         /// </summary>
         [YamlIgnore]
-        public List<AbstractRenderAPIObject> ActivelyMapping { get; } = [];
-
+        public List<IApiDataBuffer> ActivelyMapping { get; } = [];
+        
         private bool _padEndingToVec4 = true;
         public bool PadEndingToVec4
         {
@@ -190,6 +189,9 @@ namespace XREngine.Rendering
             get => _mapped;
             set => SetField(ref _mapped, value);
         }
+
+        public IEnumerable<VoidPtr> GetMappedAddresses()
+            => ActivelyMapping.Select(x => x.GetMappedAddress()).Where(x => x.HasValue).Select(x => x!.Value);
 
         private EBufferMapStorageFlags _storageFlags = EBufferMapStorageFlags.Write | EBufferMapStorageFlags.Persistent | EBufferMapStorageFlags.Coherent | EBufferMapStorageFlags.ClientStorage;
         public EBufferMapStorageFlags StorageFlags
@@ -251,7 +253,10 @@ namespace XREngine.Rendering
         }
 
         private DataSource? _clientSideSource = null;
-        public DataSource? Source
+        /// <summary>
+        /// The data buffer stored on the CPU side.
+        /// </summary>
+        public DataSource? ClientSideSource
         {
             get => _clientSideSource;
             set => SetField(ref _clientSideSource, value);
@@ -267,11 +272,18 @@ namespace XREngine.Rendering
             set => SetField(ref _integral, value);
         }
 
-        private string _bindingName = string.Empty;
-        public string BindingName
+        private string _attributeName = string.Empty;
+        public string AttributeName
         {
-            get => _bindingName;
-            set => SetField(ref _bindingName, value);
+            get => _attributeName;
+            set => SetField(ref _attributeName, value);
+        }
+
+        private InterleavedAttribute[] _interleavedAttributeNames = [];
+        public InterleavedAttribute[] InterleavedAttributes
+        {
+            get => _interleavedAttributeNames;
+            set => SetField(ref _interleavedAttributeNames, value);
         }
 
         private uint _instanceDivisor = 0;
@@ -330,6 +342,13 @@ namespace XREngine.Rendering
         {
             get => _bindingIndexOverride;
             set => SetField(ref _bindingIndexOverride, value);
+        }
+
+        private bool _resizable = true;
+        public bool Resizable
+        {
+            get => _resizable;
+            set => SetField(ref _resizable, value);
         }
 
         //TODO: Vulkan methods
@@ -414,7 +433,7 @@ namespace XREngine.Rendering
         /// <returns>The T value at the given offset.</returns>
         [UnconditionalSuppressMessage("AOT", "IL3050:Calling members annotated with 'RequiresDynamicCodeAttribute' may break functionality when AOT compiling.", Justification = "<Pending>")]
         public T? Get<T>(uint offset) where T : struct
-            => _clientSideSource != null ? (T?)Marshal.PtrToStructure(_clientSideSource.Address + offset, typeof(T)) : default;
+            => _clientSideSource != null ? Marshal.PtrToStructure<T>(_clientSideSource.Address + offset) : default;
 
         /// <summary>
         /// Writes the struct value into the buffer at the given index.
@@ -520,22 +539,42 @@ namespace XREngine.Rendering
             => Marshal.StructureToPtr(data, _clientSideSource!.Address[index, ElementSize], true);
         public T GetDataRawAtIndex<T>(uint index) where T : struct
             => Marshal.PtrToStructure<T>(_clientSideSource!.Address[index, ElementSize]);
+
         public unsafe void SetFloat(uint index, float data)
             => ((float*)_clientSideSource!.Address.Pointer)[index] = data;
         public unsafe float GetFloat(uint index)
             => ((float*)_clientSideSource!.Address.Pointer)[index];
+        public unsafe void SetFloatAtOffset(uint offset, float data)
+            => ((float*)(_clientSideSource!.Address + offset).Pointer)[0] = data;
+        public unsafe float GetFloatAtOffset(uint offset)
+            => ((float*)(_clientSideSource!.Address + offset).Pointer)[0];
+
         public unsafe void SetVector2(uint index, Vector2 data)
             => ((Vector2*)_clientSideSource!.Address.Pointer)[index] = data;
         public unsafe Vector2 GetVector2(uint index)
             => ((Vector2*)_clientSideSource!.Address.Pointer)[index];
+        public unsafe void SetVector2AtOffset(uint offset, Vector2 data)
+            => ((Vector2*)(_clientSideSource!.Address + offset).Pointer)[0] = data;
+        public unsafe Vector2 GetVector2AtOffset(uint offset)
+            => ((Vector2*)(_clientSideSource!.Address + offset).Pointer)[0];
+
         public unsafe void SetVector3(uint index, Vector3 data)
             => ((Vector3*)_clientSideSource!.Address.Pointer)[index] = data;
         public unsafe Vector3 GetVector3(uint index)
             => ((Vector3*)_clientSideSource!.Address.Pointer)[index];
+        public unsafe void SetVector3AtOffset(uint offset, Vector3 data)
+            => ((Vector3*)(_clientSideSource!.Address + offset).Pointer)[0] = data;
+        public unsafe Vector3 GetVector3AtOffset(uint offset)
+            => ((Vector3*)(_clientSideSource!.Address + offset).Pointer)[0];
+
         public unsafe void SetVector4(uint index, Vector4 data)
             => ((Vector4*)_clientSideSource!.Address.Pointer)[index] = data;
         public unsafe Vector4 GetVector4(uint index)
             => ((Vector4*)_clientSideSource!.Address.Pointer)[index];
+        public unsafe void SetVector4AtOffset(uint offset, Vector4 data)
+            => ((Vector4*)(_clientSideSource!.Address + offset).Pointer)[0] = data;
+        public unsafe Vector4 GetVector4AtOffset(uint offset)
+            => ((Vector4*)(_clientSideSource!.Address + offset).Pointer)[0];
 
         public Remapper? SetDataRaw<T>(IList<T> list, bool remap = false) where T : struct
         {
@@ -890,5 +929,13 @@ namespace XREngine.Rendering
         }
 
         public static implicit operator VoidPtr(XRDataBuffer b) => b.Address;
+    }
+
+    public record struct InterleavedAttribute(uint? attribIndexOverride, string attributeName, uint offset, EComponentType type, uint count, bool integral)
+    {
+        public static implicit operator (uint? attribIndexOverride, string attributeName, uint offset, EComponentType type, uint count, bool integral)(InterleavedAttribute value)
+            => (value.attribIndexOverride, value.attributeName, value.offset, value.type, value.count, value.integral);
+        public static implicit operator InterleavedAttribute((uint? attribIndexOverride, string attributeName, uint offset, EComponentType type, uint count, bool integral) value)
+            => new(value.attribIndexOverride, value.attributeName, value.offset, value.type, value.count, value.integral);
     }
 }

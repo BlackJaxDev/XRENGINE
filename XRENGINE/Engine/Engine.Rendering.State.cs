@@ -79,6 +79,7 @@ namespace XREngine
 
                 public static bool HasOvrMultiViewExtension { get; internal set; } = false;
                 public static bool HasNVStereoExtension { get; internal set; } = false;
+                public static bool DebugInstanceRenderingAvailable { get; internal set; } = true;
 
                 //public static XRRenderPipelineInstance? CurrentCollectingVisiblePipeline => CollectingVisiblePipelineStack.Count > 0 ? CollectingVisiblePipelineStack.Peek() : null;
                 //public static XRRenderPipelineInstance.RenderingState? CollectingVisiblePipelineState => CurrentCollectingVisiblePipeline?.RenderState;

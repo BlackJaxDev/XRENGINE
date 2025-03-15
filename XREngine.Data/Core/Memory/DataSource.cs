@@ -17,6 +17,8 @@ namespace XREngine.Data
         [YamlIgnore]
         public VoidPtr Address { get; set; }
 
+        public static DataSource Allocate<T>(uint count, bool zeroMemory = false) where T : unmanaged
+            => new(count * (uint)Marshal.SizeOf<T>(), zeroMemory);
         public static unsafe DataSource FromArray<T>(T[] data) where T : unmanaged
         {
             DataSource source = new((uint)(data.Length * sizeof(T)));

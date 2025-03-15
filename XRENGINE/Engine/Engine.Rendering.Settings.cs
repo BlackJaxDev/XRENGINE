@@ -287,6 +287,9 @@ namespace XREngine
                     get => _physicsVisualizeSettings;
                     set => SetField(ref _physicsVisualizeSettings, value);
                 }
+                public bool PopulateVertexDataInParallel { get; set; } = true;
+                public bool ProcessMeshImportsAsynchronously { get; set; } = true;
+                public bool UseInterleavedMeshBuffer { get; set; } = true;
             }
         }
     }
