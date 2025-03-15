@@ -28,6 +28,15 @@ namespace XREngine
                 public int ThreadId { get; set; }
                 public int Depth { get; set; }
 
+                /// <summary>
+                /// Completed sub-entries that are ready to be printed.
+                /// </summary>
+                private readonly ConcurrentQueue<CodeProfilerTimer> _completedSubEntries = new();
+                /// <summary>
+                /// The currently active sub-entry that's being timed.
+                /// </summary>
+                private CodeProfilerTimer? _activeSubEntry;
+
                 public void End()
                     => EndTime = Time.Timer.Time();
 
@@ -35,38 +44,70 @@ namespace XREngine
                 public void OnPoolableReleased() { }
                 public void OnPoolableReset()
                     => StartTime = Time.Timer.Time();
+
+                public void PushEntry(CodeProfilerTimer entry)
+                {
+                    entry.Depth = Depth + 1;
+                    if (_activeSubEntry is null)
+                        _activeSubEntry = entry;
+                    else
+                        _activeSubEntry.PushEntry(entry);
+                }
+
+                public void PopEntry(CodeProfilerTimer entry)
+                {
+                    if (_activeSubEntry == entry)
+                    {
+                        _activeSubEntry = null;
+                        _completedSubEntries.Enqueue(entry);
+                    }
+                    else
+                    {
+                        _activeSubEntry?.PopEntry(entry);
+                    }
+                }
+
+                internal void PrintSubEntries(StringBuilder sb, ResourcePool<CodeProfilerTimer> timerPool, float debugOutputMinElapsedMs)
+                {
+                    foreach (var entry in _completedSubEntries)
+                    {
+                        string indent = new(' ', entry.Depth * 2);
+                        if (entry.ElapsedMs >= debugOutputMinElapsedMs)
+                        {
+                            sb.Append($"{indent}{entry.Name} took {FormatMs(entry.ElapsedMs)}\n");
+                            entry.PrintSubEntries(sb, timerPool, debugOutputMinElapsedMs);
+                        }
+                        timerPool.Release(entry);
+                    }
+                }
             }
 
             public bool EnableFrameLogging { get; set; } = true;
             public float DebugOutputMinElapsedMs { get; set; } = 1.0f;
 
-            public ConcurrentDictionary<int, ConcurrentBag<CodeProfilerTimer>> FrameLog { get; } = [];
-            private readonly ConcurrentDictionary<int, int> _depth = [];
-            
+            public ConcurrentDictionary<int, CodeProfilerTimer> RootEntriesPerThread { get; } = [];
+            private ConcurrentQueue<CodeProfilerTimer> _completedEntriesPrinting = [];
+            private ConcurrentQueue<CodeProfilerTimer> _completedEntries = [];
+
             public void ClearFrameLog()
             {
                 StringBuilder sb = new();
-                foreach (var queue in FrameLog)
+                _completedEntriesPrinting.Clear();
+                _completedEntriesPrinting = Interlocked.Exchange(ref _completedEntries, _completedEntriesPrinting);
+                foreach (var entry in _completedEntriesPrinting)
                 {
-                    if (queue.Value.IsEmpty)
-                        continue;
-                    
-                    //sb.Append($"Frame log for thread with tid {queue.Key}:\n");
-                    var bag = queue.Value;
-                    var sorted = bag.OrderBy(x => x.StartTime).ThenBy(x => x.Depth);
-                    foreach (var log in sorted)
+                    string indent = new(' ', entry.Depth * 2);
+                    if (entry.ElapsedMs >= DebugOutputMinElapsedMs)
                     {
-                        string indent = new(' ', log.Depth * 2);
-                        if (log.ElapsedMs >= DebugOutputMinElapsedMs)
-                            sb.Append($"{indent}{log.Name} took {FormatMs(log.ElapsedMs)}\n");
-                        _timerPool.Release(log);
+                        sb.Append($"{indent}{entry.Name} took {FormatMs(entry.ElapsedMs)}\n");
+                        entry.PrintSubEntries(sb, _timerPool, DebugOutputMinElapsedMs);
                     }
-                    string logStr = sb.ToString();
-                    if (!string.IsNullOrWhiteSpace(logStr))
-                        Debug.Out(logStr);
-                    sb.Clear();
+                    _timerPool.Release(entry);
                 }
-                FrameLog.Clear();
+                string logStr = sb.ToString();
+                if (!string.IsNullOrWhiteSpace(logStr))
+                    Debug.Out(logStr);
+                sb.Clear();
             }
 
             private static string FormatMs(float elapsedMs)
@@ -79,12 +120,31 @@ namespace XREngine
             }
 
             private void PushEntry(CodeProfilerTimer entry)
-                => _depth.AddOrUpdate(entry.ThreadId, 1, (_, depth) => depth + 1);
+            {
+                RootEntriesPerThread.AddOrUpdate(
+                    entry.ThreadId, //key
+                    entry, //add
+                    (tid, rootEntry) => //update
+                    {
+                        rootEntry.PushEntry(entry);
+                        return rootEntry;
+                    });
+            }
+
             private void PopEntry(CodeProfilerTimer entry)
             {
                 entry.End();
-                entry.Depth = _depth.AddOrUpdate(entry.ThreadId, 0, (_, depth) => depth - 1);
-                FrameLog.GetOrAdd(entry.ThreadId, _ => []).Add(entry);
+
+                if (!RootEntriesPerThread.TryGetValue(entry.ThreadId, out var rootEntry))
+                    return;
+
+                if (rootEntry != entry)
+                    rootEntry.PopEntry(entry);
+                else
+                {
+                    RootEntriesPerThread.TryRemove(entry.ThreadId, out _);
+                    _completedEntries.Enqueue(entry);
+                }
             }
 
             private readonly ResourcePool<CodeProfilerTimer> _timerPool = new(() => new CodeProfilerTimer());

@@ -100,14 +100,34 @@ namespace XREngine.Rendering
             Matrix4x4? dataTransform,
             bool parallel)
         {
-            int len = firstAppearanceArray?.Length ?? sourceList.Count;
-            using var t = Engine.Profiler.Start($"PopulateVertexData (remapped): {len} {(parallel ? "parallel" : "sequential")}");
+            int count = firstAppearanceArray?.Length ?? sourceList.Count;
+            using var t = Engine.Profiler.Start($"PopulateVertexData (remapped): {count} {(parallel ? "parallel" : "sequential")}");
+            var actions = vertexActions as DelVertexAction[] ?? [.. vertexActions];
 
             if (parallel)
-                Parallel.For(0, len, i => SetVertexData(i, vertexActions, sourceList, firstAppearanceArray, dataTransform));
+            {
+                Parallel.For(0, count, i =>
+                {
+                    int x = firstAppearanceArray?[i] ?? i;
+                    Vertex vtx = sourceList[x];
+                    for (int j = 0, len = actions.Length; j < len; j++)
+                    {
+                        actions[j].Invoke(this, i, x, vtx, dataTransform);
+                    }
+                });
+            }
             else
-                for (int i = 0; i < len; ++i)
-                    SetVertexData(i, vertexActions, sourceList, firstAppearanceArray, dataTransform);
+            {
+                for (int i = 0; i < count; i++)
+                {
+                    int x = firstAppearanceArray?[i] ?? i;
+                    Vertex vtx = sourceList[x];
+                    for (int j = 0, len = actions.Length; j < len; j++)
+                    {
+                        actions[j].Invoke(this, i, x, vtx, dataTransform);
+                    }
+                }
+            }
         }
 
         private void PopulateVertexData(
@@ -118,40 +138,32 @@ namespace XREngine.Rendering
             bool parallel)
         {
             using var t = Engine.Profiler.Start($"PopulateVertexData: {count} {(parallel ? "parallel" : "sequential")}");
+            // Cache the vertex actions array so we don't enumerate repeatedly
+            var actions = vertexActions as DelVertexAction[] ?? [.. vertexActions];
 
             if (parallel)
-                Parallel.For(0, count, i => SetVertexData(i, vertexActions, sourceList, dataTransform));
+            {
+                Parallel.For(0, count, i =>
+                {
+                    var vtx = sourceList[i];
+                    // Inline loop over cached actions
+                    for (int j = 0, len = actions.Length; j < len; j++)
+                    {
+                        actions[j].Invoke(this, i, i, vtx, dataTransform);
+                    }
+                });
+            }
             else
-                for (int i = 0; i < count; ++i)
-                    SetVertexData(i, vertexActions, sourceList, dataTransform);
-        }
-
-        private void SetVertexData(
-            int i,
-            IEnumerable<DelVertexAction> vertexActions,
-            List<Vertex> sourceList,
-            int[]? remapArray,
-            Matrix4x4? dataTransform)
-        {
-            using var t = Engine.Profiler.Start();
-
-            int x = remapArray?[i] ?? i;
-            Vertex vtx = sourceList[x];
-            foreach (var action in vertexActions)
-                action.Invoke(this, i, x, vtx, dataTransform);
-        }
-
-        private void SetVertexData(
-            int i,
-            IEnumerable<DelVertexAction> vertexActions,
-            List<Vertex> sourceList,
-            Matrix4x4? dataTransform)
-        {
-            //using var t = Engine.Profiler.Start();
-
-            Vertex vtx = sourceList[i];
-            foreach (var action in vertexActions)
-                action.Invoke(this, i, i, vtx, dataTransform);
+            {
+                for (int i = 0; i < count; i++)
+                {
+                    var vtx = sourceList[i];
+                    for (int j = 0, len = actions.Length; j < len; j++)
+                    {
+                        actions[j].Invoke(this, i, i, vtx, dataTransform);
+                    }
+                }
+            }
         }
 
         private void InitMeshBuffers(
@@ -1506,7 +1518,7 @@ namespace XREngine.Rendering
 
             int boneIndex = 0;
             Dictionary<TransformBase, int> boneToIndexTable = [];
-            MaxWeightCount = 0;
+            _maxWeightCount = 0;
             for (int i = 0; i < boneCount; i++)
             {
                 Bone bone = mesh.Bones[i];
@@ -1524,7 +1536,7 @@ namespace XREngine.Rendering
 
                 //Dispose of the imported offset matrix and just use the initially-calculated inverse bind matrix (bind pose)
                 Matrix4x4 invBind = transform.InverseBindMatrix; //bone.OffsetMatrix.Transposed();
-
+                
                 invBindMatrices.Add(transform!, invBind);
 
                 int weightCount = bone.VertexWeightCount;
@@ -1548,7 +1560,7 @@ namespace XREngine.Rendering
                         }
 
                         sourceList[newId].Weights ??= wpv;
-                        MaxWeightCount = Math.Max(MaxWeightCount, wpv.Count);
+                        _maxWeightCount = Math.Max(MaxWeightCount, wpv.Count);
                     }
                 }
 
@@ -1568,14 +1580,15 @@ namespace XREngine.Rendering
                 PopulateSkinningBuffers(boneToIndexTable, weightsPerVertex);
         }
 
+        private int _maxWeightCount = 0;
         /// <summary>
         /// This is the maximum number of weights used for one or more vertices.
         /// </summary>
-        public int MaxWeightCount { get; private set; } = 0;
+        public int MaxWeightCount => _maxWeightCount;
 
         private void PopulateSkinningBuffers(Dictionary<TransformBase, int> boneToIndexTable, Dictionary<TransformBase, (float weight, Matrix4x4 invBindMatrix)>?[] weightsPerVertex)
         {
-            using var timer = Engine.Profiler.Start();
+            //using var timer = Engine.Profiler.Start();
 
             uint vertCount = (uint)VertexCount;
             bool intVarType = Engine.Rendering.Settings.UseIntegerUniformsInShaders;
@@ -1593,144 +1606,282 @@ namespace XREngine.Rendering
             {
                 BoneWeightOffsets = new XRDataBuffer(ECommonBufferType.BoneMatrixOffset.ToString(), EBufferTarget.ArrayBuffer, vertCount, indexVarType, 1, false, intVarType);
                 BoneWeightCounts = new XRDataBuffer(ECommonBufferType.BoneMatrixCount.ToString(), EBufferTarget.ArrayBuffer, vertCount, indexVarType, 1, false, intVarType);
-            }
+    
+                BoneWeightIndices = new XRDataBuffer($"{ECommonBufferType.BoneMatrixIndices}Buffer", EBufferTarget.ShaderStorageBuffer, true);
+                Buffers.Add(BoneWeightIndices.AttributeName, BoneWeightIndices);
 
-            PopulateWeightBuffers(boneToIndexTable, weightsPerVertex, optimizeTo4Weights, out List<int> boneIndices, out List<float> boneWeights);
+                BoneWeightValues = new XRDataBuffer($"{ECommonBufferType.BoneMatrixWeights}Buffer", EBufferTarget.ShaderStorageBuffer, false);
+                Buffers.Add(BoneWeightValues.AttributeName, BoneWeightValues);
+            }
 
             Buffers.Add(BoneWeightOffsets.AttributeName, BoneWeightOffsets);
             Buffers.Add(BoneWeightCounts.AttributeName, BoneWeightCounts);
 
-            if (!optimizeTo4Weights)
-            {
-                if (intVarType)
-                    BoneWeightIndices = Buffers.SetBufferRaw(boneIndices, $"{ECommonBufferType.BoneMatrixIndices}Buffer", false, true, false, 0, EBufferTarget.ShaderStorageBuffer);
-                else
-                    BoneWeightIndices = Buffers.SetBufferRaw(boneIndices.Select(x => (float)x).ToArray(), $"{ECommonBufferType.BoneMatrixIndices}Buffer", false, false, false, 0, EBufferTarget.ShaderStorageBuffer);
-                BoneWeightValues = Buffers.SetBufferRaw(boneWeights, $"{ECommonBufferType.BoneMatrixWeights}Buffer", false, false, false, 0, EBufferTarget.ShaderStorageBuffer);
-            }
+            PopulateWeightBuffers(boneToIndexTable, weightsPerVertex, optimizeTo4Weights);
         }
 
-        private void PopulateWeightBuffers(
+        /// <summary>
+        /// Populates bone weight buffers in parallel for skinning with more than 4 weights per vertex.
+        /// </summary>
+        /// <param name="boneToIndexTable"></param>
+        /// <param name="weightsPerVertex"></param>
+        private unsafe void PopulateUnoptWeightsParallel(
             Dictionary<TransformBase, int> boneToIndexTable,
-            Dictionary<TransformBase, (float weight, Matrix4x4 invBindMatrix)>?[] weightsPerVertex,
-            bool optimizeTo4Weights,
-            out List<int> boneIndices,
-            out List<float> boneWeights)
+            Dictionary<TransformBase, (float weight, Matrix4x4 invBindMatrix)>?[] weightsPerVertex)
         {
-            using var timer = Engine.Profiler.Start();
+            using var t = Engine.Profiler.Start();
 
-            MaxWeightCount = 0;
-            boneIndices = [];
-            boneWeights = [];
-            int offset = 0;
+            int vertexCount = VertexCount;
+            // Arrays to hold per-vertex count and temporary storage per vertex.
+            uint[] counts = new uint[vertexCount];
+            // Temporary storage for indices and weights computed per vertex.
+            List<int>[] localBoneIndices = new List<int>[vertexCount];
+            List<float>[] localBoneWeights = new List<float>[vertexCount];
             bool intVarType = Engine.Rendering.Settings.UseIntegerUniformsInShaders;
-            for (uint vertexIndex = 0; vertexIndex < VertexCount; ++vertexIndex)
+
+            // Process each vertex in parallel.
+            void Fill(int vertexIndex)
             {
                 var weightGroup = weightsPerVertex[vertexIndex];
                 if (weightGroup is null)
                 {
-                    Debug.Out($"Vertex {vertexIndex} has no weights.");
+                    counts[vertexIndex] = 0;
+                    localBoneIndices[vertexIndex] = [];
+                    localBoneWeights[vertexIndex] = [];
                 }
+                else
+                {
+                    // Normalize weights before processing.
+                    VertexWeightGroup.Normalize(weightGroup);
+                    int count = weightGroup.Count;
+                    counts[vertexIndex] = (uint)count;
+                    List<int> indicesList = new(count);
+                    List<float> weightsList = new(count);
+                    foreach (var pair in weightGroup)
+                    {
+                        int bIndex = boneToIndexTable[pair.Key];
+                        float bWeight = pair.Value.weight;
+                        if (bIndex < 0)
+                        {
+                            bIndex = -1;
+                            bWeight = 0.0f;
+                        }
+                        // +1 because 0 is reserved for identity.
+                        indicesList.Add(bIndex + 1);
+                        weightsList.Add(bWeight);
+                    }
+                    localBoneIndices[vertexIndex] = indicesList;
+                    localBoneWeights[vertexIndex] = weightsList;
+                    // Thread-safe update of maximum weight count.
+                    Interlocked.Exchange(ref _maxWeightCount, Math.Max(MaxWeightCount, count));
+                }
+            }
+            Parallel.For(0, vertexCount, Fill);
 
+            // Compute prefix-sum offsets sequentially.
+            uint offset = 0u;
+            XRDataBuffer offsetsBuf = BoneWeightOffsets!;
+            XRDataBuffer countsBuf = BoneWeightCounts!;
+
+            // Write the computed offsets and counts to the weight buffers.
+            for (int vertexIndex = 0; vertexIndex < vertexCount; vertexIndex++)
+            {
+                uint count = counts[vertexIndex];
+                if (intVarType)
+                {
+                    ((uint*)offsetsBuf.Address)[vertexIndex] = offset;
+                    ((uint*)countsBuf.Address)[vertexIndex] = count;
+                }
+                else
+                {
+                    ((float*)offsetsBuf.Address)[vertexIndex] = offset;
+                    ((float*)countsBuf.Address)[vertexIndex] = count;
+                }
+                offset += count;
+            }
+
+            // Assemble global boneIndices and boneWeights lists sequentially.
+            BoneWeightIndices!.Allocate<int>(offset);
+            BoneWeightValues!.Allocate<int>(offset);
+            offset = 0u;
+
+            for (int i = 0; i < vertexCount; i++)
+            {
+                uint count = counts[i];
+                if (intVarType)
+                {
+                    for (int j = 0; j < count; j++)
+                    {
+                        ((int*)BoneWeightIndices.Address)[offset] = localBoneIndices[i][j];
+                        ((float*)BoneWeightValues.Address)[offset] = localBoneWeights[i][j];
+                        offset++;
+                    }
+                }
+                else
+                {
+                    for (int j = 0; j < count; j++)
+                    {
+                        ((float*)BoneWeightIndices.Address)[offset] = localBoneIndices[i][j];
+                        ((float*)BoneWeightValues.Address)[offset] = localBoneWeights[i][j];
+                        offset++;
+                    }
+                }
+            }
+        }
+        private unsafe void PopulateWeightBuffers(
+            Dictionary<TransformBase, int> boneToIndexTable,
+            Dictionary<TransformBase, (float weight, Matrix4x4 invBindMatrix)>?[] weightsPerVertex,
+            bool optimizeTo4Weights)
+        {
+            _maxWeightCount = 0;
+            if (optimizeTo4Weights)
+                PopulateOptWeightsParallel(boneToIndexTable, weightsPerVertex);
+            else
+                PopulateUnoptWeightsParallel(boneToIndexTable, weightsPerVertex);
+        }
+
+        private unsafe void PopulateUnoptWeightsSequential(
+            Dictionary<TransformBase, int> boneToIndexTable,
+            Dictionary<TransformBase, (float weight, Matrix4x4 invBindMatrix)>?[] weightsPerVertex)
+        {
+            using var t = Engine.Profiler.Start();
+
+            bool intVarType = Engine.Rendering.Settings.UseIntegerUniformsInShaders;
+            int vertexCount = VertexCount;
+            var weightOffsets = BoneWeightOffsets;
+            var weightCounts = BoneWeightCounts;
+            List<int> boneIndices = [];
+            List<float> boneWeights = [];
+            int offset = 0;
+            float* offsetData = (float*)weightOffsets!.Address;
+            float* countData = (float*)weightCounts!.Address;
+            int* offsetDataInt = (int*)weightOffsets!.Address;
+            int* countDataInt = (int*)weightCounts!.Address;
+
+            // Sequential path when not optimizing to 4 weights.
+            for (int vertexIndex = 0; vertexIndex < vertexCount; vertexIndex++)
+            {
+                var weightGroup = weightsPerVertex[vertexIndex];
                 if (weightGroup is null)
                 {
                     if (intVarType)
                     {
-                        if (optimizeTo4Weights)
-                        {
-                            BoneWeightOffsets?.Set(vertexIndex, new IVector4());
-                            BoneWeightCounts?.Set(vertexIndex, new Vector4());
-                        }
-                        else
-                        {
-                            BoneWeightOffsets?.Set(vertexIndex, offset);
-                            BoneWeightCounts?.Set(vertexIndex, 0);
-                        }
+                        offsetDataInt[vertexIndex] = offset;
+                        countDataInt[vertexIndex] = 0;
                     }
                     else
                     {
-                        if (optimizeTo4Weights)
-                        {
-                            BoneWeightOffsets?.Set(vertexIndex, new Vector4());
-                            BoneWeightCounts?.Set(vertexIndex, new Vector4());
-                        }
-                        else
-                        {
-                            BoneWeightOffsets?.Set(vertexIndex, (float)offset);
-                            BoneWeightCounts?.Set(vertexIndex, 0.0f);
-                        }
+                        offsetData[vertexIndex] = (float)offset;
+                        countData[vertexIndex] = 0.0f;
                     }
-                }
-                else if (optimizeTo4Weights)
-                {
-                    VertexWeightGroup.Optimize(weightGroup, 4);
-                    int count = weightGroup.Count;
-                    MaxWeightCount = Math.Max(MaxWeightCount, count);
-
-                    IVector4 indices = new();
-                    Vector4 weights = new();
-                    int i = 0;
-                    foreach (var pair in weightGroup)
-                    {
-                        int boneIndex = boneToIndexTable[pair.Key];
-                        float boneWeight = pair.Value.weight;
-                        if (boneIndex < 0)
-                        {
-                            boneIndex = -1;
-                            boneWeight = 0.0f;
-                        }
-                        indices[i] = boneIndex + 1; //+1 because 0 is reserved for the identity matrix
-                        weights[i] = boneWeight;
-                        i++;
-                    }
-
-                    if (intVarType)
-                        BoneWeightOffsets?.Set(vertexIndex, indices);
-                    else
-                        BoneWeightOffsets?.Set(vertexIndex, new Vector4(indices.X, indices.Y, indices.Z, indices.W));
-                    BoneWeightCounts?.Set(vertexIndex, weights);
                 }
                 else
                 {
                     VertexWeightGroup.Normalize(weightGroup);
                     int count = weightGroup.Count;
-                    MaxWeightCount = Math.Max(MaxWeightCount, count);
-
+                    _maxWeightCount = Math.Max(MaxWeightCount, count);
                     foreach (var pair in weightGroup)
                     {
-                        int boneIndex = boneToIndexTable[pair.Key];
-                        float boneWeight = pair.Value.weight;
-                        if (boneIndex < 0)
+                        int bIndex = boneToIndexTable[pair.Key];
+                        float bWeight = pair.Value.weight;
+                        if (bIndex < 0)
                         {
-                            boneIndex = -1;
-                            boneWeight = 0.0f;
+                            bIndex = -1;
+                            bWeight = 0.0f;
                         }
-
-                        boneIndices.Add(boneIndex + 1); //+1 because 0 is reserved for the identity matrix
-                        boneWeights.Add(boneWeight);
+                        boneIndices.Add(bIndex + 1); // +1 because 0 is reserved for identity.
+                        boneWeights.Add(bWeight);
                     }
                     if (intVarType)
                     {
-                        BoneWeightOffsets?.Set(vertexIndex, offset);
-                        BoneWeightCounts?.Set(vertexIndex, count);
+                        offsetDataInt[vertexIndex] = offset;
+                        countDataInt[vertexIndex] = count;
                     }
                     else
                     {
-                        BoneWeightOffsets?.Set(vertexIndex, (float)offset);
-                        BoneWeightCounts?.Set(vertexIndex, (float)count);
+                        offsetData[vertexIndex] = (float)offset;
+                        countData[vertexIndex] = (float)count;
                     }
                     offset += count;
                 }
             }
 
-            //if (MaxWeightCount > 4)
-            //    Debug.Out($"Max weight count: {MaxWeightCount}");
+            BoneWeightIndices!.SetDataRaw(boneIndices.ToArray());
+            BoneWeightValues!.SetDataRaw(boneWeights.ToArray());
+        }
 
-            //while (boneIndices.Count % 4 != 0)
-            //{
-            //    boneIndices.Add(-1);
-            //    boneWeights.Add(0.0f);
-            //}
+        private unsafe void PopulateOptWeightsParallel(
+            Dictionary<TransformBase, int> boneToIndexTable,
+            Dictionary<TransformBase, (float weight, Matrix4x4 invBindMatrix)>?[] weightsPerVertex)
+        {
+            using var t = Engine.Profiler.Start();
+
+            bool intVarType = Engine.Rendering.Settings.UseIntegerUniformsInShaders;
+            int vertexCount = VertexCount;
+            var weightOffsets = BoneWeightOffsets!;
+            var weightCounts = BoneWeightCounts!;
+
+            // Parallelize since each vertex is independent in the optimized path.
+            void Fill(int vertexIndex)
+            {
+                var weightGroup = weightsPerVertex[vertexIndex];
+                int* offsetInts = (int*)weightOffsets.Address;
+                float* countFloats = (float*)weightCounts.Address;
+                // Each vertex uses 4 ints (for indices) and 4 floats (for weights)
+                int baseIndex = vertexIndex * 4;
+
+                if (weightGroup is null)
+                {
+                    // Set default values: all zeros.
+                    offsetInts[baseIndex + 0] = 0;
+                    offsetInts[baseIndex + 1] = 0;
+                    offsetInts[baseIndex + 2] = 0;
+                    offsetInts[baseIndex + 3] = 0;
+                    countFloats[baseIndex + 0] = 0.0f;
+                    countFloats[baseIndex + 1] = 0.0f;
+                    countFloats[baseIndex + 2] = 0.0f;
+                    countFloats[baseIndex + 3] = 0.0f;
+                }
+                else
+                {
+                    // Optimize weight group to at most 4 weights.
+                    VertexWeightGroup.Optimize(weightGroup, 4);
+                    int count = weightGroup.Count;
+                    int current, computed;
+                    do
+                    {
+                        current = _maxWeightCount;
+                        computed = Math.Max(current, count);
+                    }
+                    while (Interlocked.CompareExchange(ref _maxWeightCount, computed, current) != current);
+
+                    // Prepare local storage for up to four indices and weights.
+                    int i = 0;
+                    foreach (var pair in weightGroup)
+                    {
+                        int bIndex = boneToIndexTable[pair.Key];
+                        float bWeight = pair.Value.weight;
+                        if (bIndex < 0)
+                        {
+                            bIndex = -1;
+                            bWeight = 0.0f;
+                        }
+                        // +1 because 0 is reserved for identity.
+                        int value = bIndex + 1;
+                        offsetInts[baseIndex + i] = value;
+                        countFloats[baseIndex + i] = bWeight;
+                        i++;
+                    }
+                    // Fill remaining slots with zeros.
+                    while (i < 4)
+                    {
+                        offsetInts[baseIndex + i] = 0;
+                        countFloats[baseIndex + i] = 0.0f;
+                        i++;
+                    }
+                }
+            }
+            Parallel.For(0, vertexCount, Fill);
         }
 
         private static unsafe bool TryGetTransform(Dictionary<string, List<SceneNode>> nodeCache, string name, out TransformBase? transform)

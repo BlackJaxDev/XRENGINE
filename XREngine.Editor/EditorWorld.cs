@@ -41,8 +41,8 @@ public static class EditorWorld
     public const bool VisualizeQuadtree = false;
     public const bool Physics = true;
     public const int PhysicsBallCount = 10; //The number of physics balls to add to the scene.
-    public const bool DirLight = false;
-    public const bool SpotLight = true;
+    public const bool DirLight = true;
+    public const bool SpotLight = false;
     public const bool DirLight2 = false;
     public const bool PointLight = false;
     public const bool SoundNode = false;
