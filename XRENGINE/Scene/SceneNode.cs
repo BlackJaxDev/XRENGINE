@@ -402,6 +402,8 @@ namespace XREngine.Scene
         /// <typeparam name="T"></typeparam>
         public T? AddComponent<T>(string? name = null) where T : XRComponent
         {
+            using var t = Engine.Profiler.Start();
+
             var comp = XRComponent.New<T>(this);
             comp.World = World;
             comp.Name = name;
@@ -535,6 +537,8 @@ namespace XREngine.Scene
 
         private void AddComponent(XRComponent comp)
         {
+            using var t = Engine.Profiler.Start();
+
             lock (Components)
             {
                 ComponentsInternal.Add(comp);
@@ -708,6 +712,14 @@ namespace XREngine.Scene
             lock (Components)
             {
                 return ComponentsInternal.FirstOrDefault(type.IsInstanceOfType);
+            }
+        }
+
+        public XRComponent? GetComponent(string typeName)
+        {
+            lock (Components)
+            {
+                return ComponentsInternal.FirstOrDefault(x => string.Equals(x.GetType().Name, typeName));
             }
         }
 

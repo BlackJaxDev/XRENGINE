@@ -8,21 +8,19 @@ namespace XREngine.Data.Animation
         private IAnimationState? _currentState;
 
         public StateMachine()
-        {
-            _states = new ConcurrentDictionary<string, IAnimationState>();
-        }
+            => _states = new ConcurrentDictionary<string, IAnimationState>();
 
         public void AddState(IAnimationState state)
             => _states.TryAdd(state.Name, state);
 
         public void SwitchState(string newStateName)
         {
-            if (_states.TryGetValue(newStateName, out IAnimationState? newState))
-            {
-                _currentState?.Exit();
-                _currentState = newState;
-                _currentState.Enter();
-            }
+            if (!_states.TryGetValue(newStateName, out IAnimationState? newState))
+                return;
+            
+            _currentState?.Exit();
+            _currentState = newState;
+            _currentState.Enter();
         }
 
         public IAnimationState? RemoveState(string stateName)
@@ -30,6 +28,7 @@ namespace XREngine.Data.Animation
             _states.Remove(stateName, out IAnimationState? state);
             return state;
         }
+
         public bool RemoveState(string stateName, out IAnimationState? state)
             => _states.Remove(stateName, out state);
 

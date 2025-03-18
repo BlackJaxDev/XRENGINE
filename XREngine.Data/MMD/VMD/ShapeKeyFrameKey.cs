@@ -1,6 +1,10 @@
 ﻿namespace XREngine.Data.MMD
 {
-    public class ShapeKeyFrameKey : IBinaryDataSource
+    public interface IFramesKey
+    {
+        uint FrameNumber { get; }
+    }
+    public class ShapeKeyFrameKey : IBinaryDataSource, IFramesKey
     {
         public uint FrameNumber { get; private set; }
         public float Weight { get; private set; }

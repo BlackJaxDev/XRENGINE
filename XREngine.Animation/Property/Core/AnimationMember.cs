@@ -1,4 +1,5 @@
 ﻿using System.Reflection;
+using XREngine.Data.Animation;
 using XREngine.Data.Core;
 
 namespace XREngine.Animation
@@ -16,12 +17,12 @@ namespace XREngine.Animation
         /// </summary>
         /// <param name="memberName">The name of this property and optionally sub-properties separated by a period.</param>
         /// <param name="children">Any sub-properties this property owns and you want to animate.</param>
-        public AnimationMember(string memberName, params AnimationMember[] children) : this()
+        public AnimationMember(string memberName, EAnimationMemberType memberType, params AnimationMember[] children) : this()
         {
             int splitIndex = memberName.IndexOf('.');
             if (splitIndex >= 0)
             {
-                string remainingPath = memberName.Substring(splitIndex + 1, memberName.Length - splitIndex - 1);
+                string remainingPath = memberName[(splitIndex + 1)..];
                 _children.Add(new AnimationMember(remainingPath));
                 memberName = memberName[..splitIndex];
             }
@@ -29,7 +30,7 @@ namespace XREngine.Animation
                 _children.AddRange(children);
             _memberName = memberName;
             Animation = null;
-            MemberType = EAnimationMemberType.Property;
+            MemberType = memberType;
         }
         /// <summary>
         /// Constructor to create a subtree with an animation attached at this level.
@@ -37,14 +38,14 @@ namespace XREngine.Animation
         /// <param name="memberName">The name of the field, property or method to animate.</param>
         /// <param name="memberType"></param>
         /// <param name="animation"></param>
-        public AnimationMember(string memberName, EAnimationMemberType memberType, BasePropAnim animation) : this()
+        public AnimationMember(string memberName, EAnimationMemberType memberType = EAnimationMemberType.Property, BasePropAnim? animation = null) : this()
         {
             if (memberType != EAnimationMemberType.Property)
             {
                 int splitIndex = memberName.IndexOf('.');
                 if (splitIndex >= 0)
                 {
-                    string remainingPath = memberName.Substring(splitIndex + 1, memberName.Length - splitIndex - 1);
+                    string remainingPath = memberName[(splitIndex + 1)..];
                     _children.Add(new AnimationMember(remainingPath));
                     memberName = memberName[..splitIndex];
                 }
@@ -54,13 +55,15 @@ namespace XREngine.Animation
             MemberType = memberType;
         }
 
+        private const BindingFlags BindingFlag = BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic;
+
         //Cached at runtime
         private PropertyInfo? _propertyCache;
         private MethodInfo? _methodCache;
         private FieldInfo? _fieldCache;
         internal Action<object?, float>? _tick = null;
 
-        private BasePropAnim? _animation;
+        private BasePropAnim? _animation = null;
         public BasePropAnim? Animation
         {
             get => _animation;
@@ -70,15 +73,15 @@ namespace XREngine.Animation
         private readonly EventList<AnimationMember> _children = [];
         public EventList<AnimationMember> Children => _children;
 
-
         private string _memberName = string.Empty;
         public string MemberName
         {
             get => _memberName;
-            set => _memberName = value;
+            set => SetField(ref _memberName, value);
         }
 
-        public object[] MethodArguments { get; } = new object[1];
+        //For now, methods can only have one animated argument (but can still have multiple non-animated arguments)
+        public object[] MethodArguments { get; set; } = new object[1];
         public int MethodValueArgumentIndex { get; set; } = 0;
 
         //TODO: resolve _memberType as a new object animated
@@ -96,6 +99,13 @@ namespace XREngine.Animation
             private set => SetField(ref _memberNotFound, value);
         }
 
+        private bool _cacheReturnValue = false;
+        public bool CacheReturnValue
+        {
+            get => _cacheReturnValue;
+            set => SetField(ref _cacheReturnValue, value);
+        }
+
         protected override void OnPropertyChanged<T>(string? propName, T prev, T field)
         {
             base.OnPropertyChanged(propName, prev, field);
@@ -106,12 +116,15 @@ namespace XREngine.Animation
                     switch (_memberType)
                     {
                         case EAnimationMemberType.Field:
+                            _fieldCache = null;
                             _tick = FieldTick;
                             break;
                         case EAnimationMemberType.Property:
+                            _propertyCache = null;
                             _tick = PropertyTick;
                             break;
                         case EAnimationMemberType.Method:
+                            _methodCache = null;
                             _tick = MethodTick;
                             break;
                     }
@@ -133,8 +146,8 @@ namespace XREngine.Animation
                 member.CollectAnimations(path, animations);
         }
 
-        //TODO: determine if member is field, property or method once the object is applied
-        //No two members can share the same name
+        private object? _cachedReturnValue = null;
+
         internal void MethodTick(object? obj, float delta)
         {
             if (obj is null || MemberNotFound)
@@ -145,7 +158,7 @@ namespace XREngine.Animation
                 Type? type = obj.GetType();
                 while (type != null)
                 {
-                    if ((_methodCache = type.GetMethod(_memberName)) is null)
+                    if ((_methodCache = type.GetMethod(_memberName, BindingFlag, MethodArguments.Select(x => x.GetType()).ToArray())) is null)
                         type = type.BaseType;
                     else
                         break;
@@ -155,8 +168,41 @@ namespace XREngine.Animation
                     return;
             }
 
-            if (_methodCache is not null)
-                Animation?.Tick(obj, _methodCache, delta, MethodValueArgumentIndex, MethodArguments);
+            if (_methodCache is null)
+                return;
+
+            object? methodReturn;
+            //Set the value of the method argument and call the method
+            var animation = Animation;
+            if (animation is not null)
+            {
+                if (animation.State == EAnimationState.Playing)
+                {
+                    methodReturn = animation.SetValue(obj, _methodCache, MethodValueArgumentIndex, MethodArguments);
+                    animation.Tick(delta);
+                }
+                else
+                    methodReturn = GetMethodReturnValue(obj);
+            }
+            else
+                methodReturn = GetMethodReturnValue(obj);
+            
+            //Tick children on method return value
+            if (_children.Count > 0)
+            {
+                foreach (AnimationMember f in _children)
+                    f._tick?.Invoke(methodReturn, delta);
+            }
+
+            object? GetMethodReturnValue(object obj)
+            {
+                object? methodReturn;
+                if (CacheReturnValue)
+                    methodReturn = (_cachedReturnValue ??= _methodCache.Invoke(obj, MethodArguments));
+                else
+                    methodReturn = _methodCache.Invoke(obj, MethodArguments);
+                return methodReturn;
+            }
         }
         internal void PropertyTick(object? obj, float delta)
         {
@@ -168,7 +214,7 @@ namespace XREngine.Animation
                 Type? type = obj.GetType();
                 while (type != null)
                 {
-                    if ((_propertyCache = type.GetProperty(_memberName)) is null)
+                    if ((_propertyCache = type.GetProperty(_memberName, BindingFlag)) is null)
                         type = type.BaseType;
                     else
                         break;
@@ -178,16 +224,42 @@ namespace XREngine.Animation
                     return;
             }
 
-            if (_propertyCache is not null)
+            if (_propertyCache is null)
+                return;
+
+            object? propertyReturn;
+            //Set the value of the property and tick the animation
+            var animation = Animation;
+            if (animation is not null)
             {
-                if (Animation is not null)
-                    Animation.Tick(obj, _propertyCache, delta);
-                else
+                if (animation.State == EAnimationState.Playing)
                 {
-                    object? value = _propertyCache.GetValue(obj);
-                    foreach (AnimationMember f in _children)
-                        f._tick?.Invoke(value, delta);
+                    propertyReturn = animation.SetValue(obj, _propertyCache);
+                    animation.Tick(delta);
                 }
+                else
+                    propertyReturn = GetPropertyReturnValue(obj);
+            }
+            else
+            {
+                propertyReturn = GetPropertyReturnValue(obj);
+            }
+
+            //Tick children on property value
+            if (_children.Count > 0)
+            {
+                foreach (AnimationMember f in _children)
+                    f._tick?.Invoke(propertyReturn, delta);
+            }
+
+            object? GetPropertyReturnValue(object obj)
+            {
+                object? propertyReturn;
+                if (CacheReturnValue)
+                    propertyReturn = (_cachedReturnValue ??= _propertyCache.GetValue(obj));
+                else
+                    propertyReturn = _propertyCache.GetValue(obj);
+                return propertyReturn;
             }
         }
         internal void FieldTick(object? obj, float delta)
@@ -200,7 +272,7 @@ namespace XREngine.Animation
                 Type? type = obj.GetType();
                 while (type != null)
                 {
-                    if ((_fieldCache = type.GetField(_memberName)) is null)
+                    if ((_fieldCache = type.GetField(_memberName, BindingFlag)) is null)
                         type = type.BaseType;
                     else
                         break;
@@ -209,16 +281,38 @@ namespace XREngine.Animation
                     return;
             }
 
-            if (_fieldCache is not null)
+            if (_fieldCache is null)
+                return;
+            
+            object? fieldReturn;
+            var animation = Animation;
+            if (animation is not null)
             {
-                if (Animation is not null)
-                    Animation.Tick(obj, _fieldCache, delta);
-                else
+                if (animation.State == EAnimationState.Playing)
                 {
-                    object? value = _fieldCache.GetValue(obj);
-                    foreach (AnimationMember f in _children)
-                        f._tick?.Invoke(value, delta);
+                    fieldReturn = animation.SetValue(obj, _fieldCache);
+                    animation.Tick(delta);
                 }
+                else
+                    fieldReturn = GetFieldReturnValue(obj);
+            }
+            else
+                fieldReturn = GetFieldReturnValue(obj);
+            
+            if (_children.Count > 0)
+            {
+                foreach (AnimationMember f in _children)
+                    f._tick?.Invoke(fieldReturn, delta);
+            }
+
+            object? GetFieldReturnValue(object obj)
+            {
+                object? fieldReturn;
+                if (CacheReturnValue)
+                    fieldReturn = (_cachedReturnValue ??= _fieldCache.GetValue(obj));
+                else
+                    fieldReturn = _fieldCache.GetValue(obj);
+                return fieldReturn;
             }
         }
         /// <summary>
@@ -227,7 +321,7 @@ namespace XREngine.Animation
         /// </summary>
         /// <param name="tree">The animation tree that owns this member.</param>
         /// <returns>The total amount of animations this member and its child members contain.</returns>
-        internal int Register(AnimationTree tree)
+        internal int Register(AnimationClip tree)
         {
             bool animExists = Animation != null;
             int count = animExists ? 1 : 0;
@@ -247,7 +341,7 @@ namespace XREngine.Animation
         /// </summary>
         /// <param name="tree">The animation tree that owns this member.</param>
         /// <returns>The total amount of animations this member and its child members contain.</returns>
-        internal int Unregister(AnimationTree tree)
+        internal int Unregister(AnimationClip tree)
         {
             bool animExists = Animation != null;
             int count = animExists ? 1 : 0;

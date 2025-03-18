@@ -3,7 +3,9 @@ using System.Collections.Concurrent;
 using System.Numerics;
 using XREngine.Data.Colors;
 using XREngine.Data.Geometry;
+using XREngine.Data.Rendering;
 using XREngine.Data.Transforms.Rotations;
+using XREngine.Rendering;
 using XREngine.Rendering.Physics.Physx;
 
 namespace XREngine
@@ -71,18 +73,59 @@ namespace XREngine
                     _debugPoints.Clear();
                 }
 
+                private static XRMeshRenderer? _lineRenderer = null;
+                public static XRMeshRenderer GetLineRenderer()
+                {
+                    if (_lineRenderer is null)
+                    {
+                        XRMesh mesh = XRMesh.Create(VertexQuad.PosY());
+                        XRMaterial mat = XRMaterial.CreateUnlitColorMaterialForward(ColorF4.White);
+                        mat.RenderOptions.DepthTest.Enabled = XREngine.Rendering.Models.Materials.ERenderParamUsage.Disabled;
+                        mat.RenderOptions.CullMode = ECullMode.None;
+                        mat.EnableTransparency();
+                        _lineRenderer = new XRMeshRenderer(mesh, mat);
+                    }
+                    return _lineRenderer;
+                }
+
+                private static XRMeshRenderer? _pointRenderer = null;
+                public static XRMeshRenderer GetPointRenderer()
+                {
+                    if (_pointRenderer is null)
+                    {
+                        XRMesh mesh = XRMesh.Create(VertexQuad.PosZ());
+                        XRMaterial mat = XRMaterial.CreateUnlitColorMaterialForward(ColorF4.White);
+                        mat.RenderOptions.DepthTest.Enabled = XREngine.Rendering.Models.Materials.ERenderParamUsage.Disabled;
+                        mat.EnableTransparency();
+                        _pointRenderer = new XRMeshRenderer(mesh, mat);
+                    }
+                    return _pointRenderer;
+                }
+
                 public static void RenderShapes()
                 {
                     if (!Engine.Rendering.State.DebugInstanceRenderingAvailable)
                     {
+                        var camera = Engine.Rendering.State.RenderingCamera;
+                        var fwd = camera!.Transform.RenderForward;
+                        var up = camera!.Transform.RenderUp;
+                        var right = camera!.Transform.RenderRight;
+                        var pointSize = 0.04f;
+                        Matrix4x4 pointScale = Matrix4x4.CreateScale(pointSize);
                         foreach (var (pos, color) in _debugPoints)
                         {
-
+                            var rend = GetPointRenderer();
+                            rend.Material!.SetVector4(0, color);
+                            rend.Render(pointScale * Matrix4x4.CreateWorld(pos, fwd, up));
                         }
                         _debugPoints.Clear();
+                        var lineWidth = 0.02f;
                         foreach (var (pos0, pos1, color) in _debugLines)
                         {
-
+                            var rend = GetLineRenderer();
+                            rend.Material!.SetVector4(0, color);
+                            Matrix4x4 matrix = CalculateLineMatrix(pos0, pos1, lineWidth, fwd, up, right);
+                            rend.Render(matrix);
                         }
                         _debugLines.Clear();
                         foreach (var (pos0, pos1, pos2, color) in _debugTriangles)
@@ -98,10 +141,23 @@ namespace XREngine
                     }
                 }
 
+                private static Matrix4x4 CalculateLineMatrix(Vector3 pos0, Vector3 pos1, float lineWidth, Vector3 camForward, Vector3 camUp, Vector3 camRight)
+                {
+                    Vector3 dir = pos1 - pos0;
+                    Vector3 center = (pos0 + pos1) * 0.5f;
+                    float length = dir.Length();
+                    float scaleXY = lineWidth;
+                    float scaleZ = length;
+                    Matrix4x4 scaleMatrix = Matrix4x4.CreateScale(scaleXY, scaleXY, scaleZ);
+                    Vector3 lineUp = Vector3.Cross(dir, camRight).Normalized();
+                    Matrix4x4 rotMatrix = Matrix4x4.CreateWorld(center, dir, lineUp);
+                    return scaleMatrix * rotMatrix;
+                }
+
                 private static bool InCamera(Vector3 position)
                 {
-                    if (!Engine.Rendering.State.DebugInstanceRenderingAvailable)
-                        return false;
+                    //if (!Engine.Rendering.State.DebugInstanceRenderingAvailable)
+                    //    return false;
 
                     return true;
                     //var playerCam = Engine.State.MainPlayer.ControlledPawn?.GetCamera()?.Camera;

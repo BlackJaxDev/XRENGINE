@@ -2,6 +2,7 @@
 using System.ComponentModel;
 using System.Globalization;
 using System.Numerics;
+using XREngine.Animation;
 using XREngine.Components;
 using XREngine.Data;
 using XREngine.Data.Core;
@@ -63,7 +64,50 @@ namespace XREngine.Scene.Transforms
         public Transform(TransformBase? parent = null, EOrder order = EOrder.TRS)
             : this(Quaternion.Identity, parent, order) { }
 
-        private Vector3 _scale = Vector3.One;
+        public void SetX(float x)
+            => Translation = new Vector3(x, Translation.Y, Translation.Z);
+        public void SetY(float y)
+            => Translation = new Vector3(Translation.X, y, Translation.Z);
+        public void SetZ(float z)
+            => Translation = new Vector3(Translation.X, Translation.Y, z);
+        public void SetPitch(float pitch)
+        {
+            var r = Rotator;
+            r.Pitch = pitch;
+            Rotator = r;
+        }
+        public void SetYaw(float yaw)
+        {
+            var r = Rotator;
+            r.Yaw = yaw;
+            Rotator = r;
+        }
+        public void SetRoll(float roll)
+        {
+            var r = Rotator;
+            r.Roll = roll;
+            Rotator = r;
+        }
+        public void SetBindRelativeX(float x)
+            => Translation = new Vector3(x + _bindState.Translation.X, Translation.Y, Translation.Z);
+        public void SetBindRelativeY(float y)
+            => Translation = new Vector3(Translation.X, y + _bindState.Translation.Y, Translation.Z);
+        public void SetBindRelativeZ(float z)
+            => Translation = new Vector3(Translation.X, Translation.Y, z + _bindState.Translation.Z);
+        public void SetBindRelativeRotation(Quaternion rotation)
+            => Rotation = _bindState.Rotation * rotation;
+
+        private TransformState _state = new();
+        private TransformState _bindState = new();
+
+        public override void SaveBindState()
+        {
+            _bindState = new TransformState { Translation = Translation, Rotation = Rotation, Scale = Scale, Order = Order };
+            var localMatrix = CreateLocalMatrix();
+            BindMatrix = localMatrix * (Parent?.BindMatrix ?? Matrix4x4.Identity);
+            InverseBindMatrix = Matrix4x4.Invert(BindMatrix, out var inv) ? inv : Matrix4x4.Identity;
+        }
+
         //[TypeConverter(typeof(Vector3TypeConverter))]
         //[DefaultValue(typeof(Vector3), "1 1 1")]
         /// <summary>
@@ -71,18 +115,17 @@ namespace XREngine.Scene.Transforms
         /// </summary>
         public Vector3 Scale
         {
-            get => _scale;
-            set => SetField(ref _scale, value);
+            get => _state.Scale;
+            set => SetField(ref _state.Scale, value);
         }
 
-        private Vector3 _translation = Vector3.Zero;
         /// <summary>
         /// The local translation of this transform relative to its parent.
         /// </summary>
         public Vector3 Translation
         {
-            get => _translation;
-            set => SetField(ref _translation, value);
+            get => _state.Translation;
+            set => SetField(ref _state.Translation, value);
         }
 
         /// <summary>
@@ -95,7 +138,6 @@ namespace XREngine.Scene.Transforms
             set => Rotation = value.ToQuaternion();
         }
 
-        private Quaternion _rotation = Quaternion.Identity;
         //[DefaultValue(typeof(Quaternion), "0 0 0 1")]
         //[TypeConverter(typeof(QuaternionTypeConverter))]
         /// <summary>
@@ -103,18 +145,17 @@ namespace XREngine.Scene.Transforms
         /// </summary>
         public Quaternion Rotation
         {
-            get => _rotation;
-            set => SetField(ref _rotation, value);
+            get => _state.Rotation;
+            set => SetField(ref _state.Rotation, value);
         }
 
-        private EOrder _order = EOrder.TRS;
         /// <summary>
         /// The order of operations to calculate the final local matrix from translation, rotation and scale.
         /// </summary>
         public EOrder Order
         {
-            get => _order;
-            set => SetField(ref _order, value);
+            get => _state.Order;
+            set => SetField(ref _state.Order, value);
         }
 
         private float _smoothingSpeed = 0.4f;
@@ -178,7 +219,7 @@ namespace XREngine.Scene.Transforms
                     VerifySmoothingTick();
                     break;
                 case nameof(Order):
-                    _localMatrixGen = _order switch
+                    _localMatrixGen = Order switch
                     {
                         EOrder.RST => RST,
                         EOrder.STR => STR,
@@ -473,6 +514,25 @@ namespace XREngine.Scene.Transforms
                 Translation = translation;
         }
 
+        public void SetWorldX(float x, bool networkSmoothed = false)
+        {
+            var translation = WorldTranslation;
+            translation.X = x;
+            SetWorldTranslation(translation, networkSmoothed);
+        }
+        public void SetWorldY(float y, bool networkSmoothed = false)
+        {
+            var translation = WorldTranslation;
+            translation.Y = y;
+            SetWorldTranslation(translation, networkSmoothed);
+        }
+        public void SetWorldZ(float z, bool networkSmoothed = false)
+        {
+            var translation = WorldTranslation;
+            translation.Z = z;
+            SetWorldTranslation(translation, networkSmoothed);
+        }
+
         public Quaternion ParentWorldRotation
             => Parent?.WorldRotation ?? Quaternion.Identity;
         public Vector3 ParentWorldTranslation
@@ -482,5 +542,8 @@ namespace XREngine.Scene.Transforms
             => Quaternion.Inverse(ParentWorldRotation);
         public Vector3 ParentInverseWorldTranslation
             => Vector3.Transform(Vector3.Zero, ParentInverseWorldMatrix);
+
+        public TransformState FrameState => _state;
+        public TransformState BindState => _bindState;
     }
 }

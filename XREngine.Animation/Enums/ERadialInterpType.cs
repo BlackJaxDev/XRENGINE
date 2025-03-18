@@ -4,6 +4,6 @@
     {
         Step,
         Linear,
-        CubicBezier
+        Smooth
     }
 }

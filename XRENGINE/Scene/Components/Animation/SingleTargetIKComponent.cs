@@ -1,4 +1,5 @@
-﻿using XREngine.Components;
+﻿using System.ComponentModel;
+using XREngine.Components;
 using XREngine.Data.Colors;
 using XREngine.Data.Rendering;
 using XREngine.Rendering.Info;

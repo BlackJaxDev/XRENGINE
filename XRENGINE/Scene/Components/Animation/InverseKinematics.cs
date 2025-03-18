@@ -373,7 +373,11 @@ namespace XREngine.Scene.Components.Animation
             {
                 BoneChainItem parent = chain[i];
                 BoneChainItem child = chain[i + 1];
-                totalLength += parent.SetVectorToChild(child.WorldPosSolve);
+                var len1 = parent.SetVectorToChild(child.WorldPosSolve);
+
+                float len = parent.Transform!.BindMatrix.Translation.Distance(child.Transform!.BindMatrix.Translation);
+                parent.DistanceToChild = len;
+                totalLength += len;
             }
             return totalLength;
         }

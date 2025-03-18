@@ -37,9 +37,9 @@ namespace XREngine.Editor;
 public static class EditorWorld
 {
     //Unit testing toggles
-    public const bool VisualizeOctree = true;
+    public const bool VisualizeOctree = false;
     public const bool VisualizeQuadtree = false;
-    public const bool Physics = true;
+    public const bool Physics = false;
     public const int PhysicsBallCount = 10; //The number of physics balls to add to the scene.
     public const bool DirLight = true;
     public const bool SpotLight = false;
@@ -56,9 +56,9 @@ public static class EditorWorld
     public const bool ModelZUp = false; //If true, the model will be rotated 90 degrees around the X axis.
     public const bool AddEditorUI = true; //Adds the full editor UI to the camera. Probably don't use this one a character pawn.
     public const bool VRPawn = false; //Enables VR input and pawn.
-    public const bool CharacterPawn = true; //Enables the player to physically locomote in the world. Requires a physical floor.
+    public const bool CharacterPawn = false; //Enables the player to physically locomote in the world. Requires a physical floor.
     public const bool ThirdPersonPawn = true; //If on desktop and character pawn is enabled, this will add a third person camera instead of first person.
-    public const bool TestAnimation = true; //Adds test animations to the character pawn.
+    public const bool TestAnimation = false; //Adds test animations to the character pawn.
     public const bool PhysicsChain = false; //Adds a jiggle physics chain to the character pawn.
     public const bool TransformTool = false; //Adds the transform tool to the scene for testing dragging and rotating etc.
     public const bool AllowEditingInVR = false; //Allows the user to edit the scene from desktop in VR.
@@ -67,6 +67,7 @@ public static class EditorWorld
     public const bool Microphone = false; //Adds a microphone to the scene for testing audio capture.
     public const bool VMC = false; //Adds a VMC capture component to the avatar for testing.
     public const bool FaceMotion3D = false; //Adds a face motion 3D capture component to the avatar for testing.
+    public const bool AnimationClipVMD = true; //Imports a VMD animation clip for testing.
 
     private static readonly Queue<float> _fpsAvg = new();
     private static void TickFPS(UITextComponent t)
@@ -89,6 +90,8 @@ public static class EditorWorld
     {
         if (rootNode is null)
             return;
+
+        //Debug.Out(rootNode.PrintTree());
 
         var humanComp = rootNode.AddComponent<HumanoidComponent>()!;
         if (!VRPawn)
@@ -200,6 +203,18 @@ public static class EditorWorld
             var glasses = humanComp.SceneNode?.FindDescendant(x => x.Name?.Contains("glasses", StringComparison.InvariantCultureIgnoreCase) ?? false);
             if (glasses != null)
                 glasses.IsActiveSelf = false;
+        }
+
+        if (AnimationClipVMD)
+        {
+            var desktopDir = Environment.GetFolderPath(Environment.SpecialFolder.DesktopDirectory);
+            var clip = Engine.Assets.Load<AnimationClip>(Path.Combine(desktopDir, "test.vmd"));
+            if (clip is not null)
+            {
+                var anim = rootNode.AddComponent<AnimationClipComponent>()!;
+                anim.StartOnActivate = true;
+                anim.Animation = clip;
+            }
         }
     }
 
@@ -394,6 +409,7 @@ public static class EditorWorld
         var footTfm = footNode.SetTransform<Transform>();
         footTfm.Translation = new Vector3(0.0f, -movementComp.HalfHeight, 0.0f);
         footTfm.Scale = new Vector3(movementComp.StandingHeight);
+        footTfm.SaveBindState();
 
         //local rotation node only yaws to match the view yaw, so use it as the parent for the avatar
         return footNode;
@@ -597,6 +613,7 @@ public static class EditorWorld
         var footTfm = footNode.SetTransform<Transform>();
         footTfm.Translation = new Vector3(0.0f, -movementComp.HalfHeight, 0.0f);
         footTfm.Scale = new Vector3(movementComp.StandingHeight);
+        footTfm.SaveBindState();
 
         return footNode;
     }
@@ -1078,9 +1095,19 @@ public static class EditorWorld
         PostProcessSteps.GenerateBoundingBoxes |
         PostProcessSteps.RemoveRedundantMaterials;
 
-        var staticFlags = PostProcessSteps.None;
-            //PostProcessSteps.SplitLargeMeshes |
-            //PostProcessSteps.PreTransformVertices;
+        var staticFlags =
+            PostProcessSteps.SplitLargeMeshes |
+            //PostProcessSteps.PreTransformVertices |
+            PostProcessSteps.Triangulate |
+            PostProcessSteps.GenerateNormals |
+            PostProcessSteps.CalculateTangentSpace |
+            PostProcessSteps.JoinIdenticalVertices |
+            PostProcessSteps.OptimizeGraph |
+            PostProcessSteps.OptimizeMeshes |
+            PostProcessSteps.SortByPrimitiveType |
+            PostProcessSteps.ImproveCacheLocality |
+            PostProcessSteps.GenerateBoundingBoxes |
+            PostProcessSteps.FlipUVs;
 
         if (AnimatedModel)
             ModelImporter.ImportAsync(fbxPathDesktop, animFlags, null, null, characterParentNode, ModelScale, ModelZUp).ContinueWith(OnFinishedAvatar);
@@ -1088,11 +1115,11 @@ public static class EditorWorld
         {
             //string path = Path.Combine(Engine.Assets.EngineAssetsPath, "Models", "Sponza", "sponza.obj");
 
-            string path2 = Path.Combine(Engine.Assets.EngineAssetsPath, "Models", "main1_sponza", "NewSponza_Main_Yup_003.fbx");
-            var task2 = ModelImporter.ImportAsync(path2, staticFlags, null, null, importedModelsNode, 1, false).ContinueWith(OnFinishedWorld);
+            //string path2 = Path.Combine(Engine.Assets.EngineAssetsPath, "Models", "main1_sponza", "NewSponza_Main_Yup_003.fbx");
+            //var task2 = ModelImporter.ImportAsync(path2, staticFlags, null, null, importedModelsNode, 1, false).ContinueWith(OnFinishedWorld);
 
-            //string path = Path.Combine(Engine.Assets.EngineAssetsPath, "Models", "pkg_a_curtains", "NewSponza_Curtains_FBX_YUp.fbx");
-            //var task1 = ModelImporter.ImportAsync(path, flags, null, null, importedModelsNode, 1, false).ContinueWith(OnFinishedWorld);
+            string path = Path.Combine(Engine.Assets.EngineAssetsPath, "Models", "pkg_a_curtains", "NewSponza_Curtains_FBX_YUp.fbx");
+            var task1 = ModelImporter.ImportAsync(path, staticFlags, null, null, importedModelsNode, 1, false).ContinueWith(OnFinishedWorld);
 
             //await Task.WhenAll(task1, task2);
         }

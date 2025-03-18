@@ -232,6 +232,11 @@ namespace XREngine
         public void RegisterAnimationTick<T>(Action<T> tick, ETickGroup group = ETickGroup.Normal) where T : XRWorldObjectBase
             => RegisterTick(group, ETickOrder.Animation, () => tick((T)this));
 
+        public void UnregisterAnimationTick(Action<XRWorldObjectBase> tick, ETickGroup group = ETickGroup.Normal)
+            => UnregisterTick(group, ETickOrder.Animation, () => tick(this));
+        public void UnregisterAnimationTick<T>(Action<T> tick, ETickGroup group = ETickGroup.Normal) where T : XRWorldObjectBase
+            => UnregisterTick(group, ETickOrder.Animation, () => tick((T)this));
+
         /// <summary>
         /// Tells the engine to replicate this object to the network.
         /// </summary>

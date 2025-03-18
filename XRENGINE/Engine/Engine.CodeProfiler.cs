@@ -43,7 +43,12 @@ namespace XREngine
                 public void OnPoolableDestroyed() { }
                 public void OnPoolableReleased() { }
                 public void OnPoolableReset()
-                    => StartTime = Time.Timer.Time();
+                {
+                    Depth = 0;
+                    _completedSubEntries.Clear();
+                    _activeSubEntry = null;
+                    StartTime = Time.Timer.Time();
+                }
 
                 public void PushEntry(CodeProfilerTimer entry)
                 {
@@ -69,21 +74,27 @@ namespace XREngine
 
                 internal void PrintSubEntries(StringBuilder sb, ResourcePool<CodeProfilerTimer> timerPool, float debugOutputMinElapsedMs)
                 {
-                    foreach (var entry in _completedSubEntries)
+                    float totalMs = ElapsedMs;
+                    bool hadSubEntries = false;
+                    while (_completedSubEntries.TryDequeue(out var subEntry))
                     {
-                        string indent = new(' ', entry.Depth * 2);
-                        if (entry.ElapsedMs >= debugOutputMinElapsedMs)
+                        string indent = new(' ', subEntry.Depth * 2);
+                        if (subEntry.ElapsedMs >= debugOutputMinElapsedMs)
                         {
-                            sb.Append($"{indent}{entry.Name} took {FormatMs(entry.ElapsedMs)}\n");
-                            entry.PrintSubEntries(sb, timerPool, debugOutputMinElapsedMs);
+                            sb.Append($"{indent}{subEntry.Name} took {FormatMs(subEntry.ElapsedMs)}\n");
+                            subEntry.PrintSubEntries(sb, timerPool, debugOutputMinElapsedMs);
+                            totalMs -= subEntry.ElapsedMs;
+                            hadSubEntries = true;
                         }
-                        timerPool.Release(entry);
+                        timerPool.Release(subEntry);
                     }
+                    if (hadSubEntries && totalMs >= debugOutputMinElapsedMs)
+                        sb.Append($"{new(' ', (Depth + 1) * 2)}<Remaining>: {FormatMs(totalMs)}\n");
                 }
             }
 
             public bool EnableFrameLogging { get; set; } = true;
-            public float DebugOutputMinElapsedMs { get; set; } = 1.0f;
+            public float DebugOutputMinElapsedMs { get; set; } = 1000.0f;
 
             public ConcurrentDictionary<int, CodeProfilerTimer> RootEntriesPerThread { get; } = [];
             private ConcurrentQueue<CodeProfilerTimer> _completedEntriesPrinting = [];
@@ -94,12 +105,11 @@ namespace XREngine
                 StringBuilder sb = new();
                 _completedEntriesPrinting.Clear();
                 _completedEntriesPrinting = Interlocked.Exchange(ref _completedEntries, _completedEntriesPrinting);
-                foreach (var entry in _completedEntriesPrinting)
+                while (_completedEntriesPrinting.TryDequeue(out var entry))
                 {
-                    string indent = new(' ', entry.Depth * 2);
                     if (entry.ElapsedMs >= DebugOutputMinElapsedMs)
                     {
-                        sb.Append($"{indent}{entry.Name} took {FormatMs(entry.ElapsedMs)}\n");
+                        sb.Append($"{new(' ', entry.Depth * 2)}{entry.Name} took {FormatMs(entry.ElapsedMs)}\n");
                         entry.PrintSubEntries(sb, _timerPool, DebugOutputMinElapsedMs);
                     }
                     _timerPool.Release(entry);
@@ -113,14 +123,15 @@ namespace XREngine
             private static string FormatMs(float elapsedMs)
             {
                 if (elapsedMs < 1.0f)
-                    return $"{MathF.Round(elapsedMs * 1000.0f, 2)}μs";
+                    return $"{MathF.Round(elapsedMs * 1000.0f)}μs";
                 if (elapsedMs >= 1000.0f)
-                    return $"{MathF.Round(elapsedMs / 1000.0f, 2)}s";
-                return $"{MathF.Round(elapsedMs, 2)}ms";
+                    return $"{MathF.Round(elapsedMs / 1000.0f, 1)}sec (slow)";
+                return $"{MathF.Round(elapsedMs)}ms";
             }
 
             private void PushEntry(CodeProfilerTimer entry)
             {
+                entry.Depth = 0;
                 RootEntriesPerThread.AddOrUpdate(
                     entry.ThreadId, //key
                     entry, //add

@@ -4,23 +4,32 @@ using XREngine.Data.Animation;
 
 namespace XREngine.Animation
 {
-    public class FloatKeyframe : VectorKeyframe<float>
+    public class FloatKeyframe(float second, float inValue, float outValue, float inTangent, float outTangent, EVectorInterpType type) : VectorKeyframe<float>(second, inValue, outValue, inTangent, outTangent, type)
     {
         public FloatKeyframe()
-            : this(0.0f, 0.0f, 0.0f, EVectorInterpType.Smooth) { }
+            : this(0.0f, 0.0f, 0.0f, EVectorInterpType.Linear) { }
+
         public FloatKeyframe(int frameIndex, float FPS, float inValue, float outValue, float inTangent, float outTangent, EVectorInterpType type)
             : this(frameIndex / FPS, inValue, outValue, inTangent, outTangent, type) { }
         public FloatKeyframe(int frameIndex, float FPS, float inoutValue, float inoutTangent, EVectorInterpType type)
-            : this(frameIndex / FPS, inoutValue, inoutValue, inoutTangent, inoutTangent, type) { }
+            : this(frameIndex / FPS, inoutValue, inoutTangent, type) { }
+        public FloatKeyframe(int frameIndex, float FPS, float inoutValue, float inTangent, float outTangent, EVectorInterpType type)
+            : this(frameIndex / FPS, inoutValue, inTangent, outTangent, type) { }
+
         public FloatKeyframe(float second, float inoutValue, float inoutTangent, EVectorInterpType type)
             : this(second, inoutValue, inoutValue, inoutTangent, inoutTangent, type) { }
         public FloatKeyframe(float second, float inoutValue, float inTangent, float outTangent, EVectorInterpType type)
             : this(second, inoutValue, inoutValue, inTangent, outTangent, type) { }
-        public FloatKeyframe(float second, float inValue, float outValue, float inTangent, float outTangent, EVectorInterpType type)
-            : base(second, inValue, outValue, inTangent, outTangent, type) { }
 
         public override float LerpOut(VectorKeyframe<float>? next, float diff, float span)
-            => Interp.Lerp(OutValue, next?.InValue ?? 0.0f, span.IsZero() ? 0.0f : diff / span);
+        {
+            if (span.IsZero())
+                return OutValue;
+
+            var t = diff / span;
+            t = Math.Clamp(t, 0.0f, 1.0f);
+            return Interp.Lerp(OutValue, next?.InValue ?? OutValue, t);
+        }
         public override float LerpVelocityOut(VectorKeyframe<float>? next, float diff, float span)
             => span.IsZero() ? 0.0f : ((next?.InValue ?? 0.0f) - OutValue) / (diff / span);
 
@@ -29,68 +38,173 @@ namespace XREngine.Animation
         public override float LerpVelocityIn(VectorKeyframe<float>? prev, float diff, float span)
             => span.IsZero() ? 0.0f : (InValue - (prev?.OutValue ?? 0.0f)) / (diff / span);
 
+        /// <summary>
+        /// Calculates the value of the cubic Bezier curve at the current keyframe.
+        /// </summary>
+        /// <param name="next"></param>
+        /// <param name="diff"></param>
+        /// <param name="span"></param>
+        /// <returns></returns>
         public override float CubicBezierOut(VectorKeyframe<float>? next, float diff, float span)
-            => Interp.CubicBezier(
-                OutValue,
-                OutValue + OutTangent * span,
-                (next?.InValue ?? 0.0f) + (next?.InTangent ?? 0.0f) * span,
-                next?.InValue ?? 0.0f,
-                span.IsZero() ? 0.0f : diff / span);
+        {
+            if (span.IsZero())
+                return OutValue;
 
+            var t = diff / span;
+            var (p1, p2, p3, p4) = GetBezierPointsWithNext(next, span);
+            return Interp.CubicBezier(p1, p2, p3, p4, t);
+        }
+
+        /// <summary>
+        /// Calculates the velocity of the cubic Bezier curve at the current keyframe.
+        /// </summary>
+        /// <param name="next"></param>
+        /// <param name="diff"></param>
+        /// <param name="span"></param>
+        /// <returns></returns>
         public override float CubicBezierVelocityOut(VectorKeyframe<float>? next, float diff, float span)
-            => span.IsZero() 
-            ? 0.0f 
-            : Interp.CubicBezierVelocity(
-                OutValue,
-                OutValue + OutTangent * span,
-                (next?.InValue ?? 0.0f) + (next?.InTangent ?? 0.0f) * span,
-                next?.InValue ?? 0.0f,
-                diff / span) / span;
+        {
+            if (span.IsZero())
+                return 0.0f;
 
+            var t = diff / span;
+            var (p1, p2, p3, p4) = GetBezierPointsWithNext(next, span);
+            return Interp.CubicBezierVelocity(p1, p2, p3, p4, t) / span;
+        }
+
+        /// <summary>
+        /// Calculates the acceleration of the cubic Bezier curve at the current keyframe.
+        /// </summary>
+        /// <param name="next"></param>
+        /// <param name="diff"></param>
+        /// <param name="span"></param>
+        /// <returns></returns>
         public override float CubicBezierAccelerationOut(VectorKeyframe<float>? next, float diff, float span)
-            => span.IsZero() 
-            ? 0.0f
-            : Interp.CubicBezierAcceleration(
+        {
+            if (span.IsZero())
+                return 0.0f;
+
+            var t = diff / span;
+            var (p1, p2, p3, p4) = GetBezierPointsWithNext(next, span);
+            return Interp.CubicBezierAcceleration(p1, p2, p3, p4, t) / (span * span);
+        }
+
+        /// <summary>
+        /// Calculates the value of the cubic Bezier curve at the current keyframe.
+        /// </summary>
+        /// <param name="prev"></param>
+        /// <param name="diff"></param>
+        /// <param name="span"></param>
+        /// <returns></returns>
+        public override float CubicBezierIn(VectorKeyframe<float>? prev, float diff, float span)
+        {
+            if (span.IsZero())
+                return 0.0f;
+
+            var t = diff / span;
+            var (p1, p2, p3, p4) = GetBezierPointsWithPrev(prev, span);
+            return Interp.CubicBezier(p1, p2, p3, p4, t);
+        }
+
+        /// <summary>
+        /// Calculates the velocity of the cubic Bezier curve at the current keyframe.
+        /// </summary>
+        /// <param name="prev"></param>
+        /// <param name="diff"></param>
+        /// <param name="span"></param>
+        /// <returns></returns>
+        public override float CubicBezierVelocityIn(VectorKeyframe<float>? prev, float diff, float span)
+        {
+            if (span.IsZero())
+                return 0.0f;
+
+            var t = diff / span;
+            var (p1, p2, p3, p4) = GetBezierPointsWithPrev(prev, span);
+            return Interp.CubicBezierVelocity(p1, p2, p3, p4, t) / span;
+        }
+
+        /// <summary>
+        /// Calculates the acceleration of the cubic Bezier curve at the current keyframe.
+        /// </summary>
+        /// <param name="prev"></param>
+        /// <param name="diff"></param>
+        /// <param name="span"></param>
+        /// <returns></returns>
+        public override float CubicBezierAccelerationIn(VectorKeyframe<float>? prev, float diff, float span)
+        {
+            if (span.IsZero())
+                return 0.0f;
+
+            var t = diff / span;
+            var (p1, p2, p3, p4) = GetBezierPointsWithPrev(prev, span);
+            return Interp.CubicBezierAcceleration(p1, p2, p3, p4, t) / (span * span);
+        }
+
+        /// <summary>
+        /// Calculates and returns the four control points needed for cubic Bezier interpolation 
+        /// between this keyframe and the next keyframe.
+        /// </summary>
+        /// <param name="next">The next keyframe in the sequence. If null, this keyframe's values are used.</param>
+        /// <param name="span">The time span between the current keyframe and the next keyframe.</param>
+        /// <returns>
+        /// A tuple containing the four control points (p1, p2, p3, p4) where:
+        /// - p1: Starting point (current keyframe's OutValue)
+        /// - p2: First control point based on current keyframe's OutTangent
+        /// - p3: Second control point based on next keyframe's InTangent
+        /// - p4: End point (next keyframe's InValue or current OutValue if next is null)
+        /// </returns>
+        /// <remarks>
+        /// The control points are calculated using the standard cubic Bezier formula where:
+        /// - The first and last points (p1, p4) represent the actual keyframe values
+        /// - The middle points (p2, p3) are calculated using the tangent values scaled by the time span
+        /// This method is used internally by cubic Bezier interpolation functions
+        /// </remarks>
+        private (float p1, float p2, float p3, float p4) GetBezierPointsWithNext(VectorKeyframe<float>? next, float span)
+        {
+            float nextInValue = next?.InValue ?? OutValue;
+            return (
                 OutValue,
                 OutValue + OutTangent * span,
-                (next?.InValue ?? 0.0f) + (next?.InTangent ?? 0.0f) * span,
-                next?.InValue ?? 0.0f,
-                diff / span) / (span * span);
+                nextInValue + (next?.InTangent ?? 0.0f) * span,
+                nextInValue
+            );
+        }
 
-        public override float CubicBezierIn(VectorKeyframe<float>? prev, float diff, float span)
-            => Interp.CubicBezier(
-                prev?.OutValue ?? 0.0f,
-                (prev?.OutValue ?? 0.0f) + (prev?.OutTangent ?? 0.0f) * span,
+        /// <summary>
+        /// Calculates and returns the four control points needed for cubic Bezier interpolation
+        /// between this keyframe and the previous keyframe.
+        /// </summary>
+        /// <param name="prev">The previous keyframe in the sequence. If null, this keyframe's values are used.</param>
+        /// <param name="span">The time span between the previous keyframe and the current keyframe.</param>
+        /// <returns>
+        /// A tuple containing the four control points (p1, p2, p3, p4) where:
+        /// - p1: Starting point (previous keyframe's OutValue or current InValue if prev is null)
+        /// - p2: First control point based on previous keyframe's OutTangent
+        /// - p3: Second control point based on current keyframe's InTangent
+        /// - p4: End point (current keyframe's InValue)
+        /// </returns>
+        /// <remarks>
+        /// The control points are calculated using the standard cubic Bezier formula where:
+        /// - The first and last points (p1, p4) represent the actual keyframe values
+        /// - The middle points (p2, p3) are calculated using the tangent values scaled by the time span
+        /// This method is used internally by cubic Bezier interpolation functions
+        private (float p1, float p2, float p3, float p4) GetBezierPointsWithPrev(VectorKeyframe<float>? prev, float span)
+        {
+            float prevOutValue = prev?.OutValue ?? InValue;
+            return (
+                prevOutValue,
+                prevOutValue + (prev?.OutTangent ?? 0.0f) * span,
                 InValue + InTangent * span,
-                InValue,
-                span.IsZero() ? 0.0f : diff / span);
-
-        public override float CubicBezierVelocityIn(VectorKeyframe<float>? prev, float diff, float span)
-            => span.IsZero() 
-            ? 0.0f 
-            : Interp.CubicBezierVelocity(
-                prev?.OutValue ?? 0.0f,
-                (prev?.OutValue ?? 0.0f) + (prev?.OutTangent ?? 0.0f) * span,
-                InValue + InTangent * span,
-                InValue,
-                diff / span) / span;
-
-        public override float CubicBezierAccelerationIn(VectorKeyframe<float>? prev, float diff, float span)
-            => span.IsZero()
-            ? 0.0f 
-            : Interp.CubicBezierAcceleration(
-                prev?.OutValue ?? 0.0f,
-                (prev?.OutValue ?? 0.0f) + (prev?.OutTangent ?? 0.0f) * span,
-                InValue + InTangent * span,
-                InValue,
-                diff / span) / (span * span);
+                InValue
+            );
+        }
 
         public override string WriteToString()
             => $"{Second} {InValue} {OutValue} {InTangent} {OutTangent} {InterpolationTypeIn} {InterpolationTypeOut}";
 
         public override string ToString()
             => $"[S:{Second}] V:({InValue} {OutValue}) T:([{InTangent} {InterpolationTypeIn}] [{OutTangent} {InterpolationTypeOut}])";
-            
+
         public override void ReadFromString(string str)
         {
             string[] parts = str.Split(' ');
@@ -102,7 +216,7 @@ namespace XREngine.Animation
             InterpolationTypeIn = parts[5].AsEnum<EVectorInterpType>();
             InterpolationTypeOut = parts[6].AsEnum<EVectorInterpType>();
         }
-        
+
         public override void MakeOutLinear()
         {
             VectorKeyframe<float>? next = Next;
@@ -144,7 +258,7 @@ namespace XREngine.Animation
 
         public override void UnifyTangentDirections(EUnifyBias bias) => UnifyTangents(bias);
         public override void UnifyTangentMagnitudes(EUnifyBias bias) => UnifyTangents(bias);
-        
+
         public override void UnifyTangents(EUnifyBias bias)
         {
             switch (bias)
@@ -178,6 +292,9 @@ namespace XREngine.Animation
             }
         }
 
+        /// <summary>
+        /// Generates the tangents for this keyframe based on the surrounding keyframes.
+        /// </summary>
         public void GenerateTangents()
         {
             var next = GetNextKeyframe(out float nextSpan);
@@ -215,11 +332,6 @@ namespace XREngine.Animation
                     OutTangent = (next.InValue - OutValue) / nextSpan;
                 }
             }
-
-            //float valueDiff = (next?.InValue ?? InValue) - (prev?.OutValue ?? OutValue);
-            //float secDiff = (next?.Second ?? Second) - (prev?.Second ?? Second);
-            //if (secDiff != 0.0f)
-            //    InTangent = -(OutTangent = valueDiff / secDiff);
         }
         public void GenerateOutTangent()
         {
@@ -228,13 +340,6 @@ namespace XREngine.Animation
             {
                 OutTangent = (next.InValue - OutValue) / nextSpan;
             }
-
-            //var next = GetNextKeyframe(out float span1);
-            //var prev = GetPrevKeyframe(out float span2);
-            //float valueDiff = (next?.InValue ?? InValue) - (prev?.OutValue ?? OutValue);
-            //float secDiff = (next?.Second ?? Second) - (prev?.Second ?? Second);
-            //if (secDiff != 0.0f)
-            //    OutTangent = valueDiff / secDiff;
         }
         public void GenerateInTangent()
         {
@@ -243,13 +348,6 @@ namespace XREngine.Animation
             {
                 InTangent = -(InValue - prev.OutValue) / prevSpan;
             }
-
-            //var next = GetNextKeyframe(out float span1);
-            //var prev = GetPrevKeyframe(out float span2);
-            //float valueDiff = (next?.InValue ?? InValue) - (prev?.OutValue ?? OutValue);
-            //float secDiff = (next?.Second ?? Second) - (prev?.Second ?? Second);
-            //if (secDiff != 0.0f)
-            //    InTangent = -valueDiff / secDiff;
         }
         public void GenerateAdjacentTangents(bool prev, bool next)
         {

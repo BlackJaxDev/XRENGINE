@@ -383,6 +383,7 @@ namespace XREngine.Rendering.Physics.Physx
                 {
                     BindingIndexOverride = 0,
                     Usage = EBufferUsage.StreamDraw,
+                    DisposeOnPush = false
                 };
                 _debugPointsRenderer.Buffers.Add(_debugPointsBuffer.AttributeName, _debugPointsBuffer);
                 //_debugPointsRenderer.GenerateAsync = false;
@@ -422,6 +423,7 @@ namespace XREngine.Rendering.Physics.Physx
                 {
                     BindingIndexOverride = 0,
                     Usage = EBufferUsage.StreamDraw,
+                    DisposeOnPush = false
                 };
                 _debugLinesRenderer.Buffers?.Add(_debugLinesBuffer.AttributeName, _debugLinesBuffer);
                 //_debugLinesRenderer.GenerateAsync = false;
@@ -461,6 +463,7 @@ namespace XREngine.Rendering.Physics.Physx
                 {
                     BindingIndexOverride = 0,
                     Usage = EBufferUsage.StreamDraw,
+                    DisposeOnPush = false
                 };
                 _debugTrianglesRenderer.Buffers?.Add(_debugTrianglesBuffer.AttributeName, _debugTrianglesBuffer);
                 //_debugTrianglesRenderer.GenerateAsync = false;

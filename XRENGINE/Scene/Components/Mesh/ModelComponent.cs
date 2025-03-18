@@ -56,28 +56,35 @@ namespace XREngine.Components.Scene.Mesh
             switch (propName)
             {
                 case nameof(Model):
-                    Meshes.Clear();
-                    if (Model != null)
-                    {
-                        foreach (SubMesh mesh in Model.Meshes)
-                        {
-                            RenderableMesh rendMesh = new(mesh, this)
-                            {
-                                //RootTransform = mesh.RootTransform
-                            };
-                            Meshes.Add(rendMesh);
-                            _meshLinks.TryAdd(mesh, rendMesh);
-                        }
-
-                        Model.Meshes.PostAnythingAdded += AddMesh;
-                        Model.Meshes.PostAnythingRemoved += RemoveMesh;
-                    }
+                    ModelChanged();
                     break;
                 case nameof(RenderBounds):
                     foreach (RenderableMesh mesh in Meshes)
                         mesh.RenderBounds = RenderBounds;
                     break;
             }
+        }
+
+        private void ModelChanged()
+        {
+            using var t = Engine.Profiler.Start("ModelComponent.ModelChanged");
+
+            Meshes.Clear();
+            if (Model is null)
+                return;
+            
+            foreach (SubMesh mesh in Model.Meshes)
+            {
+                RenderableMesh rendMesh = new(mesh, this)
+                {
+                    //RootTransform = mesh.RootTransform
+                };
+                Meshes.Add(rendMesh);
+                _meshLinks.TryAdd(mesh, rendMesh);
+            }
+
+            Model.Meshes.PostAnythingAdded += AddMesh;
+            Model.Meshes.PostAnythingRemoved += RemoveMesh;
         }
 
         private void AddMesh(SubMesh item)

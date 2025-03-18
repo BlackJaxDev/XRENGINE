@@ -500,6 +500,21 @@ namespace XREngine.Data
         public static Vector4 Lerp(Vector4 start, Vector4 end, float time, float speed)
             => Lerp(start, end, time * speed);
 
+        public static Vector2 Lerp(Vector2 start, Vector2 end, Vector2 time)
+            => start + (end - start) * time;
+        public static Vector2 Lerp(Vector2 start, Vector2 end, Vector2 time, float speed)
+            => Lerp(start, end, time * speed);
+
+        public static Vector3 Lerp(Vector3 start, Vector3 end, Vector3 time)
+            => start + (end - start) * time;
+        public static Vector3 Lerp(Vector3 start, Vector3 end, Vector3 time, float speed)
+            => Lerp(start, end, time * speed);
+
+        public static Vector4 Lerp(Vector4 start, Vector4 end, Vector4 time)
+            => start + (end - start) * time;
+        public static Vector4 Lerp(Vector4 start, Vector4 end, Vector4 time, float speed)
+            => Lerp(start, end, time * speed);
+
         public static Quaternion Slerp(Quaternion q1, Quaternion q2, float blend)
         {
             // if either input is zero, return the other.

@@ -12,27 +12,51 @@ namespace XREngine.Animation
         /// <summary>
         /// Call to set this animation's current value to an object's property and then advance the animation by the given delta.
         /// </summary>
-        public void Tick(object obj, FieldInfo field, float delta)
+        public object? SetAndTick(object obj, FieldInfo field, float delta)
         {
-            field.SetValue(obj, GetCurrentValueGeneric());
+            var value = SetValue(obj, field);
             Tick(delta);
+            return value;
         }
+
+        public object? SetValue(object obj, FieldInfo field)
+        {
+            var value = GetCurrentValueGeneric();
+            field.SetValue(obj, value);
+            return value;
+        }
+
         /// <summary>
         /// Call to set this animation's current value to an object's property and then advance the animation by the given delta.
         /// </summary>
-        public void Tick(object obj, PropertyInfo property, float delta)
+        public object? SetAndTick(object obj, PropertyInfo property, float delta)
         {
-            property.SetValue(obj, GetCurrentValueGeneric());
+            var value = SetValue(obj, property);
             Tick(delta);
+            return value;
         }
+
+        public object? SetValue(object obj, PropertyInfo property)
+        {
+            var value = GetCurrentValueGeneric();
+            property.SetValue(obj, value);
+            return value;
+        }
+
         /// <summary>
         /// Call to set this animation's current value to an object's method that takes it as a single argument and then advance the animation by the given delta.
         /// </summary>
-        public void Tick(object obj, MethodInfo method, float delta, int valueArgumentIndex, object?[] methodArguments)
+        public object? SetAndTick(object obj, MethodInfo method, float delta, int valueArgumentIndex, object?[] methodArguments)
+        {
+            object? value = SetValue(obj, method, valueArgumentIndex, methodArguments);
+            Tick(delta);
+            return value;
+        }
+
+        public object? SetValue(object obj, MethodInfo method, int valueArgumentIndex, object?[] methodArguments)
         {
             methodArguments[valueArgumentIndex] = GetCurrentValueGeneric();
-            method.Invoke(obj, methodArguments);
-            Tick(delta);
+            return method.Invoke(obj, methodArguments);
         }
 
         /// <summary>

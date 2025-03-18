@@ -14,6 +14,8 @@ namespace XREngine.Components.Scene.Mesh
 
         protected virtual void Meshes_PostAnythingRemoved(RenderableMesh item)
         {
+            using var t = Engine.Profiler.Start("RenderableComponent.Meshes_PostAnythingRemoved");
+
             var ri = item.RenderInfo;
             int i = RenderedObjects.IndexOf(ri);
             if (i < 0)
@@ -27,6 +29,8 @@ namespace XREngine.Components.Scene.Mesh
 
         protected virtual void Meshes_PostAnythingAdded(RenderableMesh item)
         {
+            using var t = Engine.Profiler.Start("RenderableComponent.Meshes_PostAnythingAdded");
+
             var ri = item.RenderInfo;
             int i = RenderedObjects.IndexOf(ri);
             if (i >= 0)

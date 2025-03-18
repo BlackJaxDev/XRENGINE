@@ -35,7 +35,13 @@ namespace XREngine
 
         private readonly ConcurrentDictionary<string, XRTexture2D> _texturePathCache = new();
 
-        public XRMaterial MaterialFactory(string modelFilePath, string name, List<TextureSlot> textures, TextureFlags flags, ShadingMode mode, Dictionary<string, List<MaterialProperty>> properties)
+        public XRMaterial MaterialFactory(
+            string modelFilePath,
+            string name,
+            List<TextureSlot> textures,
+            TextureFlags flags,
+            ShadingMode mode,
+            Dictionary<string, List<MaterialProperty>> properties)
         {
             //Random r = new();
 
@@ -363,9 +369,10 @@ namespace XREngine
                 localTransform *= fbxMatrixParent.Value;
 
             SceneNode sceneNode = new(parentSceneNode, name);
-            sceneNode.Transform.DeriveLocalMatrix(localTransform);
-            sceneNode.Transform.RecalculateMatrices();
-            sceneNode.Transform.InverseBindMatrix = sceneNode.Transform.InverseWorldMatrix;
+            var tfm = sceneNode.GetTransformAs<Transform>(true)!;
+            tfm.DeriveLocalMatrix(localTransform);
+            tfm.RecalculateMatrices();
+            tfm.SaveBindState();
 
             if (_nodeCache.TryGetValue(name, out List<SceneNode>? nodes))
                 nodes.Add(sceneNode);
@@ -386,6 +393,8 @@ namespace XREngine
 
         private unsafe void ProcessMeshes(Node node, AScene scene, SceneNode sceneNode, Matrix4x4 dataTransform, TransformBase rootTransform)
         {
+            using var t = Engine.Profiler.Start($"Processing meshes for {node.Name}");
+
             ModelComponent modelComponent = sceneNode.AddComponent<ModelComponent>()!;
             Model model = new();
             modelComponent.Name = node.Name;
@@ -394,7 +403,7 @@ namespace XREngine
                 int meshIndex = node.MeshIndices[i];
                 Mesh mesh = scene.Meshes[meshIndex];
 
-                (XRMesh xrMesh, XRMaterial xrMaterial) = ProcessSubMesh(sceneNode.Transform, mesh, scene, dataTransform);
+                (XRMesh xrMesh, XRMaterial xrMaterial) = ProcessSubMesh(mesh, scene, dataTransform);
 
                 _meshes.Add(xrMesh);
                 _materials.Add(xrMaterial);
@@ -406,17 +415,22 @@ namespace XREngine
         }
 
         private unsafe (XRMesh mesh, XRMaterial material) ProcessSubMesh(
-            TransformBase parentTransform,
             Mesh mesh,
             AScene scene,
             Matrix4x4 dataTransform)
         {
-            //Debug.Out($"Processing mesh: {mesh->MName}");
-            return (new(mesh, _assimp, _nodeCache, dataTransform), ProcessMaterial(mesh, scene));
+            using var t = Engine.Profiler.Start($"Processing submesh for {mesh.Name}");
+
+            Task<XRMesh> newMesh = Task.Run(() => new XRMesh(mesh, _assimp, _nodeCache, dataTransform));
+            Task<XRMaterial> newMaterial = Task.Run(() => ProcessMaterial(mesh, scene));
+            Task.WaitAll(newMesh, newMaterial);
+            return (newMesh.Result, newMaterial.Result);
         }
 
         private unsafe XRMaterial ProcessMaterial(Mesh mesh, AScene scene)
         {
+            using var t = Engine.Profiler.Start($"Processing material for {mesh.Name}");
+
             Material matInfo = scene.Materials[mesh.MaterialIndex];
             List<TextureSlot> textures = [];
             for (int i = 0; i < 22; ++i)

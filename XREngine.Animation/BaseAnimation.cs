@@ -17,7 +17,6 @@ namespace XREngine.Animation
         public event Action<BaseAnimation>? SpeedChanged;
         public event Action<BaseAnimation>? LoopChanged;
         public event Action<BaseAnimation>? LengthChanged;
-        public event Action<BaseAnimation>? TickSelfChanged;
 
         protected void OnAnimationStarted() => AnimationStarted?.Invoke(this);
         protected void OnAnimationEnded() => AnimationEnded?.Invoke(this);
@@ -26,7 +25,6 @@ namespace XREngine.Animation
         protected void OnSpeedChanged() => SpeedChanged?.Invoke(this);
         protected void OnLoopChanged() => LoopChanged?.Invoke(this);
         protected void OnLengthChanged() => LengthChanged?.Invoke(this);
-        protected void OnTickSelfChanged() => TickSelfChanged?.Invoke(this);
 
         protected float _lengthInSeconds = 0.0f;
         protected float _speed = 1.0f;
@@ -163,6 +161,9 @@ namespace XREngine.Animation
         /// <param name="delta">The change in seconds to add to the current time. Negative values are allowed.</param>
         public virtual void Tick(float delta)
         {
+            if (_state != EAnimationState.Playing)
+                return;
+
             //Modify delta with speed
             delta *= Speed;
 

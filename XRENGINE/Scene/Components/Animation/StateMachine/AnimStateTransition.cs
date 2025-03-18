@@ -8,7 +8,7 @@ namespace XREngine.Components
     public class AnimStateTransition
     {
         //[Browsable(false)]
-        //public AnimState Owner { get; internal set; }
+        public AnimState? Owner { get; internal set; }
 
         public event Action? Started;
         public event Action? Finished;
@@ -34,7 +34,7 @@ namespace XREngine.Components
         /// If <see cref="BlendType"/> == <see cref="EAnimBlendType.Custom"/>, 
         /// uses these keyframes to interpolate between 0.0f and 1.0f.
         /// </summary>
-        public KeyframeTrack<FloatKeyframe>? CustomBlendFunction { get; set; }
+        public PropAnimFloat? CustomBlendFunction { get; set; }
         /// <summary>
         /// If multiple transitions evaluate to true at the same time, this dictates which transition will occur.
         /// </summary>

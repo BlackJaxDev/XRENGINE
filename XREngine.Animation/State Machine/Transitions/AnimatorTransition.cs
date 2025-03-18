@@ -1,24 +1,14 @@
 ﻿namespace XREngine.Data.Animation
 {
-    public class AnimatorTransition : IAnimationTransition
+    public class AnimatorTransition(IAnimationState targetState) : IAnimationTransition
     {
-        public IAnimationState TargetState { get; set; }
-        public List<IAnimationCondition> Conditions { get; set; }
-
-        public AnimatorTransition(IAnimationState targetState)
-        {
-            TargetState = targetState;
-            Conditions = new List<IAnimationCondition>();
-        }
+        public IAnimationState TargetState { get; set; } = targetState;
+        public List<IAnimationCondition> Conditions { get; set; } = [];
 
         public void AddCondition(IAnimationCondition condition)
-        {
-            Conditions.Add(condition);
-        }
+            => Conditions.Add(condition);
 
         public bool CheckConditions()
-        {
-            return Conditions.All(condition => condition.Evaluate());
-        }
+            => Conditions.All(condition => condition.Evaluate());
     }
 }

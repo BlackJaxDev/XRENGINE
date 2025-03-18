@@ -308,7 +308,8 @@ namespace XREngine.Rendering
             uint blendshapeCount = Mesh?.BlendshapeCount ?? 0;
             BlendshapeWeights = new XRDataBuffer($"{ECommonBufferType.BlendshapeWeights}Buffer", EBufferTarget.ShaderStorageBuffer, blendshapeCount.Align(4), EComponentType.Float, 1, false, false)
             {
-                Usage = EBufferUsage.DynamicDraw
+                Usage = EBufferUsage.DynamicDraw,
+                DisposeOnPush = false
             };
 
             for (uint i = 0; i < blendshapeCount; i++)
@@ -359,7 +360,8 @@ namespace XREngine.Rendering
             {
                 //RangeFlags = EBufferMapRangeFlags.Write | EBufferMapRangeFlags.Persistent | EBufferMapRangeFlags.Coherent;
                 //StorageFlags = EBufferMapStorageFlags.Write | EBufferMapStorageFlags.Persistent | EBufferMapStorageFlags.Coherent | EBufferMapStorageFlags.ClientStorage;
-                Usage = EBufferUsage.StreamDraw
+                Usage = EBufferUsage.StreamDraw,
+                DisposeOnPush = false
             };
             BoneInvBindMatricesBuffer = new($"{ECommonBufferType.BoneInvBindMatrices}Buffer", EBufferTarget.ShaderStorageBuffer, boneCount + 1, EComponentType.Float, 16, false, false)
             {

@@ -66,10 +66,10 @@ namespace XREngine.Animation
                 if (index >= 0 && index < Count)
                 {
                     int i = 0;
-                    foreach (T key in this.Cast<T>())
+                    foreach (var key in this)
                     {
                         if (i == index)
-                            return key;
+                            return (T)key;
                         ++i;
                     }
                 }
@@ -81,7 +81,7 @@ namespace XREngine.Animation
                     return;
                 
                 int i = 0;
-                foreach (T key in this.Cast<T>())
+                foreach (var key in this)
                 {
                     if (i++ != index)
                         continue;
@@ -100,7 +100,7 @@ namespace XREngine.Animation
                 if (index >= 0 && index < Count)
                 {
                     int i = 0;
-                    foreach (T key in this.Cast<T>())
+                    foreach (var key in this)
                         if (i++ == index)
                             return key;
                 }
@@ -111,7 +111,7 @@ namespace XREngine.Animation
                 if (value is T keyValue && index >= 0 && index <= Count)
                 {
                     int i = 0;
-                    foreach (T key in this.Cast<T>())
+                    foreach (var key in this)
                     {
                         if (i++ != index)
                             continue;
@@ -188,9 +188,9 @@ namespace XREngine.Animation
         public T? GetKeyBefore(float second)
         {
             T? bestKey = null;
-            foreach (T key in this.Cast<T>())
+            foreach (var key in this)
                 if (key.Second <= second)
-                    bestKey = key;
+                    bestKey = key as T;
                 else
                     break;
 
@@ -253,7 +253,7 @@ namespace XREngine.Animation
                 return -1;
 
             int i = 0;
-            foreach (T key in this.Cast<T>())
+            foreach (var key in this)
                 if (key != keyValue)
                     ++i;
                 else

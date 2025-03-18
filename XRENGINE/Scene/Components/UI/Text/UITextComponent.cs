@@ -472,6 +472,7 @@ namespace XREngine.Rendering.UI
                 //StorageFlags = EBufferMapStorageFlags.Write | EBufferMapStorageFlags.Persistent | EBufferMapStorageFlags.Coherent | EBufferMapStorageFlags.ClientStorage;
                 Usage = AnimatableTransforms ? EBufferUsage.StreamDraw : EBufferUsage.StaticCopy,
                 BindingIndexOverride = 0,
+                DisposeOnPush = false
             };
             meshRend.Buffers.Add(transformsBindingName, _transformsBuffer);
 
@@ -483,6 +484,7 @@ namespace XREngine.Rendering.UI
                 //StorageFlags = EBufferMapStorageFlags.Write | EBufferMapStorageFlags.Persistent | EBufferMapStorageFlags.Coherent | EBufferMapStorageFlags.ClientStorage;
                 Usage = EBufferUsage.StaticCopy,
                 BindingIndexOverride = 1,
+                DisposeOnPush = false
             };
             meshRend.Buffers.Add(uvsBindingName, _uvsBuffer);
 
@@ -497,6 +499,7 @@ namespace XREngine.Rendering.UI
                     //StorageFlags = EBufferMapStorageFlags.Write | EBufferMapStorageFlags.Persistent | EBufferMapStorageFlags.Coherent | EBufferMapStorageFlags.ClientStorage;
                     Usage = EBufferUsage.StaticCopy,
                     BindingIndexOverride = 2,
+                    DisposeOnPush = false
                 };
                 meshRend.Buffers.Add(rotationsBindingName, _rotationsBuffer);
             }

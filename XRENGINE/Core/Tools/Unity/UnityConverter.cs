@@ -5,7 +5,7 @@ namespace XREngine.Core.Tools.Unity
 {
     public static class UnityConverter
     {
-        public static AnimationTree ConvertFloatAnimation(UnityAnimationClip animClip)
+        public static AnimationClip ConvertFloatAnimation(UnityAnimationClip animClip)
         {
             var settings = animClip.AnimationClipSettings;
             float lengthInSeconds = (settings?.StopTime ?? 0) - (settings?.StartTime ?? 0);
@@ -35,7 +35,7 @@ namespace XREngine.Core.Tools.Unity
                     anim.Keyframes.Add(kfs);
                 anims.Add((path, attrib, anim));
             });
-            var tree = new AnimationTree();
+            var tree = new AnimationClip();
             anims.ForEach(anim =>
             {
                 if (anim.attrib is not null)

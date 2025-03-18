@@ -6,6 +6,29 @@ namespace XREngine.Scene.Transforms
 {
     public abstract partial class TransformBase
     {
+        private Matrix4x4 _inverseBindMatrix = Matrix4x4.Identity;
+        /// <summary>
+        /// Used for model skinning. The inverse model-space bind matrix for this transform, set during model import.
+        /// </summary>
+        public Matrix4x4 InverseBindMatrix
+        {
+            get => _inverseBindMatrix;
+            set => SetField(ref _inverseBindMatrix, value);
+        }
+
+        private Matrix4x4 _bindMatrix = Matrix4x4.Identity;
+        public Matrix4x4 BindMatrix
+        {
+            get => _bindMatrix;
+            set => SetField(ref _bindMatrix, value);
+        }
+
+        public virtual void SaveBindState()
+        {
+            BindMatrix = LocalMatrix *(Parent?.BindMatrix ?? Matrix4x4.Identity);
+            InverseBindMatrix = Matrix4x4.Invert(BindMatrix, out var inv) ? inv : Matrix4x4.Identity;
+        }
+
         public float DistanceTo(TransformBase other)
             => WorldTranslation.Distance(other.WorldTranslation);
         public float DistanceToParent()
@@ -29,16 +52,6 @@ namespace XREngine.Scene.Transforms
         {
             get => _forceManualRecalc;
             set => SetField(ref _forceManualRecalc, value);
-        }
-
-        private Matrix4x4 _inverseBindMatrix = Matrix4x4.Identity;
-        /// <summary>
-        /// Used for model skinning. The inverse model-space bind matrix for this transform, set during model import.
-        /// </summary>
-        public Matrix4x4 InverseBindMatrix
-        {
-            get => _inverseBindMatrix;
-            set => SetField(ref _inverseBindMatrix, value);
         }
 
         private float _timeSinceLastKeyframe = 0;

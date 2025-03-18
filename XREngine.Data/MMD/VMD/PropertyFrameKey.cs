@@ -14,6 +14,8 @@
             for (int i = 0; i < count; i++)
             {
                 string ikName = VMDUtils.ToShiftJisString(reader.ReadBytes(20));
+                if (VMDUtils.JP2EN.TryGetValue(ikName, out string? enName))
+                    ikName = enName;
                 bool state = reader.ReadByte() == 1;
                 IkStates.Add((ikName, state));
             }

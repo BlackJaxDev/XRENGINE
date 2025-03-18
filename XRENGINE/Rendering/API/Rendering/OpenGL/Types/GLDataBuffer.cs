@@ -249,6 +249,8 @@ namespace XREngine.Rendering.OpenGL
                 void* addr = Data.Address;
                 Api.NamedBufferData(BindingId, Data.Length, addr, ToGLEnum(Data.Usage));
                 _lastPushedLength = Data.Length;
+                if (Data.DisposeOnPush)
+                    Data.Dispose();
             }
 
             public static GLEnum ToGLEnum(EBufferUsage usage) => usage switch

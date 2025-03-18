@@ -95,12 +95,12 @@ namespace XREngine.Rendering
 
         private void PopulateVertexData(
             IEnumerable<DelVertexAction> vertexActions,
-            List<Vertex> sourceList,
+            Vertex[] sourceList,
             int[]? firstAppearanceArray,
             Matrix4x4? dataTransform,
             bool parallel)
         {
-            int count = firstAppearanceArray?.Length ?? sourceList.Count;
+            int count = firstAppearanceArray?.Length ?? sourceList.Length;
             using var t = Engine.Profiler.Start($"PopulateVertexData (remapped): {count} {(parallel ? "parallel" : "sequential")}");
             var actions = vertexActions as DelVertexAction[] ?? [.. vertexActions];
 
@@ -132,7 +132,7 @@ namespace XREngine.Rendering
 
         private void PopulateVertexData(
             IEnumerable<DelVertexAction> vertexActions,
-            List<Vertex> sourceList,
+            Vertex[] sourceList,
             int count,
             Matrix4x4? dataTransform,
             bool parallel)
@@ -311,8 +311,8 @@ namespace XREngine.Rendering
 
         public bool HasSkinning => _utilizedBones is not null && _utilizedBones.Length > 0;
 
-        private List<Vertex> _vertices = [];
-        public List<Vertex> Vertices
+        private Vertex[] _vertices = [];
+        public Vertex[] Vertices
         {
             get => _vertices;
             private set => SetField(ref _vertices, value);
@@ -530,12 +530,12 @@ namespace XREngine.Rendering
             return indices;
         }
 
-        private Remapper? SetTriangleIndices(List<Vertex> vertices, bool remap = true)
+        private Remapper? SetTriangleIndices(Vertex[] vertices, bool remap = true)
         {
             _triangles = [];
 
-            while (vertices.Count % 3 != 0)
-                vertices.RemoveAt(vertices.Count - 1);
+            //while (vertices.Count % 3 != 0)
+            //    vertices.RemoveAt(vertices.Count - 1);
 
             if (remap)
             {
@@ -552,15 +552,15 @@ namespace XREngine.Rendering
             }
             else
             {
-                for (int i = 0; i < vertices.Count;)
+                for (int i = 0; i < vertices.Length;)
                     _triangles.Add(new IndexTriangle(i++, i++, i++));
                 return null;
             }
         }
-        private Remapper? SetLineIndices(List<Vertex> vertices, bool remap = true)
+        private Remapper? SetLineIndices(Vertex[] vertices, bool remap = true)
         {
-            if (vertices.Count % 2 != 0)
-                vertices.RemoveAt(vertices.Count - 1);
+            //if (vertices.Count % 2 != 0)
+            //    vertices.RemoveAt(vertices.Count - 1);
 
             _lines = [];
             if (remap)
@@ -577,12 +577,12 @@ namespace XREngine.Rendering
             }
             else
             {
-                for (int i = 0; i < vertices.Count;)
+                for (int i = 0; i < vertices.Length;)
                     _lines.Add(new IndexLine(i++, i++));
                 return null;
             }
         }
-        private Remapper? SetPointIndices(List<Vertex> vertices, bool remap = true)
+        private Remapper? SetPointIndices(Vertex[] vertices, bool remap = true)
         {
             _points = [];
             if (remap)
@@ -595,7 +595,7 @@ namespace XREngine.Rendering
             }
             else
             {
-                for (int i = 0; i < vertices.Count;)
+                for (int i = 0; i < vertices.Length;)
                     _points.Add(i++);
                 return null;
             }
@@ -856,7 +856,7 @@ namespace XREngine.Rendering
             //We can do this in parallel since each vertex is independent
             PopulateVertexData(
                 vertexActions.Values,
-                triVertices,
+                [.. triVertices],
                 VertexCount,
                 dataTransform,
                 Engine.Rendering.Settings.PopulateVertexDataInParallel);
@@ -963,35 +963,30 @@ namespace XREngine.Rendering
 
             _bounds = bounds ?? new AABB(Vector3.Zero, Vector3.Zero);
 
-            //Remap vertices to unique indices for each type of simple primitive
-            Remapper? triRemap = SetTriangleIndices(triangles);
-            Remapper? lineRemap = SetLineIndices(lines);
-            Remapper? pointRemap = SetPointIndices(points);
-
             //Determine which type of primitive has the most data and use that as the primary type
             int count;
             Remapper? remapper;
-            List<Vertex> sourceList;
+            Vertex[] sourceList;
             if (triangles.Count > lines.Count && triangles.Count > points.Count)
             {
                 _type = EPrimitiveType.Triangles;
                 count = triangles.Count;
-                remapper = triRemap;
-                sourceList = triangles;
+                sourceList = [.. triangles];
+                remapper = SetTriangleIndices(sourceList);
             }
             else if (lines.Count > triangles.Count && lines.Count > points.Count)
             {
                 _type = EPrimitiveType.Lines;
                 count = lines.Count;
-                remapper = lineRemap;
-                sourceList = lines;
+                sourceList = [.. lines];
+                remapper = SetLineIndices(sourceList);
             }
             else
             {
                 _type = EPrimitiveType.Points;
                 count = points.Count;
-                remapper = pointRemap;
-                sourceList = points;
+                sourceList = [.. points];
+                remapper = SetPointIndices(sourceList);
             }
 
             int[] firstAppearanceArray;
@@ -1042,9 +1037,9 @@ namespace XREngine.Rendering
             ArgumentNullException.ThrowIfNull(nodeCache);
 
             //Convert all primitives to simple primitives
-            List<Vertex> points = [];
-            List<Vertex> lines = [];
-            List<Vertex> triangles = [];
+            Vertex[] points = [];
+            Vertex[] lines = [];
+            Vertex[] triangles = [];
 
             //Create an action for each vertex attribute to set the buffer data
             //This lets us avoid redundant LINQ code by looping through the vertices only once
@@ -1061,15 +1056,15 @@ namespace XREngine.Rendering
             //TODO: pre-allocate points, lines, and triangles to the correct size and populate in parallel? this is already pretty fast anyways
 
             //This remap contains a list of new vertex indices for each original vertex index.
-            PopulateVerticesAssimp(
+            PopulateVerticesAssimpParallelPrecomputed(
                 mesh,
-                points,
-                lines,
-                triangles,
                 vertexActions,
                 ref maxColorCount,
                 ref maxTexCoordCount,
                 vertexCache,
+                out points,
+                out lines,
+                out triangles,
                 out var faceRemap);
 
             SetTriangleIndices(triangles, false);
@@ -1078,23 +1073,23 @@ namespace XREngine.Rendering
 
             //Determine which type of primitive has the most data and use that as the primary type
             int count;
-            List<Vertex> sourceList;
-            if (triangles.Count > lines.Count && triangles.Count > points.Count)
+            Vertex[] sourceList;
+            if (triangles.Length > lines.Length && triangles.Length > points.Length)
             {
                 _type = EPrimitiveType.Triangles;
-                count = triangles.Count;
+                count = triangles.Length;
                 sourceList = triangles;
             }
-            else if (lines.Count > triangles.Count && lines.Count > points.Count)
+            else if (lines.Length > triangles.Length && lines.Length > points.Length)
             {
                 _type = EPrimitiveType.Lines;
-                count = lines.Count;
+                count = lines.Length;
                 sourceList = lines;
             }
             else
             {
                 _type = EPrimitiveType.Points;
-                count = points.Count;
+                count = points.Length;
                 sourceList = points;
             }
 
@@ -1131,7 +1126,7 @@ namespace XREngine.Rendering
             Vertices = sourceList;
         }
 
-        private unsafe void PopulateAssimpBlendshapeData(Mesh mesh, Matrix4x4 dataTransform, List<Vertex> sourceList)
+        private unsafe void PopulateAssimpBlendshapeData(Mesh mesh, Matrix4x4 dataTransform, Vertex[] sourceList)
         {
             if (!Engine.Rendering.Settings.AllowBlendshapes || !mesh.HasMeshAnimationAttachments)
                 return;
@@ -1141,6 +1136,195 @@ namespace XREngine.Rendering
                 BlendshapeNames[i] = mesh.MeshAnimationAttachments[i].Name;
 
             PopulateBlendshapeBuffers(sourceList, dataTransform);
+        }
+        private static void PopulateVerticesAssimpParallelPrecomputed(
+            Mesh mesh,
+            ConcurrentDictionary<int, DelVertexAction> vertexActions,
+            ref int mcc,
+            ref int mtc,
+            ConcurrentDictionary<int, Vertex> vertexCache,
+            out Vertex[] points,
+            out Vertex[] lines,
+            out Vertex[] triangles,
+            out Dictionary<int, List<int>> faceRemap)
+        {
+            int faceCount = mesh.FaceCount;
+
+            using var t = Engine.Profiler.Start($"PopulateVerticesAssimpParallelPrecomputed with {faceCount} faces");
+
+            int maxColorCount = 0;
+            int maxTexCoordCount = 0;
+
+            // Precompute per-face vertex counts and offsets for each target type.
+            // For a face:
+            //  • 1 index → points (1 vertex)
+            //  • 2 indices → lines (2 vertices)
+            //  • ≥3 indices → triangles (fan triangulation: (IndexCount - 2) * 3 vertices)
+            int[] offsetPoints = new int[faceCount];
+            int[] offsetLines = new int[faceCount];
+            int[] offsetTriangles = new int[faceCount];
+
+            int totalPoints = 0, totalLines = 0, totalTriangles = 0;
+
+            using (var t1 = Engine.Profiler.Start("Precompute offsets"))
+            {
+                for (int i = 0; i < faceCount; i++)
+                {
+                    Face face = mesh.Faces[i];
+                    if (face.IndexCount == 1)
+                    {
+                        offsetPoints[i] = totalPoints;
+                        totalPoints += 1;
+                    }
+                    else if (face.IndexCount == 2)
+                    {
+                        offsetLines[i] = totalLines;
+                        totalLines += 2;
+                    }
+                    else
+                    {
+                        offsetTriangles[i] = totalTriangles;
+                        int numTriangles = face.IndexCount - 2; // fan triangulation
+                        totalTriangles += numTriangles * 3;
+                    }
+                }
+            }
+
+            // Preallocate arrays to hold the vertices in correct order.
+            Vertex[] pointsArray = new Vertex[totalPoints];
+            Vertex[] linesArray = new Vertex[totalLines];
+            Vertex[] trianglesArray = new Vertex[totalTriangles];
+
+            // Use a concurrent dictionary for face remapping.
+            var concurrentFaceRemap = new ConcurrentDictionary<int, List<int>>();
+
+            // Global flags for vertex actions.
+            bool hasNormalAction = vertexActions.ContainsKey(1);
+            bool hasTangentAction = vertexActions.ContainsKey(2);
+            bool hasTexCoordAction = vertexActions.ContainsKey(3);
+            bool hasColorAction = vertexActions.ContainsKey(4);
+
+            using (var t2 = Engine.Profiler.Start("Populate vertices"))
+            {
+                // Process each face in parallel.
+                Parallel.For(0, faceCount, i =>
+                {
+                    Face face = mesh.Faces[i];
+                    int numInd = face.IndexCount;
+
+                    if (numInd == 1)
+                    {
+                        int baseOffset = offsetPoints[i];
+                        ProcessAssimpVertexPrecomputed(face.Indices[0], pointsArray, baseOffset, mesh, vertexCache, vertexActions,
+                            ref maxTexCoordCount, ref maxColorCount,
+                            concurrentFaceRemap,
+                            ref hasNormalAction, ref hasTangentAction, ref hasTexCoordAction, ref hasColorAction);
+                    }
+                    else if (numInd == 2)
+                    {
+                        int baseOffset = offsetLines[i];
+                        ProcessAssimpVertexPrecomputed(face.Indices[0], linesArray, baseOffset, mesh, vertexCache, vertexActions,
+                            ref maxTexCoordCount, ref maxColorCount,
+                            concurrentFaceRemap,
+                            ref hasNormalAction, ref hasTangentAction, ref hasTexCoordAction, ref hasColorAction);
+                        ProcessAssimpVertexPrecomputed(face.Indices[1], linesArray, baseOffset + 1, mesh, vertexCache, vertexActions,
+                            ref maxTexCoordCount, ref maxColorCount,
+                            concurrentFaceRemap,
+                            ref hasNormalAction, ref hasTangentAction, ref hasTexCoordAction, ref hasColorAction);
+                    }
+                    else
+                    {
+                        int baseOffset = offsetTriangles[i];
+                        int localOffset = 0;
+                        int index0 = face.Indices[0];
+                        // Fan triangulation: (i0, i1, i2), (i0, i2, i3), ...
+                        for (int j = 0; j < numInd - 2; j++)
+                        {
+                            int index1 = face.Indices[j + 1];
+                            int index2 = face.Indices[j + 2];
+                            ProcessAssimpVertexPrecomputed(index0, trianglesArray, baseOffset + localOffset, mesh, vertexCache, vertexActions,
+                                ref maxTexCoordCount, ref maxColorCount,
+                                concurrentFaceRemap,
+                                ref hasNormalAction, ref hasTangentAction, ref hasTexCoordAction, ref hasColorAction);
+                            localOffset++;
+                            ProcessAssimpVertexPrecomputed(index1, trianglesArray, baseOffset + localOffset, mesh, vertexCache, vertexActions,
+                                ref maxTexCoordCount, ref maxColorCount,
+                                concurrentFaceRemap,
+                                ref hasNormalAction, ref hasTangentAction, ref hasTexCoordAction, ref hasColorAction);
+                            localOffset++;
+                            ProcessAssimpVertexPrecomputed(index2, trianglesArray, baseOffset + localOffset, mesh, vertexCache, vertexActions,
+                                ref maxTexCoordCount, ref maxColorCount,
+                                concurrentFaceRemap,
+                                ref hasNormalAction, ref hasTangentAction, ref hasTexCoordAction, ref hasColorAction);
+                            localOffset++;
+                        }
+                    }
+                });
+            }
+
+            points = pointsArray;
+            lines = linesArray;
+            triangles = trianglesArray;
+
+            // Convert the concurrent face remap to a regular dictionary.
+            faceRemap = new Dictionary<int, List<int>>(concurrentFaceRemap);
+            mtc = maxTexCoordCount;
+            mcc = maxColorCount;
+        }
+
+        private static void ProcessAssimpVertexPrecomputed(
+            int originalIndex,
+            Vertex[] targetArray,
+            int targetIndex,
+            Mesh mesh,
+            ConcurrentDictionary<int, Vertex> vertexCache,
+            ConcurrentDictionary<int, DelVertexAction> vertexActions,
+            ref int maxTexCoordCount,
+            ref int maxColorCount,
+            ConcurrentDictionary<int, List<int>> faceRemap,
+            ref bool hasNormalAction,
+            ref bool hasTangentAction,
+            ref bool hasTexCoordAction,
+            ref bool hasColorAction)
+        {
+            // Get or create the vertex (thread-safe via the concurrent dictionary)
+            Vertex v = vertexCache.GetOrAdd(originalIndex, x => Vertex.FromAssimp(mesh, x));
+            if (v == null)
+                return;
+
+            // Write the vertex into the preallocated array at its computed index.
+            targetArray[targetIndex] = v;
+
+            // Update vertex actions based on the vertex's attributes.
+            if (v.Normal != null && !hasNormalAction)
+                hasNormalAction |= AddNormalAction(vertexActions);
+
+            if (v.Tangent != null && !hasTangentAction)
+                hasTangentAction |= AddTangentAction(vertexActions);
+
+            if (v.TextureCoordinateSets != null && v.TextureCoordinateSets.Count > 0 && !hasTexCoordAction)
+            {
+                Interlocked.Exchange(ref maxTexCoordCount, Math.Max(maxTexCoordCount, v.TextureCoordinateSets.Count));
+                hasTexCoordAction |= AddTexCoordAction(vertexActions);
+            }
+
+            if (v.ColorSets != null && v.ColorSets.Count > 0 && !hasColorAction)
+            {
+                Interlocked.Exchange(ref maxColorCount, Math.Max(maxColorCount, v.ColorSets.Count));
+                hasColorAction |= AddColorAction(vertexActions);
+            }
+
+            // Update the face remap: map the original index to its new global index.
+            faceRemap.AddOrUpdate(originalIndex,
+                key => [targetIndex],
+                (key, list) =>
+                {
+                    lock (list)
+                    {
+                        list.Add(targetIndex);
+                    }
+                    return list;
+                });
         }
         private static void PopulateVerticesAssimp(
             Mesh mesh,
@@ -1330,13 +1514,14 @@ namespace XREngine.Rendering
             }
         }
 
-        private unsafe void PopulateBlendshapeBuffers(List<Vertex> sourceList, Matrix4x4 dataTransform)
+        private unsafe void PopulateBlendshapeBuffers(Vertex[] sourceList, Matrix4x4 dataTransform)
         {
             using var t = Engine.Profiler.Start();
 
             bool intVarType = Engine.Rendering.Settings.UseIntegerUniformsInShaders;
 
-            BlendshapeCounts = new XRDataBuffer(ECommonBufferType.BlendshapeCount.ToString(), EBufferTarget.ArrayBuffer, (uint)sourceList.Count, intVarType ? EComponentType.Int : EComponentType.Float, 2, false, intVarType);
+            BlendshapeCounts = new XRDataBuffer(ECommonBufferType.BlendshapeCount.ToString(), EBufferTarget.ArrayBuffer, (uint)sourceList.Length, intVarType ? EComponentType.Int : EComponentType.Float, 2, false, intVarType);
+            Buffers.Add(BlendshapeCounts.AttributeName, BlendshapeCounts);
 
             List<Vector3> deltas = [Vector3.Zero]; //0 index is reserved for 0 delta
             List<IVector4> blendshapeIndices = [];
@@ -1344,7 +1529,7 @@ namespace XREngine.Rendering
             bool remapDeltas = Engine.Rendering.Settings.RemapBlendshapeDeltas;
 
             int blendshapeDeltaIndicesIndex = 0;
-            int sourceCount = sourceList.Count;
+            int sourceCount = sourceList.Length;
             int blendshapeCount = (int)BlendshapeCount;
             int* blendshapeCounts = (int*)BlendshapeCounts.Address;
             float* blendshapeCountsFloat = (float*)BlendshapeCounts.Address;
@@ -1422,162 +1607,211 @@ namespace XREngine.Rendering
             }
 
             BlendshapeIndices = new XRDataBuffer($"{ECommonBufferType.BlendshapeIndices}Buffer", EBufferTarget.ShaderStorageBuffer, (uint)blendshapeIndices.Count, intVarType ? EComponentType.Int : EComponentType.Float, 4, false, intVarType);
-            
-            if (remapDeltas)
-            {
-                Remapper deltaRemap = new();
-                deltaRemap.Remap(deltas, null);
-                BlendshapeDeltas = new XRDataBuffer($"{ECommonBufferType.BlendshapeDeltas}Buffer", EBufferTarget.ShaderStorageBuffer, deltaRemap.ImplementationLength, EComponentType.Float, 4, false, false);
-
-                float* deltaData = (float*)BlendshapeDeltas.Address;
-                for (int i = 0; i < deltaRemap.ImplementationLength; i++)
-                {
-                    Vector3 delta = deltas[deltaRemap.ImplementationTable![i]];
-                    *deltaData++ = delta.X;
-                    *deltaData++ = delta.Y;
-                    *deltaData++ = delta.Z;
-                    *deltaData++ = 0.0f;
-                }
-
-                //Update the blendshape indices buffer with remapped delta indices
-                var remap = deltaRemap!.RemapTable!;
-                int* indicesDataInt = (int*)BlendshapeIndices.Address;
-                float* indicesDataFloat = (float*)BlendshapeIndices.Address;
-                for (int i = 0; i < blendshapeIndices.Count; i++)
-                {
-                    IVector4 indices = blendshapeIndices[i];
-                    if (intVarType)
-                    {
-                        *indicesDataInt++ = indices.X;
-                        *indicesDataInt++ = remap[indices.Y];
-                        *indicesDataInt++ = remap[indices.Z];
-                        *indicesDataInt++ = remap[indices.W];
-                    }
-                    else
-                    {
-                        Vector4 newIndices = new(indices.X, remap[indices.Y], remap[indices.Z], remap[indices.W]);
-                        *indicesDataFloat++ = indices.X;
-                        *indicesDataFloat++ = remap[indices.Y];
-                        *indicesDataFloat++ = remap[indices.Z];
-                        *indicesDataFloat++ = remap[indices.W];
-                    }
-                }
-            }
-            else
-            {
-                BlendshapeDeltas = new XRDataBuffer($"{ECommonBufferType.BlendshapeDeltas}Buffer", EBufferTarget.ShaderStorageBuffer, (uint)deltas.Count, EComponentType.Float, 4, false, false);
-                float* deltaData = (float*)BlendshapeDeltas.Address;
-                for (int i = 0; i < deltas.Count; i++)
-                {
-                    Vector3 delta = deltas[i];
-                    *deltaData++ = delta.X;
-                    *deltaData++ = delta.Y;
-                    *deltaData++ = delta.Z;
-                    *deltaData++ = 0.0f;
-                }
-                int* indicesDataInt = (int*)BlendshapeIndices.Address;
-                float* indicesDataFloat = (float*)BlendshapeIndices.Address;
-                for (int i = 0; i < blendshapeIndices.Count; i++)
-                {
-                    IVector4 indices = blendshapeIndices[i];
-                    if (intVarType)
-                    {
-                        *indicesDataInt++ = indices.X;
-                        *indicesDataInt++ = indices.Y;
-                        *indicesDataInt++ = indices.Z;
-                        *indicesDataInt++ = indices.W;
-                    }
-                    else
-                    {
-                        *indicesDataFloat++ = indices.X;
-                        *indicesDataFloat++ = indices.Y;
-                        *indicesDataFloat++ = indices.Z;
-                        *indicesDataFloat++ = indices.W;
-                    }
-                }
-            }
-
-            Buffers.Add(BlendshapeCounts.AttributeName, BlendshapeCounts);
             Buffers.Add(BlendshapeIndices.AttributeName, BlendshapeIndices);
+
+            if (remapDeltas)
+                PopulateRemappedBlendshapeDeltas(intVarType, deltas, blendshapeIndices);
+            else
+                PopulateBlendshapeDeltas(intVarType, deltas, blendshapeIndices);
+        }
+
+        private unsafe void PopulateBlendshapeDeltas(bool intVarType, List<Vector3> deltas, List<IVector4> blendshapeIndices)
+        {
+            using var t = Engine.Profiler.Start();
+
+            BlendshapeDeltas = new XRDataBuffer($"{ECommonBufferType.BlendshapeDeltas}Buffer", EBufferTarget.ShaderStorageBuffer, (uint)deltas.Count, EComponentType.Float, 4, false, false);
             Buffers.Add(BlendshapeDeltas.AttributeName, BlendshapeDeltas);
+
+            float* deltaData = (float*)BlendshapeDeltas.Address;
+            for (int i = 0; i < deltas.Count; i++)
+            {
+                Vector3 delta = deltas[i];
+                *deltaData++ = delta.X;
+                *deltaData++ = delta.Y;
+                *deltaData++ = delta.Z;
+                *deltaData++ = 0.0f;
+            }
+            int* indicesDataInt = (int*)BlendshapeIndices!.Address;
+            float* indicesDataFloat = (float*)BlendshapeIndices.Address;
+            for (int i = 0; i < blendshapeIndices.Count; i++)
+            {
+                IVector4 indices = blendshapeIndices[i];
+                if (intVarType)
+                {
+                    *indicesDataInt++ = indices.X;
+                    *indicesDataInt++ = indices.Y;
+                    *indicesDataInt++ = indices.Z;
+                    *indicesDataInt++ = indices.W;
+                }
+                else
+                {
+                    *indicesDataFloat++ = indices.X;
+                    *indicesDataFloat++ = indices.Y;
+                    *indicesDataFloat++ = indices.Z;
+                    *indicesDataFloat++ = indices.W;
+                }
+            }
+        }
+
+        private unsafe void PopulateRemappedBlendshapeDeltas(bool intVarType, List<Vector3> deltas, List<IVector4> blendshapeIndices)
+        {
+            using var t = Engine.Profiler.Start();
+
+            Remapper deltaRemap = new();
+            deltaRemap.Remap(deltas, null);
+            BlendshapeDeltas = new XRDataBuffer($"{ECommonBufferType.BlendshapeDeltas}Buffer", EBufferTarget.ShaderStorageBuffer, deltaRemap.ImplementationLength, EComponentType.Float, 4, false, false);
+            Buffers.Add(BlendshapeDeltas.AttributeName, BlendshapeDeltas);
+
+            float* deltaData = (float*)BlendshapeDeltas.Address;
+            for (int i = 0; i < deltaRemap.ImplementationLength; i++)
+            {
+                Vector3 delta = deltas[deltaRemap.ImplementationTable![i]];
+                *deltaData++ = delta.X;
+                *deltaData++ = delta.Y;
+                *deltaData++ = delta.Z;
+                *deltaData++ = 0.0f;
+            }
+
+            //Update the blendshape indices buffer with remapped delta indices
+            var remap = deltaRemap!.RemapTable!;
+            int* indicesDataInt = (int*)BlendshapeIndices!.Address;
+            float* indicesDataFloat = (float*)BlendshapeIndices.Address;
+            for (int i = 0; i < blendshapeIndices.Count; i++)
+            {
+                IVector4 indices = blendshapeIndices[i];
+                if (intVarType)
+                {
+                    *indicesDataInt++ = indices.X;
+                    *indicesDataInt++ = remap[indices.Y];
+                    *indicesDataInt++ = remap[indices.Z];
+                    *indicesDataInt++ = remap[indices.W];
+                }
+                else
+                {
+                    Vector4 newIndices = new(indices.X, remap[indices.Y], remap[indices.Z], remap[indices.W]);
+                    *indicesDataFloat++ = indices.X;
+                    *indicesDataFloat++ = remap[indices.Y];
+                    *indicesDataFloat++ = remap[indices.Z];
+                    *indicesDataFloat++ = remap[indices.W];
+                }
+            }
         }
 
         private void InitializeSkinning(
             Mesh mesh,
             Dictionary<string, List<SceneNode>> nodeCache,
             Dictionary<int, List<int>>? faceRemap,
-            List<Vertex> sourceList)
+            Vertex[] sourceList)
         {
             using var t = Engine.Profiler.Start();
 
-            //Debug.Out($"Collecting bone weights for {mesh.Name}.");
-
-            int boneCount = Engine.Rendering.Settings.AllowSkinning ? mesh.BoneCount : 0;
-            Dictionary<TransformBase, (float weight, Matrix4x4 invBindMatrix)>?[]? weightsPerVertex = new Dictionary<TransformBase, (float weight, Matrix4x4 invBindMatrix)>?[VertexCount];
-            Dictionary<TransformBase, Matrix4x4> invBindMatrices = [];
-
-            int boneIndex = 0;
-            Dictionary<TransformBase, int> boneToIndexTable = [];
-            _maxWeightCount = 0;
-            for (int i = 0; i < boneCount; i++)
-            {
-                Bone bone = mesh.Bones[i];
-                if (!bone.HasVertexWeights)
-                    continue;
-
-                string name = bone.Name;
-                //Debug.Out($"Bone {name} has {bone.VertexWeightCount} weights.");
-
-                if (!TryGetTransform(nodeCache, name, out var transform) || transform is null)
-                {
-                    Debug.Out($"Bone {name} has no corresponding node in the heirarchy.");
-                    continue;
-                }
-
-                //Dispose of the imported offset matrix and just use the initially-calculated inverse bind matrix (bind pose)
-                Matrix4x4 invBind = transform.InverseBindMatrix; //bone.OffsetMatrix.Transposed();
-                
-                invBindMatrices.Add(transform!, invBind);
-
-                int weightCount = bone.VertexWeightCount;
-                for (int j = 0; j < weightCount; j++)
-                {
-                    var vw = bone.VertexWeights[j];
-                    var id = vw.VertexID;
-                    var weight = vw.Weight;
-
-                    var list = faceRemap?[id] ?? [id];
-                    foreach (var newId in list)
-                    {
-                        var wpv = weightsPerVertex![newId] ??= [];
-
-                        if (!wpv.TryGetValue(transform!, out (float weight, Matrix4x4 invBindMatrix) existingPair))
-                            wpv.Add(transform!, (weight, invBind));
-                        else if (existingPair.weight != weight)
-                        {
-                            Debug.Out($"Vertex {newId} has multiple different weights for bone {name}.");
-                            wpv[transform] = ((existingPair.weight + weight) / 2.0f, existingPair.invBindMatrix);
-                        }
-
-                        sourceList[newId].Weights ??= wpv;
-                        _maxWeightCount = Math.Max(MaxWeightCount, wpv.Count);
-                    }
-                }
-
-                if (!boneToIndexTable.ContainsKey(transform!))
-                    boneToIndexTable.Add(transform!, boneIndex++);
-            }
-
-            var utilizedBones = new (TransformBase, Matrix4x4)[boneToIndexTable.Count];
-            foreach (var pair in boneToIndexTable)
-                utilizedBones[pair.Value] = (pair.Key, invBindMatrices[pair.Key]);
-            UtilizedBones = utilizedBones;
+            CollectBoneWeights(mesh, nodeCache, faceRemap, sourceList, out int boneCount, out Dictionary<TransformBase, (float weight, Matrix4x4 invBindMatrix)>?[]? weightsPerVertex, out Dictionary<TransformBase, int> boneToIndexTable);
 
             //if (boneToIndexTable.Count < boneCount)
             //    Debug.Out($"{boneCount - boneToIndexTable.Count} unweighted bones were removed.");
 
             if (weightsPerVertex is not null && weightsPerVertex.Length > 0 && boneCount > 0)
                 PopulateSkinningBuffers(boneToIndexTable, weightsPerVertex);
+        }
+
+        private void CollectBoneWeights(
+            Mesh mesh,
+            Dictionary<string, List<SceneNode>> nodeCache,
+            Dictionary<int, List<int>>? faceRemap,
+            Vertex[] sourceList,
+            out int boneCount,
+            out Dictionary<TransformBase, (float weight, Matrix4x4 invBindMatrix)>?[]? weightsPerVertex,
+            out Dictionary<TransformBase, int> boneToIndexTable)
+        {
+            using var t = Engine.Profiler.Start();
+
+            boneCount = Engine.Rendering.Settings.AllowSkinning ? mesh.BoneCount : 0;
+            int vertexCount = VertexCount;
+            var weightsPerVertex2 = new Dictionary<TransformBase, (float weight, Matrix4x4 invBindMatrix)>?[vertexCount];
+
+            // Use concurrent dictionaries for thread-safe updates.
+            var concurrentInvBindMatrices = new System.Collections.Concurrent.ConcurrentDictionary<TransformBase, Matrix4x4>();
+            var concurrentBoneToIndexTable = new System.Collections.Concurrent.ConcurrentDictionary<TransformBase, int>();
+            _maxWeightCount = 0;
+            int boneIndex = 0;
+
+            // Create per-vertex locks to synchronize updates to weightsPerVertex.
+            object[] vertexLocks = new object[vertexCount];
+            for (int i = 0; i < vertexCount; i++)
+                vertexLocks[i] = new object();
+
+            Parallel.For(0, boneCount, i =>
+            {
+                Bone bone = mesh.Bones[i];
+                if (!bone.HasVertexWeights)
+                    return;
+
+                string name = bone.Name;
+                if (!TryGetTransform(nodeCache, name, out var transform) || transform is null)
+                {
+                    Debug.Out($"Bone {name} has no corresponding node in the heirarchy.");
+                    return;
+                }
+
+                Matrix4x4 invBind = transform.InverseBindMatrix;
+                concurrentInvBindMatrices[transform] = invBind;
+
+                int weightCount = bone.VertexWeightCount;
+                for (int j = 0; j < weightCount; j++)
+                {
+                    var vw = bone.VertexWeights[j];
+                    int origId = vw.VertexID;
+                    float weight = vw.Weight;
+                    List<int> targetIndices = (faceRemap != null && faceRemap.TryGetValue(origId, out var remapped))
+                        ? remapped
+                        : [origId];
+
+                    foreach (int newId in targetIndices)
+                    {
+                        lock (vertexLocks[newId])
+                        {
+                            var wpv = weightsPerVertex2[newId];
+                            if (wpv == null)
+                            {
+                                wpv = [];
+                                weightsPerVertex2[newId] = wpv;
+                            }
+
+                            if (!wpv.TryGetValue(transform, out var existing))
+                                wpv[transform] = (weight, invBind);
+                            else if (existing.weight != weight)
+                            {
+                                wpv[transform] = ((existing.weight + weight) * 0.5f, existing.invBindMatrix);
+                                Debug.Out($"Vertex {newId} has multiple weights for bone {name}.");
+                            }
+                            if (sourceList[newId].Weights == null)
+                                sourceList[newId].Weights = wpv;
+
+                            int currentMax, origMax;
+                            do
+                            {
+                                origMax = _maxWeightCount;
+                                currentMax = Math.Max(origMax, wpv.Count);
+                            }
+                            while (Interlocked.CompareExchange(ref _maxWeightCount, currentMax, origMax) != origMax);
+                        }
+                    }
+                }
+
+                int idx = Interlocked.Increment(ref boneIndex) - 1;
+                concurrentBoneToIndexTable.TryAdd(transform, idx);
+            });
+
+            boneToIndexTable = concurrentBoneToIndexTable.ToDictionary(kvp => kvp.Key, kvp => kvp.Value);
+
+            // Set UtilizedBones from boneToIndexTable and the collected inverse bind matrices.
+            var utilizedBones = new (TransformBase tfm, Matrix4x4 invBindWorldMtx)[boneToIndexTable.Count];
+            foreach (var pair in boneToIndexTable)
+                if (concurrentInvBindMatrices.TryGetValue(pair.Key, out Matrix4x4 cachedInvBind))
+                    utilizedBones[pair.Value] = (pair.Key, cachedInvBind);
+            UtilizedBones = utilizedBones;
+
+            weightsPerVertex = weightsPerVertex2;
         }
 
         private int _maxWeightCount = 0;
@@ -1893,8 +2127,8 @@ namespace XREngine.Rendering
                 return false;
             }
 
-            if (matchList.Count > 1)
-                Debug.Out($"{name} has multiple corresponding nodes in the heirarchy. Using the first one.");
+            //if (matchList.Count > 1)
+            //    Debug.Out($"{name} has multiple corresponding nodes in the heirarchy. Using the first one.");
 
             transform = matchList[0].Transform;
             return true;

@@ -224,7 +224,7 @@ namespace XREngine.Timers
         /// Retrives the current timestamp from the stopwatch.
         /// </summary>
         /// <returns></returns>
-        public float Time() => (float)_watch.Elapsed.TotalSeconds;
+        public float Time() => (float)_watch.ElapsedTicks / TimeSpan.TicksPerSecond;
 
         public bool DispatchRender()
         {

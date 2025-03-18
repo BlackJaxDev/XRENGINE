@@ -27,6 +27,8 @@ namespace XREngine.Components
             set => SetField(ref _isActive, value);
         }
 
+        public bool IsActiveInHierarchy => IsActive && SceneNode.IsActiveInHierarchy;
+
         public XREvent<(XRComponent, TransformBase)> LocalMatrixChanged;
         public XREvent<(XRComponent, TransformBase)> RenderWorldMatrixChanged;
 

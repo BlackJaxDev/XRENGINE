@@ -351,6 +351,13 @@ namespace XREngine.Rendering
             set => SetField(ref _resizable, value);
         }
 
+        private bool _disposeOnPush = true;
+        public bool DisposeOnPush
+        {
+            get => _disposeOnPush;
+            set => SetField(ref _disposeOnPush, value);
+        }
+
         //TODO: Vulkan methods
         //public Span<T> BeginUpdate()
         //{

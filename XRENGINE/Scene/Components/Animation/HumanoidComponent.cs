@@ -18,13 +18,13 @@ namespace XREngine.Scene.Components.Animation
         {
             base.OnComponentActivated();
             if (SolveIK)
-                RegisterTick(ETickGroup.Normal, ETickOrder.Scene, SolveFullBodyIK);
+                RegisterTick(ETickGroup.Late, ETickOrder.Scene, SolveFullBodyIK);
         }
         protected internal override void OnComponentDeactivated()
         {
             base.OnComponentDeactivated();
             if (SolveIK)
-                UnregisterTick(ETickGroup.Normal, ETickOrder.Scene, SolveFullBodyIK);
+                UnregisterTick(ETickGroup.Late, ETickOrder.Scene, SolveFullBodyIK);
         }
 
         protected override void OnPropertyChanged<T>(string? propName, T prev, T field)
@@ -36,9 +36,9 @@ namespace XREngine.Scene.Components.Animation
                     if (IsActive)
                     {
                         if (SolveIK)
-                            RegisterTick(ETickGroup.Normal, ETickOrder.Scene, SolveFullBodyIK);
+                            RegisterTick(ETickGroup.Late, ETickOrder.Scene, SolveFullBodyIK);
                         else
-                            UnregisterTick(ETickGroup.Normal, ETickOrder.Scene, SolveFullBodyIK);
+                            UnregisterTick(ETickGroup.Late, ETickOrder.Scene, SolveFullBodyIK);
                     }
                     break;
             }
@@ -507,26 +507,26 @@ namespace XREngine.Scene.Components.Animation
             if (Left.Leg.Node is not null)
                 FindChildrenFor(Left.Leg, [
                     (Left.Knee, ByNameContainsAll("Knee")),
-                    (Left.Foot, ByNameContainsAll("Foot")),
+                    (Left.Foot, ByNameContainsAny("Foot", "Ankle")),
                     (Left.Toes, ByNameContainsAll("Toe")),
                 ]);
 
             if (Right.Leg.Node is not null)
                 FindChildrenFor(Right.Leg, [
                     (Right.Knee, ByNameContainsAll("Knee")),
-                    (Right.Foot, ByNameContainsAll("Foot")),
+                    (Right.Foot, ByNameContainsAny("Foot", "Ankle")),
                     (Right.Toes, ByNameContainsAll("Toe")),
                 ]);
 
             if (Left.Knee.Node is not null && Left.Foot.Node is null)
                 FindChildrenFor(Left.Knee, [
-                    (Left.Foot, ByNameContainsAll("Foot")),
+                    (Left.Foot, ByNameContainsAny("Foot", "Ankle")),
                     (Left.Toes, ByNameContainsAll("Toe")),
                 ]);
 
             if (Right.Knee.Node is not null && Right.Foot.Node is null)
                 FindChildrenFor(Right.Knee, [
-                    (Right.Foot, ByNameContainsAll("Foot")),
+                    (Right.Foot, ByNameContainsAny("Foot", "Ankle")),
                     (Right.Toes, ByNameContainsAll("Toe")),
                 ]);
 
@@ -562,6 +562,63 @@ namespace XREngine.Scene.Components.Animation
             //Knees
             LeftKneeTarget = (Left.Knee.Node?.Transform, Matrix4x4.Identity);
             RightKneeTarget = (Right.Knee.Node?.Transform, Matrix4x4.Identity);
+        }
+
+        public void SetFootPositionX(float x, bool leftFoot)
+        {
+            if (leftFoot)
+                LeftFootTarget = (null, Matrix4x4.CreateTranslation(new Vector3(x, LeftFootTarget.offset.Translation.Y, LeftFootTarget.offset.Translation.Z)));
+            else
+                RightFootTarget = (null, Matrix4x4.CreateTranslation(new Vector3(x, RightFootTarget.offset.Translation.Y, RightFootTarget.offset.Translation.Z)));
+        }
+        public void SetFootPositionY(float y, bool leftFoot)
+        {
+            if (leftFoot)
+                LeftFootTarget = (null, Matrix4x4.CreateTranslation(new Vector3(LeftFootTarget.offset.Translation.X, y, LeftFootTarget.offset.Translation.Z)));
+            else
+                RightFootTarget = (null, Matrix4x4.CreateTranslation(new Vector3(RightFootTarget.offset.Translation.X, y, RightFootTarget.offset.Translation.Z)));
+        }
+        public void SetFootPositionZ(float z, bool leftFoot)
+        {
+            if (leftFoot)
+                LeftFootTarget = (null, Matrix4x4.CreateTranslation(new Vector3(LeftFootTarget.offset.Translation.X, LeftFootTarget.offset.Translation.Y, z)));
+            else
+                RightFootTarget = (null, Matrix4x4.CreateTranslation(new Vector3(RightFootTarget.offset.Translation.X, RightFootTarget.offset.Translation.Y, z)));
+        }
+        public void SetFootPosition(Vector3 position, bool leftFoot)
+        {
+            if (leftFoot)
+                LeftFootTarget = (null, Matrix4x4.CreateTranslation(position));
+            else
+                RightFootTarget = (null, Matrix4x4.CreateTranslation(position));
+        }
+        public void SetFootRotation(Quaternion rotation, bool leftFoot)
+        {
+            if (leftFoot)
+                LeftFootTarget = (null, Matrix4x4.CreateFromQuaternion(rotation) * Matrix4x4.CreateTranslation(LeftFootTarget.offset.Translation));
+            else
+                RightFootTarget = (null, Matrix4x4.CreateFromQuaternion(rotation) * Matrix4x4.CreateTranslation(RightFootTarget.offset.Translation));
+        }
+        public void SetHandPosition(Vector3 position, bool leftHand)
+        {
+            if (leftHand)
+                LeftHandTarget = (null, Matrix4x4.CreateTranslation(position));
+            else
+                RightHandTarget = (null, Matrix4x4.CreateTranslation(position));
+        }
+        public void SetFootPositionAndRotation(Vector3 position, Quaternion rotation, bool leftFoot)
+        {
+            if (leftFoot)
+                LeftFootTarget = (null, Matrix4x4.CreateFromQuaternion(rotation) * Matrix4x4.CreateTranslation(position));
+            else
+                RightFootTarget = (null, Matrix4x4.CreateFromQuaternion(rotation) * Matrix4x4.CreateTranslation(position));
+        }
+        public void SetHandPositionAndRotation(Vector3 position, Quaternion rotation, bool leftHand)
+        {
+            if (leftHand)
+                LeftHandTarget = (null, Matrix4x4.CreateFromQuaternion(rotation) * Matrix4x4.CreateTranslation(position));
+            else
+                RightHandTarget = (null, Matrix4x4.CreateFromQuaternion(rotation) * Matrix4x4.CreateTranslation(position));
         }
 
         private static Func<SceneNode, bool> ByNameContainsAny(params string[] names)
@@ -842,5 +899,8 @@ namespace XREngine.Scene.Components.Animation
             Matrix4x4 leftLookat = Matrix4x4.CreateLookAt(tfm.WorldTranslation, worldTargetPosition, Globals.Up);
             tfm.SetWorldRotation(Quaternion.CreateFromRotationMatrix(leftLookat));
         }
+
+        public Transform? GetBoneByName(string name)
+            => SceneNode.FindDescendantByName(name, StringComparison.InvariantCulture)?.GetTransformAs<Transform>(true);
     }
 }

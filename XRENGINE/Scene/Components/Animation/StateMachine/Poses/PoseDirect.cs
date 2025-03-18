@@ -1,17 +1,22 @@
-﻿//namespace XREngine.Components
-//{
-//    public class PoseDirect : PoseGenBase
-//    {
-//        public SkeletalAnimation Animation { get; set; } = null;
+﻿using XREngine.Animation;
 
-//        public PoseDirect() { }
-//        public PoseDirect(SkeletalAnimation anim) 
-//            => Animation = anim;
+namespace XREngine.Components
+{
+    /// <summary>
+    /// Retrieves a pose directly from a skeletal animation.
+    /// </summary>
+    public class PoseDirect : PoseGenBase
+    {
+        public SkeletalAnimation? Animation { get; set; } = null;
 
-//        public override SkeletalAnimationPose GetPose()
-//            => Animation?.GetFrame();
+        public PoseDirect() { }
+        public PoseDirect(SkeletalAnimation anim)
+            => Animation = anim;
 
-//        public override void Tick(float delta)
-//            => Animation?.Tick(delta);
-//    }
-//}
+        public override HumanoidPose? GetPose()
+            => Animation?.GetFrame();
+
+        public override void Tick(float delta)
+            => Animation?.Tick(delta);
+    }
+}

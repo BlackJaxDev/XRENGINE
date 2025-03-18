@@ -67,7 +67,7 @@ namespace XREngine.Scene.Components.Animation
             {
                 float len = WorldPosSolve.Distance(childWorldPosition);
                 WorldChildDirSolve = (childWorldPosition - WorldPosSolve).Normalized();
-                DistanceToChild = len;
+                //DistanceToChild = len;
                 return len;
             }
         }
