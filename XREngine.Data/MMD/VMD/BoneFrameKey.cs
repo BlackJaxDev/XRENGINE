@@ -1,6 +1,4 @@
-﻿using Extensions;
-using System.Numerics;
-using YamlDotNet.Core.Tokens;
+﻿using System.Numerics;
 
 namespace XREngine.Data.MMD
 {
@@ -30,7 +28,7 @@ namespace XREngine.Data.MMD
         public void Load(BinaryReader reader)
         {
             FrameNumber = reader.ReadUInt32();
-            Translation = new Vector3(reader.ReadSingle(), reader.ReadSingle(), reader.ReadSingle() * -1.0f) * VMDFile.MMDUnitsToMeters;
+            Translation = new Vector3(reader.ReadSingle(), reader.ReadSingle(), reader.ReadSingle() * -1.0f) * VMDUtils.MMDUnitsToMeters;
             Rotation = InvertZAxisRotation(new Quaternion(reader.ReadSingle(), reader.ReadSingle(), reader.ReadSingle(), reader.ReadSingle()));
             DeserializeInterp([.. reader.ReadBytes(64).Select(b => (sbyte)b)]);
         }
@@ -38,9 +36,10 @@ namespace XREngine.Data.MMD
         public void Save(BinaryWriter writer)
         {
             Quaternion rotation = InvertZAxisRotation(Rotation);
+            Vector3 translation = Translation * VMDUtils.MetersToMMDUnits;
 
             writer.Write(FrameNumber);
-            writer.Write(new float[] { Translation.X, Translation.Y, Translation.Z * -1.0f }.SelectMany(BitConverter.GetBytes).ToArray());
+            writer.Write(new float[] { translation.X, translation.Y, translation.Z * -1.0f }.SelectMany(BitConverter.GetBytes).ToArray());
             writer.Write(new float[] { rotation.X, rotation.Y, rotation.Z, rotation.W }.SelectMany(BitConverter.GetBytes).ToArray());
             writer.Write(SerializeInterp().Select(b => (byte)b).ToArray());
         }

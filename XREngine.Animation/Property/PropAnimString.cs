@@ -4,9 +4,9 @@ namespace XREngine.Animation
 {
     public class PropAnimString : PropAnimKeyframed<StringKeyframe>, IEnumerable<StringKeyframe>
     {
-        private DelGetValue<string> _getValue;
+        private DelGetValue<string?> _getValue;
 
-        private string[]? _baked = null;
+        private string?[]? _baked = null;
         /// <summary>
         /// The default value to return when no keyframes are set.
         /// </summary>
@@ -30,15 +30,15 @@ namespace XREngine.Animation
         protected override void BakedChanged()
             => _getValue = !IsBaked ? GetValueKeyframed : GetValueBaked;
 
-        public string GetValue(float second)
+        public string? GetValue(float second)
             => _getValue(second);
-        protected override object GetValueGeneric(float second)
+        protected override object? GetValueGeneric(float second)
             => _getValue(second);
-        public string GetValueBaked(float second)
+        public string? GetValueBaked(float second)
             => GetValueBaked((int)Math.Floor(second * BakedFramesPerSecond));
-        public string GetValueBaked(int frameIndex)
-            => _baked?.TryGet(frameIndex) ?? string.Empty;
-        public string GetValueKeyframed(float second)
+        public string? GetValueBaked(int frameIndex)
+            => _baked?.TryGet(frameIndex);
+        public string? GetValueKeyframed(float second)
         {
             StringKeyframe? key = Keyframes?.GetKeyBefore(second);
             if (key != null)
@@ -56,37 +56,30 @@ namespace XREngine.Animation
                 _baked[i] = GetValueKeyframed(i * invFPS);
         }
 
-        protected override object GetCurrentValueGeneric()
-        {
-            throw new NotImplementedException();
-        }
+        protected override object? GetCurrentValueGeneric()
+            => GetValue(CurrentTime);
 
         protected override void OnProgressed(float delta)
         {
-            throw new NotImplementedException();
-        }
-    }
-    public class StringKeyframe : Keyframe, IStepKeyframe
-    {
-        public string Value { get; set; }
-        public override Type ValueType => typeof(string);
-        public new StringKeyframe? Next
-        {
-            get => _next as StringKeyframe;
-            set => _next = value;
-        }
-        public new StringKeyframe? Prev
-        {
-            get => _prev as StringKeyframe;
-            set => _prev = value;
-        }
+            //if (IsBaked)
+            //{
+            //    CurrentValue = GetValueBakedBySecond(_currentTime);
+            //    return;
+            //}
 
-        public override void ReadFromString(string str)
-        {
-            int spaceIndex = str.IndexOf(' ');
-            Second = float.Parse(str[..spaceIndex]);
-            Value = str[(spaceIndex + 1)..];
+            //_prevKeyframe ??= Keyframes.GetKeyBefore(_currentTime);
+
+            //if (Keyframes.Count == 0)
+            //{
+            //    CurrentValue = DefaultValue;
+            //    return;
+            //}
+
+            //float second = _currentTime;
+            //CurrentValue = _prevKeyframe?.Interpolate(second,
+            //    out _prevKeyframe,
+            //    out _,
+            //    out _) ?? DefaultValue;
         }
-        public override string WriteToString() => string.Format("{0} {1}", Second, Value);
     }
 }

@@ -209,9 +209,8 @@ namespace XREngine.Animation
                 return;
             }
 
-            if (_prevKeyframe is null)
-                _prevKeyframe = Keyframes.First;
-            if (Keyframes.Count == 0)
+            var prevKf = _prevKeyframe ??= Keyframes.First;
+            if (prevKf is null || Keyframes.Count == 0)
             {
                 CurrentPosition = DefaultValue;
                 return;
@@ -230,13 +229,13 @@ namespace XREngine.Animation
 
                 if (LerpConstrainedFPS)
                 {
-                    _prevKeyframe.Interpolate(floorSec,
+                    prevKf.Interpolate(floorSec,
                         out _prevKeyframe,
                         out LerpableKeyframe<TValue> _,
                         out float _,
                         out TValue floorPosition);
 
-                    _prevKeyframe.Interpolate(ceilSec,
+                    prevKf.Interpolate(ceilSec,
                        out LerpableKeyframe<TValue> _,
                        out LerpableKeyframe<TValue> _,
                        out float _,
@@ -248,7 +247,8 @@ namespace XREngine.Animation
                 second = floorSec;
             }
 
-            _prevKeyframe.Interpolate(second,
+            prevKf.Interpolate(
+                second,
                 out _prevKeyframe,
                 out LerpableKeyframe<TValue> _,
                 out float _,
@@ -258,8 +258,9 @@ namespace XREngine.Animation
         }
         private TValue LerpKeyedValues(float floorSec, float ceilSec, float time)
         {
-            TValue floorValue = Keyframes.First.Interpolate(floorSec, out LerpableKeyframe<TValue> prevKey, out _, out _);
-            TValue ceilValue = prevKey.Interpolate(ceilSec);
+            LerpableKeyframe<TValue>? prevKey = null;
+            TValue floorValue = Keyframes.First?.Interpolate(floorSec, out prevKey, out _, out _) ?? DefaultValue;
+            TValue ceilValue = prevKey?.Interpolate(ceilSec) ?? DefaultValue;
             return LerpValues(floorValue, ceilValue, time);
         }
         public override void Bake(float framesPerSecond)
@@ -287,6 +288,7 @@ namespace XREngine.Animation
             Second = second;
             InValue = inValue;
             OutValue = outValue;
+            _interpolate = Step;
         }
 
         protected delegate T DelInterpolate(LerpableKeyframe<T> key1, LerpableKeyframe<T> key2, float time);

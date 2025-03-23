@@ -1,4 +1,5 @@
 ﻿using Extensions;
+using System.Buffers;
 using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Diagnostics.CodeAnalysis;
@@ -28,10 +29,10 @@ namespace XREngine.Rendering
         public EventList<ListenerContext> Listeners { get; private set; } = [];
         
         public XREventGroup<GameMode> CurrentGameModeChanged;
-        public XREvent<XRWorldInstance> PreBeginPlay;
-        public XREvent<XRWorldInstance> PostBeginPlay;
-        public XREvent<XRWorldInstance> PreEndPlay;
-        public XREvent<XRWorldInstance> PostEndPlay;
+        public XREvent<XRWorldInstance>? PreBeginPlay;
+        public XREvent<XRWorldInstance>? PostBeginPlay;
+        public XREvent<XRWorldInstance>? PreEndPlay;
+        public XREvent<XRWorldInstance>? PostEndPlay;
 
         protected VisualScene3D _visualScene;
         public VisualScene3D VisualScene => _visualScene;
@@ -81,36 +82,37 @@ namespace XREngine.Rendering
 
         public bool IsPlaying { get; private set; }
 
-        public void BeginPlay()
+        public async Task BeginPlay()
         {
-            PreBeginPlay.Invoke(this);
+            PreBeginPlay?.Invoke(this);
             PhysicsScene.Initialize();
-            BeginPlayInternal();
+            await BeginPlayInternal();
             LinkTimeCallbacks();
-            PostBeginPlay.Invoke(this);
+            PostBeginPlay?.Invoke(this);
         }
 
-        protected virtual void BeginPlayInternal()
+        protected virtual async Task BeginPlayInternal()
         {
             VisualScene.GenericRenderTree.Swap();
 
-            //Recalculate all transforms before activating nodes
+            //Recalculate all transforms before activating nodes, in case any cross-dependencies exist
             foreach (SceneNode node in RootNodes)
-                node.Transform.RecalculateMatrixHeirarchy(true, true, Engine.Rendering.Settings.RecalcChildMatricesInParallel);
+                await node.Transform.RecalculateMatrixHeirarchy(true, true, Engine.Rendering.Settings.RecalcChildMatricesInParallel);
 
             foreach (SceneNode node in RootNodes)
                 if (node.IsActiveSelf)
                     node.OnActivated();
+
             IsPlaying = true;
         }
 
         public void EndPlay()
         {
-            PreEndPlay.Invoke(this);
+            PreEndPlay?.Invoke(this);
             UnlinkTimeCallbacks();
             PhysicsScene.Destroy();
             EndPlayInternal();
-            PostEndPlay.Invoke(this);
+            PostEndPlay?.Invoke(this);
         }
         protected virtual void EndPlayInternal()
         {
@@ -152,12 +154,18 @@ namespace XREngine.Rendering
 
         private void ApplyRenderMatrixChanges()
         {
+            //using var t = Engine.Profiler.Start();
+            //var arr = ArrayPool<(TransformBase tfm, Matrix4x4 renderMatrix)>.Shared.Rent(_pushToRenderSnapshot.Count);
+            //await Task.WhenAll(_pushToRenderSnapshot.Select(x => x.tfm.SetRenderMatrix(x.renderMatrix, false)));
+            //_pushToRenderSnapshot.Clear();
             while (_pushToRenderSnapshot.TryDequeue(out (TransformBase tfm, Matrix4x4 renderMatrix) item))
-                item.tfm.SetRenderMatrix(item.renderMatrix, false);
+                item.tfm.RenderMatrix = item.renderMatrix;
         }
 
         private void GlobalSwapBuffers()
         {
+            //using var t = Engine.Profiler.Start();
+
             ApplyRenderMatrixChanges();
             VisualScene.GlobalSwapBuffers();
             //PhysicsScene.SwapDebugBuffers();
@@ -191,13 +199,13 @@ namespace XREngine.Rendering
 
         private void PostUpdate()
         {
-            Action<IEnumerable<TransformBase>> recalc = Engine.Rendering.Settings.RecalcChildMatricesInParallel
+            Func<IEnumerable<TransformBase>, Task> recalc = Engine.Rendering.Settings.RecalcChildMatricesInParallel
                 ? RecalcTransformsParallelTasks
                 : RecalcTransformsSequential;
 
             //Sequentially iterate through each depth of modified transforms, in order
-            foreach (var item in _invalidTransforms.OrderBy(x => x.Key)) 
-                recalc(item.Value);
+            foreach (var item in _invalidTransforms.OrderBy(x => x.Key))
+                recalc(item.Value).Wait();
 
             _pushToRenderWrite = Interlocked.Exchange(ref _pushToRenderSnapshot, _pushToRenderWrite);
         }
@@ -205,15 +213,15 @@ namespace XREngine.Rendering
         public void EnqueueRenderTransformChange(TransformBase transform)
             => _pushToRenderWrite.Enqueue((transform, transform.WorldMatrix));
 
-        private static void RecalcTransformsSequential(IEnumerable<TransformBase> bag)
+        private static async Task RecalcTransformsSequential(IEnumerable<TransformBase> bag)
         {
             foreach (var transform in bag)
-                transform.RecalculateMatrixHeirarchy(false, false, false);
+                await transform.RecalculateMatrixHeirarchy(false, false, false);
         }
 
-        private static void RecalcTransformsParallelTasks(IEnumerable<TransformBase> bag)
+        private static async Task RecalcTransformsParallelTasks(IEnumerable<TransformBase> bag)
         {
-            void Calc(TransformBase tfm)
+            Task Calc(TransformBase tfm)
                 => tfm.RecalculateMatrixHeirarchy(false, false, true);
 
             Task AsCalcTask(TransformBase tfm)
@@ -222,7 +230,7 @@ namespace XREngine.Rendering
                 return Task.Run(AsyncCalc);
             }
 
-            Task.WaitAll([.. bag.Select(AsCalcTask)]);
+            await Task.WhenAll([.. bag.Select(AsCalcTask)]);
         }
 
         private ConcurrentQueue<(TransformBase tfm, Matrix4x4 renderMatrix)> _pushToRenderWrite = new();

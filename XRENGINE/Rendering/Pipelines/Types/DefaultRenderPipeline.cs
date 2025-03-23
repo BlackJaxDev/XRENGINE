@@ -74,7 +74,7 @@ public class DefaultRenderPipeline : RenderPipeline
     public const string DepthViewTextureName = "DepthView";
     public const string StencilViewTextureName = "StencilView";
     public const string AlbedoOpacityTextureName = "AlbedoOpacity";
-    public const string RMSITextureName = "RMSI";
+    public const string RMSETextureName = "RMSE";
     public const string DepthStencilTextureName = "DepthStencil";
     public const string DiffuseTextureName = "LightingTexture";
     public const string HDRSceneTextureName = "HDRSceneTex";
@@ -157,7 +157,7 @@ public class DefaultRenderPipeline : RenderPipeline
                 NormalTextureName,
                 DepthViewTextureName,
                 AlbedoOpacityTextureName,
-                RMSITextureName,
+                RMSETextureName,
                 DepthStencilTextureName);
 
             aoCmd.SetOutputNames(
@@ -192,7 +192,7 @@ public class DefaultRenderPipeline : RenderPipeline
                 c.Add<VPRC_LightCombinePass>().SetOptions(
                     AlbedoOpacityTextureName,
                     NormalTextureName,
-                    RMSITextureName,
+                    RMSETextureName,
                     DepthViewTextureName);
             }
 
@@ -307,8 +307,8 @@ public class DefaultRenderPipeline : RenderPipeline
         //RMSI GBuffer texture
         //R = Roughness, G = Metallic, B = Specular, A = IOR
         c.Add<VPRC_CacheOrCreateTexture>().SetOptions(
-            RMSITextureName,
-            CreateRMSITexture,
+            RMSETextureName,
+            CreateRMSETexture,
             NeedsRecreateTextureInternalSize,
             ResizeTextureInternalSize);
 
@@ -513,7 +513,7 @@ public class DefaultRenderPipeline : RenderPipeline
             return t;
         }
     }
-    private XRTexture CreateRMSITexture()
+    private XRTexture CreateRMSETexture()
     {
         if (Stereo)
         {
@@ -751,7 +751,7 @@ public class DefaultRenderPipeline : RenderPipeline
         XRTexture[] lightCombineTextures = [
             GetTexture<XRTexture>(AlbedoOpacityTextureName)!,
             GetTexture<XRTexture>(NormalTextureName)!,
-            GetTexture<XRTexture>(RMSITextureName)!,
+            GetTexture<XRTexture>(RMSETextureName)!,
             GetTexture<XRTexture>(AmbientOcclusionIntensityTextureName)!,
             GetTexture<XRTexture>(DepthViewTextureName)!,
             diffuseTexture,

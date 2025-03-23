@@ -7,7 +7,7 @@ namespace XREngine.Rendering
 {
     public abstract class XRCameraParameters(float nearPlane, float farPlane) : XRBase
     {
-        public XREvent<XRCameraParameters> ProjectionMatrixChanged { get; }
+        public XREvent<XRCameraParameters>? ProjectionMatrixChanged { get; }
 
         public void ForceInvalidateProjection()
             => _projectionMatrix = null;
@@ -54,7 +54,7 @@ namespace XREngine.Rendering
             
             _projectionMatrix = CalculateProjectionMatrix();
             _untransformedFrustum = CalculateUntransformedFrustum();
-            ProjectionMatrixChanged.Invoke(this);
+            ProjectionMatrixChanged?.Invoke(this);
         }
 
         /// <summary>

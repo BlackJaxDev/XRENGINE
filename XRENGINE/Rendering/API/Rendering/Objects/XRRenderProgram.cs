@@ -122,11 +122,12 @@ namespace XREngine.Rendering
             return mask;
         }
 
-        public XRRenderProgram(bool linkNow, params XRShader[] shaders)
-            : this(shaders, linkNow) { }
+        public XRRenderProgram(bool linkNow, bool separable, params XRShader[] shaders)
+            : this(linkNow, separable, (IEnumerable<XRShader>)shaders) { }
 
-        public XRRenderProgram(IEnumerable<XRShader> shaders, bool linkNow = true)
+        public XRRenderProgram(bool linkNow, bool separable, IEnumerable<XRShader> shaders)
         {
+            Separable = separable;
             Shaders.AddRange(shaders);
             if (linkNow)
                 AllowLink();

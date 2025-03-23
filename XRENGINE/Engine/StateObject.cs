@@ -5,6 +5,12 @@ namespace XREngine
     public class StateObject : IDisposable, IPoolable
     {
         private static readonly ResourcePool<StateObject> _statePool = new(() => new());
+        private bool _takenFromStatePool = false;
+
+        internal StateObject()
+        {
+            _takenFromStatePool = false;
+        }
 
         public Action? OnStateEnded { get; set; }
         private bool _disposed = false;
@@ -12,6 +18,7 @@ namespace XREngine
         public static StateObject New(Action? onStateEnded = null)
         {
             var state = _statePool.Take();
+            state._takenFromStatePool = true;
             state.OnStateEnded = onStateEnded;
             return state;
         }
@@ -34,7 +41,8 @@ namespace XREngine
                 return;
             _disposed = true;
             GC.SuppressFinalize(this);
-            _statePool.Release(this);
+            if (_takenFromStatePool)
+                _statePool.Release(this);
         }
     }
 }

@@ -70,6 +70,13 @@ namespace XREngine.Animation
             set => SetField(ref _animation, value);
         }
 
+        private AnimationClip? _parentClip = null;
+        public AnimationClip? ParentClip
+        {
+            get => _parentClip;
+            internal set => SetField(ref _parentClip, value);
+        }
+
         private readonly EventList<AnimationMember> _children = [];
         public EventList<AnimationMember> Children => _children;
 
@@ -106,25 +113,68 @@ namespace XREngine.Animation
             set => SetField(ref _cacheReturnValue, value);
         }
 
+        private bool _registeredWithClip = false;
+        public bool RegisteredWithClip
+        {
+            get => _registeredWithClip;
+            private set => SetField(ref _registeredWithClip, value);
+        }
+
+        protected override bool OnPropertyChanging<T>(string? propName, T field, T @new)
+        {
+            bool change = base.OnPropertyChanging(propName, field, @new);
+            if (change)
+            {
+                switch (propName)
+                {
+                    case nameof(ParentClip):
+                        if (ParentClip != null && Animation != null)
+                            Animation.AnimationEnded -= ParentClip.AnimationHasEnded;
+                        break;
+                }
+            }
+            return change;
+        }
+
         protected override void OnPropertyChanged<T>(string? propName, T prev, T field)
         {
             base.OnPropertyChanged(propName, prev, field);
             switch (propName)
             {
+                case nameof(CacheReturnValue):
+                    _cacheAttempted = false;
+                    break;
+                case nameof(Animation):
+                    if (ParentClip != null && Animation != null && !_registeredWithClip)
+                    {
+                        Animation.AnimationEnded += ParentClip.AnimationHasEnded;
+                        _registeredWithClip = true;
+                    }
+                    break;
+                case nameof(ParentClip):
+                    if (ParentClip != null && Animation != null && !_registeredWithClip)
+                    {
+                        Animation.AnimationEnded += ParentClip.AnimationHasEnded;
+                        _registeredWithClip = true;
+                    }
+                    break;
                 case nameof(MemberType):
                     MemberNotFound = false;
                     switch (_memberType)
                     {
                         case EAnimationMemberType.Field:
                             _fieldCache = null;
+                            _cacheAttempted = false;
                             _tick = FieldTick;
                             break;
                         case EAnimationMemberType.Property:
                             _propertyCache = null;
+                            _cacheAttempted = false;
                             _tick = PropertyTick;
                             break;
                         case EAnimationMemberType.Method:
                             _methodCache = null;
+                            _cacheAttempted = false;
                             _tick = MethodTick;
                             break;
                     }
@@ -147,6 +197,7 @@ namespace XREngine.Animation
         }
 
         private object? _cachedReturnValue = null;
+        private bool _cacheAttempted = false;
 
         internal void MethodTick(object? obj, float delta)
         {
@@ -198,7 +249,14 @@ namespace XREngine.Animation
             {
                 object? methodReturn;
                 if (CacheReturnValue)
-                    methodReturn = (_cachedReturnValue ??= _methodCache.Invoke(obj, MethodArguments));
+                {
+                    if (!_cacheAttempted)
+                    {
+                        _cacheAttempted = true;
+                        _cachedReturnValue = _methodCache.Invoke(obj, MethodArguments);
+                    }
+                    methodReturn = _cachedReturnValue;
+                }
                 else
                     methodReturn = _methodCache.Invoke(obj, MethodArguments);
                 return methodReturn;
@@ -256,7 +314,14 @@ namespace XREngine.Animation
             {
                 object? propertyReturn;
                 if (CacheReturnValue)
-                    propertyReturn = (_cachedReturnValue ??= _propertyCache.GetValue(obj));
+                {
+                    if (!_cacheAttempted)
+                    {
+                        _cacheAttempted = true;
+                        _cachedReturnValue = _propertyCache.GetValue(obj);
+                    }
+                    propertyReturn = _cachedReturnValue;
+                }
                 else
                     propertyReturn = _propertyCache.GetValue(obj);
                 return propertyReturn;
@@ -309,7 +374,14 @@ namespace XREngine.Animation
             {
                 object? fieldReturn;
                 if (CacheReturnValue)
-                    fieldReturn = (_cachedReturnValue ??= _fieldCache.GetValue(obj));
+                {
+                    if (!_cacheAttempted)
+                    {
+                        _cacheAttempted = true;
+                        _cachedReturnValue = _fieldCache.GetValue(obj);
+                    }
+                    fieldReturn = _cachedReturnValue;
+                }
                 else
                     fieldReturn = _fieldCache.GetValue(obj);
                 return fieldReturn;
@@ -321,17 +393,22 @@ namespace XREngine.Animation
         /// </summary>
         /// <param name="tree">The animation tree that owns this member.</param>
         /// <returns>The total amount of animations this member and its child members contain.</returns>
-        internal int Register(AnimationClip tree)
+        internal int Register(AnimationClip tree, bool startNow = true)
         {
-            bool animExists = Animation != null;
-            int count = animExists ? 1 : 0;
+            ParentClip = tree;
 
-            //TODO: call Animation.File.AnimationEnded -= tree.AnimationHasEnded somewhere
-            if (animExists)
-                Animation!.AnimationEnded += tree.AnimationHasEnded;
+            int count = 0;
+
+            if (Animation != null)
+            {
+                count++;
+
+                if (startNow)
+                    StartAnimation();
+            }
 
             foreach (AnimationMember folder in _children)
-                count += folder.Register(tree);
+                count += folder.Register(tree, startNow);
 
             return count;
         }
@@ -343,11 +420,9 @@ namespace XREngine.Animation
         /// <returns>The total amount of animations this member and its child members contain.</returns>
         internal int Unregister(AnimationClip tree)
         {
-            bool animExists = Animation != null;
-            int count = animExists ? 1 : 0;
+            ParentClip = null;
 
-            if (animExists)
-                Animation!.AnimationEnded -= tree.AnimationHasEnded;
+            int count = Animation != null ? 1 : 0;
 
             foreach (AnimationMember folder in _children)
                 count += folder.Unregister(tree);
@@ -356,15 +431,21 @@ namespace XREngine.Animation
         }
         internal void StartAnimations()
         {
+            StartAnimation();
+            foreach (AnimationMember folder in _children)
+                folder.StartAnimations();
+        }
+
+        private void StartAnimation()
+        {
             MemberNotFound = false;
             _fieldCache = null;
             _propertyCache = null;
             _methodCache = null;
 
             Animation?.Start();
-            foreach (AnimationMember folder in _children)
-                folder.StartAnimations();
         }
+
         internal void StopAnimations()
         {
             MemberNotFound = false;

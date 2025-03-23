@@ -180,11 +180,9 @@ namespace XREngine
                 if (!anyAcked)
                     UpdateRTT(0.0f);
             }
-            public virtual async void ConsumeQueues()
+            public virtual void ConsumeQueues()
             {
-                var read = Task.Run(ReadUDP);
-                var send = Task.Run(SendUDP);
-                await Task.WhenAll(read, send);
+                Task.WaitAll(ReadUDP(), SendUDP());
             }
 
             /// <summary>
@@ -536,7 +534,14 @@ namespace XREngine
                     acks = [.. _receivedRemoteSequences];
                 return acks;
             }
-            private void WriteToRemoteSeqs(ushort seq)
+            /// <summary>
+            /// Writes the sequence number to the received remote sequence queue.
+            /// If the sequence is more recent than the last one we received, update the last received sequence and return true.
+            /// Else, ignore the sequence and return false.
+            /// </summary>
+            /// <param name="seq"></param>
+            /// <returns></returns>
+            private bool WriteToRemoteSeqs(ushort seq)
             {
                 //If the sequence is more recent than the last one we received, update the last received sequence
                 lock (_receivedRemoteSequences)
@@ -547,8 +552,11 @@ namespace XREngine
                         _receivedRemoteSequences.PushBack(seq);
                         if (_receivedRemoteSequences.Count > 33) //32 bits + 1 for max ack
                             _receivedRemoteSequences.PopFront();
+
+                        return true;
                     }
                 }
+                return false;
             }
 
             private static void SetHeader(byte flags, byte[] allData, int dataLen, ushort seq, ushort ack, uint ackBitfield)
@@ -614,7 +622,7 @@ namespace XREngine
                         out uint ackBitfield,
                         out int dataLength);
 
-                    WriteToRemoteSeqs(seq);
+                    bool shouldRead = WriteToRemoteSeqs(seq);
 
                     //When a packet is received,
                     //ack bitfield is scanned and if bit n is set,
@@ -625,7 +633,7 @@ namespace XREngine
                             anyAcked |= AcknowledgeSeq((ushort)(ack - i - 1));
 
                     if (availableDataLen >= offset + dataLength)
-                        offset += ReadPacketData(compressed, type, inBuf, decompBuffer, offset, dataLength);
+                        offset += ReadPacketData(compressed, type, inBuf, decompBuffer, offset, dataLength, shouldRead);
                     else
                         return 0; //Not enough data to read packet, don't progress offset
                 }
@@ -699,19 +707,23 @@ namespace XREngine
                 byte[] inBuf,
                 byte[] decompBuffer,
                 int dataOffset, //Already offset by header length
-                int dataLength)
+                int dataLength,
+                bool propogateData)
             {
                 int readLen = dataLength;
                 if (!compressed)
                     readLen += GuidLen;
 
-                Task.Run(() =>
+                if (propogateData)
                 {
-                    if (compressed)
-                        ReadCompressed(type, inBuf, decompBuffer, dataOffset, dataLength);
-                    else
-                        ReadUncompressed(type, inBuf, dataOffset, dataLength);
-                });
+                    //Task.Run(() =>
+                    //{
+                        if (compressed)
+                            ReadCompressed(type, inBuf, decompBuffer, dataOffset, dataLength);
+                        else
+                            ReadUncompressed(type, inBuf, dataOffset, dataLength);
+                    //});
+                }
                 
                 return readLen;
             }

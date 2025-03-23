@@ -103,5 +103,10 @@ namespace XREngine.Data.MMD
         {
             return ((IEnumerable)_dict).GetEnumerator();
         }
+
+        public override string ToString()
+        {
+            return $"FrameDictionary<{typeof(T).Name}>: {Count} frames";
+        }
     }
 }

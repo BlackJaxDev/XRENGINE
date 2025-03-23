@@ -5,6 +5,7 @@ using Extensions;
 using ImageMagick;
 using System.Collections.Concurrent;
 using System.Diagnostics;
+using System.Xml.Linq;
 using XREngine.Components.Scene.Mesh;
 using XREngine.Data.Colors;
 using XREngine.Data.Rendering;
@@ -25,7 +26,11 @@ namespace XREngine
     /// </summary>
     public class ModelImporter : IDisposable
     {
-        protected ModelImporter(string path, Action? onCompleted, DelMaterialFactory? materialFactory)
+        public delegate void DelMakeMaterialAction(XRMaterial mat, XRTexture[] textureList, List<TextureSlot> textures, string name);
+
+        public DelMakeMaterialAction MakeMaterialAction { get; set; } = MakeMaterial;
+
+        public ModelImporter(string path, Action? onCompleted, DelMaterialFactory? materialFactory)
         {
             _assimp = new AssimpContext();
             _path = path;
@@ -35,6 +40,77 @@ namespace XREngine
 
         private readonly ConcurrentDictionary<string, XRTexture2D> _texturePathCache = new();
 
+        private void MakeMaterialInternal(XRMaterial mat, XRTexture[] textureList, List<TextureSlot> textures, string name)
+        {
+            FillTextures(mat, textureList);
+            MakeMaterialAction(mat, textureList, textures, name);
+        }
+
+        private static void FillTextures(XRMaterial mat, XRTexture[] textureList)
+        {
+            for (int i = 0; i < textureList.Length; i++)
+            {
+                XRTexture? tex = textureList[i];
+                if (tex is not null)
+                    mat.Textures[i] = tex;
+            }
+        }
+
+        public static void MakeMaterial(XRMaterial mat, XRTexture[] textureList, List<TextureSlot> textures, string name)
+        {
+            bool transp = textures.Any(x => (x.Flags & 0x2) != 0 || x.TextureType == TextureType.Opacity);
+            bool normal = textures.Any(x => x.TextureType == TextureType.Normals);
+            if (textureList.Length > 0)
+            {
+                if (transp || textureList.Any(x => x is not null && x.HasAlphaChannel))
+                {
+                    transp = true;
+                    mat.Shaders.Add(ShaderHelper.UnlitTextureFragForward()!);
+                }
+                else
+                {
+                    mat.Shaders.Add(ShaderHelper.TextureFragDeferred()!);
+                    mat.Parameters =
+                    [
+                        new ShaderFloat(1.0f, "Opacity"),
+                            new ShaderFloat(1.0f, "Specular"),
+                            new ShaderFloat(0.9f, "Roughness"),
+                            new ShaderFloat(0.0f, "Metallic"),
+                            new ShaderFloat(1.0f, "IndexOfRefraction"),
+                        ];
+                }
+            }
+            else
+            {
+                //Show the material as magenta if no textures are present
+                mat.Shaders.Add(ShaderHelper.LitColorFragDeferred()!);
+                mat.Parameters =
+                [
+                    new ShaderVector3(ColorF3.Magenta, "BaseColor"),
+                    new ShaderFloat(1.0f, "Opacity"),
+                    new ShaderFloat(1.0f, "Specular"),
+                    new ShaderFloat(1.0f, "Roughness"),
+                    new ShaderFloat(0.0f, "Metallic"),
+                    new ShaderFloat(1.0f, "IndexOfRefraction"),
+                ];
+            }
+
+            mat.RenderPass = transp ? (int)EDefaultRenderPass.TransparentForward : (int)EDefaultRenderPass.OpaqueDeferredLit;
+            mat.Name = name;
+            mat.RenderOptions = new RenderingParameters()
+            {
+                CullMode = ECullMode.Back,
+                DepthTest = new DepthTest()
+                {
+                    UpdateDepth = true,
+                    Enabled = ERenderParamUsage.Enabled,
+                    Function = EComparison.Less,
+                },
+                //LineWidth = 5.0f,
+                BlendModeAllDrawBuffers = transp ? BlendMode.EnabledTransparent() : BlendMode.Disabled(),
+            };
+        }
+
         public XRMaterial MaterialFactory(
             string modelFilePath,
             string name,
@@ -43,76 +119,18 @@ namespace XREngine
             ShadingMode mode,
             Dictionary<string, List<MaterialProperty>> properties)
         {
-            //Random r = new();
-
             XRTexture[] textureList = new XRTexture[textures.Count];
             XRMaterial mat = new(textureList);
-            Task.Run(() => Parallel.For(0, textures.Count, i => LoadTexture(modelFilePath, textures, textureList, i))).ContinueWith(x =>
+            ParallelLoopResult MakeTextures()
             {
-                for (int i = 0; i < textureList.Length; i++)
-                {
-                    XRTexture? tex = textureList[i];
-                    if (tex is not null)
-                        mat.Textures[i] = tex;
-                }
-
-                bool transp = textures.Any(x => (x.Flags & 0x2) != 0 || x.TextureType == TextureType.Opacity);
-                bool normal = textures.Any(x => x.TextureType == TextureType.Normals);
-                if (textureList.Length > 0)
-                {
-                    if (transp || textureList.Any(x => x is not null && x.HasAlphaChannel))
-                    {
-                        transp = true;
-                        mat.Shaders.Add(ShaderHelper.UnlitTextureFragForward()!);
-                    }
-                    else
-                    {
-                        mat.Shaders.Add(ShaderHelper.TextureFragDeferred()!);
-                        mat.Parameters =
-                        [
-                            new ShaderFloat(1.0f, "Opacity"),
-                            new ShaderFloat(1.0f, "Specular"),
-                            new ShaderFloat(0.9f, "Roughness"),
-                            new ShaderFloat(0.0f, "Metallic"),
-                            new ShaderFloat(1.0f, "IndexOfRefraction"),
-                        ];
-                    }
-                }
-                else
-                {
-                    //Show the material as magenta if no textures are present
-                    mat.Shaders.Add(ShaderHelper.LitColorFragDeferred()!);
-                    mat.Parameters =
-                    [
-                        new ShaderVector3(ColorF3.Magenta, "BaseColor"),
-                    new ShaderFloat(1.0f, "Opacity"),
-                    new ShaderFloat(1.0f, "Specular"),
-                    new ShaderFloat(1.0f, "Roughness"),
-                    new ShaderFloat(0.0f, "Metallic"),
-                    new ShaderFloat(1.0f, "IndexOfRefraction"),
-                ];
-                }
-
-                mat.RenderPass = transp ? (int)EDefaultRenderPass.TransparentForward : (int)EDefaultRenderPass.OpaqueDeferredLit;
-                mat.Name = name;
-                mat.RenderOptions = new RenderingParameters()
-                {
-                    CullMode = ECullMode.Back,
-                    DepthTest = new DepthTest()
-                    {
-                        UpdateDepth = true,
-                        Enabled = ERenderParamUsage.Enabled,
-                        Function = EComparison.Less,
-                    },
-                    //LineWidth = 5.0f,
-                    BlendModeAllDrawBuffers = transp ? BlendMode.EnabledTransparent() : BlendMode.Disabled(),
-                };
-            });
-
+                void MakeTexture(int i) => LoadTexture(modelFilePath, textures, textureList, i);
+                return Parallel.For(0, textures.Count, MakeTexture);
+            }
+            Task.Run(MakeTextures).ContinueWith(t => MakeMaterialInternal(mat, textureList, textures, name));
             return mat;
         }
 
-        private void LoadTexture(string modelFilePath, List<TextureSlot> textures, XRTexture[] textureList, int i)
+        public void LoadTexture(string modelFilePath, List<TextureSlot> textures, XRTexture[] textureList, int i)
         {
             string path = textures[i].FilePath;
             if (string.IsNullOrWhiteSpace(path))
@@ -221,7 +239,7 @@ namespace XREngine
 
         private readonly ConcurrentBag<Action> _meshProcessActions = [];
 
-        private unsafe SceneNode? Import(
+        public unsafe SceneNode? Import(
             PostProcessSteps options = PostProcessSteps.None,
             bool preservePivots = true,
             bool removeAssimpFBXNodes = true,
@@ -298,7 +316,14 @@ namespace XREngine
             Matrix4x4? fbxMatrixParent = null,
             bool removeAssimpFBXNodes = true)
         {
-            SceneNode sceneNode = CreateNode(rootNode, parentSceneNode, fbxMatrixParent, removeAssimpFBXNodes, out Matrix4x4? fbxMatrix, node.Name, node.Transform.Transposed());
+            SceneNode sceneNode = CreateNode(
+                rootNode,
+                parentSceneNode,
+                fbxMatrixParent,
+                removeAssimpFBXNodes,
+                out Matrix4x4? fbxMatrix,
+                node.Name,
+                node.Transform.Transposed());
             if (rootNode)
                 rootTransform = sceneNode.Transform;
             Matrix4x4 dataTransform = sceneNode.Transform.WorldMatrix * rootTransform!.InverseWorldMatrix;

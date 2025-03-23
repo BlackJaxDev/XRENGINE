@@ -1,5 +1,4 @@
 ﻿using Extensions;
-using System.ComponentModel;
 using XREngine.Animation;
 
 namespace XREngine.Components
@@ -7,12 +6,12 @@ namespace XREngine.Components
     public class PoseBlend1D : PoseGenBase
     {
         public PoseBlend1D() { }
-        public PoseBlend1D(params SkelAnimKeyframe[] keyframes)
+        public PoseBlend1D(params PoseKeyframe[] keyframes)
             => _poses.AddRange(keyframes);
-        public PoseBlend1D(IEnumerable<SkelAnimKeyframe> keyframes)
+        public PoseBlend1D(IEnumerable<PoseKeyframe> keyframes)
             => _poses.AddRange(keyframes);
 
-        private KeyframeTrack<SkelAnimKeyframe> _poses = [];
+        private KeyframeTrack<PoseKeyframe> _poses = [];
         private float _time = 0.0f;
 
         public float InterpolationTime
@@ -20,7 +19,7 @@ namespace XREngine.Components
             get => _time;
             set => SetField(ref _time, value);
         }
-        public KeyframeTrack<SkelAnimKeyframe> Poses
+        public KeyframeTrack<PoseKeyframe> Poses
         {
             get => _poses;
             set => SetField(ref _poses, value);
@@ -28,12 +27,12 @@ namespace XREngine.Components
 
         public override HumanoidPose? GetPose()
         {
-            SkelAnimKeyframe? kf = Poses.GetKeyBefore(InterpolationTime);
+            PoseKeyframe? kf = Poses.GetKeyBefore(InterpolationTime);
             if (kf is null)
                 return null;
 
             HumanoidPose? frame = kf.Animation?.GetFrame();
-            if (kf.Next is SkelAnimKeyframe kf2)
+            if (kf.Next is PoseKeyframe kf2)
             {
                 HumanoidPose? frame2 = kf2.Animation?.GetFrame();
                 if (frame2 != null)
@@ -48,23 +47,8 @@ namespace XREngine.Components
         }
         public override void Tick(float delta)
         {
-            foreach (SkelAnimKeyframe pose in Poses.Cast<SkelAnimKeyframe>())
+            foreach (PoseKeyframe pose in Poses.Cast<PoseKeyframe>())
                 pose?.Animation?.Tick(delta);
-        }
-        public class SkelAnimKeyframe : Keyframe
-        {
-            public SkeletalAnimation? Animation { get; set; } = null;
-
-            [Browsable(false)]
-            public override Type ValueType => throw new NotImplementedException();
-            public override void ReadFromString(string str)
-            {
-
-            }
-            public override string WriteToString()
-            {
-                return null;
-            }
         }
     }
 }

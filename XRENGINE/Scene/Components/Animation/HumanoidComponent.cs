@@ -76,8 +76,11 @@ namespace XREngine.Scene.Components.Animation
 
         public HumanoidComponent() 
         {
-            RenderedObjects = [RenderInfo3D.New(this, EDefaultRenderPass.OpaqueForward, Render)];
+            RenderedObjects = [RenderInfo = RenderInfo3D.New(this, EDefaultRenderPass.OpaqueForward, Render)];
+            RenderInfo.IsVisible = false;
         }
+
+        public RenderInfo3D RenderInfo { get; }
 
         private void Render()
         {
@@ -386,7 +389,7 @@ namespace XREngine.Scene.Components.Animation
         //    rootBone.Def.MaxPositionOffset = new Vector3(distance * 0.1f, distance * 0.1f, distance * 0.1f);
         //    rootBone.Def.MinPositionOffset = -rootBone.Def.MaxPositionOffset;
         //}
-        
+
         public void SetFromNode()
         {
             //Debug.Out(SceneNode.PrintTree());
@@ -398,8 +401,8 @@ namespace XREngine.Scene.Components.Animation
             FindChildrenFor(Hips, [
                 (Spine, ByName("Spine")),
                 (Chest, ByName("Chest")),
-                (Left.Leg, ByPosition("Leg", x => x.X > 0.0f)),
-                (Right.Leg, ByPosition("Leg", x => x.X < 0.0f)),
+                (Left.Leg, ByPosition(LegNameContains, x => x.X > 0.0f)),
+                (Right.Leg, ByPosition(LegNameContains, x => x.X < 0.0f)),
             ]);
 
             if (Spine.Node is not null && Chest.Node is null)
@@ -436,32 +439,34 @@ namespace XREngine.Scene.Components.Animation
                 ]);
 
             if (Right.Shoulder.Node is not null)
+            {
                 FindChildrenFor(Right.Shoulder, [
                     (Right.Arm, ByNameContainsAll("Arm")),
                     (Right.Elbow, ByNameContainsAll("Elbow")),
-                    (Right.Wrist, ByNameContainsAll("Wrist")),
+                    (Right.Wrist, ByNameContainsAnyAndDoesNotContain(HandNameMatches, TwistBoneMismatch)),
                 ]);
+            }
 
             if (Left.Arm.Node is not null && Left.Elbow.Node is null)
                 FindChildrenFor(Left.Arm, [
                     (Left.Elbow, ByNameContainsAll("Elbow")),
-                    (Left.Wrist, ByNameContainsAll("Wrist")),
+                    (Left.Wrist, ByNameContainsAnyAndDoesNotContain(HandNameMatches, TwistBoneMismatch)),
                 ]);
 
             if (Right.Arm.Node is not null && Right.Elbow.Node is null)
                 FindChildrenFor(Right.Arm, [
                     (Right.Elbow, ByNameContainsAll("Elbow")),
-                    (Right.Wrist, ByNameContainsAll("Wrist")),
+                    (Right.Wrist, ByNameContainsAnyAndDoesNotContain(HandNameMatches, TwistBoneMismatch)),
                 ]);
 
             if (Left.Elbow.Node is not null && Left.Wrist.Node is null)
                 FindChildrenFor(Left.Elbow, [
-                    (Left.Wrist, ByNameContainsAll("Wrist")),
+                    (Left.Wrist, ByNameContainsAnyAndDoesNotContain(HandNameMatches, TwistBoneMismatch)),
                 ]);
 
             if (Right.Elbow.Node is not null && Right.Wrist.Node is null)
                 FindChildrenFor(Right.Elbow, [
-                    (Right.Wrist, ByNameContainsAll("Wrist")),
+                    (Right.Wrist, ByNameContainsAnyAndDoesNotContain(HandNameMatches, TwistBoneMismatch)),
                 ]);
 
             //Find finger bones
@@ -506,39 +511,44 @@ namespace XREngine.Scene.Components.Animation
             //Find leg bones
             if (Left.Leg.Node is not null)
                 FindChildrenFor(Left.Leg, [
-                    (Left.Knee, ByNameContainsAll("Knee")),
-                    (Left.Foot, ByNameContainsAny("Foot", "Ankle")),
-                    (Left.Toes, ByNameContainsAll("Toe")),
+                    (Left.Knee, ByNameContainsAll(KneeNameContains)),
+                    (Left.Foot, ByNameContainsAnyAndDoesNotContain(FootNameMatches, TwistBoneMismatch)),
+                    (Left.Toes, ByNameContainsAll(ToeNameContains)),
                 ]);
 
             if (Right.Leg.Node is not null)
                 FindChildrenFor(Right.Leg, [
-                    (Right.Knee, ByNameContainsAll("Knee")),
-                    (Right.Foot, ByNameContainsAny("Foot", "Ankle")),
-                    (Right.Toes, ByNameContainsAll("Toe")),
+                    (Right.Knee, ByNameContainsAll(KneeNameContains)),
+                    (Right.Foot, ByNameContainsAnyAndDoesNotContain(FootNameMatches,TwistBoneMismatch)),
+                    (Right.Toes, ByNameContainsAll(ToeNameContains)),
                 ]);
 
             if (Left.Knee.Node is not null && Left.Foot.Node is null)
                 FindChildrenFor(Left.Knee, [
-                    (Left.Foot, ByNameContainsAny("Foot", "Ankle")),
-                    (Left.Toes, ByNameContainsAll("Toe")),
+                    (Left.Foot, ByNameContainsAnyAndDoesNotContain(FootNameMatches, TwistBoneMismatch)),
+                    (Left.Toes, ByNameContainsAll(ToeNameContains)),
                 ]);
 
             if (Right.Knee.Node is not null && Right.Foot.Node is null)
                 FindChildrenFor(Right.Knee, [
-                    (Right.Foot, ByNameContainsAny("Foot", "Ankle")),
-                    (Right.Toes, ByNameContainsAll("Toe")),
+                    (Right.Foot, ByNameContainsAnyAndDoesNotContain(FootNameMatches, TwistBoneMismatch)),
+                    (Right.Toes, ByNameContainsAll(ToeNameContains)),
                 ]);
 
             if (Left.Foot.Node is not null && Left.Toes.Node is null)
                 FindChildrenFor(Left.Foot, [
-                    (Left.Toes, ByNameContainsAll("Toe")),
+                    (Left.Toes, ByNameContainsAll(ToeNameContains)),
                 ]);
 
             if (Right.Foot.Node is not null && Right.Toes.Node is null)
                 FindChildrenFor(Right.Foot, [
-                    (Right.Toes, ByNameContainsAll("Toe")),
+                    (Right.Toes, ByNameContainsAll(ToeNameContains)),
                 ]);
+
+            //Left.Knee.Constraints = KneeConstraints();
+            //Right.Knee.Constraints = KneeConstraints();
+            //Left.Elbow.Constraints = ElbowConstraints();
+            //Right.Elbow.Constraints = ElbowConstraints();
 
             //Assign initial solve targets to current bone positions
 
@@ -563,6 +573,39 @@ namespace XREngine.Scene.Components.Animation
             LeftKneeTarget = (Left.Knee.Node?.Transform, Matrix4x4.Identity);
             RightKneeTarget = (Right.Knee.Node?.Transform, Matrix4x4.Identity);
         }
+
+        private static BoneIKConstraints KneeConstraints()
+        {
+            return new BoneIKConstraints()
+            {
+                MaxPitch = 90.0f,
+                MinPitch = -90.0f,
+                MaxRoll = 0.0f,
+                MinRoll = 0.0f,
+                MaxYaw = 0.0f,
+                MinYaw = 0.0f,
+            };
+        }
+
+        private static BoneIKConstraints ElbowConstraints()
+        {
+            return new BoneIKConstraints()
+            {
+                MaxPitch = 90.0f,
+                MinPitch = -90.0f,
+                MaxRoll = 0.0f,
+                MinRoll = 0.0f,
+                MaxYaw = 90.0f,
+                MinYaw = -90.0f,
+            };
+        }
+
+        private const string LegNameContains = "Leg";
+        private const string ToeNameContains = "Toe";
+        private const string KneeNameContains = "Knee";
+        private static readonly string[] FootNameMatches = ["Foot", "Ankle"];
+        private static readonly string[] TwistBoneMismatch = ["Twist"];
+        private static readonly string[] HandNameMatches = ["Wrist", "Hand"];
 
         public void SetFootPositionX(float x, bool leftFoot)
         {
@@ -623,6 +666,11 @@ namespace XREngine.Scene.Components.Animation
 
         private static Func<SceneNode, bool> ByNameContainsAny(params string[] names)
             => node => names.Any(name => node.Name?.Contains(name, StringComparison.InvariantCultureIgnoreCase) ?? false);
+
+        private static Func<SceneNode, bool> ByNameContainsAnyAndDoesNotContain(string[] any, string[] none)
+            => node =>
+            any.Any(name => node.Name?.Contains(name, StringComparison.InvariantCultureIgnoreCase) ?? false) &&
+            none.All(name => !(node.Name?.Contains(name, StringComparison.InvariantCultureIgnoreCase) ?? false));
 
         private static Func<SceneNode, bool> ByNameContainsAll(params string[] names)
             => node => names.Any(name => node.Name?.Contains(name, StringComparison.InvariantCultureIgnoreCase) ?? false);

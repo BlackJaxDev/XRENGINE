@@ -45,6 +45,7 @@
     <PackageReference Include="DotnetNoise" Version="1.0.0" />
     <PackageReference Include="FFmpeg.AutoGen" Version="7.0.0" />
     <PackageReference Include="GraphQL" Version="8.4.1" />
+    <PackageReference Include="Jitter2" Version="2.5.6" />
     <PackageReference Include="JoltPhysicsSharp" Version="2.15.4" />
     <PackageReference Include="LZMA-SDK" Version="22.1.1" />
     <PackageReference Include="Magick.NET-Q16-HDRI-OpenMP-x64" Version="14.5.0" />
@@ -61,6 +62,7 @@
     <PackageReference Include="NDILibDotNetCoreBase" Version="2024.7.22.1" />
     <PackageReference Include="Newtonsoft.Json" Version="13.0.3" />
     <PackageReference Include="NVorbis" Version="0.10.5" />
+    <PackageReference Include="Raylib-cs" Version="7.0.1" />
     <PackageReference Include="RestSharp" Version="112.1.0" />
     <PackageReference Include="SharpFont.NetStandard" Version="1.0.5" />
     <PackageReference Include="Silk.NET" Version="2.22.0" />
@@ -170,6 +172,7 @@
 
   <ItemGroup>
     <Folder Include="runtimes\win-x64\native\" />
+    <Folder Include="Scene\Physics\Jolt\" />
   </ItemGroup>
 
 </Project>

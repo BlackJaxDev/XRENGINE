@@ -11,9 +11,9 @@ namespace XREngine.Rendering.OpenGL
     {
         public override GLObjectType Type => GLObjectType.Texture;
 
-        public XREvent<PreBindCallback> PreBind;
-        public XREvent<PrePushDataCallback> PrePushData;
-        public XREvent<GLTexture<T>> PostPushData;
+        public XREvent<PreBindCallback>? PreBind;
+        public XREvent<PrePushDataCallback>? PrePushData;
+        public XREvent<GLTexture<T>>? PostPushData;
 
         private bool _isPushing = false;
         public bool IsPushing
@@ -116,20 +116,20 @@ namespace XREngine.Rendering.OpenGL
                 return false;
 
             PreBindCallback callback = new();
-            PreBind.Invoke(callback);
+            PreBind?.Invoke(callback);
             return callback.ShouldBind;
         }
 
         protected virtual void OnPrePushData(out bool shouldPush, out bool allowPostPushCallback)
         {
             PrePushDataCallback callback = new();
-            PrePushData.Invoke(callback);
+            PrePushData?.Invoke(callback);
             shouldPush = callback.ShouldPush;
             allowPostPushCallback = callback.AllowPostPushCallback;
         }
 
         protected virtual void OnPostPushData()
-            => PostPushData.Invoke(this);
+            => PostPushData?.Invoke(this);
 
         public abstract ETextureTarget TextureTarget { get; }
 

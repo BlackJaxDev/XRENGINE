@@ -24,28 +24,28 @@ namespace XREngine.Timers
         private const float MaxFrequency = 1000.0f; // Frequency cap for Update/RenderFrame events
 
         //Events to subscribe to
-        public event Action? PreUpdateFrame;
+        public XREvent? PreUpdateFrame;
         /// <summary>
         /// Subscribe to this event for game logic updates.
         /// </summary>
-        public event Action? UpdateFrame;
-        public event Action? PostUpdateFrame;
+        public XREvent? UpdateFrame;
+        public XREvent? PostUpdateFrame;
         /// <summary>
         /// Subscribe to this event to execute logic on the render thread right before buffers are swapped.
         /// </summary>
-        public event Action? CollectVisible;
+        public XREvent? CollectVisible;
         /// <summary>
         /// Subscribe to this event to execute render commands that have been swapped for consumption.
         /// </summary>
-        public event Action? RenderFrame;
+        public XREvent? RenderFrame;
         /// <summary>
         /// Subscribe to this event to swap update and render buffers, on the render thread.
         /// </summary>
-        public event Action? SwapBuffers;
+        public XREvent? SwapBuffers;
         /// <summary>
         /// Subscribe to this event to execute logic at a fixed rate completely separate from the update/render threads, such as physics.
         /// </summary>
-        public event Action? FixedUpdate;
+        public XREvent? FixedUpdate;
 
         private float _updateTimeDiff = 0.0f; // quantization error for UpdateFrame events
         private bool _isRunningSlowly; // true, when UpdatePeriod cannot reach TargetUpdatePeriod
@@ -122,26 +122,26 @@ namespace XREngine.Timers
         /// <summary>
         /// Update is always running game logic as fast as requested.
         /// </summary>
-        private void UpdateThread()
+        private async Task UpdateThread()
         {
             while (IsRunning)
-                DispatchUpdate();
+                await DispatchUpdate();
         }
         /// <summary>
         /// This thread waits for the render thread to finish swapping the last frame's prerender buffers, 
         /// then dispatches a prerender to collect the next frame's batch of render commands while this frame renders.
         /// </summary>
-        private void CollectVisibleThread()
+        private async Task CollectVisibleThread()
         {
             while (IsRunning)
             {
                 //Collects visible object and generates render commands for the game's current state
-                DispatchCollectVisible();
+                await DispatchCollectVisible();
 
                 //Wait for the render thread to swap update buffers with render buffers
                 _renderDone.Wait();
                 _renderDone.Reset();
-                DispatchSwapBuffers();
+                await DispatchSwapBuffers();
 
                 //Inform the render thread that the swap is done
                 _swapDone.Set();
@@ -151,7 +151,7 @@ namespace XREngine.Timers
         /// This thread runs at a fixed rate, executing logic that should not be tied to the update/render threads.
         /// Typical events occuring here are logic like physics calculations.
         /// </summary>
-        private void FixedUpdateThread()
+        private async Task FixedUpdateThread()
         {
             while (IsRunning)
             {
@@ -162,7 +162,7 @@ namespace XREngine.Timers
                 
                 FixedUpdateManager.Delta = elapsed;
                 FixedUpdateManager.LastTimestamp = timestamp;
-                DispatchFixedUpdate();
+                await DispatchFixedUpdate();
                 timestamp = Time();
                 FixedUpdateManager.ElapsedTime = timestamp - FixedUpdateManager.LastTimestamp;
             }
@@ -253,7 +253,7 @@ namespace XREngine.Timers
             }
         }
 
-        public void DispatchCollectVisible()
+        public async Task DispatchCollectVisible()
         {
             try
             {
@@ -261,7 +261,7 @@ namespace XREngine.Timers
                 float elapsed = (timestamp - Collect.LastTimestamp).Clamp(0.0f, 1.0f);
                 Collect.Delta = elapsed;
                 Collect.LastTimestamp = timestamp;
-                CollectVisible?.Invoke();
+                await (CollectVisible?.InvokeAsync() ?? Task.CompletedTask);
                 timestamp = Time();
                 Collect.ElapsedTime = timestamp - Collect.LastTimestamp;
             }
@@ -271,13 +271,13 @@ namespace XREngine.Timers
             }
         }
 
-        public void DispatchSwapBuffers()
-            => SwapBuffers?.Invoke();
+        public Task DispatchSwapBuffers()
+            => (SwapBuffers?.InvokeAsync() ?? Task.CompletedTask);
 
-        private void DispatchFixedUpdate()
-            => FixedUpdate?.Invoke();
+        private Task DispatchFixedUpdate()
+            => (FixedUpdate?.InvokeAsync() ?? Task.CompletedTask);
 
-        public void DispatchUpdate()
+        public async Task DispatchUpdate()
         {
             try
             {
@@ -292,9 +292,9 @@ namespace XREngine.Timers
                     Update.Delta = elapsed;
                     Update.LastTimestamp = timestamp;
 
-                    PreUpdateFrame?.Invoke();
-                    UpdateFrame?.Invoke();
-                    PostUpdateFrame?.Invoke();
+                    await (PreUpdateFrame?.InvokeAsync() ?? Task.CompletedTask);
+                    await (UpdateFrame?.InvokeAsync() ?? Task.CompletedTask);
+                    await (PostUpdateFrame?.InvokeAsync() ?? Task.CompletedTask);
 
                     timestamp = Time();
                     Update.ElapsedTime = timestamp - Update.LastTimestamp;

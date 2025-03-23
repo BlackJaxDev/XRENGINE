@@ -7,31 +7,30 @@ namespace XREngine.Animation
 {
     public class PropAnimQuaternion : PropAnimKeyframed<QuaternionKeyframe>, IEnumerable<QuaternionKeyframe>
     {
-        private DelGetValue<Quaternion> _getValue;
+        public event Action<PropAnimQuaternion>? ConstrainKeyframedFPSChanged;
+        public event Action<PropAnimQuaternion>? LerpConstrainedFPSChanged;
 
+        private DelGetValue<Quaternion> _getValue;
         private Quaternion[]? _baked = null;
+
+        private Quaternion _defaultValue = Quaternion.Identity;
         /// <summary>
         /// The default value to return when no keyframes are set.
         /// </summary>
-        public Quaternion DefaultValue { get; set; } = Quaternion.Identity;
+        public Quaternion DefaultValue
+        {
+            get => _defaultValue;
+            set => SetField(ref _defaultValue, value);
+        }
 
         public PropAnimQuaternion() : base(0.0f, false)
-        {
-            _getValue = !IsBaked ? GetValueKeyframed : GetValueBakedBySecond;
-        }
+            => _getValue = !IsBaked ? GetValueKeyframed : GetValueBakedBySecond;
         public PropAnimQuaternion(float lengthInSeconds, bool looped, bool useKeyframes)
             : base(lengthInSeconds, looped, useKeyframes)
-        {
-            _getValue = !IsBaked ? GetValueKeyframed : GetValueBakedBySecond;
-        }
-        public PropAnimQuaternion(int frameCount, float FPS, bool looped, bool useKeyframes) 
+            => _getValue = !IsBaked ? GetValueKeyframed : GetValueBakedBySecond;
+        public PropAnimQuaternion(int frameCount, float FPS, bool looped, bool useKeyframes)
             : base(frameCount, FPS, looped, useKeyframes)
-        {
-            _getValue = !IsBaked ? GetValueKeyframed : GetValueBakedBySecond;
-        }
-
-        public event Action<PropAnimQuaternion>? ConstrainKeyframedFPSChanged;
-        public event Action<PropAnimQuaternion>? LerpConstrainedFPSChanged;
+            => _getValue = !IsBaked ? GetValueKeyframed : GetValueBakedBySecond;
 
         protected override void BakedChanged()
             => _getValue = !IsBaked ? GetValueKeyframed : GetValueBakedBySecond;
@@ -140,11 +139,13 @@ namespace XREngine.Animation
             {
                 int frame = (int)(second * _bakedFPS);
                 float floorSec = _bakedFPS != 0.0f ? (frame / _bakedFPS) : 0.0f;
-                float ceilSec = _bakedFPS != 0.0f ? ((frame + 1) / _bakedFPS) : 0.0f;
-                float time = second - floorSec;
 
                 if (LerpConstrainedFPS)
+                {
+                    float ceilSec = _bakedFPS != 0.0f ? ((frame + 1) / _bakedFPS) : 0.0f;
+                    float time = second - floorSec;
                     return LerpKeyedValues(floorSec, ceilSec, time);
+                }
 
                 second = floorSec;
             }
@@ -198,6 +199,7 @@ namespace XREngine.Animation
         }
 
         private QuaternionKeyframe? _prevKeyframe;
+
         protected override void OnProgressed(float delta)
         {
             //TODO: assign separate functions to be called by OnProgressed to avoid if statements and returns

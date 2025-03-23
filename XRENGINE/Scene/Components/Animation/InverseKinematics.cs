@@ -170,12 +170,12 @@ namespace XREngine.Scene.Components.Animation
             Vector3 originalRootPosition = chain[0].WorldPosSolve;
             float distanceToTarget = Vector3.DistanceSquared(originalRootPosition, targetPos);
 
-            if (distanceToTarget > totalLength * totalLength)
-            {
-                //Easy case: the target is out of reach, all bones will look at the target
-                StretchChain(chain, originalRootPosition, targetPos);
-            }
-            else
+            //if (distanceToTarget > totalLength * totalLength)
+            //{
+            //    //Easy case: the target is out of reach, all bones will look at the target
+            //    StretchChain(chain, originalRootPosition, targetPos);
+            //}
+            //else
             {
                 int iterations = 0;
                 float diff = Vector3.Distance(chain[^1].WorldPosSolve, targetPos);
@@ -258,7 +258,7 @@ namespace XREngine.Scene.Components.Animation
                 Vector3 startPos = startTargetPos + halfDiffVec;
                 Vector3 endPos = endTargetPos - halfDiffVec;
 
-                StretchChain(chain, startPos, endPos);
+                //StretchChain(chain, startPos, endPos);
             }
             else
             {
@@ -302,20 +302,20 @@ namespace XREngine.Scene.Components.Animation
             PostSolve(chain);
         }
 
-        private static void StretchChain(BoneChainItem[] chain, Vector3 startPos, Vector3 endPos)
-        {
-            var root = chain[0];
-            root.WorldPosSolve = startPos;
-            root.WorldChildDirSolve = (endPos - root.WorldPosSolve).Normalized();
-            for (int i = 1; i < chain.Length; i++)
-            {
-                var bone = chain[i];
-                var prevBone = chain[i - 1];
-                float dist = prevBone.DistanceToChild;
-                bone.WorldPosSolve = prevBone.WorldPosSolve + prevBone.WorldChildDirSolve * dist;
-                bone.WorldChildDirSolve = (endPos - bone.WorldPosSolve).Normalized();
-            }
-        }
+        //private static void StretchChain(BoneChainItem[] chain, Vector3 startPos, Vector3 endPos)
+        //{
+        //    var root = chain[0];
+        //    root.WorldPosSolve = startPos;
+        //    root.WorldChildDirSolve = (endPos - root.WorldPosSolve).Normalized();
+        //    for (int i = 1; i < chain.Length; i++)
+        //    {
+        //        var bone = chain[i];
+        //        var prevBone = chain[i - 1];
+        //        float dist = prevBone.DistanceToChild;
+        //        bone.WorldPosSolve = prevBone.WorldPosSolve + prevBone.WorldChildDirSolve * dist;
+        //        bone.WorldChildDirSolve = (endPos - bone.WorldPosSolve).Normalized();
+        //    }
+        //}
 
         private static void BackwardPhaseSolveWorld(BoneChainItem parent, BoneChainItem child)
         {
@@ -343,9 +343,18 @@ namespace XREngine.Scene.Components.Animation
 
         private static void Constrain(BoneChainItem parent, BoneChainItem child)
         {
-            //TODO: convert to local space and apply constraints
-            //World solve pos and dir are set at this point
-
+            if (parent.Constraints is null)
+                return;
+            
+            var parentTfm = parent.Transform;
+            parentTfm!.Rotation = parentTfm!.BindState.Rotation;
+            parentTfm!.RecalculateMatrices();
+            parentTfm!.RecalculateInverseMatrices();
+            var localPos = parentTfm!.InverseTransformPoint(child.WorldPosSolve);
+            var constrainedLocalPos = parent.Constraints.ConstrainChildLocalPosition(localPos);
+            var worldPos = parentTfm.TransformPoint(constrainedLocalPos);
+            child.WorldPosSolve = worldPos;
+            parent.WorldChildDirSolve = (child.WorldPosSolve - parent.WorldPosSolve).Normalized();
         }
 
         /// <summary>
@@ -373,7 +382,7 @@ namespace XREngine.Scene.Components.Animation
             {
                 BoneChainItem parent = chain[i];
                 BoneChainItem child = chain[i + 1];
-                var len1 = parent.SetVectorToChild(child.WorldPosSolve);
+                parent.SetWorldChildDirTo(child.WorldPosSolve);
 
                 float len = parent.Transform!.BindMatrix.Translation.Distance(child.Transform!.BindMatrix.Translation);
                 parent.DistanceToChild = len;
@@ -391,8 +400,11 @@ namespace XREngine.Scene.Components.Animation
         {
             var root = chain[0];
             var rootTfm = root.Transform;
-            rootTfm!.SetWorldTranslation(root.WorldPosSolve);
-            rootTfm.RecalculateMatrices(); //Must recalc matrix for each subsequent bone calculation
+
+            rootTfm!.Parent?.RecalculateMatrices();
+            rootTfm!.Parent?.RecalculateInverseMatrices();
+            rootTfm.SetWorldTranslation(root.WorldPosSolve);
+
             for (int i = 1; i < chain.Length; i++)
             {
                 BoneChainItem parent = chain[i - 1];
@@ -410,21 +422,7 @@ namespace XREngine.Scene.Components.Animation
                     Debug.LogWarning($"Child bone has no transform, canceling solve.");
                     break;
                 }
-
-                //Take current local translation from parent
-                Vector3 localPos = cTfm.LocalTranslation;
-                //Transform it to parent's world space
-                Vector3 v0 = pTfm.TransformPoint(localPos) - pTfm.WorldTranslation;
-                //Get the direction from parent to child
-                Vector3 v1 = child.WorldPosSolve - parent.WorldPosSolve;
-                //Get the delta rotation between the two world-space vectors
-                Quaternion rot = XRMath.RotationBetweenVectors(v0, v1);
-                //Add the delta rotation to the parent's current world rotation
-                pTfm.SetWorldRotation(rot * pTfm.WorldRotation);
-                pTfm.RecalculateMatrices(); //Must recalc matrix for each subsequent bone calculation
-
                 //Set the child's world translation
-
                 bool lastBone = i == chain.Length - 1;
                 if (lastBone)
                 {
@@ -433,9 +431,16 @@ namespace XREngine.Scene.Components.Animation
                     Vector3 parentToChild = parent.WorldChildDirSolve * dist;
                     child.WorldPosSolve = parent.WorldPosSolve + parentToChild;
                 }
-
-                cTfm.SetWorldTranslation(child.WorldPosSolve);
-                cTfm.RecalculateMatrices(); //Must recalc matrix for each subsequent bone calculation
+                //Take current local translation from parent
+                //Transform it to parent's world space
+                //Get the direction from parent to child
+                //Get the delta rotation between the two world-space vectors
+                //Add the delta rotation to the parent's current world rotation
+                pTfm.Parent?.RecalculateMatrices();
+                pTfm.Parent?.RecalculateInverseMatrices();
+                pTfm.RecalculateMatrices();
+                pTfm.RecalculateInverseMatrices();
+                pTfm.AddWorldRotation(XRMath.RotationBetweenVectors(pTfm.TransformVector(cTfm.Translation), child.WorldPosSolve - parent.WorldPosSolve));
             }
         }
 

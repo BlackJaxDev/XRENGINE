@@ -63,12 +63,9 @@ namespace XREngine.Scene.Components.Animation
             /// </summary>
             /// <param name="childWorldPosition"></param>
             /// <returns></returns>
-            public float SetVectorToChild(Vector3 childWorldPosition)
+            public void SetWorldChildDirTo(Vector3 childWorldPosition)
             {
-                float len = WorldPosSolve.Distance(childWorldPosition);
                 WorldChildDirSolve = (childWorldPosition - WorldPosSolve).Normalized();
-                //DistanceToChild = len;
-                return len;
             }
         }
     }

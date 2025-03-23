@@ -20,15 +20,19 @@ namespace XREngine.Rendering
             set => SetField(ref _index, value);
         }
         public event Action<RenderBone>? RenderTransformUpdated;
-        public TransformBase Transform { get; }
+        public TransformBase Transform
+        {
+            get => _transform;
+            private set => SetField(ref _transform, value);
+        }
         public Matrix4x4 InvBindMatrix { get; }
 
         public RenderBone(TransformBase source, Matrix4x4 invBindMtx, uint index)
         {
             Index = index;
-            Transform = source;
-            Transform.RenderWorldMatrixChanged += OnRenderTransformChanged;
             InvBindMatrix = invBindMtx;
+            _transform = source;
+            _transform.RenderWorldMatrixChanged += OnRenderTransformChanged;
         }
 
         protected override bool OnPropertyChanging<T>(string? propName, T field, T @new)
@@ -65,6 +69,7 @@ namespace XREngine.Rendering
 
         private List<VertexWeightGroup> _targetWeights = [];
         private uint _index;
+        private TransformBase _transform;
 
         public List<VertexWeightGroup> TargetWeights
         {

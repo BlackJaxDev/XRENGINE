@@ -155,15 +155,15 @@ namespace XREngine.Components
 
             var albedoOpacityTexture = pipeline.GetTexture<XRTexture>(DefaultRenderPipeline.AlbedoOpacityTextureName);
             var normalTexture = pipeline.GetTexture<XRTexture>(DefaultRenderPipeline.NormalTextureName);
-            var rmsiTexture = pipeline.GetTexture<XRTexture>(DefaultRenderPipeline.RMSITextureName);
+            var rmseTexture = pipeline.GetTexture<XRTexture>(DefaultRenderPipeline.RMSETextureName);
             var depthViewTexture = pipeline.GetTexture<XRTexture>(DefaultRenderPipeline.DepthViewTextureName);
 
-            if (albedoOpacityTexture is null || normalTexture is null || rmsiTexture is null || depthViewTexture is null)
+            if (albedoOpacityTexture is null || normalTexture is null || rmseTexture is null || depthViewTexture is null)
                 return;
 
             matProg.Sampler("Texture0", albedoOpacityTexture, 0);
             matProg.Sampler("Texture1", normalTexture, 1);
-            matProg.Sampler("Texture2", rmsiTexture, 2);
+            matProg.Sampler("Texture2", rmseTexture, 2);
             matProg.Sampler("Texture3", depthViewTexture, 3);
             matProg.Uniform("BoxWorldMatrix", Transform.RenderMatrix);
             matProg.Uniform("BoxHalfScale", HalfExtents);

@@ -305,13 +305,14 @@ namespace XREngine.Components.Scene
 
             //lock (ActiveListeners)
             //{
+            int min = 0;
                 //int min = ActiveListeners.Values.Min(x => x.BuffersProcessed);
                 //if (min == 0)
                 //    return;
 
                 foreach (var source in ActiveListeners.Values)
                 {
-                    var buffers = source.UnqueueConsumedBuffers(/*min*/);
+                    var buffers = source.UnqueueConsumedBuffers(min);
                     if (buffers != null)
                         foreach (var buffer in buffers)
                             source.ParentListener.ReleaseBuffer(buffer);

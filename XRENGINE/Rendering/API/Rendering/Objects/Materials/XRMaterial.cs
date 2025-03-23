@@ -195,7 +195,7 @@ namespace XREngine.Rendering
 
             ShaderPipelineProgram?.Destroy();
             ShaderPipelineProgram = Engine.Rendering.Settings.AllowShaderPipelines
-                ? new XRRenderProgram(Shaders.Where(x => x.Type != EShaderType.Vertex)) { Separable = true }
+                ? new XRRenderProgram(true, true, Shaders.Where(x => x.Type != EShaderType.Vertex))
                 : null;
         }
 

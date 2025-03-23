@@ -8,20 +8,20 @@ namespace XREngine.Rendering.Pipelines.Commands
     {
         public string AlbedoOpacityTexture { get; set; } = "AlbedoOpacityTexture";
         public string NormalTexture { get; set; } = "NormalTexture";
-        public string RMSITexture { get; set; } = "RMSITexture";
+        public string RMSETexture { get; set; } = "RMSETexture";
         public string DepthViewTexture { get; set; } = "DepthViewTexture";
 
-        public void SetOptions(string albedoOpacityTexture, string normalTexture, string rmsiTexture, string depthViewTexture)
+        public void SetOptions(string albedoOpacityTexture, string normalTexture, string rmseTexture, string depthViewTexture)
         {
             AlbedoOpacityTexture = albedoOpacityTexture;
             NormalTexture = normalTexture;
-            RMSITexture = rmsiTexture;
+            RMSETexture = rmseTexture;
             DepthViewTexture = depthViewTexture;
         }
 
         private XRTexture? _albedoOpacityTextureCache = null;
         private XRTexture? _normalTextureCache = null;
-        private XRTexture? _rmsiTextureCache = null;
+        private XRTexture? _rmseTextureCache = null;
         private XRTexture? _depthViewTextureCache = null;
 
         public XRMeshRenderer? PointLightRenderer { get; private set; }
@@ -35,21 +35,21 @@ namespace XREngine.Rendering.Pipelines.Commands
 
             var albOpacTex = Pipeline.GetTexture<XRTexture>(AlbedoOpacityTexture);
             var normTex = Pipeline.GetTexture<XRTexture>(NormalTexture);
-            var rmsiTex = Pipeline.GetTexture<XRTexture>(RMSITexture);
+            var rmseTex = Pipeline.GetTexture<XRTexture>(RMSETexture);
             var depthViewTex = Pipeline.GetTexture<XRTexture>(DepthViewTexture);
-            if (albOpacTex is null || normTex is null || rmsiTex is null || depthViewTex is null)
+            if (albOpacTex is null || normTex is null || rmseTex is null || depthViewTex is null)
                 throw new Exception("One or more required textures are missing.");
 
             if (_albedoOpacityTextureCache != albOpacTex ||
                 _normalTextureCache != normTex ||
-                _rmsiTextureCache != rmsiTex ||
+                _rmseTextureCache != rmseTex ||
                 _depthViewTextureCache != depthViewTex)
             {
                 _albedoOpacityTextureCache = albOpacTex;
                 _normalTextureCache = normTex;
-                _rmsiTextureCache = rmsiTex;
+                _rmseTextureCache = rmseTex;
                 _depthViewTextureCache = depthViewTex;
-                CreateLightRenderers(albOpacTex, normTex, rmsiTex, depthViewTex);
+                CreateLightRenderers(albOpacTex, normTex, rmseTex, depthViewTex);
             }
 
             var lights = Pipeline.RenderState.WindowViewport?.World?.Lights;
@@ -93,14 +93,14 @@ namespace XREngine.Rendering.Pipelines.Commands
         private void CreateLightRenderers(
             XRTexture albOpacTex,
             XRTexture normTex,
-            XRTexture rmsiTex,
+            XRTexture rmseTex,
             XRTexture depthViewTex)
         {
             XRTexture[] lightRefs =
             [
                 albOpacTex,
                 normTex,
-                rmsiTex,
+                rmseTex,
                 depthViewTex,
                 //shadow map texture
             ];

@@ -59,7 +59,7 @@ namespace XREngine.Rendering.Info
             get => _cullingMatrix;
             set
             {
-                if (!XRMath.MatrixEquals(_cullingMatrix, value))
+                //if (!XRMath.MatrixEquals(_cullingMatrix, value))
                     SetField(ref _cullingMatrix, value);
             }
         }
@@ -162,7 +162,10 @@ namespace XREngine.Rendering.Info
                     break;
                 case nameof(CullingOffsetMatrix):
                 case nameof(LocalCullingVolume):
-                    OctreeNode?.QueueItemMoved(this);
+                    //using (var t = Engine.Profiler.Start("QueueItemMoved"))
+                    {
+                        OctreeNode?.QueueItemMoved(this);
+                    }
                     break;
             }
         }

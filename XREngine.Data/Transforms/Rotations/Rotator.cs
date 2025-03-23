@@ -134,6 +134,12 @@ namespace XREngine.Data.Transforms.Rotations
         public readonly Quaternion GetRollQuaternion()
             => Quaternion.CreateFromAxisAngle(Vector3.UnitZ, XRMath.DegToRad(Roll));
 
+        /// <summary>
+        /// Returns a YPR rotator looking from the origin to the end of this vector.
+        /// Initial vector is assumed to be pointing along the -Z axis.
+        /// Yaw rotates counterclockwise around the Y axis,
+        /// and pitch rotates upward around the X axis, after X has been yawed.
+        /// </summary>
         public static Rotator CreateLookat(Vector3 vector)
             => XRMath.LookatAngles(vector);
 

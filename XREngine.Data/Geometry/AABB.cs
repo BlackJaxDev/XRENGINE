@@ -530,7 +530,7 @@ namespace XREngine.Data.Geometry
 
         public readonly EContainment ContainsBox(Box box)
         {
-            var corners = box.WorldCornersEnumerable;
+            var corners = box.WorldCorners;
             int contained = 0;
             bool allIn = true;
             bool allOut = true;

@@ -144,6 +144,9 @@ namespace XREngine.Components
             }
         }
 
+        /// <summary>
+        /// Unlinks input from the pawn connected to this input component.
+        /// </summary>
         private void UnlinkOwningPawn()
         {
             if (_owningPawn is null || _owningPawn.LocalPlayerController == null)
@@ -155,6 +158,9 @@ namespace XREngine.Components
             UnlinkInput();
         }
 
+        /// <summary>
+        /// Links input from the pawn connected to this input component.
+        /// </summary>
         private void LinkOwningPawn()
         {
             if (_owningPawn is null)
@@ -168,18 +174,18 @@ namespace XREngine.Components
 
         private void OwningPawnPropertyChanging(object? sender, IXRPropertyChangingEventArgs e)
         {
-            if (e.PropertyName == nameof(PawnComponent.LocalPlayerController))
-            {
-                UnlinkInput();
-            }
+            if (e.PropertyName != nameof(PawnComponent.LocalPlayerController))
+                return;
+            
+            UnlinkInput();
         }
 
         private void OwningPawnPropertyChanged(object? sender, IXRPropertyChangedEventArgs e)
         {
-            if (e.PropertyName == nameof(PawnComponent.LocalPlayerController))
-            {
-                LinkInput();
-            }
+            if (e.PropertyName != nameof(PawnComponent.LocalPlayerController))
+                return;
+            
+            LinkInput();
         }
 
         private void LinkInput()
@@ -263,9 +269,7 @@ namespace XREngine.Components
         }
 
         private void CollectVisible()
-        {
-            GetCameraCanvas()?.VisualScene2D?.RenderTree?.FindAllIntersectingSorted(CursorPositionWorld2D, InteractableIntersections, InteractablePredicate);
-        }
+            => GetCameraCanvas()?.VisualScene2D?.RenderTree?.FindAllIntersectingSorted(CursorPositionWorld2D, InteractableIntersections, InteractablePredicate);
 
         private void SwapBuffers()
         {

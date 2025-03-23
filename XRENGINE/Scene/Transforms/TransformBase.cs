@@ -1,4 +1,5 @@
 ﻿using Extensions;
+using System.Buffers;
 using System.ComponentModel;
 using System.Diagnostics.CodeAnalysis;
 using System.Numerics;
@@ -57,6 +58,7 @@ namespace XREngine.Scene.Transforms
             _children = [];
             _children.PostAnythingAdded += ChildAdded;
             _children.PostAnythingRemoved += ChildRemoved;
+            _children.ThreadSafe = true;
 
             _localMatrix = new MatrixInfo { NeedsRecalc = true };
             _worldMatrix = new MatrixInfo { NeedsRecalc = true };
@@ -169,8 +171,8 @@ namespace XREngine.Scene.Transforms
 
         public TransformBase[] ChildrenSerialized
         {
-            get => [.. _children];
-            set => _children = [.. value];
+            get => [.. Children];
+            set => Children = [.. value];
         }
 
         public void AddChild(TransformBase child, bool childPreservesWorldTransform, bool now)
@@ -271,6 +273,7 @@ namespace XREngine.Scene.Transforms
                 case nameof(Children):
                     _children.PostAnythingAdded += ChildAdded;
                     _children.PostAnythingRemoved += ChildRemoved;
+                    _children.ThreadSafe = true;
                     lock (_children)
                     {
                         foreach (var child in _children)
@@ -292,9 +295,11 @@ namespace XREngine.Scene.Transforms
 
         protected virtual void OnRenderMatrixChanged()
         {
-            MakeCapsule();
-            RenderInfo.LocalCullingVolume = Capsule.GetAABB(false);
-            RenderInfo.CullingOffsetMatrix = RenderMatrix;
+            //using var t = Engine.Profiler.Start();
+
+            //MakeCapsule();
+            //RenderInfo.LocalCullingVolume = Capsule.GetAABB(false);
+            //RenderInfo.CullingOffsetMatrix = RenderMatrix;
 
             _inverseRenderMatrix = null;
             RenderWorldMatrixChanged?.Invoke(this);
@@ -336,12 +341,12 @@ namespace XREngine.Scene.Transforms
 
         public void RecalculateInverseMatrices(bool forceInverseWorldRecalc = false)
         {
-            if (_inverseLocalMatrix.NeedsRecalc)
+            //if (_inverseLocalMatrix.NeedsRecalc)
             {
                 _inverseLocalMatrix.NeedsRecalc = false;
                 RecalcLocalInv();
             }
-            if (_inverseWorldMatrix.NeedsRecalc || forceInverseWorldRecalc)
+            //if (_inverseWorldMatrix.NeedsRecalc || forceInverseWorldRecalc)
             {
                 _inverseWorldMatrix.NeedsRecalc = false;
                 RecalcWorldInv(false);
@@ -355,25 +360,84 @@ namespace XREngine.Scene.Transforms
         /// </summary>
         /// <param name="recalcChildrenNow"></param>
         /// <returns></returns>
-        public virtual void RecalculateMatrixHeirarchy(bool forceWorldRecalc, bool setRenderMatrixNow, bool parallel)
+        public virtual Task RecalculateMatrixHeirarchy(bool forceWorldRecalc, bool setRenderMatrixNow, bool parallel)
         {
             if (!RecalculateMatrices(forceWorldRecalc, setRenderMatrixNow))
-                return;
+                return Task.CompletedTask;
 
             if (parallel)
-                ParallelChildrenRecalc(setRenderMatrixNow);
+                return ParallelChildrenRecalc(setRenderMatrixNow);
             else
-                SequentialChildrenRecalc(setRenderMatrixNow);
+                return SequentialChildrenRecalc(setRenderMatrixNow);
         }
 
-        private void SequentialChildrenRecalc(bool setRenderMatrixNow)
+        private async Task SequentialChildrenRecalc(bool setRenderMatrixNow)
         {
-            foreach (var child in _children)
-                child.RecalculateMatrixHeirarchy(true, setRenderMatrixNow, false);
+            //var childrenCopy = RentChildrenCopy(out int c);
+            var c = _children.Count;
+            for (int i = 0; i < c; i++)
+                await _children[i].RecalculateMatrixHeirarchy(true, setRenderMatrixNow, false);
+            //ReturnChildrenCopy(childrenCopy);
         }
 
-        private void ParallelChildrenRecalc(bool setRenderMatrixNow)
-            => Task.WaitAll(_children.Select(child => Task.Run(() => child.RecalculateMatrixHeirarchy(true, setRenderMatrixNow, true))));
+        private async Task ParallelChildrenRecalc(bool setRenderMatrixNow)
+        {
+            //var childrenCopy = RentChildrenCopy(out int c);
+            var c = _children.Count;
+            await Task.WhenAll(_children.Take(c).Select(child => child.RecalculateMatrixHeirarchy(true, setRenderMatrixNow, true)));
+            //ReturnChildrenCopy(childrenCopy);
+        }
+
+        public Task SetRenderMatrix(Matrix4x4 matrix, bool recalcAllChildRenderMatrices = true)
+        {
+            RenderMatrix = matrix;
+            if (recalcAllChildRenderMatrices)
+                return RecalculateRenderMatrixHierarchy(Engine.Rendering.Settings.RecalcChildMatricesInParallel);
+            else
+                return Task.CompletedTask;
+        }
+
+        private Task RecalculateRenderMatrixHierarchy(bool parallel)
+        {
+            if (parallel)
+                return ParallelChildrenRenderMatrixRecalc();
+            else
+                return SequentialChildrenRenderMatrixRecalc();
+        }
+
+        private async Task SequentialChildrenRenderMatrixRecalc()
+        {
+            //var childrenCopy = RentChildrenCopy(out int c);
+            var c = _children.Count;
+            for (int i = 0; i < c; i++)
+            {
+                TransformBase child = _children[i];
+                await child.SetRenderMatrix(child.LocalMatrix * RenderMatrix, false);
+            }
+            //ReturnChildrenCopy(childrenCopy);
+        }
+
+        private TransformBase[] RentChildrenCopy(out int count)
+        {
+            lock (_children)
+            {
+                count = _children.Count;
+                TransformBase[] childrenCopy = ArrayPool<TransformBase>.Shared.Rent(count);
+                _children.CopyTo(childrenCopy, 0);
+                return childrenCopy;
+            }
+        }
+
+        private static void ReturnChildrenCopy(TransformBase[] copy)
+            => ArrayPool<TransformBase>.Shared.Return(copy);
+
+        private async Task ParallelChildrenRenderMatrixRecalc()
+        {
+            //var childrenCopy = RentChildrenCopy(out int c);
+            var c = _children.Count;
+            await Task.WhenAll(_children.Take(c).Select(child => child.SetRenderMatrix(child.LocalMatrix * RenderMatrix, true)));
+            //ReturnChildrenCopy(childrenCopy);
+        }
 
         public TransformBase? FindChild(string name, StringComparison comp = StringComparison.Ordinal)
         {
@@ -514,34 +578,8 @@ namespace XREngine.Scene.Transforms
         public Matrix4x4 RenderMatrix
         {
             get => _renderMatrix;
-            private set => SetField(ref _renderMatrix, value);
+            internal set => SetFieldUnchecked(ref _renderMatrix, value);
         }
-
-        public void SetRenderMatrix(Matrix4x4 matrix, bool recalcAllChildRenderMatrices = true)
-        {
-            RenderMatrix = matrix;
-            if (recalcAllChildRenderMatrices)
-                RecalculateRenderMatrixHierarchy(Engine.Rendering.Settings.RecalcChildMatricesInParallel);
-        }
-
-        private void RecalculateRenderMatrixHierarchy(bool parallel)
-        {
-            if (parallel)
-                ParallelChildrenRenderMatrixRecalc();
-            else
-                SequentialChildrenRenderMatrixRecalc();
-        }
-
-
-        private void SequentialChildrenRenderMatrixRecalc()
-        {
-            foreach (var child in _children)
-                child.SetRenderMatrix(child.LocalMatrix * RenderMatrix, false);
-        }
-
-        private void ParallelChildrenRenderMatrixRecalc()
-            => Task.WaitAll(_children.Select(child => Task.Run(() => child.SetRenderMatrix(child.LocalMatrix * RenderMatrix, true))));
-
 
         private Matrix4x4? _inverseRenderMatrix = Matrix4x4.Identity;
         public Matrix4x4 InverseRenderMatrix => _inverseRenderMatrix ??= Matrix4x4.Invert(RenderMatrix, out var inverted) ? inverted : Matrix4x4.Identity;

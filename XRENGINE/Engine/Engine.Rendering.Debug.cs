@@ -106,32 +106,32 @@ namespace XREngine
                 {
                     if (!Engine.Rendering.State.DebugInstanceRenderingAvailable)
                     {
-                        var camera = Engine.Rendering.State.RenderingCamera;
-                        var fwd = camera!.Transform.RenderForward;
-                        var up = camera!.Transform.RenderUp;
-                        var right = camera!.Transform.RenderRight;
-                        var pointSize = 0.04f;
-                        Matrix4x4 pointScale = Matrix4x4.CreateScale(pointSize);
-                        foreach (var (pos, color) in _debugPoints)
-                        {
-                            var rend = GetPointRenderer();
-                            rend.Material!.SetVector4(0, color);
-                            rend.Render(pointScale * Matrix4x4.CreateWorld(pos, fwd, up));
-                        }
+                        //var camera = Engine.Rendering.State.RenderingCamera;
+                        //var fwd = camera!.Transform.RenderForward;
+                        //var up = camera!.Transform.RenderUp;
+                        //var right = camera!.Transform.RenderRight;
+                        //var pointSize = 0.04f;
+                        //Matrix4x4 pointScale = Matrix4x4.CreateScale(pointSize);
+                        //foreach (var (pos, color) in _debugPoints)
+                        //{
+                        //    var rend = GetPointRenderer();
+                        //    rend.Material!.SetVector4(0, color);
+                        //    rend.Render(pointScale * Matrix4x4.CreateWorld(pos, fwd, up));
+                        //}
                         _debugPoints.Clear();
-                        var lineWidth = 0.02f;
-                        foreach (var (pos0, pos1, color) in _debugLines)
-                        {
-                            var rend = GetLineRenderer();
-                            rend.Material!.SetVector4(0, color);
-                            Matrix4x4 matrix = CalculateLineMatrix(pos0, pos1, lineWidth, fwd, up, right);
-                            rend.Render(matrix);
-                        }
+                        //var lineWidth = 0.02f;
+                        //foreach (var (pos0, pos1, color) in _debugLines)
+                        //{
+                        //    var rend = GetLineRenderer();
+                        //    rend.Material!.SetVector4(0, color);
+                        //    Matrix4x4 matrix = CalculateLineMatrix(pos0, pos1, lineWidth, fwd, up, right);
+                        //    rend.Render(matrix);
+                        //}
                         _debugLines.Clear();
-                        foreach (var (pos0, pos1, pos2, color) in _debugTriangles)
-                        {
+                        //foreach (var (pos0, pos1, pos2, color) in _debugTriangles)
+                        //{
 
-                        }
+                        //}
                         _debugTriangles.Clear();
                     }
                     else

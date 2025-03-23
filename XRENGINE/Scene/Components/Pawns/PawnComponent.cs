@@ -14,10 +14,10 @@ namespace XREngine.Components
     /// </summary>
     public class PawnComponent : XRComponent
     {
-        public XREvent<PawnComponent> PrePossessed;
-        public XREvent<PawnComponent> PostPossessed;
-        public XREvent<PawnComponent> PreUnpossessed;
-        public XREvent<PawnComponent> PostUnpossessed;
+        public XREvent<PawnComponent>? PrePossessed;
+        public XREvent<PawnComponent>? PostPossessed;
+        public XREvent<PawnComponent>? PreUnpossessed;
+        public XREvent<PawnComponent>? PostUnpossessed;
 
         private EventList<OptionalInputSetComponent> _optionalInputSets = [];
         public EventList<OptionalInputSetComponent> OptionalInputSets
@@ -67,13 +67,13 @@ namespace XREngine.Components
         public Segment CursorPositionWorld => Viewport?.GetWorldSegment(CursorPositionViewport) ?? new Segment(Vector3.Zero, Vector3.Zero);
 
         protected virtual void PostPossess()
-            => PostPossessed.Invoke(this);
+            => PostPossessed?.Invoke(this);
         protected virtual void PrePossess()
-            => PrePossessed.Invoke(this);
+            => PrePossessed?.Invoke(this);
         protected virtual void PostUnpossess()
-            => PostUnpossessed.Invoke(this);
+            => PostUnpossessed?.Invoke(this);
         protected virtual void PreUnpossess()
-            => PreUnpossessed.Invoke(this);
+            => PreUnpossessed?.Invoke(this);
 
         protected override bool OnPropertyChanging<T>(string? propName, T field, T @new)
         {

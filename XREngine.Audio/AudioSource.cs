@@ -80,7 +80,7 @@ namespace XREngine.Audio
         //}
         public unsafe AudioBuffer[]? UnqueueConsumedBuffers(int requestedCount = 0)
         {
-            int count = requestedCount <= 0 ? BuffersProcessed : Math.Min(BuffersProcessed, requestedCount);
+            int count = Math.Min(_currentStreamingBuffers.Count, requestedCount <= 0 ? BuffersProcessed : Math.Min(BuffersProcessed, requestedCount));
             if (count == 0)
                 return null;
 
@@ -89,8 +89,11 @@ namespace XREngine.Audio
             for (int i = 0; i < count; i++)
             {
                 var buf = _currentStreamingBuffers[0];
-                buffers[i] = buf;
-                handles[i] = buf.Handle;
+                if (buf is not null)
+                {
+                    buffers[i] = buf;
+                    handles[i] = buf.Handle;
+                }
                 _currentStreamingBuffers.RemoveAt(0);
             }
             fixed (uint* pBuffers = handles)

@@ -1,12 +1,10 @@
 ﻿using Extensions;
 using System.ComponentModel;
-using System.Globalization;
 using System.Numerics;
 using XREngine.Animation;
 using XREngine.Components;
 using XREngine.Data;
 using XREngine.Data.Core;
-using XREngine.Data.Core.TypeConverters;
 using XREngine.Data.Transforms.Rotations;
 using YamlDotNet.Serialization;
 
@@ -495,6 +493,28 @@ namespace XREngine.Scene.Transforms
         //        Rotation = Quaternion.Normalize(ParentInverseWorldRotation * value);
         //    }
         //}
+
+        public void AddWorldRotation(Quaternion value, bool networkSmoothed = false)
+        {
+            // Get the parent's world rotation. If no parent exists, returns Quaternion.Identity
+            Quaternion parentWorldRotation = ParentWorldRotation;
+
+            // To add a world-space rotation while maintaining the local-space hierarchy,
+            // we need to convert the world rotation into the correct local-space delta.
+            // This is done by "sandwiching" the rotation between the inverse parent rotation and parent rotation:
+            // localDelta = parentWorldRotation^-1 * value * parentWorldRotation
+            Quaternion localDelta = Quaternion.Inverse(parentWorldRotation) * value * parentWorldRotation;
+
+            // Apply the local delta to our current rotation and normalize to prevent floating point errors
+            Quaternion rotation = Quaternion.Normalize(localDelta * Rotation);
+
+            // If networkSmoothed is true, the rotation will be smoothly interpolated to the target value
+            // This is useful for network replication to avoid sudden jerky movements
+            if (networkSmoothed)
+                TargetRotation = rotation;
+            else // Otherwise, apply the rotation immediately
+                Rotation = rotation;
+        }
 
         public void SetWorldRotation(Quaternion value, bool networkSmoothed = false)
         {

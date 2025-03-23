@@ -30,6 +30,7 @@ using XREngine.Scene.Components.Physics;
 using XREngine.Scene.Components.VR;
 using XREngine.Scene.Transforms;
 using static XREngine.Scene.Transforms.RigidBodyTransform;
+using BlendMode = XREngine.Rendering.Models.Materials.BlendMode;
 using Quaternion = System.Numerics.Quaternion;
 
 namespace XREngine.Editor;
@@ -40,7 +41,7 @@ public static class EditorWorld
     public const bool VisualizeOctree = false;
     public const bool VisualizeQuadtree = false;
     public const bool Physics = false;
-    public const int PhysicsBallCount = 10; //The number of physics balls to add to the scene.
+    public const int PhysicsBallCount = 100; //The number of physics balls to add to the scene.
     public const bool DirLight = true;
     public const bool SpotLight = false;
     public const bool DirLight2 = false;
@@ -54,12 +55,12 @@ public static class EditorWorld
     public const bool AnimatedModel = true; //Imports a character model to be animated.
     public const float ModelScale = 0.0254f; //The scale of the model when imported.
     public const bool ModelZUp = false; //If true, the model will be rotated 90 degrees around the X axis.
-    public const bool AddEditorUI = true; //Adds the full editor UI to the camera. Probably don't use this one a character pawn.
+    public const bool AddEditorUI = false; //Adds the full editor UI to the camera.
     public const bool VRPawn = false; //Enables VR input and pawn.
     public const bool CharacterPawn = false; //Enables the player to physically locomote in the world. Requires a physical floor.
     public const bool ThirdPersonPawn = true; //If on desktop and character pawn is enabled, this will add a third person camera instead of first person.
     public const bool TestAnimation = false; //Adds test animations to the character pawn.
-    public const bool PhysicsChain = false; //Adds a jiggle physics chain to the character pawn.
+    public const bool PhysicsChain = true; //Adds a jiggle physics chain to the character pawn.
     public const bool TransformTool = false; //Adds the transform tool to the scene for testing dragging and rotating etc.
     public const bool AllowEditingInVR = false; //Allows the user to edit the scene from desktop in VR.
     public const bool AddCameraVRPickup = true;
@@ -86,20 +87,20 @@ public static class EditorWorld
         t.Text = str;
     }
 
-    static void OnFinishedImportingAvatar(SceneNode? rootNode, IReadOnlyCollection<XRMaterial> materials, IReadOnlyCollection<XRMesh> meshes)
+    static void OnFinishedImportingAvatar(SceneNode? rootNode)
     {
         if (rootNode is null)
             return;
 
-        //Debug.Out(rootNode.PrintTree());
+        Debug.Out(rootNode.PrintTree());
 
         var humanComp = rootNode.AddComponent<HumanoidComponent>()!;
         if (!VRPawn)
         {
             humanComp.LeftArmIKEnabled = false;
             humanComp.RightArmIKEnabled = false;
-            humanComp.LeftLegIKEnabled = false;
-            humanComp.RightLegIKEnabled = false;
+            humanComp.LeftLegIKEnabled = true;
+            humanComp.RightLegIKEnabled = true;
             humanComp.HipToHeadIKEnabled = false;
         }
 
@@ -126,8 +127,8 @@ public static class EditorWorld
             var knee = humanComp!.Right.Knee?.Node?.Transform;
             var leg = humanComp!.Right.Leg?.Node?.Transform;
 
-            leg?.RegisterAnimationTick<Transform>(t => t.Rotation = Quaternion.CreateFromAxisAngle(Globals.Right, XRMath.DegToRad(180 - 90.0f * (MathF.Cos(Engine.ElapsedTime) * 0.5f + 0.5f))));
-            knee?.RegisterAnimationTick<Transform>(t => t.Rotation = Quaternion.CreateFromAxisAngle(Globals.Right, XRMath.DegToRad(90.0f * (MathF.Cos(Engine.ElapsedTime) * 0.5f + 0.5f))));
+            leg?.RegisterAnimationTick<Scene.Transforms.Transform>(t => t.Rotation = Quaternion.CreateFromAxisAngle(Globals.Right, XRMath.DegToRad(180 - 90.0f * (MathF.Cos(Engine.ElapsedTime) * 0.5f + 0.5f))));
+            knee?.RegisterAnimationTick<Scene.Transforms.Transform>(t => t.Rotation = Quaternion.CreateFromAxisAngle(Globals.Right, XRMath.DegToRad(90.0f * (MathF.Cos(Engine.ElapsedTime) * 0.5f + 0.5f))));
 
             //var rootTfm = rootNode.FirstChild.GetTransformAs<Transform>(true)!;
             ////rotate the root node in a circle, but still facing forward
@@ -161,20 +162,96 @@ public static class EditorWorld
             //Find breast bone
             if (chest is not null)
             {
-                var breast = chest.FindChild(x =>
-                    (x.Name?.Contains("breast", StringComparison.InvariantCultureIgnoreCase) ?? false) ||
-                    (x.Name?.Contains("boob", StringComparison.InvariantCultureIgnoreCase) ?? false));
-                if (breast?.SceneNode is not null)
+                var earR = chest.FindChild(x => (x.Name?.Contains("KittenEarR", StringComparison.InvariantCultureIgnoreCase) ?? false));
+                if (earR?.SceneNode is not null)
                 {
-                    var phys = breast.SceneNode.AddComponent<PhysicsChainComponent>()!;
+                    var phys = earR.SceneNode.AddComponent<PhysicsChainComponent>()!;
                     phys.UpdateMode = PhysicsChainComponent.EUpdateMode.Normal;
                     phys.UpdateRate = 60;
                     phys.Damping = 0.1f;
                     phys.Inert = 0.0f;
-                    phys.Stiffness = 0.1f;
+                    phys.Stiffness = 0.05f;
                     phys.Force = new Vector3(0.0f, 0.0f, 0.0f);
-                    phys.Elasticity = 0.1f;
+                    phys.Elasticity = 0.2f;
                 }
+
+                var earL = chest.FindChild(x => (x.Name?.Contains("KittenEarL", StringComparison.InvariantCultureIgnoreCase) ?? false));
+                if (earL?.SceneNode is not null)
+                {
+                    var phys = earL.SceneNode.AddComponent<PhysicsChainComponent>()!;
+                    phys.UpdateMode = PhysicsChainComponent.EUpdateMode.Normal;
+                    phys.UpdateRate = 60;
+                    phys.Damping = 0.1f;
+                    phys.Inert = 0.0f;
+                    phys.Stiffness = 0.05f;
+                    phys.Force = new Vector3(0.0f, 0.0f, 0.0f);
+                    phys.Elasticity = 0.2f;
+                }
+
+                var breastL = chest.FindChild(x =>(x.Name?.Contains("BreastUpper2_LRoot", StringComparison.InvariantCultureIgnoreCase) ?? false));
+                if (breastL?.SceneNode is not null)
+                {
+                    var phys = breastL.SceneNode.AddComponent<PhysicsChainComponent>()!;
+                    phys.UpdateMode = PhysicsChainComponent.EUpdateMode.Normal;
+                    phys.UpdateRate = 60;
+                    phys.Damping = 0.1f;
+                    phys.Inert = 0.0f;
+                    phys.Stiffness = 0.05f;
+                    phys.Force = new Vector3(0.0f, 0.0f, 0.0f);
+                    phys.Elasticity = 0.2f;
+                }
+
+                var breastR = chest.FindChild(x => (x.Name?.Contains("BreastUpper2_RRoot", StringComparison.InvariantCultureIgnoreCase) ?? false));
+                if (breastR?.SceneNode is not null)
+                {
+                    var phys = breastR.SceneNode.AddComponent<PhysicsChainComponent>()!;
+                    phys.UpdateMode = PhysicsChainComponent.EUpdateMode.Normal;
+                    phys.UpdateRate = 60;
+                    phys.Damping = 0.1f;
+                    phys.Inert = 0.0f;
+                    phys.Stiffness = 0.05f;
+                    phys.Force = new Vector3(0.0f, 0.0f, 0.0f);
+                    phys.Elasticity = 0.2f;
+                }
+
+                var tail = humanComp.Hips?.Node?.Transform.FindChild(x => x.Name?.Contains("Hair_1_2", StringComparison.InvariantCultureIgnoreCase) ?? false);
+                if (tail?.SceneNode is not null)
+                {
+                    var phys = tail.SceneNode.AddComponent<PhysicsChainComponent>()!;
+                    phys.UpdateMode = PhysicsChainComponent.EUpdateMode.Normal;
+                    phys.UpdateRate = 60;
+                    phys.Damping = 0.01f;
+                    phys.Inert = 0.0f;
+                    phys.Stiffness = 0.0f;
+                    phys.Force = new Vector3(0.0f, 0.0f, 0.0f);
+                    phys.Elasticity = 0.05f;
+                }
+
+                var longHair = humanComp.Head?.Node?.Transform.FindChild(x => x.Name?.Contains("Long Hair", StringComparison.InvariantCultureIgnoreCase) ?? false);
+                if (longHair?.SceneNode is not null)
+                {
+                    var phys = longHair.SceneNode.AddComponent<PhysicsChainComponent>()!;
+                    phys.UpdateMode = PhysicsChainComponent.EUpdateMode.Default;
+                    phys.UpdateRate = 60;
+                    phys.Damping = 0.7f;
+                    phys.Inert = 0.1f;
+                    phys.Stiffness = 0.2f;
+                    phys.Force = new Vector3(0.0f, -0.6f, 0.0f);
+                    phys.Elasticity = 0.01f;
+                }
+
+                //var zafHair = humanComp.Head?.Node?.Transform.FindChild(x => x.Name?.Contains("Zaf Hair", StringComparison.InvariantCultureIgnoreCase) ?? false);
+                //if (zafHair?.SceneNode is not null)
+                //{
+                //    var phys = zafHair.SceneNode.AddComponent<PhysicsChainComponent>()!;
+                //    phys.UpdateMode = PhysicsChainComponent.EUpdateMode.FixedUpdate;
+                //    phys.UpdateRate = 60;
+                //    phys.Damping = 0.01f;
+                //    phys.Inert = 0.0f;
+                //    phys.Stiffness = 0.01f;
+                //    phys.Force = new Vector3(0.0f, 0.0f, 0.0f);
+                //    phys.Elasticity = 0.1f;
+                //}
             }
         }
 
@@ -229,7 +306,7 @@ public static class EditorWorld
         s.AllowSkinning = true;
         //s.RenderMesh3DBounds = true;
         s.RenderTransformDebugInfo = false;
-        s.RenderTransformLines = true;
+        s.RenderTransformLines = false;
         //s.RenderTransformCapsules = true;
         s.RenderTransformPoints = false;
         s.RecalcChildMatricesInParallel = true;
@@ -303,7 +380,7 @@ public static class EditorWorld
             XRTexture2D skyEquirect = Engine.Assets.LoadEngineAsset<XRTexture2D>("Textures", $"{names[r.Next(0, names.Length - 1)]}.exr");
 
             if (LightProbe)
-                AddLightProbe(rootNode);
+                AddLightProbes(rootNode, 1, 1, 1, 10, 10, 10);
             if (Skybox)
                 AddSkybox(rootNode, skyEquirect);
         }
@@ -660,20 +737,37 @@ public static class EditorWorld
     //Code for lighting the scene.
     #region Lights
 
-    private static void AddLightProbe(SceneNode rootNode)
+    private static void AddLightProbes(SceneNode rootNode, int heightCount, int widthCount, int depthCount, float height, float width, float depth)
     {
-        var probe = new SceneNode(rootNode) { Name = "TestLightProbeNode" };
-        var probeTransform = probe.SetTransform<Transform>();
-        probeTransform.Translation = new Vector3(0.0f, 20.0f, 0.0f);
-        if (!probe.TryAddComponent<LightProbeComponent>(out var probeComp))
-            return;
+        var probeRoot = new SceneNode(rootNode) { Name = "LightProbeRoot" };
 
-        probeComp!.Name = "TestLightProbe";
-        probeComp.SetCaptureResolution(128, false);
-        probeComp.RealtimeCapture = true;
-        probeComp.PreviewDisplay = LightProbeComponent.ERenderPreview.Irradiance;
-        probeComp.RealTimeCaptureUpdateInterval = TimeSpan.FromMilliseconds(200.0f);
-        probeComp.StopRealtimeCaptureAfter = TimeSpan.FromSeconds(5.0f);
+        float halfWidth = width * 0.5f;
+        float halfDepth = depth * 0.5f;
+
+        for (int i = 0; i < heightCount; i++)
+        {
+            float h = i * height;
+            for (int j = 0; j < widthCount; j++)
+            {
+                float w = j * width;
+                for (int k = 0; k < depthCount; k++)
+                {
+                    float d = k * depth;
+
+                    var probe = new SceneNode(probeRoot) { Name = $"LightProbe_{i}_{j}_{k}" };
+                    var probeTransform = probe.SetTransform<Transform>();
+                    probeTransform.Translation = new Vector3(w - halfWidth, h, d - halfDepth);
+                    var probeComp = probe.AddComponent<LightProbeComponent>();
+
+                    probeComp!.Name = "TestLightProbe";
+                    probeComp.SetCaptureResolution(64, false);
+                    probeComp.RealtimeCapture = true;
+                    probeComp.PreviewDisplay = LightProbeComponent.ERenderPreview.Irradiance;
+                    probeComp.RealTimeCaptureUpdateInterval = TimeSpan.FromMilliseconds(200.0f);
+                    probeComp.StopRealtimeCaptureAfter = TimeSpan.FromSeconds(5.0f);
+                }
+            }
+        }
     }
 
     private static void AddDirLight(SceneNode rootNode)
@@ -1077,23 +1171,76 @@ public static class EditorWorld
 
     //Tests for importing models and animations.
     #region Models
+    public static void MakeMaterial(XRMaterial mat, XRTexture[] textureList, List<TextureSlot> textures, string name)
+    {
+        bool transp = textures.Any(x => (x.Flags & 0x2) != 0 || x.TextureType == TextureType.Opacity);
+        bool normal = textures.Any(x => x.TextureType == TextureType.Normals);
+        if (textureList.Length > 0)
+        {
+            if (transp || textureList.Any(x => x is not null && x.HasAlphaChannel))
+            {
+                transp = true;
+                mat.Shaders.Add(ShaderHelper.UnlitTextureFragForward()!);
+            }
+            else
+            {
+                mat.Shaders.Add(ShaderHelper.TextureFragDeferred()!);
+                mat.Parameters =
+                [
+                    new ShaderFloat(1.0f, "Opacity"),
+                            new ShaderFloat(1.0f, "Specular"),
+                            new ShaderFloat(0.9f, "Roughness"),
+                            new ShaderFloat(0.0f, "Metallic"),
+                            new ShaderFloat(1.0f, "IndexOfRefraction"),
+                        ];
+            }
+        }
+        else
+        {
+            //Show the material as magenta if no textures are present
+            mat.Shaders.Add(ShaderHelper.LitColorFragDeferred()!);
+            mat.Parameters =
+            [
+                new ShaderVector3(ColorF3.Magenta, "BaseColor"),
+                    new ShaderFloat(1.0f, "Opacity"),
+                    new ShaderFloat(1.0f, "Specular"),
+                    new ShaderFloat(1.0f, "Roughness"),
+                    new ShaderFloat(0.0f, "Metallic"),
+                    new ShaderFloat(1.0f, "IndexOfRefraction"),
+                ];
+        }
 
+        mat.RenderPass = transp ? (int)EDefaultRenderPass.TransparentForward : (int)EDefaultRenderPass.OpaqueDeferredLit;
+        mat.Name = name;
+        mat.RenderOptions = new RenderingParameters()
+        {
+            CullMode = ECullMode.Back,
+            DepthTest = new DepthTest()
+            {
+                UpdateDepth = true,
+                Enabled = ERenderParamUsage.Enabled,
+                Function = EComparison.Less,
+            },
+            //LineWidth = 5.0f,
+            BlendModeAllDrawBuffers = transp ? BlendMode.EnabledTransparent() : BlendMode.Disabled(),
+        };
+    }
     private static void ImportModels(string desktopDir, SceneNode rootNode, SceneNode characterParentNode)
     {
         var importedModelsNode = new SceneNode(rootNode) { Name = "TestImportedModelsNode" };
         string fbxPathDesktop = Path.Combine(desktopDir, "misc", "test2.fbx");
 
         var animFlags = 
-        PostProcessSteps.Triangulate |
-        PostProcessSteps.JoinIdenticalVertices |
-        PostProcessSteps.GenerateNormals |
-        PostProcessSteps.CalculateTangentSpace |
-        PostProcessSteps.OptimizeGraph |
-        PostProcessSteps.OptimizeMeshes |
-        PostProcessSteps.SortByPrimitiveType |
-        PostProcessSteps.ImproveCacheLocality |
-        PostProcessSteps.GenerateBoundingBoxes |
-        PostProcessSteps.RemoveRedundantMaterials;
+            PostProcessSteps.Triangulate |
+            PostProcessSteps.JoinIdenticalVertices |
+            PostProcessSteps.GenerateNormals |
+            PostProcessSteps.CalculateTangentSpace |
+            PostProcessSteps.OptimizeGraph |
+            PostProcessSteps.OptimizeMeshes |
+            PostProcessSteps.SortByPrimitiveType |
+            PostProcessSteps.ImproveCacheLocality |
+            PostProcessSteps.GenerateBoundingBoxes |
+            PostProcessSteps.RemoveRedundantMaterials;
 
         var staticFlags =
             PostProcessSteps.SplitLargeMeshes |
@@ -1110,15 +1257,27 @@ public static class EditorWorld
             PostProcessSteps.FlipUVs;
 
         if (AnimatedModel)
-            ModelImporter.ImportAsync(fbxPathDesktop, animFlags, null, null, characterParentNode, ModelScale, ModelZUp).ContinueWith(OnFinishedAvatar);
+        {
+            SceneNode? ImportAnimated()
+            {
+                using var importer = new ModelImporter(fbxPathDesktop, null, null);
+                importer.MakeMaterialAction = MakeMaterial;
+                var node = importer.Import(animFlags, true, true, ModelScale, ModelZUp, true);
+                if (characterParentNode != null && node != null)
+                    characterParentNode.Transform.AddChild(node.Transform, false, true);
+                return node;
+            }
+            Task.Run(ImportAnimated).ContinueWith(nodeTask => OnFinishedImportingAvatar(nodeTask.Result));
+            //ModelImporter.ImportAsync(fbxPathDesktop, animFlags, null, null, characterParentNode, ModelScale, ModelZUp).ContinueWith(OnFinishedAvatarAsync);
+        }
         if (StaticModel)
         {
-            //string path = Path.Combine(Engine.Assets.EngineAssetsPath, "Models", "Sponza", "sponza.obj");
+            string path = Path.Combine(Engine.Assets.EngineAssetsPath, "Models", "Sponza", "sponza.obj");
 
             //string path2 = Path.Combine(Engine.Assets.EngineAssetsPath, "Models", "main1_sponza", "NewSponza_Main_Yup_003.fbx");
             //var task2 = ModelImporter.ImportAsync(path2, staticFlags, null, null, importedModelsNode, 1, false).ContinueWith(OnFinishedWorld);
 
-            string path = Path.Combine(Engine.Assets.EngineAssetsPath, "Models", "pkg_a_curtains", "NewSponza_Curtains_FBX_YUp.fbx");
+            //string path = Path.Combine(Engine.Assets.EngineAssetsPath, "Models", "pkg_a_curtains", "NewSponza_Curtains_FBX_YUp.fbx");
             var task1 = ModelImporter.ImportAsync(path, staticFlags, null, null, importedModelsNode, 1, false).ContinueWith(OnFinishedWorld);
 
             //await Task.WhenAll(task1, task2);
@@ -1161,13 +1320,13 @@ public static class EditorWorld
         (SceneNode? rootNode, IReadOnlyCollection<XRMaterial> materials, IReadOnlyCollection<XRMesh> meshes) = task.Result;
         rootNode?.GetTransformAs<Transform>()?.ApplyScale(new Vector3(0.01f));
     }
-    private static void OnFinishedAvatar(Task<(SceneNode? rootNode, IReadOnlyCollection<XRMaterial> materials, IReadOnlyCollection<XRMesh> meshes)> task)
+    private static void OnFinishedAvatarAsync(Task<(SceneNode? rootNode, IReadOnlyCollection<XRMaterial> materials, IReadOnlyCollection<XRMesh> meshes)> task)
     {
         if (task.IsCanceled || task.IsFaulted)
             return;
 
         (SceneNode? rootNode, IReadOnlyCollection<XRMaterial> materials, IReadOnlyCollection<XRMesh> meshes) = task.Result;
-        OnFinishedImportingAvatar(rootNode, materials, meshes);
+        OnFinishedImportingAvatar(rootNode);
     }
 
     private static void EnableTransformToolForNode(SceneNode? node, ETransformType transformType = ETransformType.Translate)

@@ -1,4 +1,5 @@
-﻿using System.Numerics;
+﻿using Extensions;
+using System.Numerics;
 
 namespace XREngine.Data.Geometry
 {
@@ -18,6 +19,9 @@ namespace XREngine.Data.Geometry
             readonly get => _end;
             set => _end = value;
         }
+
+        public readonly Vector3 Direction
+            => (_end - _start).Normalized();
 
         public float Length
         {

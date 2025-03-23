@@ -11,30 +11,39 @@ namespace XREngine.Scene.Components.Animation
         /// </summary>
         public class BoneIKConstraints : XRBase
         {
-            private Rotator? _minRotation;
-            private Rotator? _maxRotation;
-            private Vector3 _minPositionOffset;
-            private Vector3 _maxPositionOffset;
+            public float MaxYaw { get; set; } = 360.0f;
+            public float MinYaw { get; set; } = 360.0f;
+            public float MaxPitch { get; set; } = 360.0f;
+            public float MinPitch { get; set; } = 360.0f;
+            public float MaxRoll { get; set; } = 360.0f;
+            public float MinRoll { get; set; } = 360.0f;
 
-            public Rotator? MinRotation
+            /// <summary>
+            /// Given an IK solve for the child bone in local bind space, constrain the child bone's local position.
+            /// </summary>
+            /// <param name="childVector"></param>
+            /// <returns></returns>
+            public Vector3 ConstrainChildLocalPosition(Vector3 childVector)
             {
-                get => _minRotation;
-                set => SetField(ref _minRotation, value);
-            }
-            public Rotator? MaxRotation
-            {
-                get => _maxRotation;
-                set => SetField(ref _maxRotation, value);
-            }
-            public Vector3 MinPositionOffset
-            {
-                get => _minPositionOffset;
-                set => SetField(ref _minPositionOffset, value);
-            }
-            public Vector3 MaxPositionOffset
-            {
-                get => _maxPositionOffset;
-                set => SetField(ref _maxPositionOffset, value);
+                //First, pitch the child vector 90 deg down to convert from an up vector (typical bone orientation) to a forward vector (camera-like orientation)
+                childVector = Vector3.Transform(childVector, Quaternion.CreateFromYawPitchRoll(0.0f, -90.0f * XRMath.DegToRadMultf, 0.0f));
+
+                Rotator r = XRMath.LookatAngles(childVector);
+                Quaternion preConstrained = Quaternion.CreateFromYawPitchRoll(
+                    r.Yaw * XRMath.DegToRadMultf,
+                    r.Pitch * XRMath.DegToRadMultf,
+                    r.Roll * XRMath.DegToRadMultf);
+                r.Yaw = Math.Clamp(r.Yaw, MinYaw, MaxYaw);
+                r.Pitch = Math.Clamp(r.Pitch, MinPitch, MaxPitch);
+                Quaternion postConstrained = Quaternion.CreateFromYawPitchRoll(
+                    r.Yaw * XRMath.DegToRadMultf,
+                    r.Pitch * XRMath.DegToRadMultf,
+                    0.0f);
+                childVector = Vector3.Transform(childVector, Quaternion.Inverse(preConstrained) * postConstrained);
+
+                //Now, pitch the child vector 90 deg up
+                childVector = Vector3.Transform(childVector, Quaternion.CreateFromYawPitchRoll(0.0f, 90.0f * XRMath.DegToRadMultf, 0.0f));
+                return childVector;
             }
         }
     }

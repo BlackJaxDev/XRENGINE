@@ -124,7 +124,7 @@ namespace XREngine.Components.Lights
             base.OnTransformRenderWorldMatrixChanged(transform);
         }
 
-        private uint _irradianceResolution = 128;
+        private uint _irradianceResolution = 64;
         public uint IrradianceResolution
         {
             get => _irradianceResolution;

@@ -75,7 +75,7 @@ namespace XREngine.Rendering.Pipelines.Commands
         public string NormalTextureName { get; set; } = "Normal";
         public string DepthViewTextureName { get; set; } = "DepthView";
         public string AlbedoTextureName { get; set; } = "AlbedoOpacity";
-        public string RMSITextureName { get; set; } = "RMSI";
+        public string RMSETextureName { get; set; } = "RMSE";
         public string DepthStencilTextureName { get; set; } = "DepthStencil";
 
         public void SetOptions(int samples, uint noiseWidth, uint noiseHeight, float minSampleDist, float maxSampleDist, bool stereo)
@@ -87,12 +87,12 @@ namespace XREngine.Rendering.Pipelines.Commands
             MaxSampleDist = maxSampleDist;
             Stereo = stereo;
         }
-        public void SetGBufferInputTextureNames(string normal, string depthView, string albedo, string rmsi, string depthStencil)
+        public void SetGBufferInputTextureNames(string normal, string depthView, string albedo, string rmse, string depthStencil)
         {
             NormalTextureName = normal;
             DepthViewTextureName = depthView;
             AlbedoTextureName = albedo;
-            RMSITextureName = rmsi;
+            RMSETextureName = rmse;
             DepthStencilTextureName = depthStencil;
         }
         public void SetOutputNames(string noise, string ssaoIntensityTexture, string ssaoFBO, string ssaoBlurFBO, string gBufferFBO)
@@ -109,13 +109,13 @@ namespace XREngine.Rendering.Pipelines.Commands
             XRTexture? normalTex = Pipeline.GetTexture<XRTexture>(NormalTextureName);
             XRTexture? depthViewTex = Pipeline.GetTexture<XRTexture>(DepthViewTextureName);
             XRTexture? albedoTex = Pipeline.GetTexture<XRTexture>(AlbedoTextureName);
-            XRTexture? rmsiTex = Pipeline.GetTexture<XRTexture>(RMSITextureName);
+            XRTexture? rmseTex = Pipeline.GetTexture<XRTexture>(RMSETextureName);
             XRTexture? depthStencilTex = Pipeline.GetTexture<XRTexture>(DepthStencilTextureName);
 
             if (normalTex is null ||
                 depthViewTex is null ||
                 albedoTex is null ||
-                rmsiTex is null ||
+                rmseTex is null ||
                 depthStencilTex is null)
                 return;
 
@@ -130,7 +130,7 @@ namespace XREngine.Rendering.Pipelines.Commands
                 normalTex,
                 depthViewTex,
                 albedoTex,
-                rmsiTex,
+                rmseTex,
                 depthStencilTex,
                 width,
                 height);
@@ -140,7 +140,7 @@ namespace XREngine.Rendering.Pipelines.Commands
             XRTexture normalTex,
             XRTexture depthViewTex,
             XRTexture albedoTex,
-            XRTexture rmsiTex,
+            XRTexture rmseTex,
             XRTexture depthStencilTex,
             int width,
             int height)
@@ -230,7 +230,7 @@ namespace XREngine.Rendering.Pipelines.Commands
             if (normalTex is not IFrameBufferAttachement normalAttach)
                 throw new ArgumentException("Normal texture must be an IFrameBufferAttachement");
 
-            if (rmsiTex is not IFrameBufferAttachement rmsiAttach)
+            if (rmseTex is not IFrameBufferAttachement rmseAttach)
                 throw new ArgumentException("RMSI texture must be an IFrameBufferAttachement");
 
             if (depthStencilTex is not IFrameBufferAttachement depthStencilAttach)
@@ -239,7 +239,7 @@ namespace XREngine.Rendering.Pipelines.Commands
             XRQuadFrameBuffer ssaoGenFBO = new(ssaoGenMat, true,
                 (albedoAttach, EFrameBufferAttachment.ColorAttachment0, 0, -1),
                 (normalAttach, EFrameBufferAttachment.ColorAttachment1, 0, -1),
-                (rmsiAttach, EFrameBufferAttachment.ColorAttachment2, 0, -1),
+                (rmseAttach, EFrameBufferAttachment.ColorAttachment2, 0, -1),
                 (depthStencilAttach, EFrameBufferAttachment.DepthStencilAttachment, 0, -1))
             {
                 Name = SSAOFBOName

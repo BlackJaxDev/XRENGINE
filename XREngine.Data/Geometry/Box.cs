@@ -72,8 +72,8 @@ namespace XREngine.Data.Geometry
 
         public readonly bool Intersects(Box box)
         {
-            var corners = box.WorldCorners;
-            var planes = WorldPlanes;
+            var corners = box.WorldCorners.ToArray();
+            var planes = WorldPlanes.ToArray();
             for (int i = 0; i < 6; i++)
             {
                 var plane = planes[i];
@@ -154,40 +154,43 @@ namespace XREngine.Data.Geometry
             throw new NotImplementedException();
         }
 
-        public readonly Vector3[] LocalCorners =>
-        [
-            new(LocalMinimum.X, LocalMinimum.Y, LocalMinimum.Z),
-            new(LocalMaximum.X, LocalMinimum.Y, LocalMinimum.Z),
-            new(LocalMinimum.X, LocalMaximum.Y, LocalMinimum.Z),
-            new(LocalMaximum.X, LocalMaximum.Y, LocalMinimum.Z),
-            new(LocalMinimum.X, LocalMinimum.Y, LocalMaximum.Z),
-            new(LocalMaximum.X, LocalMinimum.Y, LocalMaximum.Z),
-            new(LocalMinimum.X, LocalMaximum.Y, LocalMaximum.Z),
-            new(LocalMaximum.X, LocalMaximum.Y, LocalMaximum.Z)
-        ];
+        public readonly IEnumerable<Vector3> LocalCorners
+        {
+            get
+            {
+                yield return new Vector3(LocalMinimum.X, LocalMinimum.Y, LocalMinimum.Z);
+                yield return new Vector3(LocalMaximum.X, LocalMinimum.Y, LocalMinimum.Z);
+                yield return new Vector3(LocalMinimum.X, LocalMaximum.Y, LocalMinimum.Z);
+                yield return new Vector3(LocalMaximum.X, LocalMaximum.Y, LocalMinimum.Z);
+                yield return new Vector3(LocalMinimum.X, LocalMinimum.Y, LocalMaximum.Z);
+                yield return new Vector3(LocalMaximum.X, LocalMinimum.Y, LocalMaximum.Z);
+                yield return new Vector3(LocalMinimum.X, LocalMaximum.Y, LocalMaximum.Z);
+                yield return new Vector3(LocalMaximum.X, LocalMaximum.Y, LocalMaximum.Z);
+            }
+        }
 
-        public readonly Vector3[] WorldCorners
-            => WorldCornersEnumerable.ToArray();
-        
-        public readonly IEnumerable<Vector3> WorldCornersEnumerable
+        public readonly IEnumerable<Plane> LocalPlanes
+        {
+            get
+            {
+                yield return new Plane(Vector3.UnitX, -LocalMinimum.X);
+                yield return new Plane(-Vector3.UnitX, LocalMaximum.X);
+                yield return new Plane(Vector3.UnitY, -LocalMinimum.Y);
+                yield return new Plane(-Vector3.UnitY, LocalMaximum.Y);
+                yield return new Plane(Vector3.UnitZ, -LocalMinimum.Z);
+                yield return new Plane(-Vector3.UnitZ, LocalMaximum.Z);
+            }
+        }
+
+        public readonly IEnumerable<Vector3> WorldCorners
             => LocalCorners.Select(PointToWorldSpace);
 
-        public readonly Plane[] LocalPlanes =>
-        [
-            new(Vector3.UnitX, -LocalMinimum.X),
-            new(-Vector3.UnitX, LocalMaximum.X),
-            new(Vector3.UnitY, -LocalMinimum.Y),
-            new(-Vector3.UnitY, LocalMaximum.Y),
-            new(Vector3.UnitZ, -LocalMinimum.Z),
-            new(-Vector3.UnitZ, LocalMaximum.Z)
-        ];
-
-        public readonly Plane[] WorldPlanes
+        public readonly IEnumerable<Plane> WorldPlanes
         {
             get
             {
                 var tfm = Transform;
-                return LocalPlanes.Select(p => Plane.Transform(p, tfm)).ToArray();
+                return LocalPlanes.Select(p => Plane.Transform(p, tfm));
             }
         }
     }

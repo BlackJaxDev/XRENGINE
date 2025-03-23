@@ -13,16 +13,29 @@ namespace XREngine.Components.Scene
 
         private WaveInEvent? _waveIn;
         private int _deviceIndex = 0;
-        private int _bufferMs = 30;
+        private int _bufferMs = 100;
         private int _sampleRate = 44100;
-        private int _bits = 8;
+        private int _bitsPerSample = 16;
         private bool _receive = true;
         private bool _capture = true;
 
         private byte[] _currentBuffer = [];
-        private int _currentBufferIndex = 0;
+        private int _currentBufferOffset = 0;
         private bool _muted = false;
         private float _lowerCutOff = 0.006f;
+
+        public enum EBitsPerSample
+        {
+            Eight = 8,
+            Sixteen = 16,
+            ThirtyTwo = 32
+        }
+
+        public EBitsPerSample BitsPerSample
+        {
+            get => (EBitsPerSample)_bitsPerSample;
+            set => _bitsPerSample = (int)value;
+        }
 
         /// <summary>
         /// Whether to capture and broadcast audio from the local microphone.
@@ -125,11 +138,11 @@ namespace XREngine.Components.Scene
             _waveIn = new WaveInEvent
             {
                 DeviceNumber = DeviceIndex,
-                WaveFormat = new WaveFormat(SampleRate, _bits, channels: 1), //TODO: support different formats other than pcm16
+                WaveFormat = new WaveFormat(SampleRate, _bitsPerSample, channels: 1),
                 BufferMilliseconds = BufferMs
             };
             //Allocate 100 ms worth of buffer space
-            int bufferSize = SampleRate * _bits / 8 * BufferMs / 1000;
+            int bufferSize = SampleRate * _bitsPerSample / 8 * BufferMs / 1000;
             //Explanation: ((Samples / 1 Second) * (Bits / 1 Sample) / 8) * (BufferMs / 1000) = bytes per second * seconds = bytes
             _currentBuffer = new byte[bufferSize];
             _waveIn.DataAvailable += WaveIn_DataAvailable;
@@ -157,32 +170,38 @@ namespace XREngine.Components.Scene
                 return;
 
             int remainingByteCount = e.BytesRecorded;
-            int offset = 0;
+            int srcOffset = 0;
             while (remainingByteCount > 0)
             {
-                int endIndex = _currentBufferIndex + remainingByteCount;
-                if (endIndex < _currentBuffer.Length)
+                int endIndex = _currentBufferOffset + remainingByteCount;
+                if (endIndex <= _currentBuffer.Length)
                 {
                     //If the buffer has enough space, just copy the data and move on with our life
-                    Buffer.BlockCopy(e.Buffer, offset, _currentBuffer, _currentBufferIndex, remainingByteCount);
-                    _currentBufferIndex += remainingByteCount;
+                    Buffer.BlockCopy(e.Buffer, srcOffset, _currentBuffer, _currentBufferOffset, remainingByteCount);
+
+                    srcOffset += remainingByteCount;
+                    _currentBufferOffset += remainingByteCount;
                     remainingByteCount = 0;
 
                     //If the buffer happens to be perfectly filled (edge case), queue it
-                    if (_currentBufferIndex == _currentBuffer.Length)
+                    if (_currentBufferOffset == _currentBuffer.Length)
+                    {
                         ReplicateCurrentBuffer();
+                        _currentBufferOffset = 0;
+                    }
                 }
                 else
                 {
                     //Consume remaining space from the available data
-                    int remainingSpace = _currentBuffer.Length - _currentBufferIndex;
-                    offset += remainingSpace;
+                    int remainingSpace = _currentBuffer.Length - _currentBufferOffset;
+                    if (remainingSpace > 0)
+                        Buffer.BlockCopy(e.Buffer, srcOffset, _currentBuffer, _currentBufferOffset, remainingSpace);
+
+                    srcOffset += remainingSpace;
                     remainingByteCount -= remainingSpace;
 
-                    if (remainingSpace > 0)
-                        Buffer.BlockCopy(e.Buffer, 0, _currentBuffer, _currentBufferIndex, remainingSpace);
-
                     ReplicateCurrentBuffer();
+                    _currentBufferOffset = 0;
                 }
             }
         }
@@ -194,59 +213,170 @@ namespace XREngine.Components.Scene
                 return true;
 
             float sumSquares = 0.0f;
-            // For 8-bit PCM, samples are unsigned bytes (0-255). The midpoint is 128.
-            // We'll normalize each sample to [-1, 1] then compute the RMS.
-            for (int i = 0; i < _currentBuffer.Length; i++)
+
+            if (_bitsPerSample == 8)
             {
-                float normalized = (_currentBuffer[i] - 128) / 127.0f;
-                sumSquares += normalized * normalized;
+                // For 8-bit PCM, samples are unsigned bytes (0-255). The midpoint is 128.
+                // We'll normalize each sample to [-1, 1] then compute the RMS.
+                for (int i = 0; i < _currentBuffer.Length; i++)
+                {
+                    float normalized = (_currentBuffer[i] - 128) / 127.0f;
+                    sumSquares += normalized * normalized;
+                }
+            }
+            else if (_bitsPerSample == 16)
+            {
+                // For 16-bit PCM, samples are signed shorts (-32768 to 32767).
+                // We'll normalize each sample to [-1, 1] then compute the RMS.
+                for (int i = 0; i < _currentBuffer.Length; i += 2)
+                {
+                    short sample = BitConverter.ToInt16(_currentBuffer, i);
+                    float normalized = sample / 32768.0f;
+                    sumSquares += normalized * normalized;
+                }
+            }
+            else if (_bitsPerSample == 32)
+            {
+                // For 32-bit PCM, samples are floats (-1 to 1).
+                // We'll compute the RMS directly.
+                for (int i = 0; i < _currentBuffer.Length; i += 4)
+                {
+                    float sample = BitConverter.ToSingle(_currentBuffer, i);
+                    sumSquares += sample * sample;
+                }
+            }
+            else
+            {
+                throw new NotSupportedException($"Unsupported bits per sample: {_bitsPerSample}");
             }
 
-            float rmsSq = sumSquares / _currentBuffer.Length;
+            float rmsSq = sumSquares / (_currentBuffer.Length / (_bitsPerSample / 8));
             //Debug.Out($"Mic RMS: {Math.Sqrt(rmsSq)}");
             return rmsSq >= _lowerCutOff * _lowerCutOff;
         }
 
         private void ReplicateCurrentBuffer()
         {
+            Denoise(ref _currentBuffer);
             if (!VerifyLowerCutoff())
                 return;
 
-            //Denoise(_currentBuffer);
-
-            EnqueueDataReplication(nameof(_currentBuffer), _currentBuffer.ToArray(), false, false);
-            _currentBufferIndex = 0;
+            EnqueueDataReplication(nameof(_currentBuffer), _currentBuffer.ToArray(), true, false);
         }
 
-        //TODO: verify this works
+        private float _smoothingFactor = 0.5f; // Default value of 0.5 (50% smoothing)
         /// <summary>
-        /// A simple moving average filter with a window size of 3 for noise reduction.
+        /// Controls the strength of the noise reduction filter. 
+        /// Range is 0.0 to 1.0, where 0.0 is no smoothing and 1.0 is maximum smoothing.
+        /// Default is 0.5 (50% smoothing).
         /// </summary>
-        /// <param name="currentBuffer"></param>
-        private static void Denoise(byte[] currentBuffer)
+        public float SmoothingFactor
         {
-            // A simple moving average filter with a window size of 3 for noise reduction.
+            get => _smoothingFactor;
+            set => SetField(ref _smoothingFactor, Math.Clamp(value, 0f, 1f));
+        }
+
+        // Replace the Denoise method
+        private void Denoise(ref byte[] currentBuffer)
+        {
             int length = currentBuffer.Length;
-            if (length < 3)
+            if (length < 3 || _smoothingFactor < float.Epsilon)
                 return;
 
-            byte[] smoothed = new byte[length];
-
-            // Process the first sample: average of first two samples.
-            smoothed[0] = (byte)((currentBuffer[0] + currentBuffer[1]) / 2);
-
-            // Process middle samples with a 3-point moving average.
-            for (int i = 1; i < length - 1; i++)
+            // Handle different bit depths
+            switch (_bitsPerSample)
             {
-                int sum = currentBuffer[i - 1] + currentBuffer[i] + currentBuffer[i + 1];
-                smoothed[i] = (byte)(sum / 3);
+                case 8:
+                    byte[] smoothedBytes = new byte[length];
+
+                    // Process first sample
+                    smoothedBytes[0] = (byte)((
+                        currentBuffer[0] * (1 - _smoothingFactor) +
+                        currentBuffer[1] * _smoothingFactor));
+
+                    // Process middle samples
+                    for (int i = 1; i < length - 1; i++)
+                    {
+                        float sum =
+                            currentBuffer[i - 1] * _smoothingFactor / 2 +
+                            currentBuffer[i] * (1 - _smoothingFactor) +
+                            currentBuffer[i + 1] * _smoothingFactor / 2;
+                        smoothedBytes[i] = (byte)sum;
+                    }
+
+                    // Process last sample
+                    smoothedBytes[length - 1] = (byte)((
+                        currentBuffer[length - 2] * _smoothingFactor +
+                        currentBuffer[length - 1] * (1 - _smoothingFactor)));
+
+                    Buffer.BlockCopy(smoothedBytes, 0, currentBuffer, 0, length);
+
+                    break;
+
+                case 16:
+                    int shortLength = length / 2;
+                    short[] samples = new short[shortLength];
+                    short[] smoothedShorts = new short[shortLength];
+
+                    Buffer.BlockCopy(currentBuffer, 0, samples, 0, length);
+
+                    // Process first sample
+                    smoothedShorts[0] = (short)((
+                        samples[0] * (1 - _smoothingFactor) +
+                        samples[1] * _smoothingFactor));
+
+                    // Process middle samples
+                    for (int i = 1; i < shortLength - 1; i++)
+                    {
+                        float sum = 
+                            samples[i - 1] * _smoothingFactor / 2 +
+                            samples[i] * (1 - _smoothingFactor) +
+                            samples[i + 1] * _smoothingFactor / 2;
+                        smoothedShorts[i] = (short)sum;
+                    }
+
+                    // Process last sample
+                    smoothedShorts[shortLength - 1] = (short)((
+                        samples[shortLength - 2] * _smoothingFactor +
+                        samples[shortLength - 1] * (1 - _smoothingFactor)));
+
+                    Buffer.BlockCopy(smoothedShorts, 0, currentBuffer, 0, length);
+
+                    break;
+
+                case 32:
+                    int floatLength = length / 4;
+                    float[] floatSamples = new float[floatLength];
+                    float[] smoothedFloats = new float[floatLength];
+
+                    Buffer.BlockCopy(currentBuffer, 0, floatSamples, 0, length);
+
+                    // Process first sample
+                    smoothedFloats[0] = 
+                        floatSamples[0] * (1 - _smoothingFactor) +
+                        floatSamples[1] * _smoothingFactor;
+
+                    // Process middle samples
+                    for (int i = 1; i < floatLength - 1; i++)
+                    {
+                        smoothedFloats[i] =
+                            floatSamples[i - 1] * _smoothingFactor / 2 +
+                            floatSamples[i] * (1 - _smoothingFactor) +
+                            floatSamples[i + 1] * _smoothingFactor / 2;
+                    }
+
+                    // Process last sample
+                    smoothedFloats[floatLength - 1] = 
+                        floatSamples[floatLength - 2] * _smoothingFactor +
+                        floatSamples[floatLength - 1] * (1 - _smoothingFactor);
+
+                    Buffer.BlockCopy(smoothedFloats, 0, currentBuffer, 0, length);
+
+                    break;
+
+                default:
+                    throw new NotSupportedException($"Unsupported bits per sample: {_bitsPerSample}");
             }
-
-            // Process the last sample: average of the last two samples.
-            smoothed[length - 1] = (byte)((currentBuffer[length - 2] + currentBuffer[length - 1]) / 2);
-
-            // Copy the denoised data back into the current buffer.
-            Buffer.BlockCopy(smoothed, 0, currentBuffer, 0, length);
         }
 
         public override void ReceiveData(string id, object data)
@@ -255,7 +385,7 @@ namespace XREngine.Components.Scene
             {
                 case nameof(_currentBuffer):
                     if (Receive && !Muted && data is ICollection col)
-                        Task.Run(() => EnqueueStreamingAudio(col));
+                        EnqueueStreamingAudio(col);
                     break;
             }
         }
@@ -268,13 +398,41 @@ namespace XREngine.Components.Scene
             {
                 if (b is byte bVal)
                     buffer[i] = bVal;
-                else if (byte.TryParse(b.ToString(), out byte sVal))
+                else if (byte.TryParse(b?.ToString(), out byte sVal))
                     buffer[i] = sVal;
                 i++;
             }
+
             BufferReceived?.Invoke(buffer);
+
             var audioSource = GetAudioSourceComponent(true)!;
-            audioSource.EnqueueStreamingBuffers(SampleRate, false, buffer);
+            switch (_bitsPerSample)
+            {
+                case 8:
+                    {
+                        audioSource.EnqueueStreamingBuffers(SampleRate, false, buffer);
+                    }
+                    break;
+                case 16:
+                    {
+                        //cast every 2 bytes to a short
+                        short[] shorts = new short[buffer.Length / 2];
+                        Buffer.BlockCopy(buffer, 0, shorts, 0, buffer.Length);
+                        audioSource.EnqueueStreamingBuffers(SampleRate, false, shorts);
+                    }
+                    break;
+                case 32:
+                    {
+                        //cast every 4 bytes to a float
+                        float[] floats = new float[buffer.Length / 4];
+                        Buffer.BlockCopy(buffer, 0, floats, 0, buffer.Length);
+                        audioSource.EnqueueStreamingBuffers(SampleRate, false, floats);
+                    }
+                    break;
+                default:
+                    Debug.Out($"Unsupported bits per sample: {_bitsPerSample}");
+                    return;
+            }
             audioSource.Play();
         }
 
@@ -323,6 +481,10 @@ namespace XREngine.Components.Scene
             }
             else
                 Debug.Out($"Available audio input devices:{Environment.NewLine}{string.Join(Environment.NewLine, devices)}");
+
+            var asioNames = AsioOut.GetDriverNames();
+            if (asioNames.Length > 0)
+                Debug.Out($"Available ASIO devices:{Environment.NewLine}{string.Join(Environment.NewLine, asioNames)}");
 
             DeviceIndex = Math.Clamp(DeviceIndex, 0, devices.Length - 1);
 

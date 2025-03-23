@@ -105,7 +105,7 @@ namespace XREngine.Audio
 
             var error = Api.GetError();
             if (error != AudioError.NoError)
-                throw new Exception($"{error}");
+                Trace.WriteLine($"OpenAL Error: {error}");
         }
 
         private ResourcePool<AudioSource> SourcePool { get; }
@@ -128,12 +128,16 @@ namespace XREngine.Audio
 
         public void ReleaseSource(AudioSource source)
         {
+            if (source is null)
+                return;
             Sources.Remove(source.Handle);
             SourcePool.Release(source);
             VerifyError();
         }
         public void ReleaseBuffer(AudioBuffer buffer)
         {
+            if (buffer is null)
+                return;
             Buffers.Remove(buffer.Handle);
             BufferPool.Release(buffer);
             VerifyError();

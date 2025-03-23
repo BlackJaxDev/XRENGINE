@@ -31,8 +31,8 @@ namespace XREngine.Components.Scene.Shapes
         public BoxComponent(float uniformHalfExtents, ICollisionObjectConstructionInfo info)
             : base(new Box(uniformHalfExtents), info) { }
         
-        public Vector3[] GetTransformedCorners() => _shape.WorldCorners;
-        public Vector3[] GetUntransformedCorners() => _shape.LocalCorners;
+        public IEnumerable<Vector3> GetTransformedCorners() => _shape.WorldCorners;
+        public IEnumerable<Vector3> GetUntransformedCorners() => _shape.LocalCorners;
 
         public override XRCollisionShape GetCollisionShape()
         {

@@ -128,15 +128,15 @@ namespace XREngine.Rendering.Physics.Physx
             enable_custom_filter_shader(&sceneDesc, filterShaderCallback, 1u);
 
             sceneDesc.flags =
-                PxSceneFlags.EnableCcd |
+                //PxSceneFlags.EnableCcd |
                 PxSceneFlags.EnableGpuDynamics |
-                PxSceneFlags.EnableActiveActors |
-                PxSceneFlags.EnableStabilization |
-                PxSceneFlags.EnableEnhancedDeterminism;
+                PxSceneFlags.EnableActiveActors;
+                //PxSceneFlags.EnableStabilization |
+                //PxSceneFlags.EnableEnhancedDeterminism;
             sceneDesc.broadPhaseType = PxBroadPhaseType.Gpu;
             //sceneDesc.gpuDynamicsConfig = new PxgDynamicsMemoryConfig()
             //{
-
+            //    maxRigidContactCount = 64,
             //};
             _scene = _physicsPtr->CreateSceneMut(&sceneDesc);
             Scenes.Add((nint)_scene, this);
@@ -148,6 +148,8 @@ namespace XREngine.Rendering.Physics.Physx
 
         public override unsafe void StepSimulation()
         {
+            //using var t = Engine.Profiler.Start();
+
             Simulate(Engine.Time.Timer.FixedUpdateDelta, null, true);
             if (!FetchResults(true, out uint error))
             {
@@ -160,7 +162,9 @@ namespace XREngine.Rendering.Physics.Physx
 
             uint count;
             var ptr = _scene->GetActiveActorsMut(&count);
-            Task.WaitAll(Enumerable.Range(0, (int)count).Select(i => Task.Run(() => UpdatePhysicsActor(ptr, i))));
+            for (int i = 0; i < count; i++)
+                UpdatePhysicsActor(ptr, i);
+            //Task.WaitAll(Enumerable.Range(0, (int)count).Select(i => Task.Run(() => UpdatePhysicsActor(ptr, i))));
             NotifySimulationStepped();
         }
 

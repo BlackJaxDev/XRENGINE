@@ -5,7 +5,7 @@ namespace XREngine.Rendering.Pipelines.Commands
 {
     public class VPRC_DispatchCompute : ViewportRenderCommand
     {
-        private readonly XRRenderProgram _computeProgram = new(false);
+        private readonly XRRenderProgram _computeProgram = new(false, false);
 
         private static uint GetOne() => 1u;
 

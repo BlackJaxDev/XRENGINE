@@ -25,7 +25,7 @@ namespace XREngine.Scene.Transforms
 
         public virtual void SaveBindState()
         {
-            BindMatrix = LocalMatrix *(Parent?.BindMatrix ?? Matrix4x4.Identity);
+            BindMatrix = LocalMatrix * (Parent?.BindMatrix ?? Matrix4x4.Identity);
             InverseBindMatrix = Matrix4x4.Invert(BindMatrix, out var inv) ? inv : Matrix4x4.Identity;
         }
 
@@ -179,6 +179,12 @@ namespace XREngine.Scene.Transforms
                 return _children.LastOrDefault();
         }
 
+        /// <summary>
+        /// Returns the Y-aligned forward and right directions for this transform.
+        /// The pitch of the transform is ignored.
+        /// </summary>
+        /// <param name="forward"></param>
+        /// <param name="right"></param>
         public void GetDirectionsXZ(out Vector3 forward, out Vector3 right)
         {
             forward = WorldForward;
@@ -196,6 +202,13 @@ namespace XREngine.Scene.Transforms
             right = WorldRight;
         }
 
+        /// <summary>
+        /// Returns the Y-aligned forward and right directions for the provided matrix.
+        /// The pitch of the matrix is ignored.
+        /// </summary>
+        /// <param name="matrix"></param>
+        /// <param name="forward"></param>
+        /// <param name="right"></param>
         public static void GetDirectionsXZ(Matrix4x4 matrix, out Vector3 forward, out Vector3 right)
         {
             right = Vector3.TransformNormal(Globals.Right, matrix);

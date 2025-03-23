@@ -212,7 +212,7 @@ namespace XREngine
         public static void BeginPlayAllWorlds()
         {
             foreach (var world in XRWorldInstance.WorldInstances.Values)
-                world.BeginPlay();
+                world.BeginPlay().Wait();
         }
         public static void EndPlayAllWorlds()
         {

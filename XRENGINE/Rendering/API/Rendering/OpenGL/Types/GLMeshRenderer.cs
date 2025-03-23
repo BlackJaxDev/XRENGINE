@@ -450,7 +450,7 @@ namespace XREngine.Rendering.OpenGL
 
                 shaders = shaders.Append(vertexShader);
                 
-                program = Renderer.GenericToAPI<GLRenderProgram>(new XRRenderProgram(shaders, false) { Separable = false })!;
+                program = Renderer.GenericToAPI<GLRenderProgram>(new XRRenderProgram(false, false, shaders))!;
                 program.PropertyChanged += CheckProgramLinked;
                 InitiateLink(program);
             }
@@ -466,7 +466,7 @@ namespace XREngine.Rendering.OpenGL
                     ? GenerateVertexShader(vertexSourceGenerator)
                     : vertexShaders.FirstOrDefault(vertexShaderSelector) ?? GenerateVertexShader(vertexSourceGenerator);
 
-                vertexProgram = Renderer.GenericToAPI<GLRenderProgram>(new XRRenderProgram(false, vertexShader) { Separable = true})!;
+                vertexProgram = Renderer.GenericToAPI<GLRenderProgram>(new XRRenderProgram(false, true, vertexShader))!;
                 vertexProgram.PropertyChanged += CheckProgramLinked;
                 InitiateLink(vertexProgram);
             }

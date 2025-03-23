@@ -2,13 +2,39 @@
 using System.Runtime.CompilerServices;
 using System.Text;
 using XREngine.Core;
+using XREngine.Data.Core;
 
 namespace XREngine
 {
     public static partial class Engine
     {
-        public class CodeProfiler
+        public class CodeProfiler : XRBase
         {
+            private bool _enableFrameLogging = false;
+            public bool EnableFrameLogging
+            {
+                get => _enableFrameLogging;
+                set => SetField(ref _enableFrameLogging, value);
+            }
+
+            private float _debugOutputMinElapsedMs = 1.0f;
+            public float DebugOutputMinElapsedMs
+            {
+                get => _debugOutputMinElapsedMs;
+                set => SetField(ref _debugOutputMinElapsedMs, value);
+            }
+
+            public ConcurrentDictionary<int, CodeProfilerTimer> RootEntriesPerThread { get; } = [];
+
+            private ConcurrentQueue<CodeProfilerTimer> _completedEntriesPrinting = [];
+            private ConcurrentQueue<CodeProfilerTimer> _completedEntries = [];
+
+            private readonly ResourcePool<CodeProfilerTimer> _timerPool = new(() => new CodeProfilerTimer());
+
+            private readonly ConcurrentDictionary<Guid, CodeProfilerTimer> _asyncTimers = [];
+
+            public delegate void DelTimerCallback(string? methodName, float elapsedMs);
+
             public CodeProfiler()
             {
                 Time.Timer.SwapBuffers += ClearFrameLog;
@@ -37,7 +63,9 @@ namespace XREngine
                 /// </summary>
                 private CodeProfilerTimer? _activeSubEntry;
 
-                public void End()
+                public void Start()
+                    => StartTime = Time.Timer.Time();
+                public void Stop()
                     => EndTime = Time.Timer.Time();
 
                 public void OnPoolableDestroyed() { }
@@ -47,7 +75,6 @@ namespace XREngine
                     Depth = 0;
                     _completedSubEntries.Clear();
                     _activeSubEntry = null;
-                    StartTime = Time.Timer.Time();
                 }
 
                 public void PushEntry(CodeProfilerTimer entry)
@@ -93,13 +120,6 @@ namespace XREngine
                 }
             }
 
-            public bool EnableFrameLogging { get; set; } = true;
-            public float DebugOutputMinElapsedMs { get; set; } = 1000.0f;
-
-            public ConcurrentDictionary<int, CodeProfilerTimer> RootEntriesPerThread { get; } = [];
-            private ConcurrentQueue<CodeProfilerTimer> _completedEntriesPrinting = [];
-            private ConcurrentQueue<CodeProfilerTimer> _completedEntries = [];
-
             public void ClearFrameLog()
             {
                 StringBuilder sb = new();
@@ -140,11 +160,12 @@ namespace XREngine
                         rootEntry.PushEntry(entry);
                         return rootEntry;
                     });
+                entry.Start();
             }
 
             private void PopEntry(CodeProfilerTimer entry)
             {
-                entry.End();
+                entry.Stop();
 
                 if (!RootEntriesPerThread.TryGetValue(entry.ThreadId, out var rootEntry))
                     return;
@@ -158,10 +179,7 @@ namespace XREngine
                 }
             }
 
-            private readonly ResourcePool<CodeProfilerTimer> _timerPool = new(() => new CodeProfilerTimer());
-            private readonly ConcurrentDictionary<Guid, CodeProfilerTimer> _asyncTimers = [];
-
-            public delegate void DelTimerCallback(string? methodName, float elapsedMs);
+            private StateObject so = new();
 
             /// <summary>
             /// Starts a timer and returns a StateObject that will stop the timer when it is disposed.
@@ -171,14 +189,15 @@ namespace XREngine
             /// <returns></returns>
             public StateObject Start(DelTimerCallback? callback, [CallerMemberName] string? methodName = null)
             {
-                if (!EnableFrameLogging)
-                    return StateObject.New();
+                return so;
+                //if (!EnableFrameLogging)
+                //    return StateObject.New();
 
-                var entry = _timerPool.Take();
-                entry.Name = methodName;
-                entry.ThreadId = Environment.CurrentManagedThreadId;
-                PushEntry(entry);
-                return StateObject.New(() => Stop(entry, callback));
+                //var entry = _timerPool.Take();
+                ////entry.Name = methodName;
+                ////entry.ThreadId = Environment.CurrentManagedThreadId;
+                ////PushEntry(entry);
+                //return StateObject.New(() => Stop(entry, callback));
             }
             public StateObject Start([CallerMemberName] string? methodName = null)
                 => Start(null, methodName);
@@ -190,7 +209,7 @@ namespace XREngine
             private void Stop(CodeProfilerTimer entry, DelTimerCallback? callback)
             {
                 callback?.Invoke(entry.Name ?? string.Empty, entry.ElapsedMs);
-                PopEntry(entry);
+                //PopEntry(entry);
             }
             /// <summary>
             /// Starts an async timer and returns the id of the timer.

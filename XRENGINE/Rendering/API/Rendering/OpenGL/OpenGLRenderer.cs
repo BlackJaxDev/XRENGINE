@@ -73,6 +73,8 @@ namespace XREngine.Rendering.OpenGL
                 Debug.Out($"OpenGL Vendor: {vendor}");
                 Debug.Out($"OpenGL Renderer: {renderer}");
                 Debug.Out($"OpenGL Shading Language Version: {shadingLanguageVersion}");
+
+                Engine.Rendering.State.IsNVIDIA = vendor.Contains("NVIDIA");
             }
 
             GLRenderProgram.ReadBinaryShaderCache(version);

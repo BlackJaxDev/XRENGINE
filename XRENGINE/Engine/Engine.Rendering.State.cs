@@ -78,8 +78,14 @@ namespace XREngine
                 public static bool IsStereoPass => RenderingPipelineState?.StereoPass ?? false;
 
                 public static bool HasOvrMultiViewExtension { get; internal set; } = false;
-                public static bool HasNVStereoExtension { get; internal set; } = false;
+                /// <summary>
+                /// If true, the shaders required for instanced debug rendering are available.
+                /// </summary>
                 public static bool DebugInstanceRenderingAvailable { get; internal set; } = true;
+                /// <summary>
+                /// If true, the current GPU is an NVIDIA GPU.
+                /// </summary>
+                public static bool IsNVIDIA { get; internal set; }
 
                 //public static XRRenderPipelineInstance? CurrentCollectingVisiblePipeline => CollectingVisiblePipelineStack.Count > 0 ? CollectingVisiblePipelineStack.Peek() : null;
                 //public static XRRenderPipelineInstance.RenderingState? CollectingVisiblePipelineState => CurrentCollectingVisiblePipeline?.RenderState;

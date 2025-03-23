@@ -4,6 +4,9 @@ namespace XREngine.Data.MMD
 {
     public static class VMDUtils
     {
+        public const float MMDUnitsToMeters = 0.08f;
+        public const float MetersToMMDUnits = 12.5f;
+
         static VMDUtils()
         {
             Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);
@@ -325,11 +328,31 @@ namespace XREngine.Data.MMD
             { UpperBody2, "Chest" },
             { Neck, "Neck" },
             { Head, "Head" },
+
+            { BothEyes, "Eyes" },
             { LeftEye, "Eye_L" },
+            { RightEye, "Eye_R" },
+
             { LeftShoulder, "Left_shoulder" },
+            { LeftShoulderPivot, "Left_shoulder_p" }, // 左肩P
+            { LeftShoulderControl, "Left_shoulder_c" }, // 左肩C
             { LeftArm, "Left_arm" },
             { LeftElbow, "Left_elbow" },
             { LeftWrist, "Left_wrist" },
+            { LeftLeg, "Left_leg" },
+            { LeftKnee, "Left_knee" },
+            { LeftAnkle, "Left_ankle" },
+            { RightShoulder, "Right_shoulder" },
+            { RightShoulderPivot, "Right_shoulder_p" },    // 右肩P
+            { RightShoulderControl, "Right_shoulder_c" },  // 右肩C
+            { RightArm, "Right_arm" },
+            { RightElbow, "Right_elbow" },
+            { RightWrist, "Right_wrist" },
+
+            { RightLeg, "Right_leg" },
+            { RightKnee, "Right_knee" },
+            { RightAnkle, "Right_ankle" },
+
             { LeftThumb1, "Thumb0_L" },
             { LeftThumb2, "Thumb1_L" },
             { LeftFore1, "IndexFinger1_L" },
@@ -344,15 +367,7 @@ namespace XREngine.Data.MMD
             { LeftLittle1, "LittleFinger1_L" },
             { LeftLittle2, "LittleFinger2_L" },
             { LeftLittle3, "LittleFinger3_L" },
-            { LeftLeg, "Left_leg" },
-            { LeftKnee, "Left_knee" },
-            { LeftAnkle, "Left_ankle" },
-            { BothEyes, "Eyes" },
-            { RightEye, "Eye_R" },
-            { RightShoulder, "Right_shoulder" },
-            { RightArm, "Right_arm" },
-            { RightElbow, "Right_elbow" },
-            { RightWrist, "Right_wrist" },
+
             { RightThumb1, "Thumb0_R" },
             { RightThumb2, "Thumb1_R" },
             { RightFore1, "IndexFinger1_R" },
@@ -367,9 +382,6 @@ namespace XREngine.Data.MMD
             { RightLittle1, "LittleFinger1_R" },
             { RightLittle2, "LittleFinger2_R" },
             { RightLittle3, "LittleFinger3_R" },
-            { RightLeg, "Right_leg" },
-            { RightKnee, "Right_knee" },
-            { RightAnkle, "Right_ankle" },
 
             { ArmIKLeft, "ArmL IK" },
             { ArmIKRight, "ArmR IK" },
@@ -385,8 +397,6 @@ namespace XREngine.Data.MMD
             { Tongue1, "Tongue 1" },                       // 舌１
             { Tongue2, "Tongue 2" },                       // 舌２
             { Tongue3, "Tongue 3" },                       // 舌３
-            { RightShoulderPivot, "Right Shoulder P" },    // 右肩P
-            { RightShoulderControl, "Right Shoulder C" },  // 右肩C
             { RightArmTwist, "Right Arm Twist" },          // 右腕捩
             { RightArmTwist1, "Right Arm Twist 1" },       // 右腕捩1
             { RightArmTwist2, "Right Arm Twist 2" },       // 右腕捩2
@@ -398,8 +408,6 @@ namespace XREngine.Data.MMD
             { RightHandTwist2, "Right Hand Twist 2" },     // 右手捩2
             { RightHandTwist3, "Right Hand Twist 3" },     // 右手捩3
             { RightSleeve, "Right Sleeve" },               // 右袖
-            { LeftShoulderPivot, "Left Shoulder P" },      // 左肩P
-            { LeftShoulderControl, "Left Shoulder C" },    // 左肩C
             { LeftArmTwist, "Left Arm Twist" },            // 左腕捩
             { LeftArmTwist1, "Left Arm Twist 1" },         // 左腕捩1
             { LeftArmTwist2, "Left Arm Twist 2" },         // 左腕捩2

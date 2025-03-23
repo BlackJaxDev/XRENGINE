@@ -52,6 +52,15 @@ namespace XREngine.Data.Core
             return true;
         }
 
+        protected bool SetFieldUnchecked<T>(ref T field, T value, [CallerMemberName] string? propertyName = null)
+        {
+            OnPropertyChanging(propertyName, field, value);
+            T prev = field;
+            field = value;
+            OnPropertyChanged(propertyName, prev, field);
+            return true;
+        }
+
         protected T SetFieldReturn<T>(ref T field, T value, [CallerMemberName] string? propertyName = null)
         {
             if (ReferenceEquals(field, value))

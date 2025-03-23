@@ -587,6 +587,9 @@ namespace XREngine.Data.Core
 
         /// <summary>
         /// Returns a YPR rotator looking from the origin to the end of this vector.
+        /// Initial vector is assumed to be pointing along the -Z axis.
+        /// Yaw rotates counterclockwise around the Y axis,
+        /// and pitch rotates upward around the X axis, after X has been yawed.
         /// </summary>
         public static Rotator LookatAngles(Vector3 vector) => new(
             RadToDeg(GetPitchAfterYaw(vector)),
@@ -596,9 +599,24 @@ namespace XREngine.Data.Core
         public static Rotator LookatAngles(Vector3 origin, Vector3 point)
             => LookatAngles(point - origin);
 
+        /// <summary>
+        /// Calculates the yaw angle (rotation around Y-axis) for a vector in radians.
+        /// The yaw calculation uses atan2 to find the angle between the vector's X and Z components.
+        /// A negative sign is applied to account for right-handed coordinate system conventions.
+        /// </summary>
+        /// <param name="vector">The vector to calculate yaw angle from</param>
+        /// <returns>The yaw angle in radians, where 0 points along -Z and positive rotation is counterclockwise around Y axis</returns>
         public static float GetYaw(Vector3 vector)
             => MathF.Atan2(-vector.X, -vector.Z);
 
+        /// <summary>
+        /// Calculates the pitch angle (rotation around X-axis) for a vector after yaw has been applied.
+        /// The pitch is calculated as the angle between:
+        /// - The Y component (height)
+        /// - The length of the horizontal components (sqrt(x^2 + z^2))
+        /// </summary>
+        /// <param name="vector">The vector to calculate pitch from</param>
+        /// <returns>The pitch angle in radians, where positive values rotate the vector upward</returns>
         public static float GetPitchAfterYaw(Vector3 vector)
             => MathF.Atan2(vector.Y, MathF.Sqrt(vector.X * vector.X + vector.Z * vector.Z));
 

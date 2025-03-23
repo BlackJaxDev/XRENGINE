@@ -28,7 +28,7 @@ namespace XREngine.Rendering
         private delegate void DelVertexAction(XRMesh @this, int index, int remappedIndex, Vertex vtx, Matrix4x4? dataTransform);
 
         [YamlIgnore]
-        public XREvent<XRMesh> DataChanged;
+        public XREvent<XRMesh>? DataChanged;
 
         private bool _interleaved = false;
         public bool Interleaved
@@ -1052,8 +1052,6 @@ namespace XREngine.Rendering
             //While doing this, compile a command list of actions to set buffer data
             ConcurrentDictionary<int, Vertex> vertexCache = new();
             PrimitiveType primType = mesh.PrimitiveType;
-
-            //TODO: pre-allocate points, lines, and triangles to the correct size and populate in parallel? this is already pretty fast anyways
 
             //This remap contains a list of new vertex indices for each original vertex index.
             PopulateVerticesAssimpParallelPrecomputed(
@@ -2148,7 +2146,7 @@ namespace XREngine.Rendering
         [RequiresDynamicCode("")]
         public float? Intersect(Segment localSpaceSegment, out Triangle? triangle)
         {
-            using var t = Engine.Profiler.Start();
+            //using var t = Engine.Profiler.Start();
 
             triangle = null;
 
@@ -2225,7 +2223,7 @@ namespace XREngine.Rendering
             //Each pixel in the 3D texture is a distance to the nearest triangle
             SignedDistanceField = new();
             XRShader shader = ShaderHelper.LoadEngineShader("Compute//sdfgen.comp");
-            XRRenderProgram program = new(true, shader);
+            XRRenderProgram program = new(true, true, shader);
             XRDataBuffer verticesBuffer = Buffers[ECommonBufferType.Position.ToString()].Clone(false, EBufferTarget.ShaderStorageBuffer);
             verticesBuffer.AttributeName = "Vertices";
             XRDataBuffer indicesBuffer = GetIndexBuffer(EPrimitiveType.Triangles, out _, EBufferTarget.ShaderStorageBuffer)!;

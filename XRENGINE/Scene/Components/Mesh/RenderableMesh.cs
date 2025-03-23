@@ -40,6 +40,8 @@ namespace XREngine.Components.Scene.Mesh
         }
 
         private TransformBase? _rootBone;
+        private RenderableComponent _component;
+
         public TransformBase? RootBone
         {
             get => _rootBone;
@@ -49,7 +51,11 @@ namespace XREngine.Components.Scene.Mesh
         /// <summary>
         /// The transform that owns this mesh.
         /// </summary>
-        public RenderableComponent Component { get; }
+        public RenderableComponent Component
+        {
+            get => _component;
+            private set => SetField(ref _component, value);
+        }
 
         private readonly RenderCommandMethod3D _renderBoundsCommand;
 
@@ -67,9 +73,6 @@ namespace XREngine.Components.Scene.Mesh
         public RenderableMesh(SubMesh mesh, RenderableComponent component)
         {
             Component = component;
-            Component.Transform.RenderWorldMatrixChanged += Component_WorldMatrixChanged;
-            Component.PropertyChanged += ComponentPropertyChanged;
-            Component.PropertyChanging += ComponentPropertyChanging;
             RootBone = mesh.RootBone;
 
             foreach (var lod in mesh.LODs)
@@ -206,7 +209,11 @@ namespace XREngine.Components.Scene.Mesh
 
                     case nameof(Component):
                         if (Component is not null)
+                        {
                             Component.Transform.RenderWorldMatrixChanged -= Component_WorldMatrixChanged;
+                            Component.PropertyChanged -= ComponentPropertyChanged;
+                            Component.PropertyChanging -= ComponentPropertyChanging;
+                        }
                         break;
                 }
             }
@@ -228,8 +235,10 @@ namespace XREngine.Components.Scene.Mesh
                 case nameof(Component):
                     if (Component is not null)
                     {
-                        Component.Transform.RenderWorldMatrixChanged += RootBone_WorldMatrixChanged;
+                        Component.Transform.RenderWorldMatrixChanged += Component_WorldMatrixChanged;
                         Component_WorldMatrixChanged(Component.Transform);
+                        Component.PropertyChanged += ComponentPropertyChanged;
+                        Component.PropertyChanging += ComponentPropertyChanging;
                     }
                     break;
                 case nameof(RenderBounds):
@@ -258,6 +267,8 @@ namespace XREngine.Components.Scene.Mesh
         /// <param name="rootBone"></param>
         private void RootBone_WorldMatrixChanged(TransformBase rootBone)
         {
+            //using var timer = Engine.Profiler.Start();
+
             bool hasSkinning = (CurrentLOD?.Value?.Renderer?.Mesh?.HasSkinning ?? false) && Engine.Rendering.Settings.AllowSkinning;
             if (!hasSkinning)
                 return;
@@ -271,6 +282,8 @@ namespace XREngine.Components.Scene.Mesh
         /// <param name="component"></param>
         private void Component_WorldMatrixChanged(TransformBase component)
         {
+            //using var timer = Engine.Profiler.Start();
+
             bool hasSkinning = (CurrentLOD?.Value?.Renderer?.Mesh?.HasSkinning ?? false) && Engine.Rendering.Settings.AllowSkinning;
             if (hasSkinning)
                 return;

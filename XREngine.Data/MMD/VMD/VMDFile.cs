@@ -4,9 +4,6 @@ namespace XREngine.Data.MMD
 {
     public class VMDFile
     {
-        public const float MMDUnitsToMeters = 0.08f;
-        public const float MetersToMMDUnits = 12.5f;
-
         public string? FilePath { get; private set; }
         public VMDHeader? Header { get; private set; }
         public BoneAnimation? BoneAnimation { get; private set; }

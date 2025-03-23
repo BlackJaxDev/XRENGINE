@@ -95,6 +95,8 @@ namespace XREngine.Scene
 
         public void SwapBuffers()
         {
+            //using var t = Engine.Profiler.Start();
+
             foreach (DirectionalLightComponent l in DynamicDirectionalLights)
                 l.SwapBuffers();
             foreach (SpotLightComponent l in DynamicSpotLights)

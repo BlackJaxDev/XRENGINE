@@ -53,7 +53,10 @@ namespace XREngine.Scene
         /// Swaps the update/render buffers for the scene.
         /// </summary>
         public virtual void GlobalSwapBuffers()
-            => GenericRenderTree.Swap();
+        {
+            //using var t = Engine.Profiler.Start();
+            GenericRenderTree.Swap();
+        }
 
         public abstract IEnumerator<RenderInfo> GetEnumerator();
         IEnumerator IEnumerable.GetEnumerator() => GetEnumerator();

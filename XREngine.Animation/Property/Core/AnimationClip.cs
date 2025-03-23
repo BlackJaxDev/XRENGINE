@@ -1,7 +1,4 @@
-﻿using Assimp;
-using System;
-using System.Diagnostics;
-using System.Numerics;
+﻿using System.Numerics;
 using XREngine.Core.Files;
 using XREngine.Data;
 using XREngine.Data.Core;
@@ -90,7 +87,7 @@ namespace XREngine.Animation
                 switch (propName)
                 {
                     case nameof(RootMember):
-                        _rootMember?.Unregister(this);
+                        //_rootMember?.Unregister(this);
                         break;
                 }
             }
@@ -103,7 +100,7 @@ namespace XREngine.Animation
             switch (propName)
             {
                 case nameof(RootMember):
-                    TotalAnimCount = _rootMember?.Register(this) ?? 0;
+                    //TotalAnimCount = _rootMember?.Register(this) ?? 0;
                     break;
             }
         }
@@ -127,6 +124,7 @@ namespace XREngine.Animation
 
         private void OnAnimationEnded()
         {
+            _rootMember?.Unregister(this);
             IsPlaying = false;
             AnimationEnded?.Invoke(this);
         }
@@ -145,7 +143,7 @@ namespace XREngine.Animation
         public void Start()
         {
             IsPlaying = true;
-            _rootMember?.StartAnimations();
+            TotalAnimCount = _rootMember?.Register(this, true) ?? 0;
             AnimationStarted?.Invoke(this);
         }
         public void Stop()
@@ -159,18 +157,23 @@ namespace XREngine.Animation
 
         public override bool Load3rdParty(string filePath)
         {
-            const float fps = 30;
             if (filePath.EndsWith(".vmd"))
             {
                 VMDFile vmd = new();
                 vmd.Load(filePath);
-                LengthInSeconds = vmd.MaxFrameCount / fps;
-                Looped = true;
-                AssembleVMDTree(vmd, fps);
+                LoadFromVMD(vmd);
                 return true;
             }
             return false;
         }
+
+        public void LoadFromVMD(VMDFile vmd)
+        {
+            const float fps = 30.0f;
+            LengthInSeconds = vmd.MaxFrameCount / fps;
+            AssembleVMDTree(vmd, fps);
+        }
+
         /// <summary>
         /// Creates 4 quaternion control points for a cubic Bézier curve between start and end,
         /// using cp1 and cp2 (from a 2D easing curve defined on [0,1]²) to control the tangents.
@@ -225,13 +228,9 @@ namespace XREngine.Animation
             float angle = MathF.Acos(q.W);
             float sinAngle = MathF.Sin(angle);
             if (MathF.Abs(sinAngle) > 0.0001f)
-            {
                 return new Vector3(q.X, q.Y, q.Z) * (angle / sinAngle);
-            }
             else
-            {
                 return new Vector3(q.X, q.Y, q.Z); // small-angle approximation
-            }
         }
 
         /// <summary>
@@ -265,11 +264,16 @@ namespace XREngine.Animation
             {
                 foreach (var bone in vmd.BoneAnimation)
                 {
-                    PropAnimFloat xAnim = new((int)vmd.MaxFrameCount, fps, true, true);
-                    PropAnimFloat yAnim = new((int)vmd.MaxFrameCount, fps, true, true);
-                    PropAnimFloat zAnim = new((int)vmd.MaxFrameCount, fps, true, true);
-                    PropAnimQuaternion rotAnim = new((int)vmd.MaxFrameCount, fps, true, true);
+                    PropAnimFloat xAnim = new((int)vmd.MaxFrameCount, fps, false, true);
+                    PropAnimFloat yAnim = new((int)vmd.MaxFrameCount, fps, false, true);
+                    PropAnimFloat zAnim = new((int)vmd.MaxFrameCount, fps, false, true);
+                    PropAnimQuaternion rotAnim = new((int)vmd.MaxFrameCount, fps, false, true);
                     PopulateVMDAnimation(fps, bone, xAnim, yAnim, zAnim, rotAnim);
+
+                    //ConstrainAndLerpFloat(fps, xAnim);
+                    //ConstrainAndLerpFloat(fps, yAnim);
+                    //ConstrainAndLerpFloat(fps, zAnim);
+                    //ConstrainAndLerpQuat(fps, rotAnim);
 
                     if (bone.Key.Contains("IK"))
                     {
@@ -354,6 +358,19 @@ namespace XREngine.Animation
                 //    foreach (var frame in morph.Value)
                 //        morphAnimFloat.Keyframes.Add(new FloatKeyframe((int)frame.Key, fps, frame.Value.Weight, 0.0f, EVectorInterpType.Step));
                 //}
+            }
+
+            static void ConstrainAndLerpFloat(float fps, PropAnimFloat anim)
+            {
+                anim.ConstrainKeyframedFPS = true;
+                anim.BakedFramesPerSecond = fps;
+                anim.LerpConstrainedFPS = true;
+            }
+            static void ConstrainAndLerpQuat(float fps, PropAnimQuaternion anim)
+            {
+                anim.ConstrainKeyframedFPS = true;
+                anim.BakedFramesPerSecond = fps;
+                anim.LerpConstrainedFPS = true;
             }
         }
 

@@ -231,11 +231,13 @@ namespace XREngine.Animation
             {
                 int frame = (int)(second * _bakedFPS);
                 float floorSec = _bakedFPS != 0.0f ? (frame / _bakedFPS) : 0.0f;
-                float ceilSec = _bakedFPS != 0.0f ? ((frame + 1) / _bakedFPS) : 0.0f;
-                float time = second - floorSec;
 
                 if (LerpConstrainedFPS)
+                {
+                    float ceilSec = _bakedFPS != 0.0f ? ((frame + 1) / _bakedFPS) : 0.0f;
+                    float time = second - floorSec;
                     return LerpKeyedValues(floorSec, ceilSec, time, type);
+                }
 
                 second = floorSec;
             }
