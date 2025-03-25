@@ -47,10 +47,10 @@ namespace System.Collections.Generic
         #region Fields
 
         // The node at the front of the deque.
-        public Node front = null;
+        public Node? front = null;
 
         // The node at the back of the deque.
-        public Node back = null;
+        public Node? back = null;
 
         // The number of elements in the deque.
         private int count = 0;
@@ -100,27 +100,27 @@ namespace System.Collections.Generic
         /// <summary>
         /// Gets or sets an item in the Deque.
         /// </summary>
-        public T this[uint index]
+        public T? this[uint index]
         {
             get
             {
                 if (index >= count || front is null)
-                    return default(T);
+                    return default;
 
-                Node c = front;
+                Node? c = front;
                 for (int i = 0; i < index; i++)
-                    c = c.Next;
-                return c.Value;
+                    c = c!.Next;
+                return c!.Value;
             }
             set
             {
                 if (index >= count || front is null)
                     return;
 
-                Node c = front;
+                Node? c = front;
                 for (int i = 0; i < index; i++)
-                    c = c.Next;
-                c.Value = value;
+                    c = c!.Next;
+                c!.Value = value;
 
                 version++;
             }
@@ -140,14 +140,11 @@ namespace System.Collections.Generic
                 return;
             }
 
-            Node f = front;
-            if (f is null)
-                f = front = new Node(defaultValue);
+            Node? f = front ??= new Node(defaultValue);
 
             for (int i = 0; i < Size; i++)
             {
-                if (f.Next is null)
-                    f.Next = new Node(defaultValue) { Previous = f };
+                f.Next ??= new Node(defaultValue) { Previous = f };
 
                 f = f.Next;
                 count++;
@@ -155,7 +152,7 @@ namespace System.Collections.Generic
             if (f != null)
             {
                 back = f;
-                f.Previous.Next = null;
+                f.Previous!.Next = null;
             }
 
             version++;
@@ -217,17 +214,18 @@ namespace System.Collections.Generic
         public virtual void PushFront(T item)
         {
             // The new node to add to the front of the deque.
-            Node newNode = new Node(item);
-
-            // Link the new node to the front node. The current front node at 
-            // the front of the deque is now the second node in the deque.
-            newNode.Next = front;
+            Node newNode = new(item)
+            {
+                // Link the new node to the front node. The current front node at 
+                // the front of the deque is now the second node in the deque.
+                Next = front
+            };
 
             // If the deque isn't empty.
-            if(Count > 0)
+            if (Count > 0)
             {
                 // Link the current front to the new node.
-                front.Previous = newNode;
+                front!.Previous = newNode;
             }
 
             // Make the new node the front of the deque.
@@ -261,18 +259,19 @@ namespace System.Collections.Generic
         public virtual void PushBack(T item)
         {
             // The new node to add to the back of the deque.
-            Node newNode = new Node(item);
-            
-            // Link the new node to the back node. The current back node at 
-            // the back of the deque is now the second to the last node in the
-            // deque.
-            newNode.Previous = back;
+            Node newNode = new(item)
+            {
+                // Link the new node to the back node. The current back node at 
+                // the back of the deque is now the second to the last node in the
+                // deque.
+                Previous = back
+            };
 
             // If the deque is not empty.
-            if(Count > 0)
+            if (Count > 0)
             {
                 // Link the current back node to the new node.
-                back.Next = newNode;
+                back!.Next = newNode;
             }
 
             // Make the new node the back of the deque.
@@ -318,7 +317,7 @@ namespace System.Collections.Generic
             #endregion
 
             // Get the object at the front of the deque.
-            T item = front.Value;
+            T item = front!.Value;
 
             // Move the front back one node.
             front = front.Next;
@@ -330,7 +329,7 @@ namespace System.Collections.Generic
             if(Count > 0)
             {
                 // Tie off the previous link in the front node.
-                front.Previous = null;
+                front!.Previous = null;
             }
             // Else the deque is empty.
             else
@@ -371,7 +370,7 @@ namespace System.Collections.Generic
             #endregion
 
             // Get the object at the back of the deque.
-            T item = back.Value;
+            T item = back!.Value;
 
             // Move back node forward one node.
             back = back.Previous;
@@ -383,7 +382,7 @@ namespace System.Collections.Generic
             if(Count > 0)
             {
                 // Tie off the next link in the back node.
-                back.Next = null;
+                back!.Next = null;
             }
             // Else the deque is empty.
             else
@@ -423,7 +422,7 @@ namespace System.Collections.Generic
 
             #endregion
 
-            return front.Value;
+            return front!.Value;
         }
 
         /// <summary>
@@ -446,7 +445,7 @@ namespace System.Collections.Generic
 
             #endregion
 
-            return back.Value;
+            return back!.Value;
         }
 
         /// <summary>
@@ -479,13 +478,10 @@ namespace System.Collections.Generic
         /// A synchronized wrapper around the Deque.
         /// </returns>
         public static Deque<T> Synchronized(Deque<T> deque)
-        {            
+        {
             #region Require
 
-            if(deque is null)
-            {
-                throw new ArgumentNullException("deque");
-            }
+            ArgumentNullException.ThrowIfNull(deque, nameof(deque));
 
             #endregion
 
@@ -495,37 +491,37 @@ namespace System.Collections.Generic
         [Conditional("DEBUG")]
         private void AssertValid()
         {
-            //int n = 0;
-            //Node current = front;
+            int n = 0;
+            Node? current = front;
 
-            //while(current != null)
-            //{
-            //    n++;
-            //    current = current.Next;
-            //}
+            while (current != null)
+            {
+                n++;
+                current = current.Next;
+            }
 
-            //Debug.Assert(n == Count);
+            Debug.Assert(n == Count);
 
-            //if(Count > 0)
-            //{
-            //    Debug.Assert(front != null && back != null, "Front/Back Null Test - Count > 0");
+            if (Count > 0)
+            {
+                Debug.Assert(front != null && back != null, "Front/Back Null Test - Count > 0");
 
-            //    Node f = front;
-            //    Node b = back;
+                Node f = front;
+                Node b = back;
 
-            //    while(f.Next != null && b.Previous != null)
-            //    {
-            //        f = f.Next;
-            //        b = b.Previous;
-            //    }
+                while (f.Next != null && b.Previous != null)
+                {
+                    f = f.Next;
+                    b = b.Previous;
+                }
 
-            //    Debug.Assert(f.Next is null && b.Previous is null, "Front/Back Termination Test");
-            //    Debug.Assert(f == back && b == front, "Front/Back Equality Test");
-            //}
-            //else
-            //{
-            //    Debug.Assert(front is null && back is null, "Front/Back Null Test - Count == 0");
-            //}
+                Debug.Assert(f.Next is null && b.Previous is null, "Front/Back Termination Test");
+                Debug.Assert(f == back && b == front, "Front/Back Equality Test");
+            }
+            else
+            {
+                Debug.Assert(front is null && back is null, "Front/Back Null Test - Count == 0");
+            }
         }
 
         #endregion       
@@ -572,25 +568,25 @@ namespace System.Collections.Generic
         {
             #region Require
 
-            if(array is null)
+            if (array is null)
             {
-                throw new ArgumentNullException("array");
+                throw new ArgumentNullException(nameof(array));
             }
-            else if(index < 0)
+            else if (index < 0)
             {
-                throw new ArgumentOutOfRangeException("index", index,
+                throw new ArgumentOutOfRangeException(nameof(index), index,
                     "Index is less than zero.");
             }
-            else if(array.Rank > 1)
+            else if (array.Rank > 1)
             {
                 throw new ArgumentException("Array is multidimensional.");
             }
-            else if(index >= array.Length)
+            else if (index >= array.Length)
             {
                 throw new ArgumentException("Index is equal to or greater " +
                     "than the length of array.");
             }
-            else if(Count > array.Length - index)
+            else if (Count > array.Length - index)
             {
                 throw new ArgumentException(
                     "The number of elements in the source Deque is greater " +
@@ -602,7 +598,7 @@ namespace System.Collections.Generic
 
             int i = index;
 
-            foreach(object obj in this)
+            foreach(object? obj in this)
             {
                 array.SetValue(obj, i);
                 i++;
@@ -647,9 +643,10 @@ namespace System.Collections.Generic
         /// </returns>
         public virtual object Clone()
         {
-            Deque<T> clone = new Deque<T>(this);
-
-            clone.version = this.version;
+            Deque<T> clone = new(this)
+            {
+                version = this.version
+            };
 
             return clone;
         }
@@ -670,7 +667,7 @@ namespace System.Collections.Generic
             Top:
             bool f = true;
 
-            Node next = front, prev = front;
+            Node? next = front, prev = front;
             while (next != null)
             {
                 if (f) 
@@ -680,7 +677,7 @@ namespace System.Collections.Generic
                     continue;
                 }
 
-                int v = comp(prev.Value, next.Value);
+                int v = comp(prev!.Value, next.Value);
                 if (v > 0)
                 {
                     next.Previous = prev.Previous;

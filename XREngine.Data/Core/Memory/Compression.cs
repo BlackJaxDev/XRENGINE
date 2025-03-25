@@ -28,6 +28,39 @@ namespace XREngine.Data
             encoder.Code(inStream, outStream, arr.Length, -1, null);
             return outStream.ToArray();
         }
+        /// <summary>
+        /// Compresses a byte array using the LZMA algorithm, without allocating new objects.
+        /// </summary>
+        /// <param name="arr"></param>
+        /// <param name="encoder"></param>
+        /// <param name="inStreamObject"></param>
+        /// <param name="outStreamObject"></param>
+        /// <returns></returns>
+        public static unsafe byte[] Compress(
+            byte[] arr,
+            ref SevenZip.Compression.LZMA.Encoder encoder,
+            ref MemoryStream inStreamObject,
+            ref MemoryStream outStreamObject)
+        {
+            encoder ??= new();
+            inStreamObject ??= new();
+            outStreamObject ??= new();
+
+            if (inStreamObject.Length < arr.Length)
+                inStreamObject.SetLength(arr.Length);
+            inStreamObject.Seek(0, SeekOrigin.Begin);
+            inStreamObject.Write(arr, 0, arr.Length);
+            inStreamObject.Seek(0, SeekOrigin.Begin);
+
+            if (outStreamObject.Length < arr.Length)
+                outStreamObject.SetLength(arr.Length); // Set the length of the output stream to the size of the input stream, will be smaller after compression
+            outStreamObject.Seek(0, SeekOrigin.Begin);
+
+            encoder.WriteCoderProperties(outStreamObject);
+            outStreamObject.Write(BitConverter.GetBytes(arr.Length), 0, 4);
+            encoder.Code(inStreamObject, outStreamObject, arr.Length, -1, null);
+            return outStreamObject.ToArray();
+        }
         public static int Decompress(byte[] inBuf, int inOffset, int inLength, byte[] outBuf, int outOffset)
         {
             SevenZip.Compression.LZMA.Decoder decoder = new();
@@ -44,6 +77,46 @@ namespace XREngine.Data
             int len = BitConverter.ToInt32(lengthBytes, 0);
 
             decoder.Code(inStream, outStream, inStream.Length - 9, len, null);
+
+            return len;
+        }
+        public static int Decompress(
+            byte[] inBuf,
+            int inOffset,
+            int inLength,
+            byte[] outBuf,
+            int outOffset,
+            ref SevenZip.Compression.LZMA.Decoder decoder,
+            ref MemoryStream inStreamObject,
+            ref MemoryStream outStreamObject)
+        {
+            decoder ??= new();
+            inStreamObject ??= new();
+            outStreamObject ??= new();
+
+            if (inStreamObject.Length < inLength)
+                inStreamObject.SetLength(inLength);
+            inStreamObject.Seek(0, SeekOrigin.Begin);
+            inStreamObject.Write(inBuf, inOffset, inLength);
+            inStreamObject.Seek(0, SeekOrigin.Begin);
+
+            //if (outStreamObject.Length < outBuf.Length - outOffset)
+            //outStreamObject.SetLength(outBuf.Length - outOffset);
+            outStreamObject.SetLength(0);
+            outStreamObject.Seek(0, SeekOrigin.Begin);
+
+            byte[] properties = new byte[5];
+            inStreamObject.Read(properties, 0, 5);
+            byte[] lengthBytes = new byte[4];
+            inStreamObject.Read(lengthBytes, 0, 4);
+
+            decoder.SetDecoderProperties(properties);
+            int len = BitConverter.ToInt32(lengthBytes, 0);
+
+            decoder.Code(inStreamObject, outStreamObject, inStreamObject.Length - 9, len, null);
+
+            outStreamObject.Seek(0, SeekOrigin.Begin);
+            outStreamObject.Read(outBuf, outOffset, len);
 
             return len;
         }

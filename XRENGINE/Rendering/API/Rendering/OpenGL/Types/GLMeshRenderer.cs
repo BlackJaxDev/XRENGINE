@@ -1045,5 +1045,10 @@ namespace XREngine.Rendering.OpenGL
                 EPrimitiveType.Patches => GLEnum.Patches,
                 _ => GLEnum.Triangles,
             };
+
+        public int GetInteger(GLEnum value)
+        {
+            return Api.GetInteger(value);
+        }
     }
 }

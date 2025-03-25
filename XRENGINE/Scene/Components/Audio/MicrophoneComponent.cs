@@ -3,6 +3,7 @@ using System.Collections;
 
 namespace XREngine.Components.Scene
 {
+
     //[RequireComponents(typeof(AudioSourceComponent))]
     public class MicrophoneComponent : XRComponent
     {
@@ -14,15 +15,17 @@ namespace XREngine.Components.Scene
         private WaveInEvent? _waveIn;
         private int _deviceIndex = 0;
         private int _bufferMs = 100;
-        private int _sampleRate = 44100;
-        private int _bitsPerSample = 16;
+        private int _sampleRate = Engine.Audio.SampleRate;
+        private int _bitsPerSample = 8;
         private bool _receive = true;
         private bool _capture = true;
+        private bool _compressOverNetwork = true;
 
         private byte[] _currentBuffer = [];
         private int _currentBufferOffset = 0;
         private bool _muted = false;
-        private float _lowerCutOff = 0.006f;
+        private float _lowerCutOff = 0.01f;
+        private bool _loopback = false;
 
         public enum EBitsPerSample
         {
@@ -53,6 +56,25 @@ namespace XREngine.Components.Scene
             get => _receive;
             set => SetField(ref _receive, value);
         }
+
+        /// <summary>
+        /// Indicates the user wants to listen to their own microphone.
+        /// </summary>
+        public bool Loopback
+        {
+            get => _loopback;
+            set => SetField(ref _loopback, value);
+        }
+
+        /// <summary>
+        /// Whether to compress audio data before sending it over the network.
+        /// </summary>
+        public bool CompressOverNetwork
+        {
+            get => _compressOverNetwork;
+            set => SetField(ref _compressOverNetwork, value);
+        }
+
         /// <summary>
         /// The index of the audio device to capture from.
         /// Device 0 is the default device set in Windows.
@@ -188,6 +210,7 @@ namespace XREngine.Components.Scene
                     {
                         ReplicateCurrentBuffer();
                         _currentBufferOffset = 0;
+                        //Array.Fill<byte>(_currentBuffer, 0);
                     }
                 }
                 else
@@ -202,6 +225,7 @@ namespace XREngine.Components.Scene
 
                     ReplicateCurrentBuffer();
                     _currentBufferOffset = 0;
+                    //Array.Fill<byte>(_currentBuffer, 0);
                 }
             }
         }
@@ -258,10 +282,14 @@ namespace XREngine.Components.Scene
         private void ReplicateCurrentBuffer()
         {
             Denoise(ref _currentBuffer);
+
             if (!VerifyLowerCutoff())
                 return;
 
-            EnqueueDataReplication(nameof(_currentBuffer), _currentBuffer.ToArray(), true, false);
+            if (Loopback)
+                ReceiveData(nameof(_currentBuffer), _currentBuffer.ToArray());
+            else
+                EnqueueDataReplication(nameof(_currentBuffer), _currentBuffer.ToArray(), CompressOverNetwork, false);
         }
 
         private float _smoothingFactor = 0.5f; // Default value of 0.5 (50% smoothing)
@@ -276,7 +304,6 @@ namespace XREngine.Components.Scene
             set => SetField(ref _smoothingFactor, Math.Clamp(value, 0f, 1f));
         }
 
-        // Replace the Denoise method
         private void Denoise(ref byte[] currentBuffer)
         {
             int length = currentBuffer.Length;
@@ -406,6 +433,7 @@ namespace XREngine.Components.Scene
             BufferReceived?.Invoke(buffer);
 
             var audioSource = GetAudioSourceComponent(true)!;
+            audioSource.Loop = false;
             switch (_bitsPerSample)
             {
                 case 8:
@@ -433,7 +461,9 @@ namespace XREngine.Components.Scene
                     Debug.Out($"Unsupported bits per sample: {_bitsPerSample}");
                     return;
             }
-            audioSource.Play();
+
+            //if (audioSource.State != Audio.AudioSource.ESourceState.Playing)
+            //    audioSource.Play();
         }
 
         public event Action<byte[]>? BufferReceived;

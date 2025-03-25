@@ -201,7 +201,7 @@ public unsafe partial class VulkanRenderer
 
         public void GenSampler()
         {
-            Api!.GetPhysicalDeviceProperties(Renderer.physicalDevice, out PhysicalDeviceProperties properties);
+            Api!.GetPhysicalDeviceProperties(Renderer._physicalDevice, out PhysicalDeviceProperties properties);
 
             SamplerCreateInfo samplerInfo = new()
             {

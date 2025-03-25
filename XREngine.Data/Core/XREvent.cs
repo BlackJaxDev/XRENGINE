@@ -128,19 +128,19 @@ namespace XREngine.Data.Core
         IEnumerator IEnumerable.GetEnumerator()
             => ((IEnumerable)Actions).GetEnumerator();
 
-        public static XREvent<T> operator +(XREvent<T> e, Action<T> a)
+        public static XREvent<T>? operator +(XREvent<T>? e, Action<T> a)
         {
             e ??= new();
             e.AddListener(a);
             return e;
         }
-        public static XREvent<T> operator -(XREvent<T> e, Action<T> a)
+        public static XREvent<T>? operator -(XREvent<T>? e, Action<T> a)
         {
             if (e is null)
-                return new();
+                return null;
             e.RemoveListener(a);
             if (e.Count == 0)
-                return new();
+                return null;
             return e;
         }
     }

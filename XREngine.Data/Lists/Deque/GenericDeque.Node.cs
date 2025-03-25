@@ -6,20 +6,15 @@ namespace System.Collections.Generic
 
         // Represents a node in the deque.
         [Serializable()]
-        public class Node
+        public class Node(T value)
         {
-            private T value;
+            private T value = value;
 
-            private Node previous = null;
+            private Node? previous = null;
 
-            private Node next = null;
+            private Node? next = null;
 
-            public Node(T value)
-            {
-                this.value = value;
-            }
-
-            public T Value
+            public T? Value
             {
                 get
                 {
@@ -31,7 +26,7 @@ namespace System.Collections.Generic
                 }
             }
 
-            public Node Previous
+            public Node? Previous
             {
                 get
                 {
@@ -43,7 +38,7 @@ namespace System.Collections.Generic
                 }
             }
 
-            public Node Next
+            public Node? Next
             {
                 get
                 {

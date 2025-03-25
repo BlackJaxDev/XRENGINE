@@ -65,10 +65,11 @@ public static class EditorWorld
     public const bool AllowEditingInVR = false; //Allows the user to edit the scene from desktop in VR.
     public const bool AddCameraVRPickup = true;
     public const bool IKTest = false; //Adds an simple IK test tree to the scene.
-    public const bool Microphone = false; //Adds a microphone to the scene for testing audio capture.
+    public const bool Microphone = true; //Adds a microphone to the scene for testing audio capture.
     public const bool VMC = false; //Adds a VMC capture component to the avatar for testing.
     public const bool FaceMotion3D = false; //Adds a face motion 3D capture component to the avatar for testing.
-    public const bool AnimationClipVMD = true; //Imports a VMD animation clip for testing.
+    public const bool AnimationClipVMD = false; //Imports a VMD animation clip for testing.
+    public const bool LipSync = true; //Adds a lip sync component to the avatar for testing.
 
     private static readonly Queue<float> _fpsAvg = new();
     private static void TickFPS(UITextComponent t)
@@ -291,6 +292,25 @@ public static class EditorWorld
                 var anim = rootNode.AddComponent<AnimationClipComponent>()!;
                 anim.StartOnActivate = true;
                 anim.Animation = clip;
+            }
+        }
+
+        if (LipSync)
+        {
+            var lipSyncOnPawn = Engine.State.MainPlayer.ControlledPawn?.SceneNode?.GetComponent<OVRLipSyncComponent>();
+            if (lipSyncOnPawn is not null)
+            {
+                var desc = rootNode.FindDescendantByName("Face", StringComparison.InvariantCultureIgnoreCase);
+                if (desc is not null)
+                {
+                    void SetModel((SceneNode node, XRComponent comp) x)
+                    {
+                        if (x.comp is ModelComponent model)
+                            lipSyncOnPawn.ModelComponent = model;
+                        desc.ComponentAdded -= SetModel;
+                    }
+                    desc.ComponentAdded += SetModel;
+                }
             }
         }
     }
@@ -618,9 +638,20 @@ public static class EditorWorld
 
         if (!(VRPawn && AllowEditingInVR) && Microphone)
         {
+            var audioSource = cameraNode.AddComponent<AudioSourceComponent>()!;
+            audioSource.Loop = false;
+            audioSource.Pitch = 1.0f;
+
             var microphone = cameraNode.AddComponent<MicrophoneComponent>()!;
             microphone.Capture = true;//!isServer;
             microphone.Receive = true;//isServer;
+            microphone.Loopback = false; //For testing, set to true to hear your own voice, unless both capture and receive are true on the client.
+
+            if (LipSync)
+            {
+                var lipSync = cameraNode.AddComponent<OVRLipSyncComponent>()!;
+                lipSync.VisemeNamePrefix = "vrc.v_";
+            }
         }
 
         PawnComponent pawnComp;

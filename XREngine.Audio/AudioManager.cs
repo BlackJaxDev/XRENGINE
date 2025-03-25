@@ -7,6 +7,8 @@ namespace XREngine.Audio
         private readonly EventList<ListenerContext> _listeners = [];
         public IEventListReadOnly<ListenerContext> Listeners => _listeners;
 
+        public int SampleRate { get; set; } = 44100;
+
         private void OnContextDisposed(ListenerContext listener)
         {
             listener.Disposed -= OnContextDisposed;

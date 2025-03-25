@@ -14,7 +14,7 @@ public unsafe partial class OpenXRAPI
     private void CreateInstance()
     {
         var appInfo = MakeAppInfo();
-        var createInfo = MakeCreateInfo(appInfo, GetRequiredExtensions(Renderer.OpenGL), EnableValidationLayers ? validationLayers : null);
+        var createInfo = MakeCreateInfo(appInfo, GetRequiredExtensions(ERenderer.OpenGL), EnableValidationLayers ? validationLayers : null);
         MakeInstance(createInfo);
         Free(appInfo, createInfo);
     }

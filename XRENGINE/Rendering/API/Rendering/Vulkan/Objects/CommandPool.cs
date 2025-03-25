@@ -11,12 +11,12 @@ namespace XREngine.Rendering.Vulkan
 
         private void CreateCommandPool()
         {
-            var queueFamiliyIndicies = FindQueueFamilies(physicalDevice);
+            var queueFamiliyIndicies = FamilyQueueIndices;
 
             CommandPoolCreateInfo poolInfo = new()
             {
                 SType = StructureType.CommandPoolCreateInfo,
-                QueueFamilyIndex = queueFamiliyIndicies.GraphicsFamily!.Value,
+                QueueFamilyIndex = queueFamiliyIndicies.GraphicsFamilyIndex!.Value,
             };
 
             if (Api!.CreateCommandPool(device, ref poolInfo, null, out commandPool) != Result.Success)

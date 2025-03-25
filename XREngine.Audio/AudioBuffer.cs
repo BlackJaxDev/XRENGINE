@@ -22,19 +22,38 @@ namespace XREngine.Audio
             ParentListener.VerifyError();
         }
 
+        private object? _data;
+        private int _freq;
+        private bool _stereo;
+
+        public object? Data => _data;
+        public int Frequency => _freq;
+        public bool Stereo => _stereo;
+
         public unsafe void SetData(byte[] data, int frequency, bool stereo)
         {
+            _data = data;
+            _freq = frequency;
+            _stereo = stereo;
+
             Api.BufferData(Handle, stereo ? BufferFormat.Stereo8 : BufferFormat.Mono8, data, frequency);
             ParentListener.VerifyError();
         }
         public void SetData(short[] data, int frequency, bool stereo)
         {
-            ParentListener.VerifyError();
+            _data = data;
+            _freq = frequency;
+            _stereo = stereo;
+
             Api.BufferData(Handle, stereo ? BufferFormat.Stereo16 : BufferFormat.Mono16, data, frequency);
             ParentListener.VerifyError();
         }
         public void SetData(float[] data, int frequency, bool stereo)
         {
+            _data = data;
+            _freq = frequency;
+            _stereo = stereo;
+
             Api.BufferData(Handle, stereo ? FloatBufferFormat.Stereo : FloatBufferFormat.Mono, data, frequency);
             ParentListener.VerifyError();
         }
@@ -43,6 +62,10 @@ namespace XREngine.Audio
         {
             if (buffer.Data is null)
                 return;
+
+            _data = buffer.Data;
+            _freq = buffer.Frequency;
+            _stereo = buffer.Stereo;
 
             void* ptr = buffer.Data.Address.Pointer;
             int length = (int)buffer.Data.Length;
@@ -183,21 +206,37 @@ namespace XREngine.Audio
 
         public void Dispose()
         {
+            GC.SuppressFinalize(this);
+            if (Handle == 0)
+                return;
             Api.DeleteBuffer(Handle);
             ParentListener.VerifyError();
-            GC.SuppressFinalize(this);
+            Handle = 0;
         }
 
         void IPoolable.OnPoolableReset()
         {
-            Handle = Api.GenBuffer();
+            //if (Handle != 0)
+            //{
+            //    Api.DeleteBuffer(Handle);
+            //    ParentListener.VerifyError();
+            //    Handle = 0;
+            //}
+
+            //Handle = Api.GenBuffer();
+            //ParentListener.VerifyError();
             //The user should call SetData to set the data for the buffer after taking it from the pool.
         }
 
         void IPoolable.OnPoolableReleased()
         {
             //SetData(Array.Empty<byte>(), 0, false);
-            Api.DeleteBuffer(Handle);
+
+            //if (Handle == 0)
+            //    return;
+            //Api.DeleteBuffer(Handle);
+            //ParentListener.VerifyError();
+            //Handle = 0;
         }
 
         void IPoolable.OnPoolableDestroyed()

@@ -4,7 +4,8 @@ using System.Runtime.InteropServices;
 namespace XREngine.Rendering.Vulkan;
 public unsafe partial class VulkanRenderer
 {
-    private PhysicalDevice physicalDevice;
+    private PhysicalDevice _physicalDevice;
+    public PhysicalDevice PhysicalDevice => _physicalDevice;
 
     private void PickPhysicalDevice()
     {
@@ -12,7 +13,7 @@ public unsafe partial class VulkanRenderer
         Api!.EnumeratePhysicalDevices(instance, ref devicedCount, null);
 
         if (devicedCount == 0)
-            throw new Exception("failed to find GPUs with Vulkan support!");
+            throw new Exception("Failed to find GPUs with Vulkan support.");
         
         var devices = new PhysicalDevice[devicedCount];
         fixed (PhysicalDevice* devicesPtr = devices)
@@ -21,19 +22,20 @@ public unsafe partial class VulkanRenderer
         }
 
         foreach (var device in devices)
-            if (IsDeviceSuitable(device))
+            if (IsDeviceSuitable(device, out var indices))
             {
-                physicalDevice = device;
+                _physicalDevice = device;
+                _familyQueueIndicesCache = indices;
                 break;
             }
         
-        if (physicalDevice.Handle == 0)
-            throw new Exception("failed to find a suitable GPU!");
+        if (_physicalDevice.Handle == 0)
+            throw new Exception("Failed to find a suitable GPU for Vulkan.");
     }
 
-    private bool IsDeviceSuitable(PhysicalDevice device)
+    private bool IsDeviceSuitable(PhysicalDevice device, out QueueFamilyIndices indices)
     {
-        var indices = FindQueueFamilies(device);
+        indices = FindQueueFamilies(device);
 
         bool extensionsSupported = CheckDeviceExtensionsSupport(device);
 
@@ -66,43 +68,9 @@ public unsafe partial class VulkanRenderer
 
     }
 
-    private QueueFamilyIndices FindQueueFamilies(PhysicalDevice device)
-    {
-        var indices = new QueueFamilyIndices();
-
-        uint queueFamilityCount = 0;
-        Api!.GetPhysicalDeviceQueueFamilyProperties(device, ref queueFamilityCount, null);
-
-        var queueFamilies = new QueueFamilyProperties[queueFamilityCount];
-        fixed (QueueFamilyProperties* queueFamiliesPtr = queueFamilies)
-        {
-            Api!.GetPhysicalDeviceQueueFamilyProperties(device, ref queueFamilityCount, queueFamiliesPtr);
-        }
-
-
-        uint i = 0;
-        foreach (var queueFamily in queueFamilies)
-        {
-            if (queueFamily.QueueFlags.HasFlag(QueueFlags.GraphicsBit))
-                indices.GraphicsFamily = i;
-            
-            khrSurface!.GetPhysicalDeviceSurfaceSupport(device, i, surface, out var presentSupport);
-
-            if (presentSupport)
-                indices.PresentFamily = i;
-            
-            if (indices.IsComplete())
-                break;
-            
-            i++;
-        }
-
-        return indices;
-    }
-
     public uint FindMemoryType(uint typeFilter, MemoryPropertyFlags memProps)
     {
-        Api!.GetPhysicalDeviceMemoryProperties(physicalDevice, out PhysicalDeviceMemoryProperties memProperties);
+        Api!.GetPhysicalDeviceMemoryProperties(_physicalDevice, out PhysicalDeviceMemoryProperties memProperties);
 
         for (int i = 0; i < memProperties.MemoryTypeCount; i++)
             if ((typeFilter & (1 << i)) != 0 && (memProperties.MemoryTypes[i].PropertyFlags & memProps) == memProps)

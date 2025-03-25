@@ -168,5 +168,10 @@ namespace XREngine.Rendering.Vulkan
 
         public void DeviceWaitIdle()
             => Api!.DeviceWaitIdle(device);
+
+        public bool SupportsMultipleGraphicsQueues()
+        {
+            return false;
+        }
     }
 }

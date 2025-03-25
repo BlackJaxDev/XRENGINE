@@ -1,7 +1,9 @@
 ﻿using Silk.NET.OpenAL;
 using Silk.NET.OpenAL.Extensions.Creative;
+using System.Diagnostics;
 using System.Numerics;
 using XREngine.Core;
+using XREngine.Data.Core;
 
 namespace XREngine.Audio
 {
@@ -57,18 +59,37 @@ namespace XREngine.Audio
             }
         }
 
-        private readonly List<AudioBuffer> _currentStreamingBuffers = [];
-        public IReadOnlyList<AudioBuffer> CurrentStreamingBuffers => _currentStreamingBuffers;
+        private readonly Queue<AudioBuffer> _currentStreamingBuffers = [];
+        public Queue<AudioBuffer> CurrentStreamingBuffers => _currentStreamingBuffers;
 
-        public unsafe void QueueBuffers(params AudioBuffer[] buffers)
+        public XREvent<AudioBuffer>? BufferQueued;
+        public XREvent<AudioBuffer>? BufferProcessed;
+
+        public unsafe void QueueBuffers(int maxbuffers, params AudioBuffer[] buffers)
         {
-            _currentStreamingBuffers.AddRange(buffers);
+            int buffersProcessed = BuffersProcessed;
+            if (buffersProcessed > 0)
+                UnqueueConsumedBuffers(buffersProcessed);
+            
+            if (BuffersQueued > maxbuffers)
+            {
+                Debug.WriteLine("Warning: QueueBuffers called with more buffers than maxbuffers.");
+                return;
+            }
 
-            uint[] handles = new uint[buffers.Length];
+            uint* handles = stackalloc uint[buffers.Length];
             for (int i = 0; i < buffers.Length; i++)
-                handles[i] = buffers[i].Handle;
-            fixed (uint* pBuffers = handles)
-                Api.SourceQueueBuffers(Handle, buffers.Length, pBuffers);
+            {
+                var buf = buffers[i];
+                _currentStreamingBuffers.Enqueue(buf);
+                BufferQueued?.Invoke(buf);
+                handles[i] = buf.Handle;
+            }
+            //Trace.WriteLineIf(handles.Length > 0, $"Queuing {handles.Length} buffers.");
+            Api.SourceQueueBuffers(Handle, buffers.Length, handles);
+
+            if (!IsPlaying)
+                Api.SourcePlay(Handle);
         }
         //public unsafe void UnqueueBuffers(params AudioBuffer[] buffers)
         //{
@@ -78,27 +99,31 @@ namespace XREngine.Audio
         //    fixed (uint* pBuffers = handles)
         //        Api.SourceUnqueueBuffers(Handle, buffers.Length, pBuffers);
         //}
-        public unsafe AudioBuffer[]? UnqueueConsumedBuffers(int requestedCount = 0)
+        public unsafe void UnqueueConsumedBuffers(int requestedCount = 0)
         {
-            int count = Math.Min(_currentStreamingBuffers.Count, requestedCount <= 0 ? BuffersProcessed : Math.Min(BuffersProcessed, requestedCount));
-            if (count == 0)
-                return null;
+            bool looping = GetLooping();
+            if (looping)
+                Debug.WriteLine("Warning: UnqueueConsumedBuffers called on a looping source.");
 
-            AudioBuffer[] buffers = new AudioBuffer[count];
-            uint[] handles = new uint[count];
+            int count = Math.Min(_currentStreamingBuffers.Count, requestedCount <= 0 ? BuffersProcessed : requestedCount);
+            if (count == 0)
+                return;
+
+            uint* handles = stackalloc uint[count];
             for (int i = 0; i < count; i++)
             {
-                var buf = _currentStreamingBuffers[0];
+                var buf = _currentStreamingBuffers.Dequeue();
                 if (buf is not null)
                 {
-                    buffers[i] = buf;
                     handles[i] = buf.Handle;
+                    BufferProcessed?.Invoke(buf);
+                    ParentListener.ReleaseBuffer(buf);
                 }
-                _currentStreamingBuffers.RemoveAt(0);
+                else
+                    Debug.WriteLine("Warning: UnqueueConsumedBuffers found a null buffer.");
             }
-            fixed (uint* pBuffers = handles)
-                Api.SourceUnqueueBuffers(Handle, count, pBuffers);
-            return buffers;
+            Api.SourceUnqueueBuffers(Handle, count, handles);
+            //Trace.WriteLineIf(handles.Length > 0, $"Unqueued {handles.Length} buffers.");
         }
         #endregion
 
@@ -452,17 +477,19 @@ namespace XREngine.Audio
             ParentListener.VerifyError();
             return value;
         }
-        private int GetBuffersQueued()
+        private unsafe int GetBuffersQueued()
         {
             ParentListener.MakeCurrent();
-            Api.GetSourceProperty(Handle, GetSourceInteger.BuffersQueued, out int value);
+            int value;
+            Api.GetSourceProperty(Handle, GetSourceInteger.BuffersQueued, &value);
             ParentListener.VerifyError();
             return value;
         }
-        private int GetBuffersProcessed()
+        private unsafe int GetBuffersProcessed()
         {
             ParentListener.MakeCurrent();
-            Api.GetSourceProperty(Handle, GetSourceInteger.BuffersProcessed, out int value);
+            int value;
+            Api.GetSourceProperty(Handle, GetSourceInteger.BuffersProcessed, &value);
             ParentListener.VerifyError();
             return value;
         }

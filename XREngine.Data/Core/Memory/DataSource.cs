@@ -117,6 +117,20 @@ namespace XREngine.Data
             return bytes;
         }
 
+        public short[] GetShorts()
+        {
+            short[] shorts = new short[Length / 2];
+            Marshal.Copy(Address, shorts, 0, (int)(Length / 2));
+            return shorts;
+        }
+
+        public float[] GetFloats()
+        {
+            float[] floats = new float[Length / 4];
+            Marshal.Copy(Address, floats, 0, (int)(Length / 4));
+            return floats;
+        }
+
         public DataSource Clone()
         {
             if (External)

@@ -91,7 +91,7 @@ public unsafe partial class VulkanRenderer
     {
         foreach (var format in candidates)
         {
-            Api!.GetPhysicalDeviceFormatProperties(physicalDevice, format, out var props);
+            Api!.GetPhysicalDeviceFormatProperties(_physicalDevice, format, out var props);
             if ((tiling == ImageTiling.Linear && (props.LinearTilingFeatures & features) == features) || 
                 (tiling == ImageTiling.Optimal && (props.OptimalTilingFeatures & features) == features))
                 return format;
@@ -108,7 +108,7 @@ public unsafe partial class VulkanRenderer
 
     private void CreateSwapChain()
     {
-        var swapChainSupport = QuerySwapChainSupport(physicalDevice);
+        var swapChainSupport = QuerySwapChainSupport(_physicalDevice);
         var surfaceFormat = ChooseSwapSurfaceFormat(swapChainSupport.Formats);
         var presentMode = ChoosePresentMode(swapChainSupport.PresentModes);
         var extent = ChooseSwapExtent(swapChainSupport.Capabilities);
@@ -130,10 +130,10 @@ public unsafe partial class VulkanRenderer
             ImageUsage = ImageUsageFlags.ColorAttachmentBit,
         };
 
-        var indices = FindQueueFamilies(physicalDevice);
-        var queueFamilyIndices = stackalloc[] { indices.GraphicsFamily!.Value, indices.PresentFamily!.Value };
+        var indices = FamilyQueueIndices;
+        var queueFamilyIndices = stackalloc[] { indices.GraphicsFamilyIndex!.Value, indices.PresentFamilyIndex!.Value };
 
-        if (indices.GraphicsFamily != indices.PresentFamily)
+        if (indices.GraphicsFamilyIndex != indices.PresentFamilyIndex)
         {
             createInfo = createInfo with
             {
@@ -159,7 +159,7 @@ public unsafe partial class VulkanRenderer
             throw new NotSupportedException("VK_KHR_swapchain extension not found.");
         
         if (khrSwapChain!.CreateSwapchain(device, ref createInfo, null, out swapChain) != Result.Success)
-            throw new Exception("failed to create swap chain!");
+            throw new Exception("Failed to create swap chain.");
         
         khrSwapChain.GetSwapchainImages(device, swapChain, ref imageCount, null);
         swapChainImages = new Image[imageCount];

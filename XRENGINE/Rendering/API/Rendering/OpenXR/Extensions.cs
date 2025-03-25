@@ -1,37 +1,37 @@
-﻿using Silk.NET.Core.Native;
+﻿using Silk.NET.OpenXR.Extensions.HTC;
+using Silk.NET.OpenXR.Extensions.HTCX;
 using Silk.NET.OpenXR.Extensions.KHR;
 using Silk.NET.Vulkan.Extensions.EXT;
 
 public unsafe partial class OpenXRAPI
 {
-    //private readonly string[] deviceExtensions =
-    //[
-    //    HtcxViveTrackerInteraction.ExtensionName,
-    //    //HtcFacialTracking.ExtensionName,
-    //    //HtcFoveation.ExtensionName,
-    //    //HtcPassthrough.ExtensionName,
-    //    KhrVulkanEnable.ExtensionName,
-    //    KhrVulkanEnable2.ExtensionName,
-    //    //KhrAndroidSurfaceSwapchain.ExtensionName,
-    //];
-    public enum Renderer
+    private readonly string[] HTC_Extensions =
+    [
+        HtcxViveTrackerInteraction.ExtensionName,
+        HtcFacialTracking.ExtensionName,
+        HtcFoveation.ExtensionName,
+        HtcPassthrough.ExtensionName,
+        HtcAnchor.ExtensionName,
+        HtcBodyTracking.ExtensionName,
+    ];
+    public enum ERenderer
     {
         OpenGL,
         Vulkan,
     }
-    private string[] GetRequiredExtensions(Renderer renderer, params string[] otherExtensions)
+    private string[] GetRequiredExtensions(ERenderer renderer, params string[] otherExtensions)
     {
         string[] extensions = [];
         if (EnableValidationLayers)
             extensions = [.. extensions, ExtDebugUtils.ExtensionName];
         switch (renderer)
         {
-            case Renderer.Vulkan:
+            case ERenderer.Vulkan:
                 {
                     extensions = [.. extensions, KhrVulkanEnable.ExtensionName, KhrVulkanEnable2.ExtensionName];
                 }
                 break;
-            case Renderer.OpenGL:
+            case ERenderer.OpenGL:
                 {
                     extensions = [.. extensions, KhrOpenglEnable.ExtensionName];
                 }
@@ -43,6 +43,6 @@ public unsafe partial class OpenXRAPI
         if (otherExtensions.Length > 0)
             extensions = [.. extensions, .. otherExtensions];
 
-        return extensions;
+        return [.. extensions, .. HTC_Extensions];
     }
 }

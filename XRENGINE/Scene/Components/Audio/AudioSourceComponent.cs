@@ -4,6 +4,7 @@ using System.Collections.Concurrent;
 using System.Numerics;
 using XREngine.Audio;
 using XREngine.Data;
+using XREngine.Data.Core;
 using static XREngine.Audio.AudioSource;
 
 namespace XREngine.Components.Scene
@@ -28,7 +29,7 @@ namespace XREngine.Components.Scene
         /// <summary>
         /// These are the listeners that are currently listening to this audio source because it is within their range.
         /// </summary>
-        private ConcurrentDictionary<ListenerContext, AudioSource> ActiveListeners { get; set; } = [];
+        public ConcurrentDictionary<ListenerContext, AudioSource> ActiveListeners { get; set; } = [];
 
         /// <summary>
         /// The rolloff factor of the source.
@@ -226,6 +227,18 @@ namespace XREngine.Components.Scene
             //}
         }
 
+        private int _maxStreamingBuffers = 10;
+        public int MaxStreamingBuffers
+        {
+            get => _maxStreamingBuffers;
+            set => SetField(ref _maxStreamingBuffers, value);
+        }
+
+        public XREvent<(int frequency, bool stereo, float[] buffer)>? StreamingBufferEnqueuedFloat;
+        public XREvent<(int frequency, bool stereo, short[] buffer)>? StreamingBufferEnqueuedShort;
+        public XREvent<(int frequency, bool stereo, byte[] buffer)>? StreamingBufferEnqueuedByte;
+        public XREvent<AudioData>? StreamingBufferEnqueued;
+        
         public void EnqueueStreamingBuffers(int frequency, bool stereo, params float[][] buffers)
         {
             //if (Type == ESourceType.Static)
@@ -233,15 +246,16 @@ namespace XREngine.Components.Scene
 
             //lock (ActiveListeners)
             //{
-                foreach (var source in ActiveListeners.Values)
+            foreach (var source in ActiveListeners.Values)
+            {
+                foreach (var buffer in buffers)
                 {
-                    foreach (var buffer in buffers)
-                    {
-                        var audioBuffer = source.ParentListener.TakeBuffer();
-                        audioBuffer.SetData(buffer, frequency, stereo);
-                        source.QueueBuffers(audioBuffer);
-                    }
+                    var audioBuffer = source.ParentListener.TakeBuffer();
+                    audioBuffer.SetData(buffer, frequency, stereo);
+                    source.QueueBuffers(MaxStreamingBuffers, audioBuffer);
+                    StreamingBufferEnqueuedFloat?.Invoke((frequency, stereo, buffer));
                 }
+            }
             //}
         }
         public void EnqueueStreamingBuffers(int frequency, bool stereo, params short[][] buffers)
@@ -251,15 +265,16 @@ namespace XREngine.Components.Scene
 
             //lock (ActiveListeners)
             //{
-                foreach (var source in ActiveListeners.Values)
+            foreach (var source in ActiveListeners.Values)
+            {
+                foreach (var buffer in buffers)
                 {
-                    foreach (var buffer in buffers)
-                    {
-                        var audioBuffer = source.ParentListener.TakeBuffer();
-                        audioBuffer.SetData(buffer, frequency, stereo);
-                        source.QueueBuffers(audioBuffer);
-                    }
+                    var audioBuffer = source.ParentListener.TakeBuffer();
+                    audioBuffer.SetData(buffer, frequency, stereo);
+                    source.QueueBuffers(MaxStreamingBuffers, audioBuffer);
+                    StreamingBufferEnqueuedShort?.Invoke((frequency, stereo, buffer));
                 }
+            }
             //}
         }
         public void EnqueueStreamingBuffers(int frequency, bool stereo, params byte[][] buffers)
@@ -269,15 +284,16 @@ namespace XREngine.Components.Scene
 
             //lock (ActiveListeners)
             //{
-                foreach (var source in ActiveListeners.Values)
+            foreach (var source in ActiveListeners.Values)
+            {
+                foreach (var buffer in buffers)
                 {
-                    foreach (var buffer in buffers)
-                    {
-                        var audioBuffer = source.ParentListener.TakeBuffer();
-                        audioBuffer.SetData(buffer, frequency, stereo);
-                        source.QueueBuffers(audioBuffer);
-                    }
+                    AudioBuffer audioBuffer = source.ParentListener.TakeBuffer();
+                    audioBuffer.SetData(buffer, frequency, stereo);
+                    source.QueueBuffers(MaxStreamingBuffers, audioBuffer);
+                    StreamingBufferEnqueuedByte?.Invoke((frequency, stereo, buffer));
                 }
+            }
             //}
         }
         public void EnqueueStreamingBuffers(params AudioData[] buffers)
@@ -287,15 +303,16 @@ namespace XREngine.Components.Scene
 
             //lock (ActiveListeners)
             //{
-                foreach (var source in ActiveListeners.Values)
+            foreach (var source in ActiveListeners.Values)
+            {
+                foreach (var buffer in buffers)
                 {
-                    foreach (var buffer in buffers)
-                    {
-                        var audioBuffer = source.ParentListener.TakeBuffer();
-                        audioBuffer.SetData(buffer);
-                        source.QueueBuffers(audioBuffer);
-                    }
+                    var audioBuffer = source.ParentListener.TakeBuffer();
+                    audioBuffer.SetData(buffer);
+                    source.QueueBuffers(MaxStreamingBuffers, audioBuffer);
+                    StreamingBufferEnqueued?.Invoke(buffer);
                 }
+            }
             //}
         }
         public void DequeueConsumedBuffers()
@@ -303,20 +320,26 @@ namespace XREngine.Components.Scene
             if (Type != ESourceType.Streaming)
                 return;
 
+            //if (!Engine.IsRenderThread)
+            //{
+            //    Engine.EnqueueMainThreadTask(DequeueConsumedBuffers);
+            //    return;
+            //}
+
             //lock (ActiveListeners)
             //{
-            int min = 0;
-                //int min = ActiveListeners.Values.Min(x => x.BuffersProcessed);
-                //if (min == 0)
-                //    return;
+            //int min = 0;
+            //int min = ActiveListeners.Values.Min(x => x.BuffersProcessed);
+            //if (min == 0)
+            //    return;
 
-                foreach (var source in ActiveListeners.Values)
-                {
-                    var buffers = source.UnqueueConsumedBuffers(min);
-                    if (buffers != null)
-                        foreach (var buffer in buffers)
-                            source.ParentListener.ReleaseBuffer(buffer);
-                }
+            //foreach (var source in ActiveListeners.Values)
+            //{
+            //    var buffers = source.UnqueueConsumedBuffers(0);
+            //    if (buffers != null)
+            //        foreach (var buffer in buffers)
+            //            source.ParentListener.ReleaseBuffer(buffer);
+            //}
             //}
         }
 
@@ -343,9 +366,9 @@ namespace XREngine.Components.Scene
 
             //lock (ActiveListeners)
             //{
-                foreach (var source in ActiveListeners.Values)
-                    source.Dispose();
-                ActiveListeners.Clear();
+            foreach (var source in ActiveListeners.Values)
+                source.Dispose();
+            ActiveListeners.Clear();
             //}
         }
 

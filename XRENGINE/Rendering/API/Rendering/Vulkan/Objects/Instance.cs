@@ -7,6 +7,7 @@ namespace XREngine.Rendering.Vulkan;
 public unsafe partial class VulkanRenderer
 {
     private Instance instance;
+    public Instance Instance => instance;
 
     private void DestroyInstance()
         => Api!.DestroyInstance(instance, null);

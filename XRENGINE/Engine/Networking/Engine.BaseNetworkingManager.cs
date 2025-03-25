@@ -182,7 +182,8 @@ namespace XREngine
             }
             public virtual void ConsumeQueues()
             {
-                Task.WaitAll(ReadUDP(), SendUDP());
+                ReadUDP();
+                    SendUDP();
             }
 
             /// <summary>
@@ -413,7 +414,8 @@ namespace XREngine
             public void ReplicateData(XRWorldObjectBase obj, object value, string idStr, bool compress, bool resendOnFailedAck)
             {
                 void EncodeAndQueue() => Send(obj.ID, compress, Encoding.UTF8.GetBytes(AssetManager.Serializer.Serialize((idStr, value))), EBroadcastType.Data, resendOnFailedAck);
-                Task.Run(EncodeAndQueue);
+                EncodeAndQueue();
+                //Task.Run(EncodeAndQueue);
             }
 
             /// <summary>
@@ -454,6 +456,12 @@ namespace XREngine
 
             private const int HeaderLen = 16; //3 bytes for protocol, 1 byte for flags, 2 bytes for sequence, 2 bytes for ack, 4 bytes for ack bitfield, 4 bytes for data length (not including header or guid)
             private const int GuidLen = 16; //Guid is always 16 bytes
+            private SevenZip.Compression.LZMA.Encoder _encoder = new();
+            private SevenZip.Compression.LZMA.Decoder _decoder = new();
+            private MemoryStream _compStreamIn = new();
+            private MemoryStream _compStreamOut = new();
+            private MemoryStream _decompStreamIn = new();
+            private MemoryStream _decompStreamOut = new();
 
             /// <summary>
             /// Sends a broadcast packet to send over the established UDP connection.
@@ -493,7 +501,7 @@ namespace XREngine
                     byte[] uncompData = new byte[GuidLen + uncompDataLen];
                     int offset = 0;
                     SetGuidAndData(id, data, uncompData, ref offset);
-                    byte[] compData = Compression.Compress(uncompData);
+                    byte[] compData = Compression.Compress(uncompData, ref _encoder, ref _compStreamIn, ref _compStreamOut);
 
                     //Then, create the full packet with header
                     int compDataLen = compData.Length;
@@ -546,17 +554,48 @@ namespace XREngine
                 //If the sequence is more recent than the last one we received, update the last received sequence
                 lock (_receivedRemoteSequences)
                 {
-                    bool noSeq = _receivedRemoteSequences.Count == 0;
-                    if (noSeq || SeqGreater(seq, _receivedRemoteSequences.PeekBack()))
+                    // If we have no sequences yet, or this sequence is greater than our max sequence
+                    if (_receivedRemoteSequences.Count == 0 || SeqGreater(seq, _receivedRemoteSequences.PeekBack()))
                     {
                         _receivedRemoteSequences.PushBack(seq);
                         if (_receivedRemoteSequences.Count > 33) //32 bits + 1 for max ack
                             _receivedRemoteSequences.PopFront();
 
-                        return true;
+                        return true; // This is a new sequence we haven't seen before
                     }
+
+                    //Sequence as not greater than the last one we received, but it could still be a *new* sequence
+
+                    // If we've already received this sequence before, don't process it again
+                    if (_receivedRemoteSequences.Contains(seq))
+                        return false;
+                    
+                    // Insert the sequence in the right position to maintain order
+                    // This handles out-of-order packet reception
+                    var tempList = new List<ushort>(_receivedRemoteSequences.Cast<ushort>());
+
+                    // Find the insertion point to maintain ordered sequences
+                    int insertIndex = 0;
+                    for (; insertIndex < tempList.Count; insertIndex++)
+                    {
+                        if (SeqGreater(tempList[insertIndex], seq))
+                            break;
+                    }
+
+                    tempList.Insert(insertIndex, seq);
+
+                    // Clear and rebuild the queue with the new ordered sequences
+                    _receivedRemoteSequences.Clear();
+                    foreach (var s in tempList)
+                        _receivedRemoteSequences.PushBack(s);
+
+                    if (_receivedRemoteSequences.Count > 33)
+                        _receivedRemoteSequences.PopFront();
+
+                    // We want to store this sequence for acknowledgment purposes
+                    // but since it's out of order, we don't want to process its data
+                    return false;
                 }
-                return false;
             }
 
             private static void SetHeader(byte flags, byte[] allData, int dataLen, ushort seq, ushort ack, uint ackBitfield)
@@ -633,7 +672,11 @@ namespace XREngine
                             anyAcked |= AcknowledgeSeq((ushort)(ack - i - 1));
 
                     if (availableDataLen >= offset + dataLength)
+                    {
+                        //if (shouldRead)
+                        //    Debug.Out($"Received packet with sequence number: {seq}");
                         offset += ReadPacketData(compressed, type, inBuf, decompBuffer, offset, dataLength, shouldRead);
+                    }
                     else
                         return 0; //Not enough data to read packet, don't progress offset
                 }
@@ -701,7 +744,7 @@ namespace XREngine
                 offset += 4;
             }
 
-            private static int ReadPacketData(
+            private int ReadPacketData(
                 bool compressed,
                 EBroadcastType type,
                 byte[] inBuf,
@@ -714,17 +757,15 @@ namespace XREngine
                 if (!compressed)
                     readLen += GuidLen;
 
+                // Only propagate data if this sequence should be processed (in order)
                 if (propogateData)
                 {
-                    //Task.Run(() =>
-                    //{
-                        if (compressed)
-                            ReadCompressed(type, inBuf, decompBuffer, dataOffset, dataLength);
-                        else
-                            ReadUncompressed(type, inBuf, dataOffset, dataLength);
-                    //});
+                    if (compressed)
+                        ReadCompressed(type, inBuf, decompBuffer, dataOffset, dataLength);
+                    else
+                        ReadUncompressed(type, inBuf, dataOffset, dataLength);
                 }
-                
+
                 return readLen;
             }
 
@@ -738,9 +779,9 @@ namespace XREngine
                     dataLength);
             }
 
-            private static void ReadCompressed(EBroadcastType type, byte[] inBuf, byte[] decompBuffer, int dataOffset, int dataLength)
+            private void ReadCompressed(EBroadcastType type, byte[] inBuf, byte[] decompBuffer, int dataOffset, int dataLength)
             {
-                int decompLen = Compression.Decompress(inBuf, dataOffset, dataLength, decompBuffer, 0);
+                int decompLen = Compression.Decompress(inBuf, dataOffset, dataLength, decompBuffer, 0, ref _decoder, ref _decompStreamIn, ref _decompStreamOut);
                 Propogate(
                     new Guid([.. decompBuffer.Take(GuidLen)]),
                     type,

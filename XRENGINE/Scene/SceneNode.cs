@@ -34,7 +34,10 @@ namespace XREngine.Scene
         {
             Transform = transform ?? new Transform();
             Transform.Parent = parent?.Transform;
+
             Name = name;
+            ComponentsInternal.PostAnythingAdded += OnComponentAdded;
+            ComponentsInternal.PostAnythingRemoved += OnComponentRemoved;
         }
 #pragma warning disable CS8618 // Non-nullable field must contain a non-null value when exiting constructor. Consider adding the 'required' modifier or declaring as nullable.
         public SceneNode(string name, TransformBase? transform = null)
@@ -43,8 +46,8 @@ namespace XREngine.Scene
             Transform = transform ?? new Transform();
 
             Name = name;
-            ComponentsInternal.PostAnythingAdded += ComponentAdded;
-            ComponentsInternal.PostAnythingRemoved += ComponentRemoved;
+            ComponentsInternal.PostAnythingAdded += OnComponentAdded;
+            ComponentsInternal.PostAnythingRemoved += OnComponentRemoved;
         }
 //#pragma warning disable CS8618 // Non-nullable field must contain a non-null value when exiting constructor. Consider adding the 'required' modifier or declaring as nullable.
 //        public SceneNode(XRScene scene, string name, TransformBase? transform = null)
@@ -66,14 +69,23 @@ namespace XREngine.Scene
 
             World = world;
             Name = name ?? DefaultName;
-            ComponentsInternal.PostAnythingAdded += ComponentAdded;
-            ComponentsInternal.PostAnythingRemoved += ComponentRemoved;
+            ComponentsInternal.PostAnythingAdded += OnComponentAdded;
+            ComponentsInternal.PostAnythingRemoved += OnComponentRemoved;
         }
 
-        private void ComponentRemoved(XRComponent item)
-            => item.RemovedFromSceneNode(this);
-        private void ComponentAdded(XRComponent item)
-            => item.AddedToSceneNode(this);
+        public XREvent<(SceneNode node, XRComponent comp)>? ComponentAdded;
+        public XREvent<(SceneNode node, XRComponent comp)>? ComponentRemoved;
+
+        private void OnComponentRemoved(XRComponent item)
+        {
+            item.RemovedFromSceneNode(this);
+            ComponentRemoved?.Invoke((this, item));
+        }
+        private void OnComponentAdded(XRComponent item)
+        {
+            item.AddedToSceneNode(this);
+            ComponentAdded?.Invoke((this, item));
+        }
 
         private readonly EventList<XRComponent> _components = [];
         private EventList<XRComponent> ComponentsInternal => _components;

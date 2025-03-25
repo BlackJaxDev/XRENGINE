@@ -10,7 +10,7 @@ public unsafe partial class VulkanRenderer
     public abstract class VkObject<T> : VkObjectBase where T : GenericRenderObject
     {
         public Device Device => Renderer.device;
-        public PhysicalDevice PhysicalDevice => Renderer.physicalDevice;
+        public PhysicalDevice PhysicalDevice => Renderer._physicalDevice;
 
         private readonly List<VkObject<T>?> _objectCache = [];
         public IReadOnlyList<VkObject<T>?> ObjectCache => _objectCache;

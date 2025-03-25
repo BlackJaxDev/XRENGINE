@@ -1,4 +1,5 @@
-﻿using System.Collections.Concurrent;
+﻿using Extensions;
+using System.Collections.Concurrent;
 using System.Diagnostics.CodeAnalysis;
 using System.Linq;
 using XREngine.Data.Geometry;
@@ -122,5 +123,18 @@ namespace XREngine.Components.Scene.Mesh
 
         public IEnumerable<XRMeshRenderer> GetAllRenderersWhere(Predicate<XRMeshRenderer> predicate)
             => Meshes.SelectMany(x => x.LODs).Select(x => x.Renderer).Where(x => predicate(x));
+
+        public void SetBlendShapeWeight(string blendshapeName, float percentage)
+        {
+            bool HasMatchingBlendshape(XRMeshRenderer x)
+                    => (x?.Mesh?.HasBlendshapes ?? false) && x.Mesh!.BlendshapeNames.Contains(blendshapeName);
+            GetAllRenderersWhere(HasMatchingBlendshape).ForEach(x => x.SetBlendshapeWeight(blendshapeName, percentage));
+        }
+        public void SetBlendShapeWeightNormalized(string blendshapeName, float weight)
+        {
+            bool HasMatchingBlendshape(XRMeshRenderer x)
+                    => (x?.Mesh?.HasBlendshapes ?? false) && x.Mesh!.BlendshapeNames.Contains(blendshapeName);
+            GetAllRenderersWhere(HasMatchingBlendshape).ForEach(x => x.SetBlendshapeWeightNormalized(blendshapeName, weight));
+        }
     }
 }
