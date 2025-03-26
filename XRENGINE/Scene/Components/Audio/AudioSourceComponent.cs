@@ -377,6 +377,14 @@ namespace XREngine.Components.Scene
             base.OnPropertyChanged(propName, prev, field);
             switch (propName)
             {
+                case nameof(IsDirectional):
+                    //lock (ActiveListeners)
+                    //{
+                    if (!IsDirectional)
+                        foreach (var source in ActiveListeners.Values)
+                            source.Direction = Vector3.Zero;
+                    //}
+                    break;
                 case nameof(RolloffFactor):
                     //lock (ActiveListeners)
                     //{
@@ -578,6 +586,13 @@ namespace XREngine.Components.Scene
             }
         }
 
+        private bool _isDirectional = false;
+        public bool IsDirectional
+        {
+            get => _isDirectional;
+            set => SetField(ref _isDirectional, value);
+        }
+
         private void UpdateOrientation(Vector3 worldPosition)
         {
             if (IsStereo)
@@ -602,14 +617,16 @@ namespace XREngine.Components.Scene
                         Vector3 relativePosition = Vector3.Transform(worldPosition, invListenerTransform);
                         source.Velocity = delta > 0.0f ? (relativePosition - source.Position) / delta : Vector3.Zero;
                         source.Position = relativePosition;
-                        source.Direction = Vector3.TransformNormal(worldForward, invListenerTransform);
+                        if (IsDirectional)
+                            source.Direction = Vector3.TransformNormal(worldForward, invListenerTransform);
                     }
                 }
                 else
                 {
                     source.Velocity = delta > 0.0f ? (worldPosition - source.Position) / delta : Vector3.Zero;
                     source.Position = worldPosition;
-                    source.Direction = worldForward;
+                    if (IsDirectional)
+                        source.Direction = worldForward;
                 }
 
                 //TODO: manage streaming buffers and handle state update when all sources are stopped

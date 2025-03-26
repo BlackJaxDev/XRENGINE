@@ -15,17 +15,25 @@ namespace XREngine.Data
                 for (int i = 0; i < length; i++)
                     bytes[i] = byte.Parse(byteStr.Substring(i << 1, 2), System.Globalization.NumberStyles.HexNumber);
             }
-            return Decompress(bytes);
+            return Decompress(bytes, false);
         }
 
-        public static unsafe byte[] Compress(byte[] arr)
+        public static unsafe byte[] Compress(byte[] arr, bool longSize = false)
         {
             SevenZip.Compression.LZMA.Encoder encoder = new();
             using MemoryStream inStream = new(arr);
             using MemoryStream outStream = new();
             encoder.WriteCoderProperties(outStream);
-            outStream.Write(BitConverter.GetBytes(arr.Length), 0, 4);
-            encoder.Code(inStream, outStream, arr.Length, -1, null);
+            if (longSize)
+            {
+                outStream.Write(BitConverter.GetBytes(arr.LongLength), 0, 8);
+                encoder.Code(inStream, outStream, arr.LongLength, -1, null);
+            }
+            else
+            {
+                outStream.Write(BitConverter.GetBytes(arr.Length), 0, 4);
+                encoder.Code(inStream, outStream, arr.Length, -1, null);
+            }
             return outStream.ToArray();
         }
         /// <summary>
@@ -120,7 +128,7 @@ namespace XREngine.Data
 
             return len;
         }
-        public static byte[] Decompress(byte[] bytes)
+        public static byte[] Decompress(byte[] bytes, bool longLength = false)
         {
             SevenZip.Compression.LZMA.Decoder decoder = new();
             using MemoryStream inStream = new(bytes);
@@ -129,13 +137,15 @@ namespace XREngine.Data
             inStream.Seek(0, SeekOrigin.Begin);
             byte[] properties = new byte[5];
             inStream.Read(properties, 0, 5);
-            byte[] lengthBytes = new byte[4];
-            inStream.Read(lengthBytes, 0, 4);
+
+            int sizeByteCount = longLength ? 8 : 4;
+            byte[] lengthBytes = new byte[sizeByteCount];
+            inStream.Read(lengthBytes, 0, sizeByteCount);
 
             decoder.SetDecoderProperties(properties);
-            int len = BitConverter.ToInt32(lengthBytes, 0);
+            long len = BitConverter.ToInt64(lengthBytes, 0);
 
-            decoder.Code(inStream, outStream, inStream.Length - 9, len, null);
+            decoder.Code(inStream, outStream, inStream.Length - 5 - sizeByteCount, len, null);
 
             return outStream.ToArray();
         }
@@ -151,7 +161,7 @@ namespace XREngine.Data
 
         public static unsafe string CompressToString(byte[] arr)
         {
-            byte[] compressed = Compress(arr);
+            byte[] compressed = Compress(arr, false);
             StringBuilder sb = new();
             foreach (byte b in compressed)
                 sb.Append(b.ToString("X2"));

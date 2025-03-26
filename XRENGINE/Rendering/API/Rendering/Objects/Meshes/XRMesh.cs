@@ -2272,5 +2272,101 @@ namespace XREngine.Rendering
             }
             return data;
         }
+
+        /// <summary>
+        /// Creates a deep copy of this mesh including all vertex data, indices, and buffers.
+        /// </summary>
+        /// <returns>A new XRMesh instance containing copied data</returns>
+        public XRMesh Clone()
+        {
+            using var t = Engine.Profiler.Start("XRMesh Clone");
+
+            // Create new mesh
+            XRMesh clone = new()
+            {
+                // Copy basic properties
+                _interleaved = Interleaved,
+                _interleavedStride = InterleavedStride,
+                _positionOffset = PositionOffset,
+                _normalOffset = NormalOffset,
+                _tangentOffset = TangentOffset,
+                _colorOffset = ColorOffset,
+                _texCoordOffset = TexCoordOffset,
+                _colorCount = ColorCount,
+                _texCoordCount = TexCoordCount,
+                VertexCount = VertexCount,
+                _type = Type,
+                _bounds = Bounds,
+                _maxWeightCount = MaxWeightCount,
+                BlendshapeNames = [.. BlendshapeNames],
+                // Deep copy vertices
+                _vertices = new Vertex[Vertices.Length]
+            };
+
+            for (int i = 0; i < Vertices.Length; i++)
+                clone._vertices[i] = Vertices[i].HardCopy();
+
+            // Deep copy primitive indices
+            if (_points != null)
+                clone._points = [.. _points];
+            if (_lines != null)
+                clone._lines = [.. _lines];
+            if (_triangles != null)
+                clone._triangles = [.. _triangles];
+
+            // Deep copy buffers
+            clone.Buffers = Buffers.Clone();
+
+            // Copy specific buffer references
+            clone.PositionsBuffer = clone.Buffers.GetValueOrDefault(ECommonBufferType.Position.ToString());
+            clone.NormalsBuffer = clone.Buffers.GetValueOrDefault(ECommonBufferType.Normal.ToString());
+            clone.TangentsBuffer = clone.Buffers.GetValueOrDefault(ECommonBufferType.Tangent.ToString());
+
+            if (ColorBuffers != null)
+            {
+                clone.ColorBuffers = new XRDataBuffer[ColorBuffers.Length];
+                for (int i = 0; i < ColorBuffers.Length; i++)
+                    clone.ColorBuffers[i] = clone.Buffers.GetValueOrDefault($"{ECommonBufferType.Color}{i}")!;
+            }
+
+            if (TexCoordBuffers != null)
+            {
+                clone.TexCoordBuffers = new XRDataBuffer[TexCoordBuffers.Length];
+                for (int i = 0; i < TexCoordBuffers.Length; i++)
+                    clone.TexCoordBuffers[i] = clone.Buffers.GetValueOrDefault($"{ECommonBufferType.TexCoord}{i}")!;
+            }
+
+            clone.InterleavedVertexBuffer = clone.Buffers.GetValueOrDefault(ECommonBufferType.InterleavedVertex.ToString());
+
+            // Copy skinning data
+            if (HasSkinning)
+            {
+                clone.UtilizedBones = new (TransformBase tfm, Matrix4x4 invBindWorldMtx)[UtilizedBones.Length];
+                Array.Copy(UtilizedBones, clone.UtilizedBones, UtilizedBones.Length);
+
+                clone.BoneWeightOffsets = clone.Buffers.GetValueOrDefault(ECommonBufferType.BoneMatrixOffset.ToString());
+                clone.BoneWeightCounts = clone.Buffers.GetValueOrDefault(ECommonBufferType.BoneMatrixCount.ToString());
+                clone.BoneWeightIndices = clone.Buffers.GetValueOrDefault($"{ECommonBufferType.BoneMatrixIndices}Buffer");
+                clone.BoneWeightValues = clone.Buffers.GetValueOrDefault($"{ECommonBufferType.BoneMatrixWeights}Buffer");
+            }
+
+            // Copy blendshape data
+            if (HasBlendshapes)
+            {
+                clone.BlendshapeCounts = clone.Buffers.GetValueOrDefault(ECommonBufferType.BlendshapeCount.ToString());
+                clone.BlendshapeIndices = clone.Buffers.GetValueOrDefault($"{ECommonBufferType.BlendshapeIndices}Buffer");
+                clone.BlendshapeDeltas = clone.Buffers.GetValueOrDefault($"{ECommonBufferType.BlendshapeDeltas}Buffer");
+            }
+
+            //// Copy SDF if exists
+            //if (SignedDistanceField != null)
+            //    clone.SignedDistanceField = SignedDistanceField.Clone();
+
+            //// Copy events
+            //if (DataChanged != null)
+            //    clone.DataChanged = new XREvent<XRMesh>(DataChanged);
+
+            return clone;
+        }
     }
 }

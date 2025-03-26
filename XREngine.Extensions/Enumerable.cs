@@ -5,10 +5,10 @@ namespace Extensions
 {
     public static class EnumerableExtension
     {
-        public static IEnumerable<T> AsThreadSafeEnumerable<T>(this IEnumerable<T> enumerable, ReaderWriterLockSlim rwlock)
-        {
-            return new ThreadSafeEnumerable<T>(enumerable, rwlock);
-        }
+        //public static IEnumerable<T> AsThreadSafeEnumerable<T>(this IEnumerable<T> enumerable, ReaderWriterLockSlim rwlock)
+        //{
+        //    return new ThreadSafeEnumerable<T>(enumerable, rwlock);
+        //}
         public static IEnumerable<TResult> SelectEvery<TElement, TResult>(
             this IEnumerable<TElement> source,
             int count,

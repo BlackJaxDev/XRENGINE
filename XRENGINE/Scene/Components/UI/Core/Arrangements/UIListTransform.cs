@@ -309,15 +309,15 @@ namespace XREngine.Rendering.UI
 
             //add up all the heights of the children
             float totalHeight = 0.0f;
-            lock (Children)
-            {
+            //lock (Children)
+            //{
                 for (int i = 0; i < Children.Count; i++)
                 {
                     totalHeight += ItemSize ?? (Children[i] is UIBoundableTransform bc && !bc.IsCollapsed && !bc.ExcludeFromParentAutoCalcHeight ? bc.GetHeight() : 0.0f);
                     if (i < Children.Count - 1)
                         totalHeight += ItemSpacing;
                 }
-            }
+            //}
             return totalHeight;
         }
         public override float GetMaxChildWidth()
@@ -327,15 +327,15 @@ namespace XREngine.Rendering.UI
 
             //add up all the widths of the children
             float totalWidth = 0.0f;
-            lock (Children)
-            {
+            //lock (Children)
+            //{
                 for (int i = 0; i < Children.Count; i++)
                 {
                     totalWidth += ItemSize ?? (Children[i] is UIBoundableTransform bc && !bc.IsCollapsed && !bc.ExcludeFromParentAutoCalcWidth ? bc.GetWidth() : 0.0f);
                     if (i < Children.Count - 1)
                         totalWidth += ItemSpacing;
                 }
-            }
+            //}
             return totalWidth;
         }
     }

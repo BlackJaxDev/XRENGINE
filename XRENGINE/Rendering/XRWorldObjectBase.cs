@@ -258,7 +258,7 @@ namespace XREngine
         /// <param name="id"></param>
         /// <param name="data"></param>
         /// <param name="udp"></param>
-        public void EnqueueDataReplication(string id, object data, bool compress, bool resendOnFailedAck)
+        public void EnqueueDataReplication(string id, byte[] data, bool compress, bool resendOnFailedAck)
             => Engine.Networking?.ReplicateData(this, data, id, compress, resendOnFailedAck);
 
         /// <summary>
@@ -267,7 +267,7 @@ namespace XREngine
         /// </summary>
         /// <param name="id"></param>
         /// <param name="data"></param>
-        public virtual void ReceiveData(string id, object data)
+        public virtual void ReceiveData(string id, object? data)
         {
 
         }
@@ -294,19 +294,24 @@ namespace XREngine
         /// </summary>
         /// <param name="propName"></param>
         /// <param name="value"></param>
-        public void SetReplicatedProperty(string propName, object value)
+        public void SetReplicatedProperty(string propName, object? value)
         {
             var repl = GetReplicationInfo();
             if (repl is null)
                 return;
 
-            if (repl.ReplicateOnChangeProperties.TryGetValue(propName, out var pair) &&
-                pair.PropertyType.IsAssignableFrom(value.GetType()))
-                pair.SetValue(this, value);
+            if (repl.ReplicateOnChangeProperties.TryGetValue(propName, out var changeProp) && IsSettable(value, changeProp))
+                changeProp.SetValue(this, value);
 
-            if (repl.ReplicateOnTickProperties.TryGetValue(propName, out var prop) &&
-                prop.PropertyType.IsAssignableFrom(value.GetType()))
-                prop.SetValue(this, value);
+            if (repl.ReplicateOnTickProperties.TryGetValue(propName, out var tickProp) && IsSettable(value, tickProp))
+                tickProp.SetValue(this, value);
+        }
+
+        private static bool IsSettable(object? value, PropertyInfo pair)
+        {
+            return value is null
+                ? pair.PropertyType.IsClass && !pair.PropertyType.IsValueType
+                : pair.PropertyType.IsAssignableFrom(value.GetType());
         }
     }
 }

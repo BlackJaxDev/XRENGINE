@@ -239,7 +239,7 @@ namespace XREngine.Timers
 
                     Render.Delta = elapsed;
                     Render.LastTimestamp = timestamp;
-                    RenderFrame?.Invoke();
+                    RenderFrame?.Invoke(); // This dispatch has to be synchronous to stay on the main thread
 
                     timestamp = Time();
                     Render.ElapsedTime = timestamp - Render.LastTimestamp;

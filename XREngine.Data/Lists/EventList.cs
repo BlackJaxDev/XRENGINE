@@ -39,7 +39,7 @@ namespace System.Collections.Generic
     /// <summary>
     /// A derivation of <see cref="ThreadSafeList{T}"/> that monitors all operations and provides events for each kind of operation.
     /// </summary>
-    public class EventList<T> : XRObjectBase, IEventListReadOnly<T>, IList<T>, ICollection<T>, IEnumerable<T>, IEnumerable, IList, ICollection, IReadOnlyList<T>, IReadOnlyCollection<T>
+    public partial class EventList<T> : XRObjectBase, IEventListReadOnly<T>, IList<T>, ICollection<T>, IEnumerable<T>, IEnumerable, IList, ICollection, IReadOnlyList<T>, IReadOnlyCollection<T>
     {
         private readonly List<T> _list;
         private ReaderWriterLockSlim? _lock;
@@ -973,7 +973,7 @@ namespace System.Collections.Generic
             => CopyTo((T[])array, index);
 
         public IEnumerator<T> GetEnumerator()
-            => ThreadSafe ? new ThreadSafeEnumerator(_list, _lock) : _list.GetEnumerator();
+            => ThreadSafe ? new ThreadSafeListEnumerator<T>(_list, _lock) : _list.GetEnumerator();
         IEnumerator IEnumerable.GetEnumerator()
             => GetEnumerator();
 
@@ -994,45 +994,5 @@ namespace System.Collections.Generic
 
         public void Remove(object? value)
             => ((IList)_list).Remove(value);
-
-        private class ThreadSafeEnumerator(List<T> list, ReaderWriterLockSlim? locker) : IEnumerator<T>
-        {
-            private int _currentIndex = 0;
-
-            public T Current { get; private set; } = default!;
-            object IEnumerator.Current => Current!;
-
-            public void Dispose()
-            {
-                //locker?.ExitReadLock();
-            }
-            public bool MoveNext()
-            {
-                int index = _currentIndex;
-                bool valid = index >= 0 && index < list.Count;
-
-                if (!valid)
-                    return false;
-
-                ++_currentIndex;
-                Current = list[index];
-
-                if (index == 0)
-                    locker?.EnterReadLock();
-                
-                if (index == list.Count - 1)
-                    locker?.ExitReadLock();
-
-                return true;
-            }
-            public void Reset()
-            {
-                if (_currentIndex != 0)
-                    locker?.ExitReadLock();
-
-                _currentIndex = 0;
-                Current = list.Count == 0 ? default! : list[0];
-            }
-        }
     }
 }

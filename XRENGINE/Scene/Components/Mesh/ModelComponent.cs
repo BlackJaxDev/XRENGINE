@@ -124,17 +124,29 @@ namespace XREngine.Components.Scene.Mesh
         public IEnumerable<XRMeshRenderer> GetAllRenderersWhere(Predicate<XRMeshRenderer> predicate)
             => Meshes.SelectMany(x => x.LODs).Select(x => x.Renderer).Where(x => predicate(x));
 
-        public void SetBlendShapeWeight(string blendshapeName, float percentage)
+        public void SetBlendShapeWeight(string blendshapeName, float percentage, StringComparison comp = StringComparison.InvariantCultureIgnoreCase)
         {
             bool HasMatchingBlendshape(XRMeshRenderer x)
-                    => (x?.Mesh?.HasBlendshapes ?? false) && x.Mesh!.BlendshapeNames.Contains(blendshapeName);
-            GetAllRenderersWhere(HasMatchingBlendshape).ForEach(x => x.SetBlendshapeWeight(blendshapeName, percentage));
+                => (x?.Mesh?.HasBlendshapes ?? false) && x.Mesh!.BlendshapeNames.Contains(blendshapeName, comp);
+            var rends = GetAllRenderersWhere(HasMatchingBlendshape);
+            //if (!rends.Any())
+            //{
+            //    Debug.LogWarning($"No renderers found with blendshape {blendshapeName}");
+            //    return;
+            //}
+            rends.ForEach(x => x.SetBlendshapeWeight(blendshapeName, percentage));
         }
-        public void SetBlendShapeWeightNormalized(string blendshapeName, float weight)
+        public void SetBlendShapeWeightNormalized(string blendshapeName, float weight, StringComparison comp = StringComparison.InvariantCultureIgnoreCase)
         {
             bool HasMatchingBlendshape(XRMeshRenderer x)
-                    => (x?.Mesh?.HasBlendshapes ?? false) && x.Mesh!.BlendshapeNames.Contains(blendshapeName);
-            GetAllRenderersWhere(HasMatchingBlendshape).ForEach(x => x.SetBlendshapeWeightNormalized(blendshapeName, weight));
+                => (x?.Mesh?.HasBlendshapes ?? false) && x.Mesh!.BlendshapeNames.Contains(blendshapeName, comp);
+            var rends = GetAllRenderersWhere(HasMatchingBlendshape);
+            //if (!rends.Any())
+            //{
+            //    Debug.LogWarning($"No renderers found with blendshape {blendshapeName}");
+            //    return;
+            //}
+            rends.ForEach(x => x.SetBlendshapeWeightNormalized(blendshapeName, weight));
         }
     }
 }

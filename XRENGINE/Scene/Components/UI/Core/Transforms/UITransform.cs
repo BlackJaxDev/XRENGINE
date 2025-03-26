@@ -242,7 +242,7 @@ namespace XREngine.Rendering.UI
         {
             try
             {
-               // lock (Children)
+                //lock (Children)
                 {
                     foreach (var c in Children)
                         if (c is UITransform uiTfm)
@@ -360,12 +360,12 @@ namespace XREngine.Rendering.UI
                     if (this is IRenderable r)
                         foreach (var rc in r.RenderedObjects)
                             rc.UserInterfaceCanvas = ParentCanvas?.SceneNode?.GetComponent<UICanvasComponent>();
-                    lock (Children)
-                    {
+                    //lock (Children)
+                    //{
                         foreach (var child in Children)
                             if (child is UITransform uiTransform)
                                 uiTransform.ParentCanvas = ParentCanvas;
-                    }
+                    //}
                     InvalidateLayout();
                     break;
                 case nameof(PlacementInfo):

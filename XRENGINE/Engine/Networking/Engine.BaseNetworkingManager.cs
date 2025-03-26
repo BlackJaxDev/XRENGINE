@@ -1,4 +1,5 @@
-﻿using System.Collections.Concurrent;
+﻿using MemoryPack;
+using System.Collections.Concurrent;
 using System.Net;
 using System.Net.NetworkInformation;
 using System.Net.Sockets;
@@ -183,7 +184,7 @@ namespace XREngine
             public virtual void ConsumeQueues()
             {
                 ReadUDP();
-                    SendUDP();
+                SendUDP();
             }
 
             /// <summary>
@@ -400,8 +401,9 @@ namespace XREngine
             /// <param name="compress"></param>
             public void ReplicateObject(XRWorldObjectBase obj, bool compress, bool resendOnFailedAck)
             {
-                void EncodeAndQueue() => Send(obj.ID, compress, Encoding.UTF8.GetBytes(AssetManager.Serializer.Serialize(obj)), EBroadcastType.Object, resendOnFailedAck);
-                Task.Run(EncodeAndQueue);
+                var bytes = MemoryPackSerializer.Serialize(obj);
+                //var bytes = Encoding.UTF8.GetBytes(AssetManager.Serializer.Serialize(obj));
+                Send(obj.ID, compress, bytes, EBroadcastType.Object, resendOnFailedAck);
             }
 
             /// <summary>
@@ -411,11 +413,12 @@ namespace XREngine
             /// <param name="value"></param>
             /// <param name="idStr"></param>
             /// <param name="compress"></param>
-            public void ReplicateData(XRWorldObjectBase obj, object value, string idStr, bool compress, bool resendOnFailedAck)
+            public void ReplicateData(XRWorldObjectBase obj, byte[] value, string idStr, bool compress, bool resendOnFailedAck)
             {
-                void EncodeAndQueue() => Send(obj.ID, compress, Encoding.UTF8.GetBytes(AssetManager.Serializer.Serialize((idStr, value))), EBroadcastType.Data, resendOnFailedAck);
-                EncodeAndQueue();
-                //Task.Run(EncodeAndQueue);
+                IdValue data = new(idStr, value);
+                var bytes = MemoryPackSerializer.Serialize(data);
+                //var bytes = Encoding.UTF8.GetBytes(AssetManager.Serializer.Serialize(data));
+                Send(obj.ID, compress, bytes, EBroadcastType.Data, resendOnFailedAck);
             }
 
             /// <summary>
@@ -426,10 +429,13 @@ namespace XREngine
             /// <param name="propName"></param>
             /// <param name="value"></param>
             /// <param name="compress"></param>
-            public void ReplicatePropertyUpdated<T>(XRWorldObjectBase obj, string? propName, T? value, bool compress, bool resendOnFailedAck)
+            public void ReplicatePropertyUpdated<T>(XRWorldObjectBase obj, string? propName, T value, bool compress, bool resendOnFailedAck)
             {
-                void EncodeAndQueue() => Send(obj.ID, compress, Encoding.UTF8.GetBytes(AssetManager.Serializer.Serialize((propName, value))), EBroadcastType.Property, resendOnFailedAck);
-                Task.Run(EncodeAndQueue);
+                var bytes1 = MemoryPackSerializer.Serialize(value);
+                IdValue data = new(propName ?? string.Empty, bytes1);
+                var bytes = MemoryPackSerializer.Serialize(data);
+                //var bytes = Encoding.UTF8.GetBytes(AssetManager.Serializer.Serialize(data));
+                Send(obj.ID, compress, bytes, EBroadcastType.Property, resendOnFailedAck);
             }
 
             /// <summary>
@@ -439,8 +445,7 @@ namespace XREngine
             /// <param name="transform"></param>
             public void ReplicateTransform(TransformBase transform, bool resendOnFailedAck)
             {
-                void EncodeAndQueue() => Send(transform.ID, false, transform.EncodeToBytes(), EBroadcastType.Transform, resendOnFailedAck);
-                Task.Run(EncodeAndQueue);
+                Send(transform.ID, false, transform.EncodeToBytes(), EBroadcastType.Transform, resendOnFailedAck);
             }
 
             /// <summary>
@@ -450,8 +455,9 @@ namespace XREngine
             /// <param name="compress"></param>
             public void ReplicateStateChange(StateChangeInfo data, bool compress, bool resendOnFailedAck)
             {
-                void EncodeAndQueue() => Send(Guid.Empty, compress, Encoding.UTF8.GetBytes(AssetManager.Serializer.Serialize(data)), EBroadcastType.StateChange, resendOnFailedAck);
-                Task.Run(EncodeAndQueue);
+                var bytes = MemoryPackSerializer.Serialize(data);
+                //var bytes = Encoding.UTF8.GetBytes(AssetManager.Serializer.Serialize(data));
+                Send(Guid.Empty, compress, bytes, EBroadcastType.StateChange, resendOnFailedAck);
             }
 
             private const int HeaderLen = 16; //3 bytes for protocol, 1 byte for flags, 2 bytes for sequence, 2 bytes for ack, 4 bytes for ack bitfield, 4 bytes for data length (not including header or guid)
@@ -822,24 +828,30 @@ namespace XREngine
                 {
                     case EBroadcastType.Object:
                         {
-                            string dataStr = Encoding.UTF8.GetString(data, dataOffset, dataLen);
-                            var newObj = AssetManager.Deserializer.Deserialize(dataStr, worldObj.GetType()) as XRWorldObjectBase;
+                            //string dataStr = Encoding.UTF8.GetString(data, dataOffset, dataLen);
+                            //var newObj = AssetManager.Deserializer.Deserialize(dataStr, worldObj.GetType()) as XRWorldObjectBase;
+                            var newObj = MemoryPackSerializer.Deserialize<XRWorldObjectBase>(data.AsSpan(dataOffset, dataLen));
+
                             if (newObj is not null)
                                 worldObj.CopyFrom(newObj);
                             break;
                         }
                     case EBroadcastType.Property:
                         {
-                            string dataStr = Encoding.UTF8.GetString(data, dataOffset, dataLen);
-                            var (propName, value) = AssetManager.Deserializer.Deserialize<(string propName, object value)>(dataStr);
-                            worldObj.SetReplicatedProperty(propName, value);
+                            //string dataStr = Encoding.UTF8.GetString(data, dataOffset, dataLen);
+                            //var (propName, value) = AssetManager.Deserializer.Deserialize<(string propName, object value)>(dataStr);
+                            IdValue d = MemoryPackSerializer.Deserialize<IdValue>(data.AsSpan(dataOffset, dataLen));
+
+                            worldObj.SetReplicatedProperty(d.key, d.value);
                             break;
                         }
                     case EBroadcastType.Data:
                         {
-                            string dataStr = Encoding.UTF8.GetString(data, dataOffset, dataLen);
-                            var (id2, value2) = AssetManager.Deserializer.Deserialize<(string id, object data)>(dataStr);
-                            worldObj.ReceiveData(id2, value2);
+                            //string dataStr = Encoding.UTF8.GetString(data, dataOffset, dataLen);
+                            //var (id2, value2) = AssetManager.Deserializer.Deserialize<(string id, object data)>(dataStr);
+                            IdValue d = MemoryPackSerializer.Deserialize<IdValue>(data.AsSpan(dataOffset, dataLen));
+
+                            worldObj.ReceiveData(d.key, d.value);
                             break;
                         }
                     case EBroadcastType.Transform:
@@ -1091,6 +1103,19 @@ namespace XREngine
             //    ReadReceivedData(_tcpInBuffer, ref _tcpBufferOffset, _decompBuffer);
             //}
             #endregion
+        }
+    }
+    [MemoryPackable]
+    internal partial record struct IdValue(string key, byte[] value)
+    {
+        public static implicit operator (string idStr, byte[] value)(IdValue value)
+        {
+            return (value.key, value.value);
+        }
+
+        public static implicit operator IdValue((string idStr, byte[] value) value)
+        {
+            return new IdValue(value.idStr, value.value);
         }
     }
 }

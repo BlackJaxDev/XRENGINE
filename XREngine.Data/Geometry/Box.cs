@@ -5,53 +5,166 @@ namespace XREngine.Data.Geometry
 {
     public struct Box : IShape
     {
-        public Vector3 LocalCenter;
-        public Vector3 LocalSize;
-        public Matrix4x4 Transform = Matrix4x4.Identity;
+        private Vector3 _localCenter;
+        private Vector3 _localSize;
+        private Matrix4x4 _transform = Matrix4x4.Identity;
 
-        public readonly Vector3 LocalHalfExtents => LocalSize * 0.5f;
-        public readonly Vector3 LocalMinimum => LocalCenter - LocalHalfExtents;
-        public readonly Vector3 LocalMaximum => LocalCenter + LocalHalfExtents;
+        private bool _localCacheValid = false;
+        private bool _worldCacheValid = false;
 
-        public readonly Vector3 WorldCenter => Vector3.Transform(LocalCenter, Transform);
-        public readonly Vector3 WorldMinimum => Vector3.Transform(LocalMinimum, Transform);
-        public readonly Vector3 WorldMaximum => Vector3.Transform(LocalMaximum, Transform);
+        private Vector3[]? _cachedLocalCorners;
+        private Plane[]? _cachedLocalPlanes;
+        private Vector3[]? _cachedWorldCorners;
+        private Plane[]? _cachedWorldPlanes;
+
+        public Vector3 LocalCenter
+        {
+            readonly get => _localCenter;
+            set
+            {
+                _localCenter = value;
+                _localCacheValid = false;
+            }
+        }
+        public Vector3 LocalSize
+        {
+            readonly get => _localSize;
+            set
+            {
+                _localSize = value;
+                _localCacheValid = false;
+            }
+        }
+        public Matrix4x4 Transform
+        {
+            readonly get => _transform;
+            set
+            {
+                _transform = value;
+                _worldCacheValid = false;
+            }
+        }
+
+        public readonly Vector3 LocalHalfExtents => _localSize * 0.5f;
+        public readonly Vector3 LocalMinimum => _localCenter - LocalHalfExtents;
+        public readonly Vector3 LocalMaximum => _localCenter + LocalHalfExtents;
+
+        private void UpdateLocalCache()
+        {
+            var min = LocalMinimum;
+            var max = LocalMaximum;
+
+            _cachedLocalCorners =
+            [
+                new Vector3(min.X, min.Y, min.Z),
+                new Vector3(max.X, min.Y, min.Z),
+                new Vector3(min.X, max.Y, min.Z),
+                new Vector3(max.X, max.Y, min.Z),
+                new Vector3(min.X, min.Y, max.Z),
+                new Vector3(max.X, min.Y, max.Z),
+                new Vector3(min.X, max.Y, max.Z),
+                new Vector3(max.X, max.Y, max.Z)
+            ];
+
+            _cachedLocalPlanes =
+            [
+                new Plane(Vector3.UnitX, -min.X),
+                new Plane(-Vector3.UnitX, max.X),
+                new Plane(Vector3.UnitY, -min.Y),
+                new Plane(-Vector3.UnitY, max.Y),
+                new Plane(Vector3.UnitZ, -min.Z),
+                new Plane(-Vector3.UnitZ, max.Z)
+            ];
+        }
+
+        private void UpdateWorldCache()
+        {
+            if (!_localCacheValid)
+                UpdateLocalCache();
+            _cachedWorldCorners = [.. _cachedLocalCorners!.Select(PointToWorldSpace)];
+            var tfm = _transform;
+            _cachedWorldPlanes = [.. _cachedLocalPlanes!.Select(p => Plane.Transform(p, tfm))];
+        }
+
+        public IEnumerable<Vector3> LocalCorners
+        {
+            get
+            {
+                if (!_localCacheValid)
+                    UpdateLocalCache();
+                return _cachedLocalCorners!;
+            }
+        }
+
+        public IEnumerable<Plane> LocalPlanes
+        {
+            get
+            {
+                if (!_localCacheValid)
+                    UpdateLocalCache();
+                return _cachedLocalPlanes!;
+            }
+        }
+
+        public IEnumerable<Vector3> WorldCorners
+        {
+            get
+            {
+                if (!_worldCacheValid)
+                    UpdateWorldCache();
+                return _cachedWorldCorners!;
+            }
+        }
+
+        public IEnumerable<Plane> WorldPlanes
+        {
+            get
+            {
+                if (!_worldCacheValid)
+                    UpdateWorldCache();
+                return _cachedWorldPlanes!;
+            }
+        }
+
+        public readonly Vector3 WorldCenter => Vector3.Transform(_localCenter, _transform);
+        public readonly Vector3 WorldMinimum => Vector3.Transform(LocalMinimum, _transform);
+        public readonly Vector3 WorldMaximum => Vector3.Transform(LocalMaximum, _transform);
 
         public readonly Vector3 PointToLocalSpace(Vector3 worldPoint)
-            => Matrix4x4.Invert(Transform, out var inv) ? Vector3.Transform(worldPoint, inv) : worldPoint;
+            => Matrix4x4.Invert(_transform, out var inv) ? Vector3.Transform(worldPoint, inv) : worldPoint;
         public readonly Vector3 PointToWorldSpace(Vector3 localPoint)
-            => Vector3.Transform(localPoint, Transform);
+            => Vector3.Transform(localPoint, _transform);
         public readonly Vector3 NormalToLocalSpace(Vector3 worldNormal)
-            => Matrix4x4.Invert(Transform, out var inv) ? Vector3.TransformNormal(worldNormal, Matrix4x4.Transpose(inv)) : worldNormal;
+            => Matrix4x4.Invert(_transform, out var inv) ? Vector3.TransformNormal(worldNormal, Matrix4x4.Transpose(inv)) : worldNormal;
         public readonly Vector3 NormalToWorldSpace(Vector3 localNormal)
-            => Vector3.TransformNormal(localNormal, Transform);
+            => Vector3.TransformNormal(localNormal, _transform);
 
         public Box() { }
         public Box(float uniformSize)
         {
-            LocalCenter = Vector3.Zero;
-            LocalSize = new Vector3(uniformSize);
+            _localCenter = Vector3.Zero;
+            _localSize = new Vector3(uniformSize);
         }
         public Box(float sizeX, float sizeY, float sizeZ)
         {
-            LocalCenter = Vector3.Zero;
-            LocalSize = new Vector3(sizeX, sizeY, sizeZ);
+            _localCenter = Vector3.Zero;
+            _localSize = new Vector3(sizeX, sizeY, sizeZ);
         }
         public Box(Vector3 size)
         {
-            LocalCenter = Vector3.Zero;
-            LocalSize = size;
+            _localCenter = Vector3.Zero;
+            _localSize = size;
         }
         public Box(Vector3 center, Vector3 size)
         {
-            LocalCenter = center;
-            LocalSize = size;
+            _localCenter = center;
+            _localSize = size;
         }
         public Box(Vector3 center, Vector3 size, Matrix4x4 transform)
         {
-            LocalCenter = center;
-            LocalSize = size;
-            Transform = transform;
+            _localCenter = center;
+            _localSize = size;
+            _transform = transform;
         }
 
         public static Box FromMinMax(Vector3 min, Vector3 max)
@@ -70,7 +183,7 @@ namespace XREngine.Data.Geometry
         public readonly bool Contains(Box box)
             => box.WorldCorners.All(Contains);
 
-        public readonly bool Intersects(Box box)
+        public bool Intersects(Box box)
         {
             var corners = box.WorldCorners.ToArray();
             var planes = WorldPlanes.ToArray();
@@ -137,7 +250,7 @@ namespace XREngine.Data.Geometry
 
         public readonly bool IntersectsSegment(Segment segment, out Vector3[] points)
         {
-            segment = segment.TransformedBy(Transform.Inverted());
+            segment = segment.TransformedBy(_transform.Inverted());
             bool intersects = GeoUtil.SegmentIntersectsAABB(segment.Start, segment.End, LocalMinimum, LocalMaximum, out Vector3 enter, out Vector3 exit);
             points = intersects ? [PointToWorldSpace(enter), PointToWorldSpace(exit)] : [];
             return intersects;
@@ -145,53 +258,13 @@ namespace XREngine.Data.Geometry
 
         public readonly bool IntersectsSegment(Segment segment)
         {
-            segment = segment.TransformedBy(Transform.Inverted());
+            segment = segment.TransformedBy(_transform.Inverted());
             return GeoUtil.SegmentIntersectsAABB(segment.Start, segment.End, LocalMinimum, LocalMaximum, out _, out _);
         }
 
         public EContainment ContainsBox(Box box)
         {
             throw new NotImplementedException();
-        }
-
-        public readonly IEnumerable<Vector3> LocalCorners
-        {
-            get
-            {
-                yield return new Vector3(LocalMinimum.X, LocalMinimum.Y, LocalMinimum.Z);
-                yield return new Vector3(LocalMaximum.X, LocalMinimum.Y, LocalMinimum.Z);
-                yield return new Vector3(LocalMinimum.X, LocalMaximum.Y, LocalMinimum.Z);
-                yield return new Vector3(LocalMaximum.X, LocalMaximum.Y, LocalMinimum.Z);
-                yield return new Vector3(LocalMinimum.X, LocalMinimum.Y, LocalMaximum.Z);
-                yield return new Vector3(LocalMaximum.X, LocalMinimum.Y, LocalMaximum.Z);
-                yield return new Vector3(LocalMinimum.X, LocalMaximum.Y, LocalMaximum.Z);
-                yield return new Vector3(LocalMaximum.X, LocalMaximum.Y, LocalMaximum.Z);
-            }
-        }
-
-        public readonly IEnumerable<Plane> LocalPlanes
-        {
-            get
-            {
-                yield return new Plane(Vector3.UnitX, -LocalMinimum.X);
-                yield return new Plane(-Vector3.UnitX, LocalMaximum.X);
-                yield return new Plane(Vector3.UnitY, -LocalMinimum.Y);
-                yield return new Plane(-Vector3.UnitY, LocalMaximum.Y);
-                yield return new Plane(Vector3.UnitZ, -LocalMinimum.Z);
-                yield return new Plane(-Vector3.UnitZ, LocalMaximum.Z);
-            }
-        }
-
-        public readonly IEnumerable<Vector3> WorldCorners
-            => LocalCorners.Select(PointToWorldSpace);
-
-        public readonly IEnumerable<Plane> WorldPlanes
-        {
-            get
-            {
-                var tfm = Transform;
-                return LocalPlanes.Select(p => Plane.Transform(p, tfm));
-            }
         }
     }
 }

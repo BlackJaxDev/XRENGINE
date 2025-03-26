@@ -87,7 +87,7 @@ namespace XREngine.Scene
             ComponentAdded?.Invoke((this, item));
         }
 
-        private readonly EventList<XRComponent> _components = [];
+        private readonly EventList<XRComponent> _components = new() { ThreadSafe = true };
         private EventList<XRComponent> ComponentsInternal => _components;
 
         [YamlMember(Order = 0)]
@@ -172,11 +172,11 @@ namespace XREngine.Scene
                     break;
                 case nameof(World):
                     Transform.World = World;
-                    lock (Components)
-                    {
+                    //lock (Components)
+                    //{
                         foreach (var component in Components)
                             component.World = World;
-                    }
+                    //}
                     break;
                 case nameof(Transform):
                     if (_transform != null)
@@ -352,13 +352,9 @@ namespace XREngine.Scene
 
             if (flags.HasFlag(ETransformSetFlags.RetainCurrentChildren) && _transform is not null)
             {
-                var list = _transform.Children;
                 bool maintainWorldTransform = flags.HasFlag(ETransformSetFlags.RetainedChildrenMaintainWorldTransform);
-                lock (list)
-                {
-                    foreach (var child in list)
-                        transform.AddChild(child, maintainWorldTransform, true);
-                }
+                foreach (var child in _transform.Children)
+                    transform.AddChild(child, maintainWorldTransform, true);
             }
 
             Transform = transform;
@@ -551,10 +547,10 @@ namespace XREngine.Scene
         {
             using var t = Engine.Profiler.Start();
 
-            lock (Components)
-            {
+            //lock (Components)
+            //{
                 ComponentsInternal.Add(comp);
-            }
+            //}
 
             comp.Destroying += ComponentDestroying;
             comp.Destroyed += ComponentDestroyed;
@@ -610,10 +606,10 @@ namespace XREngine.Scene
             if (comp is null)
                 return;
 
-            lock (Components)
-            {
+            //lock (Components)
+            //{
                 ComponentsInternal.Remove(comp);
-            }
+            //}
             comp.Destroying -= ComponentDestroying;
             comp.Destroyed -= ComponentDestroyed;
             comp.Destroy();
@@ -629,10 +625,10 @@ namespace XREngine.Scene
             if (comp is null)
                 return;
 
-            lock (Components)
-            {
+            //lock (Components)
+            //{
                 ComponentsInternal.Remove(comp);
-            }
+            //}
             comp.Destroying -= ComponentDestroying;
             comp.Destroyed -= ComponentDestroyed;
             comp.Destroy();
@@ -647,10 +643,10 @@ namespace XREngine.Scene
             if (comp is not XRComponent xrComp)
                 return;
 
-            lock (Components)
-            {
+            //lock (Components)
+            //{
                 ComponentsInternal.Remove(xrComp);
-            }
+            //}
             xrComp.Destroying -= ComponentDestroying;
             xrComp.Destroyed -= ComponentDestroyed;
         }
@@ -662,10 +658,10 @@ namespace XREngine.Scene
         /// <returns></returns>
         public T1? GetComponent<T1>() where T1 : XRComponent
         {
-            lock (Components)
-            {
+            //lock (Components)
+            //{
                 return ComponentsInternal.FirstOrDefault(x => x is T1) as T1;
-            }
+            //}
         }
 
         /// <summary>
@@ -695,10 +691,10 @@ namespace XREngine.Scene
         /// <returns></returns>
         public T1? GetLastComponent<T1>() where T1 : XRComponent
         {
-            lock (Components)
-            {
+            //lock (Components)
+            //{
                 return ComponentsInternal.LastOrDefault(x => x is T1) as T1;
-            }
+            //}
         }
 
         /// <summary>
@@ -706,12 +702,12 @@ namespace XREngine.Scene
         /// </summary>
         /// <typeparam name="T1"></typeparam>
         /// <returns></returns>
-        public T1[] GetComponents<T1>() where T1 : XRComponent
+        public IEnumerable<T1> GetComponents<T1>() where T1 : XRComponent
         {
-            lock (Components)
-            {
-                return ComponentsInternal.OfType<T1>().ToArray();
-            }
+            //lock (Components)
+            //{
+                return ComponentsInternal.OfType<T1>();
+            //}
         }
 
         /// <summary>
@@ -721,18 +717,18 @@ namespace XREngine.Scene
         /// <returns></returns>
         public XRComponent? GetComponent(Type type)
         {
-            lock (Components)
-            {
+            //lock (Components)
+            //{
                 return ComponentsInternal.FirstOrDefault(type.IsInstanceOfType);
-            }
+            //}
         }
 
         public XRComponent? GetComponent(string typeName)
         {
-            lock (Components)
-            {
+            //lock (Components)
+            //{
                 return ComponentsInternal.FirstOrDefault(x => string.Equals(x.GetType().Name, typeName));
-            }
+            //}
         }
 
         /// <summary>
@@ -742,10 +738,10 @@ namespace XREngine.Scene
         /// <returns></returns>
         public XRComponent? GetComponentAtIndex(int index)
         {
-            lock (Components)
-            {
+            //lock (Components)
+            //{
                 return ComponentsInternal.ElementAtOrDefault(index);
-            }
+            //}
         }
 
         /// <summary>
@@ -755,10 +751,10 @@ namespace XREngine.Scene
         /// <returns></returns>
         public XRComponent? GetLastComponent(Type type)
         {
-            lock (Components)
-            {
+            //lock (Components)
+            //{
                 return ComponentsInternal.LastOrDefault(type.IsInstanceOfType);
-            }
+            //}
         }
 
         /// <summary>
@@ -766,12 +762,12 @@ namespace XREngine.Scene
         /// </summary>
         /// <param name="type"></param>
         /// <returns></returns>
-        public XRComponent[] GetComponents(Type type)
+        public IEnumerable<XRComponent> GetComponents(Type type)
         {
-            lock (Components)
-            {
-                return ComponentsInternal.Where(type.IsInstanceOfType).ToArray();
-            }
+            //lock (Components)
+            //{
+                return ComponentsInternal.Where(type.IsInstanceOfType);
+            //}
         }
 
         public XRComponent? this[Type type]
@@ -794,12 +790,14 @@ namespace XREngine.Scene
 
         private void ActivateComponents()
         {
-            foreach (XRComponent component in Components)
-                if (component.IsActive)
-                {
-                    component.VerifyInterfacesOnStart();
-                    component.OnComponentActivated();
-                }
+            foreach (XRComponent component in ComponentsInternal)
+            {
+                if (!component.IsActive)
+                    continue;
+                
+                component.VerifyInterfacesOnStart();
+                component.OnComponentActivated();
+            }
         }
 
         private void ActivateTransform()
@@ -808,8 +806,8 @@ namespace XREngine.Scene
                 return;
 
             _transform.OnSceneNodeActivated();
-            lock (_transform.Children)
-            {
+            //lock (_transform.Children)
+            //{
                 foreach (var child in _transform.Children)
                 {
                     var node = child?.SceneNode;
@@ -819,7 +817,7 @@ namespace XREngine.Scene
                     if (node.IsActiveSelf)
                         node.OnActivated();
                 }
-            }
+            //}
         }
 
         /// <summary>
@@ -834,14 +832,17 @@ namespace XREngine.Scene
 
         private void DeactivateComponents()
         {
-            foreach (XRComponent component in Components)
-                if (component.IsActive)
-                {
-                    component.OnComponentDeactivated();
-                    component.VerifyInterfacesOnStop();
-                    if (component.UnregisterTicksOnStop)
-                        ClearTicks();
-                }
+            foreach (XRComponent component in ComponentsInternal)
+            {
+                if (!component.IsActive)
+                    continue;
+                
+                component.OnComponentDeactivated();
+                component.VerifyInterfacesOnStop();
+
+                if (component.UnregisterTicksOnStop)
+                    ClearTicks();
+            }
         }
 
         private void DeactivateTransform()
@@ -851,8 +852,8 @@ namespace XREngine.Scene
 
             _transform.OnSceneNodeDeactivated();
             _transform.ClearTicks();
-            lock (_transform.Children)
-            {
+            //lock (_transform.Children)
+            //{
                 foreach (var child in _transform.Children)
                 {
                     var node = child?.SceneNode;
@@ -862,27 +863,40 @@ namespace XREngine.Scene
                     if (node.IsActiveSelf)
                         node.OnDeactivated();
                 }
-            }
+            //}
         }
 
+        /// <summary>
+        /// Iterates through all components attached to the scene node and calls the componentAction on each.
+        /// If iterateChildHierarchy is true, the method will also iterate through all child nodes and their components, recursively.
+        /// </summary>
+        /// <param name="componentAction"></param>
+        /// <param name="iterateChildHierarchy"></param>
         public void IterateComponents(Action<XRComponent> componentAction, bool iterateChildHierarchy)
         {
-            lock (Components)
-            {
+            //lock (Components)
+            //{
                 foreach (var component in ComponentsInternal)
                     componentAction(component);
-            }
+            //}
 
             if (!iterateChildHierarchy)
                 return;
 
-            lock (Transform.Children)
-            {
+            //lock (Transform.Children)
+            //{
                 foreach (var child in Transform.Children)
                     child?.SceneNode?.IterateComponents(componentAction, true);
-            }
+            //}
         }
 
+        /// <summary>
+        /// Iterates through all components *only of type T* that are attached to the scene node and calls the componentAction on each.
+        /// If iterateChildHierarchy is true, the method will also iterate through all child nodes and their components, recursively.
+        /// </summary>
+        /// <typeparam name="T"></typeparam>
+        /// <param name="componentAction"></param>
+        /// <param name="iterateChildHierarchy"></param>
         public void IterateComponents<T>(Action<T> componentAction, bool iterateChildHierarchy) where T : XRComponent
             => IterateComponents(c =>
             {
@@ -890,55 +904,100 @@ namespace XREngine.Scene
                     componentAction(t);
             }, iterateChildHierarchy);
 
+        /// <summary>
+        /// Iterates through all components of type T attached to the scene node and calls the componentAction on each.
+        /// </summary>
+        /// <param name="nodeAction"></param>
         public void IterateHierarchy(Action<SceneNode> nodeAction)
         {
             nodeAction(this);
 
-            lock (Transform.Children)
-            {
+            //lock (Transform.Children)
+            //{
                 foreach (var child in Transform.Children)
                     child?.SceneNode?.IterateHierarchy(nodeAction);
-            }
+            //}
         }
 
+        /// <summary>
+        /// Returns true if the scene node has a component of the given type attached to it.
+        /// </summary>
+        /// <param name="requiredType"></param>
+        /// <returns></returns>
         public bool HasComponent(Type requiredType)
         {
-            lock (Components)
-            {
+            //lock (Components)
+            //{
                 return ComponentsInternal.Any(requiredType.IsInstanceOfType);
-            }
+            //}
         }
 
+        /// <summary>
+        /// Returns true if the scene node has a component of type T attached to it.
+        /// </summary>
+        /// <typeparam name="T"></typeparam>
+        /// <returns></returns>
         public bool HasComponent<T>() where T : XRComponent
         {
-            lock (Components)
-            {
+            //lock (Components)
+            //{
                 return ComponentsInternal.Any(x => x is T);
-            }
+            //}
         }
 
+        /// <summary>
+        /// Attempts to retrieve the first component of the given type attached to the scene node.
+        /// </summary>
+        /// <param name="type"></param>
+        /// <param name="comp"></param>
+        /// <returns></returns>
         public bool TryGetComponent(Type type, out XRComponent? comp)
         {
             comp = GetComponent(type);
             return comp != null;
         }
+
+        /// <summary>
+        /// Attempts to retrieve the first component of type T attached to the scene node.
+        /// </summary>
+        /// <typeparam name="T"></typeparam>
+        /// <param name="comp"></param>
+        /// <returns></returns>
         public bool TryGetComponent<T>(out T? comp) where T : XRComponent
         {
             comp = GetComponent<T>();
             return comp != null;
         }
 
-        public bool TryGetComponents(Type type, out XRComponent[] comps)
+        /// <summary>
+        /// Attempts to retrieve all components of the given type attached to the scene node.
+        /// </summary>
+        /// <param name="type"></param>
+        /// <param name="comps"></param>
+        /// <returns></returns>
+        public bool TryGetComponents(Type type, out IEnumerable<XRComponent> comps)
         {
             comps = GetComponents(type);
-            return comps.Length > 0;
-        }
-        public bool TryGetComponents<T>(out T[] comps) where T : XRComponent
-        {
-            comps = GetComponents<T>();
-            return comps.Length > 0;
+            return comps.Any();
         }
 
+        /// <summary>
+        /// Attempts to retrieve all components of type T attached to the scene node.
+        /// </summary>
+        /// <typeparam name="T"></typeparam>
+        /// <param name="comps"></param>
+        /// <returns></returns>
+        public bool TryGetComponents<T>(out IEnumerable<T> comps) where T : XRComponent
+        {
+            comps = GetComponents<T>();
+            return comps.Any();
+        }
+
+        /// <summary>
+        /// Returns a string representation of the scene node and its children.
+        /// </summary>
+        /// <param name="depth"></param>
+        /// <returns></returns>
         public string PrintTree(int depth = 0)
         {
             string d = new(' ', depth++);
@@ -953,46 +1012,79 @@ namespace XREngine.Scene
         }
 
         public delegate bool DelFindDescendant(string fullPath, string nodeName);
+
+        /// <summary>
+        /// Finds the first descendant of the scene node that has a name that matches the given name.
+        /// </summary>
+        /// <param name="name"></param>
+        /// <param name="comp"></param>
+        /// <returns></returns>
         public SceneNode? FindDescendantByName(string name, StringComparison comp = StringComparison.Ordinal)
             => FindDescendant((fullPath, nodeName) => string.Equals(name, nodeName, comp));
+
+        /// <summary>
+        /// Finds the first descendant of the scene node that has a path that matches the given path.
+        /// pathSplitter is the character that separates the names in the path, and should be the same as the character used for splitting names in the path parameter.
+        /// </summary>
+        /// <param name="path"></param>
+        /// <param name="pathSplitter"></param>
+        /// <returns></returns>
         public SceneNode? FindDescendant(string path, string pathSplitter = "/")
-            => FindDescendant(path, (fullPath, nodeName) => fullPath == nodeName, pathSplitter);
+            => FindDescendantInternal(path, (fullPath, nodeName) => fullPath == path, pathSplitter);
+
+        /// <summary>
+        /// Finds the first descendant of the scene node that matches the given comparer.
+        /// pathSplitter is the character that will be used to separate names in the path.
+        /// </summary>
+        /// <param name="comparer"></param>
+        /// <param name="pathSplitter"></param>
+        /// <returns></returns>
         public SceneNode? FindDescendant(DelFindDescendant comparer, string pathSplitter = "/")
-            => FindDescendant(Name ?? string.Empty, comparer, pathSplitter);
-        private SceneNode? FindDescendant(string fullPath, DelFindDescendant comparer, string pathSplitter)
+            => FindDescendantInternal(Name ?? string.Empty, comparer, pathSplitter);
+
+        /// <summary>
+        /// Finds the first descendant of the scene node that matches the given comparer.
+        /// fullPath is the path of the current node in the hierarchy recursion.
+        /// pathSplitter is the character that will be used to separate names in the path.
+        /// </summary>
+        /// <param name="fullPath"></param>
+        /// <param name="comparer"></param>
+        /// <param name="pathSplitter"></param>
+        /// <returns></returns>
+        private SceneNode? FindDescendantInternal(string fullPath, DelFindDescendant comparer, string pathSplitter)
         {
             string name = Name ?? string.Empty;
             if (comparer(fullPath, name))
                 return this;
             fullPath += $"{pathSplitter}{name}";
-            lock (Transform.Children)
-            {
+            //lock (Transform.Children)
+            //{
                 foreach (var child in Transform.Children)
                     if (child?.SceneNode is SceneNode node)
-                        if (node.FindDescendant(fullPath, comparer, pathSplitter) is SceneNode found)
+                        if (node.FindDescendantInternal(fullPath, comparer, pathSplitter) is SceneNode found)
                             return found;
-            }
+            //}
             return null;
         }
         public SceneNode? FindDescendant(Func<TransformBase, bool> predicate)
         {
             if (predicate(Transform))
                 return this;
-            lock (Transform.Children)
-            {
+            //lock (Transform.Children)
+            //{
                 foreach (var child in Transform.Children)
                     if (child?.SceneNode is SceneNode node)
                         if (node.FindDescendant(predicate) is SceneNode found)
                             return found;
-            }
+            //}
             return null;
         }
 
         public SceneNode?[] FindDescendants(params Func<TransformBase, bool>[] predicates)
         {
             SceneNode?[] nodes = new SceneNode?[predicates.Length];
-            lock (Transform.Children)
-            {
+            //lock (Transform.Children)
+            //{
                 foreach (var child in Transform.Children)
                     if (child?.SceneNode is SceneNode node)
                     {
@@ -1007,7 +1099,7 @@ namespace XREngine.Scene
                         else
                             break;
                     }
-            }
+            //}
             return nodes;
         }
 

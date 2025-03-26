@@ -185,6 +185,15 @@ namespace XREngine.Rendering
             public void OnDeserialization(object? sender) => ((IDeserializationCallback)_buffers).OnDeserialization(sender);
             IEnumerator<KeyValuePair<string, XRDataBuffer>> IEnumerable<KeyValuePair<string, XRDataBuffer>>.GetEnumerator() => ((IEnumerable<KeyValuePair<string, XRDataBuffer>>)_buffers).GetEnumerator();
             IEnumerator IEnumerable.GetEnumerator() => ((IEnumerable)_buffers).GetEnumerator();
+
+            public BufferCollection Clone()
+            {
+                BufferCollection clone = [];
+                foreach (KeyValuePair<string, XRDataBuffer> kvp in _buffers)
+                    clone.Add(kvp.Key, kvp.Value.Clone(true, kvp.Value.Target));
+                return clone;
+            }
+
             public EventDictionary<string, XRDataBuffer> Buffers
             {
                 get => _buffers;

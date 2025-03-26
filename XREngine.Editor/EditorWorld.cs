@@ -68,8 +68,9 @@ public static class EditorWorld
     public const bool Microphone = true; //Adds a microphone to the scene for testing audio capture.
     public const bool VMC = false; //Adds a VMC capture component to the avatar for testing.
     public const bool FaceMotion3D = false; //Adds a face motion 3D capture component to the avatar for testing.
-    public const bool AnimationClipVMD = false; //Imports a VMD animation clip for testing.
+    public const bool AnimationClipVMD = true; //Imports a VMD animation clip for testing.
     public const bool LipSync = true; //Adds a lip sync component to the avatar for testing.
+    public const bool AttachMicToAnimatedModel = true; //If true, the microphone output will be attached to the animated model instead of the flying camera.
 
     private static readonly Queue<float> _fpsAvg = new();
     private static void TickFPS(UITextComponent t)
@@ -163,31 +164,33 @@ public static class EditorWorld
             //Find breast bone
             if (chest is not null)
             {
-                var earR = chest.FindChild(x => (x.Name?.Contains("KittenEarR", StringComparison.InvariantCultureIgnoreCase) ?? false));
-                if (earR?.SceneNode is not null)
-                {
-                    var phys = earR.SceneNode.AddComponent<PhysicsChainComponent>()!;
-                    phys.UpdateMode = PhysicsChainComponent.EUpdateMode.Normal;
-                    phys.UpdateRate = 60;
-                    phys.Damping = 0.1f;
-                    phys.Inert = 0.0f;
-                    phys.Stiffness = 0.05f;
-                    phys.Force = new Vector3(0.0f, 0.0f, 0.0f);
-                    phys.Elasticity = 0.2f;
-                }
+                //var earR = chest.FindChild(x => (x.Name?.Contains("KittenEarR", StringComparison.InvariantCultureIgnoreCase) ?? false));
+                //if (earR?.SceneNode is not null)
+                //{
+                //    var phys = earR.SceneNode.AddComponent<PhysicsChainComponent>()!;
+                //    phys.UpdateMode = PhysicsChainComponent.EUpdateMode.Normal;
+                //    phys.UpdateRate = 60;
+                //    phys.Damping = 0.1f;
+                //    phys.Inert = 0.0f;
+                //    phys.Stiffness = 0.05f;
+                //    phys.Force = new Vector3(0.0f, 0.0f, 0.0f);
+                //    phys.Elasticity = 0.2f;
+                //    phys.Multithread = false;
+                //}
 
-                var earL = chest.FindChild(x => (x.Name?.Contains("KittenEarL", StringComparison.InvariantCultureIgnoreCase) ?? false));
-                if (earL?.SceneNode is not null)
-                {
-                    var phys = earL.SceneNode.AddComponent<PhysicsChainComponent>()!;
-                    phys.UpdateMode = PhysicsChainComponent.EUpdateMode.Normal;
-                    phys.UpdateRate = 60;
-                    phys.Damping = 0.1f;
-                    phys.Inert = 0.0f;
-                    phys.Stiffness = 0.05f;
-                    phys.Force = new Vector3(0.0f, 0.0f, 0.0f);
-                    phys.Elasticity = 0.2f;
-                }
+                //var earL = chest.FindChild(x => (x.Name?.Contains("KittenEarL", StringComparison.InvariantCultureIgnoreCase) ?? false));
+                //if (earL?.SceneNode is not null)
+                //{
+                //    var phys = earL.SceneNode.AddComponent<PhysicsChainComponent>()!;
+                //    phys.UpdateMode = PhysicsChainComponent.EUpdateMode.Normal;
+                //    phys.UpdateRate = 60;
+                //    phys.Damping = 0.1f;
+                //    phys.Inert = 0.0f;
+                //    phys.Stiffness = 0.05f;
+                //    phys.Force = new Vector3(0.0f, 0.0f, 0.0f);
+                //    phys.Elasticity = 0.2f;
+                //    phys.Multithread = false;
+                //}
 
                 var breastL = chest.FindChild(x =>(x.Name?.Contains("BreastUpper2_LRoot", StringComparison.InvariantCultureIgnoreCase) ?? false));
                 if (breastL?.SceneNode is not null)
@@ -200,6 +203,7 @@ public static class EditorWorld
                     phys.Stiffness = 0.05f;
                     phys.Force = new Vector3(0.0f, 0.0f, 0.0f);
                     phys.Elasticity = 0.2f;
+                    phys.Multithread = false;
                 }
 
                 var breastR = chest.FindChild(x => (x.Name?.Contains("BreastUpper2_RRoot", StringComparison.InvariantCultureIgnoreCase) ?? false));
@@ -213,33 +217,37 @@ public static class EditorWorld
                     phys.Stiffness = 0.05f;
                     phys.Force = new Vector3(0.0f, 0.0f, 0.0f);
                     phys.Elasticity = 0.2f;
+                    phys.Multithread = false;
                 }
 
-                var tail = humanComp.Hips?.Node?.Transform.FindChild(x => x.Name?.Contains("Hair_1_2", StringComparison.InvariantCultureIgnoreCase) ?? false);
+                var tail = humanComp.Hips?.Node?.Transform.FindChild(x => x.Name?.Contains("Hair_1_1", StringComparison.InvariantCultureIgnoreCase) ?? false);
                 if (tail?.SceneNode is not null)
                 {
                     var phys = tail.SceneNode.AddComponent<PhysicsChainComponent>()!;
                     phys.UpdateMode = PhysicsChainComponent.EUpdateMode.Normal;
                     phys.UpdateRate = 60;
-                    phys.Damping = 0.01f;
+                    phys.Damping = 0.1f;
                     phys.Inert = 0.0f;
-                    phys.Stiffness = 0.0f;
-                    phys.Force = new Vector3(0.0f, 0.0f, 0.0f);
-                    phys.Elasticity = 0.05f;
+                    phys.Stiffness = 0.05f;
+                    phys.Gravity = new Vector3(0.0f, -10.0f, 0.0f);
+                    phys.Elasticity = 0.2f;
+                    phys.Multithread = false;
                 }
 
                 var longHair = humanComp.Head?.Node?.Transform.FindChild(x => x.Name?.Contains("Long Hair", StringComparison.InvariantCultureIgnoreCase) ?? false);
-                if (longHair?.SceneNode is not null)
-                {
-                    var phys = longHair.SceneNode.AddComponent<PhysicsChainComponent>()!;
-                    phys.UpdateMode = PhysicsChainComponent.EUpdateMode.Default;
-                    phys.UpdateRate = 60;
-                    phys.Damping = 0.7f;
-                    phys.Inert = 0.1f;
-                    phys.Stiffness = 0.2f;
-                    phys.Force = new Vector3(0.0f, -0.6f, 0.0f);
-                    phys.Elasticity = 0.01f;
-                }
+                longHair!.SceneNode!.IsActiveSelf = false;
+                //if (longHair?.SceneNode is not null)
+                //{
+                //    var phys = longHair.SceneNode.AddComponent<PhysicsChainComponent>()!;
+                //    phys.UpdateMode = PhysicsChainComponent.EUpdateMode.Default;
+                //    phys.UpdateRate = 60;
+                //    phys.Damping = 1.0f;
+                //    phys.Inert = 0.0f;
+                //    phys.Stiffness = 0.0f;
+                //    phys.Gravity = new Vector3(0.0f, -0.1f, 0.0f);
+                //    phys.Elasticity = 0.001f;
+                //    phys.Multithread = false;
+                //}
 
                 //var zafHair = humanComp.Head?.Node?.Transform.FindChild(x => x.Name?.Contains("Zaf Hair", StringComparison.InvariantCultureIgnoreCase) ?? false);
                 //if (zafHair?.SceneNode is not null)
@@ -295,21 +303,32 @@ public static class EditorWorld
             }
         }
 
-        if (LipSync)
+        OVRLipSyncComponent? lipSync = null;
+        if (AttachMicToAnimatedModel)
         {
-            var lipSyncOnPawn = Engine.State.MainPlayer.ControlledPawn?.SceneNode?.GetComponent<OVRLipSyncComponent>();
-            if (lipSyncOnPawn is not null)
+            var headNode = humanComp!.Head?.Node?.Transform?.SceneNode;
+            if (headNode is not null)
+                AttachMicTo(headNode, out _, out _, out lipSync);
+        }
+        else if (LipSync)
+            lipSync = Engine.State.MainPlayer.ControlledPawn?.SceneNode?.GetComponent<OVRLipSyncComponent>();
+        
+        if (lipSync is not null)
+        {
+            var face = rootNode.FindDescendantByName("Face", StringComparison.InvariantCultureIgnoreCase);
+            if (face is not null)
             {
-                var desc = rootNode.FindDescendantByName("Face", StringComparison.InvariantCultureIgnoreCase);
-                if (desc is not null)
+                if (face.TryGetComponent<ModelComponent>(out var comp))
+                    lipSync.ModelComponent = comp;
+                else
                 {
+                    face.ComponentAdded += SetModel;
                     void SetModel((SceneNode node, XRComponent comp) x)
                     {
                         if (x.comp is ModelComponent model)
-                            lipSyncOnPawn.ModelComponent = model;
-                        desc.ComponentAdded -= SetModel;
+                            lipSync.ModelComponent = model;
+                        face.ComponentAdded -= SetModel;
                     }
-                    desc.ComponentAdded += SetModel;
                 }
             }
         }
@@ -636,24 +655,9 @@ public static class EditorWorld
             listener.SpeedOfSound = 343.3f;
         }
 
-        if (!(VRPawn && AllowEditingInVR) && Microphone)
-        {
-            var audioSource = cameraNode.AddComponent<AudioSourceComponent>()!;
-            audioSource.Loop = false;
-            audioSource.Pitch = 1.0f;
-
-            var microphone = cameraNode.AddComponent<MicrophoneComponent>()!;
-            microphone.Capture = true;//!isServer;
-            microphone.Receive = true;//isServer;
-            microphone.Loopback = false; //For testing, set to true to hear your own voice, unless both capture and receive are true on the client.
-
-            if (LipSync)
-            {
-                var lipSync = cameraNode.AddComponent<OVRLipSyncComponent>()!;
-                lipSync.VisemeNamePrefix = "vrc.v_";
-            }
-        }
-
+        if (!(VRPawn && AllowEditingInVR) && Microphone && !(AnimatedModel && AttachMicToAnimatedModel))
+            AttachMicTo(cameraNode, out _, out _, out _);
+        
         PawnComponent pawnComp;
         if (flyable)
         {
@@ -668,6 +672,28 @@ public static class EditorWorld
 
         pawnComp.EnqueuePossessionByLocalPlayer(ELocalPlayerIndex.One);
         return pawnComp;
+    }
+
+    private static void AttachMicTo(SceneNode node, out AudioSourceComponent source, out MicrophoneComponent mic, out OVRLipSyncComponent lipSync)
+    {
+        source = node.AddComponent<AudioSourceComponent>()!;
+        source.Loop = false;
+        source.Pitch = 1.0f;
+        source.IsDirectional = false;
+        source.ConeInnerAngle = 0.0f;
+        source.ConeOuterAngle = 90.0f;
+        source.ConeOuterGain = 1.0f;
+
+        mic = node.AddComponent<MicrophoneComponent>()!;
+        mic.Capture = true;//!isServer;
+        mic.Receive = true;//isServer;
+        mic.Loopback = false; //For testing, set to true to hear your own voice, unless both capture and receive are true on the client.
+
+        if (LipSync)
+        {
+            lipSync = node.AddComponent<OVRLipSyncComponent>()!;
+            lipSync.VisemeNamePrefix = "vrc.v_";
+        }
     }
 
     private static SceneNode CreateDesktopCharacterPawn(SceneNode rootNode, bool setUI)

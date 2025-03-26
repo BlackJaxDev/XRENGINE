@@ -391,8 +391,8 @@ namespace XREngine.Rendering.UI
         /// <returns></returns>
         public override float GetMaxChildWidth()
         {
-            lock (Children)
-            {
+            //lock (Children)
+            //{
                 var children = Children.
                     Where(x => x is UIBoundableTransform b && !b.IsCollapsed && !b.ExcludeFromParentAutoCalcWidth).
                     Cast<UIBoundableTransform>();
@@ -403,7 +403,7 @@ namespace XREngine.Rendering.UI
                     maxWidth = Math.Max(maxWidth, width);
                 }
                 return maxWidth;
-            }
+            //}
         }
 
         /// <summary>
@@ -412,8 +412,8 @@ namespace XREngine.Rendering.UI
         /// <returns></returns>
         public override float GetMaxChildHeight()
         {
-            lock (Children)
-            {
+            //lock (Children)
+            //{
                 var children = Children.
                     Where(x => x is UIBoundableTransform b && !b.IsCollapsed && !b.ExcludeFromParentAutoCalcHeight).
                     Cast<UIBoundableTransform>();
@@ -424,7 +424,7 @@ namespace XREngine.Rendering.UI
                     maxHeight = Math.Max(maxHeight, height);
                 }
                 return maxHeight;
-            }
+            //}
         }
 
         private void ClampSize(ref Vector2 size)
@@ -587,8 +587,8 @@ namespace XREngine.Rendering.UI
         {
             try
             {
-                lock (Children)
-                {
+                //lock (Children)
+                //{
                     foreach (var c in Children)
                     {
                         if (c is not UIBoundableTransform uiComp)
@@ -598,7 +598,7 @@ namespace XREngine.Rendering.UI
                         if (comp != null)
                             return comp;
                     }
-                }
+                //}
             }
             catch (Exception ex)
             {
@@ -624,12 +624,12 @@ namespace XREngine.Rendering.UI
         {
             try
             {
-                lock (Children)
-                {
+                //lock (Children)
+                //{
                     foreach (var c in Children)
                         if (c is UIBoundableTransform uiTfm)
                             uiTfm.FindAllIntersecting(worldPoint, true, results);
-                }
+                //}
             }
             catch// (Exception ex)
             {

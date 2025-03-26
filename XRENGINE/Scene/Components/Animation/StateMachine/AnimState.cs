@@ -24,14 +24,14 @@ namespace XREngine.Components
             {
                 if (_transitions != null)
                 {
-                    _transitions.PostAnythingAdded -= _transitions_PostAnythingAdded;
-                    _transitions.PostAnythingRemoved -= _transitions_PostAnythingRemoved;
+                    _transitions.PostAnythingAdded -= Transitions_PostAnythingAdded;
+                    _transitions.PostAnythingRemoved -= Transitions_PostAnythingRemoved;
                 }
                 _transitions = value ?? [];
-                _transitions.PostAnythingAdded += _transitions_PostAnythingAdded;
-                _transitions.PostAnythingRemoved += _transitions_PostAnythingRemoved;
+                _transitions.PostAnythingAdded += Transitions_PostAnythingAdded;
+                _transitions.PostAnythingRemoved += Transitions_PostAnythingRemoved;
                 foreach (AnimStateTransition transition in _transitions)
-                    _transitions_PostAnythingAdded(transition);
+                    Transitions_PostAnythingAdded(transition);
             }
         }
 
@@ -78,11 +78,11 @@ namespace XREngine.Components
         /// <summary>
         /// Attempts to find any transitions that evaluate to true and returns the one with the highest priority.
         /// </summary>
-        public AnimStateTransition TryTransition()
+        public AnimStateTransition? TryTransition()
         {
             AnimStateTransition[] transitions =
                 [.. Transitions.
-                FindAll(x => x.Condition()).
+                FindAll(x => x.Condition?.Invoke() ?? false).
                 OrderBy(x => x.Priority)];
 
             return transitions.Length > 0 ? transitions[0] : null;
@@ -91,7 +91,7 @@ namespace XREngine.Components
         {
             Animation?.Tick(delta);
         }
-        public HumanoidPose GetFrame()
+        public HumanoidPose? GetFrame()
         {
             return Animation?.GetPose();
         }
@@ -103,12 +103,12 @@ namespace XREngine.Components
         {
 
         }
-        private void _transitions_PostAnythingRemoved(AnimStateTransition item)
+        private void Transitions_PostAnythingRemoved(AnimStateTransition item)
         {
             if (item.Owner == this)
                 item.Owner = null;
         }
-        private void _transitions_PostAnythingAdded(AnimStateTransition item)
+        private void Transitions_PostAnythingAdded(AnimStateTransition item)
         {
             item.Owner = this;
         }

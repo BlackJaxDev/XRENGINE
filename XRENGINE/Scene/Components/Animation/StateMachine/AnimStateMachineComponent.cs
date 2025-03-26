@@ -7,27 +7,53 @@ namespace XREngine.Components
 {
     public class AnimStateMachineComponent : XRComponent
     {
-        internal int InitialStateIndex { get; set; } = -1;
+        private int _initialStateIndex = -1;
+        public int InitialStateIndex
+        {
+            get => _initialStateIndex;
+            set => SetField(ref _initialStateIndex, value);
+        }
 
-        public HumanoidComponent? Skeleton { get; set; }
+        private HumanoidComponent? _skeleton;
+        public HumanoidComponent? Skeleton
+        {
+            get => _skeleton;
+            set => SetField(ref _skeleton, value);
+        }
 
+        private EventList<AnimState> _states;
         public EventList<AnimState> States
         {
             get => _states;
             set => SetField(ref _states, value, UnlinkStates, LinkStates);
         }
 
-        internal ConcurrentDictionary<string, SkeletalAnimation> AnimationTable { get; set; }
+        private ConcurrentDictionary<string, SkeletalAnimation> _animationTable = new();
+        public ConcurrentDictionary<string, SkeletalAnimation> AnimationTable
+        {
+            get => _animationTable;
+            set => SetField(ref _animationTable, value);
+        }
 
-        public AnimState InitialState
+        private BlendManager? _blendManager;
+        public AnimState? InitialState
         {
             get => States.IndexInRange(InitialStateIndex) ? States[InitialStateIndex] : null;
             set
             {
+                if (value == null)
+                {
+                    if (States.IndexInRange(InitialStateIndex))
+                        States.RemoveAt(InitialStateIndex);
+                    InitialStateIndex = -1;
+                    return;
+                }
+
                 bool wasNull = !States.IndexInRange(InitialStateIndex);
-                int index = States.IndexOf(value);
-                if (index >= 0)
-                    InitialStateIndex = index;
+
+                int newIndex = States.IndexOf(value);
+                if (newIndex >= 0)
+                    InitialStateIndex = newIndex;
                 else if (value != null)
                 {
                     InitialStateIndex = States.Count;
@@ -36,50 +62,56 @@ namespace XREngine.Components
                 else
                     InitialStateIndex = -1;
 
-                if (wasNull && IsActiveInHierarchy && States.IndexInRange(InitialStateIndex))
+                if (!wasNull || !IsActiveInHierarchy)
+                    return;
+                
+                var initialState = InitialState;
+                if (initialState != null)
                 {
-                    _blendManager = new BlendManager(InitialState);
+                    _blendManager = new BlendManager(initialState);
                     RegisterTick(ETickGroup.PrePhysics, (int)ETickOrder.Animation, Tick);
                 }
             }
         }
 
-        private EventList<AnimState> _states;
-        private BlendManager? _blendManager;
-
         public AnimStateMachineComponent()
         {
             InitialStateIndex = -1;
-            States = [];
+            _states = [];
             Skeleton = null;
         }
         public AnimStateMachineComponent(HumanoidComponent skeleton)
         {
             InitialStateIndex = -1;
-            States = [];
+            _states = [];
             Skeleton = skeleton;
         }
+
         protected internal override void OnComponentActivated()
         {
             base.OnComponentActivated();
 
-            if (!States.IndexInRange(InitialStateIndex))
-                return;
-
-            _blendManager = new BlendManager(InitialState);
-            RegisterTick(ETickGroup.Normal, ETickOrder.Animation, Tick);
+            var initialState = InitialState;
+            if (initialState != null)
+            {
+                _blendManager = new BlendManager(initialState);
+                RegisterTick(ETickGroup.Normal, ETickOrder.Animation, Tick);
+            }
         }
         protected internal override void OnComponentDeactivated()
         {
             base.OnComponentDeactivated();
-            if (!States.IndexInRange(InitialStateIndex))
-                return;
-            UnregisterTick(ETickGroup.Normal, ETickOrder.Animation, Tick);
             _blendManager = null;
         }
 
         protected internal void Tick()
-            => _blendManager?.Tick(Engine.Delta, States, Skeleton);
+        {
+            var skeleton = Skeleton;
+            if (skeleton is null)
+                return;
+
+            _blendManager?.Tick(Engine.Delta, States, skeleton);
+        }
 
         private void LinkStates(EventList<AnimState> states)
         {

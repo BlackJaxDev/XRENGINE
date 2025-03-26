@@ -15,28 +15,28 @@ public partial class PhysicsChainComponent
         public Vector3 LocalGravity
         {
             get => _localGravity;
-            set => SetField(ref _localGravity, value);
+            set => SetFieldUnchecked(ref _localGravity, value);
         }
 
         private float _boneTotalLength;
         public float BoneTotalLength
         {
             get => _boneTotalLength;
-            set => SetField(ref _boneTotalLength, value);
+            set => SetFieldUnchecked(ref _boneTotalLength, value);
         }
 
         private List<Particle> _particles = [];
         public List<Particle> Particles
         {
             get => _particles;
-            set => SetField(ref _particles, value);
+            set => SetFieldUnchecked(ref _particles, value);
         }
 
         private Vector3 _restGravity;
         public Vector3 RestGravity
         {
             get => _restGravity;
-            set => SetField(ref _restGravity, value);
+            set => SetFieldUnchecked(ref _restGravity, value);
         }
     }
 }

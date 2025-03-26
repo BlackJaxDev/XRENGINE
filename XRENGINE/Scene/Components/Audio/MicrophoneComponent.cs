@@ -135,11 +135,14 @@ namespace XREngine.Components.Scene
                 case nameof(BufferMs):
                 case nameof(SampleRate):
                 case nameof(Capture):
-                //case nameof(Bits):
-                    if (IsCapturing && Capture)
-                        StartCapture();
-                    else
-                        StopCapture();
+                    //case nameof(Bits):
+                    if (IsActiveInHierarchy)
+                    {
+                        if (IsCapturing && Capture)
+                            StartCapture();
+                        else
+                            StopCapture();
+                    }
                     break;
             }
         }
@@ -163,9 +166,10 @@ namespace XREngine.Components.Scene
                 WaveFormat = new WaveFormat(SampleRate, _bitsPerSample, channels: 1),
                 BufferMilliseconds = BufferMs
             };
-            //Allocate 100 ms worth of buffer space
+
+            //((Samples / 1 Second) * (Bits / 1 Sample) / 8) * (BufferMs / 1000) = bytes per second * seconds = bytes
             int bufferSize = SampleRate * _bitsPerSample / 8 * BufferMs / 1000;
-            //Explanation: ((Samples / 1 Second) * (Bits / 1 Sample) / 8) * (BufferMs / 1000) = bytes per second * seconds = bytes
+
             _currentBuffer = new byte[bufferSize];
             _waveIn.DataAvailable += WaveIn_DataAvailable;
             _waveIn.StartRecording();
@@ -281,7 +285,7 @@ namespace XREngine.Components.Scene
 
         private void ReplicateCurrentBuffer()
         {
-            Denoise(ref _currentBuffer);
+            //Denoise(ref _currentBuffer);
 
             if (!VerifyLowerCutoff())
                 return;
@@ -292,7 +296,7 @@ namespace XREngine.Components.Scene
                 EnqueueDataReplication(nameof(_currentBuffer), _currentBuffer.ToArray(), CompressOverNetwork, false);
         }
 
-        private float _smoothingFactor = 0.5f; // Default value of 0.5 (50% smoothing)
+        private float _smoothingFactor = 1.0f; // Default value of 0.5 (50% smoothing)
         /// <summary>
         /// Controls the strength of the noise reduction filter. 
         /// Range is 0.0 to 1.0, where 0.0 is no smoothing and 1.0 is maximum smoothing.
@@ -406,7 +410,7 @@ namespace XREngine.Components.Scene
             }
         }
 
-        public override void ReceiveData(string id, object data)
+        public override void ReceiveData(string id, object? data)
         {
             switch (id)
             {

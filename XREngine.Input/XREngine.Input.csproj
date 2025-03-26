@@ -41,7 +41,7 @@
     <PackageReference Include="Silk.NET.Input.Extensions" Version="2.22.0" />
     <PackageReference Include="Silk.NET.Input.Glfw" Version="2.22.0" />
     <PackageReference Include="SixLabors.ImageSharp" Version="3.1.7" />
-    <PackageReference Include="System.Text.Json" Version="9.0.2" />
+    <PackageReference Include="System.Text.Json" Version="9.0.3" />
   </ItemGroup>
 
   <ItemGroup>

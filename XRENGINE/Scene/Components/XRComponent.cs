@@ -98,8 +98,8 @@ namespace XREngine.Components
         /// </summary>
         /// <typeparam name="T"></typeparam>
         /// <returns></returns>
-        public T[] GetSiblingComponents<T>() where T : XRComponent
-            => [.. SceneNode.GetComponents<T>().Where(x => x != this)];
+        public IEnumerable<T> GetSiblingComponents<T>() where T : XRComponent
+            => SceneNode.GetComponents<T>().Where(x => x != this);
 
 #pragma warning disable IDE0051 // Remove unused private members
         private void ConstructionSetSceneNode(SceneNode node)
@@ -227,7 +227,7 @@ namespace XREngine.Components
             switch (propName)
             {
                 case nameof(IsActive):
-                    if (IsActive)
+                    if (IsActiveInHierarchy)
                     {
                         VerifyInterfacesOnStart();
                         OnComponentActivated();

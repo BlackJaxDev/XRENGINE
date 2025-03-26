@@ -52,8 +52,8 @@ namespace XREngine.Rendering.UI
 
         protected override void OnResizeChildComponents(BoundingRectangleF parentRegion)
         {
-            lock (Children)
-            {
+            //lock (Children)
+            //{
                 for (int i = 0; i < Children.Count; i++)
                 {
                     if (Children[i] is not UITransform child)
@@ -69,7 +69,7 @@ namespace XREngine.Rendering.UI
                         child.Visibility = EVisibility.Collapsed;
                     }
                 }
-            }
+            //}
         }
     }
     /// <summary>
