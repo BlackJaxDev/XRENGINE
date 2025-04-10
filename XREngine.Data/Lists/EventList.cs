@@ -47,7 +47,7 @@ namespace System.Collections.Generic
         public bool ThreadSafe
         {
             get => _lock != null;
-            set => _lock = /*value ? new ReaderWriterLockSlim() :*/ null;
+            set => _lock = value ? new ReaderWriterLockSlim(LockRecursionPolicy.SupportsRecursion) : null;
         }
 
         public delegate void SingleHandler(T item);

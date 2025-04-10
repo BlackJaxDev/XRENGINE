@@ -10,8 +10,8 @@ namespace XREngine.Scene.Components.Animation
     {
         public HumanoidComponent Humanoid => GetSiblingComponent<HumanoidComponent>(true)!;
 
-        public IKSolverLimb _leftFoot = new(ELimbEndEffector.LeftFoot) { /*_bendModifier = ELimbBendModifier.Target*/ };
-        public IKSolverLimb _rightFoot = new(ELimbEndEffector.RightFoot) { /*_bendModifier = ELimbBendModifier.Target*/ };
+        public IKSolverLimb _leftFoot = new(ELimbEndEffector.LeftFoot) { _bendModifier = ELimbBendModifier.Target };
+        public IKSolverLimb _rightFoot = new(ELimbEndEffector.RightFoot) { _bendModifier = ELimbBendModifier.Target };
         public IKSolverLimb _leftHand = new(ELimbEndEffector.LeftHand) { _bendModifier = ELimbBendModifier.Arm };
         public IKSolverLimb _rightHand = new(ELimbEndEffector.RightHand) { _bendModifier = ELimbBendModifier.Arm };
         public IKSolverFABRIK _spine = new();

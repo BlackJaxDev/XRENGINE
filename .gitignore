@@ -17,10 +17,6 @@
 mono_crash.*
 
 # Build results
-[Dd]ebug/
-[Dd]ebugPublic/
-[Rr]elease/
-[Rr]eleases/
 x64/
 x86/
 [Ww][Ii][Nn]32/
@@ -362,3 +358,7 @@ MigrationBackup/
 # Fody - auto-generated XML schema
 FodyWeavers.xsd
 Build/CommonAssets/Fonts/*/*.png
+Build/Editor/Debug/
+Build/Engine/Debug/
+Build/Editor/Release/
+Build/Engine/Release/

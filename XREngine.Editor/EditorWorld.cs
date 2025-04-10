@@ -1,4 +1,5 @@
 ﻿using Assimp;
+using Extensions;
 using MagicPhysX;
 using Silk.NET.Input;
 using Silk.NET.OpenAL;
@@ -74,7 +75,7 @@ public static class EditorWorld
     //Models
     public const bool StaticModel = false; //Imports a scene model to be rendered.
     public const bool AnimatedModel = true; //Imports a character model to be animated.
-    public const float ModelScale = 0.0254f; //The scale of the model when imported.
+    public const float ModelScale = 1.0f; //The scale of the model when imported.
     public const bool ModelZUp = false; //If true, the model will be rotated 90 degrees around the X axis.
 
     //Audio
@@ -278,19 +279,18 @@ public static class EditorWorld
                 }
 
                 var longHair = humanComp.Head?.Node?.Transform.FindChild(x => x.Name?.Contains("Long Hair", StringComparison.InvariantCultureIgnoreCase) ?? false);
-                longHair!.SceneNode!.IsActiveSelf = false;
-                //if (longHair?.SceneNode is not null)
-                //{
-                //    var phys = longHair.SceneNode.AddComponent<PhysicsChainComponent>()!;
-                //    phys.UpdateMode = PhysicsChainComponent.EUpdateMode.Default;
-                //    phys.UpdateRate = 60;
-                //    phys.Damping = 1.0f;
-                //    phys.Inert = 0.0f;
-                //    phys.Stiffness = 0.0f;
-                //    phys.Gravity = new Vector3(0.0f, -0.1f, 0.0f);
-                //    phys.Elasticity = 0.001f;
-                //    phys.Multithread = false;
-                //}
+                if (longHair?.SceneNode is not null)
+                {
+                    //longHair.SceneNode.IsActiveSelf = false;
+                    var phys = longHair.SceneNode.AddComponent<PhysicsChainComponent>()!;
+                    phys.UpdateMode = PhysicsChainComponent.EUpdateMode.Normal;
+                    phys.UpdateRate = 60;
+                    phys.Damping = 0.1f;
+                    phys.Inert = 0.0f;
+                    phys.Stiffness = 0.05f;
+                    phys.Force = new Vector3(0.0f, 0.0f, 0.0f);
+                    phys.Elasticity = 0.2f;
+                }
 
                 //var zafHair = humanComp.Head?.Node?.Transform.FindChild(x => x.Name?.Contains("Zaf Hair", StringComparison.InvariantCultureIgnoreCase) ?? false);
                 //if (zafHair?.SceneNode is not null)
@@ -388,8 +388,8 @@ public static class EditorWorld
         s.AllowBlendshapes = true;
         s.AllowSkinning = true;
         //s.RenderMesh3DBounds = true;
-        s.RenderTransformDebugInfo = false;
-        s.RenderTransformLines = false;
+        s.RenderTransformDebugInfo = true;
+        s.RenderTransformLines = true;
         //s.RenderTransformCapsules = true;
         s.RenderTransformPoints = false;
         s.RecalcChildMatricesInParallel = true;
@@ -568,7 +568,7 @@ public static class EditorWorld
         var footNode = localRotationNode.NewChild("Foot Position Node");
         var footTfm = footNode.SetTransform<Transform>();
         footTfm.Translation = new Vector3(0.0f, -movementComp.HalfHeight, 0.0f);
-        //footTfm.Scale = new Vector3(movementComp.StandingHeight);
+        footTfm.Scale = new Vector3(movementComp.StandingHeight);
         footTfm.SaveBindState();
 
         //local rotation node only yaws to match the view yaw, so use it as the parent for the avatar
@@ -797,7 +797,7 @@ public static class EditorWorld
         var footNode = characterNode.NewChild("Foot Position Node");
         var footTfm = footNode.SetTransform<Transform>();
         footTfm.Translation = new Vector3(0.0f, -movementComp.HalfHeight, 0.0f);
-        //footTfm.Scale = new Vector3(movementComp.StandingHeight);
+        footTfm.Scale = new Vector3(movementComp.StandingHeight);
         footTfm.SaveBindState();
 
         return footNode;
@@ -1280,7 +1280,7 @@ public static class EditorWorld
     private static void ImportModels(string desktopDir, SceneNode rootNode, SceneNode characterParentNode)
     {
         var importedModelsNode = new SceneNode(rootNode) { Name = "TestImportedModelsNode" };
-        string fbxPathDesktop = Path.Combine(desktopDir, "misc", "test2.fbx");
+        string fbxPathDesktop = Path.Combine(desktopDir, "misc", "test.fbx");
 
         var animFlags = 
             PostProcessSteps.Triangulate |
@@ -1454,7 +1454,7 @@ public static class EditorWorld
                 mat.Shaders.Add(albedoMatcap);
                 mat.Textures =
                 [
-                    textureList[0],
+                    textureList.TryGet(0),
                 ];
                 MakeDefaultParameters(mat);
                 break;

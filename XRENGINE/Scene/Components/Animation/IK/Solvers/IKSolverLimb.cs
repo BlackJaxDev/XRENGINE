@@ -94,14 +94,9 @@ namespace XREngine.Scene.Components.Animation
             var bone3Position = _bone3._transform.WorldTranslation;
 
             // Set bend plane to current (cant use the public SetBendPlaneToCurrent() method here because the solver has not initialized yet)
-            Vector3 normal = Vector3.Cross(
+            _animationNormal = BendNormal = Vector3.Cross(
                 bone2Position - bone1Position,
-                bone3Position - bone2Position);
-
-            if (normal != Vector3.Zero)
-                BendNormal = normal.Normalized();
-
-            _animationNormal = BendNormal;
+                bone3Position - bone2Position).Normalized();
 
             AssignArmAxisDirs(ref _axisDirectionsLeft);
             AssignArmAxisDirs(ref _axisDirectionsRight);

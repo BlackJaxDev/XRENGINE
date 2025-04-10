@@ -55,10 +55,9 @@ namespace XREngine.Scene.Transforms
         {
             _sceneNode = null;
             Depth = parent?.Depth + 1 ?? 0;
-            _children = [];
+            _children = new EventList<TransformBase>() { ThreadSafe = true };
             _children.PostAnythingAdded += ChildAdded;
             _children.PostAnythingRemoved += ChildRemoved;
-            _children.ThreadSafe = true;
 
             _localMatrix = new MatrixInfo { NeedsRecalc = true };
             _worldMatrix = new MatrixInfo { NeedsRecalc = true };
@@ -166,7 +165,14 @@ namespace XREngine.Scene.Transforms
         public EventList<TransformBase> Children
         {
             get => _children;
-            set => SetField(ref _children, value);
+            set
+            {
+                if (value is not null)
+                    value.ThreadSafe = true;
+                else
+                    return;
+                SetField(ref _children, value);
+            }
         }
 
         public TransformBase[] ChildrenSerialized

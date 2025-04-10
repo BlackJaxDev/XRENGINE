@@ -170,7 +170,5 @@ namespace Extensions
             value = default;
             return false;
         }
-
-
     }
 }
