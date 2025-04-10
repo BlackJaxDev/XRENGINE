@@ -19,7 +19,7 @@ namespace XREngine.Rendering.Models.Materials
         [Browsable(false)]
         public bool IsUnchanged => Enabled == ERenderParamUsage.Unchanged;
         
-        public ERenderParamUsage Enabled { get; set; } = ERenderParamUsage.Disabled;
+        public ERenderParamUsage Enabled { get; set; } = ERenderParamUsage.Unchanged;
         public StencilTestFace FrontFace
         {
             get => _frontFace;

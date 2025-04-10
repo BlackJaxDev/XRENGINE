@@ -1,4 +1,5 @@
-﻿using XREngine.Data.Rendering;
+﻿using System.Numerics;
+using XREngine.Data.Rendering;
 
 namespace XREngine.Rendering
 {
@@ -18,6 +19,7 @@ namespace XREngine.Rendering
             set => SetField(ref _array, value);
         }
         public override uint MaxDimension { get; } = 1u;
+        public override Vector3 WidthHeightDepth => new(0, 0, 0);
         public override ETextureTarget TextureTarget => ETextureTarget.Texture1D;
     }
 }

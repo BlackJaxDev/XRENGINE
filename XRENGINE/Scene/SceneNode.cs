@@ -353,7 +353,8 @@ namespace XREngine.Scene
             if (flags.HasFlag(ETransformSetFlags.RetainCurrentChildren) && _transform is not null)
             {
                 bool maintainWorldTransform = flags.HasFlag(ETransformSetFlags.RetainedChildrenMaintainWorldTransform);
-                foreach (var child in _transform.Children)
+                var copy = _transform.Children.ToArray();
+                foreach (var child in copy)
                     transform.AddChild(child, maintainWorldTransform, true);
             }
 
@@ -556,10 +557,7 @@ namespace XREngine.Scene
             comp.Destroyed += ComponentDestroyed;
 
             if (IsActiveInHierarchy && World is not null)
-            {
-                comp.VerifyInterfacesOnStart();
                 comp.OnComponentActivated();
-            }
         }
 
         public bool TryAddComponent<T>(out T? comp, string? name = null) where T : XRComponent
@@ -791,13 +789,8 @@ namespace XREngine.Scene
         private void ActivateComponents()
         {
             foreach (XRComponent component in ComponentsInternal)
-            {
-                if (!component.IsActive)
-                    continue;
-                
-                component.VerifyInterfacesOnStart();
-                component.OnComponentActivated();
-            }
+                if (component.IsActive)
+                    component.OnComponentActivated();
         }
 
         private void ActivateTransform()
@@ -833,16 +826,8 @@ namespace XREngine.Scene
         private void DeactivateComponents()
         {
             foreach (XRComponent component in ComponentsInternal)
-            {
-                if (!component.IsActive)
-                    continue;
-                
-                component.OnComponentDeactivated();
-                component.VerifyInterfacesOnStop();
-
-                if (component.UnregisterTicksOnStop)
-                    ClearTicks();
-            }
+                if (component.IsActive)
+                    component.OnComponentDeactivated();
         }
 
         private void DeactivateTransform()
@@ -1041,6 +1026,42 @@ namespace XREngine.Scene
         /// <returns></returns>
         public SceneNode? FindDescendant(DelFindDescendant comparer, string pathSplitter = "/")
             => FindDescendantInternal(Name ?? string.Empty, comparer, pathSplitter);
+
+        public T? FindFirstDescendantComponent<T>() where T : XRComponent
+        {
+            //lock (Components)
+            //{
+            foreach (var component in ComponentsInternal)
+                if (component is T t)
+                    return t;
+            //}
+            //lock (Transform.Children)
+            //{
+            foreach (var child in Transform.Children)
+                if (child?.SceneNode is SceneNode node)
+                    if (node.FindFirstDescendantComponent<T>() is T found)
+                        return found;
+            //}
+            return null;
+        }
+
+        public T[] FindAllDescendantComponents<T>() where T : XRComponent
+        {
+            List<T> components = [];
+            //lock (Components)
+            //{
+            foreach (var component in ComponentsInternal)
+                if (component is T t)
+                    components.Add(t);
+            //}
+            //lock (Transform.Children)
+            //{
+            foreach (var child in Transform.Children)
+                if (child?.SceneNode is SceneNode node)
+                    components.AddRange(node.FindAllDescendantComponents<T>());
+            //}
+            return [.. components];
+        }
 
         /// <summary>
         /// Finds the first descendant of the scene node that matches the given comparer.

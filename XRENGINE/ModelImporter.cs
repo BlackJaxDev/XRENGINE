@@ -4,8 +4,6 @@ using Assimp.Unmanaged;
 using Extensions;
 using ImageMagick;
 using System.Collections.Concurrent;
-using System.Diagnostics;
-using System.Xml.Linq;
 using XREngine.Components.Scene.Mesh;
 using XREngine.Data.Colors;
 using XREngine.Data.Rendering;
@@ -69,7 +67,7 @@ namespace XREngine
                 }
                 else
                 {
-                    mat.Shaders.Add(ShaderHelper.TextureFragDeferred()!);
+                    mat.Shaders.Add(ShaderHelper.LitTextureFragDeferred()!);
                     mat.Parameters =
                     [
                         new ShaderFloat(1.0f, "Opacity"),
@@ -145,40 +143,42 @@ namespace XREngine
                     path = Path.Combine(dir, path);
             }
 
-            XRTexture2D TextureFactory(string x)
-            {
-                var tex = Engine.Assets.Load<XRTexture2D>(path);
-                if (tex is null)
-                {
-                    //Debug.Out($"Failed to load texture: {path}");
-                    tex = new XRTexture2D()
-                    {
-                        Name = Path.GetFileNameWithoutExtension(path),
-                        MagFilter = ETexMagFilter.Linear,
-                        MinFilter = ETexMinFilter.Linear,
-                        UWrap = ETexWrapMode.Repeat,
-                        VWrap = ETexWrapMode.Repeat,
-                        AlphaAsTransparency = true,
-                        AutoGenerateMipmaps = true,
-                        Resizable = true,
-                    };
-                }
-                else
-                {
-                    //Debug.Out($"Loaded texture: {path}");
-                    tex.MagFilter = ETexMagFilter.Linear;
-                    tex.MinFilter = ETexMinFilter.Linear;
-                    tex.UWrap = ETexWrapMode.Repeat;
-                    tex.VWrap = ETexWrapMode.Repeat;
-                    tex.AlphaAsTransparency = true;
-                    tex.AutoGenerateMipmaps = true;
-                    tex.Resizable = false;
-                    tex.SizedInternalFormat = ESizedInternalFormat.Rgba8;
-                }
-                return tex;
-            }
+            textureList[i] = _texturePathCache.GetOrAdd(path, MakeTextureAction);
+        }
 
-            textureList[i] = _texturePathCache.GetOrAdd(path, TextureFactory);
+        public Func<string, XRTexture2D> MakeTextureAction { get; set; } = TextureFactoryInternal;
+
+        private static XRTexture2D TextureFactoryInternal(string path)
+        {
+            var tex = Engine.Assets.Load<XRTexture2D>(path);
+            if (tex is null)
+            {
+                Debug.Out($"Failed to load texture: {path}");
+                tex = new XRTexture2D()
+                {
+                    Name = Path.GetFileNameWithoutExtension(path),
+                    MagFilter = ETexMagFilter.Linear,
+                    MinFilter = ETexMinFilter.Linear,
+                    UWrap = ETexWrapMode.Repeat,
+                    VWrap = ETexWrapMode.Repeat,
+                    AlphaAsTransparency = true,
+                    AutoGenerateMipmaps = true,
+                    Resizable = true,
+                };
+            }
+            else
+            {
+                Debug.Out($"Loaded texture: {path}");
+                tex.MagFilter = ETexMagFilter.Linear;
+                tex.MinFilter = ETexMinFilter.Linear;
+                tex.UWrap = ETexWrapMode.Repeat;
+                tex.VWrap = ETexWrapMode.Repeat;
+                tex.AlphaAsTransparency = true;
+                tex.AutoGenerateMipmaps = true;
+                tex.Resizable = false;
+                tex.SizedInternalFormat = ESizedInternalFormat.Rgba8;
+            }
+            return tex;
         }
 
         public string SourceFilePath => _path;

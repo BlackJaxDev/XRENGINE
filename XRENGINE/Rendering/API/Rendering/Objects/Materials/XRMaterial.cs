@@ -209,10 +209,10 @@ namespace XREngine.Rendering
             => new(ShaderHelper.UnlitTextureFragForward());
 
         public static XRMaterial CreateLitTextureMaterial(bool deferred = true)
-            => new(deferred ? ShaderHelper.TextureFragDeferred() : ShaderHelper.LitTextureFragForward());
+            => new(deferred ? ShaderHelper.LitTextureFragDeferred() : ShaderHelper.LitTextureFragForward());
 
         public static XRMaterial CreateLitTextureMaterial(XRTexture2D texture, bool deferred = true)
-            => new([texture], deferred ? ShaderHelper.TextureFragDeferred() : ShaderHelper.LitTextureFragForward());
+            => new([texture], deferred ? ShaderHelper.LitTextureFragDeferred() : ShaderHelper.LitTextureFragForward());
 
         public static XRMaterial CreateUnlitColorMaterialForward()
             => CreateUnlitColorMaterialForward(Color.DarkTurquoise);

@@ -8,6 +8,8 @@ using XREngine.Data.Vectors;
 using XREngine.Input;
 using XREngine.Rendering.Info;
 using XREngine.Rendering.UI;
+using XREngine.Scene;
+using XREngine.Scene.Components.Animation;
 using YamlDotNet.Serialization;
 using State = XREngine.Engine.Rendering.State;
 
@@ -598,8 +600,10 @@ namespace XREngine.Rendering
             bool testHud,
             bool testSceneOctree,
             bool testScenePhysics,
+            LayerMask layerMask,
+            AbstractPhysicsScene.IAbstractQueryFilter? filter,
             SortedDictionary<float, List<(RenderInfo3D item, object? data)>> orderedOctreeResults,
-            SortedDictionary<float, List<(XRComponent item, object? data)>> orderedPhysicsResults,
+            SortedDictionary<float, List<(XRComponent? item, object? data)>> orderedPhysicsResults,
             params XRComponent[] ignored)
         {
             bool hasMatches = false;
@@ -638,6 +642,8 @@ namespace XREngine.Rendering
                 hasMatches |= World?.RaycastPhysics(
                     CameraComponent, 
                     normalizedViewportPosition,
+                    layerMask,
+                    filter,
                     orderedPhysicsResults) ?? false;
             }
 

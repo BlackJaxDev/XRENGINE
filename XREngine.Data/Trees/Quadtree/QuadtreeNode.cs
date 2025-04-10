@@ -8,7 +8,7 @@ namespace XREngine.Data.Trees
     public class QuadtreeNode<T>(BoundingRectangleF bounds, int subDivIndex, int subDivLevel, QuadtreeNode<T>? parent, Quadtree<T> owner)
         : QuadtreeNodeBase(bounds, subDivIndex, subDivLevel) where T : class, IQuadtreeItem
     {
-        protected List<T> _items = [];
+        protected EventList<T> _items = new() { ThreadSafe = false };
         protected QuadtreeNode<T>?[] _subNodes = new QuadtreeNode<T>?[QuadtreeBase.MaxChildNodeCount];
         protected QuadtreeNode<T>? _parentNode = parent;
 
@@ -18,7 +18,7 @@ namespace XREngine.Data.Trees
         public QuadtreeNode<T>? ParentNode { get => _parentNode; set => _parentNode = value; }
         public int SubDivIndex { get => _subDivIndex; set => _subDivIndex = value; }
         public int SubDivLevel { get => _subDivLevel; set => _subDivLevel = value; }
-        public List<T> Items => _items;
+        public EventList<T> Items => _items;
 
         protected override QuadtreeNodeBase? GetNodeInternal(int index)
             => _subNodes[index];
@@ -543,9 +543,17 @@ namespace XREngine.Data.Trees
             //IsLoopingItems = true;
             //try
             //{
+            try
+            {
                 foreach (T item in _items)
                     if (item.Contains(point) && (predicate?.Invoke(item) ?? true))
                         intersecting.Add(item);
+            }
+            catch (InvalidOperationException ex)
+            {
+                //This is thrown when the collection is modified while iterating
+                Trace.WriteLine(ex);
+            }
             //}
             //catch (Exception ex)
             //{
@@ -588,13 +596,11 @@ namespace XREngine.Data.Trees
         /// Simply collects all the items contained in this node and all of its sub nodes.
         /// </summary>
         /// <returns></returns>
-        public List<T> CollectChildren()
+        public void CollectChildren(List<T> children)
         {
-            List<T> list = new(_items);
+            children.AddRange(_items);
             foreach (QuadtreeNode<T>? node in _subNodes)
-                if (node is not null)
-                    list.AddRange(node.CollectChildren());
-            return list;
+                node?.CollectChildren(children);
         }
         #endregion
 

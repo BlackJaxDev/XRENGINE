@@ -338,7 +338,6 @@ public partial class PhysicsChainComponent : XRComponent, IRenderable
         if (_particleTrees.Count == 0)
             AppendParticleTree(SceneNode.GetTransformAs<Transform>(true)!);
 
-        Transform.RecalculateMatrices();
         _objectScale = MathF.Abs(Transform.LossyWorldScale.X);
         _objectPrevPosition = Transform.WorldTranslation;
         _objectMove = Vector3.Zero;
@@ -357,7 +356,6 @@ public partial class PhysicsChainComponent : XRComponent, IRenderable
         if (root is null)
             return;
 
-        root.RecalculateInverseMatrices();
         _particleTrees.Add(new ParticleTree(root));
     }
 
@@ -367,7 +365,6 @@ public partial class PhysicsChainComponent : XRComponent, IRenderable
 
         if (tfm != null)
         {
-            tfm.RecalculateMatrices();
             ptcl.Position = ptcl.PrevPosition = tfm.WorldTranslation;
             ptcl.InitLocalPosition = tfm.LocalTranslation;
             ptcl.InitLocalRotation = tfm.LocalRotation;
@@ -377,15 +374,12 @@ public partial class PhysicsChainComponent : XRComponent, IRenderable
             TransformBase? parent = tree.Particles[parentIndex].Transform;
             if (parent != null)
             {
-                parent.RecalculateMatrices();
-                parent.RecalculateInverseMatrices();
                 if (EndLength > 0.0f)
                 {
                     TransformBase? parentParentTfm = parent.Parent;
                     Vector3 endOffset;
                     if (parentParentTfm != null)
                     {
-                        parentParentTfm.RecalculateMatrices();
                         endOffset = parent.InverseTransformPoint(parent.WorldTranslation * 2.0f - parentParentTfm.WorldTranslation) * EndLength;
                     }
                     else
@@ -394,7 +388,6 @@ public partial class PhysicsChainComponent : XRComponent, IRenderable
                 }
                 else
                 {
-                    Transform.RecalculateMatrices();
                     ptcl.EndOffset = parent.InverseTransformPoint(Transform.TransformVector(EndOffset) + parent.WorldTranslation);
                 }
                 
@@ -408,7 +401,6 @@ public partial class PhysicsChainComponent : XRComponent, IRenderable
         {
             var parentPtcl = tree.Particles[parentIndex];
             var parentTfm = parentPtcl.Transform!;
-            parentTfm.RecalculateMatrices();
             var parentPtclPos = parentTfm.WorldTranslation;
             boneLength += (parentPtclPos - ptcl.Position).Length();
             ptcl.BoneLength = boneLength;
@@ -512,7 +504,6 @@ public partial class PhysicsChainComponent : XRComponent, IRenderable
         for (int i = 0; i < _particleTrees.Count; ++i)
             ResetParticlesPosition(_particleTrees[i]);
 
-        Transform.RecalculateMatrices();
         _objectPrevPosition = Transform.WorldTranslation;
     }
 
@@ -522,18 +513,12 @@ public partial class PhysicsChainComponent : XRComponent, IRenderable
         {
             Particle p = pt.Particles[i];
             if (p.Transform is not null)
-            {
-                p.Transform.RecalculateMatrices();
                 p.Position = p.PrevPosition = p.Transform.WorldTranslation;
-            }
             else // end bone
             {
                 Transform? pb = pt.Particles[p.ParentIndex].Transform;
                 if (pb is not null)
-                {
-                    pb.RecalculateMatrices();
                     p.Position = p.PrevPosition = pb.TransformPoint(p.EndOffset);
-                }
             }
             p.IsColliding = false;
         }
@@ -719,22 +704,20 @@ public partial class PhysicsChainComponent : XRComponent, IRenderable
 
             Transform? pTfm = parent.Transform;
             Transform? cTfm = child.Transform;
-            cTfm?.RecalculateMatrices();
+
             if (parent.ChildCount <= 1 && pTfm is not null) // do not modify bone orientation if has more then one child
             {
                 Vector3 localPos = cTfm is not null
-                    ? cTfm.LocalTranslation
+                    ? cTfm.Translation
                     : child.EndOffset;
 
-                pTfm.RecalculateMatrices();
-                Vector3 v0 = pTfm.TransformVector(localPos);
+                Vector3 v0 = pTfm.TransformDirection(localPos);
                 Vector3 v1 = child.Position - parent.Position;
                 Quaternion rot = XRMath.RotationBetweenVectors(v0, v1);
-                pTfm.Parent?.RecalculateInverseMatrices();
-                pTfm.AddWorldRotation(rot);
+
+                pTfm.AddWorldRotationDelta(rot);
             }
 
-            pTfm?.RecalculateInverseMatrices();
             cTfm?.SetWorldTranslation(child.Position);
         }
     }

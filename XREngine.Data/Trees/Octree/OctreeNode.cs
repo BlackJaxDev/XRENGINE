@@ -16,7 +16,7 @@ namespace XREngine.Data.Trees
     public class OctreeNode<T>(AABB bounds, int subDivIndex, int subDivLevel, OctreeNode<T>? parent, Octree<T> owner)
         : OctreeNodeBase(bounds, subDivIndex, subDivLevel) where T : class, IOctreeItem
     {
-        protected List<T> _items = [];
+        protected EventList<T> _items = new() { ThreadSafe = true };
         protected OctreeNode<T>?[] _subNodes = new OctreeNode<T>[OctreeBase.MaxChildNodeCount];
         protected OctreeNode<T>? _parentNode = parent;
         //private readonly ReaderWriterLockSlim _lock;
@@ -44,7 +44,7 @@ namespace XREngine.Data.Trees
         {
             _subNodes[subDivIndex] = null;
         }
-        public List<T> Items => _items;
+        public EventList<T> Items => _items;
 
         #region Child movement
         public override void QueueItemMoved(IOctreeItem item)
@@ -59,7 +59,7 @@ namespace XREngine.Data.Trees
             //need to try subdividing for all items at that point.
 
             if (item?.LocalCullingVolume != null)
-                Owner.MovedItems.Enqueue(item);
+                Owner.Move(item);
         }
         public override void HandleMovedItem(IOctreeItem item)
         {

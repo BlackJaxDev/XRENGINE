@@ -71,6 +71,8 @@ namespace XREngine.Data
 
             // var q is the change in t between successive evaluations.
             float q = 1.0f / (pointCount - 1); // q is dependent on the number of GAPS = POINTS-1
+            float q2 = q * q;
+            float q3 = q2 * q;
 
             // coefficients of the cubic polynomial that we're FDing -
             Vector2 a = p0;
@@ -79,26 +81,24 @@ namespace XREngine.Data
             Vector2 d = p3 - 3 * p2 + 3 * p1 - p0;
 
             // initial values of the poly and the 3 diffs -
-            Vector2 s = a;                                     // the poly value
-            Vector2 u = b * q + c * q * q + d * q * q * q;     // 1st order diff (quadratic)
-            Vector2 v = 2 * c * q * q + 6 * d * q * q * q;     // 2nd order diff (linear)
-            Vector2 w = 6 * d * q * q * q;                     // 3rd order diff (constant)
+            Vector2 s = a;                          // the poly value
+            Vector2 u = b * q + c * q2 + d * q3;    // 1st order diff (quadratic)
+            Vector2 v = 2 * c * q2 + 6 * d * q3;    // 2nd order diff (linear)
+            Vector2 w = 6 * d * q3;                 // 3rd order diff (constant)
 
             length = 0.0f;
-
-            Vector2 OldPos = p0;
             points[0] = p0;
 
             for (int i = 1; i < pointCount; ++i)
             {
+                Vector2 prevPos = s;
+
                 s += u;
                 u += v;
                 v += w;
 
-                length += (s - OldPos).Length();
-                OldPos = s;
-
                 points[i] = s;
+                length += (s - prevPos).Length();
             }
             return points;
         }
@@ -653,7 +653,7 @@ namespace XREngine.Data
             if (deltaRads > totalRads)
                 deltaRads = totalRads;
 
-            return Vector3.Transform(current, Quaternion.CreateFromAxisAngle(axis, deltaRads));
+            return System.Numerics.Vector3.Transform(current, Quaternion.CreateFromAxisAngle(axis, deltaRads));
         }
 
         #endregion
@@ -756,5 +756,287 @@ namespace XREngine.Data
         }
 
         #endregion
+
+        public static float Float(float t, EFloatInterpolationMode mode) => mode switch
+        {
+            EFloatInterpolationMode.Linear => Linear(t, 0, 1),
+            EFloatInterpolationMode.InOutCubic => InOutCubic(t, 0, 1),
+            EFloatInterpolationMode.InOutQuintic => InOutQuintic(t, 0, 1),
+            EFloatInterpolationMode.InQuintic => InQuintic(t, 0, 1),
+            EFloatInterpolationMode.InQuartic => InQuartic(t, 0, 1),
+            EFloatInterpolationMode.InCubic => InCubic(t, 0, 1),
+            EFloatInterpolationMode.InQuadratic => InQuadratic(t, 0, 1),
+            EFloatInterpolationMode.OutQuintic => OutQuintic(t, 0, 1),
+            EFloatInterpolationMode.OutQuartic => OutQuartic(t, 0, 1),
+            EFloatInterpolationMode.OutCubic => OutCubic(t, 0, 1),
+            EFloatInterpolationMode.OutInCubic => OutInCubic(t, 0, 1),
+            EFloatInterpolationMode.OutInQuartic => OutInQuartic(t, 0, 1),
+            EFloatInterpolationMode.BackInCubic => BackInCubic(t, 0, 1),
+            EFloatInterpolationMode.BackInQuartic => BackInQuartic(t, 0, 1),
+            EFloatInterpolationMode.OutBackCubic => OutBackCubic(t, 0, 1),
+            EFloatInterpolationMode.OutBackQuartic => OutBackQuartic(t, 0, 1),
+            EFloatInterpolationMode.OutElasticSmall => OutElasticSmall(t, 0, 1),
+            EFloatInterpolationMode.OutElasticBig => OutElasticBig(t, 0, 1),
+            EFloatInterpolationMode.InElasticSmall => InElasticSmall(t, 0, 1),
+            EFloatInterpolationMode.InElasticBig => InElasticBig(t, 0, 1),
+            EFloatInterpolationMode.InSine => InSine(t, 0, 1),
+            EFloatInterpolationMode.OutSine => OutSine(t, 0, 1),
+            EFloatInterpolationMode.InOutSine => InOutSine(t, 0, 1),
+            EFloatInterpolationMode.InElastic => InElastic(t, 0, 1),
+            EFloatInterpolationMode.OutElastic => OutElastic(t, 0, 1),
+            EFloatInterpolationMode.InBack => InBack(t, 0, 1),
+            EFloatInterpolationMode.OutBack => OutBack(t, 0, 1),
+            _ => 0,
+        };
+
+        public static Vector2 Vector2(Vector2 start, Vector2 end, float t, EFloatInterpolationMode mode)
+        {
+            float interpT = Float(t, mode);
+            return ((1 - interpT) * start) + (interpT * end);
+        }
+
+        public static Vector3 Vector3(Vector3 start, Vector3 end, float t, EFloatInterpolationMode mode)
+        {
+            float interpT = Float(t, mode);
+            return ((1 - interpT) * start) + (interpT * end);
+        }
+
+        public static Vector4 Vector4(Vector4 start, Vector4 end, float t, EFloatInterpolationMode mode)
+        {
+            float interpT = Float(t, mode);
+            return ((1 - interpT) * start) + (interpT * end);
+        }
+
+        public static float LerpDistance(float value, float target, float increaseSpeed, float decreaseSpeed, float dt)
+            => value == target
+                ? target
+                : value < target
+                    ? (value + dt * increaseSpeed).Clamp(float.NegativeInfinity, target)
+                    : (value - dt * decreaseSpeed).Clamp(target, float.PositiveInfinity);
+
+        private static float Linear(float t, float start, float end)
+            => start + end * t;
+
+        private static void GetTimes(float t, out float t2, out float t3)
+        {
+            t2 = t * t;
+            t3 = t2 * t;
+        }
+
+        private static float InOutCubic(float t, float b, float c)
+        {
+            GetTimes(t, out float t2, out float t3);
+            return b + c * (-2 * t3 + 3 * t2);
+        }
+
+        private static float InOutQuintic(float t, float b, float c)
+        {
+            GetTimes(t, out float ts, out float tc);
+            return b + c * (6 * tc * ts + -15 * ts * ts + 10 * tc);
+        }
+
+        private static float InQuintic(float t, float b, float c)
+        {
+            GetTimes(t, out float ts, out float tc);
+            return b + c * (tc * ts);
+        }
+
+        private static float InQuartic(float t, float b, float c)
+            => b + c * (t * t * t * t);
+        private static float InCubic(float t, float b, float c)
+            => b + c * (t * t * t);
+        private static float InQuadratic(float t, float b, float c)
+            => b + c * (t * t);
+
+        private static float OutQuintic(float t, float b, float c)
+        {
+            GetTimes(t, out float ts, out float tc);
+            return b + c * (tc * ts + -5 * ts * ts + 10 * tc + -10 * ts + 5 * t);
+        }
+        private static float OutQuartic(float t, float b, float c)
+        {
+            GetTimes(t, out float ts, out float tc);
+            return b + c * (-1 * ts * ts + 4 * tc + -6 * ts + 4 * t);
+        }
+        private static float OutCubic(float t, float b, float c)
+        {
+            GetTimes(t, out float ts, out float tc);
+            return b + c * (tc + -3 * ts + 3 * t);
+        }
+
+        private static float OutInCubic(float t, float b, float c)
+        {
+            GetTimes(t, out float ts, out float tc);
+            return b + c * (4 * tc + -6 * ts + 3 * t);
+        }
+
+        private static float OutInQuartic(float t, float b, float c)
+        {
+            GetTimes(t, out float ts, out float tc);
+            return b + c * (6 * tc + -9 * ts + 4 * t);
+        }
+
+        private static float BackInCubic(float t, float b, float c)
+        {
+            GetTimes(t, out float ts, out float tc);
+            return b + c * (4 * tc + -3 * ts);
+        }
+
+        private static float BackInQuartic(float t, float b, float c)
+        {
+            GetTimes(t, out float ts, out float tc);
+            return b + c * (2 * ts * ts + 2 * tc + -3 * ts);
+        }
+
+        private static float OutBackCubic(float t, float b, float c)
+        {
+            GetTimes(t, out float ts, out float tc);
+            return b + c * (4 * tc + -9 * ts + 6 * t);
+        }
+
+        private static float OutBackQuartic(float t, float b, float c)
+        {
+            GetTimes(t, out float ts, out float tc);
+            return b + c * (-2 * ts * ts + 10 * tc + -15 * ts + 8 * t);
+        }
+
+        private static float OutElasticSmall(float t, float b, float c)
+        {
+            GetTimes(t, out float ts, out float tc);
+            return b + c * (33 * tc * ts + -106 * ts * ts + 126 * tc + -67 * ts + 15 * t);
+        }
+
+        private static float OutElasticBig(float t, float b, float c)
+        {
+            GetTimes(t, out float ts, out float tc);
+            return b + c * (56 * tc * ts + -175 * ts * ts + 200 * tc + -100 * ts + 20 * t);
+        }
+
+        private static float InElasticSmall(float t, float b, float c)
+        {
+            GetTimes(t, out float ts, out float tc);
+            return b + c * (33 * tc * ts + -59 * ts * ts + 32 * tc + -5 * ts);
+        }
+
+        private static float InElasticBig(float t, float b, float c)
+        {
+            GetTimes(t, out float ts, out float tc);
+            return b + c * (56 * tc * ts + -105 * ts * ts + 60 * tc + -10 * ts);
+        }
+
+        private static float InSine(float t, float b, float c)
+        {
+            c -= b;
+            return -c * Cos(t / 1 * (PI / 2)) + c + b;
+        }
+
+        private static float OutSine(float t, float b, float c)
+        {
+            c -= b;
+            return c * Sin(t / 1 * (PI / 2)) + b;
+        }
+
+        private static float InOutSine(float t, float b, float c)
+        {
+            c -= b;
+            return -c / 2 * (Cos(PI * t / 1) - 1) + b;
+        }
+
+        private static float InElastic(float t, float b, float c)
+        {
+            c -= b;
+
+            float d = 1f;
+            float p = d * .3f;
+            float s = 0;
+            float a = 0;
+
+            if (t == 0)
+                return b;
+            if ((t /= d) == 1)
+                return b + c;
+
+            if (a == 0f || a < Abs(c))
+            {
+                a = c;
+                s = p / 4;
+            }
+            else
+            {
+                s = p / (2 * PI) * Asin(c / a);
+            }
+            return -(a * Pow(2, 10 * (t -= 1)) * Sin((t * d - s) * (2 * PI) / p)) + b;
+        }
+        private static float OutElastic(float t, float b, float c)
+        {
+            c -= b;
+
+            float d = 1f;
+            float p = d * .3f;
+            float s = 0;
+            float a = 0;
+
+            if (t == 0)
+                return b;
+            if ((t /= d) == 1)
+                return b + c;
+
+            if (a == 0f || a < Abs(c))
+            {
+                a = c;
+                s = p / 4;
+            }
+            else
+            {
+                s = p / (2 * PI) * Asin(c / a);
+            }
+            return (a * Pow(2, -10 * t) * Sin((t * d - s) * (2 * PI) / p) + c + b);
+        }
+
+        private static float InBack(float t, float b, float c)
+        {
+            c -= b;
+            t /= 1;
+            float s = 1.70158f;
+            return c * (t) * t * ((s + 1) * t - s) + b;
+        }
+
+        private static float OutBack(float t, float b, float c)
+        {
+            float s = 1.70158f;
+            c -= b;
+            t = (t / 1) - 1;
+            return c * ((t) * t * ((s + 1) * t + s) + 1) + b;
+        }
+    }
+    public enum EFloatInterpolationMode
+    {
+        Linear,
+        InOutCubic,
+        InOutQuintic,
+        InQuintic,
+        InQuartic,
+        InCubic,
+        InQuadratic,
+        OutQuintic,
+        OutQuartic,
+        OutCubic,
+        OutInCubic,
+        OutInQuartic,
+        BackInCubic,
+        BackInQuartic,
+        OutBackCubic,
+        OutBackQuartic,
+        OutElasticSmall,
+        OutElasticBig,
+        InElasticSmall,
+        InElasticBig,
+        InSine,
+        OutSine,
+        InOutSine,
+        InElastic,
+        OutElastic,
+        InBack,
+        OutBack
     }
 }

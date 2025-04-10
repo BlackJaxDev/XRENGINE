@@ -5,6 +5,7 @@ using System.Numerics;
 using XREngine.Components;
 using XREngine.Data.Geometry;
 using XREngine.Scene;
+using XREngine.Scene.Components.Animation;
 using static Jitter2.Collision.DynamicTree;
 using Quaternion = System.Numerics.Quaternion;
 
@@ -55,70 +56,40 @@ namespace XREngine.Rendering.Physics.Physx
             return true;
         }
 
-        public override bool RaycastAny(Segment worldSegment, out uint hitFaceIndex)
-        {
-            bool hasHit = World.DynamicTree.RayCast(
-                worldSegment.Start.ToJVector(),
-                worldSegment.Direction.ToJVector(),
-                RayCastFilterPre,
-                RayCastFilterPost,
-                out _,
-                out _,
-                out _);
+        //public override bool RaycastAny(Segment worldSegment, out uint hitFaceIndex)
+        //{
+        //    bool hasHit = World.DynamicTree.RayCast(
+        //        worldSegment.Start.ToJVector(),
+        //        worldSegment.Direction.ToJVector(),
+        //        RayCastFilterPre,
+        //        RayCastFilterPost,
+        //        out _,
+        //        out _,
+        //        out _);
 
-            hitFaceIndex = 0;
-            return hasHit;
-        }
+        //    hitFaceIndex = 0;
+        //    return hasHit;
+        //}
 
-        public override void RaycastSingle(Segment worldSegment, SortedDictionary<float, List<(XRComponent? item, object? data)>> items)
-        {
-            bool hasHit = World.DynamicTree.RayCast(
-                worldSegment.Start.ToJVector(),
-                worldSegment.Direction.ToJVector(),
-                RayCastFilterPre,
-                RayCastFilterPost,
-                out IDynamicTreeProxy? proxy,
-                out JVector normal,
-                out float distance);
+        //public override void RaycastSingle(Segment worldSegment, SortedDictionary<float, List<(XRComponent? item, object? data)>> items)
+        //{
+        //    bool hasHit = World.DynamicTree.RayCast(
+        //        worldSegment.Start.ToJVector(),
+        //        worldSegment.Direction.ToJVector(),
+        //        RayCastFilterPre,
+        //        RayCastFilterPost,
+        //        out IDynamicTreeProxy? proxy,
+        //        out JVector normal,
+        //        out float distance);
 
-            if (hasHit && proxy != null)
-            {
-                if (proxy is XRComponent comp)
-                {
-                    items.Add(distance, [(comp, normal.ToVector3())]);
-                }
-            }
-        }
-
-        public override void RaycastMultiple(Segment worldSegment, SortedDictionary<float, List<(XRComponent? item, object? data)>> results)
-        {
-
-        }
-
-        public override bool SweepAny(IPhysicsGeometry geometry, (Vector3 position, Quaternion rotation) pose, Vector3 unitDir, float distance, out uint hitFaceIndex)
-        {
-            throw new NotImplementedException();
-        }
-
-        public override void SweepSingle(IPhysicsGeometry geometry, (Vector3 position, Quaternion rotation) pose, Vector3 unitDir, float distance, SortedDictionary<float, List<(XRComponent? item, object? data)>> items)
-        {
-            throw new NotImplementedException();
-        }
-
-        public override void SweepMultiple(IPhysicsGeometry geometry, (Vector3 position, Quaternion rotation) pose, Vector3 unitDir, float distance, SortedDictionary<float, List<(XRComponent? item, object? data)>> results)
-        {
-            throw new NotImplementedException();
-        }
-
-        public override bool OverlapAny(IPhysicsGeometry geometry, (Vector3 position, Quaternion rotation) pose, SortedDictionary<float, List<(XRComponent? item, object? data)>> results)
-        {
-            throw new NotImplementedException();
-        }
-
-        public override void OverlapMultiple(IPhysicsGeometry geometry, (Vector3 position, Quaternion rotation) pose, SortedDictionary<float, List<(XRComponent? item, object? data)>> results)
-        {
-            throw new NotImplementedException();
-        }
+        //    if (hasHit && proxy != null)
+        //    {
+        //        if (proxy is XRComponent comp)
+        //        {
+        //            items.Add(distance, [(comp, normal.ToVector3())]);
+        //        }
+        //    }
+        //}
 
         public override void AddActor(IAbstractPhysicsActor actor)
         {
@@ -131,6 +102,46 @@ namespace XREngine.Rendering.Physics.Physx
         }
 
         public override void NotifyShapeChanged(IAbstractPhysicsActor actor)
+        {
+            throw new NotImplementedException();
+        }
+
+        public override bool RaycastAny(Segment worldSegment, LayerMask layerMask, IAbstractQueryFilter? filter, out uint hitFaceIndex)
+        {
+            throw new NotImplementedException();
+        }
+
+        public override bool RaycastSingle(Segment worldSegment, LayerMask layerMask, IAbstractQueryFilter? filter, SortedDictionary<float, List<(XRComponent? item, object? data)>> items)
+        {
+            throw new NotImplementedException();
+        }
+
+        public override bool RaycastMultiple(Segment worldSegment, LayerMask layerMask, IAbstractQueryFilter? filter, SortedDictionary<float, List<(XRComponent? item, object? data)>> results)
+        {
+            throw new NotImplementedException();
+        }
+
+        public override bool SweepAny(IPhysicsGeometry geometry, (Vector3 position, Quaternion rotation) pose, Vector3 unitDir, float distance, LayerMask layerMask, IAbstractQueryFilter? filter, out uint hitFaceIndex)
+        {
+            throw new NotImplementedException();
+        }
+
+        public override bool SweepSingle(IPhysicsGeometry geometry, (Vector3 position, Quaternion rotation) pose, Vector3 unitDir, float distance, LayerMask layerMask, IAbstractQueryFilter? filter, SortedDictionary<float, List<(XRComponent? item, object? data)>> items)
+        {
+            throw new NotImplementedException();
+        }
+
+        public override bool SweepMultiple(IPhysicsGeometry geometry, (Vector3 position, Quaternion rotation) pose, Vector3 unitDir, float distance, LayerMask layerMask, IAbstractQueryFilter? filter, SortedDictionary<float, List<(XRComponent? item, object? data)>> results)
+        {
+            throw new NotImplementedException();
+        }
+
+        public override bool OverlapAny(IPhysicsGeometry geometry, (Vector3 position, Quaternion rotation) pose, LayerMask layerMask, IAbstractQueryFilter? filter, SortedDictionary<float, List<(XRComponent? item, object? data)>> results)
+        {
+            throw new NotImplementedException();
+        }
+
+        public override bool OverlapMultiple(IPhysicsGeometry geometry, (Vector3 position, Quaternion rotation) pose, LayerMask layerMask, IAbstractQueryFilter? filter, SortedDictionary<float, List<(XRComponent? item, object? data)>> results)
         {
             throw new NotImplementedException();
         }

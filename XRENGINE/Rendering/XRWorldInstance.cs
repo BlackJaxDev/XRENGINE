@@ -13,6 +13,7 @@ using XREngine.Data.Geometry;
 using XREngine.Data.Trees;
 using XREngine.Rendering.Info;
 using XREngine.Scene;
+using XREngine.Scene.Components.Animation;
 using XREngine.Scene.Transforms;
 using static XREngine.Engine;
 
@@ -447,17 +448,23 @@ namespace XREngine.Rendering
         public bool RaycastPhysics(
             CameraComponent cameraComponent,
             Vector2 normalizedScreenPoint,
-            SortedDictionary<float, List<(XRComponent item, object? data)>> orderedResults)
+            LayerMask layerMask,
+            AbstractPhysicsScene.IAbstractQueryFilter? filter,
+            SortedDictionary<float, List<(XRComponent? item, object? data)>> orderedResults)
             => RaycastPhysics(
                 cameraComponent.Camera.GetWorldSegment(normalizedScreenPoint),
+                layerMask,
+                filter,
                 orderedResults);
 
         public bool RaycastPhysics(
             Segment worldSegment,
-            SortedDictionary<float, List<(XRComponent item, object? data)>> orderedResults)
+            LayerMask layerMask,
+            AbstractPhysicsScene.IAbstractQueryFilter? filter,
+            SortedDictionary<float, List<(XRComponent? item, object? data)>> orderedResults)
         {
             orderedResults.Clear();
-            PhysicsScene.RaycastSingle(worldSegment, orderedResults);
+            PhysicsScene.RaycastSingle(worldSegment, layerMask, filter, orderedResults);
             return orderedResults.Count > 0;
         }
 

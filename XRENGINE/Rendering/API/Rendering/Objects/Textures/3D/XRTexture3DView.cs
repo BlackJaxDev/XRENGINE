@@ -1,4 +1,6 @@
-﻿using XREngine.Data.Rendering;
+﻿using Assimp;
+using System.Numerics;
+using XREngine.Data.Rendering;
 
 namespace XREngine.Rendering
 {
@@ -11,6 +13,9 @@ namespace XREngine.Rendering
         EPixelInternalFormat internalFormat) : XRTextureView<XRTexture3D>(viewedTexture, minLevel, numLevels, minLayer, numLayers, internalFormat)
     {
         public override uint MaxDimension { get; } = 3u;
+
+        public override Vector3 WidthHeightDepth => new(0, 0, 0);
+
         public override ETextureTarget TextureTarget => ETextureTarget.Texture3D;
     }
 }

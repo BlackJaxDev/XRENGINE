@@ -1,0 +1,8 @@
+﻿namespace XREngine.Audio.Steam;
+
+public enum IPLAirAbsorptionModelType
+{
+    IPL_AIRABSORPTIONTYPE_DEFAULT,
+    IPL_AIRABSORPTIONTYPE_EXPONENTIAL,
+    IPL_AIRABSORPTIONTYPE_CALLBACK
+}

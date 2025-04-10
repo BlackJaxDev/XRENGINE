@@ -1,4 +1,5 @@
-﻿using XREngine.Data.Colors;
+﻿using System.Numerics;
+using XREngine.Data.Colors;
 using XREngine.Data.Rendering;
 using static XREngine.Rendering.OpenGL.OpenGLRenderer;
 
@@ -15,5 +16,6 @@ namespace XREngine.Rendering.OpenGL
         void PreSampling();
         void PushData();
         string ResolveSamplerName(int textureIndex, string? samplerNameOverride);
+        Vector3 WidthHeightDepth { get; }
     }
 }

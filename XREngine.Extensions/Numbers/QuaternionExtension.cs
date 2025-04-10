@@ -18,5 +18,20 @@ namespace Extensions
             result.M33 = 1 - 2 * quaternion.X * quaternion.X - 2 * quaternion.Y * quaternion.Y;
             return result;
         }
+
+        public static Vector3 Rotate(this Quaternion rotation, Vector3 vector)
+            => Vector3.Transform(vector, rotation);
+        public static Vector3 PosZ(this Quaternion rotation)
+            => Vector3.Transform(Vector3.UnitZ, rotation);
+        public static Vector3 PosY(this Quaternion rotation)
+            => Vector3.Transform(Vector3.UnitY, rotation);
+        public static Vector3 PosX(this Quaternion rotation)
+            => Vector3.Transform(Vector3.UnitX, rotation);
+        public static Vector3 NegZ(this Quaternion rotation)
+            => Vector3.Transform(-Vector3.UnitZ, rotation);
+        public static Vector3 NegY(this Quaternion rotation)
+            => Vector3.Transform(-Vector3.UnitY, rotation);
+        public static Vector3 NegX(this Quaternion rotation)
+            => Vector3.Transform(-Vector3.UnitX, rotation);
     }
 }

@@ -1,4 +1,5 @@
-﻿using XREngine.Data.Rendering;
+﻿using System.Numerics;
+using XREngine.Data.Rendering;
 
 namespace XREngine.Rendering
 {
@@ -25,6 +26,7 @@ namespace XREngine.Rendering
             set => SetField(ref _view2D, value);
         }
         public override uint MaxDimension { get; } = 2u;
+        public override Vector3 WidthHeightDepth => new(0, 0, 0);
         public override ETextureTarget TextureTarget => ETextureTarget.TextureBuffer;
     }
 }

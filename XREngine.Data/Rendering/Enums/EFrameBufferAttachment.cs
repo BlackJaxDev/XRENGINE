@@ -2,13 +2,15 @@
 {
     public enum EFrameBufferAttachment
     {
+        None = 0,
+        Back,
+        Front,
+        Left,
+        Right,
         FrontLeft,
         FrontRight,
         BackLeft,
         BackRight,
-        Color,
-        Depth,
-        Stencil,
         DepthStencilAttachment,
         ColorAttachment0,
         ColorAttachment1,

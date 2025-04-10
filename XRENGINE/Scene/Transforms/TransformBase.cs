@@ -519,6 +519,15 @@ namespace XREngine.Scene.Transforms
         /// </summary>
         public Matrix4x4 ParentInverseWorldMatrix => Parent?.InverseWorldMatrix ?? Matrix4x4.Identity;
 
+        /// <summary>
+        /// Returns the parent bind matrix, or identity if no parent.
+        /// </summary>
+        public Matrix4x4 ParentBindMatrix => Parent?.BindMatrix ?? Matrix4x4.Identity;
+        /// <summary>
+        /// Returns the inverse of the parent bind matrix, or identity if no parent.
+        /// </summary>
+        public Matrix4x4 ParentInverseBindMatrix => Parent?.InverseBindMatrix ?? Matrix4x4.Identity;
+
         public Matrix4x4 ParentRenderMatrix => Parent?.RenderMatrix ?? Matrix4x4.Identity;
         public Matrix4x4 ParentInverseRenderMatrix => Parent?.InverseRenderMatrix ?? Matrix4x4.Identity;
         
@@ -563,9 +572,11 @@ namespace XREngine.Scene.Transforms
         public Vector3 LocalTranslation => LocalMatrix.Translation;
         public virtual Quaternion LocalRotation => Quaternion.CreateFromRotationMatrix(LocalMatrix);
         public virtual Quaternion WorldRotation => Quaternion.CreateFromRotationMatrix(WorldMatrix);
+        public virtual Quaternion InverseLocalRotation => Quaternion.CreateFromRotationMatrix(InverseLocalMatrix);
+        public virtual Quaternion InverseWorldRotation => Quaternion.CreateFromRotationMatrix(InverseWorldMatrix);
         public Vector3 LossyWorldScale => ExtractScale(WorldMatrix);
 
-        private static Vector3 ExtractScale(Matrix4x4 matrix)
+        public static Vector3 ExtractScale(Matrix4x4 matrix)
         {
             Vector3 scale;
             scale.X = new Vector3(matrix.M11, matrix.M12, matrix.M13).Length();
@@ -593,7 +604,7 @@ namespace XREngine.Scene.Transforms
         {
             get
             {
-                //VerifyLocalMatrix();
+                VerifyLocalMatrix();
                 return _localMatrix.Matrix;
             }
         }
@@ -603,15 +614,15 @@ namespace XREngine.Scene.Transforms
         /// If this is not called after values are changed and the matrix is invalidated,
         /// the matrix will not be recalculated until swap buffers is called or the matrix is specifically requested.
         /// </summary>
-        //public void VerifyLocalMatrix()
-        //{
-        //    if (!_localMatrix.NeedsRecalc)
-        //        return;
+        public bool VerifyLocalMatrix()
+        {
+            if (!_localMatrix.NeedsRecalc)
+                return false;
 
-        //    World?.AddDirtyTransform(this, out _, false);
-        //    //_localMatrix.NeedsRecalc = false;
-        //    //RecalcLocal();
-        //}
+            _localMatrix.NeedsRecalc = false;
+            RecalcLocal();
+            return true;
+        }
 
         internal void RecalcLocal()
         {
@@ -633,7 +644,7 @@ namespace XREngine.Scene.Transforms
         {
             get
             {
-                //VerifyWorldMatrix();
+                VerifyWorldMatrix();
                 return _worldMatrix.Matrix;
             }
         }
@@ -643,15 +654,20 @@ namespace XREngine.Scene.Transforms
         /// If this is not called after values are changed and the matrix is invalidated,
         /// the matrix will not be recalculated until swap buffers is called or the matrix is specifically requested.
         /// </summary>
-        //public void VerifyWorldMatrix()
-        //{
-        //    if (!_worldMatrix.NeedsRecalc)
-        //        return;
+        public bool VerifyWorldMatrix()
+        {
+            bool force = VerifyLocalMatrix() | VerifyParentWorldMatrix();
 
-        //    World?.AddDirtyTransform(this, out _, false);
-        //    //_worldMatrix.NeedsRecalc = false;
-        //    //RecalcWorld(false);
-        //}
+            if (!_worldMatrix.NeedsRecalc && !force)
+                return false;
+
+            _worldMatrix.NeedsRecalc = false;
+            RecalcWorld(false);
+            return true;
+        }
+
+        private bool VerifyParentWorldMatrix()
+            => Parent?.VerifyWorldMatrix() ?? false;
 
         internal void RecalcWorld(bool allowSetLocal)
         {
@@ -696,12 +712,12 @@ namespace XREngine.Scene.Transforms
 
         private void VerifyLocalInv()
         {
-            //VerifyLocalMatrix();
+            VerifyLocalMatrix();
 
-            //if (!_inverseLocalMatrix.NeedsRecalc)
-            //    return;
-            
-            //_inverseLocalMatrix.NeedsRecalc = false;
+            if (!_inverseLocalMatrix.NeedsRecalc)
+                return;
+
+            _inverseLocalMatrix.NeedsRecalc = false;
             RecalcLocalInv();
         }
 
@@ -736,12 +752,12 @@ namespace XREngine.Scene.Transforms
 
         private void VerifyWorldInv()
         {
-            //VerifyWorldMatrix();
+            VerifyWorldMatrix();
 
-            //if (!_inverseWorldMatrix.NeedsRecalc)
-            //    return;
-            
-            //_inverseWorldMatrix.NeedsRecalc = false;
+            if (!_inverseWorldMatrix.NeedsRecalc)
+                return;
+
+            _inverseWorldMatrix.NeedsRecalc = false;
             RecalcWorldInv(false);
         }
 
@@ -784,6 +800,7 @@ namespace XREngine.Scene.Transforms
         protected void MarkLocalModified()
         {
             _localMatrix.NeedsRecalc = true;
+            _inverseLocalMatrix.NeedsRecalc = true;
             MarkWorldModified();
             HasChanged = true;
         }
@@ -794,6 +811,7 @@ namespace XREngine.Scene.Transforms
         protected void MarkWorldModified()
         {
             _worldMatrix.NeedsRecalc = true;
+            _inverseWorldMatrix.NeedsRecalc = true;
             World?.AddDirtyTransform(this);
             HasChanged = true;
         }

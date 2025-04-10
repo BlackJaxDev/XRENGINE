@@ -10,6 +10,8 @@ namespace XREngine.Data
     {
         private void* _address;
 
+        public static readonly VoidPtr Zero = new() { _address = null };
+
         public readonly void* Pointer => _address;
 
         #region Primitive Types

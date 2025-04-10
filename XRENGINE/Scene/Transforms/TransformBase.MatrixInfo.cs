@@ -228,6 +228,9 @@ namespace XREngine.Scene.Transforms
             forward = forward.Normalized();
         }
 
+        public virtual void ResetPose(bool networkSmoothed = false)
+            => DeriveLocalMatrix(ParentInverseBindMatrix * BindMatrix, networkSmoothed);
+
         private class MatrixInfo
         {
             private readonly ReaderWriterLockSlim _modifiedLock = new();

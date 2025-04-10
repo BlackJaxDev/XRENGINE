@@ -238,10 +238,10 @@ public class DefaultRenderPipeline : RenderPipeline
                 CreatePostProcessFBO,
                 GetDesiredFBOSizeInternal);
 
-            c.Add<VPRC_CacheOrCreateFBO>().SetOptions(
-                UserInterfaceFBOName,
-                CreateUserInterfaceFBO,
-                GetDesiredFBOSizeInternal);
+            //c.Add<VPRC_CacheOrCreateFBO>().SetOptions(
+            //    UserInterfaceFBOName,
+            //    CreateUserInterfaceFBO,
+            //    GetDesiredFBOSizeInternal);
 
             c.Add<VPRC_ExposureUpdate>().SetOptions(HDRSceneTextureName, true);
         }
@@ -250,7 +250,9 @@ public class DefaultRenderPipeline : RenderPipeline
             using (c.AddUsing<VPRC_BindOutputFBO>())
             {
                 c.Add<VPRC_RenderQuadFBO>().FrameBufferName = PostProcessFBOName;
-                c.Add<VPRC_RenderScreenSpaceUI>();
+
+                //We're not rendering to an FBO, we're rendering direct to the screen on top of the scene
+                c.Add<VPRC_RenderScreenSpaceUI>()/*.OutputTargetFBOName = UserInterfaceFBOName*/;
             }
         }
         c.Add<VPRC_RenderMeshesPass>().RenderPass = (int)EDefaultRenderPass.PostRender;
@@ -341,11 +343,11 @@ public class DefaultRenderPipeline : RenderPipeline
         //    ResizeTextureInternalSize);
 
         //HUD texture
-        c.Add<VPRC_CacheOrCreateTexture>().SetOptions(
-            UserInterfaceTextureName,
-            CreateHUDTexture,
-            NeedsRecreateTextureFullSize,
-            ResizeTextureFullSize);
+        //c.Add<VPRC_CacheOrCreateTexture>().SetOptions(
+        //    UserInterfaceTextureName,
+        //    CreateHUDTexture,
+        //    NeedsRecreateTextureFullSize,
+        //    ResizeTextureFullSize);
     }
 
     #endregion
@@ -547,20 +549,20 @@ public class DefaultRenderPipeline : RenderPipeline
             var t = XRTexture2DArray.CreateFrameBufferTexture(
                 2,
                 InternalWidth, InternalHeight,
-                EPixelInternalFormat.Rgba16f,
+                EPixelInternalFormat.Rgb16f,
                 EPixelFormat.Rgb,
                 EPixelType.HalfFloat);
             t.OVRMultiViewParameters = new(0, 2u);
             t.Resizable = false;
-            t.SizedInternalFormat = ESizedInternalFormat.Rgba16f;
+            t.SizedInternalFormat = ESizedInternalFormat.Rgb16f;
             return t;
         }
         else
         {
             var t = XRTexture2D.CreateFrameBufferTexture(
                 InternalWidth, InternalHeight,
-                EPixelInternalFormat.Rgba16f,
-                EPixelFormat.Rgba,
+                EPixelInternalFormat.Rgb16f,
+                EPixelFormat.Rgb,
                 EPixelType.HalfFloat);
             //t.Resizable = false;
             //t.SizedInternalFormat = ESizedInternalFormat.Rgba16f;
@@ -609,74 +611,74 @@ public class DefaultRenderPipeline : RenderPipeline
             return t;
         }
     }
-    private XRTexture CreateHUDTexture()
-    {
-        uint w = (uint)State.WindowViewport!.Width;
-        uint h = (uint)State.WindowViewport!.Height;
-        if (Stereo)
-        {
-            var t = XRTexture2DArray.CreateFrameBufferTexture(
-                2, w, h,
-                EPixelInternalFormat.Rgba8,
-                EPixelFormat.Rgba,
-                EPixelType.UnsignedByte);
-            t.Resizable = false;
-            t.SizedInternalFormat = ESizedInternalFormat.Rgba8;
-            t.OVRMultiViewParameters = new(0, 2u);
-            t.MinFilter = ETexMinFilter.Nearest;
-            t.MagFilter = ETexMagFilter.Nearest;
-            t.UWrap = ETexWrapMode.ClampToEdge;
-            t.VWrap = ETexWrapMode.ClampToEdge;
-            t.SamplerName = UserInterfaceTextureName;
-            return t;
-        }
-        else
-        {
-            var t = XRTexture2D.CreateFrameBufferTexture(
-                w, h,
-                EPixelInternalFormat.Rgba8,
-                EPixelFormat.Rgba,
-                EPixelType.UnsignedByte);
-            //t.Resizable = false;
-            //t.SizedInternalFormat = ESizedInternalFormat.Rgba8;
-            t.MinFilter = ETexMinFilter.Nearest;
-            t.MagFilter = ETexMagFilter.Nearest;
-            t.UWrap = ETexWrapMode.ClampToEdge;
-            t.VWrap = ETexWrapMode.ClampToEdge;
-            t.SamplerName = UserInterfaceTextureName;
-            return t;
-        }
-    }
+    //private XRTexture CreateHUDTexture()
+    //{
+    //    uint w = (uint)State.WindowViewport!.Width;
+    //    uint h = (uint)State.WindowViewport!.Height;
+    //    if (Stereo)
+    //    {
+    //        var t = XRTexture2DArray.CreateFrameBufferTexture(
+    //            2, w, h,
+    //            EPixelInternalFormat.Rgba8,
+    //            EPixelFormat.Rgba,
+    //            EPixelType.UnsignedByte);
+    //        t.Resizable = false;
+    //        t.SizedInternalFormat = ESizedInternalFormat.Rgba8;
+    //        t.OVRMultiViewParameters = new(0, 2u);
+    //        t.MinFilter = ETexMinFilter.Nearest;
+    //        t.MagFilter = ETexMagFilter.Nearest;
+    //        t.UWrap = ETexWrapMode.ClampToEdge;
+    //        t.VWrap = ETexWrapMode.ClampToEdge;
+    //        t.SamplerName = UserInterfaceTextureName;
+    //        return t;
+    //    }
+    //    else
+    //    {
+    //        var t = XRTexture2D.CreateFrameBufferTexture(
+    //            w, h,
+    //            EPixelInternalFormat.Rgba8,
+    //            EPixelFormat.Rgba,
+    //            EPixelType.UnsignedByte);
+    //        //t.Resizable = false;
+    //        //t.SizedInternalFormat = ESizedInternalFormat.Rgba8;
+    //        t.MinFilter = ETexMinFilter.Nearest;
+    //        t.MagFilter = ETexMagFilter.Nearest;
+    //        t.UWrap = ETexWrapMode.ClampToEdge;
+    //        t.VWrap = ETexWrapMode.ClampToEdge;
+    //        t.SamplerName = UserInterfaceTextureName;
+    //        return t;
+    //    }
+    //}
 
     #endregion
 
     #region FBO Creation
 
-    private XRFrameBuffer CreateUserInterfaceFBO()
-    {
-        var hudTexture = GetTexture<XRTexture>(UserInterfaceTextureName)!;
-        XRShader hudShader = XRShader.EngineShader(Path.Combine(SceneShaderPath, HudFBOShaderName()), EShaderType.Fragment);
-        XRMaterial hudMat = new([hudTexture], hudShader)
-        {
-            RenderOptions = new RenderingParameters()
-            {
-                DepthTest = new()
-                {
-                    Enabled = ERenderParamUsage.Unchanged,
-                    Function = EComparison.Always,
-                    UpdateDepth = false,
-                },
-            }
-        };
-        var uiFBO = new XRQuadFrameBuffer(hudMat);
+    //private XRFrameBuffer CreateUserInterfaceFBO()
+    //{
+    //    var hudTexture = GetTexture<XRTexture>(UserInterfaceTextureName)!;
+    //    XRShader hudShader = XRShader.EngineShader(Path.Combine(SceneShaderPath, HudFBOShaderName()), EShaderType.Fragment);
+    //    XRMaterial hudMat = new([hudTexture], hudShader)
+    //    {
+    //        RenderOptions = new RenderingParameters()
+    //        {
+    //            DepthTest = new()
+    //            {
+    //                Enabled = ERenderParamUsage.Unchanged,
+    //                Function = EComparison.Always,
+    //                UpdateDepth = false,
+    //            },
+    //        }
+    //    };
+    //    var uiFBO = new XRQuadFrameBuffer(hudMat);
 
-        if (hudTexture is not IFrameBufferAttachement hudAttach)
-            throw new InvalidOperationException("HUD texture must be an FBO-attachable texture.");
+    //    if (hudTexture is not IFrameBufferAttachement hudAttach)
+    //        throw new InvalidOperationException("HUD texture must be an FBO-attachable texture.");
 
-        uiFBO.SetRenderTargets((hudAttach, EFrameBufferAttachment.ColorAttachment0, 0, -1));
+    //    uiFBO.SetRenderTargets((hudAttach, EFrameBufferAttachment.ColorAttachment0, 0, -1));
 
-        return uiFBO;
-    }
+    //    return uiFBO;
+    //}
     private XRFrameBuffer CreatePostProcessFBO()
     {
         XRTexture[] postProcessRefs =

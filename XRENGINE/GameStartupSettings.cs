@@ -1,4 +1,5 @@
-﻿using XREngine.Core.Files;
+﻿using XREngine.Components.Scene.Transforms;
+using XREngine.Core.Files;
 using XREngine.Data.Rendering;
 
 namespace XREngine
@@ -142,5 +143,42 @@ namespace XREngine
             get => _runVRInPlace;
             set => SetField(ref _runVRInPlace, value);
         }
+        public Dictionary<int, string> LayerNames { get; set; } = DefaultLayers.All;
+
+        /// <summary>
+        /// The maximum number of times a mirror can reflect another mirror.
+        /// </summary>
+        public enum EMaxMirrorRecursionCount
+        {
+            /// <summary>
+            /// No recursion is allowed.
+            /// </summary>
+            None = 0,
+            /// <summary>
+            /// One recursion is allowed.
+            /// </summary>
+            One = 1,
+            /// <summary>
+            /// Two recursions are allowed.
+            /// </summary>
+            Two = 2,
+            /// <summary>
+            /// Four recursions are allowed.
+            /// </summary>
+            Four = 4,
+            /// <summary>
+            /// Eight recursions are allowed.
+            /// </summary>
+            Eight = 8,
+            /// <summary>
+            /// Sixteen recursions are allowed.
+            /// </summary>
+            Sixteen = 16,
+        }
+
+        /// <summary>
+        /// The maximum number of times a mirror can reflect another mirror.
+        /// </summary>
+        public EMaxMirrorRecursionCount MaxMirrorRecursionCount { get; set; } = EMaxMirrorRecursionCount.Eight;
     }
 }

@@ -1,4 +1,5 @@
-﻿using System.Reflection;
+﻿using ImmediateReflection;
+using System.Reflection;
 using XREngine.Data.Animation;
 using XREngine.Data.Core;
 
@@ -58,9 +59,9 @@ namespace XREngine.Animation
         private const BindingFlags BindingFlag = BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic;
 
         //Cached at runtime
-        private PropertyInfo? _propertyCache;
+        private ImmediateProperty? _propertyCache;
         private MethodInfo? _methodCache;
-        private FieldInfo? _fieldCache;
+        private ImmediateField? _fieldCache;
         internal Action<object?, float>? _tick = null;
 
         private BasePropAnim? _animation = null;
@@ -88,8 +89,17 @@ namespace XREngine.Animation
         }
 
         //For now, methods can only have one animated argument (but can still have multiple non-animated arguments)
-        public object[] MethodArguments { get; set; } = new object[1];
-        public int MethodValueArgumentIndex { get; set; } = 0;
+        public object[] MethodArguments
+        {
+            get => _methodArguments;
+            set => SetField(ref _methodArguments, value);
+        }
+
+        public int MethodValueArgumentIndex
+        {
+            get => _methodValueArgumentIndex;
+            set => SetField(ref _methodValueArgumentIndex, value);
+        }
 
         //TODO: resolve _memberType as a new object animated
         private EAnimationMemberType _memberType = EAnimationMemberType.Property;
@@ -198,6 +208,8 @@ namespace XREngine.Animation
 
         private object? _cachedReturnValue = null;
         private bool _cacheAttempted = false;
+        private int _methodValueArgumentIndex = 0;
+        private object[] _methodArguments = new object[1];
 
         internal void MethodTick(object? obj, float delta)
         {
@@ -206,14 +218,8 @@ namespace XREngine.Animation
 
             if (_methodCache is null)
             {
-                Type? type = obj.GetType();
-                while (type != null)
-                {
-                    if ((_methodCache = type.GetMethod(_memberName, BindingFlag, MethodArguments.Select(x => x.GetType()).ToArray())) is null)
-                        type = type.BaseType;
-                    else
-                        break;
-                }
+                var methodType = obj.GetType();
+                _methodCache = methodType?.GetMethod(_memberName, BindingFlag, [.. MethodArguments.Select(x => x.GetType())]);
 
                 if (MemberNotFound = _methodCache is null)
                     return;
@@ -237,7 +243,7 @@ namespace XREngine.Animation
             }
             else
                 methodReturn = GetMethodReturnValue(obj);
-            
+
             //Tick children on method return value
             if (_children.Count > 0)
             {
@@ -269,14 +275,8 @@ namespace XREngine.Animation
 
             if (_propertyCache is null)
             {
-                Type? type = obj.GetType();
-                while (type != null)
-                {
-                    if ((_propertyCache = type.GetProperty(_memberName, BindingFlag)) is null)
-                        type = type.BaseType;
-                    else
-                        break;
-                }
+                ImmediateType immediateType = obj.GetImmediateType();
+                _propertyCache = immediateType.GetProperty(_memberName);
 
                 if (MemberNotFound = _propertyCache is null)
                     return;
@@ -334,21 +334,16 @@ namespace XREngine.Animation
 
             if (_fieldCache is null)
             {
-                Type? type = obj.GetType();
-                while (type != null)
-                {
-                    if ((_fieldCache = type.GetField(_memberName, BindingFlag)) is null)
-                        type = type.BaseType;
-                    else
-                        break;
-                }
+                ImmediateType immediateType = obj.GetImmediateType();
+                _fieldCache = immediateType.GetField(_memberName);
+
                 if (MemberNotFound = _fieldCache is null)
                     return;
             }
 
             if (_fieldCache is null)
                 return;
-            
+
             object? fieldReturn;
             var animation = Animation;
             if (animation is not null)
@@ -363,7 +358,7 @@ namespace XREngine.Animation
             }
             else
                 fieldReturn = GetFieldReturnValue(obj);
-            
+
             if (_children.Count > 0)
             {
                 foreach (AnimationMember f in _children)
@@ -442,7 +437,9 @@ namespace XREngine.Animation
             _fieldCache = null;
             _propertyCache = null;
             _methodCache = null;
-
+            if (Animation is null)
+                return;
+            //Debug.WriteLine($"Starting animation {Animation.Name} on {MemberName}");
             Animation?.Start();
         }
 

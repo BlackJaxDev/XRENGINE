@@ -50,7 +50,7 @@ void main()
 
 	vec3 albedoColor = texture(Texture0, uv).rgb;
 	vec3 normal = texture(Texture1, uv).rgb;
-	vec3 rms = texture(Texture2, uv).rgb;
+	vec4 rmse = texture(Texture2, uv);
 	float ao = texture(Texture3, uv).r;
 	float depth = texture(Texture4, uv).r;
 	vec3 InLo = texture(Texture5, uv).rgb;
@@ -58,9 +58,10 @@ void main()
 	vec3 fragPosWS = WorldPosFromDepth(depth, uv);
 	//float fogDensity = noise3(fragPosWS);
 
-	float roughness = rms.x;
-  	float metallic = rms.y;
-	float specularIntensity = rms.z;
+	float roughness = rmse.x;
+  	float metallic = rmse.y;
+	float specularIntensity = rmse.z;
+	float emissiveIntensity = rmse.w;
 
 	vec3 CameraPosition = InverseViewMatrix[3].xyz;
 	vec3 V = normalize(CameraPosition - fragPosWS);
@@ -81,5 +82,5 @@ void main()
 	vec3 specular = prefilteredColor * (kS * brdfValue.x + brdfValue.y);
 	vec3 ambient = (kD * diffuse + specular) * ao;
 
-	OutLo = ambient + InLo;
+	OutLo = ambient + InLo + emissiveIntensity * albedoColor;
 }

@@ -36,6 +36,8 @@ namespace XREngine
 
         private static readonly ConcurrentQueue<Action> _asyncTaskQueue = new();
         private static readonly ConcurrentQueue<Action> _mainThreadTaskQueue = new();
+        private static readonly List<Func<bool>> _mainThreadCoroutines = [];
+        private static readonly ConcurrentQueue<Func<bool>> _mainThreadCoroutinesAddQueue = new();
 
         public static bool IsRenderThread => Environment.CurrentManagedThreadId == RenderThreadId;
         public static int RenderThreadId { get; private set; }
@@ -52,6 +54,8 @@ namespace XREngine
         /// <param name="task"></param>
         public static void EnqueueMainThreadTask(Action task)
             => _mainThreadTaskQueue.Enqueue(task);
+        public static void AddMainThreadCoroutine(Func<bool> task)
+            => _mainThreadCoroutinesAddQueue.Enqueue(task);
 
         /// <summary>
         /// Invokes the task on the main thread if the current thread is not the render thread.
@@ -230,6 +234,11 @@ namespace XREngine
         {
             while (_mainThreadTaskQueue.TryDequeue(out var task))
                 task.Invoke();
+            while (_mainThreadCoroutinesAddQueue.TryDequeue(out var task))
+                _mainThreadCoroutines.Add(task);
+            for (int i = 0; i < _mainThreadCoroutines.Count; i++)
+                if (_mainThreadCoroutines[i].Invoke())
+                    _mainThreadCoroutines.RemoveAt(i--);
         }
 
         public static void InitializeWindows(List<GameWindowStartupSettings> windows)

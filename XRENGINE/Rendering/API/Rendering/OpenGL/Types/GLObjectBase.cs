@@ -117,16 +117,16 @@ namespace XREngine.Rendering.OpenGL
                 {
                     //try
                     //{
-                        if (_bindingId is null || _bindingId.Value == InvalidBindingId)
-                            Generate();
+                    if (_bindingId is null || _bindingId.Value == InvalidBindingId)
+                        Generate();
 
-                        if (TryGetBindingId(out uint bindingId))
-                            return bindingId;
-                        else
-                        {
-                            Debug.LogWarning($"Failed to generate object of type {Type}.");
-                            return InvalidBindingId;
-                        }
+                    if (TryGetBindingId(out uint bindingId))
+                        return bindingId;
+                    else
+                    {
+                        Debug.LogWarning($"Failed to generate object of type {Type}.");
+                        return InvalidBindingId;
+                    }
                     //}
                     //catch (Exception ex)
                     //{
@@ -470,13 +470,18 @@ namespace XREngine.Rendering.OpenGL
             public static GLEnum ToGLEnum(EFrameBufferAttachment attachment)
                 => attachment switch
                 {
+                    EFrameBufferAttachment.None => GLEnum.None,
+                    EFrameBufferAttachment.Back => GLEnum.Back,
+                    EFrameBufferAttachment.Front => GLEnum.Front,
+                    EFrameBufferAttachment.Left => GLEnum.Left,
+                    EFrameBufferAttachment.Right => GLEnum.Right,
                     EFrameBufferAttachment.BackLeft => GLEnum.BackLeft,
                     EFrameBufferAttachment.BackRight => GLEnum.BackRight,
                     EFrameBufferAttachment.FrontLeft => GLEnum.FrontLeft,
                     EFrameBufferAttachment.FrontRight => GLEnum.FrontRight,
-                    EFrameBufferAttachment.Color => GLEnum.Color,
-                    EFrameBufferAttachment.Depth => GLEnum.Depth,
-                    EFrameBufferAttachment.Stencil => GLEnum.Stencil,
+                    //EFrameBufferAttachment.Color => GLEnum.Color,
+                    //EFrameBufferAttachment.Depth => GLEnum.Depth,
+                    //EFrameBufferAttachment.Stencil => GLEnum.Stencil,
                     EFrameBufferAttachment.ColorAttachment0 => GLEnum.ColorAttachment0,
                     EFrameBufferAttachment.ColorAttachment1 => GLEnum.ColorAttachment1,
                     EFrameBufferAttachment.ColorAttachment2 => GLEnum.ColorAttachment2,
@@ -692,6 +697,34 @@ namespace XREngine.Rendering.OpenGL
                 }
                 _bindingId = null;
                 PostDeleted();
+            }
+
+            public static ReadBufferMode ToReadBufferMode(EFrameBufferAttachment attachment)
+            {
+                return attachment switch
+                {
+                    EFrameBufferAttachment.BackLeft => ReadBufferMode.BackLeft,
+                    EFrameBufferAttachment.BackRight => ReadBufferMode.BackRight,
+                    EFrameBufferAttachment.FrontLeft => ReadBufferMode.FrontLeft,
+                    EFrameBufferAttachment.FrontRight => ReadBufferMode.FrontRight,
+                    EFrameBufferAttachment.ColorAttachment0 => ReadBufferMode.ColorAttachment0,
+                    EFrameBufferAttachment.ColorAttachment1 => ReadBufferMode.ColorAttachment1,
+                    EFrameBufferAttachment.ColorAttachment2 => ReadBufferMode.ColorAttachment2,
+                    EFrameBufferAttachment.ColorAttachment3 => ReadBufferMode.ColorAttachment3,
+                    EFrameBufferAttachment.ColorAttachment4 => ReadBufferMode.ColorAttachment4,
+                    EFrameBufferAttachment.ColorAttachment5 => ReadBufferMode.ColorAttachment5,
+                    EFrameBufferAttachment.ColorAttachment6 => ReadBufferMode.ColorAttachment6,
+                    EFrameBufferAttachment.ColorAttachment7 => ReadBufferMode.ColorAttachment7,
+                    EFrameBufferAttachment.ColorAttachment8 => ReadBufferMode.ColorAttachment8,
+                    EFrameBufferAttachment.ColorAttachment9 => ReadBufferMode.ColorAttachment9,
+                    EFrameBufferAttachment.ColorAttachment10 => ReadBufferMode.ColorAttachment10,
+                    EFrameBufferAttachment.ColorAttachment11 => ReadBufferMode.ColorAttachment11,
+                    EFrameBufferAttachment.ColorAttachment12 => ReadBufferMode.ColorAttachment12,
+                    EFrameBufferAttachment.ColorAttachment13 => ReadBufferMode.ColorAttachment13,
+                    EFrameBufferAttachment.ColorAttachment14 => ReadBufferMode.ColorAttachment14,
+                    EFrameBufferAttachment.ColorAttachment15 => ReadBufferMode.ColorAttachment15,
+                    _ => throw new ArgumentOutOfRangeException(nameof(attachment), attachment, null),
+                };
             }
         }
     }

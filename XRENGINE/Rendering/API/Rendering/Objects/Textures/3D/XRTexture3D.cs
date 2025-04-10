@@ -1,4 +1,5 @@
-﻿using XREngine.Data.Rendering;
+﻿using System.Numerics;
+using XREngine.Data.Rendering;
 
 namespace XREngine.Rendering
 {
@@ -124,6 +125,8 @@ namespace XREngine.Rendering
         /// False by default.
         /// </summary>
         public bool Resizable { get; set; } = true;
+
+        public override Vector3 WidthHeightDepth => new(Width, Height, Depth);
 
         public EDepthStencilFmt DepthStencilFormat { get; set; } = EDepthStencilFmt.None;
 

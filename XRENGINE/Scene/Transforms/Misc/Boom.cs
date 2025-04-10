@@ -3,6 +3,8 @@ using System.Drawing;
 using System.Numerics;
 using XREngine.Data;
 using XREngine.Rendering.Physics.Physx;
+using XREngine.Scene;
+using XREngine.Scene.Components.Animation;
 using XREngine.Scene.Transforms;
 
 namespace XREngine.Components.Scene.Transforms
@@ -96,6 +98,23 @@ namespace XREngine.Components.Scene.Transforms
 
         private readonly SortedDictionary<float, List<(XRComponent? item, object? data)>> _traceOutput = [];
 
+        private PhysxScene.PhysxQueryFilter _queryFilter = new()
+        {
+            Flags = MagicPhysX.PxQueryFlags.Static,
+        };
+        public PhysxScene.PhysxQueryFilter QueryFilter
+        {
+            get => _queryFilter;
+            set => SetField(ref _queryFilter, value);
+        }
+
+        private LayerMask _layerMask = LayerMask.GetMask(DefaultLayers.Default);
+        public LayerMask LayerMask
+        {
+            get => _layerMask;
+            set => SetField(ref _layerMask, value);
+        }
+
         private void Tick()
         {
             float newLength;
@@ -107,6 +126,8 @@ namespace XREngine.Components.Scene.Transforms
                     (ParentWorldMatrix.Translation, Quaternion.Identity),
                     Vector3.Transform(Globals.Backward, Parent?.WorldRotation ?? Quaternion.Identity),
                     MaxLength,
+                    _layerMask,
+                    _queryFilter,
                     _traceOutput);
                 if (_traceOutput.Count == 0)
                     newLength = MaxLength;

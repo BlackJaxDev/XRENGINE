@@ -296,6 +296,17 @@ namespace XREngine.Rendering
         [YamlIgnore]
         public VoidPtr Address => _clientSideSource?.Address ?? throw new InvalidDataException("Local buffer data has not been allocated.");
 
+        public bool TryGetAddress(out VoidPtr address)
+        {
+            if (_clientSideSource != null)
+            {
+                address = _clientSideSource.Address;
+                return true;
+            }
+            address = VoidPtr.Zero;
+            return false;
+        }
+
         /// <summary>
         /// The total size in bytes of this buffer.
         /// </summary>

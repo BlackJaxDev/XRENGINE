@@ -45,12 +45,13 @@
     <PackageReference Include="DotnetNoise" Version="1.0.0" />
     <PackageReference Include="FFmpeg.AutoGen" Version="7.0.0" />
     <PackageReference Include="GraphQL" Version="8.4.1" />
-    <PackageReference Include="Jitter2" Version="2.5.6" />
-    <PackageReference Include="JoltPhysicsSharp" Version="2.16.0" />
+    <PackageReference Include="ImmediateReflection" Version="2.0.0" />
+    <PackageReference Include="Jitter2" Version="2.5.7" />
+    <PackageReference Include="JoltPhysicsSharp" Version="2.16.1" />
     <PackageReference Include="LZMA-SDK" Version="22.1.1" />
-    <PackageReference Include="Magick.NET-Q16-HDRI-OpenMP-x64" Version="14.5.0" />
-    <PackageReference Include="Magick.NET.Core" Version="14.5.0" />
-    <PackageReference Include="Magick.NET.SystemDrawing" Version="8.0.5" />
+    <PackageReference Include="Magick.NET-Q16-HDRI-OpenMP-x64" Version="14.6.0" />
+    <PackageReference Include="Magick.NET.Core" Version="14.6.0" />
+    <PackageReference Include="Magick.NET.SystemDrawing" Version="8.0.6" />
     <PackageReference Include="MagicPhysX" Version="1.0.0" />
     <PackageReference Include="MathNet.Numerics" Version="5.0.0" />
     <PackageReference Include="MathNet.Numerics.Providers.CUDA" Version="5.0.0" />
@@ -159,6 +160,33 @@
   </ItemGroup>
 
   <ItemGroup>
+    <None Update="avcodec-61.dll">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+    <None Update="avdevice-61.dll">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+    <None Update="avfilter-10.dll">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+    <None Update="avformat-61.dll">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+    <None Update="avutil-59.dll">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+    <None Update="ffmpeg.exe">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+    <None Update="ffplay.exe">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+    <None Update="ffprobe.exe">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+    <None Update="postproc-58.dll">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
     <None Update="runtimes\win-x64\native\libmagicphysx.dll">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </None>
@@ -166,6 +194,12 @@
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </None>
     <None Update="OVRLipSync.dll">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+    <None Update="swresample-5.dll">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+    <None Update="swscale-8.dll">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </None>
   </ItemGroup>

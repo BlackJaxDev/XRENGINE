@@ -10,7 +10,9 @@ using XREngine.Data.Core;
 using XREngine.Data.Geometry;
 using XREngine.Rendering.Physics.Physx.Joints;
 using XREngine.Scene;
+using XREngine.Scene.Components.Animation;
 using static MagicPhysX.NativeMethods;
+using static XREngine.Rendering.Physics.Physx.PhysxScene;
 using Quaternion = System.Numerics.Quaternion;
 
 namespace XREngine.Rendering.Physics.Physx
@@ -826,6 +828,8 @@ namespace XREngine.Rendering.Physics.Physx
             PxQueryCache* cache = null,
             int maxHitCapacity = 32)
         {
+            //TODO: avoid stackalloc and new array allocation
+
             var filterData = filterMask != null ? PxQueryFilterData_new_1(filterMask, queryFlags) : PxQueryFilterData_new_2(queryFlags);
             PxVec3 o = origin;
             PxVec3 d = unitDir;
@@ -935,6 +939,8 @@ namespace XREngine.Rendering.Physics.Physx
             PxQueryCache* cache = null,
             int maxHitCapacity = 32)
         {
+            //TODO: avoid stackalloc and new array allocation
+
             var filterData = filterMask != null ? PxQueryFilterData_new_1(filterMask, queryFlags) : PxQueryFilterData_new_2(queryFlags);
             PxVec3 d = unitDir;
             var t = MakeTransform(pose.position, pose.rotation);
@@ -969,6 +975,8 @@ namespace XREngine.Rendering.Physics.Physx
             PxQueryFilterCallback* filterCallback = null,
             int maxHitCapacity = 32)
         {
+            //TODO: avoid stackalloc and new array allocation
+
             var filterData = filterMask != null ? PxQueryFilterData_new_1(filterMask, queryFlags) : PxQueryFilterData_new_2(queryFlags);
             var t = MakeTransform(pose.position, pose.rotation);
             PxOverlapHit* hitBuffer = stackalloc PxOverlapHit[maxHitCapacity];
@@ -1082,6 +1090,86 @@ namespace XREngine.Rendering.Physics.Physx
             //AddActor(actor);
         }
 
+        private static PxFilterData FilterDataFromLayerMask(LayerMask layerMask)
+            => PxFilterData_new_2((uint)layerMask.Value, 0u, 0u, 0u);
+        private static LayerMask LayerMaskFromFilterData(PxFilterData filterData)
+            => new((int)filterData.word0);
+
+        /// <summary>
+        /// Gets all filtering-related data for a query.
+        /// </summary>
+        /// <param name="layerMask"></param>
+        /// <param name="filter"></param>
+        /// <param name="filterMask"></param>
+        /// <param name="filterCallback"></param>
+        /// <param name="hitFlags"></param>
+        /// <param name="queryFlags"></param>
+        /// <param name="sweepInflation"></param>
+        private void GetFiltering(
+            LayerMask layerMask,
+            IAbstractQueryFilter? filter,
+            out PxFilterData filterMask,
+            out PxQueryFilterCallback filterCallback,
+            out PxHitFlags hitFlags,
+            out PxQueryFlags queryFlags,
+            out float sweepInflation)
+        {
+            PxFilterData filterMask2 = FilterDataFromLayerMask(layerMask);
+            PxFilterData_setToDefault_mut(&filterMask2);
+            filterMask = filterMask2;
+
+            PxQueryHitType PreFilter(PxFilterData* filterData, PxShape* shape, PxRigidActor* actor, PxHitFlags queryFlags)
+            {
+                if (filter is PhysxQueryFilter physxFilter && physxFilter.PreFilter != null)
+                {
+                    var geo = GetShape(shape);
+                    var rigidActor = PhysxRigidActor.Get(actor);
+                    return physxFilter.PreFilter(*filterData, geo, rigidActor, queryFlags);
+                }
+                return PxQueryHitType.None;
+            }
+
+            PxQueryHitType PostFilter(PxFilterData* filterData, PxQueryHit* hit)
+            {
+                if (filter is PhysxQueryFilter physxFilter && physxFilter.PostFilter != null)
+                {
+                    return physxFilter.PostFilter(*filterData, *hit);
+                }
+                return PxQueryHitType.None;
+            }
+
+            void Destructor() { }
+
+            filterCallback = new() { vtable_ = PhysxScene.Native.CreateVTable(PreFilter, PostFilter, Destructor) };
+
+            hitFlags = PxHitFlags.Default;
+            queryFlags = PxQueryFlags.Static | PxQueryFlags.Dynamic;
+            sweepInflation = 0.0f;
+            if (filter is PhysxQueryFilter physxFilter)
+            {
+                hitFlags = physxFilter.HitFlags;
+                queryFlags = physxFilter.Flags;
+                sweepInflation = physxFilter.SweepInflation;
+            }
+        }
+
+        public delegate PxQueryHitType DelPreFilter(PxFilterData filterData, PhysxShape? shape, PhysxRigidActor? actor, PxHitFlags queryFlags);
+        public delegate PxQueryHitType DelPostFilter(PxFilterData filterData, PxQueryHit hit);
+
+        public struct PhysxQueryFilter : IAbstractQueryFilter
+        {
+            public DelPreFilter? PreFilter = null;
+            public DelPostFilter? PostFilter = null;
+            public PxQueryFlags Flags = PxQueryFlags.Static | PxQueryFlags.Dynamic;
+            public PxHitFlags HitFlags = PxHitFlags.Default;
+            public float SweepInflation = 0.0f;
+
+            public PhysxQueryFilter()
+            {
+
+            }
+        }
+
         private static RaycastHit ToRaycastHit(PxRaycastHit hit)
             => new()
             {
@@ -1092,19 +1180,52 @@ namespace XREngine.Rendering.Physics.Physx
                 UV = new Vector2(hit.u, hit.v),
             };
 
+        private static SweepHit ToSweepHit(PxSweepHit hit)
+        {
+            return new SweepHit
+            {
+                Position = hit.position,
+                Normal = hit.normal,
+                Distance = hit.distance,
+                FaceIndex = hit.faceIndex,
+            };
+        }
+
+        private static OverlapHit ToOverlapHit(PxOverlapHit hit)
+        {
+            return new OverlapHit
+            {
+                FaceIndex = hit.faceIndex,
+            };
+        }
+
         public override bool RaycastAny(
             Segment worldSegment,
+            LayerMask layerMask,
+            IAbstractQueryFilter? filter,
             out uint hitFaceIndex)
         {
             var start = worldSegment.Start;
             var end = worldSegment.End;
             var distance = worldSegment.Length;
             var unitDir = (end - start).Normalized();
-            return RaycastAny(start, unitDir, distance, out hitFaceIndex, PxQueryFlags.AnyHit, null, null, null);
+
+            GetFiltering(
+                layerMask,
+                filter,
+                out PxFilterData filterMask,
+                out PxQueryFilterCallback filterCallback,
+                out _,
+                out PxQueryFlags queryFlags,
+                out _);
+
+            return RaycastAny(start, unitDir, distance, out hitFaceIndex, queryFlags, &filterMask, &filterCallback, null);
         }
 
-        public override void RaycastSingle(
+        public override bool RaycastSingle(
             Segment worldSegment,
+            LayerMask layerMask,
+            IAbstractQueryFilter? filter,
             SortedDictionary<float, List<(XRComponent? item, object? data)>> results)
         {
             var start = worldSegment.Start;
@@ -1112,25 +1233,48 @@ namespace XREngine.Rendering.Physics.Physx
             var distance = worldSegment.Length;
             var unitDir = (end - start).Normalized();
 
-            if (!RaycastSingle(start, unitDir, distance, PxHitFlags.Position | PxHitFlags.Normal, out PxRaycastHit hit, PxQueryFlags.AnyHit, null, null, null))
-                return;
+            GetFiltering(
+                layerMask,
+                filter,
+                out PxFilterData filterMask,
+                out PxQueryFilterCallback filterCallback,
+                out PxHitFlags hitFlags,
+                out PxQueryFlags queryFlags,
+                out _);
+
+            if (!RaycastSingle(
+                start,
+                unitDir,
+                distance,
+                hitFlags,
+                out PxRaycastHit hit,
+                queryFlags,
+                &filterMask,
+                &filterCallback,
+                null))
+                return false;
+
+            PhysxScene.Native.FreeVTable(filterCallback.vtable_);
 
             PhysxRigidActor? actor = PhysxRigidActor.Get(hit.actor);
             if (actor is null)
-                return;
+                return true;
 
             XRComponent? component = actor.GetOwningComponent();
             if (component is null)
-                return;
+                return true;
 
             if (!results.TryGetValue(hit.distance, out var list))
                 results.Add(hit.distance, list = []);
 
             list.Add((component, ToRaycastHit(hit)));
+            return true;
         }
 
-        public override void RaycastMultiple(
+        public override bool RaycastMultiple(
             Segment worldSegment,
+            LayerMask layerMask,
+            IAbstractQueryFilter? filter,
             SortedDictionary<float, List<(XRComponent? item, object? data)>> results)
         {
             var start = worldSegment.Start;
@@ -1138,7 +1282,19 @@ namespace XREngine.Rendering.Physics.Physx
             var distance = worldSegment.Length;
             var unitDir = (end - start).Normalized();
 
-            var hits = RaycastMultiple(start, unitDir, distance, PxHitFlags.Position | PxHitFlags.Normal, out bool blockingHit, PxQueryFlags.AnyHit, null, null, null);
+            GetFiltering(
+                layerMask,
+                filter,
+                out PxFilterData filterMask,
+                out PxQueryFilterCallback filterCallback,
+                out PxHitFlags hitFlags,
+                out PxQueryFlags queryFlags,
+                out _);
+
+            var hits = RaycastMultiple(start, unitDir, distance, hitFlags, out bool blockingHit, queryFlags, &filterMask, &filterCallback, null, 32);
+
+            PhysxScene.Native.FreeVTable(filterCallback.vtable_);
+
             foreach (var hit in hits)
             {
                 PhysxRigidActor? actor = PhysxRigidActor.Get(hit.actor);
@@ -1149,17 +1305,12 @@ namespace XREngine.Rendering.Physics.Physx
                 if (component is null)
                     continue;
 
-                Vector3 hitPoint = start + unitDir * hit.distance;
-                Vector3 hitNormal = hit.normal;
-                //var d = (hitPoint - start).Length();
-                //if (d > distance)
-                //    continue;
-
                 if (!results.TryGetValue(hit.distance, out var list))
                     results.Add(hit.distance, list = []);
 
-                list.Add((component, (hitPoint, hitNormal, hit.distance)));
+                list.Add((component, ToRaycastHit(hit)));
             }
+            return hits.Length > 0;
         }
 
         public override bool SweepAny(
@@ -1167,49 +1318,82 @@ namespace XREngine.Rendering.Physics.Physx
             (Vector3 position, Quaternion rotation) pose,
             Vector3 unitDir,
             float distance,
+            LayerMask layerMask,
+            IAbstractQueryFilter? filter,
             out uint hitFaceIndex)
         {
+            GetFiltering(
+                layerMask,
+                filter,
+                out PxFilterData filterMask,
+                out PxQueryFilterCallback filterCallback,
+                out PxHitFlags hitFlags,
+                out PxQueryFlags queryFlags,
+                out float infl);
+
             bool hasHit = SweepAny(
                 geometry,
                 pose,
                 unitDir,
                 distance,
-                PxHitFlags.Position | PxHitFlags.Normal,
+                hitFlags,
                 out PxQueryHit hit,
-                PxQueryFlags.AnyHit,
-                null,
-                0.0f,
-                null,
+                queryFlags,
+                &filterMask,
+                infl,
+                &filterCallback,
                 null);
+
+            PhysxScene.Native.FreeVTable(filterCallback.vtable_);
+
             hitFaceIndex = hit.faceIndex;
             return hasHit;
         }
 
-        public override void SweepSingle(
+        public override bool SweepSingle(
             IPhysicsGeometry geometry,
             (Vector3 position, Quaternion rotation) pose,
             Vector3 unitDir,
             float distance,
+            LayerMask layerMask,
+            IAbstractQueryFilter? filter,
             SortedDictionary<float, List<(XRComponent? item, object? data)>> results)
         {
+            GetFiltering(
+                layerMask,
+                filter,
+                out PxFilterData filterMask,
+                out PxQueryFilterCallback filterCallback,
+                out PxHitFlags hitFlags,
+                out PxQueryFlags queryFlags,
+                out float infl);
+
             if (SweepSingle(
                 geometry,
                 pose,
                 unitDir,
                 distance,
-                PxHitFlags.Position | PxHitFlags.Normal,
+                hitFlags,
                 out PxSweepHit hit,
-                PxQueryFlags.Static,
-                null,
-                0.0f,
-                null,
+                queryFlags,
+                &filterMask,
+                infl,
+                &filterCallback,
                 null))
-                AddSweepHit(pose, distance, results, hit);
+            {
+                AddSweepHit(results, hit);
+
+                PhysxScene.Native.FreeVTable(filterCallback.vtable_);
+                return true;
+            }
+            else
+            {
+                PhysxScene.Native.FreeVTable(filterCallback.vtable_);
+                return false;
+            }
         }
 
         private static void AddSweepHit(
-            (Vector3 position, Quaternion rotation) pose,
-            float distance,
             SortedDictionary<float, List<(XRComponent? item, object? data)>> results,
             PxSweepHit hit)
         {
@@ -1221,26 +1405,45 @@ namespace XREngine.Rendering.Physics.Physx
             //if (component is null)
             //    return;
 
-            Vector3 hitPoint = hit.position;
-            Vector3 hitNormal = hit.normal;
-            //var d = (hitPoint - pose.position).Length();
-            //if (d > distance)
-            //    return;
-
             if (!results.TryGetValue(hit.distance, out var list))
                 results.Add(hit.distance, list = []);
 
-            list.Add((component, (hitPoint, hitNormal, hit.distance)));
+            list.Add((component, ToSweepHit(hit)));
         }
 
-        public override void SweepMultiple(
+        public override bool SweepMultiple(
             IPhysicsGeometry geometry,
             (Vector3 position, Quaternion rotation) pose,
             Vector3 unitDir,
             float distance,
+            LayerMask layerMask,
+            IAbstractQueryFilter? filter,
             SortedDictionary<float, List<(XRComponent? item, object? data)>> results)
         {
-            var hits = SweepMultiple(geometry, pose, unitDir, distance, PxHitFlags.Position | PxHitFlags.Normal, out bool blockingHit, PxQueryFlags.AnyHit, null, 0.0f, null, null);
+            GetFiltering(
+                layerMask,
+                filter,
+                out PxFilterData filterMask,
+                out PxQueryFilterCallback filterCallback,
+                out PxHitFlags hitFlags,
+                out PxQueryFlags queryFlags,
+                out float infl);
+
+            var hits = SweepMultiple(
+                geometry,
+                pose,
+                unitDir,
+                distance,
+                hitFlags,
+                out bool blockingHit,
+                queryFlags,
+                &filterMask,
+                infl,
+                &filterCallback,
+                null);
+
+            PhysxScene.Native.FreeVTable(filterCallback.vtable_);
+
             foreach (var hit in hits)
             {
                 PhysxRigidActor? actor = PhysxRigidActor.Get(hit.actor);
@@ -1251,25 +1454,40 @@ namespace XREngine.Rendering.Physics.Physx
                 if (component is null)
                     continue;
 
-                Vector3 hitPoint = hit.position;
-                Vector3 hitNormal = hit.normal;
-                //var d = (hitPoint - pose.position).Length();
-                //if (d > distance)
-                //    continue;
-
                 if (!results.TryGetValue(hit.distance, out var list))
                     results.Add(hit.distance, list = []);
 
-                list.Add((component, (hitPoint, hitNormal, hit.distance)));
+                list.Add((component, ToSweepHit(hit)));
             }
+            return hits.Length > 0;
         }
 
         public override bool OverlapAny(
             IPhysicsGeometry geometry,
             (Vector3 position, Quaternion rotation) pose,
+            LayerMask layerMask,
+            IAbstractQueryFilter? filter,
             SortedDictionary<float, List<(XRComponent? item, object? data)>> results)
         {
-            bool hasHit = OverlapAny(geometry, pose, out PxOverlapHit hit, PxQueryFlags.AnyHit, null, null);
+            GetFiltering(
+                layerMask,
+                filter,
+                out PxFilterData filterMask,
+                out PxQueryFilterCallback filterCallback,
+                out _,
+                out PxQueryFlags queryFlags,
+                out _);
+
+            bool hasHit = OverlapAny(
+                geometry,
+                pose,
+                out PxOverlapHit hit,
+                queryFlags,
+                &filterMask,
+                &filterCallback);
+
+            PhysxScene.Native.FreeVTable(filterCallback.vtable_);
+
             if (hasHit)
             {
                 PhysxRigidActor? actor = PhysxRigidActor.Get(hit.actor);
@@ -1285,17 +1503,31 @@ namespace XREngine.Rendering.Physics.Physx
                 if (!results.TryGetValue(d, out var list))
                     results.Add(0.0f, list = []);
 
-                list.Add((component, null));
+                list.Add((component, ToOverlapHit(hit)));
             }
             return hasHit;
         }
 
-        public override void OverlapMultiple(
+        public override bool OverlapMultiple(
             IPhysicsGeometry geometry,
             (Vector3 position, Quaternion rotation) pose,
+            LayerMask layerMask,
+            IAbstractQueryFilter? filter,
             SortedDictionary<float, List<(XRComponent? item, object? data)>> results)
         {
-            var hits = OverlapMultiple(geometry, pose, PxQueryFlags.AnyHit, null, null, 32);
+            GetFiltering(
+                layerMask,
+                filter,
+                out PxFilterData filterMask,
+                out PxQueryFilterCallback filterCallback,
+                out _,
+                out PxQueryFlags queryFlags,
+                out _);
+
+            var hits = OverlapMultiple(geometry, pose, queryFlags, &filterMask, &filterCallback, 32);
+
+            PhysxScene.Native.FreeVTable(filterCallback.vtable_);
+
             foreach (var hit in hits)
             {
                 PhysxRigidActor? actor = PhysxRigidActor.Get(hit.actor);
@@ -1311,8 +1543,9 @@ namespace XREngine.Rendering.Physics.Physx
                 if (!results.TryGetValue(d, out var list))
                     results.Add(0.0f, list = []);
 
-                list.Add((component, null));
+                list.Add((component, ToOverlapHit(hit)));
             }
+            return hits.Length > 0;
         }
 
         public bool VisualizeEnabled

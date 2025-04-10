@@ -1,5 +1,5 @@
-﻿using Silk.NET.Core.Win32Extras;
-using System.Text;
+﻿using System.Globalization;
+using System.Numerics;
 using XREngine.Rendering.Models.Materials;
 
 namespace XREngine.Rendering.Shaders.Generator
@@ -56,6 +56,47 @@ namespace XREngine.Rendering.Shaders.Generator
 
         public void WriteUniform(EShaderVarType type, string name, bool array = false)
             => Line($"{(_inBlock ? string.Empty : "uniform ")}{type.ToString()[1..]} {name}{(array ? "[]" : "")};");
+
+        private static string Format(int defaultValue)
+            => defaultValue.ToString(CultureInfo.InvariantCulture);
+        private static string Format(float defaultValue)
+            => defaultValue.ToString("0.0###f", CultureInfo.InvariantCulture);
+        private static string Format(Vector2 defaultValue)
+            => $"vec2({defaultValue.X}, {defaultValue.Y})";
+        private static string Format(Vector3 defaultValue)
+            => $"vec3({defaultValue.X}, {defaultValue.Y}, {defaultValue.Z})";
+        private static string Format(Vector4 defaultValue)
+            => $"vec4({defaultValue.X}, {defaultValue.Y}, {defaultValue.Z}, {defaultValue.W})";
+
+        public void WriteUniform(int layoutLocation, EShaderVarType type, string name, float defaultValue, bool array = false)
+            => Line($"layout (location = {layoutLocation}) uniform {type.ToString()[1..]} {name}{(array ? "[]" : "")} = {Format(defaultValue)};");
+
+        public void WriteUniform(EShaderVarType type, string name, float defaultValue, bool array = false)
+            => Line($"{(_inBlock ? string.Empty : "uniform ")}{type.ToString()[1..]} {name}{(array ? "[]" : "")} = {Format(defaultValue)};");
+
+        public void WriteUniform(int layoutLocation, EShaderVarType type, string name, Vector2 defaultValue, bool array = false)
+            => Line($"layout (location = {layoutLocation}) uniform {type.ToString()[1..]} {name}{(array ? "[]" : "")} = {Format(defaultValue)};");
+
+        public void WriteUniform(EShaderVarType type, string name, Vector2 defaultValue, bool array = false)
+            => Line($"{(_inBlock ? string.Empty : "uniform ")}{type.ToString()[1..]} {name}{(array ? "[]" : "")} = {Format(defaultValue)};");
+
+        public void WriteUniform(int layoutLocation, EShaderVarType type, string name, Vector3 defaultValue, bool array = false)
+            => Line($"layout (location = {layoutLocation}) uniform {type.ToString()[1..]} {name}{(array ? "[]" : "")} = {Format(defaultValue)};");
+
+        public void WriteUniform(EShaderVarType type, string name, Vector3 defaultValue, bool array = false)
+            => Line($"{(_inBlock ? string.Empty : "uniform ")}{type.ToString()[1..]} {name}{(array ? "[]" : "")} = {Format(defaultValue)};");
+
+        public void WriteUniform(int layoutLocation, EShaderVarType type, string name, Vector4 defaultValue, bool array = false)
+            => Line($"layout (location = {layoutLocation}) uniform {type.ToString()[1..]} {name}{(array ? "[]" : "")} = {Format(defaultValue)};");
+
+        public void WriteUniform(EShaderVarType type, string name, Vector4 defaultValue, bool array = false)
+            => Line($"{(_inBlock ? string.Empty : "uniform ")}{type.ToString()[1..]} {name}{(array ? "[]" : "")} = {Format(defaultValue)};");
+
+        public void WriteUniform(int layoutLocation, EShaderVarType type, string name, int defaultValue, bool array = false)
+            => Line($"layout (location = {layoutLocation}) uniform {type.ToString()[1..]} {name}{(array ? "[]" : "")} = {Format(defaultValue)};");
+
+        public void WriteUniform(EShaderVarType type, string name, int defaultValue, bool array = false)
+            => Line($"{(_inBlock ? string.Empty : "uniform ")}{type.ToString()[1..]} {name}{(array ? "[]" : "")} = {Format(defaultValue)};");
 
         public StateObject StartShaderStorageBufferBlock(string bufferName, int binding)
         {

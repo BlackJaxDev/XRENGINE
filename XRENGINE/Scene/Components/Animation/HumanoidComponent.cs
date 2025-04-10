@@ -173,8 +173,8 @@ namespace XREngine.Scene.Components.Animation
                 set => SetField(ref _worldBindPose, value);
             }
 
-            private BoneIKConstraints? _constraints;
-            public BoneIKConstraints? Constraints
+            private IKRotationConstraintComponent? _constraints;
+            public IKRotationConstraintComponent? Constraints
             {
                 get => _constraints;
                 set => SetField(ref _constraints, value);
@@ -196,7 +196,7 @@ namespace XREngine.Scene.Components.Animation
             }
 
             public void ResetPose()
-                => Node?.Transform.DeriveLocalMatrix(LocalBindPose);
+                => Node?.Transform?.ResetPose();
         }
 
         public BoneDef Hips { get; } = new();
@@ -204,6 +204,10 @@ namespace XREngine.Scene.Components.Animation
         public BoneDef Chest { get; } = new();
         public BoneDef Neck { get; } = new();
         public BoneDef Head { get; } = new();
+        /// <summary>
+        /// Position in space where the eyes are looking at
+        /// </summary>
+        public BoneDef EyesTarget { get; } = new();
 
         public class BodySide : XRBase
         {

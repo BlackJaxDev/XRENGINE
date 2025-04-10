@@ -9,7 +9,7 @@ namespace XREngine.Data.Geometry
     /// <summary>
     /// Axis-aligned rectangle struct. Supports position, size, and a local origin. All translations are relative to the bottom left (0, 0), like a graph.
     /// </summary>
-    public struct BoundingRectangleF(Vector2 translation, Vector2 bounds, Vector2 localOriginPercentage)
+    public struct BoundingRectangleF(Vector2 translation, Vector2 bounds, Vector2 localOriginPercentage) : IEquatable<BoundingRectangleF>
     {
         /// <summary>
         /// A rectangle with a location at 0,0 (bottom left), a size of 0, and a local origin at the bottom left.
@@ -474,5 +474,18 @@ Bottom left point of this rectangle is Position - LocalOrigin.")]
 
         public readonly BoundingRectangle AsBoundingRectangle()
             => new((IVector2)_translation, (IVector2)_bounds, _localOriginPercentage);
+
+        public readonly bool Equals(BoundingRectangleF other)
+            => _translation.Equals(other._translation) &&
+                _bounds.Equals(other._bounds) &&
+                _localOriginPercentage.Equals(other._localOriginPercentage);
+        public override readonly bool Equals(object? obj)
+            => obj is BoundingRectangleF other && Equals(other);
+        public override readonly int GetHashCode()
+            => HashCode.Combine(_translation, _bounds, _localOriginPercentage);
+        public static bool operator ==(BoundingRectangleF left, BoundingRectangleF right)
+            => left.Equals(right);
+        public static bool operator !=(BoundingRectangleF left, BoundingRectangleF right)
+            => !left.Equals(right);
     }
 }

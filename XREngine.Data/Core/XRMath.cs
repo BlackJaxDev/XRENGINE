@@ -1,4 +1,6 @@
 ﻿using Extensions;
+using SimpleScene.Util.ssBVH;
+using System;
 using System.Numerics;
 using XREngine.Data.Geometry;
 using XREngine.Data.Transforms.Rotations;
@@ -447,7 +449,7 @@ namespace XREngine.Data.Core
             }
         }
         /// <summary>
-        /// Returns the angle in radians between two vectors.
+        /// Returns the angle in degrees between two vectors.
         /// </summary>
         public static float AngleBetween(Vector3 vector1, Vector3 vector2)
         {
@@ -464,9 +466,9 @@ namespace XREngine.Data.Core
             if (dot > 0.999f)
                 return 0.0f;
             else if (dot < -0.999f)
-                return DegToRad(180.0f);
+                return 180.0f;
             else
-                return MathF.Acos(dot);
+                return float.RadiansToDegrees(MathF.Acos(dot));
         }
         /// <summary>
         /// Returns the rotation axis direction vector that is perpendicular to the two vectors.
@@ -591,23 +593,21 @@ namespace XREngine.Data.Core
         /// Yaw rotates counterclockwise around the Y axis,
         /// and pitch rotates upward around the X axis, after X has been yawed.
         /// </summary>
-        public static Rotator LookatAngles(Vector3 vector) => new(
-            RadToDeg(GetPitchAfterYaw(vector)),
-            RadToDeg(GetYaw(vector)),
-            0.0f);
+        public static Rotator LookatAngles(Vector3 vector)
+            => new(GetPitchAfterYaw(vector), GetYaw(vector), 0.0f);
 
         public static Rotator LookatAngles(Vector3 origin, Vector3 point)
             => LookatAngles(point - origin);
 
-        /// <summary>
-        /// Calculates the yaw angle (rotation around Y-axis) for a vector in radians.
-        /// The yaw calculation uses atan2 to find the angle between the vector's X and Z components.
-        /// A negative sign is applied to account for right-handed coordinate system conventions.
-        /// </summary>
-        /// <param name="vector">The vector to calculate yaw angle from</param>
-        /// <returns>The yaw angle in radians, where 0 points along -Z and positive rotation is counterclockwise around Y axis</returns>
-        public static float GetYaw(Vector3 vector)
-            => MathF.Atan2(-vector.X, -vector.Z);
+        ///// <summary>
+        ///// Calculates the yaw angle (rotation around Y-axis) for a vector in radians.
+        ///// The yaw calculation uses atan2 to find the angle between the vector's X and Z components.
+        ///// A negative sign is applied to account for right-handed coordinate system conventions.
+        ///// </summary>
+        ///// <param name="vector">The vector to calculate yaw angle from</param>
+        ///// <returns>The yaw angle in radians, where 0 points along -Z and positive rotation is counterclockwise around Y axis</returns>
+        //public static float GetYaw(Vector3 vector)
+        //    => MathF.Atan2(-vector.X, -vector.Z);
 
         /// <summary>
         /// Calculates the pitch angle (rotation around X-axis) for a vector after yaw has been applied.
@@ -616,9 +616,11 @@ namespace XREngine.Data.Core
         /// - The length of the horizontal components (sqrt(x^2 + z^2))
         /// </summary>
         /// <param name="vector">The vector to calculate pitch from</param>
-        /// <returns>The pitch angle in radians, where positive values rotate the vector upward</returns>
+        /// <returns>The pitch angle in degrees, where positive values rotate the vector upward</returns>
         public static float GetPitchAfterYaw(Vector3 vector)
-            => MathF.Atan2(vector.Y, MathF.Sqrt(vector.X * vector.X + vector.Z * vector.Z));
+        {
+            return float.RadiansToDegrees(MathF.Atan2(vector.Y, MathF.Sqrt(vector.X * vector.X + vector.Z * vector.Z)));
+        }
 
         public static Vector3 GetSafeNormal(Vector3 value, float Tolerance = 1.0e-8f)
         {
@@ -1077,17 +1079,17 @@ namespace XREngine.Data.Core
             return RadToDeg(angle);
         }
 
-        /// <summary>
-        /// Returns a new Vector that is the linear blend of the 2 given Vectors
-        /// </summary>
-        /// <param name="a">First input vector</param>
-        /// <param name="b">Second input vector</param>
-        /// <param name="blend">The blend factor. a when blend=0, b when blend=1.</param>
-        /// <returns>a when blend=0, b when blend=1, and a linear combination otherwise</returns>
-        public static Vector3 Lerp(Vector3 a, Vector3 b, float time)
+        ///// <summary>
+        ///// Returns a new Vector that is the linear blend of the 2 given Vectors
+        ///// </summary>
+        ///// <param name="a">First input vector</param>
+        ///// <param name="b">Second input vector</param>
+        ///// <param name="blend">The blend factor. a when blend=0, b when blend=1.</param>
+        ///// <returns>a when blend=0, b when blend=1, and a linear combination otherwise</returns>
+        //public static Vector3 Lerp(Vector3 a, Vector3 b, float time)
 
-            //initial value with a percentage of the difference between the two vectors added to it.
-            => a + (b - a) * time;
+        //    //initial value with a percentage of the difference between the two vectors added to it.
+        //    => a + (b - a) * time;
 
         /// <summary>
         /// Interpolate 3 Vectors using Barycentric coordinates
@@ -1257,5 +1259,884 @@ namespace XREngine.Data.Core
         //    => (1.0f - UV.X - UV.Y) * triangle.Vertex0.Position + UV.X * triangle.Vertex1.Position + UV.Y * triangle.Vertex2.Position;
         public static Vector3 PositionFromBarycentricUV(Vector3 v0, Vector3 v1, Vector3 v2, Vector2 uv)
             => (1.0f - uv.X - uv.Y) * v0 + uv.X * v1 + uv.Y * v2;
+
+        public static float DeltaAngle(float angleFrom, float angleTo)
+        {
+            float delta = angleTo - angleFrom;
+            if (delta > 180.0f)
+                delta -= 360.0f;
+            else if (delta < -180.0f)
+                delta += 360.0f;
+            return delta;
+        }
+
+        /// <summary>
+        /// Returns yaw angle (-180 - 180) of 'forward' vector relative to rotation space defined by spaceForward and spaceUp axes.
+        /// </summary>
+        public static float GetYaw(Quaternion space, Vector3 forward)
+        {
+            Vector3 dirLocal = Vector3.Transform(forward, Quaternion.Inverse(space));
+            if (dirLocal.X == 0f && dirLocal.Z == 0f || float.IsInfinity(dirLocal.X) || float.IsInfinity(dirLocal.Z))
+                return 0f;
+            return float.RadiansToDegrees(MathF.Atan2(dirLocal.X, dirLocal.Z));
+        }
+
+        /// <summary>
+        /// Returns pitch angle (-90 - 90) of 'forward' vector relative to rotation space defined by spaceForward and spaceUp axes.
+        /// </summary>
+        public static float GetPitch(Quaternion space, Vector3 forward)
+        {
+            forward = forward.Normalized();
+            Vector3 dirLocal = Vector3.Transform(forward, Quaternion.Inverse(space));
+            if (MathF.Abs(dirLocal.Y) > 1f)
+                dirLocal = dirLocal.Normalized();
+            return float.RadiansToDegrees(-MathF.Asin(dirLocal.Y));
+        }
+
+        /// <summary>
+        /// Returns bank angle (-180 - 180) of 'forward' and 'up' vectors relative to rotation space defined by spaceForward and spaceUp axes.
+        /// </summary>
+        public static float GetBank(Quaternion space, Vector3 forward, Vector3 up)
+        {
+            Vector3 spaceUp = Vector3.Transform(Globals.Up, space);
+
+            Quaternion invSpace = Quaternion.Inverse(space);
+            forward = Vector3.Transform(forward, invSpace);
+            up = Vector3.Transform(up, invSpace);
+
+            Quaternion q = Quaternion.Inverse(LookRotation(spaceUp, forward));
+            up = Vector3.Transform(up, q);
+            float result = float.RadiansToDegrees(MathF.Atan2(up.X, up.Z));
+            return result.Clamp(-180f, 180f);
+        }
+
+        /// <summary>
+        /// Returns yaw angle (-180 - 180) of 'forward' vector relative to rotation space defined by spaceForward and spaceUp axes.
+        /// </summary>
+        public static float GetYaw(Quaternion space, Quaternion rotation)
+        {
+            Vector3 dirLocal = Vector3.Transform(Vector3.Transform(Globals.Forward, rotation), Quaternion.Inverse(space));
+            if (dirLocal.X == 0f && dirLocal.Z == 0f || float.IsInfinity(dirLocal.X) || float.IsInfinity(dirLocal.Z))
+                return 0f;
+            return float.RadiansToDegrees(MathF.Atan2(dirLocal.X, dirLocal.Z));
+        }
+
+        /// <summary>
+        /// Returns pitch angle (-90 - 90) of 'forward' vector relative to rotation space defined by spaceForward and spaceUp axes.
+        /// </summary>
+        public static float GetPitch(Quaternion space, Quaternion rotation)
+        {
+            Vector3 dirLocal = Vector3.Transform(Vector3.Transform(Globals.Forward, rotation), Quaternion.Inverse(space));
+            if (MathF.Abs(dirLocal.Y) > 1f)
+                dirLocal = dirLocal.Normalized();
+            return float.RadiansToDegrees(-MathF.Asin(dirLocal.Y));
+        }
+
+        /// <summary>
+        /// Returns bank angle (-180 - 180) of 'forward' and 'up' vectors relative to rotation space defined by spaceForward and spaceUp axes.
+        /// </summary>
+        public static float GetBank(Quaternion space, Quaternion rotation)
+        {
+            Vector3 spaceUp = Vector3.Transform(Globals.Up, space);
+
+            Quaternion invSpace = Quaternion.Inverse(space);
+            Vector3 forward = Vector3.Transform(Vector3.Transform(Globals.Forward, rotation), invSpace);
+            Vector3 up = Vector3.Transform(Vector3.Transform(Globals.Up, rotation), invSpace);
+
+            Quaternion q = Quaternion.Inverse(LookRotation(spaceUp, forward));
+            up = Vector3.Transform(up, q);
+            float result = float.RadiansToDegrees(MathF.Atan2(up.X, up.Z));
+            return result.Clamp(-180f, 180f);
+        }
+
+        /// <summary>
+        /// Optimized Quaternion.Lerp
+        /// </summary>
+        public static Quaternion Lerp(Quaternion fromRotation, Quaternion toRotation, float weight)
+        {
+            if (weight <= 0f)
+                return fromRotation;
+            if (weight >= 1f)
+                return toRotation;
+            return Quaternion.Lerp(fromRotation, toRotation, weight);
+        }
+
+        /// <summary>
+        /// Optimized Quaternion.Slerp
+        /// </summary>
+        public static Quaternion Slerp(Quaternion fromRotation, Quaternion toRotation, float weight)
+        {
+            if (weight <= 0f)
+                return fromRotation;
+            if (weight >= 1f)
+                return toRotation;
+            return Quaternion.Slerp(fromRotation, toRotation, weight);
+        }
+
+        /// <summary>
+        /// Returns the rotation from identity Quaternion to "q", interpolated linearily by "weight".
+        /// </summary>
+        public static Quaternion LinearBlend(Quaternion q, float weight)
+        {
+            if (weight <= 0f)
+                return Quaternion.Identity;
+            if (weight >= 1f)
+                return q;
+            return Quaternion.Lerp(Quaternion.Identity, q, weight);
+        }
+
+        /// <summary>
+        /// Returns the rotation from identity Quaternion to "q", interpolated spherically by "weight".
+        /// </summary>
+        public static Quaternion SphericalBlend(Quaternion q, float weight)
+        {
+            if (weight <= 0f)
+                return Quaternion.Identity;
+            if (weight >= 1f)
+                return q;
+            return Quaternion.Slerp(Quaternion.Identity, q, weight);
+        }
+
+        /// <summary>
+        /// Creates a FromToRotation, but makes sure its axis remains fixed near to the Quaternion singularity point.
+        /// </summary>
+        /// <returns>
+        /// The from to rotation around an axis.
+        /// </returns>
+        /// <param name='fromDirection'>
+        /// From direction.
+        /// </param>
+        /// <param name='toDirection'>
+        /// To direction.
+        /// </param>
+        /// <param name='axis'>
+        /// Axis. Should be normalized before passing into this method.
+        /// </param>
+        public static Quaternion FromToAroundAxis(Vector3 fromDirection, Vector3 toDirection, Vector3 axis)
+        {
+            Quaternion fromTo = RotationBetweenVectors(fromDirection, toDirection);
+            ToAngleAxis(fromTo, out float angle, out Vector3 freeAxis);
+
+            if (Vector3.Dot(freeAxis, axis) < 0.0f)
+                angle = -angle;
+
+            return Quaternion.CreateFromAxisAngle(axis, angle);
+        }
+
+        private static void ToAngleAxis(Quaternion rotation, out float angle, out Vector3 axis)
+        {
+            angle = 2.0f * MathF.Acos(rotation.W);
+            float den = MathF.Sqrt(1.0f - rotation.W * rotation.W);
+            axis = den > 0.0001f ? new(rotation.X / den, rotation.Y / den, rotation.Z / den) : Globals.Forward;
+        }
+
+        /// <summary>
+        /// Gets the rotation that can be used to convert a rotation from one axis space to another.
+        /// </summary>
+        public static Quaternion RotationToLocalSpace(Quaternion space, Quaternion rotation)
+            => Quaternion.Inverse(Quaternion.Inverse(space) * rotation);
+
+        /// <summary>
+        /// Gets the Quaternion from rotation "from" to rotation "to".
+        /// </summary>
+        public static Quaternion FromToRotation(Quaternion from, Quaternion to)
+            => to == from ? Quaternion.Identity : to * Quaternion.Inverse(from);
+
+        /// <summary>
+        /// Gets the closest direction axis to a vector.
+        /// Input vector must be normalized.
+        /// </summary>
+        public static Vector3 GetAxis(Vector3 v)
+        {
+            Vector3 closest = Globals.Right;
+            bool neg = false;
+
+            float x = Vector3.Dot(v, Globals.Right);
+            float maxAbsDot = MathF.Abs(x);
+            if (x < 0f) neg = true;
+
+            float y = Vector3.Dot(v, Globals.Up);
+            float absDot = MathF.Abs(y);
+            if (absDot > maxAbsDot)
+            {
+                maxAbsDot = absDot;
+                closest = Globals.Up;
+                neg = y < 0f;
+            }
+
+            float z = Vector3.Dot(v, Globals.Forward);
+            absDot = MathF.Abs(z);
+            if (absDot > maxAbsDot)
+            {
+                closest = Globals.Forward;
+                neg = z < 0f;
+            }
+
+            if (neg) closest = -closest;
+            return closest;
+        }
+
+        public static Quaternion ClampRotation(Quaternion rotation, float clampWeight, int clampSmoothing)
+        {
+            if (clampWeight >= 1f)
+                return Quaternion.Identity;
+
+            if (clampWeight <= 0f)
+                return rotation;
+
+            float angle = AngleBetween(Quaternion.Identity, rotation);
+            float dot = 1f - (angle / 180f);
+            float targetClampMlp = (1f - ((clampWeight - dot) / (1f - dot))).Clamp(0f, 1f);
+            float clampMlp = (dot / clampWeight).Clamp(0f, 1f);
+
+            // Sine smoothing iterations
+            for (int i = 0; i < clampSmoothing; i++)
+            {
+                float sinF = clampMlp * MathF.PI * 0.5f;
+                clampMlp = MathF.Sin(sinF);
+            }
+
+            return Quaternion.Slerp(Quaternion.Identity, rotation, clampMlp * targetClampMlp);
+        }
+
+        private static float AngleBetween(Quaternion from, Quaternion to)
+        {
+            // Calculate the dot product and clamp it between -1 and 1
+            float dot = Quaternion.Dot(from, to);
+            dot = MathF.Min(MathF.Max(dot, -1.0f), 1.0f);
+
+            // The angle between two quaternions is defined as 2 * acos(|dot|)
+            return float.RadiansToDegrees(2.0f * MathF.Acos(MathF.Abs(dot)));
+        }
+
+        /// <summary>
+        /// Clamps an angular value.
+        /// </summary>
+        public static float ClampAngle(float angle, float clampWeight, int clampSmoothing)
+        {
+            if (clampWeight >= 1f)
+                return 0f;
+            if (clampWeight <= 0f)
+                return angle;
+
+            float dot = 1f - (MathF.Abs(angle) / 180f);
+            float targetClampMlp = (1f - ((clampWeight - dot) / (1f - dot))).Clamp(0f, 1f);
+            float clampMlp = (dot / clampWeight).Clamp(0f, 1f);
+
+            // Sine smoothing iterations
+            for (int i = 0; i < clampSmoothing; i++)
+            {
+                float sinF = clampMlp * MathF.PI * 0.5f;
+                clampMlp = MathF.Sin(sinF);
+            }
+
+            return Interp.Lerp(0f, angle, clampMlp * targetClampMlp);
+        }
+
+        /// <summary>
+        /// Used for matching the rotations of objects that have different orientations.
+        /// </summary>
+        public static Quaternion MatchRotation(Quaternion targetRotation, Vector3 targetAxis1, Vector3 targetAxis2, Vector3 axis1, Vector3 axis2)
+        {
+            Quaternion f = LookRotation(axis1, axis2);
+            Quaternion fTarget = LookRotation(targetAxis1, targetAxis2);
+
+            Quaternion d = targetRotation * fTarget;
+            return d * Quaternion.Inverse(f);
+        }
+
+        /// <summary>
+        /// Converts an Euler rotation from 0 to 360 representation to -180 to 180.
+        /// </summary>
+        public static Vector3 ToBiPolar(Vector3 euler)
+            => new(ToBiPolar(euler.X), ToBiPolar(euler.Y), ToBiPolar(euler.Z));
+
+        /// <summary>
+        /// Converts an angular value from 0 to 360 representation to -180 to 180.
+        /// </summary>
+        public static float ToBiPolar(float angle)
+        {
+            angle %= 360f;
+            return angle switch
+            {
+                >= 180f => angle - 360f,
+                <= -180f => angle + 360f,
+                _ => angle
+            };
+        }
+
+        /// <summary>
+        /// Mirrors a Quaternion on the YZ plane in provided rotation space.
+        /// </summary>
+        public static Quaternion MirrorYZ(Quaternion r, Quaternion space)
+        {
+            r = Quaternion.Inverse(space) * r;
+            Vector3 forward = Vector3.Transform(Globals.Forward, r);
+            Vector3 up = Vector3.Transform(Globals.Up, r);
+
+            forward.X *= -1;
+            up.X *= -1;
+
+            return space * LookRotation(forward, up);
+        }
+
+        /// <summary>
+        /// Mirrors a Quaternion on the world space YZ plane.
+        /// </summary>
+        public static Quaternion MirrorYZ(Quaternion r)
+        {
+            Vector3 forward = Vector3.Transform(Globals.Forward, r);
+            Vector3 up = Vector3.Transform(Globals.Up, r);
+
+            forward.X *= -1;
+            up.X *= -1;
+
+            return LookRotation(forward, up);
+        }
+
+        public static Quaternion LookRotation(Vector3 forward)
+            => LookRotation(forward, Globals.Up);
+        public static Quaternion LookRotation(Vector3 forward, Vector3 up)
+        {
+            // Return identity if forward has near zero magnitude.
+            if (forward.LengthSquared() < Epsilon)
+                return Quaternion.Identity;
+
+            // Normalize forward vector to define the Z axis.
+            Vector3 z = forward.Normalized();
+
+            // Compute the X axis as the cross product between forward and up.
+            Vector3 x = Vector3.Cross(z, up);
+
+            // If up is zero magnitude or forward and up are colinear,
+            // use fallback: Quaternion.FromToRotation from positive Z-axis to forward.
+            if (x.LengthSquared() < Epsilon || up.LengthSquared() < Epsilon)
+                return RotationBetweenVectors(new Vector3(0, 0, 1), z);
+
+            x = x.Normalized();
+
+            // Compute the Y axis as the cross product between Z and X.
+            Vector3 y = Vector3.Cross(z, x);
+
+            // Create a rotation matrix where:
+            // X axis = x, Y axis = y, Z axis = z.
+            Matrix4x4 m = new(
+                x.X, y.X, z.X, 0f,
+                x.Y, y.Y, z.Y, 0f,
+                x.Z, y.Z, z.Z, 0f,
+                0f, 0f, 0f, 1f
+            );
+
+            return Quaternion.CreateFromRotationMatrix(m);
+        }
+
+        /// <summary>
+        /// Returns yaw angle (-180 - 180) of 'forward' vector.
+        /// </summary>
+        public static float GetYaw(Vector3 forward)
+        {
+            if (forward.X == 0f && forward.Z == 0f)
+                return 0f;
+
+            if (float.IsInfinity(forward.X) || float.IsInfinity(forward.Z))
+                return 0;
+
+            return float.RadiansToDegrees(MathF.Atan2(forward.X, forward.Z));
+        }
+
+        /// <summary>
+        /// Returns pitch angle (-90 - 90) of 'forward' vector.
+        /// </summary>
+        public static float GetPitch(Vector3 forward)
+        {
+            forward = forward.Normalized(); // Asin range -1 - 1
+            return float.RadiansToDegrees(-MathF.Asin(forward.Y));
+        }
+
+        /// <summary>
+        /// Returns bank angle (-180 - 180) of 'forward' and 'up' vectors.
+        /// </summary>
+        public static float GetBank(Vector3 forward, Vector3 up)
+        {
+            Quaternion q = Quaternion.Inverse(LookRotation(Globals.Up, forward));
+            up = Vector3.Transform(up, q);
+            float result = float.RadiansToDegrees(MathF.Atan2(up.X, up.Z));
+            return result.Clamp(-180f, 180f);
+        }
+
+        /// <summary>
+        /// Returns yaw angle (-180 - 180) of 'forward' vector relative to rotation space defined by spaceForward and spaceUp axes.
+        /// </summary>
+        public static float GetYaw(Vector3 spaceForward, Vector3 spaceUp, Vector3 forward)
+        {
+            Quaternion space = Quaternion.Inverse(LookRotation(spaceForward, spaceUp));
+            Vector3 dirLocal = Vector3.Transform(forward, space);
+
+            if (dirLocal.X == 0f && dirLocal.Z == 0f)
+                return 0f;
+
+            if (float.IsInfinity(dirLocal.X) || float.IsInfinity(dirLocal.Z))
+                return 0;
+            
+            return float.RadiansToDegrees(MathF.Atan2(dirLocal.X, dirLocal.Z));
+        }
+
+        /// <summary>
+        /// Returns pitch angle (-90 - 90) of 'forward' vector relative to rotation space defined by spaceForward and spaceUp axes.
+        /// </summary>
+        public static float GetPitch(Vector3 spaceForward, Vector3 spaceUp, Vector3 forward)
+        {
+            Quaternion space = Quaternion.Inverse(LookRotation(spaceForward, spaceUp));
+            forward = forward.Normalized();
+            Vector3 dirLocal = Vector3.Transform(forward, space);
+            return float.RadiansToDegrees(-MathF.Asin(dirLocal.Y));
+        }
+
+        /// <summary>
+        /// Returns bank angle (-180 - 180) of 'forward' and 'up' vectors relative to rotation space defined by spaceForward and spaceUp axes.
+        /// </summary>
+        public static float GetBank(Vector3 spaceForward, Vector3 spaceUp, Vector3 forward, Vector3 up)
+        {
+            Quaternion space = Quaternion.Inverse(LookRotation(spaceForward, spaceUp));
+            forward = Vector3.Transform(forward, space);
+            up = Vector3.Transform(up, space);
+
+            Quaternion q = Quaternion.Inverse(LookRotation(spaceUp, forward));
+            up = Vector3.Transform(up, q);
+            float result = float.RadiansToDegrees(MathF.Atan2(up.X, up.Z));
+            return result.Clamp(-180f, 180f);
+        }
+
+        public static Vector3 Lerp(Vector3 fromVector, Vector3 toVector, float weight)
+        {
+            if (weight <= 0f)
+                return fromVector;
+            if (weight >= 1f)
+                return toVector;
+            return Vector3.Lerp(fromVector, toVector, weight);
+        }
+
+        public static Vector3 Slerp(Vector3 fromVector, Vector3 toVector, float weight)
+        {
+            if (weight <= 0f)
+                return fromVector;
+            if (weight >= 1f)
+                return toVector;
+
+            float dot = Vector3.Dot(fromVector, toVector);
+            dot = dot.Clamp(-1f, 1f);
+            float theta = MathF.Acos(dot) * weight;
+            Vector3 relative = toVector - fromVector * dot;
+            relative = relative.Normalized();
+            return fromVector * MathF.Cos(theta) + relative * MathF.Sin(theta);
+        }
+
+        /// <summary>
+        /// Returns vector projection on axis multiplied by weight.
+        /// </summary>
+        public static Vector3 ExtractVertical(Vector3 v, Vector3 verticalAxis, float weight)
+        {
+            if (weight <= 0f)
+                return Vector3.Zero;
+            if (verticalAxis == Globals.Up)
+                return Globals.Up * v.Y * weight;
+            return ProjectVector(v, verticalAxis) * weight;
+        }
+
+        /// <summary>
+        /// Projects a vector along a normal.
+        /// </summary>
+        /// <param name="vector"></param>
+        /// <param name="normal"></param>
+        /// <returns></returns>
+        public static Vector3 ProjectVector(Vector3 vector, Vector3 normal)
+        {
+            float sqrMag = normal.LengthSquared();
+            if (sqrMag < Epsilon)
+                return Vector3.Zero;
+
+            float dot = Vector3.Dot(vector, normal);
+            return normal * (dot / sqrMag);
+        }
+
+        /// <summary>
+        /// Returns vector projected to a plane and multiplied by weight.
+        /// </summary>
+        public static Vector3 ExtractHorizontal(Vector3 v, Vector3 normal, float weight)
+        {
+            if (weight <= 0f)
+                return Vector3.Zero;
+
+            if (normal == Globals.Up)
+                return new Vector3(v.X, 0f, v.Z) * weight;
+
+            Vector3 tangent = v;
+            OrthoNormalize(ref normal, ref tangent);
+            return ProjectVector(v, tangent) * weight;
+        }
+
+        /// <summary>
+        /// Flattens a vector on a plane defined by 'normal'.
+        /// </summary>
+        public static Vector3 Flatten(Vector3 v, Vector3 normal)
+            => normal == Globals.Up ? new Vector3(v.X, 0f, v.Z) : v - ProjectVector(v, normal);
+
+        /// <summary>
+        /// Clamps the direction to clampWeight from normalDirection, clampSmoothing is the number of sine smoothing iterations applied on the result.
+        /// </summary>
+        public static Vector3 ClampDirection(Vector3 direction, Vector3 normalDirection, float clampWeight, int clampSmoothing)
+        {
+            if (clampWeight <= 0)
+                return direction;
+
+            if (clampWeight >= 1f)
+                return normalDirection;
+
+            // Getting the angle between direction and normalDirection
+            float angle = AngleBetween(normalDirection, direction);
+            float dot = 1f - (angle / 180f);
+
+            if (dot > clampWeight)
+                return direction;
+
+            // Clamping the target
+            float targetClampMlp = clampWeight > 0 ? (1f - ((clampWeight - dot) / (1f - dot))).Clamp(0f, 1f) : 1f;
+
+            // Calculating the clamp multiplier
+            float clampMlp = clampWeight > 0 ? (dot / clampWeight).Clamp(0f, 1f) : 1f;
+
+            // Sine smoothing iterations
+            for (int i = 0; i < clampSmoothing; i++)
+            {
+                float sinF = clampMlp * MathF.PI * 0.5f;
+                clampMlp = MathF.Sin(sinF);
+            }
+
+            // Slerping the direction (don't use Lerp here, it breaks it)
+            return Slerp(normalDirection, direction, clampMlp * targetClampMlp);
+        }
+
+        /// <summary>
+        /// Clamps the direction to clampWeight from normalDirection, clampSmoothing is the number of sine smoothing iterations applied on the result.
+        /// </summary>
+        public static Vector3 ClampDirection(Vector3 direction, Vector3 normalDirection, float clampWeight, int clampSmoothing, out bool changed)
+        {
+            changed = false;
+
+            if (clampWeight <= 0) return direction;
+
+            if (clampWeight >= 1f)
+            {
+                changed = true;
+                return normalDirection;
+            }
+
+            // Getting the angle between direction and normalDirection
+            float angle = AngleBetween(normalDirection, direction);
+            float dot = 1f - (angle / 180f);
+
+            if (dot > clampWeight)
+                return direction;
+            changed = true;
+
+            // Clamping the target
+            float targetClampMlp = clampWeight > 0 ? (1f - ((clampWeight - dot) / (1f - dot))).Clamp(0f, 1f) : 1f;
+
+            // Calculating the clamp multiplier
+            float clampMlp = clampWeight > 0 ? (dot / clampWeight).Clamp(0f, 1f) : 1f;
+
+            // Sine smoothing iterations
+            for (int i = 0; i < clampSmoothing; i++)
+            {
+                float sinF = clampMlp * MathF.PI * 0.5f;
+                clampMlp = MathF.Sin(sinF);
+            }
+
+            // Slerping the direction (don't use Lerp here, it breaks it)
+            return Slerp(normalDirection, direction, clampMlp * targetClampMlp);
+        }
+
+        /// <summary>
+        /// Clamps the direction to clampWeight from normalDirection, clampSmoothing is the number of sine smoothing iterations applied on the result.
+        /// </summary>
+        public static Vector3 ClampDirection(Vector3 direction, Vector3 normalDirection, float clampWeight, int clampSmoothing, out float clampValue)
+        {
+            clampValue = 1f;
+
+            if (clampWeight <= 0)
+                return direction;
+
+            if (clampWeight >= 1f)
+                return normalDirection;
+            
+            // Getting the angle between direction and normalDirection
+            float angle = AngleBetween(normalDirection, direction);
+            float dot = 1f - (angle / 180f);
+
+            if (dot > clampWeight)
+            {
+                clampValue = 0f;
+                return direction;
+            }
+
+            // Clamping the target
+            float targetClampMlp = clampWeight > 0
+                ? (1f - ((clampWeight - dot) / (1f - dot))).Clamp(0f, 1f)
+                : 1f;
+
+            // Calculating the clamp multiplier
+            float clampMlp = clampWeight > 0 ? (dot / clampWeight).Clamp(0f, 1f) : 1f;
+
+            // Sine smoothing iterations
+            for (int i = 0; i < clampSmoothing; i++)
+                clampMlp = MathF.Sin(clampMlp * MathF.PI * 0.5f);
+            
+            // Slerping the direction (don't use Lerp here, it breaks it)
+            float slerp = clampMlp * targetClampMlp;
+            clampValue = 1f - slerp;
+            return Slerp(normalDirection, direction, slerp);
+        }
+
+        /// <summary>
+        /// Get the intersection point of line and plane
+        /// </summary>
+        public static Vector3 LineToPlane(Vector3 origin, Vector3 direction, Vector3 planeNormal, Vector3 planePoint)
+        {
+            float dot = Vector3.Dot(planePoint - origin, planeNormal);
+            float normalDot = Vector3.Dot(direction, planeNormal);
+
+            if (normalDot == 0.0f)
+                return Vector3.Zero;
+
+            float dist = dot / normalDot;
+            return origin + direction.Normalized() * dist;
+        }
+
+        /// <summary>
+        /// Projects a point to a plane.
+        /// </summary>
+        public static Vector3 ProjectPointToPlane(Vector3 point, Vector3 planePosition, Vector3 planeNormal)
+        {
+            if (planeNormal == Globals.Up)
+               return new Vector3(point.X, planePosition.Y, point.Z);
+            
+            Vector3 tangent = point - planePosition;
+            Vector3 normal = planeNormal;
+            OrthoNormalize(ref normal, ref tangent);
+
+            return planePosition + ProjectVector(point - planePosition, tangent);
+        }
+
+        /// <summary>
+        /// Makes vectors normalized and orthogonal to each other.
+        /// Normalizes normal. Normalizes tangent and makes sure it is orthogonal to normal 
+        /// (that is, angle between them is 90 degrees).
+        /// </summary>
+        /// <param name="normal">Reference to the normal vector to be normalized</param>
+        /// <param name="tangent">Reference to the tangent vector to be made orthogonal to normal and normalized</param>
+        public static void OrthoNormalize(ref Vector3 normal, ref Vector3 tangent)
+        {
+            normal = normal.Normalized();
+            tangent -= Vector3.Dot(tangent, normal) * normal;
+            float magnitude = tangent.Length();
+            if (magnitude > Epsilon)
+                tangent /= magnitude;
+            else
+                tangent = GetSafeNormal(Vector3.Cross(normal, Globals.Up));
+        }
+
+        /// <summary>
+        /// Makes vectors normalized and orthogonal to each other.
+        /// Normalizes normal. Normalizes tangent and makes sure it is orthogonal to normal. 
+        /// Normalizes binormal and makes sure it is orthogonal to both normal and tangent.
+        /// </summary>
+        /// <param name="normal">Reference to the normal vector to be normalized</param>
+        /// <param name="tangent">Reference to the tangent vector to be made orthogonal to normal and normalized</param>
+        /// <param name="binormal">Reference to the binormal vector to be made orthogonal to both normal and tangent and normalized</param>
+        public static void OrthoNormalize(ref Vector3 normal, ref Vector3 tangent, ref Vector3 binormal)
+        {
+            normal = normal.Normalized();
+            tangent -= Vector3.Dot(tangent, normal) * normal;
+            float magnitude = tangent.Length();
+            if (magnitude > Epsilon)
+                tangent /= magnitude;
+            else
+                tangent = GetSafeNormal(Vector3.Cross(normal, Globals.Up));
+
+            binormal = binormal - Vector3.Dot(binormal, normal) * normal - Vector3.Dot(binormal, tangent) * tangent;
+            magnitude = binormal.Length();
+            if (magnitude > Epsilon)
+                binormal /= magnitude;
+            else
+                binormal = Vector3.Cross(normal, tangent);
+        }
+
+        public static Quaternion RotateTowards(Quaternion from, Quaternion to, float maxDegreesDelta)
+        {
+            float angle = AngleBetween(from, to);
+            if (angle == 0f)
+                return to;
+            float t = MathF.Min(1f, maxDegreesDelta / angle);
+            return Slerp(from, to, t);
+        }
+
+        public static Vector3 SmoothDamp(Vector3 current, Vector3 target, ref Vector3 currentVelocity, float smoothTime, float maxSpeed, float deltaTime)
+        {
+            // Based on Game Programming Gems 4 Chapter 1.10
+            smoothTime = Math.Max(0.0001f, smoothTime);
+            float omega = 2f / smoothTime;
+
+            float x = omega * deltaTime;
+            float exp = 1f / (1f + x + 0.48f * x * x + 0.235f * x * x * x);
+
+            Vector3 change = current - target;
+            Vector3 originalTo = target;
+
+            // Clamp maximum speed
+            float maxChange = maxSpeed * smoothTime;
+            float maxChangeSq = maxChange * maxChange;
+            float sqrMagnitude = change.LengthSquared();
+
+            // If we're moving too fast, limit the movement
+            if (sqrMagnitude > maxChangeSq)
+            {
+                float magnitude = MathF.Sqrt(sqrMagnitude);
+                change *= maxChange / magnitude;
+            }
+
+            target = current - change;
+
+            Vector3 temp = (currentVelocity + omega * change) * deltaTime;
+
+            currentVelocity = (currentVelocity - omega * temp) * exp;
+
+            Vector3 output = target + (change + temp) * exp;
+
+            // Prevent overshooting
+            Vector3 origMinusCurr = originalTo - current;
+            Vector3 outMinusOrig = output - originalTo;
+
+            if (Vector3.Dot(origMinusCurr, outMinusOrig) > 0)
+            {
+                output = originalTo;
+                currentVelocity = (output - originalTo) / deltaTime;
+            }
+
+            return output;
+        }
+
+        public static float SmoothDamp(float current, float target, ref float currentVelocity, float smoothTime, float maxSpeed, float deltaTime)
+        {
+            // Based on Game Programming Gems 4 Chapter 1.10
+            smoothTime = Math.Max(0.0001f, smoothTime);
+            float omega = 2f / smoothTime;
+            float x = omega * deltaTime;
+            float exp = 1f / (1f + x + 0.48f * x * x + 0.235f * x * x * x);
+            float change = current - target;
+            float originalTo = target;
+            // Clamp maximum speed
+            float maxChange = maxSpeed * smoothTime;
+            float maxChangeSq = maxChange * maxChange;
+            float sqrMagnitude = change * change;
+            // If we're moving too fast, limit the movement
+            if (sqrMagnitude > maxChangeSq)
+            {
+                float magnitude = MathF.Sqrt(sqrMagnitude);
+                change *= maxChange / magnitude;
+            }
+            target = current - change;
+            float temp = (currentVelocity + omega * change) * deltaTime;
+            currentVelocity = (currentVelocity - omega * temp) * exp;
+            float output = target + (change + temp) * exp;
+            // Prevent overshooting
+            float origMinusCurr = originalTo - current;
+            float outMinusOrig = output - originalTo;
+            if (origMinusCurr * outMinusOrig > 0)
+            {
+                output = originalTo;
+                currentVelocity = (output - originalTo) / deltaTime;
+            }
+            return output;
+        }
+        /// <summary>
+		/// Converts an Axis to Vector3.
+		/// </summary>
+		public static Vector3 AxisToVector(Axis axis)
+        {
+            return axis switch
+            {
+                Axis.X => Globals.Right,
+                Axis.Y => Globals.Up,
+                _ => Globals.Forward,
+            };
+        }
+
+        /// <summary>
+        /// Converts a Vector3 to Axis.
+        /// </summary>
+        public static Axis VectorToAxis(Vector3 v)
+        {
+            float absX = MathF.Abs(v.X);
+            float absY = MathF.Abs(v.Y);
+            float absZ = MathF.Abs(v.Z);
+
+            Axis d = Axis.X;
+            if (absY > absX && absY > absZ)
+                d = Axis.Y;
+            if (absZ > absX && absZ > absY)
+                d = Axis.Z;
+            return d;
+        }
+
+        /// <summary>
+        /// Returns the Axis of the Transform towards a world space direction.
+        /// </summary>
+        public static Axis GetAxisToDirection(Quaternion r, Vector3 direction)
+        {
+            Vector3 axis = GetAxisVectorToDirection(r, direction);
+            if (axis == Globals.Right)
+                return Axis.X;
+            if (axis == Globals.Up)
+                return Axis.Y;
+            return Axis.Z;
+        }
+
+        /// <summary>
+        /// Returns the local axis of a rotation space that aligns the most with a direction.
+        /// </summary>
+        public static Vector3 GetAxisVectorToDirection(Quaternion r, Vector3 direction)
+        {
+            direction = direction.Normalized();
+            Vector3 axis = Globals.Right;
+            float dotX = MathF.Abs(Vector3.Dot(r.Rotate(Globals.Right), direction));
+            float dotY = MathF.Abs(Vector3.Dot(r.Rotate(Globals.Up), direction));
+            if (dotY > dotX)
+                axis = Globals.Up;
+            float dotZ = MathF.Abs(Vector3.Dot(r.Rotate(Globals.Forward), direction));
+            if (dotZ > dotX && dotZ > dotY)
+                axis = Globals.Forward;
+            return axis;
+        }
+
+        /// <summary>
+        /// Reflects a vector across a plane defined by a normal vector.
+        /// 
+        /// The reflection formula is: R = V - 2(V·N)N
+        /// Where:
+        /// - R is the reflected vector
+        /// - V is the incident vector to reflect
+        /// - N is the normal vector of the reflection plane (must be normalized)
+        /// - V·N is the dot product representing how much V points in the same direction as N
+        /// 
+        /// The formula works by:
+        /// 1. Computing how much the vector points in the normal direction (V·N)
+        /// 2. Scaling the normal by this amount and doubling it (2(V·N)N)
+        /// 3. Subtracting this from the original vector to get the reflection
+        /// </summary>
+        /// <param name="vector">The vector to reflect</param>
+        /// <param name="normal">The normalized normal vector of the reflection plane</param>
+        /// <returns>The reflected vector</returns>
+        public static Vector3 Reflect(Vector3 vector, Vector3 normal)
+            => vector - 2.0f * Vector3.Dot(vector, normal) * normal;
     }
 }

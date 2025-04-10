@@ -69,10 +69,10 @@ namespace XREngine.Data.MMD
 
         private static void WriteEvery4Bytes(sbyte[] interp, int offset, VMDBezier bezier)
         {
-            interp[offset] = (sbyte)(bezier.XY0.X * 127.0f);
-            interp[offset + 4] = (sbyte)(bezier.XY0.Y * 127.0f);
-            interp[offset + 8] = (sbyte)(bezier.XY1.X * 127.0f);
-            interp[offset + 12] = (sbyte)(bezier.XY1.Y * 127.0f);
+            interp[offset] = (sbyte)(bezier.StartControlPoint.X * 127.0f);
+            interp[offset + 4] = (sbyte)(bezier.StartControlPoint.Y * 127.0f);
+            interp[offset + 8] = (sbyte)(bezier.EndControlPoint.X * 127.0f);
+            interp[offset + 12] = (sbyte)(bezier.EndControlPoint.Y * 127.0f);
         }
 
         private sbyte[] SerializeInterp()

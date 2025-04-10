@@ -42,8 +42,8 @@ namespace XREngine.Rendering.UI
 
         protected override Matrix4x4 GetRenderWorldMatrix(UIBoundableTransform tfm)
         {
-            var w = tfm.ActualWidth;
-            var h = tfm.ActualHeight;
+            var w = tfm.GetWidth();
+            var h = tfm.GetHeight();
             return Matrix4x4.CreateScale(w, h, 1.0f) * base.GetRenderWorldMatrix(tfm);
         }
     }

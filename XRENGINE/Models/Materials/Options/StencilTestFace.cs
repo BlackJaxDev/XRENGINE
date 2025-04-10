@@ -55,6 +55,8 @@ namespace XREngine.Rendering.Models.Materials
         }
         /// <summary>
         /// The mask to use when reading the stencil buffer.
+        /// Only the bits set in this mask will be compared to the reference value.
+        /// This mask is bitwise ANDed with both the reference value and the stored stencil value before the test compares them.
         /// </summary>
         public uint ReadMask
         {
@@ -63,6 +65,7 @@ namespace XREngine.Rendering.Models.Materials
         }
         /// <summary>
         /// The mask to use when writing to the stencil buffer.
+        /// This masks out the bits that are allowed to be written to the stencil buffer.
         /// </summary>
         public uint WriteMask
         {

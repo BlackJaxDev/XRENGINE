@@ -189,7 +189,7 @@ namespace XREngine.Rendering
 
         public abstract void DispatchCompute(XRRenderProgram program, int v1, int v2, int v3);
 
-        public abstract void GetScreenshotAsync(BoundingRectangle region, bool withTransparency, Action<MagickImage> imageCallback);
+        public abstract void GetScreenshotAsync(BoundingRectangle region, bool withTransparency, Action<MagickImage, int> imageCallback);
 
         /// <summary>
         /// Blits the contents of one framebuffer to another.

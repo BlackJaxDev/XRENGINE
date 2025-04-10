@@ -39,8 +39,9 @@ public partial class EditorPanel : XRComponent
         //XRTexture2D grabTex = XRTexture2D.CreateGrabPassTextureResized(1.0f, EReadBufferMode.Front, true, false, false, false);
         var bgMat = new XRMaterial(parameters, [/*grabTex*/], bgShader);
         bgMat.RenderOptions.CullMode = ECullMode.None;
-        bgMat.RenderOptions.RequiredEngineUniforms = EUniformRequirements.Camera;
+        //bgMat.RenderOptions.RequiredEngineUniforms = EUniformRequirements.Camera;
         bgMat.RenderPass = (int)EDefaultRenderPass.TransparentForward;
+        //bgMat.EnableTransparency();
         return bgMat;
     }
 }

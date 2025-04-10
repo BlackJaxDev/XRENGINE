@@ -1,4 +1,6 @@
-﻿using System.Numerics;
+﻿using System.Diagnostics;
+using System.Numerics;
+using XREngine.Animation.IK;
 using XREngine.Core.Files;
 using XREngine.Data;
 using XREngine.Data.Core;
@@ -107,8 +109,10 @@ namespace XREngine.Animation
 
         internal void AnimationHasEnded(BaseAnimation obj)
         {
-            if (++_endedAnimations >= _totalAnimCount)
-                AllAnimationsEnded();
+            //if (Interlocked.Increment(ref _endedAnimations) >= _totalAnimCount)
+                //AllAnimationsEnded();
+            //else
+            //    Debug.WriteLine($"Animation {obj.Name} ended, {TotalAnimCount - _endedAnimations} remaining.");
         }
 
         private void AllAnimationsEnded()
@@ -281,7 +285,7 @@ namespace XREngine.Animation
                         {
                             ikRoot = new AnimationMember("GetComponent", EAnimationMemberType.Method)
                             {
-                                MethodArguments = ["HumanoidComponent"],
+                                MethodArguments = ["HumanoidIKSolverComponent"],
                                 CacheReturnValue = true, //Cache this method call so we don't have to search for the humanoid every frame
                             };
                             RootMember.Children.Add(ikRoot);
@@ -290,27 +294,32 @@ namespace XREngine.Animation
                         if (bone.Key.Contains("Foot"))
                         {
                             bool left = bone.Key.Contains('L');
-                            AnimationMember boneX = new("SetFootPositionX", EAnimationMemberType.Method, xAnim)
+                            ELimbEndEffector eff = left ? ELimbEndEffector.LeftFoot : ELimbEndEffector.RightFoot;
+                            AnimationMember boneX = new("SetIKPositionX", EAnimationMemberType.Method, xAnim)
                             {
-                                MethodArguments = [0.0f, left],
+                                MethodArguments = [eff, 0.0f],
+                                MethodValueArgumentIndex = 1,
                             };
                             ikRoot.Children.Add(boneX);
 
-                            AnimationMember boneY = new("SetFootPositionY", EAnimationMemberType.Method, yAnim)
+                            AnimationMember boneY = new("SetIKPositionY", EAnimationMemberType.Method, yAnim)
                             {
-                                MethodArguments = [0.0f, left],
+                                MethodArguments = [eff, 0.0f],
+                                MethodValueArgumentIndex = 1,
                             };
                             ikRoot.Children.Add(boneY);
 
-                            AnimationMember boneZ = new("SetFootPositionZ", EAnimationMemberType.Method, zAnim)
+                            AnimationMember boneZ = new("SetIKPositionZ", EAnimationMemberType.Method, zAnim)
                             {
-                                MethodArguments = [0.0f, left],
+                                MethodArguments = [eff, 0.0f],
+                                MethodValueArgumentIndex = 1,
                             };
                             ikRoot.Children.Add(boneZ);
 
-                            AnimationMember boneRot = new("SetFootRotation", EAnimationMemberType.Method, rotAnim)
+                            AnimationMember boneRot = new("SetIKRotation", EAnimationMemberType.Method, rotAnim)
                             {
-                                MethodArguments = [Quaternion.Identity, left],
+                                MethodArguments = [eff, Quaternion.Identity],
+                                MethodValueArgumentIndex = 1,
                             };
                             ikRoot.Children.Add(boneRot);
                         }
@@ -374,7 +383,13 @@ namespace XREngine.Animation
             }
         }
 
-        private static void PopulateVMDAnimation(float fps, KeyValuePair<string, FrameDictionary<BoneFrameKey>> bone, PropAnimFloat xAnim, PropAnimFloat yAnim, PropAnimFloat zAnim, PropAnimQuaternion rotAnim)
+        private static void PopulateVMDAnimation(
+            float fps,
+            KeyValuePair<string, FrameDictionary<BoneFrameKey>> bone,
+            PropAnimFloat xAnim,
+            PropAnimFloat yAnim,
+            PropAnimFloat zAnim,
+            PropAnimQuaternion rotAnim)
         {
             var frames = bone.Value.ToArray();
             for (int i = 0; i < frames.Length; i++)
@@ -389,15 +404,15 @@ namespace XREngine.Animation
                 BezierCurveToControlPoints(
                     lastData.Translation.X,
                     data.Translation.X,
-                    lastData.TranslationXBezier!.XY0,
-                    data.TranslationXBezier!.XY1,
+                    lastData.TranslationXBezier!.StartControlPoint,
+                    data.TranslationXBezier!.EndControlPoint,
                     out _,
                     out float xOutTan);
                 BezierCurveToControlPoints(
                     data.Translation.X,
                     nextData.Translation.X,
-                    lastData.TranslationXBezier!.XY0,
-                    data.TranslationXBezier!.XY1,
+                    lastData.TranslationXBezier!.StartControlPoint,
+                    data.TranslationXBezier!.EndControlPoint,
                     out float xInTan,
                     out _);
                 xAnim.Keyframes.Add(new FloatKeyframe((int)frame.Key, fps, data.Translation.X, xOutTan, xInTan, EVectorInterpType.Smooth));
@@ -405,15 +420,15 @@ namespace XREngine.Animation
                 BezierCurveToControlPoints(
                     lastData.Translation.Y,
                     data.Translation.Y,
-                    lastData.TranslationYBezier!.XY0,
-                    data.TranslationYBezier!.XY1,
+                    lastData.TranslationYBezier!.StartControlPoint,
+                    data.TranslationYBezier!.EndControlPoint,
                     out _,
                     out float yOutTan);
                 BezierCurveToControlPoints(
                     data.Translation.Y,
                     nextData.Translation.Y,
-                    lastData.TranslationYBezier!.XY0,
-                    data.TranslationYBezier!.XY1,
+                    lastData.TranslationYBezier!.StartControlPoint,
+                    data.TranslationYBezier!.EndControlPoint,
                     out float yInTan,
                     out _);
                 yAnim.Keyframes.Add(new FloatKeyframe((int)frame.Key, fps, data.Translation.Y, yOutTan, yInTan, EVectorInterpType.Smooth));
@@ -421,15 +436,15 @@ namespace XREngine.Animation
                 BezierCurveToControlPoints(
                     lastData.Translation.Z,
                     data.Translation.Z,
-                    lastData.TranslationZBezier!.XY0,
-                    data.TranslationZBezier!.XY1,
+                    lastData.TranslationZBezier!.StartControlPoint,
+                    data.TranslationZBezier!.EndControlPoint,
                     out _,
                     out float zOutTan);
                 BezierCurveToControlPoints(
                     data.Translation.Z,
                     nextData.Translation.Z,
-                    lastData.TranslationZBezier!.XY0,
-                    data.TranslationZBezier!.XY1,
+                    lastData.TranslationZBezier!.StartControlPoint,
+                    data.TranslationZBezier!.EndControlPoint,
                     out float zInTan,
                     out _);
                 zAnim.Keyframes.Add(new FloatKeyframe((int)frame.Key, fps, data.Translation.Z, zOutTan, zInTan, EVectorInterpType.Smooth));
@@ -437,15 +452,15 @@ namespace XREngine.Animation
                 BezierCurveToControlPoints(
                     lastData.Rotation,
                     data.Rotation,
-                    lastData.RotationBezier!.XY0,
-                    data.RotationBezier!.XY1,
+                    lastData.RotationBezier!.StartControlPoint,
+                    data.RotationBezier!.EndControlPoint,
                     out _,
                     out Quaternion outRotTan);
                 BezierCurveToControlPoints(
                     data.Rotation,
                     nextData.Rotation,
-                    lastData.RotationBezier!.XY0,
-                    data.RotationBezier!.XY1,
+                    lastData.RotationBezier!.StartControlPoint,
+                    data.RotationBezier!.EndControlPoint,
                     out Quaternion inRotTan,
                     out _);
                 rotAnim.Keyframes.Add(new QuaternionKeyframe((int)frame.Key, fps, data.Rotation, outRotTan, inRotTan, ERadialInterpType.Smooth));

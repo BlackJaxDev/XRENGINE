@@ -59,30 +59,40 @@ public partial class UIEditorComponent : UIComponent
     {
         SceneNode.Transform.Clear();
 
-        var splitChild = SceneNode.NewChild();
-        var splitTfm = splitChild.GetTransformAs<UIDualSplitTransform>(true)!;
+        var splitChild = SceneNode.NewChildWithTransform(out UIDualSplitTransform splitTfm, "EditorRoot");
         splitTfm.VerticalSplit = true;
         splitTfm.FirstFixedSize = true;
         splitTfm.FixedSize = MenuHeight;
         splitTfm.SplitterSize = 0.0f;
 
-        splitChild.NewChild<UIToolbarComponent>(out var toolbarComp);
+        splitChild.NewChild(out UIToolbarComponent toolbarComp, "Menu");
         toolbarComp.RootMenuOptions = MenuOptions;
         toolbarComp.SubmenuItemHeight = MenuHeight;
         _toolbar = toolbarComp;
 
-        var listNode = splitChild.NewChild();
-        var listTfm = listNode.SetTransform<UIListTransform>();
-        listTfm.DisplayHorizontal = true;
+        SceneNode dockNode = splitChild.NewChildWithTransform(out UIMultiSplitTransform dockTfm, "DockableRoot");
+        dockTfm.Arrangement = UISplitArrangement.LeftMiddleRight;
+        dockTfm.SplitterSize = 0.0f;
+        dockTfm.CanUserResize = false;
+        dockTfm.FixedSizeFirst = 300;
+        dockTfm.FixedSizeSecond = 300;
+
+        SceneNode hierarchyNode = dockNode.NewChild("Hierarchy");
+        hierarchyNode.NewChild<HierarchyPanel>(out var hierarchy);
+        hierarchy.RootNodes.Clear();
+        if (World is not null)
+            hierarchy.RootNodes.AddRange(World.RootNodes);
+
+        var middleNode = dockNode.NewChild("Scene");
+        //middleNode.AddComponent<UIVideoComponent>();
+
+        dockNode.NewChildWithTransform(out UIListTransform listTfm, out InspectorPanel inspector, "Inspector");
+        listTfm.DisplayHorizontal = false;
         listTfm.ItemAlignment = EListAlignment.TopOrLeft;
 
-        listNode.NewChild<HierarchyPanel>(out var inspector);
-        //hierarchy.RootNodes.Clear();
-        //if (World is not null)
-        //    hierarchy.RootNodes.AddRange(World.RootNodes);
 
         //World.Name = "TestWorld";
-        //inspector.InspectedObjects = [Engine.Rendering.Settings];
+        inspector.InspectedObjects = [Engine.Rendering.Settings];
 
         ////Create the dockable windows transform for panels
         //var dockableNode = splitChild.NewChild<UIDockingRootComponent>(out var root);

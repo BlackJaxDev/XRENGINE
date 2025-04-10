@@ -1,4 +1,5 @@
-﻿namespace XREngine.Rendering.Models.Materials
+﻿
+namespace XREngine.Rendering.Models.Materials
 {
     public static class ShaderHelper
     {
@@ -121,10 +122,27 @@ void main()
 ";
             return new XRShader(EShaderType.Fragment, source);
         }
-        public static XRShader? TextureFragDeferred()
+        public static XRShader? LitTextureFragDeferred()
             => LoadEngineShader(Path.Combine("Common", "TexturedDeferred.fs"));
         public static XRShader? LitColorFragDeferred()
             => LoadEngineShader(Path.Combine("Common", "ColoredDeferred.fs"));
+        public static XRShader LitTextureNormalFragDeferred()
+            => LoadEngineShader(Path.Combine("Common", "TexturedNormalDeferred.fs"));
+        public static XRShader LitTextureNormalMetallicFragDeferred()
+            => LoadEngineShader(Path.Combine("Common", "TexturedNormalMetallicDeferred.fs"));
+        public static XRShader LitTextureNormalRoughnessMetallicDeferred()
+            => LoadEngineShader(Path.Combine("Common", "TexturedNormalMetallicRoughnessDeferred.fs"));
+        public static XRShader LitTextureMetallicFragDeferred()
+            => LoadEngineShader(Path.Combine("Common", "TexturedMetallicDeferred.fs"));
+        public static XRShader LitTextureMetallicRoughnessDeferred()
+            => LoadEngineShader(Path.Combine("Common", "TexturedMetallicRoughnessDeferred.fs"));
+        public static XRShader LitTextureRoughnessFragDeferred()
+            => LoadEngineShader(Path.Combine("Common", "TexturedRoughnessDeferred.fs"));
+        public static XRShader LitTextureMatcapDeferred()
+            => LoadEngineShader(Path.Combine("Common", "TexturedMatcapDeferred.fs"));
+        public static XRShader LitTextureEmissiveDeferred()
+            => LoadEngineShader(Path.Combine("Common", "TexturedEmissiveDeferred.fs"));
+
         public static XRShader? UnlitTextureFragForward()
              => LoadEngineShader(Path.Combine("Common", "UnlitTexturedForward.fs"));
         public static XRShader? UnlitTextureStereoFragForward()
@@ -133,6 +151,7 @@ void main()
             => LoadEngineShader(Path.Combine("Common", "UnlitAlphaTexturedForward.fs"));
         public static XRShader? UnlitColorFragForward()
              => LoadEngineShader(Path.Combine("Common", "UnlitColoredForward.fs"));
+
         public static XRShader LitColorFragForward()
         {
             string source = @"

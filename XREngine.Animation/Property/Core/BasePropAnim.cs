@@ -1,4 +1,5 @@
-﻿using System.Reflection;
+﻿using ImmediateReflection;
+using System.Reflection;
 
 namespace XREngine.Animation
 {
@@ -29,6 +30,23 @@ namespace XREngine.Animation
         /// <summary>
         /// Call to set this animation's current value to an object's property and then advance the animation by the given delta.
         /// </summary>
+        public object? SetAndTick(object obj, ImmediateField field, float delta)
+        {
+            var value = SetValue(obj, field);
+            Tick(delta);
+            return value;
+        }
+
+        public object? SetValue(object obj, ImmediateField field)
+        {
+            var value = GetCurrentValueGeneric();
+            field.SetValue(obj, value);
+            return value;
+        }
+
+        /// <summary>
+        /// Call to set this animation's current value to an object's property and then advance the animation by the given delta.
+        /// </summary>
         public object? SetAndTick(object obj, PropertyInfo property, float delta)
         {
             var value = SetValue(obj, property);
@@ -37,6 +55,23 @@ namespace XREngine.Animation
         }
 
         public object? SetValue(object obj, PropertyInfo property)
+        {
+            var value = GetCurrentValueGeneric();
+            property.SetValue(obj, value);
+            return value;
+        }
+
+        /// <summary>
+        /// Call to set this animation's current value to an object's property and then advance the animation by the given delta.
+        /// </summary>
+        public object? SetAndTick(object obj, ImmediateProperty property, float delta)
+        {
+            var value = SetValue(obj, property);
+            Tick(delta);
+            return value;
+        }
+
+        public object? SetValue(object obj, ImmediateProperty property)
         {
             var value = GetCurrentValueGeneric();
             property.SetValue(obj, value);

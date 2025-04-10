@@ -628,7 +628,7 @@ namespace XREngine.Rendering.OpenGL
             Api.BindFramebuffer(FramebufferTarget.ReadFramebuffer, 0);
             Api.ReadBuffer(ReadBufferMode.Front);
             nuint size = (uint)data.Length;
-            uint pbo = ReadToPBO(new BoundingRectangle(0, 0, 1, 1), format, pixelType, size, out IntPtr sync);
+            uint pbo = ReadFBOToPBO(new BoundingRectangle(0, 0, 1, 1), format, pixelType, size, out IntPtr sync);
             void FenceCheck()
             {
                 if (GetData(size, data, sync, pbo))
@@ -796,7 +796,7 @@ namespace XREngine.Rendering.OpenGL
             return true;
         }
 
-        public override void GetScreenshotAsync(BoundingRectangle region, bool withTransparency, Action<MagickImage> imageCallback)
+        public override void GetScreenshotAsync(BoundingRectangle region, bool withTransparency, Action<MagickImage, int> imageCallback)
         {
             //TODO: render to an FBO with the desired render size and capture from that, instead of using the window size.
 
@@ -804,34 +804,318 @@ namespace XREngine.Rendering.OpenGL
             //This method is async on the CPU, but still executes synchronously on the GPU.
             //https://developer.download.nvidia.com/GTC/PDF/GTC2012/PresentationPDF/S0356-GTC2012-Texture-Transfers.pdf
 
-            uint w = (uint)region.Width;
-            uint h = (uint)region.Height;
+            CaptureFBOColorAttachment(region, withTransparency, imageCallback, 0u, ReadBufferMode.Front, -1, true);
+        }
+
+        public void CaptureFBOAttachment(
+            BoundingRectangle region,
+            bool withTransparency,
+            Action<MagickImage, int> imageCallback,
+            uint readFBOBindingId,
+            EFrameBufferAttachment attachment,
+            int layer = -1,
+            bool async = true)
+        {
+            switch (attachment)
+            {
+                case EFrameBufferAttachment.DepthAttachment:
+                    CaptureFBOAttachment(
+                        region,
+                        imageCallback,
+                        readFBOBindingId,
+                        ReadBufferMode.None,
+                        EPixelFormat.DepthComponent,
+                        EPixelType.Float,
+                        layer,
+                        async);
+                    break;
+                case EFrameBufferAttachment.StencilAttachment:
+                    CaptureFBOAttachment(
+                        region,
+                        imageCallback,
+                        readFBOBindingId,
+                        ReadBufferMode.None,
+                        EPixelFormat.StencilIndex,
+                        EPixelType.UnsignedByte,
+                        layer,
+                        async);
+
+                    break;
+                case EFrameBufferAttachment.DepthStencilAttachment:
+                    CaptureFBOAttachment(
+                        region,
+                        imageCallback,
+                        readFBOBindingId,
+                        ReadBufferMode.None,
+                        EPixelFormat.DepthStencil,
+                        EPixelType.UnsignedInt248,
+                        layer,
+                        async);
+                    break;
+                default:
+                    CaptureFBOColorAttachment(
+                        region,
+                        withTransparency,
+                        imageCallback,
+                        readFBOBindingId,
+                        GLObjectBase.ToReadBufferMode(attachment),
+                        layer,
+                        async);
+                    break;
+            }
+        }
+
+        public void CaptureFBOColorAttachment(
+            BoundingRectangle region,
+            bool withTransparency,
+            Action<MagickImage, int> imageCallback,
+            uint readFBOBindingId,
+            ReadBufferMode readBuffer,
+            int layer = -1,
+            bool async = true)
+        {
             EPixelFormat format = withTransparency ? EPixelFormat.Bgra : EPixelFormat.Bgr;
             EPixelType pixelType = EPixelType.UnsignedByte;
-            var data = XRTexture.AllocateBytes(w, h, format, pixelType);
-
-            Api.BindFramebuffer(FramebufferTarget.ReadFramebuffer, 0);
-            Api.ReadBuffer(ReadBufferMode.Front);
-
-            nuint size = (uint)data.Length;
-            uint pbo = ReadToPBO(region, format, pixelType, size, out IntPtr sync);
-            void FenceCheck()
-            {
-                if (GetData(size, data, sync, pbo))
-                {
-                    Api.DeleteSync(sync);
-                    Api.DeleteBuffer(pbo);
-                    var image = XRTexture.NewImage(w, h, format, pixelType, data);
-                    image.Flip();
-                    Task.Run(() => imageCallback(image));
-                }
-                else
-                {
-                    Engine.EnqueueMainThreadTask(FenceCheck);
-                }
-            }
-            Engine.EnqueueMainThreadTask(FenceCheck);
+            CaptureFBOAttachment(
+                region,
+                imageCallback,
+                readFBOBindingId,
+                readBuffer,
+                format,
+                pixelType,
+                layer,
+                async);
         }
+
+        public void CaptureFBOAttachment(
+            BoundingRectangle region,
+            Action<MagickImage, int> imageCallback,
+            uint readFBOBindingId,
+            ReadBufferMode readBuffer,
+            EPixelFormat format,
+            EPixelType pixelType,
+            int layer = -1,
+            bool async = true)
+        {
+            //Specify which FBO to read from
+            Api.BindFramebuffer(FramebufferTarget.ReadFramebuffer, readFBOBindingId);
+
+            //Specify which attachment buffer to read from
+            Api.ReadBuffer(readBuffer);
+
+            CaptureCurrentlyBoundFBOAttachment(region, imageCallback, format, pixelType, async);
+        }
+
+        public unsafe void CaptureTexture(
+            BoundingRectangle region,
+            Action<MagickImage, int> imageCallback,
+            uint textureBindingId,
+            int mipLevel,
+            int layer,
+            bool async = true)
+        {
+            uint w = (uint)region.Width;
+            uint h = (uint)region.Height;
+
+            Api.GetTextureLevelParameter(textureBindingId, mipLevel, GLEnum.TextureInternalFormat, out int format);
+            InternalFormat internalFormat = (InternalFormat)format;
+            //int bpp = GetBytesPerPixel(internalFormat);
+
+            Api.GetTextureParameterI(textureBindingId, GLEnum.DepthStencilTextureMode, out int depthStencilMode);
+            GLEnum mode = (GLEnum)depthStencilMode;
+            
+            EPixelFormat pixelFormat = EPixelFormat.Rgba;
+            EPixelType pixelType = EPixelType.UnsignedByte;
+            switch (internalFormat)
+            {
+                case InternalFormat.Depth24Stencil8:
+                    pixelFormat = EPixelFormat.DepthStencil;
+                    pixelType = EPixelType.UnsignedInt248;
+                    break;
+                case InternalFormat.Depth32fStencil8:
+                    pixelFormat = EPixelFormat.DepthStencil;
+                    pixelType = EPixelType.Float32UnsignedInt248Rev;
+                    break;
+            }
+
+            var data = XRTexture.AllocateBytes(w, h, pixelFormat, pixelType);
+
+            if (async)
+            {
+                uint size = (uint)data.Length;
+                uint pbo = ReadTextureToPBO(textureBindingId, region, layer, 1, pixelFormat, pixelType, size, out IntPtr sync);
+                bool FenceCheck()
+                {
+                    if (!GetData(size, data, sync, pbo))
+                        return false;
+                    else
+                    {
+                        Api.DeleteSync(sync);
+                        Api.DeleteBuffer(pbo);
+
+                        void MakeImage()
+                        {
+                            if (IsDepthStencilFormat(internalFormat))
+                            {
+                                switch (mode)
+                                {
+                                    case GLEnum.StencilIndex:
+                                        imageCallback(MakeStencilImage(pixelType, w, h, data), 0);
+                                        break;
+                                    case GLEnum.DepthComponent:
+                                        imageCallback(MakeDepthImage(pixelType, w, h, data), 0);
+                                        break;
+                                    default:
+                                        imageCallback(OpenGLRenderer.MakeImage(pixelFormat, pixelType, w, h, data), 0);
+                                        break;
+                                }
+                            }
+                            else
+                                imageCallback(OpenGLRenderer.MakeImage(pixelFormat, pixelType, w, h, data), 0);
+                        }
+                        Task.Run(MakeImage);
+
+                        return true;
+                    }
+                }
+                Engine.AddMainThreadCoroutine(FenceCheck);
+            }
+            else
+            {
+                fixed (byte* ptr = data)
+                {
+                    Api.GetTextureSubImage(textureBindingId, mipLevel, region.X, region.Y, layer, w, h, 1, GLObjectBase.ToGLEnum(pixelFormat), GLObjectBase.ToGLEnum(pixelType), (uint)data.Length, ptr);
+                }
+                Task.Run(() => imageCallback(XRTexture.NewImage(w, h, pixelFormat, pixelType, data), 0));
+            }
+        }
+
+        private bool IsDepthStencilFormat(InternalFormat internalFormat) => internalFormat switch
+        {
+            InternalFormat.Depth24Stencil8 or
+            InternalFormat.Depth32fStencil8 or
+            InternalFormat.Depth32fStencil8NV => true,
+            _ => false,
+        };
+
+        public unsafe void CaptureCurrentlyBoundFBOAttachment(
+            BoundingRectangle region,
+            Action<MagickImage, int> imageCallback,
+            EPixelFormat pixelFormat,
+            EPixelType pixelType,
+            bool async = true)
+        {
+            uint w = (uint)region.Width;
+            uint h = (uint)region.Height;
+            var data = XRTexture.AllocateBytes(w, h, pixelFormat, pixelType);
+
+            if (async)
+            {
+                nuint size = (uint)data.Length;
+                uint pbo = ReadFBOToPBO(region, pixelFormat, pixelType, size, out IntPtr sync);
+                bool FenceCheck()
+                {
+                    if (!GetData(size, data, sync, pbo))
+                        return false;
+                    else
+                    {
+                        Api.DeleteSync(sync);
+                        Api.DeleteBuffer(pbo);
+
+                        void MakeImage()
+                        {
+                            if (pixelType == EPixelType.Float32UnsignedInt248Rev || pixelType == EPixelType.UnsignedInt248)
+                            {
+                                MakeDepthStencilImages(pixelType, w, h, data, out MagickImage depth, out MagickImage stencil);
+                                imageCallback(depth, 0);
+                                imageCallback(stencil, 1);
+                            }
+                            else
+                                imageCallback(OpenGLRenderer.MakeImage(pixelFormat, pixelType, w, h, data), 0);
+                        }
+                        Task.Run(MakeImage);
+
+                        return true;
+                    }
+                }
+                Engine.AddMainThreadCoroutine(FenceCheck);
+            }
+            else
+            {
+                fixed (byte* ptr = data)
+                {
+                    Api.ReadPixels(region.X, region.Y, w, h, GLObjectBase.ToGLEnum(pixelFormat), GLObjectBase.ToGLEnum(pixelType), ptr);
+                }
+                Task.Run(() => imageCallback(XRTexture.NewImage(w, h, pixelFormat, pixelType, data), 0));
+            }
+        }
+
+        private static unsafe MagickImage MakeImage(EPixelFormat format, EPixelType pixelType, uint w, uint h, byte[] data)
+            => XRTexture.NewImage(w, h, format, pixelType, data);
+
+        private unsafe void MakeDepthStencilImages(EPixelType pixelType, uint w, uint h, byte[] data, out MagickImage depth, out MagickImage stencil)
+        {
+            bool floatType = pixelType == EPixelType.Float32UnsignedInt248Rev;
+            depth = XRTexture.NewImage(w, h, EPixelFormat.Rgb, EPixelType.UnsignedByte, ExtractDepthData(floatType, data));
+            stencil = XRTexture.NewImage(w, h, EPixelFormat.Rgb, EPixelType.UnsignedByte, ExtractStencilData(floatType, data));
+        }
+        private unsafe MagickImage MakeDepthImage(EPixelType pixelType, uint w, uint h, byte[] data)
+        {
+            bool floatType = pixelType == EPixelType.Float32UnsignedInt248Rev;
+            return XRTexture.NewImage(w, h, EPixelFormat.Rgb, EPixelType.UnsignedByte, ExtractDepthData(floatType, data));
+        }
+        private unsafe MagickImage MakeStencilImage(EPixelType pixelType, uint w, uint h, byte[] data)
+        {
+            bool floatType = pixelType == EPixelType.Float32UnsignedInt248Rev;
+            return XRTexture.NewImage(w, h, EPixelFormat.Rgb, EPixelType.UnsignedByte, ExtractStencilData(floatType, data));
+        }
+
+        private byte[] ExtractStencilData(bool floatingPoint, byte[] data)
+        {
+            //every 3 bytes is the depth, and the last byte is the stencil
+            //we're converting that last byte into grayscale rgb -> 3 bytes with same value
+            int bytesPerPixel = floatingPoint ? 8 : 4;
+            int stencilOffset = floatingPoint ? 4 : 3;
+            int pixelCount = data.Length / bytesPerPixel;
+            byte[] newData = new byte[pixelCount * 3];
+            Parallel.For(0, pixelCount, i =>
+            {
+                int index = i * bytesPerPixel;
+                int newIndex = i * 3;
+                byte stencil = data[index + stencilOffset];
+                newData[newIndex] = stencil;
+                newData[newIndex + 1] = stencil;
+                newData[newIndex + 2] = stencil;
+            });
+            return newData;
+        }
+
+        private byte[] ExtractDepthData(bool floatingPoint, byte[] data)
+        {
+            //every 3 bytes is the depth, and the last byte is the stencil
+            //if float, 4 bytes are used for the depth, a byte for stencil, and 3 bytes to align
+            //we're converting that depth value down into a byte and then into grayscale rgb -> 3 bytes with same value
+            int bytesPerPixel = floatingPoint ? 8 : 4;
+            int pixelCount = data.Length / bytesPerPixel;
+            byte[] newData = new byte[pixelCount * 3];
+            Parallel.For(0, pixelCount, i =>
+            {
+                int index = i * bytesPerPixel;
+                int newIndex = i * 3;
+
+                float depth = floatingPoint
+                    ? BitConverter.Int32BitsToSingle((data[index] << 24) | (data[index + 1] << 16) | data[index + 2] << 8 | data[index + 3])
+                    : ((data[index] << 16) | (data[index + 1] << 8) | data[index + 2]) / (float)0xFFFFFF;
+
+                byte compressedDepth = (byte)(depth * 255.0f);
+
+                newData[newIndex] = compressedDepth;
+                newData[newIndex + 1] = compressedDepth;
+                newData[newIndex + 2] = compressedDepth;
+            });
+            return newData;
+        }
+
         public override void GetPixelAsync(int x, int y, bool withTransparency, Action<ColorF4> pixelCallback)
         {
             //TODO: render to an FBO with the desired render size and capture from that, instead of using the window size.
@@ -848,7 +1132,7 @@ namespace XREngine.Rendering.OpenGL
             Api.ReadBuffer(ReadBufferMode.Front);
 
             nuint size = (uint)data.Length;
-            uint pbo = ReadToPBO(new BoundingRectangle(x, y, 1, 1), format, pixelType, size, out IntPtr sync);
+            uint pbo = ReadFBOToPBO(new BoundingRectangle(x, y, 1, 1), format, pixelType, size, out IntPtr sync);
             void FenceCheck()
             {
                 if (GetData(size, data, sync, pbo))
@@ -881,7 +1165,7 @@ namespace XREngine.Rendering.OpenGL
             Api.ReadBuffer(ReadBufferMode.None);
 
             nuint size = (uint)data.Length;
-            uint pbo = ReadToPBO(new BoundingRectangle(x, y, 1, 1), format, pixelType, size, out IntPtr sync);
+            uint pbo = ReadFBOToPBO(new BoundingRectangle(x, y, 1, 1), format, pixelType, size, out IntPtr sync);
             void FenceCheck()
             {
                 if (GetData(size, data, sync, pbo))
@@ -902,12 +1186,23 @@ namespace XREngine.Rendering.OpenGL
             Engine.EnqueueMainThreadTask(FenceCheck);
         }
 
-        private unsafe uint ReadToPBO(BoundingRectangle region, EPixelFormat format, EPixelType type, nuint size, out IntPtr sync)
+        private unsafe uint ReadFBOToPBO(BoundingRectangle region, EPixelFormat format, EPixelType type, nuint size, out IntPtr sync)
         {
             uint pbo = Api.GenBuffer();
             Api.BindBuffer(GLEnum.PixelPackBuffer, pbo);
             Api.BufferData(GLEnum.PixelPackBuffer, size, null, GLEnum.StreamRead);
             Api.ReadPixels(region.X, region.Y, (uint)region.Width, (uint)region.Height, GLObjectBase.ToGLEnum(format), GLObjectBase.ToGLEnum(type), null);
+            sync = Api.FenceSync(GLEnum.SyncGpuCommandsComplete, 0u);
+            Api.BindBuffer(GLEnum.PixelPackBuffer, 0);
+            return pbo;
+        }
+
+        private unsafe uint ReadTextureToPBO(uint textureId, BoundingRectangle region, int layerOffset, uint layerCount, EPixelFormat format, EPixelType type, uint size, out IntPtr sync)
+        {
+            uint pbo = Api.GenBuffer();
+            Api.BindBuffer(GLEnum.PixelPackBuffer, pbo);
+            Api.BufferData(GLEnum.PixelPackBuffer, size, null, GLEnum.StreamRead);
+            Api.GetTextureSubImage(textureId, 0, region.X, region.Y, layerOffset, (uint)region.Width, (uint)region.Height, layerCount, GLObjectBase.ToGLEnum(format), GLObjectBase.ToGLEnum(type), size, null);
             sync = Api.FenceSync(GLEnum.SyncGpuCommandsComplete, 0u);
             Api.BindBuffer(GLEnum.PixelPackBuffer, 0);
             return pbo;
@@ -1161,5 +1456,279 @@ namespace XREngine.Rendering.OpenGL
                 mask,
                 linearFilter ? BlitFramebufferFilter.Linear : BlitFramebufferFilter.Nearest);
         }
+
+        public static int GetBytesPerPixel(InternalFormat internalFormat) => internalFormat switch
+        {
+            // Standard formats
+            InternalFormat.Rgba8 => 4,
+            InternalFormat.Rgb8 => 3,
+            InternalFormat.R8 => 1,
+            InternalFormat.RG8 => 2,
+
+            // Depth/Stencil formats
+            InternalFormat.DepthComponent32f => 4,
+            InternalFormat.DepthComponent24 => 3,
+            InternalFormat.DepthComponent16 => 2,
+            InternalFormat.DepthComponent32 => 4,
+            InternalFormat.DepthComponent => 4, // Default to 4 bytes (32-bit float)
+            InternalFormat.StencilIndex8 => 1,
+            InternalFormat.StencilIndex1 => 1,
+            InternalFormat.StencilIndex4 => 1,
+            InternalFormat.StencilIndex16 => 2,
+            InternalFormat.StencilIndex => 1, // Default to 1 byte (8-bit)
+            InternalFormat.Depth24Stencil8 => 4,
+            InternalFormat.Depth32fStencil8 => 5, // 4 bytes depth + 1 byte stencil
+            InternalFormat.DepthStencil => 4,
+            InternalFormat.DepthStencilMesa => 4,
+
+            // Base formats
+            InternalFormat.Red => 1,
+            InternalFormat.RG => 2,
+            InternalFormat.Rgb => 3,
+            InternalFormat.Rgba => 4,
+
+            // Higher bit depth formats
+            InternalFormat.Rgba16 => 8,
+            InternalFormat.Rgb16 => 6,
+            InternalFormat.RG16 => 4,
+            InternalFormat.R16 => 2,
+            InternalFormat.Rgba16f => 8,
+            InternalFormat.Rgb16f => 6,
+            InternalFormat.RG16f => 4,
+            InternalFormat.R16f => 2,
+            InternalFormat.Rgba32f => 16,
+            InternalFormat.Rgb32f => 12,
+            InternalFormat.RG32f => 8,
+            InternalFormat.R32f => 4,
+
+            // Integer formats
+            InternalFormat.Rgba8i => 4,
+            InternalFormat.Rgb8i => 3,
+            InternalFormat.RG8i => 2,
+            InternalFormat.R8i => 1,
+            InternalFormat.Rgba16i => 8,
+            InternalFormat.Rgb16i => 6,
+            InternalFormat.RG16i => 4,
+            InternalFormat.R16i => 2,
+            InternalFormat.Rgba32i => 16,
+            InternalFormat.Rgb32i => 12,
+            InternalFormat.RG32i => 8,
+            InternalFormat.R32i => 4,
+            InternalFormat.Rgba8ui => 4,
+            InternalFormat.Rgb8ui => 3,
+            InternalFormat.RG8ui => 2,
+            InternalFormat.R8ui => 1,
+            InternalFormat.Rgba16ui => 8,
+            InternalFormat.Rgb16ui => 6,
+            InternalFormat.RG16ui => 4,
+            InternalFormat.R16ui => 2,
+            InternalFormat.Rgba32ui => 16,
+            InternalFormat.Rgb32ui => 12,
+            InternalFormat.RG32ui => 8,
+            InternalFormat.R32ui => 4,
+
+            // Special formats
+            InternalFormat.R3G3B2 => 1,
+            InternalFormat.Rgb565Oes => 2,
+            InternalFormat.Rgba4 => 2,
+            InternalFormat.Rgb5A1 => 2,
+            InternalFormat.Rgb10A2 => 4,
+            InternalFormat.Rgb10A2ui => 4,
+            InternalFormat.R11fG11fB10f => 4,
+            InternalFormat.Rgb9E5 => 4,
+
+            // sRGB formats
+            InternalFormat.Srgb8 => 3,
+            InternalFormat.Srgb8Alpha8 => 4,
+            InternalFormat.Srgb => 3,
+            InternalFormat.SrgbAlpha => 4,
+
+            // Signed normalized formats
+            InternalFormat.R8SNorm => 1,
+            InternalFormat.RG8SNorm => 2,
+            InternalFormat.Rgb8SNorm => 3,
+            InternalFormat.Rgba8SNorm => 4,
+            InternalFormat.R16SNorm => 2,
+            InternalFormat.RG16SNorm => 4,
+            InternalFormat.Rgb16SNorm => 6,
+            InternalFormat.Rgba16SNorm => 8,
+
+            // Compressed formats - return estimated bytes per block
+            InternalFormat.CompressedRgbS3TCDxt1Ext => 1, // ~0.5 bytes per pixel
+            InternalFormat.CompressedRgbaS3TCDxt1Ext => 1, // ~0.5 bytes per pixel
+            InternalFormat.CompressedRgbaS3TCDxt3Angle => 1, // ~1 byte per pixel
+            InternalFormat.CompressedRgbaS3TCDxt5Angle => 1, // ~1 byte per pixel
+            InternalFormat.CompressedRed => 1, // Depends on actual compression
+            InternalFormat.CompressedRG => 1, // Depends on actual compression
+            InternalFormat.CompressedRgb => 1, // Depends on actual compression
+            InternalFormat.CompressedRgba => 1, // Depends on actual compression
+            InternalFormat.CompressedSrgb => 1, // Depends on actual compression
+            InternalFormat.CompressedSrgbAlpha => 1, // Depends on actual compression
+            InternalFormat.CompressedSrgbS3TCDxt1Ext => 1, // ~0.5 bytes per pixel
+            InternalFormat.CompressedSrgbAlphaS3TCDxt1Ext => 1, // ~0.5 bytes per pixel
+            InternalFormat.CompressedSrgbAlphaS3TCDxt3Ext => 1, // ~1 byte per pixel
+            InternalFormat.CompressedSrgbAlphaS3TCDxt5Ext => 1, // ~1 byte per pixel
+            InternalFormat.CompressedRedRgtc1 => 1, // ~0.5 bytes per pixel
+            InternalFormat.CompressedSignedRedRgtc1 => 1, // ~0.5 bytes per pixel
+            InternalFormat.CompressedRedGreenRgtc2Ext => 1, // ~1 byte per pixel
+            InternalFormat.CompressedSignedRedGreenRgtc2Ext => 1, // ~1 byte per pixel
+            InternalFormat.Etc1Rgb8Oes => 1, // ~0.5 bytes per pixel
+
+            // ASTC and other modern compressed formats
+            InternalFormat.CompressedRgbaBptcUnorm => 1, // ~1 byte per pixel
+            InternalFormat.CompressedSrgbAlphaBptcUnorm => 1, // ~1 byte per pixel
+            InternalFormat.CompressedRgbBptcSignedFloat => 1, // ~1 byte per pixel
+            InternalFormat.CompressedRgbBptcUnsignedFloat => 1, // ~1 byte per pixel
+            InternalFormat.CompressedR11Eac => 1, // ~0.5 bytes per pixel
+            InternalFormat.CompressedSignedR11Eac => 1, // ~0.5 bytes per pixel
+            InternalFormat.CompressedRG11Eac => 1, // ~1 byte per pixel
+            InternalFormat.CompressedSignedRG11Eac => 1, // ~1 byte per pixel
+            InternalFormat.CompressedRgb8Etc2 => 1, // ~0.5 bytes per pixel
+            InternalFormat.CompressedSrgb8Etc2 => 1, // ~0.5 bytes per pixel
+            InternalFormat.CompressedRgb8PunchthroughAlpha1Etc2 => 1, // ~0.5 bytes per pixel
+            InternalFormat.CompressedSrgb8PunchthroughAlpha1Etc2 => 1, // ~0.5 bytes per pixel
+            InternalFormat.CompressedRgba8Etc2Eac => 1, // ~1 byte per pixel
+            InternalFormat.CompressedSrgb8Alpha8Etc2Eac => 1, // ~1 byte per pixel
+
+            // ASTC formats (all approximately 1 byte per pixel or less)
+            InternalFormat.CompressedRgbaAstc4x4 => 1,
+            InternalFormat.CompressedRgbaAstc5x4 => 1,
+            InternalFormat.CompressedRgbaAstc5x5 => 1,
+            InternalFormat.CompressedRgbaAstc6x5 => 1,
+            InternalFormat.CompressedRgbaAstc6x6 => 1,
+            InternalFormat.CompressedRgbaAstc8x5 => 1,
+            InternalFormat.CompressedRgbaAstc8x6 => 1,
+            InternalFormat.CompressedRgbaAstc8x8 => 1,
+            InternalFormat.CompressedRgbaAstc10x5 => 1,
+            InternalFormat.CompressedRgbaAstc10x6 => 1,
+            InternalFormat.CompressedRgbaAstc10x8 => 1,
+            InternalFormat.CompressedRgbaAstc10x10 => 1,
+            InternalFormat.CompressedRgbaAstc12x10 => 1,
+            InternalFormat.CompressedRgbaAstc12x12 => 1,
+
+            // 3D ASTC formats
+            InternalFormat.CompressedRgbaAstc3x3x3Oes => 1,
+            InternalFormat.CompressedRgbaAstc4x3x3Oes => 1,
+            InternalFormat.CompressedRgbaAstc4x4x3Oes => 1,
+            InternalFormat.CompressedRgbaAstc4x4x4Oes => 1,
+            InternalFormat.CompressedRgbaAstc5x4x4Oes => 1,
+            InternalFormat.CompressedRgbaAstc5x5x4Oes => 1,
+            InternalFormat.CompressedRgbaAstc5x5x5Oes => 1,
+            InternalFormat.CompressedRgbaAstc6x5x5Oes => 1,
+            InternalFormat.CompressedRgbaAstc6x6x5Oes => 1,
+            InternalFormat.CompressedRgbaAstc6x6x6Oes => 1,
+
+            // sRGB ASTC formats
+            InternalFormat.CompressedSrgb8Alpha8Astc4x4 => 1,
+            InternalFormat.CompressedSrgb8Alpha8Astc5x4 => 1,
+            InternalFormat.CompressedSrgb8Alpha8Astc5x5 => 1,
+            InternalFormat.CompressedSrgb8Alpha8Astc6x5 => 1,
+            InternalFormat.CompressedSrgb8Alpha8Astc6x6 => 1,
+            InternalFormat.CompressedSrgb8Alpha8Astc8x5 => 1,
+            InternalFormat.CompressedSrgb8Alpha8Astc8x6 => 1,
+            InternalFormat.CompressedSrgb8Alpha8Astc8x8 => 1,
+            InternalFormat.CompressedSrgb8Alpha8Astc10x5 => 1,
+            InternalFormat.CompressedSrgb8Alpha8Astc10x6 => 1,
+            InternalFormat.CompressedSrgb8Alpha8Astc10x8 => 1,
+            InternalFormat.CompressedSrgb8Alpha8Astc10x10 => 1,
+            InternalFormat.CompressedSrgb8Alpha8Astc12x10 => 1,
+            InternalFormat.CompressedSrgb8Alpha8Astc12x12 => 1,
+
+            // 3D sRGB ASTC formats
+            InternalFormat.CompressedSrgb8Alpha8Astc3x3x3Oes => 1,
+            InternalFormat.CompressedSrgb8Alpha8Astc4x3x3Oes => 1,
+            InternalFormat.CompressedSrgb8Alpha8Astc4x4x3Oes => 1,
+            InternalFormat.CompressedSrgb8Alpha8Astc4x4x4Oes => 1,
+            InternalFormat.CompressedSrgb8Alpha8Astc5x4x4Oes => 1,
+            InternalFormat.CompressedSrgb8Alpha8Astc5x5x4Oes => 1,
+            InternalFormat.CompressedSrgb8Alpha8Astc5x5x5Oes => 1,
+            InternalFormat.CompressedSrgb8Alpha8Astc6x5x5Oes => 1,
+            InternalFormat.CompressedSrgb8Alpha8Astc6x6x5Oes => 1,
+            InternalFormat.CompressedSrgb8Alpha8Astc6x6x6Oes => 1,
+
+            // Extension formats
+            InternalFormat.Alpha4Ext => 1,
+            InternalFormat.Alpha8Ext => 1,
+            InternalFormat.Alpha12Ext => 2,
+            InternalFormat.Alpha16Ext => 2,
+            InternalFormat.Luminance4Ext => 1,
+            InternalFormat.Luminance8Ext => 1,
+            InternalFormat.Luminance12Ext => 2,
+            InternalFormat.Luminance16Ext => 2,
+            InternalFormat.Luminance4Alpha4Ext => 1,
+            InternalFormat.Luminance6Alpha2Ext => 1,
+            InternalFormat.Luminance8Alpha8Ext => 2,
+            InternalFormat.Luminance12Alpha4Ext => 2,
+            InternalFormat.Luminance12Alpha12Ext => 3,
+            InternalFormat.Luminance16Alpha16Ext => 4,
+            InternalFormat.Intensity4Ext => 1,
+            InternalFormat.Intensity8Ext => 1,
+            InternalFormat.Intensity12Ext => 2,
+            InternalFormat.Intensity16Ext => 2,
+            InternalFormat.Rgb2Ext => 1,
+            InternalFormat.Rgb4 => 2,
+            InternalFormat.Rgb5 => 2,
+            InternalFormat.Rgb10 => 4,
+            InternalFormat.Rgb12 => 5, // 36-bit, packed as 5 bytes
+            InternalFormat.Rgba2 => 1,
+            InternalFormat.Rgba12 => 6, // 48-bit, packed as 6 bytes
+
+            // Dual formats
+            InternalFormat.DualAlpha4Sgis => 1,
+            InternalFormat.DualAlpha8Sgis => 1,
+            InternalFormat.DualAlpha12Sgis => 2,
+            InternalFormat.DualAlpha16Sgis => 2,
+            InternalFormat.DualLuminance4Sgis => 1,
+            InternalFormat.DualLuminance8Sgis => 1,
+            InternalFormat.DualLuminance12Sgis => 2,
+            InternalFormat.DualLuminance16Sgis => 2,
+            InternalFormat.DualIntensity4Sgis => 1,
+            InternalFormat.DualIntensity8Sgis => 1,
+            InternalFormat.DualIntensity12Sgis => 2,
+            InternalFormat.DualIntensity16Sgis => 2,
+            InternalFormat.DualLuminanceAlpha4Sgis => 1,
+            InternalFormat.DualLuminanceAlpha8Sgis => 2,
+            InternalFormat.QuadAlpha4Sgis => 2,
+            InternalFormat.QuadAlpha8Sgis => 4,
+            InternalFormat.QuadLuminance4Sgis => 2,
+            InternalFormat.QuadLuminance8Sgis => 4,
+            InternalFormat.QuadIntensity4Sgis => 2,
+            InternalFormat.QuadIntensity8Sgis => 4,
+
+            // Ext formats
+            InternalFormat.Alpha32uiExt => 4,
+            InternalFormat.Intensity32uiExt => 4,
+            InternalFormat.Luminance32uiExt => 4,
+            InternalFormat.LuminanceAlpha32uiExt => 8,
+            InternalFormat.Alpha16uiExt => 2,
+            InternalFormat.Intensity16uiExt => 2,
+            InternalFormat.Luminance16uiExt => 2,
+            InternalFormat.LuminanceAlpha16uiExt => 4,
+            InternalFormat.Alpha8uiExt => 1,
+            InternalFormat.Intensity8uiExt => 1,
+            InternalFormat.Luminance8uiExt => 1,
+            InternalFormat.LuminanceAlpha8uiExt => 2,
+            InternalFormat.Alpha32iExt => 4,
+            InternalFormat.Intensity32iExt => 4,
+            InternalFormat.Luminance32iExt => 4,
+            InternalFormat.LuminanceAlpha32iExt => 8,
+            InternalFormat.Alpha16iExt => 2,
+            InternalFormat.Intensity16iExt => 2,
+            InternalFormat.Luminance16iExt => 2,
+            InternalFormat.LuminanceAlpha16iExt => 4,
+            InternalFormat.Alpha8iExt => 1,
+            InternalFormat.Intensity8iExt => 1,
+            InternalFormat.Luminance8iExt => 1,
+            InternalFormat.LuminanceAlpha8iExt => 2,
+            InternalFormat.DepthComponent32fNV => 4,
+            InternalFormat.Depth32fStencil8NV => 5,
+
+            // SR formats
+            InternalFormat.SR8Ext => 1,
+            InternalFormat.Srg8Ext => 2,
+
+            // Default for unknown formats - conservative 4 bytes
+            _ => 4
+        };
     }
 }

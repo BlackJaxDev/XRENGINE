@@ -3,6 +3,7 @@ using ImageMagick;
 using System.Numerics;
 using XREngine.Actors.Types;
 using XREngine.Components;
+using XREngine.Core;
 using XREngine.Data.Colors;
 using XREngine.Data.Core;
 using XREngine.Data.Geometry;
@@ -13,6 +14,7 @@ using XREngine.Input.Devices;
 using XREngine.Rendering;
 using XREngine.Rendering.Commands;
 using XREngine.Rendering.Info;
+using XREngine.Rendering.Physics.Physx;
 using XREngine.Scene;
 using XREngine.Scene.Transforms;
 
@@ -86,21 +88,12 @@ public partial class EditorFlyingCameraPawnComponent : FlyingCameraPawnComponent
 
     public RenderInfo[] RenderedObjects { get; }
 
-    static void ScreenshotCallback(MagickImage img)
+    static void ScreenshotCallback(MagickImage img, int index)
     {
         var path = GetScreenshotPath();
-        VerifyPathExists(path);
+        Utility.EnsureDirPathExists(path);
+        img?.Flip();
         img?.Write(path);
-    }
-
-    private static void VerifyPathExists(string path)
-    {
-        string? dir = Path.GetDirectoryName(path);
-        if (string.IsNullOrWhiteSpace(dir) || Directory.Exists(dir))
-            return;
-
-        VerifyPathExists(dir);
-        Directory.CreateDirectory(dir);
     }
 
     private static string GetScreenshotPath()
@@ -141,8 +134,9 @@ public partial class EditorFlyingCameraPawnComponent : FlyingCameraPawnComponent
     public bool RenderFrustum { get; set; } = false;
     public bool RenderRaycast { get; set; } = false;
 
-    private readonly SortedDictionary<float, List<(XRComponent item, object? data)>> _lastPhysicsPickResults = [];
+    private readonly SortedDictionary<float, List<(XRComponent? item, object? data)>> _lastPhysicsPickResults = [];
     private readonly SortedDictionary<float, List<(RenderInfo3D item, object? data)>> _lastOctreePickResults = [];
+    private PhysxScene.PhysxQueryFilter _queryFilter = new();
 
     private void PostRender()
     {
@@ -157,7 +151,15 @@ public partial class EditorFlyingCameraPawnComponent : FlyingCameraPawnComponent
         if (_wantsScreenshot)
         {
             _wantsScreenshot = false;
-            rend.GetScreenshotAsync(vp.Region, false, ScreenshotCallback);
+            //rend.GetScreenshotAsync(vp.Region, false, ScreenshotCallback);
+
+            var pipeline = Engine.Rendering.State.CurrentRenderingPipeline;
+            if (pipeline is not null)
+            {
+                string desktop = Environment.GetFolderPath(Environment.SpecialFolder.DesktopDirectory);
+                string capturePath = Path.Combine(desktop, $"{pipeline.GetType().Name}_{DateTime.Now:yyyy-MM-dd_HH-mm-ss}");
+                Engine.Rendering.State.CurrentRenderingPipeline?.CaptureAllTextures(capturePath);
+            }
         }
 
         var cam = GetCamera();
@@ -186,12 +188,14 @@ public partial class EditorFlyingCameraPawnComponent : FlyingCameraPawnComponent
         SceneNode? tfmTool = TransformTool3D.InstanceNode;
         if (tfmTool is not null && tfmTool.TryGetComponent<TransformTool3D>(out var comp))
             comp?.MouseMove(_lastRaycastSegment, cam.Camera, LeftClickPressed);
-        
-        //lock (_raycastLock)
-        //    if (vp.PickScene(p, false, true, true, _lastOctreePickResults, _lastPhysicsPickResults))
-        //    {
-        //        //Debug.Out(Name + " picked something!");
-        //    }
+
+        //_lastOctreePickResults.Clear();
+        //_lastPhysicsPickResults.Clear();
+        //LayerMask layerMask = LayerMask.GetMask(DefaultLayers.Default);
+        //if (vp.PickScene(p, false, true, true, layerMask, _queryFilter, _lastOctreePickResults, _lastPhysicsPickResults))
+        //{
+        //    //Debug.Out(Name + " picked something!");
+        //}
 
         //Task.Run(() => SetRaycastResult(orderedResults));
 
@@ -543,6 +547,6 @@ public partial class EditorFlyingCameraPawnComponent : FlyingCameraPawnComponent
         if (!Selection.SceneNodes.Contains(node))
             return;
 
-        Selection.SceneNodes = Selection.SceneNodes.Where(n => n != node).ToArray();
+        Selection.SceneNodes = [.. Selection.SceneNodes.Where(n => n != node)];
     }
 }

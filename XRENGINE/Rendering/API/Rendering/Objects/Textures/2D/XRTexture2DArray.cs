@@ -1,4 +1,5 @@
 ﻿using ImageMagick;
+using System.Numerics;
 using XREngine.Data;
 using XREngine.Data.Rendering;
 using XREngine.Data.Vectors;
@@ -12,6 +13,8 @@ namespace XREngine.Rendering
         private XRTexture2D[] _textures = [];
         private bool _resizable = false;
         private ESizedInternalFormat _sizedInternalFormat = ESizedInternalFormat.Rgba8;
+
+        public override Vector3 WidthHeightDepth => new(Width, Height, Depth);
 
         public XRTexture2DArray(params XRTexture2D[] textures)
         {

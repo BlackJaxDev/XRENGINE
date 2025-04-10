@@ -118,11 +118,8 @@ namespace XREngine.Rendering.OpenGL
 
                     switch (tref.FrameBufferAttachment.Value)
                     {
-                        case EFrameBufferAttachment.Color:
-                        case EFrameBufferAttachment.Depth:
                         case EFrameBufferAttachment.DepthAttachment:
                         case EFrameBufferAttachment.DepthStencilAttachment:
-                        case EFrameBufferAttachment.Stencil:
                         case EFrameBufferAttachment.StencilAttachment:
                             continue;
                     }

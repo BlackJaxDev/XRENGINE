@@ -17,10 +17,10 @@ namespace XREngine.Rendering
         private float _exposureTransitionSpeed = 0.01f;
         private ColorF3 _tint = new(1.0f, 1.0f, 1.0f);
         private bool _autoExposure = true;
-        private float _autoExposureBias = 0.0f;
-        private float _autoExposureScale = 1.0f;
-        private float _exposureDividend = 0.5f;
-        private float _minExposure = 0.01f;
+        private float _autoExposureBias = -10.0f;
+        private float _autoExposureScale = 0.5f;
+        private float _exposureDividend = 0.1f;
+        private float _minExposure = 0.0001f;
         private float _maxExposure = 500.0f;
         private float _exposure = 1.0f;
         private float _gamma = 2.2f;

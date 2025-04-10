@@ -228,17 +228,9 @@ namespace XREngine.Components
             {
                 case nameof(IsActive):
                     if (IsActiveInHierarchy)
-                    {
-                        VerifyInterfacesOnStart();
                         OnComponentActivated();
-                    }
                     else
-                    {
                         OnComponentDeactivated();
-                        VerifyInterfacesOnStop();
-                        if (UnregisterTicksOnStop)
-                            ClearTicks();
-                    }
                     break;
                 case nameof(SceneNode):
                     World = _sceneNode.World;
@@ -254,7 +246,10 @@ namespace XREngine.Components
         /// Called when the component is made active.
         /// This is where ticks should register and connections to the world should be established.
         /// </summary>
-        protected internal virtual void OnComponentActivated() { }
+        protected internal virtual void OnComponentActivated()
+        {
+            VerifyInterfacesOnStart();
+        }
 
         /// <summary>
         /// If true, all registered ticks will be unregistered when the component is set to inactive.
@@ -270,7 +265,12 @@ namespace XREngine.Components
         /// <summary>
         /// Called when the component is made inactive.
         /// </summary>
-        protected internal virtual void OnComponentDeactivated() { }
+        protected internal virtual void OnComponentDeactivated()
+        {
+            VerifyInterfacesOnStop();
+            if (UnregisterTicksOnStop)
+                ClearTicks();
+        }
 
         /// <summary>
         /// This method is called when the component is set to active in the world.

@@ -1,9 +1,11 @@
 ﻿using Extensions;
+using ImageMagick;
 using Silk.NET.OpenGL;
 using System.Diagnostics.CodeAnalysis;
 using System.Numerics;
 using XREngine.Data;
 using XREngine.Data.Core;
+using XREngine.Data.Geometry;
 using XREngine.Data.Rendering;
 using XREngine.Rendering.Models.Materials;
 using XREngine.Rendering.Shaders.Generator;
@@ -842,20 +844,25 @@ namespace XREngine.Rendering.OpenGL
                         StencilTest st = r.StencilTest;
                         StencilTestFace b = st.BackFace;
                         StencilTestFace f = st.FrontFace;
+
                         Api.StencilOpSeparate(GLEnum.Back,
                             (StencilOp)(int)b.BothFailOp,
                             (StencilOp)(int)b.StencilPassDepthFailOp,
                             (StencilOp)(int)b.BothPassOp);
+
                         Api.StencilOpSeparate(GLEnum.Front,
                             (StencilOp)(int)f.BothFailOp,
                             (StencilOp)(int)f.StencilPassDepthFailOp,
                             (StencilOp)(int)f.BothPassOp);
+
                         Api.StencilMaskSeparate(GLEnum.Back, b.WriteMask);
                         Api.StencilMaskSeparate(GLEnum.Front, f.WriteMask);
+
                         Api.StencilFuncSeparate(GLEnum.Back,
                             StencilFunction.Never + (int)b.Function, b.Reference, b.ReadMask);
                         Api.StencilFuncSeparate(GLEnum.Front,
                             StencilFunction.Never + (int)f.Function, f.Reference, f.ReadMask);
+
                         break;
                     }
 
@@ -1047,8 +1054,6 @@ namespace XREngine.Rendering.OpenGL
             };
 
         public int GetInteger(GLEnum value)
-        {
-            return Api.GetInteger(value);
-        }
+            => Api.GetInteger(value);
     }
 }

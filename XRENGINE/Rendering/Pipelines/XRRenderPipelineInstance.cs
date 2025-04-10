@@ -1,7 +1,11 @@
-﻿using System.Numerics;
+﻿using ImageMagick;
+using System.Numerics;
 using XREngine.Components;
+using XREngine.Core;
 using XREngine.Data.Core;
+using XREngine.Data.Geometry;
 using XREngine.Rendering.Commands;
+using XREngine.Rendering.OpenGL;
 using XREngine.Scene;
 using static XREngine.Engine.Rendering.State;
 
@@ -32,6 +36,85 @@ public sealed partial class XRRenderPipelineInstance : XRBase
     {
         get => _pipeline;
         set => SetField(ref _pipeline, value);
+    }
+
+    public void CaptureAllTextures(string exportDirPath)
+    {
+        if (AbstractRenderer.Current is not OpenGLRenderer rend)
+            return;
+
+        foreach (XRTexture tex in _textures.Values)
+        {
+            if (tex.APIWrappers.FirstOrDefault(x => x is IGLTexture) is not IGLTexture apiWrapper)
+                continue;
+
+            void ProcessImage(MagickImage image, int index)
+            {
+                string name = tex.Name ?? tex.GetDescribingName();
+                if (index > 0)
+                    name += $" [{index + 1}]";
+                string fileName = $"{name}.png";
+                string filePath = Path.Combine(exportDirPath, fileName);
+                Utility.EnsureDirPathExists(exportDirPath);
+                image.Flip();
+                image.Write(filePath);
+            }
+            var whd = apiWrapper.WidthHeightDepth;
+            BoundingRectangle region = new(0, 0, (int)whd.X, (int)whd.Y);
+            for (int i = 0; i < whd.Z; i++)
+                rend.CaptureTexture(region, ProcessImage, apiWrapper.BindingId, 0, i);
+        }
+    }
+
+    public void CaptureAllFBOs(string exportDirPath)
+    {
+        if (AbstractRenderer.Current is not OpenGLRenderer rend)
+            return;
+
+        foreach (XRFrameBuffer fbo in _frameBuffers.Values)
+        {
+            if (fbo.Targets is null || 
+                fbo.Targets.Length == 0 || 
+                fbo.APIWrappers.FirstOrDefault(x => x is GLFrameBuffer) is not GLFrameBuffer apiWrapper)
+                continue;
+
+            foreach (var (Target, Attachment, MipLevel, LayerIndex) in fbo.Targets)
+            {
+                void ProcessImage(MagickImage image, int index)
+                {
+                    string name = $"{fbo.GetDescribingName()}_{Attachment}";
+                    if (index > 0)
+                        name += $"_img{index + 1}";
+                    if (MipLevel > 0)
+                        name += $"_mip{MipLevel}";
+                    if (LayerIndex >= 0)
+                        name += $"_layer{LayerIndex}";
+                    string fileName = $"{name}.png";
+                    string filePath = Path.Combine(exportDirPath, fileName);
+                    Utility.EnsureDirPathExists(exportDirPath);
+                    image.Flip();
+                    image.Write(filePath);
+                }
+
+                switch (Target)
+                {
+                    case XRTexture2D tex2D:
+                        {
+                            BoundingRectangle region = new(0, 0, (int)tex2D.Width, (int)tex2D.Height);
+                            rend.CaptureFBOAttachment(region, true, ProcessImage, apiWrapper.BindingId, Attachment);
+                        }
+                        break;
+                    case XRTexture2DArray tex2DArray:
+                        for (int i = 0; i < tex2DArray.Depth; ++i)
+                        {
+                            BoundingRectangle region = new(0, 0, (int)tex2DArray.Width, (int)tex2DArray.Height);
+                            rend.CaptureFBOAttachment(region, true, ProcessImage, apiWrapper.BindingId, Attachment);
+                        }
+                        break;
+                }    
+
+            }
+        }
     }
 
     protected override bool OnPropertyChanging<T>(string? propName, T field, T @new)

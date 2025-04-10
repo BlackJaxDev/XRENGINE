@@ -263,7 +263,19 @@ namespace XREngine.Actors.Types
             screenTranslationMeshes.Add(new SubMesh(screenTransPrim, _screenMat));
         }
 
-        private static void GetMeshes(Vector3 unit, VertexLine axisLine, VertexLine transLine1, VertexLine transLine2, VertexLine scaleLine1, VertexLine scaleLine2, out XRMesh axisPrim, out XRMesh arrowPrim, out XRMesh transPrim1, out XRMesh transPrim2, out XRMesh scalePrim, out XRMesh rotPrim)
+        private static void GetMeshes(
+            Vector3 unit,
+            VertexLine axisLine,
+            VertexLine transLine1,
+            VertexLine transLine2,
+            VertexLine scaleLine1,
+            VertexLine scaleLine2,
+            out XRMesh axisPrim,
+            out XRMesh arrowPrim,
+            out XRMesh transPrim1,
+            out XRMesh transPrim2,
+            out XRMesh scalePrim,
+            out XRMesh rotPrim)
         {
             //string axis = ((char)('X' + normalAxis)).ToString();
 
@@ -283,26 +295,35 @@ namespace XREngine.Actors.Types
             Vector3 halfUnit = unit * _axisHalfLength;
 
             transLine1 = new(halfUnit, halfUnit + unit1 * _axisHalfLength);
-            transLine1.Vertex0.ColorSets.Add(new Vector4(unit1, 1.0f));
-            transLine1.Vertex1.ColorSets.Add(new Vector4(unit1, 1.0f));
+            transLine1.Vertex0.ColorSets = [new Vector4(unit1, 1.0f)];
+            transLine1.Vertex1.ColorSets = [new Vector4(unit1, 1.0f)];
 
             transLine2 = new(halfUnit, halfUnit + unit2 * _axisHalfLength);
-            transLine2.Vertex0.ColorSets.Add(new Vector4(unit2, 1.0f));
-            transLine2.Vertex1.ColorSets.Add(new Vector4(unit2, 1.0f));
+            transLine2.Vertex0.ColorSets = [new Vector4(unit2, 1.0f)];
+            transLine2.Vertex1.ColorSets = [new Vector4(unit2, 1.0f)];
 
             scaleLine1 = new(unit1 * _scaleHalf1LDist, unit2 * _scaleHalf1LDist);
-            scaleLine1.Vertex0.ColorSets.Add(new Vector4(unit, 1.0f));
-            scaleLine1.Vertex1.ColorSets.Add(new Vector4(unit, 1.0f));
+            scaleLine1.Vertex0.ColorSets = [new Vector4(unit, 1.0f)];
+            scaleLine1.Vertex1.ColorSets = [new Vector4(unit, 1.0f)];
 
             scaleLine2 = new(unit1 * _scaleHalf2LDist, unit2 * _scaleHalf2LDist);
-            scaleLine2.Vertex0.ColorSets.Add(new Vector4(unit, 1.0f));
-            scaleLine2.Vertex1.ColorSets.Add(new Vector4(unit, 1.0f));
+            scaleLine2.Vertex0.ColorSets = [new Vector4(unit, 1.0f)];
+            scaleLine2.Vertex1.ColorSets = [new Vector4(unit, 1.0f)];
         }
 
-        private void GetMaterials(int normalAxis, Vector3 unit, Vector3 unit1, Vector3 unit2, out XRMaterial axisMat, out XRMaterial planeMat1, out XRMaterial planeMat2, out XRMaterial scalePlaneMat)
+        private void GetMaterials(
+            int normalAxis,
+            Vector3 unit,
+            Vector3 unit1,
+            Vector3 unit2,
+            out XRMaterial axisMat,
+            out XRMaterial planeMat1,
+            out XRMaterial planeMat2,
+            out XRMaterial scalePlaneMat)
         {
             axisMat = XRMaterial.CreateUnlitColorMaterialForward(unit);
             axisMat.RenderOptions.DepthTest.Enabled = ERenderParamUsage.Disabled;
+            axisMat.RenderOptions.CullMode = ECullMode.None;
             //axisMat.RenderOptions.LineWidth = 1.0f;
             _axisMat[normalAxis] = axisMat;
 
@@ -359,7 +380,7 @@ namespace XREngine.Actors.Types
         private void UpdateScreenSpace()
         {
             if (_targetSocket != null)
-                SocketTransformChanged(null);
+                UpdateRootTransform();
         }
 
         protected override void OnPropertyChanged<T>(string? propName, T prev, T field)
@@ -371,13 +392,20 @@ namespace XREngine.Actors.Types
                     ModeChanged();
                     break;
                 case nameof(TransformSpace):
-                    SetWorldMatrices(GetSocketSpacialTransform(), GetSocketSpacialTransformInverse());
-                    //_dragMatrix = RootComponent.WorldMatrix;
-                    //_invDragMatrix = RootComponent.InverseWorldMatrix;
-                    if (_transformSpace == ETransformSpace.Screen)
-                        RegisterTick(ETickGroup.PostPhysics, ETickOrder.Logic, UpdateScreenSpace);
-                    else
-                        UnregisterTick(ETickGroup.PostPhysics, ETickOrder.Logic, UpdateScreenSpace);
+                    {
+                        if (_transformSpace == ETransformSpace.Screen)
+                            RegisterTick(ETickGroup.Late, ETickOrder.Logic, UpdateScreenSpace);
+                        else
+                            UnregisterTick(ETickGroup.Late, ETickOrder.Logic, UpdateScreenSpace);
+                    }
+                    break;
+                case nameof(TargetSocket):
+                    {
+                        if (_targetSocket != null)
+                            _targetSocket.WorldMatrixChanged += SocketTransformChangedCallback;
+
+                        UpdateRootTransform();
+                    }
                     break;
             }
         }
@@ -529,24 +557,7 @@ namespace XREngine.Actors.Types
         public TransformBase? TargetSocket
         {
             get => _targetSocket;
-            set
-            {
-                if (_targetSocket != null)
-                {
-                    _targetSocket.WorldMatrixChanged -= SocketTransformChanged;
-                }
-                _targetSocket = value;
-                if (_targetSocket != null)
-                {
-                    SetWorldMatrices(GetSocketSpacialTransform(), GetSocketSpacialTransformInverse());
-                    _targetSocket.WorldMatrixChanged += SocketTransformChanged;
-                }
-                else
-                    SetWorldMatrices(Matrix4x4.Identity, Matrix4x4.Identity);
-
-                //_dragMatrix = RootComponent.WorldMatrix;
-                //_invDragMatrix = RootComponent.InverseWorldMatrix;
-            }
+            set => SetField(ref _targetSocket, value);
         }
 
         private Matrix4x4 GetSocketSpacialTransform()
@@ -624,26 +635,18 @@ namespace XREngine.Actors.Types
             }
         }
 
-        private void SocketTransformChanged(TransformBase? socket)
+        private void SocketTransformChangedCallback(TransformBase? socket)
         {
-            if (_pressed)
+            if (_pressed || TransformSpace == ETransformSpace.Screen)
                 return;
-            
-            _pressed = true;
-            SetWorldMatrices(GetSocketSpacialTransform(), GetSocketSpacialTransformInverse());
-            //_dragMatrix = RootComponent.WorldMatrix;
-            //_invDragMatrix = RootComponent.InverseWorldMatrix;
-            _pressed = false;
+
+            UpdateRootTransform();
         }
 
-        //public override void OnSpawnedPreComponentSetup()
-        //{
-        //    //OwningWorld.Scene.Add(this);
-        //}
-        //public override void OnDespawned()
-        //{
-        //    //OwningWorld.Scene.Remove(this);
-        //}
+        private void UpdateRootTransform()
+        {
+            SetRootTransform(_dragMatrix = GetSocketSpacialTransform());
+        }
 
         private BoolVector3 _hiAxis;
         private bool _hiCam, _hiSphere;
@@ -698,8 +701,6 @@ namespace XREngine.Actors.Types
 
             //TODO: convert to socket space
             //_targetSocket.Rotation *= worldDelta;
-
-            SetWorldMatrices(GetSocketSpacialTransform(), GetSocketSpacialTransformInverse());
         }
 
         private void DragTranslation(Vector3 dragPointWorld)
@@ -708,7 +709,7 @@ namespace XREngine.Actors.Types
 
             //var parent = _targetSocket?.Parent;
             //Matrix4x4 mtx = _targetSocket.LocalMatrix * Matrix4x4.CreateTranslation(worldDelta) * (parent?.WorldMatrix ?? Matrix4x4.Identity);
-            _targetSocket?.DeriveWorldMatrix(_targetSocket.WorldMatrix * Matrix4x4.CreateTranslation(worldDelta));
+            _targetSocket?.DeriveWorldMatrix(Matrix4x4.CreateTranslation(worldDelta) * _targetSocket.WorldMatrix);
 
             //Matrix4 m = _targetSocket.InverseWorldMatrix.ClearScale();
             //m = m.ClearTranslation();
@@ -730,8 +731,6 @@ namespace XREngine.Actors.Types
             //TODO: convert world delta to local socket delta
             //if (_targetSocket != null)
             //    _targetSocket.Translation.Value += worldDelta;
-
-            SetWorldMatrices(GetSocketSpacialTransform(), GetSocketSpacialTransformInverse());
         }
         private void DragScale(Vector3 dragPointWorld)
         {
@@ -740,8 +739,6 @@ namespace XREngine.Actors.Types
             //TODO: better method for scaling
 
             //_targetSocket.Scale += worldDelta;
-
-            SetWorldMatrices(GetSocketSpacialTransform(), GetSocketSpacialTransformInverse());
         }
         /// <summary>
         /// Returns a point relative to the local space of the target socket (origin at 0,0,0), clamped to the highlighted drag plane.
@@ -1065,7 +1062,7 @@ namespace XREngine.Actors.Types
         #endregion
 
         private bool _pressed = false;
-        //private Matrix4 _dragMatrix, _invDragMatrix;
+        private Matrix4x4 _dragMatrix, _invDragMatrix;
 
         /// <summary>
         /// Returns true if intersecting one of the transform tool's various parts.
@@ -1140,22 +1137,13 @@ namespace XREngine.Actors.Types
 
         private void OnPressed()
         {
-            if (_targetSocket != null)
-            {
-                SetWorldMatrices(GetSocketSpacialTransform(), GetSocketSpacialTransformInverse());
-                PrevRootWorldMatrix = _targetSocket.WorldMatrix;
-            }
-            else
-            {
-                SetWorldMatrices(Matrix4x4.Identity, Matrix4x4.Identity);
-                PrevRootWorldMatrix = Matrix4x4.Identity;
-            }
+            PrevRootWorldMatrix = _targetSocket != null ? _targetSocket.WorldMatrix : Matrix4x4.Identity;
 
             _pressed = true;
             MouseDown?.Invoke();
         }
 
-        private void SetWorldMatrices(Matrix4x4 transform, Matrix4x4 invTransform)
+        private void SetRootTransform(Matrix4x4 transform)
             => RootTransform.SetWorldMatrix(transform);
 
         private void OnReleased()

@@ -158,7 +158,7 @@ namespace XREngine.Components.Scene
         public void StartCapture()
         {
             if (_waveIn is not null)
-                StopCapture();
+                return;
 
             _waveIn = new WaveInEvent
             {

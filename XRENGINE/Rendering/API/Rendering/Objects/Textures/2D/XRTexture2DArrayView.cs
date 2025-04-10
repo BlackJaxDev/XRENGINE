@@ -1,4 +1,5 @@
-﻿using XREngine.Data.Rendering;
+﻿using System.Numerics;
+using XREngine.Data.Rendering;
 
 namespace XREngine.Rendering
 {
@@ -24,6 +25,8 @@ namespace XREngine.Rendering
         bool multisample) : XRTextureView<XRTexture2DArray>(viewedTexture, minLevel, numLevels, minLayer, numLayers, internalFormat), IFrameBufferAttachement
     {
         public override uint MaxDimension { get; } = 2;
+
+        public override Vector3 WidthHeightDepth => new(Width, Height, 1);
 
         private bool _array = array;
         public bool Array

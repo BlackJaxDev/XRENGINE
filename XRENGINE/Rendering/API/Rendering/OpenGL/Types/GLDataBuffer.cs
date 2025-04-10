@@ -19,6 +19,7 @@ namespace XREngine.Rendering.OpenGL
                 Data.SetBlockIndexRequested -= SetBlockIndex;
                 Data.BindRequested -= Bind;
                 Data.UnbindRequested -= Unbind;
+                Data.MapBufferDataRequested -= MapBufferData;
             }
             protected override void LinkData()
             {
@@ -30,6 +31,7 @@ namespace XREngine.Rendering.OpenGL
                 Data.SetBlockIndexRequested += SetBlockIndex;
                 Data.BindRequested += Bind;
                 Data.UnbindRequested += Unbind;
+                Data.MapBufferDataRequested += MapBufferData;
             }
 
             public override GLObjectType Type => GLObjectType.Buffer;
@@ -246,7 +248,7 @@ namespace XREngine.Rendering.OpenGL
                 if (Engine.InvokeOnMainThread(PushData))
                     return;
 
-                void* addr = Data.Address;
+                void* addr = (Data.TryGetAddress(out var address) ? address : VoidPtr.Zero).Pointer;
                 Api.NamedBufferData(BindingId, Data.Length, addr, ToGLEnum(Data.Usage));
                 _lastPushedLength = Data.Length;
                 if (Data.DisposeOnPush)
@@ -354,11 +356,11 @@ namespace XREngine.Rendering.OpenGL
                     Debug.LogWarning($"Buffer {GetDescribingName()} is resizable and cannot be mapped.");
                     return;
                 }
-                if (!ImmutableStorageSet)
-                {
-                    Debug.LogWarning($"Buffer {GetDescribingName()} has not had immutable storage set.");
-                    return;
-                }
+                //if (!ImmutableStorageSet)
+                //{
+                //    Debug.LogWarning($"Buffer {GetDescribingName()} has not had immutable storage set.");
+                //    return;
+                //}
 
                 if (Engine.InvokeOnMainThread(MapBufferData))
                     return;

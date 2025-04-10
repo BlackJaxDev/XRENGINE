@@ -43,42 +43,64 @@ namespace XREngine.Data.Trees
             }
         }
         
-        internal ConcurrentQueue<T> AddedItems { get; } = new ConcurrentQueue<T>();
-        internal ConcurrentQueue<T> RemovedItems { get; } = new ConcurrentQueue<T>();
-        internal ConcurrentQueue<T> MovedItems { get; } = new ConcurrentQueue<T>();
+        internal enum ETreeCommand
+        {
+            Move,
+            Add,
+            Remove
+        }
+        internal ConcurrentQueue<(T item, ETreeCommand)> SwapCommands { get; } = new ConcurrentQueue<(T item, ETreeCommand command)>(); 
 
         /// <summary>
         /// Updates all moved, added and removed items in the octree.
         /// </summary>
         public void Swap()
         {
-            while (MovedItems.TryDequeue(out T? item))
-                item?.OctreeNode?.HandleMovedItem(item);
-            while (RemovedItems.TryDequeue(out T? item))
+            while (SwapCommands.TryDequeue(out (T item, ETreeCommand command) command))
             {
-                if (item is null)
+                if (command.item is null)
                     continue;
 
-                var node = item.OctreeNode;
-                if (node != null)
+                switch (command.command)
                 {
-                    node.Remove(item, out bool destroyNode);
-                    if (destroyNode)
-                        node.Destroy();
-                }
-            }
-            while (AddedItems.TryDequeue(out T? item))
-            {
-                if (item is null)
-                    continue;
+                    case ETreeCommand.Move:
+                        command.item?.OctreeNode?.HandleMovedItem(command.item);
+                        break;
 
-                if (!_head.AddHereOrSmaller(item))
-                    _head.AddHere(item);
+                    case ETreeCommand.Add:
+                        {
+                            if (command.item is null)
+                                continue;
+
+                            if (!_head.AddHereOrSmaller(command.item))
+                                _head.AddHere(command.item);
+                        }
+                        break;
+
+                    case ETreeCommand.Remove:
+                        {
+                            if (command.item is null)
+                                continue;
+
+                            var node = command.item.OctreeNode;
+                            if (node != null)
+                            {
+                                node.Remove(command.item, out bool destroyNode);
+                                if (destroyNode)
+                                    node.Destroy();
+                            }
+                        }
+                        break;
+                }
             }
         }
 
         public void Add(T value)
-            => AddedItems.Enqueue(value);
+            => SwapCommands.Enqueue((value, ETreeCommand.Add));
+        public void Remove(T value)
+            => SwapCommands.Enqueue((value, ETreeCommand.Remove));
+        public void Move(T item)
+            => SwapCommands.Enqueue((item, ETreeCommand.Move));
 
         public void AddRange(IEnumerable<T> value)
         {
@@ -117,9 +139,6 @@ namespace XREngine.Data.Trees
                 if (item is T t)
                     Remove(t);
         }
-
-        public void Remove(T value)
-            => RemovedItems.Enqueue(value);
 
         //public List<T> FindAll(float radius, Vector3 point, EContainment containment)
         //    => FindAll(new Sphere(point, radius), containment);

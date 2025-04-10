@@ -1,5 +1,6 @@
 ﻿using Silk.NET.OpenGL;
 using Silk.NET.OpenGL.Extensions.OVR;
+using System.Numerics;
 using XREngine.Data.Colors;
 using XREngine.Data.Core;
 using XREngine.Data.Rendering;
@@ -89,6 +90,9 @@ namespace XREngine.Rendering.OpenGL
             TextureTarget == ETextureTarget.Texture2DMultisampleArray ||
             TextureTarget == ETextureTarget.ProxyTexture2DMultisample ||
             TextureTarget == ETextureTarget.ProxyTexture2DMultisampleArray;
+
+        public Vector3 WidthHeightDepth
+            => Data.WidthHeightDepth;
 
         protected virtual void SetParameters()
         {

@@ -5,6 +5,7 @@ using Silk.NET.OpenAL;
 using System.Numerics;
 using XREngine.Actors.Types;
 using XREngine.Animation;
+using XREngine.Animation.IK;
 using XREngine.Components;
 using XREngine.Components.Lights;
 using XREngine.Components.Scene;
@@ -30,7 +31,6 @@ using XREngine.Scene.Components.Physics;
 using XREngine.Scene.Components.VR;
 using XREngine.Scene.Transforms;
 using static XREngine.Scene.Transforms.RigidBodyTransform;
-using BlendMode = XREngine.Rendering.Models.Materials.BlendMode;
 using Quaternion = System.Numerics.Quaternion;
 
 namespace XREngine.Editor;
@@ -38,44 +38,64 @@ namespace XREngine.Editor;
 public static class EditorWorld
 {
     //Unit testing toggles
+
+    //Debug visualize
     public const bool VisualizeOctree = false;
     public const bool VisualizeQuadtree = false;
-    public const bool Physics = false;
-    public const int PhysicsBallCount = 100; //The number of physics balls to add to the scene.
+
+    //Editor UI
+    public const bool AddEditorUI = true; //Adds the full editor UI to the camera.
+    public const bool TransformTool = true; //Adds the transform tool to the scene for testing dragging and rotating etc.
+    public const bool AllowEditingInVR = false; //Allows the user to edit the scene from desktop in VR.
+
+    //Misc
+    public const bool Skybox = true; //Adds a skybox to the scene
+    public const bool Spline = false; //Adds a 3D spline to the scene.
+    public const bool DeferredDecal = false; //Adds a deferred decal to the scene.
+    public const bool AddCameraVRPickup = true; //Adds a camera pickup to the scene for testing VR camera pickup.
+
+    //Light
     public const bool DirLight = true;
     public const bool SpotLight = false;
     public const bool DirLight2 = false;
     public const bool PointLight = false;
-    public const bool SoundNode = false;
     public const bool LightProbe = true; //Adds a test light probe to the scene for PBR lighting.
-    public const bool Skybox = true;
-    public const bool Spline = false; //Adds a 3D spline to the scene.
-    public const bool DeferredDecal = false; //Adds a deferred decal to the scene.
+
+    //Pawns
+    public const bool VRPawn = false; //Enables VR input and pawn.
+    public const bool CharacterPawn = false; //Enables the player to physically locomote in the world. Requires a physical floor.
+    public const bool ThirdPersonPawn = true; //If on desktop and character pawn is enabled, this will add a third person camera instead of first person.
+
+    //Physics
+    public const bool PhysicsChain = true; //Adds a jiggle physics chain to the character pawn.
+    public const bool Physics = true;
+    public const int PhysicsBallCount = 100; //The number of physics balls to add to the scene.
+
+    //Models
     public const bool StaticModel = false; //Imports a scene model to be rendered.
     public const bool AnimatedModel = true; //Imports a character model to be animated.
     public const float ModelScale = 0.0254f; //The scale of the model when imported.
     public const bool ModelZUp = false; //If true, the model will be rotated 90 degrees around the X axis.
-    public const bool AddEditorUI = false; //Adds the full editor UI to the camera.
-    public const bool VRPawn = false; //Enables VR input and pawn.
-    public const bool CharacterPawn = false; //Enables the player to physically locomote in the world. Requires a physical floor.
-    public const bool ThirdPersonPawn = true; //If on desktop and character pawn is enabled, this will add a third person camera instead of first person.
-    public const bool TestAnimation = false; //Adds test animations to the character pawn.
-    public const bool PhysicsChain = true; //Adds a jiggle physics chain to the character pawn.
-    public const bool TransformTool = false; //Adds the transform tool to the scene for testing dragging and rotating etc.
-    public const bool AllowEditingInVR = false; //Allows the user to edit the scene from desktop in VR.
-    public const bool AddCameraVRPickup = true;
-    public const bool IKTest = false; //Adds an simple IK test tree to the scene.
-    public const bool Microphone = true; //Adds a microphone to the scene for testing audio capture.
-    public const bool VMC = false; //Adds a VMC capture component to the avatar for testing.
-    public const bool FaceMotion3D = false; //Adds a face motion 3D capture component to the avatar for testing.
-    public const bool AnimationClipVMD = true; //Imports a VMD animation clip for testing.
-    public const bool LipSync = true; //Adds a lip sync component to the avatar for testing.
+
+    //Audio
+    public const bool SoundNode = false;
+    public const bool Microphone = false; //Adds a microphone to the scene for testing audio capture.
     public const bool AttachMicToAnimatedModel = true; //If true, the microphone output will be attached to the animated model instead of the flying camera.
+
+    //Face and lip sync
+    public const bool VMC = false; //Adds a VMC capture component to the avatar for testing.
+    public const bool LipSync = true; //Adds a lip sync component to the avatar for testing.
+    public const bool FaceMotion3D = false; //Adds a face motion 3D capture component to the avatar for testing.
+
+    //Animation
+    public const bool AnimationClipVMD = true; //Imports a VMD animation clip for testing.
+    public const bool IKTest = false; //Adds an simple IK test tree to the scene.
+    public const bool TestAnimation = false; //Adds test animations to the character pawn.
 
     private static readonly Queue<float> _fpsAvg = new();
     private static void TickFPS(UITextComponent t)
     {
-        _fpsAvg.Enqueue(1.0f / Engine.Time.Timer.Render.SmoothedDelta);
+        _fpsAvg.Enqueue(1.0f / Engine.Time.Timer.Render.Delta);
         if (_fpsAvg.Count > 60)
             _fpsAvg.Dequeue();
         string str = $"{MathF.Round(_fpsAvg.Sum() / _fpsAvg.Count)}hz";
@@ -97,13 +117,36 @@ public static class EditorWorld
         Debug.Out(rootNode.PrintTree());
 
         var humanComp = rootNode.AddComponent<HumanoidComponent>()!;
+        humanComp.SolveIK = false;
+        humanComp.LeftArmIKEnabled = false;
+        humanComp.RightArmIKEnabled = false;
+        humanComp.LeftLegIKEnabled = false;
+        humanComp.RightLegIKEnabled = false;
+        humanComp.HipToHeadIKEnabled = false;
+
+        var animator = rootNode.AddComponent<AnimStateMachineComponent>()!;
+
         if (!VRPawn)
         {
-            humanComp.LeftArmIKEnabled = false;
-            humanComp.RightArmIKEnabled = false;
-            humanComp.LeftLegIKEnabled = true;
-            humanComp.RightLegIKEnabled = true;
-            humanComp.HipToHeadIKEnabled = false;
+            var humanik = rootNode.AddComponent<HumanoidIKSolverComponent>()!;
+
+            humanik.SetIKPositionWeight(ELimbEndEffector.LeftHand, 0.0f);
+            humanik.SetIKRotationWeight(ELimbEndEffector.LeftHand, 0.0f);
+
+            humanik.SetIKPositionWeight(ELimbEndEffector.RightHand, 0.0f);
+            humanik.SetIKRotationWeight(ELimbEndEffector.RightHand, 0.0f);
+
+            humanik.SetIKPositionWeight(ELimbEndEffector.LeftFoot, 1.0f);
+            humanik.SetIKRotationWeight(ELimbEndEffector.LeftFoot, 0.0f);
+
+            humanik.SetIKPositionWeight(ELimbEndEffector.RightFoot, 1.0f);
+            humanik.SetIKRotationWeight(ELimbEndEffector.RightFoot, 0.0f);
+
+            humanik.SetSpineWeight(0.0f);
+        }
+        else
+        {
+            var vrik = rootNode.AddComponent<VRIKSolverComponent>();
         }
 
         //var headTfm = humanComp.Head?.Node?.GetTransformAs<Transform>();
@@ -119,7 +162,7 @@ public static class EditorWorld
             player.HumanoidComponent = humanComp;
             player.EyeLBoneName = "Eye_L";
             player.EyeRBoneName = "Eye_R";
-            
+
             VRPlayerInputSet input = playspaceNode.GetComponent<VRPlayerInputSet>()!;
             input.MuteToggled += (enabled) => player.EndCalibration();
         }
@@ -226,11 +269,11 @@ public static class EditorWorld
                     var phys = tail.SceneNode.AddComponent<PhysicsChainComponent>()!;
                     phys.UpdateMode = PhysicsChainComponent.EUpdateMode.Normal;
                     phys.UpdateRate = 60;
-                    phys.Damping = 0.1f;
+                    phys.Damping = 0.01f;
                     phys.Inert = 0.0f;
-                    phys.Stiffness = 0.05f;
-                    phys.Gravity = new Vector3(0.0f, -10.0f, 0.0f);
-                    phys.Elasticity = 0.2f;
+                    phys.Stiffness = 0.0f;
+                    phys.Gravity = new Vector3(0.0f, -0.1f, 0.0f);
+                    phys.Elasticity = 0.01f;
                     phys.Multithread = false;
                 }
 
@@ -272,7 +315,6 @@ public static class EditorWorld
                 return;
 
             EnableTransformToolForNode(head);
-            return;
         }
 
         if (VMC)
@@ -297,6 +339,8 @@ public static class EditorWorld
             var clip = Engine.Assets.Load<AnimationClip>(Path.Combine(desktopDir, "test.vmd"));
             if (clip is not null)
             {
+                clip.Looped = true;
+
                 var anim = rootNode.AddComponent<AnimationClipComponent>()!;
                 anim.StartOnActivate = true;
                 anim.Animation = clip;
@@ -352,7 +396,7 @@ public static class EditorWorld
         s.TickGroupedItemsInParallel = true;
         s.RenderWindowsWhileInVR = true;
         s.AllowShaderPipelines = false; //Somehow, this lowers performance
-        s.RenderVRSinglePassStereo = false;
+        s.RenderVRSinglePassStereo = true;
         //s.PhysicsVisualizeSettings.SetAllTrue();
 
         string desktopDir = Environment.GetFolderPath(Environment.SpecialFolder.DesktopDirectory);
@@ -524,7 +568,7 @@ public static class EditorWorld
         var footNode = localRotationNode.NewChild("Foot Position Node");
         var footTfm = footNode.SetTransform<Transform>();
         footTfm.Translation = new Vector3(0.0f, -movementComp.HalfHeight, 0.0f);
-        footTfm.Scale = new Vector3(movementComp.StandingHeight);
+        //footTfm.Scale = new Vector3(movementComp.StandingHeight);
         footTfm.SaveBindState();
 
         //local rotation node only yaws to match the view yaw, so use it as the parent for the avatar
@@ -674,8 +718,15 @@ public static class EditorWorld
         return pawnComp;
     }
 
-    private static void AttachMicTo(SceneNode node, out AudioSourceComponent source, out MicrophoneComponent mic, out OVRLipSyncComponent lipSync)
+    private static void AttachMicTo(SceneNode node, out AudioSourceComponent? source, out MicrophoneComponent? mic, out OVRLipSyncComponent? lipSync)
     {
+        source = null;
+        mic = null;
+        lipSync = null;
+
+        if (!Microphone)
+            return;
+        
         source = node.AddComponent<AudioSourceComponent>()!;
         source.Loop = false;
         source.Pitch = 1.0f;
@@ -746,7 +797,7 @@ public static class EditorWorld
         var footNode = characterNode.NewChild("Foot Position Node");
         var footTfm = footNode.SetTransform<Transform>();
         footTfm.Translation = new Vector3(0.0f, -movementComp.HalfHeight, 0.0f);
-        footTfm.Scale = new Vector3(movementComp.StandingHeight);
+        //footTfm.Scale = new Vector3(movementComp.StandingHeight);
         footTfm.SaveBindState();
 
         return footNode;
@@ -821,7 +872,7 @@ public static class EditorWorld
                     probeComp.RealtimeCapture = true;
                     probeComp.PreviewDisplay = LightProbeComponent.ERenderPreview.Irradiance;
                     probeComp.RealTimeCaptureUpdateInterval = TimeSpan.FromMilliseconds(200.0f);
-                    probeComp.StopRealtimeCaptureAfter = TimeSpan.FromSeconds(5.0f);
+                    //probeComp.StopRealtimeCaptureAfter = TimeSpan.FromSeconds(5.0f);
                 }
             }
         }
@@ -1226,62 +1277,6 @@ public static class EditorWorld
 
     #endregion
 
-    //Tests for importing models and animations.
-    #region Models
-    public static void MakeMaterial(XRMaterial mat, XRTexture[] textureList, List<TextureSlot> textures, string name)
-    {
-        bool transp = textures.Any(x => (x.Flags & 0x2) != 0 || x.TextureType == TextureType.Opacity);
-        bool normal = textures.Any(x => x.TextureType == TextureType.Normals);
-        if (textureList.Length > 0)
-        {
-            if (transp || textureList.Any(x => x is not null && x.HasAlphaChannel))
-            {
-                transp = true;
-                mat.Shaders.Add(ShaderHelper.UnlitTextureFragForward()!);
-            }
-            else
-            {
-                mat.Shaders.Add(ShaderHelper.TextureFragDeferred()!);
-                mat.Parameters =
-                [
-                    new ShaderFloat(1.0f, "Opacity"),
-                            new ShaderFloat(1.0f, "Specular"),
-                            new ShaderFloat(0.9f, "Roughness"),
-                            new ShaderFloat(0.0f, "Metallic"),
-                            new ShaderFloat(1.0f, "IndexOfRefraction"),
-                        ];
-            }
-        }
-        else
-        {
-            //Show the material as magenta if no textures are present
-            mat.Shaders.Add(ShaderHelper.LitColorFragDeferred()!);
-            mat.Parameters =
-            [
-                new ShaderVector3(ColorF3.Magenta, "BaseColor"),
-                    new ShaderFloat(1.0f, "Opacity"),
-                    new ShaderFloat(1.0f, "Specular"),
-                    new ShaderFloat(1.0f, "Roughness"),
-                    new ShaderFloat(0.0f, "Metallic"),
-                    new ShaderFloat(1.0f, "IndexOfRefraction"),
-                ];
-        }
-
-        mat.RenderPass = transp ? (int)EDefaultRenderPass.TransparentForward : (int)EDefaultRenderPass.OpaqueDeferredLit;
-        mat.Name = name;
-        mat.RenderOptions = new RenderingParameters()
-        {
-            CullMode = ECullMode.Back,
-            DepthTest = new DepthTest()
-            {
-                UpdateDepth = true,
-                Enabled = ERenderParamUsage.Enabled,
-                Function = EComparison.Less,
-            },
-            //LineWidth = 5.0f,
-            BlendModeAllDrawBuffers = transp ? BlendMode.EnabledTransparent() : BlendMode.Disabled(),
-        };
-    }
     private static void ImportModels(string desktopDir, SceneNode rootNode, SceneNode characterParentNode)
     {
         var importedModelsNode = new SceneNode(rootNode) { Name = "TestImportedModelsNode" };
@@ -1297,7 +1292,8 @@ public static class EditorWorld
             PostProcessSteps.SortByPrimitiveType |
             PostProcessSteps.ImproveCacheLocality |
             PostProcessSteps.GenerateBoundingBoxes |
-            PostProcessSteps.RemoveRedundantMaterials;
+            PostProcessSteps.RemoveRedundantMaterials |
+            PostProcessSteps.FlipUVs;
 
         var staticFlags =
             PostProcessSteps.SplitLargeMeshes |
@@ -1319,6 +1315,7 @@ public static class EditorWorld
             {
                 using var importer = new ModelImporter(fbxPathDesktop, null, null);
                 importer.MakeMaterialAction = MakeMaterial;
+                importer.MakeTextureAction = MakeTexture;
                 var node = importer.Import(animFlags, true, true, ModelScale, ModelZUp, true);
                 if (characterParentNode != null && node != null)
                     characterParentNode.Transform.AddChild(node.Transform, false, true);
@@ -1403,6 +1400,427 @@ public static class EditorWorld
         else
             node.Activated += Edit;
     }
+    
+    //Hardcoded materials for testing until UI
+    public static void MakeMaterial(XRMaterial mat, XRTexture[] textureList, List<TextureSlot> textures, string name)
+    {
+        //Debug.Out($"Making material for {name}: {string.Join(", ", textureList.Select(x => x?.Name ?? "<missing name>"))}");
 
-    #endregion
+        // Clear current shader list
+        mat.Shaders.Clear();
+
+        XRShader color = ShaderHelper.LitColorFragDeferred()!;
+        XRShader albedo = ShaderHelper.LitTextureFragDeferred()!;
+        XRShader albedoNormal = ShaderHelper.LitTextureNormalFragDeferred()!;
+        XRShader albedoNormalMetallic = ShaderHelper.LitTextureNormalMetallicFragDeferred()!;
+        XRShader albedoMetallic = ShaderHelper.LitTextureMetallicFragDeferred()!;
+        XRShader albedoNormalRoughnessMetallic = ShaderHelper.LitTextureNormalRoughnessMetallicDeferred()!;
+        XRShader albedoRoughness = ShaderHelper.LitTextureRoughnessFragDeferred()!;
+        XRShader albedoMatcap = ShaderHelper.LitTextureMatcapDeferred()!;
+        XRShader albedoEmissive = ShaderHelper.LitTextureEmissiveDeferred();
+
+        switch (name)
+        {
+            case "Boots": // "BaseColor, Roughness, BaseColor, , Roughness"
+                //textureList[0].Load3rdParty();
+                mat.Shaders.Add(albedoRoughness);
+                mat.Textures =
+                [
+                    textureList[0],
+                    textureList[1],
+                ];
+                MakeDefaultParameters(mat);
+                break;
+
+            case "Metal": // "T_MainTex_D, T_MainTex_D"
+                mat.Shaders.Add(color);
+                MakeDefaultParameters(mat);
+                mat.SetVector3("BaseColor", new Vector3(0.6f));
+                mat.SetFloat("Roughness", 0.5f);
+                mat.SetFloat("Metallic", 1.0f);
+                mat.SetFloat("Specular", 1.0f);
+                break;
+
+            case "BackHair": // "HairEarTail Texture, HairEarTail Texture"
+                mat.Shaders.Add(albedo);
+                mat.Textures =
+                [
+                    textureList[0],
+                ];
+                MakeDefaultParameters(mat);
+                break;
+
+            case "Goth_Bunny_Straps": // "Arm matcaps, Arm matcaps"
+                mat.Shaders.Add(albedoMatcap);
+                mat.Textures =
+                [
+                    textureList[0],
+                ];
+                MakeDefaultParameters(mat);
+                break;
+
+            case "black_1": // "T_MainTex_D, T_MainTex_D, "
+                mat.Shaders.Add(color);
+                MakeDefaultParameters(mat);
+                break;
+
+            case "Ears": // "ears emiss, ears emiss"
+                mat.Shaders.Add(albedo);
+                mat.Textures =
+                [
+                    textureList[0],
+                ];
+                MakeDefaultParameters(mat);
+                break;
+
+            case "Material #130": // no textures provided
+                mat.Shaders.Add(color);
+                MakeDefaultParameters(mat);
+                break;
+
+            case "Material #132": // "BLACK, NORMAL, METALIC, Regular_Roughness"
+                mat.Shaders.Add(albedoNormalRoughnessMetallic);
+                mat.Textures =
+                [
+                    textureList[0],
+                    textureList[1],
+                    textureList[2],
+                    textureList[3],
+                ];
+                MakeDefaultParameters(mat);
+                break;
+
+            case "1": // "No Saturation 06 (1), No Saturation 06 (1)
+                mat.Shaders.Add(albedo);
+                mat.Textures = [textureList[0]];
+                MakeDefaultParameters(mat);
+                break;
+
+            case "2": // "61, 61"
+                mat.Shaders.Add(albedo);
+                mat.Textures = [textureList[0]];
+                MakeDefaultParameters(mat);
+                break;
+
+            case "Goth_Bunny_Thigh_Highs": // "generator5, generator5"
+                mat.Shaders.Add(albedo);
+                mat.Textures = [textureList[0]];
+                MakeDefaultParameters(mat);
+                break;
+
+            case "LEFT_EYE": // "Eye_5, left eye by nanna, Eye_5"
+                mat.Shaders.Add(albedo);
+                mat.Textures = [textureList[0]];
+                MakeDefaultParameters(mat);
+                break;
+
+            case "Back_hair": // "Hair1, hairglow-mono_emission, Hair1"
+                mat.Shaders.Add(albedoEmissive);
+                mat.Textures = [textureList[0], textureList[1]];
+                MakeDefaultParameters(mat);
+                break;
+
+            case "New_002": // "lis_dlcu_029_02_base_PP1_K, lis_dlcu_029_02_base_PP1_K"
+                mat.Shaders.Add(albedo);
+                mat.Textures = [textureList[0]];
+                MakeDefaultParameters(mat);
+                break;
+
+            case "Mat_Glow": // "T_MainTex_D, T_MainTex_D"
+                mat.Shaders.Add(color);
+                mat.Textures = [textureList[0]];
+                MakeDefaultParameters(mat);
+                break;
+
+            case "FABRIC 1_FRONT_1830": // No textures given
+                mat.Shaders.Add(color);
+                MakeDefaultParameters(mat);
+                break;
+
+            case "Material #131": // "7"
+                mat.Shaders.Add(albedo);
+                mat.Textures = [textureList[0]];
+                MakeDefaultParameters(mat);
+                break;
+
+            case "tail": // "T_MainTex_D, EM backhair, T_MainTex_D"
+                mat.Shaders.Add(albedoEmissive);
+                mat.Textures = [textureList[0], textureList[1]];
+                MakeDefaultParameters(mat);
+                break;
+
+            case "hoodie": // "low poly_defaultMat.001_BaseColor.1001, low poly_defaultMat.001_Roughness.1001, "
+                mat.Shaders.Add(albedoRoughness);
+                mat.Textures = [textureList[0], textureList[1]];
+                MakeDefaultParameters(mat);
+                break;
+
+            case "Face": // "googleface, googleface"
+                mat.Shaders.Add(albedo);
+                mat.Textures = [textureList[0]];
+                MakeDefaultParameters(mat);
+                break;
+
+            case "Material #98": // "Shorts_bake_Merge, Shorts_Normal_OpenGL"
+                mat.Shaders.Add(albedoNormal);
+                mat.Textures = [textureList[0]];
+                MakeDefaultParameters(mat);
+                break;
+
+            case "Material.002": // Empty setup
+                mat.Shaders.Add(color);
+                MakeDefaultParameters(mat);
+                break;
+
+            case "metal.002": // Empty setup
+                mat.Shaders.Add(color);
+                MakeDefaultParameters(mat);
+                break;
+
+            case "Body": // "Body, Body"
+                mat.Shaders.Add(albedo);
+                mat.Textures = [textureList[0]];
+                MakeDefaultParameters(mat);
+                break;
+
+            case "RIGHT_EYE": // "Eye_5, right eye by nanna, Eye_5"
+                mat.Shaders.Add(color);
+                mat.Textures = [textureList[0]];
+                MakeDefaultParameters(mat);
+                break;
+
+            case "TEETH___SOCK": // "T_MainTex_D, T_MainTex_D"
+                mat.Shaders.Add(color);
+                MakeDefaultParameters(mat);
+                break;
+
+            default:
+                // Default material setup
+                mat.Shaders.Add(color);
+                MakeDefaultParameters(mat);
+                break;
+        }
+        mat.Name = name;
+        // Set a default render pass (opaque deferred lighting in this example)
+        mat.RenderPass = (int)EDefaultRenderPass.OpaqueDeferredLit;
+    }
+    private static XRTexture2D MakeTexture(string path)
+    {
+        Dictionary<string, string> pathRemap = new()
+        {
+            {
+                "C:\\Users\\black\\OneDrive\\Desktop\\misc\\..\\..\\..\\VRChat Assets\\Shoes\\Adidas_Superstar\\BLACK\\BLACK.png",
+                "C:\\Users\\black\\OneDrive\\Documents\\VRC-Avatars\\Assets\\VRChat Assets\\Shoes\\Adidas_Superstar\\BLACK\\BLACK.png"
+            },
+
+            {
+                "C:\\Users\\black\\OneDrive\\Desktop\\misc\\..\\..\\..\\VRChat Assets\\Shoes\\Adidas_Superstar\\NORMAL.png",
+                "C:\\Users\\black\\OneDrive\\Documents\\VRC-Avatars\\Assets\\VRChat Assets\\Shoes\\Adidas_Superstar\\NORMAL.png"
+            },
+
+            {
+                "C:\\Users\\black\\OneDrive\\Desktop\\misc\\..\\..\\..\\VRChat Assets\\Shoes\\Adidas_Superstar\\METALIC.png",
+                "C:\\Users\\black\\OneDrive\\Documents\\VRC-Avatars\\Assets\\VRChat Assets\\Shoes\\Adidas_Superstar\\METALIC.png"
+            },
+
+            {
+                "C:\\Users\\black\\OneDrive\\Desktop\\misc\\..\\..\\..\\VRChat Assets\\Shoes\\Adidas_Superstar\\Regular_Roughness.png",
+                "C:\\Users\\black\\OneDrive\\Documents\\VRC-Avatars\\Assets\\VRChat Assets\\Shoes\\Adidas_Superstar\\Regular_Roughness.png"
+            },
+
+            {
+                "L:\\CustomAvatars2\\Assets\\Misc\\Main\\X\\Val\\Jax.fbm\\1\\T_MainTex_D.png",
+                "C:\\Users\\black\\OneDrive\\Documents\\VRC-Avatars\\Assets\\Misc\\Main\\X\\Val\\Jax.fbm\\T_MainTex_D.png"
+            },
+
+            {
+                "C:\\Users\\black\\OneDrive\\Desktop\\misc\\..\\..\\..\\VRChat Assets\\Shoes\\Leather High Boots Extended\\Leather High Boots Extended\\2k_base\\BaseColor.png",
+                "C:\\Users\\black\\OneDrive\\Documents\\VRC-Avatars\\Assets\\VRChat Assets\\Shoes\\Leather High Boots Extended\\Leather High Boots Extended\\2k_base\\BaseColor.png"
+            },
+
+            {
+                "C:\\Users\\black\\OneDrive\\Desktop\\misc\\..\\..\\..\\VRChat Assets\\Shoes\\Leather High Boots Extended\\Leather High Boots Extended\\2k_base\\Roughness.png",
+                "C:\\Users\\black\\OneDrive\\Documents\\VRC-Avatars\\Assets\\VRChat Assets\\Shoes\\Leather High Boots Extended\\Leather High Boots Extended\\2k_base\\Roughness.png"
+            },
+
+            {
+                "L:\\CustomAvatars2\\Assets\\Misc\\Main\\X\\Val\\Jax.fbm\\T_MainTex_D.png",
+                "C:\\Users\\black\\OneDrive\\Documents\\VRC-Avatars\\Assets\\Misc\\Main\\X\\Val\\Jax.fbm\\T_MainTex_D.png"
+            },
+
+            {
+                "L:\\CustomAvatars2\\Assets\\Misc\\Main\\X\\Val\\Jax.fbm\\generator5.png",
+                "C:\\Users\\black\\OneDrive\\Documents\\VRC-Avatars\\Assets\\Misc\\Main\\X\\Val\\Jax.fbm\\generator5.png"
+            },
+
+            {
+                "L:\\CustomAvatars2\\Assets\\Misc\\Main\\X\\Val\\Jax.fbm\\ears emiss.png",
+                "C:\\Users\\black\\OneDrive\\Documents\\VRC-Avatars\\Assets\\Misc\\Main\\X\\Val\\Jax.fbm\\ears emiss.png"
+            },
+
+            {
+                "C:\\Users\\black\\OneDrive\\Desktop\\misc\\..\\..\\..\\VRChat Assets\\Underwear\\Female Bombshell Bra\\Female Bombshell Bra\\Texture_Valentines Bra Black Lace trans.png",
+                "C:\\Users\\black\\OneDrive\\Documents\\VRC-Avatars\\Assets\\VRChat Assets\\Underwear\\Female Bombshell Bra\\Female Bombshell Bra\\Texture_Valentines Bra Black Lace trans.png"
+            },
+
+            {
+                "D:\\Documents\\Avatar2\\Assets\\Zafira Model By Luuy\\Tex\\lis_dlcu_029_02_base_PP1_K.png",
+                ""
+            },
+
+            {
+                "D:\\Documents\\Avatar2\\Assets\\Zafira Model By Luuy\\Tex\\Hair1.png",
+                ""
+            },
+
+            {
+                "C:\\Users\\black\\OneDrive\\Desktop\\misc\\..\\..\\..\\VRChat Assets\\Tops\\Shawty hoodie - Zinpia\\7.png",
+                "C:\\Users\\black\\OneDrive\\Documents\\VRC-Avatars\\Assets\\VRChat Assets\\Tops\\Shawty hoodie - Zinpia\\7.png"
+            },
+
+            {
+                "C:\\Users\\black\\OneDrive\\Desktop\\misc\\..\\..\\..\\VRChat Assets\\Hair\\BedHead v2 by Nessy\\Textures\\61.png",
+                "C:\\Users\\black\\OneDrive\\Documents\\VRC-Avatars\\Assets\\VRChat Assets\\Hair\\HairPack WetCat\\Textures\\61.png"
+            },
+
+            {
+                "D:\\Documents\\Avatar2\\Assets\\Zafira Model By Luuy\\Tex\\hairglow-mono_emission.png",
+                "C:\\Users\\black\\OneDrive\\Documents\\VRC-Avatars\\Assets\\Misc\\R\\Avatar-Lovelylove-Asset-bundle-2.file_ad87b39f-eb28-49ba-bae7-ab7bc0f312fc.1.vrca\\Assets\\Texture2D\\hairglow-mono_emission 1.png"
+            },
+
+            {
+                "C:\\Users\\black\\OneDrive\\Desktop\\misc\\..\\..\\..\\Misc\\Main\\X\\Val\\Jax.fbm\\Eye_5.png",
+                "C:\\Users\\black\\OneDrive\\Documents\\VRC-Avatars\\Assets\\Misc\\Main\\X\\Val\\Jax.fbm\\Eye_5.png"
+            },
+
+            {
+                "C:\\Users\\black\\OneDrive\\Desktop\\misc\\..\\..\\..\\Misc\\Main\\X\\Val\\Texture2D\\Body.png",
+                "C:\\Users\\black\\OneDrive\\Documents\\VRC-Avatars\\Assets\\Misc\\Main\\X\\Val\\Texture2D\\Body.png" },
+
+            {
+                "L:\\CustomAvatars2\\Assets\\Misc\\Main\\X\\Val\\Jax.fbm\\left eye by nanna.png",
+                "C:\\Users\\black\\OneDrive\\Documents\\VRC-Avatars\\Assets\\Misc\\Main\\X\\Val\\Jax.fbm\\left eye by nanna.png"
+            },
+
+            {
+                "L:\\CustomAvatars2\\Assets\\Misc\\Main\\X\\Val\\Jax.fbm\\EM backhair.png",
+                "C:\\Users\\black\\OneDrive\\Documents\\VRC-Avatars\\Assets\\Misc\\Main\\X\\Val\\Jax.fbm\\EM backhair.png"
+            },
+
+            {
+                "C:\\Users\\black\\OneDrive\\Desktop\\misc\\..\\..\\..\\VRChat Assets\\Hair\\Bedhead by Nessy\\Textures\\No Saturation 01.png",
+                "C:\\Users\\black\\OneDrive\\Documents\\VRC-Avatars\\Assets\\VRChat Assets\\Textures\\Cici Hair\\No Saturation 01.png"
+            },
+
+            {
+                "D:\\Documents\\Avatar2\\Assets\\Main\\Avatars\\MAD LOVE\\Materials\\Textures\\HairEarTail Texture.png",
+                "C:\\Users\\black\\OneDrive\\Documents\\VRC-Avatars\\Assets\\Misc\\Main\\X\\Val\\Texture2D\\HairEarTail Texture.png"
+            },
+
+            {
+                "C:\\Users\\black\\OneDrive\\Desktop\\misc\\..\\..\\..\\Misc\\Main\\X\\Val\\Jax.fbm\\googleface.png",
+                "C:\\Users\\black\\OneDrive\\Documents\\VRC-Avatars\\Assets\\Misc\\Main\\X\\Val\\Jax.fbm\\googleface.png"
+            },
+
+            {
+                "C:\\Users\\black\\OneDrive\\Desktop\\misc\\..\\..\\..\\VRChat Assets\\Tops\\panda split dye hoodie by clally#6969\\split dye hoodie for panda.fbm\\low poly_defaultMat.001_BaseColor.1001.png",
+                "C:\\Users\\black\\OneDrive\\Documents\\VRC-Avatars\\Assets\\VRChat Assets\\Tops\\panda split dye hoodie by clally#6969\\split dye hoodie for panda.fbm\\low poly_defaultMat.001_BaseColor.1001.png"
+            },
+
+            {
+                "C:\\Users\\black\\OneDrive\\Desktop\\misc\\..\\..\\..\\VRChat Assets\\Tops\\panda split dye hoodie by clally#6969\\split dye hoodie for panda.fbm\\low poly_defaultMat.001_Roughness.1001.png",
+                "C:\\Users\\black\\OneDrive\\Documents\\VRC-Avatars\\Assets\\VRChat Assets\\Tops\\panda split dye hoodie by clally#6969\\split dye hoodie for panda.fbm\\low poly_defaultMat.001_Roughness.1001.png"
+            },
+
+            {
+                "L:\\CustomAvatars2\\Assets\\Misc\\Main\\X\\Val\\Jax.fbm\\Arm matcaps.png",
+                "C:\\Users\\black\\OneDrive\\Documents\\VRC-Avatars\\Assets\\Misc\\Main\\X\\Val\\Jax.fbm\\Arm matcaps.png"
+            },
+
+            {
+                "C:\\Users\\black\\OneDrive\\Desktop\\misc\\..\\..\\..\\VRChat Assets\\Hair\\BedHead v2 by Nessy\\Textures\\51.png",
+                "C:\\Users\\black\\OneDrive\\Documents\\VRC-Avatars\\Assets\\VRChat Assets\\Hair\\Jen by Nessy\\Textures\\51.png"
+            },
+
+            {
+                "D:\\Documents\\Avatar2\\Assets\\Main\\Rips\\worker_lXgVip0x3vX06jqcB6_zGr9UoSbJw1C1PGuPZ-tmp1\\Assets\\Texture2D\\T_MainTex_D.png",
+                "C:\\Users\\black\\OneDrive\\Documents\\VRC-Avatars\\Assets\\Misc\\Main\\X\\Val\\Jax.fbm\\T_MainTex_D.png"
+            },
+
+            {
+                "C:\\Users\\black\\OneDrive\\Desktop\\misc\\..\\..\\..\\VRChat Assets\\Hair\\Bedhead by Nessy\\Textures\\No Saturation 06 (1).png",
+                "C:\\Users\\black\\OneDrive\\Documents\\VRC-Avatars\\Assets\\VRChat Assets\\Textures\\Cici Hair\\No Saturation 06.png"
+            },
+
+            {
+                "L:\\CustomAvatars2\\Assets\\VRChat Assets\\Pants\\Shorts by Zeit\\Shorts_By_Zeit_rar\\Shorts_bake_Merge.png",
+                "C:\\Users\\black\\OneDrive\\Documents\\VRC-Avatars\\Assets\\Jax VRM Export\\Jax VRM2.Textures\\Shorts_bake_Merge.png"
+            },
+
+            {
+                "L:\\CustomAvatars2\\Assets\\VRChat Assets\\Pants\\Shorts by Zeit\\Shorts_By_Zeit_rar\\Shorts_Normal_OpenGL.png",
+                "C:\\Users\\black\\OneDrive\\Documents\\VRC-Avatars\\Assets\\Misc\\! Saint By Hate\\Textures\\Shorts_Normal_OpenGL.png"
+            },
+
+            {
+                "L:\\CustomAvatars2\\Assets\\Misc\\Main\\X\\Val\\Jax.fbm\\right eye by nanna.png",
+                "C:\\Users\\black\\OneDrive\\Documents\\VRC-Avatars\\Assets\\Misc\\Main\\X\\Val\\Jax.fbm\\right eye by nanna.png"
+            },
+
+            {
+                "L:\\CustomAvatars2\\Assets\\VRChat Assets\\Pants\\Shorts by Zeit\\Shorts_By_Zeit_rar\\Shorts_bake_Merge_metal.png",
+                "C:\\Users\\black\\OneDrive\\Documents\\VRC-Avatars\\Assets\\!Textures\\Split By Yumiko\\Shorts_bake_Merge_metal.png"
+            },
+
+            {
+                "L:\\CustomAvatars2\\Assets\\VRChat Assets\\Pants\\Shorts by Zeit\\Shorts_By_Zeit_rar\\Metal_Normal_OpenGL.png",
+                "C:\\Users\\black\\OneDrive\\Documents\\VRC-Avatars\\Assets\\JaxVRCToolkit_Autogenerated\\AshOld\\Textures\\Metal_Normal_OpenGL.png"
+            }
+        };
+
+        if (!File.Exists(path) && pathRemap.TryGetValue(path, out string? newPath) && !string.IsNullOrEmpty(newPath))
+            path = newPath;
+
+        var tex = Engine.Assets.Load<XRTexture2D>(path);
+        if (tex is null)
+        {
+            Debug.Out($"Failed to load texture: {path}");
+            tex = new XRTexture2D()
+            {
+                Name = Path.GetFileNameWithoutExtension(path),
+                MagFilter = ETexMagFilter.Linear,
+                MinFilter = ETexMinFilter.Linear,
+                UWrap = ETexWrapMode.Repeat,
+                VWrap = ETexWrapMode.Repeat,
+                AlphaAsTransparency = true,
+                AutoGenerateMipmaps = true,
+                Resizable = true,
+            };
+        }
+        else
+        {
+            //Debug.Out($"Loaded texture: {path}");
+            tex.MagFilter = ETexMagFilter.Linear;
+            tex.MinFilter = ETexMinFilter.Linear;
+            tex.UWrap = ETexWrapMode.Repeat;
+            tex.VWrap = ETexWrapMode.Repeat;
+            tex.AlphaAsTransparency = true;
+            tex.AutoGenerateMipmaps = true;
+            tex.Resizable = false;
+            tex.SizedInternalFormat = ESizedInternalFormat.Rgba8;
+        }
+        return tex;
+    }
+    private static void MakeDefaultParameters(XRMaterial mat)
+    {
+        mat.Parameters =
+        [
+            new ShaderVector3(new Vector3(1.0f, 1.0f, 1.0f), "BaseColor"),
+            new ShaderFloat(1.0f, "Opacity"),
+            new ShaderFloat(1.0f, "Roughness"),
+            new ShaderFloat(0.0f, "Metallic"),
+            new ShaderFloat(0.0f, "Specular"),
+            new ShaderFloat(0.0f, "Emission"),
+        ];
+    }
 }

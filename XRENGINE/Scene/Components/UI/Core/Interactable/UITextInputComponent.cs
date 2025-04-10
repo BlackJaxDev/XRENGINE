@@ -399,7 +399,10 @@ namespace XREngine.Rendering.UI
         protected virtual void ParseAndSet(PropertyInfo prop, object?[] targets)
         {
             foreach (var target in targets)
-                prop.SetValue(target, Text);
+            {
+                var obj = Convert.ChangeType(Text, prop.PropertyType);
+                prop.SetValue(target, obj);
+            }
         }
 
         private int _cursorPosition = 0;

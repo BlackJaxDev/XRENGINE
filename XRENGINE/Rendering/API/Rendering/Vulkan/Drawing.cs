@@ -83,7 +83,7 @@ namespace XREngine.Rendering.Vulkan
             //    Filter.Linear);
             //EndSingleTimeCommands(commandBuffer);
         }
-        public override void GetScreenshotAsync(BoundingRectangle region, bool withTransparency, Action<MagickImage> imageCallback)
+        public override void GetScreenshotAsync(BoundingRectangle region, bool withTransparency, Action<MagickImage, int> imageCallback)
         {
             throw new NotImplementedException();
         }

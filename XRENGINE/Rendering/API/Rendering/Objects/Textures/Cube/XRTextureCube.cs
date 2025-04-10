@@ -1,4 +1,4 @@
-﻿using Silk.NET.OpenGL;
+﻿using System.Numerics;
 using XREngine.Data.Rendering;
 using XREngine.Rendering.Models.Materials.Textures;
 
@@ -11,6 +11,8 @@ namespace XREngine.Rendering
 
         public event DelAttachFaceToFBO? AttachFaceToFBORequested;
         public event DelDetachFaceFromFBO? DetachFaceFromFBORequested;
+
+        public override Vector3 WidthHeightDepth => new(Extent, Extent, 6);
 
         public XRTextureCube()
             : this(1u) { }

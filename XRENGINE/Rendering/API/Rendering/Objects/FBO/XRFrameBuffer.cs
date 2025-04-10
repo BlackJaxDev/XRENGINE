@@ -86,17 +86,54 @@ namespace XREngine.Rendering
                 {
                     switch (Attachment)
                     {
-                        case EFrameBufferAttachment.Color:
-                            TextureTypes |= EFrameBufferTextureTypeFlags.Color;
-                            continue;
-                        case EFrameBufferAttachment.Depth:
+                        //case EFrameBufferAttachment.ColorAttachment0:
+                        //case EFrameBufferAttachment.ColorAttachment1:
+                        //case EFrameBufferAttachment.ColorAttachment2:
+                        //case EFrameBufferAttachment.ColorAttachment3:
+                        //case EFrameBufferAttachment.ColorAttachment4:
+                        //case EFrameBufferAttachment.ColorAttachment5:
+                        //case EFrameBufferAttachment.ColorAttachment6:
+                        //case EFrameBufferAttachment.ColorAttachment7:
+                        //case EFrameBufferAttachment.ColorAttachment8:
+                        //case EFrameBufferAttachment.ColorAttachment9:
+                        //case EFrameBufferAttachment.ColorAttachment10:
+                        //case EFrameBufferAttachment.ColorAttachment11:
+                        //case EFrameBufferAttachment.ColorAttachment12:
+                        //case EFrameBufferAttachment.ColorAttachment13:
+                        //case EFrameBufferAttachment.ColorAttachment14:
+                        //case EFrameBufferAttachment.ColorAttachment15:
+                        //case EFrameBufferAttachment.ColorAttachment16:
+                        //case EFrameBufferAttachment.ColorAttachment17:
+                        //case EFrameBufferAttachment.ColorAttachment18:
+                        //case EFrameBufferAttachment.ColorAttachment19:
+                        //case EFrameBufferAttachment.ColorAttachment20:
+                        //case EFrameBufferAttachment.ColorAttachment21:
+                        //case EFrameBufferAttachment.ColorAttachment22:
+                        //case EFrameBufferAttachment.ColorAttachment23:
+                        //case EFrameBufferAttachment.ColorAttachment24:
+                        //case EFrameBufferAttachment.ColorAttachment25:
+                        //case EFrameBufferAttachment.ColorAttachment26:
+                        //case EFrameBufferAttachment.ColorAttachment27:
+                        //case EFrameBufferAttachment.ColorAttachment28:
+                        //case EFrameBufferAttachment.ColorAttachment29:
+                        //case EFrameBufferAttachment.ColorAttachment30:
+                        //case EFrameBufferAttachment.ColorAttachment31:
+                        //case EFrameBufferAttachment.FrontLeft:
+                        //case EFrameBufferAttachment.FrontRight:
+                        //case EFrameBufferAttachment.BackLeft:
+                        //case EFrameBufferAttachment.BackRight:
+                        //case EFrameBufferAttachment.Back:
+                        //case EFrameBufferAttachment.Front:
+                        //case EFrameBufferAttachment.Left:
+                        //case EFrameBufferAttachment.Right:
+                        //    TextureTypes |= EFrameBufferTextureTypeFlags.Color;
+                        //    continue;
                         case EFrameBufferAttachment.DepthAttachment:
                             TextureTypes |= EFrameBufferTextureTypeFlags.Depth;
                             continue;
                         case EFrameBufferAttachment.DepthStencilAttachment:
                             TextureTypes |= EFrameBufferTextureTypeFlags.Depth | EFrameBufferTextureTypeFlags.Stencil;
                             continue;
-                        case EFrameBufferAttachment.Stencil:
                         case EFrameBufferAttachment.StencilAttachment:
                             TextureTypes |= EFrameBufferTextureTypeFlags.Stencil;
                             continue;
@@ -323,7 +360,7 @@ namespace XREngine.Rendering
                     cuberef.Bind();
                     cuberef.AttachFaceToFBO(this, Attachment, ECubemapFace.PosX + LayerIndex, MipLevel);
                     break;
-                case XRTexture2DArray arrayref when arrayref.OVRMultiViewParameters is XRTexture2DArray.OVRMultiView ovr:
+                case XRTexture2DArray arrayref when arrayref.OVRMultiViewParameters is XRTexture2DArray.OVRMultiView ovr && !Engine.Rendering.State.IsNVIDIA:
                     arrayref.Bind();
                     arrayref.AttachToFBO_OVRMultiView(this, Attachment, MipLevel, ovr.Offset, ovr.NumViews);
                     break;

@@ -9,12 +9,13 @@
         /// The name of the FBO to render the UI to.
         /// If null, the UI will be rendered to the current viewport.
         /// </summary>
-        public string? UserInterfaceFBOName { get; set; }
+        public string? OutputTargetFBOName { get; set; } = null;
 
         /// <summary>
         /// If true, the command will not render anything if the FBO is not found.
+        /// Note that this should be false if you want to render to the current viewport instead of an FBO.
         /// </summary>
-        public bool FailRenderIfNoFBO { get; set; } = false;
+        public bool FailRenderIfNoOutputFBO { get; set; } = false;
 
         //public override bool NeedsCollecVisible => true;
 
@@ -44,12 +45,12 @@
 
         protected override void Execute()
         {
-            var ui = Pipeline.RenderState.UserInterface;
+            var ui = Pipeline.RenderState.ScreenSpaceUserInterface;
             if (ui is null || !ui.IsActive)
                 return;
-            
-            var fbo = UserInterfaceFBOName is null ? null : Pipeline.GetFBO<XRFrameBuffer>(UserInterfaceFBOName);
-            if (FailRenderIfNoFBO && fbo is null)
+
+            var fbo = OutputTargetFBOName is null ? null : Pipeline.GetFBO<XRFrameBuffer>(OutputTargetFBOName);
+            if (FailRenderIfNoOutputFBO && fbo is null)
                 return;
 
             ui.RenderScreenSpace(Pipeline.RenderState.RenderingViewport, fbo);

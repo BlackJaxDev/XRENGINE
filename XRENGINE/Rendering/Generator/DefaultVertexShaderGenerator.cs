@@ -12,7 +12,6 @@ namespace XREngine.Rendering.Shaders.Generator
     {
         public override bool UseNVStereo => true;
     }
-
     /// <summary>
     /// Generates a typical vertex shader for use with most models.
     /// </summary>
@@ -74,6 +73,7 @@ namespace XREngine.Rendering.Shaders.Generator
             WriteExtensions();
             Line();
             WriteInputs();
+            WriteOutputs();
             WriteAdjointMethod();
             using (StartMain())
             {
@@ -86,6 +86,11 @@ namespace XREngine.Rendering.Shaders.Generator
 
                 //Transform position, normals and tangents
                 WriteMeshTransforms(Mesh.HasSkinning && Engine.Rendering.Settings.AllowSkinning);
+                if (UseNVStereo)
+                {
+                    Line("gl_Layer = 0;");
+                    Line("gl_SecondaryViewportMaskNV[0] = 1;");
+                }
 
                 WriteColorOutputs();
                 WriteTexCoordOutputs();
@@ -93,12 +98,54 @@ namespace XREngine.Rendering.Shaders.Generator
             return End();
         }
 
+        /// <summary>
+        /// Writes the shader outputs to the fragment shader.
+        /// </summary>
+        private void WriteOutputs()
+        {
+            if (UseNVStereo)
+                Line("layout(viewport_relative, secondary_view_offset = 1) out highp int gl_Layer;"); //Apply secondary view offset to the layer output
+
+            WriteOutVar(0, EShaderVarType._vec3, FragPosName);
+
+            if (Mesh.HasNormals)
+                WriteOutVar(1, EShaderVarType._vec3, FragNormName);
+
+            if (Mesh.HasTangents)
+            {
+                WriteOutVar(2, EShaderVarType._vec3, FragTanName);
+                WriteOutVar(3, EShaderVarType._vec3, FragBinormName);
+            }
+
+            if (Mesh.HasTexCoords)
+                for (int i = 0; i < Mesh.TexCoordCount.ClampMax(8); ++i)
+                    WriteOutVar(4 + i, EShaderVarType._vec2, string.Format(FragUVName, i));
+
+            if (Mesh.HasColors)
+                for (int i = 0; i < Mesh.ColorCount.ClampMax(8); ++i)
+                    WriteOutVar(12 + i, EShaderVarType._vec4, string.Format(FragColorName, i));
+
+            WriteOutVar(20, EShaderVarType._vec3, FragPosLocalName);
+
+            Line();
+
+            //For some reason, this is necessary when using shader pipelines
+            //if (Engine.Rendering.Settings.AllowShaderPipelines)
+            WriteGLPerVertexOut();
+        }
+
         private void WriteExtensions()
         {
             if (UseOVRMultiView)
             {
                 Line("#extension GL_OVR_multiview2 : require");
+                //multiview tess/geo extension is not supported on nvidia gpus (I assume because you should just use nv stereo)
                 //Line("#extension GL_EXT_multiview_tessellation_geometry_shader : enable");
+            }
+            else if (UseNVStereo)
+            {
+                Line("#extension GL_NV_viewport_array2 : require");
+                Line("#extension GL_NV_stereo_view_rendering : require");
             }
         }
 
@@ -110,11 +157,6 @@ namespace XREngine.Rendering.Shaders.Generator
             WriteBuffers();
             WriteBufferBlocks();
             WriteUniforms();
-            WriteOutData();
-
-            //For some reason, this is necessary when using shader pipelines
-            //if (Engine.Rendering.Settings.AllowShaderPipelines)
-                WriteGLPerVertexOut();
         }
 
         private void WriteTexCoordOutputs()
@@ -195,7 +237,7 @@ namespace XREngine.Rendering.Shaders.Generator
         {
             WriteUniform(EShaderVarType._mat4, EEngineUniform.ModelMatrix.ToString());
 
-            if (UseOVRMultiView)
+            if (UseOVRMultiView || UseNVStereo)
             {
                 WriteUniform(EShaderVarType._mat4, $"{EEngineUniform.LeftEyeInverseViewMatrix}{VertexUniformSuffix}");
                 WriteUniform(EShaderVarType._mat4, $"{EEngineUniform.RightEyeInverseViewMatrix}{VertexUniformSuffix}");
@@ -216,7 +258,7 @@ namespace XREngine.Rendering.Shaders.Generator
             if (Mesh.SupportsBillboarding)
                 WriteUniform(EShaderVarType._int, EEngineUniform.BillboardMode.ToString());
 
-            if (!UseOVRMultiView) //Include toggle for manual stereo VR calculations in shader if not using OVR multi-view
+            if (!UseOVRMultiView && !UseNVStereo) //Include toggle for manual stereo VR calculations in shader if not using OVR multi-view or NV stereo
                 WriteUniform(EShaderVarType._bool, EEngineUniform.VRMode.ToString());
 
             //if (Mesh.HasSkinning && Engine.Rendering.Settings.AllowSkinning)
@@ -276,35 +318,6 @@ namespace XREngine.Rendering.Shaders.Generator
 
             if (wroteAnything)
                 Line();
-        }
-
-        /// <summary>
-        /// This information is sent to the fragment shader.
-        /// </summary>
-        private void WriteOutData()
-        {
-            WriteOutVar(0, EShaderVarType._vec3, FragPosName);
-
-            if (Mesh.HasNormals)
-                WriteOutVar(1, EShaderVarType._vec3, FragNormName);
-
-            if (Mesh.HasTangents)
-            {
-                WriteOutVar(2, EShaderVarType._vec3, FragTanName);
-                WriteOutVar(3, EShaderVarType._vec3, FragBinormName);
-            }
-
-            if (Mesh.HasTexCoords)
-                for (int i = 0; i < Mesh.TexCoordCount.ClampMax(8); ++i)
-                    WriteOutVar(4 + i, EShaderVarType._vec2, string.Format(FragUVName, i));
-
-            if (Mesh.HasColors)
-                for (int i = 0; i < Mesh.ColorCount.ClampMax(8); ++i)
-                    WriteOutVar(12 + i, EShaderVarType._vec4, string.Format(FragColorName, i));
-
-            WriteOutVar(20, EShaderVarType._vec3, FragPosLocalName);
-
-            Line();
         }
 
         /// <summary>
@@ -510,21 +523,54 @@ namespace XREngine.Rendering.Shaders.Generator
         {
             Line($"{FragPosLocalName} = {localInputPosName}.xyz;");
 
-            if (UseOVRMultiView)
+            if (UseNVStereo)
             {
-                Line("bool leftEye = gl_ViewID_OVR == 0;");
-                Line($"mat4 {EEngineUniform.InverseViewMatrix}{VertexUniformSuffix} = leftEye ? {EEngineUniform.LeftEyeInverseViewMatrix}{VertexUniformSuffix} : {EEngineUniform.RightEyeInverseViewMatrix}{VertexUniformSuffix};");
-                Line($"mat4 {EEngineUniform.ProjMatrix}{VertexUniformSuffix} = leftEye ? {EEngineUniform.LeftEyeProjMatrix}{VertexUniformSuffix} : {EEngineUniform.RightEyeProjMatrix}{VertexUniformSuffix};");
+                const string finalPosLeftName = "outPosLeft";
+                const string finalPosRightName = "outPosRight";
+
+                DeclareAndAssignFinalPosition(
+                    localInputPosName,
+                    finalPosLeftName,
+                    $"{EEngineUniform.LeftEyeInverseViewMatrix}{VertexUniformSuffix}",
+                    $"{EEngineUniform.LeftEyeProjMatrix}{VertexUniformSuffix}",
+                    0);
+
+                DeclareAndAssignFinalPosition(
+                    localInputPosName,
+                    finalPosRightName,
+                    $"{EEngineUniform.RightEyeInverseViewMatrix}{VertexUniformSuffix}",
+                    $"{EEngineUniform.RightEyeProjMatrix}{VertexUniformSuffix}",
+                    1);
+
+                Assign_GL_Position(finalPosLeftName);
+                Assign_GL_SecondaryPositionNV(finalPosRightName);
             }
+            else
+            {
+                string invViewMatrixName = $"{EEngineUniform.InverseViewMatrix}{VertexUniformSuffix}";
+                string projMatrixName = $"{EEngineUniform.ProjMatrix}{VertexUniformSuffix}";
+                if (UseOVRMultiView)
+                {
+                    Line("bool leftEye = gl_ViewID_OVR == 0;");
+                    Line($"mat4 {invViewMatrixName} = leftEye ? {EEngineUniform.LeftEyeInverseViewMatrix}{VertexUniformSuffix} : {EEngineUniform.RightEyeInverseViewMatrix}{VertexUniformSuffix};");
+                    Line($"mat4 {projMatrixName} = leftEye ? {EEngineUniform.LeftEyeProjMatrix}{VertexUniformSuffix} : {EEngineUniform.RightEyeProjMatrix}{VertexUniformSuffix};");
+                }
 
-            const string finalPosName = "outPos";
+                const string finalPosName = "outPos";
 
-            DeclareAndAssignFinalPosition(localInputPosName, finalPosName);
-            AssignFragPosOut(finalPosName);
-            AssignGL_Position(finalPosName);
+                DeclareAndAssignFinalPosition(
+                    localInputPosName,
+                    finalPosName,
+                    invViewMatrixName,
+                    projMatrixName,
+                    0);
+
+                AssignFragPosOut(finalPosName);
+                Assign_GL_Position(finalPosName);
+            }
         }
 
-        private void BillboardCalc(string posName, string glPosName)
+        private void BillboardCalc(string posName, string glPosName, string invViewMatrixName, string projMatrixName, int index)
         {
             Comment($"'{EEngineUniform.BillboardMode}' uniform: 0 = none, 1 = camera-facing (perspective), 2 = camera plane (orthographic)");
 
@@ -540,8 +586,8 @@ namespace XREngine.Rendering.Shaders.Generator
             const string camPositionName = "camPosition";
             const string camForwardName = "camForward";
 
-            Line($"vec3 {camPositionName} = {EEngineUniform.InverseViewMatrix}{VertexUniformSuffix}[3].xyz;");
-            Line($"vec3 {camForwardName} = normalize({EEngineUniform.InverseViewMatrix}{VertexUniformSuffix}[2].xyz);");
+            Line($"vec3 {camPositionName} = {invViewMatrixName}[3].xyz;");
+            Line($"vec3 {camForwardName} = normalize({invViewMatrixName}[2].xyz);");
 
             //Extract rotation pivot from ModelMatrix
             Line($"vec3 {pivotName} = {EEngineUniform.ModelMatrix}[3].xyz;");
@@ -567,20 +613,20 @@ namespace XREngine.Rendering.Shaders.Generator
             //Model matrix is already multipled into rotatedWorldPos, so don't multiply it again. Use as-is, or multiply by only view and projection matrices
             //VR shaders will multiply the view and projection matrices in the geometry shader
 
-            void AssignNoVR()
+            void AssignCameraSpace()
             {
-                DeclareVP();
-                Line($"{glPosName} = {ViewProjMatrixName} * {rotatedWorldPosName};");
+                DeclareVP(ViewMatrixName + index, invViewMatrixName, projMatrixName, ViewProjMatrixName + index);
+                Line($"{glPosName} = {ViewProjMatrixName + index} * {rotatedWorldPosName};");
             }
 
             //VR shaders will multiply the view and projection matrices in the geometry shader
-            void AssignVR()
+            void AssignModelSpace()
                 => Line($"{glPosName} = {rotatedWorldPosName};");
 
-            if (UseOVRMultiView)
-                AssignNoVR(); //Multiply by view and projection right now - not in geometry shader
+            if (UseOVRMultiView || UseNVStereo)
+                AssignCameraSpace(); //Multiply by view and projection right now - not in geometry shader
             else
-                IfElse(EEngineUniform.VRMode.ToString(), AssignVR, AssignNoVR);
+                IfElse(EEngineUniform.VRMode.ToString(), AssignModelSpace, AssignCameraSpace);
         }
 
         /// <summary>
@@ -589,30 +635,35 @@ namespace XREngine.Rendering.Shaders.Generator
         /// </summary>
         /// <param name="localInputPositionName"></param>
         /// <param name="finalPositionName"></param>
-        private void DeclareAndAssignFinalPosition(string localInputPositionName, string finalPositionName)
+        private void DeclareAndAssignFinalPosition(string localInputPositionName, string finalPositionName, string invViewMatrixName, string projMatrixName, int index)
         {
             Line($"vec4 {finalPositionName};");
 
-            void AssignNoVR()
+            void AssignCameraSpace()
             {
-                DeclareMVP();
-                Line($"{finalPositionName} = {ModelViewProjMatrixName} * {localInputPositionName};");
+                DeclareMVP(ViewMatrixName + index, invViewMatrixName, projMatrixName, ModelViewMatrixName + index, ModelViewProjMatrixName + index);
+                Line($"{finalPositionName} = {ModelViewProjMatrixName + index} * {localInputPositionName};");
             }
 
-            //VR shaders will multiply the view and projection matrices in the geometry shader
-            void AssignVR()
+            //Non-extension VR shaders will multiply the view and projection matrices in the geometry shader
+            void AssignModelSpace()
                 => Line($"{finalPositionName} = {EEngineUniform.ModelMatrix} * {localInputPositionName};");
 
             void NoBillboardCalc()
             {
-                if (UseOVRMultiView)
-                    AssignNoVR(); //Multiply by view and projection right now - not in geometry shader
+                if (UseOVRMultiView || UseNVStereo)
+                    AssignCameraSpace(); //Multiply by view and projection right now - not in geometry shader
                 else
-                    IfElse(EEngineUniform.VRMode.ToString(), AssignVR, AssignNoVR);
+                    IfElse(EEngineUniform.VRMode.ToString(), AssignModelSpace, AssignCameraSpace);
             }
 
             if (Mesh.SupportsBillboarding)
-                IfElse($"{EEngineUniform.BillboardMode} != 0", () => BillboardCalc(localInputPositionName, finalPositionName), NoBillboardCalc);
+            {
+                void BillboardCalc() 
+                    => this.BillboardCalc(localInputPositionName, finalPositionName, invViewMatrixName, projMatrixName, index);
+
+                IfElse($"{EEngineUniform.BillboardMode} != 0", BillboardCalc, NoBillboardCalc);
+            }
             else
                 NoBillboardCalc();
         }
@@ -630,7 +681,7 @@ namespace XREngine.Rendering.Shaders.Generator
             void NoPerspDivide()
                 => Line($"{FragPosName} = {finalPositionName}.xyz;");
 
-            if (UseOVRMultiView)
+            if (UseOVRMultiView || UseNVStereo)
                 PerspDivide();
             else //No perspective divide in VR shaders - done in geometry shader
                 IfElse(EEngineUniform.VRMode.ToString(), NoPerspDivide, PerspDivide);
@@ -640,43 +691,33 @@ namespace XREngine.Rendering.Shaders.Generator
         /// Assigns gl_Position to the final position.
         /// </summary>
         /// <param name="finalPositionName"></param>
-        private void AssignGL_Position(string finalPositionName)
+        private void Assign_GL_Position(string finalPositionName)
             => Line($"gl_Position = {finalPositionName};");
+
+        /// <summary>
+        /// Assigns gl_SecondaryPositionNV to the final right eye position.
+        /// </summary>
+        /// <param name="finalPositionName"></param>
+        private void Assign_GL_SecondaryPositionNV(string finalPositionName)
+            => Line($"gl_SecondaryPositionNV = {finalPositionName};");
 
         /// <summary>
         /// Creates the projection * view matrix.
         /// </summary>
-        private void DeclareVP(/*bool stereoLeft*/)
+        private void DeclareVP(string viewMatrixName, string invViewMatrixName, string projMatrixName, string viewProjMatrixName)
         {
-            //if (UseOVRMultiView)
-            //{
-            //    Line($"mat4 {ViewMatrixName} = inverse({(stereoLeft ? EEngineUniform.LeftEyeInverseViewMatrix : EEngineUniform.RightEyeInverseViewMatrix)});");
-            //    Line($"mat4 {ViewProjMatrixName} = {(stereoLeft ? EEngineUniform.LeftEyeProjMatrix : EEngineUniform.RightEyeProjMatrix)} * {ViewMatrixName};");
-            //}
-            //else
-            //{
-                Line($"mat4 {ViewMatrixName} = inverse({EEngineUniform.InverseViewMatrix}{VertexUniformSuffix});");
-                Line($"mat4 {ViewProjMatrixName} = {EEngineUniform.ProjMatrix}{VertexUniformSuffix} * {ViewMatrixName};");
-            //}
+            Line($"mat4 {viewMatrixName} = inverse({invViewMatrixName});");
+            Line($"mat4 {viewProjMatrixName} = {projMatrixName} * {viewMatrixName};");
         }
 
         /// <summary>
         /// Creates the projection * view * model matrix.
         /// </summary>
-        private void DeclareMVP(/*bool stereoLeft*/)
+        private void DeclareMVP(string viewMatrixName, string invViewMatrixName, string projMatrixName, string modelViewMatrixName, string modelViewProjMatrixName)
         {
-            //if (UseOVRMultiView)
-            //{
-            //    Line($"mat4 {ViewMatrixName} = inverse({(stereoLeft ? EEngineUniform.LeftEyeInverseViewMatrix : EEngineUniform.RightEyeInverseViewMatrix)});");
-            //    Line($"mat4 {ModelViewMatrixName} = {ViewMatrixName} * {EEngineUniform.ModelMatrix};");
-            //    Line($"mat4 {ModelViewProjMatrixName} = {(stereoLeft ? EEngineUniform.LeftEyeProjMatrix : EEngineUniform.RightEyeProjMatrix)} * {ModelViewMatrixName};");
-            //}
-            //else
-            //{
-                Line($"mat4 {ViewMatrixName} = inverse({EEngineUniform.InverseViewMatrix}{VertexUniformSuffix});");
-                Line($"mat4 {ModelViewMatrixName} = {ViewMatrixName} * {EEngineUniform.ModelMatrix};");
-                Line($"mat4 {ModelViewProjMatrixName} = {EEngineUniform.ProjMatrix}{VertexUniformSuffix} * {ModelViewMatrixName};");
-            //}
+            Line($"mat4 {viewMatrixName} = inverse({invViewMatrixName});");
+            Line($"mat4 {modelViewMatrixName} = {viewMatrixName} * {EEngineUniform.ModelMatrix};");
+            Line($"mat4 {modelViewProjMatrixName} = {projMatrixName} * {modelViewMatrixName};");
         }
     }
 }

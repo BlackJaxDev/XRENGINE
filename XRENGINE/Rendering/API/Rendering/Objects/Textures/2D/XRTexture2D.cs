@@ -2,16 +2,16 @@
 using ImageMagick.Drawing;
 using SixLabors.ImageSharp;
 using SixLabors.ImageSharp.PixelFormats;
+using System.Numerics;
 using XREngine.Data;
 using XREngine.Data.Colors;
-using XREngine.Data.Core;
 using XREngine.Data.Rendering;
 using XREngine.Data.Vectors;
 
 namespace XREngine.Rendering
 {
     [XR3rdPartyExtensions("png", "jpg", "jpeg", "tif", "tiff", "tga", "exr", "hdr")]
-    public class XRTexture2D : XRTexture, IFrameBufferAttachement
+    public partial class XRTexture2D : XRTexture, IFrameBufferAttachement
     {
         protected override void Reload3rdParty(string path)
         {
@@ -69,7 +69,6 @@ namespace XREngine.Rendering
         }
 
         private ESizedInternalFormat _sizedInternalFormat = ESizedInternalFormat.Rgba32f;
-        private EDepthStencilFmt _depthStencilFormat = EDepthStencilFmt.None;
         private ETexMagFilter _magFilter = ETexMagFilter.Nearest;
         private ETexMinFilter _minFilter = ETexMinFilter.Nearest;
         private ETexWrapMode _uWrap = ETexWrapMode.Repeat;
@@ -199,11 +198,6 @@ namespace XREngine.Rendering
             set => SetField(ref _mipmaps, value);
         }
 
-        public EDepthStencilFmt DepthStencilFormat
-        {
-            get => _depthStencilFormat;
-            set => SetField(ref _depthStencilFormat, value);
-        }
         public ETexMagFilter MagFilter
         {
             get => _magFilter;
@@ -373,7 +367,7 @@ namespace XREngine.Rendering
 
         private XRDataBuffer? _pbo;
 
-        public bool ShouldLoadDataFromPBO
+        public bool ShouldLoadDataFromInternalPBO
         {
             get => _pbo != null;
             set
@@ -397,11 +391,17 @@ namespace XREngine.Rendering
             }
         }
 
-        public override bool HasAlphaChannel => Mipmaps.Any(HasAlpha);
+        public override bool HasAlphaChannel
+            => Mipmaps.Any(HasAlpha);
+
+        public override Vector3 WidthHeightDepth
+            => new(Width, Height, 1);
 
         private static bool HasAlpha(Mipmap2D x) => x.PixelFormat switch
         {
-            EPixelFormat.Bgra or EPixelFormat.Rgba or EPixelFormat.LuminanceAlpha => true,
+            EPixelFormat.Bgra or
+            EPixelFormat.Rgba or
+            EPixelFormat.LuminanceAlpha => true,
             _ => false,
         };
 
@@ -419,125 +419,17 @@ namespace XREngine.Rendering
             _pbo.UnmapBufferData();
         }
 
-        public class GrabPassInfo : XRBase
-        {
-            private EReadBufferMode _readBuffer;
-            private bool _colorBit;
-            private bool _depthBit;
-            private bool _stencilBit;
-            private bool _linearFilter;
-            private bool _resizeToFit;
-            private float _resizeScale;
-            private XRTexture2D? _resultTexture;
-
-            public EReadBufferMode ReadBuffer
-            {
-                get => _readBuffer;
-                set => SetField(ref _readBuffer, value);
-            }
-            public bool ColorBit
-            {
-                get => _colorBit;
-                set => SetField(ref _colorBit, value);
-            }
-            public bool DepthBit
-            {
-                get => _depthBit;
-                set => SetField(ref _depthBit, value);
-            }
-            public bool StencilBit
-            {
-                get => _stencilBit;
-                set => SetField(ref _stencilBit, value);
-            }
-            public bool LinearFilter
-            {
-                get => _linearFilter;
-                set => SetField(ref _linearFilter, value);
-            }
-            public bool ResizeToFit
-            {
-                get => _resizeToFit;
-                set => SetField(ref _resizeToFit, value);
-            }
-            public float ResizeScale
-            {
-                get => _resizeScale;
-                set => SetField(ref _resizeScale, value);
-            }
-            public XRTexture2D? ResultTexture
-            {
-                get => _resultTexture;
-                set => SetField(ref _resultTexture, value);
-            }
-
-            private XRFrameBuffer? _resultFBO = null;
-            public XRFrameBuffer? ResultFBO => _resultFBO ??= (ResultTexture is null ? null : new((ResultTexture, EFrameBufferAttachment.ColorAttachment0, 0, -1)));
-
-            public GrabPassInfo(XRTexture2D? resultTexture, EReadBufferMode readBuffer, bool colorBit, bool depthBit, bool stencilBit, bool linearFilter, bool resizeToFit, float resizeScale)
-            {
-                _readBuffer = readBuffer;
-                _colorBit = colorBit;
-                _depthBit = depthBit;
-                _stencilBit = stencilBit;
-                _linearFilter = linearFilter;
-                _resizeToFit = resizeToFit;
-                _resizeScale = resizeScale;
-                _resultTexture = resultTexture;
-            }
-
-            public GrabPassInfo() { }
-
-            protected override void OnPropertyChanged<T>(string? propName, T prev, T field)
-            {
-                base.OnPropertyChanged(propName, prev, field);
-                if (propName == nameof(ResultTexture))
-                {
-                    _resultFBO?.Destroy();
-                    _resultFBO = null;
-                }
-            }
-
-            public void Grab(XRFrameBuffer? inFBO, XRViewport? viewport)
-            {
-                var rend = AbstractRenderer.Current;
-                if (rend is null)
-                    return;
-
-                var fbo = ResultFBO;
-                if (fbo is null)
-                    return;
-
-                uint w, h;
-                if (inFBO is not null)
-                {
-                    w = inFBO.Width;
-                    h = inFBO.Height;
-                    Resize(w, h);
-                    rend.BlitFBOToFBO(inFBO, fbo, _readBuffer, _colorBit, _depthBit, _stencilBit, _linearFilter);
-                }
-                else if (viewport is not null)
-                {
-                    w = (uint)viewport.Width;
-                    h = (uint)viewport.Height;
-                    Resize(w, h);
-                    rend.BlitViewportToFBO(viewport, fbo, _readBuffer, _colorBit, _depthBit, _stencilBit, _linearFilter);
-                }
-            }
-
-            private void Resize(uint w, uint h)
-            {
-                var fbo = ResultFBO;
-                if (fbo is null)
-                    return;
-
-                if (!_resizeToFit || w == fbo.Width && h == fbo.Height)
-                    return;
-
-                fbo.Resize((uint)(w * _resizeScale), (uint)(h * _resizeScale));
-            }
-        }
-
+        /// <summary>
+        /// Creates a new texture specifically for attaching to a framebuffer.
+        /// Resizes the texture to a scale of the current viewport size.
+        /// </summary>
+        /// <param name="resizeScale"></param>
+        /// <param name="readBuffer"></param>
+        /// <param name="colorBit"></param>
+        /// <param name="depthBit"></param>
+        /// <param name="stencilBit"></param>
+        /// <param name="linearFilter"></param>
+        /// <returns></returns>
         public static XRTexture2D CreateGrabPassTextureResized(
             float resizeScale = 1.0f,
             EReadBufferMode readBuffer = EReadBufferMode.ColorAttachment0,
@@ -554,6 +446,19 @@ namespace XREngine.Rendering
             t.GrabPass = new GrabPassInfo(t, readBuffer, colorBit, depthBit, stencilBit, linearFilter, true, resizeScale);
             return t;
         }
+
+        /// <summary>
+        /// Creates a new texture specifically for attaching to a framebuffer.
+        /// Keeps the texture at the same size as when it was created.
+        /// </summary>
+        /// <param name="w"></param>
+        /// <param name="h"></param>
+        /// <param name="readBuffer"></param>
+        /// <param name="colorBit"></param>
+        /// <param name="depthBit"></param>
+        /// <param name="stencilBit"></param>
+        /// <param name="linearFilter"></param>
+        /// <returns></returns>
         public static XRTexture2D CreateGrabPassTextureStatic(
             uint w,
             uint h,

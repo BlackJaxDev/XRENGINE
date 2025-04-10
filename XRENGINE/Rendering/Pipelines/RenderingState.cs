@@ -49,7 +49,7 @@ public sealed partial class XRRenderPipelineInstance
         /// <summary>
         /// The screen-space UI to render over the scene.
         /// </summary>
-        public UICanvasComponent? UserInterface { get; private set; }
+        public UICanvasComponent? ScreenSpaceUserInterface { get; private set; }
 
         //TODO: instead of bools for shadow and stereo passes, use an int for the pass type.
 
@@ -72,7 +72,7 @@ public sealed partial class XRRenderPipelineInstance
             ShadowPass = shadowPass;
             StereoPass = stereoPass;
             GlobalMaterialOverride = globalMaterialOverride;
-            UserInterface = screenSpaceUI?.CanvasTransform?.DrawSpace == ECanvasDrawSpace.Screen ? screenSpaceUI : null;
+            ScreenSpaceUserInterface = screenSpaceUI?.CanvasTransform?.DrawSpace == ECanvasDrawSpace.Screen ? screenSpaceUI : null;
 
             if (WindowViewport is not null)
                 _renderingViewports.Push(WindowViewport);
@@ -105,7 +105,7 @@ public sealed partial class XRRenderPipelineInstance
             ShadowPass = false;
             StereoPass = false;
             GlobalMaterialOverride = null;
-            UserInterface = null;
+            ScreenSpaceUserInterface = null;
         }
 
         public XRCamera? RenderingCamera

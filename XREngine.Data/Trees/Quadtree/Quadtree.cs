@@ -15,34 +15,43 @@ namespace XREngine.Data.Trees
         public BoundingRectangleF Bounds => _head.Bounds;
 
         public Quadtree(BoundingRectangleF bounds)
-        {
-            _head = new QuadtreeNode<T>(bounds, 0, 0, null, this);
-        }
-        public Quadtree(BoundingRectangleF bounds, List<T> items) : this(bounds) => _head.AddHereOrSmaller(items);
+            => _head = new QuadtreeNode<T>(bounds, 0, 0, null, this);
+        public Quadtree(BoundingRectangleF bounds, List<T> items) : this(bounds)
+            => _head.AddHereOrSmaller(items);
 
         public void Remake()
             => Remake(_head.Bounds);
         public void Remake(BoundingRectangleF newBounds)
         {
-            List<T> renderables = [];
-            _head.CollectAll(renderables);
-
-            _head = new QuadtreeNode<T>(newBounds, 0, 0, null, this);
-
-            foreach (T item in renderables)
-                if (!_head.AddHereOrSmaller(item))
-                    _head.AddHere(item);
+            if (_head.Bounds == newBounds)
+                return;
+            _remakeRequested = newBounds;
         }
 
         internal ConcurrentQueue<T> AddedItems { get; } = new ConcurrentQueue<T>();
         internal ConcurrentQueue<T> RemovedItems { get; } = new ConcurrentQueue<T>();
         internal ConcurrentQueue<T> MovedItems { get; } = new ConcurrentQueue<T>();
 
+        private BoundingRectangleF? _remakeRequested = null;
+
         /// <summary>
         /// Updates all moved, added and removed items in the octree.
         /// </summary>
         public void Swap()
         {
+            if (_remakeRequested.HasValue)
+            {
+                List<T> renderables = [];
+                _head.CollectAll(renderables);
+
+                _head = new QuadtreeNode<T>(_remakeRequested.Value, 0, 0, null, this);
+
+                foreach (T item in renderables)
+                    if (!_head.AddHereOrSmaller(item))
+                        _head.AddHere(item);
+
+                _remakeRequested = null;
+            }
             while (MovedItems.TryDequeue(out T? item))
                 item?.QuadtreeNode?.HandleMovedItem(item);
             while (RemovedItems.TryDequeue(out T? item))

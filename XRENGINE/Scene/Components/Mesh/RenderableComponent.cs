@@ -42,7 +42,7 @@ namespace XREngine.Components.Scene.Mesh
                 ri.WorldInstance = World;
         }
 
-        public EventList<RenderableMesh> Meshes { get; private set; } = [];
+        public EventList<RenderableMesh> Meshes { get; private set; } = new EventList<RenderableMesh>() { ThreadSafe = true };
         public RenderInfo[] RenderedObjects { get; private set; } = [];
     }
 }

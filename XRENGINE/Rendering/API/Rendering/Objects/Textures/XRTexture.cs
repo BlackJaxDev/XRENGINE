@@ -1,4 +1,5 @@
 ﻿using ImageMagick;
+using System.Numerics;
 using XREngine.Data.Colors;
 using XREngine.Data.Rendering;
 
@@ -299,6 +300,7 @@ namespace XREngine.Rendering
 
         public virtual bool IsResizeable { get; } = false;
         public virtual bool HasAlphaChannel { get; } = false;
+        public abstract Vector3 WidthHeightDepth { get; }
 
         public void AttachToFBO(XRFrameBuffer target, int mipLevel = 0)
         {

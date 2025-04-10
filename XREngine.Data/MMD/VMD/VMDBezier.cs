@@ -8,11 +8,15 @@ namespace XREngine.Data.MMD
     /// </summary>
     public class VMDBezier(Vector2 cp1, Vector2 cp2)
     {
-        /// <summary>Gets the first control point of the Bezier curve.</summary>
-        public Vector2 XY0 { get; private set; } = cp1;
+        /// <summary>
+        /// Gets the first control point of the Bezier curve.
+        /// </summary>
+        public Vector2 StartControlPoint { get; private set; } = cp1;
 
-        /// <summary>Gets the second control point of the Bezier curve.</summary>
-        public Vector2 XY1 { get; private set; } = cp2;
+        /// <summary>
+        /// Gets the second control point of the Bezier curve.
+        /// </summary>
+        public Vector2 EndControlPoint { get; private set; } = cp2;
 
         /// <summary>
         /// Evaluates the X component of the Bezier curve at the specified parameter t.
@@ -27,7 +31,7 @@ namespace XREngine.Data.MMD
             float it = 1.0f - t;
             float it2 = it * it;
             float it3 = it2 * it;
-            float[] x = [0, XY0.X, XY1.X, 1];
+            float[] x = [0, StartControlPoint.X, EndControlPoint.X, 1];
             return t3 * x[3] + 3 * t2 * it * x[2] + 3 * t * it2 * x[1] + it3 * x[0];
         }
 
@@ -44,7 +48,7 @@ namespace XREngine.Data.MMD
             float it = 1.0f - t;
             float it2 = it * it;
             float it3 = it2 * it;
-            float[] y = [0, XY0.Y, XY1.Y, 1];
+            float[] y = [0, StartControlPoint.Y, EndControlPoint.Y, 1];
             return t3 * y[3] + 3 * t2 * it * y[2] + 3 * t * it2 * y[1] + it3 * y[0];
         }
 
@@ -61,7 +65,7 @@ namespace XREngine.Data.MMD
         /// </summary>
         /// <returns>A string in the format "&lt;VMDBezier XY0:(x,y), XY1:(x,y)&gt;"</returns>
         public override string ToString()
-            => $"<VMDBezier XY0:{XY0}, XY1:{XY1}>";
+            => $"<VMDBezier XY0:{StartControlPoint}, XY1:{EndControlPoint}>";
 
         /// <summary>
         /// Uses binary search to find the parameter t where the X component equals the specified time value.

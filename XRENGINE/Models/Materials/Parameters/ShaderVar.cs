@@ -386,6 +386,7 @@ namespace XREngine.Rendering.Models.Materials
         _dvec4,
         _bvec2,
         _bvec3,
-        _bvec4
+        _bvec4,
+        _sampler2D
     }
 }
