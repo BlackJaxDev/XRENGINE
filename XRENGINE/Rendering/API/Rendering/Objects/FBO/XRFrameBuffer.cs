@@ -356,6 +356,10 @@ namespace XREngine.Rendering
                     buf.Bind();
                     buf.AttachToFBO(this, Attachment);
                     break;
+                case XRTexture2DArray arrayRef when LayerIndex >= 0:
+                    arrayRef.Bind();
+                    arrayRef.AttachImageToFBO(this, Attachment, LayerIndex, MipLevel);
+                    break;
                 case XRTextureCube cuberef when LayerIndex >= 0 && LayerIndex < 6:
                     cuberef.Bind();
                     cuberef.AttachFaceToFBO(this, Attachment, ECubemapFace.PosX + LayerIndex, MipLevel);
@@ -386,6 +390,10 @@ namespace XREngine.Rendering
                 case XRRenderBuffer buf:
                     buf.Bind();
                     buf.DetachFromFBO(this, Attachment);
+                    break;
+                case XRTexture2DArray arrayRef when LayerIndex >= 0:
+                    arrayRef.Bind();
+                    arrayRef.DetachImageFromFBO(this, Attachment, LayerIndex, MipLevel);
                     break;
                 case XRTextureCube cuberef when LayerIndex >= 0 && LayerIndex < 6:
                     cuberef.Bind();

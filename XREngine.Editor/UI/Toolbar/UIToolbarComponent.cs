@@ -16,8 +16,8 @@ public partial class UIToolbarComponent : UIComponent
 {
     public UIBoundableTransform BoundableTransform => TransformAs<UIBoundableTransform>(true)!;
 
-    private List<ToolbarButton> _rootMenuOptions = [];
-    public List<ToolbarButton> RootMenuOptions
+    private List<ToolbarItemBase> _rootMenuOptions = [];
+    public List<ToolbarItemBase> RootMenuOptions
     {
         get => _rootMenuOptions;
         set => SetField(ref _rootMenuOptions, value);
@@ -40,7 +40,7 @@ public partial class UIToolbarComponent : UIComponent
         switch (propName)
         {
             case nameof(RootMenuOptions):
-                RemakeChildren();
+                RemakeToolbarItems();
                 break;
         }
     }
@@ -48,7 +48,7 @@ public partial class UIToolbarComponent : UIComponent
     protected override void OnComponentActivated()
     {
         base.OnComponentActivated();
-        RemakeChildren();
+        RemakeToolbarItems();
     }
     protected override void OnComponentDeactivated()
     {
@@ -56,7 +56,7 @@ public partial class UIToolbarComponent : UIComponent
         SceneNode.Transform.Clear();
     }
 
-    public void RemakeChildren()
+    public void RemakeToolbarItems()
     {
         SceneNode.Transform.Clear();
         //Create the root menu transform - this is a horizontal list of buttons.
@@ -68,13 +68,13 @@ public partial class UIToolbarComponent : UIComponent
         bool horizontal,
         float? width,
         float? height,
-        IList<ToolbarButton> options,
+        IList<ToolbarItemBase> options,
         bool alignSubmenuToSide,
         float? menuHeight,
         UIToolbarComponent toolbar)
     {
         var listNode = parentNode.NewChild<UIMaterialComponent>(out var menuMat);
-        menuMat.Material = EditorPanel.BackgroundMaterial;
+        menuMat.Material = EditorPanel.MakeBackgroundMaterial();
         var listTfm = listNode.SetTransform<UIListTransform>();
         listTfm.DisplayHorizontal = horizontal;
         listTfm.ItemSpacing = 0.0f;
@@ -89,40 +89,52 @@ public partial class UIToolbarComponent : UIComponent
 
     //Works for both horizontal root menu and vertical submenus
     private void CreateChildMenu(
-        IList<ToolbarButton> options,
+        IList<ToolbarItemBase> options,
         SceneNode listNode,
         bool alignSubmenuToSide,
         UIToolbarComponent toolbar)
     {
         //Create the buttons for each menu option.
-        foreach (var menuItem in options)
+        foreach (ToolbarItemBase menuItem in options)
         {
-            var buttonNode = listNode.NewChild<UIButtonComponent, UIMaterialComponent>(out var button, out var background);
-            menuItem.InteractableComponent = button;
-            menuItem.ParentToolbarComponent = toolbar;
-            button.Name = menuItem.Text;
+            switch (menuItem)
+            {
+                case ToolbarButton tbb:
+                    CreateButton(listNode, alignSubmenuToSide, toolbar, tbb);
+                    break;
+                case ToolbarSeparator tbs:
+                    CreateSeparator(listNode, alignSubmenuToSide, toolbar, tbs);
+                    break;
+                case ToolbarDropdown tbd:
+                    CreateDropdown(listNode, alignSubmenuToSide, toolbar, tbd);
+                    break;
+            }
+        }
+    }
 
-            var mat = XRMaterial.CreateUnlitColorMaterialForward(ColorF4.Transparent);
-            mat.EnableTransparency();
-            background.Material = mat;
+    private void CreateDropdown(SceneNode listNode, bool alignSubmenuToSide, UIToolbarComponent toolbar, ToolbarDropdown tbd)
+    {
+        var buttonNode = listNode.NewChild<UIButtonComponent, UIMaterialComponent>(out var button, out var background);
+        EditorUI.Styles.UpdateButton(button);
+        tbd.InteractableComponent = button;
+        tbd.ParentToolbarComponent = toolbar;
+        button.Name = tbd.Text;
+        var mat = XRMaterial.CreateUnlitColorMaterialForward(ColorF4.Transparent);
+        mat.EnableTransparency();
+        background.Material = mat;
+        var buttonTfm = buttonNode.GetTransformAs<UIBoundableTransform>(true)!;
+        buttonTfm.MaxAnchor = new Vector2(0.0f, 1.0f);
+        buttonTfm.Margins = new Vector4(Margin);
 
-            var buttonTfm = buttonNode.GetTransformAs<UIBoundableTransform>(true)!;
-            buttonTfm.MaxAnchor = new Vector2(0.0f, 1.0f);
-            buttonTfm.Margins = new Vector4(Margin);
+        buttonNode.NewChild<UITextComponent>(out var text);
+        var textTfm = text.BoundableTransform;
+        textTfm.Margins = new Vector4(10.0f, Margin, 10.0f, Margin);
+        text.FontSize = 14;
+        text.Text = tbd.Text;
 
-            buttonNode.NewChild<UITextComponent>(out var text);
-
-            var textTfm = text.BoundableTransform;
-            textTfm.Margins = new Vector4(10.0f, Margin, 10.0f, Margin);
-
-            text.FontSize = 14;
-            text.Text = menuItem.Text;
-            //text.Color = ColorF4.LightGray;
-
-            if (menuItem.ChildOptions.Count <= 0)
-                continue;
-
-            var submenuList = CreateMenu(buttonNode, false, null, null, menuItem.ChildOptions, true, SubmenuItemHeight, toolbar);
+        if (tbd.Options.Length > 0)
+        {
+            UIListTransform submenuList = CreateMenu(buttonNode, false, null, null, [.. tbd.Options.Select(x => new ToolbarButton(x))], true, SubmenuItemHeight, toolbar);
             submenuList.Visibility = EVisibility.Collapsed;
             submenuList.ExcludeFromParentAutoCalcHeight = true;
             submenuList.ExcludeFromParentAutoCalcWidth = true;
@@ -130,6 +142,71 @@ public partial class UIToolbarComponent : UIComponent
             submenuList.Translation = alignSubmenuToSide
                 ? new Vector2(Margin, Margin)
                 : new Vector2(-Margin, -Margin);
+            //Align top left of submenu...
+            submenuList.NormalizedPivot = new Vector2(0.0f, 1.0f);
+            if (alignSubmenuToSide)
+            {
+                //...to top right of parent button
+                submenuList.MaxAnchor = new Vector2(1.0f, 1.0f);
+                submenuList.MinAnchor = new Vector2(1.0f, 1.0f);
+            }
+            else
+            {
+                //...to bottom left of parent button
+                submenuList.MaxAnchor = new Vector2(0.0f, 0.0f);
+                submenuList.MinAnchor = new Vector2(0.0f, 0.0f);
+            }
+        }
+    }
+
+    private void CreateSeparator(SceneNode listNode, bool alignSubmenuToSide, UIToolbarComponent toolbar, ToolbarSeparator tbs)
+    {
+        var separatorNode = listNode.NewChild<UIMaterialComponent>(out var separatorMat);
+        separatorMat.Material = EditorPanel.MakeBackgroundMaterial();
+        var separatorTfm = separatorNode.SetTransform<UIBoundableTransform>();
+        separatorTfm.Padding = new Vector4(0.0f);
+        separatorTfm.Width = 1.0f;
+        separatorTfm.Height = SubmenuItemHeight;
+    }
+
+    private void CreateButton(SceneNode listNode, bool alignSubmenuToSide, UIToolbarComponent toolbar, ToolbarButton tbb)
+    {
+        var buttonNode = listNode.NewChild<UIButtonComponent, UIMaterialComponent>(out var button, out var background);
+        EditorUI.Styles.UpdateButton(button);
+        tbb.InteractableComponent = button;
+        tbb.ParentToolbarComponent = toolbar;
+        button.Name = tbb.Text;
+
+        var mat = XRMaterial.CreateUnlitColorMaterialForward(ColorF4.Transparent);
+        mat.EnableTransparency();
+        background.Material = mat;
+
+        var buttonTfm = buttonNode.GetTransformAs<UIBoundableTransform>(true)!;
+        buttonTfm.MaxAnchor = new Vector2(0.0f, 1.0f);
+        buttonTfm.Margins = new Vector4(Margin);
+
+        buttonNode.NewChild<UITextComponent>(out var text);
+
+        var textTfm = text.BoundableTransform;
+        textTfm.Margins = new Vector4(10.0f, Margin, 10.0f, Margin);
+
+        text.FontSize = 14;
+        text.Text = tbb.Text;
+        text.Color = EditorUI.Styles.ButtonTextColor;
+
+        if (tbb.ChildOptions.Count > 0)
+        {
+            UIListTransform submenuList = CreateMenu(buttonNode, false, null, null, tbb.ChildOptions, true, SubmenuItemHeight, toolbar);
+
+            submenuList.Visibility = EVisibility.Collapsed;
+            submenuList.ExcludeFromParentAutoCalcHeight = true;
+            submenuList.ExcludeFromParentAutoCalcWidth = true;
+
+            //Undo margin from button
+            submenuList.Translation = alignSubmenuToSide
+                ? new Vector2(Margin, Margin)
+                : new Vector2(-Margin, -Margin);
+
             //Align top left of submenu...
             submenuList.NormalizedPivot = new Vector2(0.0f, 1.0f);
             if (alignSubmenuToSide)

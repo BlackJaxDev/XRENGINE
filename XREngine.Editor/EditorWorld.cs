@@ -29,6 +29,7 @@ using XREngine.Scene;
 using XREngine.Scene.Components;
 using XREngine.Scene.Components.Animation;
 using XREngine.Scene.Components.Physics;
+using XREngine.Scene.Components.Scripting;
 using XREngine.Scene.Components.VR;
 using XREngine.Scene.Transforms;
 using static XREngine.Scene.Transforms.RigidBodyTransform;
@@ -42,11 +43,11 @@ public static class EditorWorld
 
     //Debug visualize
     public const bool VisualizeOctree = false;
-    public const bool VisualizeQuadtree = false;
+    public const bool VisualizeQuadtree = true;
 
     //Editor UI
     public const bool AddEditorUI = true; //Adds the full editor UI to the camera.
-    public const bool TransformTool = true; //Adds the transform tool to the scene for testing dragging and rotating etc.
+    public const bool TransformTool = false; //Adds the transform tool to the scene for testing dragging and rotating etc.
     public const bool AllowEditingInVR = false; //Allows the user to edit the scene from desktop in VR.
 
     //Misc
@@ -70,7 +71,7 @@ public static class EditorWorld
     //Physics
     public const bool PhysicsChain = true; //Adds a jiggle physics chain to the character pawn.
     public const bool Physics = true;
-    public const int PhysicsBallCount = 100; //The number of physics balls to add to the scene.
+    public const int PhysicsBallCount = 10; //The number of physics balls to add to the scene.
 
     //Models
     public const bool StaticModel = false; //Imports a scene model to be rendered.
@@ -89,7 +90,7 @@ public static class EditorWorld
     public const bool FaceMotion3D = false; //Adds a face motion 3D capture component to the avatar for testing.
 
     //Animation
-    public const bool AnimationClipVMD = true; //Imports a VMD animation clip for testing.
+    public const bool AnimationClipVMD = false; //Imports a VMD animation clip for testing.
     public const bool IKTest = false; //Adds an simple IK test tree to the scene.
     public const bool TestAnimation = false; //Adds test animations to the character pawn.
 
@@ -115,7 +116,7 @@ public static class EditorWorld
         if (rootNode is null)
             return;
 
-        Debug.Out(rootNode.PrintTree());
+        //Debug.Out(rootNode.PrintTree());
 
         var humanComp = rootNode.AddComponent<HumanoidComponent>()!;
         humanComp.SolveIK = false;
@@ -126,24 +127,38 @@ public static class EditorWorld
         humanComp.HipToHeadIKEnabled = false;
 
         var animator = rootNode.AddComponent<AnimStateMachineComponent>()!;
+        var ftOscReceiver = rootNode.AddComponent<FaceTrackingReceiverComponent>();
+        var ftOscSender = rootNode.AddComponent<OscSenderComponent>();
 
         if (!VRPawn)
         {
             var humanik = rootNode.AddComponent<HumanoidIKSolverComponent>()!;
 
-            humanik.SetIKPositionWeight(ELimbEndEffector.LeftHand, 0.0f);
-            humanik.SetIKRotationWeight(ELimbEndEffector.LeftHand, 0.0f);
+            humanik.SetIKPositionWeight(ELimbEndEffector.LeftHand, 1.0f);
+            humanik.SetIKRotationWeight(ELimbEndEffector.LeftHand, 1.0f);
 
-            humanik.SetIKPositionWeight(ELimbEndEffector.RightHand, 0.0f);
-            humanik.SetIKRotationWeight(ELimbEndEffector.RightHand, 0.0f);
+            humanik.SetIKPositionWeight(ELimbEndEffector.RightHand, 1.0f);
+            humanik.SetIKRotationWeight(ELimbEndEffector.RightHand, 1.0f);
 
             humanik.SetIKPositionWeight(ELimbEndEffector.LeftFoot, 1.0f);
-            humanik.SetIKRotationWeight(ELimbEndEffector.LeftFoot, 0.0f);
+            humanik.SetIKRotationWeight(ELimbEndEffector.LeftFoot, 1.0f);
 
             humanik.SetIKPositionWeight(ELimbEndEffector.RightFoot, 1.0f);
-            humanik.SetIKRotationWeight(ELimbEndEffector.RightFoot, 0.0f);
+            humanik.SetIKRotationWeight(ELimbEndEffector.RightFoot, 1.0f);
 
             humanik.SetSpineWeight(0.0f);
+
+            SceneNode node = rootNode.NewChild("IKTargetNode");
+            var handTfm = humanComp.Right.Foot.Node!.GetTransformAs<Transform>(true)!;
+            node.GetTransformAs<Transform>(true)!.SetFrameState(new TransformState()
+            {
+                Order = Transform.EOrder.TRS,
+                Rotation = handTfm.WorldRotation,
+                Scale = new Vector3(1.0f),
+                Translation = handTfm.WorldTranslation
+            });
+            humanik.GetGoalIK(ELimbEndEffector.RightFoot)!.TargetIKTransform = node.Transform;
+            EnableTransformToolForNode(node);
         }
         else
         {
@@ -268,12 +283,12 @@ public static class EditorWorld
                 if (tail?.SceneNode is not null)
                 {
                     var phys = tail.SceneNode.AddComponent<PhysicsChainComponent>()!;
-                    phys.UpdateMode = PhysicsChainComponent.EUpdateMode.Normal;
+                    phys.UpdateMode = PhysicsChainComponent.EUpdateMode.Default;
                     phys.UpdateRate = 60;
-                    phys.Damping = 0.01f;
-                    phys.Inert = 0.0f;
-                    phys.Stiffness = 0.0f;
-                    phys.Gravity = new Vector3(0.0f, -0.1f, 0.0f);
+                    phys.Damping = 0.2f;
+                    phys.Inert = 0.5f;
+                    phys.Stiffness = 0.1f;
+                    phys.Gravity = new Vector3(0.0f, -10.0f, 0.0f);
                     phys.Elasticity = 0.01f;
                     phys.Multithread = false;
                 }
@@ -310,11 +325,11 @@ public static class EditorWorld
         if (TransformTool)
         {
             //Put the transform tool on the head for testing
-            var head = humanComp!.Head?.Node?.Transform?.SceneNode;
-            if (head is null)
+            var hip = humanComp!.Hips?.Node?.Transform?.SceneNode;
+            if (hip is null)
                 return;
 
-            EnableTransformToolForNode(head);
+            EnableTransformToolForNode(hip);
         }
 
         if (VMC)
@@ -389,12 +404,12 @@ public static class EditorWorld
         s.AllowSkinning = true;
         //s.RenderMesh3DBounds = true;
         s.RenderTransformDebugInfo = true;
-        s.RenderTransformLines = true;
+        s.RenderTransformLines = false;
         //s.RenderTransformCapsules = true;
         s.RenderTransformPoints = false;
         s.RecalcChildMatricesInParallel = true;
         s.TickGroupedItemsInParallel = true;
-        s.RenderWindowsWhileInVR = true;
+        s.RenderWindowsWhileInVR = false;
         s.AllowShaderPipelines = false; //Somehow, this lowers performance
         s.RenderVRSinglePassStereo = true;
         //s.PhysicsVisualizeSettings.SetAllTrue();
@@ -504,7 +519,7 @@ public static class EditorWorld
         comp.TargetTransform = targetNode.Transform;
 
         //Let the user move the target
-        EnableTransformToolForNode(targetNode, ETransformType.Translate);
+        EnableTransformToolForNode(targetNode, ETransformMode.Translate);
 
         //string tree = ikTestRootNode.PrintTree();
         //Debug.Out(tree);
@@ -527,7 +542,7 @@ public static class EditorWorld
         var characterTfm = vrPlayspaceNode.SetTransform<RigidBodyTransform>();
         characterTfm.InterpolationMode = EInterpolationMode.Interpolate;
 
-        var characterComp = vrPlayspaceNode.AddComponent<CharacterPawnComponent>("TestPawn")!;
+        CharacterPawnComponent characterComp = vrPlayspaceNode.AddComponent<CharacterPawnComponent>("TestPawn")!;
         pawn = characterComp;
         var vrInput = vrPlayspaceNode.AddComponent<VRPlayerInputSet>()!;
         vrInput.LeftHandOverlapChanged += OnLeftHandOverlapChanged;
@@ -543,7 +558,9 @@ public static class EditorWorld
         SceneNode localRotationNode = vrPlayspaceNode.NewChild("LocalRotationNode");
         characterComp.IgnoreViewTransformPitch = true;
         characterComp.ViewRotationTransform = localRotationNode.GetTransformAs<Transform>(true)!;
-        characterComp.InputOrientationTransform = AddHeadsetNode(out hmdTfm, out _, localRotationNode, setUI, out var canvas, characterComp).Transform;
+
+        PawnComponent? refPawn = characterComp;
+        characterComp.InputOrientationTransform = AddHeadsetNode(out hmdTfm, out _, localRotationNode, setUI, out var canvas, ref refPawn).Transform;
 
         AddHandControllerNode(out leftTfm, out _, localRotationNode, true);
         AddHandControllerNode(out rightTfm, out _, localRotationNode, false);
@@ -616,16 +633,18 @@ public static class EditorWorld
     {
         SceneNode vrPlayspaceNode = new(rootNode) { Name = "VRPlayspaceNode" };
         var playspaceTfm = vrPlayspaceNode.SetTransform<Transform>();
-        AddHeadsetNode(out _, out _, vrPlayspaceNode, setUI, out _);
+        PawnComponent? pawn = null;
+        AddHeadsetNode(out _, out _, vrPlayspaceNode, setUI, out _, ref pawn);
         AddHandControllerNode(out _, out _, vrPlayspaceNode, true);
         AddHandControllerNode(out _, out _, vrPlayspaceNode, false);
         AddTrackerCollectionNode(vrPlayspaceNode);
+        VRPlayerInputSet? input = pawn?.SceneNode?.AddComponent<VRPlayerInputSet>()!;
     }
 
     private static void AddTrackerCollectionNode(SceneNode vrPlayspaceNode)
         => vrPlayspaceNode.NewChild<VRTrackerCollectionComponent>(out _, "VRTrackerCollectionNode");
 
-    private static SceneNode AddHeadsetNode(out VRHeadsetTransform hmdTfm, out VRHeadsetComponent hmdComp, SceneNode parentNode, bool setUI, out UICanvasComponent? canvas, PawnComponent? pawn = null)
+    private static SceneNode AddHeadsetNode(out VRHeadsetTransform hmdTfm, out VRHeadsetComponent hmdComp, SceneNode parentNode, bool setUI, out UICanvasComponent? canvas, ref PawnComponent? pawn)
     {
         canvas = null;
 
@@ -658,7 +677,7 @@ public static class EditorWorld
             persp.FarZ = 100000.0f;
             firstPersonCam.CullWithFrustum = true;
             if (pawn is null)
-                firstPersonCam.SetAsPlayerView(ELocalPlayerIndex.One);
+                pawn = firstPersonCam.SetAsPlayerView(ELocalPlayerIndex.One);
             else
                 pawn.CameraComponent = firstPersonCam;
 
@@ -1061,8 +1080,7 @@ public static class EditorWorld
             input.OwningPawn = pawnForInput;
 
             //This will take care of editor UI arrangement operations for us
-            var mainUINode = rootCanvasNode.NewChild<UIEditorComponent>(out var editorComp);
-            editorComp.MenuOptions = GenerateRootMenu();
+            var mainUINode = rootCanvasNode.NewChild<UIEditorComponent>(out UIEditorComponent? editorComp);
             if (editorComp.UITransform is UIBoundableTransform tfm)
             {
                 tfm.MinAnchor = new Vector2(0.0f, 0.0f);
@@ -1072,9 +1090,25 @@ public static class EditorWorld
                 tfm.Width = null;
                 tfm.Height = null;
             }
+            _editorComponent = editorComp;
+            RemakeMenu();
+
+            GameCSProjLoader.OnAssemblyLoaded += GameCSProjLoader_OnAssemblyLoaded;
+            GameCSProjLoader.OnAssemblyUnloaded += GameCSProjLoader_OnAssemblyUnloaded;
         }
 
         return canvas;
+    }
+
+    private static UIEditorComponent? _editorComponent = null;
+
+    private static void GameCSProjLoader_OnAssemblyUnloaded(string obj) => RemakeMenu();
+    private static void GameCSProjLoader_OnAssemblyLoaded(string arg1, GameCSProjLoader.AssemblyData arg2) => RemakeMenu();
+
+    private static void RemakeMenu()
+    {
+        if (_editorComponent is not null)
+            _editorComponent.RootMenuOptions = GenerateRootMenu();
     }
 
     //Signals the camera to take a picture of the current view.
@@ -1098,26 +1132,40 @@ public static class EditorWorld
 
     //Generates the root menu for the editor UI.
     //TODO: allow scripts to add menu options with attributes
-    private static List<ToolbarButton> GenerateRootMenu()
+    private static List<ToolbarItemBase> GenerateRootMenu()
     {
-        return [
-            new("File", [Key.ControlLeft, Key.F],
+        List<ToolbarItemBase> buttons = [
+            new ToolbarButton("File", [Key.ControlLeft, Key.F],
             [
-                new("Save All", SaveAll),
-                new("Open", [
+                new ToolbarButton("Save All", SaveAll),
+                new ToolbarButton("Open", [
                     new ToolbarButton("Project", LoadProject),
                     ])
             ]),
-            new("Edit"),
-            new("Assets"),
-            new("Tools", [Key.ControlLeft, Key.T],
+            new ToolbarButton("Edit"),
+            new ToolbarButton("Assets"),
+            new ToolbarButton("Tools", [Key.ControlLeft, Key.T],
             [
-                new("Take Screenshot", TakeScreenshot),
+                new ToolbarButton("Take Screenshot", TakeScreenshot),
             ]),
-            new("View"),
-            new("Window"),
-            new("Help"),
+            new ToolbarButton("View"),
+            new ToolbarButton("Window"),
+            new ToolbarButton("Help"),
         ];
+
+        //Add dynamically loaded menu options
+        foreach (GameCSProjLoader.AssemblyData assembly in GameCSProjLoader.LoadedAssemblies.Values)
+        {
+            foreach (Type menuItem in assembly.MenuItems)
+            {
+                if (!menuItem.IsSubclassOf(typeof(ToolbarItemBase)))
+                    continue;
+                
+                buttons.Add((ToolbarItemBase)Activator.CreateInstance(menuItem)!);
+            }
+        }
+        
+        return buttons;
     }
 
     #endregion
@@ -1280,7 +1328,7 @@ public static class EditorWorld
     private static void ImportModels(string desktopDir, SceneNode rootNode, SceneNode characterParentNode)
     {
         var importedModelsNode = new SceneNode(rootNode) { Name = "TestImportedModelsNode" };
-        string fbxPathDesktop = Path.Combine(desktopDir, "misc", "test.fbx");
+        string fbxPathDesktop = Path.Combine(desktopDir, "misc", "jax.fbx");
 
         var animFlags = 
             PostProcessSteps.Triangulate |
@@ -1359,7 +1407,7 @@ public static class EditorWorld
                     {
                         UpdateDepth = false,
                         Enabled = ERenderParamUsage.Enabled,
-                        Function = EComparison.Less,
+                        Function = Rendering.Models.Materials.EComparison.Less,
                     },
                     //LineWidth = 1.0f,
                 }
@@ -1383,7 +1431,7 @@ public static class EditorWorld
         OnFinishedImportingAvatar(rootNode);
     }
 
-    private static void EnableTransformToolForNode(SceneNode? node, ETransformType transformType = ETransformType.Translate)
+    private static void EnableTransformToolForNode(SceneNode? node, ETransformMode transformType = ETransformMode.Translate)
     {
         if (node is null)
             return;

@@ -220,7 +220,7 @@ namespace XREngine.Scene.Components.Animation
 
                 // Substract any motion from parent transforms
                 Vector3 externalDelta = solver.RootBone._solverPosition - _lastEndRootPos;
-                externalDelta -= _animator.deltaPosition;
+                externalDelta -= _animator.DeltaPosition;
 
                 // Head target position
                 Vector3 headTargetPos = solver._spine._headPosition;
@@ -314,7 +314,7 @@ namespace XREngine.Scene.Components.Animation
                 _animator.SetFloat(PARAM_Speed, _animSpeed);
 
                 // Is Stopping
-                AnimTransition? transInfo = _animator.GetAnimatorTransitionInfo(0);
+                AnimStateTransition? transInfo = _animator.GetCurrentTransition(0);
                 bool isStopping = transInfo?.NameEquals(PARAM_Stop) ?? false;
 
                 // Root lerp speed

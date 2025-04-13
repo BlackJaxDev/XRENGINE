@@ -153,7 +153,7 @@ namespace XREngine.Scene.Components.Animation
         {
             XRMath.OrthoNormalize(ref normal, ref v1);
             XRMath.OrthoNormalize(ref normal, ref v2);
-            return XRMath.AngleBetween(v1, v2);
+            return XRMath.GetBestAngleDegreesBetween(v1, v2);
         }
     }
 }

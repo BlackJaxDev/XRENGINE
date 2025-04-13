@@ -10,6 +10,8 @@ namespace XREngine.Data
     {
         private void* _address;
 
+        public readonly bool IsValid => _address != null && (uint)_address != 0xFFFFFFFF && (ulong)_address != 0xFFFFFFFFFFFFFFFF;
+
         public static readonly VoidPtr Zero = new() { _address = null };
 
         public readonly void* Pointer => _address;

@@ -2,6 +2,7 @@
 using MathNet.Numerics;
 using System.ComponentModel.DataAnnotations;
 using System.Numerics;
+using XREngine.Data.Colors;
 using XREngine.Data.Core;
 using XREngine.Scene.Transforms;
 
@@ -10,13 +11,6 @@ namespace XREngine.Scene.Components.Animation
     [Serializable]
     public partial class IKSolverTrigonometric : IKSolver
     {
-        private TransformBase? _ikTargetTransform;
-        public TransformBase? IKTargetTransform
-        {
-            get => _ikTargetTransform;
-            set => SetField(ref _ikTargetTransform, value);
-        }
-
         public TransformBase? RelativeIKSpaceTransform { get; set; }
 
         private float _ikRotationWeight = 1f;
@@ -217,53 +211,12 @@ namespace XREngine.Scene.Components.Animation
         /// </returns>
         public bool SetChain(Transform? bone1, Transform? bone2, Transform? bone3, Transform? root)
         {
-            this._bone1._transform = bone1;
-            this._bone2._transform = bone2;
-            this._bone3._transform = bone3;
+            _bone1._transform = bone1;
+            _bone2._transform = bone2;
+            _bone3._transform = bone3;
 
             Initialize(root);
             return Initialized;
-        }
-
-        /// <summary>
-        /// Solve the bone chain.
-        /// </summary>
-        public static void Solve(Transform bone1, Transform bone2, Transform bone3, Vector3 targetPosition, Vector3 bendNormal, float weight)
-        {
-            if (weight <= 0f)
-                return;
-
-            // Direction of the limb in solver
-            targetPosition = Vector3.Lerp(bone3.WorldTranslation, targetPosition, weight);
-
-            Vector3 dir = targetPosition - bone1.WorldTranslation;
-
-            // Distance between the first and the last node solver positions
-            float length = dir.Length();
-            if (length == 0f)
-                return;
-
-            float sqrMag1 = (bone2.WorldTranslation - bone1.WorldTranslation).LengthSquared();
-            float sqrMag2 = (bone3.WorldTranslation - bone2.WorldTranslation).LengthSquared();
-
-            // Get the general world space bending direction
-            Vector3 bendDir = Vector3.Cross(dir, bendNormal);
-
-            // Get the direction to the trigonometrically solved position of the second node
-            Vector3 toBendPoint = GetDirectionToBendPoint(dir, length, bendDir, sqrMag1, sqrMag2);
-
-            // Position the second node
-            Quaternion q1 = XRMath.RotationBetweenVectors(bone2.WorldTranslation - bone1.WorldTranslation, toBendPoint);
-            if (weight < 1f)
-                q1 = Quaternion.Lerp(Quaternion.Identity, q1, weight);
-
-            bone1.SetWorldRotation(q1 * bone1.WorldRotation);
-
-            Quaternion q2 = XRMath.RotationBetweenVectors(bone3.WorldTranslation - bone2.WorldTranslation, targetPosition - bone2.WorldTranslation);
-            if (weight < 1f)
-                q2 = Quaternion.Lerp(Quaternion.Identity, q2, weight);
-
-            bone2.SetWorldRotation(q2 * bone2.WorldRotation);
         }
 
         //Calculates the bend direction based on the law of cosines. NB! Magnitude of the returned vector does not equal to the length of the first bone!
@@ -289,8 +242,7 @@ namespace XREngine.Scene.Components.Animation
             RawIKPosition = _bone3._transform.WorldTranslation;
             RawIKRotation = _bone3._transform.WorldRotation;
 
-            // Initiating bones
-            InitiateBones();
+            InitializeBones();
 
             _directHierarchy = IsDirectHierarchy();
         }
@@ -312,7 +264,7 @@ namespace XREngine.Scene.Components.Animation
         }
 
         // Set the defaults for the bones
-        public void InitiateBones()
+        public void InitializeBones()
         {
             if (_bone2._transform == null || _bone3._transform == null)
                 return;
@@ -340,7 +292,9 @@ namespace XREngine.Scene.Components.Animation
 
         protected override void OnUpdate()
         {
-            if (_bone1._transform == null || _bone2._transform == null || _bone3._transform == null)
+            if (_bone1._transform == null ||
+                _bone2._transform == null ||
+                _bone3._transform == null)
                 return;
 
             PreUpdate();
@@ -348,16 +302,20 @@ namespace XREngine.Scene.Components.Animation
             float posWeight = IKPositionWeight;
             if (posWeight > 0.0f)
             {
+                Vector3 bone1WorldPos = _bone1._transform.WorldMatrix.Translation;
+                Vector3 bone2WorldPos = _bone2._transform.WorldMatrix.Translation;
+                Vector3 bone3WorldPos = _bone3._transform.WorldMatrix.Translation;
+
                 // Reinitializing the bones when the hierarchy is not direct. This allows for skipping animated bones in the hierarchy.
                 if (!_directHierarchy)
                 {
-                    _bone1.Initialize(_bone2._transform.WorldTranslation, BendNormal);
-                    _bone2.Initialize(_bone3._transform.WorldTranslation, BendNormal);
+                    _bone1.Initialize(bone2WorldPos, BendNormal);
+                    _bone2.Initialize(bone3WorldPos, BendNormal);
                 }
 
                 // Find out if bone lengths should be updated
-                _bone1._lengthSquared = (_bone2._transform.WorldTranslation - _bone1._transform.WorldTranslation).LengthSquared();
-                _bone2._lengthSquared = (_bone3._transform.WorldTranslation - _bone2._transform.WorldTranslation).LengthSquared();
+                _bone1._lengthSquared = (bone2WorldPos - bone1WorldPos).LengthSquared();
+                _bone2._lengthSquared = (bone3WorldPos - bone2WorldPos).LengthSquared();
 
                 if (BendNormal == Vector3.Zero)
                     Debug.LogWarning("IKSolverTrigonometric Bend Normal is Vector3.zero.");
@@ -367,23 +325,33 @@ namespace XREngine.Scene.Components.Animation
                 // Interpolating bend normal
                 Vector3 currentBendNormal = Vector3.Lerp(_bone1.GetBendNormalFromCurrentRotation(), BendNormal, posWeight);
 
-                Vector3 bone1ToBone2 = _bone2._transform.WorldTranslation - _bone1._transform.WorldTranslation;
+                Vector3 bone1ToBone2 = bone2WorldPos - bone1WorldPos;
 
                 // Calculating and interpolating bend direction
                 Vector3 bendDirection = Vector3.Lerp(
                     bone1ToBone2,
-                    GetBendDirection(weightedWorldPos, currentBendNormal),
+                    -GetBendDirection(weightedWorldPos, currentBendNormal),
                     posWeight);
 
                 if (bendDirection == Vector3.Zero)
                     bendDirection = bone1ToBone2;
 
-                // Rotating bone1
-                _bone1._transform.SetWorldRotation(_bone1.GetRotation(bendDirection, currentBendNormal));
+                Engine.Rendering.Debug.RenderLine(bone1WorldPos, bone1WorldPos + bendDirection, ColorF4.Red);
+                //Engine.Rendering.Debug.RenderLine(bone1WorldPos, bone1WorldPos + currentBendNormal, ColorF4.Orange);
+
+                // Rotating bone 1
+                Quaternion bone1Rot = _bone1.GetRotation(bendDirection, currentBendNormal);
+                _bone1._transform.SetWorldRotation(bone1Rot);
 
                 // Rotating bone 2
-                var bone2ToIK = weightedWorldPos - _bone2._transform.WorldTranslation;
-                _bone2._transform.SetWorldRotation(_bone2.GetRotation(bone2ToIK, _bone2.GetBendNormalFromCurrentRotation()));
+                var bone2ToIK = weightedWorldPos - bone2WorldPos;
+                Vector3 bendNormal = _bone2.GetBendNormalFromCurrentRotation();
+
+                Engine.Rendering.Debug.RenderLine(bone2WorldPos, bone2WorldPos + bone2ToIK, ColorF4.Green);
+                //Engine.Rendering.Debug.RenderLine(bone2WorldPos, bone2WorldPos + bendNormal, ColorF4.Yellow);
+
+                Quaternion bone2Rot = _bone2.GetRotation(bone2ToIK, bendNormal);
+                _bone2._transform.SetWorldRotation(bone2Rot);
             }
 
             // Rotating bone3
@@ -400,6 +368,7 @@ namespace XREngine.Scene.Components.Animation
         protected virtual void PreInitialize() { }
         protected virtual void PreUpdate() { }
         protected virtual void PostSolve() { }
+
         protected bool _directHierarchy = true;
 
         /// <summary>
@@ -410,7 +379,8 @@ namespace XREngine.Scene.Components.Animation
         /// <returns></returns>
         protected Vector3 GetBendDirection(Vector3 IKPosition, Vector3 bendNormal)
         {
-            if (_bone1._transform == null || _bone2._transform == null)
+            if (_bone1._transform == null || 
+                _bone2._transform == null)
                 return Vector3.Zero;
 
             Vector3 direction = IKPosition - _bone1._transform.WorldTranslation;
@@ -423,8 +393,9 @@ namespace XREngine.Scene.Components.Animation
             float x = (directionSqrMag + _bone1._lengthSquared - _bone2._lengthSquared) / 2.0f / directionMagnitude;
             float y = (float)Math.Sqrt((_bone1._lengthSquared - x * x).ClampMin(0));
 
-            Vector3 yDirection = Vector3.Cross(direction / directionMagnitude, bendNormal);
-            return Vector3.Transform(new Vector3(0.0f, y, x), XRMath.LookRotation(direction, yDirection));
+            Vector3 yDirection = Vector3.Cross(bendNormal, direction / directionMagnitude);
+            Quaternion lookRot = XRMath.LookRotation(direction, yDirection);
+            return Vector3.Transform(new Vector3(0.0f, y, x), lookRot);
         }
     }
 }

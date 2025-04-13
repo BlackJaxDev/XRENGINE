@@ -3,6 +3,7 @@ using Silk.NET.OpenGL;
 using XREngine.Data;
 using XREngine.Data.Core;
 using XREngine.Data.Rendering;
+using static XREngine.Rendering.OpenGL.OpenGLRenderer;
 
 namespace XREngine.Rendering.OpenGL
 {
@@ -112,6 +113,11 @@ namespace XREngine.Rendering.OpenGL
 
             Data.AttachToFBORequested_OVRMultiView -= AttachToFBO_OVRMultiView;
             Data.DetachFromFBORequested_OVRMultiView -= DetachFromFBO_OVRMultiView;
+            Data.PushDataRequested -= PushData;
+            Data.BindRequested -= Bind;
+            Data.UnbindRequested -= Unbind;
+            Data.AttachImageToFBORequested -= AttachImageToFBO;
+            Data.DetachImageFromFBORequested -= DetachImageFromFBO;
             Data.Resized -= DataResized;
             Mipmaps = [];
         }
@@ -121,8 +127,42 @@ namespace XREngine.Rendering.OpenGL
 
             Data.AttachToFBORequested_OVRMultiView += AttachToFBO_OVRMultiView;
             Data.DetachFromFBORequested_OVRMultiView += DetachFromFBO_OVRMultiView;
+            Data.PushDataRequested += PushData;
+            Data.AttachImageToFBORequested += AttachImageToFBO;
+            Data.DetachImageFromFBORequested += DetachImageFromFBO;
+            Data.BindRequested += Bind;
+            Data.UnbindRequested += Unbind;
             Data.Resized += DataResized;
             UpdateMipmaps();
+        }
+
+        public override void AttachToFBO(XRFrameBuffer fbo, EFrameBufferAttachment attachment, int mipLevel = 0)
+        {
+            for (int i = 0; i < Data.Depth; ++i)
+                AttachImageToFBO(fbo, attachment, i, mipLevel);
+        }
+        public override void DetachFromFBO(XRFrameBuffer fbo, EFrameBufferAttachment attachment, int mipLevel = 0)
+        {
+            for (int i = 0; i < Data.Depth; ++i)
+                DetachImageFromFBO(fbo, attachment, i, mipLevel);
+        }
+
+        private void DetachImageFromFBO(XRFrameBuffer target, EFrameBufferAttachment attachment, int layer, int mipLevel)
+        {
+            if (Renderer.GetOrCreateAPIRenderObject(target) is not GLObjectBase apiFBO)
+                return;
+
+            Api.NamedFramebufferTextureLayer(apiFBO.BindingId, ToGLEnum(attachment), 0, mipLevel, layer);
+            //Api.FramebufferTexture2D(GLEnum.Framebuffer, ToGLEnum(attachment), GLEnum.TextureCubeMapPositiveX + layer, BindingId, mipLevel);
+        }
+
+        private void AttachImageToFBO(XRFrameBuffer target, EFrameBufferAttachment attachment, int layer, int mipLevel)
+        {
+            if (Renderer.GetOrCreateAPIRenderObject(target) is not GLObjectBase apiFBO)
+                return;
+
+            Api.NamedFramebufferTextureLayer(apiFBO.BindingId, ToGLEnum(attachment), BindingId, mipLevel, layer);
+            //Api.FramebufferTexture2D(GLEnum.Framebuffer, ToGLEnum(attachment), GLEnum.TextureCubeMapPositiveX + layer, BindingId, mipLevel);
         }
 
         private void DataResized()

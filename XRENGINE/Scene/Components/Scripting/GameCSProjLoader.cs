@@ -32,6 +32,9 @@ namespace XREngine.Scene.Components.Scripting
             }
         }
 
+        public static event Action<string, AssemblyData>? OnAssemblyLoaded;
+        public static event Action<string>? OnAssemblyUnloaded;
+
         public class AssemblyData(Type[] components, Type[] menuItems)
         {
             public Type[] Components { get; } = components;
@@ -39,14 +42,16 @@ namespace XREngine.Scene.Components.Scripting
         }
         
         private static readonly Dictionary<string, (object source, Assembly assembly, AssemblyLoadContext context, AssemblyData data)> _loadedAssemblies = [];
+        public static IReadOnlyDictionary<string, AssemblyData> LoadedAssemblies => _loadedAssemblies.ToDictionary(kvp => kvp.Key, kvp => kvp.Value.data);
 
         [RequiresUnreferencedCode("Calls System.Reflection.Assembly.GetExportedTypes()")]
         private static void LoadFromAssembly(string id, object source, AssemblyLoadContext context, Assembly assembly)
         {
             Type[] exported = assembly.GetExportedTypes();
-            Type[] components = exported.Where(t => t.IsSubclassOf(typeof(XRComponent))).ToArray();
-            Type[] menuItems = exported.Where(t => t.IsSubclassOf(typeof(XRMenuItem))).ToArray();
+            Type[] components = [.. exported.Where(t => t.IsSubclassOf(typeof(XRComponent)))];
+            Type[] menuItems = [.. exported.Where(t => t.IsSubclassOf(typeof(XRMenuItem)))];
             _loadedAssemblies.Add(id, (source, assembly, context, new AssemblyData(components, menuItems)));
+            OnAssemblyLoaded?.Invoke(id, new AssemblyData(components, menuItems));
         }
 
         [RequiresUnreferencedCode("")]
@@ -73,7 +78,9 @@ namespace XREngine.Scene.Components.Scripting
             data.context.Unload();
             if (data.source is Stream stream)
                 stream.Dispose();
+
             _loadedAssemblies.Remove(id);
+            OnAssemblyUnloaded?.Invoke(id);
         }
     }
 }

@@ -118,6 +118,15 @@ namespace XREngine.Scene.Transforms
             InverseBindMatrix = Matrix4x4.Invert(BindMatrix, out var inv) ? inv : Matrix4x4.Identity;
         }
 
+        public void SetFrameState(TransformState state)
+        {
+            _frameState = state;
+            Translation = state.Translation;
+            Rotation = state.Rotation;
+            Scale = state.Scale;
+            Order = state.Order;
+        }
+
         //[TypeConverter(typeof(Vector3TypeConverter))]
         //[DefaultValue(typeof(Vector3), "1 1 1")]
         /// <summary>
@@ -506,6 +515,24 @@ namespace XREngine.Scene.Transforms
         //    }
         //}
 
+        public void AddWorldScaleDelta(Vector3 worldDelta, bool networkSmoothed = false)
+        {
+            Vector3 localDelta = Vector3.TransformNormal(worldDelta, ParentInverseWorldMatrix);
+            if (networkSmoothed)
+                TargetScale = localDelta + (TargetScale ?? Scale);
+            else
+                Scale = localDelta + Scale;
+        }
+
+        public void AddWorldTranslationDelta(Vector3 worldDelta, bool networkSmoothed = false)
+        {
+            Vector3 localDelta = Vector3.TransformNormal(worldDelta, ParentInverseWorldMatrix);
+            if (networkSmoothed)
+                TargetTranslation = localDelta + (TargetTranslation ?? Translation);
+            else
+                Translation = localDelta + Translation;
+        }
+
         public void AddWorldRotationDelta(Quaternion worldDelta, bool networkSmoothed = false)
         {
             // Get the parent's world rotation. If no parent exists, returns Quaternion.Identity
@@ -515,17 +542,15 @@ namespace XREngine.Scene.Transforms
             // we need to convert the world rotation into the correct local-space delta.
             // This is done by "sandwiching" the rotation between the inverse parent rotation and parent rotation:
             // localDelta = parentWorldRotation^-1 * value * parentWorldRotation
-            Quaternion localDelta = Quaternion.Inverse(parentWorldRotation) * worldDelta * parentWorldRotation;
+            Quaternion localDelta = Quaternion.Inverse(parentWorldRotation) * worldDelta;
 
             // Apply the local delta to our current rotation and normalize to prevent floating point errors
-            Quaternion rotation = Quaternion.Normalize(localDelta * Rotation);
-
             // If networkSmoothed is true, the rotation will be smoothly interpolated to the target value
             // This is useful for network replication to avoid sudden jerky movements
             if (networkSmoothed)
-                TargetRotation = rotation;
+                TargetRotation = Quaternion.Normalize(localDelta * (TargetRotation ?? Rotation));
             else // Otherwise, apply the rotation immediately
-                Rotation = rotation;
+                Rotation = Quaternion.Normalize(localDelta * Rotation);
         }
 
         public void SetWorldRotation(Quaternion worldRotation, bool networkSmoothed = false)

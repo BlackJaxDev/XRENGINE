@@ -9,12 +9,32 @@ namespace XREngine.Rendering.UI
     /// <summary>
     /// A basic UI component that renders a quad with a material.
     /// </summary>
-    public class UIMaterialComponent : UIRenderableComponent
+    public class UIMaterialComponent(XRMaterial quadMaterial, bool flipVerticalUVCoord = false) : UIRenderableComponent
     {
         public UIMaterialComponent() 
-            : this(XRMaterial.CreateUnlitColorMaterialForward(Color.Magenta)) { }
-        public UIMaterialComponent(XRMaterial quadMaterial, bool flipVerticalUVCoord = false) : base()
-            => Mesh = new XRMeshRenderer(XRMesh.Create(VertexQuad.PosZ(1.0f, true, 0.0f, flipVerticalUVCoord)), quadMaterial);
+            : this(XRMaterial.CreateUnlitColorMaterialForward(Color.Magenta), true) { }
+
+        protected internal override void OnComponentActivated()
+        {
+            base.OnComponentActivated();
+
+            RenderPass = (int)EDefaultRenderPass.OpaqueForward;
+            var quadMesh = XRMesh.Create(VertexQuad.PosZ(1.0f, true, 0.0f, flipVerticalUVCoord));
+            quadMaterial.RenderPass = (int)EDefaultRenderPass.OpaqueForward;
+            quadMaterial.RenderOptions = _renderParameters;
+            Mesh = new XRMeshRenderer(quadMesh, quadMaterial);
+        }
+
+        private readonly RenderingParameters _renderParameters = new()
+        {
+            CullMode = ECullMode.None,
+            DepthTest = new()
+            {
+                Enabled = ERenderParamUsage.Disabled,
+                Function = EComparison.Always
+            },
+            BlendModeAllDrawBuffers = BlendMode.EnabledTransparent(),
+        };
 
         public XRTexture? Texture(int index)
             => (Material?.Textures?.IndexInRange(index) ?? false)
@@ -42,8 +62,8 @@ namespace XREngine.Rendering.UI
 
         protected override Matrix4x4 GetRenderWorldMatrix(UIBoundableTransform tfm)
         {
-            var w = tfm.GetWidth();
-            var h = tfm.GetHeight();
+            var w = tfm.ActualWidth;
+            var h = tfm.ActualHeight;
             return Matrix4x4.CreateScale(w, h, 1.0f) * base.GetRenderWorldMatrix(tfm);
         }
     }

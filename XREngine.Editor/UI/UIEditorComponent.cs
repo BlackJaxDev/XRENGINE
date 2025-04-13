@@ -14,8 +14,8 @@ public partial class UIEditorComponent : UIComponent
     private UIToolbarComponent? _toolbar;
     public UIToolbarComponent? Toolbar => _toolbar;
 
-    private List<ToolbarButton> _rootMenuOptions = [];
-    public List<ToolbarButton> MenuOptions
+    private List<ToolbarItemBase> _rootMenuOptions = [];
+    public List<ToolbarItemBase> RootMenuOptions
     {
         get => _rootMenuOptions;
         set => SetField(ref _rootMenuOptions, value);
@@ -37,9 +37,9 @@ public partial class UIEditorComponent : UIComponent
                 if (_toolbar is not null)
                     _toolbar.SubmenuItemHeight = MenuHeight;
                 break;
-            case nameof(MenuOptions):
+            case nameof(RootMenuOptions):
                 if (_toolbar is not null)
-                    _toolbar.RootMenuOptions = MenuOptions;
+                    _toolbar.RootMenuOptions = RootMenuOptions;
                 break;
         }
     }
@@ -49,6 +49,7 @@ public partial class UIEditorComponent : UIComponent
         base.OnComponentActivated();
         RemakeChildren();
     }
+
     protected override void OnComponentDeactivated()
     {
         base.OnComponentDeactivated();
@@ -66,7 +67,7 @@ public partial class UIEditorComponent : UIComponent
         splitTfm.SplitterSize = 0.0f;
 
         splitChild.NewChild(out UIToolbarComponent toolbarComp, "Menu");
-        toolbarComp.RootMenuOptions = MenuOptions;
+        toolbarComp.RootMenuOptions = RootMenuOptions;
         toolbarComp.SubmenuItemHeight = MenuHeight;
         _toolbar = toolbarComp;
 
@@ -77,19 +78,17 @@ public partial class UIEditorComponent : UIComponent
         dockTfm.FixedSizeFirst = 300;
         dockTfm.FixedSizeSecond = 300;
 
-        SceneNode hierarchyNode = dockNode.NewChild("Hierarchy");
+        SceneNode hierarchyNode = dockNode.NewChildWithTransform<UIBoundableTransform>(out _, "Hierarchy");
         hierarchyNode.NewChild<HierarchyPanel>(out var hierarchy);
-        hierarchy.RootNodes.Clear();
         if (World is not null)
-            hierarchy.RootNodes.AddRange(World.RootNodes);
-
-        var middleNode = dockNode.NewChild("Scene");
+            hierarchy.RootNodes = [.. World.RootNodes];
+        
+        var middleNode = dockNode.NewChildWithTransform<UIBoundableTransform>(out _, "Scene");
         //middleNode.AddComponent<UIVideoComponent>();
 
         dockNode.NewChildWithTransform(out UIListTransform listTfm, out InspectorPanel inspector, "Inspector");
         listTfm.DisplayHorizontal = false;
         listTfm.ItemAlignment = EListAlignment.TopOrLeft;
-
 
         //World.Name = "TestWorld";
         inspector.InspectedObjects = [Engine.Rendering.Settings];

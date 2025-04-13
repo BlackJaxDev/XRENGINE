@@ -13,11 +13,11 @@ namespace XREngine.Rendering.Pipelines.Commands
     public class VPRC_SSAOPass : ViewportRenderCommand
     {
         private string SSAOBlurShaderName() => 
-            Stereo ? "SSAOBlurStereo.fs" : 
+            //Stereo ? "SSAOBlurStereo.fs" : 
             "SSAOBlur.fs";
 
         private string SSAOGenShaderName() =>
-            Stereo ? "SSAOGenStereo.fs" : 
+            //Stereo ? "SSAOGenStereo.fs" : 
             "SSAOGen.fs";
 
         public string SSAONoiseTextureName { get; set; } = "SSAONoiseTexture";

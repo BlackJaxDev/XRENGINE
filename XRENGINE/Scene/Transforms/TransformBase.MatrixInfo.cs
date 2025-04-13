@@ -163,11 +163,6 @@ namespace XREngine.Scene.Transforms
         public Vector3 InverseTransformDirection(Vector3 worldDirection)
             => Vector3.TransformNormal(worldDirection, InverseWorldMatrix);
 
-        public Vector3 InverseTransformVector(Vector3 worldPosition)
-            => InverseTransformPoint(worldPosition) - InverseWorldMatrix.Translation;
-        public Vector3 TransformVector(Vector3 localVector)
-            => TransformPoint(localVector) - WorldMatrix.Translation;
-
         public TransformBase? FirstChild()
         {
             lock (_children)

@@ -390,9 +390,9 @@ namespace XREngine.Scene.Components.Animation
                     }
 
                     Solve();
-                    Write();
+                    Apply();
 
-                    WriteTransforms();
+                    ApplyTransforms();
                 }
                 else
                 {
@@ -410,7 +410,7 @@ namespace XREngine.Scene.Components.Animation
             _lastLOD = _lod;
         }
 
-        private void WriteTransforms()
+        private void ApplyTransforms()
         {
             for (int i = 0; i < _solverTransforms.Length; i++)
             {
@@ -676,7 +676,7 @@ namespace XREngine.Scene.Components.Animation
                 //spine.headPositionOffset += spine.pelvisPositionOffset;
             }
 
-            Write();
+            Apply();
 
             // Find the support leg
             if (_hasLegs)
@@ -770,7 +770,7 @@ namespace XREngine.Scene.Components.Animation
         private Vector3 debugPos3;
         private Vector3 debugPos4;
 
-        private void Write()
+        private void Apply()
         {
             _solvedPositions[0] = RootBone._solverPosition;
             _solvedRotations[0] = RootBone._solverRotation;

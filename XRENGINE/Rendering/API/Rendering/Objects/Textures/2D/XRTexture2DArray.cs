@@ -115,10 +115,43 @@ namespace XREngine.Rendering
 
         public event Action? Resized = null;
 
-        private void TextureResized()
+        private void IndividualTextureResized()
         {
             Resized?.Invoke();
         }
+
+        public void Resize(uint width, uint height)
+        {
+            if (Width == width && Height == height)
+                return;
+
+            foreach (XRTexture2D texture in Textures)
+                texture.Resize(width, height);
+
+            Resized?.Invoke();
+        }
+
+        public delegate void DelAttachImageToFBO(XRFrameBuffer target, EFrameBufferAttachment attachment, int layer, int mipLevel);
+        public delegate void DelDetachImageFromFBO(XRFrameBuffer target, EFrameBufferAttachment attachment, int layer, int mipLevel);
+
+        public event DelAttachImageToFBO? AttachImageToFBORequested;
+        public event DelDetachImageFromFBO? DetachImageFromFBORequested;
+
+        public void AttachImageToFBO(XRFrameBuffer fbo, int layer, int mipLevel = 0)
+        {
+            if (FrameBufferAttachment.HasValue)
+                AttachImageToFBO(fbo, FrameBufferAttachment.Value, layer, mipLevel);
+        }
+        public void DetachImageFromFBO(XRFrameBuffer fbo, int layer, int mipLevel = 0)
+        {
+            if (FrameBufferAttachment.HasValue)
+                DetachImageFromFBO(fbo, FrameBufferAttachment.Value, layer, mipLevel);
+        }
+
+        public void AttachImageToFBO(XRFrameBuffer fbo, EFrameBufferAttachment attachment, int layer, int mipLevel = 0)
+            => AttachImageToFBORequested?.Invoke(fbo, attachment, layer, mipLevel);
+        public void DetachImageFromFBO(XRFrameBuffer fbo, EFrameBufferAttachment attachment, int layer, int mipLevel = 0)
+            => DetachImageFromFBORequested?.Invoke(fbo, attachment, layer, mipLevel);
 
         protected override bool OnPropertyChanging<T>(string? propName, T field, T @new)
         {
@@ -131,7 +164,7 @@ namespace XREngine.Rendering
                         if (Textures != null)
                         {
                             foreach (XRTexture2D texture in Textures)
-                                texture.Resized -= TextureResized;
+                                texture.Resized -= IndividualTextureResized;
                         }
                         break;
                 }
@@ -148,7 +181,7 @@ namespace XREngine.Rendering
                     if (Textures != null)
                     {
                         foreach (XRTexture2D texture in Textures)
-                            texture.Resized += TextureResized;
+                            texture.Resized += IndividualTextureResized;
                     }
                     break;
             }

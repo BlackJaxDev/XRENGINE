@@ -1,4 +1,5 @@
-﻿using OpenVR.NET;
+﻿using Extensions;
+using OpenVR.NET;
 using OpenVR.NET.Devices;
 using OpenVR.NET.Manifest;
 using System.Diagnostics;
@@ -10,10 +11,12 @@ using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using Valve.VR;
+using XREngine.Data.Geometry;
 using XREngine.Data.Rendering;
 using XREngine.Rendering;
 using XREngine.Rendering.Models.Materials;
 using XREngine.Rendering.OpenGL;
+using XREngine.Scene;
 using ETextureType = Valve.VR.ETextureType;
 
 namespace XREngine
@@ -152,38 +155,79 @@ namespace XREngine
                 var right = MakeFBOTexture(rW, rH);
 
                 if (Stereo)
-                {
-                    SetViewportParameters(rW, rH, StereoViewport = new XRViewport(window));
-                    StereoViewport.RenderPipeline = new DefaultRenderPipeline(true);
-                    var outputTextures = new XRTexture2DArray(left, right)
-                    {
-                        Resizable = false,
-                        SizedInternalFormat = ESizedInternalFormat.Rgb8,
-                        OVRMultiViewParameters = new(0, 2u),
-                    };
-                    VRStereoRenderTarget = new XRFrameBuffer((outputTextures, EFrameBufferAttachment.ColorAttachment0, 0, -1));
-                    StereoLeftViewTexture = new XRTexture2DArrayView(outputTextures, 0u, 1u, 0u, 1u, EPixelInternalFormat.Rgb8, false, false);
-                    StereoRightViewTexture = new XRTexture2DArrayView(outputTextures, 0u, 1u, 1u, 1u, EPixelInternalFormat.Rgb8, false, false);
-                }
+                    InitSinglePass(window, rW, rH, left, right);
                 else
+                    InitTwoPass(window, rW, rH, left, right);
+            }
+
+            private static void InitTwoPass(XRWindow window, uint rW, uint rH, XRTexture2D left, XRTexture2D right)
+            {
+                left.FrameBufferAttachment = EFrameBufferAttachment.ColorAttachment0;
+                right.FrameBufferAttachment = EFrameBufferAttachment.ColorAttachment0;
+
+                VRLeftEyeRenderTarget = MakeTwoPassFBO(rW, rH, VRLeftEyeViewTexture = left, LeftEyeViewport = new XRViewport(window) { Index = 0 });
+                VRRightEyeRenderTarget = MakeTwoPassFBO(rW, rH, VRRightEyeViewTexture = right, RightEyeViewport = new XRViewport(window) { Index = 1 });
+
+                if (ViewInformation.LeftEyeCamera is not null)
+                    LeftEyeViewport.Camera = ViewInformation.LeftEyeCamera;
+
+                if (ViewInformation.RightEyeCamera is not null)
+                    RightEyeViewport.Camera = ViewInformation.RightEyeCamera;
+
+                if (ViewInformation.World is not null)
                 {
-                    left.FrameBufferAttachment = EFrameBufferAttachment.ColorAttachment0;
-                    right.FrameBufferAttachment = EFrameBufferAttachment.ColorAttachment0;
-                    VRLeftEyeRenderTarget = MakeTwoPassFBO(rW, rH, VRLeftEyeViewTexture = left, LeftEyeViewport = new XRViewport(window) { Index = 0 });
-                    VRRightEyeRenderTarget = MakeTwoPassFBO(rW, rH, VRRightEyeViewTexture = right, RightEyeViewport = new XRViewport(window) { Index = 1 });
-
-                    if (ViewInformation.LeftEyeCamera is not null)
-                        LeftEyeViewport.Camera = ViewInformation.LeftEyeCamera;
-
-                    if (ViewInformation.RightEyeCamera is not null)
-                        RightEyeViewport.Camera = ViewInformation.RightEyeCamera;
-
-                    if (ViewInformation.World is not null)
-                    {
-                        LeftEyeViewport.WorldInstanceOverride = ViewInformation.World;
-                        RightEyeViewport.WorldInstanceOverride = ViewInformation.World;
-                    }
+                    LeftEyeViewport.WorldInstanceOverride = ViewInformation.World;
+                    RightEyeViewport.WorldInstanceOverride = ViewInformation.World;
                 }
+            }
+
+            private static void InitSinglePass(XRWindow window, uint rW, uint rH, XRTexture2D left, XRTexture2D right)
+            {
+                Engine.Time.Timer.CollectVisible += CollectVisibleStereo;
+                Engine.Time.Timer.SwapBuffers += SwapBuffersStereo;
+
+                SetViewportParameters(rW, rH, StereoViewport = new XRViewport(window));
+                StereoViewport.RenderPipeline = new DefaultRenderPipeline(true);
+                StereoViewport.AutomaticallyCollectVisible = false;
+                StereoViewport.AutomaticallySwapBuffers = false;
+
+                var leftProj = Api.CVR.GetProjectionMatrix(EVREye.Eye_Left, 0.1f, 100000.0f).ToNumerics().Transposed();
+                var rightProj = Api.CVR.GetProjectionMatrix(EVREye.Eye_Right, 0.1f, 100000.0f).ToNumerics().Transposed();
+                var combined = ProjectionMatrixCombiner.CombineProjectionMatrices(leftProj, rightProj);
+                var combinedInverted = combined.Inverted();
+                _stereoCullingFrustum = new Frustum(combinedInverted);
+
+                var outputTextures = new XRTexture2DArray(left, right)
+                {
+                    Resizable = false,
+                    SizedInternalFormat = ESizedInternalFormat.Rgb8,
+                    OVRMultiViewParameters = new(0, 2u),
+                };
+                VRStereoRenderTarget = new XRFrameBuffer((outputTextures, EFrameBufferAttachment.ColorAttachment0, 0, -1));
+                StereoLeftViewTexture = new XRTexture2DArrayView(outputTextures, 0u, 1u, 0u, 1u, EPixelInternalFormat.Rgb8, false, false);
+                StereoRightViewTexture = new XRTexture2DArrayView(outputTextures, 0u, 1u, 1u, 1u, EPixelInternalFormat.Rgb8, false, false);
+            }
+
+            private static Frustum? _stereoCullingFrustum = null;
+
+            private static void SwapBuffersStereo()
+            {
+                StereoViewport?.SwapBuffers();
+            }
+
+            private static void CollectVisibleStereo()
+            {
+                var scene = ViewInformation.World?.VisualScene;
+                var node = ViewInformation.HMDNode;
+                var frustum = _stereoCullingFrustum;
+                if (scene is null || node is null || frustum is null)
+                    return;
+
+                Frustum worldFrustum = frustum.Value.TransformedBy(node.Transform.WorldMatrix);
+
+                var commands = StereoViewport!.RenderPipelineInstance.MeshRenderCommands;
+
+                scene.CollectRenderedItems(commands, null, null);
             }
 
             private static bool _powerSaving = false;
@@ -491,11 +535,11 @@ namespace XREngine
             public static NamedPipeServerStream? PipeServer { get; private set; }
             public static NamedPipeClientStream? PipeClient { get; private set; }
 
-            private static (XRCamera? left, XRCamera? right, XRWorldInstance? world) _viewInformation = (null, null, null);
+            private static (XRCamera? left, XRCamera? right, XRWorldInstance? world, SceneNode? HMDNode) _viewInformation = (null, null, null, null);
             /// <summary>
             /// The world instance to render in the VR headset, and the cameras for the left and right eyes.
             /// </summary>
-            public static (XRCamera? LeftEyeCamera, XRCamera? RightEyeCamera, XRWorldInstance? World) ViewInformation
+            public static (XRCamera? LeftEyeCamera, XRCamera? RightEyeCamera, XRWorldInstance? World, SceneNode? HMDNode) ViewInformation
             {
                 get => _viewInformation;
                 set

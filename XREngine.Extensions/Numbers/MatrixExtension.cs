@@ -43,41 +43,44 @@ namespace Extensions
 
         public static Quaternion ToQuaternion(this Matrix4x4 matrix)
         {
-            float trace = matrix.M11 + matrix.M22 + matrix.M33;
-            float w, x, y, z;
-            if (trace > 0)
-            {
-                float s = 0.5f / (float)Math.Sqrt(trace + 1.0f);
-                w = 0.25f / s;
-                x = (matrix.M32 - matrix.M23) * s;
-                y = (matrix.M13 - matrix.M31) * s;
-                z = (matrix.M21 - matrix.M12) * s;
-            }
-            else if (matrix.M11 > matrix.M22 && matrix.M11 > matrix.M33)
-            {
-                float s = 2.0f * (float)Math.Sqrt(1.0f + matrix.M11 - matrix.M22 - matrix.M33);
-                w = (matrix.M32 - matrix.M23) / s;
-                x = 0.25f * s;
-                y = (matrix.M12 + matrix.M21) / s;
-                z = (matrix.M13 + matrix.M31) / s;
-            }
-            else if (matrix.M22 > matrix.M33)
-            {
-                float s = 2.0f * (float)Math.Sqrt(1.0f + matrix.M22 - matrix.M11 - matrix.M33);
-                w = (matrix.M13 - matrix.M31) / s;
-                x = (matrix.M12 + matrix.M21) / s;
-                y = 0.25f * s;
-                z = (matrix.M23 + matrix.M32) / s;
-            }
-            else
-            {
-                float s = 2.0f * (float)Math.Sqrt(1.0f + matrix.M33 - matrix.M11 - matrix.M22);
-                w = (matrix.M21 - matrix.M12) / s;
-                x = (matrix.M13 + matrix.M31) / s;
-                y = (matrix.M23 + matrix.M32) / s;
-                z = 0.25f * s;
-            }
-            return new Quaternion(x, y, z, w);
+            matrix.Translation = Vector3.Zero; // Remove translation component
+            return Quaternion.Normalize(Quaternion.CreateFromRotationMatrix(matrix));
+
+            //float trace = matrix.M11 + matrix.M22 + matrix.M33;
+            //float w, x, y, z;
+            //if (trace > 0)
+            //{
+            //    float s = 0.5f / (float)Math.Sqrt(trace + 1.0f);
+            //    w = 0.25f / s;
+            //    x = (matrix.M32 - matrix.M23) * s;
+            //    y = (matrix.M13 - matrix.M31) * s;
+            //    z = (matrix.M21 - matrix.M12) * s;
+            //}
+            //else if (matrix.M11 > matrix.M22 && matrix.M11 > matrix.M33)
+            //{
+            //    float s = 2.0f * (float)Math.Sqrt(1.0f + matrix.M11 - matrix.M22 - matrix.M33);
+            //    w = (matrix.M32 - matrix.M23) / s;
+            //    x = 0.25f * s;
+            //    y = (matrix.M12 + matrix.M21) / s;
+            //    z = (matrix.M13 + matrix.M31) / s;
+            //}
+            //else if (matrix.M22 > matrix.M33)
+            //{
+            //    float s = 2.0f * (float)Math.Sqrt(1.0f + matrix.M22 - matrix.M11 - matrix.M33);
+            //    w = (matrix.M13 - matrix.M31) / s;
+            //    x = (matrix.M12 + matrix.M21) / s;
+            //    y = 0.25f * s;
+            //    z = (matrix.M23 + matrix.M32) / s;
+            //}
+            //else
+            //{
+            //    float s = 2.0f * (float)Math.Sqrt(1.0f + matrix.M33 - matrix.M11 - matrix.M22);
+            //    w = (matrix.M21 - matrix.M12) / s;
+            //    x = (matrix.M13 + matrix.M31) / s;
+            //    y = (matrix.M23 + matrix.M32) / s;
+            //    z = 0.25f * s;
+            //}
+            //return new Quaternion(x, y, z, w);
         }
     }
 }

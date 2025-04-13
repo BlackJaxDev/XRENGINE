@@ -32,9 +32,7 @@ namespace XREngine.Scene.Components.Animation
                 => XRMath.LookRotation(direction, bendNormal) * _targetToLocalSpace;
 
             public Vector3 GetBendNormalFromCurrentRotation()
-                => _transform == null
-                    ? _defaultLocalBendNormal
-                    : Vector3.Transform(_defaultLocalBendNormal, _transform.WorldRotation);
+                => _transform is null ? _defaultLocalBendNormal : Vector3.Transform(_defaultLocalBendNormal, _transform.WorldRotation);
         }
     }
 }

@@ -3,7 +3,7 @@ using XREngine.Animation;
 
 namespace XREngine.Components
 {
-    public class PoseBlend : PoseGenBase
+    public class PoseBlend : HumanoidPoseGenBase
     {
         public PoseBlend() { }
         public PoseBlend(SkeletalAnimation from, SkeletalAnimation to)

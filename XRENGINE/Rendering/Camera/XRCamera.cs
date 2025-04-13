@@ -374,7 +374,7 @@ namespace XREngine.Rendering
             if (depthRange == ERange.ZeroToOne)
                 clipSpacePos.Z = normalizedPointDepth.Z * 2.0f - 1.0f;
 
-            Vector4 viewSpacePos = Vector4.Transform(clipSpacePos, InverseProjectionMatrix * Transform.RenderMatrix);
+            Vector4 viewSpacePos = Vector4.Transform(clipSpacePos, InverseProjectionMatrix * Transform.WorldMatrix);
             if (viewSpacePos.W != 0.0f)
                 viewSpacePos /= viewSpacePos.W;
             return viewSpacePos.XYZ();

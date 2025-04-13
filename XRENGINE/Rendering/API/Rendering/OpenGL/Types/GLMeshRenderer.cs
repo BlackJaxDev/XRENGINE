@@ -1,11 +1,9 @@
 ﻿using Extensions;
-using ImageMagick;
 using Silk.NET.OpenGL;
 using System.Diagnostics.CodeAnalysis;
 using System.Numerics;
 using XREngine.Data;
 using XREngine.Data.Core;
-using XREngine.Data.Geometry;
 using XREngine.Data.Rendering;
 using XREngine.Rendering.Models.Materials;
 using XREngine.Rendering.Shaders.Generator;
@@ -445,17 +443,20 @@ namespace XREngine.Rendering.OpenGL
             {
                 XRShader vertexShader = hasNoVertexShaders
                     ? GenerateVertexShader(vertexSourceGenerator)
-                    : shaders.FirstOrDefault(x => x.Type == EShaderType.Vertex && vertexShaderSelector(x)) ?? GenerateVertexShader(vertexSourceGenerator);
+                    : FindVertexShader(shaders, vertexShaderSelector) ?? GenerateVertexShader(vertexSourceGenerator);
 
                 if (!hasNoVertexShaders)
                     shaders = shaders.Where(x => x.Type != EShaderType.Vertex);
 
                 shaders = shaders.Append(vertexShader);
-                
+
                 program = Renderer.GenericToAPI<GLRenderProgram>(new XRRenderProgram(false, false, shaders))!;
                 program.PropertyChanged += CheckProgramLinked;
                 InitiateLink(program);
             }
+
+            private static XRShader? FindVertexShader(IEnumerable<XRShader> shaders, Func<XRShader, bool> vertexShaderSelector)
+                => shaders.FirstOrDefault(x => x.Type == EShaderType.Vertex && vertexShaderSelector(x));
 
             private void CreateSeparatedVertexProgram(
                 ref GLRenderProgram? vertexProgram,

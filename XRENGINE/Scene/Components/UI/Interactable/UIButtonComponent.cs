@@ -71,23 +71,101 @@ namespace XREngine.Rendering.UI
             set => SetField(ref _highlightTextColor, value);
         }
 
+        protected override void OnPropertyChanged<T>(string? propName, T prev, T field)
+        {
+            base.OnPropertyChanged(propName, prev, field);
+            switch (propName)
+            {
+                case nameof(BackgroundColorUniformName):
+                    {
+                        if (!IsHighlighted)
+                            SetBackgroundDefault();
+                        break;
+                    }
+
+                case nameof(DefaultBackgroundColor):
+                    {
+                        if (!IsHighlighted)
+                            SetBackgroundDefault();
+                        break;
+                    }
+
+                case nameof(HighlightBackgroundColor):
+                    {
+                        if (IsHighlighted)
+                            SetBackgroundHighlighted();
+                        break;
+                    }
+
+                case nameof(DefaultTextColor):
+                    {
+                        if (!IsHighlighted)
+                            SetTextDefault();
+                        break;
+                    }
+
+                case nameof(HighlightTextColor):
+                    {
+                        if (IsHighlighted)
+                            SetTextHighlighted();
+                        break;
+                    }
+            }
+        }
+
+        private bool _isHighlighted = false;
+        public bool IsHighlighted
+        {
+            get => _isHighlighted;
+            private set => SetField(ref _isHighlighted, value);
+        }
+
         protected virtual void Highlight()
         {
-            var bg = BackgroundMaterialComponent?.Material;
-            bg?.SetVector4(BackgroundColorUniformName, HighlightBackgroundColor);
+            if (IsHighlighted)
+                return;
 
+            IsHighlighted = true;
+
+            SetBackgroundHighlighted();
+            SetTextHighlighted();
+        }
+
+        protected virtual void Unhighlight()
+        {
+            if (!IsHighlighted)
+                return;
+
+            IsHighlighted = false;
+
+            SetBackgroundDefault();
+            SetTextDefault();
+        }
+
+        private void SetTextHighlighted()
+        {
             var text = TextComponent;
             if (text is not null)
                 text.Color = HighlightTextColor;
         }
-        protected virtual void Unhighlight()
+
+        private void SetBackgroundHighlighted()
         {
             var bg = BackgroundMaterialComponent?.Material;
-            bg?.SetVector4(BackgroundColorUniformName, DefaultBackgroundColor);
+            bg?.SetVector4(BackgroundColorUniformName, HighlightBackgroundColor);
+        }
 
+        private void SetTextDefault()
+        {
             var text = TextComponent;
             if (text is not null)
                 text.Color = DefaultTextColor;
+        }
+
+        private void SetBackgroundDefault()
+        {
+            var bg = BackgroundMaterialComponent?.Material;
+            bg?.SetVector4(BackgroundColorUniformName, DefaultBackgroundColor);
         }
     }
 }

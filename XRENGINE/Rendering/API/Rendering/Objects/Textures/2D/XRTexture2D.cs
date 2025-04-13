@@ -277,11 +277,7 @@ namespace XREngine.Rendering
         /// </summary>
         public void Resize(uint width, uint height)
         {
-            if (Width == width && 
-                Height == height)
-                return;
-
-            if (_mipmaps is null || _mipmaps.Length <= 0)
+            if (Width == width && Height == height || _mipmaps is null || _mipmaps.Length <= 0)
                 return;
 
             for (int i = 0; i < _mipmaps.Length && width > 0u && height > 0u; ++i)

@@ -5,7 +5,9 @@ using Microsoft.Build.Logging;
 using System.Text;
 using System.Xml.Linq;
 using XREngine;
+using XREngine.Core;
 using XREngine.Rendering;
+using XREngine.Scene.Components.Scripting;
 
 internal class CodeManager : XRSingleton<CodeManager>
 {
@@ -15,8 +17,8 @@ internal class CodeManager : XRSingleton<CodeManager>
     public const string LegacyProjectGuid = "FAE04EC0-301F-11D3-BF4B-00C04F79EFBC";
     public const string ModernProjectGuid = "9A19103F-16F7-4668-BE54-9A1E7A4F7556";
 
-    private bool _isGameClientInvalid = false;
-    private bool _gameFilesChanged = false;
+    private bool _isGameClientInvalid = true;
+    private bool _gameFilesChanged = true;
 
     private bool _compileOnChange = false;
     /// <summary>
@@ -170,7 +172,7 @@ internal class CodeManager : XRSingleton<CodeManager>
             CompileSolution(Config_Release, Platform_x64);
     }
 
-    private void CreateCSProj(
+    private static void CreateCSProj(
         string sourceRootFolder,
         string projectFilePath,
         string rootNamespace,
@@ -241,6 +243,7 @@ internal class CodeManager : XRSingleton<CodeManager>
             ));
 
         var project = new XDocument(new XElement("Project", content));
+        Utility.EnsureDirPathExists(projectFilePath);
         project.Save(projectFilePath);
     }
 
@@ -292,10 +295,13 @@ internal class CodeManager : XRSingleton<CodeManager>
 
     public void CompileSolution(string config = Config_Debug, string platform = Platform_AnyCPU)
     {
+        // Create a custom string logger to capture all output
+        var stringLogger = new StringLogger(LoggerVerbosity.Diagnostic);
+
         var projectCollection = new ProjectCollection();
         var buildParameters = new BuildParameters(projectCollection)
         {
-            Loggers = [new ConsoleLogger(LoggerVerbosity.Detailed)]
+            Loggers = [new ConsoleLogger(LoggerVerbosity.Detailed), stringLogger]
         };
 
         Dictionary<string, string?> props = new()
@@ -311,23 +317,88 @@ internal class CodeManager : XRSingleton<CodeManager>
             return;
         }
 
-        var buildRequest = new BuildRequestData(GetSolutionPath(), props, null, ["Build"], null);
-        var buildResult = BuildManager.DefaultBuildManager.Build(buildParameters, buildRequest);
+        BuildRequestData buildRequest = new(GetSolutionPath(), props, null, ["Build"], null);
+        BuildResult buildResult = BuildManager.DefaultBuildManager.Build(buildParameters, buildRequest);
+
+        _isGameClientInvalid = false;
 
         if (buildResult.OverallResult == BuildResultCode.Success)
         {
             Debug.Out("Build succeeded.");
-            _isGameClientInvalid = false;
+            GameCSProjLoader.Unload("GAME");
+            GameCSProjLoader.LoadFromPath("GAME", GetBinaryPath(Config_Debug, Platform_AnyCPU));
         }
         else
         {
-            Debug.Out("Build failed.");
-            foreach (var message in buildResult.ResultsByTarget.Values.SelectMany(x => x.Items))
+            Debug.Out("Build failed. Details below:");
+
+            // Display all log messages from the string logger
+            string log = stringLogger.GetFullLog();
+            Debug.Out(log);
+
+            // Extract and display errors from build result
+            foreach (var target in buildResult.ResultsByTarget.Values)
             {
-                //Debug.Out(message.ItemType.ToString());
-                Debug.Out(message.ItemSpec);
-                Debug.Out(message.GetMetadata("Message"));
+                foreach (var item in target.Items)
+                {
+                    if (item.GetMetadata("Code") is null)
+                        continue;
+                    
+                    Debug.Out($"{item.GetMetadata("Code")}: {item.GetMetadata("Message")}");
+
+                    // Include file and line information if available
+                    string file = item.GetMetadata("File") ?? string.Empty;
+                    string line = item.GetMetadata("Line") ?? string.Empty;
+                    string column = item.GetMetadata("Column") ?? string.Empty;
+
+                    if (!string.IsNullOrEmpty(file))
+                    {
+                        Debug.Out($"  at {file}:{line},{column}");
+                    }
+                }
             }
         }
+    }
+
+    // Custom logger that captures all output to a string
+    private class StringLogger(LoggerVerbosity verbosity) : ILogger
+    {
+        private readonly StringBuilder _log = new();
+
+        public void Initialize(IEventSource eventSource)
+        {
+            eventSource.ErrorRaised += (sender, e) =>
+                _log.AppendLine($"ERROR {e.Code}: {e.Message} ({e.File}:{e.LineNumber},{e.ColumnNumber})");
+
+            eventSource.WarningRaised += (sender, e) =>
+                _log.AppendLine($"WARNING {e.Code}: {e.Message} ({e.File}:{e.LineNumber},{e.ColumnNumber})");
+
+            eventSource.MessageRaised += (sender, e) =>
+                _log.AppendLine($"{e.Message}");
+        }
+
+        public string GetFullLog() => _log.ToString();
+
+        public void Shutdown() { }
+
+        public LoggerVerbosity Verbosity
+        {
+            get => verbosity;
+            set => verbosity = value;
+        }
+
+        private string? _parameters = null;
+        public string? Parameters
+        {
+            get => _parameters;
+            set => _parameters = value;
+        }
+    }
+
+    public string GetBinaryPath(string config = Config_Debug, string platform = Platform_AnyCPU)
+    {
+        string projectName = GetProjectName();
+        string outputPath = Path.Combine(Engine.Assets.LibrariesPath, projectName, "Build", config, platform);
+        return Path.Combine(outputPath, $"{projectName}.dll");
     }
 }

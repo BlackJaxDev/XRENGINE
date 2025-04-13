@@ -906,9 +906,11 @@ namespace XREngine.Rendering.OpenGL
             CaptureCurrentlyBoundFBOAttachment(region, imageCallback, format, pixelType, async);
         }
 
+        public delegate void DelImageCallback(MagickImage image, int layer, int channelIndex);
+
         public unsafe void CaptureTexture(
             BoundingRectangle region,
-            Action<MagickImage, int> imageCallback,
+            DelImageCallback imageCallback,
             uint textureBindingId,
             int mipLevel,
             int layer,
@@ -960,18 +962,18 @@ namespace XREngine.Rendering.OpenGL
                                 switch (mode)
                                 {
                                     case GLEnum.StencilIndex:
-                                        imageCallback(MakeStencilImage(pixelType, w, h, data), 0);
+                                        imageCallback(MakeStencilImage(pixelType, w, h, data), layer, 0);
                                         break;
                                     case GLEnum.DepthComponent:
-                                        imageCallback(MakeDepthImage(pixelType, w, h, data), 0);
+                                        imageCallback(MakeDepthImage(pixelType, w, h, data), layer, 0);
                                         break;
                                     default:
-                                        imageCallback(OpenGLRenderer.MakeImage(pixelFormat, pixelType, w, h, data), 0);
+                                        imageCallback(OpenGLRenderer.MakeImage(pixelFormat, pixelType, w, h, data), layer, 0);
                                         break;
                                 }
                             }
                             else
-                                imageCallback(OpenGLRenderer.MakeImage(pixelFormat, pixelType, w, h, data), 0);
+                                imageCallback(OpenGLRenderer.MakeImage(pixelFormat, pixelType, w, h, data), layer, 0);
                         }
                         Task.Run(MakeImage);
 
@@ -986,7 +988,7 @@ namespace XREngine.Rendering.OpenGL
                 {
                     Api.GetTextureSubImage(textureBindingId, mipLevel, region.X, region.Y, layer, w, h, 1, GLObjectBase.ToGLEnum(pixelFormat), GLObjectBase.ToGLEnum(pixelType), (uint)data.Length, ptr);
                 }
-                Task.Run(() => imageCallback(XRTexture.NewImage(w, h, pixelFormat, pixelType, data), 0));
+                Task.Run(() => imageCallback(XRTexture.NewImage(w, h, pixelFormat, pixelType, data), layer, 0));
             }
         }
 

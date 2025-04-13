@@ -139,7 +139,7 @@ namespace XREngine.Timers
                 await DispatchCollectVisible();
 
                 //Wait for the render thread to swap update buffers with render buffers
-                _renderDone.Wait();
+                _renderDone.Wait(-1);
                 _renderDone.Reset();
                 await DispatchSwapBuffers();
 
@@ -173,7 +173,7 @@ namespace XREngine.Timers
         public void WaitToRender()
         {
             //Wait for swapping to finish
-            _swapDone.Wait();
+            _swapDone.Wait(-1);
             _swapDone.Reset();
 
             //Suspend this thread until a render is dispatched
@@ -186,15 +186,15 @@ namespace XREngine.Timers
         public bool IsCollectVisibleDone
             => _swapDone.IsSet;
 
-        public void ResetCollectVisible()
-        {
-            _swapDone.Reset();
-        }
+        //public void ResetCollectVisible()
+        //{
+        //    _swapDone.Reset();
+        //}
 
-        public void SetRenderDone()
-        {
-            _renderDone.Set();
-        }
+        //public void SetRenderDone()
+        //{
+        //    _renderDone.Set();
+        //}
 
         public void Stop()
         {
@@ -204,19 +204,19 @@ namespace XREngine.Timers
             _renderDone?.Set();
             //_updatingDone?.Set();
 
-            UpdateTask?.Wait();
+            //UpdateTask?.Wait(-1);
             UpdateTask = null;
 
-            CollectVisibleTask?.Wait();
+            //CollectVisibleTask?.Wait(-1);
             CollectVisibleTask = null;
 
-            RenderTask?.Wait();
+            //RenderTask?.Wait(-1);
             RenderTask = null;
 
-            SingleTask?.Wait();
+            //SingleTask?.Wait(-1);
             SingleTask = null;
 
-            FixedUpdateTask?.Wait();
+            //FixedUpdateTask?.Wait(-1);
             FixedUpdateTask = null;
         }
 

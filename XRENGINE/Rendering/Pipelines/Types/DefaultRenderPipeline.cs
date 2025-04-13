@@ -19,19 +19,19 @@ public class DefaultRenderPipeline : RenderPipeline
     private readonly FarToNearRenderCommandSorter _farToNearSorter = new();
 
     private string BrightPassShaderName() => 
-        Stereo ? "BrightPassStereo.fs" : 
+        //Stereo ? "BrightPassStereo.fs" : 
         "BrightPass.fs";
 
     private string HudFBOShaderName() => 
-        Stereo ? "HudFBOStereo.fs" : 
+        //Stereo ? "HudFBOStereo.fs" : 
         "HudFBO.fs";
 
     private string PostProcessShaderName() => 
-        Stereo ? "PostProcessStereo.fs" : 
+        //Stereo ? "PostProcessStereo.fs" : 
         "PostProcess.fs";
 
     private string DeferredLightCombineShaderName() => 
-        Stereo ? "DeferredLightCombineStereo.fs" : 
+        //Stereo ? "DeferredLightCombineStereo.fs" : 
         "DeferredLightCombine.fs";
 
     /// <summary>

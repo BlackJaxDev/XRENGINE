@@ -1,4 +1,6 @@
-﻿namespace XREngine.Editor.UI.Toolbar;
+﻿using XREngine.Rendering.UI;
+
+namespace XREngine.Editor.UI.Toolbar;
 
 public class ToolbarDropdown : ToolbarItemBase
 {
@@ -39,5 +41,15 @@ public class ToolbarDropdown : ToolbarItemBase
     protected void OnOptionSelected(int index)
     {
         OptionSelected?.Invoke(this, index, Options[index]);
+    }
+
+    public override void OnInteracted(UIInteractableComponent component)
+    {
+
+    }
+
+    public override void OnCancelInteraction(UIInteractableComponent component)
+    {
+
     }
 }

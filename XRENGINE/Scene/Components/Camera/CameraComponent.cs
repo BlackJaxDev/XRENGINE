@@ -115,8 +115,15 @@ namespace XREngine.Components
         /// Creates a new pawn component and uses this camera as the view via being a sibling component.
         /// </summary>
         /// <param name="playerIndex"></param>
-        public void SetAsPlayerView(ELocalPlayerIndex playerIndex)
-            => SceneNode.AddComponent<PawnComponent>()?.EnqueuePossessionByLocalPlayer(playerIndex);
+        public PawnComponent SetAsPlayerView(ELocalPlayerIndex playerIndex)
+        {
+            if (!SceneNode.TryGetComponent<PawnComponent>(out var pawn) || pawn is null)
+                pawn = SceneNode.AddComponent<PawnComponent>()!;
+            
+            pawn.EnqueuePossessionByLocalPlayer(playerIndex);
+            return pawn;
+        }
+
         /// <summary>
         /// Helper method to set this camera as the view of the player with the given index.
         /// Creates a new pawn component of the given type and uses this camera as the view via being a sibling component.

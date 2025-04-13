@@ -27,21 +27,33 @@ public partial class EditorPanel : XRComponent
         set => _backgroundMaterial = value;
     }
 
-    private static XRMaterial MakeBackgroundMaterial()
+    public static XRMaterial MakeBackgroundMaterial()
     {
-        var bgShader = ShaderHelper.UnlitColorFragForward()!; //ShaderHelper.LoadEngineShader("UI\\GrabpassGaussian.frag");
+        var bgShader = ShaderHelper.LoadEngineShader("UI\\GrabpassGaussian.frag");
         ShaderVar[] parameters =
         [
-            new ShaderVector4(new ColorF4(1.0f, 0.0f, 0.0f, 1.0f), "MatColor"),
-            //new ShaderFloat(10.0f, "BlurStrength"),
-            //new ShaderInt(30, "SampleCount"),
+            new ShaderVector4(new ColorF4(66/255.0f, 79/255.0f, 78/255.0f, 1.0f), "MatColor"),
+            new ShaderFloat(10.0f, "BlurStrength"),
+            new ShaderInt(15, "SampleCount"),
         ];
-        //XRTexture2D grabTex = XRTexture2D.CreateGrabPassTextureResized(1.0f, EReadBufferMode.Front, true, false, false, false);
-        var bgMat = new XRMaterial(parameters, [/*grabTex*/], bgShader);
-        bgMat.RenderOptions.CullMode = ECullMode.None;
-        //bgMat.RenderOptions.RequiredEngineUniforms = EUniformRequirements.Camera;
-        bgMat.RenderPass = (int)EDefaultRenderPass.TransparentForward;
+        XRTexture2D grabTex = XRTexture2D.CreateGrabPassTextureResized(1.0f, EReadBufferMode.Front, true, false, false, false);
+        var bgMat = new XRMaterial(parameters, [grabTex], bgShader)
+        {
+            RenderPass = (int)EDefaultRenderPass.OpaqueForward,
+            RenderOptions = RenderParameters
+        };
         //bgMat.EnableTransparency();
         return bgMat;
     }
+    private static RenderingParameters RenderParameters { get; } = new()
+    {
+        CullMode = ECullMode.None,
+        DepthTest = new()
+        {
+            Enabled = ERenderParamUsage.Disabled,
+            Function = EComparison.Always
+        },
+        RequiredEngineUniforms = EUniformRequirements.ViewportDimensions,
+        BlendModeAllDrawBuffers = BlendMode.EnabledTransparent(),
+    };
 }

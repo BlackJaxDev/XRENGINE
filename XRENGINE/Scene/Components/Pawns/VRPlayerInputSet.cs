@@ -2,7 +2,10 @@
 using System.Numerics;
 using XREngine.Core.Attributes;
 using XREngine.Data.Components.Scene;
+using XREngine.Data.Rendering;
 using XREngine.Input.Devices;
+using XREngine.Rendering.Commands;
+using XREngine.Rendering.Info;
 using XREngine.Rendering.Physics.Physx;
 using XREngine.Rendering.Physics.Physx.Joints;
 using XREngine.Scene.Transforms;
@@ -14,7 +17,7 @@ namespace XREngine.Components
     /// Normal keyboard, mouse and gamepad input is available both on desktop and in VR to allow for special VR control setups.
     /// </summary>
     [RequireComponents(typeof(CharacterPawnComponent))]
-    public class VRPlayerInputSet : OptionalInputSetComponent
+    public class VRPlayerInputSet : OptionalInputSetComponent, IRenderable
     {
         public CharacterPawnComponent CharacterPawn => GetSiblingComponent<CharacterPawnComponent>(true)!;
 
@@ -138,16 +141,41 @@ namespace XREngine.Components
         }
 
         private bool _springEnabled = true;
+
+        public VRPlayerInputSet()
+        {
+            RenderedObjects = [RenderInfo3D.New(this, new RenderCommandMethod3D(EDefaultRenderPass.PostRender, PostRender))];
+        }
+
+        private bool _screenshotRequested = false;
+        private void PostRender()
+        {
+            if (Engine.Rendering.State.IsStereoPass && _screenshotRequested)
+            {
+                _screenshotRequested = false;
+
+                var pipeline = Engine.Rendering.State.CurrentRenderingPipeline;
+                if (pipeline is null)
+                    return;
+
+                string desktop = Environment.GetFolderPath(Environment.SpecialFolder.DesktopDirectory);
+                string capturePath = Path.Combine(desktop, $"{pipeline.GetType().Name}_{DateTime.Now:yyyy-MM-dd_HH-mm-ss}");
+                pipeline.CaptureAllTextures(capturePath);
+            }
+        }
+
         public bool SpringEnabled
         {
             get => _springEnabled;
             set => SetField(ref _springEnabled, value);
         }
-        
+
+        public RenderInfo[] RenderedObjects { get; }
+
         public delegate void DelPauseToggled(bool leftHand);
         public event DelPauseToggled? PauseToggled;
 
-        public event Action<bool> MuteToggled;
+        public event Action<bool>? MuteToggled;
 
         public enum EVRActionCategory
         {
@@ -200,6 +228,12 @@ namespace XREngine.Components
             input.RegisterVRFloatAction(EVRActionCategory.Global, EVRGameAction.GrabRight, GrabRight);
             input.RegisterVRBoolAction(EVRActionCategory.Global, EVRGameAction.ToggleQuickMenu, ToggleQuickMenu);
             input.RegisterVRBoolAction(EVRActionCategory.Global, EVRGameAction.ToggleMute, ToggleMute);
+            input.RegisterKeyEvent(EKey.S, EButtonInputType.Pressed, Screenshot);
+        }
+
+        private void Screenshot()
+        {
+            _screenshotRequested = true;
         }
 
         private void ToggleMute(bool enabled)

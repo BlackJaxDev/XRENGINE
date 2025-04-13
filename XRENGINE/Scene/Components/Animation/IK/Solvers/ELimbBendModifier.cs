@@ -6,10 +6,26 @@
     [Serializable]
     public enum ELimbBendModifier
     {
-        Animation, // Bending relative to the animated rotation of the first bone
-        Target, // Bending relative to IKRotation
-        Parent, // Bending relative to parentBone
-        Arm, // Arm modifier tries to find the most biometrically natural and relaxed arm bend plane
-        Goal // Use the bend goal Transform
+        /// <summary>
+        /// Bending relative to the animated rotation of the first bone.
+        /// </summary>
+        Animation,
+        /// <summary>
+        /// Bending relative to the IK target transform's rotation / IKRotation.
+        /// </summary>
+        Target,
+        /// <summary>
+        /// Bending relative to the parent bone's rotation.
+        /// </summary>
+        Parent,
+        /// <summary>
+        /// Determines the bend direction based on the arm's natural bend direction.
+        /// </summary>
+        Arm,
+        /// <summary>
+        /// Uses bend goal transform to determine the bend direction.
+        /// For example, a knee or elbow target transform.
+        /// </summary>
+        Goal
     }
 }

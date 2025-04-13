@@ -526,11 +526,13 @@ namespace XREngine.Rendering.Physics.Physx
         {
             if (!Engine.Rendering.State.DebugInstanceRenderingAvailable)
                 return null;
-
+            
             try
             {
                 XRShader vertShader = ShaderHelper.LoadEngineShader(Path.Combine("Common", "Debug", "InstancedDebugPrimitive.vs"), EShaderType.Vertex);
-                XRShader stereoVertShader = ShaderHelper.LoadEngineShader(Path.Combine("Common", "Debug", "InstancedDebugPrimitiveStereo.vs"), EShaderType.Vertex);
+                XRShader stereoMV2VertShader = ShaderHelper.LoadEngineShader(Path.Combine("Common", "Debug", "InstancedDebugPrimitiveStereoMV2.vs"), EShaderType.Vertex);
+                XRShader stereoNVVertShader = ShaderHelper.LoadEngineShader(Path.Combine("Common", "Debug", "InstancedDebugPrimitiveStereoNV.vs"), EShaderType.Vertex);
+
                 XRShader geomShader = ShaderHelper.LoadEngineShader(Path.Combine("Common", "Debug", "PointInstance.gs"), EShaderType.Geometry);
                 XRShader fragShader = ShaderHelper.LoadEngineShader(Path.Combine("Common", "Debug", "InstancedDebugPrimitivePoint.fs"), EShaderType.Fragment);
                 ShaderVar[] vars =
@@ -538,7 +540,7 @@ namespace XREngine.Rendering.Physics.Physx
                     new ShaderFloat(PointSize, "PointSize"),
                     new ShaderInt(0, "TotalPoints"),
                 ];
-                var mat = new XRMaterial(vars, vertShader, stereoVertShader, geomShader, fragShader);
+                var mat = new XRMaterial(vars, vertShader, stereoMV2VertShader, stereoNVVertShader, geomShader, fragShader);
                 mat.RenderOptions.RequiredEngineUniforms = EUniformRequirements.Camera;
                 mat.RenderOptions.CullMode = ECullMode.None;
                 mat.RenderOptions.DepthTest.Enabled = ERenderParamUsage.Disabled;
@@ -561,6 +563,9 @@ namespace XREngine.Rendering.Physics.Physx
             try
             {
                 XRShader vertShader = ShaderHelper.LoadEngineShader(Path.Combine("Common", "Debug", "InstancedDebugPrimitive.vs"), EShaderType.Vertex);
+                XRShader stereoMV2VertShader = ShaderHelper.LoadEngineShader(Path.Combine("Common", "Debug", "InstancedDebugPrimitiveStereoMV2.vs"), EShaderType.Vertex);
+                XRShader stereoNVVertShader = ShaderHelper.LoadEngineShader(Path.Combine("Common", "Debug", "InstancedDebugPrimitiveStereoNV.vs"), EShaderType.Vertex);
+
                 XRShader geomShader = ShaderHelper.LoadEngineShader(Path.Combine("Common", "Debug", "LineInstance.gs"), EShaderType.Geometry);
                 XRShader fragShader = ShaderHelper.LoadEngineShader(Path.Combine("Common", "Debug", "InstancedDebugPrimitive.fs"), EShaderType.Fragment);
                 ShaderVar[] vars =
@@ -568,7 +573,7 @@ namespace XREngine.Rendering.Physics.Physx
                     new ShaderFloat(LineWidth, "LineWidth"),
                     new ShaderInt(0, "TotalLines"),
                 ];
-                var mat = new XRMaterial(vars, vertShader, geomShader, fragShader);
+                var mat = new XRMaterial(vars, vertShader, stereoMV2VertShader, stereoNVVertShader, geomShader, fragShader);
                 mat.RenderOptions.RequiredEngineUniforms = EUniformRequirements.Camera;
                 mat.RenderOptions.CullMode = ECullMode.None;
                 mat.RenderOptions.DepthTest.Enabled = ERenderParamUsage.Disabled;
@@ -591,13 +596,16 @@ namespace XREngine.Rendering.Physics.Physx
             try
             {
                 XRShader vertShader = ShaderHelper.LoadEngineShader(Path.Combine("Common", "Debug", "InstancedDebugPrimitive.vs"), EShaderType.Vertex);
+                XRShader stereoMV2VertShader = ShaderHelper.LoadEngineShader(Path.Combine("Common", "Debug", "InstancedDebugPrimitiveStereoMV2.vs"), EShaderType.Vertex);
+                XRShader stereoNVVertShader = ShaderHelper.LoadEngineShader(Path.Combine("Common", "Debug", "InstancedDebugPrimitiveStereoNV.vs"), EShaderType.Vertex);
+
                 XRShader geomShader = ShaderHelper.LoadEngineShader(Path.Combine("Common", "Debug", "TriangleInstance.gs"), EShaderType.Geometry);
                 XRShader fragShader = ShaderHelper.LoadEngineShader(Path.Combine("Common", "Debug", "InstancedDebugPrimitive.fs"), EShaderType.Fragment);
                 ShaderVar[] vars =
                 [
                     new ShaderInt(0, "TotalTriangles"),
-            ];
-                var mat = new XRMaterial(vars, vertShader, geomShader, fragShader);
+                ];
+                var mat = new XRMaterial(vars, vertShader, stereoMV2VertShader, stereoNVVertShader, geomShader, fragShader);
                 mat.RenderOptions.RequiredEngineUniforms = EUniformRequirements.Camera;
                 mat.RenderOptions.CullMode = ECullMode.None;
                 mat.RenderOptions.DepthTest.Enabled = ERenderParamUsage.Disabled;

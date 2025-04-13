@@ -69,9 +69,42 @@ public abstract class RenderPipeline : XRBase
         => (uint)State.WindowViewport!.Height;
 
     protected static bool NeedsRecreateTextureInternalSize(XRTexture t)
-        => t is XRTexture2D t2d && (t2d.Width != InternalWidth || t2d.Height != InternalHeight);
+    {
+        uint w = InternalWidth;
+        uint h = InternalHeight;
+        switch (t)
+        {
+            case XRTexture2D t2d:
+                return t2d.Width != w || t2d.Height != h;
+            case XRTexture2DArray t2da:
+                return t2da.Width != w || t2da.Height != h;
+            case XRTexture2DView:
+            case XRTexture2DArrayView:
+                return false;
+            default:
+                Debug.LogWarning($"Texture {t.Name} is not a 2D or 2DArray texture. Cannot resize.");
+                return false;
+        }
+    }
+
     protected static bool NeedsRecreateTextureFullSize(XRTexture t)
-        => t is XRTexture2D t2d && (t2d.Width != FullWidth || t2d.Height != FullHeight);
+    {
+        uint w = FullWidth;
+        uint h = FullHeight;
+        switch (t)
+        {
+            case XRTexture2D t2d:
+                return t2d.Width != w || t2d.Height != h;
+            case XRTexture2DArray t2da:
+                return t2da.Width != w || t2da.Height != h;
+            case XRTexture2DView:
+            case XRTexture2DArrayView:
+                return false;
+            default:
+                Debug.LogWarning($"Texture {t.Name} is not a 2D or 2DArray texture. Cannot resize.");
+                return false;
+        }
+    }
 
     protected static void ResizeTextureInternalSize(XRTexture t)
     {
@@ -82,6 +115,18 @@ public abstract class RenderPipeline : XRBase
                     t2d.Resize(InternalWidth, InternalHeight);
                 else
                     t2d.Destroy();
+                break;
+            case XRTexture2DArray t2da:
+                if (t2da.Resizable)
+                    t2da.Resize(InternalWidth, InternalHeight);
+                else
+                    t2da.Destroy();
+                break;
+            case XRTexture2DView:
+            case XRTexture2DArrayView:
+                break;
+            default:
+                Debug.LogWarning($"Texture {t.Name} is not a 2D or 2DArray texture. Cannot resize.");
                 break;
         }
     }
@@ -94,6 +139,18 @@ public abstract class RenderPipeline : XRBase
                     t2d.Resize(FullWidth, FullHeight);
                 else
                     t2d.Destroy();
+                break;
+            case XRTexture2DArray t2da:
+                if (t2da.Resizable)
+                    t2da.Resize(FullWidth, FullHeight);
+                else
+                    t2da.Destroy();
+                break;
+            case XRTexture2DView:
+            case XRTexture2DArrayView:
+                break;
+            default:
+                Debug.LogWarning($"Texture {t.Name} is not a 2D or 2DArray texture. Cannot resize.");
                 break;
         }
     }

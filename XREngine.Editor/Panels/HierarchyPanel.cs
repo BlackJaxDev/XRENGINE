@@ -1,5 +1,6 @@
 ﻿using System.Numerics;
 using XREngine.Data.Colors;
+using XREngine.Editor.UI;
 using XREngine.Rendering;
 using XREngine.Rendering.UI;
 using XREngine.Scene;
@@ -8,7 +9,12 @@ namespace XREngine.Editor;
 
 public partial class HierarchyPanel : EditorPanel
 {
-    public List<SceneNode> RootNodes { get; set; } = [];
+    private List<SceneNode> _rootNodes = [];
+    public List<SceneNode> RootNodes
+    {
+        get => _rootNodes;
+        set => SetField(ref _rootNodes, value);
+    }
 
     private const float Margin = 4.0f;
 
@@ -61,7 +67,7 @@ public partial class HierarchyPanel : EditorPanel
     private void CreateTree(SceneNode parentNode, HierarchyPanel hierarchyPanel)
     {
         var listNode = parentNode.NewChild<UIMaterialComponent>(out var menuMat);
-        menuMat.Material = BackgroundMaterial;
+        menuMat.Material = MakeBackgroundMaterial();
         var listTfm = listNode.SetTransform<UIListTransform>();
         listTfm.DisplayHorizontal = false;
         listTfm.ItemSpacing = 0;
@@ -79,6 +85,7 @@ public partial class HierarchyPanel : EditorPanel
         foreach (SceneNode node in copy)
         {
             var buttonNode = listNode.NewChild<UIButtonComponent, UIMaterialComponent>(out var button, out var background);
+            EditorUI.Styles.UpdateButton(button);
             button.Name = node.Name;
 
             var mat = XRMaterial.CreateUnlitColorMaterialForward(ColorF4.Transparent);

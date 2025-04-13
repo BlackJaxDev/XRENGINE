@@ -473,8 +473,8 @@ namespace XREngine.Scene.Components.Animation
                     if (animator != null && animator.IsActive)
                     {
                         // Rotate root around animator.pivotPosition
-                        Vector3 pivot = animator.applyRootMotion
-                            ? animator.pivotPosition
+                        Vector3 pivot = animator.ApplyRootMotion
+                            ? animator.PivotPosition
                             : animator.Transform.WorldTranslation;
                         Vector3 dir = rootBone._solverPosition - pivot;
                         rootBone._solverPosition = pivot + fix.Rotate(dir);

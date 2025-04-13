@@ -69,8 +69,11 @@ namespace XREngine.Animation
         //    _values[8].Weight = weights[8];
         //}
 
-        public void UpdateSkeleton(HumanoidComponent skeleton)
+        public void UpdateSkeleton(HumanoidComponent? skeleton)
         {
+            if (skeleton is null)
+                return;
+
             Transform? bone = skeleton.GetBoneByName(_name);
             if (bone != null)
                 UpdateState(bone.FrameState, bone.BindState);

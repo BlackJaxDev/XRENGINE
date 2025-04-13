@@ -138,11 +138,11 @@ namespace XREngine.Scene.Transforms
         /// <summary>
         /// This scalar is multiplied by the distance from the camera to scale the billboard.
         /// </summary>
-        private float _distanceScalar = 1.0f;
-        public float ScaleReferenceDistance
+        private float _distanceScale = 1.0f;
+        public float DistanceScale
         {
-            get => _distanceScalar;
-            set => SetField(ref _distanceScalar, value);
+            get => _distanceScale;
+            set => SetField(ref _distanceScale, value);
         }
 
         protected override bool OnPropertyChanging<T>(string? propName, T field, T @new)
@@ -167,7 +167,7 @@ namespace XREngine.Scene.Transforms
             {
                 case nameof(Perspective):
                 case nameof(ScaleByDistance):
-                case nameof(ScaleReferenceDistance):
+                case nameof(DistanceScale):
                     MarkWorldModified();
                     break;
 
@@ -201,7 +201,7 @@ namespace XREngine.Scene.Transforms
 
         private void CameraMoved(TransformBase @base)
         {
-            RecalcWorld(true);
+            RecalcWorld();
         }
 
         protected override Matrix4x4 CreateLocalMatrix()
@@ -267,7 +267,7 @@ namespace XREngine.Scene.Transforms
             if (ScaleByDistance)
             {
                 float distance = pos.Distance(cameraPos);
-                float scale = distance / ScaleReferenceDistance;
+                float scale = distance * DistanceScale;
                 worldMtx = Matrix4x4.CreateScale(scale) * worldMtx;
             }
 

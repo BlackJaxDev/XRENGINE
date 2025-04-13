@@ -36,7 +36,7 @@ namespace XREngine.Data.Components
                 DepthTest = new DepthTest()
                 {
                     Enabled = ERenderParamUsage.Enabled,
-                    Function = EComparison.Less,
+                    Function = XREngine.Rendering.Models.Materials.EComparison.Less,
                     UpdateDepth = true,
                 },
                 //Don't write to the color buffer, only the stencil buffer
@@ -55,7 +55,7 @@ namespace XREngine.Data.Components
 
         private static StencilTestFace MirrorStencil() => new()
         {
-            Function = EComparison.Always, //Always pass and increment
+            Function = XREngine.Rendering.Models.Materials.EComparison.Always, //Always pass and increment
             BothFailOp = EStencilOp.Keep, //Keep the current value if depth test fails and the mesh doesn't render
             StencilPassDepthFailOp = EStencilOp.Keep, //Keep the current value if depth test fails and the mesh doesn't render
             BothPassOp = EStencilOp.Incr, //Increment the stencil buffer value if depth test passes and the mesh renders

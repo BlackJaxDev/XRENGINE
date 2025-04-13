@@ -1,5 +1,4 @@
 ﻿using Silk.NET.OpenGL;
-using Silk.NET.OpenGL.Extensions.OVR;
 using System.Numerics;
 using XREngine.Data.Colors;
 using XREngine.Data.Core;
@@ -205,9 +204,9 @@ namespace XREngine.Rendering.OpenGL
         protected internal override void PostGenerated()
             => Invalidate();
 
-        public void AttachToFBO(XRFrameBuffer fbo, EFrameBufferAttachment attachment, int mipLevel = 0)
+        public virtual void AttachToFBO(XRFrameBuffer fbo, EFrameBufferAttachment attachment, int mipLevel = 0)
             => Api.NamedFramebufferTexture(Renderer.GenericToAPI<GLFrameBuffer>(fbo)!.BindingId, ToGLEnum(attachment), BindingId, mipLevel);
-        public void DetachFromFBO(XRFrameBuffer fbo, EFrameBufferAttachment attachment, int mipLevel = 0)
+        public virtual void DetachFromFBO(XRFrameBuffer fbo, EFrameBufferAttachment attachment, int mipLevel = 0)
             => Api.NamedFramebufferTexture(Renderer.GenericToAPI<GLFrameBuffer>(fbo)!.BindingId, ToGLEnum(attachment), 0, mipLevel);
 
         public void AttachToFBO_OVRMultiView(XRFrameBuffer fbo, EFrameBufferAttachment attachment, int mipLevel, int offset, uint numViews)

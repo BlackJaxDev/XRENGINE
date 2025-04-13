@@ -400,9 +400,11 @@ namespace XREngine.Scene.Components.Animation
         {
             var root = chain[0];
             var rootTfm = root.Transform;
-
-            rootTfm!.Parent?.RecalculateMatrices();
-            rootTfm!.Parent?.RecalculateInverseMatrices();
+            if (rootTfm is null)
+                return;
+            
+            //rootTfm!.Parent?.RecalculateMatrices();
+            //rootTfm!.Parent?.RecalculateInverseMatrices();
             rootTfm.SetWorldTranslation(root.WorldPosSolve);
 
             for (int i = 1; i < chain.Length; i++)
@@ -436,11 +438,11 @@ namespace XREngine.Scene.Components.Animation
                 //Get the direction from parent to child
                 //Get the delta rotation between the two world-space vectors
                 //Add the delta rotation to the parent's current world rotation
-                pTfm.Parent?.RecalculateMatrices();
-                pTfm.Parent?.RecalculateInverseMatrices();
-                pTfm.RecalculateMatrices();
-                pTfm.RecalculateInverseMatrices();
-                pTfm.AddWorldRotationDelta(XRMath.RotationBetweenVectors(pTfm.TransformVector(cTfm.Translation), child.WorldPosSolve - parent.WorldPosSolve));
+                //pTfm.Parent?.RecalculateMatrices();
+                //pTfm.Parent?.RecalculateInverseMatrices();
+                //pTfm.RecalculateMatrices();
+                //pTfm.RecalculateInverseMatrices();
+                pTfm.AddWorldRotationDelta(XRMath.RotationBetweenVectors(pTfm.TransformDirection(cTfm.Translation), child.WorldPosSolve - parent.WorldPosSolve));
             }
         }
 

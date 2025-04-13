@@ -217,13 +217,13 @@ namespace XREngine.Rendering
         private static async Task RecalcTransformsSequential(IEnumerable<TransformBase> bag)
         {
             foreach (var transform in bag)
-                await transform.RecalculateMatrixHeirarchy(false, false, false);
+                await transform.RecalculateMatrixHeirarchy(true, false, false);
         }
 
         private static async Task RecalcTransformsParallelTasks(IEnumerable<TransformBase> bag)
         {
             Task Calc(TransformBase tfm)
-                => tfm.RecalculateMatrixHeirarchy(false, false, true);
+                => tfm.RecalculateMatrixHeirarchy(true, false, true);
 
             Task AsCalcTask(TransformBase tfm)
             {

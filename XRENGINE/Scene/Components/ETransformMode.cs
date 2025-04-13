@@ -1,6 +1,6 @@
 ﻿namespace XREngine.Actors.Types
 {
-    public enum ETransformType
+    public enum ETransformMode
     {
         Scale,
         Rotate,

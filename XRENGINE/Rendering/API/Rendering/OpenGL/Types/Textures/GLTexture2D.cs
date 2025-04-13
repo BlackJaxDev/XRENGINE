@@ -182,11 +182,11 @@ namespace XREngine.Rendering.OpenGL
                 fullPush = info!.NeedsFullPush;
             }
 
-            if (data is null || data.Length == 0)
-                PushWithNoData(glTarget, i, Data.Width >> i, Data.Height >> i, pixelFormat, pixelType, internalPixelFormat, fullPush);
-            else
+            if ((data is not null && data.Length > 0) || pbo is not null)
                 PushWithData(glTarget, i, mip!.Width, mip.Height, pixelFormat, pixelType, internalPixelFormat, data, pbo, fullPush);
-            
+            else
+                PushWithNoData(glTarget, i, Data.Width >> i, Data.Height >> i, pixelFormat, pixelType, internalPixelFormat, fullPush);
+
             if (info != null)
             {
                 info.NeedsFullPush = false;
@@ -224,7 +224,7 @@ namespace XREngine.Rendering.OpenGL
         /// <param name="pixelFormat"></param>
         /// <param name="pixelType"></param>
         /// <param name="internalPixelFormat"></param>
-        /// <param name="bmp"></param>
+        /// <param name="data"></param>
         /// <param name="fullPush"></param>
         private unsafe void PushWithData(
             GLEnum glTarget,
@@ -234,7 +234,7 @@ namespace XREngine.Rendering.OpenGL
             GLEnum pixelFormat,
             GLEnum pixelType,
             InternalFormat internalPixelFormat,
-            DataSource? bmp,
+            DataSource? data,
             XRDataBuffer? pbo,
             bool fullPush)
         {
@@ -245,35 +245,29 @@ namespace XREngine.Rendering.OpenGL
             // the data ptr is treated as a byte offset into the buffer object's data store.
             if (!fullPush || StorageSet)
             {
-                if (bmp is null)
+                if (data is null)
                 {
                     pbo?.Bind();
                     Api.TexSubImage2D(glTarget, i, 0, 0, w, h, pixelFormat, pixelType, null);
                     pbo?.Unbind();
                 }
                 else
-                    Api.TexSubImage2D(glTarget, i, 0, 0, w, h, pixelFormat, pixelType, bmp.Address.Pointer);
+                    Api.TexSubImage2D(glTarget, i, 0, 0, w, h, pixelFormat, pixelType, data.Address.Pointer);
             }
+            else if (Data.MultiSample)
+            {
+                if (data is not null)
+                    Debug.LogWarning("Multisample textures do not support initial data, ignoring all mipmaps.");
+
+                Api.TexImage2DMultisample(glTarget, Data.MultiSampleCount, internalPixelFormat, w, h, Data.FixedSampleLocations);
+            }
+            else if (data is not null)
+                Api.TexImage2D(glTarget, i, internalPixelFormat, w, h, 0, pixelFormat, pixelType, data.Address.Pointer);
             else
             {
-                if (Data.MultiSample)
-                {
-                    if (bmp is not null)
-                        Debug.LogWarning("Multisample textures do not support initial data, ignoring all mipmaps.");
-
-                    Api.TexImage2DMultisample(glTarget, Data.MultiSampleCount, internalPixelFormat, w, h, Data.FixedSampleLocations);
-                }
-                else
-                {
-                    if (bmp is not null)
-                        Api.TexImage2D(glTarget, i, internalPixelFormat, w, h, 0, pixelFormat, pixelType, bmp.Address.Pointer);
-                    else
-                    {
-                        pbo?.Bind();
-                        Api.TexImage2D(glTarget, i, internalPixelFormat, w, h, 0, pixelFormat, pixelType, null);
-                        pbo?.Unbind();
-                    }
-                }
+                pbo?.Bind();
+                Api.TexImage2D(glTarget, i, internalPixelFormat, w, h, 0, pixelFormat, pixelType, null);
+                pbo?.Unbind();
             }
         }
 

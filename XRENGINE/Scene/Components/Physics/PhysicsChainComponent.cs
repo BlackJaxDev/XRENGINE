@@ -87,7 +87,6 @@ public partial class PhysicsChainComponent : XRComponent, IRenderable
                 break;
         }
 
-        Transform.RecalculateMatrices();
         var translation = Transform.WorldTranslation;
         _objectScale = MathF.Abs(Transform.LossyWorldScale.X);
         _objectMove = translation - _objectPrevPosition;
@@ -96,15 +95,13 @@ public partial class PhysicsChainComponent : XRComponent, IRenderable
         for (int i = 0; i < _particleTrees.Count; ++i)
         {
             ParticleTree pt = _particleTrees[i];
-            pt.Root.RecalculateMatrices();
-            pt.RestGravity = pt.Root.TransformVector(pt.LocalGravity);
+            pt.RestGravity = pt.Root.TransformDirection(pt.LocalGravity);
 
             for (int j = 0; j < pt.Particles.Count; ++j)
             {
                 Particle p = pt.Particles[j];
                 if (p.Transform is not null)
                 {
-                    p.Transform.RecalculateMatrices();
                     p.TransformPosition = p.Transform.WorldTranslation;
                     p.TransformLocalPosition = p.Transform.LocalTranslation;
                     p.TransformLocalToWorldMatrix = p.Transform.WorldMatrix;
@@ -377,20 +374,14 @@ public partial class PhysicsChainComponent : XRComponent, IRenderable
                 if (EndLength > 0.0f)
                 {
                     TransformBase? parentParentTfm = parent.Parent;
-                    Vector3 endOffset;
-                    if (parentParentTfm != null)
-                    {
-                        endOffset = parent.InverseTransformPoint(parent.WorldTranslation * 2.0f - parentParentTfm.WorldTranslation) * EndLength;
-                    }
-                    else
-                        endOffset = new Vector3(EndLength, 0.0f, 0.0f);
+                    Vector3 endOffset = parentParentTfm != null
+                        ? parent.InverseTransformPoint(parent.WorldTranslation * 2.0f - parentParentTfm.WorldTranslation) * EndLength
+                        : new Vector3(EndLength, 0.0f, 0.0f);
                     ptcl.EndOffset = endOffset;
                 }
                 else
-                {
-                    ptcl.EndOffset = parent.InverseTransformPoint(Transform.TransformVector(EndOffset) + parent.WorldTranslation);
-                }
-                
+                    ptcl.EndOffset = parent.InverseTransformPoint(Transform.TransformDirection(EndOffset) + parent.WorldTranslation);
+                                
                 ptcl.Position = ptcl.PrevPosition = parent.TransformPoint(ptcl.EndOffset);
             }
             ptcl.InitLocalPosition = Vector3.Zero;
@@ -441,8 +432,7 @@ public partial class PhysicsChainComponent : XRComponent, IRenderable
 
     private void UpdateParameters(ParticleTree pt)
     {
-        // m_LocalGravity = m_Root.InverseTransformDirection(m_Gravity);
-        pt.LocalGravity = Vector3.TransformNormal(Gravity.Normalized(), pt.RootWorldToLocalMatrix).Normalized() * Gravity.Length();
+        pt.LocalGravity = Vector3.TransformNormal(Gravity, pt.RootWorldToLocalMatrix);
 
         for (int i = 0; i < pt.Particles.Count; ++i)
         {

@@ -87,11 +87,8 @@ namespace XREngine.Rendering.Shaders.Generator
                 //Transform position, normals and tangents
                 WriteMeshTransforms(Mesh.HasSkinning && Engine.Rendering.Settings.AllowSkinning);
                 if (UseNVStereo)
-                {
                     Line("gl_Layer = 0;");
-                    Line("gl_SecondaryViewportMaskNV[0] = 1;");
-                }
-
+                
                 WriteColorOutputs();
                 WriteTexCoordOutputs();
             }
@@ -104,8 +101,8 @@ namespace XREngine.Rendering.Shaders.Generator
         private void WriteOutputs()
         {
             if (UseNVStereo)
-                Line("layout(viewport_relative, secondary_view_offset = 1) out highp int gl_Layer;"); //Apply secondary view offset to the layer output
-
+                Line("layout(secondary_view_offset = 1) out highp int gl_Layer;"); //Apply secondary view offset to the layer output
+            
             WriteOutVar(0, EShaderVarType._vec3, FragPosName);
 
             if (Mesh.HasNormals)

@@ -151,11 +151,11 @@ namespace XREngine.Scene.Components.Animation
         /// <param name="direction"></param>
         /// <param name="axis"></param>
         [Serializable]
-        public struct AxisDirection(Vector3 direction, Vector3 axis)
+        public class AxisDirection(Vector3 direction, Vector3 axis)
         {
-            public Vector3 direction = direction.Normalized();
-            public Vector3 axis = axis.Normalized();
-            public float dot = 0;
+            public Vector3 Direction { get; } = direction.Normalized();
+            public Vector3 Axis { get; } = axis.Normalized();
+            public float Dot { get; set; } = 0;
         }
 
         public IKSolverLimb() { }
@@ -191,10 +191,21 @@ namespace XREngine.Scene.Components.Animation
         /// <param name="axisDirections"></param>
         private static void AssignArmAxisDirs(ref AxisDirection[] axisDirections)
         {
-            axisDirections[0] = new AxisDirection(Vector3.Zero, new Vector3(-1f, 0f, 0f)); // default
-            axisDirections[1] = new AxisDirection(new Vector3(0.5f, 0f, -0.2f), new Vector3(-0.5f, -1f, 1f)); // behind head
-            axisDirections[2] = new AxisDirection(new Vector3(-0.5f, -1f, -0.2f), new Vector3(0f, 0.5f, -1f)); // arm twist
-            axisDirections[3] = new AxisDirection(new Vector3(-0.5f, -0.5f, 1f), new Vector3(-1f, -1f, -1f)); // cross heart
+            axisDirections[0] = new AxisDirection(
+                Vector3.Zero,
+                new Vector3(-1f, 0f, 0f)); // default
+
+            axisDirections[1] = new AxisDirection(
+                new Vector3(0.5f, 0f, -0.2f),
+                new Vector3(-0.5f, -1f, 1f)); // behind head
+
+            axisDirections[2] = new AxisDirection(
+                new Vector3(-0.5f, -1f, -0.2f),
+                new Vector3(0f, 0.5f, -1f)); // arm twist
+
+            axisDirections[3] = new AxisDirection(
+                new Vector3(-0.5f, -0.5f, 1f),
+                new Vector3(-1f, -1f, -1f)); // cross heart
         }
 
         private Vector3 GetModifiedBendNormal()
@@ -257,34 +268,33 @@ namespace XREngine.Scene.Components.Animation
                         Vector3 direction = (GetWorldIKPosition() - _bone1._transform.WorldTranslation).Normalized();
 
                         //Convert direction to default world space
-                        direction = Vector3.Transform(direction, Quaternion.Inverse(_bone1._transform.Parent.WorldRotation * Quaternion.Inverse(_parentDefaultRotation)));
+                        var localToParentRot = _bone1._transform.Parent.WorldRotation * Quaternion.Inverse(_parentDefaultRotation);
+                        direction = Vector3.Transform(direction, Quaternion.Inverse(localToParentRot));
 
                         //Invert direction for left hand
                         if (_goal == ELimbEndEffector.LeftHand)
                             direction.X = -direction.X;
 
                         //Calculate dot products for all AxisDirections
-                        for (int i = 1; i < ArmAxisDirections.Length; i++)
+                        var armDirs = ArmAxisDirections;
+                        for (int i = 1; i < armDirs.Length; i++)
                         {
-                            ArmAxisDirections[i].dot = (Vector3.Dot(ArmAxisDirections[i].direction, direction)).Clamp(0.0f, 1.0f);
-                            ArmAxisDirections[i].dot = Interp.Float(ArmAxisDirections[i].dot, EFloatInterpolationMode.InOutQuintic);
+                            var armDir = armDirs[i];
+                            float dot = Vector3.Dot(armDir.Direction, direction).Clamp(0.0f, 1.0f);
+                            armDir.Dot = Interp.Float(dot, EFloatInterpolationMode.InOutQuintic);
                         }
 
-                        // Summing up the arm bend axis
-                        Vector3 sum = ArmAxisDirections[0].axis;
+                        //Sum up the arm bend axis
+                        Vector3 sum = armDirs[0].Axis;
+                        for (int i = 1; i < armDirs.Length; i++)
+                            sum = XRMath.Slerp(sum, armDirs[i].Axis, armDirs[i].Dot);
 
-                        for (int i = 1; i < ArmAxisDirections.Length; i++)
-                            sum = XRMath.Slerp(sum, ArmAxisDirections[i].axis, ArmAxisDirections[i].dot);
-
-                        // Inverting sum for left hand
+                        //Invert sum for left hand
                         if (_goal == ELimbEndEffector.LeftHand)
-                        {
-                            sum.X = -sum.X;
                             sum = -sum;
-                        }
-
+                        
                         //Convert sum back to parent space
-                        Vector3 armBendNormal = Vector3.Transform(sum, _bone1._transform.Parent.WorldRotation * Quaternion.Inverse(_parentDefaultRotation));
+                        Vector3 armBendNormal = Vector3.Transform(sum, localToParentRot);
 
                         if (weight.AlmostEqual(1.0f))
                             return armBendNormal;

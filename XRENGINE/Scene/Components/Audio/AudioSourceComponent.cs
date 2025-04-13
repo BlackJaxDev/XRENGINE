@@ -574,17 +574,13 @@ namespace XREngine.Components.Scene
             DequeueConsumedBuffers();
         }
 
-        public bool IsStereo
+        public bool IsStereo => Type switch
         {
-            get
-            {
-                return Type switch
-                {
-                    ESourceType.Static => StaticBuffer?.Stereo ?? false,
-                    _ => false,
-                };
-            }
-        }
+            ESourceType.Static => StaticBuffer?.Stereo ?? false,
+            ESourceType.Streaming => (ActiveListeners.Values.FirstOrDefault()?.CurrentStreamingBuffers?.TryPeek(out var buffer) ?? false) && (buffer?.Stereo ?? false),
+            ESourceType.Undetermined => false,
+            _ => false
+        };
 
         private bool _isDirectional = false;
         public bool IsDirectional

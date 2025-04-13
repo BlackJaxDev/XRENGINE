@@ -120,7 +120,7 @@ namespace XREngine.Rendering
             if (text is null)
                 return false;
 
-            int index = text.IndexOf($"#extension {name}", StringComparison.OrdinalIgnoreCase);
+            int index = text.IndexOf($"#extension {name}", StringComparison.InvariantCultureIgnoreCase);
             if (index == -1)
                 return false;
 
@@ -128,7 +128,7 @@ namespace XREngine.Rendering
             if (allowedBehaviors.Length == 0)
                 return true;
 
-            int end = text.IndexOf('\n', index);
+            int end = text.IndexOf('\r', index);
             if (end == -1)
                 return false;
 

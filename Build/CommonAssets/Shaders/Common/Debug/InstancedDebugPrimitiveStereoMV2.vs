@@ -14,6 +14,7 @@ out gl_PerVertex
 void main()
 {
     instanceID = gl_InstanceID;
+    
     // No vertex attributes needed
     gl_Position = vec4(0.0f);
 }

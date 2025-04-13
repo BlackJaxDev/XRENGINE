@@ -17,7 +17,7 @@ namespace XREngine.Scene.Components.Animation
         private bool _skipSolverUpdate;
         private bool _updateFrame;
         private bool _componentInitiated;
-        public bool _resetTransformsToDefault = true;
+        public bool _resetTransformsToDefault = false;
         private AnimStateMachineComponent? _animStateMachine;
 
         protected internal override void OnComponentActivated()

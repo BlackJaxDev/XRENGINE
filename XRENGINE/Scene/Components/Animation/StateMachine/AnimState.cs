@@ -7,12 +7,12 @@ namespace XREngine.Components
     public class AnimState : XRBase
     {
         private EventList<AnimStateTransition> _transitions = [];
-        private PoseGenBase? _animation;
+        private HumanoidPoseGenBase? _animation;
         private float _startSecond = 0.0f;
         private float _endSecond = 0.0f;
 
         [Browsable(false)]
-        public AnimStateMachineComponent? Owner { get; internal set; }
+        public AnimLayer? OwningLayer { get; internal set; }
 
         /// <summary>
         /// All possible transitions to move out of this state and into another state.
@@ -38,7 +38,7 @@ namespace XREngine.Components
         /// <summary>
         /// The pose retrieval animation to use to retrieve a result.
         /// </summary>
-        public PoseGenBase? Animation
+        public HumanoidPoseGenBase? Animation
         {
             get => _animation;
             set => SetField(ref _animation, value);
@@ -55,21 +55,21 @@ namespace XREngine.Components
         }
 
         public AnimState() { }
-        public AnimState(PoseGenBase animation)
+        public AnimState(HumanoidPoseGenBase animation)
         {
             Animation = animation;
         }
-        public AnimState(PoseGenBase animation, params AnimStateTransition[] transitions)
-        {
-            Animation = animation;
-            Transitions = [.. transitions];
-        }
-        public AnimState(PoseGenBase animation, List<AnimStateTransition> transitions)
+        public AnimState(HumanoidPoseGenBase animation, params AnimStateTransition[] transitions)
         {
             Animation = animation;
             Transitions = [.. transitions];
         }
-        public AnimState(PoseGenBase animation, EventList<AnimStateTransition> transitions)
+        public AnimState(HumanoidPoseGenBase animation, List<AnimStateTransition> transitions)
+        {
+            Animation = animation;
+            Transitions = [.. transitions];
+        }
+        public AnimState(HumanoidPoseGenBase animation, EventList<AnimStateTransition> transitions)
         {
             Animation = animation;
             Transitions = [.. transitions];
@@ -78,11 +78,11 @@ namespace XREngine.Components
         /// <summary>
         /// Attempts to find any transitions that evaluate to true and returns the one with the highest priority.
         /// </summary>
-        public AnimStateTransition? TryTransition()
+        public AnimStateTransition? TryTransition(IDictionary<string, AnimVar> variable)
         {
             AnimStateTransition[] transitions =
                 [.. Transitions.
-                FindAll(x => x.Condition?.Invoke() ?? false).
+                FindAll(x => x.AllConditionsValid(variable)).
                 OrderBy(x => x.Priority)];
 
             return transitions.Length > 0 ? transitions[0] : null;

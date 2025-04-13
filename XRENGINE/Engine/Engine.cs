@@ -362,8 +362,8 @@ namespace XREngine
             //TODO: clean shutdown. Each window should dispose of assets its allocated upon its own closure
 
             //ShuttingDown = true;
-            //Time.Timer.Stop();
-            //Assets.Dispose();
+            Time.Timer.Stop();
+            Assets.Dispose();
             //ShuttingDown = false;
         }
 

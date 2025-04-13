@@ -5,7 +5,7 @@ namespace XREngine.Components
     /// <summary>
     /// Retrieves a pose directly from a skeletal animation.
     /// </summary>
-    public class PoseDirect : PoseGenBase
+    public class PoseDirect : HumanoidPoseGenBase
     {
         public SkeletalAnimation? Animation { get; set; } = null;
 

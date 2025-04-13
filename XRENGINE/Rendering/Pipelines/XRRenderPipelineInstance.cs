@@ -38,6 +38,11 @@ public sealed partial class XRRenderPipelineInstance : XRBase
         set => SetField(ref _pipeline, value);
     }
 
+    /// <summary>
+    /// Captures all textures in the pipeline and saves them to the specified directory.
+    /// This method must be called from the main thread - it's recommended to use the 'PostRender' default draw pass to call this method.
+    /// </summary>
+    /// <param name="exportDirPath"></param>
     public void CaptureAllTextures(string exportDirPath)
     {
         if (AbstractRenderer.Current is not OpenGLRenderer rend)
@@ -48,24 +53,34 @@ public sealed partial class XRRenderPipelineInstance : XRBase
             if (tex.APIWrappers.FirstOrDefault(x => x is IGLTexture) is not IGLTexture apiWrapper)
                 continue;
 
-            void ProcessImage(MagickImage image, int index)
-            {
-                string name = tex.Name ?? tex.GetDescribingName();
-                if (index > 0)
-                    name += $" [{index + 1}]";
-                string fileName = $"{name}.png";
-                string filePath = Path.Combine(exportDirPath, fileName);
-                Utility.EnsureDirPathExists(exportDirPath);
-                image.Flip();
-                image.Write(filePath);
-            }
             var whd = apiWrapper.WidthHeightDepth;
             BoundingRectangle region = new(0, 0, (int)whd.X, (int)whd.Y);
             for (int i = 0; i < whd.Z; i++)
+            {
+                void ProcessImage(MagickImage image, int layer, int channelIndex)
+                {
+                    string name = tex.Name ?? tex.GetDescribingName();
+                    if (whd.Z > 1)
+                        name += $" [Layer {layer + 1}]";
+                    if (channelIndex > 0)
+                        name += $" [{channelIndex + 1}]";
+                    string fileName = $"{name}.png";
+                    string filePath = Path.Combine(exportDirPath, fileName);
+                    Utility.EnsureDirPathExists(exportDirPath);
+                    image.Flip();
+                    image.Write(filePath);
+                }
+
                 rend.CaptureTexture(region, ProcessImage, apiWrapper.BindingId, 0, i);
+            }
         }
     }
 
+    /// <summary>
+    /// Captures all framebuffers in the pipeline and saves them to the specified directory.
+    /// This method must be called from the main thread - it's recommended to use the 'PostRender' default draw pass to call this method.
+    /// </summary>
+    /// <param name="exportDirPath"></param>
     public void CaptureAllFBOs(string exportDirPath)
     {
         if (AbstractRenderer.Current is not OpenGLRenderer rend)

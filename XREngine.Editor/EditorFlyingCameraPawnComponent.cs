@@ -138,12 +138,14 @@ public partial class EditorFlyingCameraPawnComponent : FlyingCameraPawnComponent
     private readonly SortedDictionary<float, List<(RenderInfo3D item, object? data)>> _lastOctreePickResults = [];
     private PhysxScene.PhysxQueryFilter _queryFilter = new();
 
+    protected override void Tick()
+    {
+        base.Tick();
+        ApplyInput(Viewport);
+    }
+
     private void PostRender()
     {
-        var rend = AbstractRenderer.Current;
-        if (rend is null)
-            return;
-
         var vp = Viewport;
         if (vp is null)
             return;
@@ -162,28 +164,20 @@ public partial class EditorFlyingCameraPawnComponent : FlyingCameraPawnComponent
             }
         }
 
+        if (NeedsDepthHit())
+            GetDepthHit(vp, GetCursorInternalCoordinatePosition(vp));
+    }
+
+    private void ApplyInput(XRViewport? vp)
+    {
+        if (vp is null)
+            return;
+
         var cam = GetCamera();
         if (cam is null)
             return;
 
-        var input = LocalInput;
-        if (input is null)
-            return;
-
-        var pos = input?.Mouse?.CursorPosition;
-        if (pos is null)
-            return;
-
-        Vector2 p = pos.Value;
-        p.Y = vp.Height - p.Y;
-        p = vp.ScreenToViewportCoordinate(p);
-        p = vp.ViewportToInternalCoordinate(p);
-
-        if (NeedsDepthHit())
-            GetDepthHit(vp, p);
-
-        p = vp.NormalizeInternalCoordinate(p);
-        _lastRaycastSegment = vp.GetWorldSegment(p);
+        _lastRaycastSegment = GetWorldSegment(vp);
 
         SceneNode? tfmTool = TransformTool3D.InstanceNode;
         if (tfmTool is not null && tfmTool.TryGetComponent<TransformTool3D>(out var comp))
@@ -207,6 +201,32 @@ public partial class EditorFlyingCameraPawnComponent : FlyingCameraPawnComponent
         //}
 
         ApplyTransformations(vp);
+    }
+
+    private Segment GetWorldSegment(XRViewport vp)
+        => vp.GetWorldSegment(GetNormalizedCursorPosition(vp));
+
+    private Vector2 GetNormalizedCursorPosition(XRViewport vp)
+        => vp.NormalizeInternalCoordinate(GetCursorInternalCoordinatePosition(vp));
+
+    private Vector2 GetCursorInternalCoordinatePosition(XRViewport vp)
+    {
+        Vector2 p = Vector2.Zero;
+
+        var input = LocalInput;
+        if (input is null)
+            return p;
+
+        var pos = input?.Mouse?.CursorPosition;
+        if (pos is null)
+            return p;
+
+        p = pos.Value;
+        p.Y = vp.Height - p.Y;
+        p = vp.ScreenToViewportCoordinate(p);
+        p = vp.ViewportToInternalCoordinate(p);
+
+        return p;
     }
 
     private void GetDepthHit(XRViewport vp, Vector2 p)
@@ -374,13 +394,6 @@ public partial class EditorFlyingCameraPawnComponent : FlyingCameraPawnComponent
         _lastScrollDelta = diff;
     }
 
-    protected override void Tick()
-    {
-        base.Tick();
-        if (CtrlPressed && (Keyboard?.Pressed(EKey.S) ?? false))
-            TakeScreenshot();
-    }
-
     private bool _wantsScreenshot = false;
 
     /// <summary>
@@ -392,7 +405,60 @@ public partial class EditorFlyingCameraPawnComponent : FlyingCameraPawnComponent
     public override void RegisterInput(InputInterface input)
     {
         base.RegisterInput(input);
+
         input.RegisterMouseButtonEvent(EMouseButton.LeftClick, EButtonInputType.Pressed, Select);
+        input.RegisterKeyEvent(EKey.F12, EButtonInputType.Pressed, TakeScreenshot);
+
+        input.RegisterKeyEvent(EKey.Number1, EButtonInputType.Pressed, SetTransformTranslation);
+        input.RegisterKeyEvent(EKey.Number2, EButtonInputType.Pressed, SetTransformRotation);
+        input.RegisterKeyEvent(EKey.Number3, EButtonInputType.Pressed, SetTransformScale);
+
+        input.RegisterKeyEvent(EKey.F1, EButtonInputType.Pressed, SetTransformModeWorld);
+        input.RegisterKeyEvent(EKey.F2, EButtonInputType.Pressed, SetTransformModeLocal);
+        input.RegisterKeyEvent(EKey.F3, EButtonInputType.Pressed, SetTransformModeParent);
+        input.RegisterKeyEvent(EKey.F4, EButtonInputType.Pressed, SetTransformModeScreen);
+    }
+
+    private void SetTransformModeParent()
+    {
+        if (TransformTool3D.GetActiveInstance(out var comp) && comp!.TransformSpace != ETransformSpace.Parent)
+            comp.TransformSpace = ETransformSpace.Parent;
+    }
+
+    private void SetTransformModeScreen()
+    {
+        if (TransformTool3D.GetActiveInstance(out var comp) && comp!.TransformSpace != ETransformSpace.Screen)
+            comp.TransformSpace = ETransformSpace.Screen;
+    }
+
+    private void SetTransformModeLocal()
+    {
+        if (TransformTool3D.GetActiveInstance(out var comp) && comp!.TransformSpace != ETransformSpace.Local)
+            comp.TransformSpace = ETransformSpace.Local;
+    }
+
+    private void SetTransformModeWorld()
+    {
+        if (TransformTool3D.GetActiveInstance(out var comp) && comp!.TransformSpace != ETransformSpace.World)
+            comp.TransformSpace = ETransformSpace.World;
+    }
+
+    private void SetTransformScale()
+    {
+        if (TransformTool3D.GetActiveInstance(out var comp) && comp!.TransformMode != ETransformMode.Scale)
+            comp.TransformMode = ETransformMode.Scale;
+    }
+
+    private void SetTransformRotation()
+    {
+        if (TransformTool3D.GetActiveInstance(out var comp) && comp!.TransformMode != ETransformMode.Rotate)
+            comp.TransformMode = ETransformMode.Rotate;
+    }
+
+    private void SetTransformTranslation()
+    {
+        if (TransformTool3D.GetActiveInstance(out var comp) && comp!.TransformMode != ETransformMode.Translate)
+            comp.TransformMode = ETransformMode.Translate;
     }
 
     private SortedDictionary<float, List<(ITreeItem item, object? data)>>? _lastRaycast = null;

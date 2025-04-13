@@ -33,5 +33,10 @@ namespace Extensions
             => Vector3.Transform(-Vector3.UnitY, rotation);
         public static Vector3 NegX(this Quaternion rotation)
             => Vector3.Transform(-Vector3.UnitX, rotation);
+
+        public static Quaternion WorldToLocal(this Quaternion worldRotation, Quaternion parentWorldRotation)
+            => Quaternion.Inverse(parentWorldRotation) * worldRotation;
+        public static Quaternion LocalToWorld(this Quaternion localRotation, Quaternion parentWorldRotation)
+            => parentWorldRotation * localRotation;
     }
 }

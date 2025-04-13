@@ -60,22 +60,22 @@ namespace XREngine.Rendering.Commands
         }
         internal void Render(int pass)
         {
-            if (!_renderingPasses.TryGetValue(pass, out var list))
+            if (!_renderingPasses.TryGetValue(pass, out ICollection<RenderCommand>? list))
             {
                 //Debug.Out($"No render pass {pass} found.");
                 return;
             }
-
-            list.ForEach(x => x.Render());
+            list.ForEach(x => x?.Render());
         }
         public void SwapBuffers()
         {
             static void Clear(ICollection<RenderCommand> x)
                 => x.Clear();
             static void Swap(ICollection<RenderCommand> x)
-                => x.ForEach(y => y.SwapBuffers());
+                => x.ForEach(y => y?.SwapBuffers());
             
             (_updatingPasses, _renderingPasses) = (_renderingPasses, _updatingPasses);
+
             _renderingPasses.Values.ForEach(Swap);
             _updatingPasses.Values.ForEach(Clear);
 

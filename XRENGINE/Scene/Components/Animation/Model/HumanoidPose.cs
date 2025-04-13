@@ -19,7 +19,7 @@ namespace XREngine.Animation
         {
             BoneFrames.Remove(boneName);
         }
-        public void UpdateSkeleton(HumanoidComponent skeleton)
+        public void UpdateSkeleton(HumanoidComponent? skeleton)
         {
             foreach (BoneFrame b in BoneFrames.Values)
                 b.UpdateSkeleton(skeleton);

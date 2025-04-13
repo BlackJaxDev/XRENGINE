@@ -31,13 +31,14 @@
 
   <ItemGroup>
     <PackageReference Include="AssimpNetter" Version="5.4.3.3" />
-    <PackageReference Include="FFmpeg.AutoGen" Version="7.0.0" />
+    <PackageReference Include="FFmpeg.AutoGen" Version="7.1.1" />
     <PackageReference Include="Google.Cloud.Speech.V1" Version="3.8.0" />
     <PackageReference Include="Google.Cloud.TextToSpeech.V1" Version="3.10.0" />
     <PackageReference Include="MathNet.Numerics" Version="5.0.0" />
     <PackageReference Include="MathNet.Numerics.Providers.CUDA" Version="5.0.0" />
     <PackageReference Include="MemoryPack" Version="1.21.4" />
     <PackageReference Include="Microsoft.Build" Version="17.13.9" />
+    <PackageReference Include="Microsoft.Build.Framework" Version="17.13.9" />
     <PackageReference Include="NDILibDotNetCoreBase" Version="2024.7.22.1" />
     <PackageReference Include="Newtonsoft.Json" Version="13.0.3" />
     <PackageReference Include="Silk.NET" Version="2.22.0" />
@@ -95,7 +96,7 @@
     <PackageReference Include="SixLabors.ImageSharp" Version="3.1.7" />
     <PackageReference Include="SkiaSharp" Version="3.116.1" />
     <PackageReference Include="Steamworks.NET" Version="2024.8.0" />
-    <PackageReference Include="System.Text.Json" Version="9.0.3" />
+    <PackageReference Include="System.Text.Json" Version="9.0.4" />
     <PackageReference Include="YamlDotNet" Version="16.3.0" />
   </ItemGroup>
 

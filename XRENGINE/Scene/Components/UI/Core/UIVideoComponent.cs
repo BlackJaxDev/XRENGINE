@@ -2,7 +2,6 @@
 using System.Collections.Concurrent;
 using System.Runtime.InteropServices;
 using XREngine.Components.Scene;
-using XREngine.Data;
 using XREngine.Data.Rendering;
 
 namespace XREngine.Rendering.UI
@@ -30,29 +29,9 @@ namespace XREngine.Rendering.UI
 
         private int _videoStreamIndex = -1;
         private int _audioStreamIndex = -1;
-        //These bools are to prevent infinite pre-rendering recursion
-        private bool _updating = false;
-        private bool _swapping = false;
-        private bool _rendering = false;
 
         private int _currentPboIndex = 0;
-        private readonly XRDataBuffer[] _pboBuffers =
-        [
-            new("", EBufferTarget.PixelUnpackBuffer, 1, EComponentType.Byte, 3, false, false)
-            {
-                Resizable = false,
-                Usage = EBufferUsage.StreamDraw,
-                RangeFlags = EBufferMapRangeFlags.InvalidateBuffer | EBufferMapRangeFlags.Write,
-                StorageFlags = EBufferMapStorageFlags.Write | EBufferMapStorageFlags.Coherent | EBufferMapStorageFlags.Persistent,
-            },
-            new("", EBufferTarget.PixelUnpackBuffer, 1, EComponentType.Byte, 3, false, false)
-            {
-                Resizable = false,
-                Usage = EBufferUsage.StreamDraw,
-                RangeFlags = EBufferMapRangeFlags.InvalidateBuffer | EBufferMapRangeFlags.Write,
-                StorageFlags = EBufferMapStorageFlags.Write | EBufferMapStorageFlags.Coherent | EBufferMapStorageFlags.Persistent,
-            }
-        ];
+        private readonly XRDataBuffer?[] _pboBuffers = [null, null];
 
         private const int MAX_QUEUE_SIZE = 3; // Limit frame queue to prevent memory buildup
 
@@ -61,11 +40,11 @@ namespace XREngine.Rendering.UI
         private byte[]? _currentFrame;
         private readonly Lock _frameLock = new();
 
-        private AVFrame* frame;
-        private AVPacket* packet;
-        private SwsContext* swsContext;
+        private AVFrame* _frame;
+        private AVPacket* _packet;
+        private SwsContext* _swsContext;
 
-        private const AVPixelFormat videoTextureFormat = AVPixelFormat.AV_PIX_FMT_RGB24;
+        private const AVPixelFormat _videoTextureFormat = AVPixelFormat.AV_PIX_FMT_RGB24;
 
         public UIVideoComponent() : base(GetVideoMaterial())
             => _fbo = new XRMaterialFrameBuffer(Material);
@@ -101,13 +80,13 @@ namespace XREngine.Rendering.UI
             base.OnComponentActivated();
             AllocateDecode();
             RegisterTick(Components.ETickGroup.Normal, Components.ETickOrder.Logic, DecodeFrame);
-            Engine.Time.Timer.CollectVisible += ConsumeFrameQueue;
+            Engine.Time.Timer.RenderFrame += ConsumeFrameQueue;
         }
         protected internal override void OnComponentDeactivated()
         {
             base.OnComponentDeactivated();
             UnregisterTick(Components.ETickGroup.Normal, Components.ETickOrder.Logic, DecodeFrame);
-            Engine.Time.Timer.CollectVisible -= ConsumeFrameQueue;
+            Engine.Time.Timer.RenderFrame -= ConsumeFrameQueue;
             CleanupDecode();
             _frameQueue.CompleteAdding();
         }
@@ -142,12 +121,28 @@ namespace XREngine.Rendering.UI
             if (tex is null)
                 return;
 
+            if (Engine.InvokeOnMainThread(() => UploadFrameToTexturePBO(frame)))
+                return;
+
             _currentPboIndex = (_currentPboIndex + 1) % _pboBuffers.Length;
-            XRDataBuffer pbo = _pboBuffers[_currentPboIndex];
+            XRDataBuffer? pbo = _pboBuffers[_currentPboIndex];
 
             //Pre-allocate the texture's data buffer with the frame's data length
-            pbo.Resize((uint)frame.Length, false);
+            if (pbo is null || pbo.Length != (uint)frame.Length)
+            {
+                //pbo.Resize((uint)frame.Length, false);
+                pbo?.Destroy();
 
+                _pboBuffers[_currentPboIndex] = pbo = new XRDataBuffer("", EBufferTarget.PixelUnpackBuffer, (uint)frame.Length / 3, EComponentType.Byte, 3, false, false)
+                {
+                    Resizable = false,
+                    Usage = EBufferUsage.StreamDraw,
+                    RangeFlags = EBufferMapRangeFlags.Write | EBufferMapRangeFlags.Persistent,
+                    StorageFlags = EBufferMapStorageFlags.Write | EBufferMapStorageFlags.Coherent | EBufferMapStorageFlags.Persistent | EBufferMapStorageFlags.ClientStorage,
+                };
+            }
+
+            pbo.Generate();
             pbo.Bind();
             {
                 //Setting streaming PBO will invalidate the texture, forcing it to push the streaming pbo's data to the texture on next bind (which is now)
@@ -173,7 +168,7 @@ namespace XREngine.Rendering.UI
 
                 // Copy data to api PBO
                 var ptr = apiBuffer.GetMappedAddress();
-                if (ptr is null)
+                if (ptr is null || ptr.Value.IsValid)
                     continue;
 
                 Marshal.Copy(data, 0, ptr.Value, data.Length);
@@ -228,32 +223,32 @@ namespace XREngine.Rendering.UI
 
         private void DecodeFrame()
         {
-            if (ffmpeg.av_read_frame(_formatContext, packet) < 0)
+            if (ffmpeg.av_read_frame(_formatContext, _packet) < 0)
                 return;
             
-            if (packet->stream_index == _videoStreamIndex)
+            if (_packet->stream_index == _videoStreamIndex)
                 DecodeVideo();
-            else if (packet->stream_index == _audioStreamIndex)
+            else if (_packet->stream_index == _audioStreamIndex)
                 DecodeAudio();
 
-            ffmpeg.av_packet_unref(packet);
+            ffmpeg.av_packet_unref(_packet);
         }
 
         private void DecodeAudio()
         {
-            if (ffmpeg.avcodec_send_packet(_audioCodecContext, packet) < 0)
+            if (ffmpeg.avcodec_send_packet(_audioCodecContext, _packet) < 0)
                 return;
             
-            while (ffmpeg.avcodec_receive_frame(_audioCodecContext, frame) >= 0)
+            while (ffmpeg.avcodec_receive_frame(_audioCodecContext, _frame) >= 0)
                 ProcessAudioFrame();
         }
 
         private void DecodeVideo()
         {
-            if (ffmpeg.avcodec_send_packet(_videoCodecContext, packet) < 0)
+            if (ffmpeg.avcodec_send_packet(_videoCodecContext, _packet) < 0)
                 return;
             
-            while (ffmpeg.avcodec_receive_frame(_videoCodecContext, frame) >= 0)
+            while (ffmpeg.avcodec_receive_frame(_videoCodecContext, _frame) >= 0)
                 ProcessVideoFrame();
         }
 
@@ -310,21 +305,21 @@ namespace XREngine.Rendering.UI
             OpenVideoContext();
             OpenAudioContext();
             
-            frame = ffmpeg.av_frame_alloc();
-            packet = ffmpeg.av_packet_alloc();
-            swsContext = (SwsContext*)null;
+            _frame = ffmpeg.av_frame_alloc();
+            _packet = ffmpeg.av_packet_alloc();
+            _swsContext = (SwsContext*)null;
         }
 
         private void CleanupDecode()
         {
-            fixed (AVFrame** p = &frame)
+            fixed (AVFrame** p = &_frame)
                 ffmpeg.av_frame_free(p);
 
-            fixed (AVPacket** p = &packet)
+            fixed (AVPacket** p = &_packet)
                 ffmpeg.av_packet_free(p);
 
-            if (swsContext != null)
-                ffmpeg.sws_freeContext(swsContext);
+            if (_swsContext != null)
+                ffmpeg.sws_freeContext(_swsContext);
 
             if (_videoCodecContext != null)
             {
@@ -429,9 +424,9 @@ namespace XREngine.Rendering.UI
             if (audioSource is null)
                 return;
 
-            short[] samples = new short[frame->nb_samples * _audioCodecContext->ch_layout.nb_channels];
+            short[] samples = new short[_frame->nb_samples * _audioCodecContext->ch_layout.nb_channels];
 
-            Marshal.Copy((IntPtr)frame->data[0], samples, 0, samples.Length);
+            Marshal.Copy((IntPtr)_frame->data[0], samples, 0, samples.Length);
 
             int freq = _audioCodecContext->sample_rate;
             bool stereo = _audioCodecContext->ch_layout.nb_channels == 2;
@@ -442,20 +437,20 @@ namespace XREngine.Rendering.UI
         private void ProcessVideoFrame()
         {
             // Handle hardware frame if needed
-            var decodedFrame = GetHwFrame(frame);
+            var decodedFrame = GetHwFrame(_frame);
 
             // Convert frame to RGB24 if needed
-            if (decodedFrame->format != (int)videoTextureFormat)
+            if (decodedFrame->format != (int)_videoTextureFormat)
             {
-                if (swsContext == null)
+                if (_swsContext == null)
                 {
-                    swsContext = ffmpeg.sws_getContext(
+                    _swsContext = ffmpeg.sws_getContext(
                         decodedFrame->width,
                         decodedFrame->height,
                         (AVPixelFormat)decodedFrame->format,
                         decodedFrame->width,
                         decodedFrame->height,
-                        videoTextureFormat,
+                        _videoTextureFormat,
                         ffmpeg.SWS_BILINEAR,
                         null,
                         null,
@@ -463,13 +458,13 @@ namespace XREngine.Rendering.UI
                 }
 
                 var convertedFrame = ffmpeg.av_frame_alloc();
-                convertedFrame->format = (int)videoTextureFormat;
+                convertedFrame->format = (int)_videoTextureFormat;
                 convertedFrame->width = decodedFrame->width;
                 convertedFrame->height = decodedFrame->height;
                 ffmpeg.av_frame_get_buffer(convertedFrame, 0);
 
                 ffmpeg.sws_scale(
-                    swsContext,
+                    _swsContext,
                     decodedFrame->data,
                     decodedFrame->linesize,
                     0,
@@ -477,7 +472,7 @@ namespace XREngine.Rendering.UI
                     convertedFrame->data,
                     convertedFrame->linesize);
 
-                if (decodedFrame != frame)
+                if (decodedFrame != _frame)
                     ffmpeg.av_frame_free(&decodedFrame);
                 decodedFrame = convertedFrame;
             }
@@ -504,7 +499,7 @@ namespace XREngine.Rendering.UI
                 // Queue was completed (during shutdown)
             }
 
-            if (decodedFrame != frame)
+            if (decodedFrame != _frame)
                 ffmpeg.av_frame_free(&decodedFrame);
         }
     }

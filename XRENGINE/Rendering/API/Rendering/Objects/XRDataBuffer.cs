@@ -362,7 +362,7 @@ namespace XREngine.Rendering
             set => SetField(ref _resizable, value);
         }
 
-        private bool _disposeOnPush = true;
+        private bool _disposeOnPush = false;
         public bool DisposeOnPush
         {
             get => _disposeOnPush;

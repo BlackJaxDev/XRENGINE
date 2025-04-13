@@ -20,12 +20,28 @@ namespace XREngine
             /// </summary>
             public static class Debug
             {
+                static Debug()
+                {
+                    Engine.Time.Timer.PreUpdateFrame += PreUpdate;
+                }
+
+                private static void PreUpdate()
+                {
+                    _debugPointsQueue.Clear();
+                    _debugLinesQueue.Clear();
+                    _debugTrianglesQueue.Clear();
+                }
+
                 public static readonly Vector3 UIPositionBias = new(0.0f, 0.0f, 0.1f);
                 public static readonly Rotator UIRotation = new(90.0f, 0.0f, 0.0f, ERotationOrder.YPR);
 
                 private static readonly ConcurrentBag<(Vector3 pos, ColorF4 color)> _debugPoints = [];
                 private static readonly ConcurrentBag<(Vector3 pos0, Vector3 pos1, ColorF4 color)> _debugLines = [];
                 private static readonly ConcurrentBag<(Vector3 pos0, Vector3 pos1, Vector3 pos2, ColorF4 color)> _debugTriangles = [];
+
+                private static readonly ConcurrentQueue<(Vector3 pos, ColorF4 color)> _debugPointsQueue = [];
+                private static readonly ConcurrentQueue<(Vector3 pos0, Vector3 pos1, ColorF4 color)> _debugLinesQueue = [];
+                private static readonly ConcurrentQueue<(Vector3 pos0, Vector3 pos1, Vector3 pos2, ColorF4 color)> _debugTrianglesQueue = [];
 
                 private static readonly InstancedDebugVisualizer _instancedDebugVisualizer = new();
 
@@ -104,6 +120,20 @@ namespace XREngine
 
                 public static void RenderShapes()
                 {
+                    foreach (var updatePoint in _debugPointsQueue)
+                        _debugPoints.Add(updatePoint);
+                    foreach (var updateLine in _debugLinesQueue)
+                        _debugLines.Add(updateLine);
+                    foreach (var updateTriangle in _debugTrianglesQueue)
+                        _debugTriangles.Add(updateTriangle);
+
+                    //while (_debugPointsQueue.TryDequeue(out var point))
+                    //    _debugPoints.Add(point);
+                    //while (_debugLinesQueue.TryDequeue(out var line))
+                    //    _debugLines.Add(line);
+                    //while (_debugTrianglesQueue.TryDequeue(out var triangle))
+                    //    _debugTriangles.Add(triangle);
+
                     if (!Engine.Rendering.State.DebugInstanceRenderingAvailable)
                     {
                         //var camera = Engine.Rendering.State.RenderingCamera;
@@ -156,10 +186,8 @@ namespace XREngine
 
                 private static bool InCamera(Vector3 position)
                 {
-                    //if (!Engine.Rendering.State.DebugInstanceRenderingAvailable)
-                    //    return false;
-
                     return true;
+
                     //var playerCam = Engine.State.MainPlayer.ControlledPawn?.GetCamera()?.Camera;
                     //if (playerCam is null)
                     //    return false;
@@ -172,20 +200,30 @@ namespace XREngine
                     //    vpPos.X <= 1 &&
                     //    vpPos.Y >= 0 &&
                     //    vpPos.Y <= 1 &&
-                    //    vpPos.Z >= 0 &&
-                    //    vpPos.Z <= 1;
+                    //    vpPos.Z >= playerCam.NearZ &&
+                    //    vpPos.Z < playerCam.FarZ;
                 }
 
                 public static void RenderPoint(Vector3 position, ColorF4 color)
                 {
-                    if (InCamera(position))
+                    if (!InCamera(position))
+                        return;
+
+                    if (IsRenderThread)
                         _debugPoints.Add((position, color));
+                    else
+                        _debugPointsQueue.Enqueue((position, color));
                 }
 
                 public static unsafe void RenderLine(Vector3 start, Vector3 end, ColorF4 color)
                 {
-                    if (InCamera(start) || InCamera(end))
+                    if (!InCamera(start) && !InCamera(end))
+                        return;
+                    
+                    if (IsRenderThread)
                         _debugLines.Add((start, end, color));
+                    else
+                        _debugLinesQueue.Enqueue((start, end, color));
                 }
 
                 public static void RenderTriangle(Triangle triangle, ColorF4 color, bool solid)
@@ -201,7 +239,12 @@ namespace XREngine
                         return;
 
                     if (solid)
-                        _debugTriangles.Add((A, B, C, color));
+                    {
+                        if (IsRenderThread)
+                            _debugTriangles.Add((A, B, C, color));
+                        else
+                            _debugTrianglesQueue.Enqueue((A, B, C, color));
+                    }
                     else
                     {
                         RenderLine(A, B, color);

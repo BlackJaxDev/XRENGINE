@@ -451,7 +451,7 @@ namespace XREngine.Data.Core
         /// <summary>
         /// Returns the angle in degrees between two vectors.
         /// </summary>
-        public static float AngleBetween(Vector3 vector1, Vector3 vector2)
+        public static float GetBestAngleDegreesBetween(Vector3 vector1, Vector3 vector2)
         {
             vector1 = vector1.Normalized();
             vector2 = vector2.Normalized();
@@ -469,6 +469,27 @@ namespace XREngine.Data.Core
                 return 180.0f;
             else
                 return float.RadiansToDegrees(MathF.Acos(dot));
+        }
+        public static float GetBestAngleRadiansBetween(Vector3 start, Vector3 end, float tolerance = 0.001f)
+        {
+            start = start.Normalized();
+            end = end.Normalized();
+
+            float dot = Vector3.Dot(start, end);
+
+            //dot is the cosine adj/hyp ratio between the two vectors, so
+            //dot == 1 is same direction
+            //dot == -1 is opposite direction
+            //dot == 0 is a 90 degree angle
+
+            tolerance = 1.0f - tolerance;
+
+            if (dot > tolerance)
+                return 0.0f;
+            else if (dot < -tolerance)
+                return PIf;
+            else
+                return MathF.Acos(dot);
         }
         /// <summary>
         /// Returns the rotation axis direction vector that is perpendicular to the two vectors.
@@ -1119,7 +1140,7 @@ namespace XREngine.Data.Core
             float unit = sqx + sqy + sqz + sqw; // if normalised is one, otherwise is correction factor
             float test = rotation.X * rotation.Y + rotation.Z * rotation.W;
             if (test > 0.499f * unit)
-            { 
+            {
                 // singularity at north pole
                 euler.Y = 2.0f * MathF.Atan2(rotation.X, rotation.W);
                 euler.Z = MathF.PI / 2.0f;
@@ -1598,36 +1619,30 @@ namespace XREngine.Data.Core
             => LookRotation(forward, Globals.Up);
         public static Quaternion LookRotation(Vector3 forward, Vector3 up)
         {
-            // Return identity if forward has near zero magnitude.
+            // Return identity if the forward vector is nearly zero.
             if (forward.LengthSquared() < Epsilon)
                 return Quaternion.Identity;
 
-            // Normalize forward vector to define the Z axis.
-            Vector3 z = forward.Normalized();
+            // Normalize the forward vector.
+            forward = Vector3.Normalize(forward);
 
-            // Compute the X axis as the cross product between forward and up.
-            Vector3 x = Vector3.Cross(z, up);
+            // If upwards is nearly zero length, fallback.
+            if (up.LengthSquared() < Epsilon)
+                return RotationBetweenVectors(Vector3.UnitZ, forward);
 
-            // If up is zero magnitude or forward and up are colinear,
-            // use fallback: Quaternion.FromToRotation from positive Z-axis to forward.
-            if (x.LengthSquared() < Epsilon || up.LengthSquared() < Epsilon)
-                return RotationBetweenVectors(new Vector3(0, 0, 1), z);
+            // Compute the right vector as cross(upwards, forward).
+            Vector3 right = Vector3.Cross(up, forward);
 
-            x = x.Normalized();
+            // If forward and upwards are colinear, fallback.
+            if (right.LengthSquared() < Epsilon)
+                return RotationBetweenVectors(Vector3.UnitZ, forward);
 
-            // Compute the Y axis as the cross product between Z and X.
-            Vector3 y = Vector3.Cross(z, x);
+            right = Vector3.Normalize(right);
 
-            // Create a rotation matrix where:
-            // X axis = x, Y axis = y, Z axis = z.
-            Matrix4x4 m = new(
-                x.X, y.X, z.X, 0f,
-                x.Y, y.Y, z.Y, 0f,
-                x.Z, y.Z, z.Z, 0f,
-                0f, 0f, 0f, 1f
-            );
+            // Recalculate the up vector to ensure orthogonality.
+            up = Vector3.Cross(forward, right);
 
-            return Quaternion.CreateFromRotationMatrix(m);
+            return Quaternion.CreateFromRotationMatrix(Matrix4x4.CreateWorld(Vector3.Zero, forward, up));
         }
 
         /// <summary>
@@ -1677,7 +1692,7 @@ namespace XREngine.Data.Core
 
             if (float.IsInfinity(dirLocal.X) || float.IsInfinity(dirLocal.Z))
                 return 0;
-            
+
             return float.RadiansToDegrees(MathF.Atan2(dirLocal.X, dirLocal.Z));
         }
 
@@ -1793,7 +1808,7 @@ namespace XREngine.Data.Core
                 return normalDirection;
 
             // Getting the angle between direction and normalDirection
-            float angle = AngleBetween(normalDirection, direction);
+            float angle = GetBestAngleDegreesBetween(normalDirection, direction);
             float dot = 1f - (angle / 180f);
 
             if (dot > clampWeight)
@@ -1832,7 +1847,7 @@ namespace XREngine.Data.Core
             }
 
             // Getting the angle between direction and normalDirection
-            float angle = AngleBetween(normalDirection, direction);
+            float angle = GetBestAngleDegreesBetween(normalDirection, direction);
             float dot = 1f - (angle / 180f);
 
             if (dot > clampWeight)
@@ -1868,9 +1883,9 @@ namespace XREngine.Data.Core
 
             if (clampWeight >= 1f)
                 return normalDirection;
-            
+
             // Getting the angle between direction and normalDirection
-            float angle = AngleBetween(normalDirection, direction);
+            float angle = GetBestAngleDegreesBetween(normalDirection, direction);
             float dot = 1f - (angle / 180f);
 
             if (dot > clampWeight)
@@ -1890,7 +1905,7 @@ namespace XREngine.Data.Core
             // Sine smoothing iterations
             for (int i = 0; i < clampSmoothing; i++)
                 clampMlp = MathF.Sin(clampMlp * MathF.PI * 0.5f);
-            
+
             // Slerping the direction (don't use Lerp here, it breaks it)
             float slerp = clampMlp * targetClampMlp;
             clampValue = 1f - slerp;
@@ -1918,8 +1933,8 @@ namespace XREngine.Data.Core
         public static Vector3 ProjectPointToPlane(Vector3 point, Vector3 planePosition, Vector3 planeNormal)
         {
             if (planeNormal == Globals.Up)
-               return new Vector3(point.X, planePosition.Y, point.Z);
-            
+                return new Vector3(point.X, planePosition.Y, point.Z);
+
             Vector3 tangent = point - planePosition;
             Vector3 normal = planeNormal;
             OrthoNormalize(ref normal, ref tangent);
@@ -2138,5 +2153,34 @@ namespace XREngine.Data.Core
         /// <returns>The reflected vector</returns>
         public static Vector3 Reflect(Vector3 vector, Vector3 normal)
             => vector - 2.0f * Vector3.Dot(vector, normal) * normal;
+
+        /// <summary>
+        /// Calculates the angle between two vectors in radians, taking into account the rotation normal to calculate a -180 to 180 angle.
+        /// </summary>
+        /// <param name="end"></param>
+        /// <param name="start"></param>
+        /// <param name="rotationNormal"></param>
+        /// <returns></returns>
+        public static float GetFullAngleRadiansBetween(Vector3 start, Vector3 end, Vector3 rotationNormal)
+        {
+            // Cross product determines rotation direction
+            Vector3 cross = Vector3.Cross(start, end);
+            float direction = Vector3.Dot(cross, rotationNormal) < 0 ? -1 : 1;
+
+            // Calculate angle with direction
+            float dot = Vector3.Dot(start, end);
+            dot = dot.Clamp(-1.0f, 1.0f); // Ensure dot is within valid range
+            return (float)Acos(dot) * direction;
+        }
+
+        /// <summary>
+        /// Calculates the angle between two vectors in degrees, taking into account the rotation normal to calculate a -180 to 180 angle.
+        /// </summary>
+        /// <param name="end"></param>
+        /// <param name="start"></param>
+        /// <param name="rotationNormal"></param>
+        /// <returns></returns>
+        public static float GetFullAngleDegreesBetween(Vector3 start, Vector3 end, Vector3 rotationNormal)
+            => float.RadiansToDegrees(GetFullAngleRadiansBetween(start, end, rotationNormal));
     }
 }

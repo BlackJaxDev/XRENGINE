@@ -115,7 +115,7 @@ public class InspectorPanel : EditorPanel
     private void CreatePropertyList(SceneNode parentNode, InspectorPanel inspectorPanel)
     {
         var listNode = parentNode.NewChild<UIMaterialComponent>(out var menuMat);
-        menuMat.Material = BackgroundMaterial;
+        menuMat.Material = MakeBackgroundMaterial();
         var listTfm = listNode.SetTransform<UIListTransform>();
         listTfm.DisplayHorizontal = false;
         listTfm.ItemSpacing = 0.0f;

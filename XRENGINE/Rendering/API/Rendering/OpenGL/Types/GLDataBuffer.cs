@@ -39,17 +39,24 @@ namespace XREngine.Rendering.OpenGL
             protected internal override void PostGenerated()
             {
                 var rend = Renderer.ActiveMeshRenderer;
-                if (rend is null)
+                if (rend is not null)
+                    BindToRenderer(rend.GetVertexProgram(), rend);
+                else
                 {
                     var target = Data.Target;
                     if (target == EBufferTarget.ArrayBuffer)
+                    {
                         Debug.LogWarning($"{GetDescribingName()} generated without a mesh renderer.");
-                    return;
+                        return;
+                    }
                 }
-                BindToProgram(rend.GetVertexProgram(), rend);
+                if (Data.Resizable)
+                    PushData();
+                else
+                    AllocateImmutable();
             }
 
-            public void BindToProgram(GLRenderProgram vertexProgram, GLMeshRenderer? arrayBufferLink, bool pushDataNow = true)
+            public void BindToRenderer(GLRenderProgram vertexProgram, GLMeshRenderer? arrayBufferLink, bool pushDataNow = true)
             {
                 try
                 {
@@ -71,14 +78,6 @@ namespace XREngine.Rendering.OpenGL
                 catch (Exception e)
                 {
                     Debug.LogException(e, "Error binding buffer.");
-                }
-
-                if (pushDataNow)
-                {
-                    if (Data.Resizable)
-                        PushData();
-                    else
-                        AllocateImmutable();
                 }
             }
 
@@ -373,7 +372,13 @@ namespace XREngine.Rendering.OpenGL
                 uint id = BindingId;
                 uint length = GetLength();
                 GPUSideSource?.Dispose();
-                GPUSideSource = new DataSource(Api.MapNamedBufferRange(id, IntPtr.Zero, length, (uint)ToGLEnum(Data.RangeFlags)), length);
+                var addr = Api.MapNamedBufferRange(id, IntPtr.Zero, length, (uint)ToGLEnum(Data.RangeFlags));
+                if (addr is null)
+                {
+                    //Debug.LogWarning("Failed to map buffer.");
+                    return;
+                }
+                GPUSideSource = new DataSource(addr, length);
                 Data.ActivelyMapping.Add(this);
             }
 
@@ -381,7 +386,13 @@ namespace XREngine.Rendering.OpenGL
             {
                 uint id = BindingId;
                 GPUSideSource?.Dispose();
-                GPUSideSource = new DataSource(Api.MapNamedBufferRange(id, offset, length, (uint)ToGLEnum(Data.RangeFlags)), length);
+                var addr = Api.MapNamedBufferRange(id, offset, length, (uint)ToGLEnum(Data.RangeFlags));
+                if (addr is null)
+                {
+                    //Debug.LogWarning("Failed to map buffer.");
+                    return;
+                }
+                GPUSideSource = new DataSource(addr, length);
                 Data.ActivelyMapping.Add(this);
             }
 
