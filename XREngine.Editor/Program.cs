@@ -31,7 +31,7 @@ internal class Program
         int w = 1920;
         int h = 1080;
         float updateHz = 60.0f;
-        float renderHz = 120.0f;
+        float renderHz = 0.0f;
         float fixedHz = 30.0f;
 
         int primaryX = NativeMethods.GetSystemMetrics(0);

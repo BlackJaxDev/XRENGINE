@@ -701,13 +701,17 @@ public partial class PhysicsChainComponent : XRComponent, IRenderable
                     ? cTfm.Translation
                     : child.EndOffset;
 
+                //pTfm.RecalculateMatrices(true, false);
                 Vector3 v0 = pTfm.TransformDirection(localPos);
                 Vector3 v1 = child.Position - parent.Position;
-                Quaternion rot = XRMath.RotationBetweenVectors(v0, v1);
+                Quaternion rot = Quaternion.Normalize(XRMath.RotationBetweenVectors(v0, v1));
 
+                //pTfm.Parent?.RecalculateMatrices(true, false);
                 pTfm.AddWorldRotationDelta(rot);
             }
 
+            //pTfm?.RecalculateMatrices(true, false);
+            //pTfm?.RecalculateInverseMatrices(true);
             cTfm?.SetWorldTranslation(child.Position);
         }
     }

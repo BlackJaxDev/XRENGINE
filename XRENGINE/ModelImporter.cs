@@ -4,6 +4,7 @@ using Assimp.Unmanaged;
 using Extensions;
 using ImageMagick;
 using System.Collections.Concurrent;
+using System.Numerics;
 using XREngine.Components.Scene.Mesh;
 using XREngine.Data.Colors;
 using XREngine.Data.Rendering;
@@ -71,11 +72,11 @@ namespace XREngine
                     mat.Parameters =
                     [
                         new ShaderFloat(1.0f, "Opacity"),
-                            new ShaderFloat(1.0f, "Specular"),
-                            new ShaderFloat(0.9f, "Roughness"),
-                            new ShaderFloat(0.0f, "Metallic"),
-                            new ShaderFloat(1.0f, "IndexOfRefraction"),
-                        ];
+                                new ShaderFloat(1.0f, "Specular"),
+                                new ShaderFloat(0.9f, "Roughness"),
+                                new ShaderFloat(0.0f, "Metallic"),
+                                new ShaderFloat(1.0f, "IndexOfRefraction"),
+                            ];
                 }
             }
             else
@@ -85,12 +86,12 @@ namespace XREngine
                 mat.Parameters =
                 [
                     new ShaderVector3(ColorF3.Magenta, "BaseColor"),
-                    new ShaderFloat(1.0f, "Opacity"),
-                    new ShaderFloat(1.0f, "Specular"),
-                    new ShaderFloat(1.0f, "Roughness"),
-                    new ShaderFloat(0.0f, "Metallic"),
-                    new ShaderFloat(1.0f, "IndexOfRefraction"),
-                ];
+                        new ShaderFloat(1.0f, "Opacity"),
+                        new ShaderFloat(1.0f, "Specular"),
+                        new ShaderFloat(1.0f, "Roughness"),
+                        new ShaderFloat(0.0f, "Metallic"),
+                        new ShaderFloat(1.0f, "IndexOfRefraction"),
+                    ];
             }
 
             mat.RenderPass = transp ? (int)EDefaultRenderPass.TransparentForward : (int)EDefaultRenderPass.OpaqueDeferredLit;
@@ -186,7 +187,7 @@ namespace XREngine
         private readonly AssimpContext _assimp;
         private readonly string _path;
         private readonly Action? _onCompleted;
-        
+
         public delegate XRMaterial DelMaterialFactory(
             string modelFilePath,
             string name,
@@ -200,9 +201,19 @@ namespace XREngine
         private readonly ConcurrentDictionary<string, TextureSlot> _textureInfoCache = [];
         private readonly ConcurrentDictionary<string, MagickImage?> _textureCache = new();
         private readonly Dictionary<string, List<SceneNode>> _nodeCache = [];
-        
+
         private readonly ConcurrentBag<XRMesh> _meshes = [];
         private readonly ConcurrentBag<XRMaterial> _materials = [];
+
+        // Class to track original node transforms for later normalization
+        private class NodeTransformInfo(Node assimpNode, SceneNode sceneNode, Vector3 scale, List<int> meshIndices)
+        {
+            public Node AssimpNode = assimpNode;
+            public SceneNode SceneNode = sceneNode;
+            public Vector3 OriginalScale = scale;
+            public List<int> MeshIndices = meshIndices;
+            public Matrix4x4 OriginalWorldMatrix;
+        }
 
         public static SceneNode? Import(
             string path,
@@ -238,6 +249,7 @@ namespace XREngine
             });
 
         private readonly ConcurrentBag<Action> _meshProcessActions = [];
+        private readonly List<NodeTransformInfo> _nodeTransforms = [];
 
         public unsafe SceneNode? Import(
             PostProcessSteps options = PostProcessSteps.None,
@@ -260,8 +272,9 @@ namespace XREngine
             using (Engine.Profiler.Start($"Assemble model hierarchy"))
             {
                 rootNode = new(Path.GetFileNameWithoutExtension(SourceFilePath));
-                ProcessNode(true, scene.RootNode, scene, rootNode, null, null, removeAssimpFBXNodes);
-                //Debug.Out(rootNode.PrintTree());
+                _nodeTransforms.Clear();
+                ProcessNode(true, scene.RootNode, scene, rootNode, null, Matrix4x4.Identity, removeAssimpFBXNodes);
+                NormalizeNodeScales(scene, rootNode);
             }
 
             Action meshProcessAction = multiThread
@@ -307,15 +320,73 @@ namespace XREngine
                 action();
         }
 
+        private void NormalizeNodeScales(AScene scene, SceneNode rootNode)
+        {
+            using var t = Engine.Profiler.Start("Normalizing node scales");
+
+            foreach (var nodeInfo in _nodeTransforms)
+            {
+                nodeInfo.OriginalWorldMatrix = nodeInfo.SceneNode.Transform.WorldMatrix;
+
+                var transform = nodeInfo.SceneNode.GetTransformAs<Transform>(false)!;
+
+                // Store the original world position
+                Vector3 originalWorldPos = nodeInfo.SceneNode.Transform.WorldTranslation;
+
+                // Create a new local matrix with unit scale but same rotation
+                // Extract rotation from original local matrix
+                Matrix4x4.Decompose(transform.LocalMatrix, out _, out Quaternion rotation, out Vector3 translation);
+
+                // Create new local matrix with unit scale
+                Matrix4x4 normalizedLocalMatrix = Matrix4x4.CreateFromQuaternion(rotation) * Matrix4x4.CreateTranslation(translation);
+
+                // Apply the new local matrix
+                transform.DeriveLocalMatrix(normalizedLocalMatrix);
+                transform.RecalculateMatrices(true, true);
+
+                // Calculate the position difference caused by scale removal
+                Vector3 newWorldPos = nodeInfo.SceneNode.Transform.WorldTranslation;
+                Vector3 positionOffset = originalWorldPos - newWorldPos;
+
+                // Adjust the local translation to compensate for scale removal
+                if (positionOffset != Vector3.Zero)
+                {
+                    // For position offsets, use the full inverse transform
+                    Vector3 localOffset = transform.Parent?.InverseTransformPoint(originalWorldPos) ?? originalWorldPos;
+
+                    // Then set the local translation directly
+                    transform.Translation = localOffset;
+                    transform.RecalculateMatrices(true, true);
+                }
+
+                transform.SaveBindState();
+            }
+
+            //Create mesh process actions and create a transform to move vertices to model root space
+            foreach (var nodeInfo in _nodeTransforms)
+            {
+                if (nodeInfo.MeshIndices.Count <= 0)
+                    continue;
+                
+                var rootTransform = rootNode.Transform;
+                Matrix4x4 geometryTransform = nodeInfo.OriginalWorldMatrix * rootTransform.InverseWorldMatrix;
+                EnqueueProcessMeshes(nodeInfo.AssimpNode, scene, nodeInfo.SceneNode, geometryTransform, rootTransform);
+            }
+        }
+
         private void ProcessNode(
             bool rootNode,
             Node node,
             AScene scene,
             SceneNode parentSceneNode,
             TransformBase? rootTransform,
-            Matrix4x4? fbxMatrixParent = null,
-            bool removeAssimpFBXNodes = true)
+            Matrix4x4 parentWorldMatrix,
+            bool removeAssimpFBXNodes = true,
+            Matrix4x4? fbxMatrixParent = null)
         {
+            Matrix4x4 nodeTransform = node.Transform.Transposed();
+            Matrix4x4.Decompose(nodeTransform, out Vector3 scale, out _, out _);
+
             SceneNode sceneNode = CreateNode(
                 rootNode,
                 parentSceneNode,
@@ -323,12 +394,37 @@ namespace XREngine
                 removeAssimpFBXNodes,
                 out Matrix4x4? fbxMatrix,
                 node.Name,
-                node.Transform.Transposed());
+                nodeTransform);
+
             if (rootNode)
                 rootTransform = sceneNode.Transform;
-            Matrix4x4 dataTransform = sceneNode.Transform.WorldMatrix * rootTransform!.InverseWorldMatrix;
-            EnqueueProcessMeshes(node, scene, sceneNode, dataTransform, rootTransform!);
-            ProcessChildren(node, scene, rootTransform, removeAssimpFBXNodes, sceneNode, fbxMatrix);
+
+            List<int> meshIndices = [];
+            for (var i = 0; i < node.MeshCount; i++)
+                meshIndices.Add(node.MeshIndices[i]);
+            
+            // Store node information for later normalization
+            _nodeTransforms.Add(new NodeTransformInfo(
+                node,
+                sceneNode,
+                scale,
+                meshIndices
+            ));
+
+            // Process children
+            for (var i = 0; i < node.ChildCount; i++)
+            {
+                Node childNode = node.Children[i];
+                ProcessNode(
+                    false,
+                    childNode,
+                    scene,
+                    sceneNode,
+                    rootTransform,
+                    sceneNode.Transform.LocalMatrix * parentWorldMatrix,
+                    removeAssimpFBXNodes,
+                    fbxMatrix);
+            }
         }
 
         private SceneNode CreateNode(
@@ -338,7 +434,7 @@ namespace XREngine
             bool removeAssimpFBXNodes,
             out Matrix4x4? fbxMatrix,
             string name,
-            Matrix4x4 nodeMatrix)
+            Matrix4x4 localTransform)
         {
             fbxMatrix = null;
             bool remove = removeAssimpFBXNodes && !rootNode;
@@ -354,41 +450,28 @@ namespace XREngine
                     if (affectsParent)
                     {
                         var tfm = parentSceneNode.Transform;
-                        tfm.DeriveLocalMatrix(nodeMatrix * parentSceneNode.Transform.LocalMatrix);
+                        tfm.DeriveLocalMatrix(localTransform * parentSceneNode.Transform.LocalMatrix);
                         tfm.RecalculateMatrices(true, true);
+                        tfm.SaveBindState();
                     }
                     else
                     {
-                        fbxMatrix = nodeMatrix;
+                        fbxMatrix = localTransform;
                         if (fbxMatrixParent.HasValue)
                             fbxMatrix *= fbxMatrixParent.Value;
                     }
                     return parentSceneNode;
                 }
             }
-            return CreateNode(nodeMatrix, parentSceneNode, fbxMatrixParent, remove, name);
+            return CreateNode(localTransform, parentSceneNode, fbxMatrixParent, remove, name);
         }
 
-        private void ProcessChildren(
-            Node node,
-            AScene scene,
-            TransformBase? rootTransform,
+        private SceneNode CreateNode(
+            Matrix4x4 localTransform,
+            SceneNode parentSceneNode,
+            Matrix4x4? fbxMatrixParent,
             bool removeAssimpFBXNodes,
-            SceneNode sceneNode,
-            Matrix4x4? fbxMatrix)
-        {
-            for (var i = 0; i < node.ChildCount; i++)
-                ProcessNode(
-                    false,
-                    node.Children[i],
-                    scene,
-                    sceneNode,
-                    rootTransform,
-                    fbxMatrix,
-                    removeAssimpFBXNodes);
-        }
-
-        private SceneNode CreateNode(Matrix4x4 localTransform, SceneNode parentSceneNode, Matrix4x4? fbxMatrixParent, bool removeAssimpFBXNodes, string name)
+            string name)
         {
             if (removeAssimpFBXNodes && fbxMatrixParent.HasValue)
                 localTransform *= fbxMatrixParent.Value;
@@ -396,7 +479,7 @@ namespace XREngine
             SceneNode sceneNode = new(parentSceneNode, name);
             var tfm = sceneNode.GetTransformAs<Transform>(true)!;
             tfm.DeriveLocalMatrix(localTransform);
-            tfm.RecalculateMatrices();
+            tfm.RecalculateMatrices(true, true);
             tfm.SaveBindState();
 
             if (_nodeCache.TryGetValue(name, out List<SceneNode>? nodes))

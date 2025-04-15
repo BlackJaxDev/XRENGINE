@@ -43,10 +43,10 @@ public static class EditorWorld
 
     //Debug visualize
     public const bool VisualizeOctree = false;
-    public const bool VisualizeQuadtree = true;
+    public const bool VisualizeQuadtree = false;
 
     //Editor UI
-    public const bool AddEditorUI = true; //Adds the full editor UI to the camera.
+    public const bool AddEditorUI = false; //Adds the full editor UI to the camera.
     public const bool TransformTool = false; //Adds the transform tool to the scene for testing dragging and rotating etc.
     public const bool AllowEditingInVR = false; //Allows the user to edit the scene from desktop in VR.
 
@@ -70,7 +70,7 @@ public static class EditorWorld
 
     //Physics
     public const bool PhysicsChain = true; //Adds a jiggle physics chain to the character pawn.
-    public const bool Physics = true;
+    public const bool Physics = false;
     public const int PhysicsBallCount = 10; //The number of physics balls to add to the scene.
 
     //Models
@@ -148,17 +148,18 @@ public static class EditorWorld
 
             humanik.SetSpineWeight(0.0f);
 
-            SceneNode node = rootNode.NewChild("IKTargetNode");
-            var handTfm = humanComp.Right.Foot.Node!.GetTransformAs<Transform>(true)!;
-            node.GetTransformAs<Transform>(true)!.SetFrameState(new TransformState()
+            SceneNode ikTargetNode = rootNode.NewChild("IKTargetNode");
+            var handTfm = humanComp.Left.Foot.Node!.GetTransformAs<Transform>(true)!;
+            ikTargetNode.GetTransformAs<Transform>(true)!.SetFrameState(new TransformState()
             {
                 Order = Transform.EOrder.TRS,
                 Rotation = handTfm.WorldRotation,
                 Scale = new Vector3(1.0f),
                 Translation = handTfm.WorldTranslation
             });
-            humanik.GetGoalIK(ELimbEndEffector.RightFoot)!.TargetIKTransform = node.Transform;
-            EnableTransformToolForNode(node);
+            humanik.GetGoalIK(ELimbEndEffector.LeftFoot)!.TargetIKTransform = ikTargetNode.Transform;
+            EnableTransformToolForNode(ikTargetNode);
+            Selection.SceneNode = ikTargetNode;
         }
         else
         {
@@ -223,89 +224,111 @@ public static class EditorWorld
             //Find breast bone
             if (chest is not null)
             {
-                //var earR = chest.FindChild(x => (x.Name?.Contains("KittenEarR", StringComparison.InvariantCultureIgnoreCase) ?? false));
-                //if (earR?.SceneNode is not null)
-                //{
-                //    var phys = earR.SceneNode.AddComponent<PhysicsChainComponent>()!;
-                //    phys.UpdateMode = PhysicsChainComponent.EUpdateMode.Normal;
-                //    phys.UpdateRate = 60;
-                //    phys.Damping = 0.1f;
-                //    phys.Inert = 0.0f;
-                //    phys.Stiffness = 0.05f;
-                //    phys.Force = new Vector3(0.0f, 0.0f, 0.0f);
-                //    phys.Elasticity = 0.2f;
-                //    phys.Multithread = false;
-                //}
+                var earR = chest.FindDescendant(x =>
+                    (x.Name?.Contains("KittenEarR", StringComparison.InvariantCultureIgnoreCase) ?? false));
+                if (earR?.SceneNode is not null)
+                {
+                    var phys = earR.SceneNode.AddComponent<PhysicsChainComponent>()!;
+                    phys.UpdateMode = PhysicsChainComponent.EUpdateMode.Default;
+                    phys.UpdateRate = 60;
+                    phys.Damping = 0.1f;
+                    phys.Inert = 0.0f;
+                    phys.Stiffness = 0.05f;
+                    //phys.Force = new Vector3(0.0f, 0.0f, 0.0f);
+                    phys.Elasticity = 0.2f;
+                    phys.Multithread = false;
+                }
 
-                //var earL = chest.FindChild(x => (x.Name?.Contains("KittenEarL", StringComparison.InvariantCultureIgnoreCase) ?? false));
-                //if (earL?.SceneNode is not null)
-                //{
-                //    var phys = earL.SceneNode.AddComponent<PhysicsChainComponent>()!;
-                //    phys.UpdateMode = PhysicsChainComponent.EUpdateMode.Normal;
-                //    phys.UpdateRate = 60;
-                //    phys.Damping = 0.1f;
-                //    phys.Inert = 0.0f;
-                //    phys.Stiffness = 0.05f;
-                //    phys.Force = new Vector3(0.0f, 0.0f, 0.0f);
-                //    phys.Elasticity = 0.2f;
-                //    phys.Multithread = false;
-                //}
+                var earL = chest.FindDescendant(x => 
+                    (x.Name?.Contains("KittenEarL", StringComparison.InvariantCultureIgnoreCase) ?? false));
+                if (earL?.SceneNode is not null)
+                {
+                    var phys = earL.SceneNode.AddComponent<PhysicsChainComponent>()!;
+                    phys.UpdateMode = PhysicsChainComponent.EUpdateMode.Default;
+                    phys.UpdateRate = 60;
+                    phys.Damping = 0.1f;
+                    phys.Inert = 0.0f;
+                    phys.Stiffness = 0.05f;
+                    //phys.Force = new Vector3(0.0f, 0.0f, 0.0f);
+                    phys.Elasticity = 0.2f;
+                    phys.Multithread = false;
+                }
 
-                var breastL = chest.FindChild(x =>(x.Name?.Contains("BreastUpper2_LRoot", StringComparison.InvariantCultureIgnoreCase) ?? false));
+                var breastL = chest.FindDescendant(x =>
+                    (x.Name?.Contains("BreastUpper2_LRoot", StringComparison.InvariantCultureIgnoreCase) ?? false) || 
+                    (x.Name?.Contains("Boob.L", StringComparison.InvariantCultureIgnoreCase) ?? false));
                 if (breastL?.SceneNode is not null)
                 {
                     var phys = breastL.SceneNode.AddComponent<PhysicsChainComponent>()!;
-                    phys.UpdateMode = PhysicsChainComponent.EUpdateMode.Normal;
+                    phys.UpdateMode = PhysicsChainComponent.EUpdateMode.Default;
                     phys.UpdateRate = 60;
                     phys.Damping = 0.1f;
                     phys.Inert = 0.0f;
                     phys.Stiffness = 0.05f;
-                    phys.Force = new Vector3(0.0f, 0.0f, 0.0f);
+                    //phys.Force = new Vector3(0.0f, 0.0f, 0.0f);
                     phys.Elasticity = 0.2f;
                     phys.Multithread = false;
                 }
 
-                var breastR = chest.FindChild(x => (x.Name?.Contains("BreastUpper2_RRoot", StringComparison.InvariantCultureIgnoreCase) ?? false));
+                var breastR = chest.FindDescendant(x => 
+                    (x.Name?.Contains("BreastUpper2_RRoot", StringComparison.InvariantCultureIgnoreCase) ?? false) || 
+                    (x.Name?.Contains("Boob.R", StringComparison.InvariantCultureIgnoreCase) ?? false));
                 if (breastR?.SceneNode is not null)
                 {
                     var phys = breastR.SceneNode.AddComponent<PhysicsChainComponent>()!;
-                    phys.UpdateMode = PhysicsChainComponent.EUpdateMode.Normal;
+                    phys.UpdateMode = PhysicsChainComponent.EUpdateMode.Default;
                     phys.UpdateRate = 60;
                     phys.Damping = 0.1f;
                     phys.Inert = 0.0f;
                     phys.Stiffness = 0.05f;
-                    phys.Force = new Vector3(0.0f, 0.0f, 0.0f);
+                    //phys.Force = new Vector3(0.0f, 0.0f, 0.0f);
                     phys.Elasticity = 0.2f;
                     phys.Multithread = false;
                 }
 
-                var tail = humanComp.Hips?.Node?.Transform.FindChild(x => x.Name?.Contains("Hair_1_1", StringComparison.InvariantCultureIgnoreCase) ?? false);
+                //var breastCenter = chest.FindChild(x => (x.Name?.Contains("Boob_Root", StringComparison.InvariantCultureIgnoreCase) ?? false));
+                //if (breastCenter?.SceneNode is not null)
+                //{
+                //    var phys = breastCenter.SceneNode.AddComponent<PhysicsChainComponent>()!;
+                //    phys.UpdateMode = PhysicsChainComponent.EUpdateMode.Normal;
+                //    phys.UpdateRate = 60;
+                //    phys.Damping = 0.1f;
+                //    phys.Inert = 0.0f;
+                //    phys.Stiffness = 0.05f;
+                //    phys.Force = new Vector3(0.0f, 0.0f, 0.0f);
+                //    phys.Elasticity = 0.2f;
+                //    phys.Multithread = false;
+                //}
+
+                var tail = humanComp.Hips?.Node?.Transform.FindDescendant(x =>
+                    x.Name?.Contains("Hair_1_2", StringComparison.InvariantCultureIgnoreCase) ?? false);
                 if (tail?.SceneNode is not null)
                 {
                     var phys = tail.SceneNode.AddComponent<PhysicsChainComponent>()!;
                     phys.UpdateMode = PhysicsChainComponent.EUpdateMode.Default;
                     phys.UpdateRate = 60;
-                    phys.Damping = 0.2f;
+                    phys.Damping = 0.1f;
                     phys.Inert = 0.5f;
-                    phys.Stiffness = 0.1f;
-                    phys.Gravity = new Vector3(0.0f, -10.0f, 0.0f);
+                    phys.Stiffness = 0.05f;
+                    phys.Force = new Vector3(0.0f, 0.0f, 0.0f);
                     phys.Elasticity = 0.01f;
                     phys.Multithread = false;
                 }
 
-                var longHair = humanComp.Head?.Node?.Transform.FindChild(x => x.Name?.Contains("Long Hair", StringComparison.InvariantCultureIgnoreCase) ?? false);
-                if (longHair?.SceneNode is not null)
-                {
-                    //longHair.SceneNode.IsActiveSelf = false;
-                    var phys = longHair.SceneNode.AddComponent<PhysicsChainComponent>()!;
-                    phys.UpdateMode = PhysicsChainComponent.EUpdateMode.Normal;
-                    phys.UpdateRate = 60;
-                    phys.Damping = 0.1f;
-                    phys.Inert = 0.0f;
-                    phys.Stiffness = 0.05f;
-                    phys.Force = new Vector3(0.0f, 0.0f, 0.0f);
-                    phys.Elasticity = 0.2f;
-                }
+                //var longHair = humanComp.Head?.Node?.Transform.FindDescendant(x =>
+                //    x.Name?.Contains("Long Hair", StringComparison.InvariantCultureIgnoreCase) ?? false);
+                //if (longHair?.SceneNode is not null)
+                //{
+                //    //longHair.SceneNode.IsActiveSelf = false;
+                //    var phys = longHair.SceneNode.AddComponent<PhysicsChainComponent>()!;
+                //    phys.UpdateMode = PhysicsChainComponent.EUpdateMode.Normal;
+                //    phys.UpdateRate = 60;
+                //    phys.Damping = 0.1f;
+                //    phys.Inert = 0.0f;
+                //    phys.Stiffness = 0.05f;
+                //    phys.Force = new Vector3(0.0f, 0.0f, 0.0f);
+                //    phys.Elasticity = 0.2f;
+                //}
 
                 //var zafHair = humanComp.Head?.Node?.Transform.FindChild(x => x.Name?.Contains("Zaf Hair", StringComparison.InvariantCultureIgnoreCase) ?? false);
                 //if (zafHair?.SceneNode is not null)
@@ -404,7 +427,7 @@ public static class EditorWorld
         s.AllowSkinning = true;
         //s.RenderMesh3DBounds = true;
         s.RenderTransformDebugInfo = true;
-        s.RenderTransformLines = false;
+        s.RenderTransformLines = true;
         //s.RenderTransformCapsules = true;
         s.RenderTransformPoints = false;
         s.RecalcChildMatricesInParallel = true;
@@ -473,7 +496,7 @@ public static class EditorWorld
             AddIKTest(rootNode);
         if (LightProbe || Skybox)
         {
-            string[] names = [/*"warm_restaurant_4k",*/ "overcast_soil_puresky_4k", /*"studio_small_09_4k",*/ "klippad_sunrise_2_4k", "satara_night_4k"];
+            string[] names = ["warm_restaurant_4k", "overcast_soil_puresky_4k", "studio_small_09_4k", "klippad_sunrise_2_4k", "satara_night_4k"];
             Random r = new();
             XRTexture2D skyEquirect = Engine.Assets.LoadEngineAsset<XRTexture2D>("Textures", $"{names[r.Next(0, names.Length - 1)]}.exr");
 
@@ -1328,7 +1351,7 @@ public static class EditorWorld
     private static void ImportModels(string desktopDir, SceneNode rootNode, SceneNode characterParentNode)
     {
         var importedModelsNode = new SceneNode(rootNode) { Name = "TestImportedModelsNode" };
-        string fbxPathDesktop = Path.Combine(desktopDir, "misc", "jax.fbx");
+        string fbxPathDesktop = Path.Combine(desktopDir, "misc", "jax2.fbx");
 
         var animFlags = 
             PostProcessSteps.Triangulate |
@@ -1407,7 +1430,7 @@ public static class EditorWorld
                     {
                         UpdateDepth = false,
                         Enabled = ERenderParamUsage.Enabled,
-                        Function = Rendering.Models.Materials.EComparison.Less,
+                        Function = EComparison.Less,
                     },
                     //LineWidth = 1.0f,
                 }

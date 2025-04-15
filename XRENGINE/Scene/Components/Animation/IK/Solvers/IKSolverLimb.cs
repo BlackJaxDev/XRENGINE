@@ -197,15 +197,15 @@ namespace XREngine.Scene.Components.Animation
 
             axisDirections[1] = new AxisDirection(
                 new Vector3(0.5f, 0f, -0.2f),
-                new Vector3(-0.5f, -1f, 1f)); // behind head
+                new Vector3(-0.5f, 1f, 1f)); // behind head
 
             axisDirections[2] = new AxisDirection(
                 new Vector3(-0.5f, -1f, -0.2f),
-                new Vector3(0f, 0.5f, -1f)); // arm twist
+                new Vector3(0f, -0.5f, -1f)); // arm twist
 
             axisDirections[3] = new AxisDirection(
                 new Vector3(-0.5f, -0.5f, 1f),
-                new Vector3(-1f, -1f, -1f)); // cross heart
+                new Vector3(-1f, 1f, -1f)); // cross heart
         }
 
         private Vector3 GetModifiedBendNormal()
@@ -257,7 +257,6 @@ namespace XREngine.Scene.Components.Animation
                         if (_bone1._transform == null || _bone1._transform.Parent == null || weight.AlmostEqual(0.0f))
                             return BendNormal;
 
-                        // Disabling this for legs
                         if (_goal == ELimbEndEffector.LeftFoot ||
                             _goal == ELimbEndEffector.RightFoot)
                         {

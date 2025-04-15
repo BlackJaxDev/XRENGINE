@@ -1728,8 +1728,8 @@ namespace XREngine.Rendering
             var weightsPerVertex2 = new Dictionary<TransformBase, (float weight, Matrix4x4 invBindMatrix)>?[vertexCount];
 
             // Use concurrent dictionaries for thread-safe updates.
-            var concurrentInvBindMatrices = new System.Collections.Concurrent.ConcurrentDictionary<TransformBase, Matrix4x4>();
-            var concurrentBoneToIndexTable = new System.Collections.Concurrent.ConcurrentDictionary<TransformBase, int>();
+            var concurrentInvBindMatrices = new ConcurrentDictionary<TransformBase, Matrix4x4>();
+            var concurrentBoneToIndexTable = new ConcurrentDictionary<TransformBase, int>();
             _maxWeightCount = 0;
             int boneIndex = 0;
 

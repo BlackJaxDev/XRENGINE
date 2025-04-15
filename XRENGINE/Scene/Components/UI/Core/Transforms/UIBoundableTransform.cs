@@ -457,7 +457,7 @@ namespace XREngine.Rendering.UI
         public override void FitLayout(BoundingRectangleF parentBounds)
         {
             OnResizeActual(ApplyMargins(parentBounds));
-            //if (ShouldMarkLocalMatrixChanged())
+            if (ShouldMarkLocalMatrixChanged())
                 MarkLocalModified();
         }
 

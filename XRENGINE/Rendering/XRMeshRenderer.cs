@@ -398,25 +398,27 @@ namespace XREngine.Rendering
                 return;
 
             //using var timer = Engine.Profiler.Start();
-            float* boneBuf = (float*)BoneMatricesBuffer.Address;
-            uint index = bone.Index * 16u;
-            boneBuf[index + 0] = bone.Transform.RenderMatrix.M11;
-            boneBuf[index + 1] = bone.Transform.RenderMatrix.M12;
-            boneBuf[index + 2] = bone.Transform.RenderMatrix.M13;
-            boneBuf[index + 3] = bone.Transform.RenderMatrix.M14;
-            boneBuf[index + 4] = bone.Transform.RenderMatrix.M21;
-            boneBuf[index + 5] = bone.Transform.RenderMatrix.M22;
-            boneBuf[index + 6] = bone.Transform.RenderMatrix.M23;
-            boneBuf[index + 7] = bone.Transform.RenderMatrix.M24;
-            boneBuf[index + 8] = bone.Transform.RenderMatrix.M31;
-            boneBuf[index + 9] = bone.Transform.RenderMatrix.M32;
-            boneBuf[index + 10] = bone.Transform.RenderMatrix.M33;
-            boneBuf[index + 11] = bone.Transform.RenderMatrix.M34;
-            boneBuf[index + 12] = bone.Transform.RenderMatrix.M41;
-            boneBuf[index + 13] = bone.Transform.RenderMatrix.M42;
-            boneBuf[index + 14] = bone.Transform.RenderMatrix.M43;
-            boneBuf[index + 15] = bone.Transform.RenderMatrix.M44;
-            //BoneMatricesBuffer?.Set(bone.Index, bone.Transform.RenderMatrix);
+            //float* boneBuf = (float*)BoneMatricesBuffer.Address;
+            //uint index = bone.Index * 16u;
+            //boneBuf[index + 0] = bone.Transform.RenderMatrix.M11;
+            //boneBuf[index + 1] = bone.Transform.RenderMatrix.M12;
+            //boneBuf[index + 2] = bone.Transform.RenderMatrix.M13;
+            //boneBuf[index + 3] = bone.Transform.RenderMatrix.M14;
+            //boneBuf[index + 4] = bone.Transform.RenderMatrix.M21;
+            //boneBuf[index + 5] = bone.Transform.RenderMatrix.M22;
+            //boneBuf[index + 6] = bone.Transform.RenderMatrix.M23;
+            //boneBuf[index + 7] = bone.Transform.RenderMatrix.M24;
+            //boneBuf[index + 8] = bone.Transform.RenderMatrix.M31;
+            //boneBuf[index + 9] = bone.Transform.RenderMatrix.M32;
+            //boneBuf[index + 10] = bone.Transform.RenderMatrix.M33;
+            //boneBuf[index + 11] = bone.Transform.RenderMatrix.M34;
+            //boneBuf[index + 12] = bone.Transform.RenderMatrix.M41;
+            //boneBuf[index + 13] = bone.Transform.RenderMatrix.M42;
+            //boneBuf[index + 14] = bone.Transform.RenderMatrix.M43;
+            //boneBuf[index + 15] = bone.Transform.RenderMatrix.M44;
+            //if (bone.Transform.Name == "Hair_1_3")
+            //    Debug.Out("");
+            BoneMatricesBuffer?.Set(bone.Index, bone.Transform.RenderMatrix);
             _bonesInvalidated = true;
         }
 

@@ -226,11 +226,10 @@ namespace XREngine.Rendering
             Renderer.FrameBufferInvalidated();
             Viewports.ForEach(vp => vp.Resize((uint)obj.X, (uint)obj.Y, false));
 
-            var timer = Engine.Time.Timer;
-            //timer.DispatchUpdate();
-            timer.DispatchCollectVisible();
-            timer.DispatchSwapBuffers();
-            timer.DispatchRender();
+            //var timer = Engine.Time.Timer;
+            //await timer.DispatchCollectVisible();
+            //await timer.DispatchSwapBuffers();
+            //timer.DispatchRender();
         }
 
         public XRViewport GetOrAddViewportForPlayer(LocalPlayerController controller, bool autoSizeAllViewports)

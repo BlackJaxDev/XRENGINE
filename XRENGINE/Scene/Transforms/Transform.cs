@@ -542,7 +542,7 @@ namespace XREngine.Scene.Transforms
             // we need to convert the world rotation into the correct local-space delta.
             // This is done by "sandwiching" the rotation between the inverse parent rotation and parent rotation:
             // localDelta = parentWorldRotation^-1 * value * parentWorldRotation
-            Quaternion localDelta = Quaternion.Inverse(parentWorldRotation) * worldDelta;
+            Quaternion localDelta = Quaternion.Normalize(Quaternion.Inverse(parentWorldRotation) * worldDelta * parentWorldRotation);
 
             // Apply the local delta to our current rotation and normalize to prevent floating point errors
             // If networkSmoothed is true, the rotation will be smoothly interpolated to the target value

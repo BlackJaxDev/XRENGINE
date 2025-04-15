@@ -332,7 +332,7 @@ namespace XREngine.Scene.Transforms
             //    {
                     bool recalcChildren = VerifyWorldMatrix(forceWorldRecalc);
                     if (setRenderMatrixNow || World is null)
-                        SetRenderMatrix(WorldMatrix, false);
+                        SetRenderMatrix(WorldMatrix, false).Wait();
                     return recalcChildren;
                 //}
                 //else

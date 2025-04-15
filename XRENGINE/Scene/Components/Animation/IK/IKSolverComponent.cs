@@ -2,15 +2,8 @@
 
 namespace XREngine.Scene.Components.Animation
 {
-    /// <summary>
-    /// Base abstract class for %IK solver components.
-    /// </summary>
     public abstract class IKSolverComponent : BaseIKSolverComponent
     {
-        /// <summary>
-        /// Gets the solver used by this component.
-        /// </summary>
-        /// <returns></returns>
         public abstract IKSolver GetIKSolver();
 
         protected override void UpdateSolver()

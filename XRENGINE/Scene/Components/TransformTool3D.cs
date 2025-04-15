@@ -617,7 +617,7 @@ namespace XREngine.Actors.Types
         private const float _circRadius = _orbRadius * _circOrbScale;
         private const float _screenTransExtent = _orbRadius * 0.1f;
         private const float _axisSnapRange = 7.0f;
-        private const float _selectRange = 0.03f; //Selection error range for orb and circ
+        private const float _selectRange = 0.05f; //Selection error range for orb and circ
         private const float _axisSelectRange = 0.1f; //Selection error range for axes
         private const float _selectOrbScale = _selectRange / _orbRadius;
         private const float _circOrbScale = 1.2f;
@@ -935,7 +935,7 @@ namespace XREngine.Actors.Types
                 if (GeoUtil.RayIntersectsPlane(start, dir, Vector3.Zero, localCameraPos, out point))
                 {
                     //Clamp the point to edge of the sphere
-                    //point = Ray.PointAtLineDistance(Vector3.Zero, point, 1.0f);
+                    point = Ray.PointAtLineDistance(Vector3.Zero, point, 1.0f);
 
                     //Point lies on circ line?
                     float distance = point.Length();
@@ -1216,7 +1216,7 @@ namespace XREngine.Actors.Types
             MouseUp?.Invoke();
         }
 
-        public static bool RenderDebugInfo { get; set; } = true;
+        public static bool RenderDebugInfo { get; set; } = false;
 
         private void Render()
         {
