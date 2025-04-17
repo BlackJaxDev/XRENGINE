@@ -1379,6 +1379,34 @@ namespace XREngine.Data.Geometry
                 return farDist < 0.0f && leftDist < 0.0f;
             return farDist * leftDist < 0.0f;
         }
+
+        public static float SegmentDistanceToSegment(Vector3 s1Start, Vector3 s1End, Vector3 s2Start, Vector3 s2End)
+        {
+            Vector3 u = s1End - s1Start;
+            Vector3 v = s2End - s2Start;
+            Vector3 w = s1Start - s2Start;
+            float a = Vector3.Dot(u, u); // always >= 0
+            float b = Vector3.Dot(u, v);
+            float c = Vector3.Dot(v, v); // always >= 0
+            float d = Vector3.Dot(u, w);
+            float e = Vector3.Dot(v, w);
+            float D = a * c - b * b; // always >= 0
+            // compute the line parameters of the two closest points
+            float sc, tc;
+            if (D < 1e-8f) // the lines are almost parallel
+            {
+                sc = 0.0f;
+                tc = (b > c ? d / b : e / c); // use the largest denominator
+            }
+            else
+            {
+                sc = (b * e - c * d) / D;
+                tc = (a * e - b * d) / D;
+            }
+            // get the difference of the two closest points
+            Vector3 dP = w + (sc * u) - (tc * v); // = S1(sc) - S2(tc)
+            return dP.LengthSquared();
+        }
     }
     public enum EContainment
     {

@@ -68,22 +68,44 @@ namespace XREngine.Data.Geometry
             throw new NotImplementedException();
         }
 
-        public bool ContainsPoint(Vector3 point, float tolerance = float.Epsilon)
+        public readonly bool ContainsPoint(Vector3 point, float tolerance = float.Epsilon)
         {
-            throw new NotImplementedException();
+            Vector3 vec = point - Center;
+            float length = vec.Length();
+            return length <= Radius + tolerance;
         }
 
         public readonly AABB GetAABB(bool transformed) 
             => new(Center - new Vector3(Radius), Center + new Vector3(Radius));
 
-        public bool IntersectsSegment(Segment segment, out Vector3[] points)
+        public readonly bool IntersectsSegment(Segment segment, out Vector3[] points)
         {
-            throw new NotImplementedException();
+            Vector3 direction = segment.End - segment.Start;
+            Vector3 diff = segment.Start - Center;
+            float a = Vector3.Dot(direction, direction);
+            float b = 2.0f * Vector3.Dot(diff, direction);
+            float c = Vector3.Dot(diff, diff) - Radius * Radius;
+            float discriminant = b * b - 4.0f * a * c;
+            if (discriminant < 0)
+            {
+                points = [];
+                return false;
+            }
+            float t1 = (-b + MathF.Sqrt(discriminant)) / (2.0f * a);
+            float t2 = (-b - MathF.Sqrt(discriminant)) / (2.0f * a);
+            points = [segment.Start + t1 * direction, segment.Start + t2 * direction];
+            return true;
         }
 
-        public bool IntersectsSegment(Segment segment)
+        public readonly bool IntersectsSegment(Segment segment)
         {
-            throw new NotImplementedException();
+            Vector3 direction = segment.End - segment.Start;
+            Vector3 diff = segment.Start - Center;
+            float a = Vector3.Dot(direction, direction);
+            float b = 2.0f * Vector3.Dot(diff, direction);
+            float c = Vector3.Dot(diff, diff) - Radius * Radius;
+            float discriminant = b * b - 4.0f * a * c;
+            return discriminant >= 0;
         }
 
         public override readonly string ToString()

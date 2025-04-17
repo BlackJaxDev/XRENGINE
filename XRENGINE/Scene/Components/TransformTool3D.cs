@@ -40,20 +40,6 @@ namespace XREngine.Actors.Types
             set => SetField(ref _toolScale, value);
         }
 
-        private ETransformSpace _transformSpace = ETransformSpace.World;
-        public ETransformSpace TransformSpace
-        {
-            get => _transformSpace;
-            set => SetField(ref _transformSpace, value);
-        }
-
-        private ETransformMode _mode = ETransformMode.Translate;
-        public ETransformMode TransformMode
-        {
-            get => _mode;
-            set => SetField(ref _mode, value);
-        }
-
         #region Single Instance
 
         /// <summary>
@@ -78,6 +64,36 @@ namespace XREngine.Actors.Types
             return instance is not null && instance.TryGetComponent(out comp) && comp is not null;
         }
 
+        private static ETransformSpace _transformSpace = ETransformSpace.World;
+        public static ETransformSpace TransformSpace
+        {
+            get => _transformSpace;
+            set
+            {
+                _transformSpace = value;
+
+                if (!GetActiveInstance(out var instance) || instance is null)
+                    return;
+                
+                if (_transformSpace == ETransformSpace.Screen)
+                    instance.RegisterTick(ETickGroup.Late, ETickOrder.Logic, instance.UpdateScreenSpace);
+                else
+                    instance.UnregisterTick(ETickGroup.Late, ETickOrder.Logic, instance.UpdateScreenSpace);
+            }
+        }
+
+        private static ETransformMode _mode = ETransformMode.Translate;
+        public static ETransformMode TransformMode
+        {
+            get => _mode;
+            set
+            {
+                _mode = value;
+                if (GetActiveInstance(out var instance))
+                    instance?.ModeChanged();
+            }
+        }
+
         /// <summary>
         /// Spawns and retrieves the transformation tool in the current scene.
         /// </summary>
@@ -85,7 +101,7 @@ namespace XREngine.Actors.Types
         /// <param name="comp"></param>
         /// <param name="transformType"></param>
         /// <returns></returns>
-        public static TransformTool3D? GetInstance(TransformBase comp, ETransformMode transformType)
+        public static TransformTool3D? GetInstance(TransformBase comp)
         {
             XRWorldInstance? world = comp?.World;
             if (world is null)
@@ -97,11 +113,13 @@ namespace XREngine.Actors.Types
                 _instanceNode = new SceneNode(world);
             }
 
-            TransformTool3D tool = _instanceNode.GetOrAddComponent<TransformTool3D>(out _)!;
-            tool.TargetSocket = comp;
-            tool.TransformMode = transformType;
+            TransformTool3D instance = _instanceNode.GetOrAddComponent<TransformTool3D>(out _)!;
+            instance.TargetSocket = comp;
 
-            return tool;
+            if (_transformSpace == ETransformSpace.Screen)
+                instance.RegisterTick(ETickGroup.Late, ETickOrder.Logic, instance.UpdateScreenSpace);
+
+            return instance;
         }
 
         #endregion
@@ -399,17 +417,6 @@ namespace XREngine.Actors.Types
             base.OnPropertyChanged(propName, prev, field);
             switch (propName)
             {
-                case nameof(TransformMode):
-                    ModeChanged();
-                    break;
-                case nameof(TransformSpace):
-                    {
-                        if (_transformSpace == ETransformSpace.Screen)
-                            RegisterTick(ETickGroup.Late, ETickOrder.Logic, UpdateScreenSpace);
-                        else
-                            UnregisterTick(ETickGroup.Late, ETickOrder.Logic, UpdateScreenSpace);
-                    }
-                    break;
                 case nameof(TargetSocket):
                     {
                         if (_targetSocket != null)

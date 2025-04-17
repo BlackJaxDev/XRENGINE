@@ -3,6 +3,7 @@ using System.Collections.Concurrent;
 using System.Runtime.InteropServices;
 using XREngine.Components.Scene;
 using XREngine.Data.Rendering;
+using XREngine.Data.Vectors;
 
 namespace XREngine.Rendering.UI
 {
@@ -46,7 +47,7 @@ namespace XREngine.Rendering.UI
 
         private const AVPixelFormat _videoTextureFormat = AVPixelFormat.AV_PIX_FMT_RGB24;
 
-        public UIVideoComponent() : base(GetVideoMaterial())
+        public UIVideoComponent() : base(GetVideoMaterial(), true)
             => _fbo = new XRMaterialFrameBuffer(Material);
 
         public XRTexture2D? VideoTexture => Material?.Textures[0] as XRTexture2D;
@@ -62,18 +63,6 @@ namespace XREngine.Rendering.UI
             //texture.Resizable = false;
             return new XRMaterial([texture], XRShader.EngineShader(Path.Combine("Common", "UnlitTexturedForward.fs"), EShaderType.Fragment));
         }
-
-        //protected override void OnResizeLayout(BoundingRectangle parentRegion)
-        //{
-        //    base.OnResizeLayout(parentRegion);
-
-        //    int
-        //        w = (int)ActualWidth.ClampMin(1.0f),
-        //        h = (int)ActualHeight.ClampMin(1.0f);
-
-        //    Viewport.Resize(w, h);
-        //    _fbo.Resize(w, h);
-        //}
 
         protected internal override void OnComponentActivated()
         {
@@ -168,7 +157,7 @@ namespace XREngine.Rendering.UI
 
                 // Copy data to api PBO
                 var ptr = apiBuffer.GetMappedAddress();
-                if (ptr is null || ptr.Value.IsValid)
+                if (ptr is null || !ptr.Value.IsValid)
                     continue;
 
                 Marshal.Copy(data, 0, ptr.Value, data.Length);
@@ -434,10 +423,30 @@ namespace XREngine.Rendering.UI
             audioSource.EnqueueStreamingBuffers(freq, stereo, samples);
         }
 
+        private IVector2? _widthHeight;
+        public IVector2? WidthHeight
+        {
+            get => _widthHeight;
+            set
+            {
+                if (_widthHeight == value)
+                    return;
+
+                _widthHeight = value;
+                if (value is null)
+                    return;
+
+                VideoTexture?.Resize((uint)value.Value.X, (uint)value.Value.Y);
+                _fbo.Resize((uint)value.Value.X, (uint)value.Value.Y);
+            }
+        }
+
         private void ProcessVideoFrame()
         {
             // Handle hardware frame if needed
             var decodedFrame = GetHwFrame(_frame);
+
+            WidthHeight = new IVector2(decodedFrame->width, decodedFrame->height);
 
             // Convert frame to RGB24 if needed
             if (decodedFrame->format != (int)_videoTextureFormat)

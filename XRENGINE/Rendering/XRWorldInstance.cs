@@ -493,13 +493,19 @@ namespace XREngine.Rendering
             
             switch (renderable.Owner)
             {
-                case ModelComponent model:
-                    {
-                        float? dist = model.Intersect(segment, out Triangle? tri);
-                        return (dist, tri);
-                    }
+                //case ModelComponent model:
+                //    {
+                //        float? dist = model.Intersect(segment, out Triangle? tri);
+                //        return (dist, tri);
+                //    }
                 case TransformBase transform:
                     {
+                        //Debug.Out($"DirectItemTest: {transform.Name}");
+
+                        var viewNode = Engine.State.MainPlayer.ControlledPawn?.GetCamera()?.Transform;
+                        if (viewNode != null && transform == viewNode)
+                            return (null, null);
+
                         Capsule c = transform.Capsule;
                         if (!c.IntersectsSegment(segment, out Vector3[] points))
                             break;

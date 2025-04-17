@@ -85,7 +85,7 @@ namespace XREngine.Rendering.Info
             get => _localCullingVolume;
             set
             {
-                if (!XRMath.VolumeEquals(_localCullingVolume, value))
+                //if (!XRMath.VolumeEquals(_localCullingVolume, value))
                     SetField(ref _localCullingVolume, value);
             }
         }

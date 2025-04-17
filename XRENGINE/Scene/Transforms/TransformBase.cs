@@ -4,6 +4,7 @@ using System.ComponentModel;
 using System.Diagnostics.CodeAnalysis;
 using System.Numerics;
 using System.Reflection;
+using XREngine.Data.Colors;
 using XREngine.Data.Geometry;
 using XREngine.Data.Rendering;
 using XREngine.Rendering.Commands;
@@ -42,7 +43,7 @@ namespace XREngine.Scene.Transforms
             set => SetField(ref _selectionRadius, value);
         }
 
-        private Capsule _capsule = new(Vector3.Zero, Vector3.UnitY, 0.015f, 0.5f);
+        private Capsule _capsule = new(Vector3.Zero, Vector3.UnitY, 0.01f, 0.5f);
         [YamlIgnore]
         public Capsule Capsule
         {
@@ -73,8 +74,8 @@ namespace XREngine.Scene.Transforms
 
         private void MakeCapsule()
         {
-            Vector3 parentPos = Parent?.RenderTranslation ?? Vector3.Zero;
-            Vector3 thisPos = RenderTranslation;
+            Vector3 parentPos = Parent?.WorldTranslation ?? Vector3.Zero;
+            Vector3 thisPos = WorldTranslation;
             Vector3 center = (parentPos + thisPos) / 2.0f;
             Vector3 dir = (thisPos - parentPos).Normalized();
             float halfHeight = Vector3.Distance(parentPos, thisPos) / 2.0f;
@@ -96,9 +97,7 @@ namespace XREngine.Scene.Transforms
 
         protected virtual RenderInfo[] GetDebugRenderInfo()
         {
-            MakeCapsule();
-            RenderInfo.LocalCullingVolume = Capsule.GetAABB(false);
-            RenderInfo.CullingOffsetMatrix = RenderMatrix;
+            RemakeCapsule();
             return [RenderInfo];
         }
 
@@ -122,6 +121,13 @@ namespace XREngine.Scene.Transforms
 
             if (settings.RenderTransformCapsules)
                 Engine.Rendering.Debug.RenderCapsule(Capsule, settings.TransformCapsuleColor);
+
+            if (settings.RenderTransformCullingVolumes)
+            {
+                var box = RenderInfo.LocalCullingVolume;
+                if (box is not null)
+                    Engine.Rendering.Debug.RenderBox(box.Value.HalfExtents, box.Value.Center, RenderInfo.CullingOffsetMatrix, false, ColorF4.Red);
+            }
         }
 
         private void ChildAdded(TransformBase e)
@@ -302,10 +308,6 @@ namespace XREngine.Scene.Transforms
         protected virtual void OnRenderMatrixChanged()
         {
             //using var t = Engine.Profiler.Start();
-
-            //MakeCapsule();
-            //RenderInfo.LocalCullingVolume = Capsule.GetAABB(false);
-            //RenderInfo.CullingOffsetMatrix = RenderMatrix;
 
             _inverseRenderMatrix = null;
             RenderWorldMatrixChanged?.Invoke(this);
@@ -767,10 +769,30 @@ namespace XREngine.Scene.Transforms
                 ? WorldMatrix
                 : WorldMatrix * inverted;
 
+
+
         protected virtual void OnWorldMatrixChanged()
         {
+            RemakeCapsule();
             World?.EnqueueRenderTransformChange(this);
             WorldMatrixChanged?.Invoke(this);
+        }
+
+        private void RemakeCapsule()
+        {
+            MakeCapsule();
+
+            bool axisAligned = Engine.Rendering.Settings.TransformCullingIsAxisAligned;
+            if (axisAligned)
+            {
+                RenderInfo.LocalCullingVolume = Capsule.GetAABB(true);
+                RenderInfo.CullingOffsetMatrix = Matrix4x4.Identity;
+            }
+            else
+            {
+                RenderInfo.LocalCullingVolume = Capsule.GetAABB(false, true, out Quaternion dirToUp);
+                RenderInfo.CullingOffsetMatrix = Matrix4x4.CreateFromQuaternion(Quaternion.Normalize(Quaternion.Inverse(dirToUp))) * Matrix4x4.CreateTranslation(Capsule.Center);
+            }
         }
 
         #endregion

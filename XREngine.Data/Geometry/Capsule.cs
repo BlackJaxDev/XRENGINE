@@ -1,5 +1,6 @@
 ﻿using Extensions;
 using System.Numerics;
+using XREngine.Data.Core;
 
 namespace XREngine.Data.Geometry
 {
@@ -90,19 +91,30 @@ namespace XREngine.Data.Geometry
             return Ray.PointAtLineDistance(colinearPoint, point, _radius);
         }
 
-        public readonly AABB GetAABB(bool transformedByCenter)
+        public readonly AABB GetAABB(bool includeCenterTranslation)
+            => GetAABB(includeCenterTranslation, false, out _);
+        public readonly AABB GetAABB(bool includeCenterTranslation, bool alignToUp, out Quaternion dirToUp)
         {
             Vector3 top = GetTopCenterPoint();
             Vector3 bot = GetBottomCenterPoint();
-            if (!transformedByCenter)
+            if (!includeCenterTranslation)
             {
                 top -= Center;
                 bot -= Center;
             }
-            float radius = Radius;
+            if (alignToUp)
+            {
+                Vector3 dir = (top - bot).Normalized();
+                dirToUp = Quaternion.Normalize(XRMath.RotationBetweenVectors(dir, Globals.Up));
+                top = Vector3.Transform(top, dirToUp);
+                bot = Vector3.Transform(bot, dirToUp);
+            }
+            else
+                dirToUp = Quaternion.Identity;
+            Vector3 radius = new(MathF.Abs(Radius));
             return new(
-                Vector3.Min(top, bot) - new Vector3(radius),
-                Vector3.Max(top, bot) + new Vector3(radius));
+                Vector3.Min(top, bot) - radius,
+                Vector3.Max(top, bot) + radius);
         }
 
         #region Containment
@@ -177,37 +189,162 @@ namespace XREngine.Data.Geometry
             throw new NotImplementedException();
         }
 
-        public readonly bool IntersectsSegment(Segment segment, out Vector3[] points)
+        public readonly bool IntersectsSegment(Segment segment, out Vector3[] intersectingPoints)
         {
             Vector3 top = GetTopCenterPoint();
             Vector3 bot = GetBottomCenterPoint();
-            float startDist = GeoUtil.SegmentShortestDistanceToPoint(bot, top, segment.Start);
-            float endDist = GeoUtil.SegmentShortestDistanceToPoint(bot, top, segment.End);
-            if (startDist <= _radius || endDist <= _radius)
+            Vector3 capsuleDir = top - bot;
+            Vector3 segmentDir = segment.End - segment.Start;
+
+            // First check if either endpoint is inside the capsule
+            bool startInside = ContainsPoint(segment.Start);
+            bool endInside = ContainsPoint(segment.End);
+
+            if (startInside && endInside)
             {
-                points =
-                [
-                    startDist <= _radius ? segment.Start : segment.End,
-                    endDist <= _radius ? segment.End : segment.Start,
-                ];
+                // Both endpoints are inside - the whole segment is inside
+                intersectingPoints = [segment.Start, segment.End];
                 return true;
             }
-            points = [];
-            return false;
+
+            // Calculate the minimum distance between the segment and the capsule's axis
+            float distance = GeoUtil.SegmentDistanceToSegment(bot, top, segment.Start, segment.End);
+
+            if (distance > _radius)
+            {
+                // No intersection if the closest distance exceeds the radius
+                intersectingPoints = [];
+                return false;
+            }
+
+            // At this point, we know the segment intersects the capsule
+            // We need to find the actual intersection points
+            List<Vector3> points = new(2);
+
+            // Add any endpoints that are inside the capsule
+            if (startInside)
+                points.Add(segment.Start);
+            if (endInside)
+                points.Add(segment.End);
+
+            // If we don't have 2 points yet, we need to find the actual intersections
+            if (points.Count < 2)
+            {
+                // Check intersection with the top hemisphere
+                Sphere topSphere = GetTopSphere();
+                if (topSphere.IntersectsSegment(segment, out Vector3[] topIntersections))
+                {
+                    foreach (var point in topIntersections)
+                    {
+                        // Only add points that lie in the hemisphere facing away from the capsule axis
+                        if (Vector3.Dot(point - top, capsuleDir) >= 0)
+                        {
+                            points.Add(point);
+                        }
+                    }
+                }
+
+                // Check intersection with the bottom hemisphere
+                Sphere bottomSphere = GetBottomSphere();
+                if (bottomSphere.IntersectsSegment(segment, out Vector3[] bottomIntersections))
+                {
+                    foreach (var point in bottomIntersections)
+                    {
+                        // Only add points that lie in the hemisphere facing away from the capsule axis
+                        if (Vector3.Dot(point - bot, capsuleDir) <= 0)
+                        {
+                            points.Add(point);
+                        }
+                    }
+                }
+
+                // Check intersection with the capsule's cylindrical part
+                // We need to find where the segment intersects an infinite cylinder along the capsule axis
+                Vector3 capAxis = capsuleDir.Normalized();
+                Vector3 w = segment.Start - bot;
+
+                // Calculate the coefficients for the quadratic equation
+                Vector3 a = segmentDir - (Vector3.Dot(segmentDir, capAxis) * capAxis);
+                Vector3 b = w - (Vector3.Dot(w, capAxis) * capAxis);
+
+                float A = Vector3.Dot(a, a);
+                float B = 2 * Vector3.Dot(a, b);
+                float C = Vector3.Dot(b, b) - (_radius * _radius);
+
+                // Solve the quadratic equation
+                if (A > float.Epsilon) // Non-parallel case
+                {
+                    float discriminant = B * B - 4 * A * C;
+
+                    if (discriminant >= 0)
+                    {
+                        float sqrtD = MathF.Sqrt(discriminant);
+                        float t1 = (-B - sqrtD) / (2 * A);
+                        float t2 = (-B + sqrtD) / (2 * A);
+
+                        // Check if the intersection points are within the segment bounds
+                        if (t1 >= 0 && t1 <= 1)
+                        {
+                            Vector3 p1 = segment.Start + t1 * segmentDir;
+
+                            // Check if the point is within the cylindrical part of the capsule
+                            float axisProj = Vector3.Dot(p1 - bot, capAxis);
+                            if (axisProj >= 0 && axisProj <= capsuleDir.Length())
+                            {
+                                points.Add(p1);
+                            }
+                        }
+
+                        if (t2 >= 0 && t2 <= 1)
+                        {
+                            Vector3 p2 = segment.Start + t2 * segmentDir;
+
+                            // Check if the point is within the cylindrical part of the capsule
+                            float axisProj = Vector3.Dot(p2 - bot, capAxis);
+                            if (axisProj >= 0 && axisProj <= capsuleDir.Length())
+                            {
+                                points.Add(p2);
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Remove duplicate points (within a small tolerance)
+            if (points.Count > 1)
+            {
+                for (int i = points.Count - 1; i > 0; i--)
+                {
+                    for (int j = i - 1; j >= 0; j--)
+                    {
+                        if (Vector3.DistanceSquared(points[i], points[j]) < 1e-6f)
+                        {
+                            points.RemoveAt(i);
+                            break;
+                        }
+                    }
+                }
+            }
+
+            // Sort points along the segment direction for consistency
+            points.Sort((a, b) =>
+                Vector3.Dot(a - segment.Start, segmentDir).CompareTo(
+                Vector3.Dot(b - segment.Start, segmentDir)));
+
+            intersectingPoints = points.ToArray();
+            return intersectingPoints.Length > 0;
         }
 
         public readonly bool IntersectsSegment(Segment segment)
         {
             Vector3 top = GetTopCenterPoint();
             Vector3 bot = GetBottomCenterPoint();
-            //float startDist = GeoUtil.SegmentShortestDistanceToPoint(bot, top, segment.Start);
-            //float endDist = GeoUtil.SegmentShortestDistanceToPoint(bot, top, segment.End);
-            //if (startDist <= _radius || endDist <= _radius)
-            //    return true;
-            Vector3 point = GeoUtil.SegmentClosestColinearPointToPoint(bot, top, segment.Start);
-            if (Vector3.Distance(point, segment.Start) <= segment.Length)
-                return Vector3.Distance(point, segment.Start) <= _radius;
-            return false;
+
+            // Find minimum distance between capsule axis segment and query segment
+            float distance = GeoUtil.SegmentDistanceToSegment(bot, top, segment.Start, segment.End);
+
+            // If the minimum distance is less than or equal to the radius, they intersect
+            return distance <= _radius;
         }
 
         public EContainment ContainsBox(Box box)

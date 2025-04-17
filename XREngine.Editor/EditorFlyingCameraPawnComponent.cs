@@ -3,6 +3,7 @@ using ImageMagick;
 using System.Numerics;
 using XREngine.Actors.Types;
 using XREngine.Components;
+using XREngine.Components.Scene.Transforms;
 using XREngine.Core;
 using XREngine.Data.Colors;
 using XREngine.Data.Core;
@@ -31,6 +32,15 @@ public partial class EditorFlyingCameraPawnComponent : FlyingCameraPawnComponent
             RenderInfo3D.New(this, _postRenderRC),
             RenderInfo3D.New(this, _renderHighlightRC)
         ];
+        Selection.SelectionChanged += Selection_SelectionChanged;
+    }
+
+    private void Selection_SelectionChanged(SceneNode[] selection)
+    {
+        if (selection.Length == 0)
+            TransformTool3D.DestroyInstance();
+        else
+            TransformTool3D.GetInstance(selection[0].Transform);
     }
 
     //These two drag points diverge if the camera moves, so they're both stored initially at mouse down
@@ -132,7 +142,7 @@ public partial class EditorFlyingCameraPawnComponent : FlyingCameraPawnComponent
     public float FarZ => GetCamera()?.Camera.FarZ ?? 0.0f;
 
     public bool RenderFrustum { get; set; } = false;
-    public bool RenderRaycast { get; set; } = false;
+    public bool RenderRaycast { get; set; } = true;
 
     private readonly SortedDictionary<float, List<(XRComponent? item, object? data)>> _lastPhysicsPickResults = [];
     private readonly SortedDictionary<float, List<(RenderInfo3D item, object? data)>> _lastOctreePickResults = [];
@@ -177,30 +187,52 @@ public partial class EditorFlyingCameraPawnComponent : FlyingCameraPawnComponent
         if (cam is null)
             return;
 
-        _lastRaycastSegment = GetWorldSegment(vp);
+        var p = GetNormalizedCursorPosition(vp);
+        _lastRaycastSegment = vp.GetWorldSegment(p);
 
         SceneNode? tfmTool = TransformTool3D.InstanceNode;
         if (tfmTool is not null && tfmTool.TryGetComponent<TransformTool3D>(out var comp))
             comp?.MouseMove(_lastRaycastSegment, cam.Camera, LeftClickPressed);
 
-        //_lastOctreePickResults.Clear();
-        //_lastPhysicsPickResults.Clear();
-        //LayerMask layerMask = LayerMask.GetMask(DefaultLayers.Default);
-        //if (vp.PickScene(p, false, true, true, layerMask, _queryFilter, _lastOctreePickResults, _lastPhysicsPickResults))
-        //{
-        //    //Debug.Out(Name + " picked something!");
-        //}
-
-        //Task.Run(() => SetRaycastResult(orderedResults));
-
-        //if (RenderRaycast)
-        //{
-        //    Vector3 start = _lastRaycastSegment.Start;
-        //    Vector3 end = _lastRaycastSegment.End;
-        //    Engine.Rendering.Debug.RenderLine(start, end, ColorF4.Magenta, false);
-        //}
+        lock (_raycastLock)
+        {
+            _lastOctreePickResults.Clear();
+            _lastPhysicsPickResults.Clear();
+            LayerMask layerMask = LayerMask.GetMask(DefaultLayers.Default);
+            if (vp.PickScene(p, false, true, true, layerMask, _queryFilter, _lastOctreePickResults, _lastPhysicsPickResults))
+            {
+                if (RenderRaycast)
+                {
+                    if (_lastOctreePickResults.Count > 0)
+                        RenderRaycastResult(_lastOctreePickResults.FirstOrDefault());
+                    
+                    //foreach (var x in _lastPhysicsPickResults.Values)
+                    //    foreach (var (c2, _) in x)
+                    //        if (c2?.SceneNode is not null)
+                    //            Engine.Rendering.Debug.RenderLine(_lastRaycastSegment.Start, _lastRaycastSegment.End, ColorF4.Green);
+                }
+                //Debug.Out(Name + " picked something!");
+            }
+        }
 
         ApplyTransformations(vp);
+    }
+
+    private static void RenderRaycastResult(KeyValuePair<float, List<(RenderInfo3D item, object? data)>> result)
+    {
+        if (result.Value is null || result.Value.Count == 0)
+            return;
+
+        foreach ((RenderInfo3D info, object? o) in result.Value)
+        {
+            if (info.Owner is not TransformBase tfm || o is not Vector3 bestPoint)
+                continue;
+            
+            string? name = tfm.Name;
+            if (name is not null)
+                Engine.Rendering.Debug.RenderText(bestPoint, name, ColorF4.Black);
+            Engine.Rendering.Debug.RenderPoint(bestPoint, ColorF4.Red);
+        }
     }
 
     private Segment GetWorldSegment(XRViewport vp)
@@ -237,14 +269,12 @@ public partial class EditorFlyingCameraPawnComponent : FlyingCameraPawnComponent
         if (validDepth)
         {
             DepthHitNormalizedViewportPoint = new Vector3(p.X, p.Y, depth!.Value);
-            if (_queryDepth)
-                WorldDragPoint = Viewport?.NormalizedViewportToWorldCoordinate(DepthHitNormalizedViewportPoint!.Value);
+            WorldDragPoint = Viewport?.NormalizedViewportToWorldCoordinate(DepthHitNormalizedViewportPoint!.Value);
         }
         else
         {
             DepthHitNormalizedViewportPoint = null;
-            if (_queryDepth)
-                WorldDragPoint = null;
+            WorldDragPoint = null;
         }
         _queryDepth = false;
     }
@@ -263,7 +293,7 @@ public partial class EditorFlyingCameraPawnComponent : FlyingCameraPawnComponent
 
     private bool _queryDepth = false;
     private bool NeedsDepthHit()
-        => _lastScrollDelta.HasValue || _lastMouseTranslationDelta.HasValue || _lastRotateDelta.HasValue || _queryDepth;
+        => _queryDepth;
 
     protected override void OnPropertyChanged<T>(string? propName, T prev, T field)
     {
@@ -355,9 +385,7 @@ public partial class EditorFlyingCameraPawnComponent : FlyingCameraPawnComponent
     protected override void MouseRotate(float x, float y)
     {
         if (WorldDragPoint.HasValue)
-        {
             _lastRotateDelta = new Vector2(-x * MouseRotateSpeed, y * MouseRotateSpeed);
-        }
         else if (Selection.SceneNodes.Length > 0)
         {
             Vector3 avgPoint = Vector3.Zero;
@@ -383,6 +411,7 @@ public partial class EditorFlyingCameraPawnComponent : FlyingCameraPawnComponent
                 return;
 
             _lastMouseTranslationDelta = new Vector2(-x, -y);
+            //_queryDepth = true;
         }
         else
             base.MouseTranslate(x, y);
@@ -392,6 +421,7 @@ public partial class EditorFlyingCameraPawnComponent : FlyingCameraPawnComponent
     protected override void OnScrolled(float diff)
     {
         _lastScrollDelta = diff;
+        _queryDepth = true;
     }
 
     private bool _wantsScreenshot = false;
@@ -419,47 +449,13 @@ public partial class EditorFlyingCameraPawnComponent : FlyingCameraPawnComponent
         input.RegisterKeyEvent(EKey.F4, EButtonInputType.Pressed, SetTransformModeScreen);
     }
 
-    private void SetTransformModeParent()
-    {
-        if (TransformTool3D.GetActiveInstance(out var comp) && comp!.TransformSpace != ETransformSpace.Parent)
-            comp.TransformSpace = ETransformSpace.Parent;
-    }
-
-    private void SetTransformModeScreen()
-    {
-        if (TransformTool3D.GetActiveInstance(out var comp) && comp!.TransformSpace != ETransformSpace.Screen)
-            comp.TransformSpace = ETransformSpace.Screen;
-    }
-
-    private void SetTransformModeLocal()
-    {
-        if (TransformTool3D.GetActiveInstance(out var comp) && comp!.TransformSpace != ETransformSpace.Local)
-            comp.TransformSpace = ETransformSpace.Local;
-    }
-
-    private void SetTransformModeWorld()
-    {
-        if (TransformTool3D.GetActiveInstance(out var comp) && comp!.TransformSpace != ETransformSpace.World)
-            comp.TransformSpace = ETransformSpace.World;
-    }
-
-    private void SetTransformScale()
-    {
-        if (TransformTool3D.GetActiveInstance(out var comp) && comp!.TransformMode != ETransformMode.Scale)
-            comp.TransformMode = ETransformMode.Scale;
-    }
-
-    private void SetTransformRotation()
-    {
-        if (TransformTool3D.GetActiveInstance(out var comp) && comp!.TransformMode != ETransformMode.Rotate)
-            comp.TransformMode = ETransformMode.Rotate;
-    }
-
-    private void SetTransformTranslation()
-    {
-        if (TransformTool3D.GetActiveInstance(out var comp) && comp!.TransformMode != ETransformMode.Translate)
-            comp.TransformMode = ETransformMode.Translate;
-    }
+    private void SetTransformModeParent() => TransformTool3D.TransformSpace = ETransformSpace.Parent;
+    private void SetTransformModeScreen() => TransformTool3D.TransformSpace = ETransformSpace.Screen;
+    private void SetTransformModeLocal() => TransformTool3D.TransformSpace = ETransformSpace.Local;
+    private void SetTransformModeWorld() => TransformTool3D.TransformSpace = ETransformSpace.World;
+    private void SetTransformScale() => TransformTool3D.TransformMode = ETransformMode.Scale;
+    private void SetTransformRotation() => TransformTool3D.TransformMode = ETransformMode.Rotate;
+    private void SetTransformTranslation() => TransformTool3D.TransformMode = ETransformMode.Translate;
 
     private SortedDictionary<float, List<(ITreeItem item, object? data)>>? _lastRaycast = null;
     private readonly object _raycastLock = new();
@@ -510,13 +506,6 @@ public partial class EditorFlyingCameraPawnComponent : FlyingCameraPawnComponent
         if (input is null)
             return;
 
-        //var lc = input?.Mouse?.LeftClick;
-        //if (lc is null)
-        //    return;
-
-        //if (!lc.GetState(EButtonInputType.Pressed))
-        //    return;
-
         List<SceneNode> currentHits = [];
         lock (_raycastLock)
         {
@@ -529,6 +518,8 @@ public partial class EditorFlyingCameraPawnComponent : FlyingCameraPawnComponent
                 foreach (var (info, _) in x)
                     if (info.Owner is XRComponent comp && comp.SceneNode is not null)
                         currentHits.Add(comp.SceneNode);
+                    else if (info.Owner is TransformBase tfm && tfm.SceneNode is not null)
+                        currentHits.Add(tfm.SceneNode);
         }
 
         if (_lastSelection is null)

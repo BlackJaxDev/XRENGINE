@@ -48,6 +48,14 @@ public partial class UIEditorComponent : UIComponent
     {
         base.OnComponentActivated();
         RemakeChildren();
+        Selection.SelectionChanged += OnSelectionChanged;
+    }
+
+    private void OnSelectionChanged(SceneNode[] obj)
+    {
+        if (_inspector is null)
+            return;
+        _inspector.InspectedObjects = obj;
     }
 
     protected override void OnComponentDeactivated()
@@ -55,6 +63,9 @@ public partial class UIEditorComponent : UIComponent
         base.OnComponentDeactivated();
         SceneNode.Transform.Clear();
     }
+
+    private InspectorPanel? _inspector;
+    private HierarchyPanel? _hierarchy;
 
     public void RemakeChildren()
     {
@@ -82,7 +93,8 @@ public partial class UIEditorComponent : UIComponent
         hierarchyNode.NewChild<HierarchyPanel>(out var hierarchy);
         if (World is not null)
             hierarchy.RootNodes = [.. World.RootNodes];
-        
+        _hierarchy = hierarchy;
+
         var middleNode = dockNode.NewChildWithTransform<UIBoundableTransform>(out _, "Scene");
         //middleNode.AddComponent<UIVideoComponent>();
 
@@ -91,6 +103,7 @@ public partial class UIEditorComponent : UIComponent
         listTfm.ItemAlignment = EListAlignment.TopOrLeft;
 
         //World.Name = "TestWorld";
+        _inspector = inspector;
         inspector.InspectedObjects = [Engine.Rendering.Settings];
 
         ////Create the dockable windows transform for panels

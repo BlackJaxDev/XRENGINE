@@ -610,24 +610,24 @@ namespace XREngine.Rendering
             if (CameraComponent is null)
                 return hasMatches;
 
-            //if (testHud)
-            //{
-            //    var cameraCanvas = CameraComponent.GetUserInterfaceOverlay();
-            //    if (cameraCanvas is not null && cameraCanvas.CanvasTransform.DrawSpace != ECanvasDrawSpace.World)
-            //    {
-            //        UIComponent?[] hudComps = cameraCanvas.FindDeepestComponents(normalizedViewportPosition);
-            //        foreach (var hudComp in hudComps)
-            //        {
-            //            if (hudComp is not UIInteractableComponent inter || !inter.IsActive)
-            //                continue;
-                        
-            //            hasMatches = true;
-            //            float dist = 0.0f;
-            //            dist = CameraComponent.Camera.DistanceFrom(hudComp.Transform.WorldTranslation, false);
-            //            orderedPhysicsResults.Add(dist, [(inter, null)]);
-            //        }
-            //    }
-            //}
+            if (testHud)
+            {
+                var cameraCanvas = CameraComponent.GetUserInterfaceOverlay();
+                if (cameraCanvas is not null && cameraCanvas.CanvasTransform.DrawSpace != ECanvasDrawSpace.World)
+                {
+                    UIComponent?[] hudComps = cameraCanvas.FindDeepestComponents(normalizedViewportPosition);
+                    foreach (var hudComp in hudComps)
+                    {
+                        if (hudComp is not UIInteractableComponent inter || !inter.IsActive)
+                            continue;
+
+                        hasMatches = true;
+                        float dist = 0.0f;
+                        dist = CameraComponent.Camera.DistanceFrom(hudComp.Transform.WorldTranslation, false);
+                        orderedPhysicsResults.Add(dist, [(inter, null)]);
+                    }
+                }
+            }
 
             if (testSceneOctree)
             {

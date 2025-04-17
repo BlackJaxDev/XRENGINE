@@ -46,7 +46,7 @@ public static class EditorWorld
     public const bool VisualizeQuadtree = false;
 
     //Editor UI
-    public const bool AddEditorUI = false; //Adds the full editor UI to the camera.
+    public const bool AddEditorUI = true; //Adds the full editor UI to the camera.
     public const bool TransformTool = false; //Adds the transform tool to the scene for testing dragging and rotating etc.
     public const bool AllowEditingInVR = false; //Allows the user to edit the scene from desktop in VR.
 
@@ -311,6 +311,7 @@ public static class EditorWorld
                     phys.Inert = 0.5f;
                     phys.Stiffness = 0.05f;
                     phys.Force = new Vector3(0.0f, 0.0f, 0.0f);
+                    phys.Gravity = new Vector3(0.0f, -0.1f, 0.0f);
                     phys.Elasticity = 0.01f;
                     phys.Multithread = false;
                 }
@@ -427,8 +428,8 @@ public static class EditorWorld
         s.AllowSkinning = true;
         //s.RenderMesh3DBounds = true;
         s.RenderTransformDebugInfo = true;
-        s.RenderTransformLines = true;
-        //s.RenderTransformCapsules = true;
+        s.RenderTransformLines = false;
+        s.RenderTransformCapsules = false;
         s.RenderTransformPoints = false;
         s.RecalcChildMatricesInParallel = true;
         s.TickGroupedItemsInParallel = true;
@@ -542,7 +543,7 @@ public static class EditorWorld
         comp.TargetTransform = targetNode.Transform;
 
         //Let the user move the target
-        EnableTransformToolForNode(targetNode, ETransformMode.Translate);
+        EnableTransformToolForNode(targetNode);
 
         //string tree = ikTestRootNode.PrintTree();
         //Debug.Out(tree);
@@ -1454,7 +1455,7 @@ public static class EditorWorld
         OnFinishedImportingAvatar(rootNode);
     }
 
-    private static void EnableTransformToolForNode(SceneNode? node, ETransformMode transformType = ETransformMode.Translate)
+    private static void EnableTransformToolForNode(SceneNode? node)
     {
         if (node is null)
             return;
@@ -1462,12 +1463,12 @@ public static class EditorWorld
         //we have to wait for the scene node to be activated in the instance of the world before we can attach the transform tool
         void Edit(SceneNode x)
         {
-            TransformTool3D.GetInstance(x.Transform, transformType);
+            TransformTool3D.GetInstance(x.Transform);
             x.Activated -= Edit;
         }
 
         if (node.IsActiveInHierarchy && node.World is not null)
-            TransformTool3D.GetInstance(node.Transform, transformType);
+            TransformTool3D.GetInstance(node.Transform);
         else
             node.Activated += Edit;
     }

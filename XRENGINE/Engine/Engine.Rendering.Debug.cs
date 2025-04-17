@@ -1,12 +1,14 @@
 ﻿using Extensions;
 using System.Collections.Concurrent;
 using System.Numerics;
+using XREngine.Core;
 using XREngine.Data.Colors;
 using XREngine.Data.Geometry;
 using XREngine.Data.Rendering;
 using XREngine.Data.Transforms.Rotations;
 using XREngine.Rendering;
 using XREngine.Rendering.Physics.Physx;
+using XREngine.Rendering.UI;
 
 namespace XREngine
 {
@@ -27,9 +29,12 @@ namespace XREngine
 
                 private static void PreUpdate()
                 {
-                    _debugPointsQueue.Clear();
-                    _debugLinesQueue.Clear();
-                    _debugTrianglesQueue.Clear();
+                    //lock (DebugTextUpdateQueue)
+                        DebugTextUpdateQueue.Clear();
+                    
+                    DebugPointsQueue.Clear();
+                    DebugLinesQueue.Clear();
+                    DebugTrianglesQueue.Clear();
                 }
 
                 public static readonly Vector3 UIPositionBias = new(0.0f, 0.0f, 0.1f);
@@ -39,9 +44,9 @@ namespace XREngine
                 private static readonly ConcurrentBag<(Vector3 pos0, Vector3 pos1, ColorF4 color)> _debugLines = [];
                 private static readonly ConcurrentBag<(Vector3 pos0, Vector3 pos1, Vector3 pos2, ColorF4 color)> _debugTriangles = [];
 
-                private static readonly ConcurrentQueue<(Vector3 pos, ColorF4 color)> _debugPointsQueue = [];
-                private static readonly ConcurrentQueue<(Vector3 pos0, Vector3 pos1, ColorF4 color)> _debugLinesQueue = [];
-                private static readonly ConcurrentQueue<(Vector3 pos0, Vector3 pos1, Vector3 pos2, ColorF4 color)> _debugTrianglesQueue = [];
+                private static readonly ConcurrentQueue<(Vector3 pos, ColorF4 color)> DebugPointsQueue = [];
+                private static readonly ConcurrentQueue<(Vector3 pos0, Vector3 pos1, ColorF4 color)> DebugLinesQueue = [];
+                private static readonly ConcurrentQueue<(Vector3 pos0, Vector3 pos1, Vector3 pos2, ColorF4 color)> DebugTrianglesQueue = [];
 
                 private static readonly InstancedDebugVisualizer _instancedDebugVisualizer = new();
 
@@ -120,11 +125,33 @@ namespace XREngine
 
                 public static void RenderShapes()
                 {
-                    foreach (var updatePoint in _debugPointsQueue)
+                    //lock (DebugTextUpdateQueue)
+                        foreach ((Vector3 pos, string text, ColorF4 color) in DebugTextUpdateQueue)
+                            UpdateDebugText(pos, text, color);
+
+                    var hashes = DebugTexts.Keys.ToArray();
+                    for (int i = 0; i < hashes.Length; i++)
+                    {
+                        var hash = hashes[i];
+                        if (!DebugTexts.TryGetValue(hash, out var text))
+                            continue;
+
+                        text.text.Render();
+
+                        float nowTime = Engine.Time.Timer.Time();
+                        float lastTime = text.lastUpdatedTime;
+                        if (nowTime - lastTime > Engine.Rendering.Settings.DebugTextMaxLifespan)
+                        {
+                            if (DebugTexts.TryRemove(hash, out (UIText text, float lastUpdatedTime) item))
+                                TextPool.Release(item.text);
+                        }
+                    }
+
+                    foreach (var updatePoint in DebugPointsQueue)
                         _debugPoints.Add(updatePoint);
-                    foreach (var updateLine in _debugLinesQueue)
+                    foreach (var updateLine in DebugLinesQueue)
                         _debugLines.Add(updateLine);
-                    foreach (var updateTriangle in _debugTrianglesQueue)
+                    foreach (var updateTriangle in DebugTrianglesQueue)
                         _debugTriangles.Add(updateTriangle);
 
                     //while (_debugPointsQueue.TryDequeue(out var point))
@@ -212,7 +239,7 @@ namespace XREngine
                     if (IsRenderThread)
                         _debugPoints.Add((position, color));
                     else
-                        _debugPointsQueue.Enqueue((position, color));
+                        DebugPointsQueue.Enqueue((position, color));
                 }
 
                 public static unsafe void RenderLine(Vector3 start, Vector3 end, ColorF4 color)
@@ -223,7 +250,7 @@ namespace XREngine
                     if (IsRenderThread)
                         _debugLines.Add((start, end, color));
                     else
-                        _debugLinesQueue.Enqueue((start, end, color));
+                        DebugLinesQueue.Enqueue((start, end, color));
                 }
 
                 public static void RenderTriangle(Triangle triangle, ColorF4 color, bool solid)
@@ -243,7 +270,7 @@ namespace XREngine
                         if (IsRenderThread)
                             _debugTriangles.Add((A, B, C, color));
                         else
-                            _debugTrianglesQueue.Enqueue((A, B, C, color));
+                            DebugTrianglesQueue.Enqueue((A, B, C, color));
                     }
                     else
                     {
@@ -516,89 +543,125 @@ namespace XREngine
                     bool solid,
                     ColorF4 color)
                 {
-                    const int segments = 10;
-                    const int rings = 10;
-
-                    Vector3[] capsulePoints = new Vector3[segments * rings];
-                    for (int i = 0; i < rings; i++)
-                    {
-                        float theta = MathF.PI * i / rings;
-                        float sinTheta = MathF.Sin(theta);
-                        float cosTheta = MathF.Cos(theta);
-                        for (int j = 0; j < segments; j++)
-                        {
-                            float phi = 2 * MathF.PI * j / segments;
-                            float sinPhi = MathF.Sin(phi);
-                            float cosPhi = MathF.Cos(phi);
-                            Vector3 localPoint = new(cosPhi * sinTheta, cosTheta, sinPhi * sinTheta);
-                            capsulePoints[i * segments + j] = localPoint * radius + center + localUpAxis * halfHeight;
-                        }
-                    }
-
                     if (solid)
                     {
-                        // Build triangle fan: center + each adjacent edge.
-                        for (int i = 0; i < rings - 1; i++)
-                        {
-                            for (int j = 0; j < segments - 1; j++)
-                            {
-                                Vector3 pos0 = capsulePoints[i * segments + j];
-                                Vector3 pos1 = capsulePoints[i * segments + j + 1];
-                                Vector3 pos2 = capsulePoints[(i + 1) * segments + j];
-                                RenderTriangle(pos0, pos1, pos2, color, true);
+                        const int segments = 10;
+                        const int rings = 10;
 
-                                pos0 = capsulePoints[i * segments + j + 1];
-                                pos1 = capsulePoints[(i + 1) * segments + j + 1];
-                                pos2 = capsulePoints[(i + 1) * segments + j];
-                                RenderTriangle(pos0, pos1, pos2, color, true);
+                        Vector3[] capsulePoints = new Vector3[segments * rings];
+                        for (int i = 0; i < rings; i++)
+                        {
+                            float theta = MathF.PI * i / rings;
+                            float sinTheta = MathF.Sin(theta);
+                            float cosTheta = MathF.Cos(theta);
+                            for (int j = 0; j < segments; j++)
+                            {
+                                float phi = 2 * MathF.PI * j / segments;
+                                float sinPhi = MathF.Sin(phi);
+                                float cosPhi = MathF.Cos(phi);
+                                Vector3 localPoint = new(cosPhi * sinTheta, cosTheta, sinPhi * sinTheta);
+                                capsulePoints[i * segments + j] = localPoint * radius + center + localUpAxis * halfHeight;
                             }
                         }
-                        // Build top and bottom caps.
-                        Vector3 topCenter = center + localUpAxis * halfHeight;
-                        Vector3 bottomCenter = center - localUpAxis * halfHeight;
-                        for (int i = 0; i < rings - 1; i++)
-                        {
-                            Vector3 topPos0 = capsulePoints[i * segments];
-                            Vector3 topPos1 = capsulePoints[(i + 1) * segments];
 
-                            Vector3 bottomPos0 = capsulePoints[i * segments + segments - 1];
-                            Vector3 bottomPos1 = capsulePoints[(i + 1) * segments];
-
-                            RenderTriangle(topCenter, topPos0, topPos1, color, true);
-                            RenderTriangle(bottomCenter, bottomPos0, bottomPos1, color, true);
-                        }
-                    }
-                    else
-                    {
                         for (int i = 0; i < rings; i++)
                         {
                             for (int j = 0; j < segments; j++)
                             {
+                                int next = (j + 1) % segments;
+                                int nextRing = i < rings - 1 ? i + 1 : i;
                                 Vector3 pos0 = capsulePoints[i * segments + j];
-                                Vector3 pos1 = capsulePoints[i * segments + (j + 1) % segments];
+                                Vector3 pos1 = capsulePoints[i * segments + next];
                                 RenderLine(pos0, pos1, color);
-
                                 if (i < rings - 1)
                                 {
-                                    Vector3 pos2 = capsulePoints[(i + 1) * segments + j];
+                                    Vector3 pos2 = capsulePoints[nextRing * segments + j];
                                     RenderLine(pos0, pos2, color);
                                 }
                             }
                         }
+                    }
+                    else
+                    {
+                        // Render a wireframe capsule using circles and lines
+                        const int segments = 16; // Number of segments around the circumference
+                        const int arcSegments = 8; // Number of segments for the hemisphere arcs
 
-                        // Build top and bottom caps.
+                        // Compute orthonormal basis for drawing circles perpendicular to localUpAxis
+                        Vector3 tangent = Vector3.Normalize(Vector3.Cross(localUpAxis,
+                            localUpAxis.Equals(Vector3.UnitX) ? Vector3.UnitY : Vector3.UnitX));
+                        Vector3 bitangent = Vector3.Cross(localUpAxis, tangent);
+
                         Vector3 topCenter = center + localUpAxis * halfHeight;
                         Vector3 bottomCenter = center - localUpAxis * halfHeight;
-                        for (int i = 0; i < rings - 1; i++)
+
+                        // Build circle points at top and bottom (reused for arcs)
+                        Vector3[] circlePoints = new Vector3[segments];
+                        for (int i = 0; i < segments; i++)
                         {
-                            Vector3 topPos0 = capsulePoints[i * segments];
-                            Vector3 topPos1 = capsulePoints[(i + 1) * segments];
-                            Vector3 bottomPos0 = capsulePoints[i * segments + segments - 1];
-                            Vector3 bottomPos1 = capsulePoints[(i + 1) * segments];
-                            RenderLine(topCenter, topPos0, color);
-                            RenderLine(topCenter, topPos1, color);
-                            RenderLine(bottomCenter, bottomPos0, color);
-                            RenderLine(bottomCenter, bottomPos1, color);
+                            float angle = 2 * MathF.PI * i / segments;
+                            float cos = MathF.Cos(angle);
+                            float sin = MathF.Sin(angle);
+                            Vector3 offset = tangent * cos * radius + bitangent * sin * radius;
+                            circlePoints[i] = offset; // Store just the offset for reuse
+                        }
+
+                        // Draw top and bottom circles
+                        for (int i = 0; i < segments; i++)
+                        {
+                            Vector3 point1 = topCenter + circlePoints[i];
+                            Vector3 point2 = topCenter + circlePoints[(i + 1) % segments];
+                            RenderLine(point1, point2, color);
+
+                            point1 = bottomCenter + circlePoints[i];
+                            point2 = bottomCenter + circlePoints[(i + 1) % segments];
+                            RenderLine(point1, point2, color);
+                        }
+
+                        // Draw vertical lines and hemisphere arcs
+                        // Use fewer vertical lines to avoid cluttering
+                        int verticalLineCount = 4;
+                        for (int i = 0; i < segments; i += segments / verticalLineCount)
+                        {
+                            // Draw vertical lines connecting top and bottom circles
+                            Vector3 topPoint = topCenter + circlePoints[i];
+                            Vector3 bottomPoint = bottomCenter + circlePoints[i];
+                            RenderLine(topPoint, bottomPoint, color);
+
+                            // Draw hemisphere arcs
+                            // Top hemisphere
+                            Vector3 prevPoint = topPoint;
+                            for (int j = 1; j <= arcSegments; j++)
+                            {
+                                float t = j / (float)arcSegments;
+                                float arcAngle = MathF.PI / 2 * t;
+                                float cosArc = MathF.Cos(arcAngle);
+                                float sinArc = MathF.Sin(arcAngle);
+
+                                Vector3 newPoint = topCenter +
+                                    circlePoints[i] * cosArc +
+                                    localUpAxis * radius * sinArc;
+
+                                RenderLine(prevPoint, newPoint, color);
+                                prevPoint = newPoint;
+                            }
+
+                            // Bottom hemisphere
+                            prevPoint = bottomPoint;
+                            for (int j = 1; j <= arcSegments; j++)
+                            {
+                                float t = j / (float)arcSegments;
+                                float arcAngle = MathF.PI / 2 * t;
+                                float cosArc = MathF.Cos(arcAngle);
+                                float sinArc = MathF.Sin(arcAngle);
+
+                                Vector3 newPoint = bottomCenter +
+                                    circlePoints[i] * cosArc -
+                                    localUpAxis * radius * sinArc;
+
+                                RenderLine(prevPoint, newPoint, color);
+                                prevPoint = newPoint;
+                            }
                         }
                     }
                 }
@@ -708,6 +771,45 @@ namespace XREngine
                             RenderLine(pos1, center, color);
                         }
                     }
+                }
+
+                private static readonly ConcurrentDictionary<int, (UIText text, float lastUpdatedTime)> DebugTexts = new();
+                private static readonly ResourcePool<UIText> TextPool = new(() => new());
+                private static readonly ConcurrentQueue<(Vector3 pos, string text, ColorF4 color)> DebugTextUpdateQueue = new();
+
+                public static void RenderText(Vector3 bestPoint, string text, ColorF4 color)
+                {
+                    if (Engine.IsRenderThread)
+                        UpdateDebugText(bestPoint, text, color);
+                    else
+                    {
+                        //lock (DebugTextUpdateQueue)
+                            DebugTextUpdateQueue.Enqueue((bestPoint, text, color));
+                    }
+                }
+
+                private static void UpdateDebugText(Vector3 bestPoint, string text, ColorF4 color)
+                {
+                    int hash = HashCode.Combine(text.GetHashCode(), bestPoint.GetHashCode());
+                    DebugTexts.AddOrUpdate(hash, _ =>
+                    {
+                        UIText t = TextPool.Take();
+                        t.Text = text;
+                        t.Color = color;
+                        t.Translation = bestPoint;
+                        //textObject.FontSize = 1.0f;
+                        t.Scale = 0.001f;
+                        return (t, Engine.Time.Timer.Time());
+                    }, (_, pair) =>
+                    {
+                        var t = pair.text;
+                        t.Text = text;
+                        t.Color = color;
+                        t.Translation = bestPoint;
+                        t.Scale = 0.001f;
+                        t.UpdateTextMatrix();
+                        return pair;
+                    });
                 }
 
                 public static void RenderFrustum(Frustum frustum, ColorF4 color)

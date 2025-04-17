@@ -48,11 +48,11 @@ public partial class EditorPanel : XRComponent
     private static RenderingParameters RenderParameters { get; } = new()
     {
         CullMode = ECullMode.None,
-        //DepthTest = new()
-        //{
-        //    Enabled = ERenderParamUsage.Disabled,
-        //    Function = EComparison.Always
-        //},
+        DepthTest = new()
+        {
+            Enabled = ERenderParamUsage.Disabled,
+            Function = EComparison.Always
+        },
         RequiredEngineUniforms = EUniformRequirements.ViewportDimensions,
         BlendModeAllDrawBuffers = BlendMode.EnabledTransparent(),
     };

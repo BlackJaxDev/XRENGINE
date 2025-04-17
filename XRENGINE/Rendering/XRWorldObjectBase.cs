@@ -215,6 +215,12 @@ namespace XREngine
             World?.UnregisterTick(group, order, tick);
         }
 
+        protected override void OnDestroying()
+        {
+            base.OnDestroying();
+            ClearTicks();
+        }
+
         protected internal void ClearTicks()
         {
             foreach (var (group, order, tick) in _tickCache)
