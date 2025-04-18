@@ -86,6 +86,9 @@ namespace XREngine.Rendering
 
             public void Grab(XRFrameBuffer? inFBO, XRViewport? viewport)
             {
+                if (Engine.Rendering.State.IsShadowPass || Engine.Rendering.State.IsSceneCapturePass)
+                    return;
+
                 var rend = AbstractRenderer.Current;
                 if (rend is null)
                     return;

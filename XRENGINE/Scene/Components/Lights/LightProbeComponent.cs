@@ -364,9 +364,13 @@ namespace XREngine.Components.Lights
             //    return;
             //_capturing = false;
 
+            Engine.Rendering.State.IsLightProbePass = true;
+
             base.Render();
             GenerateIrradianceInternal();
             GeneratePrefilterInternal();
+
+            Engine.Rendering.State.IsLightProbePass = false;
         }
     }
 }

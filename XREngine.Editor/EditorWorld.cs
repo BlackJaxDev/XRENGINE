@@ -49,6 +49,8 @@ public static class EditorWorld
     public const bool AddEditorUI = true; //Adds the full editor UI to the camera.
     public const bool TransformTool = false; //Adds the transform tool to the scene for testing dragging and rotating etc.
     public const bool AllowEditingInVR = false; //Allows the user to edit the scene from desktop in VR.
+    public const bool VideoStreaming = true; //Adds a video streaming component to the scene for testing video streaming.
+    public const bool VideoStreamingAudio = false; //Adds a video streaming audio component to the scene for testing video streaming audio.
 
     //Misc
     public const bool Skybox = true; //Adds a skybox to the scene
@@ -75,7 +77,7 @@ public static class EditorWorld
 
     //Models
     public const bool StaticModel = false; //Imports a scene model to be rendered.
-    public const bool AnimatedModel = true; //Imports a character model to be animated.
+    public const bool AnimatedModel = false; //Imports a character model to be animated.
     public const float ModelScale = 1.0f; //The scale of the model when imported.
     public const bool ModelZUp = false; //If true, the model will be rotated 90 degrees around the X axis.
 

@@ -86,6 +86,15 @@ namespace XREngine
                 /// If true, the current GPU is an NVIDIA GPU.
                 /// </summary>
                 public static bool IsNVIDIA { get; internal set; }
+                /// <summary>
+                /// If true, the current render is a light probe pass - only what's needed for light probes is rendered.
+                /// All light probe passes contain a scene capture pass.
+                /// </summary>
+                public static bool IsLightProbePass { get; internal set; }
+                /// <summary>
+                /// If true, the current render is a scene capture pass - only what's needed for scene captures is rendered.
+                /// </summary>
+                public static bool IsSceneCapturePass { get; internal set; }
 
                 //public static XRRenderPipelineInstance? CurrentCollectingVisiblePipeline => CollectingVisiblePipelineStack.Count > 0 ? CollectingVisiblePipelineStack.Peek() : null;
                 //public static XRRenderPipelineInstance.RenderingState? CollectingVisiblePipelineState => CurrentCollectingVisiblePipeline?.RenderState;

@@ -31,15 +31,15 @@
   
   <ItemGroup>
     <PackageReference Include="AssimpNetter" Version="5.4.3.3" />
-    <PackageReference Include="GraphQL" Version="8.4.1" />
+    <PackageReference Include="GraphQL" Version="8.5.0" />
     <PackageReference Include="MemoryPack" Version="1.21.4" />
     <PackageReference Include="Microsoft.AspNetCore.Http" Version="2.3.0" />
-    <PackageReference Include="Microsoft.Data.Sqlite.Core" Version="9.0.3" />
+    <PackageReference Include="Microsoft.Data.Sqlite.Core" Version="9.0.4" />
     <PackageReference Include="Newtonsoft.Json" Version="13.0.3" />
     <PackageReference Include="SixLabors.ImageSharp" Version="3.1.7" />
     <PackageReference Include="Steamworks.NET" Version="2024.8.0" />
-    <PackageReference Include="System.IdentityModel.Tokens.Jwt" Version="8.7.0" />
-    <PackageReference Include="System.Text.Json" Version="9.0.3" />
+    <PackageReference Include="System.IdentityModel.Tokens.Jwt" Version="8.8.0" />
+    <PackageReference Include="System.Text.Json" Version="9.0.4" />
   </ItemGroup>
 
   <ItemGroup>

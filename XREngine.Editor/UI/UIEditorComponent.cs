@@ -1,4 +1,5 @@
-﻿using XREngine.Core.Attributes;
+﻿using XREngine.Components.Scene;
+using XREngine.Core.Attributes;
 using XREngine.Editor.UI.Toolbar;
 using XREngine.Rendering.UI;
 using XREngine.Scene;
@@ -96,7 +97,14 @@ public partial class UIEditorComponent : UIComponent
         _hierarchy = hierarchy;
 
         var middleNode = dockNode.NewChildWithTransform<UIBoundableTransform>(out _, "Scene");
-        //middleNode.AddComponent<UIVideoComponent>();
+        if (EditorWorld.VideoStreaming)
+        {
+            middleNode.AddComponent<UIVideoComponent>();
+            if (EditorWorld.VideoStreamingAudio)
+            {
+                var audio = middleNode.AddComponent<AudioSourceComponent>();
+            }
+        }
 
         dockNode.NewChildWithTransform(out UIListTransform listTfm, out InspectorPanel inspector, "Inspector");
         listTfm.DisplayHorizontal = false;

@@ -165,6 +165,8 @@ namespace XREngine.Components.Lights
             if (World is null || RenderFBO is null)
                 return;
 
+            Engine.Rendering.State.IsSceneCapturePass = true;
+
             GetDepthParams(out IFrameBufferAttachement depthAttachment, out int[] depthLayers);
 
             if (_progressiveRenderEnabled)
@@ -181,6 +183,8 @@ namespace XREngine.Components.Lights
                 _environmentTextureCubemap.Bind();
                 _environmentTextureCubemap.GenerateMipmapsGPU();
             }
+
+            Engine.Rendering.State.IsSceneCapturePass = false;
         }
 
         private void GetDepthParams(out IFrameBufferAttachement depthAttachment, out int[] depthLayers)

@@ -1,18 +1,141 @@
 ﻿using FFmpeg.AutoGen;
 using System.Collections.Concurrent;
 using System.Runtime.InteropServices;
+using System.Text.Json;
+using System.Text.RegularExpressions;
 using XREngine.Components.Scene;
 using XREngine.Data.Rendering;
 using XREngine.Data.Vectors;
 
 namespace XREngine.Rendering.UI
 {
-    public unsafe class UIVideoComponent : UIMaterialComponent
+    public class UIVideoComponent : UIMaterialComponent
     {
         //Optional AudioSourceComponent for audio streaming
         public AudioSourceComponent? AudioSource => GetSiblingComponent<AudioSourceComponent>();
 
         private readonly XRMaterialFrameBuffer _fbo;
+
+        ///// <summary>
+        ///// Loads a Twitch stream by username.
+        ///// </summary>
+        ///// <param name="username">The Twitch username</param>
+        ///// <returns>Task representing the async operation</returns>
+        //public async Task OpenTwitchStream(string username)
+        //{
+        //    try
+        //    {
+        //        string streamUrl = await GetTwitchStreamUrl(username);
+        //        StreamUrl = streamUrl;
+
+        //        // Restart streaming if already active
+        //        if (IsActiveInHierarchy)
+        //        {
+        //            OnComponentDeactivated();
+        //            OnComponentActivated();
+        //        }
+        //    }
+        //    catch (Exception ex)
+        //    {
+        //        Debug.LogWarning($"Failed to load Twitch stream for {username}: {ex.Message}");
+        //    }
+        //}
+
+        /// <summary>
+        /// Gets the stream URL for a Twitch channel by username.
+        /// </summary>
+        /// <param name="username">The Twitch username</param>
+        /// <returns>The HLS stream URL</returns>
+        private static async Task<string> GetTwitchStreamUrl(string username)
+        {
+            // Method 1: Use GQL query to fetch access token
+            using HttpClient client = new();
+
+            // First, check if the channel is live
+            client.DefaultRequestHeaders.Add("Client-ID", "kimne78kx3ncx6brgo4mv6wki5h1ko");
+
+            var gqlPayload = new
+            {
+                operationName = "PlaybackAccessToken",
+                variables = new
+                {
+                    isLive = true,
+                    login = username,
+                    isVod = false,
+                    vodID = "",
+                    playerType = "embed"
+                },
+                extensions = new
+                {
+                    persistedQuery = new
+                    {
+                        version = 1,
+                        sha256Hash = "0828119ded1c13477966434e15800ff57ddacf13ba1911c129dc2200705b0712"
+                    }
+                }
+            };
+
+            var content = new StringContent(
+                JsonSerializer.Serialize(gqlPayload),
+                System.Text.Encoding.UTF8,
+                "application/json");
+
+            var response = await client.PostAsync("https://gql.twitch.tv/gql", content);
+            response.EnsureSuccessStatusCode();
+
+            var responseJson = await response.Content.ReadAsStringAsync();
+
+            // Parse response to extract token and signature
+            using var doc = JsonDocument.Parse(responseJson);
+            var root = doc.RootElement;
+
+            var tokenData = root
+                .GetProperty("data")
+                .GetProperty("streamPlaybackAccessToken");
+
+            var token = tokenData.GetProperty("value").GetString();
+            var sig = tokenData.GetProperty("signature").GetString();
+
+            if (string.IsNullOrEmpty(token) || string.IsNullOrEmpty(sig))
+                throw new Exception("Failed to obtain stream token");
+
+            // Construct the M3U8 URL
+            string m3u8Url = $"https://usher.ttvnw.net/api/channel/hls/{username}.m3u8" +
+                $"?player=twitchweb" +
+                $"&token={Uri.EscapeDataString(token)}" +
+                $"&sig={sig}" +
+                "&allow_source=true" +
+                "&allow_audio_only=true" +
+                "&fast_bread=true";
+
+            // Get the M3U8 playlist
+            var m3u8Response = await client.GetStringAsync(m3u8Url);
+
+            // Parse the M3U8 to extract the highest quality stream URL
+            var streamUrl = ParseM3u8ForBestQuality(m3u8Response);
+            if (string.IsNullOrEmpty(streamUrl))
+                throw new Exception("No valid stream URL found in the playlist");
+
+            return streamUrl;
+        }
+
+        /// <summary>
+        /// Parses an M3U8 playlist to find the highest quality stream URL.
+        /// </summary>
+        /// <param name="m3u8Content">The M3U8 playlist content</param>
+        /// <returns>The highest quality stream URL</returns>
+        private static string? ParseM3u8ForBestQuality(string m3u8Content)
+        {
+            // Simple parsing to get the first stream URL (typically best quality)
+            var lines = m3u8Content.Split('\n');
+            for (int i = 0; i < lines.Length; i++)
+                if (lines[i].StartsWith("#EXT-X-STREAM-INF") && i + 1 < lines.Length && !lines[i + 1].StartsWith('#'))
+                    return lines[i + 1].Trim();
+            
+            // Fallback: find any line that looks like a URL
+            var urlMatch = Regex.Match(m3u8Content, @"https?://[^\s]+\.m3u8");
+            return urlMatch.Success ? urlMatch.Value : null;
+        }
 
         private string? _streamUrl = "http://pendelcam.kip.uni-heidelberg.de/mjpg/video.mjpg";
         public string? StreamUrl
@@ -21,11 +144,11 @@ namespace XREngine.Rendering.UI
             set => SetField(ref _streamUrl, value);
         }
 
-        private AVFormatContext* _formatContext;
-        private AVCodecContext* _videoCodecContext;
-        private AVCodecContext* _audioCodecContext;
+        private unsafe AVFormatContext* _formatContext;
+        private unsafe AVCodecContext* _videoCodecContext;
+        private unsafe AVCodecContext* _audioCodecContext;
         // FFmpeg context with hardware acceleration
-        private AVBufferRef* _hwDeviceContext;
+        private unsafe AVBufferRef* _hwDeviceContext;
         private AVPixelFormat _hwPixelFormat;
 
         private int _videoStreamIndex = -1;
@@ -41,9 +164,9 @@ namespace XREngine.Rendering.UI
         private byte[]? _currentFrame;
         private readonly Lock _frameLock = new();
 
-        private AVFrame* _frame;
-        private AVPacket* _packet;
-        private SwsContext* _swsContext;
+        private unsafe AVFrame* _frame;
+        private unsafe AVPacket* _packet;
+        private unsafe SwsContext* _swsContext;
 
         private const AVPixelFormat _videoTextureFormat = AVPixelFormat.AV_PIX_FMT_RGB24;
 
@@ -64,29 +187,32 @@ namespace XREngine.Rendering.UI
             return new XRMaterial([texture], XRShader.EngineShader(Path.Combine("Common", "UnlitTexturedForward.fs"), EShaderType.Fragment));
         }
 
-        protected internal override void OnComponentActivated()
-        {
-            base.OnComponentActivated();
-            AllocateDecode();
-            RegisterTick(Components.ETickGroup.Normal, Components.ETickOrder.Logic, DecodeFrame);
-            Engine.Time.Timer.RenderFrame += ConsumeFrameQueue;
-        }
+        //protected internal override void OnComponentActivated()
+        //{
+        //    base.OnComponentActivated();
+        //    OpenTwitchStream("sodapoppin").ContinueWith(t =>
+        //    {
+        //        if (t.Exception != null)
+        //            Debug.LogWarning($"Failed to load Twitch stream for sodapoppin: {t.Exception.Message}");
+
+        //        AllocateDecode();
+        //        RegisterTick(Components.ETickGroup.Normal, Components.ETickOrder.Logic, DecodeFrame);
+        //        Engine.Time.Timer.RenderFrame += ConsumeFrameQueue;
+        //    });
+        //}
         protected internal override void OnComponentDeactivated()
         {
             base.OnComponentDeactivated();
+            StopDecoding();
+        }
+
+        private void StopDecoding()
+        {
             UnregisterTick(Components.ETickGroup.Normal, Components.ETickOrder.Logic, DecodeFrame);
             Engine.Time.Timer.RenderFrame -= ConsumeFrameQueue;
             CleanupDecode();
             _frameQueue.CompleteAdding();
         }
-
-        //private unsafe void DecodeThread()
-        //{
-        //    AllocateDecode();
-        //    while (IsActiveInHierarchy)
-        //        Decode();
-        //    CleanupDecode();
-        //}
 
         public void ConsumeFrameQueue()
         {
@@ -210,11 +336,37 @@ namespace XREngine.Rendering.UI
             return swFrame;
         }
 
-        private void DecodeFrame()
+        private unsafe void DecodeFrame()
         {
-            if (ffmpeg.av_read_frame(_formatContext, _packet) < 0)
+            int result = ffmpeg.av_read_frame(_formatContext, _packet);
+            if (result < 0)
+            {
+                // Check for specific errors
+                if (result == ffmpeg.AVERROR_EOF)
+                {
+                    Debug.Out("End of stream reached");
+                    return;
+                }
+
+                // Get detailed error message
+                byte[] errorBuffer = new byte[1024];
+                fixed (byte* ptr = errorBuffer)
+                {
+                    ffmpeg.av_strerror(result, ptr, (ulong)errorBuffer.Length);
+                    string errorMsg = new string((sbyte*)ptr).Trim('\0');
+                    Debug.LogWarning($"av_read_frame error: {errorMsg} (code: {result})");
+                }
+
+                // For HLS streams, we might need to reopen the stream if we get certain errors
+                if (StreamUrl?.EndsWith(".m3u8") == true)
+                {
+                    // Wait a moment before retrying
+                    Thread.Sleep(100);
+                }
+
                 return;
-            
+            }
+
             if (_packet->stream_index == _videoStreamIndex)
                 DecodeVideo();
             else if (_packet->stream_index == _audioStreamIndex)
@@ -223,7 +375,7 @@ namespace XREngine.Rendering.UI
             ffmpeg.av_packet_unref(_packet);
         }
 
-        private void DecodeAudio()
+        private unsafe void DecodeAudio()
         {
             if (ffmpeg.avcodec_send_packet(_audioCodecContext, _packet) < 0)
                 return;
@@ -232,7 +384,7 @@ namespace XREngine.Rendering.UI
                 ProcessAudioFrame();
         }
 
-        private void DecodeVideo()
+        private unsafe void DecodeVideo()
         {
             if (ffmpeg.avcodec_send_packet(_videoCodecContext, _packet) < 0)
                 return;
@@ -241,13 +393,56 @@ namespace XREngine.Rendering.UI
                 ProcessVideoFrame();
         }
 
-        private void AllocateDecode()
+        private unsafe bool AllocateDecode()
         {
-            //ffmpeg.avdevice_register_all();
-            //ffmpeg.avformat_network_init();
+            string? streamUrl = _streamUrl;
+            if (string.IsNullOrEmpty(streamUrl))
+            {
+                Debug.LogWarning("Stream URL is null or empty");
+                return false;
+            }
+
+            //using (var httpClient = new HttpClient())
+            //{
+            //    try
+            //    {
+            //        var response = await httpClient.GetAsync(streamUrl);
+            //        if (!response.IsSuccessStatusCode)
+            //        {
+            //            Debug.LogWarning($"Stream URL returned HTTP {response.StatusCode}");
+            //            return false;
+            //        }
+            //        var content = await response.Content.ReadAsStringAsync();
+            //        if (!content.Contains("#EXTM3U"))
+            //        {
+            //            Debug.LogWarning("Response doesn't appear to be a valid M3U8 file");
+            //            return false;
+            //        }
+            //    }
+            //    catch (Exception ex)
+            //    {
+            //        Debug.LogWarning($"Error checking stream URL: {ex.Message}");
+            //        return false;
+            //    }
+            //}
+
+            // Initialize networking for FFmpeg
+            ffmpeg.avdevice_register_all();
+            ffmpeg.avformat_network_init();
 
             // Allocate format context
             _formatContext = ffmpeg.avformat_alloc_context();
+
+            // Set interrupt callback for timeout handling
+            AVIOInterruptCB fp = new()
+            {
+                callback = new AVIOInterruptCB_callback_func
+                {
+                    Pointer = (nint)(delegate* unmanaged[Cdecl]<void*, int>)&ReadTimeoutCallback
+                },
+                opaque = null
+            };
+            _formatContext->interrupt_callback = fp;
 
             // Set options for low latency streaming
             AVDictionary* options = null;
@@ -259,19 +454,48 @@ namespace XREngine.Rendering.UI
             ffmpeg.av_dict_set(&options, "timeout", timeout, 0);
             ffmpeg.av_dict_set(&options, "rw_timeout", timeout, 0);
 
+            //ffmpeg.av_dict_set(&options, "user_agent", "Lavf/57.56.100", 0);
+            ffmpeg.av_dict_set(&options, "user_agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:86.0) Gecko/20100101 Firefox/86.0", 0);
+
+            // For HLS/M3U8 streams
+            ffmpeg.av_dict_set(&options, "protocol_whitelist", "file,http,https,tcp,tls,crypto,httpproxy", 0);
+            ffmpeg.av_dict_set(&options, "allowed_extensions", "m3u8", 0);
+            ffmpeg.av_dict_set(&options, "hls_seek_time", "0", 0);
+
+            if (streamUrl.Contains("ttvnw.net") || streamUrl.Contains("twitch.tv"))
+                ffmpeg.av_dict_set(&options, "headers", "Referrer: https://www.twitch.tv/\r\n", 0);
+
             // Open input stream
             var pFormatContext = _formatContext;
-            if (ffmpeg.avformat_open_input(&pFormatContext, _streamUrl, null, &options) != 0)
+            int result;
+            //if (streamUrl.EndsWith(".m3u8"))
+            //{
+            //    var inputFormat = ffmpeg.av_find_input_format("hls");
+            //    if (inputFormat != null)
+            //        result = ffmpeg.avformat_open_input(&pFormatContext, streamUrl, inputFormat, &options);
+            //    else
+            //        result = ffmpeg.avformat_open_input(&pFormatContext, streamUrl, null, &options);
+            //}
+            //else
+                result = ffmpeg.avformat_open_input(&pFormatContext, streamUrl, null, &options);
+            if (result != 0)
             {
-                Debug.LogWarning("Failed to open input stream");
-                return;
+                byte[] errorBuffer = new byte[1024];
+                string errorMsg;
+                fixed (byte* ptr = errorBuffer)
+                {
+                    ffmpeg.av_strerror(result, ptr, (ulong)errorBuffer.Length);
+                    errorMsg = new string((sbyte*)ptr).Trim('\0');
+                }
+                Debug.LogWarning($"Failed to open input stream: {errorMsg} (Code: {result})");
+                return false;
             }
 
             // Retrieve stream information
             if (ffmpeg.avformat_find_stream_info(_formatContext, null) < 0)
             {
                 Debug.LogWarning("Failed to find stream info");
-                return;
+                return false;
             }
 
             // Find video stream
@@ -288,24 +512,83 @@ namespace XREngine.Rendering.UI
             if (_videoStreamIndex == -1 && _audioStreamIndex == -1)
             {
                 Debug.LogWarning("No video or audio stream found");
-                return;
+                return false;
             }
 
             OpenVideoContext();
             OpenAudioContext();
-            
+
             _frame = ffmpeg.av_frame_alloc();
             _packet = ffmpeg.av_packet_alloc();
             _swsContext = (SwsContext*)null;
+
+            return true;
         }
 
-        private void CleanupDecode()
+        // Timeout callback function for FFmpeg
+        [UnmanagedCallersOnly(CallConvs = new[] { typeof(System.Runtime.CompilerServices.CallConvCdecl) })]
+        private static unsafe int ReadTimeoutCallback(void* opaque)
         {
-            fixed (AVFrame** p = &_frame)
-                ffmpeg.av_frame_free(p);
+            // Return 1 to abort I/O operation, 0 to continue
+            return 0; // Default: continue execution
+        }
 
-            fixed (AVPacket** p = &_packet)
-                ffmpeg.av_packet_free(p);
+        protected internal override void OnComponentActivated()
+        {
+            base.OnComponentActivated();
+
+            Task.Run(async () =>
+            {
+                try
+                {
+                    await GetTwitchStreamURL("sodapoppin");
+                    StartDecode();
+                }
+                catch (Exception ex)
+                {
+                    Debug.LogWarning($"Failed to initialize video stream: {ex.Message}");
+                }
+            });
+        }
+
+        private void StartDecode()
+        {
+            if (!AllocateDecode())
+                return;
+            
+            RegisterTick(Components.ETickGroup.Normal, Components.ETickOrder.Logic, DecodeFrame);
+            Engine.Time.Timer.RenderFrame += ConsumeFrameQueue;
+        }
+
+        public async Task GetTwitchStreamURL(string username)
+        {
+            try
+            {
+                Debug.Out($"Opening Twitch stream for {username}...");
+                string streamUrl = await GetTwitchStreamUrl(username);
+                Debug.Out($"Got Twitch stream URL: {streamUrl}");
+                StreamUrl = streamUrl;
+            }
+            catch (Exception ex)
+            {
+                Debug.LogWarning($"Failed to load Twitch stream for {username}: {ex.Message}");
+                throw; // Re-throw to handle in the caller
+            }
+        }
+
+        private unsafe void CleanupDecode()
+        {
+            if (_frame != null)
+            {
+                fixed (AVFrame** p = &_frame)
+                    ffmpeg.av_frame_free(p);
+            }
+
+            if (_packet != null)
+            {
+                fixed (AVPacket** p = &_packet)
+                    ffmpeg.av_packet_free(p);
+            }
 
             if (_swsContext != null)
                 ffmpeg.sws_freeContext(_swsContext);
@@ -315,37 +598,23 @@ namespace XREngine.Rendering.UI
                 fixed (AVCodecContext** p = &_videoCodecContext)
                     ffmpeg.avcodec_free_context(p);
             }
+
+            if (_audioCodecContext != null)
+            {
+                fixed (AVCodecContext** p = &_audioCodecContext)
+                    ffmpeg.avcodec_free_context(p);
+            }
+
             if (_hwDeviceContext != null)
             {
                 fixed (AVBufferRef** p = &_hwDeviceContext)
                     ffmpeg.av_buffer_unref(p);
             }
+
             if (_formatContext != null)
             {
                 fixed (AVFormatContext** p = &_formatContext)
                     ffmpeg.avformat_close_input(p);
-            }
-            if (_videoCodecContext != null)
-            {
-                fixed (AVCodecContext** p = &_videoCodecContext)
-                {
-                    ffmpeg.avcodec_free_context(p);
-                }
-            }
-            if (_audioCodecContext != null)
-            {
-                fixed (AVCodecContext** p = &_audioCodecContext)
-                {
-                    ffmpeg.avcodec_free_context(p);
-                }
-            }
-            if (_formatContext != null)
-            {
-                fixed (AVFormatContext** p = &_formatContext)
-                {
-                    ffmpeg.avformat_close_input(p);
-                    ffmpeg.avformat_free_context(*p);
-                }
             }
 
             lock (_frameLock)
@@ -353,12 +622,12 @@ namespace XREngine.Rendering.UI
                 _currentFrame = null;
             }
 
-            while (_frameQueue.TryTake(out var f)) ;
+            while (_frameQueue.TryTake(out var _)) { }
 
             ffmpeg.avformat_network_deinit();
         }
 
-        private void OpenAudioContext()
+        private unsafe void OpenAudioContext()
         {
             if (_audioStreamIndex < 0)
                 return;
@@ -378,36 +647,70 @@ namespace XREngine.Rendering.UI
                 throw new Exception("Could not open codec");
         }
 
-        private void OpenVideoContext()
+        private unsafe void OpenVideoContext()
         {
             if (_videoStreamIndex < 0)
                 return;
-            
+
             // Get codec parameters and find decoder
             var codecParameters = _formatContext->streams[_videoStreamIndex]->codecpar;
             var codec = ffmpeg.avcodec_find_decoder(codecParameters->codec_id);
             if (codec == null)
-                throw new Exception("Unsupported codec");
+            {
+                Debug.LogWarning($"Unsupported codec ID: {codecParameters->codec_id}");
+                return;
+            }
 
             // Allocate codec context
             _videoCodecContext = ffmpeg.avcodec_alloc_context3(codec);
             ffmpeg.avcodec_parameters_to_context(_videoCodecContext, codecParameters);
 
+            // Set threading options to improve performance
+            _videoCodecContext->thread_count = 4;
+            _videoCodecContext->thread_type = ffmpeg.FF_THREAD_FRAME;
+
             // Try to initialize hardware acceleration (CUDA first, then others)
-            AVHWDeviceType hwType = AVHWDeviceType.AV_HWDEVICE_TYPE_CUDA;
-            if (!InitHardwareAcceleration(_videoCodecContext, hwType))
+            bool hwAccelInitialized = false;
+
+            // Try various hardware acceleration methods
+            AVHWDeviceType[] hwTypes =
+            [
+                AVHWDeviceType.AV_HWDEVICE_TYPE_CUDA,
+                AVHWDeviceType.AV_HWDEVICE_TYPE_D3D11VA,
+                AVHWDeviceType.AV_HWDEVICE_TYPE_DXVA2,
+                AVHWDeviceType.AV_HWDEVICE_TYPE_VAAPI,
+                AVHWDeviceType.AV_HWDEVICE_TYPE_VDPAU
+            ];
+
+            foreach (var hwType in hwTypes)
             {
-                hwType = AVHWDeviceType.AV_HWDEVICE_TYPE_D3D11VA;
-                if (!InitHardwareAcceleration(_videoCodecContext, hwType))
-                    hwType = AVHWDeviceType.AV_HWDEVICE_TYPE_NONE;
+                if (InitHardwareAcceleration(_videoCodecContext, hwType))
+                {
+                    hwAccelInitialized = true;
+                    break;
+                }
             }
 
-            // Open codec
-            if (ffmpeg.avcodec_open2(_videoCodecContext, codec, null) < 0)
-                throw new Exception("Could not open codec");
+            if (!hwAccelInitialized)
+                Debug.Out("Hardware acceleration not available, using software decoding");
+
+            // Open codec with error handling
+            int result = ffmpeg.avcodec_open2(_videoCodecContext, codec, null);
+            if (result < 0)
+            {
+                byte[] errorBuffer = new byte[1024];
+                string errorMsg = string.Empty;
+                fixed (byte* ptr = errorBuffer)
+                {
+                    ffmpeg.av_strerror(result, ptr, (ulong)errorBuffer.Length);
+                    errorMsg = new string((char*)ptr).Trim('\0');
+                }
+                Debug.LogWarning($"Could not open codec: {errorMsg}");
+                return;
+            }
         }
 
-        private void ProcessAudioFrame()
+        private unsafe void ProcessAudioFrame()
         {
             var audioSource = AudioSource;
             if (audioSource is null)
@@ -441,7 +744,7 @@ namespace XREngine.Rendering.UI
             }
         }
 
-        private void ProcessVideoFrame()
+        private unsafe void ProcessVideoFrame()
         {
             // Handle hardware frame if needed
             var decodedFrame = GetHwFrame(_frame);
