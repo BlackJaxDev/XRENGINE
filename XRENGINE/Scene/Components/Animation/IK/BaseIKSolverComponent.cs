@@ -12,7 +12,7 @@ namespace XREngine.Scene.Components.Animation
         private bool IsAnimated
             => _animStateMachine != null;
         private bool AnimatePhysics
-            => _animStateMachine?.AnimatePhysics ?? false;
+            => _animStateMachine?.StateMachine?.AnimatePhysics ?? false;
 
         private bool _skipSolverUpdate;
         private bool _updateFrame;

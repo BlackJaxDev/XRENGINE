@@ -100,6 +100,9 @@ namespace XREngine.Rendering
                 uint w, h;
                 if (inFBO is not null)
                 {
+                    if (_readBuffer < EReadBufferMode.ColorAttachment0)
+                        return;
+                    
                     w = inFBO.Width;
                     h = inFBO.Height;
                     Resize(w, h);

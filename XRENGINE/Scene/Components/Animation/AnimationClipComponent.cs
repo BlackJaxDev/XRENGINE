@@ -19,6 +19,20 @@ namespace XREngine.Scene.Components.Animation
             set => SetField(ref _startOnActivate, value);
         }
 
+        private float _weight = 1.0f;
+        public float Weight
+        {
+            get => _weight;
+            set => SetField(ref _weight, value);
+        }
+
+        private float _speed = 1.0f;
+        public float Speed
+        {
+            get => _speed;
+            set => SetField(ref _speed, value);
+        }
+
         protected override bool OnPropertyChanging<T>(string? propName, T field, T @new)
         {
             bool change = base.OnPropertyChanging(propName, field, @new);
@@ -53,18 +67,18 @@ namespace XREngine.Scene.Components.Animation
                 return;
 
             Animation.Start();
-            RegisterAnimationTick(TickAnimation);
+            RegisterTick(ETickGroup.Normal, ETickOrder.Animation, TickAnimation);
         }
 
         private void Stop()
         {
             Animation?.Stop();
-            UnregisterAnimationTick(TickAnimation);
+            UnregisterTick(ETickGroup.Normal, ETickOrder.Animation, TickAnimation);
         }
 
-        private void TickAnimation(XRWorldObjectBase @base)
+        private void TickAnimation()
         {
-            Animation?.Tick(@base, Engine.Delta);
+            Animation?.Tick(this, Engine.Delta * Speed, Weight);
         }
 
         protected internal override void OnComponentActivated()

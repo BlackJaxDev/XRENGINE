@@ -1,4 +1,5 @@
 ﻿using System.Numerics;
+using XREngine.Animation;
 using XREngine.Core.Attributes;
 using XREngine.Data.Rendering;
 using XREngine.Rendering;
@@ -38,7 +39,7 @@ namespace XREngine.Components.Lights
         private Transform ShadowCameraTransform => _shadowCameraTransform ??= new Transform() 
         {
             Parent = Transform,
-            Order = XREngine.Scene.Transforms.Transform.EOrder.TRS,
+            Order = ETransformOrder.TRS,
             Translation = Globals.Backward * Scale.Z * 0.5f,
         };
 

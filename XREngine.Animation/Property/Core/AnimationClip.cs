@@ -1,18 +1,16 @@
-﻿using System.Diagnostics;
-using System.Numerics;
+﻿using System.Numerics;
 using XREngine.Animation.IK;
-using XREngine.Core.Files;
 using XREngine.Data;
-using XREngine.Data.Core;
 using XREngine.Data.MMD;
 
 namespace XREngine.Animation
 {
+
     /// <summary>
     /// Represents a single animation clip that can be played with an AnimationClipComponent or an AnimStateMachineComponent.
     /// </summary>
     [XR3rdPartyExtensions("vmd")]
-    public class AnimationClip : XRAsset
+    public class AnimationClip : MotionBase
     {
         public EAnimTreeTraversalMethod TraversalMethod { get; set; } = EAnimTreeTraversalMethod.Parallel;
 
@@ -156,8 +154,15 @@ namespace XREngine.Animation
                 _rootMember?.StopAnimations();
         }
 
-        public void Tick(XRObjectBase obj, float delta)
-            => _rootMember?._tick?.Invoke(obj, delta);
+        public override void Tick(object? rootObject, float delta, IDictionary<string, AnimVar> variables, float weight)
+        {
+            _rootMember?._tick?.Invoke(rootObject, delta, weight);
+        }
+
+        public void Tick(object? rootObject, float delta, float weight)
+        {
+            _rootMember?._tick?.Invoke(rootObject, delta, weight);
+        }
 
         public override bool Load3rdParty(string filePath)
         {

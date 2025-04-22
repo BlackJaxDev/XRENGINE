@@ -28,8 +28,8 @@
         public override void ReadFromString(string str)
         {
             int spaceIndex = str.IndexOf(' ');
-            Second = float.Parse(str.Substring(0, spaceIndex));
-            Value = bool.Parse(str.Substring(spaceIndex + 1));
+            Second = float.Parse(str.AsSpan(0, spaceIndex));
+            Value = bool.Parse(str.AsSpan(spaceIndex + 1));
         }
         public override string WriteToString()
         {

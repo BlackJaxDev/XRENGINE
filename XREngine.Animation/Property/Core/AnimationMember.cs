@@ -62,7 +62,10 @@ namespace XREngine.Animation
         private ImmediateProperty? _propertyCache;
         private MethodInfo? _methodCache;
         private ImmediateField? _fieldCache;
-        internal Action<object?, float>? _tick = null;
+
+        public delegate void DelAnimTick(object? obj, float delta, float valueApplyWeight);
+
+        internal DelAnimTick? _tick = null;
 
         private BasePropAnim? _animation = null;
         public BasePropAnim? Animation
@@ -78,8 +81,12 @@ namespace XREngine.Animation
             internal set => SetField(ref _parentClip, value);
         }
 
-        private readonly EventList<AnimationMember> _children = [];
-        public EventList<AnimationMember> Children => _children;
+        private EventList<AnimationMember> _children = [];
+        public EventList<AnimationMember> Children
+        {
+            get => _children;
+            set => SetField(ref _children, value);
+        }
 
         private string _memberName = string.Empty;
         public string MemberName
@@ -187,6 +194,13 @@ namespace XREngine.Animation
                             _cacheAttempted = false;
                             _tick = MethodTick;
                             break;
+                        case EAnimationMemberType.Group:
+                            _fieldCache = null;
+                            _propertyCache = null;
+                            _methodCache = null;
+                            _cacheAttempted = false;
+                            _tick = GroupTick;
+                            break;
                     }
                     break;
             }
@@ -211,10 +225,27 @@ namespace XREngine.Animation
         private int _methodValueArgumentIndex = 0;
         private object[] _methodArguments = new object[1];
 
-        internal void MethodTick(object? obj, float delta)
+        internal void GroupTick(object? obj, float delta, float valueApplyWeight)
         {
-            if (obj is null || MemberNotFound)
+            var animation = Animation;
+            if (obj is null)
+            {
+                animation?.Tick(delta);
                 return;
+            }
+            //We're not retrieving a new object, all child members execute on the same object
+            if (_children.Count > 0)
+                foreach (AnimationMember f in _children)
+                    f._tick?.Invoke(obj, delta, valueApplyWeight);
+        }
+        internal void MethodTick(object? obj, float delta, float valueApplyWeight)
+        {
+            var animation = Animation;
+            if (obj is null || MemberNotFound)
+            {
+                animation?.Tick(delta);
+                return;
+            }
 
             if (_methodCache is null)
             {
@@ -230,12 +261,11 @@ namespace XREngine.Animation
 
             object? methodReturn;
             //Set the value of the method argument and call the method
-            var animation = Animation;
             if (animation is not null)
             {
                 if (animation.State == EAnimationState.Playing)
                 {
-                    methodReturn = animation.SetValue(obj, _methodCache, MethodValueArgumentIndex, MethodArguments);
+                    methodReturn = animation.SetValue(obj, _methodCache, MethodValueArgumentIndex, MethodArguments,valueApplyWeight);
                     animation.Tick(delta);
                 }
                 else
@@ -248,7 +278,7 @@ namespace XREngine.Animation
             if (_children.Count > 0)
             {
                 foreach (AnimationMember f in _children)
-                    f._tick?.Invoke(methodReturn, delta);
+                    f._tick?.Invoke(methodReturn, delta, valueApplyWeight);
             }
 
             object? GetMethodReturnValue(object obj)
@@ -268,10 +298,14 @@ namespace XREngine.Animation
                 return methodReturn;
             }
         }
-        internal void PropertyTick(object? obj, float delta)
+        internal void PropertyTick(object? obj, float delta, float valueApplyWeight)
         {
+            var animation = Animation;
             if (obj is null || MemberNotFound)
+            {
+                animation?.Tick(delta);
                 return;
+            }
 
             if (_propertyCache is null)
             {
@@ -287,12 +321,11 @@ namespace XREngine.Animation
 
             object? propertyReturn;
             //Set the value of the property and tick the animation
-            var animation = Animation;
             if (animation is not null)
             {
                 if (animation.State == EAnimationState.Playing)
                 {
-                    propertyReturn = animation.SetValue(obj, _propertyCache);
+                    propertyReturn = animation.SetValue(obj, _propertyCache, valueApplyWeight);
                     animation.Tick(delta);
                 }
                 else
@@ -307,7 +340,7 @@ namespace XREngine.Animation
             if (_children.Count > 0)
             {
                 foreach (AnimationMember f in _children)
-                    f._tick?.Invoke(propertyReturn, delta);
+                    f._tick?.Invoke(propertyReturn, delta, valueApplyWeight);
             }
 
             object? GetPropertyReturnValue(object obj)
@@ -327,10 +360,14 @@ namespace XREngine.Animation
                 return propertyReturn;
             }
         }
-        internal void FieldTick(object? obj, float delta)
+        internal void FieldTick(object? obj, float delta, float valueApplyWeight)
         {
+            var animation = Animation;
             if (obj is null || MemberNotFound)
+            {
+                animation?.Tick(delta);
                 return;
+            }
 
             if (_fieldCache is null)
             {
@@ -345,12 +382,11 @@ namespace XREngine.Animation
                 return;
 
             object? fieldReturn;
-            var animation = Animation;
             if (animation is not null)
             {
                 if (animation.State == EAnimationState.Playing)
                 {
-                    fieldReturn = animation.SetValue(obj, _fieldCache);
+                    fieldReturn = animation.SetValue(obj, _fieldCache, valueApplyWeight);
                     animation.Tick(delta);
                 }
                 else
@@ -362,7 +398,7 @@ namespace XREngine.Animation
             if (_children.Count > 0)
             {
                 foreach (AnimationMember f in _children)
-                    f._tick?.Invoke(fieldReturn, delta);
+                    f._tick?.Invoke(fieldReturn, delta, valueApplyWeight);
             }
 
             object? GetFieldReturnValue(object obj)
@@ -454,5 +490,32 @@ namespace XREngine.Animation
             foreach (AnimationMember folder in _children)
                 folder.StopAnimations();
         }
+
+        public static AnimationMember SetBlendshapePercent(string name, float percent)
+            => new("SetBlendShapeWeight", EAnimationMemberType.Method) { MethodArguments = [name, percent] };
+        public static AnimationMember SetBlendshapeNormalized(string name, float normalizedValue)
+            => new("SetBlendShapeWeightNormalized", EAnimationMemberType.Method) { MethodArguments = [name, normalizedValue] };
+        public static AnimationMember SetNormalizedBlendshapeValuesByModelNodeName(string sceneNodeName, params (string blendshapeName, float normalizedValue)[] blendshapeValues)
+            => new("SceneNode", EAnimationMemberType.Property)
+            {
+                Children =
+                [
+                    new AnimationMember("FindDescendantByName", EAnimationMemberType.Method)
+                    {
+                        MethodArguments = [sceneNodeName, StringComparison.InvariantCultureIgnoreCase],
+                        CacheReturnValue = true,
+                        Children =
+                        [
+                            new AnimationMember("GetComponent", EAnimationMemberType.Method)
+                            {
+                                MethodArguments = ["ModelComponent"],
+                                CacheReturnValue = true,
+                                Children = [.. blendshapeValues.Select(x => SetBlendshapeNormalized(x.blendshapeName, x.normalizedValue))]
+                            }
+                        ]
+                    }
+                ]
+            };
+
     }
 }

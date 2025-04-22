@@ -242,7 +242,7 @@ namespace XREngine.Networking
                 new ShaderFloat(10.0f, "BlurStrength"),
                 new ShaderInt(30, "SampleCount"),
             ];
-            XRTexture2D grabTex = XRTexture2D.CreateGrabPassTextureResized(1.0f, EReadBufferMode.Back, true, false, false, false);
+            XRTexture2D grabTex = XRTexture2D.CreateGrabPassTextureResized(1.0f, EReadBufferMode.Front, true, false, false, false);
             var floorMat = new XRMaterial(floorUniforms, [grabTex], floorShader);
             floorMat.RenderOptions.CullMode = ECullMode.None;
             floorMat.RenderOptions.RequiredEngineUniforms = EUniformRequirements.Camera;

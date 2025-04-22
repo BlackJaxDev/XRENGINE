@@ -8,7 +8,7 @@
         Parallel,
         /// <summary>
         /// Members are animated sequentially in order of appearance, parent-down.
-        /// Root-Children-Grandchildren-Etc
+        /// Root-Child[0]-Grandchild[0]-Child[1]-Grandchild[0]
         /// </summary>
         BreadthFirst,
         /// <summary>

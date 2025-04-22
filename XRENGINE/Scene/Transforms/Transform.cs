@@ -21,19 +21,9 @@ namespace XREngine.Scene.Transforms
         public override string ToString()
             => $"{Name} | T:[{Translation}], R:[{Rotation}], S:[{Scale}]";
 
-        public enum EOrder
-        {
-            TRS,
-            RST,
-            STR,
-            TSR,
-            SRT,
-            RTS,
-        }
-
         public Transform()
             : this(Vector3.Zero, Quaternion.Identity) { }
-        public Transform(Vector3 scale, Vector3 translation, Quaternion rotation, TransformBase? parent = null, EOrder order = EOrder.TRS)
+        public Transform(Vector3 scale, Vector3 translation, Quaternion rotation, TransformBase? parent = null, ETransformOrder order = ETransformOrder.TRS)
             : base(parent)
         {
             Scale = scale;
@@ -41,7 +31,7 @@ namespace XREngine.Scene.Transforms
             Rotation = rotation;
             Order = order;
         }
-        public Transform(Vector3 scale, Vector3 translation, Rotator rotation, TransformBase? parent = null, EOrder order = EOrder.TRS)
+        public Transform(Vector3 scale, Vector3 translation, Rotator rotation, TransformBase? parent = null, ETransformOrder order = ETransformOrder.TRS)
             : base(parent)
         {
             Scale = scale;
@@ -49,17 +39,17 @@ namespace XREngine.Scene.Transforms
             Rotator = rotation;
             Order = order;
         }
-        public Transform(Vector3 translation, Quaternion rotation, TransformBase? parent = null, EOrder order = EOrder.TRS)
+        public Transform(Vector3 translation, Quaternion rotation, TransformBase? parent = null, ETransformOrder order = ETransformOrder.TRS)
             : this(Vector3.One, translation, rotation, parent, order) { }
-        public Transform(Vector3 translation, Rotator rotation, TransformBase? parent = null, EOrder order = EOrder.TRS)
+        public Transform(Vector3 translation, Rotator rotation, TransformBase? parent = null, ETransformOrder order = ETransformOrder.TRS)
             : this(Vector3.One, translation, rotation, parent, order) { }
-        public Transform(Quaternion rotation, TransformBase? parent = null, EOrder order = EOrder.TRS)
+        public Transform(Quaternion rotation, TransformBase? parent = null, ETransformOrder order = ETransformOrder.TRS)
             : this(Vector3.Zero, rotation, parent, order) { }
-        public Transform(Rotator rotation, TransformBase? parent = null, EOrder order = EOrder.TRS)
+        public Transform(Rotator rotation, TransformBase? parent = null, ETransformOrder order = ETransformOrder.TRS)
             : this(Vector3.Zero, rotation, parent, order) { }
-        public Transform(Vector3 translation, TransformBase? parent = null, EOrder order = EOrder.TRS)
+        public Transform(Vector3 translation, TransformBase? parent = null, ETransformOrder order = ETransformOrder.TRS)
             : this(translation, Quaternion.Identity, parent, order) { }
-        public Transform(TransformBase? parent = null, EOrder order = EOrder.TRS)
+        public Transform(TransformBase? parent = null, ETransformOrder order = ETransformOrder.TRS)
             : this(Quaternion.Identity, parent, order) { }
 
         public override void ResetPose(bool networkSmoothed = false)
@@ -171,7 +161,7 @@ namespace XREngine.Scene.Transforms
         /// <summary>
         /// The order of operations to calculate the final local matrix from translation, rotation and scale.
         /// </summary>
-        public EOrder Order
+        public ETransformOrder Order
         {
             get => _frameState.Order;
             set => SetField(ref _frameState.Order, value);
@@ -240,11 +230,11 @@ namespace XREngine.Scene.Transforms
                 case nameof(Order):
                     _localMatrixGen = Order switch
                     {
-                        EOrder.RST => RST,
-                        EOrder.STR => STR,
-                        EOrder.TSR => TSR,
-                        EOrder.SRT => SRT,
-                        EOrder.RTS => RTS,
+                        ETransformOrder.RST => RST,
+                        ETransformOrder.STR => STR,
+                        ETransformOrder.TSR => TSR,
+                        ETransformOrder.SRT => SRT,
+                        ETransformOrder.RTS => RTS,
                         _ => TRS,
                     };
                     MarkLocalModified();
@@ -344,7 +334,7 @@ namespace XREngine.Scene.Transforms
 
         public override void DeriveLocalMatrix(Matrix4x4 value, bool networkSmoothed = false)
         {
-            Order = EOrder.TRS;
+            Order = ETransformOrder.TRS;
 
             if (!Matrix4x4.Decompose(value, out Vector3 scale, out Quaternion rotation, out Vector3 translation))
                 Debug.Out("Failed to decompose matrix.");
@@ -447,7 +437,7 @@ namespace XREngine.Scene.Transforms
             byte flag4 = arr[3];
 
             bool delta = (flag1 & 1) == 1;
-            Order = (EOrder)(flag1 >> 1);
+            Order = (ETransformOrder)(flag1 >> 1);
             bool hasScale = (flag2 & 1) == 1;
             //int scaleBits = flag2 >> 1;
             bool hasTranslation = (flag3 & 1) == 1;

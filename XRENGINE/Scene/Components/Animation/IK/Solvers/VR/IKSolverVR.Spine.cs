@@ -1,7 +1,6 @@
 ﻿using Extensions;
 using System.ComponentModel.DataAnnotations;
 using System.Numerics;
-using XREngine.Components;
 using XREngine.Data;
 using XREngine.Data.Core;
 using XREngine.Scene.Transforms;
@@ -444,7 +443,7 @@ namespace XREngine.Scene.Components.Animation
                 _faceDirection = Vector3.Cross(AnchorRotation.Rotate(Globals.Right), rootBone._readRotation.Rotate(Globals.Up)) + AnchorRotation.Rotate(Globals.Forward);
             }
 
-            public void Solve(AnimStateMachineComponent? animator, VirtualBone rootBone, Leg[] legs, Arm[] arms, float scale)
+            public void Solve(AnimStateMachineComponent? stateMachine, VirtualBone rootBone, Leg[] legs, Arm[] arms, float scale)
             {
                 CalculateChestTargetRotation(rootBone, arms);
 
@@ -470,14 +469,18 @@ namespace XREngine.Scene.Components.Animation
 
                     Quaternion fix = Quaternion.CreateFromAxisAngle(rootBone._readRotation.Rotate(Globals.Up), float.DegreesToRadians(rotation));
 
-                    if (animator != null && animator.IsActive)
+                    if (stateMachine != null && stateMachine.IsActive)
                     {
                         // Rotate root around animator.pivotPosition
-                        Vector3 pivot = animator.ApplyRootMotion
-                            ? animator.PivotPosition
-                            : animator.Transform.WorldTranslation;
-                        Vector3 dir = rootBone._solverPosition - pivot;
-                        rootBone._solverPosition = pivot + fix.Rotate(dir);
+                        var sm = stateMachine.StateMachine;
+                        if (sm is not null)
+                        {
+                            Vector3 pivot = sm.ApplyRootMotion
+                                ? sm.PivotPosition
+                                : stateMachine.Transform.WorldTranslation;
+                            Vector3 dir = rootBone._solverPosition - pivot;
+                            rootBone._solverPosition = pivot + fix.Rotate(dir);
+                        }
                     }
 
                     // Rotate root

@@ -2,7 +2,6 @@
 using System.Collections.Concurrent;
 using System.Runtime.InteropServices;
 using System.Text.Json;
-using System.Text.RegularExpressions;
 using XREngine.Components.Scene;
 using XREngine.Data.Rendering;
 using XREngine.Data.Vectors;
@@ -46,7 +45,7 @@ namespace XREngine.Rendering.UI
         /// </summary>
         /// <param name="username">The Twitch username</param>
         /// <returns>The HLS stream URL</returns>
-        private static async Task<string> GetTwitchStreamUrl(string username)
+        private static async Task<string?> GetTwitchStreamUrl(string username)
         {
             // Method 1: Use GQL query to fetch access token
             using HttpClient client = new();
@@ -85,7 +84,7 @@ namespace XREngine.Rendering.UI
 
             var responseJson = await response.Content.ReadAsStringAsync();
 
-            // Parse response to extract token and signature
+            //Parse response to extract token and signature
             using var doc = JsonDocument.Parse(responseJson);
             var root = doc.RootElement;
 
@@ -99,7 +98,7 @@ namespace XREngine.Rendering.UI
             if (string.IsNullOrEmpty(token) || string.IsNullOrEmpty(sig))
                 throw new Exception("Failed to obtain stream token");
 
-            // Construct the M3U8 URL
+            //Construct the M3U8 URL
             string m3u8Url = $"https://usher.ttvnw.net/api/channel/hls/{username}.m3u8" +
                 $"?player=twitchweb" +
                 $"&token={Uri.EscapeDataString(token)}" +
@@ -108,33 +107,98 @@ namespace XREngine.Rendering.UI
                 "&allow_audio_only=true" +
                 "&fast_bread=true";
 
-            // Get the M3U8 playlist
-            var m3u8Response = await client.GetStringAsync(m3u8Url);
+            m3u8Url = "https://test-streams.mux.dev/x36xhzz/x36xhzz.m3u8";
 
-            // Parse the M3U8 to extract the highest quality stream URL
-            var streamUrl = ParseM3u8ForBestQuality(m3u8Response);
+            return m3u8Url;
+
+            //Get the M3U8 playlist
+            string m3u8Response;
+            try
+            {
+                m3u8Response = await client.GetStringAsync(m3u8Url);
+            }
+            catch (HttpRequestException ex)
+            {
+                Debug.LogWarning($"Failed to fetch M3U8 playlist: {ex.Message}");
+                return null;
+            }
+
+            //Parse the M3U8 playlist
+            var urls = ParseM3u8ForAllOptions(m3u8Response);
+            if (urls.Length == 0)
+            {
+                Debug.LogWarning("No valid stream URLs found in the playlist");
+                return null;
+            }
+
+            //Sort by bandwidth and select the highest quality stream
+            var (title, w, h, fps, bandwidth, url) = urls.OrderByDescending(x => x.bandwidth).FirstOrDefault();
+            string streamUrl = url;
             if (string.IsNullOrEmpty(streamUrl))
-                throw new Exception("No valid stream URL found in the playlist");
+            {
+                Debug.LogWarning("No valid stream URL found in the playlist");
+                return null;
+            }
 
             return streamUrl;
         }
 
-        /// <summary>
-        /// Parses an M3U8 playlist to find the highest quality stream URL.
-        /// </summary>
-        /// <param name="m3u8Content">The M3U8 playlist content</param>
-        /// <returns>The highest quality stream URL</returns>
-        private static string? ParseM3u8ForBestQuality(string m3u8Content)
+        private static (string name, int w, int h, float fps, int bandwidth, string url)[] ParseM3u8ForAllOptions(string m3u8Content)
         {
-            // Simple parsing to get the first stream URL (typically best quality)
-            var lines = m3u8Content.Split('\n');
+            const string streamInfTag = "#EXT-X-STREAM-INF:";
+            const string mediaTag = "#EXT-X-MEDIA:";
+
+            //#EXT-X-MEDIA:TYPE=VIDEO,GROUP-ID="720p60",NAME="720p60",AUTOSELECT=YES,DEFAULT=YES
+            //#EXT-X-STREAM-INF:BANDWIDTH=3422999,RESOLUTION=1280x720,CODECS="avc1.4D401F,mp4a.40.2",VIDEO="720p60",FRAME-RATE=60.000
+
+            string[] lines = m3u8Content.Split('\n');
+            List<(string name, int w, int h, float fps, int bandwidth, string url)> options = [];
+
+            string name = string.Empty;
+            int w = 0, h = 0, bandwidth = 0;
+            float fps = 0.0f;
+
             for (int i = 0; i < lines.Length; i++)
-                if (lines[i].StartsWith("#EXT-X-STREAM-INF") && i + 1 < lines.Length && !lines[i + 1].StartsWith('#'))
-                    return lines[i + 1].Trim();
-            
-            // Fallback: find any line that looks like a URL
-            var urlMatch = Regex.Match(m3u8Content, @"https?://[^\s]+\.m3u8");
-            return urlMatch.Success ? urlMatch.Value : null;
+            {
+                if (lines[i].StartsWith(mediaTag))
+                {
+                    string[] attributes = lines[i].Split([',', ':'], StringSplitOptions.RemoveEmptyEntries);
+                    foreach (var attr in attributes)
+                    {
+                        if (attr.StartsWith("NAME="))
+                            name = attr[(attr.IndexOf('=') + 1)..];
+                    }
+                }
+                if (lines[i].StartsWith(streamInfTag))
+                {
+                    string[] attributes = lines[i].Split([',', ':'], StringSplitOptions.RemoveEmptyEntries);
+                    foreach (var attr in attributes)
+                    {
+                        if (attr.StartsWith("RESOLUTION="))
+                        {
+                            string[] res = attr[(attr.IndexOf('=') + 1)..].Split('x');
+                            w = int.Parse(res[0]);
+                            h = int.Parse(res[1]);
+                        }
+                        else if (attr.StartsWith("FRAME-RATE="))
+                            fps = float.Parse(attr[(attr.IndexOf('=') + 1)..]);
+                        else if (attr.StartsWith("BANDWIDTH="))
+                            bandwidth = int.Parse(attr[(attr.IndexOf('=') + 1)..]);
+                    }
+                    if (i + 1 < lines.Length && !lines[i + 1].StartsWith('#'))
+                    {
+                        string url = lines[i + 1].Trim();
+                        options.Add((name, w, h, fps, bandwidth, url));
+
+                        name = string.Empty;
+                        w = 0;
+                        h = 0;
+                        fps = 0.0f;
+                        bandwidth = 0;
+                    }
+                }
+            }
+            return [.. options];
         }
 
         private string? _streamUrl = "http://pendelcam.kip.uni-heidelberg.de/mjpg/video.mjpg";
@@ -398,7 +462,7 @@ namespace XREngine.Rendering.UI
             string? streamUrl = _streamUrl;
             if (string.IsNullOrEmpty(streamUrl))
             {
-                Debug.LogWarning("Stream URL is null or empty");
+                //Debug.LogWarning("Stream URL is null or empty");
                 return false;
             }
 
@@ -427,6 +491,7 @@ namespace XREngine.Rendering.UI
             //}
 
             // Initialize networking for FFmpeg
+            ffmpeg.av_log_set_level(ffmpeg.AV_LOG_DEBUG);
             ffmpeg.avdevice_register_all();
             ffmpeg.avformat_network_init();
 
@@ -434,49 +499,72 @@ namespace XREngine.Rendering.UI
             _formatContext = ffmpeg.avformat_alloc_context();
 
             // Set interrupt callback for timeout handling
-            AVIOInterruptCB fp = new()
-            {
-                callback = new AVIOInterruptCB_callback_func
-                {
-                    Pointer = (nint)(delegate* unmanaged[Cdecl]<void*, int>)&ReadTimeoutCallback
-                },
-                opaque = null
-            };
-            _formatContext->interrupt_callback = fp;
+            //AVIOInterruptCB fp = new()
+            //{
+            //    callback = new AVIOInterruptCB_callback_func
+            //    {
+            //        Pointer = (nint)(delegate* unmanaged[Cdecl]<void*, int>)&ReadTimeoutCallback
+            //    },
+            //    opaque = null
+            //};
+            //_formatContext->interrupt_callback = fp;
 
             // Set options for low latency streaming
-            AVDictionary* options = null;
+            AVDictionary* options = stackalloc AVDictionary[1];
             string timeout = "5000000"; // 5 sec timeout
-            ffmpeg.av_dict_set(&options, "rtsp_transport", "tcp", 0);
-            ffmpeg.av_dict_set(&options, "stimeout", timeout, 0);
-            ffmpeg.av_dict_set(&options, "fflags", "nobuffer", 0);
-            ffmpeg.av_dict_set(&options, "flags", "low_delay", 0);
-            ffmpeg.av_dict_set(&options, "timeout", timeout, 0);
-            ffmpeg.av_dict_set(&options, "rw_timeout", timeout, 0);
 
-            //ffmpeg.av_dict_set(&options, "user_agent", "Lavf/57.56.100", 0);
-            ffmpeg.av_dict_set(&options, "user_agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:86.0) Gecko/20100101 Firefox/86.0", 0);
-
-            // For HLS/M3U8 streams
-            ffmpeg.av_dict_set(&options, "protocol_whitelist", "file,http,https,tcp,tls,crypto,httpproxy", 0);
-            ffmpeg.av_dict_set(&options, "allowed_extensions", "m3u8", 0);
-            ffmpeg.av_dict_set(&options, "hls_seek_time", "0", 0);
+            bool hls = streamUrl.EndsWith(".m3u8");
 
             if (streamUrl.Contains("ttvnw.net") || streamUrl.Contains("twitch.tv"))
-                ffmpeg.av_dict_set(&options, "headers", "Referrer: https://www.twitch.tv/\r\n", 0);
+            {
+                ffmpeg.av_dict_set(&options, "user_agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64)", 0);
+                ffmpeg.av_dict_set(&options, "referer", "https://player.twitch.tv", 0);
+                ffmpeg.av_dict_set(&options, "headers",
+                    "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64)\r\n" +
+                    "Accept: */*\r\n" +
+                    "Origin: https://player.twitch.tv\r\n" +
+                    "Referer: https://player.twitch.tv\r\n"
+                    , 0);
+            }
+
+            // For HLS/M3U8 streams
+            if (hls)
+            {
+                //ffmpeg.av_dict_set(&options, "hls_init_time", "0", 0);
+                //ffmpeg.av_dict_set(&options, "hls_seek_time", "0", 0);
+                //ffmpeg.av_dict_set(&options, "live_start_index", "0", 0);
+                //ffmpeg.av_dict_set(&options, "hls_flags", "single_file+append_list+omit_endlist", 0);
+                //ffmpeg.av_dict_set(&options, "hls_playlist_reload_attempts", "10", 0);
+                //ffmpeg.av_dict_set(&options, "hls_segment_type", "mpegts", 0);
+
+                //ffmpeg.av_dict_set(&options, "allowed_extensions", "m3u8,ts", 0);
+                ffmpeg.av_dict_set(&options, "protocol_whitelist", "file,http,https,tcp,tls", 0);
+                //ffmpeg.av_dict_set(&options, "seg_max_retry", "3", 0);
+
+                //ffmpeg.av_dict_set(&options, "reconnect", "1", 0);
+                //ffmpeg.av_dict_set(&options, "reconnect_streamed", "1", 0);
+                //ffmpeg.av_dict_set(&options, "reconnect_delay_max", "5", 0);
+            }
+
+            //ffmpeg.av_dict_set(&options, "rtsp_transport", "tcp", 0);
+            //ffmpeg.av_dict_set(&options, "stimeout", timeout, 0);
+            //ffmpeg.av_dict_set(&options, "flags", "low_delay", 0);
+            //ffmpeg.av_dict_set(&options, "timeout", timeout, 0);
+            //ffmpeg.av_dict_set(&options, "rw_timeout", timeout, 0);
+            ffmpeg.av_dict_set(&options, "fflags", "discardcorrupt", 0);
 
             // Open input stream
-            var pFormatContext = _formatContext;
+            AVFormatContext* pFormatContext = _formatContext;
             int result;
-            //if (streamUrl.EndsWith(".m3u8"))
-            //{
-            //    var inputFormat = ffmpeg.av_find_input_format("hls");
-            //    if (inputFormat != null)
-            //        result = ffmpeg.avformat_open_input(&pFormatContext, streamUrl, inputFormat, &options);
-            //    else
-            //        result = ffmpeg.avformat_open_input(&pFormatContext, streamUrl, null, &options);
-            //}
-            //else
+            if (hls)
+            {
+                var inputFormat = ffmpeg.av_find_input_format("hls");
+                if (inputFormat != null)
+                    result = ffmpeg.avformat_open_input(&pFormatContext, streamUrl, inputFormat, &options);
+                else
+                    result = ffmpeg.avformat_open_input(&pFormatContext, streamUrl, null, &options);
+            }
+            else
                 result = ffmpeg.avformat_open_input(&pFormatContext, streamUrl, null, &options);
             if (result != 0)
             {
@@ -518,6 +606,8 @@ namespace XREngine.Rendering.UI
             OpenVideoContext();
             OpenAudioContext();
 
+            ffmpeg.av_dict_free(&options);
+
             _frame = ffmpeg.av_frame_alloc();
             _packet = ffmpeg.av_packet_alloc();
             _swsContext = (SwsContext*)null;
@@ -537,18 +627,18 @@ namespace XREngine.Rendering.UI
         {
             base.OnComponentActivated();
 
-            Task.Run(async () =>
-            {
-                try
-                {
-                    await GetTwitchStreamURL("sodapoppin");
-                    StartDecode();
-                }
-                catch (Exception ex)
-                {
-                    Debug.LogWarning($"Failed to initialize video stream: {ex.Message}");
-                }
-            });
+            //Task.Run(async () =>
+            //{
+            //try
+            //{
+            GetTwitchStreamURL("Sykkuno").ContinueWith(t => StartDecode());
+                    //StartDecode();
+                //}
+                //catch (Exception ex)
+                //{
+                //    Debug.LogWarning($"Failed to initialize video stream: {ex.Message}");
+                //}
+            //});
         }
 
         private void StartDecode()
@@ -562,18 +652,18 @@ namespace XREngine.Rendering.UI
 
         public async Task GetTwitchStreamURL(string username)
         {
-            try
-            {
-                Debug.Out($"Opening Twitch stream for {username}...");
-                string streamUrl = await GetTwitchStreamUrl(username);
-                Debug.Out($"Got Twitch stream URL: {streamUrl}");
+            //try
+            //{
+                //Debug.Out($"Opening Twitch stream for {username}...");
+                string? streamUrl = await GetTwitchStreamUrl(username);
+                //Debug.Out($"Got Twitch stream URL: {streamUrl}");
                 StreamUrl = streamUrl;
-            }
-            catch (Exception ex)
-            {
-                Debug.LogWarning($"Failed to load Twitch stream for {username}: {ex.Message}");
-                throw; // Re-throw to handle in the caller
-            }
+            //}
+            //catch (Exception ex)
+            //{
+            //    Debug.LogWarning($"Failed to load Twitch stream for {username}: {ex.Message}");
+            //    throw; // Re-throw to handle in the caller
+            //}
         }
 
         private unsafe void CleanupDecode()

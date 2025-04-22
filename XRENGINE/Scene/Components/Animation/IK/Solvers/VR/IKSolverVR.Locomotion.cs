@@ -1,6 +1,7 @@
 ﻿using Extensions;
 using System.ComponentModel.DataAnnotations;
 using System.Numerics;
+using XREngine.Animation;
 using XREngine.Components;
 using XREngine.Data;
 using XREngine.Data.Core;
@@ -216,15 +217,19 @@ namespace XREngine.Scene.Components.Animation
                     return;
 
                 // Root up vector
-                Vector3 rootUp = solver.RootBone._solverRotation.Rotate(Globals.Up);
+                var rb = solver.RootBone;
+                if (rb is null)
+                    return;
+
+                Vector3 rootUp = rb._solverRotation.Rotate(Globals.Up);
 
                 // Substract any motion from parent transforms
-                Vector3 externalDelta = solver.RootBone._solverPosition - _lastEndRootPos;
-                externalDelta -= _animator.DeltaPosition;
+                Vector3 externalDelta = rb._solverPosition - _lastEndRootPos;
+                externalDelta -= _animator.StateMachine?.DeltaPosition ?? Vector3.Zero;
 
                 // Head target position
                 Vector3 headTargetPos = solver._spine._headPosition;
-                Vector3 standOffsetWorld = solver.RootBone._solverRotation.Rotate(new Vector3(_standOffset.X, 0f, _standOffset.Y) * scale);
+                Vector3 standOffsetWorld = rb._solverRotation.Rotate(new Vector3(_standOffset.X, 0f, _standOffset.Y) * scale);
                 headTargetPos += standOffsetWorld;
 
                 if (_firstFrame)
@@ -239,7 +244,7 @@ namespace XREngine.Scene.Components.Animation
                 headTargetVelocity = XRMath.Flatten(headTargetVelocity, rootUp);
 
                 // Head target offset
-                Vector3 offset = headTargetPos - solver.RootBone._solverPosition;
+                Vector3 offset = headTargetPos - rb._solverPosition;
                 offset -= externalDelta;
                 offset -= _lastCorrection;
                 offset = XRMath.Flatten(offset, rootUp);
@@ -247,7 +252,7 @@ namespace XREngine.Scene.Components.Animation
                 // Turning
                 Vector3 headForward = (solver._spine.IKRotationHead * solver._spine.AnchorRelativeToHead).Rotate(Globals.Forward);
                 headForward.Y = 0f;
-                Vector3 headForwardLocal = Quaternion.Inverse(solver.RootBone._solverRotation).Rotate(headForward);
+                Vector3 headForwardLocal = Quaternion.Inverse(rb._solverRotation).Rotate(headForward);
                 float angle = float.RadiansToDegrees(MathF.Atan2(headForwardLocal.X, headForwardLocal.Z));
                 angle += solver._spine._rootHeadingOffset;
                 float turnTarget = angle / 90f;
@@ -295,12 +300,12 @@ namespace XREngine.Scene.Components.Animation
                 _animator.SetBool(PARAM_IsMoving, _isMoving);
 
                 // Animation speed
-                Vector3 currentRootPos = solver.RootBone._solverPosition;
+                Vector3 currentRootPos = rb._solverPosition;
                 currentRootPos -= externalDelta;
                 currentRootPos -= _lastCorrection;
 
                 Vector3 rootVelocity = (currentRootPos - _lastSpeedRootPos) / deltaTime;
-                _lastSpeedRootPos = solver.RootBone._solverPosition;
+                _lastSpeedRootPos = rb._solverPosition;
                 float rootVelocityMag = rootVelocity.Length();
 
                 float animSpeedTarget = _minAnimationSpeed;
@@ -314,7 +319,7 @@ namespace XREngine.Scene.Components.Animation
                 _animator.SetFloat(PARAM_Speed, _animSpeed);
 
                 // Is Stopping
-                AnimStateTransition? transInfo = _animator.GetCurrentTransition(0);
+                AnimStateTransition? transInfo = _animator.StateMachine?.GetCurrentTransition(0);
                 bool isStopping = transInfo?.NameEquals(PARAM_Stop) ?? false;
 
                 // Root lerp speed
@@ -330,37 +335,37 @@ namespace XREngine.Scene.Components.Animation
                 _rootLerpSpeed = Interp.Lerp(_rootLerpSpeed, rootLerpSpeedTarget, deltaTime * 20f);
 
                 // Root lerp and limits
-                headTargetPos += XRMath.ExtractVertical(solver.RootBone._solverPosition - headTargetPos, rootUp, 1f);
+                headTargetPos += XRMath.ExtractVertical(rb._solverPosition - headTargetPos, rootUp, 1f);
 
                 if (_maxRootOffset > 0f)
                 {
                     // Lerp towards head target position
-                    Vector3 p = solver.RootBone._solverPosition;
+                    Vector3 p = rb._solverPosition;
 
                     if (_rootLerpSpeed > 0f)
-                        solver.RootBone._solverPosition = Vector3.Lerp(solver.RootBone._solverPosition, headTargetPos, _rootLerpSpeed * deltaTime * _weight);
+                        rb._solverPosition = Vector3.Lerp(rb._solverPosition, headTargetPos, _rootLerpSpeed * deltaTime * _weight);
                     
-                    _lastCorrection = solver.RootBone._solverPosition - p;
+                    _lastCorrection = rb._solverPosition - p;
 
                     // Max offset
-                    offset = headTargetPos - solver.RootBone._solverPosition;
+                    offset = headTargetPos - rb._solverPosition;
                     offset = XRMath.Flatten(offset, rootUp);
                     float offsetMag = offset.Length();
 
                     if (offsetMag > _maxRootOffset)
                     {
                         _lastCorrection += (offset - (offset / offsetMag) * _maxRootOffset) * _weight;
-                        solver.RootBone._solverPosition += _lastCorrection;
+                        rb._solverPosition += _lastCorrection;
                     }
                 }
                 else
                 {
                     // Snap to head target position
-                    _lastCorrection = (headTargetPos - solver.RootBone._solverPosition) * _weight;
-                    solver.RootBone._solverPosition += _lastCorrection;
+                    _lastCorrection = (headTargetPos - rb._solverPosition) * _weight;
+                    rb._solverPosition += _lastCorrection;
                 }
 
-                _lastEndRootPos = solver.RootBone._solverPosition;
+                _lastEndRootPos = rb._solverPosition;
             }
         }
     }
