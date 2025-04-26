@@ -159,20 +159,13 @@ namespace XREngine.Animation
             }
         }
 
-        public override void GetAnimationValues()
-        {
-            base.GetAnimationValues();
-            foreach (var child in Children)
-                child.Motion?.GetAnimationValues();
-        }
-
         public override void Tick(float delta)
         {
             foreach (var child in Children)
                 child.Motion?.Tick(delta * child.Speed);
         }
 
-        public override void BlendAnimationValues(IDictionary<string, AnimVar> variables)
+        public override void BlendChildMotionAnimationValues(IDictionary<string, AnimVar> variables, float weight)
         {
             float x = 0.0f;
             float y = 0.0f;
@@ -191,7 +184,7 @@ namespace XREngine.Animation
             // If we have only one child, just tick it directly
             if (_children.Count == 1)
             {
-                Blend(_children[0].Motion);
+                _children[0].Motion?.GetAnimationValues(this, variables, weight);
                 return;
             }
 
@@ -237,26 +230,29 @@ namespace XREngine.Animation
             switch (_weightCount)
             {
                 case 1:
-                    Blend(_childWeights[0].Child.Motion);
+                    _childWeights[0].Child.Motion?.GetAnimationValues(this, variables, weight);
                     return;
                 case 2:
                     Blend(
                         _childWeights[0].Child.Motion,
                         _childWeights[1].Child.Motion,
-                        _childWeights[1].Weight);
+                        _childWeights[1].Weight,
+                        variables, weight);
                     return;
                 case 3:
                     Blend(
                         _childWeights[0].Child.Motion, _childWeights[0].Weight,
                         _childWeights[1].Child.Motion, _childWeights[1].Weight,
-                        _childWeights[2].Child.Motion, _childWeights[2].Weight);
+                        _childWeights[2].Child.Motion, _childWeights[2].Weight,
+                        variables, weight);
                     return;
                 case 4:
                     Blend(
                         _childWeights[0].Child.Motion, _childWeights[0].Weight,
                         _childWeights[1].Child.Motion, _childWeights[1].Weight,
                         _childWeights[2].Child.Motion, _childWeights[2].Weight,
-                        _childWeights[3].Child.Motion, _childWeights[3].Weight);
+                        _childWeights[3].Child.Motion, _childWeights[3].Weight,
+                        variables, weight);
                     return;
             }
         }

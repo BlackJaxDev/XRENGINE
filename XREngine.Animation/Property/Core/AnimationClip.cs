@@ -162,13 +162,41 @@ namespace XREngine.Animation
                 _rootMember?.StopAnimations();
         }
 
+        public override void GetAnimationValues(MotionBase? parentMotion, IDictionary<string, AnimVar> variables, float weight)
+        {
+            foreach (var kvp in _animatedCurves)
+            {
+                if (kvp.Value.Animation is null && kvp.Value.MemberType != EAnimationMemberType.Method)
+                    continue;
+                
+                if (weight < float.Epsilon)
+                    SetAnimValue(kvp.Key, kvp.Value.DefaultValue);
+                else if (weight > 1.0f - float.Epsilon)
+                    SetAnimValue(kvp.Key, kvp.Value.GetAnimationValue());
+                else
+                {
+                    object? defaultvalue = kvp.Value.DefaultValue;
+                    object? animatedValue = kvp.Value.GetAnimationValue();
+                    object? weightedValue = Lerp(defaultvalue, animatedValue, weight);
+                    SetAnimValue(kvp.Key, weightedValue);
+                }
+            }
+            parentMotion?.CopyAnimationValuesFrom(this);
+        }
+
+        private static object? Lerp(object? defaultvalue, object? animatedValue, float weight) => defaultvalue switch
+        {
+            float df when animatedValue is float af => Interp.Lerp(df, af, weight),
+            Vector2 df2 when animatedValue is Vector2 af2 => Vector2.Lerp(df2, af2, weight),
+            Vector3 df3 when animatedValue is Vector3 af3 => Vector3.Lerp(df3, af3, weight),
+            Vector4 df4 when animatedValue is Vector4 af4 => Vector4.Lerp(df4, af4, weight),
+            Quaternion dfq when animatedValue is Quaternion afq => Quaternion.Slerp(dfq, afq, weight),
+            _ => weight > 0.5f ? animatedValue : defaultvalue, //Discrete; choose closest value
+        };
+
         public override void Tick(float delta)
         {
             TickPropertyAnimations(delta);
-        }
-        public override void BlendAnimationValues(IDictionary<string, AnimVar> variables)
-        {
-            Blend(this);
         }
 
         public override bool Load3rdParty(string filePath)
@@ -310,28 +338,28 @@ namespace XREngine.Animation
                             AnimationMember boneX = new("SetIKPositionX", EAnimationMemberType.Method, xAnim)
                             {
                                 MethodArguments = [eff, 0.0f],
-                                MethodValueArgumentIndex = 1,
+                                AnimatedMethodArgumentIndex = 1,
                             };
                             ikRoot.Children.Add(boneX);
 
                             AnimationMember boneY = new("SetIKPositionY", EAnimationMemberType.Method, yAnim)
                             {
                                 MethodArguments = [eff, 0.0f],
-                                MethodValueArgumentIndex = 1,
+                                AnimatedMethodArgumentIndex = 1,
                             };
                             ikRoot.Children.Add(boneY);
 
                             AnimationMember boneZ = new("SetIKPositionZ", EAnimationMemberType.Method, zAnim)
                             {
                                 MethodArguments = [eff, 0.0f],
-                                MethodValueArgumentIndex = 1,
+                                AnimatedMethodArgumentIndex = 1,
                             };
                             ikRoot.Children.Add(boneZ);
 
                             AnimationMember boneRot = new("SetIKRotation", EAnimationMemberType.Method, rotAnim)
                             {
                                 MethodArguments = [eff, Quaternion.Identity],
-                                MethodValueArgumentIndex = 1,
+                                AnimatedMethodArgumentIndex = 1,
                             };
                             ikRoot.Children.Add(boneRot);
                         }

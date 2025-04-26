@@ -112,7 +112,7 @@ namespace XREngine.Animation
         /// <summary>
         /// This is the index of the argument that should be set by the animation.
         /// </summary>
-        public int MethodValueArgumentIndex
+        public int AnimatedMethodArgumentIndex
         {
             get => _methodValueArgumentIndex;
             set => SetField(ref _methodValueArgumentIndex, value);
@@ -255,7 +255,7 @@ namespace XREngine.Animation
         {
             var a = Animation;
             return a is null
-                ? MemberType == EAnimationMemberType.Method ? _methodArguments[MethodValueArgumentIndex] : null
+                ? MemberType == EAnimationMemberType.Method ? _methodArguments[AnimatedMethodArgumentIndex] : null
                 : a.GetCurrentValueGeneric();
         }
 
@@ -277,11 +277,23 @@ namespace XREngine.Animation
                     _propertyCache?.SetValue(_parentObject, value);
                     break;
                 case EAnimationMemberType.Method:
-                    if (MethodValueArgumentIndex >= 0 && MethodValueArgumentIndex < _methodArguments.Length)
-                        _methodArguments[MethodValueArgumentIndex] = value;
+                    if (AnimatedMethodArgumentIndex >= 0 && AnimatedMethodArgumentIndex < _methodArguments.Length)
+                        _methodArguments[AnimatedMethodArgumentIndex] = value;
                     _methodCache?.Invoke(_parentObject, _methodArguments);
                     break;
             }
+        }
+
+        private object? Cache(object? memberValue)
+        {
+            if (!CacheReturnValue)
+                return memberValue;
+
+            if (_cacheAttempted)
+                return _cachedReturnValue;
+
+            _cacheAttempted = true;
+            return _cachedReturnValue = memberValue;
         }
 
         internal object? InitializeMethod(object? parentObj)
@@ -291,29 +303,12 @@ namespace XREngine.Animation
             if (parentObj is null || MemberNotFound)
                 return null;
             
-            if (_methodCache is null)
-            {
-                var methodType = parentObj.GetType();
-                _methodCache = methodType?.GetMethod(_memberName, BindingFlag, [.. MethodArguments.Select(x => x.GetType())]);
+            _methodCache ??= parentObj.GetType()?.GetMethod(_memberName, BindingFlag, [.. MethodArguments.Select(x => x.GetType())]);
 
-                if (MemberNotFound = _methodCache is null)
-                    return null;
-            }
+            MemberNotFound = _methodCache is null;
 
-            if (_methodCache is null)
-                return null;
-
-            if (CacheReturnValue)
-            {
-                if (!_cacheAttempted)
-                {
-                    _cacheAttempted = true;
-                    return _cachedReturnValue = _methodCache.Invoke(parentObj, MethodArguments);
-                }
-                return _cachedReturnValue;
-            }
-            else
-                return _methodCache.Invoke(parentObj, MethodArguments);
+            DefaultValue = MethodArguments[AnimatedMethodArgumentIndex];
+            return Cache(_methodCache?.Invoke(parentObj, MethodArguments));
         }
         internal object? InitializeProperty(object? parentObj)
         {
@@ -321,59 +316,28 @@ namespace XREngine.Animation
 
             if (parentObj is null || MemberNotFound)
                 return null;
-            
-            if (_propertyCache is null)
-            {
-                ImmediateType immediateType = parentObj.GetImmediateType();
-                _propertyCache = immediateType.GetProperty(_memberName);
 
-                if (MemberNotFound = _propertyCache is null)
-                    return null;
-            }
+            _propertyCache ??= parentObj.GetImmediateType().GetProperty(_memberName);
 
-            if (_propertyCache is null)
-                return null;
-            
-            if (CacheReturnValue)
-            {
-                if (!_cacheAttempted)
-                {
-                    _cacheAttempted = true;
-                    return _cachedReturnValue = _propertyCache.GetValue(parentObj);
-                }
-                return _cachedReturnValue;
-            }
-            else
-                return _propertyCache.GetValue(parentObj);
+            MemberNotFound = _propertyCache is null;
+
+            object? value = _propertyCache?.GetValue(parentObj);
+            DefaultValue = value;
+            return Cache(value);
         }
+
         internal object? InitializeField(object? parentObj)
         {
             if (parentObj is null || MemberNotFound)
                 return null;
 
-            if (_fieldCache is null)
-            {
-                ImmediateType immediateType = parentObj.GetImmediateType();
-                _fieldCache = immediateType.GetField(_memberName);
+            _fieldCache ??= parentObj.GetImmediateType().GetField(_memberName);
+            
+            MemberNotFound = _fieldCache is null;
 
-                if (MemberNotFound = _fieldCache is null)
-                    return null;
-            }
-
-            if (_fieldCache is null)
-                return null;
-
-            if (CacheReturnValue)
-            {
-                if (!_cacheAttempted)
-                {
-                    _cacheAttempted = true;
-                    return _cachedReturnValue = _fieldCache.GetValue(parentObj);
-                }
-                return _cachedReturnValue;
-            }
-            else
-                return _fieldCache.GetValue(parentObj);
+            object? value = _fieldCache?.GetValue(parentObj);
+            DefaultValue = value;
+            return Cache(value);
         }
         /// <summary>
         /// Registers to the AnimationHasEnded method in the animation tree
@@ -452,14 +416,14 @@ namespace XREngine.Animation
             => new("SetBlendShapeWeight", EAnimationMemberType.Method)
             {
                 MethodArguments = [name, percent, StringComparison.InvariantCultureIgnoreCase],
-                MethodValueArgumentIndex = 1
+                AnimatedMethodArgumentIndex = 1
             };
 
         public static AnimationMember SetBlendshapeNormalized(string name, float normalizedValue)
             => new("SetBlendShapeWeightNormalized", EAnimationMemberType.Method) 
             {
                 MethodArguments = [name, normalizedValue, StringComparison.InvariantCultureIgnoreCase],
-                MethodValueArgumentIndex = 1
+                AnimatedMethodArgumentIndex = 1
             };
 
         public static AnimationMember SetNormalizedBlendshapeValuesByModelNodeName(string sceneNodeName, params (string blendshapeName, float normalizedValue)[] blendshapeValues)
@@ -470,14 +434,14 @@ namespace XREngine.Animation
                     new AnimationMember("FindDescendantByName", EAnimationMemberType.Method)
                     {
                         MethodArguments = [sceneNodeName, StringComparison.InvariantCultureIgnoreCase],
-                        MethodValueArgumentIndex = 0,
+                        AnimatedMethodArgumentIndex = 0,
                         CacheReturnValue = true,
                         Children =
                         [
                             new AnimationMember("GetComponent", EAnimationMemberType.Method)
                             {
                                 MethodArguments = ["ModelComponent"],
-                                MethodValueArgumentIndex = 0,
+                                AnimatedMethodArgumentIndex = 0,
                                 CacheReturnValue = true,
                                 Children = [.. blendshapeValues.Select(x => SetBlendshapeNormalized(x.blendshapeName, x.normalizedValue))]
                             }

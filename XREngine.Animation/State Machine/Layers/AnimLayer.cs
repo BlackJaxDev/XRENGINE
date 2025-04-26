@@ -190,13 +190,15 @@ namespace XREngine.Animation
                 NextState = null;
 
                 //Copy animation values from the current state
-                CopyAnimationValues(_currentState?.Motion?._animationValues);
+                CopyAnimationValuesFromMotion(_currentState?.Motion);
             }
 
             CurrentState?.Tick(delta, variables);
             NextState?.Tick(delta, variables);
         }
 
+        private void CopyAnimationValuesFromMotion(MotionBase? motion)
+            => CopyAnimationValues(motion?.AnimationValues);
         private void CopyAnimationValues(Dictionary<string, object?>? values)
         {
             if (values is null)
@@ -207,7 +209,7 @@ namespace XREngine.Animation
                     SetAnimValue(key, v1Value);
         }
 
-        private void SetAnimValue(string path, object? animValue)
+        internal void SetAnimValue(string path, object? animValue)
         {
             if (!_animatedValues.TryAdd(path, animValue))
                 _animatedValues[path] = animValue;

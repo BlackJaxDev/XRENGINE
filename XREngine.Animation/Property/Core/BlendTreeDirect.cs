@@ -58,40 +58,18 @@ namespace XREngine.Animation
             set => SetField(ref _children, value);
         }
 
-        public override void GetAnimationValues()
-        {
-            base.GetAnimationValues();
-            foreach (var child in Children)
-                child.Motion?.GetAnimationValues();
-        }
-
         public override void Tick(float delta)
         {
             foreach (var child in Children)
                 child.Motion?.Tick(delta * child.Speed);
         }
 
-        public override void BlendAnimationValues(IDictionary<string, AnimVar> variables)
+        public override void BlendChildMotionAnimationValues(IDictionary<string, AnimVar> variables, float weight)
         {
-            foreach (Child child in Children)
+            foreach (var child in Children)
             {
-                child.Motion?.EvaluateMotion(variables);
-                CopyAnimatedValues(child.Motion?.AnimationValues);
-            }
-        }
-
-        private void CopyAnimatedValues(Dictionary<string, object?>? animationValues)
-        {
-            if (animationValues is null)
-                return;
-            
-            //TODO: lerp to defaults using weight here?
-            foreach (var kvp in animationValues)
-            {
-                if (_animationValues.ContainsKey(kvp.Key))
-                    _animationValues[kvp.Key] = kvp.Value;
-                else
-                    _animationValues.Add(kvp.Key, kvp.Value);
+                float childWeight = child.WeightParameterName is not null && variables.TryGetValue(child.WeightParameterName, out var weightParameter) ? weightParameter.FloatValue : 1.0f;
+                child.Motion?.GetAnimationValues(this, variables, weight * childWeight);
             }
         }
     }

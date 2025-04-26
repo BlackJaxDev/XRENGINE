@@ -138,31 +138,25 @@ namespace XREngine.Animation
                 switch (v1Value)
                 {
                     case float f1 when v2Value is float f2:
-                        SetAnimValue(layer, key, Interp.Lerp(f1, f2, t));
+                        layer.SetAnimValue(key, Interp.Lerp(f1, f2, t));
                         break;
                     case Vector2 vector21 when v2Value is Vector2 vector22:
-                        SetAnimValue(layer, key, Vector2.Lerp(vector21, vector22, t));
+                        layer.SetAnimValue(key, Vector2.Lerp(vector21, vector22, t));
                         break;
                     case Vector3 vector31 when v2Value is Vector3 vector32:
-                        SetAnimValue(layer, key, Vector3.Lerp(vector31, vector32, t));
+                        layer.SetAnimValue(key, Vector3.Lerp(vector31, vector32, t));
                         break;
                     case Vector4 vector41 when v2Value is Vector4 vector42:
-                        SetAnimValue(layer, key, Vector4.Lerp(vector41, vector42, t));
+                        layer.SetAnimValue(key, Vector4.Lerp(vector41, vector42, t));
                         break;
                     case Quaternion quaternion1 when v2Value is Quaternion quaternion2:
-                        SetAnimValue(layer, key, Quaternion.Slerp(quaternion1, quaternion2, t));
+                        layer.SetAnimValue(key, Quaternion.Slerp(quaternion1, quaternion2, t));
                         break;
                     default: //Pick the discrete value with the higher weight
-                        SetAnimValue(layer, key, t > 0.5f ? v2Value : v1Value);
+                        layer.SetAnimValue(key, t > 0.5f ? v2Value : v1Value);
                         break;
                 }
             }
-        }
-
-        private static void SetAnimValue(AnimLayer layer, string path, object? animValue)
-        {
-            if (!layer._animatedValues.TryAdd(path, animValue))
-                layer._animatedValues[path] = animValue;
         }
     }
 }

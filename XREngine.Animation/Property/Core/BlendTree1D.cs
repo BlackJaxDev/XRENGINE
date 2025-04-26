@@ -114,27 +114,20 @@ namespace XREngine.Animation
                 NeedsSort = true;
         }
 
-        public override void GetAnimationValues()
-        {
-            base.GetAnimationValues();
-            foreach (var child in Children)
-                child.Motion?.GetAnimationValues();
-        }
-
         public override void Tick(float delta)
         {
             foreach (var child in Children)
                 child.Motion?.Tick(delta * child.Speed);
         }
 
-        public override void BlendAnimationValues(IDictionary<string, AnimVar> variables)
+        public override void BlendChildMotionAnimationValues(IDictionary<string, AnimVar> variables, float weight)
         {
             if (_children.Count == 0)
                 return;
 
             if (_children.Count == 1)
             {
-                Blend(_children[0].Motion);
+                _children[0].Motion?.GetAnimationValues(this, variables, 1.0f);
                 return;
             }
 
@@ -181,7 +174,7 @@ namespace XREngine.Animation
                 max = Children[l];
             }
 
-            Blend(min.Motion, max.Motion, (parameterValue - min.Threshold) / (max.Threshold - min.Threshold));
+            Blend(min.Motion, max.Motion, (parameterValue - min.Threshold) / (max.Threshold - min.Threshold), variables, weight);
         }
     }
 }

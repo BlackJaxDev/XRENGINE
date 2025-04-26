@@ -790,7 +790,7 @@ namespace XREngine.Data.Components
 
             layer.InitialState = ftLocalRootState;
 
-            //var reset = MakeResetFTAnimator();
+            var reset = MakeResetFTAnimator();
             var driver = MakeFTBlendShapeDriver();
 
             ftLocalRootState.Motion = new BlendTreeDirect()
@@ -798,12 +798,12 @@ namespace XREngine.Data.Components
                 Name = "FT Local Root",
                 Children = 
                 [
-                    //new BlendTreeDirect.Child()
-                    //{
-                    //    WeightParameterName = Param_DirectBlend,
-                    //    Motion = reset,
-                    //    Speed = 1.0f,
-                    //},
+                    new BlendTreeDirect.Child()
+                    {
+                        WeightParameterName = Param_DirectBlend,
+                        Motion = reset,
+                        Speed = 1.0f,
+                    },
                     //new BlendTreeDirect.Child()
                     //{
                     //    WeightParameterName = Param_DirectBlend,
@@ -849,192 +849,188 @@ namespace XREngine.Data.Components
 
         }
 
-        private static BlendTreeDirect MakeFTBlendShapeDriver()
+        private static BlendTreeDirect MakeFTBlendShapeDriver() => new()
         {
-            BlendTreeDirect blendTree = new()
-            {
-                Name = "FT Blendshape Driver",
-                Children =
-                [
-                    new BlendTreeDirect.Child()
-                    {
-                        WeightParameterName = Param_EyeTrackingActive,
-                        Motion = EyeTrackingBlendTrees.RightEyeLidBlend(),
-                    },
-                    new BlendTreeDirect.Child()
-                    {
-                        WeightParameterName = Param_EyeTrackingActive,
-                        Motion = EyeTrackingBlendTrees.LeftEyeLidBlend(),
-                    },
-                    new BlendTreeDirect.Child()
-                    {
-                        WeightParameterName = Param_EyeTrackingActive,
-                        Motion = EyeTrackingBlendTrees.EyeLookRightBlend(),
-                    },
-                    new BlendTreeDirect.Child()
-                    {
-                        WeightParameterName = Param_EyeTrackingActive,
-                        Motion = EyeTrackingBlendTrees.EyeLookLeftBlend(),
-                    },
-                    new BlendTreeDirect.Child()
-                    {
-                        WeightParameterName = Param_EyeTrackingActive,
-                        Motion = EyeTrackingBlendTrees.BrowInnerUpBlend(),
-                    },
-                    new BlendTreeDirect.Child()
-                    {
-                        WeightParameterName = Param_EyeTrackingActive,
-                        Motion = EyeTrackingBlendTrees.BrowOuterUpRightBlend(),
-                    },
-                    new BlendTreeDirect.Child()
-                    {
-                        WeightParameterName = Param_EyeTrackingActive,
-                        Motion = EyeTrackingBlendTrees.BrowOuterUpLeftBlend(),
-                    },
-                    new BlendTreeDirect.Child()
-                    {
-                        WeightParameterName = Param_EyeTrackingActive,
-                        Motion = EyeTrackingBlendTrees.BrowDownRightBlend(),
-                    },
-                    new BlendTreeDirect.Child()
-                    {
-                        WeightParameterName = Param_EyeTrackingActive,
-                        Motion = EyeTrackingBlendTrees.BrowDownLeftBlend(),
-                    },
-                    //new BlendTreeDirect.Child()
-                    //{
-                    //    WeightParameterName = Param_LipTrackingActive,
-                    //    Motion = LipTrackingBlendTrees.NoseSneerBlend(),
-                    //},
-                    //new BlendTreeDirect.Child()
-                    //{
-                    //    WeightParameterName = Param_LipTrackingActive,
-                    //    Motion = LipTrackingBlendTrees.CheekPuffBlend(),
-                    //},
-                    //new BlendTreeDirect.Child()
-                    //{
-                    //    WeightParameterName = Param_LipTrackingActive,
-                    //    Motion = LipTrackingBlendTrees.JawOpenBlend(),
-                    //},
-                    //new BlendTreeDirect.Child()
-                    //{
-                    //    WeightParameterName = Param_LipTrackingActive,
-                    //    Motion = LipTrackingBlendTrees.MouthClosedBlend(),
-                    //},
-                    //new BlendTreeDirect.Child()
-                    //{
-                    //    WeightParameterName = Param_LipTrackingActive,
-                    //    Motion = LipTrackingBlendTrees.JawForwardBlend(),
-                    //},
-                    //new BlendTreeDirect.Child()
-                    //{
-                    //    WeightParameterName = Param_LipTrackingActive,
-                    //    Motion = LipTrackingBlendTrees.MouthUpperUpRightBlend(),
-                    //},
-                    //new BlendTreeDirect.Child()
-                    //{
-                    //    WeightParameterName = Param_LipTrackingActive,
-                    //    Motion = LipTrackingBlendTrees.MouthUpperUpLeftBlend(),
-                    //},
-                    //new BlendTreeDirect.Child()
-                    //{
-                    //    WeightParameterName = Param_LipTrackingActive,
-                    //    Motion = LipTrackingBlendTrees.MouthLowerDownBlend(),
-                    //},
-                    //new BlendTreeDirect.Child()
-                    //{
-                    //    WeightParameterName = Param_LipTrackingActive,
-                    //    Motion = LipTrackingBlendTrees.MouthRollUpperBlend(),
-                    //},
-                    //new BlendTreeDirect.Child()
-                    //{
-                    //    WeightParameterName = Param_LipTrackingActive,
-                    //    Motion = LipTrackingBlendTrees.MouthRollLowerBlend(),
-                    //},
-                    //new BlendTreeDirect.Child()
-                    //{
-                    //    WeightParameterName = Param_LipTrackingActive,
-                    //    Motion = LipTrackingBlendTrees.CheekSquintRightBlend(),
-                    //},
-                    //new BlendTreeDirect.Child()
-                    //{
-                    //    WeightParameterName = Param_LipTrackingActive,
-                    //    Motion = LipTrackingBlendTrees.CheekSquintLeftBlend(),
-                    //},
-                    //new BlendTreeDirect.Child()
-                    //{
-                    //    WeightParameterName = Param_LipTrackingActive,
-                    //    Motion = LipTrackingBlendTrees.MouthSmileRightBlend(),
-                    //},
-                    //new BlendTreeDirect.Child()
-                    //{
-                    //    WeightParameterName = Param_LipTrackingActive,
-                    //    Motion = LipTrackingBlendTrees.MouthSmileLeftBlend(),
-                    //},
-                    //new BlendTreeDirect.Child()
-                    //{
-                    //    WeightParameterName = Param_LipTrackingActive,
-                    //    Motion = LipTrackingBlendTrees.MouthFrownRightBlend(),
-                    //},
-                    //new BlendTreeDirect.Child()
-                    //{
-                    //    WeightParameterName = Param_LipTrackingActive,
-                    //    Motion = LipTrackingBlendTrees.MouthFrownLeftBlend(),
-                    //},
-                    //new BlendTreeDirect.Child()
-                    //{
-                    //    WeightParameterName = Param_LipTrackingActive,
-                    //    Motion = LipTrackingBlendTrees.LipPuckerBlend(),
-                    //},
-                    //new BlendTreeDirect.Child()
-                    //{
-                    //    WeightParameterName = Param_LipTrackingActive,
-                    //    Motion = LipTrackingBlendTrees.LimitJawX_MouthX(),
-                    //},
-                    //new BlendTreeDirect.Child()
-                    //{
-                    //    WeightParameterName = Param_LipTrackingActive,
-                    //    Motion = LipTrackingBlendTrees.MouthXBlend(),
-                    //},
-                    //new BlendTreeDirect.Child()
-                    //{
-                    //    WeightParameterName = Param_LipTrackingActive,
-                    //    Motion = LipTrackingBlendTrees.MouthFunnelBlend(),
-                    //},
-                    //new BlendTreeDirect.Child()
-                    //{
-                    //    WeightParameterName = Param_LipTrackingActive,
-                    //    Motion = LipTrackingBlendTrees.MouthShrugUpperBlend(),
-                    //},
-                    //new BlendTreeDirect.Child()
-                    //{
-                    //    WeightParameterName = Param_LipTrackingActive,
-                    //    Motion = LipTrackingBlendTrees.MouthShrugLowerBlend(),
-                    //},
-                    //new BlendTreeDirect.Child()
-                    //{
-                    //    WeightParameterName = Param_LipTrackingActive,
-                    //    Motion = LipTrackingBlendTrees.TongueOutBlend(),
-                    //},
-                    //new BlendTreeDirect.Child()
-                    //{
-                    //    WeightParameterName = Param_LipTrackingActive,
-                    //    Motion = LipTrackingBlendTrees.MouthStretchLeftBlend(),
-                    //},
-                    //new BlendTreeDirect.Child()
-                    //{
-                    //    WeightParameterName = Param_LipTrackingActive,
-                    //    Motion = LipTrackingBlendTrees.MouthStretchRightBlend(),
-                    //},
-                    //new BlendTreeDirect.Child()
-                    //{
-                    //    WeightParameterName = Param_LipTrackingActive,
-                    //    Motion = LipTrackingBlendTrees.MouthPressBlend(),
-                    //},
-                ]
-            };
-            return blendTree;
-        }
+            Name = "FT Blendshape Driver",
+            Children =
+            [
+                new BlendTreeDirect.Child()
+                {
+                    WeightParameterName = Param_EyeTrackingActive,
+                    Motion = EyeTrackingBlendTrees.RightEyeLidBlend(),
+                },
+                new BlendTreeDirect.Child()
+                {
+                    WeightParameterName = Param_EyeTrackingActive,
+                    Motion = EyeTrackingBlendTrees.LeftEyeLidBlend(),
+                },
+                new BlendTreeDirect.Child()
+                {
+                    WeightParameterName = Param_EyeTrackingActive,
+                    Motion = EyeTrackingBlendTrees.EyeLookRightBlend(),
+                },
+                new BlendTreeDirect.Child()
+                {
+                    WeightParameterName = Param_EyeTrackingActive,
+                    Motion = EyeTrackingBlendTrees.EyeLookLeftBlend(),
+                },
+                new BlendTreeDirect.Child()
+                {
+                    WeightParameterName = Param_EyeTrackingActive,
+                    Motion = EyeTrackingBlendTrees.BrowInnerUpBlend(),
+                },
+                new BlendTreeDirect.Child()
+                {
+                    WeightParameterName = Param_EyeTrackingActive,
+                    Motion = EyeTrackingBlendTrees.BrowOuterUpRightBlend(),
+                },
+                new BlendTreeDirect.Child()
+                {
+                    WeightParameterName = Param_EyeTrackingActive,
+                    Motion = EyeTrackingBlendTrees.BrowOuterUpLeftBlend(),
+                },
+                new BlendTreeDirect.Child()
+                {
+                    WeightParameterName = Param_EyeTrackingActive,
+                    Motion = EyeTrackingBlendTrees.BrowDownRightBlend(),
+                },
+                new BlendTreeDirect.Child()
+                {
+                    WeightParameterName = Param_EyeTrackingActive,
+                    Motion = EyeTrackingBlendTrees.BrowDownLeftBlend(),
+                },
+                new BlendTreeDirect.Child()
+                {
+                    WeightParameterName = Param_LipTrackingActive,
+                    Motion = LipTrackingBlendTrees.NoseSneerBlend(),
+                },
+                new BlendTreeDirect.Child()
+                {
+                    WeightParameterName = Param_LipTrackingActive,
+                    Motion = LipTrackingBlendTrees.CheekPuffBlend(),
+                },
+                new BlendTreeDirect.Child()
+                {
+                    WeightParameterName = Param_LipTrackingActive,
+                    Motion = LipTrackingBlendTrees.JawOpenBlend(),
+                },
+                new BlendTreeDirect.Child()
+                {
+                    WeightParameterName = Param_LipTrackingActive,
+                    Motion = LipTrackingBlendTrees.MouthClosedBlend(),
+                },
+                new BlendTreeDirect.Child()
+                {
+                    WeightParameterName = Param_LipTrackingActive,
+                    Motion = LipTrackingBlendTrees.JawForwardBlend(),
+                },
+                new BlendTreeDirect.Child()
+                {
+                    WeightParameterName = Param_LipTrackingActive,
+                    Motion = LipTrackingBlendTrees.MouthUpperUpRightBlend(),
+                },
+                new BlendTreeDirect.Child()
+                {
+                    WeightParameterName = Param_LipTrackingActive,
+                    Motion = LipTrackingBlendTrees.MouthUpperUpLeftBlend(),
+                },
+                new BlendTreeDirect.Child()
+                {
+                    WeightParameterName = Param_LipTrackingActive,
+                    Motion = LipTrackingBlendTrees.MouthLowerDownBlend(),
+                },
+                new BlendTreeDirect.Child()
+                {
+                    WeightParameterName = Param_LipTrackingActive,
+                    Motion = LipTrackingBlendTrees.MouthRollUpperBlend(),
+                },
+                new BlendTreeDirect.Child()
+                {
+                    WeightParameterName = Param_LipTrackingActive,
+                    Motion = LipTrackingBlendTrees.MouthRollLowerBlend(),
+                },
+                new BlendTreeDirect.Child()
+                {
+                    WeightParameterName = Param_LipTrackingActive,
+                    Motion = LipTrackingBlendTrees.CheekSquintRightBlend(),
+                },
+                new BlendTreeDirect.Child()
+                {
+                    WeightParameterName = Param_LipTrackingActive,
+                    Motion = LipTrackingBlendTrees.CheekSquintLeftBlend(),
+                },
+                new BlendTreeDirect.Child()
+                {
+                    WeightParameterName = Param_LipTrackingActive,
+                    Motion = LipTrackingBlendTrees.MouthSmileRightBlend(),
+                },
+                new BlendTreeDirect.Child()
+                {
+                    WeightParameterName = Param_LipTrackingActive,
+                    Motion = LipTrackingBlendTrees.MouthSmileLeftBlend(),
+                },
+                new BlendTreeDirect.Child()
+                {
+                    WeightParameterName = Param_LipTrackingActive,
+                    Motion = LipTrackingBlendTrees.MouthFrownRightBlend(),
+                },
+                new BlendTreeDirect.Child()
+                {
+                    WeightParameterName = Param_LipTrackingActive,
+                    Motion = LipTrackingBlendTrees.MouthFrownLeftBlend(),
+                },
+                new BlendTreeDirect.Child()
+                {
+                    WeightParameterName = Param_LipTrackingActive,
+                    Motion = LipTrackingBlendTrees.LipPuckerBlend(),
+                },
+                new BlendTreeDirect.Child()
+                {
+                    WeightParameterName = Param_LipTrackingActive,
+                    Motion = LipTrackingBlendTrees.LimitJawX_MouthX(),
+                },
+                new BlendTreeDirect.Child()
+                {
+                    WeightParameterName = Param_LipTrackingActive,
+                    Motion = LipTrackingBlendTrees.MouthXBlend(),
+                },
+                new BlendTreeDirect.Child()
+                {
+                    WeightParameterName = Param_LipTrackingActive,
+                    Motion = LipTrackingBlendTrees.MouthFunnelBlend(),
+                },
+                new BlendTreeDirect.Child()
+                {
+                    WeightParameterName = Param_LipTrackingActive,
+                    Motion = LipTrackingBlendTrees.MouthShrugUpperBlend(),
+                },
+                new BlendTreeDirect.Child()
+                {
+                    WeightParameterName = Param_LipTrackingActive,
+                    Motion = LipTrackingBlendTrees.MouthShrugLowerBlend(),
+                },
+                new BlendTreeDirect.Child()
+                {
+                    WeightParameterName = Param_LipTrackingActive,
+                    Motion = LipTrackingBlendTrees.TongueOutBlend(),
+                },
+                new BlendTreeDirect.Child()
+                {
+                    WeightParameterName = Param_LipTrackingActive,
+                    Motion = LipTrackingBlendTrees.MouthStretchLeftBlend(),
+                },
+                new BlendTreeDirect.Child()
+                {
+                    WeightParameterName = Param_LipTrackingActive,
+                    Motion = LipTrackingBlendTrees.MouthStretchRightBlend(),
+                },
+                new BlendTreeDirect.Child()
+                {
+                    WeightParameterName = Param_LipTrackingActive,
+                    Motion = LipTrackingBlendTrees.MouthPressBlend(),
+                },
+            ]
+        };
 
         //private static BlendTreeDirect MakeOSCm_Local()
         //{
@@ -1219,7 +1215,7 @@ namespace XREngine.Data.Components
                 setFloats.Add(new AnimationMember(nameof(AnimStateMachineComponent.SetFloat), EAnimationMemberType.Method)
                 {
                     MethodArguments = [names[i], 0.0f],
-                    MethodValueArgumentIndex = 1,
+                    AnimatedMethodArgumentIndex = 1,
                 });
             }
             return setFloats;

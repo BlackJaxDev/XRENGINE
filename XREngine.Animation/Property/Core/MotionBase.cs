@@ -83,7 +83,7 @@ namespace XREngine.Animation
                 {
                     path += ":";
                     object? arg = member.MethodArguments[i];
-                    if (member.MethodValueArgumentIndex == i)
+                    if (member.AnimatedMethodArgumentIndex == i)
                     {
                         //if (member.Animation is not null)
                             path += $"<AnimatedValue>";
@@ -122,7 +122,7 @@ namespace XREngine.Animation
                 InitializeMember(child, path, layer, owner, parentObject, parentMotions);
         }
 
-        private void SetAnimValue(string path, object? animValue)
+        protected internal void SetAnimValue(string path, object? animValue)
         {
             if (!_animationValues.TryAdd(path, animValue))
                 _animationValues[path] = animValue;
@@ -131,13 +131,13 @@ namespace XREngine.Animation
         /// <summary>
         /// Copies the animation values from the given dictionary to the current motion.
         /// </summary>
-        /// <param name="v"></param>
-        private void CopyAnimValues(Dictionary<string, object?>? v)
+        /// <param name="animatedValues"></param>
+        private void CopyAnimationValuesFrom(Dictionary<string, object?>? animatedValues)
         {
-            if (v is null)
+            if (animatedValues is null)
                 return;
 
-            foreach (var kvp in v)
+            foreach (var kvp in animatedValues)
                 SetAnimValue(kvp.Key, kvp.Value);
         }
 
@@ -308,30 +308,25 @@ namespace XREngine.Animation
             }
         }
 
-        public virtual void GetAnimationValues()
-        {
-            foreach (var kvp in _animatedCurves)
-            {
-                if (kvp.Value.Animation is null && kvp.Value.MemberType != EAnimationMemberType.Method)
-                    continue;
-
-                var value = kvp.Value.GetAnimationValue();
-                if (!_animationValues.TryAdd(kvp.Key, value))
-                    _animationValues[kvp.Key] = value;
-            }
-        }
+        /// <summary>
+        /// Retrieves all animation values and copies them into parentMotion.
+        /// 'weight' can be used to lerp between default values and animated values.
+        /// </summary>
+        /// <param name="parentMotion"></param>
+        /// <param name="variables"></param>
+        /// <param name="weight"></param>
+        public abstract void GetAnimationValues(MotionBase? parentMotion, IDictionary<string, AnimVar> variables, float weight);
 
         /// <summary>
-        /// Blends the animation values of the given child motions into this motion.
+        /// Copies the animation values out of a child motion into this motion, no blending applied.
         /// </summary>
         /// <param name="parentMotion"></param>
         /// <param name="motion"></param>
-        public void Blend(
-            MotionBase? motion)
-            => CopyAnimValues(motion?._animationValues);
+        public void CopyAnimationValuesFrom(MotionBase? motion)
+            => CopyAnimationValuesFrom(motion?._animationValues);
 
         /// <summary>
-        /// Blends the animation values of the given child motions into this motion.
+        /// Blends the animation values of the two given child motions into this motion.
         /// </summary>
         /// <param name="parentMotion"></param>
         /// <param name="m1"></param>
@@ -340,11 +335,17 @@ namespace XREngine.Animation
         public void Blend(
             MotionBase? m1,
             MotionBase? m2,
-            float t)
-            => GetLerpedValues(m1?._animationValues, m2?._animationValues, t);
+            float t,
+            IDictionary<string, AnimVar> variables,
+            float parentWeight)
+        {
+            m1?.GetAnimationValues(null, variables, parentWeight);
+            m2?.GetAnimationValues(null, variables, parentWeight);
+            GetLerpedValues(m1?._animationValues, m2?._animationValues, t);
+        }
 
         /// <summary>
-        /// Blends the animation values of the given child motions into this motion.
+        /// Blends the animation values of the three given child motions into this motion.
         /// </summary>
         /// <param name="parentMotion"></param>
         /// <param name="m1"></param>
@@ -359,11 +360,18 @@ namespace XREngine.Animation
             MotionBase? m2,
             float w2,
             MotionBase? m3,
-            float w3)
-            => GetTriLerpedValues(m1?._animationValues, m2?._animationValues, m3?._animationValues, w1, w2, w3);
+            float w3,
+            IDictionary<string, AnimVar> variables,
+            float parentWeight)
+        {
+            m1?.GetAnimationValues(null, variables, parentWeight);
+            m2?.GetAnimationValues(null, variables, parentWeight);
+            m3?.GetAnimationValues(null, variables, parentWeight);
+            GetTriLerpedValues(m1?._animationValues, m2?._animationValues, m3?._animationValues, w1, w2, w3);
+        }
 
         /// <summary>
-        /// Blends the animation values of the given child motions into this motion.
+        /// Blends the animation values of the four given child motions into this motion.
         /// </summary>
         /// <param name="parentMotion"></param>
         /// <param name="m1"></param>
@@ -382,16 +390,23 @@ namespace XREngine.Animation
             MotionBase? m3,
             float w3,
             MotionBase? m4,
-            float w4)
-            => GetQuadLerpedValues(m1?._animationValues, m2?._animationValues, m3?._animationValues, m4?._animationValues, w1, w2, w3, w4);
-
-        public void EvaluateMotion(IDictionary<string, AnimVar> variables)
+            float w4,
+            IDictionary<string, AnimVar> variables,
+            float parentWeight)
         {
-            GetAnimationValues();
-            BlendAnimationValues(variables);
+            m1?.GetAnimationValues(null, variables, parentWeight);
+            m2?.GetAnimationValues(null, variables, parentWeight);
+            m3?.GetAnimationValues(null, variables, parentWeight);
+            m4?.GetAnimationValues(null, variables, parentWeight);
+            GetQuadLerpedValues(m1?._animationValues, m2?._animationValues, m3?._animationValues, m4?._animationValues, w1, w2, w3, w4);
         }
 
-        public abstract void BlendAnimationValues(IDictionary<string, AnimVar> variables);
+        /// <summary>
+        /// Retrieves current animation values, and if this is a blend tree, blends them.
+        /// </summary>
+        /// <param name="variables"></param>
+        public void EvaluateRootMotion(IDictionary<string, AnimVar> variables)
+            => GetAnimationValues(this, variables, 1.0f);
 
         /// <summary>
         /// Advances all property animations in the motion by the given delta time.

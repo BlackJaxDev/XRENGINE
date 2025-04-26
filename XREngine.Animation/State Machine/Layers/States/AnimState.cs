@@ -66,13 +66,22 @@ namespace XREngine.Animation
         public AnimState(MotionBase motion, EventList<AnimStateTransition> transitions) : base(transitions)
             => Motion = motion;
 
+        /// <summary>
+        /// Gets & blends the animation values from the motion for this state.
+        /// </summary>
+        /// <param name="variables"></param>
         public void EvaluateValues(IDictionary<string, AnimVar> variables)
-        {
-            Motion?.EvaluateMotion(variables);
-        }
+            => Motion?.EvaluateRootMotion(variables);
+
+        /// <summary>
+        /// Advances the property animations in this state's motion by the given delta time.
+        /// </summary>
+        /// <param name="delta"></param>
+        /// <param name="variables"></param>
         public void Tick(float delta, IDictionary<string, AnimVar> variables)
         {
             Motion?.Tick(delta);
+
             foreach (var component in Components)
                 component.StateTick(this, variables, delta);
         }
