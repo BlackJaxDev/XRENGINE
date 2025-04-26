@@ -1,9 +1,12 @@
 ﻿using Extensions;
+using System.Diagnostics;
+using System.Numerics;
 using XREngine.Data;
+using XREngine.Data.Core;
 
 namespace XREngine.Animation
 {
-    public class BlendManager
+    public class BlendManager : XRBase
     {
         private float _linearBlendTime = 0.0f;
         /// <summary>
@@ -30,7 +33,7 @@ namespace XREngine.Animation
         internal void OnStarted() => _currentTransition?.OnStarted();
         internal void OnFinished() => _currentTransition?.OnFinished();
 
-        public void BeginBlend(AnimStateTransition transition)
+        public void BeginBlend(AnimStateTransition transition, AnimState? currentState, AnimState nextState)
         {
             _linearBlendTime = 0.0f;
             _currentTransition = transition;
@@ -43,10 +46,52 @@ namespace XREngine.Animation
                 EAnimBlendType.Custom => (time) => _currentTransition.CustomBlendFunction?.GetValue(time) ?? 0.0f,
                 _ => (time) => time, //Linear
             };
+            CurrentState = currentState;
+            NextState = nextState;
+            GetCurves(currentState, nextState);
             OnStarted();
         }
 
+        private void GetCurves(AnimState? currentState, AnimState nextState)
+        {
+            IEnumerable<string> uniquePaths =
+                (currentState?.Motion?._animationValues?.Keys ?? Enumerable.Empty<string>()).Union
+                (nextState.Motion?._animationValues?.Keys ?? Enumerable.Empty<string>()).Distinct();
+            _animatedCurves = new Dictionary<string, AnimationMember>(uniquePaths.Count());
+            foreach (string path in uniquePaths)
+            {
+                var currMotion = currentState?.Motion;
+                var nextMotion = nextState.Motion;
+                if (currMotion != null && (currMotion.AnimatedCurves?.TryGetValue(path, out AnimationMember? mCurr) ?? false))
+                {
+                    if (mCurr != null)
+                        _animatedCurves.Add(path, mCurr);
+                }
+                else if (nextMotion != null && (nextMotion.AnimatedCurves?.TryGetValue(path, out AnimationMember? mNext) ?? false))
+                {
+                    if (mNext != null)
+                        _animatedCurves.Add(path, mNext);
+                }
+            }
+        }
+
         public bool IsBlending => _currentTransition is not null;
+
+        private AnimState? _currentState;
+        public AnimState? CurrentState
+        {
+            get => _currentState;
+            private set => SetField(ref _currentState, value);
+        }
+
+        private AnimState? _nextState;
+        public AnimState? NextState
+        {
+            get => _nextState;
+            private set => SetField(ref _nextState, value);
+        }
+
+        private Dictionary<string, AnimationMember> _animatedCurves = [];
 
         /// <summary>
         /// Returns true if the blend finished, false if still blending.
@@ -55,8 +100,16 @@ namespace XREngine.Animation
         /// <param name="nextState"></param>
         /// <param name="delta"></param>
         /// <returns></returns>
-        public bool TickBlend(AnimState currentState, AnimState nextState, float delta)
+        public bool TickBlend(AnimLayer layer, float delta)
         {
+            //Blend between the current and next state
+            float blendTime = GetModifiedBlendTime();
+
+            Blend(layer,
+                _currentState?.Motion?._animationValues,
+                _nextState?.Motion?._animationValues,
+                blendTime);
+
             _linearBlendTime += delta;
             if (_linearBlendTime >= BlendDuration)
             {
@@ -65,11 +118,51 @@ namespace XREngine.Animation
                 _currentTransition = null;
                 return true;
             }
-            //Blend is still in progress, update the current animation
-            //var currentPose = currentState.GetFrame();
-            //var nextPose = nextState.GetFrame();
-            //currentPose?.BlendWith(nextPose, GetModifiedBlendTime());
+
             return false;
+        }
+
+        private static void Blend(AnimLayer layer, Dictionary<string, object?>? v1, Dictionary<string, object?>? v2, float t)
+        {
+            IEnumerable<string> keys =
+                (v1?.Keys ?? Enumerable.Empty<string>()).Union
+                (v2?.Keys ?? Enumerable.Empty<string>()).Distinct();
+
+            foreach (string key in keys)
+            {
+                //Leave values that don't match alone
+                if (!(v1?.TryGetValue(key, out object? v1Value) ?? false) ||
+                    !(v2?.TryGetValue(key, out object? v2Value) ?? false))
+                    continue;
+
+                switch (v1Value)
+                {
+                    case float f1 when v2Value is float f2:
+                        SetAnimValue(layer, key, Interp.Lerp(f1, f2, t));
+                        break;
+                    case Vector2 vector21 when v2Value is Vector2 vector22:
+                        SetAnimValue(layer, key, Vector2.Lerp(vector21, vector22, t));
+                        break;
+                    case Vector3 vector31 when v2Value is Vector3 vector32:
+                        SetAnimValue(layer, key, Vector3.Lerp(vector31, vector32, t));
+                        break;
+                    case Vector4 vector41 when v2Value is Vector4 vector42:
+                        SetAnimValue(layer, key, Vector4.Lerp(vector41, vector42, t));
+                        break;
+                    case Quaternion quaternion1 when v2Value is Quaternion quaternion2:
+                        SetAnimValue(layer, key, Quaternion.Slerp(quaternion1, quaternion2, t));
+                        break;
+                    default: //Pick the discrete value with the higher weight
+                        SetAnimValue(layer, key, t > 0.5f ? v2Value : v1Value);
+                        break;
+                }
+            }
+        }
+
+        private static void SetAnimValue(AnimLayer layer, string path, object? animValue)
+        {
+            if (!layer._animatedValues.TryAdd(path, animValue))
+                layer._animatedValues[path] = animValue;
         }
     }
 }

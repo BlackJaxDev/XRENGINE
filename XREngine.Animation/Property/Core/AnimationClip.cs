@@ -12,7 +12,15 @@ namespace XREngine.Animation
     [XR3rdPartyExtensions("vmd")]
     public class AnimationClip : MotionBase
     {
-        public EAnimTreeTraversalMethod TraversalMethod { get; set; } = EAnimTreeTraversalMethod.Parallel;
+        public override string ToString()
+            => $"AnimationClip: {Name}";
+
+        private EAnimTreeTraversalMethod _traversalMethod = EAnimTreeTraversalMethod.Parallel;
+        public EAnimTreeTraversalMethod TraversalMethod
+        {
+            get => _traversalMethod;
+            set => SetField(ref _traversalMethod, value);
+        }
 
         public AnimationClip()
             : base() { }
@@ -142,7 +150,7 @@ namespace XREngine.Animation
             _rootMember?.CollectAnimations(null, anims);
             return anims;
         }
-        public void Start()
+        public void Start(object? rootObject)
         {
             IsPlaying = true;
             TotalAnimCount = _rootMember?.Register(this, true) ?? 0;
@@ -154,14 +162,13 @@ namespace XREngine.Animation
                 _rootMember?.StopAnimations();
         }
 
-        public override void Tick(object? rootObject, float delta, IDictionary<string, AnimVar> variables, float weight)
+        public override void Tick(float delta)
         {
-            _rootMember?._tick?.Invoke(rootObject, delta, weight);
+            TickPropertyAnimations(delta);
         }
-
-        public void Tick(object? rootObject, float delta, float weight)
+        public override void BlendAnimationValues(IDictionary<string, AnimVar> variables)
         {
-            _rootMember?._tick?.Invoke(rootObject, delta, weight);
+            Blend(this);
         }
 
         public override bool Load3rdParty(string filePath)

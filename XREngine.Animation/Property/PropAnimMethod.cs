@@ -43,7 +43,9 @@
 
         public T? GetValueMethod(float second)
             => TickMethod != null ? TickMethod(second) : DefaultValue;
-        protected override object? GetValueGeneric(float second)
+        public override object? GetCurrentValueGeneric()
+            => GetValueGeneric(CurrentTime);
+        public override object? GetValueGeneric(float second)
             => GetValue != null ? GetValue(second) : DefaultValue;
         public T? GetValueBaked(float second)
             => _baked != null ? _baked[(int)Math.Floor(second * BakedFramesPerSecond)] : DefaultValue;
@@ -62,10 +64,6 @@
             for (int i = 0; i < BakedFrameCount; ++i)
                 _baked[i] = GetValueMethod(i * invFPS);
         }
-
-        protected override object? GetCurrentValueGeneric()
-            => GetValueGeneric(CurrentTime);
-
         protected override void OnProgressed(float delta) { }
     }
 }

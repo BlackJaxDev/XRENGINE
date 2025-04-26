@@ -4,7 +4,7 @@ using XREngine.Data.Core;
 
 namespace XREngine.Animation
 {
-    public class AnimStateBase : XRBase
+    public abstract class AnimStateBase : XRBase
     {
         public AnimStateBase(params AnimStateTransition[] transitions)
             => Transitions = [.. transitions];

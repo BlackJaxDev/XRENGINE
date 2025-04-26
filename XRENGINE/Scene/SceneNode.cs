@@ -1252,5 +1252,13 @@ namespace XREngine.Scene
             => Transform.GetChild(index)?.SceneNode;
 
         public bool IsTransformNull => _transform is null;
+
+        protected override void OnDestroying()
+        {
+            OnDeactivated();
+            Parent = null;
+            World = null;
+            base.OnDestroying();
+        }
     }
 }

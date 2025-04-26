@@ -1,7 +1,16 @@
-﻿namespace XREngine.Animation
+﻿using XREngine.Data.Core;
+
+namespace XREngine.Animation
 {
-    public abstract class AnimVar
+    public abstract class AnimVar(string name) : XRBase
     {
+        private string _parameterName = name;
+        public string ParameterName
+        {
+            get => _parameterName;
+            set => SetField(ref _parameterName, value);
+        }
+
         protected abstract void SetBool(bool value);
         protected abstract void SetFloat(float value);
         protected abstract void SetInt(int value);

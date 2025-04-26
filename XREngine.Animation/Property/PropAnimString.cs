@@ -32,7 +32,9 @@ namespace XREngine.Animation
 
         public string? GetValue(float second)
             => _getValue(second);
-        protected override object? GetValueGeneric(float second)
+        public override object? GetCurrentValueGeneric()
+            => GetValue(CurrentTime);
+        public override object? GetValueGeneric(float second)
             => _getValue(second);
         public string? GetValueBaked(float second)
             => GetValueBaked((int)Math.Floor(second * BakedFramesPerSecond));
@@ -55,9 +57,6 @@ namespace XREngine.Animation
             for (int i = 0; i < BakedFrameCount; ++i)
                 _baked[i] = GetValueKeyframed(i * invFPS);
         }
-
-        protected override object? GetCurrentValueGeneric()
-            => GetValue(CurrentTime);
 
         protected override void OnProgressed(float delta)
         {

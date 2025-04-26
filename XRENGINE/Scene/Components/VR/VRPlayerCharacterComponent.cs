@@ -1,5 +1,4 @@
-﻿using Extensions;
-using OpenVR.NET.Devices;
+﻿using OpenVR.NET.Devices;
 using System.Numerics;
 using XREngine.Components;
 using XREngine.Components.Scene.Mesh;

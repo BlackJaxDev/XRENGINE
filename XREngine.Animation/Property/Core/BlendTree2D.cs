@@ -1,10 +1,14 @@
-﻿using System.Numerics;
+﻿using Extensions;
+using System.Numerics;
 using XREngine.Data.Core;
 
 namespace XREngine.Animation
 {
     public class BlendTree2D : BlendTree
     {
+        public override string ToString()
+            => $"BlendTree2D: {Name} ({XParameterName}, {YParameterName})";
+
         public class Child : XRBase
         {
             private MotionBase? _motion;
@@ -155,7 +159,20 @@ namespace XREngine.Animation
             }
         }
 
-        public override void Tick(object? rootObject, float delta, IDictionary<string, AnimVar> variables, float weight)
+        public override void GetAnimationValues()
+        {
+            base.GetAnimationValues();
+            foreach (var child in Children)
+                child.Motion?.GetAnimationValues();
+        }
+
+        public override void Tick(float delta)
+        {
+            foreach (var child in Children)
+                child.Motion?.Tick(delta * child.Speed);
+        }
+
+        public override void BlendAnimationValues(IDictionary<string, AnimVar> variables)
         {
             float x = 0.0f;
             float y = 0.0f;
@@ -166,7 +183,7 @@ namespace XREngine.Animation
 
             if (_needsSort || _sortedByX.Length != _children.Count || _sortedByY.Length != _children.Count)
                 UpdateSortedArrays();
-            
+
             // If we have no children, there's nothing to blend
             if (_children.Count == 0)
                 return;
@@ -174,228 +191,348 @@ namespace XREngine.Animation
             // If we have only one child, just tick it directly
             if (_children.Count == 1)
             {
-                _children[0].Motion?.Tick(rootObject, delta, variables, weight);
+                Blend(_children[0].Motion);
                 return;
             }
 
             // If we have only two children, use linear interpolation
             if (_children.Count == 2)
             {
-                Child a = _children[0];
-                Child b = _children[1];
-                // Calculate the distance from the point to each child
-                float dxA = a.PositionX - x;
-                float dyA = a.PositionY - y;
-                float distA = dxA * dxA + dyA * dyA;
-                float dxB = b.PositionX - x;
-                float dyB = b.PositionY - y;
-                float distB = dxB * dxB + dyB * dyB;
-                // Calculate weights based on distance
-                float totalDist = distA + distB;
-                if (totalDist > 0)
+                switch (BlendType)
                 {
-                    float weightA = distB / totalDist;
-                    float weightB = distA / totalDist;
-                    a.Motion?.Tick(rootObject, delta, variables, weight * weightA);
-                    b.Motion?.Tick(rootObject, delta, variables, weight * weightB);
+                    case EBlendType.Cartesian:
+                        // Use linear interpolation along the direct line
+                        CalculateLinearWeightsNoBounding(x, y);
+                        break;
+                    default:
+                        // Use inverse-distance weighting for other blend types
+                        CalculateInverseDistanceWeightsNoBounding(x, y);
+                        break;
                 }
-                return;
+            }
+            else
+            {
+                // Find the children that bound (x,y)
+                FindBoundingChildren(x, y);
+
+                // If we couldn't find any bounding children, there's must be none
+                if (_boundingChildCount == 0)
+                    return;
+
+                // Calculate weights for each child based on blend type
+                switch (BlendType)
+                {
+                    case EBlendType.Barycentric:
+                        CalculateBaryCentricWeights(x, y);
+                        break;
+                    case EBlendType.Cartesian:
+                        CalculateCartesianWeights(x, y);
+                        break;
+                    case EBlendType.Directional:
+                        CalculateDirectionalWeights(x, y);
+                        break;
+                }
             }
 
-            // Find the children that bound (x,y)
-            FindBoundingChildren(x, y);
-
-            // If we couldn't find bounding children, find the nearest child
-            if (_boundingChildCount == 0)
+            switch (_weightCount)
             {
-                Child nearest = FindNearestChild(x, y);
-                nearest.Motion?.Tick(rootObject, delta, variables, weight);
-                return;
-            }
-
-            // Calculate weights for each child based on blend type
-            switch (BlendType)
-            {
-                case EBlendType.Barycentric:
-                    CalculateBaryCentricWeights(x, y);
-                    break;
-                case EBlendType.Cartesian:
-                    CalculateCartesianWeights(x, y);
-                    break;
-                case EBlendType.Directional:
-                    CalculateBaryCentricWeights(x, y);
-                    break;
-            }
-
-            // Tick each motion with its calculated weight
-            for (int i = 0; i < _weightCount; i++)
-            {
-                var childWeight = _childWeights[i];
-                childWeight.Child.Motion?.Tick(rootObject, delta, variables, weight * childWeight.Weight);
+                case 1:
+                    Blend(_childWeights[0].Child.Motion);
+                    return;
+                case 2:
+                    Blend(
+                        _childWeights[0].Child.Motion,
+                        _childWeights[1].Child.Motion,
+                        _childWeights[1].Weight);
+                    return;
+                case 3:
+                    Blend(
+                        _childWeights[0].Child.Motion, _childWeights[0].Weight,
+                        _childWeights[1].Child.Motion, _childWeights[1].Weight,
+                        _childWeights[2].Child.Motion, _childWeights[2].Weight);
+                    return;
+                case 4:
+                    Blend(
+                        _childWeights[0].Child.Motion, _childWeights[0].Weight,
+                        _childWeights[1].Child.Motion, _childWeights[1].Weight,
+                        _childWeights[2].Child.Motion, _childWeights[2].Weight,
+                        _childWeights[3].Child.Motion, _childWeights[3].Weight);
+                    return;
             }
         }
 
-        private Child FindNearestChild(float x, float y)
+        private void CalculateLinearWeightsNoBounding(float x, float y)
         {
-            Child nearest = _children[0];
-            float nearestDistSq = float.MaxValue;
-
-            for (int i = 0; i < _children.Count; i++)
+            _weightCount = 0;
+            Child a = _children[0];
+            Child b = _children[1];
+            // Get positions as vectors
+            Vector2 aPos = new(a.PositionX, a.PositionY);
+            Vector2 bPos = new(b.PositionX, b.PositionY);
+            Vector2 point = new(x, y);
+            // Project the point onto the line between a and b
+            Vector2 line = bPos - aPos;
+            float lineLength = line.Length();
+            if (lineLength < float.Epsilon)
             {
-                Child child = _children[i];
-                float dx = child.PositionX - x;
-                float dy = child.PositionY - y;
-                float distSq = dx * dx + dy * dy;
+                // Points are essentially the same, use only one
+                _childWeights[_weightCount++] = new ChildWeight { Child = a, Weight = 1.0f };
+                return;
+            }
+            // Normalize the line vector
+            Vector2 lineNormalized = line / lineLength;
+            // Calculate the projection of (point - aPos) onto the normalized line
+            Vector2 toPoint = point - aPos;
+            float projectionLength = Vector2.Dot(toPoint, lineNormalized);
+            // Calculate normalized position along the line (0 = at a, 1 = at b)
+            float t = Math.Clamp(projectionLength / lineLength, 0, 1);
+            // Calculate weights for a and b
+            _childWeights[_weightCount++] = new ChildWeight { Child = a, Weight = 1.0f - t };
+            _childWeights[_weightCount++] = new ChildWeight { Child = b, Weight = t };
+        }
 
-                if (distSq < nearestDistSq)
+        private void CalculateInverseDistanceWeightsNoBounding(float x, float y)
+        {
+            _weightCount = 0;
+            Child a = _children[0];
+            Child b = _children[1];
+
+            // Calculate the distance from the point to each child
+            float dxA = a.PositionX - x;
+            float dyA = a.PositionY - y;
+            float distA = MathF.Sqrt(dxA * dxA + dyA * dyA);
+            float dxB = b.PositionX - x;
+            float dyB = b.PositionY - y;
+            float distB = MathF.Sqrt(dxB * dxB + dyB * dyB);
+
+            // If we're exactly on one of the points
+            if (distA < float.Epsilon)
+            {
+                _childWeights[_weightCount++] = new ChildWeight { Child = a, Weight = 1.0f };
+                return;
+            }
+            else if (distB < float.Epsilon)
+            {
+                _childWeights[_weightCount++] = new ChildWeight { Child = b, Weight = 1.0f };
+                return;
+            }
+
+            // Use inverse distance weighting
+            float weightA = 1.0f / distA;
+            float weightB = 1.0f / distB;
+            float totalWeight = weightA + weightB;
+
+            // Normalize weights
+            weightA /= totalWeight;
+            weightB /= totalWeight;
+
+            _childWeights[_weightCount++] = new ChildWeight { Child = a, Weight = weightA };
+            _childWeights[_weightCount++] = new ChildWeight { Child = b, Weight = weightB };
+        }
+
+        private void CalculateDirectionalWeights(float x, float y)
+        {
+            _weightCount = 0;
+
+            // For directional blending, we need at least 3 children
+            if (_boundingChildCount < 3)
+            {
+                Child nearest = FindNearestBoundingChild(x, y);
+                _childWeights[_weightCount++] = new ChildWeight { Child = nearest, Weight = 1.0f };
+                return;
+            }
+
+            // Create a vector from origin (0,0) to the target point
+            Vector2 targetDir = new(x, y);
+            float targetMagnitude = targetDir.Length();
+
+            if (targetMagnitude < 0.0001f)
+            {
+                // If we're at the origin, use the nearest child
+                Child nearest = FindNearestBoundingChild(x, y);
+                _childWeights[_weightCount++] = new ChildWeight { Child = nearest, Weight = 1.0f };
+                return;
+            }
+
+            // Normalize the direction
+            Vector2 targetDirNorm = targetDir / targetMagnitude;
+
+            // Find the three most relevant children based on angle to target
+            List<(Child child, float angle, float distance)> childAngles = new();
+
+            for (int i = 0; i < _boundingChildCount; i++)
+            {
+                Child child = _boundingChildren[i]!;
+                Vector2 childPos = new(child.PositionX, child.PositionY);
+                float childDist = childPos.Length();
+
+                if (childDist < 0.0001f)
+                    continue; // Skip points at origin
+
+                Vector2 childDir = childPos / childDist;
+                float dot = Vector2.Dot(targetDirNorm, childDir);
+                float angle = MathF.Acos(dot.Clamp(-1f, 1f));
+
+                childAngles.Add((child, angle, childDist));
+            }
+
+            // Sort by angle
+            childAngles.Sort((a, b) => a.angle.CompareTo(b.angle));
+
+            // If we don't have enough children, fall back to nearest
+            if (childAngles.Count < 3)
+            {
+                Child nearest = FindNearestBoundingChild(x, y);
+                _childWeights[_weightCount++] = new ChildWeight { Child = nearest, Weight = 1.0f };
+                return;
+            }
+
+            // Get the 3 children that form a triangle containing the target direction
+            Child[] triangleChildren = new Child[3];
+            bool foundTriangle = false;
+
+            for (int i = 0; i < childAngles.Count; i++)
+            {
+                int j = (i + 1) % childAngles.Count;
+                int k = (i + 2) % childAngles.Count;
+
+                triangleChildren[0] = childAngles[i].child;
+                triangleChildren[1] = childAngles[j].child;
+                triangleChildren[2] = childAngles[k].child;
+
+                // Create vectors for these children
+                Vector2 a2d = new(triangleChildren[0].PositionX, triangleChildren[0].PositionY);
+                Vector2 b2d = new(triangleChildren[1].PositionX, triangleChildren[1].PositionY);
+                Vector2 c2d = new(triangleChildren[2].PositionX, triangleChildren[2].PositionY);
+
+                // Scale the target vector to match the average magnitude of the triangle vectors
+                float avgMagnitude = (a2d.Length() + b2d.Length() + c2d.Length()) / 3;
+                Vector2 scaledTarget = targetDirNorm * (avgMagnitude * targetMagnitude / MathF.Max(1.0f, targetMagnitude));
+
+                if (TryCalculateBarycentric(
+                    triangleChildren[0], triangleChildren[1], triangleChildren[2],
+                    a2d, b2d, c2d, scaledTarget))
                 {
-                    nearestDistSq = distSq;
-                    nearest = child;
+                    foundTriangle = true;
+                    break;
                 }
             }
 
-            return nearest;
+            if (!foundTriangle)
+            {
+                // Fall back to nearest if no triangle contains the direction
+                Child nearest = FindNearestBoundingChild(x, y);
+                _childWeights[_weightCount++] = new ChildWeight { Child = nearest, Weight = 1.0f };
+            }
         }
+
+        //private Child FindNearestChild(float x, float y)
+        //{
+        //    Child nearest = _children[0];
+        //    float nearestDistSq = float.MaxValue;
+
+        //    for (int i = 0; i < _children.Count; i++)
+        //    {
+        //        Child child = _children[i];
+        //        float dx = child.PositionX - x;
+        //        float dy = child.PositionY - y;
+        //        float distSq = dx * dx + dy * dy;
+
+        //        if (distSq < nearestDistSq)
+        //        {
+        //            nearestDistSq = distSq;
+        //            nearest = child;
+        //        }
+        //    }
+
+        //    return nearest;
+        //}
+
+        private readonly Comparer<Child?> _xComp = Comparer<Child?>.Create(static (a, b) =>
+        {
+            if (a == null && b == null)
+                return 0;
+            if (a == null)
+                return 1;
+            if (b == null)
+                return -1;
+            return a.PositionX.CompareTo(b.PositionX);
+        });
+        private readonly Comparer<Child?> _yComp = Comparer<Child?>.Create(static (a, b) =>
+        {
+            if (a == null && b == null)
+                return 0;
+            if (a == null)
+                return 1;
+            if (b == null)
+                return -1;
+            return a.PositionY.CompareTo(b.PositionY);
+        });
 
         private void FindBoundingChildren(float x, float y)
         {
             _boundingChildCount = 0;
 
-            // If we don't have enough children, bail early
+            // Early exit if there are not enough children
             if (_children.Count < 3)
                 return;
-            
-            // Find indices of children that could potentially bound the point
-            int leftIdx = -1;
-            int rightIdx = -1;
-            int bottomIdx = -1;
-            int topIdx = -1;
 
-            // Find closest left child
-            for (int i = _sortedByX.Length - 1; i >= 0; i--)
-            {
-                if (_sortedByX[i].PositionX > x)
-                    continue;
-                
-                leftIdx = i;
-                break;
-            }
+            // Binary search for approximate indices
+            int leftIdx = Array.BinarySearch(_sortedByX, new Child { PositionX = x }, _xComp);
+            if (leftIdx < 0) 
+                leftIdx = ~leftIdx - 1;
 
-            // Find closest right child
-            for (int i = 0; i < _sortedByX.Length; i++)
-            {
-                if (_sortedByX[i].PositionX < x)
-                    continue;
-                
-                rightIdx = i;
-                break;
-            }
+            //int bottomIdx = Array.BinarySearch(_sortedByY, new Child { PositionY = y }, _yComp);
+            //if (bottomIdx < 0) 
+            //    bottomIdx = ~bottomIdx - 1;
 
-            // Find closest bottom child
-            for (int i = _sortedByY.Length - 1; i >= 0; i--)
-            {
-                if (_sortedByY[i].PositionY > y)
-                    continue;
-                
-                bottomIdx = i;
-                break;
-            }
+            // Initialize quadrant children
+            Child? bottomLeft = null, bottomRight = null, topLeft = null, topRight = null;
+            float closestDistSq;
 
-            // Find closest top child
-            for (int i = 0; i < _sortedByY.Length; i++)
-            {
-                if (_sortedByY[i].PositionY < y)
-                    continue;
-                
-                topIdx = i;
-                break;
-            }
-
-            // If the point is outside the region covered by children, we can't bound it
-            if (leftIdx < 0 || rightIdx < 0 || bottomIdx < 0 || topIdx < 0)
-                return;
-
-            // Find the quadrant corners using the available children
-            Child? bottomLeft = null;
-            Child? bottomRight = null;
-            Child? topLeft = null;
-            Child? topRight = null;
-
-            float closestDistSq = float.MaxValue;
-
-            // Find bottom-left
-            for (int i = 0; i <= leftIdx; i++)
-            {
-                Child leftChild = _sortedByX[i];
-                if (leftChild.PositionY > y)
-                    continue;
-                
-                float dx = leftChild.PositionX - x;
-                float dy = leftChild.PositionY - y;
-                float distSq = dx * dx + dy * dy;
-                if (bottomLeft == null || distSq < closestDistSq)
-                {
-                    bottomLeft = leftChild;
-                    closestDistSq = distSq;
-                }
-            }
-
-            // Find bottom-right
-            closestDistSq = float.MaxValue;
-            for (int i = rightIdx; i < _sortedByX.Length; i++)
-            {
-                Child rightChild = _sortedByX[i];
-                if (rightChild.PositionY > y)
-                    continue;
-                
-                float dx = rightChild.PositionX - x;
-                float dy = rightChild.PositionY - y;
-                float distSq = dx * dx + dy * dy;
-                if (bottomRight == null || distSq < closestDistSq)
-                {
-                    bottomRight = rightChild;
-                    closestDistSq = distSq;
-                }
-            }
-
-            // Find top-left
+            // Find bottom-left and top-left in one pass
             closestDistSq = float.MaxValue;
             for (int i = 0; i <= leftIdx; i++)
             {
-                Child leftChild = _sortedByX[i];
-                if (leftChild.PositionY < y)
-                    continue;
-                
-                float dx = leftChild.PositionX - x;
-                float dy = leftChild.PositionY - y;
+                Child child = _sortedByX[i];
+                float dx = child.PositionX - x;
+                float dy = child.PositionY - y;
                 float distSq = dx * dx + dy * dy;
-                if (topLeft == null || distSq < closestDistSq)
+
+                if (child.PositionY <= y && (bottomLeft == null || distSq < closestDistSq))
                 {
-                    topLeft = leftChild;
+                    bottomLeft = child;
+                    closestDistSq = distSq;
+                }
+                else if (child.PositionY > y && (topLeft == null || distSq < closestDistSq))
+                {
+                    topLeft = child;
                     closestDistSq = distSq;
                 }
             }
 
-            // Find top-right
+            // Find bottom-right and top-right in one pass
             closestDistSq = float.MaxValue;
-            for (int i = rightIdx; i < _sortedByX.Length; i++)
+            for (int i = leftIdx + 1; i < _sortedByX.Length; i++)
             {
-                Child rightChild = _sortedByX[i];
-                if (rightChild.PositionY < y)
-                    continue;
-                
-                float dx = rightChild.PositionX - x;
-                float dy = rightChild.PositionY - y;
+                Child child = _sortedByX[i];
+                float dx = child.PositionX - x;
+                float dy = child.PositionY - y;
                 float distSq = dx * dx + dy * dy;
-                if (topRight == null || distSq < closestDistSq)
+
+                if (child.PositionY <= y && (bottomRight == null || distSq < closestDistSq))
                 {
-                    topRight = rightChild;
+                    bottomRight = child;
+                    closestDistSq = distSq;
+                }
+                else if (child.PositionY > y && (topRight == null || distSq < closestDistSq))
+                {
+                    topRight = child;
                     closestDistSq = distSq;
                 }
             }
 
             // Add non-null children to the bounding array
-            _boundingChildCount = 0;
             if (bottomLeft != null)
                 _boundingChildren[_boundingChildCount++] = bottomLeft;
             if (bottomRight != null)
@@ -410,12 +547,19 @@ namespace XREngine.Animation
         {
             _weightCount = 0;
 
-            // If we have fewer than 4 bounding children, fall back to nearest point
-            if (_boundingChildCount < 4)
+            switch (_boundingChildCount)
             {
-                Child nearest = FindNearestBoundingChild(x, y);
-                _childWeights[_weightCount++] = new ChildWeight { Child = nearest, Weight = 1.0f };
-                return;
+                case 0:
+                    return;
+                case 1:
+                    _childWeights[_weightCount++] = new ChildWeight { Child = _boundingChildren[0]!, Weight = 1.0f };
+                    return;
+                case 2:
+                    CalculateLinearWeights(x, y);
+                    return;
+                case 3:
+                    CalculateBaryCentricWeights(x, y);
+                    return;
             }
 
             // Sort for bilinear interpolation
@@ -476,6 +620,16 @@ namespace XREngine.Animation
             float y1 = bottomLeft.PositionY;
             float x2 = topRight.PositionX;
             float y2 = topRight.PositionY;
+
+            float xDelta = x2 - x1;
+            float yDelta = y2 - y1;
+            if (Math.Abs(xDelta) < EPSILON || Math.Abs(yDelta) < EPSILON)
+            {
+                // Degenerate case, just use the nearest child
+                Child nearest = FindNearestBoundingChild(x, y);
+                _childWeights[_weightCount++] = new ChildWeight { Child = nearest, Weight = 1.0f };
+                return;
+            }
 
             float normalizedX = (x - x1) / (x2 - x1);
             float normalizedY = (y - y1) / (y2 - y1);
@@ -539,16 +693,12 @@ namespace XREngine.Animation
             switch (_boundingChildCount)
             {
                 case 0:
-                    // No bounding children, use the nearest point from all children
-                    Child nearest = FindNearestChild(x, y);
-                    _childWeights[_weightCount++] = new ChildWeight { Child = nearest, Weight = 1.0f };
+                    // No bounding children
                     return;
-
                 case 1:
                     // Only one bounding child, use it with full weight
                     _childWeights[_weightCount++] = new ChildWeight { Child = _boundingChildren[0]!, Weight = 1.0f };
                     return;
-
                 case 2:
                     // Linear interpolation between two points
                     CalculateLinearWeights(x, y);
@@ -561,34 +711,29 @@ namespace XREngine.Animation
             // Try to find a triangle containing the point
             bool foundTriangle = false;
 
-            // Triangle 1: first three points
-            if (_boundingChildCount >= 3 && !foundTriangle)
+            // Try all possible triangles from the bounding children
+            if (_boundingChildCount >= 3)
             {
-                Child a = _boundingChildren[0]!;
-                Child b = _boundingChildren[1]!;
-                Child c = _boundingChildren[2]!;
+                // Try all possible triangle combinations
+                for (int i = 0; i < _boundingChildCount && !foundTriangle; i++)
+                {
+                    for (int j = i + 1; j < _boundingChildCount && !foundTriangle; j++)
+                    {
+                        for (int k = j + 1; k < _boundingChildCount && !foundTriangle; k++)
+                        {
+                            Child a = _boundingChildren[i]!;
+                            Child b = _boundingChildren[j]!;
+                            Child c = _boundingChildren[k]!;
 
-                Vector2 a2d = new(a.PositionX, a.PositionY);
-                Vector2 b2d = new(b.PositionX, b.PositionY);
-                Vector2 c2d = new(c.PositionX, c.PositionY);
+                            Vector2 a2d = new(a.PositionX, a.PositionY);
+                            Vector2 b2d = new(b.PositionX, b.PositionY);
+                            Vector2 c2d = new(c.PositionX, c.PositionY);
 
-                if (TryCalculateBarycentric(a, b, c, a2d, b2d, c2d, point))
-                    foundTriangle = true;
-            }
-
-            // Triangle 2: the quad diagonal if we have 4 points
-            if (_boundingChildCount >= 4 && !foundTriangle)
-            {
-                Child a = _boundingChildren[0]!;
-                Child b = _boundingChildren[1]!;
-                Child c = _boundingChildren[3]!;
-
-                Vector2 a2d = new(a.PositionX, a.PositionY);
-                Vector2 b2d = new(b.PositionX, b.PositionY);
-                Vector2 c2d = new(c.PositionX, c.PositionY);
-
-                if (TryCalculateBarycentric(a, b, c, a2d, b2d, c2d, point))
-                    foundTriangle = true;
+                            if (TryCalculateBarycentric(a, b, c, a2d, b2d, c2d, point))
+                                foundTriangle = true;
+                        }
+                    }
+                }
             }
 
             // If we couldn't find a containing triangle, use the nearest point
@@ -613,7 +758,7 @@ namespace XREngine.Animation
             Vector2 line = bPos - aPos;
             float lineLength = line.Length();
 
-            if (lineLength < float.Epsilon)
+            if (lineLength < EPSILON)
             {
                 // Points are essentially the same, use only one
                 _childWeights[_weightCount++] = new ChildWeight { Child = a, Weight = 1.0f };
@@ -635,24 +780,32 @@ namespace XREngine.Animation
             _childWeights[_weightCount++] = new ChildWeight { Child = b, Weight = t };
         }
 
+        const float EPSILON = 0.001f;
+
         private bool TryCalculateBarycentric(Child a, Child b, Child c, Vector2 a2d, Vector2 b2d, Vector2 c2d, Vector2 point)
         {
             // Calculate barycentric coordinates
             float denominator = (b2d.Y - c2d.Y) * (a2d.X - c2d.X) + (c2d.X - b2d.X) * (a2d.Y - c2d.Y);
 
-            if (Math.Abs(denominator) < float.Epsilon)
+            if (Math.Abs(denominator) < EPSILON)
                 return false;
 
             float alpha = ((b2d.Y - c2d.Y) * (point.X - c2d.X) + (c2d.X - b2d.X) * (point.Y - c2d.Y)) / denominator;
             float beta = ((c2d.Y - a2d.Y) * (point.X - c2d.X) + (a2d.X - c2d.X) * (point.Y - c2d.Y)) / denominator;
             float gamma = 1.0f - alpha - beta;
 
-            // If the point is inside this triangle
-            if (alpha < -0.01f || beta < -0.01f || gamma < -0.01f)
+            // If the point is outside the triangle beyond our tolerance
+            if (alpha < -EPSILON || beta < -EPSILON || gamma < -EPSILON)
                 return false;
 
-            // Normalize weights to ensure they sum to 1
+            // If we're inside or very close to the edge, use the barycentric coordinates
+            // but ensure they're normalized and positive
             float sum = Math.Max(0, alpha) + Math.Max(0, beta) + Math.Max(0, gamma);
+
+            // Avoid division by zero
+            if (sum < EPSILON)
+                return false;
+
             float normalizedAlpha = Math.Max(0, alpha) / sum;
             float normalizedBeta = Math.Max(0, beta) / sum;
             float normalizedGamma = Math.Max(0, gamma) / sum;

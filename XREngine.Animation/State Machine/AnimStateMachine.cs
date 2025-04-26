@@ -1,5 +1,8 @@
-﻿using System.Numerics;
+﻿using System.Diagnostics;
+using System.Numerics;
 using XREngine.Core.Files;
+using XREngine.Data.Core;
+using static XREngine.Animation.AnimLayer;
 
 namespace XREngine.Animation
 {
@@ -22,11 +25,15 @@ namespace XREngine.Animation
             get => _layers;
             set => SetField(ref _layers, value);
         }
+        
+        protected internal Dictionary<string, object?> _defaultValues = [];
+        protected internal Dictionary<string, object?> _animationValues = [];
+        protected internal readonly Dictionary<string, AnimationMember> _animatedCurves = [];
 
-        public void Initialize()
+        public void Initialize(object? rootObject)
         {
             foreach (var layer in Layers)
-                layer?.Initialize(this);
+                layer?.Initialize(this, rootObject);
         }
 
         public void Deinitialize()
@@ -38,7 +45,54 @@ namespace XREngine.Animation
         public void EvaluationTick(object? rootObject, float delta)
         {
             for (int i = 0; i < Layers.Count; ++i)
-                Layers[i].EvaluationTick(rootObject, delta, Variables);
+            {
+                AnimLayer layer = Layers[i];
+                layer.EvaluationTick(rootObject, delta, Variables);
+                CombineAnimationValues(layer);
+            }
+            ApplyAnimationValues();
+        }
+
+        private void CombineAnimationValues(AnimLayer layer)
+        {
+            //Merge animation paths from the last layer into this layer
+            IEnumerable<string> currLayerKeys = layer._animatedValues.Keys;
+
+            //First layer is always the initial setter, can't be additive
+            bool additive = layer.ApplyType == EApplyType.Additive;
+
+            foreach (var key in currLayerKeys)
+            {
+                //Does the value already exist?
+                if (_animationValues.TryGetValue(key, out object? currentValue))
+                {
+                    if (!layer._animatedValues.TryGetValue(key, out var layerValue))
+                        continue;
+                    
+                    _animationValues[key] = additive
+                        ? AddValues(currentValue, layerValue)
+                        : layerValue;
+                }
+                else if (layer._animatedValues.TryGetValue(key, out var layerValue))
+                    _animationValues.Add(key, layerValue);
+            }
+        }
+
+        private static object? AddValues(object? currentValue, object? layerValue) => currentValue switch
+        {
+            float currentFloat when layerValue is float layerFloat => currentFloat + layerFloat,
+            Vector2 currentVector2 when layerValue is Vector2 layerVector2 => currentVector2 + layerVector2,
+            Vector3 currentVector when layerValue is Vector3 layerVector => currentVector + layerVector,
+            Vector4 currentVector4 when layerValue is Vector4 layerVector4 => currentVector4 + layerVector4,
+            Quaternion currentQuaternion when layerValue is Quaternion layerQuaternion => currentQuaternion * layerQuaternion,
+            _ => currentValue, //Discrete value, just override it
+        };
+
+        public void ApplyAnimationValues()
+        {
+            foreach (var kvp in _animationValues)
+                if (_animatedCurves.TryGetValue(kvp.Key, out var member))
+                    member.ApplyAnimationValue(kvp.Value);
         }
 
         private EventDictionary<string, AnimVar> _variables = [];
@@ -47,6 +101,42 @@ namespace XREngine.Animation
             get => _variables;
             set => SetField(ref _variables, value);
         }
+
+        protected override bool OnPropertyChanging<T>(string? propName, T field, T @new)
+        {
+            bool change = base.OnPropertyChanging(propName, field, @new);
+            if (change)
+            {
+                switch (propName)
+                {
+                    case nameof(Variables):
+                        foreach (KeyValuePair<string, AnimVar> variable in Variables)
+                            variable.Value.PropertyChanged -= Value_PropertyChanged;
+                        break;
+                }
+            }
+            return change;
+        }
+        protected override void OnPropertyChanged<T>(string? propName, T prev, T field)
+        {
+            base.OnPropertyChanged(propName, prev, field);
+            switch (propName)
+            {
+                case nameof(Variables):
+                    foreach (KeyValuePair<string, AnimVar> variable in Variables)
+                        variable.Value.PropertyChanged += Value_PropertyChanged;
+                    break;
+            }
+        }
+
+        private void Value_PropertyChanged(object? sender, IXRPropertyChangedEventArgs e)
+        {
+            if (sender is AnimVar variable)
+                VariableChanged?.Invoke(variable);
+        }
+
+        public XREvent<AnimVar>? VariableChanged;
+
         /// <summary>
         /// If true, animations that animate the root object will move this transform.
         /// </summary>
@@ -99,7 +189,7 @@ namespace XREngine.Animation
             if (Variables.TryGetValue(name, out AnimVar? var))
                 var.FloatValue = defaultValue;
             else
-                Variables[name] = new AnimFloat(defaultValue);
+                Variables.Add(name, new AnimFloat(name, defaultValue));
         }
 
         public void NewInt(string name, int defaultValue)
@@ -107,7 +197,7 @@ namespace XREngine.Animation
             if (Variables.TryGetValue(name, out AnimVar? var))
                 var.IntValue = defaultValue;
             else
-                Variables[name] = new AnimInt(defaultValue);
+                Variables.Add(name, new AnimInt(name, defaultValue));
         }
 
         public void NewBool(string name, bool defaultValue)
@@ -115,7 +205,7 @@ namespace XREngine.Animation
             if (Variables.TryGetValue(name, out AnimVar? var))
                 var.BoolValue = defaultValue;
             else
-                Variables[name] = new AnimBool(defaultValue);
+                Variables.Add(name, new AnimBool(name, defaultValue));
         }
 
         public void DeleteVariable(string name)

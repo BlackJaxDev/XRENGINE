@@ -74,7 +74,9 @@ namespace XREngine.Animation
 
         public Quaternion GetValue(float second)
             => _getValue(second);
-        protected override object GetValueGeneric(float second)
+        public override object GetCurrentValueGeneric()
+            => GetValue(CurrentTime);
+        public override object GetValueGeneric(float second)
             => _getValue(second);
         public Quaternion GetValueBakedBySecond(float second)
         {
@@ -178,9 +180,6 @@ namespace XREngine.Animation
             for (int i = 0; i < BakedFrameCount; ++i)
                 _baked[i] = GetValueKeyframed(i * invFPS);
         }
-
-        protected override object GetCurrentValueGeneric()
-            => GetValue(CurrentTime);
 
         public event Action<PropAnimQuaternion>? CurrentValueChanged;
 

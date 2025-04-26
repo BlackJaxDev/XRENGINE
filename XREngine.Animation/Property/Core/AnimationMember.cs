@@ -1,6 +1,6 @@
 ﻿using ImmediateReflection;
+using System.Diagnostics;
 using System.Reflection;
-using XREngine.Data.Animation;
 using XREngine.Data.Core;
 
 namespace XREngine.Animation
@@ -63,9 +63,14 @@ namespace XREngine.Animation
         private MethodInfo? _methodCache;
         private ImmediateField? _fieldCache;
 
-        public delegate void DelAnimTick(object? obj, float delta, float valueApplyWeight);
+        public delegate object? DelInitialize(object? parentObject);
 
-        internal DelAnimTick? _tick = null;
+        private DelInitialize? _initialize = null;
+        public DelInitialize? Initialize
+        {
+            get => _initialize;
+            private set => SetField(ref _initialize, value);
+        }
 
         private BasePropAnim? _animation = null;
         public BasePropAnim? Animation
@@ -96,12 +101,17 @@ namespace XREngine.Animation
         }
 
         //For now, methods can only have one animated argument (but can still have multiple non-animated arguments)
-        public object[] MethodArguments
+        /// <summary>
+        /// These are the arguments passed into the method call.
+        /// </summary>
+        public object?[] MethodArguments
         {
             get => _methodArguments;
             set => SetField(ref _methodArguments, value);
         }
-
+        /// <summary>
+        /// This is the index of the argument that should be set by the animation.
+        /// </summary>
         public int MethodValueArgumentIndex
         {
             get => _methodValueArgumentIndex;
@@ -182,26 +192,30 @@ namespace XREngine.Animation
                         case EAnimationMemberType.Field:
                             _fieldCache = null;
                             _cacheAttempted = false;
-                            _tick = FieldTick;
+                            Initialize = InitializeField;
                             break;
                         case EAnimationMemberType.Property:
                             _propertyCache = null;
                             _cacheAttempted = false;
-                            _tick = PropertyTick;
+                            Initialize = InitializeProperty;
                             break;
                         case EAnimationMemberType.Method:
                             _methodCache = null;
                             _cacheAttempted = false;
-                            _tick = MethodTick;
+                            Initialize = InitializeMethod;
                             break;
                         case EAnimationMemberType.Group:
                             _fieldCache = null;
                             _propertyCache = null;
                             _methodCache = null;
                             _cacheAttempted = false;
-                            _tick = GroupTick;
+                            Initialize = null;
                             break;
                     }
+                    break;
+                case nameof(MemberNotFound):
+                    if (MemberNotFound)
+                        Debug.WriteLine($"Animation member '{_memberName}' not found. Animation will not be applied.");
                     break;
             }
         }
@@ -220,203 +234,146 @@ namespace XREngine.Animation
                 member.CollectAnimations(path, animations);
         }
 
+        private object? _parentObject;
         private object? _cachedReturnValue = null;
         private bool _cacheAttempted = false;
         private int _methodValueArgumentIndex = 0;
-        private object[] _methodArguments = new object[1];
+        private object?[] _methodArguments = new object?[1];
 
-        internal void GroupTick(object? obj, float delta, float valueApplyWeight)
+        private object? _defaultValue = null;
+        public object? DefaultValue
         {
-            var animation = Animation;
-            if (obj is null)
-            {
-                animation?.Tick(delta);
-                return;
-            }
-            //We're not retrieving a new object, all child members execute on the same object
-            if (_children.Count > 0)
-                foreach (AnimationMember f in _children)
-                    f._tick?.Invoke(obj, delta, valueApplyWeight);
+            get => _defaultValue;
+            set => SetField(ref _defaultValue, value);
         }
-        internal void MethodTick(object? obj, float delta, float valueApplyWeight)
-        {
-            var animation = Animation;
-            if (obj is null || MemberNotFound)
-            {
-                animation?.Tick(delta);
-                return;
-            }
 
+        /// <summary>
+        /// Returns the current value of the animation.
+        /// </summary>
+        /// <returns></returns>
+        public object? GetAnimationValue()
+        {
+            var a = Animation;
+            return a is null
+                ? MemberType == EAnimationMemberType.Method ? _methodArguments[MethodValueArgumentIndex] : null
+                : a.GetCurrentValueGeneric();
+        }
+
+        /// <summary>
+        /// Applies a potentially modified (weighted, blended, scaled) animation value to the parent object.
+        /// </summary>
+        /// <param name="value"></param>
+        public void ApplyAnimationValue(object? value)
+        {
+            if (value is null || MemberNotFound)
+                return;
+
+            switch (MemberType)
+            {
+                case EAnimationMemberType.Field:
+                    _fieldCache?.SetValue(_parentObject, value);
+                    break;
+                case EAnimationMemberType.Property:
+                    _propertyCache?.SetValue(_parentObject, value);
+                    break;
+                case EAnimationMemberType.Method:
+                    if (MethodValueArgumentIndex >= 0 && MethodValueArgumentIndex < _methodArguments.Length)
+                        _methodArguments[MethodValueArgumentIndex] = value;
+                    _methodCache?.Invoke(_parentObject, _methodArguments);
+                    break;
+            }
+        }
+
+        internal object? InitializeMethod(object? parentObj)
+        {
+            _parentObject = parentObj;
+
+            if (parentObj is null || MemberNotFound)
+                return null;
+            
             if (_methodCache is null)
             {
-                var methodType = obj.GetType();
+                var methodType = parentObj.GetType();
                 _methodCache = methodType?.GetMethod(_memberName, BindingFlag, [.. MethodArguments.Select(x => x.GetType())]);
 
                 if (MemberNotFound = _methodCache is null)
-                    return;
+                    return null;
             }
 
             if (_methodCache is null)
-                return;
+                return null;
 
-            object? methodReturn;
-            //Set the value of the method argument and call the method
-            if (animation is not null)
+            if (CacheReturnValue)
             {
-                if (animation.State == EAnimationState.Playing)
+                if (!_cacheAttempted)
                 {
-                    methodReturn = animation.SetValue(obj, _methodCache, MethodValueArgumentIndex, MethodArguments,valueApplyWeight);
-                    animation.Tick(delta);
+                    _cacheAttempted = true;
+                    return _cachedReturnValue = _methodCache.Invoke(parentObj, MethodArguments);
                 }
-                else
-                    methodReturn = GetMethodReturnValue(obj);
+                return _cachedReturnValue;
             }
             else
-                methodReturn = GetMethodReturnValue(obj);
-
-            //Tick children on method return value
-            if (_children.Count > 0)
-            {
-                foreach (AnimationMember f in _children)
-                    f._tick?.Invoke(methodReturn, delta, valueApplyWeight);
-            }
-
-            object? GetMethodReturnValue(object obj)
-            {
-                object? methodReturn;
-                if (CacheReturnValue)
-                {
-                    if (!_cacheAttempted)
-                    {
-                        _cacheAttempted = true;
-                        _cachedReturnValue = _methodCache.Invoke(obj, MethodArguments);
-                    }
-                    methodReturn = _cachedReturnValue;
-                }
-                else
-                    methodReturn = _methodCache.Invoke(obj, MethodArguments);
-                return methodReturn;
-            }
+                return _methodCache.Invoke(parentObj, MethodArguments);
         }
-        internal void PropertyTick(object? obj, float delta, float valueApplyWeight)
+        internal object? InitializeProperty(object? parentObj)
         {
-            var animation = Animation;
-            if (obj is null || MemberNotFound)
-            {
-                animation?.Tick(delta);
-                return;
-            }
+            _parentObject = parentObj;
 
+            if (parentObj is null || MemberNotFound)
+                return null;
+            
             if (_propertyCache is null)
             {
-                ImmediateType immediateType = obj.GetImmediateType();
+                ImmediateType immediateType = parentObj.GetImmediateType();
                 _propertyCache = immediateType.GetProperty(_memberName);
 
                 if (MemberNotFound = _propertyCache is null)
-                    return;
+                    return null;
             }
 
             if (_propertyCache is null)
-                return;
-
-            object? propertyReturn;
-            //Set the value of the property and tick the animation
-            if (animation is not null)
+                return null;
+            
+            if (CacheReturnValue)
             {
-                if (animation.State == EAnimationState.Playing)
+                if (!_cacheAttempted)
                 {
-                    propertyReturn = animation.SetValue(obj, _propertyCache, valueApplyWeight);
-                    animation.Tick(delta);
+                    _cacheAttempted = true;
+                    return _cachedReturnValue = _propertyCache.GetValue(parentObj);
                 }
-                else
-                    propertyReturn = GetPropertyReturnValue(obj);
+                return _cachedReturnValue;
             }
             else
-            {
-                propertyReturn = GetPropertyReturnValue(obj);
-            }
-
-            //Tick children on property value
-            if (_children.Count > 0)
-            {
-                foreach (AnimationMember f in _children)
-                    f._tick?.Invoke(propertyReturn, delta, valueApplyWeight);
-            }
-
-            object? GetPropertyReturnValue(object obj)
-            {
-                object? propertyReturn;
-                if (CacheReturnValue)
-                {
-                    if (!_cacheAttempted)
-                    {
-                        _cacheAttempted = true;
-                        _cachedReturnValue = _propertyCache.GetValue(obj);
-                    }
-                    propertyReturn = _cachedReturnValue;
-                }
-                else
-                    propertyReturn = _propertyCache.GetValue(obj);
-                return propertyReturn;
-            }
+                return _propertyCache.GetValue(parentObj);
         }
-        internal void FieldTick(object? obj, float delta, float valueApplyWeight)
+        internal object? InitializeField(object? parentObj)
         {
-            var animation = Animation;
-            if (obj is null || MemberNotFound)
-            {
-                animation?.Tick(delta);
-                return;
-            }
+            if (parentObj is null || MemberNotFound)
+                return null;
 
             if (_fieldCache is null)
             {
-                ImmediateType immediateType = obj.GetImmediateType();
+                ImmediateType immediateType = parentObj.GetImmediateType();
                 _fieldCache = immediateType.GetField(_memberName);
 
                 if (MemberNotFound = _fieldCache is null)
-                    return;
+                    return null;
             }
 
             if (_fieldCache is null)
-                return;
+                return null;
 
-            object? fieldReturn;
-            if (animation is not null)
+            if (CacheReturnValue)
             {
-                if (animation.State == EAnimationState.Playing)
+                if (!_cacheAttempted)
                 {
-                    fieldReturn = animation.SetValue(obj, _fieldCache, valueApplyWeight);
-                    animation.Tick(delta);
+                    _cacheAttempted = true;
+                    return _cachedReturnValue = _fieldCache.GetValue(parentObj);
                 }
-                else
-                    fieldReturn = GetFieldReturnValue(obj);
+                return _cachedReturnValue;
             }
             else
-                fieldReturn = GetFieldReturnValue(obj);
-
-            if (_children.Count > 0)
-            {
-                foreach (AnimationMember f in _children)
-                    f._tick?.Invoke(fieldReturn, delta, valueApplyWeight);
-            }
-
-            object? GetFieldReturnValue(object obj)
-            {
-                object? fieldReturn;
-                if (CacheReturnValue)
-                {
-                    if (!_cacheAttempted)
-                    {
-                        _cacheAttempted = true;
-                        _cachedReturnValue = _fieldCache.GetValue(obj);
-                    }
-                    fieldReturn = _cachedReturnValue;
-                }
-                else
-                    fieldReturn = _fieldCache.GetValue(obj);
-                return fieldReturn;
-            }
+                return _fieldCache.GetValue(parentObj);
         }
         /// <summary>
         /// Registers to the AnimationHasEnded method in the animation tree
@@ -492,9 +449,19 @@ namespace XREngine.Animation
         }
 
         public static AnimationMember SetBlendshapePercent(string name, float percent)
-            => new("SetBlendShapeWeight", EAnimationMemberType.Method) { MethodArguments = [name, percent] };
+            => new("SetBlendShapeWeight", EAnimationMemberType.Method)
+            {
+                MethodArguments = [name, percent, StringComparison.InvariantCultureIgnoreCase],
+                MethodValueArgumentIndex = 1
+            };
+
         public static AnimationMember SetBlendshapeNormalized(string name, float normalizedValue)
-            => new("SetBlendShapeWeightNormalized", EAnimationMemberType.Method) { MethodArguments = [name, normalizedValue] };
+            => new("SetBlendShapeWeightNormalized", EAnimationMemberType.Method) 
+            {
+                MethodArguments = [name, normalizedValue, StringComparison.InvariantCultureIgnoreCase],
+                MethodValueArgumentIndex = 1
+            };
+
         public static AnimationMember SetNormalizedBlendshapeValuesByModelNodeName(string sceneNodeName, params (string blendshapeName, float normalizedValue)[] blendshapeValues)
             => new("SceneNode", EAnimationMemberType.Property)
             {
@@ -503,12 +470,14 @@ namespace XREngine.Animation
                     new AnimationMember("FindDescendantByName", EAnimationMemberType.Method)
                     {
                         MethodArguments = [sceneNodeName, StringComparison.InvariantCultureIgnoreCase],
+                        MethodValueArgumentIndex = 0,
                         CacheReturnValue = true,
                         Children =
                         [
                             new AnimationMember("GetComponent", EAnimationMemberType.Method)
                             {
                                 MethodArguments = ["ModelComponent"],
+                                MethodValueArgumentIndex = 0,
                                 CacheReturnValue = true,
                                 Children = [.. blendshapeValues.Select(x => SetBlendshapeNormalized(x.blendshapeName, x.normalizedValue))]
                             }

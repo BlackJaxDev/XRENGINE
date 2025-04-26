@@ -1,8 +1,12 @@
-﻿
+﻿using System.Diagnostics;
+
 namespace XREngine.Animation
 {
     public class AnimState : AnimStateBase
     {
+        public override string ToString()
+            => $"AnimState: {Name} / ({Motion?.ToString() ?? "null"})";
+
         private string _name = "";
         public string Name
         {
@@ -25,7 +29,7 @@ namespace XREngine.Animation
         }
 
         private MotionBase? _animation;
-        public MotionBase? Animation
+        public MotionBase? Motion
         {
             get => _animation;
             set => SetField(ref _animation, value);
@@ -48,23 +52,27 @@ namespace XREngine.Animation
         public AnimState() { }
         public AnimState(string name)
             => Name = name;
-        public AnimState(MotionBase animation, string name)
+        public AnimState(MotionBase motion, string name)
         {
-            Animation = animation;
+            Motion = motion;
             Name = name;
         }
-        public AnimState(MotionBase animation)
-            => Animation = animation;
-        public AnimState(MotionBase animation, params AnimStateTransition[] transitions) : base(transitions)
-            => Animation = animation;
-        public AnimState(MotionBase animation, IEnumerable<AnimStateTransition> transitions) : base(transitions)
-            => Animation = animation;
-        public AnimState(MotionBase animation, EventList<AnimStateTransition> transitions) : base(transitions)
-            => Animation = animation;
+        public AnimState(MotionBase motion)
+            => Motion = motion;
+        public AnimState(MotionBase motion, params AnimStateTransition[] transitions) : base(transitions)
+            => Motion = motion;
+        public AnimState(MotionBase motion, IEnumerable<AnimStateTransition> transitions) : base(transitions)
+            => Motion = motion;
+        public AnimState(MotionBase motion, EventList<AnimStateTransition> transitions) : base(transitions)
+            => Motion = motion;
 
-        public void Tick(object? rootObject, float delta, IDictionary<string, AnimVar> variables, float weight)
+        public void EvaluateValues(IDictionary<string, AnimVar> variables)
         {
-            Animation?.Tick(rootObject, delta, variables, weight);
+            Motion?.EvaluateMotion(variables);
+        }
+        public void Tick(float delta, IDictionary<string, AnimVar> variables)
+        {
+            Motion?.Tick(delta);
             foreach (var component in Components)
                 component.StateTick(this, variables, delta);
         }
@@ -74,11 +82,23 @@ namespace XREngine.Animation
             foreach (var component in Components)
                 component.StateEntered(this, variables);
         }
-
+        
         public void OnExit(IDictionary<string, AnimVar> variables)
         {
             foreach (var component in Components)
                 component.StateExited(this, variables);
+        }
+
+        public void Initialize(AnimLayer layer, AnimStateMachine owner, object? rootObject)
+        {
+            OwningLayer = layer;
+            Motion?.Initialize(layer, owner, rootObject);
+        }
+
+        public void Deinitialize()
+        {
+            OwningLayer = null;
+            Motion?.Deinitialize();
         }
     }
 }

@@ -5,8 +5,8 @@ namespace XREngine.Scene.Components
 {
     public class AnimStateMachineComponent : XRComponent
     {
-        private AnimStateMachine? _stateMachine;
-        public AnimStateMachine? StateMachine
+        private AnimStateMachine _stateMachine = new();
+        public AnimStateMachine StateMachine
         {
             get => _stateMachine;
             set => SetField(ref _stateMachine, value);
@@ -15,7 +15,7 @@ namespace XREngine.Scene.Components
         protected internal override void OnComponentActivated()
         {
             base.OnComponentActivated();
-            StateMachine?.Initialize();
+            StateMachine.Initialize(this);
             RegisterTick(ETickGroup.Normal, ETickOrder.Animation, EvaluationTick);
         }
 
@@ -23,34 +23,27 @@ namespace XREngine.Scene.Components
         {
             base.OnComponentDeactivated();
             UnregisterTick(ETickGroup.Normal, ETickOrder.Animation, EvaluationTick);
-            StateMachine?.Deinitialize();
+            StateMachine.Deinitialize();
         }
 
         protected internal void EvaluationTick()
-            => StateMachine?.EvaluationTick(this, Engine.Delta);
+            => StateMachine.EvaluationTick(this, Engine.Delta);
 
         public void SetFloat(string name, float value)
         {
             var sm = StateMachine;
-            if (sm is null)
-                return;
-
             if (sm.Variables.TryGetValue(name, out var variable))
                 variable.FloatValue = value;
         }
         public void SetInt(string name, int value)
         {
             var sm = StateMachine;
-            if (sm is null)
-                return;
             if (sm.Variables.TryGetValue(name, out var variable))
                 variable.IntValue = value;
         }
         public void SetBool(string name, bool value)
         {
             var sm = StateMachine;
-            if (sm is null)
-                return;
             if (sm.Variables.TryGetValue(name, out var variable))
                 variable.BoolValue = value;
         }

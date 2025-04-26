@@ -1,8 +1,15 @@
 ﻿namespace XREngine.Animation
 {
-    public class AnimBool(bool defaultValue) : AnimVar
+    public class AnimBool(string name, bool defaultValue) : AnimVar(name)
     {
-        public bool Value { get; set; } = defaultValue;
+        public override string ToString() => Value.ToString();
+
+        private bool _value = defaultValue;
+        public bool Value
+        {
+            get => _value;
+            set => SetField(ref _value, value);
+        }
 
         public override bool GreaterThan(AnimTransitionCondition condition)
             => Value && !condition.ComparisonBool;
@@ -26,5 +33,16 @@
             => Value ? 1.0f : 0.0f;
         protected override int GetInt()
             => Value ? 1 : 0;
+
+        //protected override void OnPropertyChanged<T>(string? propName, T prev, T field)
+        //{
+        //    base.OnPropertyChanged(propName, prev, field);
+        //    switch (propName)
+        //    {
+        //        case nameof(Value):
+        //            Debug.WriteLine($"{nameof(AnimBool)} {ParameterName} changed to {Value}");
+        //            break;
+        //    }
+        //}
     }
 }

@@ -216,8 +216,8 @@ namespace XREngine.Rendering
         public bool GetBlendshapeIndex(string name, out uint index)
         {
             index = 0;
-            int i = BlendshapeNames.IndexOf(name);
-            if (i == -1)
+            int i = _blendshapeNameToIndex.TryGetValue(name, out int value) ? value : -1;
+            if (i < 0)
                 return false;
             index = (uint)i;
             return true;

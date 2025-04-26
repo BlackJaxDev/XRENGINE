@@ -129,8 +129,10 @@ public static class EditorWorld
         humanComp.HipToHeadIKEnabled = false;
 
         var animator = rootNode.AddComponent<AnimStateMachineComponent>()!;
-        var ftOscReceiver = rootNode.AddComponent<FaceTrackingReceiverComponent>();
-        var ftOscSender = rootNode.AddComponent<OscSenderComponent>();
+        var ftOscReceiver = rootNode.AddComponent<FaceTrackingReceiverComponent>()!;
+        ftOscReceiver.GenerateARKit();
+        var ftOscSender = rootNode.AddComponent<OscSenderComponent>()!;
+        animator!.StateMachine.VariableChanged += ftOscSender.StateMachineVariableChanged;
 
         if (!VRPawn)
         {

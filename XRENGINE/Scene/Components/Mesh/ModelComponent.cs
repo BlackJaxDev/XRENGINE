@@ -1,7 +1,6 @@
 ﻿using Extensions;
 using System.Collections.Concurrent;
 using System.Diagnostics.CodeAnalysis;
-using System.Linq;
 using XREngine.Data.Geometry;
 using XREngine.Rendering;
 using XREngine.Rendering.Models;
@@ -126,6 +125,8 @@ namespace XREngine.Components.Scene.Mesh
 
         public void SetBlendShapeWeight(string blendshapeName, float percentage, StringComparison comp = StringComparison.InvariantCultureIgnoreCase)
         {
+            //Debug.Out($"SetBlendShapeWeight: {blendshapeName} {percentage}");
+
             bool HasMatchingBlendshape(XRMeshRenderer x)
                 => (x?.Mesh?.HasBlendshapes ?? false) && x.Mesh!.BlendshapeNames.Contains(blendshapeName, comp);
             var rends = GetAllRenderersWhere(HasMatchingBlendshape);
@@ -138,6 +139,8 @@ namespace XREngine.Components.Scene.Mesh
         }
         public void SetBlendShapeWeightNormalized(string blendshapeName, float weight, StringComparison comp = StringComparison.InvariantCultureIgnoreCase)
         {
+            //Debug.Out($"SetBlendShapeWeightNormalized: {blendshapeName} {weight}");
+
             bool HasMatchingBlendshape(XRMeshRenderer x)
                 => (x?.Mesh?.HasBlendshapes ?? false) && x.Mesh!.BlendshapeNames.Contains(blendshapeName, comp);
             var rends = GetAllRenderersWhere(HasMatchingBlendshape);

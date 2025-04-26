@@ -400,8 +400,36 @@ namespace XREngine.Rendering
         public bool IsSingleBound => UtilizedBones.Length == 1;
         public bool IsUnskinned => UtilizedBones.Length == 0;
         public uint BlendshapeCount => (uint)(BlendshapeNames?.Length ?? 0);
-        public string[] BlendshapeNames { get; set; } = [];
+
+        private string[] _blendshapeNames = [];
+        public string[] BlendshapeNames
+        {
+            get => _blendshapeNames;
+            set => SetField(ref _blendshapeNames, value);
+        }
+
+        private readonly Dictionary<string, int> _blendshapeNameToIndex = [];
+
         public bool HasBlendshapes => BlendshapeCount > 0;
+
+        protected override void OnPropertyChanged<T>(string? propName, T prev, T field)
+        {
+            base.OnPropertyChanged(propName, prev, field);
+            switch (propName)
+            {
+                case nameof(BlendshapeNames):
+                    if (field is string[] names)
+                    {
+                        _blendshapeNameToIndex.Clear();
+                        for (int i = 0; i < names.Length; ++i)
+                            if (!string.IsNullOrEmpty(names[i]) && !_blendshapeNameToIndex.ContainsKey(names[i]))
+                                _blendshapeNameToIndex.Add(names[i], i);
+                            else
+                                Debug.LogWarning($"Duplicate or empty blendshape name '{names[i]}' found in mesh {Name}");
+                    }
+                    break;
+            }
+        }
 
         private (TransformBase tfm, Matrix4x4 invBindWorldMtx)[] _utilizedBones = [];
         //private VertexWeightGroup[] _weightsPerVertex = [];
@@ -1128,10 +1156,11 @@ namespace XREngine.Rendering
         {
             if (!Engine.Rendering.Settings.AllowBlendshapes || !mesh.HasMeshAnimationAttachments)
                 return;
-            
-            BlendshapeNames = new string[mesh.MeshAnimationAttachmentCount];
+
+            string[] names = new string[mesh.MeshAnimationAttachmentCount];
             for (int i = 0; i < mesh.MeshAnimationAttachmentCount; i++)
-                BlendshapeNames[i] = mesh.MeshAnimationAttachments[i].Name;
+                names[i] = mesh.MeshAnimationAttachments[i].Name;
+            BlendshapeNames = names;
 
             PopulateBlendshapeBuffers(sourceList, dataTransform);
         }

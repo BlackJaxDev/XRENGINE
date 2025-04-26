@@ -1,0 +1,99 @@
+// SkipUpdateParticles.comp
+#version 450
+
+layout(local_size_x = 128, local_size_y = 1, local_size_z = 1) in;
+
+// --- Struct Definitions ---
+
+struct Particle
+{
+    vec3 Position;
+    float _pad0;
+    vec3 PrevPosition;
+    float _pad1;
+    vec3 TransformPosition;
+    float _pad2;
+    vec3 TransformLocalPosition;
+    float _pad3;
+    int ParentIndex;
+    float Damping;
+    float Elasticity;
+    float Stiffness;
+    float Inert;
+    float Friction;
+    float Radius;
+    float BoneLength;
+    int IsColliding;
+    int _pad4;
+    int _pad5;
+    int _pad6;
+};
+
+// --- Buffers ---
+
+layout(std430, binding = 0) buffer ParticlesBuffer 
+{
+    Particle Particles[];
+};
+
+layout(std430, binding = 2) buffer TransformMatricesBuffer 
+{
+    mat4 TransformMatrices[];
+};
+
+// --- Uniforms ---
+
+uniform vec3 ObjectMove;
+uniform float Weight;
+
+// --- Main ---
+
+void main()
+{
+    uint pid = gl_GlobalInvocationID.x;
+    Particle p = Particles[pid];
+
+    if (p.ParentIndex < 0)
+    {
+        // root stays anchored
+        p.PrevPosition = p.Position;
+        p.Position     = p.TransformPosition;
+    }
+    else
+    {
+        // apply object move
+        p.PrevPosition += ObjectMove;
+        p.Position     += ObjectMove;
+
+        // only stiffness constraint
+        float stiff = mix(1.0, p.Stiffness, Weight);
+
+        if (stiff > 0.0)
+        {
+            Particle parent = Particles[p.ParentIndex];
+            mat4 m = TransformMatrices[p.ParentIndex];
+            m[3].xyz = parent.Position;
+            vec3 restPos = (m * vec4(p.TransformLocalPosition, 1.0)).xyz;
+            vec3 d = restPos - p.Position;
+            float len = length(d);
+            float baseLen = length(parent.TransformPosition - p.TransformPosition);
+            float maxLen  = baseLen * (1.0 - stiff) * 2.0;
+            if (len > maxLen)
+            {
+                p.Position += d * ((len - maxLen) / len);
+            }
+        }
+
+        // always maintain rest length
+        Particle parent = Particles[p.ParentIndex];
+        vec3 diff = parent.Position - p.Position;
+        float L = length(diff);
+        if (L > 1e-4)
+        {
+            float restLen = length(parent.TransformPosition - p.TransformPosition);
+            p.Position += diff * ((L - restLen) / L);
+        }
+    }
+
+    Particles[pid] = p;
+}

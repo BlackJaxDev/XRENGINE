@@ -62,7 +62,10 @@ namespace XREngine
 
         public new void Clear()
         {
+            var items = this.ToArray();
             base.Clear();
+            foreach (var item in items)
+                Removed?.Invoke(item.Key, item.Value);
             Cleared?.Invoke();
             Changed?.Invoke();
         }

@@ -1008,6 +1008,71 @@ namespace XREngine.Data
             t = (t / 1) - 1;
             return c * ((t) * t * ((s + 1) * t + s) + 1) + b;
         }
+
+        public static float WeightedLerp(float f1, float f2, float f3, float w1, float w2, float w3)
+        {
+            float total = w1 + w2 + w3;
+            return (f1 * w1 + f2 * w2 + f3 * w3) / total;
+        }
+        public static Vector2 WeightedLerp(Vector2 f1, Vector2 f2, Vector2 f3, float w1, float w2, float w3)
+        {
+            float total = w1 + w2 + w3;
+            return (f1 * w1 + f2 * w2 + f3 * w3) / total;
+        }
+        public static Vector3 WeightedLerp(Vector3 f1, Vector3 f2, Vector3 f3, float w1, float w2, float w3)
+        {
+            float total = w1 + w2 + w3;
+            return (f1 * w1 + f2 * w2 + f3 * w3) / total;
+        }
+        public static Vector4 WeightedLerp(Vector4 f1, Vector4 f2, Vector4 f3, float w1, float w2, float w3)
+        {
+            float total = w1 + w2 + w3;
+            return (f1 * w1 + f2 * w2 + f3 * w3) / total;
+        }
+        public static Quaternion WeightedSlerp(Quaternion f1, Quaternion f2, Quaternion f3, float w1, float w2, float w3)
+        {
+            Quaternion q1 = f1 * w1;
+            Quaternion q2 = f2 * w2;
+            Quaternion q3 = f3 * w3;
+            Quaternion result = q1 + q2 + q3;
+            if (result.LengthSquared() > 0.0f)
+                return Quaternion.Normalize(result);
+            else
+                return Quaternion.Identity;
+        }
+
+        public static float WeightedLerp(float f1, float f2, float f3, float f4, float w1, float w2, float w3, float w4)
+        {
+            float total = w1 + w2 + w3 + w4;
+            return (f1 * w1 + f2 * w2 + f3 * w3 + f4 * w4) / total;
+        }
+        public static Vector2 WeightedLerp(Vector2 f1, Vector2 f2, Vector2 f3, Vector2 f4, float w1, float w2, float w3, float w4)
+        {
+            float total = w1 + w2 + w3 + w4;
+            return (f1 * w1 + f2 * w2 + f3 * w3 + f4 * w4) / total;
+        }
+        public static Vector3 WeightedLerp(Vector3 f1, Vector3 f2, Vector3 f3, Vector3 f4, float w1, float w2, float w3, float w4)
+        {
+            float total = w1 + w2 + w3 + w4;
+            return (f1 * w1 + f2 * w2 + f3 * w3 + f4 * w4) / total;
+        }
+        public static Vector4 WeightedLerp(Vector4 f1, Vector4 f2, Vector4 f3, Vector4 f4, float w1, float w2, float w3, float w4)
+        {
+            float total = w1 + w2 + w3 + w4;
+            return (f1 * w1 + f2 * w2 + f3 * w3 + f4 * w4) / total;
+        }
+        public static Quaternion WeightedSlerp(Quaternion f1, Quaternion f2, Quaternion f3, Quaternion f4, float w1, float w2, float w3, float w4)
+        {
+            Quaternion q1 = f1 * w1;
+            Quaternion q2 = f2 * w2;
+            Quaternion q3 = f3 * w3;
+            Quaternion q4 = f4 * w4;
+            Quaternion result = q1 + q2 + q3 + q4;
+            if (result.LengthSquared() > 0.0f)
+                return Quaternion.Normalize(result);
+            else
+                return Quaternion.Identity;
+        }
     }
     public enum EFloatInterpolationMode
     {

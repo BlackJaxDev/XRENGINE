@@ -4,6 +4,9 @@ namespace XREngine.Animation
 {
     public class BlendTree1D : BlendTree
     {
+        public override string ToString()
+            => $"BlendTree1D: {Name} ({ParameterName})";
+
         private string _parameterName = string.Empty;
         public string ParameterName
         {
@@ -40,9 +43,6 @@ namespace XREngine.Animation
                 get => _humanoidMirror;
                 set => SetField(ref _humanoidMirror, value);
             }
-
-            public void Tick(object? rootObject, float delta, IDictionary<string, AnimVar> variables, float weight)
-                => Motion?.Tick(rootObject, delta * Speed, variables, weight);
         }
 
         private EventList<Child> _children = [];
@@ -114,14 +114,27 @@ namespace XREngine.Animation
                 NeedsSort = true;
         }
 
-        public override void Tick(object? rootObject, float delta, IDictionary<string, AnimVar> variables, float weight)
+        public override void GetAnimationValues()
+        {
+            base.GetAnimationValues();
+            foreach (var child in Children)
+                child.Motion?.GetAnimationValues();
+        }
+
+        public override void Tick(float delta)
+        {
+            foreach (var child in Children)
+                child.Motion?.Tick(delta * child.Speed);
+        }
+
+        public override void BlendAnimationValues(IDictionary<string, AnimVar> variables)
         {
             if (_children.Count == 0)
                 return;
 
             if (_children.Count == 1)
             {
-                _children[0].Tick(rootObject, delta, variables, weight);
+                Blend(_children[0].Motion);
                 return;
             }
 
@@ -132,16 +145,6 @@ namespace XREngine.Animation
             }
 
             float parameterValue = variables.TryGetValue(ParameterName, out AnimVar? var) ? var.FloatValue : 0.0f;
-            if (parameterValue < _children[0].Threshold)
-            {
-                _children[0].Tick(rootObject, delta, variables, weight);
-                return;
-            }
-            if (parameterValue > _children[^1].Threshold)
-            {
-                _children[^1].Tick(rootObject, delta, variables, weight);
-                return;
-            }
 
             Child min, max;
 
@@ -152,7 +155,7 @@ namespace XREngine.Animation
             }
             else
             {
-                //Binary search for the child with the closest threshold to the parameter value
+                // Binary search to find the index just above the parameter value
                 int l = 0;
                 int r = Children.Count - 1;
                 int m;
@@ -165,26 +168,20 @@ namespace XREngine.Animation
                         r = m;
                 }
 
-                min = Children[l];
-                if (l == r) //Parameter value is equal to the threshold of a child
-                {
-                    min.Tick(rootObject, delta, variables, weight);
-                    return;
-                }
-                else
-                    max = Children[l + 1];
+                // If exact match, use just this motion
+                //if (Children[l].Threshold == parameterValue)
+                //{
+                //    Children[l].Tick(rootObject, delta, variables, weight);
+                //    return;
+                //}
+
+                // For blending between thresholds, min should be the LOWER threshold
+                // l now points to the motion with threshold >= parameterValue
+                min = Children[l - 1];
+                max = Children[l];
             }
 
-            GetWeights(parameterValue, min, max, out float minWeight, out float maxWeight);
-            min.Tick(rootObject, delta, variables, minWeight * weight);
-            max.Tick(rootObject, delta, variables, maxWeight * weight);
-        }
-
-        private static void GetWeights(float parameterValue, Child min, Child max, out float minWeight, out float maxWeight)
-        {
-            float t = (parameterValue - min.Threshold) / (max.Threshold - min.Threshold);
-            minWeight = 1.0f - t;
-            maxWeight = t;
+            Blend(min.Motion, max.Motion, (parameterValue - min.Threshold) / (max.Threshold - min.Threshold));
         }
     }
 }

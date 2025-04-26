@@ -1,0 +1,198 @@
+// ApplyConstraints.comp
+#version 450
+
+layout(local_size_x = 128, local_size_y = 1, local_size_z = 1) in;
+
+// --- Struct Definitions ---
+
+struct Particle
+{
+    vec3 Position;
+    float _pad0;
+    vec3 PrevPosition;
+    float _pad1;
+    vec3 TransformPosition;
+    float _pad2;
+    vec3 TransformLocalPosition;
+    float _pad3;
+    int ParentIndex;
+    float Damping;
+    float Elasticity;
+    float Stiffness;
+    float Inert;
+    float Friction;
+    float Radius;
+    float BoneLength;
+    int IsColliding;
+    int _pad4;
+    int _pad5;
+    int _pad6;
+};
+
+struct ColliderData
+{
+    vec4 Center;   // xyz = position, w = radius
+    vec4 Params;   // type-specific
+    int Type;      // 0=sphere,1=capsule,2=box
+    int _pad0;
+    int _pad1;
+    int _pad2;
+};
+
+// --- Buffers ---
+
+layout(std430, binding = 0) buffer ParticlesBuffer
+{
+    Particle Particles[];
+};
+
+layout(std430, binding = 2) buffer TransformMatricesBuffer
+{
+    mat4 TransformMatrices[];
+};
+
+layout(std430, binding = 3) buffer CollidersBuffer
+{
+    ColliderData Colliders[];
+};
+
+// --- Uniforms ---
+
+uniform float DeltaTime;
+uniform float ObjectScale;
+uniform float Weight;
+uniform int FreezeAxis;
+uniform int ColliderCount;
+
+// --- Collision Helpers ---
+
+bool sphereColliderCollision(vec3 center, float rad, inout vec3 pos, float r)
+{
+    vec3 d = pos - center;
+    float dist = length(d);
+    float minD = r + rad;
+    if (dist < minD)
+    {
+        pos = center + d * (minD / max(dist, 1e-4));
+        return true;
+    }
+    return false;
+}
+
+bool capsuleColliderCollision(vec3 start, vec3 end, float rad, inout vec3 pos, float r)
+{
+    vec3 dir = end - start;
+    float len = length(dir);
+    if (len < 1e-4)
+    {
+        return sphereColliderCollision(start, rad, pos, r);
+    }
+    vec3 norm = dir / len;
+    float proj = clamp(dot(pos - start, norm), 0.0, len);
+    vec3 closest = start + norm * proj;
+    return sphereColliderCollision(closest, rad, pos, r);
+}
+
+bool boxColliderCollision(vec3 center, vec3 halfExt, inout vec3 pos, float r)
+{
+    vec3 local = pos - center;
+    vec3 clamped = clamp(local, -halfExt, halfExt);
+    vec3 closest = center + clamped;
+    return sphereColliderCollision(closest, 1e-4, pos, r);
+}
+
+bool processColliders(inout vec3 pos, float r)
+{
+    bool coll = false;
+    for (int i = 0; i < ColliderCount; ++i)
+    {
+        ColliderData c = Colliders[i];
+        if (c.Type == 0) 
+        {
+            coll |= sphereColliderCollision(c.Center.xyz, c.Center.w, pos, r);
+        }
+        else if (c.Type == 1)
+        {
+            coll |= capsuleColliderCollision(c.Center.xyz, c.Params.xyz, c.Center.w, pos, r);
+        }
+        else if (c.Type == 2)
+        {
+            coll |= boxColliderCollision(c.Center.xyz, c.Params.xyz, pos, r);
+        }
+    }
+    return coll;
+}
+
+// --- Freeze Axis Helper ---
+
+void applyFreezeAxis(inout vec3 pos, vec3 parentPos, mat4 parentMat)
+{
+    if (FreezeAxis < 1 || FreezeAxis > 3)
+        return;
+    
+    vec3 normal;
+    if (FreezeAxis == 1)
+        normal = normalize(parentMat[0].xyz);
+    else if (FreezeAxis == 2)
+        normal = normalize(parentMat[1].xyz);
+    else
+        normal = normalize(parentMat[2].xyz);
+    
+    float d = dot(pos - parentPos, normal);
+    pos -= normal * d;
+}
+
+// --- Main ---
+
+void main()
+{
+    uint pid = gl_GlobalInvocationID.x;
+    Particle p = Particles[pid];
+    if (p.ParentIndex < 0) return;
+
+    Particle parent = Particles[p.ParentIndex];
+
+    // stiffness & elasticity
+    float stiff = mix(1.0, p.Stiffness, Weight);
+    if (stiff > 0.0 || p.Elasticity > 0.0)
+    {
+        mat4 m = TransformMatrices[p.ParentIndex];
+        m[3].xyz = parent.Position;
+        vec3 restPos = (m * vec4(p.TransformLocalPosition, 1.0)).xyz;
+        vec3 d = restPos - p.Position;
+
+        // elasticity
+        p.Position += d * (p.Elasticity * DeltaTime);
+
+        // stiffness constraint
+        if (stiff > 0.0)
+        {
+            d = restPos - p.Position;
+            float len = length(d);
+            float baseLen = length(parent.TransformPosition - p.TransformPosition);
+            float maxLen = baseLen * (1.0 - stiff) * 2.0;
+            if (len > maxLen)
+            {
+                p.Position += d * ((len - maxLen) / len);
+            }
+        }
+    }
+
+    // collisions
+    float pr = p.Radius * ObjectScale;
+    p.IsColliding = processColliders(p.Position, pr) ? 1 : 0;
+
+    // freeze-axis
+    applyFreezeAxis(p.Position, parent.Position, TransformMatrices[p.ParentIndex]);
+
+    // length constraint
+    vec3 diff = parent.Position - p.Position;
+    float L = length(diff);
+    if (L > 1e-4)
+    {
+        float restLen = length(parent.TransformPosition - p.TransformPosition);
+        p.Position += diff * ((L - restLen) / L);
+    }
+
+    Particles[pid] = p;
+}

@@ -66,7 +66,7 @@ namespace XREngine.Scene.Components.Animation
             if (Animation is null || Animation.IsPlaying)
                 return;
 
-            Animation.Start();
+            Animation.Start(this);
             RegisterTick(ETickGroup.Normal, ETickOrder.Animation, TickAnimation);
         }
 
@@ -78,7 +78,7 @@ namespace XREngine.Scene.Components.Animation
 
         private void TickAnimation()
         {
-            Animation?.Tick(this, Engine.Delta * Speed, Weight);
+            //Animation?.TickPropertyAnimations(Engine.Delta * Speed);
         }
 
         protected internal override void OnComponentActivated()

@@ -9,7 +9,6 @@ using XREngine.Input;
 using XREngine.Rendering.Info;
 using XREngine.Rendering.UI;
 using XREngine.Scene;
-using XREngine.Scene.Components.Animation;
 using YamlDotNet.Serialization;
 using State = XREngine.Engine.Rendering.State;
 

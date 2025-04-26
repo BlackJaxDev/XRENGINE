@@ -34,9 +34,12 @@ namespace XREngine.Animation
 
         public Matrix4x4 GetValue(float second)
             => _getValue(second);
-        protected override object GetValueGeneric(float second)
+        public override object GetCurrentValueGeneric()
+        {
+            throw new NotImplementedException();
+        }
+        public override object GetValueGeneric(float second)
             => _getValue(second);
-
         public Matrix4x4 GetValueBaked(float second)
             => GetValueBaked((int)Math.Floor(second * BakedFramesPerSecond));
         public Matrix4x4 GetValueBaked(int frameIndex)
@@ -53,10 +56,6 @@ namespace XREngine.Animation
             float invFPS = 1.0f / _bakedFPS;
             for (int i = 0; i < BakedFrameCount; ++i)
                 _baked[i] = GetValueKeyframed(i * invFPS);
-        }
-        protected override object GetCurrentValueGeneric()
-        {
-            throw new NotImplementedException();
         }
         protected override void OnProgressed(float delta)
         {

@@ -52,9 +52,18 @@ namespace XREngine.Data.Components
 
         private void RegisterMethods()
         {
-            foreach (var address in ReceiverAddresses)
-                if (!Server!.TryAddMethod(address.Key, address.Value))
-                    Debug.LogWarning($"Failed to add OSC method for address {address.Key}");
+            foreach (KeyValuePair<string, Action<OscMessageValues>> address in ReceiverAddresses)
+            {
+                string addr = address.Key;
+                if (!addr.StartsWith('/'))
+                    addr = $"/avatar/parameters/{addr}";
+                if (!Server!.TryAddMethod(addr, address.Value))
+                    Debug.LogWarning($"Failed to add OSC method for address {addr}");
+            }
+            //Server!.AddMonitorCallback((message, values) =>
+            //{
+            //    Debug.Out($"Received message: {message}");
+            //});
         }
 
         protected internal override void OnComponentDeactivated()

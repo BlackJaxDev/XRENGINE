@@ -128,8 +128,8 @@ namespace XREngine.Animation
             }
         }
 
-        protected override object GetCurrentValueGeneric() => CurrentPosition;
-        protected override object GetValueGeneric(float second) => _getValue(second);
+        public override object GetCurrentValueGeneric() => CurrentPosition;
+        public override object GetValueGeneric(float second) => _getValue(second);
 
         public TValue GetValue(float second) => _getValue(second);
         public TValue GetValueBakedBySecond(float second)
@@ -207,7 +207,7 @@ namespace XREngine.Animation
             => ConstrainKeyframedFPSChanged?.Invoke(this);
 
         protected void OnLerpConstrainedFPSChanged()
-        => LerpConstrainedFPSChanged?.Invoke(this);
+            => LerpConstrainedFPSChanged?.Invoke(this);
 
         protected override void BakedChanged()
             => _getValue = ChooseValueGetter();

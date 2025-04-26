@@ -1,4 +1,8 @@
 ﻿using Extensions;
+using System.Diagnostics;
+using System.Numerics;
+using System.Reflection.Emit;
+using XREngine.Data;
 using XREngine.Data.Core;
 
 namespace XREngine.Animation
@@ -21,6 +25,8 @@ namespace XREngine.Animation
 
         public AnimStateMachine? OwningStateMachine { get; internal set; } = null;
 
+        protected internal readonly Dictionary<string, object?> _animatedValues = [];
+        
         private readonly BlendManager _blendManager = new();
 
         private EApplyType _applyType = EApplyType.Override;
@@ -134,15 +140,19 @@ namespace XREngine.Animation
                 state.OwningLayer = this;
         }
 
-        public void Initialize(AnimStateMachine owner)
+        public void Initialize(AnimStateMachine owner, object? rootObject)
         {
             OwningStateMachine = owner;
             CurrentState = InitialState;
+            foreach (var state in States)
+                state.Initialize(this, owner, rootObject);
         }
 
         public void Deinitialize()
         {
             OwningStateMachine = null;
+            foreach (var state in States)
+                state.Deinitialize();
         }
 
         public void EvaluationTick(object? rootObject, float delta, IDictionary<string, AnimVar> variables)
@@ -160,16 +170,15 @@ namespace XREngine.Animation
                     return; //No initial state, nothing to do
             }
 
+            CurrentState?.EvaluateValues(variables);
+            NextState?.EvaluateValues(variables);
+
             //Check if we're blending to a new state
             var nextState = NextState;
             if (nextState is not null || TryTransition(variables, currState, out nextState) || TryTransition(variables, AnyState, out nextState))
             {
-                //Blend between the current and next state
-                float blendTime = _blendManager.GetModifiedBlendTime();
-                currState.Tick(rootObject, delta, variables, (1.0f - blendTime) * Weight);
-                nextState!.Tick(rootObject, delta, variables, blendTime * Weight);
-
-                if (_blendManager.TickBlend(currState, nextState, delta))
+                //The blend manager will update animation values
+                if (_blendManager.TickBlend(this, delta))
                 {
                     CurrentState = nextState;
                     CurrentState?.OnEnter(variables);
@@ -180,23 +189,43 @@ namespace XREngine.Animation
             {
                 NextState = null;
 
-                //No blending, just tick the current state
-                currState.Tick(rootObject, delta, variables, Weight);
+                //Copy animation values from the current state
+                CopyAnimationValues(_currentState?.Motion?._animationValues);
             }
+
+            CurrentState?.Tick(delta, variables);
+            NextState?.Tick(delta, variables);
         }
 
-        private bool TryTransition(IDictionary<string, AnimVar> variables, AnimStateBase currentState, out AnimState? nextState)
+        private void CopyAnimationValues(Dictionary<string, object?>? values)
+        {
+            if (values is null)
+                return;
+
+            foreach (string key in values.Keys)
+                if (values.TryGetValue(key, out object? v1Value))
+                    SetAnimValue(key, v1Value);
+        }
+
+        private void SetAnimValue(string path, object? animValue)
+        {
+            if (!_animatedValues.TryAdd(path, animValue))
+                _animatedValues[path] = animValue;
+        }
+
+        private bool TryTransition(IDictionary<string, AnimVar> variables, AnimStateBase testState, out AnimState? nextState)
         {
             //If we're not blending, check for a transition
-            var transition = currentState.TryTransition(variables);
+            AnimStateTransition? transition = testState.TryTransition(variables);
             nextState = transition?.DestinationState;
 
             //If the new state is different, queue it
-            if (nextState != null && nextState != currentState)
+            if (nextState != null && (nextState != CurrentState || transition!.CanTransitionToSelf))
             {
+                Debug.WriteLine($"Transitioning from {CurrentState} to {nextState} with transition {transition}");
                 CurrentState?.OnExit(variables);
                 NextState = nextState;
-                _blendManager.BeginBlend(transition!);
+                _blendManager.BeginBlend(transition!, CurrentState, nextState);
                 return true;
             }
 

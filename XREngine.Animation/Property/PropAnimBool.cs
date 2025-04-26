@@ -22,10 +22,10 @@ namespace XREngine.Animation
             => _getValue = !IsBaked ? GetValueKeyframed : GetValueBaked;
 
         private bool _value = false;
-        protected override object GetCurrentValueGeneric() => _value;
+        public override object GetCurrentValueGeneric() => _value;
         public bool GetValue(float second)
             => _getValue?.Invoke(second) ?? false;
-        protected override object GetValueGeneric(float second)
+        public override object GetValueGeneric(float second)
             => _getValue?.Invoke(second) ?? false;
         public bool GetValueBaked(float second)
             => GetValueBaked((int)Math.Floor(second * BakedFramesPerSecond));

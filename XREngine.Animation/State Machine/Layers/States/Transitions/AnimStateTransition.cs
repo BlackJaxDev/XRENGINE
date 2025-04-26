@@ -7,6 +7,9 @@ namespace XREngine.Animation
     /// </summary>
     public class AnimStateTransition : XRBase
     {
+        public override string ToString()
+            => $"AnimStateTransition: {Name} ({DestinationState?.ToString() ?? "null"})";
+
         //[Browsable(false)]
         public AnimStateBase? Owner { get; internal set; }
 
