@@ -24,6 +24,13 @@ namespace XREngine.Animation
             _animatedCurves.Clear();
         }
 
+        public virtual void SetDefaults()
+        {
+            //_animationValues.Clear();
+            foreach (var kv in _animatedCurves)
+                SetAnimValue(kv.Key, kv.Value.DefaultValue);
+        }
+
         /// <summary>
         /// Registers all child motions in the motion, or the clip if the motion is a clip.
         /// </summary>
@@ -75,7 +82,8 @@ namespace XREngine.Animation
 
             parentObject = member.Initialize?.Invoke(parentObject);
 
-            path += $"{member.MemberName}";
+            if (member.MemberType != EAnimationMemberType.Group)
+                path += $"{member.MemberName}";
 
             if (member.MemberType == EAnimationMemberType.Method)
             {
@@ -117,7 +125,9 @@ namespace XREngine.Animation
             if (member.Children.Count == 0)
                 return;
 
-            path += "/";
+            if (member.MemberType != EAnimationMemberType.Group)
+                path += "/";
+
             foreach (AnimationMember child in member.Children)
                 InitializeMember(child, path, layer, owner, parentObject, parentMotions);
         }

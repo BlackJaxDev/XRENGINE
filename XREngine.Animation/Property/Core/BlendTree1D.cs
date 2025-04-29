@@ -114,6 +114,13 @@ namespace XREngine.Animation
                 NeedsSort = true;
         }
 
+        public override void SetDefaults()
+        {
+            base.SetDefaults();
+            foreach (var child in Children)
+                child.Motion?.SetDefaults();
+        }
+
         public override void Tick(float delta)
         {
             foreach (var child in Children)

@@ -128,10 +128,15 @@ public static class EditorWorld
         humanComp.RightLegIKEnabled = false;
         humanComp.HipToHeadIKEnabled = false;
 
-        var animator = rootNode.AddComponent<AnimStateMachineComponent>()!;
+        const string vrcftPrefix = "/avatar/parameters/";
         var ftOscReceiver = rootNode.AddComponent<FaceTrackingReceiverComponent>()!;
+        ftOscReceiver.ParameterPrefix = vrcftPrefix;
         ftOscReceiver.GenerateARKit();
+
         var ftOscSender = rootNode.AddComponent<OscSenderComponent>()!;
+        ftOscSender.ParameterPrefix = vrcftPrefix;
+
+        var animator = rootNode.AddComponent<AnimStateMachineComponent>()!;
         animator!.StateMachine.VariableChanged += ftOscSender.StateMachineVariableChanged;
 
         if (!VRPawn)

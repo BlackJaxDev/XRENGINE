@@ -159,6 +159,13 @@ namespace XREngine.Animation
             }
         }
 
+        public override void SetDefaults()
+        {
+            base.SetDefaults();
+            foreach (var child in Children)
+                child.Motion?.SetDefaults();
+        }
+
         public override void Tick(float delta)
         {
             foreach (var child in Children)
@@ -330,95 +337,108 @@ namespace XREngine.Animation
         {
             _weightCount = 0;
 
-            // For directional blending, we need at least 3 children
-            if (_boundingChildCount < 3)
-            {
-                Child nearest = FindNearestBoundingChild(x, y);
-                _childWeights[_weightCount++] = new ChildWeight { Child = nearest, Weight = 1.0f };
-                return;
-            }
-
             // Create a vector from origin (0,0) to the target point
             Vector2 targetDir = new(x, y);
             float targetMagnitude = targetDir.Length();
 
+            // If target is at origin, use the nearest bounding child
             if (targetMagnitude < 0.0001f)
             {
-                // If we're at the origin, use the nearest child
                 Child nearest = FindNearestBoundingChild(x, y);
                 _childWeights[_weightCount++] = new ChildWeight { Child = nearest, Weight = 1.0f };
                 return;
             }
 
-            // Normalize the direction
+            // Normalize the target direction
             Vector2 targetDirNorm = targetDir / targetMagnitude;
 
-            // Find the three most relevant children based on angle to target
-            List<(Child child, float angle, float distance)> childAngles = new();
+            // Find children in the general direction of the target
+            // and calculate their angular distance to the target direction
+            List<(Child child, float angleDist, float dotProduct)> childDistances = new();
 
             for (int i = 0; i < _boundingChildCount; i++)
             {
                 Child child = _boundingChildren[i]!;
                 Vector2 childPos = new(child.PositionX, child.PositionY);
-                float childDist = childPos.Length();
+                float childMagnitude = childPos.Length();
 
-                if (childDist < 0.0001f)
-                    continue; // Skip points at origin
+                // Skip points at origin
+                if (childMagnitude < 0.0001f)
+                    continue;
 
-                Vector2 childDir = childPos / childDist;
-                float dot = Vector2.Dot(targetDirNorm, childDir);
-                float angle = MathF.Acos(dot.Clamp(-1f, 1f));
+                // Normalize the child direction
+                Vector2 childDirNorm = childPos / childMagnitude;
 
-                childAngles.Add((child, angle, childDist));
+                // Calculate dot product (cosine of angle between directions)
+                float dot = Vector2.Dot(targetDirNorm, childDirNorm);
+
+                // Convert to angle distance (0 = same direction, π = opposite direction)
+                float angleDist = MathF.Acos(Math.Clamp(dot, -1.0f, 1.0f));
+
+                // Only consider children in the general direction (within π/2 radians or 90 degrees)
+                if (angleDist <= MathF.PI / 2)
+                {
+                    childDistances.Add((child, angleDist, dot));
+                }
             }
 
-            // Sort by angle
-            childAngles.Sort((a, b) => a.angle.CompareTo(b.angle));
-
-            // If we don't have enough children, fall back to nearest
-            if (childAngles.Count < 3)
+            // If no children are in the forward hemisphere, use the nearest bounding child
+            if (childDistances.Count == 0)
             {
                 Child nearest = FindNearestBoundingChild(x, y);
                 _childWeights[_weightCount++] = new ChildWeight { Child = nearest, Weight = 1.0f };
                 return;
             }
 
-            // Get the 3 children that form a triangle containing the target direction
-            Child[] triangleChildren = new Child[3];
-            bool foundTriangle = false;
+            // Sort children by angle distance (closest direction first)
+            childDistances.Sort((a, b) => a.angleDist.CompareTo(b.angleDist));
 
-            for (int i = 0; i < childAngles.Count; i++)
+            // Take up to 3 closest directional children
+            int count = Math.Min(3, childDistances.Count);
+            float[] weights = new float[count];
+            float weightSum = 0;
+
+            // Check for exact match
+            if (count > 0 && childDistances[0].angleDist < EPSILON)
             {
-                int j = (i + 1) % childAngles.Count;
-                int k = (i + 2) % childAngles.Count;
-
-                triangleChildren[0] = childAngles[i].child;
-                triangleChildren[1] = childAngles[j].child;
-                triangleChildren[2] = childAngles[k].child;
-
-                // Create vectors for these children
-                Vector2 a2d = new(triangleChildren[0].PositionX, triangleChildren[0].PositionY);
-                Vector2 b2d = new(triangleChildren[1].PositionX, triangleChildren[1].PositionY);
-                Vector2 c2d = new(triangleChildren[2].PositionX, triangleChildren[2].PositionY);
-
-                // Scale the target vector to match the average magnitude of the triangle vectors
-                float avgMagnitude = (a2d.Length() + b2d.Length() + c2d.Length()) / 3;
-                Vector2 scaledTarget = targetDirNorm * (avgMagnitude * targetMagnitude / MathF.Max(1.0f, targetMagnitude));
-
-                if (TryCalculateBarycentric(
-                    triangleChildren[0], triangleChildren[1], triangleChildren[2],
-                    a2d, b2d, c2d, scaledTarget))
+                // If one child is exactly in the same direction, use only that child
+                _childWeights[_weightCount++] = new ChildWeight
                 {
-                    foundTriangle = true;
-                    break;
-                }
+                    Child = childDistances[0].child,
+                    Weight = 1.0f
+                };
+                return;
             }
 
-            if (!foundTriangle)
+            // Calculate inverse-distance weights (closer directions have more influence)
+            for (int i = 0; i < count; i++)
             {
-                // Fall back to nearest if no triangle contains the direction
-                Child nearest = FindNearestBoundingChild(x, y);
-                _childWeights[_weightCount++] = new ChildWeight { Child = nearest, Weight = 1.0f };
+                // Use angular distance for weighting
+                // Add small epsilon to avoid division by zero
+                weights[i] = 1.0f / (childDistances[i].angleDist + EPSILON);
+                weightSum += weights[i];
+            }
+
+            // Normalize weights
+            if (weightSum > EPSILON)
+            {
+                for (int i = 0; i < count; i++)
+                {
+                    _childWeights[_weightCount++] = new ChildWeight
+                    {
+                        Child = childDistances[i].child,
+                        Weight = weights[i] / weightSum
+                    };
+                }
+            }
+            else
+            {
+                // Fallback if weights are invalid
+                _childWeights[_weightCount++] = new ChildWeight
+                {
+                    Child = childDistances[0].child,
+                    Weight = 1.0f
+                };
             }
         }
 

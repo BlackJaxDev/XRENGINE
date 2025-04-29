@@ -165,9 +165,10 @@ namespace XREngine.Animation
             if (currState is null)
             {
                 //No current state, set it to the initial state
+                InitialState ??= States.FirstOrDefault();
                 CurrentState = currState = InitialState;
                 if (currState is null)
-                    return; //No initial state, nothing to do
+                    return; //No states, nothing to do
             }
 
             CurrentState?.EvaluateValues(variables);

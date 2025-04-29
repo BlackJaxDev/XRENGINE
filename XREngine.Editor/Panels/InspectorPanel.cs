@@ -323,6 +323,30 @@ public class InspectorPanel : EditorPanel
 
         return textInput;
     }
+    private static T ObjectSelector<T>(SceneNode n, PropertyInfo prop, object?[]? objects) where T : UITextInputComponent
+    {
+        var matComp = n.AddComponent<UIMaterialComponent>()!;
+        var mat = CreateUITextInputMaterial()!;
+        //mat.RenderOptions.RequiredEngineUniforms = EUniformRequirements.Camera;
+        matComp!.Material = mat;
+        n.NewChild<UITextComponent, T, UIPropertyTextDriverComponent>(out var textComp, out var textInput, out var textDriver);
+        void GotFocus(UIInteractableComponent comp) => mat.SetVector4(OutlineColorUniformName, ColorF4.White);
+        void LostFocus(UIInteractableComponent comp) => mat.SetVector4(OutlineColorUniformName, ColorF4.Transparent);
+        textInput.MouseDirectOverlapEnter += GotFocus;
+        textInput.MouseDirectOverlapLeave += LostFocus;
+        textInput.Property = prop;
+        textInput.Targets = objects;
+        textComp!.FontSize = EditorUI.Styles.PropertyInputFontSize;
+        textComp.Color = EditorUI.Styles.PropertyInputTextColor;
+        textComp.HorizontalAlignment = EHorizontalAlignment.Left;
+        textComp.VerticalAlignment = EVerticalAlignment.Center;
+        textComp.BoundableTransform.Margins = new Vector4(5.0f, 2.0f, 5.0f, 2.0f);
+        textComp.ClipToBounds = true;
+        textComp.WrapMode = FontGlyphSet.EWrapMode.None;
+        textDriver!.Property = prop;
+        textDriver.Sources = objects;
+        return textInput;
+    }
 
     private static Action<SceneNode, PropertyInfo, object?[]?> CreateStringEditor()
     {
@@ -495,6 +519,7 @@ public class InspectorPanel : EditorPanel
     private static void CreateQuaternionEditor(SceneNode node, PropertyInfo info, object?[]? arg3)
     {
         //Quaternion editor is just a Vector3 yaw, pitch, roll editor
+
     }
 
     private static void CreateVector4Editor(SceneNode node, PropertyInfo info, object?[]? arg3)
@@ -520,7 +545,7 @@ public class InspectorPanel : EditorPanel
     private static Action<SceneNode, PropertyInfo, object?[]?>? CreateClassEditor(Type propType)
         => propType.GetCustomAttribute<EditorComponentAttribute>() is EditorComponentAttribute attr
             ? attr.CreateEditor
-            : CreateDefaultEditor(propType);
+            : CreateObjectSelector(propType);
 
     private static Action<SceneNode, PropertyInfo, object?[]?>? CreateGenericEditor(Type propType)
     {
@@ -549,13 +574,12 @@ public class InspectorPanel : EditorPanel
         return EnumEditor;
     }
 
-    private static Action<SceneNode, PropertyInfo, object?[]?>? CreateDefaultEditor(Type propType)
+    private static Action<SceneNode, PropertyInfo, object?[]?>? CreateObjectSelector(Type propType)
     {
-        static void DefaultEditor(SceneNode n, PropertyInfo prop, object?[]? objects)
+        static void ObjectSelector(SceneNode n, PropertyInfo prop, object?[]? objects)
         {
-            Debug.Out($"No editor for type {prop.PropertyType}");
-            var text = TextEditor<UITextInputComponent>(n, prop, objects);
+            var selector = ObjectSelector<UITextInputComponent>(n, prop, objects);
         }
-        return DefaultEditor;
+        return ObjectSelector;
     }
 }

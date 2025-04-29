@@ -431,13 +431,13 @@ namespace XREngine.Data.Components
                     new BlendTree2D.Child
                     {
                         Motion = EyeLookInRight(),
-                        PositionX = 0.7f,
+                        PositionX = -0.7f,
                         PositionY = 0.0f,
                     },
                     new BlendTree2D.Child
                     {
                         Motion = EyeLookOutRight(),
-                        PositionX = -0.7f,
+                        PositionX = 0.7f,
                         PositionY = 0.0f,
                     },
                     new BlendTree2D.Child

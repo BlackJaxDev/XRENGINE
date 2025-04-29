@@ -167,19 +167,22 @@ namespace XREngine.Animation
             foreach (var kvp in _animatedCurves)
             {
                 if (kvp.Value.Animation is null && kvp.Value.MemberType != EAnimationMemberType.Method)
-                    continue;
-                
-                if (weight < float.Epsilon)
-                    SetAnimValue(kvp.Key, kvp.Value.DefaultValue);
-                else if (weight > 1.0f - float.Epsilon)
-                    SetAnimValue(kvp.Key, kvp.Value.GetAnimationValue());
-                else
                 {
+                    SetAnimValue(kvp.Key, kvp.Value.DefaultValue);
+                    continue;
+                }
+                
+                //if (weight < float.Epsilon)
+                //    SetAnimValue(kvp.Key, kvp.Value.DefaultValue);
+                //else if (weight > 1.0f - float.Epsilon)
+                //    SetAnimValue(kvp.Key, kvp.Value.GetAnimationValue());
+                //else
+                //{
                     object? defaultvalue = kvp.Value.DefaultValue;
                     object? animatedValue = kvp.Value.GetAnimationValue();
                     object? weightedValue = Lerp(defaultvalue, animatedValue, weight);
                     SetAnimValue(kvp.Key, weightedValue);
-                }
+                //}
             }
             parentMotion?.CopyAnimationValuesFrom(this);
         }

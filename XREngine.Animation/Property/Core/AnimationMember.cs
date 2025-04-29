@@ -277,9 +277,14 @@ namespace XREngine.Animation
                     _propertyCache?.SetValue(_parentObject, value);
                     break;
                 case EAnimationMemberType.Method:
-                    if (AnimatedMethodArgumentIndex >= 0 && AnimatedMethodArgumentIndex < _methodArguments.Length)
-                        _methodArguments[AnimatedMethodArgumentIndex] = value;
+                    if (AnimatedMethodArgumentIndex < 0 || AnimatedMethodArgumentIndex >= _methodArguments.Length)
+                        return;
+
+                    object? lastArg = _methodArguments[AnimatedMethodArgumentIndex];
+                    _methodArguments[AnimatedMethodArgumentIndex] = value;
                     _methodCache?.Invoke(_parentObject, _methodArguments);
+                    _methodArguments[AnimatedMethodArgumentIndex] = lastArg;
+
                     break;
             }
         }

@@ -50,20 +50,39 @@ namespace XREngine.Data.Components
             }
         }
 
+        private readonly HashSet<string> _failedAddresses = [];
+
+        private string _parameterPrefix = string.Empty;
+        public string ParameterPrefix
+        {
+            get => _parameterPrefix;
+            set => SetField(ref _parameterPrefix, value);
+        }
+
         private void RegisterMethods()
         {
+            if (Server is not null)
+            {
+                Server.Dispose();
+                Server = null;
+                StartServer(Port);
+            }
             foreach (KeyValuePair<string, Action<OscMessageValues>> address in ReceiverAddresses)
             {
                 string addr = address.Key;
                 if (!addr.StartsWith('/'))
-                    addr = $"/avatar/parameters/{addr}";
+                    addr = $"{_parameterPrefix}{addr}";
                 if (!Server!.TryAddMethod(addr, address.Value))
                     Debug.LogWarning($"Failed to add OSC method for address {addr}");
             }
-            //Server!.AddMonitorCallback((message, values) =>
-            //{
-            //    Debug.Out($"Received message: {message}");
-            //});
+            Server!.AddMonitorCallback((message, values) =>
+            {
+                string address = message.ToString();
+                if (address.StartsWith(_parameterPrefix))
+                    address = address[_parameterPrefix.Length..];
+                if (!ReceiverAddresses.ContainsKey(address.ToString()) && _failedAddresses.Add(address.ToString()))
+                    Debug.Out($"Failed to handle message (only logging once): {address}");
+            });
         }
 
         protected internal override void OnComponentDeactivated()

@@ -135,6 +135,15 @@ namespace XREngine.Animation
                 VariableChanged?.Invoke(variable);
         }
 
+        /// <summary>
+        /// Invokes the VariableChanged event for all variables in the state machine.
+        /// </summary>
+        public void InvokeAllVariablesChanged()
+        {
+            foreach (var variable in Variables)
+                VariableChanged?.Invoke(variable.Value);
+        }
+
         public XREvent<AnimVar>? VariableChanged;
 
         /// <summary>

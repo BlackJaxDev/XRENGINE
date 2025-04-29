@@ -2,6 +2,7 @@
 using System.Numerics;
 using XREngine.Components;
 using XREngine.Components.Scene.Mesh;
+using XREngine.Data;
 using XREngine.Data.Colors;
 using XREngine.Data.Core;
 using XREngine.Data.Rendering;
@@ -12,6 +13,58 @@ using static XREngine.Scene.Components.Animation.InverseKinematics;
 
 namespace XREngine.Scene.Components.Animation
 {
+    public enum EHumanoidValue
+    {
+        LeftEyeDownUp,
+        LeftEyeInOut,
+        RightEyeDownUp,
+        RightEyeInOut,
+    }
+    public class HumanoidSettings : XRBase
+    {
+        private Dictionary<EHumanoidValue, float> _currentValues = [];
+        public Dictionary<EHumanoidValue, float> CurrentValues
+        {
+            get => _currentValues;
+            set => SetField(ref _currentValues, value);
+        }
+
+        public void SetValue(EHumanoidValue value, float amount)
+        {
+            if (!CurrentValues.TryAdd(value, amount))
+                CurrentValues[value] = amount;
+        }
+        public float GetValue(EHumanoidValue value)
+            => CurrentValues.TryGetValue(value, out var amount) ? amount : 0.0f;
+
+        private Vector2 _leftEyeDownUpRange = new(-30.0f, 30.0f);
+        public Vector2 LeftEyeDownUpRange
+        {
+            get => _leftEyeDownUpRange;
+            set => SetField(ref _leftEyeDownUpRange, value);
+        }
+
+        private Vector2 _leftEyeInOutRange = new(-30.0f, 30.0f);
+        public Vector2 LeftEyeInOutRange
+        {
+            get => _leftEyeInOutRange;
+            set => SetField(ref _leftEyeInOutRange, value);
+        }
+
+        private Vector2 _rightEyeDownUpRange = new(-30.0f, 30.0f);
+        public Vector2 RightEyeDownUpRange
+        {
+            get => _rightEyeDownUpRange;
+            set => SetField(ref _rightEyeDownUpRange, value);
+        }
+
+        private Vector2 _rightEyeInOutRange = new(-30.0f, 30.0f);
+        public Vector2 RightEyeInOutRange
+        {
+            get => _rightEyeInOutRange;
+            set => SetField(ref _rightEyeInOutRange, value);
+        }
+    }
     public class HumanoidComponent : XRComponent, IRenderable
     {
         protected internal override void OnComponentActivated()
@@ -20,11 +73,67 @@ namespace XREngine.Scene.Components.Animation
             if (SolveIK)
                 RegisterTick(ETickGroup.Late, ETickOrder.Scene, SolveFullBodyIK);
         }
+
         protected internal override void OnComponentDeactivated()
         {
             base.OnComponentDeactivated();
             if (SolveIK)
                 UnregisterTick(ETickGroup.Late, ETickOrder.Scene, SolveFullBodyIK);
+        }
+
+        private HumanoidSettings _settings = new();
+        public HumanoidSettings Settings
+        {
+            get => _settings;
+            set => SetField(ref _settings, value);
+        }
+
+        public void SetValue(EHumanoidValue value, float amount)
+        {
+            float t = amount * 0.5f + 0.5f;
+            switch (value)
+            {
+                case EHumanoidValue.LeftEyeDownUp:
+                    {
+                        float yaw = Settings.GetValue(EHumanoidValue.LeftEyeInOut);
+                        float pitch = Interp.Lerp(Settings.LeftEyeDownUpRange.X, Settings.LeftEyeDownUpRange.Y, t);
+                        Settings.SetValue(EHumanoidValue.LeftEyeDownUp, pitch);
+
+                        Quaternion q = Quaternion.CreateFromYawPitchRoll(yaw, pitch, 0.0f);
+                        Left.Eye.Node?.GetTransformAs<Transform>(true)?.SetBindRelativeRotation(q);
+                        break;
+                    }
+                case EHumanoidValue.LeftEyeInOut:
+                    {
+                        float yaw = Interp.Lerp(Settings.LeftEyeInOutRange.X, Settings.LeftEyeInOutRange.Y, t);
+                        float pitch = Settings.GetValue(EHumanoidValue.LeftEyeDownUp);
+                        Settings.SetValue(EHumanoidValue.LeftEyeInOut, yaw);
+
+                        Quaternion q = Quaternion.CreateFromYawPitchRoll(yaw, pitch, 0.0f);
+                        Left.Eye.Node?.GetTransformAs<Transform>(true)?.SetBindRelativeRotation(q);
+                        break;
+                    }
+                case EHumanoidValue.RightEyeDownUp:
+                    {
+                        float yaw = Settings.GetValue(EHumanoidValue.RightEyeInOut);
+                        float pitch = Interp.Lerp(Settings.RightEyeDownUpRange.X, Settings.RightEyeDownUpRange.Y, t);
+                        Settings.SetValue(EHumanoidValue.RightEyeDownUp, pitch);
+
+                        Quaternion q = Quaternion.CreateFromYawPitchRoll(yaw, pitch, 0.0f);
+                        Right.Eye.Node?.GetTransformAs<Transform>(true)?.SetBindRelativeRotation(q);
+                        break;
+                    }
+                case EHumanoidValue.RightEyeInOut:
+                    {
+                        float yaw = Interp.Lerp(Settings.RightEyeInOutRange.X, Settings.RightEyeInOutRange.Y, t);
+                        float pitch = Settings.GetValue(EHumanoidValue.RightEyeDownUp);
+                        Settings.SetValue(EHumanoidValue.RightEyeInOut, yaw);
+
+                        Quaternion q = Quaternion.CreateFromYawPitchRoll(yaw, pitch, 0.0f);
+                        Right.Eye.Node?.GetTransformAs<Transform>(true)?.SetBindRelativeRotation(q);
+                        break;
+                    }
+            }
         }
 
         protected override void OnPropertyChanged<T>(string? propName, T prev, T field)

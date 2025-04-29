@@ -20,8 +20,20 @@ namespace XREngine.Data.Components
                     StartClient(_port);
             }
         }
+
         public OscClient? Client { get; private set; } = null;
 
+        private string _parameterPrefix = string.Empty;
+        public string ParameterPrefix
+        {
+            get => _parameterPrefix;
+            set => SetField(ref _parameterPrefix, value);
+        }
+
+        /// <summary>
+        /// Called when a variable changes in a state machine.
+        /// </summary>
+        /// <param name="variable"></param>
         public void StateMachineVariableChanged(AnimVar variable)
         {
             if (Client == null)
@@ -29,7 +41,7 @@ namespace XREngine.Data.Components
 
             string address = variable.ParameterName;
             if (!address.StartsWith('/'))
-                address = $"/avatar/parameters/{address}";
+                address = $"{_parameterPrefix}{address}";
 
             switch (variable)
             {
@@ -54,10 +66,6 @@ namespace XREngine.Data.Components
             base.OnComponentActivated();
             if (Client is null)
                 StartClient(Port);
-
-            Client!.Send(FaceTrackingReceiverComponent.Param_EyeTrackingActive, true);
-            Client.Send(FaceTrackingReceiverComponent.Param_LipTrackingActive, true);
-            Client.Send(FaceTrackingReceiverComponent.Param_ExpressionTrackingActive, true);
         }
     }
 }

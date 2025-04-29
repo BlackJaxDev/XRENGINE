@@ -1,6 +1,7 @@
 ﻿using OscCore;
 using XREngine.Animation;
 using XREngine.Scene.Components;
+using XREngine.Scene.Components.Animation;
 using static XREngine.Animation.AnimTransitionCondition;
 
 namespace XREngine.Data.Components
@@ -10,122 +11,124 @@ namespace XREngine.Data.Components
         public const string Tracking_Eye_CenterPitchYaw = "/tracking/eye/CenterPitchYaw";
         public const string Tracking_Eye_EyesClosedAmount = "/tracking/eye/EyesClosedAmount";
 
-        public const string Avatar_EyeX = "v2/EyeX";
-        public const string Avatar_EyeY = "v2/EyeY";
-        public const string Avatar_EyeLeftX = "v2/EyeLeftX";
-        public const string Avatar_EyeLeftY = "v2/EyeLeftY";
-        public const string Avatar_EyeRightX = "v2/EyeRightX";
-        public const string Avatar_EyeRightY = "v2/EyeRightY";
-        public const string Avatar_EyeOpenLeft = "v2/EyeOpenLeft";
-        public const string Avatar_EyeOpenRight = "v2/EyeOpenRight";
-        public const string Avatar_EyeOpen = "v2/EyeOpen";
-        public const string Avatar_EyeClosedLeft = "v2/EyeClosedLeft";
-        public const string Avatar_EyeClosedRight = "v2/EyeClosedRight";
-        public const string Avatar_EyeClosed = "v2/EyeClosed";
-        public const string Avatar_EyeLidLeft = "v2/EyeLidLeft";
-        public const string Avatar_EyeLidRight = "v2/EyeLidRight";
-        public const string Avatar_EyeLid = "v2/EyeLid";
-        public const string Avatar_EyeSquint = "v2/EyeSquint";
-        public const string Avatar_EyesSquint = "v2/EyesSquint";
-        public const string Avatar_EyeSquintRight = "v2/EyeSquintRight";
-        public const string Avatar_EyeSquintLeft = "v2/EyeSquintLeft";
-        public const string Avatar_PupilDilation = "v2/PupilDilation";
+        public const string Avatar_Prefix = "v2/";
 
-        public const string Avatar_BrowPinchRight = "v2/BrowPinchRight";
-        public const string Avatar_BrowPinchLeft = "v2/BrowPinchLeft";
-        public const string Avatar_BrowLowererRight = "v2/BrowLowererRight";
-        public const string Avatar_BrowLowererLeft = "v2/BrowLowererLeft";
-        public const string Avatar_BrowInnerUpRight = "v2/BrowInnerUpRight";
-        public const string Avatar_BrowInnerUpLeft = "v2/BrowInnerUpLeft";
-        public const string Avatar_BrowUp = "v2/BrowUp";
-        public const string Avatar_BrowDown = "v2/BrowDown";
-        public const string Avatar_BrowInnerUp = "v2/BrowInnerUp";
-        public const string Avatar_BrowUpRight = "v2/BrowUpRight";
-        public const string Avatar_BrowUpLeft = "v2/BrowUpLeft";
-        public const string Avatar_BrowDownRight = "v2/BrowDownRight";
-        public const string Avatar_BrowDownLeft = "v2/BrowDownLeft";
-        public const string Avatar_BrowExpressionRight = "v2/BrowExpressionRight";
-        public const string Avatar_BrowExpressionLeft = "v2/BrowExpressionLeft";
-        public const string Avatar_BrowExpression = "v2/BrowExpression";
+        public const string Avatar_EyeX = Avatar_Prefix + "EyeX";
+        public const string Avatar_EyeY = Avatar_Prefix + "EyeY"; //ARKit
+        public const string Avatar_EyeLeftX = Avatar_Prefix + "EyeLeftX"; //ARKit
+        public const string Avatar_EyeLeftY = Avatar_Prefix + "EyeLeftY";
+        public const string Avatar_EyeRightX = Avatar_Prefix + "EyeRightX"; //ARKit
+        public const string Avatar_EyeRightY = Avatar_Prefix + "EyeRightY";
+        public const string Avatar_EyeOpenLeft = Avatar_Prefix + "EyeOpenLeft";
+        public const string Avatar_EyeOpenRight = Avatar_Prefix + "EyeOpenRight";
+        public const string Avatar_EyeOpen = Avatar_Prefix + "EyeOpen";
+        public const string Avatar_EyeClosedLeft = Avatar_Prefix + "EyeClosedLeft";
+        public const string Avatar_EyeClosedRight = Avatar_Prefix + "EyeClosedRight";
+        public const string Avatar_EyeClosed = Avatar_Prefix + "EyeClosed";
+        public const string Avatar_EyeLidLeft = Avatar_Prefix + "EyeLidLeft"; //ARKit
+        public const string Avatar_EyeLidRight = Avatar_Prefix + "EyeLidRight"; //ARKit
+        public const string Avatar_EyeLid = Avatar_Prefix + "EyeLid";
+        public const string Avatar_EyeSquint = Avatar_Prefix + "EyeSquint";
+        public const string Avatar_EyesSquint = Avatar_Prefix + "EyesSquint";
+        public const string Avatar_EyeSquintRight = Avatar_Prefix + "EyeSquintRight"; //ARKit
+        public const string Avatar_EyeSquintLeft = Avatar_Prefix + "EyeSquintLeft"; //ARKit
+        public const string Avatar_PupilDilation = Avatar_Prefix + "PupilDilation";
 
-        public const string Avatar_CheekSquintRight = "v2/CheekSquintRight";
-        public const string Avatar_CheekSquintLeft = "v2/CheekSquintLeft";
-        public const string Avatar_CheekPuffRight = "v2/CheekPuffRight";
-        public const string Avatar_CheekPuffLeft = "v2/CheekPuffLeft";
-        public const string Avatar_CheekPuffSuckLeft = "v2/CheekPuffSuckLeft";
-        public const string Avatar_CheekPuffSuckRight = "v2/CheekPuffSuckRight";
+        public const string Avatar_BrowPinchRight = Avatar_Prefix + "BrowPinchRight";
+        public const string Avatar_BrowPinchLeft = Avatar_Prefix + "BrowPinchLeft";
+        public const string Avatar_BrowLowererRight = Avatar_Prefix + "BrowLowererRight";
+        public const string Avatar_BrowLowererLeft = Avatar_Prefix + "BrowLowererLeft";
+        public const string Avatar_BrowInnerUpRight = Avatar_Prefix + "BrowInnerUpRight";
+        public const string Avatar_BrowInnerUpLeft = Avatar_Prefix + "BrowInnerUpLeft";
+        public const string Avatar_BrowUp = Avatar_Prefix + "BrowUp";
+        public const string Avatar_BrowDown = Avatar_Prefix + "BrowDown";
+        public const string Avatar_BrowInnerUp = Avatar_Prefix + "BrowInnerUp";
+        public const string Avatar_BrowUpRight = Avatar_Prefix + "BrowUpRight";
+        public const string Avatar_BrowUpLeft = Avatar_Prefix + "BrowUpLeft";
+        public const string Avatar_BrowDownRight = Avatar_Prefix + "BrowDownRight";
+        public const string Avatar_BrowDownLeft = Avatar_Prefix + "BrowDownLeft";
+        public const string Avatar_BrowExpressionRight = Avatar_Prefix + "BrowExpressionRight"; //ARKit
+        public const string Avatar_BrowExpressionLeft = Avatar_Prefix + "BrowExpressionLeft"; //ARKit
+        public const string Avatar_BrowExpression = Avatar_Prefix + "BrowExpression";
 
-        public const string Avatar_JawOpen = "v2/JawOpen";
-        public const string Avatar_JawRight = "v2/JawRight";
-        public const string Avatar_JawForward = "v2/JawForward";
-        public const string Avatar_JawX = "v2/JawX";
-        public const string Avatar_JawZ = "v2/JawZ";
+        public const string Avatar_CheekSquintRight = Avatar_Prefix + "CheekSquintRight";
+        public const string Avatar_CheekSquintLeft = Avatar_Prefix + "CheekSquintLeft";
+        public const string Avatar_CheekPuffRight = Avatar_Prefix + "CheekPuffRight";
+        public const string Avatar_CheekPuffLeft = Avatar_Prefix + "CheekPuffLeft"; //ARKit
+        public const string Avatar_CheekPuffSuckLeft = Avatar_Prefix + "CheekPuffSuckLeft";
+        public const string Avatar_CheekPuffSuckRight = Avatar_Prefix + "CheekPuffSuckRight";
 
-        public const string Avatar_MouthClosed = "v2/MouthClosed";
-        public const string Avatar_MouthX = "v2/MouthX";
+        public const string Avatar_JawOpen = Avatar_Prefix + "JawOpen"; //ARKit
+        public const string Avatar_JawRight = Avatar_Prefix + "JawRight";
+        public const string Avatar_JawForward = Avatar_Prefix + "JawForward"; //ARKit
+        public const string Avatar_JawX = Avatar_Prefix + "JawX"; //ARKit
+        public const string Avatar_JawZ = Avatar_Prefix + "JawZ";
 
-        public const string Avatar_MouthUpperUp = "v2/MouthUpperUp";
-        public const string Avatar_MouthUpperUpRight = "v2/MouthUpperUpRight";
-        public const string Avatar_MouthUpperUpLeft = "v2/MouthUpperUpLeft";
+        public const string Avatar_MouthClosed = Avatar_Prefix + "MouthClosed"; //ARKit
+        public const string Avatar_MouthX = Avatar_Prefix + "MouthX"; //ARKit
 
-        public const string Avatar_MouthLowerDown = "v2/MouthLowerDown";
-        public const string Avatar_MouthLowerDownRight = "v2/MouthLowerDownRight";
-        public const string Avatar_MouthLowerDownLeft = "v2/MouthLowerDownLeft";
+        public const string Avatar_MouthUpperUp = Avatar_Prefix + "MouthUpperUp"; //ARKit
+        public const string Avatar_MouthUpperUpRight = Avatar_Prefix + "MouthUpperUpRight";
+        public const string Avatar_MouthUpperUpLeft = Avatar_Prefix + "MouthUpperUpLeft";
 
-        public const string Avatar_MouthUpperDeepenRight = "v2/MouthUpperDeepenRight";
-        public const string Avatar_MouthUpperDeepenLeft = "v2/MouthUpperDeepenLeft";
-        public const string Avatar_MouthUpperRight = "v2/MouthUpperRight";
-        public const string Avatar_MouthLowerRight = "v2/MouthLowerRight";
-        public const string Avatar_MouthStretchRight = "v2/MouthStretchRight";
-        public const string Avatar_MouthStretchLeft = "v2/MouthStretchLeft";
-        public const string Avatar_MouthTightenerLeft = "v2/MouthTightenerLeft";
-        public const string Avatar_MouthTightenerRight = "v2/MouthTightenerRight";
-        public const string Avatar_MouthDimpleRight = "v2/MouthDimpleRight";
-        public const string Avatar_MouthDimpleLeft = "v2/MouthDimpleLeft";
-        public const string Avatar_MouthDimple = "v2/MouthDimple";
-        public const string Avatar_MouthRaiserUpper = "v2/MouthRaiserUpper";
-        public const string Avatar_MouthRaiserLower = "v2/MouthRaiserLower";
-        public const string Avatar_MouthPress = "v2/MouthPress";
-        public const string Avatar_MouthPressRight = "v2/MouthPressRight";
-        public const string Avatar_MouthPressLeft = "v2/MouthPressLeft";
-        public const string Avatar_SmileSadLeft = "v2/SmileSadLeft";
-        public const string Avatar_SmileSadRight = "v2/SmileSadRight";
+        public const string Avatar_MouthLowerDown = Avatar_Prefix + "MouthLowerDown"; //ARKit
+        public const string Avatar_MouthLowerDownRight = Avatar_Prefix + "MouthLowerDownRight";
+        public const string Avatar_MouthLowerDownLeft = Avatar_Prefix + "MouthLowerDownLeft";
 
-        public const string Avatar_MouthSadRight = "v2/MouthSadRight";
-        public const string Avatar_MouthSadLeft = "v2/MouthSadLeft";
-        public const string Avatar_MouthFrownRight = "v2/MouthFrownRight";
-        public const string Avatar_MouthFrownLeft = "v2/MouthFrownLeft";
-        public const string Avatar_SmileFrownRight = "v2/SmileFrownRight";
-        public const string Avatar_SmileFrownLeft = "v2/SmileFrownLeft";
+        public const string Avatar_MouthUpperDeepenRight = Avatar_Prefix + "MouthUpperDeepenRight";
+        public const string Avatar_MouthUpperDeepenLeft = Avatar_Prefix + "MouthUpperDeepenLeft";
+        public const string Avatar_MouthUpperRight = Avatar_Prefix + "MouthUpperRight";
+        public const string Avatar_MouthLowerRight = Avatar_Prefix + "MouthLowerRight";
+        public const string Avatar_MouthStretchRight = Avatar_Prefix + "MouthStretchRight"; //ARKit
+        public const string Avatar_MouthStretchLeft = Avatar_Prefix + "MouthStretchLeft"; //ARKit
+        public const string Avatar_MouthTightenerLeft = Avatar_Prefix + "MouthTightenerLeft";
+        public const string Avatar_MouthTightenerRight = Avatar_Prefix + "MouthTightenerRight";
+        public const string Avatar_MouthDimpleRight = Avatar_Prefix + "MouthDimpleRight";
+        public const string Avatar_MouthDimpleLeft = Avatar_Prefix + "MouthDimpleLeft";
+        public const string Avatar_MouthDimple = Avatar_Prefix + "MouthDimple";
+        public const string Avatar_MouthRaiserUpper = Avatar_Prefix + "MouthRaiserUpper"; //ARKit
+        public const string Avatar_MouthRaiserLower = Avatar_Prefix + "MouthRaiserLower"; //ARKit
+        public const string Avatar_MouthPress = Avatar_Prefix + "MouthPress"; //ARKit
+        public const string Avatar_MouthPressRight = Avatar_Prefix + "MouthPressRight";
+        public const string Avatar_MouthPressLeft = Avatar_Prefix + "MouthPressLeft";
+        public const string Avatar_SmileSadLeft = Avatar_Prefix + "SmileSadLeft";
+        public const string Avatar_SmileSadRight = Avatar_Prefix + "SmileSadRight";
 
-        public const string Avatar_LipSuckUpper = "v2/LipSuckUpper";
-        public const string Avatar_LipSuckUpperRight = "v2/LipSuckUpperRight";
-        public const string Avatar_LipSuckUpperLeft = "v2/LipSuckUpperLeft";
+        public const string Avatar_MouthSadRight = Avatar_Prefix + "MouthSadRight";
+        public const string Avatar_MouthSadLeft = Avatar_Prefix + "MouthSadLeft";
+        public const string Avatar_MouthFrownRight = Avatar_Prefix + "MouthFrownRight";
+        public const string Avatar_MouthFrownLeft = Avatar_Prefix + "MouthFrownLeft";
+        public const string Avatar_SmileFrownRight = Avatar_Prefix + "SmileFrownRight"; //ARKit
+        public const string Avatar_SmileFrownLeft = Avatar_Prefix + "SmileFrownLeft"; //ARKit
 
-        public const string Avatar_LipSuckLower = "v2/LipSuckLower";
-        public const string Avatar_LipSuckLowerRight = "v2/LipSuckLowerRight";
-        public const string Avatar_LipSuckLowerLeft = "v2/LipSuckLowerLeft";
+        public const string Avatar_LipSuckUpper = Avatar_Prefix + "LipSuckUpper"; //ARKit
+        public const string Avatar_LipSuckUpperRight = Avatar_Prefix + "LipSuckUpperRight";
+        public const string Avatar_LipSuckUpperLeft = Avatar_Prefix + "LipSuckUpperLeft";
 
-        public const string Avatar_LipFunnel = "v2/LipFunnel";
-        public const string Avatar_LipFunnelUpperRight = "v2/LipFunnelUpperRight";
-        public const string Avatar_LipFunnelUpperLeft = "v2/LipFunnelUpperLeft";
-        public const string Avatar_LipFunnelLowerRight = "v2/LipFunnelLowerRight";
-        public const string Avatar_LipFunnelLowerLeft = "v2/LipFunnelLowerLeft";
+        public const string Avatar_LipSuckLower = Avatar_Prefix + "LipSuckLower"; //ARKit
+        public const string Avatar_LipSuckLowerRight = Avatar_Prefix + "LipSuckLowerRight";
+        public const string Avatar_LipSuckLowerLeft = Avatar_Prefix + "LipSuckLowerLeft";
 
-        public const string Avatar_LipPucker = "v2/LipPucker";
-        public const string Avatar_LipPuckerUpperRight = "v2/LipPuckerUpperRight";
-        public const string Avatar_LipPuckerUpperLeft = "v2/LipPuckerUpperLeft";
-        public const string Avatar_LipPuckerLowerRight = "v2/LipPuckerLowerRight";
-        public const string Avatar_LipPuckerLowerLeft = "v2/LipPuckerLowerLeft";
+        public const string Avatar_LipFunnel = Avatar_Prefix + "LipFunnel"; //ARKit
+        public const string Avatar_LipFunnelUpperRight = Avatar_Prefix + "LipFunnelUpperRight";
+        public const string Avatar_LipFunnelUpperLeft = Avatar_Prefix + "LipFunnelUpperLeft";
+        public const string Avatar_LipFunnelLowerRight = Avatar_Prefix + "LipFunnelLowerRight";
+        public const string Avatar_LipFunnelLowerLeft = Avatar_Prefix + "LipFunnelLowerLeft";
 
-        public const string Avatar_NoseSneer = "v2/NoseSneer";
-        public const string Avatar_NoseSneerRight = "v2/NoseSneerRight";
-        public const string Avatar_NoseSneerLeft = "v2/NoseSneerLeft";
+        public const string Avatar_LipPucker = Avatar_Prefix + "LipPucker"; //ARKit
+        public const string Avatar_LipPuckerUpperRight = Avatar_Prefix + "LipPuckerUpperRight";
+        public const string Avatar_LipPuckerUpperLeft = Avatar_Prefix + "LipPuckerUpperLeft";
+        public const string Avatar_LipPuckerLowerRight = Avatar_Prefix + "LipPuckerLowerRight";
+        public const string Avatar_LipPuckerLowerLeft = Avatar_Prefix + "LipPuckerLowerLeft";
 
-        public const string Avatar_TongueOut = "v2/TongueOut";
-        public const string Avatar_TongueRoll = "v2/TongueRoll";
-        public const string Avatar_TongueX = "v2/TongueX";
-        public const string Avatar_TongueY = "v2/TongueY";
+        public const string Avatar_NoseSneer = Avatar_Prefix + "NoseSneer"; //ARKit
+        public const string Avatar_NoseSneerRight = Avatar_Prefix + "NoseSneerRight";
+        public const string Avatar_NoseSneerLeft = Avatar_Prefix + "NoseSneerLeft";
+
+        public const string Avatar_TongueOut = Avatar_Prefix + "TongueOut"; //ARKit
+        public const string Avatar_TongueRoll = Avatar_Prefix + "TongueRoll";
+        public const string Avatar_TongueX = Avatar_Prefix + "TongueX";
+        public const string Avatar_TongueY = Avatar_Prefix + "TongueY";
         
         public const string Param_EyeTrackingActive = "EyeTrackingActive";
         public const string Param_LipTrackingActive = "LipTrackingActive";
@@ -191,6 +194,7 @@ namespace XREngine.Data.Components
             ReceiverAddresses.Add(Avatar_EyesSquint, Avatar_EyesSquint_Method);
             ReceiverAddresses.Add(Avatar_EyeSquintRight, Avatar_EyeSquintRight_Method);
             ReceiverAddresses.Add(Avatar_EyeSquintLeft, Avatar_EyeSquintLeft_Method);
+            ReceiverAddresses.Add(Avatar_PupilDilation, Avatar_PupilDilation_Method);
 
             // Brow parameters
             ReceiverAddresses.Add(Avatar_BrowPinchRight, Avatar_BrowPinchRight_Method);
@@ -215,6 +219,8 @@ namespace XREngine.Data.Components
             ReceiverAddresses.Add(Avatar_CheekSquintLeft, Avatar_CheekSquintLeft_Method);
             ReceiverAddresses.Add(Avatar_CheekPuffRight, Avatar_CheekPuffRight_Method);
             ReceiverAddresses.Add(Avatar_CheekPuffLeft, Avatar_CheekPuffLeft_Method);
+            ReceiverAddresses.Add(Avatar_CheekPuffSuckLeft, Avatar_CheekPuffSuckLeft_Method);
+            ReceiverAddresses.Add(Avatar_CheekPuffSuckRight, Avatar_CheekPuffSuckRight_Method);
 
             // Jaw parameters
             ReceiverAddresses.Add(Avatar_JawOpen, Avatar_JawOpen_Method);
@@ -225,48 +231,130 @@ namespace XREngine.Data.Components
 
             // Mouth parameters
             ReceiverAddresses.Add(Avatar_MouthClosed, Avatar_MouthClosed_Method);
+            ReceiverAddresses.Add(Avatar_MouthX, Avatar_MouthX_Method);
+            ReceiverAddresses.Add(Avatar_MouthUpperUp, Avatar_MouthUpperUp_Method);
             ReceiverAddresses.Add(Avatar_MouthUpperUpRight, Avatar_MouthUpperUpRight_Method);
             ReceiverAddresses.Add(Avatar_MouthUpperUpLeft, Avatar_MouthUpperUpLeft_Method);
-            ReceiverAddresses.Add(Avatar_MouthUpperDeepenRight, Avatar_MouthUpperDeepenRight_Method);
-            ReceiverAddresses.Add(Avatar_MouthUpperDeepenLeft, Avatar_MouthUpperDeepenLeft_Method);
+            ReceiverAddresses.Add(Avatar_MouthLowerDown, Avatar_MouthLowerDown_Method);
             ReceiverAddresses.Add(Avatar_MouthLowerDownRight, Avatar_MouthLowerDownRight_Method);
             ReceiverAddresses.Add(Avatar_MouthLowerDownLeft, Avatar_MouthLowerDownLeft_Method);
+            ReceiverAddresses.Add(Avatar_MouthUpperDeepenRight, Avatar_MouthUpperDeepenRight_Method);
+            ReceiverAddresses.Add(Avatar_MouthUpperDeepenLeft, Avatar_MouthUpperDeepenLeft_Method);
             ReceiverAddresses.Add(Avatar_MouthUpperRight, Avatar_MouthUpperRight_Method);
             ReceiverAddresses.Add(Avatar_MouthLowerRight, Avatar_MouthLowerRight_Method);
-            ReceiverAddresses.Add(Avatar_MouthFrownRight, Avatar_MouthFrownRight_Method);
-            ReceiverAddresses.Add(Avatar_MouthFrownLeft, Avatar_MouthFrownLeft_Method);
             ReceiverAddresses.Add(Avatar_MouthStretchRight, Avatar_MouthStretchRight_Method);
             ReceiverAddresses.Add(Avatar_MouthStretchLeft, Avatar_MouthStretchLeft_Method);
+            ReceiverAddresses.Add(Avatar_MouthTightenerLeft, Avatar_MouthTightenerLeft_Method);
+            ReceiverAddresses.Add(Avatar_MouthTightenerRight, Avatar_MouthTightenerRight_Method);
             ReceiverAddresses.Add(Avatar_MouthDimpleRight, Avatar_MouthDimpleRight_Method);
             ReceiverAddresses.Add(Avatar_MouthDimpleLeft, Avatar_MouthDimpleLeft_Method);
+            ReceiverAddresses.Add(Avatar_MouthDimple, Avatar_MouthDimple_Method);
             ReceiverAddresses.Add(Avatar_MouthRaiserUpper, Avatar_MouthRaiserUpper_Method);
             ReceiverAddresses.Add(Avatar_MouthRaiserLower, Avatar_MouthRaiserLower_Method);
+            ReceiverAddresses.Add(Avatar_MouthPress, Avatar_MouthPress_Method);
             ReceiverAddresses.Add(Avatar_MouthPressRight, Avatar_MouthPressRight_Method);
             ReceiverAddresses.Add(Avatar_MouthPressLeft, Avatar_MouthPressLeft_Method);
+            ReceiverAddresses.Add(Avatar_SmileSadLeft, Avatar_SmileSadLeft_Method);
+            ReceiverAddresses.Add(Avatar_SmileSadRight, Avatar_SmileSadRight_Method);
             ReceiverAddresses.Add(Avatar_MouthSadRight, Avatar_MouthSadRight_Method);
             ReceiverAddresses.Add(Avatar_MouthSadLeft, Avatar_MouthSadLeft_Method);
+            ReceiverAddresses.Add(Avatar_MouthFrownRight, Avatar_MouthFrownRight_Method);
+            ReceiverAddresses.Add(Avatar_MouthFrownLeft, Avatar_MouthFrownLeft_Method);
+            ReceiverAddresses.Add(Avatar_SmileFrownRight, Avatar_SmileFrownRight_Method);
+            ReceiverAddresses.Add(Avatar_SmileFrownLeft, Avatar_SmileFrownLeft_Method);
 
             // Lip parameters
+            ReceiverAddresses.Add(Avatar_LipSuckUpper, Avatar_LipSuckUpper_Method);
             ReceiverAddresses.Add(Avatar_LipSuckUpperRight, Avatar_LipSuckUpperRight_Method);
             ReceiverAddresses.Add(Avatar_LipSuckUpperLeft, Avatar_LipSuckUpperLeft_Method);
+            ReceiverAddresses.Add(Avatar_LipSuckLower, Avatar_LipSuckLower_Method);
             ReceiverAddresses.Add(Avatar_LipSuckLowerRight, Avatar_LipSuckLowerRight_Method);
             ReceiverAddresses.Add(Avatar_LipSuckLowerLeft, Avatar_LipSuckLowerLeft_Method);
+            ReceiverAddresses.Add(Avatar_LipFunnel, Avatar_LipFunnel_Method);
             ReceiverAddresses.Add(Avatar_LipFunnelUpperRight, Avatar_LipFunnelUpperRight_Method);
             ReceiverAddresses.Add(Avatar_LipFunnelUpperLeft, Avatar_LipFunnelUpperLeft_Method);
             ReceiverAddresses.Add(Avatar_LipFunnelLowerRight, Avatar_LipFunnelLowerRight_Method);
             ReceiverAddresses.Add(Avatar_LipFunnelLowerLeft, Avatar_LipFunnelLowerLeft_Method);
+            ReceiverAddresses.Add(Avatar_LipPucker, Avatar_LipPucker_Method);
             ReceiverAddresses.Add(Avatar_LipPuckerUpperRight, Avatar_LipPuckerUpperRight_Method);
             ReceiverAddresses.Add(Avatar_LipPuckerUpperLeft, Avatar_LipPuckerUpperLeft_Method);
             ReceiverAddresses.Add(Avatar_LipPuckerLowerRight, Avatar_LipPuckerLowerRight_Method);
             ReceiverAddresses.Add(Avatar_LipPuckerLowerLeft, Avatar_LipPuckerLowerLeft_Method);
 
             // Nose parameters
+            ReceiverAddresses.Add(Avatar_NoseSneer, Avatar_NoseSneer_Method);
             ReceiverAddresses.Add(Avatar_NoseSneerRight, Avatar_NoseSneerRight_Method);
             ReceiverAddresses.Add(Avatar_NoseSneerLeft, Avatar_NoseSneerLeft_Method);
 
             // Tongue parameters
             ReceiverAddresses.Add(Avatar_TongueOut, Avatar_TongueOut_Method);
+            ReceiverAddresses.Add(Avatar_TongueRoll, Avatar_TongueRoll_Method);
+            ReceiverAddresses.Add(Avatar_TongueX, Avatar_TongueX_Method);
+            ReceiverAddresses.Add(Avatar_TongueY, Avatar_TongueY_Method);
         }
+
+        private void Avatar_TongueY_Method(OscMessageValues values)
+            => GetAnimStateMachine()?.SetFloat(Avatar_TongueY, values.ReadFloatElement(0));
+
+        private void Avatar_TongueX_Method(OscMessageValues values)
+            => GetAnimStateMachine()?.SetFloat(Avatar_TongueX, values.ReadFloatElement(0));
+
+        private void Avatar_TongueRoll_Method(OscMessageValues values)
+            => GetAnimStateMachine()?.SetFloat(Avatar_TongueRoll, values.ReadFloatElement(0));
+
+        private void Avatar_LipPucker_Method(OscMessageValues values)
+            => GetAnimStateMachine()?.SetFloat(Avatar_LipPucker, values.ReadFloatElement(0));
+
+        private void Avatar_LipFunnel_Method(OscMessageValues values)
+            => GetAnimStateMachine()?.SetFloat(Avatar_LipFunnel, values.ReadFloatElement(0));
+
+        private void Avatar_LipSuckLower_Method(OscMessageValues values)
+            => GetAnimStateMachine()?.SetFloat(Avatar_LipSuckLower, values.ReadFloatElement(0));
+
+        private void Avatar_LipSuckUpper_Method(OscMessageValues values)
+            => GetAnimStateMachine()?.SetFloat(Avatar_LipSuckUpper, values.ReadFloatElement(0));
+
+        private void Avatar_SmileFrownLeft_Method(OscMessageValues values)
+            => GetAnimStateMachine()?.SetFloat(Avatar_SmileFrownLeft, values.ReadFloatElement(0));
+
+        private void Avatar_SmileFrownRight_Method(OscMessageValues values)
+            => GetAnimStateMachine()?.SetFloat(Avatar_SmileFrownRight, values.ReadFloatElement(0));
+
+        private void Avatar_SmileSadRight_Method(OscMessageValues values)
+            => GetAnimStateMachine()?.SetFloat(Avatar_SmileSadRight, values.ReadFloatElement(0));
+
+        private void Avatar_SmileSadLeft_Method(OscMessageValues values)
+            => GetAnimStateMachine()?.SetFloat(Avatar_SmileSadLeft, values.ReadFloatElement(0));
+
+        private void Avatar_MouthPress_Method(OscMessageValues values)
+            => GetAnimStateMachine()?.SetFloat(Avatar_MouthPress, values.ReadFloatElement(0));
+
+        private void Avatar_MouthDimple_Method(OscMessageValues values)
+            => GetAnimStateMachine()?.SetFloat(Avatar_MouthDimple, values.ReadFloatElement(0));
+
+        private void Avatar_MouthTightenerRight_Method(OscMessageValues values)
+            => GetAnimStateMachine()?.SetFloat(Avatar_MouthTightenerRight, values.ReadFloatElement(0));
+
+        private void Avatar_MouthTightenerLeft_Method(OscMessageValues values)
+            => GetAnimStateMachine()?.SetFloat(Avatar_MouthTightenerLeft, values.ReadFloatElement(0));
+
+        private void Avatar_MouthLowerDown_Method(OscMessageValues values)
+            => GetAnimStateMachine()?.SetFloat(Avatar_MouthLowerDown, values.ReadFloatElement(0));
+
+        private void Avatar_MouthUpperUp_Method(OscMessageValues values)
+            => GetAnimStateMachine()?.SetFloat(Avatar_MouthUpperUp, values.ReadFloatElement(0));
+
+        private void Avatar_MouthX_Method(OscMessageValues values)
+            => GetAnimStateMachine()?.SetFloat(Avatar_MouthX, values.ReadFloatElement(0));
+
+        private void Avatar_CheekPuffSuckRight_Method(OscMessageValues values)
+            => GetAnimStateMachine()?.SetFloat(Avatar_CheekPuffSuckRight, values.ReadFloatElement(0));
+
+        private void Avatar_CheekPuffSuckLeft_Method(OscMessageValues values)
+            => GetAnimStateMachine()?.SetFloat(Avatar_CheekPuffSuckLeft, values.ReadFloatElement(0));
+
+        private void Avatar_PupilDilation_Method(OscMessageValues values)
+            => GetAnimStateMachine()?.SetFloat(Avatar_PupilDilation, values.ReadFloatElement(0));
 
         #region Eye Methods
         private void Avatar_EyeY_Method(OscMessageValues values)
@@ -441,6 +529,8 @@ namespace XREngine.Data.Components
         #endregion
 
         #region Nose Methods
+        private void Avatar_NoseSneer_Method(OscMessageValues values)
+            => GetAnimStateMachine()?.SetFloat(Avatar_NoseSneer, values.ReadFloatElement(0));
         private void Avatar_NoseSneerRight_Method(OscMessageValues values)
             => GetAnimStateMachine()?.SetFloat(Avatar_NoseSneerRight, values.ReadFloatElement(0));
         private void Avatar_NoseSneerLeft_Method(OscMessageValues values)
@@ -483,7 +573,7 @@ namespace XREngine.Data.Components
             sm.NewBool(Param_StateTrackingActive, true);
             sm.NewBool(Param_StateVisemesEnable, true);
             sm.NewBool(Param_SmoothingLocal, false);
-            sm.NewBool(Param_FaceTrackingEmulation, false);
+            sm.NewBool(Param_FaceTrackingEmulation, true);
             sm.NewFloat(Avatar_EyeLeftX, 0.0f);
             sm.NewFloat(Avatar_EyeRightX, 0.0f);
             sm.NewFloat(Avatar_EyeY, 0.0f);
@@ -590,6 +680,7 @@ namespace XREngine.Data.Components
             [
                 MakeTrackingStateLayer(),
                 MakeFaceTrackingLayer(),
+                MakeEyeTrackingLayer(),
             ];
         }
 
@@ -623,6 +714,281 @@ namespace XREngine.Data.Components
             sm.NewFloat($"{name}4", 0.0f);
             sm.NewFloat($"{name}8", 0.0f);
         }
+
+        private static AnimLayer MakeEyeTrackingLayer()
+        {
+            AnimLayer layer = new()
+            {
+                ApplyType = AnimLayer.EApplyType.Override,
+            };
+            AnimState state = new("Eye Tracking")
+            {
+                Motion = new BlendTreeDirect()
+                {
+                    Children =
+                    [
+                        //new()
+                        //{
+                        //    Motion = ResetAdditiveAnimator(),
+                        //    WeightParameterName = Param_DirectBlend
+                        //},
+                        new()
+                        {
+                            Motion = MakeEyeLeftRotation(),
+                            WeightParameterName = Param_DirectBlend
+                        },
+                        new()
+                        {
+                            Motion = MakeEyeRightRotation(),
+                            WeightParameterName = Param_DirectBlend
+                        },
+                    ]
+                }
+            };
+            layer.States.Add(state);
+            layer.InitialState = state;
+            return layer;
+        }
+
+        private static AnimationClip ResetAdditiveAnimator() => new()
+        {
+            Name = "Reset Additive Animator",
+            Looped = true,
+            RootMember = new AnimationMember("Set Humanoid Values", EAnimationMemberType.Group)
+            {
+                Children =
+                [
+                    new AnimationMember("SetFloat", EAnimationMemberType.Method)
+                    {
+                        MethodArguments = [Avatar_EyeLeftX, 0.0f],
+                        AnimatedMethodArgumentIndex = 1,
+                    },
+                    new AnimationMember("SetFloat", EAnimationMemberType.Method)
+                    {
+                        MethodArguments = [Avatar_EyeRightX, 0.0f],
+                        AnimatedMethodArgumentIndex = 1,
+                    },
+                    new AnimationMember("SetFloat", EAnimationMemberType.Method)
+                    {
+                        MethodArguments = [Avatar_EyeY, 0.0f],
+                        AnimatedMethodArgumentIndex = 1,
+                    },
+                ]
+            }
+        };
+
+        private static BlendTree2D MakeEyeRightRotation() => new()
+        {
+            BlendType = BlendTree2D.EBlendType.Directional,
+            XParameterName = Avatar_EyeRightX,
+            YParameterName = Avatar_EyeY,
+            Children =
+            [
+                new()
+                {
+                    Motion = EyeLookNeutralRightRot(),
+                    PositionX = 0.0f,
+                    PositionY = 0.0f,
+                },
+                new()
+                {
+                    Motion = EyeLookOutRightRot(),
+                    PositionX = 0.7f,
+                    PositionY = 0.0f,
+                },
+                new()
+                {
+                    Motion = EyeLookInRightRot(),
+                    PositionX = -0.7f,
+                    PositionY = 0.0f,
+                },
+                new()
+                {
+                    Motion = EyeLookUpRightRot(),
+                    PositionX = 0.0f,
+                    PositionY = 0.7f,
+                },
+                new()
+                {
+                    Motion = EyeLookDownRightRot(),
+                    PositionX = 0.0f,
+                    PositionY = -0.7f,
+                },
+            ]
+        };
+
+        private static AnimationClip EyeLookDownRightRot() => new()
+        {
+            Name = "Eye Look Down Right Rot",
+            Looped = true,
+            RootMember = new AnimationMember("SetHumanoidValue", EAnimationMemberType.Method)
+            {
+                MethodArguments = [EHumanoidValue.RightEyeDownUp, -3.5f],
+                AnimatedMethodArgumentIndex = 1,
+            },
+        };
+
+        private static AnimationClip EyeLookUpRightRot() => new()
+        {
+            Name = "Eye Look Up Right Rot",
+            Looped = true,
+            RootMember = new AnimationMember("SetHumanoidValue", EAnimationMemberType.Method)
+            {
+                MethodArguments = [EHumanoidValue.RightEyeDownUp, 2.8f],
+                AnimatedMethodArgumentIndex = 1,
+            },
+        };
+
+        private static AnimationClip EyeLookInRightRot() => new()
+        {
+            Name = "Eye Look In Right Rot",
+            Looped = true,
+            RootMember = new AnimationMember("SetHumanoidValue", EAnimationMemberType.Method)
+            {
+                MethodArguments = [EHumanoidValue.RightEyeInOut, -2.0f],
+                AnimatedMethodArgumentIndex = 1,
+            },
+        };
+
+        private static AnimationClip EyeLookOutRightRot() => new()
+        {
+            Name = "Eye Look Out Right Rot",
+            Looped = true,
+            RootMember = new AnimationMember("SetHumanoidValue", EAnimationMemberType.Method)
+            {
+                MethodArguments = [EHumanoidValue.RightEyeInOut, 2.0f],
+                AnimatedMethodArgumentIndex = 1,
+            },
+        };
+
+        private static AnimationClip EyeLookNeutralRightRot() => new()
+        {
+            Name = "Eye Look Neutral Right Rot",
+            Looped = true,
+            RootMember = new AnimationMember("Set Humanoid Values", EAnimationMemberType.Group)
+            {
+                Children =
+                [
+                    new AnimationMember("SetHumanoidValue", EAnimationMemberType.Method)
+                    {
+                        MethodArguments = [EHumanoidValue.RightEyeInOut, 0.0f],
+                        AnimatedMethodArgumentIndex = 1,
+                    },
+                    new AnimationMember("SetHumanoidValue", EAnimationMemberType.Method)
+                    {
+                        MethodArguments = [EHumanoidValue.RightEyeDownUp, 0.0f],
+                        AnimatedMethodArgumentIndex = 1,
+                    },
+                ]
+            }
+        };
+
+        private static BlendTree2D MakeEyeLeftRotation() => new()
+        {
+            BlendType = BlendTree2D.EBlendType.Directional,
+            XParameterName = Avatar_EyeLeftX,
+            YParameterName = Avatar_EyeY,
+            Children =
+            [
+                new()
+                {
+                    Motion = EyeLookNeutralLeftRot(),
+                    PositionX = 0.0f,
+                    PositionY = 0.0f,
+                },
+                new()
+                {
+                    Motion = EyeLookOutLeftRot(),
+                    PositionX = -0.7f,
+                    PositionY = 0.0f,
+                },
+                new()
+                {
+                    Motion = EyeLookInLeftRot(),
+                    PositionX = 0.7f,
+                    PositionY = 0.0f,
+                },
+                new()
+                {
+                    Motion = EyeLookUpLeftRot(),
+                    PositionX = 0.0f,
+                    PositionY = 0.7f,
+                },
+                new()
+                {
+                    Motion = EyeLookDownLeftRot(),
+                    PositionX = 0.0f,
+                    PositionY = -0.7f,
+                },
+                        
+            ]
+        };
+
+        private static AnimationClip EyeLookDownLeftRot() => new()
+        {
+            Name = "Eye Look Down Left Rot",
+            Looped = true,
+            RootMember = new AnimationMember("SetHumanoidValue", EAnimationMemberType.Method)
+            {
+                MethodArguments = [EHumanoidValue.LeftEyeDownUp, -3.5f],
+                AnimatedMethodArgumentIndex = 1,
+            },
+        };
+
+        private static AnimationClip EyeLookUpLeftRot() => new()
+        {
+            Name = "Eye Look Up Left Rot",
+            Looped = true,
+            RootMember = new AnimationMember("SetHumanoidValue", EAnimationMemberType.Method)
+            {
+                MethodArguments = [EHumanoidValue.LeftEyeDownUp, 2.8f],
+                AnimatedMethodArgumentIndex = 1,
+            },
+        };
+
+        private static AnimationClip EyeLookInLeftRot() => new()
+        {
+            Name = "Eye Look In Left Rot",
+            Looped = true,
+            RootMember = new AnimationMember("SetHumanoidValue", EAnimationMemberType.Method)
+            {
+                MethodArguments = [EHumanoidValue.LeftEyeInOut, -2.0f],
+                AnimatedMethodArgumentIndex = 1,
+            },
+        };
+
+        private static AnimationClip EyeLookOutLeftRot() => new()
+        {
+            Name = "Eye Look Out Left Rot",
+            Looped = true,
+            RootMember = new AnimationMember("SetHumanoidValue", EAnimationMemberType.Method)
+            {
+                MethodArguments = [EHumanoidValue.LeftEyeInOut, 2.0f],
+                AnimatedMethodArgumentIndex = 1,
+            },
+        };
+
+        private static AnimationClip EyeLookNeutralLeftRot() => new()
+        {
+            Name = "Eye Look Neutral Left Rot",
+            Looped = true,
+            RootMember = new AnimationMember("Set Humanoid Values", EAnimationMemberType.Group)
+            {
+                Children =
+                [
+                    new AnimationMember("SetHumanoidValue", EAnimationMemberType.Method)
+                    {
+                        MethodArguments = [EHumanoidValue.LeftEyeInOut, 0.0f],
+                        AnimatedMethodArgumentIndex = 1,
+                    },
+                    new AnimationMember("SetHumanoidValue", EAnimationMemberType.Method)
+                    {
+                        MethodArguments = [EHumanoidValue.LeftEyeDownUp, 0.0f],
+                        AnimatedMethodArgumentIndex = 1,
+                    },
+                ]
+            }
+        };
 
         private static AnimLayer MakeFaceTrackingLayer()
         {
@@ -667,25 +1033,27 @@ namespace XREngine.Data.Components
                 new(Param_EyeTrackingActive, EComparison.LessThan, tolerance),
             ];
 
+            var any = layer.AnyState;
+
             AnimState faceTrackingDisabledState = new("Face Tracking Disabled");
-            layer.AnyState.AddTransitionTo(faceTrackingDisabledState, faceTrackingDisabledConditions);
+            any.AddTransitionTo(faceTrackingDisabledState, faceTrackingDisabledConditions);
 
             AnimState facialExpressionsDisabledState = new("Facial Expressions Disabled");
-            layer.AnyState.AddTransitionTo(facialExpressionsDisabledState, facialExpressionsDisabledConditionsBecauseEye);
-            layer.AnyState.AddTransitionTo(facialExpressionsDisabledState, facialExpressionsDisabledConditionsBecauseLip);
+            any.AddTransitionTo(facialExpressionsDisabledState, facialExpressionsDisabledConditionsBecauseEye);
+            any.AddTransitionTo(facialExpressionsDisabledState, facialExpressionsDisabledConditionsBecauseLip);
 
             AnimState visemesEnabledState = new("Visemes Enabled");
-            layer.AnyState.AddTransitionTo(visemesEnabledState, visemesEnabledConditions);
+            any.AddTransitionTo(visemesEnabledState, visemesEnabledConditions);
 
             AnimState visemesDisabledState = new("Visemes Disabled");
-            layer.AnyState.AddTransitionTo(visemesDisabledState, visemesDisabledConditions);
+            any.AddTransitionTo(visemesDisabledState, visemesDisabledConditions);
 
             AnimState eyeTrackingEnabledState = new("Eye Tracking Enabled");
-            var eyeEnabledTransition = layer.AnyState.AddTransitionTo(eyeTrackingEnabledState, eyeTrackingEnabledConditions);
+            var eyeEnabledTransition = any.AddTransitionTo(eyeTrackingEnabledState, eyeTrackingEnabledConditions);
             eyeEnabledTransition.CanTransitionToSelf = false;
 
             AnimState eyeTrackingDisabledState = new("Eye Tracking Disabled");
-            var eyeDisabledTransition = layer.AnyState.AddTransitionTo(eyeTrackingDisabledState, eyeTrackingDisabledConditions);
+            var eyeDisabledTransition = any.AddTransitionTo(eyeTrackingDisabledState, eyeTrackingDisabledConditions);
             eyeDisabledTransition.CanTransitionToSelf = false;
 
             AnimState initState = new("Init");
@@ -1148,64 +1516,59 @@ namespace XREngine.Data.Components
         //    };
         //}
 
-        private static AnimationClip MakeResetFTAnimator()
+        private static AnimationClip MakeResetFTAnimator() => new()
         {
-            AnimationClip clip = new()
+            Name = "Reset_FT_Animator",
+            LengthInSeconds = 0.0f,
+            Looped = false,
+            RootMember = new AnimationMember("SetFloat Group", EAnimationMemberType.Group)
             {
-                Name = "Reset_FT_Animator",
-                LengthInSeconds = 0.0f,
-                Looped = false,
-                RootMember = new AnimationMember("SetFloat Group", EAnimationMemberType.Group)
-                {
-                    Children = ClearFloats
-                    (
-                        Avatar_BrowExpressionLeft,
-                        Avatar_BrowExpressionRight,
-                        Avatar_CheekPuffLeft,
-                        Avatar_CheekPuffSuckLeft,
-                        Avatar_CheekPuffSuckRight,
-                        Avatar_EyeLeftX,
-                        Avatar_EyeLidLeft,
-                        Avatar_EyeLidRight,
-                        Avatar_EyeRightX,
-                        Avatar_EyeSquintLeft,
-                        Avatar_EyeSquintRight,
-                        Avatar_EyeY,
-                        Avatar_JawForward,
-                        Avatar_JawOpen,
-                        Avatar_JawX,
-                        Avatar_LipFunnel,
-                        Avatar_LipPucker,
-                        Avatar_LipSuckLower,
-                        Avatar_LipSuckUpper,
-                        Avatar_MouthClosed,
-                        Avatar_MouthDimple,
-                        Avatar_MouthLowerDown,
-                        Avatar_MouthPress,
-                        Avatar_MouthRaiserLower,
-                        Avatar_MouthRaiserUpper,
-                        Avatar_MouthStretchLeft,
-                        Avatar_MouthStretchRight,
-                        Avatar_MouthTightenerLeft,
-                        Avatar_MouthTightenerRight,
-                        Avatar_MouthUpperUp,
-                        Avatar_MouthX,
-                        Avatar_NoseSneer,
-                        Avatar_PupilDilation,
-                        Avatar_SmileFrownLeft,
-                        Avatar_SmileFrownRight,
-                        Avatar_SmileSadLeft,
-                        Avatar_SmileSadRight,
-                        Avatar_TongueOut,
-                        Avatar_TongueRoll,
-                        Avatar_TongueX,
-                        Avatar_TongueY
-                    )
-                }
-            };
-
-            return clip;
-        }
+                Children = ClearFloats
+                (
+                    Avatar_BrowExpressionLeft,
+                    Avatar_BrowExpressionRight,
+                    Avatar_CheekPuffLeft,
+                    Avatar_CheekPuffSuckLeft,
+                    Avatar_CheekPuffSuckRight,
+                    Avatar_EyeLeftX,
+                    Avatar_EyeLidLeft,
+                    Avatar_EyeLidRight,
+                    Avatar_EyeRightX,
+                    Avatar_EyeSquintLeft,
+                    Avatar_EyeSquintRight,
+                    Avatar_EyeY,
+                    Avatar_JawForward,
+                    Avatar_JawOpen,
+                    Avatar_JawX,
+                    Avatar_LipFunnel,
+                    Avatar_LipPucker,
+                    Avatar_LipSuckLower,
+                    Avatar_LipSuckUpper,
+                    Avatar_MouthClosed,
+                    Avatar_MouthDimple,
+                    Avatar_MouthLowerDown,
+                    Avatar_MouthPress,
+                    Avatar_MouthRaiserLower,
+                    Avatar_MouthRaiserUpper,
+                    Avatar_MouthStretchLeft,
+                    Avatar_MouthStretchRight,
+                    Avatar_MouthTightenerLeft,
+                    Avatar_MouthTightenerRight,
+                    Avatar_MouthUpperUp,
+                    Avatar_MouthX,
+                    Avatar_NoseSneer,
+                    Avatar_PupilDilation,
+                    Avatar_SmileFrownLeft,
+                    Avatar_SmileFrownRight,
+                    Avatar_SmileSadLeft,
+                    Avatar_SmileSadRight,
+                    Avatar_TongueOut,
+                    Avatar_TongueRoll,
+                    Avatar_TongueX,
+                    Avatar_TongueY
+                )
+            }
+        };
 
         private static EventList<AnimationMember> ClearFloats(params string[] names)
         {

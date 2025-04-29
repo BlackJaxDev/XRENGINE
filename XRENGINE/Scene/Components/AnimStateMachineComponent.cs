@@ -1,5 +1,6 @@
 ﻿using XREngine.Animation;
 using XREngine.Components;
+using XREngine.Scene.Components.Animation;
 
 namespace XREngine.Scene.Components
 {
@@ -11,6 +12,16 @@ namespace XREngine.Scene.Components
             get => _stateMachine;
             set => SetField(ref _stateMachine, value);
         }
+
+        private HumanoidComponent? _humanoid;
+        public HumanoidComponent? Humanoid
+        {
+            get => _humanoid;
+            set => SetField(ref _humanoid, value);
+        }
+
+        private HumanoidComponent? GetHumanoidComponent()
+            => Humanoid ?? (TryGetSiblingComponent<HumanoidComponent>(out var humanoid) ? humanoid : null);
 
         protected internal override void OnComponentActivated()
         {
@@ -47,5 +58,8 @@ namespace XREngine.Scene.Components
             if (sm.Variables.TryGetValue(name, out var variable))
                 variable.BoolValue = value;
         }
+
+        public void SetHumanoidValue(EHumanoidValue name, float value)
+            => GetHumanoidComponent()?.SetValue(name, value);
     }
 }
