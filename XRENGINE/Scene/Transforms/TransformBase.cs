@@ -579,20 +579,14 @@ namespace XREngine.Scene.Transforms
         /// This transform's position in local space relative to the parent.
         /// </summary>
         public Vector3 LocalTranslation => LocalMatrix.Translation;
+
         public virtual Quaternion LocalRotation => Quaternion.CreateFromRotationMatrix(LocalMatrix);
         public virtual Quaternion WorldRotation => Quaternion.CreateFromRotationMatrix(WorldMatrix);
+
         public virtual Quaternion InverseLocalRotation => Quaternion.CreateFromRotationMatrix(InverseLocalMatrix);
         public virtual Quaternion InverseWorldRotation => Quaternion.CreateFromRotationMatrix(InverseWorldMatrix);
-        public Vector3 LossyWorldScale => ExtractScale(WorldMatrix);
 
-        public static Vector3 ExtractScale(Matrix4x4 matrix)
-        {
-            Vector3 scale;
-            scale.X = new Vector3(matrix.M11, matrix.M12, matrix.M13).Length();
-            scale.Y = new Vector3(matrix.M21, matrix.M22, matrix.M23).Length();
-            scale.Z = new Vector3(matrix.M31, matrix.M32, matrix.M33).Length();
-            return scale;
-        }
+        public Vector3 LossyWorldScale => WorldMatrix.ExtractScale();
 
         private Matrix4x4 _renderMatrix = Matrix4x4.Identity;
         public Matrix4x4 RenderMatrix

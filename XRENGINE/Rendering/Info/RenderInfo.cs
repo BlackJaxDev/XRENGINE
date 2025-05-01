@@ -42,7 +42,7 @@ namespace XREngine.Rendering.Info
         /// Return false to skip adding render commands.
         /// </summary>
         [YamlIgnore]
-        public DelAddRenderCommandsCallback? PreAddRenderCommandsCallback;
+        public DelAddRenderCommandsCallback? PreCollectCommandsCallback;
 
         protected RenderInfo(IRenderable? owner, params RenderCommand[] renderCommands)
         {
@@ -119,7 +119,7 @@ namespace XREngine.Rendering.Info
 
         public void AddRenderCommands(RenderCommandCollection passes, XRCamera? camera)
         {
-            if (!(PreAddRenderCommandsCallback?.Invoke(this, passes, camera) ?? true))
+            if (!(PreCollectCommandsCallback?.Invoke(this, passes, camera) ?? true))
                 return;
 
             for (int i = 0; i < RenderCommands.Count; i++)

@@ -1,6 +1,7 @@
 ﻿using Extensions;
 using System.IO.Compression;
 using System.Numerics;
+using XREngine.Data.Core;
 
 namespace XREngine.Scene.Transforms
 {
@@ -53,6 +54,14 @@ namespace XREngine.Scene.Transforms
             get => _forceManualRecalc;
             set => SetField(ref _forceManualRecalc, value);
         }
+
+        public Plane WorldForwardPlane => XRMath.CreatePlaneFromPointAndNormal(WorldTranslation, WorldForward);
+        public Plane WorldRightPlane => XRMath.CreatePlaneFromPointAndNormal(WorldTranslation, WorldRight);
+        public Plane WorldUpPlane => XRMath.CreatePlaneFromPointAndNormal(WorldTranslation, WorldUp);
+
+        public Plane LocalForwardPlane => XRMath.CreatePlaneFromPointAndNormal(LocalTranslation, LocalForward);
+        public Plane LocalRightPlane => XRMath.CreatePlaneFromPointAndNormal(LocalTranslation, LocalRight);
+        public Plane LocalUpPlane => XRMath.CreatePlaneFromPointAndNormal(LocalTranslation, LocalUp);
 
         private float _timeSinceLastKeyframe = 0;
 

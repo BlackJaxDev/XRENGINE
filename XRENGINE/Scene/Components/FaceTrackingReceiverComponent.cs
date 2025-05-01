@@ -555,7 +555,7 @@ namespace XREngine.Data.Components
             machine.SetFloat("EyeYaw", values.ReadFloatElement(1));
         }
 
-        public void GenerateARKit()
+        public void GenerateARKitStateMachine()
         {
             var sm = GetAnimStateMachine()?.StateMachine;
             if (sm is null)

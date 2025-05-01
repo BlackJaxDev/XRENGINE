@@ -2,7 +2,6 @@
 using MathNet.Numerics;
 using System.Numerics;
 using XREngine.Components;
-using XREngine.Components.Scene.Mesh;
 using XREngine.Data.Core;
 using XREngine.Data.Geometry;
 using XREngine.Data.Rendering;
@@ -13,9 +12,9 @@ using XREngine.Scene.Transforms;
 
 namespace XREngine.Data.Components
 {
-    public class MirrorComponent : XRComponent, IRenderable
+    public class AdvancedForwardMirrorComponent : XRComponent, IRenderable
     {
-        public MirrorComponent()
+        public AdvancedForwardMirrorComponent()
         {
             XRMesh mesh = XRMesh.Create(VertexQuad.PosZ(1.0f));
             XRMaterial mat = XRMaterial.CreateUnlitColorMaterialForward();

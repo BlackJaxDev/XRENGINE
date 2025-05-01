@@ -41,6 +41,46 @@
             set => SetField(ref _smoothing, value);
         }
 
+        public int CompressedBitCount { get; set; } = 8;
+        public override int CalcBitCount() => CompressedBitCount;
+
+        public override void WriteBits(byte[] data, ref int bitOffset)
+        {
+            if (CompressedBitCount == 32) //Write raw float
+            {
+                var bytes = BitConverter.GetBytes(Value);
+                int byteOffset = bitOffset / 8;
+                int bitsToWrite = Math.Min(32, data.Length * 8 - bitOffset);
+                for (int i = 0; i < bitsToWrite; i++)
+                {
+                    data[byteOffset] |= (byte)((bytes[i / 8] >> (i % 8)) & 1);
+                    bitOffset++;
+                }
+            }
+            else if (CompressedBitCount == 16) //Write half float
+            {
+                var bytes = BitConverter.GetBytes((Half)Value);
+                int byteOffset = bitOffset / 8;
+                int bitsToWrite = Math.Min(16, data.Length * 8 - bitOffset);
+                for (int i = 0; i < bitsToWrite; i++)
+                {
+                    data[byteOffset] |= (byte)((bytes[i / 8] >> (i % 8)) & 1);
+                    bitOffset++;
+                }
+            }
+            else //Write scaled integer value
+            {
+                int scaledValue = (int)(Value * ((1 << CompressedBitCount) - 1));
+                int byteOffset = bitOffset / 8;
+                int bitsToWrite = Math.Min(CompressedBitCount, data.Length * 8 - bitOffset);
+                for (int i = 0; i < bitsToWrite; i++)
+                {
+                    data[byteOffset] |= (byte)((scaledValue >> i) & 1);
+                    bitOffset++;
+                }
+            }
+        }
+
         //protected override void OnPropertyChanged<T>(string? propName, T prev, T field)
         //{
         //    base.OnPropertyChanged(propName, prev, field);

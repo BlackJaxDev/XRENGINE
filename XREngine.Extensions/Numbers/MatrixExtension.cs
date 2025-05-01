@@ -18,6 +18,11 @@ namespace Extensions
         //        matrix.M31, matrix.M32, matrix.M33, matrix.M34,
         //        matrix.M41, matrix.M42, matrix.M43, matrix.M44);
 
+        public static Vector3 ExtractScale(this Matrix4x4 matrix) => new(
+            new Vector3(matrix.M11, matrix.M12, matrix.M13).Length(),
+            new Vector3(matrix.M21, matrix.M22, matrix.M23).Length(),
+            new Vector3(matrix.M31, matrix.M32, matrix.M33).Length());
+
         public static Matrix4x4 Inverted(this Matrix4x4 matrix)
             => Matrix4x4.Invert(matrix, out Matrix4x4 result) ? result : Matrix4x4.Identity;
 

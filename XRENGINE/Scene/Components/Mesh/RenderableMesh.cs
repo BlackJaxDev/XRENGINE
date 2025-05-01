@@ -95,7 +95,7 @@ namespace XREngine.Components.Scene.Mesh
             if (RenderBounds)
                 RenderInfo.RenderCommands.Add(_renderBoundsCommand);
             RenderInfo.LocalCullingVolume = mesh.CullingBounds ?? mesh.Bounds;
-            RenderInfo.PreAddRenderCommandsCallback = BeforeAdd;
+            RenderInfo.PreCollectCommandsCallback = BeforeAdd;
 
             if (LODs.Count > 0)
                 CurrentLOD = LODs.First;

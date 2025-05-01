@@ -25,8 +25,8 @@ namespace XREngine.Rendering.UI
             RenderInfo3D = RenderInfo3D.New(this, RenderCommand3D);
             RenderInfo2D = RenderInfo2D.New(this, RenderCommand2D);
             RenderedObjects = [RenderInfo3D, RenderInfo2D];
-            RenderInfo3D.PreAddRenderCommandsCallback = ShouldRender3D;
-            RenderInfo2D.PreAddRenderCommandsCallback = ShouldRender2D;
+            RenderInfo3D.PreCollectCommandsCallback = ShouldRender3D;
+            RenderInfo2D.PreCollectCommandsCallback = ShouldRender2D;
         }
 
         //TODO: register callback on canvas to set RenderInfo3D/2D Visible property so no quadtree/octree culling is done if the canvas is not visible

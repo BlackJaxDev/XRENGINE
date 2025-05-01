@@ -19,17 +19,17 @@
         }
 
         public ShadowSettings Shadows { get; set; }
-        public BloomSettings Bloom { get; }
-        public DepthOfFieldSettings DepthOfField { get; }
-        public AmbientOcclusionSettings AmbientOcclusion { get; }
-        public MotionBlurSettings MotionBlur { get; }
-        public ColorGradingSettings ColorGrading { get; }
-        public VignetteSettings Vignette { get; }
-        public LensDistortionSettings LensDistortion { get; }
-        public ChromaticAberrationSettings ChromaticAberration { get; }
-        public GrainSettings Grain { get; }
-        public DitheringSettings Dithering { get; }
-        public RayTracingSettings RayTracing { get; }
+        public BloomSettings Bloom { get; set; }
+        public DepthOfFieldSettings DepthOfField { get; set; }
+        public AmbientOcclusionSettings AmbientOcclusion { get; set; }
+        public MotionBlurSettings MotionBlur { get; set; }
+        public ColorGradingSettings ColorGrading { get; set; }
+        public VignetteSettings Vignette { get; set; }
+        public LensDistortionSettings LensDistortion { get; set; }
+        public ChromaticAberrationSettings ChromaticAberration { get; set; }
+        public GrainSettings Grain { get; set; }
+        public DitheringSettings Dithering { get; set; }
+        public RayTracingSettings RayTracing { get; set; }
 
         public void SetUniforms(XRRenderProgram program)
         {

@@ -37,9 +37,12 @@ namespace XREngine.Animation
             set => SetBool(value);
         }
 
+        public abstract int CalcBitCount();
+
         public abstract bool GreaterThan(AnimTransitionCondition condition);
         public abstract bool IsTrue();
         public abstract bool LessThan(AnimTransitionCondition condition);
         public abstract bool ValueEquals(AnimTransitionCondition condition);
+        public abstract void WriteBits(byte[] data, ref int bitOffset);
     }
 }

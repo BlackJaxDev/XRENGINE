@@ -34,6 +34,25 @@
         protected override int GetInt()
             => Value ? 1 : 0;
 
+        public override int CalcBitCount() => 1;
+        public override void WriteBits(byte[] data, ref int bitOffset)
+        {
+            if (data is null || bitOffset < 0 || bitOffset >= data.Length * 8)
+                return;
+
+            int byteOffset = bitOffset / 8;
+            int bitInByte = bitOffset % 8;
+            if (byteOffset >= data.Length)
+                return;
+
+            if (Value)
+                data[byteOffset] |= (byte)(1 << bitInByte);
+            else
+                data[byteOffset] &= (byte)~(1 << bitInByte);
+
+            bitOffset += 1;
+        }
+
         //protected override void OnPropertyChanged<T>(string? propName, T prev, T field)
         //{
         //    base.OnPropertyChanged(propName, prev, field);

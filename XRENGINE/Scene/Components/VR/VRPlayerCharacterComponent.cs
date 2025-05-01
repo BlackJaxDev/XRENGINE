@@ -267,10 +267,7 @@ namespace XREngine.Scene.Components.VR
         private void HipTrackerWorldMatrixChanged(TransformBase hipTrackerTfm)
         {
             var h = GetHumanoid();
-            if (h is null)
-                return;
-
-            if (h.HipsTarget.tfm is null)
+            if (h is null || h.HipsTarget.tfm is null)
                 return;
 
             var movement = GetCharacterMovement();

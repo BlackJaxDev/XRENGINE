@@ -42,7 +42,7 @@ public static class EditorWorld
     //Unit testing toggles
 
     //Debug visualize
-    public const bool VisualizeOctree = false;
+    public const bool VisualizeOctree = true;
     public const bool VisualizeQuadtree = false;
 
     //Editor UI
@@ -57,6 +57,7 @@ public static class EditorWorld
     public const bool Spline = false; //Adds a 3D spline to the scene.
     public const bool DeferredDecal = false; //Adds a deferred decal to the scene.
     public const bool AddCameraVRPickup = true; //Adds a camera pickup to the scene for testing VR camera pickup.
+    public const bool Mirror = false; //Adds a mirror to the scene for testing mirror reflection.
 
     //Light
     public const bool DirLight = true;
@@ -66,13 +67,13 @@ public static class EditorWorld
     public const bool LightProbe = true; //Adds a test light probe to the scene for PBR lighting.
 
     //Pawns
-    public const bool VRPawn = false; //Enables VR input and pawn.
-    public const bool CharacterPawn = false; //Enables the player to physically locomote in the world. Requires a physical floor.
-    public const bool ThirdPersonPawn = true; //If on desktop and character pawn is enabled, this will add a third person camera instead of first person.
+    public const bool VRPawn = true; //Enables VR input and pawn.
+    public const bool CharacterPawn = true; //Enables the player to physically locomote in the world. Requires a physical floor.
+    public const bool ThirdPersonPawn = false; //If on desktop and character pawn is enabled, this will add a third person camera instead of first person.
 
     //Physics
     public const bool PhysicsChain = true; //Adds a jiggle physics chain to the character pawn.
-    public const bool Physics = false;
+    public const bool Physics = true;
     public const int PhysicsBallCount = 10; //The number of physics balls to add to the scene.
 
     //Models
@@ -128,15 +129,16 @@ public static class EditorWorld
         humanComp.RightLegIKEnabled = false;
         humanComp.HipToHeadIKEnabled = false;
 
+        var animator = rootNode.AddComponent<AnimStateMachineComponent>()!;
+
         const string vrcftPrefix = "/avatar/parameters/";
         var ftOscReceiver = rootNode.AddComponent<FaceTrackingReceiverComponent>()!;
         ftOscReceiver.ParameterPrefix = vrcftPrefix;
-        ftOscReceiver.GenerateARKit();
+        ftOscReceiver.GenerateARKitStateMachine();
 
         var ftOscSender = rootNode.AddComponent<OscSenderComponent>()!;
         ftOscSender.ParameterPrefix = vrcftPrefix;
 
-        var animator = rootNode.AddComponent<AnimStateMachineComponent>()!;
         animator!.StateMachine.VariableChanged += ftOscSender.StateMachineVariableChanged;
 
         if (!VRPawn)
@@ -442,9 +444,9 @@ public static class EditorWorld
         s.RenderTransformPoints = false;
         s.RecalcChildMatricesInParallel = true;
         s.TickGroupedItemsInParallel = true;
-        s.RenderWindowsWhileInVR = false;
+        s.RenderWindowsWhileInVR = true;
         s.AllowShaderPipelines = false; //Somehow, this lowers performance
-        s.RenderVRSinglePassStereo = true;
+        s.RenderVRSinglePassStereo = false;
         //s.PhysicsVisualizeSettings.SetAllTrue();
 
         string desktopDir = Environment.GetFolderPath(Environment.SpecialFolder.DesktopDirectory);
@@ -515,6 +517,8 @@ public static class EditorWorld
             if (Skybox)
                 AddSkybox(rootNode, skyEquirect);
         }
+        if (Mirror)
+            AddMirror(rootNode);
         if (Physics)
             AddPhysics(rootNode, PhysicsBallCount);
         if (Spline)
@@ -524,6 +528,15 @@ public static class EditorWorld
         ImportModels(desktopDir, rootNode, characterPawnModelParentNode ?? rootNode);
         
         return new XRWorld("Default World", scene);
+    }
+
+    private static void AddMirror(SceneNode rootNode)
+    {
+        SceneNode mirrorNode = rootNode.NewChild("MirrorNode");
+        var mirrorTfm = mirrorNode.SetTransform<Transform>();
+        mirrorTfm.Translation = new Vector3(0.0f, 0.0f, 20.0f);
+        mirrorTfm.Scale = new Vector3(100.0f, 100.0f, 1.0f);
+        var mirrorComp = mirrorNode.AddComponent<MirrorCaptureComponent>()!;
     }
 
     private static void AddIKTest(SceneNode rootNode)

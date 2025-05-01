@@ -1,5 +1,4 @@
-﻿using System.Diagnostics;
-using System.Numerics;
+﻿using System.Numerics;
 using XREngine.Core.Files;
 using XREngine.Data.Core;
 using static XREngine.Animation.AnimLayer;

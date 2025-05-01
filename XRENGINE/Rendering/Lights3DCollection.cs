@@ -43,15 +43,15 @@ namespace XREngine.Scene
         /// </summary>
         public EventList<LightProbeComponent> LightProbes { get; } = [];
 
-        private ConcurrentQueue<SceneCaptureComponent> _captureQueue = new();
-        private ConcurrentBag<SceneCaptureComponent> _captureBagUpdating = [];
-        private ConcurrentBag<SceneCaptureComponent> _captureBagRendering = [];
+        private readonly ConcurrentQueue<SceneCaptureComponentBase> _captureQueue = new();
+        private ConcurrentBag<SceneCaptureComponentBase> _captureBagUpdating = [];
+        private ConcurrentBag<SceneCaptureComponentBase> _captureBagRendering = [];
 
         /// <summary>
         /// Enqueues a scene capture component for rendering.
         /// </summary>
         /// <param name="component"></param>
-        public void QueueForCapture(SceneCaptureComponent component)
+        public void QueueForCapture(SceneCaptureComponentBase component)
         {
             if (_captureQueue.Contains(component))
                 return;
@@ -84,7 +84,7 @@ namespace XREngine.Scene
             foreach (PointLightComponent l in DynamicPointLights)
                 l.CollectVisibleItems();
 
-            while (_captureQueue.TryDequeue(out SceneCaptureComponent? capture))
+            while (_captureQueue.TryDequeue(out SceneCaptureComponentBase? capture))
             {
                 if (_captureBagUpdating.Contains(capture))
                     continue;

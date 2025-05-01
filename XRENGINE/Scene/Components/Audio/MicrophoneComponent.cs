@@ -293,7 +293,7 @@ namespace XREngine.Components.Scene
             if (Loopback)
                 ReceiveData(nameof(_currentBuffer), _currentBuffer.ToArray());
             else
-                EnqueueDataReplication(nameof(_currentBuffer), _currentBuffer.ToArray(), CompressOverNetwork, false);
+                EnqueueDataReplication(nameof(_currentBuffer), [.. _currentBuffer], CompressOverNetwork, false);
         }
 
         private float _smoothingFactor = 1.0f; // Default value of 0.5 (50% smoothing)
