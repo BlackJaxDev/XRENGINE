@@ -4,7 +4,9 @@ using XREngine.Components;
 using XREngine.Components.Scene.Mesh;
 using XREngine.Data.Colors;
 using XREngine.Data.Components.Scene;
+using XREngine.Data.Core;
 using XREngine.Data.Rendering;
+using XREngine.Data.Transforms.Rotations;
 using XREngine.Rendering.Commands;
 using XREngine.Rendering.Info;
 using XREngine.Scene.Components.Animation;
@@ -24,14 +26,33 @@ namespace XREngine.Scene.Components.VR
             if (!IsCalibrating)
                 return;
 
-            var eyes = (Headset, Matrix4x4.CreateTranslation(-EyeOffsetFromHead));
-            Engine.Rendering.Debug.RenderSphere((eyes.Headset?.WorldTranslation ?? Vector3.Zero) + eyes.Item2.Translation, CalibrationRadius, false, ColorF4.Green);
+            var hmd = Headset;
+            if (hmd is not null)
+            {
+                Vector3 hmdPoint = hmd.WorldTranslation;
+                Matrix4x4 hmdMtx = hmd.WorldMatrix;
+
+                //Clear vertical rotation from the headset matrix
+                Matrix4x4.Decompose(hmdMtx, out Vector3 scale, out Quaternion rotation, out Vector3 translation);
+                var rot = Rotator.FromQuaternion(rotation);
+                rot.Pitch = 0.0f;
+                rot.Roll = 0.0f;
+                hmdMtx =
+                    Matrix4x4.CreateScale(scale) * 
+                    Matrix4x4.CreateFromQuaternion(Quaternion.CreateFromAxisAngle(Globals.Up, float.DegreesToRadians(rot.Yaw))) * 
+                    Matrix4x4.CreateTranslation(translation);
+
+                Vector3 headPoint = (Matrix4x4.CreateTranslation(-EyeOffsetFromHead) * hmdMtx).Translation;
+                Engine.Rendering.Debug.RenderPoint(hmdPoint, ColorF4.Magenta);
+                Engine.Rendering.Debug.RenderPoint(headPoint, ColorF4.Orange);
+                Engine.Rendering.Debug.RenderLine(hmdPoint, headPoint, ColorF4.Red);
+            }
 
             var leftHand = (LeftController, LeftControllerOffset);
-            Engine.Rendering.Debug.RenderSphere((leftHand.LeftController?.WorldTranslation ?? Vector3.Zero) + LeftControllerOffset.Translation, CalibrationRadius, false, ColorF4.Green);
+            Engine.Rendering.Debug.RenderPoint((leftHand.LeftController?.WorldTranslation ?? Vector3.Zero) + LeftControllerOffset.Translation, ColorF4.Green);
 
             var rightHand = (RightController, RightControllerOffset);
-            Engine.Rendering.Debug.RenderSphere((rightHand.RightController?.WorldTranslation ?? Vector3.Zero) + RightControllerOffset.Translation, CalibrationRadius, false, ColorF4.Green);
+            Engine.Rendering.Debug.RenderPoint((rightHand.RightController?.WorldTranslation ?? Vector3.Zero) + RightControllerOffset.Translation, ColorF4.Green);
 
             var h = GetHumanoid();
             var t = GetTrackerCollection();
@@ -347,10 +368,11 @@ namespace XREngine.Scene.Components.VR
             if (headNode is null)
                 return;
 
-            var hmdMtx = Engine.VRState.Api.Headset?.DeviceToAbsoluteTrackingMatrix ?? Matrix4x4.Identity;
-            var rootPos = hmdMtx.Translation - h.Head.WorldBindPose.Translation;
+            Matrix4x4 hmdMtx = Engine.VRState.Api.Headset?.DeviceToAbsoluteTrackingMatrix ?? Matrix4x4.Identity;
+            Vector3 rootPos = hmdMtx.Translation - h.Head.WorldBindPose.Translation;
             TransformBase.GetDirectionsXZ(hmdMtx, out Vector3 forward, out _);
-            h.SceneNode.Transform.DeriveWorldMatrix(Matrix4x4.CreateWorld(rootPos, forward, Globals.Up));
+            Matrix4x4 eyeOffset = Matrix4x4.CreateTranslation(-EyeOffsetFromHead);
+            h.SceneNode.Transform.DeriveWorldMatrix(eyeOffset * Matrix4x4.CreateWorld(rootPos, -forward, Globals.Up));
         }
 
         public bool BeginCalibration()

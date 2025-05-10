@@ -12,7 +12,7 @@ using Transform = XREngine.Scene.Transforms.Transform;
 namespace XREngine.Scene.Components.Animation
 {
     /// <summary>
-    /// Hybrid %IK solver designed for mapping a character to a VR headset and 2 hand controllers 
+    /// Hybrid IK solver designed for mapping a character to a VR headset and 2 hand controllers 
     /// </summary>
     [System.Serializable]
     public partial class IKSolverVR : IKSolver
@@ -551,60 +551,60 @@ namespace XREngine.Scene.Components.Animation
             {
                 if (_locomotion._weight > 0f)
                 {
-                    //switch (locomotion.mode)
-                    //{
-                    //    case Locomotion.Mode.Procedural:
-                    //        Vector3 leftFootPosition = Vector3.Zero;
-                    //        Vector3 rightFootPosition = Vector3.zero;
-                    //        Quaternion leftFootRotation = Quaternion.identity;
-                    //        Quaternion rightFootRotation = Quaternion.identity;
-                    //        float leftFootOffset = 0f;
-                    //        float rightFootOffset = 0f;
-                    //        float leftHeelOffset = 0f;
-                    //        float rightHeelOffset = 0f;
+                    switch (_locomotion._mode)
+                    {
+                        case Locomotion.Mode.Procedural:
+                            //Vector3 leftFootPosition = Vector3.Zero;
+                            //Vector3 rightFootPosition = Vector3.Zero;
+                            //Quaternion leftFootRotation = Quaternion.Identity;
+                            //Quaternion rightFootRotation = Quaternion.Identity;
+                            //float leftFootOffset = 0f;
+                            //float rightFootOffset = 0f;
+                            //float leftHeelOffset = 0f;
+                            //float rightHeelOffset = 0f;
 
-                    //        locomotion.Solve_Procedural(rootBone, spine, leftLeg, rightLeg, leftArm, rightArm, supportLegIndex, out leftFootPosition, out rightFootPosition, out leftFootRotation, out rightFootRotation, out leftFootOffset, out rightFootOffset, out leftHeelOffset, out rightHeelOffset, scale, deltaTime);
+                            //_locomotion.Solve_Procedural(RootBone, _spine, _leftLeg, _rightLeg, _leftArm, _rightArm, _supportLegIndex, out leftFootPosition, out rightFootPosition, out leftFootRotation, out rightFootRotation, out leftFootOffset, out rightFootOffset, out leftHeelOffset, out rightHeelOffset, _scale, deltaTime);
 
-                    //        leftFootPosition += root.up * leftFootOffset;
-                    //        rightFootPosition += root.up * rightFootOffset;
+                            //leftFootPosition += _root.WorldUp * leftFootOffset;
+                            //rightFootPosition += _root.WorldUp * rightFootOffset;
 
-                    //        leftLeg.footPositionOffset += (leftFootPosition - leftLeg.lastBone.solverPosition) * IKPositionWeight * (1f - leftLeg.positionWeight) * locomotion.weight;
-                    //        rightLeg.footPositionOffset += (rightFootPosition - rightLeg.lastBone.solverPosition) * IKPositionWeight * (1f - rightLeg.positionWeight) * locomotion.weight;
+                            //_leftLeg._footPositionOffset += (leftFootPosition - _leftLeg.LastBone._solverPosition) * IKPositionWeight * (1f - _leftLeg._positionWeight) * _locomotion._weight;
+                            //_rightLeg._footPositionOffset += (rightFootPosition - _rightLeg.LastBone._solverPosition) * IKPositionWeight * (1f - _rightLeg._positionWeight) * _locomotion._weight;
 
-                    //        leftLeg.heelPositionOffset += root.up * leftHeelOffset * locomotion.weight;
-                    //        rightLeg.heelPositionOffset += root.up * rightHeelOffset * locomotion.weight;
+                            //_leftLeg._heelPositionOffset += _root.WorldUp * leftHeelOffset * _locomotion._weight;
+                            //_rightLeg._heelPositionOffset += _root.WorldUp * rightHeelOffset * _locomotion._weight;
 
-                    //        Quaternion rotationOffsetLeft = QuaTools.FromToRotation(leftLeg.lastBone.solverRotation, leftFootRotation);
-                    //        Quaternion rotationOffsetRight = QuaTools.FromToRotation(rightLeg.lastBone.solverRotation, rightFootRotation);
+                            //Quaternion rotationOffsetLeft = XRMath.FromToRotation(_leftLeg.LastBone._solverRotation, leftFootRotation);
+                            //Quaternion rotationOffsetRight = XRMath.FromToRotation(_rightLeg.LastBone._solverRotation, rightFootRotation);
 
-                    //        rotationOffsetLeft = Quaternion.Lerp(Quaternion.identity, rotationOffsetLeft, IKPositionWeight * (1f - leftLeg.rotationWeight) * locomotion.weight);
-                    //        rotationOffsetRight = Quaternion.Lerp(Quaternion.identity, rotationOffsetRight, IKPositionWeight * (1f - rightLeg.rotationWeight) * locomotion.weight);
+                            //rotationOffsetLeft = Quaternion.Lerp(Quaternion.Identity, rotationOffsetLeft, IKPositionWeight * (1f - _leftLeg._rotationWeight) * _locomotion._weight);
+                            //rotationOffsetRight = Quaternion.Lerp(Quaternion.Identity, rotationOffsetRight, IKPositionWeight * (1f - _rightLeg._rotationWeight) * _locomotion._weight);
 
-                    //        leftLeg.footRotationOffset = rotationOffsetLeft * leftLeg.footRotationOffset;
-                    //        rightLeg.footRotationOffset = rotationOffsetRight * rightLeg.footRotationOffset;
+                            //_leftLeg._footRotationOffset = rotationOffsetLeft * _leftLeg._footRotationOffset;
+                            //_rightLeg._footRotationOffset = rotationOffsetRight * _rightLeg._footRotationOffset;
 
-                    //        Vector3 footPositionC = Vector3.Lerp(leftLeg.position + leftLeg.footPositionOffset, rightLeg.position + rightLeg.footPositionOffset, 0.5f);
-                    //        footPositionC = XRMath.ProjectPointToPlane(footPositionC, rootBone.solverPosition, root.up);
+                            //Vector3 footPositionC = Vector3.Lerp(_leftLeg.Position + _leftLeg._footPositionOffset, _rightLeg.Position + _rightLeg._footPositionOffset, 0.5f);
+                            //footPositionC = XRMath.ProjectPointToPlane(footPositionC, RootBone._solverPosition, _root.WorldUp);
 
-                    //        Vector3 p = rootBone.solverPosition + rootVelocity * deltaTime * 2f * locomotion.weight;
-                    //        p = Vector3.Lerp(p, footPositionC, deltaTime * locomotion.rootSpeed * locomotion.weight);
-                    //        rootBone.solverPosition = p;
+                            //Vector3 p = RootBone._solverPosition + _rootVelocity * deltaTime * 2f * _locomotion._weight;
+                            //p = Vector3.Lerp(p, footPositionC, deltaTime * _locomotion._rootSpeed * _locomotion._weight);
+                            //RootBone._solverPosition = p;
 
-                    //        rootVelocity += (footPositionC - rootBone.solverPosition) * deltaTime * 10f;
-                    //        Vector3 rootVelocityV = XRMath.ExtractVertical(rootVelocity, root.up, 1f);
-                    //        rootVelocity -= rootVelocityV;
+                            //_rootVelocity += (footPositionC - RootBone._solverPosition) * deltaTime * 10f;
+                            //Vector3 rootVelocityV = XRMath.ExtractVertical(_rootVelocity, _root.WorldUp, 1f);
+                            //_rootVelocity -= rootVelocityV;
 
-                    //        float bodyYOffset = MathF.Min(leftFootOffset + rightFootOffset, locomotion.maxBodyYOffset * scale);
-                    //        bodyOffset = Vector3.Lerp(bodyOffset, root.up * bodyYOffset, deltaTime * 3f);
-                    //        bodyOffset = Vector3.Lerp(Vector3.Zero, bodyOffset, locomotion.weight);
+                            //float bodyYOffset = MathF.Min(leftFootOffset + rightFootOffset, _locomotion._maxBodyYOffset * _scale);
+                            //_bodyOffset = Vector3.Lerp(_bodyOffset, _root.up * bodyYOffset, deltaTime * 3f);
+                            //_bodyOffset = Vector3.Lerp(Vector3.Zero, _bodyOffset, _locomotion._weight);
 
-                    //        break;
-                    //    case Locomotion.Mode.Animated:
-                    if (_lastLocomotionWeight <= 0f)
-                        _locomotion.Reset_Animated(_readPositions);
-                    _locomotion.Solve_Animated(this, _scale, deltaTime);
-                    //        break;
-                    //}
+                            break;
+                        case Locomotion.Mode.Animated:
+                            if (_lastLocomotionWeight <= 0f)
+                                _locomotion.Reset_Animated(_readPositions);
+                            _locomotion.Solve_Animated(this, _scale, deltaTime);
+                            break;
+                    }
                 }
                 else
                 {
@@ -673,7 +673,7 @@ namespace XREngine.Scene.Components.Animation
             {
                 _spine._pelvisPositionOffset += GetPelvisOffset(deltaTime);
                 _spine._chestPositionOffset += _spine._pelvisPositionOffset;
-                //spine.headPositionOffset += spine.pelvisPositionOffset;
+                _spine._headPositionOffset += _spine._pelvisPositionOffset;
             }
 
             Apply();
@@ -814,35 +814,35 @@ namespace XREngine.Scene.Components.Animation
             //debugPos4 = sampledOrigin;
 
             _raycastResults.Clear();
-            if (_locomotion._raycastRadius <= 0f)
-            {
-                if (physicsScene.RaycastSingle(
-                    new Segment(sampledOrigin, sampledOrigin + new Vector3(direction.Length() * 1.1f)),
-                    _locomotion._blockingLayers,
-                    _queryFilter,
-                    _raycastResults))
-                {
-                    var rh = (RaycastHit)_raycastResults.First().Value.First().data!;
-                    origin = rh.Position;
-                }
-            }
-            else
-            {
-                IPhysicsGeometry geometry = new IPhysicsGeometry.Sphere(_locomotion._raycastRadius * 1.1f);
-                (Vector3 position, Quaternion rotation) pose = (sampledOrigin, Quaternion.Identity);
-                if (physicsScene.SweepSingle(
-                    geometry,
-                    pose,
-                    direction.Normalized(),
-                    direction.Length(),
-                    _locomotion._blockingLayers,
-                    _queryFilter,
-                    _raycastResults))
-                {
-                    var sh = (SweepHit)_raycastResults.First().Value.First().data!;
-                    origin = sampledOrigin + direction.Normalized() * sh.Distance / 1.1f;
-                }
-            }
+            //if (_locomotion._raycastRadius <= 0f)
+            //{
+            //    if (physicsScene.RaycastSingleAsync(
+            //        new Segment(sampledOrigin, sampledOrigin + new Vector3(direction.Length() * 1.1f)),
+            //        _locomotion._blockingLayers,
+            //        _queryFilter,
+            //        _raycastResults))
+            //    {
+            //        var rh = (RaycastHit)_raycastResults.First().Value.First().data!;
+            //        origin = rh.Position;
+            //    }
+            //}
+            //else
+            //{
+            //    IPhysicsGeometry geometry = new IPhysicsGeometry.Sphere(_locomotion._raycastRadius * 1.1f);
+            //    (Vector3 position, Quaternion rotation) pose = (sampledOrigin, Quaternion.Identity);
+            //    if (physicsScene.SweepSingle(
+            //        geometry,
+            //        pose,
+            //        direction.Normalized(),
+            //        direction.Length(),
+            //        _locomotion._blockingLayers,
+            //        _queryFilter,
+            //        _raycastResults))
+            //    {
+            //        var sh = (SweepHit)_raycastResults.First().Value.First().data!;
+            //        origin = sampledOrigin + direction.Normalized() * sh.Distance / 1.1f;
+            //    }
+            //}
 
             Vector3 position = _spine.Hips._solverPosition;
             direction = position - origin;
@@ -852,15 +852,15 @@ namespace XREngine.Scene.Components.Animation
 
             if (_locomotion._raycastRadius <= 0f)
             {
-                if (physicsScene.RaycastSingle(
-                    new Segment(origin, origin + new Vector3(direction.Length())),
-                    _locomotion._blockingLayers,
-                    _queryFilter,
-                    _raycastResults))
-                {
-                    var rh = (RaycastHit)_raycastResults.First().Value.First().data!;
-                    position = rh.Position;
-                }
+                //if (physicsScene.RaycastSingleAsync(
+                //    new Segment(origin, origin + new Vector3(direction.Length())),
+                //    _locomotion._blockingLayers,
+                //    _queryFilter,
+                //    _raycastResults))
+                //{
+                //    var rh = (RaycastHit)_raycastResults.First().Value.First().data!;
+                //    position = rh.Position;
+                //}
             }
             else
             {

@@ -1222,11 +1222,12 @@ namespace XREngine.Rendering.Physics.Physx
             return RaycastAny(start, unitDir, distance, out hitFaceIndex, queryFlags, &filterMask, &filterCallback, null);
         }
 
-        public override bool RaycastSingle(
+        public override bool RaycastSingleAsync(
             Segment worldSegment,
             LayerMask layerMask,
             IAbstractQueryFilter? filter,
-            SortedDictionary<float, List<(XRComponent? item, object? data)>> results)
+            SortedDictionary<float, List<(XRComponent? item, object? data)>> results,
+            Action<SortedDictionary<float, List<(XRComponent? item, object? data)>>> finishedCallback)
         {
             var start = worldSegment.Start;
             var end = worldSegment.End;

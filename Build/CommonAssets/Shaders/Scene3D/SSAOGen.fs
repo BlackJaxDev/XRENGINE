@@ -1,4 +1,5 @@
 #version 450
+#extension GL_OVR_multiview2 : require
 
 const float PI = 3.14159265359f;
 const float InvPI = 0.31831f;

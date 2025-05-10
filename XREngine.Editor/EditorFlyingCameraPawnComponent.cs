@@ -37,10 +37,10 @@ public partial class EditorFlyingCameraPawnComponent : FlyingCameraPawnComponent
 
     private void Selection_SelectionChanged(SceneNode[] selection)
     {
-        if (selection.Length == 0)
-            TransformTool3D.DestroyInstance();
-        else
-            TransformTool3D.GetInstance(selection[0].Transform);
+        //if (selection.Length == 0)
+        //    TransformTool3D.DestroyInstance();
+        //else
+        //    TransformTool3D.GetInstance(selection[0].Transform);
     }
 
     //These two drag points diverge if the camera moves, so they're both stored initially at mouse down
@@ -178,6 +178,13 @@ public partial class EditorFlyingCameraPawnComponent : FlyingCameraPawnComponent
             GetDepthHit(vp, GetCursorInternalCoordinatePosition(vp));
     }
 
+    private bool _allowWorldPicking = false;
+    public bool AllowWorldPicking
+    {
+        get => _allowWorldPicking;
+        set => SetField(ref _allowWorldPicking, value);
+    }
+
     private void ApplyInput(XRViewport? vp)
     {
         if (vp is null)
@@ -194,28 +201,38 @@ public partial class EditorFlyingCameraPawnComponent : FlyingCameraPawnComponent
         if (tfmTool is not null && tfmTool.TryGetComponent<TransformTool3D>(out var comp))
             comp?.MouseMove(_lastRaycastSegment, cam.Camera, LeftClickPressed);
 
-        lock (_raycastLock)
+        if (AllowWorldPicking)
         {
-            _lastOctreePickResults.Clear();
-            _lastPhysicsPickResults.Clear();
-            LayerMask layerMask = LayerMask.GetMask(DefaultLayers.Default);
-            if (vp.PickScene(p, false, true, true, layerMask, _queryFilter, _lastOctreePickResults, _lastPhysicsPickResults))
+            lock (_raycastLock)
             {
-                if (RenderRaycast)
-                {
-                    if (_lastOctreePickResults.Count > 0)
-                        RenderRaycastResult(_lastOctreePickResults.FirstOrDefault());
-                    
-                    //foreach (var x in _lastPhysicsPickResults.Values)
-                    //    foreach (var (c2, _) in x)
-                    //        if (c2?.SceneNode is not null)
-                    //            Engine.Rendering.Debug.RenderLine(_lastRaycastSegment.Start, _lastRaycastSegment.End, ColorF4.Green);
-                }
-                //Debug.Out(Name + " picked something!");
+                _lastOctreePickResults.Clear();
+                _lastPhysicsPickResults.Clear();
+                LayerMask layerMask = LayerMask.GetMask(DefaultLayers.Default);
+                vp.PickSceneAsync(p, false, true, true, layerMask, _queryFilter, _lastOctreePickResults, _lastPhysicsPickResults, OctreeRaycastCallback, PhysicsRaycastCallback);
             }
         }
 
         ApplyTransformations(vp);
+    }
+
+    private void PhysicsRaycastCallback(SortedDictionary<float, List<(XRComponent? item, object? data)>>? dictionary)
+    {
+        if (!RenderRaycast)
+            return;
+
+        //foreach (var x in _lastPhysicsPickResults.Values)
+        //    foreach (var (c2, _) in x)
+        //        if (c2?.SceneNode is not null)
+        //            Engine.Rendering.Debug.RenderLine(_lastRaycastSegment.Start, _lastRaycastSegment.End, ColorF4.Green);
+    }
+
+    private void OctreeRaycastCallback(SortedDictionary<float, List<(RenderInfo3D item, object? data)>> dictionary)
+    {
+        if (!RenderRaycast)
+            return;
+
+        if (_lastOctreePickResults.Count > 0)
+            RenderRaycastResult(_lastOctreePickResults.FirstOrDefault());
     }
 
     private static void RenderRaycastResult(KeyValuePair<float, List<(RenderInfo3D item, object? data)>> result)
@@ -502,6 +519,9 @@ public partial class EditorFlyingCameraPawnComponent : FlyingCameraPawnComponent
 
     private void Select()
     {
+        if (TransformTool3D.GetActiveInstance(out var tfmComp) && tfmComp is not null && tfmComp.Highlighted)
+            return;
+        
         var input = LocalInput;
         if (input is null)
             return;

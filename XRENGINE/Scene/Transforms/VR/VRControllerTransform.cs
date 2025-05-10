@@ -40,8 +40,7 @@ namespace XREngine.Data.Components.Scene
             ? Engine.VRState.Api.LeftController 
             : Engine.VRState.Api.RightController;
 
-        private Matrix4x4 _lastVRMatrixUpdate = Matrix4x4.Identity;
         protected override Matrix4x4 CreateLocalMatrix()
-            => _lastVRMatrixUpdate;
+            => Controller?.DeviceToAbsoluteTrackingMatrix ?? Matrix4x4.Identity;
     }
 }

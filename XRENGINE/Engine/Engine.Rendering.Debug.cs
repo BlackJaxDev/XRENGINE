@@ -1,4 +1,5 @@
 ﻿using Extensions;
+using JoltPhysicsSharp;
 using System.Collections.Concurrent;
 using System.Numerics;
 using XREngine.Core;
@@ -9,6 +10,7 @@ using XREngine.Data.Transforms.Rotations;
 using XREngine.Rendering;
 using XREngine.Rendering.Physics.Physx;
 using XREngine.Rendering.UI;
+using Triangle = XREngine.Data.Geometry.Triangle;
 
 namespace XREngine
 {
@@ -126,8 +128,8 @@ namespace XREngine
                 public static void RenderShapes()
                 {
                     //lock (DebugTextUpdateQueue)
-                        foreach ((Vector3 pos, string text, ColorF4 color) in DebugTextUpdateQueue)
-                            UpdateDebugText(pos, text, color);
+                        foreach ((Vector3 pos, string text, ColorF4 color, float scale) in DebugTextUpdateQueue)
+                            UpdateDebugText(pos, text, color, scale);
 
                     var hashes = DebugTexts.Keys.ToArray();
                     for (int i = 0; i < hashes.Length; i++)
@@ -775,20 +777,20 @@ namespace XREngine
 
                 private static readonly ConcurrentDictionary<int, (UIText text, float lastUpdatedTime)> DebugTexts = new();
                 private static readonly ResourcePool<UIText> TextPool = new(() => new());
-                private static readonly ConcurrentQueue<(Vector3 pos, string text, ColorF4 color)> DebugTextUpdateQueue = new();
+                private static readonly ConcurrentQueue<(Vector3 pos, string text, ColorF4 color, float scale)> DebugTextUpdateQueue = new();
 
-                public static void RenderText(Vector3 bestPoint, string text, ColorF4 color)
+                public static void RenderText(Vector3 bestPoint, string text, ColorF4 color, float scale = 0.0001f)
                 {
                     if (Engine.IsRenderThread)
                         UpdateDebugText(bestPoint, text, color);
                     else
                     {
                         //lock (DebugTextUpdateQueue)
-                            DebugTextUpdateQueue.Enqueue((bestPoint, text, color));
+                            DebugTextUpdateQueue.Enqueue((bestPoint, text, color, scale));
                     }
                 }
 
-                private static void UpdateDebugText(Vector3 bestPoint, string text, ColorF4 color)
+                private static void UpdateDebugText(Vector3 bestPoint, string text, ColorF4 color, float scale = 0.001f)
                 {
                     int hash = HashCode.Combine(text.GetHashCode(), bestPoint.GetHashCode());
                     DebugTexts.AddOrUpdate(hash, _ =>
@@ -798,7 +800,7 @@ namespace XREngine
                         t.Color = color;
                         t.Translation = bestPoint;
                         //textObject.FontSize = 1.0f;
-                        t.Scale = 0.001f;
+                        t.Scale = scale;
                         return (t, Engine.Time.Timer.Time());
                     }, (_, pair) =>
                     {
@@ -806,7 +808,7 @@ namespace XREngine
                         t.Text = text;
                         t.Color = color;
                         t.Translation = bestPoint;
-                        t.Scale = 0.001f;
+                        t.Scale = scale;
                         t.UpdateTextMatrix();
                         return pair;
                     });
@@ -850,6 +852,23 @@ namespace XREngine
                         case Cone c:
                             RenderCone(c.Center, c.Up, c.Radius, c.Height, solid, color);
                             break;
+                    }
+                }
+
+                public static void RenderCoordinateSystem(Matrix4x4 space, float lineScale = 1.0f, bool textPerAxis = false)
+                {
+                    Vector3 x = space.GetColumn(0).XYZ() * lineScale;
+                    Vector3 y = space.GetColumn(1).XYZ() * lineScale;
+                    Vector3 z = space.GetColumn(2).XYZ() * lineScale;
+                    Vector3 origin = space.Translation;
+                    RenderLine(origin, origin + x, ColorF4.Red);
+                    RenderLine(origin, origin + y, ColorF4.Green);
+                    RenderLine(origin, origin + z, ColorF4.Blue);
+                    if (textPerAxis)
+                    {
+                        RenderText(origin + x * 1.1f, "X", ColorF4.Red);
+                        RenderText(origin + y * 1.1f, "Y", ColorF4.Green);
+                        RenderText(origin + z * 1.1f, "Z", ColorF4.Blue);
                     }
                 }
             }

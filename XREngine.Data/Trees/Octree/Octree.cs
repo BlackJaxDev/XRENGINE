@@ -47,9 +47,11 @@ namespace XREngine.Data.Trees
         {
             Move,
             Add,
-            Remove
+            Remove,
         }
-        internal ConcurrentQueue<(T item, ETreeCommand)> SwapCommands { get; } = new ConcurrentQueue<(T item, ETreeCommand command)>(); 
+
+        internal ConcurrentQueue<(T item, ETreeCommand)> SwapCommands { get; } = new ConcurrentQueue<(T item, ETreeCommand command)>();
+        internal ConcurrentQueue<(Segment segment, SortedDictionary<float, List<(T item, object? data)>> items, Func<T, Segment, (float? distance, object? data)> directTest, Action<SortedDictionary<float, List<(T item, object? data)>>> finishedCallback)> RaycastCommands { get; } = new ConcurrentQueue<(Segment segment, SortedDictionary<float, List<(T item, object? data)>> items, Func<T, Segment, (float? distance, object? data)> directTest, Action<SortedDictionary<float, List<(T item, object? data)>>> finishedCallback)>();
 
         /// <summary>
         /// Updates all moved, added and removed items in the octree.
@@ -60,7 +62,6 @@ namespace XREngine.Data.Trees
             {
                 if (command.item is null)
                     continue;
-
                 switch (command.command)
                 {
                     case ETreeCommand.Move:
@@ -69,9 +70,6 @@ namespace XREngine.Data.Trees
 
                     case ETreeCommand.Add:
                         {
-                            if (command.item is null)
-                                continue;
-
                             if (!_head.AddHereOrSmaller(command.item))
                                 _head.AddHere(command.item);
                         }
@@ -79,9 +77,6 @@ namespace XREngine.Data.Trees
 
                     case ETreeCommand.Remove:
                         {
-                            if (command.item is null)
-                                continue;
-
                             var node = command.item.OctreeNode;
                             if (node != null)
                             {
@@ -92,6 +87,16 @@ namespace XREngine.Data.Trees
                         }
                         break;
                 }
+            }
+            while (RaycastCommands.TryDequeue(out (
+                    Segment segment,
+                    SortedDictionary<float, List<(T item, object? data)>> items,
+                    Func<T, Segment, (float? distance, object? data)> directTest,
+                    Action<SortedDictionary<float, List<(T item, object? data)>>> finishedCallback
+                ) command))
+            {
+                _head.Raycast<T>(command.segment, command.items, command.directTest);
+                command.finishedCallback(command.items);
             }
         }
 
@@ -186,12 +191,12 @@ namespace XREngine.Data.Trees
             return list;
         }
 
-        public void Raycast<TRenderableType>(
+        public void RaycastAsync(
             Segment segment,
             SortedDictionary<float, List<(T item, object? data)>> items,
-            Func<T, Segment, (float? distance, object? data)> directTest)
-            where TRenderableType : IRenderableBase
-            => _head.Raycast<TRenderableType>(segment, items, directTest);
+            Func<T, Segment, (float? distance, object? data)> directTest,
+            Action<SortedDictionary<float, List<(T item, object? data)>>> finishedCallback)
+            => RaycastCommands.Enqueue((segment, items, directTest, finishedCallback));
 
         //public void Raycast(Segment segment, SortedDictionary<float, List<(ITreeItem item, object? data)>> items, Func<ITreeItem, Segment, (float? distance, object? data)> directTest)
         //    => _head.Raycast(segment, items, directTest);

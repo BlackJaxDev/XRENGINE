@@ -249,6 +249,7 @@ public class DefaultRenderPipeline : RenderPipeline
         {
             using (c.AddUsing<VPRC_BindOutputFBO>())
             {
+                c.Add<VPRC_ClearByBoundFBO>();
                 c.Add<VPRC_RenderQuadFBO>().FrameBufferName = PostProcessFBOName;
 
                 //We're not rendering to an FBO, we're rendering direct to the screen on top of the scene

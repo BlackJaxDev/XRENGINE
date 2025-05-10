@@ -18,6 +18,8 @@ namespace XREngine.Rendering
 
         public XRCubeFrameBuffer(XRMaterial? mat) : base(mat)
         {
+            //if (mat is not null)
+            //    mat.RenderOptions.CullMode = ECullMode.None;
             FullScreenCubeMesh = new XRMeshRenderer(XRMesh.Shapes.SolidBox(new Vector3(-0.5f), new Vector3(0.5f), true), mat);
             FullScreenCubeMesh.SettingUniforms += SetUniforms;
         }

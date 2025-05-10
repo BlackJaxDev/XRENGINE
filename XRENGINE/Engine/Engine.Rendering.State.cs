@@ -95,6 +95,8 @@ namespace XREngine
                 /// If true, the current render is a scene capture pass - only what's needed for scene captures is rendered.
                 /// </summary>
                 public static bool IsSceneCapturePass { get; internal set; }
+                public static bool ReverseWinding { get; internal set; } = false;
+                public static bool ReverseCulling { get; internal set; } = false;
 
                 //public static XRRenderPipelineInstance? CurrentCollectingVisiblePipeline => CollectingVisiblePipelineStack.Count > 0 ? CollectingVisiblePipelineStack.Peek() : null;
                 //public static XRRenderPipelineInstance.RenderingState? CollectingVisiblePipelineState => CurrentCollectingVisiblePipeline?.RenderState;

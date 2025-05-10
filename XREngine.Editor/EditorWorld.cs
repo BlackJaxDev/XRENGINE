@@ -42,7 +42,7 @@ public static class EditorWorld
     //Unit testing toggles
 
     //Debug visualize
-    public const bool VisualizeOctree = true;
+    public const bool VisualizeOctree = false;
     public const bool VisualizeQuadtree = false;
 
     //Editor UI
@@ -56,8 +56,8 @@ public static class EditorWorld
     public const bool Skybox = true; //Adds a skybox to the scene
     public const bool Spline = false; //Adds a 3D spline to the scene.
     public const bool DeferredDecal = false; //Adds a deferred decal to the scene.
-    public const bool AddCameraVRPickup = true; //Adds a camera pickup to the scene for testing VR camera pickup.
-    public const bool Mirror = false; //Adds a mirror to the scene for testing mirror reflection.
+    public const bool AddCameraVRPickup = false; //Adds a camera pickup to the scene for testing VR camera pickup.
+    public const bool Mirror = true; //Adds a mirror to the scene for testing mirror reflection.
 
     //Light
     public const bool DirLight = true;
@@ -65,11 +65,13 @@ public static class EditorWorld
     public const bool DirLight2 = false;
     public const bool PointLight = false;
     public const bool LightProbe = true; //Adds a test light probe to the scene for PBR lighting.
+    public const float LightProbeCaptureMs = 100;
+    public static readonly float? StopRealtimeCaptureSec = 5; //5
 
     //Pawns
-    public const bool VRPawn = true; //Enables VR input and pawn.
-    public const bool CharacterPawn = true; //Enables the player to physically locomote in the world. Requires a physical floor.
-    public const bool ThirdPersonPawn = false; //If on desktop and character pawn is enabled, this will add a third person camera instead of first person.
+    public const bool VRPawn = false; //Enables VR input and pawn.
+    public const bool Locomotion = true; //Enables the player to physically locomote in the world. Requires a physical floor.
+    public const bool ThirdPersonPawn = true; //If on desktop and character pawn is enabled, this will add a third person camera instead of first person.
 
     //Physics
     public const bool PhysicsChain = true; //Adds a jiggle physics chain to the character pawn.
@@ -91,6 +93,7 @@ public static class EditorWorld
     public const bool VMC = false; //Adds a VMC capture component to the avatar for testing.
     public const bool LipSync = true; //Adds a lip sync component to the avatar for testing.
     public const bool FaceMotion3D = false; //Adds a face motion 3D capture component to the avatar for testing.
+    public const bool FaceTracking = false; //Adds a face tracking component to the avatar for testing.
 
     //Animation
     public const bool AnimationClipVMD = false; //Imports a VMD animation clip for testing.
@@ -131,15 +134,18 @@ public static class EditorWorld
 
         var animator = rootNode.AddComponent<AnimStateMachineComponent>()!;
 
-        const string vrcftPrefix = "/avatar/parameters/";
-        var ftOscReceiver = rootNode.AddComponent<FaceTrackingReceiverComponent>()!;
-        ftOscReceiver.ParameterPrefix = vrcftPrefix;
-        ftOscReceiver.GenerateARKitStateMachine();
+        if (FaceTracking)
+        {
+            const string vrcftPrefix = "/avatar/parameters/";
+            var ftOscReceiver = rootNode.AddComponent<FaceTrackingReceiverComponent>()!;
+            ftOscReceiver.ParameterPrefix = vrcftPrefix;
+            ftOscReceiver.GenerateARKitStateMachine();
 
-        var ftOscSender = rootNode.AddComponent<OscSenderComponent>()!;
-        ftOscSender.ParameterPrefix = vrcftPrefix;
+            var ftOscSender = rootNode.AddComponent<OscSenderComponent>()!;
+            ftOscSender.ParameterPrefix = vrcftPrefix;
 
-        animator!.StateMachine.VariableChanged += ftOscSender.StateMachineVariableChanged;
+            animator!.StateMachine.VariableChanged += ftOscSender.StateMachineVariableChanged;
+        }
 
         if (!VRPawn)
         {
@@ -174,14 +180,18 @@ public static class EditorWorld
         }
         else
         {
-            var vrik = rootNode.AddComponent<VRIKSolverComponent>();
+            //var vrik = rootNode.AddComponent<VRIKSolverComponent>();
         }
 
-        //var headTfm = humanComp.Head?.Node?.GetTransformAs<Transform>();
-        //if (headTfm is not null)
-        //    headTfm.Scale = Vector3.Zero;
+        //TODO: only remove the head in VR
+        if (VRPawn)
+        {
+            var headTfm = humanComp.Head?.Node?.GetTransformAs<Transform>();
+            if (headTfm is not null)
+                headTfm.Scale = Vector3.Zero;
+        }
 
-        if (VRPawn && CharacterPawn)
+        if (VRPawn && Locomotion)
         {
             var footNode = rootNode.Parent!;
             var rotationNode = footNode.Parent!;
@@ -359,12 +369,12 @@ public static class EditorWorld
 
         if (TransformTool)
         {
-            //Put the transform tool on the head for testing
-            var hip = humanComp!.Hips?.Node?.Transform?.SceneNode;
-            if (hip is null)
+            //Show the transform tool for testing
+            var root = humanComp!.SceneNode;
+            if (root is null)
                 return;
 
-            EnableTransformToolForNode(hip);
+            EnableTransformToolForNode(root);
         }
 
         if (VMC)
@@ -445,7 +455,7 @@ public static class EditorWorld
         s.RecalcChildMatricesInParallel = true;
         s.TickGroupedItemsInParallel = true;
         s.RenderWindowsWhileInVR = true;
-        s.AllowShaderPipelines = false; //Somehow, this lowers performance
+        s.AllowShaderPipelines = true; //Somehow, this lowers performance
         s.RenderVRSinglePassStereo = false;
         //s.PhysicsVisualizeSettings.SetAllTrue();
 
@@ -468,7 +478,7 @@ public static class EditorWorld
         SceneNode? characterPawnModelParentNode = null;
         if (VRPawn)
         {
-            if (CharacterPawn)
+            if (Locomotion)
             {
                 characterPawnModelParentNode = CreateCharacterVRPawn(rootNode, setUI, out var pawn, out _, out var leftHand, out var rightHand);
                 if (setUI)
@@ -484,7 +494,7 @@ public static class EditorWorld
             else
                 CreateFlyingVRPawn(rootNode, setUI);
         }
-        else if (CharacterPawn)
+        else if (Locomotion)
             characterPawnModelParentNode = CreateDesktopCharacterPawn(rootNode, setUI);
         else
         {
@@ -534,8 +544,8 @@ public static class EditorWorld
     {
         SceneNode mirrorNode = rootNode.NewChild("MirrorNode");
         var mirrorTfm = mirrorNode.SetTransform<Transform>();
-        mirrorTfm.Translation = new Vector3(0.0f, 0.0f, 20.0f);
-        mirrorTfm.Scale = new Vector3(100.0f, 100.0f, 1.0f);
+        mirrorTfm.Translation = new Vector3(0.0f, 0.0f, -20.0f);
+        mirrorTfm.Scale = new Vector3(160.0f, 90.0f, 1.0f);
         var mirrorComp = mirrorNode.AddComponent<MirrorCaptureComponent>()!;
     }
 
@@ -631,7 +641,7 @@ public static class EditorWorld
         var footNode = localRotationNode.NewChild("Foot Position Node");
         var footTfm = footNode.SetTransform<Transform>();
         footTfm.Translation = new Vector3(0.0f, -movementComp.HalfHeight, 0.0f);
-        footTfm.Scale = new Vector3(movementComp.StandingHeight);
+        //footTfm.Scale = new Vector3(movementComp.StandingHeight);
         footTfm.SaveBindState();
 
         //local rotation node only yaws to match the view yaw, so use it as the parent for the avatar
@@ -862,7 +872,7 @@ public static class EditorWorld
         var footNode = characterNode.NewChild("Foot Position Node");
         var footTfm = footNode.SetTransform<Transform>();
         footTfm.Translation = new Vector3(0.0f, -movementComp.HalfHeight, 0.0f);
-        footTfm.Scale = new Vector3(movementComp.StandingHeight);
+        //footTfm.Scale = new Vector3(movementComp.StandingHeight);
         footTfm.SaveBindState();
 
         return footNode;
@@ -936,8 +946,9 @@ public static class EditorWorld
                     probeComp.SetCaptureResolution(64, false);
                     probeComp.RealtimeCapture = true;
                     probeComp.PreviewDisplay = LightProbeComponent.ERenderPreview.Irradiance;
-                    probeComp.RealTimeCaptureUpdateInterval = TimeSpan.FromMilliseconds(200.0f);
-                    probeComp.StopRealtimeCaptureAfter = TimeSpan.FromSeconds(5.0f);
+                    probeComp.RealTimeCaptureUpdateInterval = TimeSpan.FromMilliseconds(LightProbeCaptureMs);
+                    if (StopRealtimeCaptureSec is not null)
+                        probeComp.StopRealtimeCaptureAfter = TimeSpan.FromSeconds(StopRealtimeCaptureSec.Value);
                 }
             }
         }
@@ -1378,15 +1389,15 @@ public static class EditorWorld
 
         var animFlags = 
             PostProcessSteps.Triangulate |
-            PostProcessSteps.JoinIdenticalVertices |
-            PostProcessSteps.GenerateNormals |
-            PostProcessSteps.CalculateTangentSpace |
-            PostProcessSteps.OptimizeGraph |
-            PostProcessSteps.OptimizeMeshes |
-            PostProcessSteps.SortByPrimitiveType |
-            PostProcessSteps.ImproveCacheLocality |
+            //PostProcessSteps.JoinIdenticalVertices |
+            //PostProcessSteps.GenerateNormals |
+            //PostProcessSteps.CalculateTangentSpace |
+            //PostProcessSteps.OptimizeGraph |
+            //PostProcessSteps.OptimizeMeshes |
+            //PostProcessSteps.SortByPrimitiveType |
+            //PostProcessSteps.ImproveCacheLocality |
             PostProcessSteps.GenerateBoundingBoxes |
-            PostProcessSteps.RemoveRedundantMaterials |
+            //PostProcessSteps.RemoveRedundantMaterials |
             PostProcessSteps.FlipUVs;
 
         var staticFlags =

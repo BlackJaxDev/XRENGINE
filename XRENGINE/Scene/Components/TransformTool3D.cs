@@ -1224,6 +1224,7 @@ namespace XREngine.Actors.Types
         }
 
         public static bool RenderDebugInfo { get; set; } = false;
+        public bool Highlighted => _hiAxis.Any || _hiCam || _hiSphere;
 
         private void Render()
         {

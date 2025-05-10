@@ -112,6 +112,7 @@ namespace XREngine.Rendering
         //    }
         //}
 
+        private Matrix4x4 _obliqueProjectionMatrix = Matrix4x4.Identity;
         private XRCameraParameters? _parameters;
         public XRCameraParameters Parameters
         {
@@ -119,8 +120,57 @@ namespace XREngine.Rendering
             set => SetField(ref _parameters, value);
         }
 
+        protected override bool OnPropertyChanging<T>(string? propName, T field, T @new)
+        {
+            bool change = base.OnPropertyChanging(propName, field, @new);
+            switch (propName)
+            {
+                case nameof(Transform):
+                    if (_transform is not null)
+                        _transform.RenderWorldMatrixChanged -= WorldMatrixChanged;
+                    break;
+            }
+            return change;
+        }
+        protected override void OnPropertyChanged<T>(string? propName, T prev, T field)
+        {
+            base.OnPropertyChanged(propName, prev, field);
+            switch (propName)
+            {
+                case nameof(Transform):
+                    if (_transform is not null)
+                        _transform.RenderWorldMatrixChanged += WorldMatrixChanged;
+                    CalculateObliqueProjectionMatrix();
+                    break;
+            }
+        }
+
+        private void WorldMatrixChanged(TransformBase @base)
+        {
+            CalculateObliqueProjectionMatrix();
+        }
+
         public Matrix4x4 ProjectionMatrix
-            => Parameters.GetProjectionMatrix();
+            => _obliqueNearClippingPlane != null 
+                ? _obliqueProjectionMatrix
+                : Parameters.GetProjectionMatrix();
+
+        private void CalculateObliqueProjectionMatrix()
+        {
+            var nearPlane = _obliqueNearClippingPlane;
+            if (nearPlane is null)
+                return;
+
+            var transform = _transform;
+            if (transform is null)
+                return;
+
+            Plane plane = nearPlane.Value;
+            Matrix4x4 viewMatrix = transform.InverseRenderMatrix;
+            Vector3 planePositionView = Vector3.Transform(XRMath.GetPlanePoint(plane), viewMatrix);
+            Vector3 planeNormalView = Vector3.TransformNormal(plane.Normal.Normalized(), viewMatrix);
+            _obliqueProjectionMatrix = CalculateObliqueProjectionMatrix(Parameters.GetProjectionMatrix(), new(planeNormalView.X, planeNormalView.Y, planeNormalView.Z, XRMath.GetPlaneDistance(planePositionView, planeNormalView)));
+        }
 
         public Matrix4x4 InverseProjectionMatrix
         {
@@ -481,5 +531,42 @@ namespace XREngine.Rendering
             //TODO: scale the rect
             return b;
         }
+
+        /// <summary>
+        /// Calculates an oblique near plane projection matrix.
+        /// Given an original projection matrix and a clipping plane in view space,
+        /// this method adjusts the projection matrix to clip against the given plane.
+        /// </summary>
+        /// <param name="projection">The original projection matrix.</param>
+        /// <param name="clipPlane">The clipping plane in the form (a, b, c, d).</param>
+        /// <returns>The modified projection matrix with an oblique near plane.</returns>
+        public static Matrix4x4 CalculateObliqueProjectionMatrix(Matrix4x4 projection, Vector4 clipPlane)
+        {
+            Vector4 Q = new(
+                (float.Sign(clipPlane.X) + projection.M31) / projection.M11,
+                (float.Sign(clipPlane.Y) + projection.M32) / projection.M22,
+                -1.0f,
+                (1.0f + projection.M33) / projection.M43);
+
+            float dot = clipPlane.Dot(Q);
+            Vector4 c = clipPlane * (2.0f / dot);
+            projection.M13 = c.X;
+            projection.M23 = c.Y;
+            projection.M33 = c.Z + 1.0f;
+            projection.M43 = c.W;
+
+            return projection;
+        }
+        
+        private Plane? _obliqueNearClippingPlane = null;
+
+        public void SetObliqueClippingPlane(Vector3 planePosWorld, Vector3 planeNormalWorld)
+            => _obliqueNearClippingPlane = XRMath.CreatePlaneFromPointAndNormal(planePosWorld, planeNormalWorld);
+        public void SetObliqueClippingPlane(Vector3 planeNormalWorld, float planeDistance)
+            => _obliqueNearClippingPlane = new Plane(planeNormalWorld, planeDistance);
+        public void SetObliqueClippingPlane(Plane plane)
+            => _obliqueNearClippingPlane = plane;
+        public void ClearObliqueClippingPlane()
+            => _obliqueNearClippingPlane = null;
     }
 }

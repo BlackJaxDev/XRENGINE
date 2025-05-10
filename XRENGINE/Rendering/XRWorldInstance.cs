@@ -148,8 +148,6 @@ namespace XREngine.Rendering
 
         public void GlobalCollectVisible()
         {
-            VisualScene.GlobalCollectVisible();
-            //PhysicsScene.DebugRenderCollect();
             Lights.CollectVisibleItems();
         }
 
@@ -445,44 +443,61 @@ namespace XREngine.Rendering
             Sequences.Clear();
         }
 
-        public bool RaycastPhysics(
+        public void RaycastPhysicsAsync(
             CameraComponent cameraComponent,
             Vector2 normalizedScreenPoint,
             LayerMask layerMask,
             AbstractPhysicsScene.IAbstractQueryFilter? filter,
-            SortedDictionary<float, List<(XRComponent? item, object? data)>> orderedResults)
-            => RaycastPhysics(
+            SortedDictionary<float, List<(XRComponent? item, object? data)>> orderedResults,
+            Action<SortedDictionary<float, List<(XRComponent? item, object? data)>>> finishedCallback)
+            => RaycastPhysicsAsync(
                 cameraComponent.Camera.GetWorldSegment(normalizedScreenPoint),
                 layerMask,
                 filter,
-                orderedResults);
+                orderedResults,
+                finishedCallback);
 
-        public bool RaycastPhysics(
+        public void RaycastPhysicsAsync(
             Segment worldSegment,
             LayerMask layerMask,
             AbstractPhysicsScene.IAbstractQueryFilter? filter,
-            SortedDictionary<float, List<(XRComponent? item, object? data)>> orderedResults)
+            SortedDictionary<float, List<(XRComponent? item, object? data)>> orderedResults,
+            Action<SortedDictionary<float, List<(XRComponent? item, object? data)>>> finishedCallback)
         {
             orderedResults.Clear();
-            PhysicsScene.RaycastSingle(worldSegment, layerMask, filter, orderedResults);
-            return orderedResults.Count > 0;
+            PhysicsScene.RaycastSingleAsync(worldSegment, layerMask, filter, orderedResults, finishedCallback);
         }
 
-        public bool RaycastOctree(
+        /// <summary>
+        /// Raycasts the octree and updates a sorted list of items that were hit.
+        /// Clears the list before adding results.
+        /// </summary>
+        /// <param name="cameraComponent"></param>
+        /// <param name="normalizedScreenPoint"></param>
+        /// <param name="orderedResults"></param>
+        public void RaycastOctreeAsync(
             CameraComponent cameraComponent,
             Vector2 normalizedScreenPoint,
-            SortedDictionary<float, List<(RenderInfo3D item, object? data)>> orderedResults)
-            => RaycastOctree(
+            SortedDictionary<float, List<(RenderInfo3D item, object? data)>> orderedResults,
+            Action<SortedDictionary<float, List<(RenderInfo3D item, object? data)>>> finishedCallback)
+            => RaycastOctreeAsync(
                 cameraComponent.Camera.GetWorldSegment(normalizedScreenPoint),
-                orderedResults);
+                orderedResults,
+                finishedCallback);
 
-        public bool RaycastOctree(
+        /// <summary>
+        /// Raycasts the octree and updates a sorted list of items that were hit.
+        /// Clears the list before adding results.
+        /// </summary>
+        /// <param name="worldSegment"></param>
+        /// <param name="orderedResults"></param>
+        public void RaycastOctreeAsync(
             Segment worldSegment,
-            SortedDictionary<float, List<(RenderInfo3D item, object? data)>> orderedResults)
+            SortedDictionary<float, List<(RenderInfo3D item, object? data)>> orderedResults,
+            Action<SortedDictionary<float, List<(RenderInfo3D item, object? data)>>> finishedCallback)
         {
             orderedResults.Clear();
-            VisualScene.Raycast<IRenderable>(worldSegment, orderedResults, DirectItemTest);
-            return orderedResults.Count > 0;
+            VisualScene.RaycastAsync(worldSegment, orderedResults, DirectItemTest, finishedCallback);
         }
 
         [RequiresDynamicCode("Calls XREngine.Components.Scene.Mesh.ModelComponent.Intersect(Segment, out Triangle?)")]

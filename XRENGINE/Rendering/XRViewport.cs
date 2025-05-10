@@ -594,7 +594,7 @@ namespace XREngine.Rendering
         /// <param name="hitDistance"></param>
         /// <param name="ignored"></param>
         /// <returns></returns>
-        public bool PickScene(
+        public void PickSceneAsync(
             Vector2 normalizedViewportPosition,
             bool testHud,
             bool testSceneOctree,
@@ -603,11 +603,12 @@ namespace XREngine.Rendering
             AbstractPhysicsScene.IAbstractQueryFilter? filter,
             SortedDictionary<float, List<(RenderInfo3D item, object? data)>> orderedOctreeResults,
             SortedDictionary<float, List<(XRComponent? item, object? data)>> orderedPhysicsResults,
+            Action<SortedDictionary<float, List<(RenderInfo3D item, object? data)>>> octreeFinishedCallback,
+            Action<SortedDictionary<float, List<(XRComponent? item, object? data)>>?> physicsFinishedCallback,
             params XRComponent[] ignored)
         {
-            bool hasMatches = false;
             if (CameraComponent is null)
-                return hasMatches;
+                return;
 
             if (testHud)
             {
@@ -620,7 +621,6 @@ namespace XREngine.Rendering
                         if (hudComp is not UIInteractableComponent inter || !inter.IsActive)
                             continue;
 
-                        hasMatches = true;
                         float dist = 0.0f;
                         dist = CameraComponent.Camera.DistanceFrom(hudComp.Transform.WorldTranslation, false);
                         orderedPhysicsResults.Add(dist, [(inter, null)]);
@@ -628,25 +628,28 @@ namespace XREngine.Rendering
                 }
             }
 
+            if (World is null)
+                return;
+
             if (testSceneOctree)
             {
-                hasMatches |= World?.RaycastOctree(
+                World.RaycastOctreeAsync(
                     CameraComponent,
                     normalizedViewportPosition,
-                    orderedOctreeResults) ?? false;
+                    orderedOctreeResults,
+                    octreeFinishedCallback);
             }
 
             if (testScenePhysics)
             {
-                hasMatches |= World?.RaycastPhysics(
+                World.RaycastPhysicsAsync(
                     CameraComponent, 
                     normalizedViewportPosition,
                     layerMask,
                     filter,
-                    orderedPhysicsResults) ?? false;
+                    orderedPhysicsResults,
+                    physicsFinishedCallback);
             }
-
-            return hasMatches;
         }
         #endregion
 

@@ -41,6 +41,7 @@ namespace XREngine.Rendering.Commands
         public RenderCommandCollection(Dictionary<int, IComparer<RenderCommand>?> passIndicesAndSorters)
             => SetRenderPasses(passIndicesAndSorters);
 
+        private object _lock = new();
         public void Add(RenderCommand item)
         {
             int pass = item.RenderPass;
@@ -49,8 +50,11 @@ namespace XREngine.Rendering.Commands
                 //Debug.Out($"No render pass {pass} found.");
                 return;
             }
-            set.Add(item);
-            ++_numCommandsRecentlyAddedToUpdate;
+            lock (_lock)
+            {
+                set.Add(item);
+                ++_numCommandsRecentlyAddedToUpdate;
+            }
         }
         internal int GetCommandsAddedCount()
         {

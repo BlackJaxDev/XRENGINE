@@ -261,6 +261,7 @@ namespace XREngine.Timers
                 float elapsed = (timestamp - Collect.LastTimestamp).Clamp(0.0f, 1.0f);
                 Collect.Delta = elapsed;
                 Collect.LastTimestamp = timestamp;
+                //CollectVisible?.Invoke();
                 await (CollectVisible?.InvokeAsync() ?? Task.CompletedTask);
                 timestamp = Time();
                 Collect.ElapsedTime = timestamp - Collect.LastTimestamp;

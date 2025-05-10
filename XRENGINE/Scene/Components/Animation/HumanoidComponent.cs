@@ -870,19 +870,33 @@ namespace XREngine.Scene.Components.Animation
             if (meshes is null || meshes.Count == 0)
                 return Vector3.Zero;
 
-            var lod = meshes[0].LODs.FirstOrDefault(); //TODO: verify first is the highest LOD
-            if (lod is null)
-                return Vector3.Zero;
+            //Find lods with matching eye bones
+            int lodCount = 0;
+            Vector3 avgEyePos = Vector3.Zero;
+            foreach (SubMesh mesh in meshes)
+            {
+                var lod = mesh.LODs.FirstOrDefault();
+                if (lod is null)
+                    continue;
 
-            var bones = lod.Mesh?.UtilizedBones;
-            if (bones is null || bones.Length == 0)
-                return Vector3.Zero;
+                var bones = lod.Mesh?.UtilizedBones;
+                if (bones is null || bones.Length == 0)
+                    continue;
 
-            if (!SumEyeVertexPositions(lod, out Vector3 eyePosWorldAvg, eyeLBoneName, eyeRBoneName) &&
-                !SumEyeBonePositions(bones, out eyePosWorldAvg, eyeLBoneName, eyeRBoneName))
-                return Vector3.Zero;
+                if (bones.Any(b => IsEyeBone(b.tfm, eyeLBoneName, eyeRBoneName)))
+                {
+                    SumEyeVertexPositions(lod, out Vector3 eyePosWorldAvg, eyeLBoneName, eyeRBoneName);
+                    lodCount++;
+                    avgEyePos += eyePosWorldAvg;
+                }
+            }
+            avgEyePos /= lodCount;
 
-            return eyePosWorldAvg - headNode.Transform.WorldTranslation;
+            avgEyePos.X = 0;
+            (avgEyePos.Y, avgEyePos.Z) = (avgEyePos.Z, avgEyePos.Y);
+            avgEyePos.Z = -avgEyePos.Z;
+
+            return avgEyePos - headNode.Transform.BindMatrix.Translation;
         }
 
         private static bool SumEyeBonePositions((TransformBase tfm, Matrix4x4 invBindWorldMtx)[] bones, out Vector3 eyePosWorldAvg, string? eyeLBoneName, string? eyeRBoneName)
@@ -918,16 +932,26 @@ namespace XREngine.Scene.Components.Animation
             return computedValue;
         }
 
-        private static bool SumEyeVertexPositions(SubMeshLOD? lod, out Vector3 eyePosWorldAvg, string? eyeLBoneName, string? eyeRBoneName)
+        private static void SumEyeVertexPositions(SubMeshLOD? lod, out Vector3 eyePosWorldAvg, string? eyeLBoneName, string? eyeRBoneName)
         {
+            if (lod is null)
+            {
+                eyePosWorldAvg = Vector3.Zero;
+                return;
+            }
+            var mesh = lod.Mesh;
+            if (mesh is null)
+            {
+                eyePosWorldAvg = Vector3.Zero;
+                return;
+            }
+
             eyePosWorldAvg = Vector3.Zero;
-            if (lod?.Mesh?.Vertices is null)
-                return false;
 
             float sumX = 0f, sumY = 0f, sumZ = 0f;
             int counted = 0;
 
-            Parallel.ForEach(lod.Mesh.Vertices, vertex =>
+            Parallel.ForEach(mesh.Vertices, vertex =>
             {
                 var weights = vertex.Weights;
                 if (weights is null)
@@ -937,7 +961,7 @@ namespace XREngine.Scene.Components.Animation
                 if (!hasEyeBone)
                     return;
 
-                Vector3 pos = vertex.GetWorldPosition();
+                Vector3 pos = vertex.Position;
                 AtomicAdd(ref sumX, pos.X);
                 AtomicAdd(ref sumY, pos.Y);
                 AtomicAdd(ref sumZ, pos.Z);
@@ -948,7 +972,6 @@ namespace XREngine.Scene.Components.Animation
             bool any = counted > 0;
             if (any)
                 eyePosWorldAvg /= counted;
-            return any;
         }
 
         private static bool IsEyeBone(TransformBase tfm, string? eyeLBoneName, string? eyeRBoneName)

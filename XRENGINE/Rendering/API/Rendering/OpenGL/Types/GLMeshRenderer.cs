@@ -819,7 +819,11 @@ namespace XREngine.Rendering.OpenGL
             //Api.PointSize(r.PointSize);
             //Api.LineWidth(r.LineWidth.Clamp(0.0f, 1.0f));
             Api.ColorMask(r.WriteRed, r.WriteGreen, r.WriteBlue, r.WriteAlpha);
-            Api.FrontFace(ToGLEnum(r.Winding));
+
+            var winding = r.Winding;
+            if (Engine.Rendering.State.ReverseWinding)
+                winding = winding == EWinding.Clockwise ? EWinding.CounterClockwise : EWinding.Clockwise;
+            Api.FrontFace(ToGLEnum(winding));
 
             ApplyCulling(r);
             ApplyDepth(r);
@@ -953,7 +957,15 @@ namespace XREngine.Rendering.OpenGL
             else
             {
                 Api.Enable(EnableCap.CullFace);
-                Api.CullFace(ToGLEnum(r.CullMode));
+                var cullMode = r.CullMode;
+                if (Engine.Rendering.State.ReverseCulling)
+                    cullMode = cullMode switch
+                    {
+                        ECullMode.Front => ECullMode.Back,
+                        ECullMode.Back => ECullMode.Front,
+                        _ => cullMode
+                    };
+                Api.CullFace(ToGLEnum(cullMode));
             }
         }
 

@@ -514,11 +514,11 @@ namespace XREngine.Data.Trees
         /// <param name="segment"></param>
         /// <param name="orderedItems"></param>
         /// <param name="directTest"></param>
-        public void Raycast<TRenderableType>(
+        public void Raycast<TOctreeType>(
             Segment segment,
             SortedDictionary<float, List<(T item, object? data)>> items,
             Func<T, Segment, (float? distance, object? data)> directTest)
-            where TRenderableType : IRenderableBase
+            where TOctreeType : IOctreeItem
         {
             if (!_bounds.IntersectsSegment(segment))
                 return;
@@ -526,7 +526,7 @@ namespace XREngine.Data.Trees
             for (int i = 0; i < _items.Count; ++i)
             {
                 T item = _items[i];
-                if (item.Owner is not TRenderableType)
+                if (item.Owner is not TOctreeType)
                     continue;
 
                 var worldCullingVolume = item.WorldCullingVolume;
@@ -543,7 +543,7 @@ namespace XREngine.Data.Trees
             }
 
             for (int i = 0; i < _subNodes.Length; ++i)
-                _subNodes[i]?.Raycast<TRenderableType>(segment, items, directTest);
+                _subNodes[i]?.Raycast<TOctreeType>(segment, items, directTest);
         }
 
         /// <summary>

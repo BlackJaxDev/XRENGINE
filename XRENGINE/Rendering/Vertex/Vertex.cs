@@ -121,6 +121,18 @@ namespace XREngine.Data.Rendering
             return pos;
         }
 
+        public Vector3 GetWorldBindPosition()
+        {
+            if (Weights is null || Weights.Count == 0)
+                return Position;
+            
+            Vector3 pos = Vector3.Zero;
+            foreach ((TransformBase bone, (float weight, Matrix4x4 bindInvWorldMatrix) pair) in Weights)
+                pos += Vector3.Transform(Position, pair.bindInvWorldMatrix * bone.BindMatrix) * pair.weight;
+
+            return pos;
+        }
+
         public Matrix4x4 GetBoneTransformMatrix()
         {
             if (Weights is null || Weights.Count == 0)

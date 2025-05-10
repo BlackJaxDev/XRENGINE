@@ -103,7 +103,6 @@ public partial class HierarchyPanel : EditorPanel
 
             text.FontSize = 14;
             text.Text = node.Name;
-            //text.Color = ColorF4.LightGray;
             textTfm.Translation = new Vector2(node.Transform.Depth * 15, 0.0f);
             textTfm.Width = null;
             textTfm.MaxAnchor = new Vector2(0.0f, 1.0f);

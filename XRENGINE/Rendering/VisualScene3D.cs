@@ -32,11 +32,12 @@ namespace XREngine.Scene
         private void RenderAABB(Vector3 extents, Vector3 center, Color color)
             => Engine.Rendering.Debug.RenderAABB(extents, center, false, color);
 
-        public void Raycast<T>(
+        public void RaycastAsync(
             Segment worldSegment,
             SortedDictionary<float, List<(RenderInfo3D item, object? data)>> items,
-            Func<RenderInfo3D, Segment, (float? distance, object? data)> directTest) where T : IRenderable
-            => RenderTree.Raycast<T>(worldSegment, items, directTest);
+            Func<RenderInfo3D, Segment, (float? distance, object? data)> directTest,
+            Action<SortedDictionary<float, List<(RenderInfo3D item, object? data)>>> finishedCallback)
+            => RenderTree.RaycastAsync(worldSegment, items, directTest, finishedCallback);
 
         public override void CollectRenderedItems(
             RenderCommandCollection meshRenderCommands,

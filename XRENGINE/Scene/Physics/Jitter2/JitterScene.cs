@@ -111,7 +111,7 @@ namespace XREngine.Rendering.Physics.Physx
             throw new NotImplementedException();
         }
 
-        public override bool RaycastSingle(Segment worldSegment, LayerMask layerMask, IAbstractQueryFilter? filter, SortedDictionary<float, List<(XRComponent? item, object? data)>> items)
+        public override bool RaycastSingleAsync(Segment worldSegment, LayerMask layerMask, IAbstractQueryFilter? filter, SortedDictionary<float, List<(XRComponent? item, object? data)>> items, Action<SortedDictionary<float, List<(XRComponent? item, object? data)>>> finishedCallback)
         {
             throw new NotImplementedException();
         }

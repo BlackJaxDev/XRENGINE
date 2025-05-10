@@ -75,10 +75,14 @@ namespace XREngine.Rendering
         /// <returns></returns>
         protected abstract Matrix4x4 CalculateProjectionMatrix();
 
+        private object _untransformedFrustumLock = new();
         public Frustum GetUntransformedFrustum()
         {
-            VerifyProjection();
-            return _untransformedFrustum!.Value;
+            lock (_untransformedFrustumLock)
+            {
+                VerifyProjection();
+                return _untransformedFrustum!.Value;
+            }
         }
         protected abstract Frustum CalculateUntransformedFrustum();
 

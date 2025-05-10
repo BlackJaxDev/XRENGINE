@@ -155,7 +155,7 @@ uniform ColorGradeStruct ColorGrade;";
 
         public void UpdateExposure(XRTexture hdrSceneTexture, bool generateMipmapsNow)
         {
-            if (!RequiresAutoExposure)
+            if (!RequiresAutoExposure || Engine.Rendering.State.IsLightProbePass || Engine.Rendering.State.IsShadowPass || Engine.Rendering.State.IsSceneCapturePass)
                 return;
 
             float time = Engine.ElapsedTime;

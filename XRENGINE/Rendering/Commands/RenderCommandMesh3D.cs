@@ -60,11 +60,18 @@ namespace XREngine.Data.Rendering
             MaterialOverride = materialOverride;
         }
 
+        public event Action? PreRender;
+        public event Action? PostRender;
+
         public override void Render()
-            => _renderMesh?.Render(
+        {
+            PreRender?.Invoke();
+            _renderMesh?.Render(
                 _renderWorldMatrixIsModelMatrix ? _renderWorldMatrix : Matrix4x4.Identity,
                 _renderMaterialOverride,
                 _renderInstances);
+            PostRender?.Invoke();
+        }
 
         public override void CollectedForRender(XRCamera? camera)
         {

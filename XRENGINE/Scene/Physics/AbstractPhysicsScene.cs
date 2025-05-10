@@ -64,11 +64,12 @@ namespace XREngine.Scene
         /// </summary>
         /// <param name="worldSegment"></param>
         /// <param name="items"></param>
-        public abstract bool RaycastSingle(
+        public abstract bool RaycastSingleAsync(
             Segment worldSegment,
             LayerMask layerMask,
             IAbstractQueryFilter? filter,
-            SortedDictionary<float, List<(XRComponent? item, object? data)>> items);
+            SortedDictionary<float, List<(XRComponent? item, object? data)>> items,
+            Action<SortedDictionary<float, List<(XRComponent? item, object? data)>>> finishedCallback);
         /// <summary>
         /// Raycasts the physics scene and returns all hit items.
         /// </summary>

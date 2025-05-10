@@ -57,6 +57,7 @@ namespace XREngine.Rendering
         /// <param name="mat">The material containing textures to render to this fullscreen quad.</param>
         public XRQuadFrameBuffer(XRMaterial mat, bool useTriangle = true) : base(mat)
         {
+            mat.RenderOptions.CullMode = ECullMode.None;
             FullScreenMesh = new XRMeshRenderer(Mesh(useTriangle), mat);
             FullScreenMesh.SettingUniforms += SetUniforms;
         }

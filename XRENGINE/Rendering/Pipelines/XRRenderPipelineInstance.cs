@@ -31,7 +31,7 @@ public sealed partial class XRRenderPipelineInstance : XRBase
     private readonly Dictionary<string, XRTexture> _textures = [];
     private readonly Dictionary<string, XRFrameBuffer> _frameBuffers = [];
 
-    private RenderPipeline? _pipeline;
+    private RenderPipeline? _pipeline = new DefaultRenderPipeline();
     public RenderPipeline? Pipeline
     {
         get => _pipeline;

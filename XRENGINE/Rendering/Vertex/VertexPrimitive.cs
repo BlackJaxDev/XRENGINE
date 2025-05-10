@@ -20,7 +20,7 @@ namespace XREngine.Data.Rendering
 
         public AABB GetCullingVolume()
         {
-            Vector3[] positions = _vertices.Select(x => x.Position).ToArray();
+            Vector3[] positions = [.. _vertices.Select(x => x.Position)];
             return new AABB(XRMath.ComponentMin(positions), XRMath.ComponentMax(positions));
         }
 

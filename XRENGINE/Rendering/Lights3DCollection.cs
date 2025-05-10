@@ -47,6 +47,8 @@ namespace XREngine.Scene
         private ConcurrentBag<SceneCaptureComponentBase> _captureBagUpdating = [];
         private ConcurrentBag<SceneCaptureComponentBase> _captureBagRendering = [];
 
+        public List<SceneCaptureComponentBase> CaptureComponents { get; } = [];
+
         /// <summary>
         /// Enqueues a scene capture component for rendering.
         /// </summary>
@@ -75,14 +77,21 @@ namespace XREngine.Scene
                 DynamicPointLights[i].SetUniforms(program, $"PointLightData[{i}]");
         }
 
+        public bool CollectingVisibleShadowMaps { get; private set; } = false;
+
         public void CollectVisibleItems()
         {
-            foreach (DirectionalLightComponent l in DynamicDirectionalLights)
-                l.CollectVisibleItems();
-            foreach (SpotLightComponent l in DynamicSpotLights)
-                l.CollectVisibleItems();
-            foreach (PointLightComponent l in DynamicPointLights)
-                l.CollectVisibleItems();
+            //CollectingVisibleShadowMaps = true;
+
+            //foreach (DirectionalLightComponent l in DynamicDirectionalLights)
+            //    l.CollectVisibleItems();
+            //foreach (SpotLightComponent l in DynamicSpotLights)
+            //    l.CollectVisibleItems();
+            //foreach (PointLightComponent l in DynamicPointLights)
+            //    l.CollectVisibleItems();
+
+            foreach (SceneCaptureComponentBase sc in CaptureComponents)
+                sc.CollectVisible();
 
             while (_captureQueue.TryDequeue(out SceneCaptureComponentBase? capture))
             {
@@ -91,6 +100,8 @@ namespace XREngine.Scene
                 _captureBagUpdating.Add(capture);
                 capture.CollectVisible();
             }
+
+            //CollectingVisibleShadowMaps = false;
         }
 
         public void SwapBuffers()
@@ -103,10 +114,12 @@ namespace XREngine.Scene
                 l.SwapBuffers();
             foreach (PointLightComponent l in DynamicPointLights)
                 l.SwapBuffers();
+            foreach (SceneCaptureComponentBase sc in CaptureComponents)
+                sc.SwapBuffers();
 
             _captureBagRendering.Clear();
             (_captureBagUpdating, _captureBagRendering) = (_captureBagRendering, _captureBagUpdating);
-            foreach (SceneCaptureComponent capture in _captureBagRendering)
+            foreach (SceneCaptureComponentBase capture in _captureBagRendering)
                 capture.SwapBuffers();
         }
 
@@ -123,7 +136,10 @@ namespace XREngine.Scene
 
             RenderingShadowMaps = false;
 
-            foreach (SceneCaptureComponent capture in _captureBagRendering)
+            foreach (SceneCaptureComponentBase sc in CaptureComponents)
+                sc.Render();
+
+            foreach (SceneCaptureComponentBase capture in _captureBagRendering)
                 capture.Render();
         }
 
