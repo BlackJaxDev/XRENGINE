@@ -64,7 +64,7 @@ namespace XREngine.Components.Lights
             if (!CastsShadows || ShadowMap is null)
                 return;
 
-            _viewport.CollectVisible(null, null);
+            _viewport.CollectVisible(null, null, false);
         }
         public override void RenderShadowMap(bool collectVisibleNow = false)
         {

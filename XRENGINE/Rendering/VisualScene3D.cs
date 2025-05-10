@@ -1,6 +1,7 @@
 ﻿using System.Drawing;
 using System.Numerics;
 using XREngine.Components;
+using XREngine.Components.Lights;
 using XREngine.Data;
 using XREngine.Data.Geometry;
 using XREngine.Data.Rendering;
@@ -43,16 +44,17 @@ namespace XREngine.Scene
             RenderCommandCollection meshRenderCommands,
             XRCamera? camera,
             bool cullWithFrustum,
-            Func<XRCamera>? cullingCameraOverride)
+            Func<XRCamera>? cullingCameraOverride,
+            bool collectMirrors)
         {
             var cullingCamera = cullingCameraOverride?.Invoke() ?? camera;
             var collectionVolume = cullWithFrustum ? cullingCamera?.WorldFrustum() : null;
-            CollectRenderedItems(meshRenderCommands, collectionVolume, camera);
+            CollectRenderedItems(meshRenderCommands, collectionVolume, camera, collectMirrors);
         }
-        public void CollectRenderedItems(RenderCommandCollection commands, IVolume? collectionVolume, XRCamera? camera)
+        public void CollectRenderedItems(RenderCommandCollection commands, IVolume? collectionVolume, XRCamera? camera, bool collectMirrors)
         {
             bool IntersectionTest(RenderInfo3D item, IVolume? cullingVolume, bool containsOnly)
-                => item.AllowRender(cullingVolume, commands, camera, containsOnly);
+                => (collectMirrors || item.Owner is not MirrorCaptureComponent) && item.AllowRender(cullingVolume, commands, camera, containsOnly);
 
             void AddRenderCommands(ITreeItem item)
             {

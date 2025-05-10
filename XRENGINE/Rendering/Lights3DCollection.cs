@@ -83,12 +83,12 @@ namespace XREngine.Scene
         {
             //CollectingVisibleShadowMaps = true;
 
-            //foreach (DirectionalLightComponent l in DynamicDirectionalLights)
-            //    l.CollectVisibleItems();
-            //foreach (SpotLightComponent l in DynamicSpotLights)
-            //    l.CollectVisibleItems();
-            //foreach (PointLightComponent l in DynamicPointLights)
-            //    l.CollectVisibleItems();
+            foreach (DirectionalLightComponent l in DynamicDirectionalLights)
+                l.CollectVisibleItems();
+            foreach (SpotLightComponent l in DynamicSpotLights)
+                l.CollectVisibleItems();
+            foreach (PointLightComponent l in DynamicPointLights)
+                l.CollectVisibleItems();
 
             foreach (SceneCaptureComponentBase sc in CaptureComponents)
                 sc.CollectVisible();

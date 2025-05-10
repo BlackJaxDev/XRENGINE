@@ -1,8 +1,10 @@
 ﻿using Assimp;
 using Extensions;
+using Raylib_cs;
 using System.Collections.Concurrent;
 using System.Numerics;
 using XREngine.Data.Core;
+using XREngine.Data.Geometry;
 using XREngine.Data.Rendering;
 using XREngine.Rendering;
 using XREngine.Rendering.Commands;
@@ -33,6 +35,8 @@ namespace XREngine.Components.Lights
             RenderCommandMethod3D preRenderRC = new((int)EDefaultRenderPass.PreRender, PreRender);
 
             _renderInfo = RenderInfo3D.New(this, _displayQuadRC, preRenderRC);
+            _renderInfo.LocalCullingVolume = AABB.FromCenterSize(Vector3.Zero, new Vector3(1.0f, 1.0f, 0.001f));
+            _renderInfo.CullingOffsetMatrix = Matrix4x4.Identity;
             _renderInfo.PreCollectCommandsCallback += RenderCommand_OnPreAddRenderCommands;
             RenderedObjects = [_renderInfo];
         }
@@ -40,24 +44,26 @@ namespace XREngine.Components.Lights
         private void PreRender()
         {
             XRCamera? camera = Engine.Rendering.State.RenderingCamera;
-            if (camera is null || !_renderingCameras.TryGetValue(camera, out (Vector3 mirrorPoint, Vector3 mirrorNormal, Matrix4x4 camMirrorWorld) info))
+            if (camera is null || !_renderingCameras.TryRemove(camera))
                 return;
 
-            UpdateMirrorCamera(camera, info.mirrorPoint, info.mirrorNormal, info.camMirrorWorld);
+            UpdateRenderTransform(Transform);
+            //UpdateMirrorCamera(camera, true);
             Render();
         }
 
         /// <summary>
         /// All cameras that have captured this mirror, and will need a mirrored camera matrix.
         /// </summary>
-        private ConcurrentDictionary<XRCamera, (Vector3 mirrorPoint, Vector3 mirrorNormal, Matrix4x4 camMirrorWorld)> _collectedCameras = [];
-        private ConcurrentDictionary<XRCamera, (Vector3 mirrorPoint, Vector3 mirrorNormal, Matrix4x4 camMirrorWorld)> _renderingCameras = [];
+        private ConcurrentHashSet<XRCamera> _collectedCameras = [];
+        private ConcurrentHashSet<XRCamera> _renderingCameras = [];
         private bool RenderCommand_OnPreAddRenderCommands(RenderInfo info, RenderCommandCollection passes, XRCamera? camera)
         {
             if (camera is null || ShouldNotRenderThisMirror(camera))
                 return false;
 
-            _collectedCameras.TryAdd(camera, GetMirrorInfo(camera));
+            _collectedCameras.Add(camera);
+            UpdateMirrorCamera(camera, true);
             CollectVisible();
             return true;
         }
@@ -65,7 +71,7 @@ namespace XREngine.Components.Lights
         private bool ShouldNotRenderThisMirror(XRCamera camera) =>
             DisallowMirrors || //Are mirrors disabled?
             //(World?.Lights?.CollectingVisibleShadowMaps ?? false) || //Are we collecting shadow maps?
-            _collectedCameras.ContainsKey(camera) || //Has this camera already captured this mirror?
+            _collectedCameras.Contains(camera) || //Has this camera already captured this mirror?
             camera == _mirrorCamera; //Is this camera the mirror camera itself?
 
         //private void RenderCommand_OnSwapBuffers(RenderCommand command)
@@ -147,10 +153,17 @@ namespace XREngine.Components.Lights
             return _environmentTexture?.Width != width || _environmentTexture?.Height != height;
         }
 
-        protected override void OnTransformRenderWorldMatrixChanged(TransformBase transform)
+        //protected override void OnTransformRenderWorldMatrixChanged(TransformBase transform)
+        //{
+        //    base.OnTransformRenderWorldMatrixChanged(transform);
+        //    UpdateRenderTransform(transform);
+        //}
+
+        private void UpdateRenderTransform(TransformBase transform)
         {
-            base.OnTransformRenderWorldMatrixChanged(transform);
-            _displayQuadRC.WorldMatrix = transform.WorldMatrix;
+            _displayQuadRC.WorldMatrix = transform.RenderMatrix;
+            _renderInfo.CullingOffsetMatrix = transform.RenderMatrix;
+            _mirrorCamera?.SetObliqueClippingPlane(transform.RenderTranslation, -transform.RenderForward);
         }
 
         protected virtual void InitializeForCapture()
@@ -216,45 +229,58 @@ namespace XREngine.Components.Lights
             };
         }
 
-        private (Vector3 mirrorPoint, Vector3 mirrorNormal, Matrix4x4 camMirrorWorld) GetMirrorInfo(XRCamera camera)
-        {
-            GetMirrorPlane(out Vector3 mirrorPoint, out Vector3 mirrorNormal);
-            Matrix4x4 camMirrorWorld = CalculateMirrorCameraView(camera, mirrorPoint, mirrorNormal);
-            return (mirrorPoint, mirrorNormal, camMirrorWorld);
-        }
+        //private (Vector3 mirrorPoint, Vector3 mirrorNormal, Matrix4x4 camMirrorWorld) GetMirrorInfo(XRCamera camera)
+        //{
+        //    GetMirrorPlane(out Vector3 mirrorPoint, out Vector3 mirrorNormal);
+        //    Matrix4x4 camMirrorWorld = CalculateMirrorCameraView(camera, mirrorPoint, mirrorNormal);
+        //    return (mirrorPoint, mirrorNormal, camMirrorWorld);
+        //}
 
-        private void UpdateMirrorCamera(XRCamera camera, Vector3 mirrorPoint, Vector3 mirrorNormal, Matrix4x4 camMirrorWorld)
+        private void UpdateMirrorCamera(XRCamera camera, bool render)
         {
+            Matrix4x4 camMirrorWorld = CalculateMirrorCameraView(camera, Transform.RenderTranslation, Transform.RenderForward, render);
+
             if (_mirrorCamera is not null)
             {
                 _mirrorCamera.Parameters = camera.Parameters;
                 _mirrorCamera.PostProcessing = camera.PostProcessing;
             }
 
-            _mirrorTransform.SetWorldMatrix(camMirrorWorld);
-
-            //mirror transform is technically not in a world, recalc render matrix here
-            _mirrorTransform.RecalculateMatrixHeirarchy(true, true, false);
-
-            _mirrorCamera?.SetObliqueClippingPlane(mirrorPoint, -mirrorNormal);
+            if (render)
+                _mirrorTransform.SetRenderMatrix(camMirrorWorld);
+            else
+                _mirrorTransform.SetWorldMatrix(camMirrorWorld);
         }
 
-        private static Matrix4x4 CalculateMirrorCameraView(XRCamera camera, Vector3 mirrorPoint, Vector3 mirrorNormal)
+        private static Matrix4x4 CalculateMirrorCameraView(XRCamera camera, Vector3 mirrorPoint, Vector3 mirrorNormal, bool render)
         {
             if (mirrorNormal.LengthSquared() < 0.0001f)
                 return Matrix4x4.Identity;
 
-            //Mirror to camera line
-            Vector3 camWorld = camera.Transform.RenderTranslation;
-            Vector3 planePerpPoint = XRMath.ProjectPointToPlane(camWorld, mirrorPoint, mirrorNormal);
-            float distance = Vector3.Distance(camWorld, planePerpPoint);
-            Vector3 perpNormal = (camWorld - planePerpPoint).Normalized();
+            var tfm = camera.Transform;
+            Vector3 pos, up, fwd;
+            if (render)
+            {
+                pos = tfm.RenderTranslation;
+                up = tfm.RenderUp;
+                fwd = tfm.RenderForward;
+            }
+            else
+            {
+                pos = tfm.WorldTranslation;
+                up = tfm.WorldUp;
+                fwd = tfm.WorldForward;
+            }
+
+            Vector3 planePerpPoint = XRMath.ProjectPointToPlane(pos, mirrorPoint, mirrorNormal);
+            float distance = Vector3.Distance(pos, planePerpPoint);
+            Vector3 perpNormal = (pos - planePerpPoint).Normalized();
             if (perpNormal.LengthSquared() < 0.0001f)
                 return Matrix4x4.Identity;
 
             Vector3 camPosMirror = planePerpPoint - perpNormal * distance;
-            Vector3 camUpDirMirror = Vector3.Reflect(camera.Transform.RenderUp, mirrorNormal);
-            Vector3 camFwdDirMirror = Vector3.Reflect(camera.Transform.RenderForward, mirrorNormal);
+            Vector3 camUpDirMirror = Vector3.Reflect(up, mirrorNormal);
+            Vector3 camFwdDirMirror = Vector3.Reflect(fwd, mirrorNormal);
 
             if (camUpDirMirror.LengthSquared() < 0.0001f)
                 camUpDirMirror = Globals.Up;
@@ -264,16 +290,10 @@ namespace XREngine.Components.Lights
             return Matrix4x4.CreateScale(new Vector3(-1.0f, 1.0f, 1.0f)) * Matrix4x4.CreateWorld(camPosMirror, camFwdDirMirror, camUpDirMirror);
         }
 
-        private void GetMirrorPlane(out Vector3 mirrorPoint, out Vector3 mirrorNormal)
-        {
-            mirrorPoint = Transform.WorldTranslation;
-            mirrorNormal = Vector3.Normalize(Transform.WorldForward);
-        }
-
         private void CollectVisible()
         {
             //DisallowMirrors = true;
-            Viewport?.CollectVisible(null, null);
+            Viewport?.CollectVisible(null, null, true);
             //DisallowMirrors = false;
         }
 

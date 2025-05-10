@@ -227,7 +227,7 @@ namespace XREngine
 
                 var commands = StereoViewport!.RenderPipelineInstance.MeshRenderCommands;
 
-                scene.CollectRenderedItems(commands, null, null);
+                scene.CollectRenderedItems(commands, worldFrustum, null, true);
             }
 
             private static bool _powerSaving = false;

@@ -144,7 +144,7 @@ namespace XREngine.Components.Lights
         }
 
         private void CollectVisibleFace(int i)
-            => Viewports[i]?.CollectVisible(null, null);
+            => Viewports[i]?.CollectVisible(null, null, false);
 
         public override void SwapBuffers()
         {

@@ -39,7 +39,8 @@ namespace XREngine.Scene
             RenderCommandCollection meshRenderCommands,
             XRCamera? activeCamera,
             bool cullWithFrustum,
-            Func<XRCamera>? cullingCameraOverride)
+            Func<XRCamera>? cullingCameraOverride,
+            bool collectMirrors)
         {
             var cullingCamera = cullingCameraOverride?.Invoke() ?? activeCamera;
             CollectRenderedItems(meshRenderCommands, cullWithFrustum ? cullingCamera?.GetOrthoCameraBounds() : null, activeCamera);

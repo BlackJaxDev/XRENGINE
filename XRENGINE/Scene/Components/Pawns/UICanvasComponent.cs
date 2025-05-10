@@ -145,7 +145,7 @@ namespace XREngine.Components
 
             //Collect the rendered items now that the layout is updated.
             if (_renderPipeline.Pipeline is not null)
-                VisualScene2D.CollectRenderedItems(_renderPipeline.MeshRenderCommands, Camera2D, false, null);
+                VisualScene2D.CollectRenderedItems(_renderPipeline.MeshRenderCommands, Camera2D, false, null, false);
         }
 
         public UIComponent? FindDeepestComponent(Vector2 normalizedViewportPosition)

@@ -149,37 +149,73 @@ namespace XREngine.Data.Geometry
         public Plane Left
         {
             get => _planes[0];
-            private set => _planes[0] = value;
+            private set
+            {
+                _planes[0] = value;
+                //Verify normal is facing right
+                if (_planes[0].Normal.X < 0)
+                    _planes[0] = new Plane(-_planes[0].Normal, -_planes[0].D);
+            }
         }
 
         public Plane Right
         {
             get => _planes[1];
-            private set => _planes[1] = value;
+            private set
+            {
+                _planes[1] = value;
+                //Verify normal is facing left
+                if (_planes[1].Normal.X > 0)
+                    _planes[1] = new Plane(-_planes[1].Normal, -_planes[1].D);
+            }
         }
 
         public Plane Bottom
         {
             get => _planes[2];
-            private set => _planes[2] = value;
+            private set
+            {
+                _planes[2] = value;
+                //Verify normal is facing up
+                if (_planes[2].Normal.Y < 0)
+                    _planes[2] = new Plane(-_planes[2].Normal, -_planes[2].D);
+            }
         }
 
         public Plane Top
         {
             get => _planes[3];
-            private set => _planes[3] = value;
+            private set
+            {
+                _planes[3] = value;
+                //Verify normal is facing down
+                if (_planes[3].Normal.Y > 0)
+                    _planes[3] = new Plane(-_planes[3].Normal, -_planes[3].D);
+            }
         }
 
         public Plane Near
         {
             get => _planes[4];
-            private set => _planes[4] = value;
+            private set
+            {
+                _planes[4] = value;
+                //Verify normal is facing forward (away from camera, negative Z)
+                if (_planes[4].Normal.Z > 0)
+                    _planes[4] = new Plane(-_planes[4].Normal, -_planes[4].D);
+            }
         }
 
         public Plane Far
         {
             get => _planes[5];
-            private set => _planes[5] = value;
+            private set
+            {
+                _planes[5] = value;
+                //Verify normal is facing backward (towards camera, positive Z)
+                if (_planes[5].Normal.Z < 0)
+                    _planes[5] = new Plane(-_planes[5].Normal, -_planes[5].D);
+            }
         }
 
         private Frustum(Plane[] planes, Vector3[] corners)
@@ -374,10 +410,18 @@ namespace XREngine.Data.Geometry
             return true;
         }
 
+        /// <summary>
+        /// Calculates the distance from a point to a plane.
+        /// When the point is in front of the plane, the distance is positive.
+        /// When the point is behind the plane, the distance is negative.
+        /// </summary>
+        /// <param name="point"></param>
+        /// <param name="plane"></param>
+        /// <returns></returns>
         public static float DistanceFromPointToPlane(Vector3 point, Plane plane)
         {
             Vector3 normal = new(plane.Normal.X, plane.Normal.Y, plane.Normal.Z);
-            return Math.Abs(Vector3.Dot(normal, point) + plane.D) / normal.Length();
+            return (Vector3.Dot(normal, point) + plane.D) / normal.Length();
         }
 
         /// <summary>

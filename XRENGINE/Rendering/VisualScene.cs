@@ -21,7 +21,8 @@ namespace XREngine.Scene
             RenderCommandCollection meshRenderCommands,
             XRCamera? activeCamera,
             bool cullWithFrustum,
-            Func<XRCamera>? cullingCameraOverride);
+            Func<XRCamera>? cullingCameraOverride,
+            bool collectMirrors);
 
         public virtual void DebugRender(XRCamera? camera, bool onlyContainingItems = false)
         {

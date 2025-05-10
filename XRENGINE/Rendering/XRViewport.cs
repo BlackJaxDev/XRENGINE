@@ -149,9 +149,9 @@ namespace XREngine.Rendering
         private void CollectVisibleInternal()
         {
             if (AutomaticallyCollectVisible)
-                CollectVisible(null, null);
+                CollectVisible(null, null, true);
         }
-        public void CollectVisible(XRWorldInstance? worldOverride, XRCamera? cameraOverride)
+        public void CollectVisible(XRWorldInstance? worldOverride, XRCamera? cameraOverride, bool collectMirrors)
         {
             XRCamera? camera = cameraOverride ?? ActiveCamera;
             if (camera is null)
@@ -161,7 +161,8 @@ namespace XREngine.Rendering
                 _renderPipeline.MeshRenderCommands,
                 camera,
                 CameraComponent?.CullWithFrustum ?? true,
-                CameraComponent?.CullingCameraOverride);
+                CameraComponent?.CullingCameraOverride,
+                collectMirrors);
 
             CollectVisibleScreenSpaceUI();
         }
