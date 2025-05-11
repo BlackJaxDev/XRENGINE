@@ -1,6 +1,7 @@
 ﻿using FFmpeg.AutoGen;
 using System.Numerics;
 using XREngine.Components;
+using XREngine.Data.Colors;
 using XREngine.Data.Geometry;
 using XREngine.Data.Trees;
 using XREngine.Rendering.Commands;
@@ -150,6 +151,18 @@ namespace XREngine.Rendering.Info
                 return -1;
 
             return 0;
+        }
+
+        protected override void RenderCullingVolume()
+        {
+            var cullingVolume = CullingVolume;
+            if (cullingVolume is null)
+                return;
+
+            Engine.Rendering.Debug.RenderRect2D(
+                cullingVolume.Value,
+                false,
+                ColorF4.White);
         }
     }
 }

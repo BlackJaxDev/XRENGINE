@@ -136,7 +136,7 @@ namespace XREngine.Timers
             while (IsRunning)
             {
                 //Collects visible object and generates render commands for the game's current state
-                await DispatchCollectVisible();
+                DispatchCollectVisible();
 
                 //Wait for the render thread to swap update buffers with render buffers
                 _renderDone.Wait(-1);
@@ -253,7 +253,7 @@ namespace XREngine.Timers
             }
         }
 
-        public async Task DispatchCollectVisible()
+        public void DispatchCollectVisible()
         {
             try
             {
@@ -261,8 +261,8 @@ namespace XREngine.Timers
                 float elapsed = (timestamp - Collect.LastTimestamp).Clamp(0.0f, 1.0f);
                 Collect.Delta = elapsed;
                 Collect.LastTimestamp = timestamp;
-                //CollectVisible?.Invoke();
-                await (CollectVisible?.InvokeAsync() ?? Task.CompletedTask);
+                CollectVisible?.InvokeParallel();
+                //await (CollectVisible?.InvokeAsync() ?? Task.CompletedTask);
                 timestamp = Time();
                 Collect.ElapsedTime = timestamp - Collect.LastTimestamp;
             }

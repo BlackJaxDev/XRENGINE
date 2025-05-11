@@ -1,4 +1,5 @@
 ﻿using XREngine.Components;
+using XREngine.Data.Colors;
 using XREngine.Data.Core;
 using XREngine.Data.Rendering;
 using XREngine.Data.Trees;
@@ -70,6 +71,8 @@ namespace XREngine.Rendering.Info
         private void CollectedForRender(RenderCommand command, XRCamera? camera)
             => CollectedForRenderCallback?.Invoke(this, command, camera);
 
+        protected abstract void RenderCullingVolume();
+
         private EventList<RenderCommand> _renderCommands = [];
         public EventList<RenderCommand> RenderCommands
         {
@@ -131,6 +134,9 @@ namespace XREngine.Rendering.Info
                 cmd.CollectedForRender(camera);
                 passes.Add(cmd);
             }
+
+            if (Engine.Rendering.Settings.RenderCullingVolumes)
+                RenderCullingVolume();
         }
     }
 }

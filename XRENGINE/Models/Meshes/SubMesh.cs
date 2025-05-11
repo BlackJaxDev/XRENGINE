@@ -44,10 +44,9 @@ namespace XREngine.Rendering.Models
         public void DetermineRootBone()
         {
             RootBone = TransformBase.FindCommonAncestor(
-                LODs.SelectMany(x => x.Mesh?.UtilizedBones ?? [])
+                [.. LODs.SelectMany(x => x.Mesh?.UtilizedBones ?? [])
                     .Select(x => x.tfm)
-                    .Distinct()
-                    .ToArray());
+                    .Distinct()]);
         }
 
         public SubMesh() { }

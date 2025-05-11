@@ -1,11 +1,9 @@
 ﻿using Jitter2;
 using Jitter2.Collision;
-using Jitter2.LinearMath;
 using System.Numerics;
 using XREngine.Components;
 using XREngine.Data.Geometry;
 using XREngine.Scene;
-using XREngine.Scene.Components.Animation;
 using static Jitter2.Collision.DynamicTree;
 using Quaternion = System.Numerics.Quaternion;
 

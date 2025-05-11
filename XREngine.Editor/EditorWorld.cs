@@ -17,6 +17,7 @@ using XREngine.Data.Colors;
 using XREngine.Data.Components;
 using XREngine.Data.Components.Scene;
 using XREngine.Data.Core;
+using XREngine.Data.Geometry;
 using XREngine.Data.Rendering;
 using XREngine.Editor.UI.Components;
 using XREngine.Editor.UI.Toolbar;
@@ -47,7 +48,7 @@ public static class EditorWorld
 
     //Editor UI
     public const bool AddEditorUI = false; //Adds the full editor UI to the camera.
-    public const bool TransformTool = false; //Adds the transform tool to the scene for testing dragging and rotating etc.
+    public const bool TransformTool = true; //Adds the transform tool to the scene for testing dragging and rotating etc.
     public const bool AllowEditingInVR = false; //Allows the user to edit the scene from desktop in VR.
     public const bool VideoStreaming = false; //Adds a video streaming component to the scene for testing video streaming.
     public const bool VideoStreamingAudio = false; //Adds a video streaming audio component to the scene for testing video streaming audio.
@@ -70,7 +71,7 @@ public static class EditorWorld
 
     //Pawns
     public const bool VRPawn = false; //Enables VR input and pawn.
-    public const bool Locomotion = true; //Enables the player to physically locomote in the world. Requires a physical floor.
+    public const bool Locomotion = false; //Enables the player to physically locomote in the world. Requires a physical floor.
     public const bool ThirdPersonPawn = true; //If on desktop and character pawn is enabled, this will add a third person camera instead of first person.
 
     //Physics
@@ -452,10 +453,11 @@ public static class EditorWorld
         s.RenderTransformLines = false;
         s.RenderTransformCapsules = false;
         s.RenderTransformPoints = false;
+        s.RenderCullingVolumes = false;
         s.RecalcChildMatricesInParallel = true;
         s.TickGroupedItemsInParallel = true;
         s.RenderWindowsWhileInVR = true;
-        s.AllowShaderPipelines = true; //Somehow, this lowers performance
+        s.AllowShaderPipelines = false; //Somehow, this lowers performance
         s.RenderVRSinglePassStereo = false;
         //s.PhysicsVisualizeSettings.SetAllTrue();
 
@@ -523,7 +525,7 @@ public static class EditorWorld
             XRTexture2D skyEquirect = Engine.Assets.LoadEngineAsset<XRTexture2D>("Textures", $"{names[r.Next(0, names.Length - 1)]}.exr");
 
             if (LightProbe)
-                AddLightProbes(rootNode, 1, 1, 1, 10, 10, 10);
+                AddLightProbes(rootNode, 1, 1, 1, 10, 10, 10, new Vector3(0.0f, 50.0f, 0.0f));
             if (Skybox)
                 AddSkybox(rootNode, skyEquirect);
         }
@@ -920,7 +922,7 @@ public static class EditorWorld
     //Code for lighting the scene.
     #region Lights
 
-    private static void AddLightProbes(SceneNode rootNode, int heightCount, int widthCount, int depthCount, float height, float width, float depth)
+    private static void AddLightProbes(SceneNode rootNode, int heightCount, int widthCount, int depthCount, float height, float width, float depth, Vector3 center)
     {
         var probeRoot = new SceneNode(rootNode) { Name = "LightProbeRoot" };
 
@@ -939,7 +941,7 @@ public static class EditorWorld
 
                     var probe = new SceneNode(probeRoot) { Name = $"LightProbe_{i}_{j}_{k}" };
                     var probeTransform = probe.SetTransform<Transform>();
-                    probeTransform.Translation = new Vector3(w - halfWidth, h, d - halfDepth);
+                    probeTransform.Translation = center + new Vector3(w - halfWidth, h, d - halfDepth);
                     var probeComp = probe.AddComponent<LightProbeComponent>();
 
                     probeComp!.Name = "TestLightProbe";
@@ -1468,7 +1470,10 @@ public static class EditorWorld
                     },
                     //LineWidth = 1.0f,
                 }
-            })]);
+            })
+        {
+            CullingBounds = new AABB(new Vector3(-9000), new Vector3(9000)),
+        }]);
     }
 
     private static void OnFinishedWorld(Task<(SceneNode? rootNode, IReadOnlyCollection<XRMaterial> materials, IReadOnlyCollection<XRMesh> meshes)> task)

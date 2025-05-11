@@ -291,7 +291,7 @@ namespace XREngine
                 public bool ProcessMeshImportsAsynchronously { get; set; } = true;
                 public bool UseInterleavedMeshBuffer { get; set; } = true;
                 public bool TransformCullingIsAxisAligned { get; set; } = true;
-                public bool RenderTransformCullingVolumes { get; set; } = false;
+                public bool RenderCullingVolumes { get; set; } = false;
                 /// <summary>
                 /// How long a cache object for text rendering should exist for without receiving any further updates.
                 /// </summary>

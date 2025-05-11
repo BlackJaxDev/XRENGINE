@@ -702,19 +702,96 @@ namespace XREngine.Data.Geometry
 
         public EContainment ContainsBox(Box box)
         {
+            // First check if all corners of the box are inside the frustum
             var corners = box.WorldCorners;
             int numInside = 0;
 
             foreach (var corner in corners)
                 if (ContainsPoint(corner))
                     numInside++;
-            
-            return numInside switch
+
+            if (numInside == 8)
+                return EContainment.Contains;
+
+            if (numInside > 0)
+                return EContainment.Intersects;
+
+            // If no corners are inside, we need additional checks:
+
+            // Check if any of the frustum edges intersect the box
+            // Create segments for the 12 edges of the frustum
+            var frustumEdges = new Segment[]
             {
-                8 => EContainment.Contains,
-                > 0 => EContainment.Intersects,
-                _ => EContainment.Disjoint
+                // Near face edges
+                new(LeftBottomNear, LeftTopNear),
+                new(LeftTopNear, RightTopNear),
+                new(RightTopNear, RightBottomNear),
+                new(RightBottomNear, LeftBottomNear),
+                
+                // Far face edges
+                new(LeftBottomFar, LeftTopFar),
+                new(LeftTopFar, RightTopFar),
+                new(RightTopFar, RightBottomFar),
+                new(RightBottomFar, LeftBottomFar),
+                
+                // Connecting edges
+                new(LeftBottomNear, LeftBottomFar),
+                new(LeftTopNear, LeftTopFar),
+                new(RightTopNear, RightTopFar),
+                new(RightBottomNear, RightBottomFar)
             };
+
+            // If any frustum edge intersects the box, the shapes intersect
+            foreach (var edge in frustumEdges)
+                if (box.Intersects(edge))
+                    return EContainment.Intersects;
+            
+            // Check if the frustum is completely inside the box
+            if (box.Contains(this))
+                return EContainment.Intersects;
+
+            // Check if any box edge intersects a frustum face
+            Vector3[] boxCorners = [.. corners];
+
+            // Create segments for the 12 edges of the box
+            var boxEdges = new Segment[]
+            {
+                // Bottom face
+                new(boxCorners[0], boxCorners[1]),
+                new(boxCorners[1], boxCorners[2]),
+                new(boxCorners[2], boxCorners[3]),
+                new(boxCorners[3], boxCorners[0]),
+                
+                // Top face
+                new(boxCorners[4], boxCorners[5]),
+                new(boxCorners[5], boxCorners[6]),
+                new(boxCorners[6], boxCorners[7]),
+                new(boxCorners[7], boxCorners[4]),
+                
+                // Connecting edges
+                new(boxCorners[0], boxCorners[4]),
+                new(boxCorners[1], boxCorners[5]),
+                new(boxCorners[2], boxCorners[6]),
+                new(boxCorners[3], boxCorners[7])
+            };
+
+            // If any box edge intersects the frustum, the shapes intersect
+            foreach (var edge in boxEdges)
+                if (IntersectsSegment(edge))
+                    return EContainment.Intersects;
+            
+            // Test if the frustum is completely inside the box
+            bool frustumInsideBox = true;
+            foreach (var corner in Corners)
+            {
+                if (!box.ContainsPoint(corner))
+                {
+                    frustumInsideBox = false;
+                    break;
+                }
+            }
+
+            return frustumInsideBox ? EContainment.Intersects : EContainment.Disjoint;
         }
     }
 }

@@ -70,9 +70,8 @@ namespace XREngine.Components.Lights
 
         private bool ShouldNotRenderThisMirror(XRCamera camera) =>
             DisallowMirrors || //Are mirrors disabled?
-            //(World?.Lights?.CollectingVisibleShadowMaps ?? false) || //Are we collecting shadow maps?
-            _collectedCameras.Contains(camera) || //Has this camera already captured this mirror?
-            camera == _mirrorCamera; //Is this camera the mirror camera itself?
+            camera == _mirrorCamera || //Is this camera the mirror camera itself?
+            _collectedCameras.Contains(camera); //Has this camera already captured this mirror?
 
         //private void RenderCommand_OnSwapBuffers(RenderCommand command)
         //    => SwapBuffers();

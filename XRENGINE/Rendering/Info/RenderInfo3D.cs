@@ -1,5 +1,6 @@
 ﻿using System.Numerics;
 using XREngine.Data;
+using XREngine.Data.Colors;
 using XREngine.Data.Core;
 using XREngine.Data.Geometry;
 using XREngine.Data.Rendering;
@@ -168,6 +169,15 @@ namespace XREngine.Rendering.Info
                     }
                     break;
             }
+        }
+
+        protected override void RenderCullingVolume()
+        {
+            var box = LocalCullingVolume;
+            if (box is null)
+                return;
+
+            Engine.Rendering.Debug.RenderBox(box.Value.HalfExtents, box.Value.Center, CullingOffsetMatrix, false, ColorF4.Red);
         }
     }
 }

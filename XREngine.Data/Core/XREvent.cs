@@ -44,6 +44,12 @@ namespace XREngine.Data.Core
             await Task.WhenAll([.. Actions.Select(Task.Run)]);
         }
 
+        public void InvokeParallel()
+        {
+            ConsumeQueues();
+            Parallel.ForEach(Actions, x => x.Invoke());
+        }
+
         private void ConsumeQueues()
         {
             while (PendingAdds.TryDequeue(out Action? add))

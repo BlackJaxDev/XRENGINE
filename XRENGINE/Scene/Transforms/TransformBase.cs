@@ -121,13 +121,6 @@ namespace XREngine.Scene.Transforms
 
             if (settings.RenderTransformCapsules)
                 Engine.Rendering.Debug.RenderCapsule(Capsule, settings.TransformCapsuleColor);
-
-            if (settings.RenderTransformCullingVolumes)
-            {
-                var box = RenderInfo.LocalCullingVolume;
-                if (box is not null)
-                    Engine.Rendering.Debug.RenderBox(box.Value.HalfExtents, box.Value.Center, RenderInfo.CullingOffsetMatrix, false, ColorF4.Red);
-            }
         }
 
         private void ChildAdded(TransformBase e)

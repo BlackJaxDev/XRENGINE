@@ -172,7 +172,7 @@ namespace XREngine.Data.Geometry
 
         public readonly bool Contains(Vector3 worldPoint)
             => ContainsPoint(worldPoint, float.Epsilon);
-        public readonly bool ContainsPoint(Vector3 worldPoint, float tolerance)
+        public readonly bool ContainsPoint(Vector3 worldPoint, float tolerance = 0.0001f)
         {
             var localPoint = PointToLocalSpace(worldPoint);
             return localPoint.X >= LocalMinimum.X && localPoint.X <= LocalMaximum.X &&
@@ -180,8 +180,22 @@ namespace XREngine.Data.Geometry
                    localPoint.Z >= LocalMinimum.Z && localPoint.Z <= LocalMaximum.Z;
         }
 
+        public readonly bool Contains(Frustum f)
+        {
+            foreach (var corner in f.Corners)
+                if (!Contains(corner))
+                    return false;
+            return true;
+        }
+
         public readonly bool Contains(Box box)
             => box.WorldCorners.All(Contains);
+
+        public readonly bool Intersects(Segment segment)
+        {
+            var localSegment = segment.TransformedBy(_transform.Inverted());
+            return GeoUtil.SegmentIntersectsAABB(localSegment.Start, localSegment.End, LocalMinimum, LocalMaximum, out _, out _);
+        }
 
         public bool Intersects(Box box)
         {
