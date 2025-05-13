@@ -1,5 +1,6 @@
 ﻿using MIConvexHull;
 using System.Numerics;
+using XREngine.Components.Lights;
 using XREngine.Data.Geometry;
 using XREngine.Data.Rendering;
 using XREngine.Data.Vectors;
@@ -10,7 +11,7 @@ using XREngine.Scene.Transforms;
 using XREngine.Timers;
 using YamlDotNet.Serialization;
 
-namespace XREngine.Components.Lights
+namespace XREngine.Scene.Components.Capture.Lights
 {
     public class LightProbeComponent : SceneCaptureComponent, IRenderable, IVertex
     {

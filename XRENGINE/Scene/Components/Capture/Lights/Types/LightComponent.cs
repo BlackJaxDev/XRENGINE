@@ -1,11 +1,12 @@
 ﻿using System.Numerics;
+using XREngine.Components;
 using XREngine.Data.Colors;
 using XREngine.Data.Rendering;
 using XREngine.Rendering;
 using XREngine.Rendering.Info;
 using XREngine.Scene.Transforms;
 
-namespace XREngine.Components.Lights
+namespace XREngine.Scene.Components.Capture.Lights.Types
 {
     public abstract class LightComponent : XRComponent, IRenderable
     {

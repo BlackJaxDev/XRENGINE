@@ -1,4 +1,4 @@
-﻿namespace XREngine.Components.Lights
+﻿namespace XREngine.Scene.Components.Capture.Lights
 {
     /// <summary>
     /// Determines how the light is handled by the engine for optimization purposes.

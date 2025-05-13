@@ -1,4 +1,5 @@
-﻿using System.Numerics;
+﻿using Extensions;
+using System.Numerics;
 
 namespace XREngine.Data.Geometry
 {
@@ -111,9 +112,21 @@ namespace XREngine.Data.Geometry
         public override readonly string ToString()
             => $"Sphere (Center: {Center}, Radius: {Radius})";
 
-        public EContainment ContainsBox(Box box)
+        public readonly EContainment ContainsBox(Box box)
         {
-            throw new NotImplementedException();
+            Vector3 min = box.LocalMinimum;
+            Vector3 max = box.LocalMaximum;
+            var wtl = box.Transform.Inverted();
+            Vector3 localCenter = Vector3.Transform(Center, wtl);
+            if (localCenter.X - Radius > max.X || localCenter.X + Radius < min.X || 
+                localCenter.Y - Radius > max.Y || localCenter.Y + Radius < min.Y || 
+                localCenter.Z - Radius > max.Z || localCenter.Z + Radius < min.Z)
+                return EContainment.Disjoint;
+            if (localCenter.X - Radius < min.X && localCenter.X + Radius > max.X &&
+                localCenter.Y - Radius < min.Y && localCenter.Y + Radius > max.Y &&
+                localCenter.Z - Radius < min.Z && localCenter.Z + Radius > max.Z)
+                return EContainment.Contains;
+            return EContainment.Intersects;
         }
     }
 }

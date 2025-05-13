@@ -1,5 +1,4 @@
 ﻿using Extensions;
-using XREngine.Components.Lights;
 using XREngine.Components.Scene.Mesh;
 using XREngine.Data.Colors;
 using XREngine.Data.Rendering;
@@ -7,6 +6,7 @@ using XREngine.Rendering.Commands;
 using XREngine.Rendering.Models.Materials;
 using XREngine.Rendering.Physics.Physx;
 using XREngine.Rendering.Pipelines.Commands;
+using XREngine.Scene.Components.Capture.Lights;
 using static XREngine.Engine.Rendering.State;
 
 namespace XREngine.Rendering;
@@ -249,7 +249,7 @@ public class DefaultRenderPipeline : RenderPipeline
         {
             using (c.AddUsing<VPRC_BindOutputFBO>())
             {
-                c.Add<VPRC_ClearByBoundFBO>();
+                //c.Add<VPRC_ClearByBoundFBO>();
                 c.Add<VPRC_RenderQuadFBO>().FrameBufferName = PostProcessFBOName;
 
                 //We're not rendering to an FBO, we're rendering direct to the screen on top of the scene

@@ -2,10 +2,10 @@
 using OscCore;
 using System.Numerics;
 using XREngine.Components;
-using XREngine.Components.Lights;
 using XREngine.Data.Colors;
 using XREngine.Rendering;
 using XREngine.Scene.Components.Animation;
+using XREngine.Scene.Components.Capture.Lights.Types;
 using XREngine.Scene.Transforms;
 
 namespace XREngine.Scene.Components;

@@ -1,5 +1,4 @@
-﻿using Assimp;
-using XREngine.Data.Rendering;
+﻿using XREngine.Data.Rendering;
 using XREngine.Rendering;
 
 namespace XREngine.Components.Lights
@@ -115,6 +114,7 @@ namespace XREngine.Components.Lights
                     AutomaticallyCollectVisible = false,
                     AutomaticallySwapBuffers = false,
                     AllowUIRender = false,
+                    CullWithFrustum = true,
                 };
                 cam.PostProcessing = new PostProcessingSettings();
                 cam.PostProcessing.ColorGrading.AutoExposure = false;

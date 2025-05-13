@@ -17,7 +17,6 @@ using XREngine.Data.Colors;
 using XREngine.Data.Components;
 using XREngine.Data.Components.Scene;
 using XREngine.Data.Core;
-using XREngine.Data.Geometry;
 using XREngine.Data.Rendering;
 using XREngine.Editor.UI.Components;
 using XREngine.Editor.UI.Toolbar;
@@ -29,6 +28,8 @@ using XREngine.Rendering.UI;
 using XREngine.Scene;
 using XREngine.Scene.Components;
 using XREngine.Scene.Components.Animation;
+using XREngine.Scene.Components.Capture.Lights;
+using XREngine.Scene.Components.Capture.Lights.Types;
 using XREngine.Scene.Components.Physics;
 using XREngine.Scene.Components.Scripting;
 using XREngine.Scene.Components.VR;
@@ -49,7 +50,7 @@ public static class EditorWorld
     //Editor UI
     public const bool AddEditorUI = false; //Adds the full editor UI to the camera.
     public const bool TransformTool = true; //Adds the transform tool to the scene for testing dragging and rotating etc.
-    public const bool AllowEditingInVR = false; //Allows the user to edit the scene from desktop in VR.
+    public const bool AllowEditingInVR = true; //Allows the user to edit the scene from desktop in VR.
     public const bool VideoStreaming = false; //Adds a video streaming component to the scene for testing video streaming.
     public const bool VideoStreamingAudio = false; //Adds a video streaming audio component to the scene for testing video streaming audio.
 
@@ -70,8 +71,8 @@ public static class EditorWorld
     public static readonly float? StopRealtimeCaptureSec = 5; //5
 
     //Pawns
-    public const bool VRPawn = false; //Enables VR input and pawn.
-    public const bool Locomotion = false; //Enables the player to physically locomote in the world. Requires a physical floor.
+    public const bool VRPawn = true; //Enables VR input and pawn.
+    public const bool Locomotion = true; //Enables the player to physically locomote in the world. Requires a physical floor.
     public const bool ThirdPersonPawn = true; //If on desktop and character pawn is enabled, this will add a third person camera instead of first person.
 
     //Physics
@@ -448,7 +449,7 @@ public static class EditorWorld
         var s = Engine.Rendering.Settings;
         s.AllowBlendshapes = true;
         s.AllowSkinning = true;
-        //s.RenderMesh3DBounds = true;
+        s.RenderMesh3DBounds = true;
         s.RenderTransformDebugInfo = true;
         s.RenderTransformLines = false;
         s.RenderTransformCapsules = false;
@@ -682,7 +683,7 @@ public static class EditorWorld
 
         controllerTfm = leftControllerNode.SetTransform<VRControllerTransform>();
         controllerTfm.LeftHand = left;
-        controllerTfm.ForceManualRecalc = false;
+        controllerTfm.ForceManualRecalc = true;
 
         modelComp = leftControllerNode.AddComponent<VRControllerModelComponent>()!;
         modelComp.LeftHand = left;
@@ -702,7 +703,13 @@ public static class EditorWorld
     private static void AddTrackerCollectionNode(SceneNode vrPlayspaceNode)
         => vrPlayspaceNode.NewChild<VRTrackerCollectionComponent>(out _, "VRTrackerCollectionNode");
 
-    private static SceneNode AddHeadsetNode(out VRHeadsetTransform hmdTfm, out VRHeadsetComponent hmdComp, SceneNode parentNode, bool setUI, out UICanvasComponent? canvas, ref PawnComponent? pawn)
+    private static SceneNode AddHeadsetNode(
+        out VRHeadsetTransform hmdTfm,
+        out VRHeadsetComponent hmdComp,
+        SceneNode parentNode,
+        bool setUI,
+        out UICanvasComponent? canvas,
+        ref PawnComponent? pawn)
     {
         canvas = null;
 
@@ -1288,7 +1295,13 @@ public static class EditorWorld
         //floorMat.EnableTransparency();
 
         var floorModel = floor.AddComponent<ModelComponent>()!;
-        floorModel.Model = new Model([new SubMesh(XRMesh.Create(VertexQuad.PosY(10000.0f)), floorMat)]);
+        floorModel.Model = new Model([new SubMesh(XRMesh.Create(VertexQuad.PosY(10000.0f)), floorMat)
+        {
+            //CullingBounds = new AABB(
+            //    new Vector3(-5000f, -0.001f, -5000f),
+            //    new Vector3(5000f, 0.001f, 5000f)
+            //)
+        }]);
     }
 
     //Spawns a ball with a random position, velocity and angular velocity.
@@ -1472,7 +1485,7 @@ public static class EditorWorld
                 }
             })
         {
-            CullingBounds = new AABB(new Vector3(-9000), new Vector3(9000)),
+            //CullingBounds = new AABB(new Vector3(-9000), new Vector3(9000)),
         }]);
     }
 

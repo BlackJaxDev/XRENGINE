@@ -854,6 +854,7 @@ namespace XREngine.Rendering
             //While doing this, compile a command list of actions to set buffer data
             void Add(Vertex v)
             {
+                bounds = bounds?.ExpandedToInclude(v.Position) ?? new AABB(v.Position, v.Position);
                 AddVertex(
                     triVertices,
                     v,
@@ -928,6 +929,7 @@ namespace XREngine.Rendering
                 switch (prim)
                 {
                     case Vertex v:
+                        bounds = bounds?.ExpandedToInclude(v.Position) ?? new AABB(v.Position, v.Position);
                         AddVertex(
                             points,
                             v,
@@ -944,6 +946,8 @@ namespace XREngine.Rendering
                             var asLines = l.ToLines();
                             foreach (VertexLine line in asLines)
                                 foreach (Vertex v in line.Vertices)
+                                {
+                                    bounds = bounds?.ExpandedToInclude(v.Position) ?? new AABB(v.Position, v.Position);
                                     AddVertex(
                                         lines,
                                         v,
@@ -954,10 +958,13 @@ namespace XREngine.Rendering
                                         ref hasTangentAction,
                                         ref hasTexCoordAction,
                                         ref hasColorAction);
+                                }
                         }
                         break;
                     case VertexLine line:
                         foreach (Vertex v in line.Vertices)
+                        {
+                            bounds = bounds?.ExpandedToInclude(v.Position) ?? new AABB(v.Position, v.Position);
                             AddVertex(
                                 lines,
                                 v,
@@ -968,12 +975,15 @@ namespace XREngine.Rendering
                                 ref hasTangentAction,
                                 ref hasTexCoordAction,
                                 ref hasColorAction);
+                        }
                         break;
                     case VertexPolygon t:
                         {
                             var asTris = t.ToTriangles();
                             foreach (VertexTriangle tri in asTris)
                                 foreach (Vertex v in tri.Vertices)
+                                {
+                                    bounds = bounds?.ExpandedToInclude(v.Position) ?? new AABB(v.Position, v.Position);
                                     AddVertex(
                                         triangles,
                                         v,
@@ -984,6 +994,7 @@ namespace XREngine.Rendering
                                         ref hasTangentAction,
                                         ref hasTexCoordAction,
                                         ref hasColorAction);
+                                }
                         }
                         break;
                 }

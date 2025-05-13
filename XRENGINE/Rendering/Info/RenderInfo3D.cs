@@ -1,4 +1,5 @@
 ﻿using System.Numerics;
+using XREngine.Components.Lights;
 using XREngine.Data;
 using XREngine.Data.Colors;
 using XREngine.Data.Core;
@@ -129,7 +130,11 @@ namespace XREngine.Rendering.Info
             IVolume? cullingVolume,
             RenderCommandCollection passes,
             XRCamera? camera,
-            bool containsOnly) => (!passes.IsShadowPass || CastsShadows) && Intersects(cullingVolume, containsOnly);
+            bool containsOnly,
+            bool collectMirrors) => 
+            (!passes.IsShadowPass || CastsShadows) && 
+            (collectMirrors || Owner is not MirrorCaptureComponent) &&
+            Intersects(cullingVolume, containsOnly);
 
         public bool Intersects(IVolume? cullingVolume, bool containsOnly)
         {

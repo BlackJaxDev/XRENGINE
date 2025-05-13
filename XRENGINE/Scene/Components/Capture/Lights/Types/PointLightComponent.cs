@@ -5,7 +5,7 @@ using XREngine.Data.Rendering;
 using XREngine.Rendering;
 using XREngine.Scene.Transforms;
 
-namespace XREngine.Components.Lights
+namespace XREngine.Scene.Components.Capture.Lights.Types
 {
     public class PointLightComponent : LightComponent
     {
@@ -154,7 +154,7 @@ namespace XREngine.Components.Lights
         {
             base.SetUniforms(program, targetStructName);
 
-            targetStructName = $"{(targetStructName ?? Engine.Rendering.Constants.LightsStructName)}.";
+            targetStructName = $"{targetStructName ?? Engine.Rendering.Constants.LightsStructName}.";
 
             program.Uniform($"{targetStructName}Color", _color);
             program.Uniform($"{targetStructName}DiffuseIntensity", _diffuseIntensity);

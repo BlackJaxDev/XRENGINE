@@ -30,9 +30,7 @@ namespace XREngine.Scene.Components.Animation
         /// Calibrates only the avatar scale.
         /// </summary>
         private static void CalibrateScale(VRIKSolverComponent ik, Settings settings)
-        {
-            CalibrateScale(ik, settings.ScaleMultiplier);
-        }
+            => CalibrateScale(ik, settings.ScaleMultiplier);
 
         /// <summary>
         /// Calibrates only the avatar scale.

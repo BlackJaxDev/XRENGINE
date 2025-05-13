@@ -48,7 +48,7 @@ namespace XREngine.Components.Lights
                 return;
 
             UpdateRenderTransform(Transform);
-            //UpdateMirrorCamera(camera, true);
+            UpdateMirrorCamera(camera, true);
             Render();
         }
 
@@ -220,11 +220,11 @@ namespace XREngine.Components.Lights
             {
                 WorldInstanceOverride = World,
                 Camera = _mirrorCamera,
-                RenderPipeline = new DefaultRenderPipeline(),
                 SetRenderPipelineFromCamera = false,
                 AutomaticallyCollectVisible = false,
                 AutomaticallySwapBuffers = false,
                 AllowUIRender = false,
+                CullWithFrustum = false,
             };
         }
 

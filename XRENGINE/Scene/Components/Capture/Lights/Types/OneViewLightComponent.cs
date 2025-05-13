@@ -1,7 +1,7 @@
 ﻿using XREngine.Rendering;
 using XREngine.Scene.Transforms;
 
-namespace XREngine.Components.Lights
+namespace XREngine.Scene.Components.Capture.Lights.Types
 {
     /// <summary>
     /// Base class to handle shadow mapping for a light that only has one view.
@@ -15,6 +15,7 @@ namespace XREngine.Components.Lights
             AutomaticallyCollectVisible = false,
             AutomaticallySwapBuffers = false,
             AllowUIRender = false,
+            CullWithFrustum = true,
         };
 
         public override void SetShadowMapResolution(uint width, uint height)

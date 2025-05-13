@@ -54,7 +54,7 @@ namespace XREngine.Scene
         public void CollectRenderedItems(RenderCommandCollection commands, IVolume? collectionVolume, XRCamera? camera, bool collectMirrors)
         {
             bool IntersectionTest(RenderInfo3D item, IVolume? cullingVolume, bool containsOnly)
-                => (collectMirrors || item.Owner is not MirrorCaptureComponent) && item.AllowRender(cullingVolume, commands, camera, containsOnly);
+                => item.AllowRender(cullingVolume, commands, camera, containsOnly, collectMirrors);
 
             void AddRenderCommands(ITreeItem item)
             {

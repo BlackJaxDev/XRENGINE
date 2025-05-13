@@ -145,6 +145,11 @@ namespace XREngine.Rendering
             get => _allowUIRender;
             set => SetField(ref _allowUIRender, value);
         }
+        public bool CullWithFrustum
+        {
+            get => _cullWithFrustum;
+            set => SetField(ref _cullWithFrustum, value);
+        }
 
         private void CollectVisibleInternal()
         {
@@ -160,7 +165,7 @@ namespace XREngine.Rendering
             (worldOverride ?? World)?.VisualScene?.CollectRenderedItems(
                 _renderPipeline.MeshRenderCommands,
                 camera,
-                CameraComponent?.CullWithFrustum ?? true,
+                CameraComponent?.CullWithFrustum ?? CullWithFrustum,
                 CameraComponent?.CullingCameraOverride,
                 collectMirrors);
 
@@ -362,6 +367,7 @@ namespace XREngine.Rendering
         private bool _automaticallySwapBuffers = true;
         private bool _allowUIRender = true;
         private int _index = 0;
+        private bool _cullWithFrustum = true;
 
         public bool SetRenderPipelineFromCamera
         {

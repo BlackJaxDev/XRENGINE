@@ -278,7 +278,20 @@ namespace XREngine.Data.Geometry
 
         public EContainment ContainsBox(Box box)
         {
-            throw new NotImplementedException();
+            var corners = box.WorldCorners.ToArray();
+            var planes = WorldPlanes.ToArray();
+            for (int i = 0; i < 6; i++)
+            {
+                var plane = planes[i];
+                for (int j = 0; j < 8; j++)
+                {
+                    if (GeoUtil.DistancePlanePoint(plane, corners[j]) > 0)
+                        break;
+                    if (j == 7)
+                        return EContainment.Disjoint;
+                }
+            }
+            return EContainment.Contains;
         }
     }
 }

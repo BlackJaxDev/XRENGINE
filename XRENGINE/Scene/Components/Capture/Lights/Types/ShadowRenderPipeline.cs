@@ -4,7 +4,7 @@ using XREngine.Rendering;
 using XREngine.Rendering.Commands;
 using XREngine.Rendering.Pipelines.Commands;
 
-namespace XREngine.Components.Lights
+namespace XREngine.Scene.Components.Capture.Lights.Types
 {
     public class ShadowRenderPipeline : RenderPipeline
     {

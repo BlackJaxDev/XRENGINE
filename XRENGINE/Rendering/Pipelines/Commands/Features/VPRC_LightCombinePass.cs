@@ -1,6 +1,6 @@
-﻿using XREngine.Components.Lights;
-using XREngine.Data.Rendering;
+﻿using XREngine.Data.Rendering;
 using XREngine.Rendering.Models.Materials;
+using XREngine.Scene.Components.Capture.Lights.Types;
 
 namespace XREngine.Rendering.Pipelines.Commands
 {

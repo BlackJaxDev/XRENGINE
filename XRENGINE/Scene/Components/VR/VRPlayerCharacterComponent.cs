@@ -4,7 +4,6 @@ using XREngine.Components;
 using XREngine.Components.Scene.Mesh;
 using XREngine.Data.Colors;
 using XREngine.Data.Components.Scene;
-using XREngine.Data.Core;
 using XREngine.Data.Rendering;
 using XREngine.Data.Transforms.Rotations;
 using XREngine.Rendering.Commands;
@@ -369,10 +368,12 @@ namespace XREngine.Scene.Components.VR
                 return;
 
             Matrix4x4 hmdMtx = Engine.VRState.Api.Headset?.DeviceToAbsoluteTrackingMatrix ?? Matrix4x4.Identity;
-            Vector3 rootPos = hmdMtx.Translation - h.Head.WorldBindPose.Translation;
+            Vector3 hmdPos = hmdMtx.Translation;
             TransformBase.GetDirectionsXZ(hmdMtx, out Vector3 forward, out _);
             Matrix4x4 eyeOffset = Matrix4x4.CreateTranslation(-EyeOffsetFromHead);
-            h.SceneNode.Transform.DeriveWorldMatrix(eyeOffset * Matrix4x4.CreateWorld(rootPos, -forward, Globals.Up));
+            Vector3 rootToHead = h.Head.WorldBindPose.Translation - h.SceneNode.Transform.BindMatrix.Translation;
+            Matrix4x4 rootOffset = Matrix4x4.CreateTranslation(-rootToHead);
+            h.SceneNode.Transform.DeriveWorldMatrix(rootOffset * eyeOffset * Matrix4x4.CreateWorld(hmdPos, -forward, Globals.Up));
         }
 
         public bool BeginCalibration()

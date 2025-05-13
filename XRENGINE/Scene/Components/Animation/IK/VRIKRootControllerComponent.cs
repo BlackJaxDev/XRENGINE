@@ -77,15 +77,17 @@ namespace XREngine.Scene.Components.Animation
         /// <param name="data">The calibration data to use for setup.</param>
         public void Calibrate(VRIKCalibrator.CalibrationData data)
         {
-            if (IKSolverComponent is null)
+            var solverComp = IKSolverComponent;
+            if (solverComp is null)
             {
                 Debug.LogWarning("No VRIK found on VRIKRootController's GameObject.");
                 return;
             }
+            var solver = solverComp.Solver;
 
-            _hipsTarget = IKSolverComponent.Solver._spine._hipsTarget;
-            _leftFootTarget = IKSolverComponent.Solver._leftLeg._target;
-            _rightFootTarget = IKSolverComponent.Solver._rightLeg._target;
+            _hipsTarget = solver._spine._hipsTarget;
+            _leftFootTarget = solver._leftLeg._target;
+            _rightFootTarget = solver._rightLeg._target;
             if (_hipsTarget != null)
                 PelvisTargetRight = data._pelvisTargetRight;
         }
@@ -98,14 +100,15 @@ namespace XREngine.Scene.Components.Animation
             if (!IsActiveInHierarchy)
                 return;
 
-            var root = IKSolverComponent?.Root;
+            var solverComp = IKSolverComponent;
+            var root = solverComp.Root;
             if (root is null)
             {
                 Debug.LogWarning("Can not update VRIKRootController without the root transform.");
                 return;
             }
 
-            var hipsTfm = IKSolverComponent?.Humanoid?.Hips.Node?.GetTransformAs<Transform>(true);
+            var hipsTfm = solverComp.Humanoid?.Hips.Node?.GetTransformAs<Transform>(true);
             if (_hipsTarget != null && hipsTfm != null)
             {
                 // Position the root at the hips target's X/Z position, preserving the current Y height
@@ -120,8 +123,8 @@ namespace XREngine.Scene.Components.Animation
                 root.SetWorldRotation(XRMath.LookRotation(f));
 
                 // Interpolate the hips position and rotation based on solver weights
-                hipsTfm.SetWorldTranslation(Vector3.Lerp(hipsTfm.WorldTranslation, _hipsTarget.WorldTranslation, IKSolverComponent.Solver._spine._pelvisPositionWeight));
-                hipsTfm.SetWorldRotation(Quaternion.Slerp(hipsTfm.WorldRotation, _hipsTarget.WorldRotation, IKSolverComponent.Solver._spine._pelvisRotationWeight));
+                hipsTfm.SetWorldTranslation(Vector3.Lerp(hipsTfm.WorldTranslation, _hipsTarget.WorldTranslation, solverComp.Solver._spine._pelvisPositionWeight));
+                hipsTfm.SetWorldRotation(Quaternion.Slerp(hipsTfm.WorldRotation, _hipsTarget.WorldRotation, solverComp.Solver._spine._pelvisRotationWeight));
             }
             else if (_leftFootTarget != null && _rightFootTarget != null)
             {
