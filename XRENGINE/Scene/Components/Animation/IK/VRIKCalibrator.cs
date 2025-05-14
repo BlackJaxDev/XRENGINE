@@ -81,12 +81,12 @@ namespace XREngine.Scene.Components.Animation
         public static CalibrationData? Calibrate(
             VRIKSolverComponent ik,
             Settings settings,
-            Transform headTracker,
-            Transform? bodyTracker = null,
-            Transform? leftHandTracker = null,
-            Transform? rightHandTracker = null,
-            Transform? leftFootTracker = null,
-            Transform? rightFootTracker = null)
+            TransformBase? headTracker,
+            TransformBase? bodyTracker = null,
+            TransformBase? leftHandTracker = null,
+            TransformBase? rightHandTracker = null,
+            TransformBase? leftFootTracker = null,
+            TransformBase? rightFootTracker = null)
         {
             if (!ik.Solver.Initialized)
             {
@@ -124,7 +124,6 @@ namespace XREngine.Scene.Components.Animation
             }
 
             var hips = human.Hips.Node?.GetTransformAs<Transform>(true);
-            var leftArm = human.Left.Arm.Node?.GetTransformAs<Transform>(true);
             var spine = ik.Solver._spine;
 
             // Root position and rotation
@@ -283,7 +282,13 @@ namespace XREngine.Scene.Components.Animation
             return data;
         }
 
-        private static void CalibrateLeg(Settings settings, Transform tracker, IKSolverVR.Leg leg, Transform? lastBone, Vector3 rootForward, bool isLeft)
+        private static void CalibrateLeg(
+            Settings settings,
+            TransformBase tracker,
+            IKSolverVR.Leg leg,
+            Transform? lastBone,
+            Vector3 rootForward,
+            bool isLeft)
         {
             if (lastBone is null)
             {
@@ -354,12 +359,12 @@ namespace XREngine.Scene.Components.Animation
         public static void Calibrate(
             VRIKSolverComponent ik,
             CalibrationData data,
-            Transform headTracker,
-            Transform? bodyTracker = null,
-            Transform? leftHandTracker = null,
-            Transform? rightHandTracker = null,
-            Transform? leftFootTracker = null,
-            Transform? rightFootTracker = null)
+            TransformBase headTracker,
+            TransformBase? bodyTracker = null,
+            TransformBase? leftHandTracker = null,
+            TransformBase? rightHandTracker = null,
+            TransformBase? leftFootTracker = null,
+            TransformBase? rightFootTracker = null)
         {
             if (!ik.Solver.Initialized)
             {
@@ -500,7 +505,13 @@ namespace XREngine.Scene.Components.Animation
                 rootController?.Destroy();
         }
 
-        private static void CalibrateLeg(CalibrationData data, Transform tracker, IKSolverVR.Leg leg, Transform? lastBone, Vector3 rootForward, bool isLeft)
+        private static void CalibrateLeg(
+            CalibrationData data,
+            TransformBase tracker,
+            IKSolverVR.Leg leg,
+            TransformBase? lastBone,
+            Vector3 rootForward,
+            bool isLeft)
         {
             if (isLeft && data._leftFoot is null) 
                 return;
@@ -550,7 +561,16 @@ namespace XREngine.Scene.Components.Animation
         /// <param name="handRotationOffset">Rotation offset of the hand controller from the hand bone (controller space).</param>
         /// <param name="scaleMlp">Multiplies the scale of the root.</param>
         /// <returns></returns>
-        public static CalibrationData Calibrate(VRIKSolverComponent ik, Transform centerEyeAnchor, Transform leftHandAnchor, Transform rightHandAnchor, Vector3 centerEyePositionOffset, Vector3 centerEyeRotationOffset, Vector3 handPositionOffset, Vector3 handRotationOffset, float scaleMlp = 1f)
+        public static CalibrationData Calibrate(
+            VRIKSolverComponent ik,
+            TransformBase centerEyeAnchor,
+            TransformBase leftHandAnchor,
+            TransformBase rightHandAnchor,
+            Vector3 centerEyePositionOffset,
+            Vector3 centerEyeRotationOffset,
+            Vector3 handPositionOffset,
+            Vector3 handRotationOffset,
+            float scaleMlp = 1f)
         {
             CalibrateHead(ik, centerEyeAnchor, centerEyePositionOffset, centerEyeRotationOffset);
             CalibrateHands(ik, leftHandAnchor, rightHandAnchor, handPositionOffset, handRotationOffset);
@@ -567,7 +587,11 @@ namespace XREngine.Scene.Components.Animation
         /// <summary>
         /// Calibrates head IK target to specified anchor position and rotation offset independent of avatar bone orientations.
         /// </summary>
-        public static void CalibrateHead(VRIKSolverComponent ik, Transform centerEyeAnchor, Vector3 anchorPositionOffset, Vector3 anchorRotationOffset)
+        public static void CalibrateHead(
+            VRIKSolverComponent ik,
+            TransformBase centerEyeAnchor,
+            Vector3 anchorPositionOffset,
+            Vector3 anchorRotationOffset)
         {
             var spine = ik.Solver._spine;
             spine._headTarget ??= new SceneNode("Head IK Target").GetTransformAs<Transform>(true)!;
@@ -601,7 +625,11 @@ namespace XREngine.Scene.Components.Animation
         /// <summary>
         /// Calibrates body target to avatar pelvis position and position/rotation offsets in character root space.
         /// </summary>
-        public static void CalibrateBody(VRIKSolverComponent ik, Transform hipsTracker, Vector3 trackerPositionOffset, Vector3 trackerRotationOffset)
+        public static void CalibrateBody(
+            VRIKSolverComponent ik,
+            Transform hipsTracker,
+            Vector3 trackerPositionOffset,
+            Vector3 trackerRotationOffset)
         {
             var spine = ik.Solver._spine;
             var root = ik.Root;
@@ -625,7 +653,12 @@ namespace XREngine.Scene.Components.Animation
         /// <summary>
         /// Calibrates hand IK targets to specified anchor position and rotation offsets independent of avatar bone orientations.
         /// </summary>
-        public static void CalibrateHands(VRIKSolverComponent ik, Transform leftHandAnchor, Transform rightHandAnchor, Vector3 anchorPositionOffset, Vector3 anchorRotationOffset)
+        public static void CalibrateHands(
+            VRIKSolverComponent ik,
+            TransformBase leftHandAnchor,
+            TransformBase rightHandAnchor,
+            Vector3 anchorPositionOffset,
+            Vector3 anchorRotationOffset)
         {
             ik.Solver._leftArm._target ??= new SceneNode(ik.World, "Left Hand IK Target").GetTransformAs<Transform>(true)!;
             ik.Solver._rightArm._target ??= new SceneNode(ik.World, "Right Hand IK Target").GetTransformAs<Transform>(true)!;
@@ -634,7 +667,12 @@ namespace XREngine.Scene.Components.Animation
             CalibrateHand(ik, rightHandAnchor, anchorPositionOffset, anchorRotationOffset, false);
         }
 
-        private static void CalibrateHand(VRIKSolverComponent ik, Transform anchor, Vector3 positionOffset, Vector3 rotationOffset, bool isLeft)
+        private static void CalibrateHand(
+            VRIKSolverComponent ik,
+            TransformBase anchor,
+            Vector3 positionOffset,
+            Vector3 rotationOffset,
+            bool isLeft)
         {
             if (isLeft)
             {
@@ -651,8 +689,18 @@ namespace XREngine.Scene.Components.Animation
             }
 
             var hand = (isLeft ? human.Left.Wrist.Node : human.Right.Wrist.Node)?.GetTransformAs<Transform>(true);
-            var forearm = (isLeft ? human.Left.Elbow.Node : human.Right.Elbow.Node)?.GetTransformAs<Transform>(true);
+            if (hand is null)
+            {
+                Debug.LogWarning($"Can not calibrate VRIK without the {human.Name} hand transform.");
+                return;
+            }
             var target = isLeft ? ik.Solver._leftArm._target : ik.Solver._rightArm._target;
+            if (target is null)
+            {
+                Debug.LogWarning($"Can not calibrate VRIK without the {human.Name} hand target.");
+                return;
+            }
+            var forearm = (isLeft ? human.Left.Elbow.Node : human.Right.Elbow.Node)?.GetTransformAs<Transform>(true);
 
             Vector3 forward = isLeft
                 ? ik.Solver._leftArm._wristToPalmAxis

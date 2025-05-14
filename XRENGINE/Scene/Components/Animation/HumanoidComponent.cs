@@ -400,6 +400,17 @@ namespace XREngine.Scene.Components.Animation
         private bool _leftLegIKEnabled = true;
         private bool _rightLegIKEnabled = true;
         private bool _hipToHeadIKEnabled = true;
+        private (TransformBase? tfm, Matrix4x4 offset) _headTarget = (null, Matrix4x4.Identity);
+        private (TransformBase? tfm, Matrix4x4 offset) _hipsTarget = (null, Matrix4x4.Identity);
+        private (TransformBase? tfm, Matrix4x4 offset) _leftHandTarget = (null, Matrix4x4.Identity);
+        private (TransformBase? tfm, Matrix4x4 offset) _rightHandTarget = (null, Matrix4x4.Identity);
+        private (TransformBase? tfm, Matrix4x4 offset) _leftFootTarget = (null, Matrix4x4.Identity);
+        private (TransformBase? tfm, Matrix4x4 offset) _rightFootTarget = (null, Matrix4x4.Identity);
+        private (TransformBase? tfm, Matrix4x4 offset) _leftElbowTarget = (null, Matrix4x4.Identity);
+        private (TransformBase? tfm, Matrix4x4 offset) _rightElbowTarget = (null, Matrix4x4.Identity);
+        private (TransformBase? tfm, Matrix4x4 offset) _leftKneeTarget = (null, Matrix4x4.Identity);
+        private (TransformBase? tfm, Matrix4x4 offset) _rightKneeTarget = (null, Matrix4x4.Identity);
+        private (TransformBase? tfm, Matrix4x4 offset) _chestTarget = (null, Matrix4x4.Identity);
 
         private static BoneChainItem[] Link(BoneDef[] bones)
             => bones.Any(bone => bone.Node is null) 
@@ -475,22 +486,61 @@ namespace XREngine.Scene.Components.Animation
         public static Matrix4x4 GetMatrixForTarget((TransformBase? tfm, Matrix4x4 offset) target)
             => target.offset * (target.tfm?.RenderMatrix ?? Matrix4x4.Identity);
 
-        public (TransformBase? tfm, Matrix4x4 offset) HeadTarget { get; set; } = (null, Matrix4x4.Identity);
-        public (TransformBase? tfm, Matrix4x4 offset) HipsTarget { get; set; } = (null, Matrix4x4.Identity);
-
-        public (TransformBase? tfm, Matrix4x4 offset) LeftHandTarget { get; set; } = (null, Matrix4x4.Identity);
-        public (TransformBase? tfm, Matrix4x4 offset) RightHandTarget { get; set; } = (null, Matrix4x4.Identity);
-
-        public (TransformBase? tfm, Matrix4x4 offset) LeftFootTarget { get; set; } = (null, Matrix4x4.Identity);
-        public (TransformBase? tfm, Matrix4x4 offset) RightFootTarget { get; set; } = (null, Matrix4x4.Identity);
-
-        public (TransformBase? tfm, Matrix4x4 offset) LeftElbowTarget { get; set; } = (null, Matrix4x4.Identity);
-        public (TransformBase? tfm, Matrix4x4 offset) RightElbowTarget { get; set; } = (null, Matrix4x4.Identity);
-
-        public (TransformBase? tfm, Matrix4x4 offset) LeftKneeTarget { get; set; } = (null, Matrix4x4.Identity);
-        public (TransformBase? tfm, Matrix4x4 offset) RightKneeTarget { get; set; } = (null, Matrix4x4.Identity);
-
-        public (TransformBase? tfm, Matrix4x4 offset) ChestTarget { get; set; } = (null, Matrix4x4.Identity);
+        public (TransformBase? tfm, Matrix4x4 offset) HeadTarget
+        {
+            get => _headTarget;
+            set => SetField(ref _headTarget, value);
+        }
+        public (TransformBase? tfm, Matrix4x4 offset) HipsTarget
+        {
+            get => _hipsTarget;
+            set => SetField(ref _hipsTarget, value);
+        }
+        public (TransformBase? tfm, Matrix4x4 offset) LeftHandTarget
+        {
+            get => _leftHandTarget;
+            set => SetField(ref _leftHandTarget, value);
+        }
+        public (TransformBase? tfm, Matrix4x4 offset) RightHandTarget
+        {
+            get => _rightHandTarget;
+            set => SetField(ref _rightHandTarget, value);
+        }
+        public (TransformBase? tfm, Matrix4x4 offset) LeftFootTarget
+        {
+            get => _leftFootTarget;
+            set => SetField(ref _leftFootTarget, value);
+        }
+        public (TransformBase? tfm, Matrix4x4 offset) RightFootTarget
+        {
+            get => _rightFootTarget;
+            set => SetField(ref _rightFootTarget, value);
+        }
+        public (TransformBase? tfm, Matrix4x4 offset) LeftElbowTarget
+        {
+            get => _leftElbowTarget;
+            set => SetField(ref _leftElbowTarget, value);
+        }
+        public (TransformBase? tfm, Matrix4x4 offset) RightElbowTarget
+        {
+            get => _rightElbowTarget;
+            set => SetField(ref _rightElbowTarget, value);
+        }
+        public (TransformBase? tfm, Matrix4x4 offset) LeftKneeTarget
+        {
+            get => _leftKneeTarget;
+            set => SetField(ref _leftKneeTarget, value);
+        }
+        public (TransformBase? tfm, Matrix4x4 offset) RightKneeTarget
+        {
+            get => _rightKneeTarget;
+            set => SetField(ref _rightKneeTarget, value);
+        }
+        public (TransformBase? tfm, Matrix4x4 offset) ChestTarget
+        {
+            get => _chestTarget;
+            set => SetField(ref _chestTarget, value);
+        }
 
         public RenderInfo[] RenderedObjects { get; }
 

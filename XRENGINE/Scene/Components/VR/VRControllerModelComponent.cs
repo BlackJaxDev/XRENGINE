@@ -20,6 +20,9 @@ namespace XREngine.Scene.Components.VR
                     Model?.Destroy();
                     Model = null;
                     break;
+                case nameof(Model):
+                    VerifyDevices();
+                    break;
             }
         }
 

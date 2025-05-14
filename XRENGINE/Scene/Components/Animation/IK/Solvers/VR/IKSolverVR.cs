@@ -5,7 +5,6 @@ using XREngine.Animation;
 using XREngine.Components;
 using XREngine.Data;
 using XREngine.Data.Core;
-using XREngine.Data.Geometry;
 using XREngine.Rendering.Physics.Physx;
 using Transform = XREngine.Scene.Transforms.Transform;
 
@@ -38,7 +37,7 @@ namespace XREngine.Scene.Components.Animation
             _readPositions = new Vector3[_solverTransforms.Length];
             _readRotations = new Quaternion[_solverTransforms.Length];
 
-            //DefaultAnimationCurves();
+            DefaultAnimationCurves();
             GuessHandOrientations(humanoid, true);
         }
 
@@ -100,23 +99,23 @@ namespace XREngine.Scene.Components.Animation
                     humanoid.Right.Elbow.Node?.GetTransformAs<Transform>(true));
         }
 
-        ///// <summary>
-        ///// Set default values for the animation curves if they have no keys.
-        ///// </summary>
-        //public void DefaultAnimationCurves()
-        //{
-        //    if (_locomotion.stepHeight == null) 
-        //        _locomotion.stepHeight = new AnimationCurve();
+        /// <summary>
+        /// Set default values for the animation curves if they have no keys.
+        /// </summary>
+        public void DefaultAnimationCurves()
+        {
+            //if (_locomotion._stepHeight == null)
+            //    _locomotion._stepHeight = new AnimationCurve();
 
-        //    if (_locomotion.heelHeight == null) 
-        //        _locomotion.heelHeight = new AnimationCurve();
+            //if (_locomotion._heelHeight == null)
+            //    _locomotion._heelHeight = new AnimationCurve();
 
-        //    if (_locomotion.stepHeight.keys.Length == 0)
-        //        _locomotion.stepHeight.keys = GetSineKeyframes(0.03f);
-            
-        //    if (_locomotion.heelHeight.keys.Length == 0)
-        //        _locomotion.heelHeight.keys = GetSineKeyframes(0.03f);
-        //}
+            //if (_locomotion._stepHeight.keys.Length == 0)
+            //    _locomotion._stepHeight.keys = GetSineKeyframes(0.03f);
+
+            //if (_locomotion._heelHeight.keys.Length == 0)
+            //    _locomotion._heelHeight.keys = GetSineKeyframes(0.03f);
+        }
 
         /// <summary>
         /// Adds position offset to a body part. Position offsets add to the targets in VRIK.
@@ -198,36 +197,37 @@ namespace XREngine.Scene.Components.Animation
         {
             for (int i = 1; i < _solverTransforms.Length; i++)
             {
-                if (_solverTransforms[i] != null)
+                var tfm = _solverTransforms[i];
+                if (tfm is null)
+                    continue;
+                
+                _defaultLocalPoses[i - 1] = new PoseData
                 {
-                    _defaultLocalPositions[i - 1] = _solverTransforms[i].Translation;
-                    _defaultLocalRotations[i - 1] = _solverTransforms[i].Rotation;
-                }
+                    Position = tfm.Translation,
+                    Rotation = tfm.Rotation
+                };
             }
         }
 
         public override void ResetTransformToDefault()
         {
-            if (!Initialized)
-                return;
-
-            if (_lod >= 2)
+            if (!Initialized || _lod >= 2)
                 return;
 
             for (int i = 1; i < _solverTransforms.Length; i++)
             {
-                if (_solverTransforms[i] != null)
-                {
-                    bool isPelvis = i == 1;
+                if (_solverTransforms[i] is null)
+                    continue;
+                
+                bool isPelvis = i == 1;
 
-                    bool isArmStretchable = i == 8 || i == 9 || i == 12 || i == 13;
-                    bool isLegStretchable = (i >= 15 && i <= 17) || (i >= 19 && i <= 21);
+                bool isArmStretchable = i == 8 || i == 9 || i == 12 || i == 13;
+                bool isLegStretchable = (i >= 15 && i <= 17) || (i >= 19 && i <= 21);
 
-                    if (isPelvis || isArmStretchable || isLegStretchable)
-                        _solverTransforms[i].Translation = _defaultLocalPositions[i - 1];
-                    
-                    _solverTransforms[i].Rotation = _defaultLocalRotations[i - 1];
-                }
+                if (isPelvis || isArmStretchable || isLegStretchable)
+                    _solverTransforms[i].Translation = _defaultLocalPoses[i - 1].Position;
+
+                _solverTransforms[i].Rotation = _defaultLocalPoses[i - 1].Rotation;
             }
         }
 
@@ -284,8 +284,12 @@ namespace XREngine.Scene.Components.Animation
         private Vector3[] _solvedPositions = new Vector3[22];
         private Quaternion[] _solvedRotations = new Quaternion[22];
         //private Vector3 defaultPelvisLocalPosition;
-        private Quaternion[] _defaultLocalRotations = new Quaternion[21];
-        private Vector3[] _defaultLocalPositions = new Vector3[21];
+        private PoseData[] _defaultLocalPoses = new PoseData[21];
+        private struct PoseData
+        {
+            public Vector3 Position;
+            public Quaternion Rotation;
+        }
 
         private Vector3 _rootV;
         private Vector3 _rootVelocity;

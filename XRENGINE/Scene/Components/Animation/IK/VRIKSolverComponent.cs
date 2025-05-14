@@ -30,7 +30,7 @@ namespace XREngine.Scene.Components.Animation
 
         protected override void UpdateSolver()
         {
-            if (!(Humanoid?.SceneNode?.IsTransformNull ?? true) && Humanoid.SceneNode.Transform.LossyWorldScale == Vector3.Zero)
+            if (!(Humanoid?.SceneNode?.IsTransformNull ?? true) && Humanoid.SceneNode.Transform.LossyWorldScale.LengthSquared() < float.Epsilon)
             {
                 Debug.LogWarning("VRIK Root Transform's scale is zero, can not update VRIK. Make sure you have not calibrated the character to a zero scale.");
                 IsActive = false;

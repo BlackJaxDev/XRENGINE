@@ -20,12 +20,18 @@ namespace XREngine.Scene.Components.VR
                     Model?.Destroy();
                     Model = null;
                     break;
+                case nameof(Model):
+                    VerifyDevices();
+                    break;
             }
         }
 
         protected override DeviceModel? GetRenderModel(VrDevice? device)
         {
-            if (DeviceIndex is null || device is null || device.DeviceIndex != DeviceIndex.Value)
+            if (DeviceIndex is null)
+                return null;
+
+            if (device is null || device.DeviceIndex != DeviceIndex.Value)
                 return null;
 
             return Engine.VRState.Api.CVR.GetTrackedDeviceClass(device.DeviceIndex) == Valve.VR.ETrackedDeviceClass.GenericTracker

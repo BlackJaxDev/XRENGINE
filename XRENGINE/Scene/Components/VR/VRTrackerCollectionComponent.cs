@@ -45,6 +45,7 @@ namespace XREngine.Data.Components.Scene
                 tfm.DeviceIndex = dev.DeviceIndex;
                 tfm.Tracker = dev;
                 modelComp.DeviceIndex = dev.DeviceIndex;
+                modelComp.LoadModelAsync(dev.Model);
                 Trackers.Add(dev.DeviceIndex, (dev, tfm));
             }
         }

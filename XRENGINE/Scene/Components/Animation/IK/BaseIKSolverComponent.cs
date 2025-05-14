@@ -31,6 +31,15 @@ namespace XREngine.Scene.Components.Animation
             Initialize();
         }
 
+        protected internal override void OnComponentDeactivated()
+        {
+            base.OnComponentDeactivated();
+
+            UnregisterTick(ETickGroup.PostPhysics, ETickOrder.Animation, FixedUpdate);
+            UnregisterTick(ETickGroup.Late, ETickOrder.Animation, LateUpdate);
+            UnregisterTick(ETickGroup.Normal, ETickOrder.Animation, Update);
+        }
+
         private void Initialize()
         {
             if (_componentInitiated)

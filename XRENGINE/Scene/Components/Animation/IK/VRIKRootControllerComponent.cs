@@ -40,13 +40,17 @@ namespace XREngine.Scene.Components.Animation
         /// </summary>
         private Transform? _rightFootTarget;
 
-        /// <summary>
-        /// Initializes a new instance of the VRIKRootControllerComponent and subscribes to the solver's update events.
-        /// </summary>
-        public VRIKRootControllerComponent()
+        protected internal override void OnComponentActivated()
         {
+            base.OnComponentActivated();
             IKSolverComponent.Solver.OnPreUpdate += OnPreUpdate;
             Calibrate();
+        }
+
+        protected internal override void OnComponentDeactivated()
+        {
+            base.OnComponentDeactivated();
+            IKSolverComponent.Solver.OnPreUpdate -= OnPreUpdate;
         }
 
         /// <summary>

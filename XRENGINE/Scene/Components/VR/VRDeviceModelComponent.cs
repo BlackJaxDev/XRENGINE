@@ -35,7 +35,7 @@ namespace XREngine.Scene.Components.VR
                 LoadModelAsync(d);
         }
 
-        private void VerifyDevices()
+        protected void VerifyDevices()
         {
             if (IsLoaded)
                 return;
@@ -50,8 +50,11 @@ namespace XREngine.Scene.Components.VR
             }
         }
 
-        private void LoadModelAsync(DeviceModel d)
+        public void LoadModelAsync(DeviceModel? d)
         {
+            if (d is null)
+                return;
+
             Model m = new();
             Model = m;
             Task.Run(() => LoadDeviceAsync(d, m));
@@ -59,8 +62,11 @@ namespace XREngine.Scene.Components.VR
 
         protected abstract DeviceModel? GetRenderModel(VrDevice? device);
 
-        protected async Task LoadDeviceAsync(DeviceModel deviceModel, Model model)
+        public static async Task LoadDeviceAsync(DeviceModel? deviceModel, Model model)
         {
+            if (deviceModel is null)
+                return;
+
             var comps = deviceModel.Components;
             foreach (var comp in comps)
             {
@@ -70,7 +76,7 @@ namespace XREngine.Scene.Components.VR
             }
         }
 
-        protected async Task<SubMesh?> LoadComponentAsync(ComponentModel comp)
+        protected static async Task<SubMesh?> LoadComponentAsync(ComponentModel comp)
         {
             if (!comp.ModelName.EndsWith(".obj"))
                 return null;

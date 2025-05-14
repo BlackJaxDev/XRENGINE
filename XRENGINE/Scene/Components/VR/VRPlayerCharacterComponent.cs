@@ -47,11 +47,8 @@ namespace XREngine.Scene.Components.VR
                 Engine.Rendering.Debug.RenderLine(hmdPoint, headPoint, ColorF4.Red);
             }
 
-            var leftHand = (LeftController, LeftControllerOffset);
-            Engine.Rendering.Debug.RenderPoint((leftHand.LeftController?.WorldTranslation ?? Vector3.Zero) + LeftControllerOffset.Translation, ColorF4.Green);
-
-            var rightHand = (RightController, RightControllerOffset);
-            Engine.Rendering.Debug.RenderPoint((rightHand.RightController?.WorldTranslation ?? Vector3.Zero) + RightControllerOffset.Translation, ColorF4.Green);
+            Engine.Rendering.Debug.RenderPoint((LeftController?.WorldTranslation ?? Vector3.Zero) + LeftControllerOffset.Translation, ColorF4.Green);
+            Engine.Rendering.Debug.RenderPoint((RightController?.WorldTranslation ?? Vector3.Zero) + RightControllerOffset.Translation, ColorF4.Green);
 
             var h = GetHumanoid();
             var t = GetTrackerCollection();
@@ -374,6 +371,8 @@ namespace XREngine.Scene.Components.VR
             Vector3 rootToHead = h.Head.WorldBindPose.Translation - h.SceneNode.Transform.BindMatrix.Translation;
             Matrix4x4 rootOffset = Matrix4x4.CreateTranslation(-rootToHead);
             h.SceneNode.Transform.DeriveWorldMatrix(rootOffset * eyeOffset * Matrix4x4.CreateWorld(hmdPos, -forward, Globals.Up));
+
+            FindNearestTrackerTargets(h);
         }
 
         public bool BeginCalibration()
@@ -458,48 +457,62 @@ namespace XREngine.Scene.Components.VR
             h.HeadTarget = (Headset, Matrix4x4.CreateTranslation(-EyeOffsetFromHead));
             h.LeftHandTarget = (LeftController, LeftControllerOffset);
             h.RightHandTarget = (RightController, RightControllerOffset);
+            //FindNearestTrackerTargets(h);
 
+            //h.SolveIK = true;
+
+            VRIKCalibrator.Calibrate(
+                GetSiblingComponent<VRIKSolverComponent>()!,
+                Engine.VRState.CalibrationSettings,
+                h.HeadTarget.tfm as Transform,
+                h.HipsTarget.tfm as Transform,
+                h.LeftHandTarget.tfm as Transform,
+                h.RightHandTarget.tfm as Transform,
+                h.LeftFootTarget.tfm as Transform,
+                h.RightFootTarget.tfm as Transform);
+        }
+
+        private void FindNearestTrackerTargets(HumanoidComponent h)
+        {
             var t = GetTrackerCollection();
-            if (t is not null)
-            {
-                var waistTfm = h.Hips.Node?.Transform;
-                var leftFootTfm = h.Left.Foot.Node?.Transform;
-                var rightFootTfm = h.Right.Foot.Node?.Transform;
+            if (t is null)
+                return;
+            
+            var waistTfm = h.Hips.Node?.Transform;
+            var leftFootTfm = h.Left.Foot.Node?.Transform;
+            var rightFootTfm = h.Right.Foot.Node?.Transform;
 
-                var chestTfm = h.Chest.Node?.Transform;
-                var leftElbowTfm = h.Left.Elbow.Node?.Transform;
-                var rightElbowTfm = h.Right.Elbow.Node?.Transform;
-                var leftKneeTfm = h.Left.Knee.Node?.Transform;
-                var rightKneeTfm = h.Right.Knee.Node?.Transform;
+            var chestTfm = h.Chest.Node?.Transform;
+            var leftElbowTfm = h.Left.Elbow.Node?.Transform;
+            var rightElbowTfm = h.Right.Elbow.Node?.Transform;
+            var leftKneeTfm = h.Left.Knee.Node?.Transform;
+            var rightKneeTfm = h.Right.Knee.Node?.Transform;
 
-                FindClosestTracker(t, waistTfm, out var WaistTracker, out Matrix4x4 offset);
-                h.HipsTarget = (WaistTracker, offset);
-                if (WaistTracker is not null)
-                    WaistTracker.WorldMatrixChanged += HipTrackerWorldMatrixChanged;
+            FindClosestTracker(t, waistTfm, out var WaistTracker, out Matrix4x4 offset);
+            h.HipsTarget = (WaistTracker, offset);
+            if (WaistTracker is not null)
+                WaistTracker.WorldMatrixChanged += HipTrackerWorldMatrixChanged;
 
-                FindClosestTracker(t, leftFootTfm, out var LeftFootTracker, out offset);
-                h.LeftFootTarget = (LeftFootTracker, offset);
+            FindClosestTracker(t, leftFootTfm, out var LeftFootTracker, out offset);
+            h.LeftFootTarget = (LeftFootTracker, offset);
 
-                FindClosestTracker(t, rightFootTfm, out var RightFootTracker, out offset);
-                h.RightFootTarget = (RightFootTracker, offset);
+            FindClosestTracker(t, rightFootTfm, out var RightFootTracker, out offset);
+            h.RightFootTarget = (RightFootTracker, offset);
 
-                FindClosestTracker(t, chestTfm, out var ChestTracker, out offset);
-                h.ChestTarget = (ChestTracker, offset);
+            FindClosestTracker(t, chestTfm, out var ChestTracker, out offset);
+            h.ChestTarget = (ChestTracker, offset);
 
-                FindClosestTracker(t, leftElbowTfm, out var LeftElbowTracker, out offset);
-                h.LeftElbowTarget = (LeftElbowTracker, offset);
+            FindClosestTracker(t, leftElbowTfm, out var LeftElbowTracker, out offset);
+            h.LeftElbowTarget = (LeftElbowTracker, offset);
 
-                FindClosestTracker(t, rightElbowTfm, out var RightElbowTracker, out offset);
-                h.RightElbowTarget = (RightElbowTracker, offset);
+            FindClosestTracker(t, rightElbowTfm, out var RightElbowTracker, out offset);
+            h.RightElbowTarget = (RightElbowTracker, offset);
 
-                FindClosestTracker(t, leftKneeTfm, out var LeftKneeTracker, out offset);
-                h.LeftKneeTarget = (LeftKneeTracker, offset);
+            FindClosestTracker(t, leftKneeTfm, out var LeftKneeTracker, out offset);
+            h.LeftKneeTarget = (LeftKneeTracker, offset);
 
-                FindClosestTracker(t, rightKneeTfm, out var RightKneeTracker, out offset);
-                h.RightKneeTarget = (RightKneeTracker, offset);
-            }
-
-            h.SolveIK = true;
+            FindClosestTracker(t, rightKneeTfm, out var RightKneeTracker, out offset);
+            h.RightKneeTarget = (RightKneeTracker, offset);
         }
 
         private void FindClosestTracker(

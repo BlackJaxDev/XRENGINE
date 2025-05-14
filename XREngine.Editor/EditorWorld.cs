@@ -182,7 +182,10 @@ public static class EditorWorld
         }
         else
         {
-            //var vrik = rootNode.AddComponent<VRIKSolverComponent>();
+            var vrik = rootNode.AddComponent<VRIKSolverComponent>()!;
+            vrik.IsActive = false;
+            //rootNode.AddComponent<VRIKRootControllerComponent>();
+            //vrik.GuessHandOrientations();
         }
 
         //TODO: only remove the head in VR

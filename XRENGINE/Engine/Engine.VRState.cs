@@ -17,6 +17,7 @@ using XREngine.Rendering;
 using XREngine.Rendering.Models.Materials;
 using XREngine.Rendering.OpenGL;
 using XREngine.Scene;
+using XREngine.Scene.Components.Animation;
 using ETextureType = Valve.VR.ETextureType;
 
 namespace XREngine
@@ -42,6 +43,8 @@ namespace XREngine
             }
 
             public static ETrackingUniverseOrigin Origin { get; set; } = ETrackingUniverseOrigin.TrackingUniverseStanding;
+
+            public static VRIKCalibrator.Settings CalibrationSettings { get; set; } = new VRIKCalibrator.Settings();
 
             private static readonly Dictionary<string, Dictionary<string, OpenVR.NET.Input.Action>> _actions = [];
             public static Dictionary<string, Dictionary<string, OpenVR.NET.Input.Action>> Actions => _actions;
