@@ -2,6 +2,7 @@
 using XREngine.Components;
 using XREngine.Data.Colors;
 using XREngine.Data.Geometry;
+using XREngine.Data.Rendering;
 using XREngine.Data.Trees;
 using XREngine.Rendering;
 using XREngine.Rendering.Commands;
@@ -40,6 +41,7 @@ namespace XREngine.Scene
             XRCamera? activeCamera,
             bool cullWithFrustum,
             Func<XRCamera>? cullingCameraOverride,
+            IVolume? collectionVolumeOverride,
             bool collectMirrors)
         {
             var cullingCamera = cullingCameraOverride?.Invoke() ?? activeCamera;

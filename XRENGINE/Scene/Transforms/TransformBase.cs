@@ -537,6 +537,7 @@ namespace XREngine.Scene.Transforms
         public Vector3 RenderUp => Vector3.TransformNormal(Globals.Up, RenderMatrix);
         public Vector3 RenderRight => Vector3.TransformNormal(Globals.Right, RenderMatrix);
         public Vector3 RenderTranslation => RenderMatrix.Translation;
+        public Quaternion RenderRotation => Quaternion.CreateFromRotationMatrix(RenderMatrix);
 
         /// <summary>
         /// This transform's world up vector.

@@ -36,8 +36,13 @@ namespace XREngine.Data.Components.Scene
             if (Engine.Rendering.State.IsShadowPass)
                 return;
 
-            Engine.Rendering.Debug.RenderFrustum(_leftEyeCamera.Value.WorldFrustum(), Colors.ColorF4.Red);
-            Engine.Rendering.Debug.RenderFrustum(_rightEyeCamera.Value.WorldFrustum(), Colors.ColorF4.Red);
+            if (Engine.VRState.StereoCullingFrustum.HasValue)
+                Engine.Rendering.Debug.RenderFrustum(Engine.VRState.StereoCullingFrustum.Value.TransformedBy(Transform.RenderMatrix), Colors.ColorF4.Green);
+            //else
+            //{
+                Engine.Rendering.Debug.RenderFrustum(_leftEyeCamera.Value.WorldFrustum(), Colors.ColorF4.Red);
+                Engine.Rendering.Debug.RenderFrustum(_rightEyeCamera.Value.WorldFrustum(), Colors.ColorF4.Red);
+            //}
         }
 
         private readonly Lazy<XRCamera> _leftEyeCamera;

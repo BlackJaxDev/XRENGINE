@@ -1,5 +1,6 @@
 ﻿using XREngine.Components;
 using XREngine.Data.Geometry;
+using XREngine.Rendering.Commands;
 using XREngine.Rendering.UI;
 using XREngine.Scene;
 
@@ -50,6 +51,10 @@ public sealed partial class XRRenderPipelineInstance
         /// The screen-space UI to render over the scene.
         /// </summary>
         public UICanvasComponent? ScreenSpaceUserInterface { get; private set; }
+        /// <summary>
+        /// All collected render commands for the current frame.
+        /// </summary>
+        public RenderCommandCollection? MeshRenderCommands { get; set; }
 
         //TODO: instead of bools for shadow and stereo passes, use an int for the pass type.
 
@@ -62,7 +67,8 @@ public sealed partial class XRRenderPipelineInstance
             bool shadowPass,
             bool stereoPass,
             XRMaterial? globalMaterialOverride,
-            UICanvasComponent? screenSpaceUI)
+            UICanvasComponent? screenSpaceUI,
+            RenderCommandCollection? meshRenderCommands)
         {
             WindowViewport = viewport;
             Scene = scene;
@@ -73,6 +79,7 @@ public sealed partial class XRRenderPipelineInstance
             StereoPass = stereoPass;
             GlobalMaterialOverride = globalMaterialOverride;
             ScreenSpaceUserInterface = screenSpaceUI?.CanvasTransform?.DrawSpace == ECanvasDrawSpace.Screen ? screenSpaceUI : null;
+            MeshRenderCommands = meshRenderCommands;
 
             if (WindowViewport is not null)
                 _renderingViewports.Push(WindowViewport);
@@ -106,6 +113,7 @@ public sealed partial class XRRenderPipelineInstance
             StereoPass = false;
             GlobalMaterialOverride = null;
             ScreenSpaceUserInterface = null;
+            MeshRenderCommands = null;
         }
 
         public XRCamera? RenderingCamera

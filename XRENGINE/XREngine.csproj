@@ -210,7 +210,6 @@
 
   <ItemGroup>
     <Folder Include="runtimes\win-x64\native\" />
-    <Folder Include="Scene\Physics\Jolt\" />
   </ItemGroup>
 
 </Project>

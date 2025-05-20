@@ -298,7 +298,7 @@ namespace XREngine.Scene.Components.Animation
                         if (Node is not null)
                         {
                             LocalBindPose = Node.Transform.LocalMatrix;
-                            WorldBindPose = Node.Transform.WorldMatrix;
+                            WorldBindPose = Node.Transform.BindMatrix;
                         }
                         break;
                 }

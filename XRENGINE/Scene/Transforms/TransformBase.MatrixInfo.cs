@@ -215,8 +215,8 @@ namespace XREngine.Scene.Transforms
         /// <param name="right"></param>
         public static void GetDirectionsXZ(Matrix4x4 matrix, out Vector3 forward, out Vector3 right)
         {
-            right = Vector3.TransformNormal(Globals.Right, matrix);
-            forward = Vector3.TransformNormal(Globals.Forward, matrix);
+            right = Vector3.TransformNormal(Globals.Right, matrix).Normalized();
+            forward = Vector3.TransformNormal(Globals.Forward, matrix).Normalized();
 
             float dot = forward.Dot(Globals.Up);
             if (Math.Abs(dot) >= 0.5f)

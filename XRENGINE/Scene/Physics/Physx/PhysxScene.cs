@@ -10,9 +10,7 @@ using XREngine.Data.Core;
 using XREngine.Data.Geometry;
 using XREngine.Rendering.Physics.Physx.Joints;
 using XREngine.Scene;
-using XREngine.Scene.Components.Animation;
 using static MagicPhysX.NativeMethods;
-using static XREngine.Rendering.Physics.Physx.PhysxScene;
 using Quaternion = System.Numerics.Quaternion;
 
 namespace XREngine.Rendering.Physics.Physx

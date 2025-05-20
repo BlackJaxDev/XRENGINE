@@ -189,15 +189,14 @@ namespace XREngine
             /// <returns></returns>
             public StateObject Start(DelTimerCallback? callback, [CallerMemberName] string? methodName = null)
             {
-                return so;
-                //if (!EnableFrameLogging)
-                //    return StateObject.New();
+                if (!EnableFrameLogging)
+                    return StateObject.New();
 
-                //var entry = _timerPool.Take();
-                ////entry.Name = methodName;
-                ////entry.ThreadId = Environment.CurrentManagedThreadId;
-                ////PushEntry(entry);
-                //return StateObject.New(() => Stop(entry, callback));
+                var entry = _timerPool.Take();
+                //entry.Name = methodName;
+                //entry.ThreadId = Environment.CurrentManagedThreadId;
+                //PushEntry(entry);
+                return StateObject.New(() => Stop(entry, callback));
             }
             public StateObject Start([CallerMemberName] string? methodName = null)
                 => Start(null, methodName);

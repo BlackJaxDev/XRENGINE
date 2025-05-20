@@ -175,7 +175,7 @@ namespace XREngine.Components
         public delegate void DelPauseToggled(bool leftHand);
         public event DelPauseToggled? PauseToggled;
 
-        public event Action<bool>? MuteToggled;
+        public event Action<bool>? IsMutedChanged;
 
         public enum EVRActionCategory
         {
@@ -229,15 +229,27 @@ namespace XREngine.Components
             input.RegisterVRBoolAction(EVRActionCategory.Global, EVRGameAction.ToggleQuickMenu, ToggleQuickMenu);
             input.RegisterVRBoolAction(EVRActionCategory.Global, EVRGameAction.ToggleMute, ToggleMute);
             input.RegisterKeyEvent(EKey.S, EButtonInputType.Pressed, Screenshot);
+            input.RegisterKeyEvent(EKey.V, EButtonInputType.Pressed, ToggleMute);
         }
 
         private void Screenshot()
+            => _screenshotRequested = true;
+
+        private bool _isMuted = false;
+        public bool IsMuted
         {
-            _screenshotRequested = true;
+            get => _isMuted;
+            set
+            {
+                SetField(ref _isMuted, value);
+                IsMutedChanged?.Invoke(value);
+            }
         }
 
+        private void ToggleMute()
+            => IsMuted = !IsMuted;
         private void ToggleMute(bool enabled)
-            => MuteToggled?.Invoke(enabled);
+            => IsMuted = enabled;
 
         private void ToggleQuickMenu(bool enabled)
             => PauseToggled?.Invoke(enabled);
@@ -532,8 +544,8 @@ namespace XREngine.Components
 
             RightHandRigidBody.KinematicTarget = (tfm.WorldTranslation, tfm.WorldRotation);
 
-            if (World?.PhysicsScene is PhysxScene px)
-                RightHandOverlap = OverlapTest(tfm, px);
+            //if (World?.PhysicsScene is PhysxScene px)
+            //    RightHandOverlap = OverlapTest(tfm, px);
         }
 
         private unsafe void LeftHandTransform_WorldMatrixChanged(TransformBase tfm)
@@ -544,8 +556,8 @@ namespace XREngine.Components
 
             LeftHandRigidBody.KinematicTarget = (tfm.WorldTranslation, tfm.WorldRotation);
 
-            if (World?.PhysicsScene is PhysxScene px)
-                LeftHandOverlap = OverlapTest(tfm, px);
+            //if (World?.PhysicsScene is PhysxScene px)
+            //    LeftHandOverlap = OverlapTest(tfm, px);
         }
 
         private unsafe PhysxDynamicRigidBody? OverlapTest(TransformBase tfm, PhysxScene px)

@@ -97,10 +97,10 @@ public partial class UIEditorComponent : UIComponent
         _hierarchy = hierarchy;
 
         var middleNode = dockNode.NewChildWithTransform<UIBoundableTransform>(out _, "Scene");
-        if (EditorWorld.VideoStreaming)
+        if (UnitTestingWorld.Toggles.VideoStreaming)
         {
             middleNode.AddComponent<UIVideoComponent>();
-            if (EditorWorld.VideoStreamingAudio)
+            if (UnitTestingWorld.Toggles.VideoStreamingAudio)
             {
                 var audio = middleNode.AddComponent<AudioSourceComponent>();
             }

@@ -1,5 +1,6 @@
 ﻿using System.Collections;
 using XREngine.Data.Core;
+using XREngine.Data.Rendering;
 using XREngine.Data.Trees;
 using XREngine.Rendering;
 using XREngine.Rendering.Commands;
@@ -22,6 +23,7 @@ namespace XREngine.Scene
             XRCamera? activeCamera,
             bool cullWithFrustum,
             Func<XRCamera>? cullingCameraOverride,
+            IVolume? collectionVolumeOverride,
             bool collectMirrors);
 
         public virtual void DebugRender(XRCamera? camera, bool onlyContainingItems = false)

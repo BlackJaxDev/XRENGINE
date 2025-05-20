@@ -56,7 +56,7 @@ namespace XREngine.Components.Scene.Mesh
             switch (propName)
             {
                 case nameof(Model):
-                    ModelChanged();
+                    OnModelChanged();
                     break;
                 case nameof(RenderBounds):
                     foreach (RenderableMesh mesh in Meshes)
@@ -65,7 +65,9 @@ namespace XREngine.Components.Scene.Mesh
             }
         }
 
-        private void ModelChanged()
+        public event Action? ModelChanged;
+
+        private void OnModelChanged()
         {
             using var t = Engine.Profiler.Start("ModelComponent.ModelChanged");
 
@@ -85,6 +87,8 @@ namespace XREngine.Components.Scene.Mesh
 
             Model.Meshes.PostAnythingAdded += AddMesh;
             Model.Meshes.PostAnythingRemoved += RemoveMesh;
+
+            ModelChanged?.Invoke();
         }
 
         private void AddMesh(SubMesh item)

@@ -23,7 +23,7 @@ namespace XREngine.Scene.Components.Capture.Lights.Types
                 return;
 
             foreach (var vp in _viewports)
-                vp.CollectVisible(null, null, false);
+                vp.CollectVisible(false);
         }
         public override void SwapBuffers()
         {

@@ -31,7 +31,7 @@ namespace XREngine.Data.Components.Scene
             var devices = Engine.VRState.Api.TrackedDevices;
             foreach (var dev in devices)
             {
-                if (!dev.IsEnabled || Trackers.ContainsKey(dev.DeviceIndex))
+                if (Trackers.ContainsKey(dev.DeviceIndex))
                     continue;
 
                 var c = Engine.VRState.Api.CVR.GetTrackedDeviceClass(dev.DeviceIndex);

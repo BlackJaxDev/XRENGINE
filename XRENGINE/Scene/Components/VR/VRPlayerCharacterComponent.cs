@@ -1,11 +1,11 @@
-﻿using OpenVR.NET.Devices;
+﻿using Extensions;
+using OpenVR.NET.Devices;
 using System.Numerics;
 using XREngine.Components;
 using XREngine.Components.Scene.Mesh;
 using XREngine.Data.Colors;
 using XREngine.Data.Components.Scene;
 using XREngine.Data.Rendering;
-using XREngine.Data.Transforms.Rotations;
 using XREngine.Rendering.Commands;
 using XREngine.Rendering.Info;
 using XREngine.Scene.Components.Animation;
@@ -25,85 +25,94 @@ namespace XREngine.Scene.Components.VR
             if (!IsCalibrating)
                 return;
 
-            var hmd = Headset;
-            if (hmd is not null)
+            //var hmd = Headset;
+            //if (hmd is not null)
+            //{
+            //    Vector3 hmdPoint = hmd.WorldTranslation;
+            //    Matrix4x4 hmdMtx = hmd.WorldMatrix;
+
+            //    //Clear vertical rotation from the headset matrix
+            //    Matrix4x4.Decompose(hmdMtx, out Vector3 scale, out Quaternion rotation, out Vector3 translation);
+            //    var rot = Rotator.FromQuaternion(rotation);
+            //    rot.Pitch = 0.0f;
+            //    rot.Roll = 0.0f;
+            //    hmdMtx =
+            //        Matrix4x4.CreateScale(scale) * 
+            //        Matrix4x4.CreateFromQuaternion(Quaternion.CreateFromAxisAngle(Globals.Up, float.DegreesToRadians(rot.Yaw))) * 
+            //        Matrix4x4.CreateTranslation(translation);
+
+            //    Vector3 headPoint = (Matrix4x4.CreateTranslation(-EyeOffsetFromHead) * hmdMtx).Translation;
+            //    Engine.Rendering.Debug.RenderPoint(hmdPoint, ColorF4.Magenta);
+            //    Engine.Rendering.Debug.RenderPoint(headPoint, ColorF4.Orange);
+            //    Engine.Rendering.Debug.RenderLine(hmdPoint, headPoint, ColorF4.Red);
+            //}
+
+            Engine.Rendering.Debug.RenderPoint((Headset?.RenderTranslation ?? Vector3.Zero), ColorF4.Green);
+            Engine.Rendering.Debug.RenderPoint((LeftControllerOffset * (LeftController?.RenderMatrix ?? Matrix4x4.Identity)).Translation, ColorF4.Green);
+            Engine.Rendering.Debug.RenderPoint((RightControllerOffset * (RightController?.RenderMatrix ?? Matrix4x4.Identity)).Translation, ColorF4.Green);
+            var headNode = GetHumanoid()?.Head.Node;
+            if (headNode is not null)
             {
-                Vector3 hmdPoint = hmd.WorldTranslation;
-                Matrix4x4 hmdMtx = hmd.WorldMatrix;
-
-                //Clear vertical rotation from the headset matrix
-                Matrix4x4.Decompose(hmdMtx, out Vector3 scale, out Quaternion rotation, out Vector3 translation);
-                var rot = Rotator.FromQuaternion(rotation);
-                rot.Pitch = 0.0f;
-                rot.Roll = 0.0f;
-                hmdMtx =
-                    Matrix4x4.CreateScale(scale) * 
-                    Matrix4x4.CreateFromQuaternion(Quaternion.CreateFromAxisAngle(Globals.Up, float.DegreesToRadians(rot.Yaw))) * 
-                    Matrix4x4.CreateTranslation(translation);
-
-                Vector3 headPoint = (Matrix4x4.CreateTranslation(-EyeOffsetFromHead) * hmdMtx).Translation;
-                Engine.Rendering.Debug.RenderPoint(hmdPoint, ColorF4.Magenta);
-                Engine.Rendering.Debug.RenderPoint(headPoint, ColorF4.Orange);
-                Engine.Rendering.Debug.RenderLine(hmdPoint, headPoint, ColorF4.Red);
+                Vector3 headNodePos = headNode.Transform.RenderTranslation;
+                Engine.Rendering.Debug.RenderPoint(headNodePos, ColorF4.Yellow);
+                Quaternion headNodeRot = headNode.Transform.RenderRotation;
+                Engine.Rendering.Debug.RenderLine(headNodePos, headNodePos + Vector3.Transform(EyeOffsetFromHead, headNodeRot), ColorF4.Yellow);
             }
 
-            Engine.Rendering.Debug.RenderPoint((LeftController?.WorldTranslation ?? Vector3.Zero) + LeftControllerOffset.Translation, ColorF4.Green);
-            Engine.Rendering.Debug.RenderPoint((RightController?.WorldTranslation ?? Vector3.Zero) + RightControllerOffset.Translation, ColorF4.Green);
+            //var h = GetHumanoid();
+            //var t = GetTrackerCollection();
+            //if (h is null || t is null)
+            //    return;
 
-            var h = GetHumanoid();
-            var t = GetTrackerCollection();
-            if (h is null || t is null)
-                return;
-            
-            var waistTfm = h.Hips.Node?.Transform;
-            var leftFootTfm = h.Left.Foot.Node?.Transform;
-            var rightFootTfm = h.Right.Foot.Node?.Transform;
+            //var waistTfm = h.Hips.Node?.Transform;
+            //var leftFootTfm = h.Left.Foot.Node?.Transform;
+            //var rightFootTfm = h.Right.Foot.Node?.Transform;
 
-            var chestTfm = h.Chest.Node?.Transform;
-            var leftElbowTfm = h.Left.Elbow.Node?.Transform;
-            var rightElbowTfm = h.Right.Elbow.Node?.Transform;
-            var leftKneeTfm = h.Left.Knee.Node?.Transform;
-            var rightKneeTfm = h.Right.Knee.Node?.Transform;
+            //var chestTfm = h.Chest.Node?.Transform;
+            //var leftElbowTfm = h.Left.Elbow.Node?.Transform;
+            //var rightElbowTfm = h.Right.Elbow.Node?.Transform;
+            //var leftKneeTfm = h.Left.Knee.Node?.Transform;
+            //var rightKneeTfm = h.Right.Knee.Node?.Transform;
 
-            List<TransformBase?> tfms = [waistTfm, leftFootTfm, rightFootTfm, chestTfm, leftElbowTfm, rightElbowTfm, leftKneeTfm, rightKneeTfm];
+            //List<TransformBase?> tfms = [waistTfm, leftFootTfm, rightFootTfm, chestTfm, leftElbowTfm, rightElbowTfm, leftKneeTfm, rightKneeTfm];
 
-            foreach ((_, VRTrackerTransform tracker) in t.Trackers.Values)
-            {
-                float bestDist = CalibrationRadius;
-                int bestIndex = -1;
-                for (int i = 0; i < tfms.Count; i++)
-                {
-                    TransformBase? tfm = tfms[i];
-                    if (tfm is null)
-                        continue;
-                    var bodyPos = tfm.WorldTranslation;
-                    var trackerPos = tracker.WorldTranslation;
-                    var dist = Vector3.Distance(bodyPos, trackerPos);
-                    if (dist < bestDist)
-                    {
-                        bestIndex = i;
-                        bestDist = dist;
-                    }
-                }
-                if (bestIndex >= 0)
-                {
-                    var tfm = tfms[bestIndex];
-                    if (tfm is not null)
-                    {
-                        var trackerPos = tracker.WorldTranslation;
-                        Engine.Rendering.Debug.RenderSphere(trackerPos, CalibrationRadius, false, ColorF4.Green);
-                        Engine.Rendering.Debug.RenderLine(trackerPos, tfm.WorldTranslation, ColorF4.Magenta);
-                        Engine.Rendering.Debug.RenderPoint(tfm.WorldTranslation, ColorF4.Green);
-                    }
-                    tfms.RemoveAt(bestIndex);
-                }
-            }
-            foreach (var tfm in tfms)
-            {
-                if (tfm is null)
-                    continue;
-                Engine.Rendering.Debug.RenderPoint(tfm.WorldTranslation, ColorF4.Red);
-            }
+            //foreach ((_, VRTrackerTransform tracker) in t.Trackers.Values)
+            //{
+            //    float bestDist = CalibrationRadius;
+            //    int bestIndex = -1;
+            //    for (int i = 0; i < tfms.Count; i++)
+            //    {
+            //        TransformBase? tfm = tfms[i];
+            //        if (tfm is null)
+            //            continue;
+            //        var bodyPos = tfm.WorldTranslation;
+            //        var trackerPos = tracker.WorldTranslation;
+            //        var dist = Vector3.Distance(bodyPos, trackerPos);
+            //        if (dist < bestDist)
+            //        {
+            //            bestIndex = i;
+            //            bestDist = dist;
+            //        }
+            //    }
+            //    if (bestIndex >= 0)
+            //    {
+            //        var tfm = tfms[bestIndex];
+            //        if (tfm is not null)
+            //        {
+            //            var trackerPos = tracker.WorldTranslation;
+            //            Engine.Rendering.Debug.RenderSphere(trackerPos, CalibrationRadius, false, ColorF4.Green);
+            //            Engine.Rendering.Debug.RenderLine(trackerPos, tfm.WorldTranslation, ColorF4.Magenta);
+            //            Engine.Rendering.Debug.RenderPoint(tfm.WorldTranslation, ColorF4.Green);
+            //        }
+            //        tfms.RemoveAt(bestIndex);
+            //    }
+            //}
+            //foreach (var tfm in tfms)
+            //{
+            //    if (tfm is null)
+            //        continue;
+            //    Engine.Rendering.Debug.RenderPoint(tfm.WorldTranslation, ColorF4.Red);
+            //}
         }
 
         private bool _isCalibrating = false;
@@ -113,7 +122,7 @@ namespace XREngine.Scene.Components.VR
             private set => SetField(ref _isCalibrating, value);
         }
 
-        private float _calibrationRadius = 0.01f;
+        private float _calibrationRadius = 0.2f;
         /// <summary>
         /// The maximum distance from a tracker to a bone for it to be considered a match during calibration.
         /// </summary>
@@ -233,6 +242,7 @@ namespace XREngine.Scene.Components.VR
             ResolveDependencies();
             SetInitialState();
             BeginCalibration();
+            RegisterTick(ETickGroup.Normal, ETickOrder.Input, UpdateTick);
         }
 
         private void SetInitialState()
@@ -278,34 +288,53 @@ namespace XREngine.Scene.Components.VR
         }
 
         /// <summary>
-        /// Moves the playspace and player root to keep the hip centered in the playspace and allow the hip to move the playspace.
+        /// Moves the playspace and player root to keep the view or hip centered in the playspace and allow the view or hip to move the playspace.
         /// </summary>
-        /// <param name="hipTrackerTfm"></param>
-        private void HipTrackerWorldMatrixChanged(TransformBase hipTrackerTfm)
+        private void MovePlayer()
         {
             var h = GetHumanoid();
-            if (h is null || h.HipsTarget.tfm is null)
+            if (h is null)
                 return;
 
-            var movement = GetCharacterMovement();
-            var playspaceRoot = Transform;
-            var playerRoot = h.TransformAs<Transform>(false);
-            if (movement is null || playspaceRoot is null || playerRoot is null)
+            //Use the hip transform if the tracker controlling it exists and the player isn't calibrating
+            bool useHip = !IsCalibrating && h.HipsTarget.tfm is not null;
+
+            TransformBase? transformToFollow = useHip ? h.HipsTarget.tfm : Headset;
+            if (transformToFollow is null)
                 return;
 
-            var hipMtx = h.HipsTarget.offset * hipTrackerTfm.WorldMatrix;
-            var playspaceMtx = playspaceRoot.WorldMatrix;
+            CharacterMovement3DComponent? movement = GetCharacterMovement();
+            TransformBase? rigidBodyTfm = Transform; //This should be the same transform as the rigid body
+            Transform? avatarTfm = h.TransformAs<Transform>(false); //This should be a descendant of the playspace root transform, to control the avatar's position in the playspace
+            if (movement is null || rigidBodyTfm is null || avatarTfm is null)
+                return;
 
-            Vector3 playspaceToHip = hipMtx.Translation - playspaceMtx.Translation;
-            playspaceToHip.Y = 0.0f;
-            //Move the playspace the difference between the hip and the playspace, but only in the XZ plane.
-            //TODO: use the character controller's up vector to determine the plane
-            movement.AddMovementInput(playspaceToHip);
+            Matrix4x4 offsetToBodyMtx;
+            Vector3 bodyWorldPos;
+            if (useHip)
+            {
+                //If using the hips as the target, we need to follow the hips, not the tracker
+                offsetToBodyMtx = h.HipsTarget.offset;
+                bodyWorldPos = h.Hips.Node!.Transform.WorldMatrix.Translation;
+            }
+            else
+            {
+                //If using the HMD as the target, we need to follow the eyes
+                offsetToBodyMtx = Matrix4x4.CreateTranslation(-EyeOffsetFromHead);
+                bodyWorldPos = h.Head.Node!.Transform.WorldMatrix.Translation;
+            }
+
+            Vector3 bodyOffsetFromAvatarRoot = bodyWorldPos - h.SceneNode.Transform.WorldMatrix.Translation;
+            Matrix4x4 deviceRelativeToFoot = Matrix4x4.CreateTranslation(-bodyOffsetFromAvatarRoot) * offsetToBodyMtx * GetTrackedDeviceMatrixRelativeToFoot(h, transformToFollow.WorldMatrix);
 
             //Move the player root opposite the hip movement to keep the hip centered in the playspace
-            Vector3 rootToHip = hipMtx.Translation - playerRoot.Translation;
-            rootToHip.Y = 0.0f;
-            playerRoot.Translation = -rootToHip;
+            Vector3 newTranslation = deviceRelativeToFoot.Translation;
+            newTranslation.Y = 0.0f; //Only move in XZ
+            Vector3 oldTranslation = avatarTfm.Translation;
+
+            //avatarTfm.Translation = newTranslation;
+            Vector3 delta = newTranslation - oldTranslation;
+            movement.AddMovementInput(delta);
         }
 
         private string? _eyesModelResolveName = "face";
@@ -354,25 +383,101 @@ namespace XREngine.Scene.Components.VR
             h.ClearIKTargets();
         }
 
-        private void UpdateRootTransform()
+        private ManualResetEventSlim _calibrationUpdateFence = new(true);
+
+        /// <summary>
+        /// Called every frame while calibrating to move the avatar into place and to find nearest trackers to body parts.
+        /// </summary>
+        private void UpdateTick()
         {
             var h = GetHumanoid();
             if (h is null)
                 return;
 
-            var headNode = h.Head.Node;
-            if (headNode is null)
-                return;
+            if (IsCalibrating)
+            {
+                _calibrationUpdateFence.Reset();
+                UpdateCalibrationPose(h);
+                FindNearestTrackerTargets(h);
+                _calibrationUpdateFence.Set();
+            }
+            else
+            {
+                MovePlayer();
+            }
+        }
 
-            Matrix4x4 hmdMtx = Engine.VRState.Api.Headset?.DeviceToAbsoluteTrackingMatrix ?? Matrix4x4.Identity;
-            Vector3 hmdPos = hmdMtx.Translation;
-            TransformBase.GetDirectionsXZ(hmdMtx, out Vector3 forward, out _);
-            Matrix4x4 eyeOffset = Matrix4x4.CreateTranslation(-EyeOffsetFromHead);
-            Vector3 rootToHead = h.Head.WorldBindPose.Translation - h.SceneNode.Transform.BindMatrix.Translation;
-            Matrix4x4 rootOffset = Matrix4x4.CreateTranslation(-rootToHead);
-            h.SceneNode.Transform.DeriveWorldMatrix(rootOffset * eyeOffset * Matrix4x4.CreateWorld(hmdPos, -forward, Globals.Up));
+        /// <summary>
+        /// Updates the avatar's pose to match the headset's position and rotation.
+        /// X and Z translation are cleared because they are used to locomote the avatar elsewhere.
+        /// </summary>
+        /// <param name="h"></param>
+        private void UpdateCalibrationPose(HumanoidComponent h)
+        {
+            Matrix4x4 hmdRelativeToFoot = GetHMDRelativeToFoot(h);
+            //ClearXZTranslation(ref hmdRelativeToFoot);
+            TransformBase.GetDirectionsXZ(hmdRelativeToFoot, out Vector3 forward, out _);
+            Transform avatarRootTfm = h.SceneNode.GetTransformAs<Transform>(true)!;
+            Vector3 prevTrans = avatarRootTfm.Translation;
+            Matrix4x4 eyeToRoot = Matrix4x4.CreateTranslation(-EyeOffsetFromHead - GetScaledHeadOffsetFromAvatarRoot(h));
+            Matrix4x4 rootMtx = (eyeToRoot * Matrix4x4.CreateWorld(hmdRelativeToFoot.Translation, -forward, Globals.Up));
+            Matrix4x4.Decompose(rootMtx, out Vector3 scale, out Quaternion rotation, out Vector3 translation);
+            avatarRootTfm.Translation = translation;
+            avatarRootTfm.Rotation = rotation;
 
-            FindNearestTrackerTargets(h);
+            //TODO: keep the avatarTfm centered on XZ, only follow Y. Use XZ as movement input
+            //Probably keep the playspace OFF the rigidbodytransform and only multiply against it when needed
+
+            //Vector3 currTrans = tfm.Translation;
+            //Vector3 delta = currTrans - prevTrans;
+            //delta.Y = 0.0f; //Only move in XZ
+            //GetCharacterMovement()?.AddMovementInput(delta);
+        }
+
+        private static void ClearYTranslation(ref Matrix4x4 hmdRelativeToFoot)
+        {
+            Vector3 hmdTranslation = hmdRelativeToFoot.Translation;
+            hmdTranslation.Y = 0.0f;
+            hmdRelativeToFoot.Translation = hmdTranslation;
+        }
+        //private static void ClearXZTranslation(ref Matrix4x4 hmdRelativeToFoot)
+        //{
+        //    Vector3 hmdTranslation = hmdRelativeToFoot.Translation;
+        //    hmdTranslation.X = 0.0f;
+        //    hmdTranslation.Z = 0.0f;
+        //    hmdRelativeToFoot.Translation = hmdTranslation;
+        //}
+
+        private static Vector3 GetScaledHeadOffsetFromAvatarRoot(HumanoidComponent h)
+            => h.Head.Node!.Transform.WorldMatrix.Translation - h.SceneNode.Transform.WorldMatrix.Translation;
+
+        private static Vector3 GetScaledBodyPartOffsetFromAvatarRoot(HumanoidComponent h, ETrackableBodyPart bodyPart)
+        {
+            TransformBase? tfm = bodyPart switch
+            {
+                ETrackableBodyPart.Hips => h.Hips.Node!.Transform,
+                ETrackableBodyPart.Chest => h.Chest.Node!.Transform,
+                ETrackableBodyPart.LeftFoot => h.Left.Foot.Node!.Transform,
+                ETrackableBodyPart.RightFoot => h.Right.Foot.Node!.Transform,
+                ETrackableBodyPart.LeftElbow => h.Left.Elbow.Node!.Transform,
+                ETrackableBodyPart.RightElbow => h.Right.Elbow.Node!.Transform,
+                ETrackableBodyPart.LeftKnee => h.Left.Knee.Node!.Transform,
+                ETrackableBodyPart.RightKnee => h.Right.Knee.Node!.Transform,
+                _ => null
+            };
+            return tfm?.WorldMatrix.Translation - h.SceneNode.Transform.WorldMatrix.Translation ?? Vector3.Zero;
+        }
+
+        private Matrix4x4 GetHMDRelativeToFoot(HumanoidComponent h)
+            => GetTrackedDeviceMatrixRelativeToFoot(h, Headset?.WorldMatrix ?? Matrix4x4.Identity);
+
+        private static Matrix4x4 GetHipTrackerRelativeToFoot(HumanoidComponent h)
+            => GetTrackedDeviceMatrixRelativeToFoot(h, h.HipsTarget.tfm?.WorldMatrix ?? Matrix4x4.Identity);
+
+        private static Matrix4x4 GetTrackedDeviceMatrixRelativeToFoot(HumanoidComponent h, Matrix4x4 trackedDeviceMatrix)
+        {
+            var footTfm = h.SceneNode.Transform.Parent!;
+            return trackedDeviceMatrix * footTfm.InverseWorldMatrix;
         }
 
         public bool BeginCalibration()
@@ -391,11 +496,6 @@ namespace XREngine.Scene.Components.VR
             var trackers = GetTrackerCollection();
             if (trackers is null) //No need to calibrate if there are no trackers
                 return false;
-
-            //Tell the humanoid to stop solving IK while we calibrate
-
-            //Root transform should follow the headset
-            RegisterTick(ETickGroup.Normal, ETickOrder.Input, UpdateRootTransform);
 
             //Save the current targets before they're cleared
             LastHeadTarget = h.HeadTarget;
@@ -441,6 +541,14 @@ namespace XREngine.Scene.Components.VR
         public (TransformBase? tfm, Matrix4x4 offset) LastRightKneeTarget { get; set; } = (null, Matrix4x4.Identity);
 
         public (TransformBase? tfm, Matrix4x4 offset) LastChestTarget { get; set; } = (null, Matrix4x4.Identity);
+
+        private VRIKSolverComponent? _ikSolver;
+        public VRIKSolverComponent? IKSolver
+        {
+            get => _ikSolver;
+            set => SetField(ref _ikSolver, value);
+        }
+
         #endregion
 
         public void EndCalibration()
@@ -448,21 +556,26 @@ namespace XREngine.Scene.Components.VR
             IsCalibrating = false;
 
             if (Headset is not null)
-                UnregisterTick(ETickGroup.Normal, ETickOrder.Input, UpdateRootTransform);
+                UnregisterTick(ETickGroup.Normal, ETickOrder.Input, UpdateTick);
 
             var h = GetHumanoid();
             if (h is null)
                 return;
 
+            _calibrationUpdateFence.Wait(100);
+
             h.HeadTarget = (Headset, Matrix4x4.CreateTranslation(-EyeOffsetFromHead));
             h.LeftHandTarget = (LeftController, LeftControllerOffset);
             h.RightHandTarget = (RightController, RightControllerOffset);
-            //FindNearestTrackerTargets(h);
 
-            //h.SolveIK = true;
+            if (IKSolver is null)
+            {
+                Debug.LogWarning("IKSolver is null, failed to calibrate.");
+                return;
+            }
 
             VRIKCalibrator.Calibrate(
-                GetSiblingComponent<VRIKSolverComponent>()!,
+                IKSolver,
                 Engine.VRState.CalibrationSettings,
                 h.HeadTarget.tfm as Transform,
                 h.HipsTarget.tfm as Transform,
@@ -472,47 +585,231 @@ namespace XREngine.Scene.Components.VR
                 h.RightFootTarget.tfm as Transform);
         }
 
+        /// <summary>
+        /// Body parts trackable by trackers, NOT the HMD or controllers which are always head and hands.
+        /// </summary>
+        public enum ETrackableBodyPart
+        {
+            Hips,
+            Chest,
+            LeftFoot,
+            RightFoot,
+            LeftElbow,
+            RightElbow,
+            LeftKnee,
+            RightKnee,
+        }
+
         private void FindNearestTrackerTargets(HumanoidComponent h)
         {
             var t = GetTrackerCollection();
             if (t is null)
                 return;
-            
+
             var waistTfm = h.Hips.Node?.Transform;
             var leftFootTfm = h.Left.Foot.Node?.Transform;
             var rightFootTfm = h.Right.Foot.Node?.Transform;
-
             var chestTfm = h.Chest.Node?.Transform;
             var leftElbowTfm = h.Left.Elbow.Node?.Transform;
             var rightElbowTfm = h.Right.Elbow.Node?.Transform;
             var leftKneeTfm = h.Left.Knee.Node?.Transform;
             var rightKneeTfm = h.Right.Knee.Node?.Transform;
 
-            FindClosestTracker(t, waistTfm, out var WaistTracker, out Matrix4x4 offset);
-            h.HipsTarget = (WaistTracker, offset);
-            if (WaistTracker is not null)
-                WaistTracker.WorldMatrixChanged += HipTrackerWorldMatrixChanged;
+            //Clear tracker-dependent targets
+            h.HipsTarget = (null, Matrix4x4.Identity);
+            h.LeftFootTarget = (null, Matrix4x4.Identity);
+            h.RightFootTarget = (null, Matrix4x4.Identity);
+            h.ChestTarget = (null, Matrix4x4.Identity);
+            h.LeftElbowTarget = (null, Matrix4x4.Identity);
+            h.RightElbowTarget = (null, Matrix4x4.Identity);
+            h.LeftKneeTarget = (null, Matrix4x4.Identity);
+            h.RightKneeTarget = (null, Matrix4x4.Identity);
 
-            FindClosestTracker(t, leftFootTfm, out var LeftFootTracker, out offset);
-            h.LeftFootTarget = (LeftFootTracker, offset);
+            foreach ((VrDevice dev, VRTrackerTransform tracker) in t.Trackers.Values)
+            {
+                Engine.Rendering.Debug.RenderSphere(tracker.RenderTranslation, CalibrationRadius, false, ColorF4.Green);
 
-            FindClosestTracker(t, rightFootTfm, out var RightFootTracker, out offset);
-            h.RightFootTarget = (RightFootTracker, offset);
+                FindClosestBodyPart(
+                    tracker,
+                    out ETrackableBodyPart closestBodyPart,
+                    out float distance,
+                    out Matrix4x4 offset2,
+                    waistTfm,
+                    leftFootTfm,
+                    rightFootTfm,
+                    chestTfm,
+                    leftElbowTfm,
+                    rightElbowTfm,
+                    leftKneeTfm,
+                    rightKneeTfm);
 
-            FindClosestTracker(t, chestTfm, out var ChestTracker, out offset);
-            h.ChestTarget = (ChestTracker, offset);
+                if (distance > CalibrationRadius)
+                    continue;
 
-            FindClosestTracker(t, leftElbowTfm, out var LeftElbowTracker, out offset);
-            h.LeftElbowTarget = (LeftElbowTracker, offset);
+                Vector3 trackerPos = tracker.RenderTranslation;
+                Vector3 humanPosFromTracker = (offset2 * tracker.RenderMatrix).Translation;
 
-            FindClosestTracker(t, rightElbowTfm, out var RightElbowTracker, out offset);
-            h.RightElbowTarget = (RightElbowTracker, offset);
+                Engine.Rendering.Debug.RenderLine(trackerPos, humanPosFromTracker, ColorF4.Magenta);
 
-            FindClosestTracker(t, leftKneeTfm, out var LeftKneeTracker, out offset);
-            h.LeftKneeTarget = (LeftKneeTracker, offset);
+                //These two positions should be the same
+                Engine.Rendering.Debug.RenderPoint(humanPosFromTracker, ColorF4.Green);
 
-            FindClosestTracker(t, rightKneeTfm, out var RightKneeTracker, out offset);
-            h.RightKneeTarget = (RightKneeTracker, offset);
+                switch (closestBodyPart)
+                {
+                    case ETrackableBodyPart.Hips:
+                        h.HipsTarget = (tracker, offset2);
+                        Engine.Rendering.Debug.RenderPoint(waistTfm!.RenderTranslation, ColorF4.Orange);
+                        break;
+                    case ETrackableBodyPart.Chest:
+                        h.ChestTarget = (tracker, offset2);
+                        Engine.Rendering.Debug.RenderPoint(chestTfm!.RenderTranslation, ColorF4.Orange);
+                        break;
+                    case ETrackableBodyPart.LeftFoot:
+                        h.LeftFootTarget = (tracker, offset2);
+                        Engine.Rendering.Debug.RenderPoint(leftFootTfm!.RenderTranslation, ColorF4.Orange);
+                        break;
+                    case ETrackableBodyPart.RightFoot:
+                        h.RightFootTarget = (tracker, offset2);
+                        Engine.Rendering.Debug.RenderPoint(rightFootTfm!.RenderTranslation, ColorF4.Orange);
+                        break;
+                    case ETrackableBodyPart.LeftElbow:
+                        h.LeftElbowTarget = (tracker, offset2);
+                        Engine.Rendering.Debug.RenderPoint(leftElbowTfm!.RenderTranslation, ColorF4.Orange);
+                        break;
+                    case ETrackableBodyPart.RightElbow:
+                        h.RightElbowTarget = (tracker, offset2);
+                        Engine.Rendering.Debug.RenderPoint(rightElbowTfm!.RenderTranslation, ColorF4.Orange);
+                        break;
+                    case ETrackableBodyPart.LeftKnee:
+                        h.LeftKneeTarget = (tracker, offset2);
+                        Engine.Rendering.Debug.RenderPoint(leftKneeTfm!.RenderTranslation, ColorF4.Orange);
+                        break;
+                    case ETrackableBodyPart.RightKnee:
+                        h.RightKneeTarget = (tracker, offset2);
+                        Engine.Rendering.Debug.RenderPoint(rightKneeTfm!.RenderTranslation, ColorF4.Orange);
+                        break;
+                }
+            }
+        }
+
+        private static void FindClosestBodyPart(
+            VRTrackerTransform tracker,
+            out ETrackableBodyPart closestBodyPart,
+            out float distance,
+            out Matrix4x4 offset2,
+            TransformBase? waistTfm,
+            TransformBase? leftFootTfm,
+            TransformBase? rightFootTfm,
+            TransformBase? chestTfm,
+            TransformBase? leftElbowTfm,
+            TransformBase? rightElbowTfm,
+            TransformBase? leftKneeTfm,
+            TransformBase? rightKneeTfm)
+        {
+            closestBodyPart = ETrackableBodyPart.Hips;
+            offset2 = Matrix4x4.Identity;
+            distance = float.MaxValue;
+            TransformBase? bestTfm = null;
+
+            if (waistTfm is not null)
+            {
+                var waistPos = waistTfm.RenderTranslation;
+                var trackerPos = tracker.RenderTranslation;
+                var dist = Vector3.Distance(waistPos, trackerPos);
+                if (dist < distance)
+                {
+                    closestBodyPart = ETrackableBodyPart.Hips;
+                    distance = dist;
+                    bestTfm = waistTfm;
+                }
+            }
+            if (leftFootTfm is not null)
+            {
+                var leftFootPos = leftFootTfm.RenderTranslation;
+                var trackerPos = tracker.RenderTranslation;
+                var dist = Vector3.Distance(leftFootPos, trackerPos);
+                if (dist < distance)
+                {
+                    closestBodyPart = ETrackableBodyPart.LeftFoot;
+                    distance = dist;
+                    bestTfm = leftFootTfm;
+                }
+            }
+            if (rightFootTfm is not null)
+            {
+                var rightFootPos = rightFootTfm.RenderTranslation;
+                var trackerPos = tracker.RenderTranslation;
+                var dist = Vector3.Distance(rightFootPos, trackerPos);
+                if (dist < distance)
+                {
+                    closestBodyPart = ETrackableBodyPart.RightFoot;
+                    distance = dist;
+                    bestTfm = rightFootTfm;
+                }
+            }
+            if (chestTfm is not null)
+            {
+                var chestPos = chestTfm.RenderTranslation;
+                var trackerPos = tracker.RenderTranslation;
+                var dist = Vector3.Distance(chestPos, trackerPos);
+                if (dist < distance)
+                {
+                    closestBodyPart = ETrackableBodyPart.Chest;
+                    distance = dist;
+                    bestTfm = chestTfm;
+                }
+            }
+            if (leftElbowTfm is not null)
+            {
+                var leftElbowPos = leftElbowTfm.RenderTranslation;
+                var trackerPos = tracker.RenderTranslation;
+                var dist = Vector3.Distance(leftElbowPos, trackerPos);
+                if (dist < distance)
+                {
+                    closestBodyPart = ETrackableBodyPart.LeftElbow;
+                    distance = dist;
+                    bestTfm = leftElbowTfm;
+                }
+            }
+            if (rightElbowTfm is not null)
+            {
+                var rightElbowPos = rightElbowTfm.RenderTranslation;
+                var trackerPos = tracker.RenderTranslation;
+                var dist = Vector3.Distance(rightElbowPos, trackerPos);
+                if (dist < distance)
+                {
+                    closestBodyPart = ETrackableBodyPart.RightElbow;
+                    distance = dist;
+                    bestTfm = rightElbowTfm;
+                }
+            }
+            if (leftKneeTfm is not null)
+            {
+                var leftKneePos = leftKneeTfm.RenderTranslation;
+                var trackerPos = tracker.RenderTranslation;
+                var dist = Vector3.Distance(leftKneePos, trackerPos);
+                if (dist < distance)
+                {
+                    closestBodyPart = ETrackableBodyPart.LeftKnee;
+                    distance = dist;
+                    bestTfm = leftKneeTfm;
+                }
+            }
+            if (rightKneeTfm is not null)
+            {
+                var rightKneePos = rightKneeTfm.RenderTranslation;
+                var trackerPos = tracker.RenderTranslation;
+                var dist = Vector3.Distance(rightKneePos, trackerPos);
+                if (dist < distance)
+                {
+                    closestBodyPart = ETrackableBodyPart.RightKnee;
+                    distance = dist;
+                    bestTfm = rightKneeTfm;
+                }
+            }
+
+            if (bestTfm is not null)
+                offset2 = bestTfm.RenderMatrix * tracker.RenderMatrix.Inverted();
         }
 
         private void FindClosestTracker(
@@ -527,11 +824,11 @@ namespace XREngine.Scene.Components.VR
             if (humanoidTfm is null)
                 return;
 
-            var bodyPos = humanoidTfm.WorldTranslation;
+            var bodyPos = humanoidTfm.RenderTranslation;
             float closestDist = float.MaxValue;
             foreach ((VrDevice dev, VRTrackerTransform tracker) in trackerCollection.Trackers.Values)
             {
-                var trackerPos = tracker.WorldTranslation;
+                var trackerPos = tracker.RenderTranslation;
                 var dist = Vector3.DistanceSquared(bodyPos, trackerPos);
                 if (dist < closestDist && float.Sqrt(dist) < CalibrationRadius)
                 {
@@ -539,7 +836,23 @@ namespace XREngine.Scene.Components.VR
                     closestTracker = tracker;
                 }
             }
-            offset = closestTracker is not null ? humanoidTfm.WorldMatrix * closestTracker.InverseWorldMatrix : Matrix4x4.Identity;
+            if (closestTracker is not null)
+            {
+                offset = humanoidTfm.RenderMatrix * closestTracker.RenderMatrix.Inverted();
+
+                Vector3 trackerPos = closestTracker.RenderTranslation;
+                Vector3 humanPosFromTracker = (offset * closestTracker.RenderMatrix).Translation;
+
+                Engine.Rendering.Debug.RenderLine(trackerPos, humanPosFromTracker, ColorF4.Magenta);
+
+                //These two positions should be the same
+                Engine.Rendering.Debug.RenderPoint(humanoidTfm.RenderTranslation, ColorF4.Orange);
+                Engine.Rendering.Debug.RenderPoint(humanPosFromTracker, ColorF4.Green);
+            }
+            else
+            {
+                offset = Matrix4x4.Identity;
+            }
         }
 
         public void CancelCalibration()
@@ -547,7 +860,7 @@ namespace XREngine.Scene.Components.VR
             IsCalibrating = false;
 
             if (Headset is not null)
-                UnregisterTick(ETickGroup.Normal, ETickOrder.Input, UpdateRootTransform);
+                UnregisterTick(ETickGroup.Normal, ETickOrder.Input, UpdateTick);
 
             var h = GetHumanoid();
             if (h is null)

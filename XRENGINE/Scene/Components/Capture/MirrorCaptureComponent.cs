@@ -292,7 +292,7 @@ namespace XREngine.Components.Lights
         private void CollectVisible()
         {
             //DisallowMirrors = true;
-            Viewport?.CollectVisible(null, null, true);
+            Viewport?.CollectVisible();
             //DisallowMirrors = false;
         }
 

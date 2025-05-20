@@ -31,10 +31,10 @@ public sealed partial class XRRenderPipelineInstance : XRBase
     private readonly Dictionary<string, XRTexture> _textures = [];
     private readonly Dictionary<string, XRFrameBuffer> _frameBuffers = [];
 
-    private RenderPipeline? _pipeline = new DefaultRenderPipeline();
+    private RenderPipeline? _pipeline;
     public RenderPipeline? Pipeline
     {
-        get => _pipeline;
+        get => _pipeline ?? SetFieldReturn(ref _pipeline, new DefaultRenderPipeline());
         set => SetField(ref _pipeline, value);
     }
 
@@ -140,7 +140,7 @@ public sealed partial class XRRenderPipelineInstance : XRBase
             switch (propName)
             {
                 case nameof(Pipeline):
-                    Pipeline?.Instances.Remove(this);
+                    _pipeline?.Instances.Remove(this);
                     break;
             }
         }
@@ -152,11 +152,11 @@ public sealed partial class XRRenderPipelineInstance : XRBase
         switch (propName)
         {
             case nameof(Pipeline):
-                if (Pipeline is not null)
+                if (_pipeline is not null)
                 {
-                    MeshRenderCommands.SetRenderPasses(Pipeline.PassIndicesAndSorters);
-                    InvalidMaterial = Pipeline.InvalidMaterial;
-                    Pipeline.Instances.Add(this);
+                    MeshRenderCommands.SetRenderPasses(_pipeline.PassIndicesAndSorters);
+                    InvalidMaterial = _pipeline.InvalidMaterial;
+                    _pipeline.Instances.Add(this);
                 }
                 else
                     InvalidMaterial = null;
@@ -186,7 +186,8 @@ public sealed partial class XRRenderPipelineInstance : XRBase
         UICanvasComponent? userInterface = null,
         bool shadowPass = false,
         bool stereoPass = false,
-        XRMaterial? shadowMaterial = null)
+        XRMaterial? shadowMaterial = null,
+        RenderCommandCollection? meshRenderCommandsOverride = null)
     {
         if (Pipeline is null)
         {
@@ -196,7 +197,7 @@ public sealed partial class XRRenderPipelineInstance : XRBase
 
         using (PushRenderingPipeline(this))
         {
-            using (RenderState.PushMainAttributes(viewport, scene, camera, stereoRightEyeCamera, targetFBO, shadowPass, stereoPass, shadowMaterial, userInterface))
+            using (RenderState.PushMainAttributes(viewport, scene, camera, stereoRightEyeCamera, targetFBO, shadowPass, stereoPass, shadowMaterial, userInterface, meshRenderCommandsOverride ?? MeshRenderCommands))
             {
                 Pipeline.CommandChain.Execute();
             }

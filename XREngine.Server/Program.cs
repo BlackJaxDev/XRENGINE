@@ -50,7 +50,7 @@ namespace XREngine.Networking
         private static void Main(string[] args)
         {
             WebAppTask = BuildWebApi();
-            var unitTestWorld = EditorWorld.CreateUnitTestWorld(false, true);
+            var unitTestWorld = UnitTestingWorld.CreateUnitTestWorld(false, true);
             CreateConsoleUI(unitTestWorld.Scenes[0].RootNodes[0]);
             Engine.Run(/*Engine.LoadOrGenerateGameSettings(() => */GetEngineSettings(unitTestWorld)/*, "startup", false)*/, Engine.LoadOrGenerateGameState());
         }

@@ -45,10 +45,11 @@ namespace XREngine.Scene
             XRCamera? camera,
             bool cullWithFrustum,
             Func<XRCamera>? cullingCameraOverride,
+            IVolume? collectionVolumeOverride,
             bool collectMirrors)
         {
-            var cullingCamera = cullingCameraOverride?.Invoke() ?? camera;
-            var collectionVolume = cullWithFrustum ? cullingCamera?.WorldFrustum() : null;
+            XRCamera? cullingCamera = cullingCameraOverride?.Invoke() ?? camera;
+            IVolume? collectionVolume = collectionVolumeOverride ?? (cullWithFrustum ? cullingCamera?.WorldFrustum() : null);
             CollectRenderedItems(meshRenderCommands, collectionVolume, camera, collectMirrors);
         }
         public void CollectRenderedItems(RenderCommandCollection commands, IVolume? collectionVolume, XRCamera? camera, bool collectMirrors)

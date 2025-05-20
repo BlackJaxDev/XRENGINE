@@ -1,7 +1,12 @@
-﻿using System.Numerics;
+﻿using Extensions;
+using System.Numerics;
 
 namespace XREngine
 {
+    /// <summary>
+    /// Combines two projection matrices into a single projection matrix that can encompass both frustums.
+    /// Ignores a lot of edge cases, but works for what we need.
+    /// </summary>
     public static class ProjectionMatrixCombiner
     {
         public static Matrix4x4 CombineProjectionMatrices(Matrix4x4 proj1, Matrix4x4 proj2, Matrix4x4? view1 = null, Matrix4x4? view2 = null)
@@ -32,112 +37,59 @@ namespace XREngine
             // Iterate over all combinations of clip space coordinates
             int index = 0;
             for (int x = -1; x <= 1; x += 2)
-            {
                 for (int y = -1; y <= 1; y += 2)
-                {
                     for (int z = 0; z <= 1; z++)
                     {
-                        // Create clip space coordinate
-                        Vector4 clipSpacePos = new(x, y, z, 1.0f);
-
-                        // Transform to world space
-                        Vector4 worldSpacePos = Vector4.Transform(clipSpacePos, invViewProj);
-
-                        // Perspective divide
-                        frustumCorners[index++] = new Vector3(
-                            worldSpacePos.X / worldSpacePos.W,
-                            worldSpacePos.Y / worldSpacePos.W,
-                            worldSpacePos.Z / worldSpacePos.W);
+                        Vector4 ws = Vector4.Transform(new Vector4(x, y, z, 1.0f), invViewProj);
+                        frustumCorners[index++] = ws.XYZ() / ws.W;
                     }
-                }
-            }
 
             return frustumCorners;
         }
 
         private static Matrix4x4 CreateMinimalEnclosingProjection(List<Vector3> worldPoints)
         {
-            // We need to find a view matrix that looks at the combined frustum
-            // For simplicity, we'll use the centroid as the look-at point
-            Vector3 centroid = CalculateCentroid(worldPoints);
+            CalculateViewSpaceBounds(worldPoints,
+                out float left, out float right,
+                out float bottom, out float top,
+                out float near, out float far);
 
-            // Calculate optimal camera position and orientation
-            // This is simplified - a real implementation might want to find the minimal enclosing frustum
-            Vector3 cameraPos = centroid - Vector3.UnitZ * CalculateOptimalDistance(worldPoints, centroid);
-
-            // Create view matrix looking at the centroid
-            Matrix4x4 viewMatrix = Matrix4x4.CreateLookAt(cameraPos, centroid, Vector3.UnitY);
-
-            // Transform all points to view space
-            List<Vector3> viewSpacePoints = [];
-            foreach (var point in worldPoints)
-                viewSpacePoints.Add(Vector3.Transform(point, viewMatrix));
-            
-            // Calculate the bounds in view space
-            CalculateViewSpaceBounds(viewSpacePoints, out float left, out float right,
-                                   out float bottom, out float top, out float near, out float far);
-
-            // Create the enclosing projection matrix
-            return Matrix4x4.CreatePerspectiveOffCenter(left, right, bottom, top, near, far);
+            // 8. Create the enclosing projection matrix
+            return Matrix4x4.CreatePerspectiveOffCenter(left, right, bottom, top, -near, -far);
         }
 
-        private static Vector3 CalculateCentroid(List<Vector3> points)
-        {
-            Vector3 sum = Vector3.Zero;
-            foreach (var point in points)
-                sum += point;
-            return sum / points.Count;
-        }
-
-        private static float CalculateOptimalDistance(List<Vector3> points, Vector3 centroid)
-        {
-            // Find the maximum distance from centroid to any point
-            float maxDistance = 0;
-            foreach (var point in points)
-            {
-                float distance = Vector3.Distance(point, centroid);
-                if (distance > maxDistance)
-                    maxDistance = distance;
-            }
-            return maxDistance * 1.5f; // Add some padding
-        }
-
-        private static void CalculateViewSpaceBounds(List<Vector3> viewSpacePoints,
-            out float left, out float right, out float bottom, out float top,
+        private static void CalculateViewSpaceBounds(
+            List<Vector3> viewSpacePoints,
+            out float nearPlaneLeft, out float nearPlaneRight,
+            out float nearPlaneBottom, out float nearPlaneTop,
             out float near, out float far)
         {
-            // Initialize with extreme values
-            left = float.MaxValue;
-            right = float.MinValue;
-            bottom = float.MaxValue;
-            top = float.MinValue;
-            near = float.MaxValue;
-            far = float.MinValue;
+            //Near is a small negative value, far is a large negative value
+            near = float.MinValue;
+            far = float.MaxValue;
+            nearPlaneLeft = float.MaxValue;
+            nearPlaneRight = float.MinValue;
+            nearPlaneBottom = float.MaxValue;
+            nearPlaneTop = float.MinValue;
 
             foreach (var point in viewSpacePoints)
             {
-                // Project point onto near plane (z = -near)
-                float z = -point.Z;
-                float x = point.X / z;
-                float y = point.Y / z;
-
-                // Update bounds
-                left = MathF.Min(left, x);
-                right = MathF.Max(right, x);
-                bottom = MathF.Min(bottom, y);
-                top = MathF.Max(top, y);
-                near = MathF.Min(near, -point.Z); // View space Z is negative
-                far = MathF.Max(far, -point.Z);
+                near = MathF.Max(near, point.Z);
+                far = MathF.Min(far, point.Z);
             }
 
-            // Add small padding to avoid clipping
-            float padding = 0.1f;
-            left -= padding;
-            right += padding;
-            bottom -= padding;
-            top += padding;
-            near = MathF.Max(0.1f, near - padding);
-            far += padding;
+            //Only consider points that are closer to the near plane
+            float halfNearFar = (far - near) * 0.5f;
+            foreach (Vector3 point in viewSpacePoints)
+            {
+                if (point.Z > halfNearFar)
+                {
+                    nearPlaneLeft = MathF.Min(nearPlaneLeft, point.X);
+                    nearPlaneRight = MathF.Max(nearPlaneRight, point.X);
+                    nearPlaneBottom = MathF.Min(nearPlaneBottom, point.Y);
+                    nearPlaneTop = MathF.Max(nearPlaneTop, point.Y);
+                }
+            }
         }
     }
 }

@@ -6,6 +6,7 @@ using XREngine.Data.Geometry;
 using XREngine.Data.Rendering;
 using XREngine.Data.Vectors;
 using XREngine.Input;
+using XREngine.Rendering.Commands;
 using XREngine.Rendering.Info;
 using XREngine.Rendering.UI;
 using XREngine.Scene;
@@ -154,55 +155,78 @@ namespace XREngine.Rendering
         private void CollectVisibleInternal()
         {
             if (AutomaticallyCollectVisible)
-                CollectVisible(null, null, true);
+                CollectVisible();
         }
-        public void CollectVisible(XRWorldInstance? worldOverride, XRCamera? cameraOverride, bool collectMirrors)
+        private void SwapBuffersInternal()
+        {
+            if (AutomaticallySwapBuffers)
+                SwapBuffers();
+        }
+
+        /// <summary>
+        /// Collects all visible items in the world and UI within the active camera for this viewport (ActiveCamera) and puts them into the render pipeline's render command collection.
+        /// Use worldOverride to override the world instance to collect from.
+        /// Use cameraOverride to override the camera to collect from.
+        /// Use renderCommandsOverride to override the render command collection to collect into.
+        /// </summary>
+        /// <param name="collectMirrors"></param>
+        /// <param name="worldOverride"></param>
+        /// <param name="cameraOverride"></param>
+        /// <param name="renderCommandsOverride"></param>
+        public void CollectVisible(
+            bool collectMirrors = true,
+            XRWorldInstance? worldOverride = null,
+            XRCamera? cameraOverride = null,
+            RenderCommandCollection? renderCommandsOverride = null,
+            bool allowScreenSpaceUICollectVisible = true,
+            IVolume? collectionVolumeOverride = null)
         {
             XRCamera? camera = cameraOverride ?? ActiveCamera;
             if (camera is null)
                 return;
 
             (worldOverride ?? World)?.VisualScene?.CollectRenderedItems(
-                _renderPipeline.MeshRenderCommands,
+                renderCommandsOverride ?? _renderPipeline.MeshRenderCommands,
                 camera,
                 CameraComponent?.CullWithFrustum ?? CullWithFrustum,
                 CameraComponent?.CullingCameraOverride,
+                collectionVolumeOverride,
                 collectMirrors);
 
-            CollectVisibleScreenSpaceUI();
+            if (allowScreenSpaceUICollectVisible)
+                CollectVisible_ScreenSpaceUI();
         }
 
-        private void CollectVisibleScreenSpaceUI()
+        public void SwapBuffers(
+            RenderCommandCollection? renderCommandsOverride = null,
+            bool allowScreenSpaceUISwap = true)
+        {
+            (renderCommandsOverride ?? _renderPipeline.MeshRenderCommands).SwapBuffers();
+            if (allowScreenSpaceUISwap)
+                SwapBuffers_ScreenSpaceUI();
+        }
+
+        /// <summary>
+        /// Collects screen space UI items into the canvas' render pipeline.
+        /// If AllowUIRender is false, the camera component has no UI canvas, or the canvas is not set to screen space, this will do nothing.
+        /// </summary>
+        private void CollectVisible_ScreenSpaceUI()
         {
             if (!AllowUIRender)
                 return;
 
-            var ui = CameraComponent?.GetUserInterfaceOverlay();
+            UICanvasComponent? ui = CameraComponent?.GetUserInterfaceOverlay();
             if (ui is null)
                 return;
 
             if (ui.CanvasTransform.DrawSpace == ECanvasDrawSpace.Screen)
                 ui?.CollectVisibleItemsScreenSpace();
         }
-
-        private void SwapBuffersInternal()
-        {
-            if (!AutomaticallySwapBuffers)
-                return;
-
-            XRCamera? camera = ActiveCamera;
-            if (camera is null)
-                return;
-
-            SwapBuffers();
-        }
-        public void SwapBuffers()
-        {
-            _renderPipeline.MeshRenderCommands.SwapBuffers();
-            SwapScreenSpaceUIBuffers();
-        }
-
-        private void SwapScreenSpaceUIBuffers()
+        /// <summary>
+        /// Swaps the screen space UI buffers.
+        /// If AllowUIRender is false, the camera component has no UI canvas, or the canvas is not set to screen space, this will do nothing.
+        /// </summary>
+        private void SwapBuffers_ScreenSpaceUI()
         {
             if (!AllowUIRender)
                 return;
@@ -244,16 +268,19 @@ namespace XREngine.Rendering
                 return;
             }
 
-            _renderPipeline.Render(
-                world.VisualScene,
-                camera,
-                null,
-                this,
-                targetFbo,
-                AllowUIRender ? CameraComponent?.GetUserInterfaceOverlay() : null,
-                shadowPass,
-                false,
-                forcedMaterial);
+            //using (Engine.Profiler.Start("XRViewport.Render"))
+            {
+                _renderPipeline.Render(
+                    world.VisualScene,
+                    camera,
+                    null,
+                    this,
+                    targetFbo,
+                    AllowUIRender ? CameraComponent?.GetUserInterfaceOverlay() : null,
+                    shadowPass,
+                    false,
+                    forcedMaterial);
+            }
         }
         /// <summary>
         /// Renders this camera's view to the FBO in stereo.
