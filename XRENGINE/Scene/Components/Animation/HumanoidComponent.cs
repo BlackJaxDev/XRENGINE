@@ -906,7 +906,7 @@ namespace XREngine.Scene.Components.Animation
         /// Calculates the average position of all vertices rigged to bones that contain the word "eye" in their name and returns the difference from the head bone.
         /// </summary>
         /// <returns></returns>
-        public Vector3 CalculateEyeOffsetFromHead(ModelComponent? eyesModel, string? eyeLBoneName, string? eyeRBoneName)
+        public Vector3 CalculateEyeOffsetFromHead(ModelComponent? eyesModel, string? eyeLBoneName, string? eyeRBoneName, bool forceXToZero = true)
         {
             if (eyesModel is null)
                 return Vector3.Zero;
@@ -942,11 +942,19 @@ namespace XREngine.Scene.Components.Animation
             }
             avgEyePos /= lodCount;
 
-            avgEyePos.X = 0;
-            (avgEyePos.Y, avgEyePos.Z) = (avgEyePos.Z, avgEyePos.Y);
-            avgEyePos.Z = -avgEyePos.Z;
+            if (forceXToZero)
+                avgEyePos.X = 0;
 
-            return avgEyePos - headNode.Transform.BindMatrix.Translation;
+            //(avgEyePos.Y, avgEyePos.Z) = (avgEyePos.Z, avgEyePos.Y);
+            //avgEyePos.Z = -avgEyePos.Z;
+
+            Vector3 rootToHead = headNode.Transform.BindMatrix.Translation - Transform.BindMatrix.Translation;
+            avgEyePos -= rootToHead;
+
+            if (forceXToZero)
+                avgEyePos.X = 0;
+
+            return avgEyePos;
         }
 
         private static bool SumEyeBonePositions((TransformBase tfm, Matrix4x4 invBindWorldMtx)[] bones, out Vector3 eyePosWorldAvg, string? eyeLBoneName, string? eyeRBoneName)

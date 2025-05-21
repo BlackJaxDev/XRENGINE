@@ -11,6 +11,7 @@ using XREngine.Rendering.Commands;
 using XREngine.Rendering.Info;
 using XREngine.Rendering.UI;
 using YamlDotNet.Serialization;
+using static XREngine.Engine.Rendering;
 
 namespace XREngine.Scene.Transforms
 {
@@ -359,31 +360,43 @@ namespace XREngine.Scene.Transforms
         /// </summary>
         /// <param name="recalcChildrenNow"></param>
         /// <returns></returns>
-        public virtual Task RecalculateMatrixHeirarchy(bool forceWorldRecalc, bool setRenderMatrixNow, bool parallel)
+        public virtual Task RecalculateMatrixHeirarchy(bool forceWorldRecalc, bool setRenderMatrixNow, ELoopType childRecalcType)
         {
             if (!RecalculateMatrices(forceWorldRecalc, setRenderMatrixNow))
                 return Task.CompletedTask;
 
-            if (parallel)
-                return ParallelChildrenRecalc(setRenderMatrixNow);
-            else
-                return SequentialChildrenRecalc(setRenderMatrixNow);
+            return childRecalcType switch
+            {
+                ELoopType.Asynchronous => ChildrenRecalcAsync(setRenderMatrixNow),
+                ELoopType.Parallel => Task.Run(() => ChildrenRecalcParallel(setRenderMatrixNow)),
+                _ => ChildrenRecalcSequential(setRenderMatrixNow),
+            };
         }
 
-        private async Task SequentialChildrenRecalc(bool setRenderMatrixNow)
+        private void ChildrenRecalcParallel(bool setRenderMatrixNow)
+        {
+            var c = _children.Count;
+            Parallel.For(0, c, async i =>
+            {
+                TransformBase child = _children[i];
+                await child.RecalculateMatrixHeirarchy(true, setRenderMatrixNow, ELoopType.Parallel);
+            });
+        }
+
+        private async Task ChildrenRecalcSequential(bool setRenderMatrixNow)
         {
             //var childrenCopy = RentChildrenCopy(out int c);
             var c = _children.Count;
             for (int i = 0; i < c; i++)
-                await _children[i].RecalculateMatrixHeirarchy(true, setRenderMatrixNow, false);
+                await _children[i].RecalculateMatrixHeirarchy(true, setRenderMatrixNow, ELoopType.Sequential);
             //ReturnChildrenCopy(childrenCopy);
         }
 
-        private async Task ParallelChildrenRecalc(bool setRenderMatrixNow)
+        private async Task ChildrenRecalcAsync(bool setRenderMatrixNow)
         {
             //var childrenCopy = RentChildrenCopy(out int c);
             var c = _children.Count;
-            await Task.WhenAll(_children.Take(c).Select(child => child.RecalculateMatrixHeirarchy(true, setRenderMatrixNow, true)));
+            await Task.WhenAll(_children.Take(c).Select(child => child.RecalculateMatrixHeirarchy(true, setRenderMatrixNow, ELoopType.Asynchronous)));
             //ReturnChildrenCopy(childrenCopy);
         }
 
@@ -391,17 +404,27 @@ namespace XREngine.Scene.Transforms
         {
             RenderMatrix = matrix;
             if (recalcAllChildRenderMatrices)
-                return RecalculateRenderMatrixHierarchy(Engine.Rendering.Settings.RecalcChildMatricesInParallel);
+                return RecalculateRenderMatrixHierarchy(Engine.Rendering.Settings.RecalcChildMatricesLoopType);
             else
                 return Task.CompletedTask;
         }
 
-        private Task RecalculateRenderMatrixHierarchy(bool parallel)
+        private Task RecalculateRenderMatrixHierarchy(ELoopType childRecalcType)
+            => childRecalcType switch
+            {
+                ELoopType.Asynchronous => AsyncChildrenRenderMatrixRecalc(),
+                ELoopType.Parallel => Task.Run(ParallelChildrenRenderMatrixRecalc),
+                _ => SequentialChildrenRenderMatrixRecalc(),
+            };
+
+        private void ParallelChildrenRenderMatrixRecalc()
         {
-            if (parallel)
-                return ParallelChildrenRenderMatrixRecalc();
-            else
-                return SequentialChildrenRenderMatrixRecalc();
+            var c = _children.Count;
+            Parallel.For(0, c, async i =>
+            {
+                TransformBase child = _children[i];
+                await child.SetRenderMatrix(child.LocalMatrix * RenderMatrix, false);
+            });
         }
 
         private async Task SequentialChildrenRenderMatrixRecalc()
@@ -430,7 +453,7 @@ namespace XREngine.Scene.Transforms
         private static void ReturnChildrenCopy(TransformBase[] copy)
             => ArrayPool<TransformBase>.Shared.Return(copy);
 
-        private async Task ParallelChildrenRenderMatrixRecalc()
+        private async Task AsyncChildrenRenderMatrixRecalc()
         {
             //var childrenCopy = RentChildrenCopy(out int c);
             var c = _children.Count;

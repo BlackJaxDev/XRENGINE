@@ -98,7 +98,7 @@ namespace XREngine.Rendering
 
             //Recalculate all transforms before activating nodes, in case any cross-dependencies exist
             foreach (SceneNode node in RootNodes)
-                await node.Transform.RecalculateMatrixHeirarchy(true, true, Engine.Rendering.Settings.RecalcChildMatricesInParallel);
+                await node.Transform.RecalculateMatrixHeirarchy(true, true, Engine.Rendering.Settings.RecalcChildMatricesLoopType);
 
             foreach (SceneNode node in RootNodes)
                 if (node.IsActiveSelf)
@@ -198,9 +198,13 @@ namespace XREngine.Rendering
 
         private void PostUpdate()
         {
-            Func<IEnumerable<TransformBase>, Task> recalc = Engine.Rendering.Settings.RecalcChildMatricesInParallel
-                ? RecalcTransformsParallelTasks
-                : RecalcTransformsSequential;
+            var loopType = Engine.Rendering.Settings.RecalcChildMatricesLoopType;
+            Func<IEnumerable<TransformBase>, Task> recalc = loopType switch
+            {
+                Engine.Rendering.ELoopType.Asynchronous => RecalcTransformsAsync,
+                Engine.Rendering.ELoopType.Parallel => RecalcTransformsParallel,
+                _ => RecalcTransformsSequential,
+            };
 
             //Sequentially iterate through each depth of modified transforms, in order
             foreach (var item in _invalidTransforms.OrderBy(x => x.Key))
@@ -215,13 +219,19 @@ namespace XREngine.Rendering
         private static async Task RecalcTransformsSequential(IEnumerable<TransformBase> bag)
         {
             foreach (var transform in bag)
-                await transform.RecalculateMatrixHeirarchy(true, false, false);
+                await transform.RecalculateMatrixHeirarchy(true, false, Engine.Rendering.ELoopType.Sequential);
         }
 
-        private static async Task RecalcTransformsParallelTasks(IEnumerable<TransformBase> bag)
+        /// <summary>
+        /// Recalculates the transform matrices of all transforms in the bag.
+        /// A bag represents one level of transformations at a certain depth, so all transforms do not depend on one another.
+        /// </summary>
+        /// <param name="bag"></param>
+        /// <returns></returns>
+        private static async Task RecalcTransformsAsync(IEnumerable<TransformBase> bag)
         {
             Task Calc(TransformBase tfm)
-                => tfm.RecalculateMatrixHeirarchy(true, false, true);
+                => tfm.RecalculateMatrixHeirarchy(true, false, Engine.Rendering.ELoopType.Asynchronous);
 
             Task AsCalcTask(TransformBase tfm)
             {
@@ -230,6 +240,14 @@ namespace XREngine.Rendering
             }
 
             await Task.WhenAll([.. bag.Select(AsCalcTask)]);
+        }
+
+        private static async Task RecalcTransformsParallel(IEnumerable<TransformBase> bag)
+        {
+            await Task.Run(() => Parallel.ForEach(bag, async (TransformBase tfm) =>
+            {
+                await tfm.RecalculateMatrixHeirarchy(true, false, Engine.Rendering.ELoopType.Asynchronous);
+            }));
         }
 
         private ConcurrentQueue<(TransformBase tfm, Matrix4x4 renderMatrix)> _pushToRenderWrite = new();

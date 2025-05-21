@@ -12,7 +12,7 @@ public static partial class UnitTestingWorld
 
         //Editor UI
         public const bool AddEditorUI = false; //Adds the full editor UI to the camera.
-        public const bool TransformTool = true; //Adds the transform tool to the scene for testing dragging and rotating etc.
+        public const bool TransformTool = false; //Adds the transform tool to the scene for testing dragging and rotating etc.
         public const bool AllowEditingInVR = true; //Allows the user to edit the scene from desktop in VR.
         public const bool VideoStreaming = false; //Adds a video streaming component to the scene for testing video streaming.
         public const bool VideoStreamingAudio = false; //Adds a video streaming audio component to the scene for testing video streaming audio.

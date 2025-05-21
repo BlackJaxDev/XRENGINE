@@ -1,6 +1,4 @@
-﻿using Assimp;
-using Extensions;
-using Raylib_cs;
+﻿using Extensions;
 using System.Collections.Concurrent;
 using System.Numerics;
 using XREngine.Data.Core;
@@ -44,12 +42,10 @@ namespace XREngine.Components.Lights
         private void PreRender()
         {
             XRCamera? camera = Engine.Rendering.State.RenderingCamera;
-            if (camera is null || !_renderingCameras.TryRemove(camera))
-                return;
-
             UpdateRenderTransform(Transform);
-            UpdateMirrorCamera(camera, true);
-            Render();
+            if (camera is not null && _renderingCameras.TryRemove(camera))
+                UpdateMirrorCamera(camera, true);
+            RenderToFBO();
         }
 
         /// <summary>
@@ -303,7 +299,7 @@ namespace XREngine.Components.Lights
             Viewport?.SwapBuffers();
         }
 
-        private void Render()
+        private void RenderToFBO()
         {
             if (World is null || RenderFBO is null)
                 return;

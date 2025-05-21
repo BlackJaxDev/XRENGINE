@@ -12,6 +12,7 @@ namespace XREngine.Components
         private Vector3 _frameInputDirection = Vector3.Zero;
         private Vector3 _currentFrameInputDirection = Vector3.Zero;
         private Vector3 _constantInputDirection = Vector3.Zero;
+        private Vector3 _literalInputDirection = Vector3.Zero;
         private float? _inputLerpSpeed = null;
 
         public Vector3 CurrentFrameInputDirection
@@ -35,12 +36,33 @@ namespace XREngine.Components
             set => SetField(ref _inputLerpSpeed, value);
         }
 
+        public Vector3 LiteralInputDirection
+        {
+            get => _literalInputDirection;
+            set => SetField(ref _literalInputDirection, value);
+        }
+
         public void AddMovementInput(Vector3 offset)
             => TargetFrameInputDirection += offset;
         public void AddMovementInput(float x, float y, float z)
             => AddMovementInput(new Vector3(x, y, z));
 
-        public virtual Vector3 ConsumeInput()
+        /// <summary>
+        /// Manually add input directly to the player movement component.
+        /// No movement processing designed for controllers and keyboards will be applied to this input.
+        /// </summary>
+        /// <param name="offset"></param>
+        public void AddLiteralInputDelta(Vector3 offset)
+            => LiteralInputDirection += offset;
+
+        protected virtual Vector3 ConsumeLiteralInput()
+        {
+            var dir = _literalInputDirection;
+            _literalInputDirection = Vector3.Zero;
+            return dir;
+        }
+
+        protected virtual Vector3 ConsumeInput()
         {
             if (InputLerpSpeed is not null)
             {

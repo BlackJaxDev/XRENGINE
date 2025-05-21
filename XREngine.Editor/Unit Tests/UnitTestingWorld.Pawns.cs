@@ -84,17 +84,45 @@ public static partial class UnitTestingWorld
             characterComp.IgnoreViewTransformPitch = true;
             characterComp.ViewRotationTransform = localRotationNode.GetTransformAs<Transform>(true)!;
 
+            //The foot node will be used to position the playspace node on the floor, because the center of the capsule is not the same as the foot position
             var footNode = localRotationNode.NewChild("Foot Position Node");
             var footTfm = footNode.SetTransform<Transform>();
             footTfm.Translation = new Vector3(0.0f, -movementComp.HalfHeight, 0.0f);
-            //footTfm.Scale = new Vector3(movementComp.StandingHeight);
             footTfm.SaveBindState();
 
-            PawnComponent? refPawn = characterComp;
-            characterComp.InputOrientationTransform = AddHeadsetNode(out hmdTfm, out _, footNode, setUI, out var canvas, ref refPawn).Transform;
+            //The playspace node will be shifted around on XZ to keep a certain tracked device centered on the foot node
+            var playspaceNode = footNode.NewChild("Playspace Node");
+            var playspaceTfm = playspaceNode.SetTransform<Transform>();
 
-            AddHandControllerNode(out leftTfm, out _, footNode, true);
-            AddHandControllerNode(out rightTfm, out _, footNode, false);
+            CreateVRDevices(
+                setUI,
+                out hmdTfm,
+                out leftTfm,
+                out rightTfm,
+                vrPlayspaceNode,
+                characterComp,
+                vrInput,
+                playspaceNode);
+
+            //This is the node used as the parent for the avatar model
+            return footNode;
+        }
+
+        private static void CreateVRDevices(
+            bool setUI,
+            out VRHeadsetTransform hmdTfm,
+            out VRControllerTransform leftTfm,
+            out VRControllerTransform rightTfm,
+            SceneNode vrPlayspaceNode,
+            CharacterPawnComponent characterComp,
+            VRPlayerInputSet vrInput,
+            SceneNode playspaceNode)
+        {
+            PawnComponent? refPawn = characterComp;
+            characterComp.InputOrientationTransform = AddHeadsetNode(out hmdTfm, out _, playspaceNode, setUI, out var canvas, ref refPawn).Transform;
+
+            AddHandControllerNode(out leftTfm, out _, playspaceNode, true);
+            AddHandControllerNode(out rightTfm, out _, playspaceNode, false);
 
             if (canvas is not null)
             {
@@ -109,12 +137,9 @@ public static partial class UnitTestingWorld
                 vrInput.PauseToggled += ShowVRMenu;
             }
 
-            AddTrackerCollectionNode(footNode);
+            AddTrackerCollectionNode(playspaceNode);
             vrInput.LeftHandTransform = leftTfm;
             vrInput.RightHandTransform = rightTfm;
-
-            //local rotation node only yaws to match the view yaw, so use it as the parent for the avatar
-            return footNode;
         }
 
         private static void VrInput_HandGrabbed(VRPlayerInputSet sender, PhysxDynamicRigidBody item, bool left)

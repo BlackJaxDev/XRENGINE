@@ -131,7 +131,7 @@ namespace XREngine.Timers
         /// This thread waits for the render thread to finish swapping the last frame's prerender buffers, 
         /// then dispatches a prerender to collect the next frame's batch of render commands while this frame renders.
         /// </summary>
-        private async Task CollectVisibleThread()
+        private void CollectVisibleThread()
         {
             while (IsRunning)
             {
@@ -141,7 +141,7 @@ namespace XREngine.Timers
                 //Wait for the render thread to swap update buffers with render buffers
                 _renderDone.Wait(-1);
                 _renderDone.Reset();
-                await DispatchSwapBuffers();
+                DispatchSwapBuffers();
 
                 //Inform the render thread that the swap is done
                 _swapDone.Set();
@@ -272,8 +272,8 @@ namespace XREngine.Timers
             }
         }
 
-        public Task DispatchSwapBuffers()
-            => (SwapBuffers?.InvokeAsync() ?? Task.CompletedTask);
+        public void DispatchSwapBuffers()
+            => SwapBuffers?.InvokeParallel();
 
         private Task DispatchFixedUpdate()
             => (FixedUpdate?.InvokeAsync() ?? Task.CompletedTask);

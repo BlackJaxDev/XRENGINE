@@ -148,9 +148,7 @@ namespace XREngine.Rendering
                     var vtx = sourceList[i];
                     // Inline loop over cached actions
                     for (int j = 0, len = actions.Length; j < len; j++)
-                    {
                         actions[j].Invoke(this, i, i, vtx, dataTransform);
-                    }
                 });
             }
             else
@@ -159,9 +157,7 @@ namespace XREngine.Rendering
                 {
                     var vtx = sourceList[i];
                     for (int j = 0, len = actions.Length; j < len; j++)
-                    {
                         actions[j].Invoke(this, i, i, vtx, dataTransform);
-                    }
                 }
             }
         }
@@ -766,12 +762,32 @@ namespace XREngine.Rendering
                 Vector3 value = vtx?.Position ?? Vector3.Zero;
 
                 if (dataTransform.HasValue)
+                {
                     value = Vector3.Transform(value, dataTransform.Value);
+                    if (vtx is not null)
+                        vtx.Position = value;
+                }
 
                 @this.SetPosition((uint)i, value);
+                @this.ExpandBounds(value);
             }
             return vertexActions.TryAdd(6, Action);
         }
+
+        private readonly Lock _boundsLock = new();
+        private void ExpandBounds(Vector3 value)
+        {
+            try
+            {
+                _boundsLock.Enter();
+                _bounds.ExpandToInclude(value);
+            }
+            finally
+            {
+                _boundsLock.Exit();
+            }
+        }
+
         private static bool AddColorAction(ConcurrentDictionary<int, DelVertexAction> vertexActions)
         {
             static void Action(XRMesh @this, int i, int x, Vertex vtx, Matrix4x4? dataTransform)
@@ -811,7 +827,11 @@ namespace XREngine.Rendering
                 Vector3 value = vtx?.Tangent ?? Vector3.Zero;
 
                 if (dataTransform.HasValue)
+                {
                     value = Vector3.TransformNormal(value, dataTransform.Value);
+                    if (vtx is not null)
+                        vtx.Tangent = value;
+                }
 
                 @this.SetTangent((uint)i, value);
             }
@@ -824,7 +844,11 @@ namespace XREngine.Rendering
                 Vector3 value = vtx?.Normal ?? Vector3.Zero;
 
                 if (dataTransform.HasValue)
+                {
                     value = Vector3.TransformNormal(value, dataTransform.Value);
+                    if (vtx is not null)
+                        vtx.Normal = value;
+                }
 
                 @this.SetNormal((uint)i, value);
             }
@@ -1087,6 +1111,8 @@ namespace XREngine.Rendering
             int maxColorCount = 0;
             int maxTexCoordCount = 0;
 
+            _bounds = new(Vector3.Zero, Vector3.Zero);
+
             //Convert all primitives to simple primitives
             //While doing this, compile a command list of actions to set buffer data
             ConcurrentDictionary<int, Vertex> vertexCache = new();
@@ -1157,8 +1183,8 @@ namespace XREngine.Rendering
 
             PopulateAssimpBlendshapeData(mesh, dataTransform, sourceList);
 
-            mesh.BoundingBox.Deconstruct(out Vector3 min, out Vector3 max);
-            _bounds = new AABB(min, max);
+            //mesh.BoundingBox.Deconstruct(out Vector3 min, out Vector3 max);
+            //_bounds = new AABB(min, max);
 
             Vertices = sourceList;
         }
@@ -1591,10 +1617,14 @@ namespace XREngine.Rendering
                     continue;
                 }
 
-                //Can't use vtx.XXX data here because it's not transformed
-                Vector3 vtxPos = GetPosition((uint)i); //vtx.Position;
-                Vector3 vtxNrm = GetNormal((uint)i); //vtx.Normal;
-                Vector3 vtxTan = GetTangent((uint)i); //vtx.Tangent;
+                //Vector3 vtxPos = GetPosition((uint)i); //vtx.Position;
+                //Vector3 vtxNrm = GetNormal((uint)i); //vtx.Normal;
+                //Vector3 vtxTan = GetTangent((uint)i); //vtx.Tangent;
+
+                Vector3 vtxPos = vtx.Position;
+                Vector3 vtxNrm = vtx.Normal ?? Vector3.Zero;
+                Vector3 vtxTan = vtx.Tangent ?? Vector3.Zero;
+
                 for (int bsInd = 0; bsInd < blendshapeCount; bsInd++)
                 {
                     var (_, bsData) = vtx.Blendshapes[bsInd];
@@ -1603,9 +1633,19 @@ namespace XREngine.Rendering
                     int nrmInd = 0;
                     int tanInd = 0;
 
-                    Vector3 posDt = Vector3.Transform(bsData.Position, dataTransform) - vtxPos;
-                    Vector3 nrmDt = Vector3.TransformNormal(bsData.Normal ?? Vector3.Zero, dataTransform).Normalized() - vtxNrm;
-                    Vector3 tanDt = Vector3.TransformNormal(bsData.Tangent ?? Vector3.Zero, dataTransform).Normalized() - vtxTan;
+                    Vector3 tfmPos = Vector3.Transform(bsData.Position, dataTransform);
+                    Vector3 tfmNrm = Vector3.TransformNormal(bsData.Normal ?? Vector3.Zero, dataTransform).Normalized();
+                    Vector3 tfmTan = Vector3.TransformNormal(bsData.Tangent ?? Vector3.Zero, dataTransform).Normalized();
+
+                    bsData.Position = tfmPos;
+                    if (bsData.Normal != null)
+                        bsData.Normal = tfmNrm;
+                    if (bsData.Tangent != null)
+                        bsData.Tangent = tfmTan;
+
+                    Vector3 posDt = tfmPos - vtxPos;
+                    Vector3 nrmDt = tfmNrm - vtxNrm;
+                    Vector3 tanDt = tfmTan - vtxTan;
 
                     if (posDt.LengthSquared() > 0.0f)
                     {

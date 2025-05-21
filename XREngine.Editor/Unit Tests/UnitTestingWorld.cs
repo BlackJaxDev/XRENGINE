@@ -1,5 +1,4 @@
-﻿using MagicPhysX;
-using System.Numerics;
+﻿using System.Numerics;
 using XREngine.Animation;
 using XREngine.Components;
 using XREngine.Components.Lights;
@@ -7,7 +6,6 @@ using XREngine.Components.Scene;
 using XREngine.Data.Components;
 using XREngine.Data.Core;
 using XREngine.Rendering;
-using XREngine.Rendering.UI;
 using XREngine.Scene;
 using XREngine.Scene.Components.Animation;
 using XREngine.Scene.Transforms;
@@ -24,15 +22,13 @@ public static partial class UnitTestingWorld
     public static XRWorld CreateUnitTestWorld(bool setUI, bool isServer)
     {
         var s = Engine.Rendering.Settings;
-        s.AllowBlendshapes = true;
-        s.AllowSkinning = true;
         s.RenderMesh3DBounds = false;
         s.RenderTransformDebugInfo = true;
         s.RenderTransformLines = false;
         s.RenderTransformCapsules = false;
         s.RenderTransformPoints = false;
         s.RenderCullingVolumes = false;
-        s.RecalcChildMatricesInParallel = true;
+        s.RecalcChildMatricesLoopType = Engine.Rendering.ELoopType.Parallel;
         s.TickGroupedItemsInParallel = true;
         s.RenderWindowsWhileInVR = true;
         s.AllowShaderPipelines = false; //Somehow, this lowers performance

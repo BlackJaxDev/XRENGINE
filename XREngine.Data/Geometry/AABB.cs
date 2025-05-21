@@ -74,7 +74,14 @@ namespace XREngine.Data.Geometry
 
         [JsonIgnore]
         [YamlIgnore]
-        public readonly float Volume => Size.X * Size.Y * Size.Z;
+        public readonly float Volume
+        {
+            get
+            {
+                var s = Size;
+                return s.X * s.Y * s.Z;
+            }
+        }
 
         public Vector3 Min
         {

@@ -10,48 +10,51 @@ namespace XREngine.Scene.Transforms
     /// <param name="parent"></param>
     public class VREyeTransform : TransformBase
     {
-        public bool IsLeftEye { get; }
-
-        /// <summary>
-        /// The distance between the eyes in meters.
-        /// </summary>
-        public static float IPD
+        private bool _isLeftEye = true;
+        public bool IsLeftEye
         {
-            get
-            {
-                if (Engine.VRState.Api.IsHeadsetPresent && Engine.VRState.Api.CVR is not null)
-                {
-                    ETrackedPropertyError error = ETrackedPropertyError.TrackedProp_Success;
-                    return (float)Engine.VRState.Api.CVR.GetFloatTrackedDeviceProperty(Engine.VRState.Api.Headset!.DeviceIndex, ETrackedDeviceProperty.Prop_UserIpdMeters_Float, ref error);
-                }
-                else
-                {
-                    return (float)0f;
-                }
-            }
+            get => _isLeftEye;
+            set => SetField(ref _isLeftEye, value);
         }
 
-        /// <summary>
-        /// Half the distance between the eyes in meters.
-        /// </summary>
-        public static float EyeSeparation => IPD / 2.0f;
-
-        private float _ipdScale = 1.0f;
-        public float IPDScale
+        public VREyeTransform()
         {
-            get => _ipdScale;
-            set
-            {
-                SetField(ref _ipdScale, value);
-                MarkLocalModified();
-            }
+            RegisterEvents();
         }
 
-        public VREyeTransform() { }
         public VREyeTransform(TransformBase? parent)
-            : base(parent) { }
+            : base(parent)
+        {
+            RegisterEvents();
+        }
         public VREyeTransform(bool isLeftEye, TransformBase? parent = null)
-            : this(parent) => IsLeftEye = isLeftEye;
+            : this(parent)
+        {
+            IsLeftEye = isLeftEye;
+            RegisterEvents();
+        }
+
+        private void RegisterEvents()
+        {
+            Engine.VRState.IPDScalarChanged += ScaledIPDValueChanged;
+            Engine.VRState.DesiredAvatarHeightChanged += ScaledIPDValueChanged;
+            Engine.VRState.RealWorldHeightChanged += ScaledIPDValueChanged;
+            Engine.VRState.ModelHeightChanged += ScaledIPDValueChanged;
+        }
+
+        private void ScaledIPDValueChanged(float value)
+            => MarkLocalModified();
+
+        protected override void OnPropertyChanged<T>(string? propName, T prev, T field)
+        {
+            base.OnPropertyChanged(propName, prev, field);
+            switch (propName)
+            {
+                case nameof(IsLeftEye):
+                    MarkLocalModified();
+                    break;
+            }
+        }
 
         protected override Matrix4x4 CreateLocalMatrix()
         {
@@ -59,9 +62,16 @@ namespace XREngine.Scene.Transforms
                 ? EVREye.Eye_Left 
                 : EVREye.Eye_Right;
 
-            return Engine.VRState.Api.IsHeadsetPresent && Engine.VRState.Api.CVR is not null
+            float realIpd = Engine.VRState.RealWorldIPD * 0.5f;
+            float scaledIpd = Engine.VRState.ScaledIPD * 0.5f;
+            float diff = scaledIpd - realIpd;
+
+            Matrix4x4 ipdOffset = Matrix4x4.CreateTranslation(new Vector3(IsLeftEye ? -diff : diff, 0.0f, 0.0f));
+            Matrix4x4 headToEye = Engine.VRState.Api.IsHeadsetPresent && Engine.VRState.Api.CVR is not null
                 ? Engine.VRState.Api.CVR.GetEyeToHeadTransform(eyeEnum).ToNumerics().Transposed().Inverted()
                 : Matrix4x4.Identity;
+
+            return headToEye * ipdOffset;
         }
     }
 }

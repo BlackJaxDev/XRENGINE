@@ -11,6 +11,7 @@ using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using Valve.VR;
+using XREngine.Data.Core;
 using XREngine.Data.Geometry;
 using XREngine.Data.Rendering;
 using XREngine.Rendering;
@@ -18,6 +19,7 @@ using XREngine.Rendering.Models.Materials;
 using XREngine.Rendering.OpenGL;
 using XREngine.Scene;
 using XREngine.Scene.Components.Animation;
+using XREngine.Scene.Transforms;
 using ETextureType = Valve.VR.ETextureType;
 
 namespace XREngine
@@ -55,6 +57,115 @@ namespace XREngine
             public static Frustum? StereoCullingFrustum => _stereoCullingFrustum;
 
             private static XRRenderPipelineInstance? _twoPassRenderPipeline = null;
+
+            /// <summary>
+            /// The distance between the eyes in meters.
+            /// </summary>
+            public static float RealWorldIPD
+            {
+                get
+                {
+                    if (Api.IsHeadsetPresent && Api.CVR is not null && Api.Headset is not null)
+                    {
+                        ETrackedPropertyError error = ETrackedPropertyError.TrackedProp_Success;
+                        return (float)Api.CVR.GetFloatTrackedDeviceProperty(Api.Headset!.DeviceIndex, ETrackedDeviceProperty.Prop_UserIpdMeters_Float, ref error);
+                    }
+                    else
+                    {
+                        return (float)0f;
+                    }
+                }
+            }
+
+            public static XREvent<float>? IPDScalarChanged;
+
+            private static float _ipdScalar = 1.0f;
+            public static float IPDScalar
+            {
+                get => _ipdScalar;
+                set
+                {
+                    _ipdScalar = value;
+                    IPDScalarChanged?.Invoke(_ipdScalar);
+                }
+            }
+
+            /// <summary>
+            /// Calculates the interpupillary distance (IPD) in world space,
+            /// scaling the real-world IPD to match the avatar’s in-world height.
+            /// </summary>
+            public static float ScaledIPD
+                => RealWorldIPD * ModelToDesiredAvatarHeightRatio * IPDScalar;
+
+            /// <summary>
+            /// Half the distance between the eyes in meters.
+            /// </summary>
+            public static float EyeSeparation
+                => RealWorldIPD / 2.0f;
+
+            public static float ScaledEyeSeparation
+                => EyeSeparation * RealToDesiredAvatarHeightRatio;
+
+            /// <summary>
+            /// The ratio of the desired avatar height to the real-world height (desired divided by real).
+            /// Multiply by IPD to get the scaled IPD.
+            /// </summary>
+            public static float RealToDesiredAvatarHeightRatio => DesiredAvatarHeight / RealWorldHeight;
+
+            /// <summary>
+            /// The ratio of the desired avatar height to the model height (desired divided by model).
+            /// Use as model scaling factor.
+            /// </summary>
+            public static float ModelToDesiredAvatarHeightRatio => DesiredAvatarHeight / ModelHeight;
+
+            /// <summary>
+            /// The ratio of the real-world height to the model height (real divided by model).
+            /// Use as model scaling factor.
+            /// </summary>
+            public static float ModelToRealWorldHeightRatio => RealWorldHeight / ModelHeight;
+
+            /// <summary>
+            /// The ratio of the desired avatar height to the real-world height (desired divided by real).
+            /// Use as model scaling factor after scaling to real-world height.
+            /// </summary>
+            public static float RealWorldToDesiredAvatarHeightRatio => DesiredAvatarHeight / RealWorldHeight;
+
+            private static float _realWorldHeight = 1.89f; // 6'2" in meters
+            public static float RealWorldHeight
+            {
+                get => _realWorldHeight;
+                set
+                {
+                    _realWorldHeight = value;
+                    RealWorldHeightChanged?.Invoke(_realWorldHeight);
+                }
+            }
+
+            private static float _desiredAvatarHeight = 1.8f; // 5'11" in meters
+            public static float DesiredAvatarHeight
+            {
+                get => _desiredAvatarHeight;
+                set
+                {
+                    _desiredAvatarHeight = value;
+                    DesiredAvatarHeightChanged?.Invoke(_desiredAvatarHeight);
+                }
+            }
+
+            private static float _modelHeight = 1.0f; // 1m avatar model height
+            public static float ModelHeight
+            {
+                get => _modelHeight;
+                set
+                {
+                    _modelHeight = value;
+                    ModelHeightChanged?.Invoke(_modelHeight);
+                }
+            }
+
+            public static XREvent<float>? RealWorldHeightChanged;
+            public static XREvent<float>? DesiredAvatarHeightChanged;
+            public static XREvent<float>? ModelHeightChanged;
 
             public static OpenVR.NET.Input.Action? GetAction<TCategory, TName>(TCategory category, TName name)
                 where TCategory : struct, Enum
@@ -122,7 +233,7 @@ namespace XREngine
                 InstallApp(vrManifest);
                 vr.SetActionManifest(actionManifest);
                 CreateActions(actionManifest, vr);
-                Time.Timer.UpdateFrame += Update;
+                Time.Timer.PreUpdateFrame += Update;
                 IsInVR = true;
                 return true;
             }
@@ -202,7 +313,7 @@ namespace XREngine
                 }
 
                 _twoPassRenderPipeline = new XRRenderPipelineInstance(new DefaultRenderPipeline(false));
-                GetStereoCullingFrustum();
+                RecalculateStereoCullingFrustum();
             }
 
             private static void InitSinglePass(XRWindow window, uint rW, uint rH, XRTexture2D left, XRTexture2D right)
@@ -215,7 +326,7 @@ namespace XREngine
                 StereoViewport.AutomaticallyCollectVisible = false;
                 StereoViewport.AutomaticallySwapBuffers = false;
 
-                GetStereoCullingFrustum();
+                RecalculateStereoCullingFrustum();
 
                 var outputTextures = new XRTexture2DArray(left, right)
                 {
@@ -231,13 +342,24 @@ namespace XREngine
             private static Matrix4x4 _combinedProjectionMatrix = Matrix4x4.Identity;
             public static Matrix4x4 CombinedProjectionMatrix => _combinedProjectionMatrix;
 
-            private static void GetStereoCullingFrustum()
+            public static void RecalculateStereoCullingFrustum()
             {
-                var cvr = Api.CVR;
-                var leftEyeView = cvr.GetEyeToHeadTransform(EVREye.Eye_Left).ToNumerics().Transposed().Inverted();
-                var leftProj = cvr.GetProjectionMatrix(EVREye.Eye_Left, 0.1f, 100000.0f).ToNumerics().Transposed();
-                var rightEyeView = cvr.GetEyeToHeadTransform(EVREye.Eye_Right).ToNumerics().Transposed().Inverted();
-                var rightProj = cvr.GetProjectionMatrix(EVREye.Eye_Right, 0.1f, 100000.0f).ToNumerics().Transposed();
+                //var cvr = Api.CVR;
+                //var leftEyeView = cvr.GetEyeToHeadTransform(EVREye.Eye_Left).ToNumerics().Transposed().Inverted();
+                //var leftProj = cvr.GetProjectionMatrix(EVREye.Eye_Left, 0.1f, 100000.0f).ToNumerics().Transposed();
+                //var rightEyeView = cvr.GetEyeToHeadTransform(EVREye.Eye_Right).ToNumerics().Transposed().Inverted();
+                //var rightProj = cvr.GetProjectionMatrix(EVREye.Eye_Right, 0.1f, 100000.0f).ToNumerics().Transposed();
+
+                var leftCam = ViewInformation.LeftEyeCamera;
+                var rightCam = ViewInformation.RightEyeCamera;
+                if (leftCam is null || rightCam is null)
+                    return;
+
+                var leftEyeView = leftCam.Transform.LocalMatrix;
+                var leftProj = leftCam.ProjectionMatrix;
+                var rightEyeView = rightCam.Transform.LocalMatrix;
+                var rightProj = rightCam.ProjectionMatrix;
+
                 _stereoCullingFrustum = new Frustum((_combinedProjectionMatrix = ProjectionMatrixCombiner.CombineProjectionMatrices(leftProj, rightProj, leftEyeView, rightEyeView)).Inverted());
             }
 
@@ -246,7 +368,7 @@ namespace XREngine
                 if (_twoPassRenderPipeline is null)
                     return;
 
-                GetStereoCullingFrustum();
+                //GetStereoCullingFrustum();
 
                 var scene = ViewInformation.World?.VisualScene;
                 var node = ViewInformation.HMDNode;
@@ -470,9 +592,11 @@ namespace XREngine
                 IncludeFields = true
             };
 
+            public static float PosePredictionSec { get; set; } = 33.3f / 1000.0f;
+
             private static void Update()
             {
-                Api.UpdateInput();
+                Api.UpdateInput(PosePredictionSec);
                 Api.Update();
             }
 
@@ -620,6 +744,16 @@ namespace XREngine
                 get => _viewInformation;
                 set
                 {
+                    if (_viewInformation.left is not null)
+                    {
+                        _viewInformation.left.Transform.LocalMatrixChanged -= EyeLocalMatrixChanged;
+                    }
+                    
+                    if (_viewInformation.right is not null)
+                    {
+                        _viewInformation.right.Transform.LocalMatrixChanged -= EyeLocalMatrixChanged;
+                    }
+                    
                     _viewInformation = value;
 
                     var leftEye = LeftEyeViewport;
@@ -627,6 +761,11 @@ namespace XREngine
                     {
                         leftEye.Camera = _viewInformation.left;
                         leftEye.WorldInstanceOverride = _viewInformation.world;
+
+                        if (_viewInformation.left is not null)
+                        {
+                            _viewInformation.left.Transform.LocalMatrixChanged += EyeLocalMatrixChanged;
+                        }
                     }
 
                     var rightEye = RightEyeViewport;
@@ -634,8 +773,20 @@ namespace XREngine
                     {
                         rightEye.Camera = _viewInformation.right;
                         rightEye.WorldInstanceOverride = _viewInformation.world;
+
+                        if (_viewInformation.right is not null)
+                        {
+                            _viewInformation.right.Transform.LocalMatrixChanged += EyeLocalMatrixChanged;
+                        }
                     }
+
+                    RecalculateStereoCullingFrustum();
                 }
+            }
+
+            private static void EyeLocalMatrixChanged(TransformBase @base)
+            {
+                RecalculateStereoCullingFrustum();
             }
 
             private static void ReadStats()

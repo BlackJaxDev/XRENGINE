@@ -2,6 +2,7 @@
 using MagicPhysX;
 using System.Numerics;
 using XREngine.Core.Attributes;
+using XREngine.Data.Colors;
 using XREngine.Data.Core;
 using XREngine.Rendering.Physics.Physx;
 using XREngine.Scene.Transforms;
@@ -36,7 +37,7 @@ namespace XREngine.Components
         private float _proneHeight = new FeetInches(1, 0.0f).ToMeters();
         private bool _constrainedClimbing = false;
         private CapsuleController? _controller;
-        private float _minMoveDistance = 0.001f;
+        private float _minMoveDistance = 0.00001f;
         private float _contactOffset = 0.001f;
         private Vector3 _upDirection = Globals.Up;
         private Vector3 _spawnPosition = Vector3.Zero;
@@ -466,11 +467,12 @@ namespace XREngine.Components
             Velocity = RigidBodyTransform.RigidBody?.LinearVelocity ?? Vector3.Zero;
             Acceleration = (Velocity - LastVelocity) / Delta;
 
-            var moveDelta = (_subUpdateTick?.Invoke(ConsumeInput()) ?? Vector3.Zero);
-            if (moveDelta.LengthSquared() < MinMoveDistance * MinMoveDistance)
-                return;
+            RenderCapsule();
 
-            Controller.Move(moveDelta, MinMoveDistance, Delta, manager.ControllerFilters, null);
+            var moveDelta = (_subUpdateTick?.Invoke(ConsumeInput()) ?? Vector3.Zero) + ConsumeLiteralInput();
+            if (moveDelta.LengthSquared() > MinMoveDistance * MinMoveDistance)
+                Controller.Move(moveDelta, MinMoveDistance, Delta, manager.ControllerFilters, null);
+
             if (Controller.CollidingDown)
             {
                 if (_subUpdateTick == AirMovementTick)
@@ -484,6 +486,16 @@ namespace XREngine.Components
             //(Vector3 deltaXP, PhysxShape? touchedShape, PhysxRigidActor? touchedActor, uint touchedObstacleHandle, PxControllerCollisionFlags collisionFlags, bool standOnAnotherCCT, bool standOnObstacle, bool isMovingUp) state = Controller.State;
             //Debug.Out($"DeltaXP: {state.deltaXP}, TouchedShape: {state.touchedShape}, TouchedActor: {state.touchedActor}, TouchedObstacleHandle: {state.touchedObstacleHandle}, CollisionFlags: {state.collisionFlags}, StandOnAnotherCCT: {state.standOnAnotherCCT}, StandOnObstacle: {state.standOnObstacle}, IsMovingUp: {state.isMovingUp}");
             LastVelocity = Velocity;
+        }
+
+        private unsafe void RenderCapsule()
+        {
+            Vector3 pos = Position;
+            Vector3 up = UpDirection;
+            float halfHeight = CurrentHeight * 0.5f;
+            float radius = Radius;
+
+            Engine.Rendering.Debug.RenderCapsule(pos - up * halfHeight, pos + up * halfHeight, radius, false, ColorF4.DarkLavender);
         }
 
         private Vector3 _acceleration;

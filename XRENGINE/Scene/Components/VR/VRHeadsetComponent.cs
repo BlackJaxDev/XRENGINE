@@ -21,7 +21,7 @@ namespace XREngine.Data.Components.Scene
 
             RenderInfo = RenderInfo3D.New(this, new RenderCommandMethod3D((int)EDefaultRenderPass.OpaqueForward, Render));
             RenderedObjects = [RenderInfo];
-            RenderInfo.IsVisible = false;
+            //RenderInfo.IsVisible = false;
         }
 
         protected override void OnTransformChanged()

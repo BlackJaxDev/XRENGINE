@@ -27,6 +27,12 @@ namespace XREngine
                     SettingsChanged?.Invoke();
                 }
             }
+            public enum ELoopType
+            {
+                Sequential,
+                Asynchronous,
+                Parallel
+            }
             /// <summary>
             /// Contains global rendering settings.
             /// </summary>
@@ -38,7 +44,7 @@ namespace XREngine
                 private bool _optimizeTo4Weights = false;
                 private bool _optimizeWeightsIfPossible = true;
                 private bool _tickGroupedItemsInParallel = true;
-                private bool _recalcChildMatricesInParallel = true;
+                private ELoopType _recalcChildMatricesLoopType = ELoopType.Asynchronous;
                 private uint _lightProbeResolution = 512u;
                 private bool _lightProbesCaptureDepth = false;
                 private uint _lightProbeDepthResolution = 256u;
@@ -143,10 +149,10 @@ namespace XREngine
                 /// <summary>
                 /// If true, when calculating matrix hierarchies, the engine will calculate a transform's child matrices in parallel.
                 /// </summary>
-                public bool RecalcChildMatricesInParallel
+                public ELoopType RecalcChildMatricesLoopType
                 {
-                    get => _recalcChildMatricesInParallel;
-                    set => SetField(ref _recalcChildMatricesInParallel, value);
+                    get => _recalcChildMatricesLoopType;
+                    set => SetField(ref _recalcChildMatricesLoopType, value);
                 }
                 /// <summary>
                 /// The default resolution of the light probe color texture.
