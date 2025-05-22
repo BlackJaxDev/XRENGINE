@@ -1,6 +1,7 @@
 ﻿using Extensions;
 using OpenVR.NET.Devices;
 using System.Numerics;
+using System.Transactions;
 using XREngine.Components;
 using XREngine.Components.Scene.Mesh;
 using XREngine.Data.Colors;
@@ -56,7 +57,7 @@ namespace XREngine.Scene.Components.VR
                 Vector3 headNodePos = headNode.Transform.RenderTranslation;
                 Engine.Rendering.Debug.RenderPoint(headNodePos, ColorF4.Yellow);
                 Quaternion headNodeRot = headNode.Transform.RenderRotation;
-                Vector3 eyePos = headNodePos + Vector3.Transform(ScaledToDesiredHeightEyeOffsetFromHead, headNodeRot);
+                Vector3 eyePos = headNodePos + Vector3.Transform(ScaledToRealWorldEyeOffsetFromHead, headNodeRot);
                 Engine.Rendering.Debug.RenderLine(headNodePos, eyePos, ColorF4.Yellow);
 
                 float halfIpd = Engine.VRState.RealWorldIPD * 0.5f;
@@ -129,7 +130,7 @@ namespace XREngine.Scene.Components.VR
             private set => SetField(ref _isCalibrating, value);
         }
 
-        private float _calibrationRadius = 0.2f;
+        private float _calibrationRadius = 0.25f;
         /// <summary>
         /// The maximum distance from a tracker to a bone for it to be considered a match during calibration.
         /// </summary>
@@ -195,7 +196,6 @@ namespace XREngine.Scene.Components.VR
         }
 
         private VRControllerTransform? _rightController;
-
         public VRControllerTransform? RightController
         {
             get => _rightController;
@@ -236,7 +236,7 @@ namespace XREngine.Scene.Components.VR
         }
 
         public Vector3 ScaledToRealWorldEyeOffsetFromHead => EyeOffsetFromHead * Engine.VRState.ModelToRealWorldHeightRatio;
-        public Vector3 ScaledToDesiredHeightEyeOffsetFromHead => EyeOffsetFromHead * Engine.VRState.ModelToDesiredAvatarHeightRatio;
+        //public Vector3 ScaledToDesiredHeightEyeOffsetFromHead => EyeOffsetFromHead * Engine.VRState.ModelToDesiredAvatarHeightRatio;
 
         public HumanoidComponent? GetHumanoid()
             => HumanoidComponent ?? GetSiblingComponent<HumanoidComponent>();
@@ -375,10 +375,11 @@ namespace XREngine.Scene.Components.VR
             if (h is null)
                 return;
             
-            float height = Engine.VRState.ModelHeight * Engine.VRState.ModelToDesiredAvatarHeightRatio;
+            float height = Engine.VRState.ModelHeight * Engine.VRState.ModelToRealWorldHeightRatio;
 
-            Transform characterNode = h.Transform!.SceneNode!.GetTransformAs<Transform>(true)!;
-            Transform playspaceNode = characterNode.Parent!.FirstChild()!.SceneNode!.GetTransformAs<Transform>(true)!;
+            Transform characterTfm = h.Transform!.SceneNode!.GetTransformAs<Transform>(true)!;
+            Transform footTfm = characterTfm.Parent!.SceneNode!.GetTransformAs<Transform>(true)!;
+            Transform playspaceTfm = characterTfm.Parent!.FirstChild()!.SceneNode!.GetTransformAs<Transform>(true)!;
             //TransformBase rotationNode = footNode.Parent!;
             //TransformBase rigidBodyNode = rotationNode.Parent!;
             CharacterMovement3DComponent? movement = GetCharacterMovement();
@@ -391,10 +392,11 @@ namespace XREngine.Scene.Components.VR
                 movement.CrouchedHeight = capsuleHeight * CrouchedHeightRatio;
                 movement.ProneHeight = capsuleHeight * ProneHeightRatio;
                 movement.Radius = radius;
+                footTfm.Translation = new Vector3(0.0f, -movement.HalfHeight, 0.0f);
             }
             //Transform rigidBodyNode = movement!.SceneNode.GetTransformAs<Transform>(true)!;
-            characterNode.Scale = new Vector3(Engine.VRState.ModelToDesiredAvatarHeightRatio);
-            playspaceNode.Scale = new Vector3(Engine.VRState.RealWorldToDesiredAvatarHeightRatio);
+            characterTfm.Scale = new Vector3(Engine.VRState.ModelToRealWorldHeightRatio);
+            //playspaceNode.Scale = new Vector3(Engine.VRState.RealWorldToDesiredAvatarHeightRatio);
         }
 
         /// <summary>
@@ -405,8 +407,8 @@ namespace XREngine.Scene.Components.VR
         private void UpdateCalibrationPose(HumanoidComponent h)
         {
             Matrix4x4 hmdRelativeToFoot = HMDRelativeToPlayspace(h);
-            Matrix4x4 eyeToHead = Matrix4x4.CreateTranslation(-ScaledToRealWorldEyeOffsetFromHead);
-            Matrix4x4 headToRoot = Matrix4x4.CreateTranslation(-GetHeadOffsetFromAvatarRoot(h));
+            Matrix4x4 eyeToHead = Matrix4x4.CreateTranslation(-EyeOffsetFromHead * Engine.VRState.ModelToRealWorldHeightRatio);
+            Matrix4x4 headToRoot = Matrix4x4.CreateTranslation(-GetHeadOffsetFromAvatarRoot(h) * Engine.VRState.ModelToRealWorldHeightRatio);
 
             Transform avatarRootTfm = h.SceneNode.GetTransformAs<Transform>(true)!;
             TransformBase footTfm = avatarRootTfm.Parent!;
@@ -414,11 +416,9 @@ namespace XREngine.Scene.Components.VR
 
             TransformBase.GetDirectionsXZ(hmdRelativeToFoot, out Vector3 forward, out _);
 
-            Matrix4x4.Decompose(hmdRelativeToFoot, out Vector3 hmdScale, out _, out Vector3 hmdTrans);
-
-            Matrix4x4 headMtx = eyeToHead * Matrix4x4.CreateScale(Engine.VRState.RealWorldToDesiredAvatarHeightRatio) * Matrix4x4.CreateWorld(hmdTrans, -forward, Globals.Up);
+            Matrix4x4 headMtx = eyeToHead * Matrix4x4.CreateWorld(hmdRelativeToFoot.Translation, -forward, Globals.Up);
             Matrix4x4 rootMtx = headToRoot * headMtx;
-            Matrix4x4.Decompose(rootMtx, out Vector3 rootScale, out Quaternion rootRot, out Vector3 rootTrans);
+            Matrix4x4.Decompose(rootMtx, out _, out Quaternion rootRot, out Vector3 rootTrans);
 
             Vector3 trackedHeadFromFoot = -headMtx.Translation;
 
@@ -430,7 +430,6 @@ namespace XREngine.Scene.Components.VR
             playspaceRootTfm.RecalculateMatrices(true);
             var currPos = playspaceRootTfm.WorldTranslation;
 
-            avatarRootTfm.Scale = rootScale;
             avatarRootTfm.Translation = new Vector3(0.0f, rootTrans.Y, 0.0f);
             avatarRootTfm.Rotation = rootRot;
 
@@ -477,7 +476,7 @@ namespace XREngine.Scene.Components.VR
             else
             {
                 //If using the HMD as the target, we need to follow the eyes
-                offsetToBodyMtx = Matrix4x4.CreateTranslation(-ScaledToDesiredHeightEyeOffsetFromHead);
+                offsetToBodyMtx = Matrix4x4.CreateTranslation(-ScaledToRealWorldEyeOffsetFromHead);
                 bodyWorldPos = h.Head.Node!.Transform.WorldMatrix.Translation;
             }
 
@@ -697,7 +696,7 @@ namespace XREngine.Scene.Components.VR
             if (!EndCalib(out HumanoidComponent? h))
                 return;
 
-            h!.HeadTarget = (Headset, Matrix4x4.CreateTranslation(-ScaledToDesiredHeightEyeOffsetFromHead));
+            h!.HeadTarget = (Headset, Matrix4x4.CreateTranslation(-ScaledToRealWorldEyeOffsetFromHead));
             h.LeftHandTarget = (LeftController, LeftControllerOffset);
             h.RightHandTarget = (RightController, RightControllerOffset);
 
@@ -765,7 +764,7 @@ namespace XREngine.Scene.Components.VR
 
             foreach ((VrDevice dev, VRTrackerTransform tracker) in t.Trackers.Values)
             {
-                Engine.Rendering.Debug.RenderSphere(tracker.RenderTranslation, CalibrationRadius, false, ColorF4.Green);
+                //Engine.Rendering.Debug.RenderSphere(tracker.RenderTranslation, CalibrationRadius, false, ColorF4.Green);
 
                 FindClosestBodyPart(
                     tracker,

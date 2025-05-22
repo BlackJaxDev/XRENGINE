@@ -41,21 +41,21 @@ namespace XREngine.Rendering
 
             EVREye eye = LeftEye ? EVREye.Eye_Left : EVREye.Eye_Right;
 
-            float left = 0.0f, right = 0.0f, top = 0.0f, bottom = 0.0f;
-            api.CVR.GetProjectionRaw(eye, ref left, ref right, ref top, ref bottom);
+            //float left = 0.0f, right = 0.0f, top = 0.0f, bottom = 0.0f;
+            //api.CVR.GetProjectionRaw(eye, ref left, ref right, ref top, ref bottom);
 
-            //See https://github.com/ValveSoftware/openvr/wiki/IVRSystem::GetProjectionRaw
-            left *= NearZ;
-            right *= NearZ;
-            top *= NearZ;
-            bottom *= NearZ;
+            ////See https://github.com/ValveSoftware/openvr/wiki/IVRSystem::GetProjectionRaw
+            //left *= NearZ;
+            //right *= NearZ;
+            //top *= NearZ;
+            //bottom *= NearZ;
 
-            Debug.Out($"Projection matrix for {eye}: [l:{left}, r:{right}, t:{top}, b:{bottom}]");
+            //Debug.Out($"Projection matrix for {eye}: [l:{left}, r:{right}, t:{top}, b:{bottom}]");
 
             //Top and bottom are swapped
-            return Matrix4x4.CreatePerspectiveOffCenter(left, right, top, bottom, NearZ, FarZ);
+            //return Matrix4x4.CreatePerspectiveOffCenter(left, right, top, bottom, NearZ, FarZ);
 
-            //return api.CVR.GetProjectionMatrix(eye, NearZ, FarZ).ToNumerics().Transposed();
+            return api.CVR.GetProjectionMatrix(eye, NearZ, FarZ).ToNumerics().Transposed();
         }
 
         protected override Frustum CalculateUntransformedFrustum()

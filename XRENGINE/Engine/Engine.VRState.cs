@@ -95,16 +95,7 @@ namespace XREngine
             /// scaling the real-world IPD to match the avatar’s in-world height.
             /// </summary>
             public static float ScaledIPD
-                => RealWorldIPD * ModelToDesiredAvatarHeightRatio * IPDScalar;
-
-            /// <summary>
-            /// Half the distance between the eyes in meters.
-            /// </summary>
-            public static float EyeSeparation
-                => RealWorldIPD / 2.0f;
-
-            public static float ScaledEyeSeparation
-                => EyeSeparation * RealToDesiredAvatarHeightRatio;
+                => RealWorldIPD * ModelToRealWorldHeightRatio * IPDScalar;
 
             /// <summary>
             /// The ratio of the desired avatar height to the real-world height (desired divided by real).
@@ -112,11 +103,11 @@ namespace XREngine
             /// </summary>
             public static float RealToDesiredAvatarHeightRatio => DesiredAvatarHeight / RealWorldHeight;
 
-            /// <summary>
-            /// The ratio of the desired avatar height to the model height (desired divided by model).
-            /// Use as model scaling factor.
-            /// </summary>
-            public static float ModelToDesiredAvatarHeightRatio => DesiredAvatarHeight / ModelHeight;
+            ///// <summary>
+            ///// The ratio of the desired avatar height to the model height (desired divided by model).
+            ///// Use as model scaling factor.
+            ///// </summary>
+            //public static float ModelToDesiredAvatarHeightRatio => DesiredAvatarHeight / ModelHeight;
 
             /// <summary>
             /// The ratio of the real-world height to the model height (real divided by model).
@@ -130,7 +121,7 @@ namespace XREngine
             /// </summary>
             public static float RealWorldToDesiredAvatarHeightRatio => DesiredAvatarHeight / RealWorldHeight;
 
-            private static float _realWorldHeight = 1.89f; // 6'2" in meters
+            private static float _realWorldHeight = 1.8f; // 5'11" in meters
             public static float RealWorldHeight
             {
                 get => _realWorldHeight;
