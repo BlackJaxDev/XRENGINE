@@ -43,8 +43,13 @@ namespace XREngine.Components.Lights
         {
             XRCamera? camera = Engine.Rendering.State.RenderingCamera;
             UpdateRenderTransform(Transform);
-            if (camera is not null && _renderingCameras.TryRemove(camera))
-                UpdateMirrorCamera(camera, true);
+            if (camera is not null)
+            {
+                if (_renderingCameras.TryRemove(camera))
+                    UpdateMirrorCamera(camera, true);
+                else if (camera == Engine.VRState.ViewInformation.RightEyeCamera) //Bandaid fix for two-pass VR
+                    UpdateMirrorCamera(camera, true);
+            }
             RenderToFBO();
         }
 
@@ -59,7 +64,7 @@ namespace XREngine.Components.Lights
                 return false;
 
             _collectedCameras.Add(camera);
-            UpdateMirrorCamera(camera, true);
+            //UpdateMirrorCamera(camera, true);
             CollectVisible();
             return true;
         }

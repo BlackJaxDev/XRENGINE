@@ -369,7 +369,7 @@ namespace XREngine
 
                 ViewInformation.World?.VisualScene?.CollectRenderedItems(
                     _twoPassRenderPipeline.MeshRenderCommands,
-                    null,
+                    ViewInformation.LeftEyeCamera,
                     true,
                     null,
                     frustum.Value.TransformedBy(node.Transform.RenderMatrix),
@@ -389,7 +389,7 @@ namespace XREngine
                 scene.CollectRenderedItems(
                     StereoViewport!.RenderPipelineInstance.MeshRenderCommands,
                     frustum.Value.TransformedBy(node.Transform.RenderMatrix),
-                    null,
+                    ViewInformation.LeftEyeCamera,
                     true);
             }
 
@@ -498,23 +498,23 @@ namespace XREngine
             {
                 ETrackedPropertyError error = ETrackedPropertyError.TrackedProp_Success;
                 float hz = Api.CVR.GetFloatTrackedDeviceProperty(0, ETrackedDeviceProperty.Prop_DisplayFrequency_Float, ref error);
-                if (error == ETrackedPropertyError.TrackedProp_Success && hz > 0.0f)
-                {
-                    Time.Timer.TargetRenderFrequency = hz;
-                    Time.Timer.TargetUpdateFrequency = hz / 2;
-                    //Time.Timer.FixedUpdateFrequency = hz / 3;
-                }
+                if (error != ETrackedPropertyError.TrackedProp_Success || hz <= 0.0f)
+                    return;
+                
+                //Time.Timer.FixedUpdateFrequency = hz / 3;
+                Time.Timer.TargetRenderFrequency = hz;
+                Time.Timer.TargetUpdateFrequency = hz / 2;
             }
             private static void SetPowerSavingUpdate()
             {
                 ETrackedPropertyError error = ETrackedPropertyError.TrackedProp_Success;
                 float hz = Api.CVR.GetFloatTrackedDeviceProperty(0, ETrackedDeviceProperty.Prop_DisplayFrequency_Float, ref error);
-                if (error == ETrackedPropertyError.TrackedProp_Success && hz > 0.0f)
-                {
-                    Time.Timer.TargetRenderFrequency = hz / 2;
-                    Time.Timer.TargetUpdateFrequency = hz / 4;
-                    //Time.Timer.FixedUpdateFrequency = hz / 3;
-                }
+                if (error != ETrackedPropertyError.TrackedProp_Success || hz <= 0.0f)
+                    return;
+                
+                //Time.Timer.FixedUpdateFrequency = hz / 3;
+                Time.Timer.TargetRenderFrequency = hz / 2;
+                Time.Timer.TargetUpdateFrequency = hz / 4;
             }
 
             private static XRMaterialFrameBuffer MakeTwoPassFBO(uint rW, uint rH, XRTexture2D tex, XRViewport vp)

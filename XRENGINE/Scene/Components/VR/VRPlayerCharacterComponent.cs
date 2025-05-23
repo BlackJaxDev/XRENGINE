@@ -1,7 +1,6 @@
 ﻿using Extensions;
 using OpenVR.NET.Devices;
 using System.Numerics;
-using System.Transactions;
 using XREngine.Components;
 using XREngine.Components.Scene.Mesh;
 using XREngine.Data.Colors;
@@ -56,11 +55,11 @@ namespace XREngine.Scene.Components.VR
             {
                 Vector3 headNodePos = headNode.Transform.RenderTranslation;
                 Engine.Rendering.Debug.RenderPoint(headNodePos, ColorF4.Yellow);
-                Quaternion headNodeRot = headNode.Transform.RenderRotation;
+                Quaternion headNodeRot = Quaternion.Normalize(headNode.Transform.RenderRotation);
                 Vector3 eyePos = headNodePos + Vector3.Transform(ScaledToRealWorldEyeOffsetFromHead, headNodeRot);
                 Engine.Rendering.Debug.RenderLine(headNodePos, eyePos, ColorF4.Yellow);
 
-                float halfIpd = Engine.VRState.RealWorldIPD * 0.5f;
+                float halfIpd = Engine.VRState.ScaledIPD * 0.5f;
                 Vector3 ipdOffset = Vector3.Transform(new Vector3(halfIpd, 0.0f, 0.0f), headNodeRot);
                 Vector3 ipdLeftTrans = eyePos - ipdOffset;
                 Vector3 ipdRightTrans = eyePos + ipdOffset;
