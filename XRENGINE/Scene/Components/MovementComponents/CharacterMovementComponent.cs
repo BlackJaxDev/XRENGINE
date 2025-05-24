@@ -388,7 +388,7 @@ namespace XREngine.Components
         protected internal unsafe override void OnComponentActivated()
         {
             _subUpdateTick = GroundMovementTick;
-            RegisterTick(TickInputWithPhysics ? ETickGroup.PrePhysics : ETickGroup.Normal, (int)ETickOrder.Animation, MainUpdateTick);
+            RegisterTick(TickInputWithPhysics ? ETickGroup.PrePhysics : ETickGroup.Late, (int)ETickOrder.Animation, MainUpdateTick);
             
             var scene = World?.PhysicsScene as PhysxScene;
             var manager = scene?.CreateOrCreateControllerManager();

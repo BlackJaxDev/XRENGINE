@@ -291,7 +291,7 @@ namespace XREngine.Scene.Components.VR
             ResolveDependencies();
             SetInitialState();
             BeginCalibration();
-            RegisterTick(ETickGroup.Late, ETickOrder.Scene, UpdateTick);
+            RegisterTick(ETickGroup.Normal, ETickOrder.Scene, UpdateTick);
         }
 
         protected internal override void OnComponentDeactivated()
@@ -406,8 +406,8 @@ namespace XREngine.Scene.Components.VR
         private void UpdateCalibrationPose(HumanoidComponent h)
         {
             Matrix4x4 hmdRelativeToFoot = HMDRelativeToPlayspace(h);
-            Matrix4x4 eyeToHead = Matrix4x4.CreateTranslation(-EyeOffsetFromHead * Engine.VRState.ModelToRealWorldHeightRatio);
-            Matrix4x4 headToRoot = Matrix4x4.CreateTranslation(-GetHeadOffsetFromAvatarRoot(h) * Engine.VRState.ModelToRealWorldHeightRatio);
+            Matrix4x4 eyeToHead = Matrix4x4.CreateTranslation(-EyeOffsetFromHead);
+            Matrix4x4 headToRoot = Matrix4x4.CreateTranslation(-GetHeadOffsetFromAvatarRoot(h));
 
             Transform avatarRootTfm = h.SceneNode.GetTransformAs<Transform>(true)!;
             TransformBase footTfm = avatarRootTfm.Parent!;
@@ -415,23 +415,26 @@ namespace XREngine.Scene.Components.VR
 
             TransformBase.GetDirectionsXZ(hmdRelativeToFoot, out Vector3 forward, out _);
 
-            Matrix4x4 headMtx = eyeToHead * Matrix4x4.CreateWorld(hmdRelativeToFoot.Translation, -forward, Globals.Up);
-            Matrix4x4 rootMtx = headToRoot * headMtx;
+            Matrix4x4 eyePosRot = Matrix4x4.CreateWorld(hmdRelativeToFoot.Translation, -forward, Globals.Up);
+            Matrix4x4 movementOffset = eyeToHead * eyePosRot;
+            Matrix4x4 rootMtx = headToRoot * eyeToHead * Matrix4x4.CreateScale(Engine.VRState.ModelToRealWorldHeightRatio) * eyePosRot;
             Matrix4x4.Decompose(rootMtx, out _, out Quaternion rootRot, out Vector3 rootTrans);
 
-            Vector3 trackedHeadFromFoot = -headMtx.Translation;
-
-            //Only move in XZ
-            trackedHeadFromFoot.Y = 0.0f;
+            //Move playspace in opposite direction only in XZ
+            Vector3 oppMovementOffset = -movementOffset.Translation;
+            oppMovementOffset.Y = 0.0f;
 
             var lastPos = playspaceRootTfm.WorldTranslation;
-            playspaceRootTfm.Translation = trackedHeadFromFoot;
+            playspaceRootTfm.Translation = oppMovementOffset;
             playspaceRootTfm.RecalculateMatrices(true);
             var currPos = playspaceRootTfm.WorldTranslation;
 
+            //Move the avatar root transform to match the headset's rotation and Y translation
             avatarRootTfm.Translation = new Vector3(0.0f, rootTrans.Y, 0.0f);
             avatarRootTfm.Rotation = rootRot;
+            avatarRootTfm.RecalculateMatrices(true, true);
 
+            //Move character literally in the same direction as the headset, so opposite the opposite
             var moveDelta = -(currPos - lastPos);
             float dx = moveDelta.X;
             float dz = moveDelta.Z;
@@ -464,32 +467,46 @@ namespace XREngine.Scene.Components.VR
             if (movement is null || rigidBodyTfm is null || avatarTfm is null)
                 return;
 
-            Matrix4x4 offsetToBodyMtx;
-            Vector3 bodyWorldPos;
+            Matrix4x4 deviceToBodyOffsetMtx;
+            Matrix4x4 deviceMtx;
             if (useHip)
             {
                 //If using the hips as the target, we need to follow the hips, not the tracker
-                offsetToBodyMtx = h.HipsTarget.offset;
-                bodyWorldPos = h.Hips.Node!.Transform.WorldMatrix.Translation;
+                deviceToBodyOffsetMtx = h.HipsTarget.offset;
+                deviceMtx = h.HipsTarget.tfm!.WorldMatrix;
             }
             else
             {
                 //If using the HMD as the target, we need to follow the eyes
-                offsetToBodyMtx = Matrix4x4.CreateTranslation(-ScaledToRealWorldEyeOffsetFromHead);
-                bodyWorldPos = h.Head.Node!.Transform.WorldMatrix.Translation;
+                deviceToBodyOffsetMtx = h.HeadTarget.offset;
+                deviceMtx = h.HeadTarget.tfm!.WorldMatrix;
             }
 
-            Vector3 bodyOffsetFromAvatarRoot = bodyWorldPos - h.SceneNode.Transform.WorldMatrix.Translation;
-            Matrix4x4 deviceRelativeToFoot = Matrix4x4.CreateTranslation(-bodyOffsetFromAvatarRoot) * offsetToBodyMtx * GetTrackedDeviceMatrixRelativeToPlayspace(h, transformToFollow.WorldMatrix);
+            Matrix4x4 hmdRelativeToFoot = GetTrackedDeviceMatrixRelativeToPlayspace(h, deviceToBodyOffsetMtx);
+            Matrix4x4 headToRoot = Matrix4x4.CreateTranslation(-GetHeadOffsetFromAvatarRoot(h) * Engine.VRState.ModelToRealWorldHeightRatio);
 
-            //Move the player root opposite the hip movement to keep the hip centered in the playspace
-            Vector3 newTranslation = deviceRelativeToFoot.Translation;
-            newTranslation.Y = 0.0f; //Only move in XZ
-            Vector3 oldTranslation = avatarTfm.Translation;
+            Transform avatarRootTfm = h.SceneNode.GetTransformAs<Transform>(true)!;
+            TransformBase footTfm = avatarRootTfm.Parent!;
+            Transform playspaceRootTfm = footTfm.FirstChild()!.SceneNode!.GetTransformAs<Transform>(true)!;
 
-            //avatarTfm.Translation = newTranslation;
-            Vector3 delta = newTranslation - oldTranslation;
-            movement.AddMovementInput(delta);
+            TransformBase.GetDirectionsXZ(hmdRelativeToFoot, out Vector3 forward, out _);
+
+            Matrix4x4 headMtx = deviceToBodyOffsetMtx * Matrix4x4.CreateWorld(hmdRelativeToFoot.Translation, -forward, Globals.Up);
+
+            Vector3 trackedBodyPartFromFoot = -headMtx.Translation;
+
+            //Only move in XZ
+            trackedBodyPartFromFoot.Y = 0.0f;
+
+            var lastPos = playspaceRootTfm.WorldTranslation;
+            playspaceRootTfm.Translation = trackedBodyPartFromFoot;
+            playspaceRootTfm.RecalculateMatrices(true);
+            var currPos = playspaceRootTfm.WorldTranslation;
+
+            var moveDelta = -(currPos - lastPos);
+            float dx = moveDelta.X;
+            float dz = moveDelta.Z;
+            GetCharacterMovement()?.AddLiteralInputDelta(new Vector3(dx, 0.0f, dz));
         }
 
         /// <summary>
@@ -659,7 +676,7 @@ namespace XREngine.Scene.Components.VR
             IsCalibrating = false;
 
             if (Headset is not null)
-                UnregisterTick(ETickGroup.Late, ETickOrder.Scene, UpdateTick);
+                UnregisterTick(ETickGroup.Normal, ETickOrder.Scene, UpdateTick);
 
             h = GetHumanoid();
             if (h is null)
@@ -695,7 +712,7 @@ namespace XREngine.Scene.Components.VR
             if (!EndCalib(out HumanoidComponent? h))
                 return;
 
-            h!.HeadTarget = (Headset, Matrix4x4.CreateTranslation(-ScaledToRealWorldEyeOffsetFromHead));
+            h!.HeadTarget = (Headset, Matrix4x4.CreateTranslation(-EyeOffsetFromHead));
             h.LeftHandTarget = (LeftController, LeftControllerOffset);
             h.RightHandTarget = (RightController, RightControllerOffset);
 

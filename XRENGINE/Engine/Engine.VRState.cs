@@ -501,9 +501,7 @@ namespace XREngine
                 if (error != ETrackedPropertyError.TrackedProp_Success || hz <= 0.0f)
                     return;
                 
-                //Time.Timer.FixedUpdateFrequency = hz / 3;
-                Time.Timer.TargetRenderFrequency = hz;
-                Time.Timer.TargetUpdateFrequency = hz / 2;
+                //Time.Timer.TargetRenderFrequency = hz;
             }
             private static void SetPowerSavingUpdate()
             {
@@ -512,9 +510,7 @@ namespace XREngine
                 if (error != ETrackedPropertyError.TrackedProp_Success || hz <= 0.0f)
                     return;
                 
-                //Time.Timer.FixedUpdateFrequency = hz / 3;
-                Time.Timer.TargetRenderFrequency = hz / 2;
-                Time.Timer.TargetUpdateFrequency = hz / 4;
+                //Time.Timer.TargetRenderFrequency = hz / 2;
             }
 
             private static XRMaterialFrameBuffer MakeTwoPassFBO(uint rW, uint rH, XRTexture2D tex, XRViewport vp)
@@ -583,7 +579,7 @@ namespace XREngine
                 IncludeFields = true
             };
 
-            public static float PosePredictionSec { get; set; } = 33.3f / 1000.0f;
+            public static float PosePredictionSec { get; set; } = 100f / 1000.0f;
 
             private static void Update()
             {

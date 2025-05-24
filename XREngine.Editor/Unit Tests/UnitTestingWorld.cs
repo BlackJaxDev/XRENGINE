@@ -28,7 +28,7 @@ public static partial class UnitTestingWorld
         s.RenderTransformCapsules = false;
         s.RenderTransformPoints = false;
         s.RenderCullingVolumes = false;
-        s.RecalcChildMatricesLoopType = Engine.Rendering.ELoopType.Parallel;
+        s.RecalcChildMatricesLoopType = Engine.Rendering.ELoopType.Sequential;
         s.TickGroupedItemsInParallel = true;
         s.RenderWindowsWhileInVR = true;
         s.AllowShaderPipelines = false; //Somehow, this lowers performance
