@@ -18,6 +18,7 @@ using XREngine.Scene.Components.VR;
 using XREngine.Scene.Transforms;
 using Quaternion = System.Numerics.Quaternion;
 using XREngine.Rendering.Models;
+using XREngine.Data.Components.Scene;
 
 namespace XREngine.Editor;
 
@@ -31,7 +32,7 @@ public static partial class UnitTestingWorld
             {
                 SceneNode? ImportAnimated()
                 {
-                    string fbxPathDesktop = Path.Combine(desktopDir, "misc", "jax2.fbx");
+                    string fbxPathDesktop = Path.Combine(desktopDir, "misc", "main2025 casual.fbx");
                     using var importer = new ModelImporter(fbxPathDesktop, null, null);
                     importer.MakeMaterialAction = CreateHardcodedMaterial;
                     importer.MakeTextureAction = CreateHardcodedTexture;
@@ -193,16 +194,114 @@ public static partial class UnitTestingWorld
                 if (Toggles.VRPawn)
                 {
                     var rotationNode = footNode.Parent!;
-                    var playspaceNode = rotationNode.Parent!;
-                    var player = playspaceNode.AddComponent<VRPlayerCharacterComponent>()!;
+                    var rigidBodyNode = rotationNode.Parent!;
+                    var player = rigidBodyNode.AddComponent<VRPlayerCharacterComponent>()!;
                     player.IKSolver = vrIKSolver;
                     player.HumanoidComponent = humanComp;
                     player.EyeLBoneName = EyeLNodeName;
                     player.EyeRBoneName = EyeRNodeName;
                     player.EyesModelResolveName = faceNodeName;
 
-                    VRPlayerInputSet input = playspaceNode.GetComponent<VRPlayerInputSet>()!;
-                    input.IsMutedChanged += (enabled) => player.EndCalibration();
+                    VRPlayerInputSet input = rigidBodyNode.GetComponent<VRPlayerInputSet>()!;
+
+                    void EndCalibration(bool enabled)
+                        => player.EndCalibration();
+
+                    input.IsMutedChanged += EndCalibration;
+
+                    if (Toggles.EmulatedVRPawn)
+                    {
+                        var playspaceNode = footNode.FirstChild!;
+                        var trackerColl = playspaceNode.LastChild!.GetComponent<VRTrackerCollectionComponent>()!;
+
+                        var extOpt = rigidBodyNode.AddComponent<ExternalOptionalInputSetComponent>()!;
+
+                        //Crazy band-aid to register these
+                        if (Toggles.AllowEditingInVR)
+                            Engine.State.MainPlayer.ControlledPawn?.OptionalInputSets.Add(extOpt);
+
+                        void RegisterEmulatorActions(Input.Devices.InputInterface inputSet)
+                        {
+                            inputSet.RegisterKeyEvent(Input.Devices.EKey.T, Input.Devices.EButtonInputType.Pressed, AddTracker);
+                            inputSet.RegisterKeyEvent(Input.Devices.EKey.Y, Input.Devices.EButtonInputType.Pressed, player.EndCalibration);
+                            inputSet.RegisterKeyEvent(Input.Devices.EKey.Number0, Input.Devices.EButtonInputType.Pressed, SelectHMD);
+                            inputSet.RegisterKeyEvent(Input.Devices.EKey.Number9, Input.Devices.EButtonInputType.Pressed, SelectLeftController);
+                            inputSet.RegisterKeyEvent(Input.Devices.EKey.Number8, Input.Devices.EButtonInputType.Pressed, SelectRightController);
+                            inputSet.RegisterKeyEvent(Input.Devices.EKey.Number7, Input.Devices.EButtonInputType.Pressed, SelectLeftFootTracker);
+                            inputSet.RegisterKeyEvent(Input.Devices.EKey.Number6, Input.Devices.EButtonInputType.Pressed, SelectRightFootTracker);
+                            inputSet.RegisterKeyEvent(Input.Devices.EKey.Number5, Input.Devices.EButtonInputType.Pressed, SelectHipTracker);
+                            inputSet.RegisterKeyEvent(Input.Devices.EKey.Number4, Input.Devices.EButtonInputType.Pressed, AutoSetTrackers);
+                        }
+                        void AutoSetTrackers()
+                        {
+                            VRHeadsetComponent? hmd = VRHeadsetComponent.Instance;
+                            VRControllerTransform? rightController = input.RightHandTransform;
+                            VRControllerTransform? leftController = input.LeftHandTransform;
+
+                            float height = Engine.VRState.ModelHeight * Engine.VRState.ModelToRealWorldHeightRatio;
+                            Vector3 headPos = humanComp.Head!.Node!.Transform.WorldTranslation;
+                            headPos.Y = 0.0f; //Set the head position to the ground level
+                            headPos.Y += height;
+                            Vector3 headTranslation = player.EyeOffsetFromHead + headPos;
+
+                            hmd?.Transform?.DeriveWorldMatrix(Matrix4x4.CreateTranslation(headTranslation), false);
+                            rightController?.DeriveWorldMatrix(humanComp.Right.Wrist.Node!.Transform.WorldMatrix, false);
+                            leftController?.DeriveWorldMatrix(humanComp.Left.Wrist.Node!.Transform.WorldMatrix, false);
+
+                            VRTrackerTransform? hipTracker = trackerColl.GetTrackerByNodeName("Hip");
+                            VRTrackerTransform? rightFootTracker = trackerColl.GetTrackerByNodeName("Right Foot");
+                            VRTrackerTransform? leftFootTracker = trackerColl.GetTrackerByNodeName("Left Foot");
+
+                            TransformBase hipTfm = humanComp.Hips.Node!.Transform;
+                            TransformBase lfTfm = humanComp.Left.Foot.Node!.Transform;
+                            TransformBase rfTfm = humanComp.Right.Foot.Node!.Transform;
+
+                            hipTracker?.DeriveWorldMatrix(hipTfm.WorldMatrix, false);
+                            rightFootTracker?.DeriveWorldMatrix(rfTfm.WorldMatrix, false);
+                            leftFootTracker?.DeriveWorldMatrix(lfTfm.WorldMatrix, false);
+                        }
+                        void SelectHipTracker()
+                        {
+                            VRTrackerTransform? hipTracker = trackerColl.GetTrackerByNodeName("Hip");
+                            if (hipTracker is not null)
+                                Selection.SceneNode = hipTracker.SceneNode;
+                        }
+                        void SelectRightFootTracker()
+                        {
+                            VRTrackerTransform? rightFootTracker = trackerColl.GetTrackerByNodeName("Right Foot");
+                            if (rightFootTracker is not null)
+                                Selection.SceneNode = rightFootTracker.SceneNode;
+                        }
+                        void SelectLeftFootTracker()
+                        {
+                            VRTrackerTransform? leftFootTracker = trackerColl.GetTrackerByNodeName("Left Foot");
+                            if (leftFootTracker is not null)
+                                Selection.SceneNode = leftFootTracker.SceneNode;
+                        }
+                        void SelectRightController()
+                        {
+                            VRControllerTransform? rightController = input.RightHandTransform;
+                            if (rightController is not null)
+                                Selection.SceneNode = rightController.SceneNode;
+                        }
+                        void SelectLeftController()
+                        {
+                            VRControllerTransform? leftController = input.LeftHandTransform;
+                            if (leftController is not null)
+                                Selection.SceneNode = leftController.SceneNode;
+                        }
+                        void SelectHMD()
+                        {
+                            VRHeadsetComponent? hmd = VRHeadsetComponent.Instance;
+                            if (hmd is not null)
+                                Selection.SceneNode = hmd.SceneNode;
+                        }
+                        void AddTracker()
+                        {
+
+                        }
+                        extOpt.OnRegisterInput += RegisterEmulatorActions;
+                    }
                 }
                 else
                 {

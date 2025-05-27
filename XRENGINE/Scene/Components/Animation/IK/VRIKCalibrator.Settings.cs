@@ -139,7 +139,7 @@ namespace XREngine.Scene.Components.Animation
                 set => SetField(ref _headTrackerForward, value);
             }
 
-            private float _scaleMultiplier = 1f;
+            private float _scaleMultiplier = 1.0f;
             /// <summary>
             /// Multiplies character scale.
             /// </summary>

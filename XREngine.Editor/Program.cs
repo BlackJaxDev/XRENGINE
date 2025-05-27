@@ -63,7 +63,7 @@ internal class Program
             FixedFramesPerSecond = fixedHz,
             NetworkingType = GameStartupSettings.ENetworkingType.Client,
         };
-        if (UnitTestingWorld.Toggles.VRPawn)
+        if (UnitTestingWorld.Toggles.VRPawn && !UnitTestingWorld.Toggles.EmulatedVRPawn)
             EditorVR.ApplyVRSettings(settings);
         return settings;
     }

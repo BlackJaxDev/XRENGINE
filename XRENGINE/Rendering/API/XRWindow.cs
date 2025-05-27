@@ -37,8 +37,7 @@ namespace XREngine.Rendering
             {
                 case nameof(TargetWorldInstance):
                     VerifyTick();
-                    bool notClient = !(Engine.Networking?.IsClient ?? false);
-                    if (notClient)
+                    if (!(Engine.Networking?.IsClient ?? false))
                         Engine.Networking?.ReplicateStateChange(
                             new Engine.StateChangeInfo(
                                 Engine.EStateChangeType.WorldChange,
@@ -355,5 +354,11 @@ namespace XREngine.Rendering
 
         public void UpdateViewportSizes()
             => ResizeViewports(Window.Size);
+
+        public void SetWorld(XRWorld? targetWorld)
+        {
+            if (targetWorld is not null)
+                TargetWorldInstance = XRWorldInstance.GetOrInitWorld(targetWorld);
+        }
     }
 }

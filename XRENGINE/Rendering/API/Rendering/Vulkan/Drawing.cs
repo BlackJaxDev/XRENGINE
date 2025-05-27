@@ -33,6 +33,10 @@ namespace XREngine.Rendering.Vulkan
         {
             throw new NotImplementedException();
         }
+        public override void ColorMask(bool red, bool green, bool blue, bool alpha)
+        {
+            throw new NotImplementedException();
+        }
 
         public override void Blit(
             XRFrameBuffer inFBO,

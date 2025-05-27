@@ -103,6 +103,11 @@ namespace XREngine.Rendering.OpenGL
             Api.MemoryBarrier(ToGLMask(mask));
         }
 
+        public override void ColorMask(bool red, bool green, bool blue, bool alpha)
+        {
+            Api.ColorMask(red, green, blue, alpha);
+        }
+
         private uint ToGLMask(EMemoryBarrierMask mask)
         {
             if (mask.HasFlag(EMemoryBarrierMask.All))

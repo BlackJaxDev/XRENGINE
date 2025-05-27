@@ -37,32 +37,140 @@ public partial class EditorFlyingCameraPawnComponent : FlyingCameraPawnComponent
 
     private void Selection_SelectionChanged(SceneNode[] selection)
     {
-        //if (selection.Length == 0)
-        //    TransformTool3D.DestroyInstance();
-        //else
-        //    TransformTool3D.GetInstance(selection[0].Transform);
+        if (selection.Length == 0)
+            TransformTool3D.DestroyInstance();
+        else
+            TransformTool3D.GetInstance(selection[0].Transform);
     }
 
-    //These two drag points diverge if the camera moves, so they're both stored initially at mouse down
-    //public Vector3? NormalizedViewportDragPoint { get; set; } = null;
-    public Vector3? WorldDragPoint { get; set; } = null;
+    private Vector3? _worldDragPoint = null;
+    /// <summary>
+    /// The reference world position to drag the camera to when dragging or rotating the camera.
+    /// </summary>
+    public Vector3? WorldDragPoint
+    {
+        get => _worldDragPoint;
+        private set => SetField(ref _worldDragPoint, value);
+    }
 
-    //protected override void OnRightClick(bool pressed)
-    //{
-    //    base.OnRightClick(pressed);
-    //    if (pressed)
-    //    {
-    //        //NormalizedViewportDragPoint = DepthHitNormalizedViewportPoint;
-    //        WorldDragPoint = DepthHitNormalizedViewportPoint.HasValue
-    //            ? Viewport?.NormalizedViewportToWorldCoordinate(DepthHitNormalizedViewportPoint.Value)
-    //            : null;
-    //    }
-    //    else
-    //    {
-    //        //NormalizedViewportDragPoint = null;
-    //        WorldDragPoint = null;
-    //    }
-    //}
+    public Vector3? LastDepthHitNormalizedViewportPoint => _lastDepthHitNormalizedViewportPoint;
+    /// <summary>
+    /// The last hit point in normalized viewport coordinates from the depth buffer.
+    /// </summary>
+    public Vector3? DepthHitNormalizedViewportPoint
+    {
+        get => _depthHitNormalizedViewportPoint;
+        private set
+        {
+            _lastDepthHitNormalizedViewportPoint = _depthHitNormalizedViewportPoint;
+            _depthHitNormalizedViewportPoint = value;
+        }
+    }
+
+    /// <summary>
+    /// Converts DepthHitNormalizedViewportPoint's depth Z-value to a distance based on the camera's near and far planes.
+    /// </summary>
+    public float LastHitDistance => XRMath.DepthToDistance(DepthHitNormalizedViewportPoint.HasValue ? DepthHitNormalizedViewportPoint.Value.Z : 0.0f, NearZ, FarZ);
+
+    /// <summary>
+    /// The near Z distance of the camera's frustum.
+    /// </summary>
+    public float NearZ => GetCamera()?.Camera.NearZ ?? 0.0f;
+
+    /// <summary>
+    /// The far Z distance of the camera's frustum.
+    /// </summary>
+    public float FarZ => GetCamera()?.Camera.FarZ ?? 0.0f;
+
+    private bool _renderWorldDragPoint = false;
+    /// <summary>
+    /// If true, renders a sphere to display the world drag position in the scene.
+    /// </summary>
+    public bool RenderWorldDragPoint
+        {
+        get => _renderWorldDragPoint;
+        set => SetField(ref _renderWorldDragPoint, value);
+    }
+
+    private bool _renderFrustum = false;
+    /// <summary>
+    /// If true, renders this pawn's camera frustum in the scene.
+    /// </summary>
+    public bool RenderFrustum
+    {
+        get => _renderFrustum;
+        set => SetField(ref _renderFrustum, value);
+    }
+
+    private bool _renderRaycast = true;
+    /// <summary>
+    /// If true, renders debug information for raycast hits.
+    /// </summary>
+    public bool RenderRaycast
+    {
+        get => _renderRaycast;
+        set => SetField(ref _renderRaycast, value);
+    }
+
+    private PhysxScene.PhysxQueryFilter _physxQueryFilter = new();
+    public PhysxScene.PhysxQueryFilter PhysxQueryFilter
+    {
+        get => _physxQueryFilter;
+        set => SetField(ref _physxQueryFilter, value);
+    }
+
+    private LayerMask _layerMask = LayerMask.GetMask(DefaultLayers.Default);
+    public LayerMask LayerMask
+    {
+        get => _layerMask;
+        set => SetField(ref _layerMask, value);
+    }
+
+    private readonly SortedDictionary<float, List<(XRComponent? item, object? data)>> _lastPhysicsPickResults = [];
+    /// <summary>
+    /// The last physics pick results from the raycast, sorted by distance.
+    /// Use RaycastLock to access this safely.
+    /// </summary>
+    public SortedDictionary<float, List<(RenderInfo3D item, object? data)>> LastOctreePickResults
+        => _lastOctreePickResults;
+
+    private readonly SortedDictionary<float, List<(RenderInfo3D item, object? data)>> _lastOctreePickResults = [];
+    /// <summary>
+    /// The last octree pick results from the raycast, sorted by distance.
+    /// Use RaycastLock to access this safely.
+    /// </summary>
+    public SortedDictionary<float, List<(XRComponent? item, object? data)>> LastPhysicsPickResults
+        => _lastPhysicsPickResults;
+
+    private List<SceneNode>? _lastHits = null;
+    private int _lastHitIndex = 0;
+    private Triangle? _hitTriangle = null;
+    private Segment _lastRaycastSegment = new(Vector3.Zero, Vector3.Zero);
+    private Vector3? _depthHitNormalizedViewportPoint = null;
+    private Vector3? _lastDepthHitNormalizedViewportPoint = null;
+
+    private readonly Lock _raycastLock = new();
+    /// <summary>
+    /// The lock used to safely access the raycast results.
+    /// </summary>
+    public Lock RaycastLock => _raycastLock;
+
+    private bool _queryDepth = false;
+
+    private bool _allowWorldPicking = true;
+    /// <summary>
+    /// If true, raycasts will be performed to pick objects in the world.
+    /// </summary>
+    public bool AllowWorldPicking
+    {
+        get => _allowWorldPicking;
+        set => SetField(ref _allowWorldPicking, value);
+    }
+
+    private readonly RenderCommandMethod3D _postRenderRC;
+    private readonly RenderCommandMethod3D _renderHighlightRC;
+
+    public RenderInfo[] RenderedObjects { get; }
 
     private void RenderHighlight()
     {
@@ -70,19 +178,18 @@ public partial class EditorFlyingCameraPawnComponent : FlyingCameraPawnComponent
             return;
 
         if (_hitTriangle is not null)
-        {
-            //Debug.Out($"Hit triangle: {_hitTriangle}");
             Engine.Rendering.Debug.RenderTriangle(_hitTriangle.Value, ColorF4.Yellow, true);
+        
+        if (RenderWorldDragPoint && (WorldDragPoint.HasValue || DepthHitNormalizedViewportPoint.HasValue) && Viewport is not null)
+        {
+            Vector3 pos;
+            if (WorldDragPoint.HasValue)
+                pos = WorldDragPoint.Value;
+            else
+                pos = Viewport.NormalizedViewportToWorldCoordinate(DepthHitNormalizedViewportPoint!.Value);
+            Engine.Rendering.Debug.RenderSphere(pos, (Viewport.Camera?.DistanceFromWorldPosition(pos) ?? 1.0f) * 0.05f, false, ColorF4.Yellow);
         }
-        //if ((WorldDragPoint.HasValue || DepthHitNormalizedViewportPoint.HasValue) && Viewport is not null)
-        //{
-        //    Vector3 pos;
-        //    if (WorldDragPoint.HasValue)
-        //        pos = WorldDragPoint.Value;
-        //    else
-        //        pos = Viewport.NormalizedViewportToWorldCoordinate(DepthHitNormalizedViewportPoint!.Value);
-        //    Engine.Rendering.Debug.RenderSphere(pos, (Viewport.Camera?.DistanceFromWorldPosition(pos) ?? 1.0f) * 0.1f, false, ColorF4.Yellow, true);
-        //}
+
         if (RenderFrustum)
         {
             var cam = GetCamera();
@@ -90,13 +197,6 @@ public partial class EditorFlyingCameraPawnComponent : FlyingCameraPawnComponent
                 Engine.Rendering.Debug.RenderFrustum(cam.Camera.WorldFrustum(), ColorF4.Red);
         }
     }
-
-    private readonly RenderCommandMethod3D _postRenderRC;
-    private readonly RenderCommandMethod3D _renderHighlightRC;
-    private List<SceneNode>? _lastSelection = null;
-    private int _lastHitIndex = 0;
-
-    public RenderInfo[] RenderedObjects { get; }
 
     static void ScreenshotCallback(MagickImage img, int index)
     {
@@ -126,27 +226,6 @@ public partial class EditorFlyingCameraPawnComponent : FlyingCameraPawnComponent
         DateTime now = DateTime.Now;
         return $"{now.Hour}-{now.Minute}-{now.Second}";
     }
-
-    public Vector3? LastDepthHitNormalizedViewportPoint => _lastDepthHitNormalizedViewportPoint;
-    public Vector3? DepthHitNormalizedViewportPoint
-    {
-        get => _depthHitNormalizedViewportPoint;
-        private set
-        {
-            _lastDepthHitNormalizedViewportPoint = _depthHitNormalizedViewportPoint;
-            _depthHitNormalizedViewportPoint = value;
-        }
-    }
-    public float LastHitDistance => XRMath.DepthToDistance(DepthHitNormalizedViewportPoint.HasValue ? DepthHitNormalizedViewportPoint.Value.Z : 0.0f, NearZ, FarZ);
-    public float NearZ => GetCamera()?.Camera.NearZ ?? 0.0f;
-    public float FarZ => GetCamera()?.Camera.FarZ ?? 0.0f;
-
-    public bool RenderFrustum { get; set; } = false;
-    public bool RenderRaycast { get; set; } = true;
-
-    private readonly SortedDictionary<float, List<(XRComponent? item, object? data)>> _lastPhysicsPickResults = [];
-    private readonly SortedDictionary<float, List<(RenderInfo3D item, object? data)>> _lastOctreePickResults = [];
-    private PhysxScene.PhysxQueryFilter _queryFilter = new();
 
     protected override void Tick()
     {
@@ -178,13 +257,6 @@ public partial class EditorFlyingCameraPawnComponent : FlyingCameraPawnComponent
             GetDepthHit(vp, GetCursorInternalCoordinatePosition(vp));
     }
 
-    private bool _allowWorldPicking = false;
-    public bool AllowWorldPicking
-    {
-        get => _allowWorldPicking;
-        set => SetField(ref _allowWorldPicking, value);
-    }
-
     private void ApplyInput(XRViewport? vp)
     {
         if (vp is null)
@@ -203,12 +275,11 @@ public partial class EditorFlyingCameraPawnComponent : FlyingCameraPawnComponent
 
         if (AllowWorldPicking)
         {
-            lock (_raycastLock)
+            using (_raycastLock.EnterScope())
             {
                 _lastOctreePickResults.Clear();
                 _lastPhysicsPickResults.Clear();
-                LayerMask layerMask = LayerMask.GetMask(DefaultLayers.Default);
-                vp.PickSceneAsync(p, false, true, true, layerMask, _queryFilter, _lastOctreePickResults, _lastPhysicsPickResults, OctreeRaycastCallback, PhysicsRaycastCallback);
+                vp.PickSceneAsync(p, false, true, false, _layerMask, _physxQueryFilter, _lastOctreePickResults, _lastPhysicsPickResults, OctreeRaycastCallback, PhysicsRaycastCallback);
             }
         }
 
@@ -308,7 +379,6 @@ public partial class EditorFlyingCameraPawnComponent : FlyingCameraPawnComponent
         return depth;
     }
 
-    private bool _queryDepth = false;
     private bool NeedsDepthHit()
         => _queryDepth;
 
@@ -383,20 +453,6 @@ public partial class EditorFlyingCameraPawnComponent : FlyingCameraPawnComponent
         }
     }
 
-    private void SetRaycastResult(SortedDictionary<float, List<(ITreeItem item, object? data)>>? result)
-    {
-        lock (_raycastLock)
-            _lastRaycast = result;
-
-        if (result is null)
-            return;
-
-        foreach ((var dist, List<(ITreeItem item, object? data)> list) in result)
-        {
-            foreach (var (i, _) in list)
-                Debug.Out($"Hit: {i as RenderInfo} {dist}");
-        }
-    }
     private Vector2? _lastRotateDelta = null;
     private Vector3? _lastRotatePoint = null;
     protected override void MouseRotate(float x, float y)
@@ -474,141 +530,136 @@ public partial class EditorFlyingCameraPawnComponent : FlyingCameraPawnComponent
     private void SetTransformRotation() => TransformTool3D.TransformMode = ETransformMode.Rotate;
     private void SetTransformTranslation() => TransformTool3D.TransformMode = ETransformMode.Translate;
 
-    private SortedDictionary<float, List<(ITreeItem item, object? data)>>? _lastRaycast = null;
-    private readonly object _raycastLock = new();
-    private Triangle? _hitTriangle = null;
-    private TransformBase? _hitTransform = null;
-
-    //private void Highlight()
-    //{
-    //    if (World is not null && Viewport is not null)
-    //    {
-    //        var cam = GetCamera();
-    //        if (cam is not null)
-    //        {
-    //            var input = LocalInput;
-    //            if (input is not null)
-    //            {
-    //                var pos = input?.Mouse?.CursorPosition;
-    //                if (pos is not null)
-    //                {
-    //                    Raycast(pos.Value);
-    //                    return;
-    //                }
-    //            }
-    //        }
-    //    }
-
-    //    lock (_raycastLock)
-    //        _lastRaycast = null;
-    //}
-
-    private Segment _lastRaycastSegment = new(Vector3.Zero, Vector3.Zero);
-    private Vector3? _depthHitNormalizedViewportPoint = null;
-    private Vector3? _lastDepthHitNormalizedViewportPoint = null;
-
-    //private void Raycast(Vector2 screenPoint)
-    //{
-    //    if (World is null || Viewport is null)
-    //        return;
-
-    //    //This code only works on the render thread, and I honestly don't understand why the math fails here but not there lol
-    //    screenPoint.Y = Viewport.Height - screenPoint.Y;
-    //    _lastRaycastSegment = Viewport.GetWorldSegment(screenPoint);
-    //}
-
+    /// <summary>
+    /// Selects a node to transform based on the last raycast results.
+    /// </summary>
     private void Select()
     {
+        //Don't select new nodes while the transform tool is active and highlighted
         if (TransformTool3D.GetActiveInstance(out var tfmComp) && tfmComp is not null && tfmComp.Highlighted)
             return;
-        
-        var input = LocalInput;
-        if (input is null)
-            return;
 
+        //Collect new hits from the last raycast results
         List<SceneNode> currentHits = [];
-        lock (_raycastLock)
-        {
-            foreach (var x in _lastPhysicsPickResults.Values)
-                foreach (var (comp, _) in x)
-                    if (comp?.SceneNode is not null)
-                        currentHits.Add(comp.SceneNode);
+        CollectHits(currentHits);
 
-            foreach (var x in _lastOctreePickResults.Values)
-                foreach (var (info, _) in x)
-                    if (info.Owner is XRComponent comp && comp.SceneNode is not null)
-                        currentHits.Add(comp.SceneNode);
-                    else if (info.Owner is TransformBase tfm && tfm.SceneNode is not null)
-                        currentHits.Add(tfm.SceneNode);
-        }
+        if (_lastHits is null)
+            SetSelection(currentHits); //if we have no last hits, just set the selection to the current hits
+        else //otherwise, compare the current hits against the last hits and use modifier keys to update the selection
+            UpdateSelection(LocalInput, CompareAgainstLastHits(currentHits, ref _lastHits, ref _lastHitIndex));
+    }
 
-        if (_lastSelection is null)
-        {
-            _lastSelection = currentHits;
-            _lastHitIndex = 0;
-            if (currentHits.Count >= 1)
-                Selection.SceneNodes = [currentHits[_lastHitIndex = 0]];
-            else
-                Selection.SceneNodes = [];
-            return;
-        }
+    /// <summary>
+    /// Sets the selection to the first node in the current hits list and updates the last hits and index.
+    /// </summary>
+    /// <param name="currentHits"></param>
+    private void SetSelection(List<SceneNode> currentHits)
+    {
+        _lastHits = currentHits;
+        _lastHitIndex = 0;
 
+        if (currentHits.Count >= 1)
+            Selection.SceneNodes = [currentHits[0]];
+        else
+            Selection.SceneNodes = [];
+    }
+
+    /// <summary>
+    /// Determines which node to select based on the current hits and the last hits.
+    /// If the nodes are the same as the last hits, it cycles through them.
+    /// Otherwise, it updates the last hits to the current hits and selects the first node.
+    /// </summary>
+    /// <param name="currentHits"></param>
+    /// <param name="lastHits"></param>
+    /// <param name="lastHitIndex"></param>
+    /// <returns></returns>
+    private static SceneNode? CompareAgainstLastHits(List<SceneNode> currentHits, ref List<SceneNode> lastHits, ref int lastHitIndex)
+    {
         //intersect with the last hit values to see if we are still hitting the same thing
-        bool sameNodes = currentHits.Count > 0 && currentHits.Intersect(_lastSelection).Count() == currentHits.Count;
+        bool sameNodes = currentHits.Count > 0 && currentHits.Intersect(lastHits).Count() == currentHits.Count;
 
         SceneNode? node;
         if (sameNodes)
         {
             //cycle the selection
-            _lastHitIndex = (_lastHitIndex + 1) % currentHits.Count;
-            node = currentHits[_lastHitIndex];
+            lastHitIndex = (lastHitIndex + 1) % currentHits.Count;
+            node = currentHits[lastHitIndex];
         }
         else
         {
-            _lastSelection = currentHits;
-            _lastHitIndex = 0;
-            node = currentHits.Count > 0 ? currentHits[_lastHitIndex] : null;
+            lastHits = currentHits;
+            lastHitIndex = 0;
+            node = currentHits.Count > 0 ? currentHits[lastHitIndex] : null;
         }
 
-        if (node is null)
-            return;
-
-        if (!ApplyModifiers(input, node))
-            Selection.SceneNodes = [node];
+        return node;
     }
 
-    private static bool ApplyModifiers(LocalInputInterface? input, SceneNode node)
+    /// <summary>
+    /// Collects the hits from the last raycast results into the current hits list.
+    /// </summary>
+    /// <param name="currentHits"></param>
+    private void CollectHits(List<SceneNode> currentHits)
     {
+        using var scope = _raycastLock.EnterScope();
+        
+        foreach (var x in _lastPhysicsPickResults.Values)
+            foreach (var (comp, _) in x)
+                if (comp?.SceneNode is not null)
+                    currentHits.Add(comp.SceneNode);
+
+        foreach (var x in _lastOctreePickResults.Values)
+            foreach (var (info, _) in x)
+                if (info.Owner is XRComponent comp && comp.SceneNode is not null)
+                    currentHits.Add(comp.SceneNode);
+                else if (info.Owner is TransformBase tfm && tfm.SceneNode is not null)
+                    currentHits.Add(tfm.SceneNode);
+    }
+
+    /// <summary>
+    /// Uses modifier keys to set, add, remove, or toggle selection of a node.
+    /// </summary>
+    /// <param name="input"></param>
+    /// <param name="node"></param>
+    /// <returns></returns>
+    private static void UpdateSelection(LocalInputInterface? input, SceneNode? node)
+    {
+        if (node is null)
+        {
+            Selection.SceneNodes = [];
+            return;
+        }
+
         var kbd = input?.Keyboard;
-        if (kbd is null)
-            return false;
-
-        //control is toggle, alt is remove, shift is add
-
-        if (kbd.GetKeyState(EKey.ControlLeft, EButtonInputType.Pressed) ||
-            kbd.GetKeyState(EKey.ControlRight, EButtonInputType.Pressed))
+        if (kbd is not null)
         {
-            if (Selection.SceneNodes.Contains(node))
+            //control is toggle, alt is remove, shift is add
+
+            if (kbd.GetKeyState(EKey.ControlLeft, EButtonInputType.Pressed) ||
+                kbd.GetKeyState(EKey.ControlRight, EButtonInputType.Pressed))
+            {
+                if (Selection.SceneNodes.Contains(node))
+                    RemoveNode(node);
+                else
+                    AddNode(node);
+
+                return;
+            }
+            else if (kbd.GetKeyState(EKey.AltLeft, EButtonInputType.Pressed) ||
+                     kbd.GetKeyState(EKey.AltRight, EButtonInputType.Pressed))
+            {
                 RemoveNode(node);
-            else
+                return;
+            }
+            else if (kbd.GetKeyState(EKey.ShiftLeft, EButtonInputType.Pressed) ||
+                     kbd.GetKeyState(EKey.ShiftRight, EButtonInputType.Pressed))
+            {
                 AddNode(node);
-
-            return true;
-        }
-        else if (kbd.GetKeyState(EKey.AltLeft, EButtonInputType.Pressed) ||
-                 kbd.GetKeyState(EKey.AltRight, EButtonInputType.Pressed))
-        {
-            RemoveNode(node);
-            return true;
-        }
-        else if (kbd.GetKeyState(EKey.ShiftLeft, EButtonInputType.Pressed) ||
-                 kbd.GetKeyState(EKey.ShiftRight, EButtonInputType.Pressed))
-        {
-            AddNode(node);
-            return true;
+                return;
+            }
         }
 
-        return false;
+        Selection.SceneNodes = [node];
     }
 
     private static void AddNode(SceneNode node)

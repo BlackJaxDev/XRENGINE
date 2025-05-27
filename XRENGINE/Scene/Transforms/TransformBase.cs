@@ -556,37 +556,48 @@ namespace XREngine.Scene.Transforms
         public Matrix4x4 ParentRenderMatrix => Parent?.RenderMatrix ?? Matrix4x4.Identity;
         public Matrix4x4 ParentInverseRenderMatrix => Parent?.InverseRenderMatrix ?? Matrix4x4.Identity;
         
-        public Vector3 RenderForward => Vector3.TransformNormal(Globals.Forward, RenderMatrix);
-        public Vector3 RenderUp => Vector3.TransformNormal(Globals.Up, RenderMatrix);
-        public Vector3 RenderRight => Vector3.TransformNormal(Globals.Right, RenderMatrix);
+        public Vector3 GetWorldUp()
+            => Engine.IsRenderThread ? RenderUp : WorldUp;
+        public Vector3 GetWorldRight()
+            => Engine.IsRenderThread ? RenderRight : WorldRight;
+        public Vector3 GetWorldForward()
+            => Engine.IsRenderThread ? RenderForward : WorldForward;
+        public Vector3 GetWorldTranslation()
+            => Engine.IsRenderThread ? RenderTranslation : WorldTranslation;
+        public Quaternion GetWorldRotation()
+            => Engine.IsRenderThread ? RenderRotation : WorldRotation;
+
+        public Vector3 RenderForward => Vector3.TransformNormal(Globals.Forward, RenderMatrix).Normalized();
+        public Vector3 RenderUp => Vector3.TransformNormal(Globals.Up, RenderMatrix).Normalized();
+        public Vector3 RenderRight => Vector3.TransformNormal(Globals.Right, RenderMatrix).Normalized();
         public Vector3 RenderTranslation => RenderMatrix.Translation;
         public Quaternion RenderRotation => Quaternion.CreateFromRotationMatrix(RenderMatrix);
 
         /// <summary>
         /// This transform's world up vector.
         /// </summary>
-        public Vector3 WorldUp => Vector3.TransformNormal(Globals.Up, WorldMatrix);
+        public Vector3 WorldUp => Vector3.TransformNormal(Globals.Up, WorldMatrix).Normalized();
         /// <summary>
         /// This transform's world right vector.
         /// </summary>
-        public Vector3 WorldRight => Vector3.TransformNormal(Globals.Right, WorldMatrix);
+        public Vector3 WorldRight => Vector3.TransformNormal(Globals.Right, WorldMatrix).Normalized();
         /// <summary>
         /// This transform's world forward vector.
         /// </summary>
-        public Vector3 WorldForward => Vector3.TransformNormal(Globals.Forward, WorldMatrix);
+        public Vector3 WorldForward => Vector3.TransformNormal(Globals.Forward, WorldMatrix).Normalized();
 
         /// <summary>
         /// This transform's local up vector.
         /// </summary>
-        public Vector3 LocalUp => Vector3.TransformNormal(Globals.Up, LocalMatrix);
+        public Vector3 LocalUp => Vector3.TransformNormal(Globals.Up, LocalMatrix).Normalized();
         /// <summary>
         /// This transform's local right vector.
         /// </summary>
-        public Vector3 LocalRight => Vector3.TransformNormal(Globals.Right, LocalMatrix);
+        public Vector3 LocalRight => Vector3.TransformNormal(Globals.Right, LocalMatrix).Normalized();
         /// <summary>
         /// This transform's local forward vector.
         /// </summary>
-        public Vector3 LocalForward => Vector3.TransformNormal(Globals.Forward, LocalMatrix);
+        public Vector3 LocalForward => Vector3.TransformNormal(Globals.Forward, LocalMatrix).Normalized();
 
         /// <summary>
         /// This transform's position in world space.

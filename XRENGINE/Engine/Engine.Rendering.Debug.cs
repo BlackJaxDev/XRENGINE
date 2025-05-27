@@ -282,16 +282,24 @@ namespace XREngine
                     }
                 }
 
+                /// <summary>
+                /// Renders a circle.
+                /// Default position is aligned with the Y-plane.
+                /// </summary>
+                /// <param name="centerPosition"></param>
+                /// <param name="rotation"></param>
+                /// <param name="radius"></param>
+                /// <param name="solid"></param>
+                /// <param name="color"></param>
                 public static void RenderCircle(
                     Vector3 centerPosition,
-                    Rotator rotation,
+                    Quaternion rotation,
                     float radius,
                     bool solid,
                     ColorF4 color)
                 {
                     const int segments = 20;
 
-                    Matrix4x4 rotMatrix = rotation.GetMatrix();
                     if (solid)
                     {
                         // Generate circle points for a triangle fan.
@@ -302,7 +310,7 @@ namespace XREngine
                             float x = MathF.Cos(angle) * radius;
                             float z = MathF.Sin(angle) * radius;
                             Vector3 localPoint = new(x, 0, z);
-                            circlePoints[i] = Vector3.Transform(localPoint, rotMatrix) + centerPosition;
+                            circlePoints[i] = Vector3.Transform(localPoint, rotation) + centerPosition;
                         }
 
                         // Build triangle fan: center + each adjacent edge.
@@ -324,7 +332,7 @@ namespace XREngine
                             float x = MathF.Cos(angle) * radius;
                             float z = MathF.Sin(angle) * radius;
                             Vector3 localPoint = new Vector3(x, 0, z);
-                            circlePoints[i] = Vector3.Transform(localPoint, rotMatrix) + centerPosition;
+                            circlePoints[i] = Vector3.Transform(localPoint, rotation) + centerPosition;
                         }
                         for (int i = 0; i < segments; i++)
                             RenderLine(circlePoints[i], circlePoints[i + 1], color);
@@ -741,6 +749,8 @@ namespace XREngine
                 {
                     const int segments = 20;
 
+                    localUpAxis = localUpAxis.Normalized();
+
                     Vector3[] conePoints = new Vector3[segments + 1];
                     for (int i = 0; i <= segments; i++)
                     {
@@ -779,7 +789,7 @@ namespace XREngine
                 private static readonly ResourcePool<UIText> TextPool = new(() => new());
                 private static readonly ConcurrentQueue<(Vector3 pos, string text, ColorF4 color, float scale)> DebugTextUpdateQueue = new();
 
-                public static void RenderText(Vector3 bestPoint, string text, ColorF4 color, float scale = 0.0001f)
+                public static void RenderText(Vector3 bestPoint, string text, ColorF4 color, float scale = 0.001f)
                 {
                     if (Engine.IsRenderThread)
                         UpdateDebugText(bestPoint, text, color);

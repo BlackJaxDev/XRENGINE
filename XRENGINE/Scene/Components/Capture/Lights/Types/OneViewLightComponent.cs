@@ -8,7 +8,9 @@ namespace XREngine.Scene.Components.Capture.Lights.Types
     /// </summary>
     public abstract class OneViewLightComponent : LightComponent
     {
-        protected readonly XRViewport _viewport = new(null, 1024, 1024)
+        private const uint DefaultResolution = 4096u;
+
+        protected readonly XRViewport _viewport = new(null, DefaultResolution, DefaultResolution)
         {
             RenderPipeline = new ShadowRenderPipeline(),
             SetRenderPipelineFromCamera = false,
@@ -39,7 +41,7 @@ namespace XREngine.Scene.Components.Capture.Lights.Types
             _viewport.Camera = cam;
 
             if (Type == ELightType.Dynamic && CastsShadows && ShadowMap is null)
-                SetShadowMapResolution(1024u, 1024u);
+                SetShadowMapResolution(DefaultResolution, DefaultResolution);
         }
 
         protected virtual TransformBase GetShadowCameraParentTransform()

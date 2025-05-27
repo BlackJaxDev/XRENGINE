@@ -348,17 +348,20 @@ namespace XREngine.Scene.Components.Animation
             {
                 if (_headTarget != null)
                 {
+                    _headTarget.RecalculateMatrices(true);
                     IKPositionHead = _headTarget.WorldTranslation;
                     IKRotationHead = _headTarget.WorldRotation;
                 }
 
                 if (_chestGoal != null)
                 {
+                    _chestGoal.RecalculateMatrices(true);
                     _goalPositionChest = _chestGoal.WorldTranslation;
                 }
 
                 if (_hipsTarget != null)
                 {
+                    _hipsTarget.RecalculateMatrices(true);
                     IKPositionPelvis = _hipsTarget.WorldTranslation;
                     IKRotationPelvis = _hipsTarget.WorldRotation;
                 }
@@ -523,9 +526,9 @@ namespace XREngine.Scene.Components.Animation
                 //Vector3 startOffset = rootUp * (bones[bones.Length - 1].solverPosition - bones[0].solverPosition).magnitude;
                 Vector3 startOffset = Vector3.Zero;// (bones[bones.Length - 1].solverPosition - bones[0].solverPosition) * weight;
 
-                float dist = Vector3.Distance(_bones[0]._solverPosition, _bones[_bones.Length - 1]._solverPosition);
+                float dist = Vector3.Distance(_bones[0]._solverPosition, _bones[^1]._solverPosition);
 
-                VirtualBone.SolveFABRIK(_bones, startPos, endPos, weight, 1f, 1, dist, startOffset);
+                VirtualBone.SolveFABRIK(_bones, startPos, endPos, weight, 1.0f, 1, dist, startOffset);
             }
 
             private void SolvePelvis()

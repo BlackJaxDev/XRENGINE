@@ -18,7 +18,6 @@ namespace XREngine
     /// </summary>
     public static partial class Engine
     {
-        private static readonly EventList<XRWorldInstance> _worldInstances = [];
         private static readonly EventList<XRWindow> _windows = [];
 
         static Engine()
@@ -101,11 +100,11 @@ namespace XREngine
         /// </summary>
         public static AudioManager Audio { get; } = new();
         /// <summary>
-        /// All active world instances. 
+        /// All active world instances.
         /// These are separate from the windows to allow for multiple windows to display the same world.
         /// They are also not the same as XRWorld, which is just the data for a world.
         /// </summary>
-        public static IEventListReadOnly<XRWorldInstance> WorldInstances => _worldInstances;
+        public static IReadOnlyCollection<XRWorldInstance> WorldInstances => XRWorldInstance.WorldInstances.Values;
         /// <summary>
         /// The list of currently active and rendering windows.
         /// </summary>
@@ -136,54 +135,81 @@ namespace XREngine
         /// <param name="state"></param>
         public static void Run(GameStartupSettings startupSettings, GameState state)
         {
-            RunGameLoop();
-            Initialize(startupSettings, state);
-            BlockForRendering();
+            if (Initialize(startupSettings, state))
+            {
+                RunGameLoop();
+                BlockForRendering();
+            }
             Cleanup();
         }
 
         /// <summary>
         /// Initializes the engine with settings for the game it will run.
         /// </summary>
-        public static void Initialize(
+        public static bool Initialize(
             GameStartupSettings startupSettings,
             GameState state,
             bool beginPlayingAllWorlds = true)
         {
-            StartingUp = true;
-            RenderThreadId = Environment.CurrentManagedThreadId;
-            GameSettings = startupSettings;
-            UserSettings = GameSettings.DefaultUserSettings;
+            bool success = false;
+            try
+            {
+                StartingUp = true;
+                RenderThreadId = Environment.CurrentManagedThreadId;
+                GameSettings = startupSettings;
+                UserSettings = GameSettings.DefaultUserSettings;
 
-            Time.Initialize(GameSettings, UserSettings);
+                //Creating windows first is most important, because they will initialize the render context and graphics API.
+                CreateWindows(startupSettings.StartupWindows);
 
-            if (state.Worlds is not null)
-                _worldInstances.AddRange(state.Worlds);
+                //VR is allowed to initialize async in the background.
+                //Windows need to be created first if initializing VR in place.
+                if (startupSettings is IVRGameStartupSettings vrSettings)
+                    Task.Run(async () => await InitializeVR(vrSettings, startupSettings.RunVRInPlace));
 
-            InitializeWindows(startupSettings.StartupWindows);
-            InitializeNetworking(startupSettings);
-            InitializeVR(startupSettings as IVRGameStartupSettings, startupSettings.RunVRInPlace);
+                //Run the tick timer for the engine.
+                Time.Initialize(GameSettings, UserSettings);
 
-            Time.Timer.SwapBuffers += SwapBuffers;
-            Time.Timer.RenderFrame += DequeueMainThreadTasks;
+                //Start processing network in/out for what type of client this is
+                InitializeNetworking(startupSettings);
 
-            StartingUp = false;
+                //Attach event callbacks for processing async and main thread tasks
+                Time.Timer.SwapBuffers += SwapBuffers;
+                Time.Timer.RenderFrame += DequeueMainThreadTasks;
+                success = true;
+            }
+            catch (Exception e)
+            {
+                Debug.LogWarning($"Error during engine initialization: {e.Message}\n{e.StackTrace}");
+                success = false;
+            }
+            finally
+            {
+                StartingUp = false;
+            }
 
-            if (beginPlayingAllWorlds)
+            if (beginPlayingAllWorlds && success)
                 BeginPlayAllWorlds();
+
+            return success;
         }
 
-        private static void InitializeVR(IVRGameStartupSettings? vrSettings, bool runVRInPlace)
+        private static async Task<bool> InitializeVR(IVRGameStartupSettings vrSettings, bool runVRInPlace)
         {
             if (vrSettings is null ||
-                vrSettings.VRManifest is null || 
+                vrSettings.VRManifest is null ||
                 vrSettings.ActionManifest is null)
-                return;
-            
+            {
+                Debug.LogWarning("VR settings are not properly initialized. VR will not be started.");
+                return false;
+            }
+
+            bool result;
             if (runVRInPlace)
-                VRState.InitializeLocal(vrSettings.ActionManifest, vrSettings.VRManifest, _windows[0]);
+                result = await VRState.InitializeLocal(vrSettings.ActionManifest, vrSettings.VRManifest, _windows[0]);
             else
-                VRState.IninitializeClient(vrSettings.ActionManifest, vrSettings.VRManifest);
+                result = await VRState.IninitializeClient(vrSettings.ActionManifest, vrSettings.VRManifest);
+            return result;
         }
 
         private static void InitializeNetworking(GameStartupSettings startupSettings)
@@ -213,11 +239,19 @@ namespace XREngine
             }
         }
 
+        /// <summary>
+        /// Starts play for all worlds.
+        /// This means all scene nodes will become active, and thus their components, and all ticking events will register, etc.
+        /// </summary>
         public static void BeginPlayAllWorlds()
         {
             foreach (var world in XRWorldInstance.WorldInstances.Values)
                 world.BeginPlay().Wait();
         }
+
+        /// <summary>
+        /// Stops play for all worlds.
+        /// </summary>
         public static void EndPlayAllWorlds()
         {
             foreach (var world in XRWorldInstance.WorldInstances.Values)
@@ -241,7 +275,7 @@ namespace XREngine
                     _mainThreadCoroutines.RemoveAt(i--);
         }
 
-        public static void InitializeWindows(List<GameWindowStartupSettings> windows)
+        public static void CreateWindows(List<GameWindowStartupSettings> windows)
         {
             foreach (var windowSettings in windows)
                 CreateWindow(windowSettings);
@@ -252,14 +286,9 @@ namespace XREngine
             XRWindow window = new(GetWindowOptions(windowSettings));
             CreateViewports(windowSettings.LocalPlayers, window);
             window.UpdateViewportSizes();
-            SetWorld(windowSettings.TargetWorld, window);
             _windows.Add(window);
-        }
 
-        private static void SetWorld(XRWorld? targetWorld, XRWindow window)
-        {
-            if (targetWorld is not null)
-                window.TargetWorldInstance = GetOrInitWorld(targetWorld);
+            /*Task.Run(() => */window.SetWorld(windowSettings.TargetWorld);
         }
 
         private static void CreateViewports(ELocalPlayerIndexMask localPlayerMask, XRWindow window)
@@ -326,22 +355,25 @@ namespace XREngine
                 1);
         }
 
-        public static XRWorldInstance GetOrInitWorld(XRWorld targetWorld)
-        {
-            if (XRWorldInstance.WorldInstances.TryGetValue(targetWorld, out var instance))
-                return instance;
-            
-            XRWorldInstance.WorldInstances.Add(targetWorld, instance = new XRWorldInstance(targetWorld));
-            return instance;
-        }
-
-        private static bool RunAsLongAs()
+        /// <summary>
+        /// This method will check the condition for the engine to continue running.
+        /// </summary>
+        /// <returns></returns>
+        private static bool IsEngineStillActive()
             => Windows.Count > 0;
 
+        /// <summary>
+        /// This will initialize all parallel threads and start the game loop.
+        /// The main rendering thread must call BlockForRendering() separately to start rendering.
+        /// </summary>
         public static void RunGameLoop()
             => Time.Timer.RunGameLoop();
+
+        /// <summary>
+        /// This will block the current thread and submit renders to the graphics API until the engine is shut down.
+        /// </summary>
         public static void BlockForRendering()
-            => Time.Timer.BlockForRendering(RunAsLongAs);
+            => Time.Timer.BlockForRendering(IsEngineStillActive);
 
         /// <summary>
         /// Closes all windows, resulting in the engine shutting down and the process ending.

@@ -28,6 +28,7 @@ namespace XREngine.Scene.Components.Capture.Lights.Types
                 {
                     c.Add<VPRC_StencilMask>().Set(~0u);
                     c.Add<VPRC_ClearByBoundFBO>();
+                    c.Add<VPRC_ColorMask>().Set(false, false, false, false);
                     c.Add<VPRC_DepthTest>().Enable = true;
                     c.Add<VPRC_DepthWrite>().Allow = true;
                     c.Add<VPRC_RenderMeshesPass>().RenderPass = (int)EDefaultRenderPass.OpaqueDeferredLit;

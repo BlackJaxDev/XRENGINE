@@ -397,6 +397,7 @@ namespace XREngine.Rendering
             bool linearFilter);
 
         public abstract void MemoryBarrier(EMemoryBarrierMask mask);
+        public abstract void ColorMask(bool red, bool green, bool blue, bool alpha);
     }
     [Flags]
     public enum EMemoryBarrierMask : int

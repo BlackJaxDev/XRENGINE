@@ -13,7 +13,7 @@ public static partial class UnitTestingWorld
         //Editor UI
         public const bool AddEditorUI = false; //Adds the full editor UI to the camera.
         public const bool TransformTool = false; //Adds the transform tool to the scene for testing dragging and rotating etc.
-        public const bool AllowEditingInVR = false; //Allows the user to edit the scene from desktop in VR.
+        public const bool AllowEditingInVR = true; //Allows the user to edit the scene from desktop in VR.
         public const bool VideoStreaming = false; //Adds a video streaming component to the scene for testing video streaming.
         public const bool VideoStreamingAudio = false; //Adds a video streaming audio component to the scene for testing video streaming audio.
 
@@ -35,6 +35,7 @@ public static partial class UnitTestingWorld
 
         //Pawns
         public const bool VRPawn = true; //Enables VR input and pawn.
+        public const bool EmulatedVRPawn = true; //Enables an emulated VR pawn for testing without a VR headset. All this does is disallow OpenVR from starting, VRPawn must still be enabled.
         public const bool Locomotion = true; //Enables the player to physically locomote in the world. Requires a physical floor.
         public const bool ThirdPersonPawn = false; //If on desktop and character pawn is enabled, this will add a third person camera instead of first person.
 
@@ -91,5 +92,21 @@ public static partial class UnitTestingWorld
             PostProcessSteps.ImproveCacheLocality |
             PostProcessSteps.GenerateBoundingBoxes |
             PostProcessSteps.FlipUVs;
+
+        /// <summary>
+        /// Indicates if the engine should use shader pipelines to mix and match shader stages.
+        /// This will break debug shape rendering, and seems to render slower than making combined programs.
+        /// </summary>
+        public static bool AllowShaderPipelines { get; set; } = false;
+        public static bool RenderMeshBounds { get; set; } = true;
+        public static Engine.Rendering.ELoopType RecalcChildMatricesType { get; set; } = Engine.Rendering.ELoopType.Parallel;
+        public static bool TickGroupedItemsInParallel { get; set; } = true;
+        public static bool SinglePassStereoVR { get; set; } = false;
+        public static bool RenderPhysicsDebug { get; set; } = false;
+        public static bool RenderWindowsWhileInVR { get; set; } = true;
+        public static bool RenderTransformDebugInfo { get; set; } = false;
+        public static bool RenderTransformPoints { get; set; } = true;
+        public static bool RenderTransformCapsules { get; set; } = false;
+        public static bool RenderTransformLines { get; set; } = true;
     }
 }

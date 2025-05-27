@@ -15,33 +15,6 @@ namespace XREngine.Editor;
 
 public static partial class UnitTestingWorld
 {
-    //private static void AddPBRTestOrbs(SceneNode rootNode, float y)
-    //{
-    //    for (int metallic = 0; metallic < 10; metallic++)
-    //        for (int roughness = 0; roughness < 10; roughness++)
-    //            AddPBRTestOrb(rootNode, metallic / 10.0f, roughness / 10.0f, 0.5f, 0.5f, 10, 10, y);
-    //}
-
-    //private static void AddPBRTestOrb(SceneNode rootNode, float metallic, float roughness, float radius, float padding, int metallicCount, int roughnessCount, float y)
-    //{
-    //    var orb1 = new SceneNode(rootNode) { Name = "TestOrb1" };
-    //    var orb1Transform = orb1.SetTransform<Transform>();
-
-    //    //arrange in grid using metallic and roughness
-    //    orb1Transform.Translation = new Vector3(
-    //        (metallic * 2.0f - 1.0f) * (radius + padding) * metallicCount,
-    //        y + padding + radius,
-    //        (roughness * 2.0f - 1.0f) * (radius + padding) * roughnessCount);
-
-    //    var orb1Model = orb1.AddComponent<ModelComponent>()!;
-    //    var mat = XRMaterial.CreateLitColorMaterial(ColorF4.Red);
-    //    mat.RenderPass = (int)EDefaultRenderPass.OpaqueDeferredLit;
-    //    mat.Parameter<ShaderFloat>("Roughness")!.Value = roughness;
-    //    mat.Parameter<ShaderFloat>("Metallic")!.Value = metallic;
-    //    orb1Model.Model = new Model([new SubMesh(XRMesh.Shapes.SolidSphere(Vector3.Zero, radius, 32), mat)]);
-    //}
-
-
     public static class UserInterface
     {
         private const bool DockFPSTopLeft = false;

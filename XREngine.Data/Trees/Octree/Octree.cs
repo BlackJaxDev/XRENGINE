@@ -95,7 +95,7 @@ namespace XREngine.Data.Trees
                     Action<SortedDictionary<float, List<(T item, object? data)>>> finishedCallback
                 ) command))
             {
-                _head.Raycast<T>(command.segment, command.items, command.directTest);
+                _head.Raycast(command.segment, command.items, command.directTest);
                 command.finishedCallback(command.items);
             }
         }

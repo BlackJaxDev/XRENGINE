@@ -597,28 +597,28 @@ namespace XREngine.Scene.Components.Animation
             if (Left.Shoulder.Node is not null)
                 FindChildrenFor(Left.Shoulder, [
                     (Left.Arm, ByNameContainsAll("Arm")),
-                    (Left.Elbow, ByNameContainsAll("Elbow")),
-                    (Left.Wrist, ByNameContainsAll("Wrist")),
+                    (Left.Elbow, ByNameContainsAnyAndDoesNotContain(ElbowNameMatches, TwistBoneMismatch)),
+                    (Left.Wrist, ByNameContainsAnyAndDoesNotContain(HandNameMatches, TwistBoneMismatch)),
                 ]);
 
             if (Right.Shoulder.Node is not null)
             {
                 FindChildrenFor(Right.Shoulder, [
                     (Right.Arm, ByNameContainsAll("Arm")),
-                    (Right.Elbow, ByNameContainsAll("Elbow")),
+                    (Right.Elbow, ByNameContainsAnyAndDoesNotContain(ElbowNameMatches, TwistBoneMismatch)),
                     (Right.Wrist, ByNameContainsAnyAndDoesNotContain(HandNameMatches, TwistBoneMismatch)),
                 ]);
             }
 
             if (Left.Arm.Node is not null && Left.Elbow.Node is null)
                 FindChildrenFor(Left.Arm, [
-                    (Left.Elbow, ByNameContainsAll("Elbow")),
+                    (Left.Elbow, ByNameContainsAnyAndDoesNotContain(ElbowNameMatches, TwistBoneMismatch)),
                     (Left.Wrist, ByNameContainsAnyAndDoesNotContain(HandNameMatches, TwistBoneMismatch)),
                 ]);
 
             if (Right.Arm.Node is not null && Right.Elbow.Node is null)
                 FindChildrenFor(Right.Arm, [
-                    (Right.Elbow, ByNameContainsAll("Elbow")),
+                    (Right.Elbow, ByNameContainsAnyAndDoesNotContain(ElbowNameMatches, TwistBoneMismatch)),
                     (Right.Wrist, ByNameContainsAnyAndDoesNotContain(HandNameMatches, TwistBoneMismatch)),
                 ]);
 
@@ -768,6 +768,7 @@ namespace XREngine.Scene.Components.Animation
         private const string KneeNameContains = "Knee";
         private static readonly string[] FootNameMatches = ["Foot", "Ankle"];
         private static readonly string[] TwistBoneMismatch = ["Twist"];
+        private static readonly string[] ElbowNameMatches = ["Elbow"];
         private static readonly string[] HandNameMatches = ["Wrist", "Hand"];
 
         public void SetFootPositionX(float x, bool leftFoot)

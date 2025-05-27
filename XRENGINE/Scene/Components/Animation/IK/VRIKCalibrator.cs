@@ -2,6 +2,7 @@
 using System.Numerics;
 using XREngine.Data.Core;
 using XREngine.Scene.Transforms;
+using static XREngine.Scene.Components.Animation.IKSolverVR;
 using Transform = XREngine.Scene.Transforms.Transform;
 
 namespace XREngine.Scene.Components.Animation
@@ -137,6 +138,8 @@ namespace XREngine.Scene.Components.Animation
             Vector3 headForward = headTracker.WorldRotation.Rotate(settings.HeadTrackerForward);
             headForward.Y = 0f;
             root.SetWorldRotation(XRMath.LookRotation(headForward, Globals.Up));
+            root.SaveBindState();
+            root.RecalculateMatrices(true);
 
             // Head
             Transform headTarget = spine._headTarget ?? (new SceneNode(root.World, "Head Target")).GetTransformAs<Transform>(true)!;
@@ -144,6 +147,8 @@ namespace XREngine.Scene.Components.Animation
             headTarget.SetParent(headTracker, false);
             headTarget.SetWorldTranslation(headPos);
             headTarget.SetWorldRotation(head.WorldRotation);
+            headTarget.SaveBindState();
+            headTarget.RecalculateMatrices(true);
 
             spine._headTarget = headTarget;
 
@@ -160,6 +165,8 @@ namespace XREngine.Scene.Components.Animation
                 pelvisTarget.SetParent(bodyTracker, false);
                 pelvisTarget.SetWorldTranslation(hips.WorldTranslation);
                 pelvisTarget.SetWorldRotation(hips.WorldRotation);
+                pelvisTarget.SaveBindState();
+                pelvisTarget.RecalculateMatrices(true);
 
                 spine._hipsTarget = pelvisTarget;
                 spine._pelvisPositionWeight = settings.HipPositionWeight;
@@ -174,9 +181,10 @@ namespace XREngine.Scene.Components.Animation
             }
 
             // Left Hand
+            var larm = ik.Solver._leftArm;
             if (leftHandTracker != null)
             {
-                Transform leftHandTarget = ik.Solver._leftArm._target ?? (new SceneNode("Left Hand Target")).GetTransformAs<Transform>(true)!;
+                Transform leftHandTarget = larm._target ?? (new SceneNode("Left Hand Target")).GetTransformAs<Transform>(true)!;
 
                 Quaternion look = leftHandTracker.WorldRotation * XRMath.LookRotation(settings.HandTrackerForward, settings.HandTrackerUp);
 
@@ -185,21 +193,24 @@ namespace XREngine.Scene.Components.Animation
                 leftHandTarget.SetWorldRotation(
                     XRMath.MatchRotation(look,
                     settings.HandTrackerForward,
-                    settings.HandTrackerUp, 
-                    ik.Solver._leftArm._wristToPalmAxis,
-                    Vector3.Cross(ik.Solver._leftArm._wristToPalmAxis, ik.Solver._leftArm._palmToThumbAxis)));
+                    settings.HandTrackerUp,
+                    larm._wristToPalmAxis,
+                    Vector3.Cross(larm._wristToPalmAxis, larm._palmToThumbAxis)));
+                leftHandTarget.SaveBindState();
+                leftHandTarget.RecalculateMatrices(true);
 
-                ik.Solver._leftArm._target = leftHandTarget;
-                ik.Solver._leftArm._positionWeight = 1f;
-                ik.Solver._leftArm._rotationWeight = 1f;
+                larm._target = leftHandTarget;
+                larm._positionWeight = 1.0f;
+                larm._rotationWeight = 1.0f;
             }
             else
             {
-                ik.Solver._leftArm._positionWeight = 0f;
-                ik.Solver._leftArm._rotationWeight = 0f;
+                larm._positionWeight = 0.0f;
+                larm._rotationWeight = 0.0f;
             }
 
             // Right Hand
+            var rarm = ik.Solver._rightArm;
             if (rightHandTracker != null)
             {
                 Transform rightHandTarget = ik.Solver._rightArm._target ?? (new SceneNode("Right Hand Target")).GetTransformAs<Transform>(true)!;
@@ -212,17 +223,19 @@ namespace XREngine.Scene.Components.Animation
                     look,
                     settings.HandTrackerForward,
                     settings.HandTrackerUp,
-                    ik.Solver._rightArm._wristToPalmAxis,
-                    -Vector3.Cross(ik.Solver._rightArm._wristToPalmAxis, ik.Solver._rightArm._palmToThumbAxis)));
+                    rarm._wristToPalmAxis,
+                    -Vector3.Cross(rarm._wristToPalmAxis, rarm._palmToThumbAxis)));
+                rightHandTarget.SaveBindState();
+                rightHandTarget.RecalculateMatrices(true);
 
-                ik.Solver._rightArm._target = rightHandTarget;
-                ik.Solver._rightArm._positionWeight = 1f;
-                ik.Solver._rightArm._rotationWeight = 1f;
+                rarm._target = rightHandTarget;
+                rarm._positionWeight = 1.0f;
+                rarm._rotationWeight = 1.0f;
             }
             else
             {
-                ik.Solver._rightArm._positionWeight = 0f;
-                ik.Solver._rightArm._rotationWeight = 0f;
+                rarm._positionWeight = 0.0f;
+                rarm._rotationWeight = 0.0f;
             }
 
             // Legs
@@ -312,9 +325,8 @@ namespace XREngine.Scene.Components.Animation
 
             var targetPos = tracker.WorldTranslation + trackerSpace.Rotate(new Vector3(inwardOffset, 0f, settings.FootForwardOffset));
             target.SetWorldTranslation(new Vector3(targetPos.X, lastBone.WorldTranslation.Y, targetPos.Z));
-
-            // Target rotation
             target.SetWorldRotation(lastBone.WorldRotation);
+            target.RecalculateMatrices(true);
 
             // Rotate target forward towards tracker forward
             Vector3 footForward = XRMath.GetAxisVectorToDirection(lastBone.WorldRotation, rootForward);
@@ -329,19 +341,22 @@ namespace XREngine.Scene.Components.Animation
                 yawOffset = -yawOffset;
 
             target.SetWorldRotation(Quaternion.CreateFromAxisAngle(Globals.Up, float.DegreesToRadians(yaw + yawOffset)) * target.WorldRotation);
-
             target.SetParent(tracker, false);
+            target.SaveBindState();
+            target.RecalculateMatrices(true);
             leg._target = target;
 
-            leg._positionWeight = 1f;
-            leg._rotationWeight = 1f;
+            leg._positionWeight = 1.0f;
+            leg._rotationWeight = 1.0f;
 
             // Bend goal
             Transform bendGoal = leg._bendGoal ?? (new SceneNode(tracker.World, $"{name} Leg Bend Goal")).GetTransformAs<Transform>(true)!;
             bendGoal.SetWorldTranslation(lastBone.WorldTranslation + trackerSpace.Rotate(Globals.Forward) + trackerSpace.Rotate(Globals.Up));// * 0.5f;
+            bendGoal.RecalculateMatrices(true);
             bendGoal.SetParent(tracker, true);
             leg._bendGoal = bendGoal;
             leg._bendGoalWeight = 1f;
+
         }
 
         /// <summary>

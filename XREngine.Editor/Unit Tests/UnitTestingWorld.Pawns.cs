@@ -4,6 +4,7 @@ using System.Numerics;
 using XREngine.Components;
 using XREngine.Components.Scene;
 using XREngine.Components.Scene.Transforms;
+using XREngine.Data.Colors;
 using XREngine.Data.Components.Scene;
 using XREngine.Rendering;
 using XREngine.Rendering.Physics.Physx;
@@ -32,7 +33,7 @@ public static partial class UnitTestingWorld
                         SceneNode cameraNode = CreateCamera(rootNode, out var camComp);
                         var pawn2 = CreateDesktopCamera(cameraNode, isServer, Toggles.AllowEditingInVR && !Toggles.AddCameraVRPickup, Toggles.AddCameraVRPickup, false);
                         if (setUI)
-                            UserInterface.CreateEditorUI(rootNode, camComp, pawn);
+                            UserInterface.CreateEditorUI(rootNode, camComp, pawn2);
                     }
                     else if (setUI) //TODO: render ui on left or right controller when opened
                         UserInterface.CreateEditorUI(characterPawnModelParentNode, null, pawn);
@@ -65,7 +66,7 @@ public static partial class UnitTestingWorld
         {
             SceneNode vrPlayspaceNode = rootNode.NewChild("VRPlayspaceNode");
             var characterTfm = vrPlayspaceNode.SetTransform<RigidBodyTransform>();
-            characterTfm.InterpolationMode = EInterpolationMode.Interpolate;
+            characterTfm.InterpolationMode = EInterpolationMode.Discrete;
 
             CharacterPawnComponent characterComp = vrPlayspaceNode.AddComponent<CharacterPawnComponent>("TestPawn")!;
             pawn = characterComp;
@@ -121,8 +122,8 @@ public static partial class UnitTestingWorld
             PawnComponent? refPawn = characterComp;
             characterComp.InputOrientationTransform = AddHeadsetNode(out hmdTfm, out _, playspaceNode, setUI, out var canvas, ref refPawn).Transform;
 
-            AddHandControllerNode(out leftTfm, out _, playspaceNode, true);
-            AddHandControllerNode(out rightTfm, out _, playspaceNode, false);
+            AddHandControllerNode(out leftTfm, playspaceNode, true);
+            AddHandControllerNode(out rightTfm, playspaceNode, false);
 
             if (canvas is not null)
             {
@@ -137,7 +138,25 @@ public static partial class UnitTestingWorld
                 vrInput.PauseToggled += ShowVRMenu;
             }
 
-            AddTrackerCollectionNode(playspaceNode);
+            var coll = AddTrackerCollectionNode(playspaceNode);
+
+            if (Toggles.EmulatedVRPawn)
+            {
+                hmdTfm.SceneNode!.AddComponent<DebugDrawComponent>()!.AddSphere(0.15f, Vector3.Zero, ColorF4.DarkRed, false);
+
+                var lf = coll.AddManualTracker("Left Foot");
+                lf.LocalMatrixOffset = Matrix4x4.CreateTranslation(-0.2f, 0, 0);
+                lf.SceneNode!.AddComponent<DebugDrawComponent>()!.AddSphere(0.05f, Vector3.Zero, ColorF4.DarkTeal, false);
+
+                var rf = coll.AddManualTracker("Right Foot");
+                rf.LocalMatrixOffset = Matrix4x4.CreateTranslation(0.2f, 0, 0);
+                rf.SceneNode!.AddComponent<DebugDrawComponent>()!.AddSphere(0.05f, Vector3.Zero, ColorF4.DarkTeal, false);
+
+                var hip = coll.AddManualTracker("Hip");
+                hip.LocalMatrixOffset = Matrix4x4.CreateTranslation(0, 0.4f, 0);
+                hip.SceneNode!.AddComponent<DebugDrawComponent>()!.AddSphere(0.05f, Vector3.Zero, ColorF4.DarkTeal, false);
+            }
+
             vrInput.LeftHandTransform = leftTfm;
             vrInput.RightHandTransform = rightTfm;
         }
@@ -168,16 +187,23 @@ public static partial class UnitTestingWorld
             movementComp.InputLerpSpeed = 0.9f;
         }
 
-        private static void AddHandControllerNode(out VRControllerTransform controllerTfm, out VRControllerModelComponent modelComp, SceneNode parentNode, bool left)
+        private static void AddHandControllerNode(out VRControllerTransform controllerTfm, SceneNode parentNode, bool left)
         {
-            SceneNode leftControllerNode = parentNode.NewChild($"VR{(left ? "Left" : "Right")}ControllerNode");
+            SceneNode controllerNode = parentNode.NewChild($"VR{(left ? "Left" : "Right")}ControllerNode");
 
-            controllerTfm = leftControllerNode.SetTransform<VRControllerTransform>();
+            controllerTfm = controllerNode.SetTransform<VRControllerTransform>();
             controllerTfm.LeftHand = left;
-            controllerTfm.ForceManualRecalc = true;
 
-            modelComp = leftControllerNode.AddComponent<VRControllerModelComponent>()!;
-            modelComp.LeftHand = left;
+            if (Toggles.EmulatedVRPawn)
+            {
+                var debugComp = controllerNode.AddComponent<DebugDrawComponent>()!;
+                debugComp.AddSphere(0.1f, Vector3.Zero, ColorF4.Black, false);
+            }
+            else
+            {
+                var modelComp = controllerNode.AddComponent<VRControllerModelComponent>()!;
+                modelComp.LeftHand = left;
+            }
         }
         private static void CreateFlyingVRPawn(SceneNode rootNode, bool setUI)
         {
@@ -185,14 +211,17 @@ public static partial class UnitTestingWorld
             var playspaceTfm = vrPlayspaceNode.SetTransform<Transform>();
             PawnComponent? pawn = null;
             AddHeadsetNode(out _, out _, vrPlayspaceNode, setUI, out _, ref pawn);
-            AddHandControllerNode(out _, out _, vrPlayspaceNode, true);
-            AddHandControllerNode(out _, out _, vrPlayspaceNode, false);
+            AddHandControllerNode(out _, vrPlayspaceNode, true);
+            AddHandControllerNode(out _, vrPlayspaceNode, false);
             AddTrackerCollectionNode(vrPlayspaceNode);
             VRPlayerInputSet? input = pawn?.SceneNode?.AddComponent<VRPlayerInputSet>()!;
         }
 
-        private static void AddTrackerCollectionNode(SceneNode vrPlayspaceNode)
-            => vrPlayspaceNode.NewChild<VRTrackerCollectionComponent>(out _, "VRTrackerCollectionNode");
+        private static VRTrackerCollectionComponent AddTrackerCollectionNode(SceneNode vrPlayspaceNode)
+        {
+            vrPlayspaceNode.NewChild(out VRTrackerCollectionComponent coll, "VRTrackerCollectionNode");
+            return coll;
+        }
 
         private static SceneNode AddHeadsetNode(
             out VRHeadsetTransform hmdTfm,
@@ -215,33 +244,36 @@ public static partial class UnitTestingWorld
             hmdComp = vrHeadsetNode.AddComponent<VRHeadsetComponent>()!;
 
             if (!Toggles.AllowEditingInVR)
-            {
-                SceneNode firstPersonViewNode = new(vrHeadsetNode) { Name = "FirstPersonViewNode" };
-                var firstPersonViewTfm = firstPersonViewNode.SetTransform<SmoothedParentConstraintTransform>();
-                firstPersonViewTfm.TranslationInterpolationSpeed = null;
-                firstPersonViewTfm.ScaleInterpolationSpeed = null;
-                firstPersonViewTfm.QuaternionInterpolationSpeed = null;
-                //firstPersonViewTfm.SplitYPR = true;
-                //firstPersonViewTfm.YawInterpolationSpeed = 5.0f;
-                //firstPersonViewTfm.PitchInterpolationSpeed = 5.0f;
-                //firstPersonViewTfm.IgnoreRoll = true;
-                //firstPersonViewTfm.UseLookAtYawPitch = true;
-                var firstPersonCam = firstPersonViewNode.AddComponent<CameraComponent>()!;
-                var persp = firstPersonCam.Camera.Parameters as XRPerspectiveCameraParameters;
-                persp!.HorizontalFieldOfView = 50.0f;
-                persp.NearZ = 0.1f;
-                persp.FarZ = 100000.0f;
-                firstPersonCam.CullWithFrustum = true;
-                if (pawn is null)
-                    pawn = firstPersonCam.SetAsPlayerView(ELocalPlayerIndex.One);
-                else
-                    pawn.CameraComponent = firstPersonCam;
-
-                //if (setUI)
-                //    canvas = CreateEditorUI(vrHeadsetNode, firstPersonCam);
-            }
-
+                AddVRFirstPersonDesktopView(ref pawn, vrHeadsetNode);
+            
             return vrHeadsetNode;
+        }
+
+        private static void AddVRFirstPersonDesktopView(ref PawnComponent pawn, SceneNode parentNode)
+        {
+            SceneNode firstPersonViewNode = new(parentNode) { Name = "FirstPersonViewNode" };
+            var firstPersonViewTfm = firstPersonViewNode.SetTransform<SmoothedParentConstraintTransform>();
+            firstPersonViewTfm.TranslationInterpolationSpeed = null;
+            firstPersonViewTfm.ScaleInterpolationSpeed = null;
+            firstPersonViewTfm.QuaternionInterpolationSpeed = null;
+            //firstPersonViewTfm.SplitYPR = true;
+            //firstPersonViewTfm.YawInterpolationSpeed = 5.0f;
+            //firstPersonViewTfm.PitchInterpolationSpeed = 5.0f;
+            //firstPersonViewTfm.IgnoreRoll = true;
+            //firstPersonViewTfm.UseLookAtYawPitch = true;
+            var firstPersonCam = firstPersonViewNode.AddComponent<CameraComponent>()!;
+            var persp = firstPersonCam.Camera.Parameters as XRPerspectiveCameraParameters;
+            persp!.HorizontalFieldOfView = 50.0f;
+            persp.NearZ = 0.1f;
+            persp.FarZ = 100000.0f;
+            firstPersonCam.CullWithFrustum = true;
+            if (pawn is null)
+                pawn = firstPersonCam.SetAsPlayerView(ELocalPlayerIndex.One);
+            else
+                pawn.CameraComponent = firstPersonCam;
+
+            //if (setUI)
+            //    canvas = CreateEditorUI(vrHeadsetNode, firstPersonCam);
         }
         #endregion
 

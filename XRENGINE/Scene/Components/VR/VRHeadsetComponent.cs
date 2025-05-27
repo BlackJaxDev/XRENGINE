@@ -11,6 +11,8 @@ namespace XREngine.Data.Components.Scene
     [RequireComponents(typeof(VRHeadsetTransform))]
     public class VRHeadsetComponent : XRComponent, IRenderable
     {
+        public static VRHeadsetComponent? Instance { get; private set; }
+
         protected VRHeadsetComponent() : base()
         {
             _leftEyeTransform = new VREyeTransform(true, Transform);
@@ -22,6 +24,11 @@ namespace XREngine.Data.Components.Scene
             RenderInfo = RenderInfo3D.New(this, new RenderCommandMethod3D((int)EDefaultRenderPass.OpaqueForward, Render));
             RenderedObjects = [RenderInfo];
             //RenderInfo.IsVisible = false;
+
+            if (Instance is not null)
+                Debug.LogWarning("There can only be one VRHeadsetComponent in the scene.");
+            else
+                Instance = this;
         }
 
         protected override void OnTransformChanged()

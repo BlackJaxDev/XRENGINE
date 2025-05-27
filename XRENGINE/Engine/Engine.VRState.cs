@@ -65,7 +65,7 @@ namespace XREngine
             {
                 get
                 {
-                    if (Api.IsHeadsetPresent && Api.CVR is not null && Api.Headset is not null)
+                    if (Api.Headset is not null)
                     {
                         ETrackedPropertyError error = ETrackedPropertyError.TrackedProp_Success;
                         return (float)Api.CVR.GetFloatTrackedDeviceProperty(Api.Headset!.DeviceIndex, ETrackedDeviceProperty.Prop_UserIpdMeters_Float, ref error);
@@ -212,22 +212,27 @@ namespace XREngine
 
             public static AbstractRenderer? Renderer { get; set; } = null;
 
-            private static bool InitSteamVR(IActionManifest actionManifest, VrManifest vrManifest)
-            {
-                var vr = Api;
-                vr.DeviceDetected += OnDeviceDetected;
-                if (!vr.TryStart(EVRApplicationType.VRApplication_Scene))
+            private static async Task<bool> InitSteamVR(IActionManifest actionManifest, VrManifest vrManifest)
+                => await Task.Run(() =>
                 {
-                    Debug.LogWarning("Failed to initialize SteamVR.");
-                    return false;
-                }
-                InstallApp(vrManifest);
-                vr.SetActionManifest(actionManifest);
-                CreateActions(actionManifest, vr);
-                Time.Timer.PreUpdateFrame += Update;
-                IsInVR = true;
-                return true;
-            }
+                    var vr = Api;
+                    vr.DeviceDetected += OnDeviceDetected;
+                    if (!vr.TryStart(EVRApplicationType.VRApplication_Scene))
+                    {
+                        Debug.LogWarning("Failed to initialize SteamVR.");
+                        vr.DeviceDetected -= OnDeviceDetected;
+                        return false;
+                    }
+                    else
+                    {
+                        InstallApp(vrManifest);
+                        vr.SetActionManifest(actionManifest);
+                        CreateActions(actionManifest, vr);
+                        Time.Timer.PreUpdateFrame += Update;
+                        IsInVR = true;
+                        return true;
+                    }
+                });
 
             /// <summary>
             /// This method initializes the VR system in local mode.
@@ -237,12 +242,13 @@ namespace XREngine
             /// <param name="vrManifest"></param>
             /// <param name="getEyeTextureHandleFunc"></param>
             /// <returns></returns>
-            public static bool InitializeLocal(
+            public static async Task<bool> InitializeLocal(
                 IActionManifest actionManifest,
                 VrManifest vrManifest,
                 XRWindow window)
             {
-                if (!InitSteamVR(actionManifest, vrManifest))
+                bool init = await InitSteamVR(actionManifest, vrManifest);
+                if (!init)
                     return false;
                 InitRender(window);
                 return true;
@@ -542,10 +548,10 @@ namespace XREngine
             /// All VR input will be send to and handled by the server process and rendered frames will be sent to this process.
             /// </summary>
             /// <returns></returns>
-            public static bool IninitializeClient(
+            public static async Task<bool> IninitializeClient(
                 IActionManifest actionManifest,
                 VrManifest vrManifest)
-                => InitSteamVR(actionManifest, vrManifest);
+                => await InitSteamVR(actionManifest, vrManifest);
 
             /// <summary>
             /// This method initializes the VR system in server mode.

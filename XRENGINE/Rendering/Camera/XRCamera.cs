@@ -492,30 +492,34 @@ namespace XREngine.Rendering
 
         public virtual void SetUniforms(XRRenderProgram program, bool stereoLeftEye = true)
         {
+            var tfm = Transform;
+            Matrix4x4 renderMtx = tfm.RenderMatrix;
+            Matrix4x4 projMtx = ProjectionMatrix;
+
             bool stereoPass = Engine.Rendering.State.IsStereoPass;
             if (stereoPass)
             {
                 if (stereoLeftEye)
                 {
-                    program.Uniform(EEngineUniform.LeftEyeInverseViewMatrix.ToString(), Transform.RenderMatrix);
-                    program.Uniform(EEngineUniform.LeftEyeProjMatrix.ToString(), ProjectionMatrix);
+                    program.Uniform(EEngineUniform.LeftEyeInverseViewMatrix.ToString(), renderMtx);
+                    program.Uniform(EEngineUniform.LeftEyeProjMatrix.ToString(), projMtx);
                 }
                 else
                 {
-                    program.Uniform(EEngineUniform.RightEyeInverseViewMatrix.ToString(), Transform.RenderMatrix);
-                    program.Uniform(EEngineUniform.RightEyeProjMatrix.ToString(), ProjectionMatrix);
+                    program.Uniform(EEngineUniform.RightEyeInverseViewMatrix.ToString(), renderMtx);
+                    program.Uniform(EEngineUniform.RightEyeProjMatrix.ToString(), projMtx);
                 }
             }
             else
             {
-                program.Uniform(EEngineUniform.InverseViewMatrix.ToString(), Transform.RenderMatrix);
-                program.Uniform(EEngineUniform.ProjMatrix.ToString(), ProjectionMatrix);
+                program.Uniform(EEngineUniform.InverseViewMatrix.ToString(), renderMtx);
+                program.Uniform(EEngineUniform.ProjMatrix.ToString(), projMtx);
             }
 
-            program.Uniform(EEngineUniform.CameraPosition.ToString(), Transform.WorldTranslation);
-            program.Uniform(EEngineUniform.CameraForward.ToString(), Transform.WorldForward);
-            program.Uniform(EEngineUniform.CameraUp.ToString(), Transform.WorldUp);
-            program.Uniform(EEngineUniform.CameraRight.ToString(), Transform.WorldRight);
+            program.Uniform(EEngineUniform.CameraPosition.ToString(), tfm.RenderTranslation);
+            program.Uniform(EEngineUniform.CameraForward.ToString(), tfm.RenderForward);
+            program.Uniform(EEngineUniform.CameraUp.ToString(), tfm.RenderUp);
+            program.Uniform(EEngineUniform.CameraRight.ToString(), tfm.RenderRight);
 
             Parameters.SetUniforms(program);
         }

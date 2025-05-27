@@ -119,7 +119,7 @@ namespace XREngine.Rendering.Info
 
         IRenderableBase? ITreeItem.Owner => Owner;
 
-        public void AddRenderCommands(RenderCommandCollection passes, XRCamera? camera)
+        public void CollectCommands(RenderCommandCollection passes, XRCamera? camera)
         {
             if (!(PreCollectCommandsCallback?.Invoke(this, passes, camera) ?? true))
                 return;

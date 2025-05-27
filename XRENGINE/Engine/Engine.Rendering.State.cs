@@ -189,6 +189,9 @@ namespace XREngine
                     => AbstractRenderer.Current?.CalcDotLuminanceAsync(texture, callback, Settings.DefaultLuminance, generateMipmapsNow);
                 public static void CalculateDotLuminanceAsync(XRTexture2DArray texture, bool generateMipmapsNow, Action<bool, float> callback)
                     => AbstractRenderer.Current?.CalcDotLuminanceAsync(texture, callback, Settings.DefaultLuminance, generateMipmapsNow);
+
+                public static void ColorMask(bool red, bool green, bool blue, bool alpha)
+                    => AbstractRenderer.Current?.ColorMask(red, green, blue, alpha);
             }
         }
     }

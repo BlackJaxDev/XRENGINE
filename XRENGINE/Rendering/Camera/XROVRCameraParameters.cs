@@ -37,7 +37,7 @@ namespace XREngine.Rendering
         {
             var api = Engine.VRState.Api;
             if (!api.IsHeadsetPresent || api.CVR is null)
-                return Matrix4x4.Identity;
+                return Matrix4x4.CreatePerspectiveFieldOfView(float.DegreesToRadians(90.0f), 1.0f, NearZ, FarZ);
 
             EVREye eye = LeftEye ? EVREye.Eye_Left : EVREye.Eye_Right;
 

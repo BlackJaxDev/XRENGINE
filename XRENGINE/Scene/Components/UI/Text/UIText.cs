@@ -1,4 +1,5 @@
-﻿using System.Numerics;
+﻿using Extensions;
+using System.Numerics;
 using XREngine.Core;
 using XREngine.Data.Colors;
 using XREngine.Data.Core;
@@ -57,7 +58,7 @@ namespace XREngine.Rendering.UI
 
             Vector3 pos = (TextTransform?.WorldTranslation ?? Vector3.Zero) + Translation;
             Vector3 camUp = camTfm.WorldUp;
-            float scale = cam!.Camera.DistanceScaleOrthographic(pos, 1.0f / Scale);
+            float scale = cam!.Camera.Transform.WorldTranslation.Distance(pos) * Scale;
             if (Roll != 0.0f)
                 camUp = Vector3.Transform(camUp, Quaternion.CreateFromAxisAngle(camTfm.WorldForward, float.DegreesToRadians(Roll)));
             TextMatrix = Matrix4x4.CreateScale(scale) * Matrix4x4.CreateRotationY(float.DegreesToRadians(Roll)) * Matrix4x4.CreateWorld(pos, camTfm.WorldForward, camUp);

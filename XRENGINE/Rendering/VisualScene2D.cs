@@ -68,7 +68,7 @@ namespace XREngine.Scene
             void AddRenderCommands(ITreeItem item)
             {
                 if (item is RenderInfo renderable)
-                    renderable.AddRenderCommands(commands, camera);
+                    renderable.CollectCommands(commands, camera);
             }
             if (collectionVolume is null)
                 RenderTree.CollectAll(AddRenderCommands);

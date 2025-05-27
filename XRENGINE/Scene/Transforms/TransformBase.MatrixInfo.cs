@@ -162,15 +162,73 @@ namespace XREngine.Scene.Transforms
             );
         }
 
+        /// <summary>
+        /// Inversely transforms a world position to local space using the appropriate matrix based on the render thread state.
+        /// </summary>
+        /// <param name="worldPosition"></param>
+        /// <returns></returns>
         public Vector3 InverseTransformPoint(Vector3 worldPosition)
-            => Vector3.Transform(worldPosition, InverseWorldMatrix);
-        public Vector3 TransformPoint(Vector3 localPosition)
-            => Vector3.Transform(localPosition, WorldMatrix);
+            => InverseTransformPoint(worldPosition, Engine.IsRenderThread);
 
-        public Vector3 TransformDirection(Vector3 localDirection)
-            => Vector3.TransformNormal(localDirection, WorldMatrix);
+        /// <summary>
+        /// Transforms a local position to world space using the appropriate matrix based on the render thread state.
+        /// </summary>
+        /// <param name="localPosition"></param>
+        /// <returns></returns>
+        public Vector3 TransformPoint(Vector3 localPosition)
+            => TransformPoint(localPosition, Engine.IsRenderThread);
+
+        /// <summary>
+        /// Inversely transforms a world direction to local space using the appropriate matrix based on the render thread state.
+        /// </summary>
+        /// <param name="worldDirection"></param>
+        /// <returns></returns>
         public Vector3 InverseTransformDirection(Vector3 worldDirection)
-            => Vector3.TransformNormal(worldDirection, InverseWorldMatrix);
+            => InverseTransformDirection(worldDirection, Engine.IsRenderThread);
+
+        /// <summary>
+        /// Transforms a local direction to world space using the appropriate matrix based on the render thread state.
+        /// </summary>
+        /// <param name="localDirection"></param>
+        /// <returns></returns>
+        public Vector3 TransformDirection(Vector3 localDirection)
+            => TransformDirection(localDirection, Engine.IsRenderThread);
+
+        /// <summary>
+        /// Inversely transforms a world position to local space using the appropriate matrix based on the render thread state.
+        /// </summary>
+        /// <param name="worldPosition"></param>
+        /// <param name="render"></param>
+        /// <returns></returns>
+        public Vector3 InverseTransformPoint(Vector3 worldPosition, bool render)
+            => Vector3.Transform(worldPosition, render ? InverseRenderMatrix : InverseWorldMatrix);
+
+        /// <summary>
+        /// Transforms a local position to world space using the appropriate matrix based on the render thread state.
+        /// </summary>
+        /// <param name="localPosition"></param>
+        /// <param name="render"></param>
+        /// <returns></returns>
+        public Vector3 TransformPoint(Vector3 localPosition, bool render)
+            => Vector3.Transform(localPosition, render ? RenderMatrix : WorldMatrix);
+
+        /// <summary>
+        /// Inversely transforms a world direction to local space using the appropriate matrix based on the render thread state.
+        /// </summary>
+        /// <param name="worldDirection"></param>
+        /// <param name="render"></param>
+        /// <returns></returns>
+        public Vector3 InverseTransformDirection(Vector3 worldDirection, bool render)
+            => Vector3.TransformNormal(worldDirection, render ? InverseRenderMatrix : InverseWorldMatrix);
+
+        /// <summary>
+        /// Transforms a local direction to world space using the appropriate matrix based on the render thread state.
+        /// </summary>
+        /// <param name="localDirection"></param>
+        /// <param name="render"></param>
+        /// <returns></returns>
+        public Vector3 TransformDirection(Vector3 localDirection, bool render)
+            => Vector3.TransformNormal(localDirection, render ? RenderMatrix : WorldMatrix);
 
         public TransformBase? FirstChild()
         {

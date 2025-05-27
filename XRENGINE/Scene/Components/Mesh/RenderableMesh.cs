@@ -1,6 +1,5 @@
 ﻿using System.Diagnostics.CodeAnalysis;
 using System.Numerics;
-using System.Runtime.CompilerServices;
 using XREngine.Data;
 using XREngine.Data.Colors;
 using XREngine.Data.Core;
@@ -40,14 +39,13 @@ namespace XREngine.Components.Scene.Mesh
         }
 
         private TransformBase? _rootBone;
-        private RenderableComponent _component;
-
         public TransformBase? RootBone
         {
             get => _rootBone;
             set => SetField(ref _rootBone, value);
         }
 
+        private RenderableComponent _component;
         /// <summary>
         /// The transform that owns this mesh.
         /// </summary>
@@ -70,7 +68,9 @@ namespace XREngine.Components.Scene.Mesh
                 Component.Transform.RenderWorldMatrixChanged -= Component_WorldMatrixChanged;
         }
 
+#pragma warning disable CS8618 // Non-nullable field must contain a non-null value when exiting constructor. Consider adding the 'required' modifier or declaring as nullable.
         public RenderableMesh(SubMesh mesh, RenderableComponent component)
+#pragma warning restore CS8618 // Non-nullable field must contain a non-null value when exiting constructor. Consider adding the 'required' modifier or declaring as nullable.
         {
             Component = component;
             RootBone = mesh.RootBone;

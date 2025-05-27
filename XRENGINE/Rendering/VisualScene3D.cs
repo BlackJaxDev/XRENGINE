@@ -60,7 +60,7 @@ namespace XREngine.Scene
             void AddRenderCommands(ITreeItem item)
             {
                 if (item is RenderInfo renderable)
-                    renderable.AddRenderCommands(commands, camera);
+                    renderable.CollectCommands(commands, camera);
             }
 
             RenderTree.CollectVisible(collectionVolume, false, AddRenderCommands, IntersectionTest);

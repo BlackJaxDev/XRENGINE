@@ -214,6 +214,7 @@ namespace XREngine.Scene.Components.Animation
             {
                 if (_target != null)
                 {
+                    _target.RecalculateMatrices(true);
                     IKPosition = _target.WorldTranslation;
                     IKRotation = _target.WorldRotation;
                 }
@@ -261,6 +262,7 @@ namespace XREngine.Scene.Components.Animation
 
                 if (_bendGoal != null && _bendGoalWeight > 0f)
                 {
+                    _bendGoal.RecalculateMatrices(true);
                     Vector3 b = Vector3.Cross(_bendGoal.WorldTranslation - Thigh._solverPosition, Position - Thigh._solverPosition);
                     Quaternion l = XRMath.LookRotation(_bendNormal, Thigh._solverPosition - Foot._solverPosition);
                     Vector3 bRelative = Quaternion.Inverse(l).Rotate(b);

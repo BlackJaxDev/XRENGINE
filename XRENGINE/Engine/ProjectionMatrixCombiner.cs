@@ -54,7 +54,6 @@ namespace XREngine
                 out float bottom, out float top,
                 out float near, out float far);
 
-            // 8. Create the enclosing projection matrix
             return Matrix4x4.CreatePerspectiveOffCenter(left, right, bottom, top, -near, -far);
         }
 

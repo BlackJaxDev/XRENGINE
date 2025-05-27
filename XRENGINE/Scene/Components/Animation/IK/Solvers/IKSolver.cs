@@ -97,7 +97,7 @@ namespace XREngine.Scene.Components.Animation
         protected Vector3 GetWorldIKPositionUnweighted()
             => TargetIKTransform?.WorldTranslation ?? _root?.TransformPoint(RawIKPosition) ?? RawIKPosition;
 
-        protected float _ikPositionWeight = 1f;
+        protected float _ikPositionWeight = 1.0f;
         [Range(0f, 1f)]
         public virtual float IKPositionWeight
         {

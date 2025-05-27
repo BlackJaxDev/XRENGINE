@@ -514,11 +514,10 @@ namespace XREngine.Rendering
             SortedDictionary<float, List<(RenderInfo3D item, object? data)>> orderedResults,
             Action<SortedDictionary<float, List<(RenderInfo3D item, object? data)>>> finishedCallback)
         {
-            orderedResults.Clear();
+            //orderedResults.Clear();
             VisualScene.RaycastAsync(worldSegment, orderedResults, DirectItemTest, finishedCallback);
         }
 
-        [RequiresDynamicCode("Calls XREngine.Components.Scene.Mesh.ModelComponent.Intersect(Segment, out Triangle?)")]
         private static (float? distance, object? data) DirectItemTest(RenderInfo3D item, Segment segment)
         {
             if (item is not RenderInfo renderable)
@@ -559,6 +558,13 @@ namespace XREngine.Rendering
                     }
             }
             return (null, null);
+        }
+
+        public static XRWorldInstance GetOrInitWorld(XRWorld targetWorld)
+        {
+            if (!WorldInstances.TryGetValue(targetWorld, out var instance))
+                WorldInstances.Add(targetWorld, instance = new(targetWorld));
+            return instance;
         }
     }
 }

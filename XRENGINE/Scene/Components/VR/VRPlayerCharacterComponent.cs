@@ -486,6 +486,7 @@ namespace XREngine.Scene.Components.VR
             Matrix4x4 headToRoot = Matrix4x4.CreateTranslation(-GetHeadOffsetFromAvatarRoot(h) * Engine.VRState.ModelToRealWorldHeightRatio);
 
             Transform avatarRootTfm = h.SceneNode.GetTransformAs<Transform>(true)!;
+            avatarRootTfm.Translation = new Vector3(0.0f, 0.0f, 0.0f);
             TransformBase footTfm = avatarRootTfm.Parent!;
             Transform playspaceRootTfm = footTfm.FirstChild()!.SceneNode!.GetTransformAs<Transform>(true)!;
 
@@ -610,6 +611,8 @@ namespace XREngine.Scene.Components.VR
 
             //Stop solving
             h.SolveIK = false;
+            if (IKSolver is not null)
+                IKSolver.IsActive = false;
 
             //Clear all targets
             h.ClearIKTargets();
@@ -727,15 +730,16 @@ namespace XREngine.Scene.Components.VR
                 return;
             }
 
+            IKSolver.IsActive = true;
             VRIKCalibrator.Calibrate(
                 IKSolver,
                 Engine.VRState.CalibrationSettings,
-                h.HeadTarget.tfm as Transform,
-                h.HipsTarget.tfm as Transform,
-                h.LeftHandTarget.tfm as Transform,
-                h.RightHandTarget.tfm as Transform,
-                h.LeftFootTarget.tfm as Transform,
-                h.RightFootTarget.tfm as Transform);
+                h.HeadTarget.tfm,
+                h.HipsTarget.tfm,
+                h.LeftHandTarget.tfm,
+                h.RightHandTarget.tfm,
+                h.LeftFootTarget.tfm,
+                h.RightFootTarget.tfm);
         }
 
         /// <summary>
@@ -778,7 +782,7 @@ namespace XREngine.Scene.Components.VR
             h.LeftKneeTarget = (null, Matrix4x4.Identity);
             h.RightKneeTarget = (null, Matrix4x4.Identity);
 
-            foreach ((VrDevice dev, VRTrackerTransform tracker) in t.Trackers.Values)
+            foreach ((_, VRTrackerTransform tracker) in t.Trackers.Values)
             {
                 //Engine.Rendering.Debug.RenderSphere(tracker.RenderTranslation, CalibrationRadius, false, ColorF4.Green);
 
@@ -991,7 +995,7 @@ namespace XREngine.Scene.Components.VR
 
             var bodyPos = humanoidTfm.RenderTranslation;
             float closestDist = float.MaxValue;
-            foreach ((VrDevice dev, VRTrackerTransform tracker) in trackerCollection.Trackers.Values)
+            foreach ((VrDevice? dev, VRTrackerTransform tracker) in trackerCollection.Trackers.Values)
             {
                 var trackerPos = tracker.RenderTranslation;
                 var dist = Vector3.DistanceSquared(bodyPos, trackerPos);
