@@ -2,15 +2,15 @@
 using XREngine.Data.Colors;
 using XREngine.Data.Core;
 
-namespace XREngine.Scene.Components.Animation
+namespace XREngine.Components.Animation
 {
     public partial class IKSolverVR
     {
         /// <summary>
         /// A base class for all IKSolverVR body parts.
         /// </summary>
-        [System.Serializable]
-        public abstract class BodyPart
+        [Serializable]
+        public abstract class BodyPart : XRBase
         {
             protected abstract void OnRead(
                 Vector3[] positions,
@@ -33,19 +33,40 @@ namespace XREngine.Scene.Components.Animation
 
             [HideInInspector]
             public VirtualBone[] _bones = [];
-            protected bool _initialized;
-            protected Vector3 _rootPosition;
+            protected bool _initialized = false;
+            protected Vector3 _rootPosition = Vector3.Zero;
             protected Quaternion _rootRotation = Quaternion.Identity;
             protected int _index = -1;
 
-            protected int _lod;
-            public int LOD
+            protected EQuality _quality = EQuality.Full;
+            public EQuality Quality
             {
-                get => _lod;
-                set => _lod = value;
+                get => _quality;
+                set => SetField(ref _quality, value);
             }
 
-            public void Read(Vector3[] positions, Quaternion[] rotations, bool hasChest, bool hasNeck, bool hasShoulders, bool hasToes, bool hasLegs, int rootIndex, int index)
+            /// <summary>
+            /// Sets initial solver positions and rotations from the arrays, which have been read from the skeleton.
+            /// </summary>
+            /// <param name="positions"></param>
+            /// <param name="rotations"></param>
+            /// <param name="hasChest"></param>
+            /// <param name="hasNeck"></param>
+            /// <param name="hasShoulders"></param>
+            /// <param name="hasToes"></param>
+            /// <param name="hasLegs"></param>
+            /// <param name="rootIndex"></param>
+            /// <param name="index"></param>
+            public void Read(
+                Vector3[] positions,
+                Quaternion[] rotations,
+                bool hasChest,
+                bool hasNeck,
+                bool hasShoulders,
+                bool hasToes,
+                bool hasLegs,
+                int rootIndex,
+                int index)
             {
                 _index = index;
                 _rootPosition = positions[rootIndex];
@@ -61,14 +82,15 @@ namespace XREngine.Scene.Components.Animation
 
             public void MovePosition(Vector3 position)
             {
-                Vector3 delta = position - _bones[0]._solverPosition;
-                foreach (VirtualBone bone in _bones) bone._solverPosition += delta;
+                Vector3 delta = position - _bones[0].SolverPosition;
+                foreach (VirtualBone bone in _bones)
+                    bone.SolverPosition += delta;
             }
 
             public void MoveRotation(Quaternion rotation)
             {
-                Quaternion delta = XRMath.FromToRotation(_bones[0]._solverRotation, rotation);
-                VirtualBone.RotateAroundPoint(_bones, 0, _bones[0]._solverPosition, delta);
+                Quaternion delta = XRMath.FromToRotation(_bones[0].SolverRotation, rotation);
+                VirtualBone.RotateAroundPoint(_bones, 0, _bones[0].SolverPosition, delta);
             }
 
             public void Translate(Vector3 position, Quaternion rotation)
@@ -82,7 +104,7 @@ namespace XREngine.Scene.Components.Animation
                 Vector3 deltaPosition = newRootPos - _rootPosition;
                 _rootPosition = newRootPos;
                 foreach (VirtualBone bone in _bones)
-                    bone._solverPosition += deltaPosition;
+                    bone.SolverPosition += deltaPosition;
 
                 Quaternion deltaRotation = XRMath.FromToRotation(_rootRotation, newRootRot);
                 _rootRotation = newRootRot;
@@ -94,7 +116,7 @@ namespace XREngine.Scene.Components.Animation
                 if (weight <= 0f)
                     return;
 
-                Quaternion q = XRMath.FromToRotation(bone._solverRotation, rotation);
+                Quaternion q = XRMath.FromToRotation(bone.SolverRotation, rotation);
 
                 if (weight < 1f)
                     q = Quaternion.Slerp(Quaternion.Identity, q, weight);
@@ -104,7 +126,7 @@ namespace XREngine.Scene.Components.Animation
                     if (_bones[i] != bone)
                         continue;
                     
-                    VirtualBone.RotateAroundPoint(_bones, i, _bones[i]._solverPosition, q);
+                    VirtualBone.RotateAroundPoint(_bones, i, _bones[i].SolverPosition, q);
                     break;
                 }
             }
@@ -112,11 +134,11 @@ namespace XREngine.Scene.Components.Animation
             public void Visualize(ColorF4 color)
             {
                 for (int i = 0; i < _bones.Length - 1; i++)
-                    Engine.Rendering.Debug.RenderLine(_bones[i]._solverPosition, _bones[i + 1]._solverPosition, color);
+                    Engine.Rendering.Debug.RenderLine(_bones[i].SolverPosition, _bones[i + 1].SolverPosition, color);
             }
 
             public void Visualize()
-                => Visualize(ColorF4.White);
+                => Visualize(ColorF4.Magenta);
         }
     }
 }

@@ -7,7 +7,7 @@ using XREngine.Data.Rendering;
 using XREngine.Rendering;
 using XREngine.Rendering.Models;
 
-namespace XREngine.Scene.Components.VR
+namespace XREngine.Components.VR
 {
     public abstract class VRDeviceModelComponent : ModelComponent
     {

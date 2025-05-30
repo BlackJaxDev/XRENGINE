@@ -1,4 +1,5 @@
 ﻿using System.Numerics;
+using XREngine.Components.Physics;
 using XREngine.Components.Scene.Mesh;
 using XREngine.Data.Colors;
 using XREngine.Data.Core;
@@ -8,7 +9,6 @@ using XREngine.Rendering.Models;
 using XREngine.Rendering.Models.Materials;
 using XREngine.Rendering.Physics.Physx;
 using XREngine.Scene;
-using XREngine.Scene.Components.Physics;
 using XREngine.Scene.Transforms;
 using static XREngine.Scene.Transforms.RigidBodyTransform;
 using Quaternion = System.Numerics.Quaternion;

@@ -1,7 +1,8 @@
 ﻿using XREngine.Core.Attributes;
+using XREngine.Scene;
 using XREngine.Scene.Transforms;
 
-namespace XREngine.Scene.Components.Physics
+namespace XREngine.Components.Physics
 {
     [RequiresTransform(typeof(RigidBodyTransform))]
     public class StaticRigidBodyComponent : PhysicsActorComponent

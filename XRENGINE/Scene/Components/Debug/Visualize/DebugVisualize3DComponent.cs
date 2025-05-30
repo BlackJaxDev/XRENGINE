@@ -4,7 +4,7 @@ using XREngine.Rendering;
 using XREngine.Rendering.Commands;
 using XREngine.Rendering.Info;
 
-namespace XREngine.Data.Components
+namespace XREngine.Components
 {
     public class DebugVisualize3DComponent : XRComponent, IRenderable
     {

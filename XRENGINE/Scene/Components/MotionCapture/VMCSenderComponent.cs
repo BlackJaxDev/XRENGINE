@@ -1,4 +1,4 @@
-﻿namespace XREngine.Scene.Components;
+﻿namespace XREngine.Components;
 
 public class VMCSenderComponent : VMCComponent
 {

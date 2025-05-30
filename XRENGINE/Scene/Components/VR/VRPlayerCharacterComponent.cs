@@ -8,10 +8,11 @@ using XREngine.Data.Components.Scene;
 using XREngine.Data.Rendering;
 using XREngine.Rendering.Commands;
 using XREngine.Rendering.Info;
-using XREngine.Scene.Components.Animation;
+using XREngine.Components.Animation;
 using XREngine.Scene.Transforms;
+using XREngine.Components.Movement;
 
-namespace XREngine.Scene.Components.VR
+namespace XREngine.Components.VR
 {
     public class VRPlayerCharacterComponent : XRComponent, IRenderable
     {

@@ -6,7 +6,7 @@ using XREngine.Rendering.Commands;
 using XREngine.Rendering.Models.Materials;
 using XREngine.Rendering.Physics.Physx;
 using XREngine.Rendering.Pipelines.Commands;
-using XREngine.Scene.Components.Capture.Lights;
+using XREngine.Components.Capture.Lights;
 using static XREngine.Engine.Rendering.State;
 
 namespace XREngine.Rendering;

@@ -1,6 +1,7 @@
 ﻿using XREngine.Animation;
+using XREngine.Data.Components;
 
-namespace XREngine.Data.Components
+namespace XREngine.Components.Animation
 {
     public static class LipTrackingBlendTrees
     {

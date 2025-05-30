@@ -1,8 +1,8 @@
 ﻿using System.Numerics;
 using XREngine.Data;
-using XREngine.Scene.Components.Physics;
+using XREngine.Components.Physics;
 
-namespace XREngine.Components
+namespace XREngine.Components.Movement
 {
     /// <summary>
     /// Base component for all components that move a player scene node.

@@ -1,9 +1,9 @@
 ﻿using Extensions;
 using XREngine.Animation;
 using XREngine.Components;
-using XREngine.Scene.Components.Animation;
+using XREngine.Components.Animation;
 
-namespace XREngine.Scene.Components
+namespace XREngine.Components
 {
     public class AnimStateMachineComponent : XRComponent
     {

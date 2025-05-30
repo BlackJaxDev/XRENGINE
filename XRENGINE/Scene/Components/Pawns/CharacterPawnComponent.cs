@@ -1,5 +1,6 @@
 ﻿using Extensions;
 using System.Numerics;
+using XREngine.Components.Movement;
 using XREngine.Core.Attributes;
 using XREngine.Data.Core;
 using XREngine.Data.Transforms.Rotations;

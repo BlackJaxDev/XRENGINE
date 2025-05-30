@@ -7,7 +7,7 @@ using XREngine.Data;
 using XREngine.Data.Core;
 using XREngine.Scene.Transforms;
 
-namespace XREngine.Scene.Components.Animation
+namespace XREngine.Components.Animation
 {
     /// <summary>
     /// Extends IKSolverTrigonometric to add automatic bend and rotation modes.

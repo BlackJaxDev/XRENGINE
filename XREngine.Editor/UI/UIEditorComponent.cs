@@ -1,4 +1,5 @@
-﻿using XREngine.Components.Scene;
+﻿using XREngine.Components;
+using XREngine.Components.Scene;
 using XREngine.Core.Attributes;
 using XREngine.Editor.UI.Toolbar;
 using XREngine.Rendering.UI;

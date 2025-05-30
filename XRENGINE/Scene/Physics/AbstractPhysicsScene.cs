@@ -3,8 +3,8 @@ using XREngine.Components;
 using XREngine.Data.Core;
 using XREngine.Data.Geometry;
 using XREngine.Rendering.Physics.Physx;
-using XREngine.Scene.Components.Animation;
-using XREngine.Scene.Components.Physics;
+using XREngine.Components.Animation;
+using XREngine.Components.Physics;
 
 namespace XREngine.Scene
 {

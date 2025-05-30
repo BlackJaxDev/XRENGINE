@@ -2,13 +2,12 @@
 using System.Numerics;
 using XREngine.Actors.Types;
 using XREngine.Components;
-using XREngine.Data.Components;
 using XREngine.Editor.UI.Components;
 using XREngine.Editor.UI.Toolbar;
 using XREngine.Rendering;
 using XREngine.Rendering.UI;
 using XREngine.Scene;
-using XREngine.Scene.Components.Scripting;
+using XREngine.Components.Scripting;
 using XREngine.Scene.Transforms;
 
 namespace XREngine.Editor;

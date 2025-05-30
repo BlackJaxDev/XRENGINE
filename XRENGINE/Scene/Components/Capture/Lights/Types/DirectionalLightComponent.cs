@@ -6,7 +6,7 @@ using XREngine.Rendering;
 using XREngine.Rendering.Models.Materials;
 using XREngine.Scene.Transforms;
 
-namespace XREngine.Scene.Components.Capture.Lights.Types
+namespace XREngine.Components.Capture.Lights.Types
 {
     [RequiresTransform(typeof(Transform))]
     public class DirectionalLightComponent : OneViewLightComponent

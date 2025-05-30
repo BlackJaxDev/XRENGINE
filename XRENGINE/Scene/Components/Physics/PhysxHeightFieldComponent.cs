@@ -1,6 +1,6 @@
 ﻿using XREngine.Core.Attributes;
 using XREngine.Rendering.Physics.Physx;
-using XREngine.Scene.Components.Physics;
+using XREngine.Components.Physics;
 
 namespace XREngine.Components;
 

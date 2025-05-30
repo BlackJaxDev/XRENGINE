@@ -2,7 +2,7 @@
 using Valve.VR;
 using XREngine.Components;
 using XREngine.Scene;
-using XREngine.Scene.Components.VR;
+using XREngine.Components.VR;
 
 namespace XREngine.Data.Components.Scene
 {

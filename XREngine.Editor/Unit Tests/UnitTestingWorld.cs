@@ -3,11 +3,10 @@ using XREngine.Animation;
 using XREngine.Components;
 using XREngine.Components.Lights;
 using XREngine.Components.Scene;
-using XREngine.Data.Components;
 using XREngine.Data.Core;
 using XREngine.Rendering;
 using XREngine.Scene;
-using XREngine.Scene.Components.Animation;
+using XREngine.Components.Animation;
 using XREngine.Scene.Transforms;
 using Quaternion = System.Numerics.Quaternion;
 

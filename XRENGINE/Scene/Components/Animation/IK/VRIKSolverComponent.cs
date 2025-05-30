@@ -2,7 +2,7 @@
 using XREngine.Core.Attributes;
 using XREngine.Scene.Transforms;
 
-namespace XREngine.Scene.Components.Animation
+namespace XREngine.Components.Animation
 {
     /// <summary>
     /// Component that uses the VRIK solver to solve IK for a humanoid character controlled by a VR headset, controllers, and optional trackers.
@@ -13,6 +13,11 @@ namespace XREngine.Scene.Components.Animation
         public IKSolverVR Solver { get; } = new();
         public HumanoidComponent Humanoid => GetSiblingComponent<HumanoidComponent>(true)!;
         public Transform? Root => Humanoid?.SceneNode?.GetTransformAs<Transform>(true);
+
+        public override void Visualize()
+        {
+            Solver.Visualize();
+        }
 
         /// <summary>
         /// Fills in arm wristToPalmAxis and palmToThumbAxis.

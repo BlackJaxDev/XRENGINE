@@ -1,7 +1,7 @@
 ﻿using NAudio.Wave;
 using System.Collections;
 
-namespace XREngine.Components.Scene
+namespace XREngine.Components
 {
 
     //[RequireComponents(typeof(AudioSourceComponent))]

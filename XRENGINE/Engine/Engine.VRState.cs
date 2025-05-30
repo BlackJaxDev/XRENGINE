@@ -18,7 +18,7 @@ using XREngine.Rendering;
 using XREngine.Rendering.Models.Materials;
 using XREngine.Rendering.OpenGL;
 using XREngine.Scene;
-using XREngine.Scene.Components.Animation;
+using XREngine.Components.Animation;
 using XREngine.Scene.Transforms;
 using ETextureType = Valve.VR.ETextureType;
 

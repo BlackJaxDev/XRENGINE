@@ -2,7 +2,7 @@
 using XREngine.Rendering;
 using XREngine.Scene.Transforms;
 
-namespace XREngine.Data.Components
+namespace XREngine.Components
 {
     public class StereoCameraComponent : XRComponent
     {

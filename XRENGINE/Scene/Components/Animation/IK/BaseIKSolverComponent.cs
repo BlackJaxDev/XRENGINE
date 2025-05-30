@@ -1,11 +1,21 @@
-﻿using XREngine.Components;
+﻿using XREngine.Data.Rendering;
+using XREngine.Rendering.Commands;
+using XREngine.Rendering.Info;
 using XREngine.Scene.Transforms;
 
-namespace XREngine.Scene.Components.Animation
+namespace XREngine.Components.Animation
 {
-    public abstract class BaseIKSolverComponent : XRComponent
+    public abstract class BaseIKSolverComponent : XRComponent, IRenderable
     {
-        protected virtual void InitializeSolver() { }
+        public BaseIKSolverComponent()
+        {
+            RenderedObjects =
+            [
+				RenderInfo = RenderInfo3D.New(this, new RenderCommandMethod3D(EDefaultRenderPass.OnTopForward, Visualize))
+            ];
+		}
+
+		protected virtual void InitializeSolver() { }
         protected virtual void UpdateSolver() { }
         protected virtual void ResetTransformsToDefault() { }
 
@@ -14,7 +24,12 @@ namespace XREngine.Scene.Components.Animation
         private bool AnimatePhysics
             => _animStateMachine?.StateMachine?.AnimatePhysics ?? false;
 
-        private bool _skipSolverUpdate;
+        public abstract void Visualize();
+
+		public RenderInfo[] RenderedObjects { get; }
+        public RenderInfo3D RenderInfo { get; }
+
+		private bool _skipSolverUpdate;
         private bool _updateFrame;
         private bool _componentInitiated;
         public bool _resetTransformsToDefault = false;

@@ -2,7 +2,7 @@
 using System.Numerics;
 using XREngine.Components;
 using XREngine.Scene;
-using XREngine.Scene.Components.Physics;
+using XREngine.Components.Physics;
 using static MagicPhysX.NativeMethods;
 
 namespace XREngine.Rendering.Physics.Physx

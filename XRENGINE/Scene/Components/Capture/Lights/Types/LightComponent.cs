@@ -6,7 +6,7 @@ using XREngine.Rendering;
 using XREngine.Rendering.Info;
 using XREngine.Scene.Transforms;
 
-namespace XREngine.Scene.Components.Capture.Lights.Types
+namespace XREngine.Components.Capture.Lights.Types
 {
     public abstract class LightComponent : XRComponent, IRenderable
     {

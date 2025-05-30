@@ -2,7 +2,7 @@
 using System.Numerics;
 using XREngine.Data.Core;
 
-namespace XREngine.Scene.Components.Animation
+namespace XREngine.Components.Animation
 {
     /// <summary>
     /// The hinge rotation limit limits the rotation to 1 degree of freedom around Axis. This rotation limit is additive which means the limits can exceed 360 degrees.

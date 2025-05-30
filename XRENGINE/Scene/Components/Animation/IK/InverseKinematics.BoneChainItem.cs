@@ -1,9 +1,10 @@
 ﻿using Extensions;
 using System.Numerics;
 using XREngine.Data.Core;
+using XREngine.Scene;
 using XREngine.Scene.Transforms;
 
-namespace XREngine.Scene.Components.Animation
+namespace XREngine.Components.Animation
 {
     public static partial class InverseKinematics
     {

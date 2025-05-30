@@ -3,7 +3,7 @@ using System.Reflection;
 using System.Runtime.Loader;
 using XREngine.Components;
 
-namespace XREngine.Scene.Components.Scripting
+namespace XREngine.Components.Scripting
 {
     public static class GameCSProjLoader
     {

@@ -7,7 +7,7 @@ using XREngine.Data.Core;
 using XREngine.Rendering.Physics.Physx;
 using XREngine.Scene.Transforms;
 
-namespace XREngine.Components
+namespace XREngine.Components.Movement
 {
     [OneComponentAllowed]
     [RequiresTransform(typeof(RigidBodyTransform))]
@@ -25,6 +25,7 @@ namespace XREngine.Components
         private float _maxJumpHeight = 10.0f;
         private Func<Vector3, Vector3>? _subUpdateTick;
         private ECrouchState _crouchState = ECrouchState.Standing;
+        private EMovementMode _movementMode = EMovementMode.Falling;
         private float _invisibleWallHeight = 0.0f;
         private float _density = 0.5f;
         private float _scaleCoeff = 0.8f;
@@ -43,6 +44,7 @@ namespace XREngine.Components
         private Vector3 _spawnPosition = Vector3.Zero;
         private Vector3 _velocity = Vector3.Zero;
         private Vector3? _gravityOverride = null;
+        private bool _rotateGravityToMatchCharacterUp = false;
 
         private float _jumpForce = 15.0f;
         private float _jumpHoldForce = 5.0f;
@@ -52,29 +54,77 @@ namespace XREngine.Components
         private bool _canJump = true;
         private float _coyoteTime = 0.2f;
         private float _coyoteTimer = 0.0f;
-        private float _jumpBufferTime = 0.2f;
-        private float _jumpBufferTimer = 0.0f;
 
+        /// <summary>
+        /// The current movement mode of the character.
+        /// </summary>
+        public enum EMovementMode
+        {
+            Walking,
+            Falling,
+            Swimming,
+            Flying,
+        }
+
+        /// <summary>
+        /// Determines the capsule's height.
+        /// </summary>
+        public enum ECrouchState
+        {
+            Standing,
+            Crouched,
+            Prone
+        }
+
+        /// <summary>
+        /// This time is the amount of time the character can still jump after leaving the ground, like a cartoon coyote running off a cliff.
+        /// Makes jumping feel more responsive and forgiving.
+        /// </summary>
+        public float CoyoteTime
+        {
+            get => _coyoteTime;
+            set => SetField(ref _coyoteTime, value);
+        }
+
+        /// <summary>
+        /// How much force is applied when jumping.
+        /// </summary>
         public float JumpForce
         {
             get => _jumpForce;
             set => SetField(ref _jumpForce, value);
         }
 
+        /// <summary>
+        /// How much force is applied when sustaining a jump for longer than the initial jump force.
+        /// </summary>
         public float JumpHoldForce
         {
             get => _jumpHoldForce;
             set => SetField(ref _jumpHoldForce, value);
         }
 
+        /// <summary>
+        /// How much acceleration is applied to the character when moving in the air.
+        /// Air movement should be less responsive than ground movement,
+        /// but still allow for some control over the character's movement in the air.
+        /// </summary>
         public float AirMovementAcceleration
         {
             get => _airMovementAcceleration;
             set => SetField(ref _airMovementAcceleration, value);
         }
 
+        /// <summary>
+        /// Half the current height of the character controller, depending on standing, crouch or prone state.
+        /// Also includes the radius and contact offset.
+        /// </summary>
         public float HalfHeight => CurrentHeight * 0.5f + Radius + ContactOffset;
 
+        /// <summary>
+        /// The position of the character's feet.
+        /// This exists because the center of the capsule is off the ground.
+        /// </summary>
         public Vector3 FootPosition
         {
             get => Controller?.FootPosition ?? (Position - UpDirection * HalfHeight);
@@ -84,6 +134,11 @@ namespace XREngine.Components
                     Controller.FootPosition = value;
             }
         }
+
+        /// <summary>
+        /// The position of the character controller.
+        /// This is the center of the capsule.
+        /// </summary>
         public Vector3 Position
         {
             get => Controller?.Position ?? Transform.WorldTranslation;
@@ -93,20 +148,47 @@ namespace XREngine.Components
                     Controller.Position = value;
             }
         }
+
+        /// <summary>
+        /// The direction the character stands up in.
+        /// </summary>
         public Vector3 UpDirection
         { 
             get => _upDirection;
             set => SetField(ref _upDirection, value);
         }
+
+        /// <summary>
+        /// If true, gravity will be rotated to match the character's <see cref="UpDirection"/>.
+        /// This is useful if you want gravity to always be relative to the character.
+        /// </summary>
+        public bool RotateGravityToMatchCharacterUp
+        {
+            get => _rotateGravityToMatchCharacterUp;
+            set => SetField(ref _rotateGravityToMatchCharacterUp, value);
+        }
+
+        /// <summary>
+        /// This allows for overriding the gravity applied to just this character controller.
+        /// </summary>
+        public Vector3? GravityOverride
+        {
+            get => _gravityOverride;
+            set => SetField(ref _gravityOverride, value);
+        }
+
+        /// <summary>
+        /// How high the character can step up onto a ledge.
+        /// </summary>
         public float StepOffset
         {
             get => _stepOffset;
             set => SetField(ref _stepOffset, value);
         }
+
         /// <summary>
-        /// The maximum slope which the character can walk up.
+        /// The maximum slope which the character can walk up, expressed as the cosine of desired limit angle.
         /// In general it is desirable to limit where the character can walk, in particular it is unrealistic for the character to be able to climb arbitary slopes.
-        /// The limit is expressed as the cosine of desired limit angle.
         /// A value of 0 disables this feature.
         /// </summary>
         public float SlopeLimitCosine
@@ -114,21 +196,38 @@ namespace XREngine.Components
             get => _slopeLimitCosine;
             set => SetField(ref _slopeLimitCosine, value);
         }
+
+        /// <summary>
+        /// The maximum slope which the character can walk up, expressed in radians.
+        /// In general it is desirable to limit where the character can walk, in particular it is unrealistic for the character to be able to climb arbitary slopes.
+        /// A value of 0 disables this feature.
+        /// </summary>
         public float SlopeLimitAngleRad
         {
             get => (float)Math.Acos(SlopeLimitCosine);
             set => SlopeLimitCosine = (float)Math.Cos(value);
         }
+
+        /// <summary>
+        /// The maximum slope which the character can walk up, expressed in degrees.
+        /// In general it is desirable to limit where the character can walk, in particular it is unrealistic for the character to be able to climb arbitary slopes.
+        /// A value of 0 disables this feature.
+        /// </summary>
         public float SlopeLimitAngleDeg
         {
             get => XRMath.RadToDeg(SlopeLimitAngleRad);
             set => SlopeLimitAngleRad = XRMath.DegToRad(value);
         }
+
+        /// <summary>
+        /// The speed at which the character moves when walking.
+        /// </summary>
         public float WalkingMovementSpeed
         {
             get => _walkingMovementSpeed;
             set => SetField(ref _walkingMovementSpeed, value);
         }
+
         /// <summary>
         /// Maximum height a jumping character can reach.
         /// This is only used if invisible walls are created(‘invisibleWallHeight’ is non zero).
@@ -147,6 +246,7 @@ namespace XREngine.Components
             get => _maxJumpHeight;
             set => SetField(ref _maxJumpHeight, value);
         }
+
         /// <summary>
         /// The contact offset used by the controller.
         /// Specifies a skin around the object within which contacts will be generated.
@@ -158,17 +258,25 @@ namespace XREngine.Components
             get => _contactOffset;
             set => SetField(ref _contactOffset, value);
         }
-        public enum ECrouchState
-        {
-            Standing,
-            Crouched,
-            Prone
-        }
+
+        /// <summary>
+        /// The crouch state of the character.
+        /// </summary>
         public ECrouchState CrouchState
         {
             get => _crouchState;
             set => SetField(ref _crouchState, value);
         }
+
+        /// <summary>
+        /// The current movement mode of the character.
+        /// </summary>
+        public EMovementMode MovementMode
+        {
+            get => _movementMode;
+            private set => SetField(ref _movementMode, value);
+        }
+
         /// <summary>
         /// Height of invisible walls created around non-walkable triangles.
         /// The library can automatically create invisible walls around non-walkable triangles defined by the ‘slopeLimit’ parameter.
@@ -180,6 +288,7 @@ namespace XREngine.Components
             get => _invisibleWallHeight;
             set => SetField(ref _invisibleWallHeight, value);
         }
+
         /// <summary>
         /// Density of underlying kinematic actor.
         /// The CCT creates a PhysX’s kinematic actor under the hood.This controls its density.
@@ -189,6 +298,7 @@ namespace XREngine.Components
             get => _density;
             set => SetField(ref _density, value);
         }
+
         /// <summary>
         /// Scale coefficient for underlying kinematic actor.
         /// The CCT creates a PhysX’s kinematic actor under the hood.
@@ -211,6 +321,7 @@ namespace XREngine.Components
             get => _scaleCoeff;
             set => SetField(ref _scaleCoeff, value);
         }
+
         /// <summary>
         /// Cached volume growth.
         /// Amount of space around the controller we cache to improve performance.
@@ -221,6 +332,7 @@ namespace XREngine.Components
             get => _volumeGrowth;
             set => SetField(ref _volumeGrowth, value);
         }
+
         /// <summary>
         /// The non-walkable mode controls if a character controller slides or not on a non-walkable part.
         /// This is only used when slopeLimit is non zero.
@@ -230,32 +342,49 @@ namespace XREngine.Components
             get => _slideOnSteepSlopes;
             set => SetField(ref _slideOnSteepSlopes, value);
         }
+
         public PhysxMaterial Material
         {
             get => _material;
             set => SetField(ref _material, value);
         }
+
         public float Radius
         {
             get => _radius;
             set => SetField(ref _radius, value);
         }
+
+        /// <summary>
+        /// How tall the character is when standing.
+        /// </summary>
         public float StandingHeight
         {
             get => _standingHeight;
             set => SetField(ref _standingHeight, value);
         }
+
+        /// <summary>
+        /// How tall the character is when prone.
+        /// </summary>
         public float ProneHeight
         {
             get => _proneHeight;
             set => SetField(ref _proneHeight, value);
         }
+
+        /// <summary>
+        /// How tall the character is when crouched.
+        /// </summary>
         public float CrouchedHeight
         {
             get => _crouchedHeight;
             set => SetField(ref _crouchedHeight, value);
         }
 
+        /// <summary>
+        /// The current height of the character controller, depending on the crouch state.
+        /// </summary>
         public float CurrentHeight => Controller?.Height ?? GetCurrentHeight();
 
         private float GetCurrentHeight()
@@ -272,6 +401,7 @@ namespace XREngine.Components
             get => _constrainedClimbing;
             set => SetField(ref _constrainedClimbing, value);
         }
+
         /// <summary>
         /// The minimum travelled distance to consider.
         /// If travelled distance is smaller, the character doesn’t move.
@@ -282,15 +412,11 @@ namespace XREngine.Components
             get => _minMoveDistance;
             set => SetField(ref _minMoveDistance, value);
         }
+
         public CapsuleController? Controller
         {
             get => _controller;
             private set => SetField(ref _controller, value);
-        }
-        public float JumpSpeed
-        {
-            get => _maxJumpHeight;
-            set => SetField(ref _maxJumpHeight, value);
         }
 
         public PhysxDynamicRigidBody? RigidBodyReference => Controller?.Actor;
@@ -335,6 +461,13 @@ namespace XREngine.Components
             base.OnPropertyChanged(propName, prev, field);
             switch (propName)
             {
+                case nameof(MovementMode):
+                    _subUpdateTick = MovementMode switch
+                    {
+                        EMovementMode.Walking => GroundMovementTick,
+                        _ => AirMovementTick,
+                    };
+                    break;
                 case nameof(StandingHeight):
                     if (CrouchState == ECrouchState.Standing)
                         Controller?.Resize(StandingHeight);
@@ -465,13 +598,13 @@ namespace XREngine.Components
                 return;
 
             Velocity = RigidBodyTransform.RigidBody?.LinearVelocity ?? Vector3.Zero;
-            Acceleration = (Velocity - LastVelocity) / Delta;
+            Acceleration = (Velocity - LastVelocity) / DeltaTime;
 
             RenderCapsule();
 
             var moveDelta = (_subUpdateTick?.Invoke(ConsumeInput()) ?? Vector3.Zero) + ConsumeLiteralInput();
             if (moveDelta.LengthSquared() > MinMoveDistance * MinMoveDistance)
-                Controller.Move(moveDelta, MinMoveDistance, Delta, manager.ControllerFilters, null);
+                Controller.Move(moveDelta, MinMoveDistance, DeltaTime, manager.ControllerFilters, null);
 
             if (Controller.CollidingDown)
             {
@@ -538,12 +671,6 @@ namespace XREngine.Components
             set => SetField(ref _walkingFriction, value.Clamp(0.0f, 1.0f));
         }
 
-        public Vector3? GravityOverride
-        {
-            get => _gravityOverride;
-            set => SetField(ref _gravityOverride, value);
-        }
-
         public void AddForce(Vector3 force)
         {
             //Calculate acceleration from force
@@ -580,14 +707,14 @@ namespace XREngine.Components
             set => SetField(ref _tickInputWithPhysics, value);
         }
 
-        private float Delta => TickInputWithPhysics ? Engine.FixedDelta : Engine.Delta;
+        private float DeltaTime => TickInputWithPhysics ? Engine.FixedDelta : Engine.Delta;
 
         protected virtual Vector3 GroundMovementTick(Vector3 posDelta)
         {
-            if (Controller is null || World?.PhysicsScene is not PhysxScene scene)
+            if (Controller is null)
                 return Vector3.Zero;
 
-            float dt = Delta;
+            float dt = DeltaTime;
 
             Vector3 moveDirection = Vector3.Zero;
             if (posDelta != Vector3.Zero)
@@ -608,11 +735,14 @@ namespace XREngine.Components
             float friction = Controller.CollidingDown ? GroundFriction : 0.0f;
             newVelocity *= (1.0f - friction);
 
-            // Convert to position delta
-            ClampSpeed(ref newVelocity);
-            Vector3 delta = newVelocity * dt;
+            //Handle ground jump
+            HandleJumping(dt, ref newVelocity);
 
-            HandleGroundJumping(dt, ref delta);
+            //Clamp speed to max speed for deterministic movement
+            ClampSpeed(ref newVelocity);
+
+            // Convert to position delta
+            Vector3 delta = newVelocity * dt;
 
             if (float.IsNaN(delta.X) || float.IsNaN(delta.Y) || float.IsNaN(delta.Z))
                 delta = Vector3.Zero;
@@ -620,45 +750,54 @@ namespace XREngine.Components
             return delta;
         }
 
-        private void HandleGroundJumping(float dt, ref Vector3 delta)
+        private void HandleJumping(float dt, ref Vector3 delta)
         {
-            if (Controller!.CollidingDown)
+            if (Controller is null)
+                return;
+
+            if (Controller.CollidingDown)
             {
                 _canJump = true;
                 _coyoteTimer = _coyoteTime;
             }
             else
-                _coyoteTimer -= dt;
-
-            if (_jumpBufferTimer > 0)
-                _jumpBufferTimer -= dt;
-
-            if (_isJumping)
             {
-                bool canInitiateJump = (_canJump && _coyoteTimer > 0.0f) || Controller.CollidingDown;
-                if (canInitiateJump)
-                {
-                    delta.Y = JumpForce * dt;
-                    _jumpElapsed = 0.0f;
-                    _canJump = false;
-                    _subUpdateTick = AirMovementTick;
-                }
-                else if (_jumpElapsed < MaxJumpDuration && !Controller.CollidingUp)
-                {
-                    delta.Y += JumpHoldForce * (1.0f - (_jumpElapsed / MaxJumpDuration)) * dt;
-                    _jumpElapsed += dt;
-                }
+                _coyoteTimer -= dt;
+                _canJump = _coyoteTimer > 0.0f;
+            }
+
+            if (!_isJumping)
+                return;
+
+            if (CanJump)
+            {
+                delta.Y = JumpForce * dt;
+                _jumpElapsed = 0.0f;
+                _canJump = false;
+                _subUpdateTick = AirMovementTick;
+            }
+            else
+            {
+                bool addingJumpForce = _isJumping && _jumpElapsed < MaxJumpDuration && !Controller.CollidingUp;
+                if (!addingJumpForce)
+                    return;
+                
+                float jumpFactor = 1.0f - (_jumpElapsed / MaxJumpDuration);
+                delta.Y += JumpHoldForce * jumpFactor * dt;
+                _jumpElapsed += dt;
             }
         }
+
+        public bool CanJump => (_canJump && _coyoteTimer > 0.0f) || (Controller?.CollidingDown ?? false);
 
         protected virtual unsafe Vector3 AirMovementTick(Vector3 posDelta)
         {
             if (Controller is null || World?.PhysicsScene is not PhysxScene scene)
                 return Vector3.Zero;
 
-            float dt = Delta;
+            float dt = DeltaTime;
 
-            // Air control uses normalized input direction with reduced influence
+            //Air control uses normalized input direction with reduced influence
             Vector3 airControl = posDelta;
             if (posDelta != Vector3.Zero)
             {
@@ -669,22 +808,25 @@ namespace XREngine.Components
                 ).Normalized() * AirMovementAcceleration;
             }
 
-            // Apply air control to current velocity
+            //Apply air control to current velocity
             Vector3 newVelocity = Velocity + (airControl * dt);
 
-            // Handle sustained jump
-            HandleAirJumping(dt, ref newVelocity);
-
+            //Apply gravity to the new velocity
             ApplyGravity(scene, ref newVelocity);
 
-            // Convert to position delta
+            //Handle coyote jump or sustained jump hold
+            HandleJumping(dt, ref newVelocity);
+
+            //Clamp speed to max speed for deterministic movement
             ClampSpeed(ref newVelocity);
+
+            //Convert to position delta
             Vector3 delta = newVelocity * dt;
 
-            // Apply landing friction
+            //Apply landing friction
             if (Controller.CollidingDown)
             {
-                delta *= (1.0f - GroundFriction);
+                delta *= 1.0f - GroundFriction;
                 _subUpdateTick = GroundMovementTick;
             }
 
@@ -694,26 +836,15 @@ namespace XREngine.Components
             return delta;
         }
 
-        private Vector3 HandleAirJumping(float dt, ref Vector3 newVelocity)
-        {
-            if (_isJumping && _jumpElapsed < MaxJumpDuration)
-            {
-                float jumpFactor = 1.0f - (_jumpElapsed / MaxJumpDuration);
-                newVelocity.Y += JumpSpeed * jumpFactor * dt;
-                _jumpElapsed += dt;
-            }
-            return newVelocity;
-        }
-
         private Vector3 VelocityToPositionDelta(Vector3 velocity)
-            => velocity * Delta;
+            => velocity * DeltaTime;
         private Vector3 AccelerationToVelocityDelta(Vector3 acceleration)
-            => acceleration * Delta;
+            => acceleration * DeltaTime;
 
         private Vector3 PositionDeltaToVelocity(Vector3 delta)
-            => delta / Delta;
+            => delta / DeltaTime;
         private Vector3 VelocityDeltaToAcceleration(Vector3 delta)
-            => delta / Delta;
+            => delta / DeltaTime;
 
         private void ClampSpeed(ref Vector3 velocity)
         {
@@ -731,16 +862,15 @@ namespace XREngine.Components
         private void ApplyGravity(PhysxScene scene, ref Vector3 delta)
         {
             Vector3 gravity = GravityOverride ?? scene.Gravity;
-            delta += gravity * Delta;
+            if (RotateGravityToMatchCharacterUp && Controller is not null)
+                gravity = Vector3.Transform(gravity, XRMath.RotationBetweenVectors(Globals.Up, Controller.UpDirection));
+            delta += gravity * DeltaTime;
         }
 
         public void Jump(bool pressed)
         {
             if (pressed)
-            {
-                _jumpBufferTimer = _jumpBufferTime;
                 _isJumping = true;
-            }
             else
             {
                 _isJumping = false;

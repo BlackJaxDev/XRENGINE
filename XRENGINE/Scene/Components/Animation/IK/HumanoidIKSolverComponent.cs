@@ -3,7 +3,7 @@ using XREngine.Animation.IK;
 using XREngine.Core.Attributes;
 using Transform = XREngine.Scene.Transforms.Transform;
 
-namespace XREngine.Scene.Components.Animation
+namespace XREngine.Components.Animation
 {
     [RequireComponents(typeof(HumanoidComponent))]
     public class HumanoidIKSolverComponent : BaseIKSolverComponent
@@ -18,6 +18,18 @@ namespace XREngine.Scene.Components.Animation
         //public IKSolverLookAt lookAt = new IKSolverLookAt();
         //public IKSolverAim aim = new IKSolverAim();
         public TransformConstrainer _hips = new();
+
+        public override void Visualize()
+        {
+            //_hips.Visualize();
+            //_leftFoot.Visualize();
+            //_rightFoot.Visualize();
+            //_leftHand.Visualize();
+            //_rightHand.Visualize();
+            //_spine.Visualize();
+            //lookAt.Visualize();
+            //aim.Visualize();
+        }
 
         private IKSolverLimb[]? _limbs;
         /// <summary>

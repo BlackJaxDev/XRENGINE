@@ -2,7 +2,7 @@
 using System.Numerics;
 using XREngine.Audio;
 
-namespace XREngine.Components.Scene
+namespace XREngine.Components
 {
     public class AudioListenerComponent : XRComponent
     {

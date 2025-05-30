@@ -4,7 +4,7 @@ using System.Numerics;
 using XREngine.Data.Core;
 using XREngine.Scene.Transforms;
 
-namespace XREngine.Scene.Components.Animation
+namespace XREngine.Components.Animation
 {
     [System.Serializable]
     public abstract partial class IKSolver : XRBase

@@ -4,9 +4,9 @@ using XREngine.Data.Colors;
 using XREngine.Data.Rendering;
 using XREngine.Rendering.Info;
 using XREngine.Scene.Transforms;
-using static XREngine.Scene.Components.Animation.InverseKinematics;
+using static XREngine.Components.Animation.InverseKinematics;
 
-namespace XREngine.Scene.Components.Animation
+namespace XREngine.Components.Animation
 {
     public class SingleTargetIKComponent : XRComponent, IRenderable
     {

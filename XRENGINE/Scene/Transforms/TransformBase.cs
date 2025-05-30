@@ -532,6 +532,16 @@ namespace XREngine.Scene.Transforms
                 return _children.IndexInRange(index) ? _children[index] : null;
         }
 
+        public Quaternion ParentWorldRotation
+            => Parent?.WorldRotation ?? Quaternion.Identity;
+        public Vector3 ParentWorldTranslation
+            => Parent?.WorldTranslation ?? Vector3.Zero;
+
+        public Quaternion ParentInverseWorldRotation
+            => Parent?.InverseWorldRotation ?? Quaternion.Identity;
+        public Vector3 ParentInverseWorldTranslation
+            => Vector3.Transform(Vector3.Zero, ParentInverseWorldMatrix);
+
         /// <summary>
         /// Returns the parent world matrix, or identity if no parent.
         /// </summary>
@@ -541,8 +551,8 @@ namespace XREngine.Scene.Transforms
         /// </summary>
         public Matrix4x4 ParentInverseWorldMatrix => Parent?.InverseWorldMatrix ?? Matrix4x4.Identity;
 
-        public Quaternion ParentWorldRotation => Quaternion.CreateFromRotationMatrix(ParentWorldMatrix);
-        public Quaternion ParentInverseWorldRotation => Quaternion.CreateFromRotationMatrix(ParentInverseWorldMatrix);
+        //public Quaternion ParentWorldRotation => Quaternion.CreateFromRotationMatrix(ParentWorldMatrix);
+        //public Quaternion ParentInverseWorldRotation => Quaternion.CreateFromRotationMatrix(ParentInverseWorldMatrix);
 
         /// <summary>
         /// Returns the parent bind matrix, or identity if no parent.

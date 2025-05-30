@@ -1,6 +1,6 @@
 ﻿using System.Runtime.InteropServices;
 
-namespace XREngine.Components.Scene
+namespace XREngine.Components
 {
     /// <summary>
     /// Custom C# implementation of Meta's OVRLipSync for facial animation using audio input.

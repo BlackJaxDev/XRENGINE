@@ -7,8 +7,9 @@ namespace XREngine.Rendering.Commands
         private float _renderDistance = 0.0f;
         /// <summary>
         /// Used to determine what order to render in.
-        /// Opaque objects closer to the camera are drawn first,
-        /// whereas translucent objects farther from the camera are drawn first.
+        /// Opaque objects closer to the camera should be drawn first,
+        /// whereas translucent objects farther from the camera should be drawn first.
+        /// The sorting order depends on how this command's requested render pass is set up in the camera's render pipeline.
         /// </summary>
         public float RenderDistance
         {

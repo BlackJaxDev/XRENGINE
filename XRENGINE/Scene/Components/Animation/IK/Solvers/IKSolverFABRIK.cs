@@ -2,7 +2,7 @@
 using System.Numerics;
 using XREngine.Data.Core;
 
-namespace XREngine.Scene.Components.Animation
+namespace XREngine.Components.Animation
 {
     /// <summary>
     /// Forward and Backward Reaching Inverse Kinematics solver.

@@ -2,7 +2,7 @@
 using Extensions;
 using XREngine.Animation;
 
-namespace XREngine.Scene.Components.Animation
+namespace XREngine.Components.Animation
 {
     public class AnimationCurve : PropAnimFloat
     {

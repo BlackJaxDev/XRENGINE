@@ -4,7 +4,7 @@ using XREngine.Rendering.Commands;
 using XREngine.Rendering.Info;
 using XREngine.Rendering.UI;
 
-namespace XREngine.Data.Components
+namespace XREngine.Components
 {
     public class DebugVisualize2DComponent : UIComponent, IRenderable
     {

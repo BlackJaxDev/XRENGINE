@@ -2,7 +2,7 @@
 using XREngine.Data.Geometry;
 using XREngine.Rendering;
 
-namespace XREngine.Scene.Components.Mesh.Shapes
+namespace XREngine.Components.Mesh.Shapes
 {
     public abstract class ShapeMeshComponent : RenderableComponent
     {

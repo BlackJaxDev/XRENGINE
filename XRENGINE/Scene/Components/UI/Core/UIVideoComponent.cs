@@ -2,7 +2,7 @@
 using System.Collections.Concurrent;
 using System.Runtime.InteropServices;
 using System.Text.Json;
-using XREngine.Components.Scene;
+using XREngine.Components;
 using XREngine.Data.Rendering;
 using XREngine.Data.Vectors;
 

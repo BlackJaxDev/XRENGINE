@@ -5,9 +5,9 @@ using Microsoft.Build.Logging;
 using System.Text;
 using System.Xml.Linq;
 using XREngine;
+using XREngine.Components.Scripting;
 using XREngine.Core;
 using XREngine.Rendering;
-using XREngine.Scene.Components.Scripting;
 
 internal class CodeManager : XRSingleton<CodeManager>
 {

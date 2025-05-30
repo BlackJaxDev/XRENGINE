@@ -1,7 +1,7 @@
 ﻿//using System.Numerics;
 //using XREngine.Core;
 //using XREngine.Data;
-//using XREngine.Scene.Components.Animation;
+//using XREngine.Components.Animation;
 //using XREngine.Scene.Transforms;
 
 //namespace XREngine.Animation

@@ -5,7 +5,7 @@ using XREngine.Data.Rendering;
 using XREngine.Rendering;
 using XREngine.Scene.Transforms;
 
-namespace XREngine.Scene.Components.Capture.Lights.Types
+namespace XREngine.Components.Capture.Lights.Types
 {
     public class PointLightComponent : LightComponent
     {

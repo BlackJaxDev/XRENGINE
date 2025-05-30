@@ -1,4 +1,4 @@
-﻿namespace XREngine.Components
+﻿namespace XREngine.Components.Movement
 {
     public class TransformMovementComponent
     {

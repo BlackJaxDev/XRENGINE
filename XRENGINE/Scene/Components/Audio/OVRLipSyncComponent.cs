@@ -2,10 +2,10 @@
 using System.Runtime.InteropServices;
 using XREngine.Components.Scene.Mesh;
 using XREngine.Data;
-using static XREngine.Components.Scene.OVRLipSync;
+using static XREngine.Components.OVRLipSync;
 using static XREngine.Data.AudioData;
 
-namespace XREngine.Components.Scene
+namespace XREngine.Components
 {
     /// <summary>
     /// This component exposes access to Meta's OVRLipSync for facial animation using audio input.

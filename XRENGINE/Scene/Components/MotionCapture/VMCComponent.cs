@@ -1,7 +1,7 @@
 ﻿using System.Net.Sockets;
 using XREngine.Components;
 
-namespace XREngine.Scene.Components;
+namespace XREngine.Components;
 
 /// <summary>
 /// Base class for all VMC protocol components.

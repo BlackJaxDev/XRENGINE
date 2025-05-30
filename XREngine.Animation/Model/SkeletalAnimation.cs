@@ -1,6 +1,6 @@
 ﻿//using Extensions;
 //using XREngine.Components;
-//using XREngine.Scene.Components.Animation;
+//using XREngine.Components.Animation;
 
 //namespace XREngine.Animation
 //{

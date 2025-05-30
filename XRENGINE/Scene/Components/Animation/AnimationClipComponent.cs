@@ -1,7 +1,7 @@
 ﻿using XREngine.Animation;
 using XREngine.Components;
 
-namespace XREngine.Scene.Components.Animation
+namespace XREngine.Components.Animation
 {
     public class AnimationClipComponent : XRComponent
     {

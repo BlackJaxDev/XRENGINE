@@ -4,7 +4,7 @@ using System.Numerics;
 using XREngine.Data.Rendering;
 using XREngine.Rendering.Commands;
 using XREngine.Rendering.Info;
-using XREngine.Scene.Components.Animation;
+using XREngine.Components.Animation;
 using XREngine.Scene.Transforms;
 
 namespace XREngine.Components;

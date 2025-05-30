@@ -4,21 +4,19 @@ using System.Numerics;
 using XREngine.Animation;
 using XREngine.Animation.IK;
 using XREngine.Components;
-using XREngine.Components.Scene;
+using XREngine.Components.Animation;
 using XREngine.Components.Scene.Mesh;
+using XREngine.Components.VR;
 using XREngine.Data.Components;
+using XREngine.Data.Components.Scene;
 using XREngine.Data.Core;
 using XREngine.Data.Rendering;
-using XREngine.Rendering.Models.Materials;
 using XREngine.Rendering;
+using XREngine.Rendering.Models;
+using XREngine.Rendering.Models.Materials;
 using XREngine.Scene;
-using XREngine.Scene.Components;
-using XREngine.Scene.Components.Animation;
-using XREngine.Scene.Components.VR;
 using XREngine.Scene.Transforms;
 using Quaternion = System.Numerics.Quaternion;
-using XREngine.Rendering.Models;
-using XREngine.Data.Components.Scene;
 
 namespace XREngine.Editor;
 

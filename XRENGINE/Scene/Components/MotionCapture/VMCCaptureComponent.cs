@@ -4,11 +4,11 @@ using System.Numerics;
 using XREngine.Components;
 using XREngine.Data.Colors;
 using XREngine.Rendering;
-using XREngine.Scene.Components.Animation;
-using XREngine.Scene.Components.Capture.Lights.Types;
+using XREngine.Components.Animation;
+using XREngine.Components.Capture.Lights.Types;
 using XREngine.Scene.Transforms;
 
-namespace XREngine.Scene.Components;
+namespace XREngine.Components;
 
 /// <summary>
 /// Receives and processes VMC motion capture information.

@@ -2,15 +2,15 @@
 using Silk.NET.OpenAL;
 using System.Numerics;
 using XREngine.Components;
-using XREngine.Components.Scene;
+using XREngine.Components.Movement;
+using XREngine.Components.Physics;
 using XREngine.Components.Scene.Transforms;
+using XREngine.Components.VR;
 using XREngine.Data.Colors;
 using XREngine.Data.Components.Scene;
 using XREngine.Rendering;
 using XREngine.Rendering.Physics.Physx;
 using XREngine.Scene;
-using XREngine.Scene.Components.Physics;
-using XREngine.Scene.Components.VR;
 using XREngine.Scene.Transforms;
 using static XREngine.Scene.Transforms.RigidBodyTransform;
 
@@ -182,7 +182,7 @@ public static partial class UnitTestingWorld
             movementComp.StandingHeight = 1.89f;
             movementComp.SpawnPosition = new Vector3(0.0f, 10.0f, 0.0f);
             movementComp.Velocity = new Vector3(0.0f, 0.0f, 0.0f);
-            movementComp.JumpSpeed = 1.0f;
+            //movementComp.JumpHoldForce = 1.0f;
             //movementComp.GravityOverride = new Vector3(0.0f, -1.0f, 0.0f);
             movementComp.InputLerpSpeed = 0.9f;
         }

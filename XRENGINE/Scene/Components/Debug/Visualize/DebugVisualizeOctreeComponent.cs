@@ -1,12 +1,9 @@
-﻿using Assimp;
-using XREngine.Data.Colors;
-using XREngine.Data.Trees;
+﻿using XREngine.Data.Trees;
 using XREngine.Rendering;
 using XREngine.Rendering.Commands;
 using XREngine.Rendering.Info;
-using XREngine.Scene;
 
-namespace XREngine.Data.Components
+namespace XREngine.Components
 {
     /// <summary>
     /// Renders a debug visualization of the scene's octree.

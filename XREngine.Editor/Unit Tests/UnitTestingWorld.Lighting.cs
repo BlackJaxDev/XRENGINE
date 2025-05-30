@@ -1,8 +1,8 @@
 ﻿using System.Numerics;
 using XREngine.Data.Core;
 using XREngine.Scene;
-using XREngine.Scene.Components.Capture.Lights;
-using XREngine.Scene.Components.Capture.Lights.Types;
+using XREngine.Components.Capture.Lights;
+using XREngine.Components.Capture.Lights.Types;
 using XREngine.Scene.Transforms;
 using Quaternion = System.Numerics.Quaternion;
 

@@ -1,19 +1,18 @@
 ﻿using Extensions;
-using System.ComponentModel.DataAnnotations;
 using System.Numerics;
 using XREngine.Animation;
-using XREngine.Components;
 using XREngine.Data;
+using XREngine.Data.Colors;
 using XREngine.Data.Core;
 using XREngine.Rendering.Physics.Physx;
 using Transform = XREngine.Scene.Transforms.Transform;
 
-namespace XREngine.Scene.Components.Animation
+namespace XREngine.Components.Animation
 {
     /// <summary>
     /// Hybrid IK solver designed for mapping a character to a VR headset and 2 hand controllers 
     /// </summary>
-    [System.Serializable]
+    [Serializable]
     public partial class IKSolverVR : IKSolver
     {
         public AnimStateMachineComponent? Animator { get; private set; }
@@ -78,23 +77,23 @@ namespace XREngine.Scene.Components.Animation
                 return;
             }
 
-            if (_leftArm._wristToPalmAxis == Vector3.Zero || !onlyIfZero)
-                _leftArm._wristToPalmAxis = VRIKCalibrator.GuessWristToPalmAxis(
+            if (_leftArm.WristToPalmAxis == Vector3.Zero || !onlyIfZero)
+                _leftArm.WristToPalmAxis = VRIKCalibrator.GuessWristToPalmAxis(
                     humanoid.Left.Wrist.Node?.GetTransformAs<Transform>(true), 
                     humanoid.Left.Elbow.Node?.GetTransformAs<Transform>(true));
             
-            if (_leftArm._palmToThumbAxis == Vector3.Zero || !onlyIfZero)
-                _leftArm._palmToThumbAxis = VRIKCalibrator.GuessPalmToThumbAxis(
+            if (_leftArm.PalmToThumbAxis == Vector3.Zero || !onlyIfZero)
+                _leftArm.PalmToThumbAxis = VRIKCalibrator.GuessPalmToThumbAxis(
                     humanoid.Left.Wrist.Node?.GetTransformAs<Transform>(true),
                     humanoid.Left.Elbow.Node?.GetTransformAs<Transform>(true));
             
-            if (_rightArm._wristToPalmAxis == Vector3.Zero || !onlyIfZero)
-                _rightArm._wristToPalmAxis = VRIKCalibrator.GuessWristToPalmAxis(
+            if (_rightArm.WristToPalmAxis == Vector3.Zero || !onlyIfZero)
+                _rightArm.WristToPalmAxis = VRIKCalibrator.GuessWristToPalmAxis(
                     humanoid.Right.Wrist.Node?.GetTransformAs<Transform>(true),
                     humanoid.Right.Elbow.Node?.GetTransformAs<Transform>(true));
             
-            if (_rightArm._palmToThumbAxis == Vector3.Zero || !onlyIfZero)
-                _rightArm._palmToThumbAxis = VRIKCalibrator.GuessPalmToThumbAxis(
+            if (_rightArm.PalmToThumbAxis == Vector3.Zero || !onlyIfZero)
+                _rightArm.PalmToThumbAxis = VRIKCalibrator.GuessPalmToThumbAxis(
                     humanoid.Right.Wrist.Node?.GetTransformAs<Transform>(true),
                     humanoid.Right.Elbow.Node?.GetTransformAs<Transform>(true));
         }
@@ -124,15 +123,33 @@ namespace XREngine.Scene.Components.Animation
         {
             switch (positionOffset)
             {
-                case EPositionOffset.Pelvis: _spine._pelvisPositionOffset += value; return;
-                case EPositionOffset.Chest: _spine._chestPositionOffset += value; return;
-                case EPositionOffset.Head: _spine._headPositionOffset += value; return;
-                case EPositionOffset.LeftHand: _leftArm._handPositionOffset += value; return;
-                case EPositionOffset.RightHand: _rightArm._handPositionOffset += value; return;
-                case EPositionOffset.LeftFoot: _leftLeg._footPositionOffset += value; return;
-                case EPositionOffset.RightFoot: _rightLeg._footPositionOffset += value; return;
-                case EPositionOffset.LeftHeel: _leftLeg._heelPositionOffset += value; return;
-                case EPositionOffset.RightHeel: _rightLeg._heelPositionOffset += value; return;
+                case EPositionOffset.Pelvis:
+                    _spine.HipsPositionOffset += value;
+                    return;
+                case EPositionOffset.Chest:
+                    _spine.ChestPositionOffset += value;
+                    return;
+                case EPositionOffset.Head:
+                    _spine.HeadPositionOffset += value;
+                    return;
+                case EPositionOffset.LeftHand:
+                    _leftArm.HandPositionOffset += value;
+                    return;
+                case EPositionOffset.RightHand:
+                    _rightArm.HandPositionOffset += value;
+                    return;
+                case EPositionOffset.LeftFoot:
+                    _leftLeg.FootPositionOffset += value;
+                    return;
+                case EPositionOffset.RightFoot:
+                    _rightLeg.FootPositionOffset += value;
+                    return;
+                case EPositionOffset.LeftHeel:
+                    _leftLeg.HeelPositionOffset += value;
+                    return;
+                case EPositionOffset.RightHeel:
+                    _rightLeg.HeelPositionOffset += value;
+                    return;
             }
         }
 
@@ -150,28 +167,28 @@ namespace XREngine.Scene.Components.Animation
             switch (rotationOffset)
             {
                 case ERotationOffset.Pelvis:
-                    _spine._pelvisRotationOffset = value * _spine._pelvisRotationOffset;
+                    _spine.HipsRotationOffset = value * _spine.HipsRotationOffset;
                     return;
                 case ERotationOffset.Chest:
-                    _spine._chestRotationOffset = value * _spine._chestRotationOffset;
+                    _spine.ChestRotationOffset = value * _spine.ChestRotationOffset;
                     return;
                 case ERotationOffset.Head:
-                    _spine._headRotationOffset = value * _spine._headRotationOffset;
+                    _spine.HeadRotationOffset = value * _spine.HeadRotationOffset;
                     return;
             }
         }
 
-        /// <summary>
-        /// Call this in each Update if your avatar is standing on a moving platform
-        /// </summary>
-        public void AddPlatformMotion(Vector3 deltaPosition, Quaternion deltaRotation, Vector3 platformPivot)
-        {
-            _locomotion.AddDeltaPosition(deltaPosition);
-            _raycastOriginPelvis += deltaPosition;
+        ///// <summary>
+        ///// Call this in each Update if your avatar is standing on a moving platform
+        ///// </summary>
+        //public void AddPlatformMotion(Vector3 deltaPosition, Quaternion deltaRotation, Vector3 platformPivot)
+        //{
+        //    _locomotion.AddDeltaPosition(deltaPosition);
+        //    _raycastOriginPelvis += deltaPosition;
 
-            _locomotion.AddDeltaRotation(deltaRotation, platformPivot);
-            _spine._faceDirection = deltaRotation.Rotate(_spine._faceDirection);
-        }
+        //    _locomotion.AddDeltaRotation(deltaRotation, platformPivot);
+        //    _spine._faceDirection = deltaRotation.Rotate(_spine._faceDirection);
+        //}
 
         /// <summary>
         /// Resets all tweens, blendings and lerps. Call this after you have teleported the character.
@@ -184,13 +201,13 @@ namespace XREngine.Scene.Components.Animation
             UpdateSolverTransforms();
             Read(_readPositions, _readRotations, _hasChest, _hasNeck, _hasShoulders, _hasToes, _hasLegs, _hasArms);
 
-            _spine._faceDirection = RootBone._readRotation.Rotate(Globals.Forward);
+            _spine.FaceDirection = RootBone?.ReadRotation.Rotate(Globals.Forward) ?? Globals.Forward;
 
-            if (_hasLegs)
-            {
-                _locomotion.Reset(_readPositions, _readRotations);
-                _raycastOriginPelvis = _spine.Hips._readPosition;
-            }
+            //if (_hasLegs)
+            //{
+            //    _locomotion.Reset(_readPositions, _readRotations);
+            //    _raycastOriginPelvis = _spine.Hips.ReadPosition;
+            //}
         }
 
         public override void StoreDefaultLocalState()
@@ -211,7 +228,7 @@ namespace XREngine.Scene.Components.Animation
 
         public override void ResetTransformToDefault()
         {
-            if (!Initialized || _lod >= 2)
+            if (!Initialized || _quality >= EQuality.Culled)
                 return;
 
             for (int i = 1; i < _solverTransforms.Length; i++)
@@ -242,7 +259,7 @@ namespace XREngine.Scene.Components.Animation
                 return false;
             }
 
-            if (_leftArm._wristToPalmAxis == Vector3.Zero)
+            if (_leftArm.WristToPalmAxis == Vector3.Zero)
             {
                 message = "Left arm 'Wrist To Palm Axis' needs to be set in VRIK. " +
                     "Please select the hand bone, set it to the axis that points from the wrist towards the palm. " +
@@ -250,7 +267,7 @@ namespace XREngine.Scene.Components.Animation
                 return false;
             }
 
-            if (_rightArm._wristToPalmAxis == Vector3.Zero)
+            if (_rightArm.WristToPalmAxis == Vector3.Zero)
             {
                 message = "Right arm 'Wrist To Palm Axis' needs to be set in VRIK. " +
                     "Please select the hand bone, set it to the axis that points from the wrist towards the palm. " +
@@ -258,7 +275,7 @@ namespace XREngine.Scene.Components.Animation
                 return false;
             }
 
-            if (_leftArm._palmToThumbAxis == Vector3.Zero)
+            if (_leftArm.PalmToThumbAxis == Vector3.Zero)
             {
                 message = "Left arm 'Palm To Thumb Axis' needs to be set in VRIK. " +
                     "Please select the hand bone, set it to the axis that points from the palm towards the thumb. " +
@@ -266,7 +283,7 @@ namespace XREngine.Scene.Components.Animation
                 return false;
             }
 
-            if (_rightArm._palmToThumbAxis == Vector3.Zero)
+            if (_rightArm.PalmToThumbAxis == Vector3.Zero)
             {
                 message = "Right arm 'Palm To Thumb Axis' needs to be set in VRIK. " +
                     "Please select the hand bone, set it to the axis that points from the palm towards the thumb. " +
@@ -295,7 +312,7 @@ namespace XREngine.Scene.Components.Animation
         private Vector3 _rootVelocity;
         private Vector3 _bodyOffset;
         private int _supportLegIndex;
-        private int _lastLOD;
+        private EQuality _lastQuality;
 
         private static Vector3 GetNormal(Transform[] transforms)
         {
@@ -335,39 +352,47 @@ namespace XREngine.Scene.Components.Animation
             for (int i = 0; i < _solverTransforms.Length; i++)
             {
                 var tfm = _solverTransforms[i];
-                if (tfm != null)
-                {
-                    tfm.RecalculateMatrices(true);
-                    _readPositions[i] = tfm.WorldTranslation;
-                    _readRotations[i] = tfm.WorldRotation;
-                }
+                if (tfm is null)
+                    continue;
+                
+                tfm.RecalculateMatrices(true);
+                _readPositions[i] = tfm.WorldTranslation;
+                _readRotations[i] = tfm.WorldRotation;
             }
         }
 
         protected override void OnInitialize()
         {
             UpdateSolverTransforms();
-            Read(_readPositions, _readRotations, _hasChest, _hasNeck, _hasShoulders, _hasToes, _hasLegs, _hasArms);
+            Read(
+                _readPositions,
+                _readRotations,
+                _hasChest,
+                _hasNeck,
+                _hasShoulders,
+                _hasToes,
+                _hasLegs,
+                _hasArms);
         }
 
         protected override void OnUpdate()
         {
-            if (IKPositionWeight > 0f)
+            if (IKPositionWeight > 0.0f)
             {
-                if (_lod < 2)
+                //if (_quality < EQuality.Culled)
                     UpdateNormal();
-                else
-                    UpdateCulled();
+                //else
+                //    UpdateCulled();
             }
-            _lastLOD = _lod;
+            _lastQuality = _quality;
         }
 
         private void UpdateNormal()
         {
             bool read = false;
 
-            if (_lastLOD != _lod)
-                LODChanged(ref read);
+            if (_lastQuality != _quality)
+                QualityChanged(ref read);
             
             if (!read)
             {
@@ -376,51 +401,63 @@ namespace XREngine.Scene.Components.Animation
             }
 
             Solve();
-            Apply();
-
             ApplyTransforms();
         }
 
-        private void LODChanged(ref bool read)
+		//private void UpdateCulled()
+  //      {
+  //          if (_locomotion._weight <= 0.0f || _root is null || _spine._headTarget is null)
+		//		return;
+
+		//	Vector3 forward = (_spine._headTarget.WorldRotation * _spine.AnchorRelativeToHead).Rotate(Globals.Forward);
+		//	forward.Y = 0f;
+
+		//	Vector3 worldPos = new(_spine._headTarget.WorldTranslation.X, _root.WorldTranslation.Y, _spine._headTarget.WorldTranslation.Z);
+  //          Quaternion worldRot = XRMath.LookRotation(forward, _root.WorldUp);
+
+		//	_root.SetWorldTranslation(worldPos);
+  //          _root.SetWorldRotation(worldRot);
+  //      }
+
+        private void QualityChanged(ref bool read)
         {
-            if (_lastLOD != 2)
+			//Only need to read the transforms if the quality has changed off of culled
+			if (_lastQuality != EQuality.Culled)
                 return;
 
-            _spine._faceDirection = RootBone!._readRotation.Rotate(Globals.Forward);
+            _spine.FaceDirection = RootBone?.ReadRotation.Rotate(Globals.Forward) ?? Globals.Forward;
 
             if (!_hasLegs)
                 return;
             
-            // Teleport to the current position/rotation if resuming from culled LOD with locomotion enabled
-            if (_locomotion._weight > 0f)
-            {
-                if (_root is not null)
-                {
-                    _root.SetWorldTranslation(new Vector3(_spine._headTarget!.WorldTranslation.X, _root.WorldTranslation.Y, _spine._headTarget.WorldTranslation.Z));
-                    Vector3 forward = _spine._faceDirection;
-                    forward.Y = 0f;
-                    _root.SetWorldRotation(XRMath.LookRotation(forward, _root.WorldUp));
-                }
+            //Teleport to the current position/rotation if resuming from culled LOD with locomotion enabled
+            //if (_locomotion._weight > 0.0f)
+            //{
+            //    if (_root is not null)
+            //    {
+            //        _root.SetWorldTranslation(new Vector3(_spine._headTarget!.WorldTranslation.X, _root.WorldTranslation.Y, _spine._headTarget.WorldTranslation.Z));
+            //        Vector3 forward = _spine._faceDirection;
+            //        forward.Y = 0f;
+            //        _root.SetWorldRotation(XRMath.LookRotation(forward, _root.WorldUp));
+            //    }
 
-                UpdateSolverTransforms();
-                Read(_readPositions, _readRotations, _hasChest, _hasNeck, _hasShoulders, _hasToes, _hasLegs, _hasArms);
-                read = true;
+            //    UpdateSolverTransforms();
+            //    Read(
+            //        _readPositions,
+            //        _readRotations,
+            //        _hasChest,
+            //        _hasNeck,
+            //        _hasShoulders,
+            //        _hasToes,
+            //        _hasLegs,
+            //        _hasArms);
 
-                _locomotion.Reset(_readPositions, _readRotations);
-            }
+            //    read = true;
 
-            _raycastOriginPelvis = _spine.Hips._readPosition;
-        }
+            //    _locomotion.Reset(_readPositions, _readRotations);
+            //}
 
-        private void UpdateCulled()
-        {
-            if (_locomotion._weight > 0.0f)
-            {
-                _root.SetWorldTranslation(new Vector3(_spine._headTarget.WorldTranslation.X, _root.WorldTranslation.Y, _spine._headTarget.WorldTranslation.Z));
-                Vector3 forward = (_spine._headTarget.WorldRotation * _spine.AnchorRelativeToHead).Rotate(Globals.Forward);
-                forward.Y = 0f;
-                _root.SetWorldRotation(XRMath.LookRotation(forward, _root.WorldUp));
-            }
+            _raycastOriginPelvis = _spine.Hips.ReadPosition;
         }
 
         private void ApplyTransforms()
@@ -437,9 +474,9 @@ namespace XREngine.Scene.Components.Animation
                 var prevWorldRot = tfm.WorldRotation;
                 var currWorldRot = GetRotation(i);
 
-                GetTransformDetails(i, out bool isRootOrPelvis, out bool isArmStretchable, out bool isLegStretchable);
+                GetTransformDetails(i, out bool isRootOrHips, out bool isArmStretchable, out bool isLegStretchable);
 
-                if (isRootOrPelvis)
+                if (isRootOrHips)
                     tfm.SetWorldTranslation(Interp.Lerp(prevWorldPos, currWorldPos, IKPositionWeight));
                 else if (isArmStretchable || isLegStretchable)
                 {
@@ -457,13 +494,13 @@ namespace XREngine.Scene.Components.Animation
             }
         }
 
-        private void GetTransformDetails(int i, out bool isRootOrPelvis, out bool isArmStretchable, out bool isLegStretchable)
+        private void GetTransformDetails(int i, out bool isRootOrHips, out bool isArmStretchable, out bool isLegStretchable)
         {
-            isRootOrPelvis = i < 2;
+            isRootOrHips = i < 2;
             isArmStretchable = i == 8 || i == 9 || i == 12 || i == 13;
             isLegStretchable = (i >= 15 && i <= 17) || (i >= 19 && i <= 21);
 
-            if (_lod <= 0)
+            if (_quality <= 0)
                 return;
             
             isArmStretchable = false;
@@ -512,11 +549,11 @@ namespace XREngine.Scene.Components.Animation
                 if (hasArms)
                     _arms = [_leftArm, _rightArm];
 
-                if (hasLegs)
-                    _locomotion.Initialize(Animator, positions, rotations, hasToes, _scale);
+                //if (hasLegs)
+                //    _locomotion.Initialize(Animator, positions, rotations, hasToes, _scale);
 
-                _raycastOriginPelvis = _spine.Hips._readPosition;
-                _spine._faceDirection = _readRotations[0].Rotate(Globals.Forward);
+                _raycastOriginPelvis = _spine.Hips.ReadPosition;
+                _spine.FaceDirection = _readRotations[0].Rotate(Globals.Forward);
             }
         }
 
@@ -528,18 +565,34 @@ namespace XREngine.Scene.Components.Animation
                 return;
             }
 
-            if (_hasLegs && _lastLocomotionWeight <= 0f && _locomotion._weight > 0f)
-                _locomotion.Reset(_readPositions, _readRotations);
+            //if (_hasLegs && _lastLocomotionWeight <= 0f && _locomotion._weight > 0f)
+            //    _locomotion.Reset(_readPositions, _readRotations);
 
             float dt = Engine.Delta;
 
-            UpdateLOD();
             PreSolve();
             ApplyOffsets();
             SubSolve(dt);
             ResetOffsets(dt);
             Apply();
             DetermineSupportLeg();
+        }
+
+        public void Visualize()
+            => Visualize(ColorF4.Magenta);
+        public void Visualize(ColorF4 color)
+        {
+            if (_hasLegs)
+            {
+                _leftLeg.Visualize(color);
+                _rightLeg.Visualize(color);
+            }
+            if (_hasArms)
+            {
+                _leftArm.Visualize(color);
+                _rightArm.Visualize(color);
+            }
+            _spine.Visualize(color);
         }
 
         private void DetermineSupportLeg()
@@ -551,7 +604,7 @@ namespace XREngine.Scene.Components.Animation
             float shortestMag = float.PositiveInfinity;
             for (int i = 0; i < _legs.Length; i++)
             {
-                float mag = (_legs[i].LastBone._solverPosition - _legs[i]._bones[0]._solverPosition).LengthSquared();
+                float mag = (_legs[i].LastBone.SolverPosition - _legs[i]._bones[0].SolverPosition).LengthSquared();
                 if (mag >= shortestMag)
                     continue;
 
@@ -564,21 +617,21 @@ namespace XREngine.Scene.Components.Animation
         {
             //_spine.Solve(Animator, RootBone!, _legs, _arms, _scale);
 
-            if (_hasLegs && _spine._pelvisPositionWeight > 0f && _plantFeet)
+            if (_hasLegs && _spine.HipsPositionWeight > 0f && _plantFeet)
                 Debug.LogWarning("If VRIK 'Pelvis Position Weight' is > 0, 'Plant Feet' should be disabled to improve performance and stability.");
 
             //if (_hasLegs)
             //    AnimateLocomotion(dt);
 
-            _lastLocomotionWeight = _locomotion._weight;
+            //_lastLocomotionWeight = _locomotion._weight;
 
-            if (_hasLegs)
-                SolveLegs();
+            //if (_hasLegs)
+            //    SolveLegs();
             //else
             //    _spine.InverseTranslateToHead(_legs, false, false, _bodyOffset, 1.0f);
 
-            if (_hasArms)
-                SolveArms();
+            //if (_hasArms)
+            //    SolveArms();
 
             return dt;
         }
@@ -588,25 +641,25 @@ namespace XREngine.Scene.Components.Animation
             _spine.ResetOffsets();
 
             if (_hasLegs)
-                foreach (Leg leg in _legs)
+                foreach (LegSolver leg in _legs)
                     leg.ResetOffsets();
 
             if (_hasArms)
-                foreach (Arm arm in _arms)
+                foreach (ArmSolver arm in _arms)
                     arm.ResetOffsets();
 
             if (_hasLegs)
             {
-                _spine._pelvisPositionOffset += GetPelvisOffset(dt);
-                _spine._chestPositionOffset += _spine._pelvisPositionOffset;
-                _spine._headPositionOffset += _spine._pelvisPositionOffset;
+                _spine.HipsPositionOffset += GetPelvisOffset(dt);
+                _spine.ChestPositionOffset += _spine.HipsPositionOffset;
+                _spine.HeadPositionOffset += _spine.HipsPositionOffset;
             }
         }
 
         private void ApplyOffsets()
         {
             if (_hasArms)
-                foreach (Arm arm in _arms)
+                foreach (ArmSolver arm in _arms)
                     arm.ApplyOffsets(_scale);
 
             _spine.ApplyOffsets(_scale);
@@ -617,96 +670,83 @@ namespace XREngine.Scene.Components.Animation
             _spine.PreSolve(_scale);
 
             if (_hasArms)
-                foreach (Arm arm in _arms)
+                foreach (ArmSolver arm in _arms)
                     arm.PreSolve(_scale);
             if (_hasLegs)
-                foreach (Leg leg in _legs)
+                foreach (LegSolver leg in _legs)
                     leg.PreSolve(_scale);
         }
 
-        private void UpdateLOD()
-        {
-            _spine.LOD = _lod;
+        //private void AnimateLocomotion(float deltaTime)
+        //{
+        //    if (_locomotion._weight > 0f)
+        //    {
+        //        switch (_locomotion._mode)
+        //        {
+        //            case Locomotion.Mode.Procedural:
+        //                //Vector3 leftFootPosition = Vector3.Zero;
+        //                //Vector3 rightFootPosition = Vector3.Zero;
+        //                //Quaternion leftFootRotation = Quaternion.Identity;
+        //                //Quaternion rightFootRotation = Quaternion.Identity;
+        //                //float leftFootOffset = 0f;
+        //                //float rightFootOffset = 0f;
+        //                //float leftHeelOffset = 0f;
+        //                //float rightHeelOffset = 0f;
 
-            if (_hasArms)
-                foreach (Arm arm in _arms)
-                    arm.LOD = _lod;
+        //                //_locomotion.Solve_Procedural(RootBone, _spine, _leftLeg, _rightLeg, _leftArm, _rightArm, _supportLegIndex, out leftFootPosition, out rightFootPosition, out leftFootRotation, out rightFootRotation, out leftFootOffset, out rightFootOffset, out leftHeelOffset, out rightHeelOffset, _scale, deltaTime);
 
-            if (_hasLegs)
-                foreach (Leg leg in _legs)
-                    leg.LOD = _lod;
-        }
+        //                //leftFootPosition += _root.WorldUp * leftFootOffset;
+        //                //rightFootPosition += _root.WorldUp * rightFootOffset;
 
-        private void AnimateLocomotion(float deltaTime)
-        {
-            if (_locomotion._weight > 0f)
-            {
-                switch (_locomotion._mode)
-                {
-                    case Locomotion.Mode.Procedural:
-                        //Vector3 leftFootPosition = Vector3.Zero;
-                        //Vector3 rightFootPosition = Vector3.Zero;
-                        //Quaternion leftFootRotation = Quaternion.Identity;
-                        //Quaternion rightFootRotation = Quaternion.Identity;
-                        //float leftFootOffset = 0f;
-                        //float rightFootOffset = 0f;
-                        //float leftHeelOffset = 0f;
-                        //float rightHeelOffset = 0f;
+        //                //_leftLeg._footPositionOffset += (leftFootPosition - _leftLeg.LastBone._solverPosition) * IKPositionWeight * (1f - _leftLeg._positionWeight) * _locomotion._weight;
+        //                //_rightLeg._footPositionOffset += (rightFootPosition - _rightLeg.LastBone._solverPosition) * IKPositionWeight * (1f - _rightLeg._positionWeight) * _locomotion._weight;
 
-                        //_locomotion.Solve_Procedural(RootBone, _spine, _leftLeg, _rightLeg, _leftArm, _rightArm, _supportLegIndex, out leftFootPosition, out rightFootPosition, out leftFootRotation, out rightFootRotation, out leftFootOffset, out rightFootOffset, out leftHeelOffset, out rightHeelOffset, _scale, deltaTime);
+        //                //_leftLeg._heelPositionOffset += _root.WorldUp * leftHeelOffset * _locomotion._weight;
+        //                //_rightLeg._heelPositionOffset += _root.WorldUp * rightHeelOffset * _locomotion._weight;
 
-                        //leftFootPosition += _root.WorldUp * leftFootOffset;
-                        //rightFootPosition += _root.WorldUp * rightFootOffset;
+        //                //Quaternion rotationOffsetLeft = XRMath.FromToRotation(_leftLeg.LastBone._solverRotation, leftFootRotation);
+        //                //Quaternion rotationOffsetRight = XRMath.FromToRotation(_rightLeg.LastBone._solverRotation, rightFootRotation);
 
-                        //_leftLeg._footPositionOffset += (leftFootPosition - _leftLeg.LastBone._solverPosition) * IKPositionWeight * (1f - _leftLeg._positionWeight) * _locomotion._weight;
-                        //_rightLeg._footPositionOffset += (rightFootPosition - _rightLeg.LastBone._solverPosition) * IKPositionWeight * (1f - _rightLeg._positionWeight) * _locomotion._weight;
+        //                //rotationOffsetLeft = Quaternion.Lerp(Quaternion.Identity, rotationOffsetLeft, IKPositionWeight * (1f - _leftLeg._rotationWeight) * _locomotion._weight);
+        //                //rotationOffsetRight = Quaternion.Lerp(Quaternion.Identity, rotationOffsetRight, IKPositionWeight * (1f - _rightLeg._rotationWeight) * _locomotion._weight);
 
-                        //_leftLeg._heelPositionOffset += _root.WorldUp * leftHeelOffset * _locomotion._weight;
-                        //_rightLeg._heelPositionOffset += _root.WorldUp * rightHeelOffset * _locomotion._weight;
+        //                //_leftLeg._footRotationOffset = rotationOffsetLeft * _leftLeg._footRotationOffset;
+        //                //_rightLeg._footRotationOffset = rotationOffsetRight * _rightLeg._footRotationOffset;
 
-                        //Quaternion rotationOffsetLeft = XRMath.FromToRotation(_leftLeg.LastBone._solverRotation, leftFootRotation);
-                        //Quaternion rotationOffsetRight = XRMath.FromToRotation(_rightLeg.LastBone._solverRotation, rightFootRotation);
+        //                //Vector3 footPositionC = Vector3.Lerp(_leftLeg.Position + _leftLeg._footPositionOffset, _rightLeg.Position + _rightLeg._footPositionOffset, 0.5f);
+        //                //footPositionC = XRMath.ProjectPointToPlane(footPositionC, RootBone._solverPosition, _root.WorldUp);
 
-                        //rotationOffsetLeft = Quaternion.Lerp(Quaternion.Identity, rotationOffsetLeft, IKPositionWeight * (1f - _leftLeg._rotationWeight) * _locomotion._weight);
-                        //rotationOffsetRight = Quaternion.Lerp(Quaternion.Identity, rotationOffsetRight, IKPositionWeight * (1f - _rightLeg._rotationWeight) * _locomotion._weight);
+        //                //Vector3 p = RootBone._solverPosition + _rootVelocity * deltaTime * 2f * _locomotion._weight;
+        //                //p = Vector3.Lerp(p, footPositionC, deltaTime * _locomotion._rootSpeed * _locomotion._weight);
+        //                //RootBone._solverPosition = p;
 
-                        //_leftLeg._footRotationOffset = rotationOffsetLeft * _leftLeg._footRotationOffset;
-                        //_rightLeg._footRotationOffset = rotationOffsetRight * _rightLeg._footRotationOffset;
+        //                //_rootVelocity += (footPositionC - RootBone._solverPosition) * deltaTime * 10f;
+        //                //Vector3 rootVelocityV = XRMath.ExtractVertical(_rootVelocity, _root.WorldUp, 1f);
+        //                //_rootVelocity -= rootVelocityV;
 
-                        //Vector3 footPositionC = Vector3.Lerp(_leftLeg.Position + _leftLeg._footPositionOffset, _rightLeg.Position + _rightLeg._footPositionOffset, 0.5f);
-                        //footPositionC = XRMath.ProjectPointToPlane(footPositionC, RootBone._solverPosition, _root.WorldUp);
+        //                //float bodyYOffset = MathF.Min(leftFootOffset + rightFootOffset, _locomotion._maxBodyYOffset * _scale);
+        //                //_bodyOffset = Vector3.Lerp(_bodyOffset, _root.up * bodyYOffset, deltaTime * 3f);
+        //                //_bodyOffset = Vector3.Lerp(Vector3.Zero, _bodyOffset, _locomotion._weight);
 
-                        //Vector3 p = RootBone._solverPosition + _rootVelocity * deltaTime * 2f * _locomotion._weight;
-                        //p = Vector3.Lerp(p, footPositionC, deltaTime * _locomotion._rootSpeed * _locomotion._weight);
-                        //RootBone._solverPosition = p;
-
-                        //_rootVelocity += (footPositionC - RootBone._solverPosition) * deltaTime * 10f;
-                        //Vector3 rootVelocityV = XRMath.ExtractVertical(_rootVelocity, _root.WorldUp, 1f);
-                        //_rootVelocity -= rootVelocityV;
-
-                        //float bodyYOffset = MathF.Min(leftFootOffset + rightFootOffset, _locomotion._maxBodyYOffset * _scale);
-                        //_bodyOffset = Vector3.Lerp(_bodyOffset, _root.up * bodyYOffset, deltaTime * 3f);
-                        //_bodyOffset = Vector3.Lerp(Vector3.Zero, _bodyOffset, _locomotion._weight);
-
-                        break;
-                    case Locomotion.Mode.Animated:
-                        if (_lastLocomotionWeight <= 0f)
-                            _locomotion.Reset_Animated(_readPositions);
-                        _locomotion.Solve_Animated(this, _scale, deltaTime);
-                        break;
-                }
-            }
-            else
-            {
-                if (_lastLocomotionWeight > 0f)
-                    _locomotion.Reset_Animated(_readPositions);
-            }
-        }
+        //                break;
+        //            case Locomotion.Mode.Animated:
+        //                if (_lastLocomotionWeight <= 0f)
+        //                    _locomotion.Reset_Animated(_readPositions);
+        //                _locomotion.Solve_Animated(this, _scale, deltaTime);
+        //                break;
+        //        }
+        //    }
+        //    else
+        //    {
+        //        if (_lastLocomotionWeight > 0f)
+        //            _locomotion.Reset_Animated(_readPositions);
+        //    }
+        //}
 
         private void SolveArms()
         {
             for (int i = 0; i < _arms.Length; i++)
-                _arms[i].TranslateRoot(_spine.Chest._solverPosition, _spine.Chest._solverRotation);
+                _arms[i].TranslateRoot(_spine.Chest.SolverPosition, _spine.Chest.SolverRotation);
 
             for (int i = 0; i < _arms.Length; i++)
                 _arms[i].Solve(i == 0);
@@ -714,167 +754,252 @@ namespace XREngine.Scene.Components.Animation
 
         private void SolveLegs()
         {
-            foreach (Leg leg in _legs)
+            foreach (LegSolver leg in _legs)
                 leg.ApplyOffsets(_scale);
 
-            if (!_plantFeet || _lod > 0)
+            if (!_plantFeet || _quality > 0)
             {
-                _spine.InverseTranslateToHead(_legs, false, false, _bodyOffset, 1f);
+                //_spine.InverseTranslateToHead(_legs, false, false, _bodyOffset, 1f);
 
-                foreach (Leg leg in _legs)
-                    leg.TranslateRoot(_spine.Hips._solverPosition, _spine.Hips._solverRotation);
-                foreach (Leg leg in _legs)
+                foreach (LegSolver leg in _legs)
+                    leg.TranslateRoot(_spine.Hips.SolverPosition, _spine.Hips.SolverRotation);
+                foreach (LegSolver leg in _legs)
                     leg.Solve(true);
             }
             else
             {
                 for (int i = 0; i < 2; i++)
                 {
-                    _spine.InverseTranslateToHead(_legs, true, true, _bodyOffset, 1f);
+                    //_spine.InverseTranslateToHead(_legs, true, true, _bodyOffset, 1f);
 
-                    foreach (Leg leg in _legs)
-                        leg.TranslateRoot(_spine.Hips._solverPosition, _spine.Hips._solverRotation);
-                    foreach (Leg leg in _legs)
+                    foreach (LegSolver leg in _legs)
+                        leg.TranslateRoot(_spine.Hips.SolverPosition, _spine.Hips.SolverRotation);
+                    foreach (LegSolver leg in _legs)
                         leg.Solve(i == 0);
                 }
             }
         }
 
-        private float _lastLocomotionWeight;
+        private float _lastLocomotionWeight = 0.0f;
 
         private Vector3 GetPosition(int index)
             => _solvedPositions[index];
         private Quaternion GetRotation(int index)
             => _solvedRotations[index];
 
-        /// <summary>
-        /// LOD 0: Full quality solving. 
-        /// LOD 1: Shoulder solving, stretching plant feet disabled, spine solving quality reduced. 
-        /// This provides about 30% of performance gain. 
-        /// LOD 2: Culled, but updating root position and rotation if locomotion is enabled.
-        /// </summary>
-        [Range(0, 2)]
-        public int _lod = 0;
+        public EQuality _quality = EQuality.Full;
+        public EQuality Quality
+        {
+            get => _quality;
+            set => SetField(ref _quality, value);
+        }
 
-        /// <summary>
-        /// Scale of the character. Value of 1 means normal adult human size.
-        /// </summary>
-        public float _scale = 1f;
+        protected override void OnPropertyChanged<T>(string? propName, T prev, T field)
+        {
+            base.OnPropertyChanged(propName, prev, field);
+            switch (propName)
+            {
+                case nameof(Quality):
+                    _spine.Quality = _quality;
+                    if (_hasArms)
+                        foreach (ArmSolver arm in _arms)
+                            arm.Quality = _quality;
+                    if (_hasLegs)
+                        foreach (LegSolver leg in _legs)
+                            leg.Quality = _quality;
+                    break;
+            }
+        }
 
-        /// <summary>
-        /// If true, will keep the toes planted even if head target is out of reach, so this can cause the camera to exit the head if it is too high for the model to reach. Enabling this increases the cost of the solver as the legs will have to be solved multiple times.
-        /// </summary>
-        public bool _plantFeet = true;
+        public enum EQuality
+        {
+			/// <summary>
+			/// Full quality solving.
+			/// </summary>
+			Full,
+			/// <summary>
+			/// Shoulder solving, stretching plant feet disabled, spine solving quality reduced.
+			/// </summary>
+			Semi,
+			/// <summary>
+			/// Culled, but updating root position and rotation if locomotion is enabled.
+			/// </summary>
+			Culled
+		}
 
-        /// <summary>
-        /// Gets the root bone.
-        /// </summary>
-        [HideInInspector]
-        public VirtualBone? RootBone { get; private set; }
+        private float _scale = 1.0f;
+		/// <summary>
+		/// Scale of the character. Value of 1 means normal adult human size.
+		/// </summary>
+		public float Scale
+        {
+            get => _scale;
+            set => SetField(ref _scale, value);
+		}
 
-        /// <summary>
-        /// The spine solver.
-        /// </summary>
-        public Spine _spine = new();
+		private bool _plantFeet = true;
+		/// <summary>
+		/// If true, will keep the toes planted even if head target is out of reach, so this can cause the camera to exit the head if it is too high for the model to reach. Enabling this increases the cost of the solver as the legs will have to be solved multiple times.
+		/// </summary>
+		public bool PlantFeet
+        {
+            get => _plantFeet;
+            set => SetField(ref _plantFeet, value);
+		}
 
-        /// <summary>
-        /// The left arm solver.
-        /// </summary>
-        public Arm _leftArm = new();
+        private VirtualBone? _rootBone;
+		[HideInInspector]
+        public VirtualBone? RootBone
+        {
+            get => _rootBone;
+            set => SetField(ref _rootBone, value);
+        }
 
-        /// <summary>
-        /// The right arm solver.
-        /// </summary>
-        public Arm _rightArm = new();
+        private SpineSolver _spine = new();
+        public SpineSolver Spine
+        {
+            get => _spine;
+            set => SetField(ref _spine, value);
+        }
 
-        /// <summary>
-        /// The left leg solver.
-        /// </summary>
-        public Leg _leftLeg = new();
+        private ArmSolver _leftArm = new();
+        public ArmSolver LeftArm
+        {
+            get => _leftArm;
+            set => SetField(ref _leftArm, value);
+        }
 
-        /// <summary>
-        /// The right leg solver.
-        /// </summary>
-        public Leg _rightLeg = new();
+        private ArmSolver _rightArm = new();
+        public ArmSolver RightArm
+        {
+            get => _rightArm;
+            set => SetField(ref _rightArm, value);
+        }
+
+        private LegSolver _leftLeg = new();
+        public LegSolver LeftLeg
+        {
+            get => _leftLeg;
+            set => SetField(ref _leftLeg, value);
+        }
+
+        private LegSolver _rightLeg = new();
+        public LegSolver RightLeg
+        {
+            get => _rightLeg;
+            set => SetField(ref _rightLeg, value);
+        }
 
         /// <summary>
         /// Procedural leg shuffling for stationary VR games.
         /// Not designed for roomscale and thumbstick locomotion.
         /// For those it would be better to use a strafing locomotion blend tree to make the character follow the horizontal direction towards the HMD by root motion or script.
         /// </summary>
-        public Locomotion _locomotion = new();
+        //public Locomotion _locomotion = new();
 
-        private Leg[] _legs = new Leg[2];
-        private Arm[] _arms = new Arm[2];
+        private LegSolver[] _legs = new LegSolver[2];
+        private ArmSolver[] _arms = new ArmSolver[2];
         private Vector3 _headPosition;
         private Vector3 _headDeltaPosition;
         private Vector3 _raycastOriginPelvis;
         private Vector3 _lastOffset;
-        private Vector3 debugPos1;
-        private Vector3 debugPos2;
-        private Vector3 debugPos3;
-        private Vector3 debugPos4;
 
         private void Apply()
         {
-            _solvedPositions[0] = RootBone._solverPosition;
-            _solvedRotations[0] = RootBone._solverRotation;
+            _solvedPositions[0] = RootBone?.SolverPosition ?? Vector3.Zero;
+            _solvedRotations[0] = RootBone?.SolverRotation ?? Quaternion.Identity;
             _spine.Write(ref _solvedPositions, ref _solvedRotations);
 
             if (_hasLegs)
             {
-                foreach (Leg leg in _legs)
+                foreach (LegSolver leg in _legs)
                     leg.Write(ref _solvedPositions, ref _solvedRotations);
             }
             if (_hasArms)
             {
-                foreach (Arm arm in _arms)
+                foreach (ArmSolver arm in _arms)
                     arm.Write(ref _solvedPositions, ref _solvedRotations);
             }
         }
 
         private SortedDictionary<float, List<(XRComponent? item, object? data)>> _raycastResults = [];
 
-        private PhysxScene.PhysxQueryFilter _queryFilter = new PhysxScene.PhysxQueryFilter()
+        private PhysxScene.PhysxQueryFilter _queryFilter = new()
         {
             
         };
 
         private Vector3 GetPelvisOffset(float deltaTime)
         {
-            if (_locomotion._weight <= 0f || _locomotion._blockingLayers == -1)
+            //if (_locomotion._weight <= 0f || _locomotion._blockingLayers == -1)
                 return Vector3.Zero;
 
-            var physicsScene = Animator?.World?.PhysicsScene;
-            if (physicsScene is null)
-                return Vector3.Zero;
+            //var physicsScene = Animator?.World?.PhysicsScene;
+            //if (physicsScene is null)
+            //    return Vector3.Zero;
 
-            // Origin to pelvis transform position
-            Vector3 sampledOrigin = _raycastOriginPelvis;
-            sampledOrigin.Y = _spine.Hips._solverPosition.Y;
-            Vector3 origin = _spine.Hips._readPosition;
-            origin.Y = _spine.Hips._solverPosition.Y;
-            Vector3 direction = origin - sampledOrigin;
+            //// Origin to pelvis transform position
+            //Vector3 sampledOrigin = _raycastOriginPelvis;
+            //sampledOrigin.Y = _spine.Hips.SolverPosition.Y;
+            //Vector3 origin = _spine.Hips.ReadPosition;
+            //origin.Y = _spine.Hips.SolverPosition.Y;
+            //Vector3 direction = origin - sampledOrigin;
 
-            //debugPos4 = sampledOrigin;
+            ////debugPos4 = sampledOrigin;
 
-            _raycastResults.Clear();
+            //_raycastResults.Clear();
+            ////if (_locomotion._raycastRadius <= 0f)
+            ////{
+            ////    if (physicsScene.RaycastSingleAsync(
+            ////        new Segment(sampledOrigin, sampledOrigin + new Vector3(direction.Length() * 1.1f)),
+            ////        _locomotion._blockingLayers,
+            ////        _queryFilter,
+            ////        _raycastResults))
+            ////    {
+            ////        var rh = (RaycastHit)_raycastResults.First().Value.First().data!;
+            ////        origin = rh.Position;
+            ////    }
+            ////}
+            ////else
+            ////{
+            ////    IPhysicsGeometry geometry = new IPhysicsGeometry.Sphere(_locomotion._raycastRadius * 1.1f);
+            ////    (Vector3 position, Quaternion rotation) pose = (sampledOrigin, Quaternion.Identity);
+            ////    if (physicsScene.SweepSingle(
+            ////        geometry,
+            ////        pose,
+            ////        direction.Normalized(),
+            ////        direction.Length(),
+            ////        _locomotion._blockingLayers,
+            ////        _queryFilter,
+            ////        _raycastResults))
+            ////    {
+            ////        var sh = (SweepHit)_raycastResults.First().Value.First().data!;
+            ////        origin = sampledOrigin + direction.Normalized() * sh.Distance / 1.1f;
+            ////    }
+            ////}
+
+            //Vector3 position = _spine.Hips.SolverPosition;
+            //direction = position - origin;
+
+            ////debugPos1 = origin;
+            ////debugPos2 = position;
+
             //if (_locomotion._raycastRadius <= 0f)
             //{
-            //    if (physicsScene.RaycastSingleAsync(
-            //        new Segment(sampledOrigin, sampledOrigin + new Vector3(direction.Length() * 1.1f)),
-            //        _locomotion._blockingLayers,
-            //        _queryFilter,
-            //        _raycastResults))
-            //    {
-            //        var rh = (RaycastHit)_raycastResults.First().Value.First().data!;
-            //        origin = rh.Position;
-            //    }
+            //    //if (physicsScene.RaycastSingleAsync(
+            //    //    new Segment(origin, origin + new Vector3(direction.Length())),
+            //    //    _locomotion._blockingLayers,
+            //    //    _queryFilter,
+            //    //    _raycastResults))
+            //    //{
+            //    //    var rh = (RaycastHit)_raycastResults.First().Value.First().data!;
+            //    //    position = rh.Position;
+            //    //}
             //}
             //else
             //{
-            //    IPhysicsGeometry geometry = new IPhysicsGeometry.Sphere(_locomotion._raycastRadius * 1.1f);
-            //    (Vector3 position, Quaternion rotation) pose = (sampledOrigin, Quaternion.Identity);
+            //    IPhysicsGeometry geometry = new IPhysicsGeometry.Sphere(_locomotion._raycastRadius);
+            //    (Vector3 position, Quaternion rotation) pose = (origin, Quaternion.Identity);
             //    if (physicsScene.SweepSingle(
             //        geometry,
             //        pose,
@@ -885,54 +1010,18 @@ namespace XREngine.Scene.Components.Animation
             //        _raycastResults))
             //    {
             //        var sh = (SweepHit)_raycastResults.First().Value.First().data!;
-            //        origin = sampledOrigin + direction.Normalized() * sh.Distance / 1.1f;
+            //        position = origin + direction.Normalized() * sh.Distance;
             //    }
             //}
 
-            Vector3 position = _spine.Hips._solverPosition;
-            direction = position - origin;
+            //_lastOffset = Vector3.Lerp(_lastOffset, Vector3.Zero, deltaTime * 3f);
+            //position += _lastOffset.ClampMagnitude(0.75f);
+            //position.Y = _spine.Hips.SolverPosition.Y;
 
-            //debugPos1 = origin;
-            //debugPos2 = position;
+            ////debugPos3 = position;
 
-            if (_locomotion._raycastRadius <= 0f)
-            {
-                //if (physicsScene.RaycastSingleAsync(
-                //    new Segment(origin, origin + new Vector3(direction.Length())),
-                //    _locomotion._blockingLayers,
-                //    _queryFilter,
-                //    _raycastResults))
-                //{
-                //    var rh = (RaycastHit)_raycastResults.First().Value.First().data!;
-                //    position = rh.Position;
-                //}
-            }
-            else
-            {
-                IPhysicsGeometry geometry = new IPhysicsGeometry.Sphere(_locomotion._raycastRadius);
-                (Vector3 position, Quaternion rotation) pose = (origin, Quaternion.Identity);
-                if (physicsScene.SweepSingle(
-                    geometry,
-                    pose,
-                    direction.Normalized(),
-                    direction.Length(),
-                    _locomotion._blockingLayers,
-                    _queryFilter,
-                    _raycastResults))
-                {
-                    var sh = (SweepHit)_raycastResults.First().Value.First().data!;
-                    position = origin + direction.Normalized() * sh.Distance;
-                }
-            }
-
-            _lastOffset = Vector3.Lerp(_lastOffset, Vector3.Zero, deltaTime * 3f);
-            position += _lastOffset.ClampMagnitude(0.75f);
-            position.Y = _spine.Hips._solverPosition.Y;
-
-            //debugPos3 = position;
-
-            _lastOffset = Vector3.Lerp(_lastOffset, position - _spine.Hips._solverPosition, deltaTime * 15f);
-            return _lastOffset;
+            //_lastOffset = Vector3.Lerp(_lastOffset, position - _spine.Hips.SolverPosition, deltaTime * 15f);
+            //return _lastOffset;
         }
     }
 }

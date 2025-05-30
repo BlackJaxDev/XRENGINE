@@ -3,7 +3,7 @@ using System.Numerics;
 using XREngine.Data.Core;
 using XREngine.Scene.Transforms;
 
-namespace XREngine.Scene.Components.Animation
+namespace XREngine.Components.Animation
 {
     /// <summary>
     /// Constraints a transform's position and rotation to either

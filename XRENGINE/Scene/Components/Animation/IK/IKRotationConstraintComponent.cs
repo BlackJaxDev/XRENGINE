@@ -4,7 +4,7 @@ using XREngine.Components;
 using XREngine.Data.Core;
 using XREngine.Scene.Transforms;
 
-namespace XREngine.Scene.Components.Animation
+namespace XREngine.Components.Animation
 {
     /// <summary>
     /// Specifies constraints for a scene node's in an IK bone chain.

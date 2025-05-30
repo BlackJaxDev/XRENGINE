@@ -1,6 +1,6 @@
 ﻿using XREngine.Data.Geometry;
 
-namespace XREngine.Scene.Components.Mesh.Shapes
+namespace XREngine.Components.Mesh.Shapes
 {
     public class BoxMeshComponent : ShapeMeshComponent
     {

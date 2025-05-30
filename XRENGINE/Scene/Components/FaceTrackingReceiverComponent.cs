@@ -1,7 +1,7 @@
 ﻿using OscCore;
 using XREngine.Animation;
-using XREngine.Scene.Components;
-using XREngine.Scene.Components.Animation;
+using XREngine.Components;
+using XREngine.Components.Animation;
 using static XREngine.Animation.AnimTransitionCondition;
 
 namespace XREngine.Data.Components

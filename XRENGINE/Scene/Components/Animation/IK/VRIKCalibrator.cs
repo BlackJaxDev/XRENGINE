@@ -1,17 +1,20 @@
 ﻿using Extensions;
 using System.Numerics;
 using XREngine.Data.Core;
+using XREngine.Scene;
 using XREngine.Scene.Transforms;
-using static XREngine.Scene.Components.Animation.IKSolverVR;
 using Transform = XREngine.Scene.Transforms.Transform;
 
-namespace XREngine.Scene.Components.Animation
+namespace XREngine.Components.Animation
 {
     /// <summary>
     /// Calibrates VRIK for the HMD and up to 5 additional trackers.
     /// </summary>
     public static partial class VRIKCalibrator
     {
+        private const string LeftHandTargetNodeName = "Left Hand Target";
+        private const string RightHandTargetNodeName = "Right Hand Target";
+
         /// <summary>
         /// Recalibrates only the avatar scale, updates CalibrationData to the new scale value
         /// </summary>
@@ -23,20 +26,20 @@ namespace XREngine.Scene.Components.Animation
         /// </summary>
         public static void RecalibrateScale(VRIKSolverComponent ik, CalibrationData data, float scaleMultiplier)
         {
-            CalibrateScale(ik, scaleMultiplier);
-            data._scale = ik.Root!.Scale.Y;
+            CalibrateScaleSimple(ik, scaleMultiplier);
+            data.Scale = ik.Root!.Scale.Y;
         }
 
         /// <summary>
         /// Calibrates only the avatar scale.
         /// </summary>
         private static void CalibrateScale(VRIKSolverComponent ik, Settings settings)
-            => CalibrateScale(ik, settings.ScaleMultiplier);
+            => CalibrateScaleSimple(ik, settings.ScaleMultiplier);
 
         /// <summary>
         /// Calibrates only the avatar scale.
         /// </summary>
-        private static void CalibrateScale(VRIKSolverComponent ik, float scaleMultiplier = 1f)
+        private static void CalibrateScaleSimple(VRIKSolverComponent ik, float scaleMultiplier = 1.0f)
         {
             var root = ik.Root;
             if (root is null)
@@ -44,7 +47,7 @@ namespace XREngine.Scene.Components.Animation
                 Debug.LogWarning("Can not calibrate VRIK without the root transform.");
                 return;
             }
-            var headTarget = ik.Solver._spine._headTarget;
+            var headTarget = ik.Solver.Spine.HeadTarget;
             if (headTarget is null)
             {
                 Debug.LogWarning("Can not calibrate VRIK without the head target.");
@@ -59,7 +62,7 @@ namespace XREngine.Scene.Components.Animation
 
             float targetY = headTarget.WorldTranslation.Y - root.WorldTranslation.Y;
             float modelY = headNode.Transform.WorldTranslation.Y - root.WorldTranslation.Y;
-            if (modelY == 0f)
+            if (modelY == 0.0f)
             {
                 Debug.LogWarning("Can not calibrate VRIK with the model's head node at the same height as the root node.");
                 return;
@@ -125,147 +128,60 @@ namespace XREngine.Scene.Components.Animation
             }
 
             var hips = human.Hips.Node?.GetTransformAs<Transform>(true);
-            var spine = ik.Solver._spine;
+            var spine = ik.Solver.Spine;
 
-            // Root position and rotation
-            Vector3 headPos = 
-                headTracker.WorldTranslation + 
-                (headTracker.WorldRotation * 
-                XRMath.LookRotation(settings.HeadTrackerForward, settings.HeadTrackerUp)).
-                Rotate(settings.HeadOffset);
+            Vector3 headPos = CalibrateRoot(settings, headTracker, root);
+            Transform? headTarget = CalibrateHead(headTracker, head, spine, headPos);
+            CalibrateScale(settings, root, head, headTarget);
+            CalibrateBody(ik, settings, bodyTracker, leftFootTracker, rightFootTracker, hips, spine);
+            CalibrateLeftHand(ik, settings, leftHandTracker);
+            CalibrateRightHand(ik, settings, rightHandTracker);
+            CalibrateLeg(
+                settings,
+                leftFootTracker,
+                ik.Solver.LeftLeg,
+                (human.Left.Toes.Node ?? human.Left.Foot.Node)?.GetTransformAs<Transform>(true),
+                root.WorldForward,
+                true);
+            CalibrateLeg(
+                settings,
+                rightFootTracker,
+                ik.Solver.RightLeg,
+                (human.Right.Toes.Node ?? human.Right.Foot.Node)?.GetTransformAs<Transform>(true),
+                root.WorldForward,
+                false);
 
-            root.SetWorldTranslation(new Vector3(headPos.X, root.WorldTranslation.Y, headPos.Z));
-            Vector3 headForward = headTracker.WorldRotation.Rotate(settings.HeadTrackerForward);
-            headForward.Y = 0f;
-            root.SetWorldRotation(XRMath.LookRotation(headForward, Globals.Up));
-            root.SaveBindState();
-            root.RecalculateMatrices(true);
+            VRIKRootControllerComponent? rc = CalibrateRootController(bodyTracker, leftFootTracker, rightFootTracker, root);
 
-            // Head
-            Transform headTarget = spine._headTarget ?? (new SceneNode(root.World, "Head Target")).GetTransformAs<Transform>(true)!;
+            // Additional solver settings
+            spine.MinHeadHeight = 0.0f;
+            //ik.Solver._locomotion._weight = bodyTracker == null && leftFootTracker == null && rightFootTracker == null ? 1.0f : 0.0f;
 
-            headTarget.SetParent(headTracker, false);
-            headTarget.SetWorldTranslation(headPos);
-            headTarget.SetWorldRotation(head.WorldRotation);
-            headTarget.SaveBindState();
-            headTarget.RecalculateMatrices(true);
+            // Fill in Calibration Data
+            data.Scale = root.Scale.Y;
+            data.Head = new CalibrationData.Target(spine.HeadTarget);
+            data.Hips = new CalibrationData.Target(spine.HipsTarget);
+            data.LeftHand = new CalibrationData.Target(ik.Solver.LeftArm.Target);
+            data.RightHand = new CalibrationData.Target(ik.Solver.RightArm.Target);
+            data.LeftFoot = new CalibrationData.Target(ik.Solver.LeftLeg.Target);
+            data.RightFoot = new CalibrationData.Target(ik.Solver.RightLeg.Target);
+            data.LeftLegGoal = new CalibrationData.Target(ik.Solver.LeftLeg.BendGoal);
+            data.RightLegGoal = new CalibrationData.Target(ik.Solver.RightLeg.BendGoal);
+            data.HipsTargetRight = rc != null ? rc.HipsTargetRight : Vector3.Zero;
+            data.HipsPositionWeight = spine.HipsPositionWeight;
+            data.HipsRotationWeight = spine.HipsRotationWeight;
 
-            spine._headTarget = headTarget;
+            return data;
+        }
 
-            // Size
-            float targetDist = headTarget.WorldTranslation.Y - root.WorldTranslation.Y;
-            float modelDist = head.WorldTranslation.Y - root.WorldTranslation.Y;
-            root.Scale *= targetDist / modelDist * settings.ScaleMultiplier;
-
-            // Body
-            if (bodyTracker != null && hips != null)
-            {
-                Transform pelvisTarget = spine._hipsTarget ?? (new SceneNode(root.World, "Hips Target")).GetTransformAs<Transform>(true)!;
-
-                pelvisTarget.SetParent(bodyTracker, false);
-                pelvisTarget.SetWorldTranslation(hips.WorldTranslation);
-                pelvisTarget.SetWorldRotation(hips.WorldRotation);
-                pelvisTarget.SaveBindState();
-                pelvisTarget.RecalculateMatrices(true);
-
-                spine._hipsTarget = pelvisTarget;
-                spine._pelvisPositionWeight = settings.HipPositionWeight;
-                spine._pelvisRotationWeight = settings.HipRotationWeight;
-                spine._maxRootAngle = 180f;
-
-                ik.Solver._plantFeet = false;
-            }
-            else if (leftFootTracker != null && rightFootTracker != null)
-            {
-                ik.Solver._spine._maxRootAngle = 0f;
-            }
-
-            // Left Hand
-            var larm = ik.Solver._leftArm;
-            if (leftHandTracker != null)
-            {
-                Transform leftHandTarget = larm._target ?? (new SceneNode("Left Hand Target")).GetTransformAs<Transform>(true)!;
-
-                Quaternion look = leftHandTracker.WorldRotation * XRMath.LookRotation(settings.HandTrackerForward, settings.HandTrackerUp);
-
-                leftHandTarget.SetParent(leftHandTracker, false);
-                leftHandTarget.SetWorldTranslation(leftHandTracker.WorldTranslation + look.Rotate(settings.HandOffset));
-                leftHandTarget.SetWorldRotation(
-                    XRMath.MatchRotation(look,
-                    settings.HandTrackerForward,
-                    settings.HandTrackerUp,
-                    larm._wristToPalmAxis,
-                    Vector3.Cross(larm._wristToPalmAxis, larm._palmToThumbAxis)));
-                leftHandTarget.SaveBindState();
-                leftHandTarget.RecalculateMatrices(true);
-
-                larm._target = leftHandTarget;
-                larm._positionWeight = 1.0f;
-                larm._rotationWeight = 1.0f;
-            }
-            else
-            {
-                larm._positionWeight = 0.0f;
-                larm._rotationWeight = 0.0f;
-            }
-
-            // Right Hand
-            var rarm = ik.Solver._rightArm;
-            if (rightHandTracker != null)
-            {
-                Transform rightHandTarget = ik.Solver._rightArm._target ?? (new SceneNode("Right Hand Target")).GetTransformAs<Transform>(true)!;
-
-                Quaternion look = rightHandTracker.WorldRotation * XRMath.LookRotation(settings.HandTrackerForward, settings.HandTrackerUp);
-
-                rightHandTarget.SetParent(rightHandTracker, false);
-                rightHandTarget.SetWorldTranslation(rightHandTracker.WorldTranslation + look.Rotate(settings.HandOffset));
-                rightHandTarget.SetWorldRotation(XRMath.MatchRotation(
-                    look,
-                    settings.HandTrackerForward,
-                    settings.HandTrackerUp,
-                    rarm._wristToPalmAxis,
-                    -Vector3.Cross(rarm._wristToPalmAxis, rarm._palmToThumbAxis)));
-                rightHandTarget.SaveBindState();
-                rightHandTarget.RecalculateMatrices(true);
-
-                rarm._target = rightHandTarget;
-                rarm._positionWeight = 1.0f;
-                rarm._rotationWeight = 1.0f;
-            }
-            else
-            {
-                rarm._positionWeight = 0.0f;
-                rarm._rotationWeight = 0.0f;
-            }
-
-            // Legs
-            if (leftFootTracker != null)
-            {
-                CalibrateLeg(
-                    settings,
-                    leftFootTracker,
-                    ik.Solver._leftLeg,
-                    (human.Left.Toes.Node ?? human.Left.Foot.Node)?.GetTransformAs<Transform>(true),
-                    root.WorldForward,
-                    true);
-            }
-            if (rightFootTracker != null)
-            {
-                CalibrateLeg(
-                    settings,
-                    rightFootTracker,
-                    ik.Solver._rightLeg,
-                    (human.Right.Toes.Node ?? human.Right.Foot.Node)?.GetTransformAs<Transform>(true),
-                    root.WorldForward,
-                    false);
-            }
-
-            // Root controller
-            bool addRootController = bodyTracker != null || (leftFootTracker != null && rightFootTracker != null);
+        private static VRIKRootControllerComponent? CalibrateRootController(TransformBase? bodyTracker, TransformBase? leftFootTracker, TransformBase? rightFootTracker, Transform root)
+        {
+            bool needsRootController = bodyTracker != null || (leftFootTracker != null && rightFootTracker != null);
             var rootController = root.SceneNode?.GetComponent<VRIKRootControllerComponent>();
 
-            if (addRootController)
+            if (needsRootController)
             {
+                //Create if it doesn't already exist
                 rootController ??= root.SceneNode?.AddComponent<VRIKRootControllerComponent>();
                 rootController?.Calibrate();
             }
@@ -274,35 +190,172 @@ namespace XREngine.Scene.Components.Animation
                 rootController?.Destroy();
             }
 
-            // Additional solver settings
-            spine._minHeadHeight = 0f;
-            ik.Solver._locomotion._weight = bodyTracker == null && leftFootTracker == null && rightFootTracker == null ? 1f : 0f;
+            return rootController;
+        }
 
-            // Fill in Calibration Data
-            data._scale = root.Scale.Y;
-            data._head = new CalibrationData.Target(spine._headTarget);
-            data._pelvis = new CalibrationData.Target(spine._hipsTarget);
-            data._leftHand = new CalibrationData.Target(ik.Solver._leftArm._target);
-            data._rightHand = new CalibrationData.Target(ik.Solver._rightArm._target);
-            data._leftFoot = new CalibrationData.Target(ik.Solver._leftLeg._target);
-            data._rightFoot = new CalibrationData.Target(ik.Solver._rightLeg._target);
-            data._leftLegGoal = new CalibrationData.Target(ik.Solver._leftLeg._bendGoal);
-            data._rightLegGoal = new CalibrationData.Target(ik.Solver._rightLeg._bendGoal);
-            data._pelvisTargetRight = rootController != null ? rootController.PelvisTargetRight : Vector3.Zero;
-            data._pelvisPositionWeight = ik.Solver._spine._pelvisPositionWeight;
-            data._pelvisRotationWeight = ik.Solver._spine._pelvisRotationWeight;
+        private static Vector3 CalibrateRoot(Settings settings, TransformBase headTracker, Transform root)
+        {
+            Vector3 headPos =
+                headTracker.WorldTranslation +
+                (headTracker.WorldRotation *
+                XRMath.LookRotation(settings.HeadTrackerForward, settings.HeadTrackerUp)).
+                Rotate(settings.HeadOffset);
 
-            return data;
+            root.SetWorldTranslation(new Vector3(headPos.X, root.WorldTranslation.Y, headPos.Z));
+            Vector3 headForward = headTracker.WorldRotation.Rotate(settings.HeadTrackerForward);
+            headForward.Y = 0.0f;
+            root.SetWorldRotation(XRMath.LookRotation(headForward, Globals.Up));
+            root.SaveBindState();
+            root.RecalculateMatrices(true);
+            return headPos;
+        }
+
+        /// <summary>
+        /// Calibrates head IK target to specified anchor position and rotation offset independent of avatar bone orientations.
+        /// </summary>
+        public static void CalibrateHeadSimple(
+            VRIKSolverComponent ik,
+            TransformBase centerEyeAnchor,
+            Vector3 anchorPositionOffset,
+            Vector3 anchorRotationOffset)
+        {
+            var root = ik.Root;
+            if (root is null)
+            {
+                Debug.LogWarning("Can not calibrate VRIK without the root transform.");
+                return;
+            }
+            var head = ik.Humanoid?.Head.Node?.GetTransformAs<Transform>(true);
+            if (head is null)
+            {
+                Debug.LogWarning("Can not calibrate VRIK without the head transform.");
+                return;
+            }
+
+            Vector3 forward = Quaternion.Inverse(head.WorldRotation).Rotate(root.WorldForward);
+            Vector3 up = Quaternion.Inverse(head.WorldRotation).Rotate(root.WorldUp);
+            Quaternion headSpace = XRMath.LookRotation(forward, up);
+
+            Vector3 anchorPos = head.WorldTranslation + (head.WorldRotation * headSpace).Rotate(anchorPositionOffset);
+            Quaternion anchorRot = head.WorldRotation * headSpace * Quaternion.CreateFromYawPitchRoll(anchorRotationOffset.Y, anchorRotationOffset.X, anchorRotationOffset.Z);
+            Quaternion anchorRotInverse = Quaternion.Inverse(anchorRot);
+
+            var spine = ik.Solver.Spine;
+            var ht = spine.HeadTarget ??= new SceneNode("Head IK Target").GetTransformAs<Transform>(true)!;
+            ht.SetParent(centerEyeAnchor, false);
+            ht.Translation = anchorRotInverse.Rotate(head.WorldTranslation - anchorPos);
+            ht.Rotation = anchorRotInverse * head.WorldRotation;
+        }
+
+        private static Transform? CalibrateHead(
+            TransformBase headTracker,
+            Transform head,
+            IKSolverVR.SpineSolver spine,
+            Vector3 headPos)
+        {
+            SceneNode? headTrackerNode = headTracker.SceneNode;
+            if (headTrackerNode is null)
+            {
+                Debug.LogWarning("Can not calibrate VRIK without a root scene node.");
+                return spine.HeadTarget;
+            }
+
+            Transform headTarget;
+            if (spine.HeadTarget is not null)
+                headTarget = spine.HeadTarget;
+            else
+            {
+                headTrackerNode.NewChildWithTransform(out headTarget, "Head Target");
+                spine.HeadTarget = headTarget;
+            }
+
+            headTarget.SetWorldTranslationRotation(headPos, head.WorldRotation);
+            headTarget.SaveBindState();
+            headTarget.RecalculateMatrices(true);
+
+            spine.HeadTarget = headTarget;
+            return headTarget;
+        }
+
+        private static void CalibrateScale(Settings settings, Transform root, Transform head, Transform? headTarget)
+        {
+            if (headTarget is null)
+            {
+                Debug.LogWarning("Can not calibrate scale without a head target.");
+                return;
+            }
+            float targetDist = headTarget.WorldTranslation.Y - root.WorldTranslation.Y;
+            float modelDist = head.WorldTranslation.Y - root.WorldTranslation.Y;
+            root.Scale *= targetDist / modelDist * settings.ScaleMultiplier;
+        }
+
+        private static void CalibrateBody(
+            VRIKSolverComponent ik,
+            Settings settings,
+            TransformBase? hipTracker,
+            TransformBase? leftFootTracker,
+            TransformBase? rightFootTracker,
+            Transform? hips,
+            IKSolverVR.SpineSolver spine)
+        {
+            if (hipTracker is null)
+            {
+                Debug.LogWarning("Can not calibrate without a hip tracker.");
+                return;
+            }
+
+            SceneNode? bodyTrackerNode = hipTracker.SceneNode;
+            if (bodyTrackerNode is null)
+            {
+                Debug.LogWarning("Can not create hips target without a hip tracker scene node.");
+                return;
+            }
+
+            if (hipTracker != null && hips != null)
+            {
+                Transform hipsTarget;
+                if (spine.HipsTarget is not null)
+                    hipsTarget = spine.HipsTarget;
+                else
+                {
+                    bodyTrackerNode.NewChildWithTransform(out hipsTarget, "Hips Target");
+                    spine.HipsTarget = hipsTarget;
+                }
+
+                hipsTarget.SetWorldTranslationRotation(hips.WorldTranslation, hips.WorldRotation);
+                hipsTarget.SaveBindState();
+                hipsTarget.RecalculateMatrices(true);
+
+                spine.HipsTarget = hipsTarget;
+                spine.HipsPositionWeight = settings.HipPositionWeight;
+                spine.HipsRotationWeight = settings.HipRotationWeight;
+                spine.MaxRootAngle = 180.0f;
+
+                ik.Solver.PlantFeet = false;
+            }
+            else if (leftFootTracker != null && rightFootTracker != null)
+            {
+                ik.Solver.Spine.MaxRootAngle = 0.0f;
+            }
         }
 
         private static void CalibrateLeg(
             Settings settings,
-            TransformBase tracker,
-            IKSolverVR.Leg leg,
+            TransformBase? tracker,
+            IKSolverVR.LegSolver leg,
             Transform? lastBone,
             Vector3 rootForward,
             bool isLeft)
         {
+            if (tracker is null)
+                return;
+
+            var trackerNode = tracker.SceneNode;
+            if (trackerNode is null)
+            {
+                Debug.LogWarning("Can not create bend goal without a tracker scene node.");
+                return;
+            }
             if (lastBone is null)
             {
                 Debug.LogWarning("Can not calibrate leg without the last bone transform.");
@@ -310,53 +363,67 @@ namespace XREngine.Scene.Components.Animation
             }
 
             string name = isLeft ? "Left" : "Right";
-            Transform target = leg._target ?? new SceneNode(tracker.World, $"{name} Foot Target").GetTransformAs<Transform>(true)!;
 
-            // Space of the tracker heading
+            Transform target;
+            if (leg.Target is not null)
+                target = leg.Target;
+            else
+            {
+                trackerNode.NewChildWithTransform(out target, $"{name} Leg Bend Goal");
+                leg.Target = target;
+            }
+
+            //Space of the tracker heading
             Quaternion trackerSpace = tracker.WorldRotation * XRMath.LookRotation(settings.FootTrackerForward, settings.FootTrackerUp);
             Vector3 f = trackerSpace.Rotate(Globals.Forward);
-            f.Y = 0f;
+            f.Y = 0.0f;
             trackerSpace = XRMath.LookRotation(f);
 
-            // Target position
+            //Target position
             float inwardOffset = settings.FootInwardOffset;
             if (!isLeft)
                 inwardOffset = -inwardOffset;
 
-            var targetPos = tracker.WorldTranslation + trackerSpace.Rotate(new Vector3(inwardOffset, 0f, settings.FootForwardOffset));
-            target.SetWorldTranslation(new Vector3(targetPos.X, lastBone.WorldTranslation.Y, targetPos.Z));
-            target.SetWorldRotation(lastBone.WorldRotation);
-            target.RecalculateMatrices(true);
+            Quaternion lastBoneWorldRot = lastBone.WorldRotation;
 
             // Rotate target forward towards tracker forward
-            Vector3 footForward = XRMath.GetAxisVectorToDirection(lastBone.WorldRotation, rootForward);
-            if (Vector3.Dot(lastBone.WorldRotation.Rotate(footForward), rootForward) < 0f) 
+            Vector3 footForward = XRMath.GetAxisVectorToDirection(lastBoneWorldRot, rootForward);
+            if (Vector3.Dot(lastBoneWorldRot.Rotate(footForward), rootForward) < 0.0f) 
                 footForward = -footForward;
 
-            Vector3 fLocal = Quaternion.Inverse(XRMath.LookRotation(target.WorldRotation.Rotate(footForward))).Rotate(f);
+            Vector3 fLocal = Quaternion.Inverse(XRMath.LookRotation(lastBoneWorldRot.Rotate(footForward))).Rotate(f);
             float yaw = float.RadiansToDegrees(MathF.Atan2(fLocal.X, fLocal.Z));
 
             float yawOffset = settings.FootYawOffset;
             if (!isLeft)
                 yawOffset = -yawOffset;
 
-            target.SetWorldRotation(Quaternion.CreateFromAxisAngle(Globals.Up, float.DegreesToRadians(yaw + yawOffset)) * target.WorldRotation);
-            target.SetParent(tracker, false);
+            var targetPos = tracker.WorldTranslation + trackerSpace.Rotate(new Vector3(inwardOffset, 0.0f, settings.FootForwardOffset));
+            target.SetWorldTranslationRotation(
+                new Vector3(targetPos.X, lastBone.WorldTranslation.Y, targetPos.Z),
+                Quaternion.CreateFromAxisAngle(Globals.Up, float.DegreesToRadians(yaw + yawOffset)) * lastBoneWorldRot);
+
             target.SaveBindState();
             target.RecalculateMatrices(true);
-            leg._target = target;
 
-            leg._positionWeight = 1.0f;
-            leg._rotationWeight = 1.0f;
+            leg.Target = target;
+            leg.PositionWeight = 1.0f;
+            leg.RotationWeight = 1.0f;
 
-            // Bend goal
-            Transform bendGoal = leg._bendGoal ?? (new SceneNode(tracker.World, $"{name} Leg Bend Goal")).GetTransformAs<Transform>(true)!;
+            Transform bendGoal;
+            if (leg.BendGoal is not null)
+                bendGoal = leg.BendGoal;
+            else
+            {
+                trackerNode.NewChildWithTransform(out bendGoal, $"{name} Leg Bend Goal");
+                leg.BendGoal = bendGoal;
+            }
+
             bendGoal.SetWorldTranslation(lastBone.WorldTranslation + trackerSpace.Rotate(Globals.Forward) + trackerSpace.Rotate(Globals.Up));// * 0.5f;
             bendGoal.RecalculateMatrices(true);
-            bendGoal.SetParent(tracker, true);
-            leg._bendGoal = bendGoal;
-            leg._bendGoalWeight = 1f;
 
+            leg.BendGoal = bendGoal;
+            leg.BendGoalWeight = 1.0f;
         }
 
         /// <summary>
@@ -400,167 +467,330 @@ namespace XREngine.Scene.Components.Animation
                 return;
             }
 
-            var spine = ik.Solver._spine;
+            var spine = ik.Solver.Spine;
 
             ik.Solver.ResetTransformToDefault();
 
-            // Head
-            Transform headTarget = spine._headTarget ?? (new SceneNode(root.World, "Head Target")).GetTransformAs<Transform>(true)!;
-
-            headTarget.SetParent(headTracker, false);
-            data._head?.ApplyLocalTransformTo(headTarget);
-            spine._headTarget = headTarget;
-
-            // Size
-            root.Scale = data._scale * Vector3.One;
-
-            // Body
-            if (bodyTracker != null && data._pelvis != null)
-            {
-                Transform pelvisTarget = spine._hipsTarget ?? (new SceneNode(root.World, "Pelvis Target")).GetTransformAs<Transform>(true)!;
-
-                pelvisTarget.SetParent(bodyTracker, false);
-                data._pelvis.ApplyLocalTransformTo(pelvisTarget);
-                spine._hipsTarget = pelvisTarget;
-
-                spine._pelvisPositionWeight = data._pelvisPositionWeight;
-                spine._pelvisRotationWeight = data._pelvisRotationWeight;
-                spine._maxRootAngle = 180f;
-
-                ik.Solver._plantFeet = false;
-            }
-            else if (leftFootTracker != null && rightFootTracker != null)
-            {
-                spine._maxRootAngle = 0f;
-            }
-
-            // Left Hand
-            var leftArm = ik.Solver._leftArm;
-            if (leftHandTracker != null)
-            {
-                Transform leftHandTarget = leftArm._target ?? (new SceneNode(root.World, "Left Hand Target")).GetTransformAs<Transform>(true)!;
-
-                leftHandTarget.SetParent(leftHandTracker, false);
-                data._leftHand?.ApplyLocalTransformTo(leftHandTarget);
-
-                leftArm._target = leftHandTarget;
-                leftArm._positionWeight = 1f;
-                leftArm._rotationWeight = 1f;
-            }
-            else
-            {
-                leftArm._positionWeight = 0f;
-                leftArm._rotationWeight = 0f;
-            }
-
-            // Right Hand
-            var rightArm = ik.Solver._rightArm;
-            if (rightHandTracker != null)
-            {
-                Transform rightHandTarget = rightArm._target ?? (new SceneNode(root.World, "Right Hand Target")).GetTransformAs<Transform>(true)!;
-
-                rightHandTarget.SetParent(rightHandTracker, false);
-                data._rightHand?.ApplyLocalTransformTo(rightHandTarget);
-
-                rightArm._target = rightHandTarget;
-                rightArm._positionWeight = 1f;
-                rightArm._rotationWeight = 1f;
-            }
-            else
-            {
-                rightArm._positionWeight = 0f;
-                rightArm._rotationWeight = 0f;
-            }
-
-            // Legs
-            if (leftFootTracker != null)
-            {
-                Transform? lastBone = (ik.Humanoid?.Left.Toes.Node ?? ik.Humanoid?.Left.Foot.Node)?.GetTransformAs<Transform>(true);
-                CalibrateLeg(
-                    data,
-                    leftFootTracker,
-                    ik.Solver._leftLeg,
-                    lastBone,
-                    root.WorldForward,
-                    true);
-            }
-
-            if (rightFootTracker != null)
-            {
-                Transform? lastBone = (ik.Humanoid?.Right.Toes.Node ?? ik.Humanoid?.Right.Foot.Node)?.GetTransformAs<Transform>(true);
-                CalibrateLeg(
-                    data,
-                    rightFootTracker,
-                    ik.Solver._rightLeg,
-                    lastBone,
-                    root.WorldForward,
-                    false);
-            }
-
+            CalibrateHead(data, headTracker, spine);
+            CalibrateScale(data, root);
+            CalibrateHips(ik, data, bodyTracker, leftFootTracker, rightFootTracker, spine);
+            CalibrateLeftHand(ik, data, leftHandTracker);
+            CalibrateRightHand(ik, data, rightHandTracker);
+            CalibrateLeg(
+                data,
+                leftFootTracker,
+                ik.Solver.LeftLeg,
+                (ik.Humanoid?.Left.Toes.Node ?? ik.Humanoid?.Left.Foot.Node)?.GetTransformAs<Transform>(true),
+                root.WorldForward,
+                true);
+            CalibrateLeg(
+                data,
+                rightFootTracker,
+                ik.Solver.RightLeg,
+                (ik.Humanoid?.Right.Toes.Node ?? ik.Humanoid?.Right.Foot.Node)?.GetTransformAs<Transform>(true),
+                root.WorldForward,
+                false);
+            
             // Additional solver settings
-            spine._minHeadHeight = 0f;
-            ik.Solver._locomotion._weight = bodyTracker == null && leftFootTracker == null && rightFootTracker == null ? 1f : 0f;
+            spine.MinHeadHeight = 0.0f;
+            //ik.Solver._locomotion._weight = bodyTracker == null && leftFootTracker == null && rightFootTracker == null ? 1.0f : 0.0f;
 
-            if (root.SceneNode is null)
+            CalibrateRoot(data, bodyTracker, leftFootTracker, rightFootTracker, root);
+        }
+
+        private static void CalibrateRightHand(VRIKSolverComponent ik, Settings settings, TransformBase? rightHandTracker)
+        {
+            if (rightHandTracker is null)
             {
-                Debug.LogWarning("Can not calibrate VRIK without a root transform.");
+                Debug.LogWarning("Can not calibrate right hand without a right hand tracker.");
                 return;
             }
 
-            var rootController = root.SceneNode.GetComponent<VRIKRootControllerComponent>();
+            SceneNode? rightHandNode = rightHandTracker.SceneNode;
+            if (rightHandNode is null)
+            {
+                Debug.LogWarning("Can not create right hand target without a right hand tracker scene node.");
+                return;
+            }
 
-            // Root controller
+            var rightArm = ik.Solver.RightArm;
+            float weightVal = 0.0f;
+            if (rightHandTracker != null)
+            {
+                weightVal = 1.0f;
+                Quaternion look = rightHandTracker.WorldRotation * XRMath.LookRotation(settings.HandTrackerForward, settings.HandTrackerUp);
+                Vector3 translation = rightHandTracker.WorldTranslation + look.Rotate(settings.HandOffset);
+                Quaternion rotation = XRMath.MatchRotation(
+                    look,
+                    settings.HandTrackerForward,
+                    settings.HandTrackerUp,
+                    rightArm.WristToPalmAxis,
+                    -Vector3.Cross(rightArm.WristToPalmAxis, rightArm.PalmToThumbAxis));
+
+                Transform rightHandTarget = GetOrAddHandTarget(rightHandNode, rightArm, RightHandTargetNodeName);
+                rightHandTarget.SetWorldTranslationRotation(translation, rotation);
+                rightHandTarget.SaveBindState();
+                rightHandTarget.RecalculateMatrices(true);
+                rightArm.Target = rightHandTarget;
+            }
+            rightArm.PositionWeight = weightVal;
+            rightArm.RotationWeight = weightVal;
+        }
+
+        private static void CalibrateRightHand(VRIKSolverComponent ik, CalibrationData data, TransformBase? rightHandTracker)
+        {
+            if (rightHandTracker is null)
+            {
+                Debug.LogWarning("Can not calibrate right hand without a right hand tracker.");
+                return;
+            }
+
+            SceneNode? rightHandNode = rightHandTracker.SceneNode;
+            if (rightHandNode is null)
+            {
+                Debug.LogWarning("Can not create right hand target without a right hand tracker scene node.");
+                return;
+            }
+
+            var rightArm = ik.Solver.RightArm;
+            float weightVal = 0.0f;
+            if (rightHandTracker != null)
+            {
+                weightVal = 1.0f;
+                Transform rightHandTarget = GetOrAddHandTarget(rightHandNode, rightArm, RightHandTargetNodeName);
+                data.RightHand?.ApplyTo(rightHandTarget);
+            }
+            rightArm.PositionWeight = weightVal;
+            rightArm.RotationWeight = weightVal;
+        }
+
+        private static void CalibrateLeftHand(VRIKSolverComponent ik, Settings settings, TransformBase? leftHandTracker)
+        {
+            if (leftHandTracker is null)
+            {
+                Debug.LogWarning("Can not calibrate left hand without a left hand tracker.");
+                return;
+            }
+
+            SceneNode? leftHandNode = leftHandTracker.SceneNode;
+            if (leftHandNode is null)
+            {
+                Debug.LogWarning("Can not create left hand target without a left hand tracker scene node.");
+                return;
+            }
+
+            var leftArm = ik.Solver.LeftArm;
+            float weightVal = 0.0f;
+            if (leftHandTracker != null)
+            {
+                weightVal = 1.0f;
+                Quaternion look = leftHandTracker.WorldRotation * XRMath.LookRotation(settings.HandTrackerForward, settings.HandTrackerUp);
+                Vector3 translation = leftHandTracker.WorldTranslation + look.Rotate(settings.HandOffset);
+                Quaternion rotation = XRMath.MatchRotation(
+                    look,
+                    settings.HandTrackerForward,
+                    settings.HandTrackerUp,
+                    leftArm.WristToPalmAxis,
+                    Vector3.Cross(leftArm.WristToPalmAxis, leftArm.PalmToThumbAxis));
+
+                Transform leftHandTarget = GetOrAddHandTarget(leftHandNode, leftArm, LeftHandTargetNodeName);
+                leftHandTarget.SetWorldTranslationRotation(translation, rotation);
+                leftHandTarget.SaveBindState();
+                leftHandTarget.RecalculateMatrices(true);
+            }
+            leftArm.PositionWeight = weightVal;
+            leftArm.RotationWeight = weightVal;
+        }
+
+        private static void CalibrateLeftHand(VRIKSolverComponent ik, CalibrationData data, TransformBase? leftHandTracker)
+        {
+            if (leftHandTracker is null)
+            {
+                Debug.LogWarning("Can not calibrate left hand without a left hand tracker.");
+                return;
+            }
+
+            SceneNode? leftHandNode = leftHandTracker.SceneNode;
+            if (leftHandNode is null)
+            {
+                Debug.LogWarning("Can not create left hand target without a left hand tracker scene node.");
+                return;
+            }
+
+            var leftArm = ik.Solver.LeftArm;
+            float weightVal = 0.0f;
+            if (leftHandTracker != null)
+            {
+                weightVal = 1.0f;
+                Transform leftHandTarget = GetOrAddHandTarget(leftHandNode, leftArm, LeftHandTargetNodeName);
+                data.LeftHand?.ApplyTo(leftHandTarget);
+            }
+            leftArm.PositionWeight = weightVal;
+            leftArm.RotationWeight = weightVal;
+        }
+
+        private static Transform GetOrAddHandTarget(SceneNode handNode, IKSolverVR.ArmSolver arm, string name)
+        {
+            Transform target;
+            if (arm.Target is null)
+            {
+                handNode.NewChildWithTransform(out target, name);
+                arm.Target = target;
+            }
+            else
+                target = arm.Target;
+            return target;
+        }
+
+        private static void CalibrateHips(
+            VRIKSolverComponent ik,
+            CalibrationData data,
+            TransformBase? bodyTracker,
+            TransformBase? leftFootTracker,
+            TransformBase? rightFootTracker,
+            IKSolverVR.SpineSolver spine)
+        {
+            if (bodyTracker != null && data.Hips != null)
+            {
+                SceneNode? hipTrackerNode = bodyTracker.SceneNode;
+                if (hipTrackerNode is null)
+                {
+                    Debug.LogWarning("Can not create hips target without a body tracker scene node.");
+                    return;
+                }
+
+                Transform hipsTarget;
+                if (spine.HipsTarget != null)
+                    hipsTarget = spine.HipsTarget;
+                else
+                    hipTrackerNode.NewChildWithTransform(out hipsTarget, "Hips Target");
+                
+                data.Hips.ApplyTo(hipsTarget);
+                spine.HipsTarget = hipsTarget;
+
+                spine.HipsPositionWeight = data.HipsPositionWeight;
+                spine.HipsRotationWeight = data.HipsRotationWeight;
+                spine.MaxRootAngle = 180.0f;
+
+                ik.Solver.PlantFeet = false;
+            }
+            else if (leftFootTracker != null && rightFootTracker != null)
+            {
+                spine.MaxRootAngle = 0.0f;
+            }
+        }
+
+        private static void CalibrateScale(CalibrationData data, Transform root)
+        {
+            root.Scale = data.Scale * Vector3.One;
+        }
+
+        private static void CalibrateHead(CalibrationData data, TransformBase headTracker, IKSolverVR.SpineSolver spine)
+        {
+            if (headTracker is null)
+            {
+                Debug.LogWarning("Can not calibrate without a head tracker.");
+                return;
+            }
+
+            SceneNode? headTrackerNode = headTracker.SceneNode;
+            if (headTrackerNode is null)
+            {
+                Debug.LogWarning("Can not create head target without a head tracker scene node.");
+                return;
+            }
+
+            Transform headTarget;
+            if (spine.HeadTarget is not null)
+                headTarget = spine.HeadTarget;
+            else
+                headTrackerNode.NewChildWithTransform(out headTarget, "Head Target");
+            
+            data.Head?.ApplyTo(headTarget);
+            spine.HeadTarget = headTarget;
+        }
+
+        private static void CalibrateRoot(CalibrationData data, TransformBase? bodyTracker, TransformBase? leftFootTracker, TransformBase? rightFootTracker, Transform root)
+        {
+            var node = root.SceneNode;
+            if (node is null)
+            {
+                Debug.LogWarning("Can not calibrate VRIK without a root scene node.");
+                return;
+            }
+
+            var rc = node.GetComponent<VRIKRootControllerComponent>();
+            if (rc is null)
+                return;
+
             bool addRootController = bodyTracker != null || (leftFootTracker != null && rightFootTracker != null);
             if (addRootController)
             {
-                rootController ??= root.SceneNode.AddComponent<VRIKRootControllerComponent>()!;
-                rootController.Calibrate(data);
+                rc ??= node.AddComponent<VRIKRootControllerComponent>()!;
+                rc?.Calibrate(data);
             }
             else
-                rootController?.Destroy();
+                rc?.Destroy();
         }
 
         private static void CalibrateLeg(
             CalibrationData data,
-            TransformBase tracker,
-            IKSolverVR.Leg leg,
+            TransformBase? tracker,
+            IKSolverVR.LegSolver leg,
             TransformBase? lastBone,
             Vector3 rootForward,
             bool isLeft)
         {
-            if (isLeft && data._leftFoot is null) 
+            if (tracker is null)
                 return;
 
-            if (!isLeft && data._rightFoot is null)
+            SceneNode? trackerNode = tracker.SceneNode;
+            if (trackerNode is null)
+            {
+                Debug.LogWarning($"Can not calibrate leg without a tracker scene node.");
+                return;
+            }
+
+            if ((isLeft && data.LeftFoot is null) || 
+                (!isLeft && data.RightFoot is null))
                 return;
 
-            string name = isLeft ? "Left" : "Right";
-
-            Transform target = leg._target ?? new SceneNode(tracker.World, $"{name} Foot Target").GetTransformAs<Transform>(true)!;
-
-            target.SetParent(tracker, true);
-
+            string sideName;
+            CalibrationData.Target? foot;
+            CalibrationData.Target? targetLegGoal;
             if (isLeft)
-                data._leftFoot?.ApplyLocalTransformTo(target);
+            {
+                sideName = "Left";
+                foot = data.LeftFoot;
+                targetLegGoal = data.LeftLegGoal;
+            }
             else
-                data._rightFoot?.ApplyLocalTransformTo(target);
+            {
+                sideName = "Right";
+                foot = data.RightFoot;
+                targetLegGoal = data.RightLegGoal;
+            }
 
-            leg._target = target;
-
-            leg._positionWeight = 1f;
-            leg._rotationWeight = 1f;
-
-            // Bend goal
-            Transform bendGoal = leg._bendGoal ?? new SceneNode(tracker.World, $"{name} Leg Bend Goal").GetTransformAs<Transform>(true)!;
-            bendGoal.SetParent(tracker, true);
-
-            if (isLeft)
-                data._leftLegGoal?.ApplyLocalTransformTo(bendGoal);
+            Transform target;
+            if (leg.Target != null)
+                target = leg.Target;
             else
-                data._rightLegGoal?.ApplyLocalTransformTo(bendGoal);
+                trackerNode.NewChildWithTransform(out target, $"{sideName} Foot Target");
+            
+            foot?.ApplyTo(target);
+            leg.Target = target;
+            leg.PositionWeight = 1.0f;
+            leg.RotationWeight = 1.0f;
 
-            leg._bendGoal = bendGoal;
-            leg._bendGoalWeight = 1f;
+            Transform bendGoal;
+            if (leg.BendGoal != null)
+                bendGoal = leg.BendGoal;
+            else
+                trackerNode.NewChildWithTransform(out bendGoal, $"{sideName} Leg Bend Goal");
+            
+            targetLegGoal?.ApplyTo(bendGoal);
+            leg.BendGoal = bendGoal;
+            leg.BendGoalWeight = 1.0f;
         }
 
         /// <summary>
@@ -574,7 +804,7 @@ namespace XREngine.Scene.Components.Animation
         /// <param name="centerEyeRotationOffset">Rotation offset of the camera from the head bone (root space).</param>
         /// <param name="handPositionOffset">Position offset of the hand controller from the hand bone (controller space).</param>
         /// <param name="handRotationOffset">Rotation offset of the hand controller from the hand bone (controller space).</param>
-        /// <param name="scaleMlp">Multiplies the scale of the root.</param>
+        /// <param name="scale">Multiplies the scale of the root.</param>
         /// <returns></returns>
         public static CalibrationData Calibrate(
             VRIKSolverComponent ik,
@@ -585,56 +815,18 @@ namespace XREngine.Scene.Components.Animation
             Vector3 centerEyeRotationOffset,
             Vector3 handPositionOffset,
             Vector3 handRotationOffset,
-            float scaleMlp = 1f)
+            float scale = 1.0f)
         {
-            CalibrateHead(ik, centerEyeAnchor, centerEyePositionOffset, centerEyeRotationOffset);
-            CalibrateHands(ik, leftHandAnchor, rightHandAnchor, handPositionOffset, handRotationOffset);
-            CalibrateScale(ik, scaleMlp);
+            CalibrateHeadSimple(ik, centerEyeAnchor, centerEyePositionOffset, centerEyeRotationOffset);
+            CalibrateHandsSimple(ik, leftHandAnchor, rightHandAnchor, handPositionOffset, handRotationOffset);
+            CalibrateScaleSimple(ik, scale);
             return new()
             {
-                _scale = ik.Root?.Scale.Y ?? 1.0f,
-                _head = new CalibrationData.Target(ik.Solver._spine._headTarget),
-                _leftHand = new CalibrationData.Target(ik.Solver._leftArm._target),
-                _rightHand = new CalibrationData.Target(ik.Solver._rightArm._target)
+                Scale = ik.Root?.Scale.Y ?? 1.0f,
+                Head = new CalibrationData.Target(ik.Solver.Spine.HeadTarget),
+                LeftHand = new CalibrationData.Target(ik.Solver.LeftArm.Target),
+                RightHand = new CalibrationData.Target(ik.Solver.RightArm.Target)
             };
-        }
-
-        /// <summary>
-        /// Calibrates head IK target to specified anchor position and rotation offset independent of avatar bone orientations.
-        /// </summary>
-        public static void CalibrateHead(
-            VRIKSolverComponent ik,
-            TransformBase centerEyeAnchor,
-            Vector3 anchorPositionOffset,
-            Vector3 anchorRotationOffset)
-        {
-            var spine = ik.Solver._spine;
-            spine._headTarget ??= new SceneNode("Head IK Target").GetTransformAs<Transform>(true)!;
-
-            var root = ik.Root;
-            if (root is null)
-            {
-                Debug.LogWarning("Can not calibrate VRIK without the root transform.");
-                return;
-            }
-            var head = ik.Humanoid?.Head.Node?.GetTransformAs<Transform>(true);
-            if (head is null)
-            {
-                Debug.LogWarning("Can not calibrate VRIK without the head transform.");
-                return;
-            }
-
-            Vector3 forward = Quaternion.Inverse(head.WorldRotation).Rotate(root.WorldForward);
-            Vector3 up = Quaternion.Inverse(head.WorldRotation).Rotate(root.WorldUp);
-            Quaternion headSpace = XRMath.LookRotation(forward, up);
-
-            Vector3 anchorPos = head.WorldTranslation + (head.WorldRotation * headSpace).Rotate(anchorPositionOffset);
-            Quaternion anchorRot = head.WorldRotation * headSpace * Quaternion.CreateFromYawPitchRoll(anchorRotationOffset.Y, anchorRotationOffset.X, anchorRotationOffset.Z);
-            Quaternion anchorRotInverse = Quaternion.Inverse(anchorRot);
-
-            spine._headTarget.SetParent(centerEyeAnchor, false);
-            spine._headTarget.Translation = anchorRotInverse.Rotate(head.WorldTranslation - anchorPos);
-            spine._headTarget.Rotation = anchorRotInverse * head.WorldRotation;
         }
 
         /// <summary>
@@ -646,7 +838,7 @@ namespace XREngine.Scene.Components.Animation
             Vector3 trackerPositionOffset,
             Vector3 trackerRotationOffset)
         {
-            var spine = ik.Solver._spine;
+            var spine = ik.Solver.Spine;
             var root = ik.Root;
             if (root is null)
             {
@@ -659,24 +851,25 @@ namespace XREngine.Scene.Components.Animation
                 Debug.LogWarning("Can not calibrate VRIK without the hips transform.");
                 return;
             }
-            spine._hipsTarget ??= new SceneNode(ik.World, "Hips IK Target").GetTransformAs<Transform>(true)!;
-            spine._hipsTarget.SetParent(hipsTracker, false);
-            spine._hipsTarget.SetWorldTranslation(hips.WorldTranslation + root.WorldRotation.Rotate(trackerPositionOffset));
-            spine._hipsTarget.SetWorldRotation(root.WorldRotation * Quaternion.CreateFromYawPitchRoll(trackerRotationOffset.Y, trackerPositionOffset.X, trackerPositionOffset.Z));
+
+            var ht = spine.HipsTarget ??= new SceneNode(ik.World, "Hips IK Target").GetTransformAs<Transform>(true)!;
+            ht.SetParent(hipsTracker, false);
+            ht.SetWorldTranslation(hips.WorldTranslation + root.WorldRotation.Rotate(trackerPositionOffset));
+            ht.SetWorldRotation(root.WorldRotation * Quaternion.CreateFromYawPitchRoll(trackerRotationOffset.Y, trackerPositionOffset.X, trackerPositionOffset.Z));
         }
 
         /// <summary>
         /// Calibrates hand IK targets to specified anchor position and rotation offsets independent of avatar bone orientations.
         /// </summary>
-        public static void CalibrateHands(
+        public static void CalibrateHandsSimple(
             VRIKSolverComponent ik,
             TransformBase leftHandAnchor,
             TransformBase rightHandAnchor,
             Vector3 anchorPositionOffset,
             Vector3 anchorRotationOffset)
         {
-            ik.Solver._leftArm._target ??= new SceneNode(ik.World, "Left Hand IK Target").GetTransformAs<Transform>(true)!;
-            ik.Solver._rightArm._target ??= new SceneNode(ik.World, "Right Hand IK Target").GetTransformAs<Transform>(true)!;
+            ik.Solver.LeftArm.Target ??= new SceneNode(ik.World, "Left Hand IK Target").GetTransformAs<Transform>(true)!;
+            ik.Solver.RightArm.Target ??= new SceneNode(ik.World, "Right Hand IK Target").GetTransformAs<Transform>(true)!;
 
             CalibrateHand(ik, leftHandAnchor, anchorPositionOffset, anchorRotationOffset, true);
             CalibrateHand(ik, rightHandAnchor, anchorPositionOffset, anchorRotationOffset, false);
@@ -709,24 +902,25 @@ namespace XREngine.Scene.Components.Animation
                 Debug.LogWarning($"Can not calibrate VRIK without the {human.Name} hand transform.");
                 return;
             }
-            var target = isLeft ? ik.Solver._leftArm._target : ik.Solver._rightArm._target;
+            var target = isLeft ? ik.Solver.LeftArm.Target : ik.Solver.RightArm.Target;
             if (target is null)
             {
                 Debug.LogWarning($"Can not calibrate VRIK without the {human.Name} hand target.");
                 return;
             }
+
             var forearm = (isLeft ? human.Left.Elbow.Node : human.Right.Elbow.Node)?.GetTransformAs<Transform>(true);
 
             Vector3 forward = isLeft
-                ? ik.Solver._leftArm._wristToPalmAxis
-                : ik.Solver._rightArm._wristToPalmAxis;
+                ? ik.Solver.LeftArm.WristToPalmAxis
+                : ik.Solver.RightArm.WristToPalmAxis;
 
             if (forward == Vector3.Zero)
                 forward = GuessWristToPalmAxis(hand, forearm);
 
             Vector3 up = isLeft
-                ? ik.Solver._leftArm._palmToThumbAxis
-                : ik.Solver._rightArm._palmToThumbAxis;
+                ? ik.Solver.LeftArm.PalmToThumbAxis
+                : ik.Solver.RightArm.PalmToThumbAxis;
 
             if (up == Vector3.Zero)
                 up = GuessPalmToThumbAxis(hand, forearm);
@@ -748,10 +942,12 @@ namespace XREngine.Scene.Components.Animation
                 Debug.LogWarning("Can not guess the hand bone's orientation without the hand and forearm transforms.");
                 return Vector3.Zero;
             }
-            Vector3 toForearm = forearm.WorldTranslation - hand.WorldTranslation;
-            Vector3 axis = XRMath.AxisToVector(XRMath.GetAxisToDirection(hand.WorldRotation, toForearm));
-            if (Vector3.Dot(toForearm, hand.WorldRotation.Rotate(axis)) > 0f)
+
+            Vector3 handToForearm = forearm.WorldTranslation - hand.WorldTranslation;
+            Vector3 axis = XRMath.AxisToVector(XRMath.GetAxisToDirection(hand.WorldRotation, handToForearm));
+            if (Vector3.Dot(handToForearm, hand.WorldRotation.Rotate(axis)) > 0.0f)
                 axis = -axis;
+
             return axis;
         }
 
@@ -795,8 +991,9 @@ namespace XREngine.Scene.Components.Animation
             Vector3 handNormal = Vector3.Cross(hand.WorldTranslation - forearm.WorldTranslation, thumb.WorldTranslation - hand.WorldTranslation);
             Vector3 toThumb = Vector3.Cross(handNormal, hand.WorldTranslation - forearm.WorldTranslation);
             Vector3 axis = XRMath.AxisToVector(XRMath.GetAxisToDirection(hand.WorldRotation, toThumb));
-            if (Vector3.Dot(toThumb, hand.WorldRotation.Rotate(axis)) < 0f)
+            if (Vector3.Dot(toThumb, hand.WorldRotation.Rotate(axis)) < 0.0f)
                 axis = -axis;
+
             return axis;
         }
     }

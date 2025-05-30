@@ -1,6 +1,6 @@
 ﻿using Transform = XREngine.Scene.Transforms.Transform;
 
-namespace XREngine.Scene.Components.Animation
+namespace XREngine.Components.Animation
 {
     public abstract class IKSolverComponent : BaseIKSolverComponent
     {

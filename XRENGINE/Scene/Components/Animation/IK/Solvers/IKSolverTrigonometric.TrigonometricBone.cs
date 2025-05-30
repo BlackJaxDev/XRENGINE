@@ -1,7 +1,7 @@
 ﻿using System.Numerics;
 using XREngine.Data.Core;
 
-namespace XREngine.Scene.Components.Animation
+namespace XREngine.Components.Animation
 {
     public partial class IKSolverTrigonometric
     {

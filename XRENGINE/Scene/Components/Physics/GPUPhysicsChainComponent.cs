@@ -8,7 +8,7 @@ using XREngine.Data.Core;
 using XREngine.Rendering;
 using XREngine.Rendering.Info;
 using XREngine.Rendering.Models.Materials;
-using XREngine.Scene.Components.Animation;
+using XREngine.Components.Animation;
 using XREngine.Scene.Transforms;
 using static XREngine.Engine;
 

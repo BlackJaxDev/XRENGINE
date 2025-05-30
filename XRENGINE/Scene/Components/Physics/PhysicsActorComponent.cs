@@ -1,6 +1,6 @@
-﻿using XREngine.Components;
+﻿using XREngine.Scene;
 
-namespace XREngine.Scene.Components.Physics
+namespace XREngine.Components.Physics
 {
     public abstract class PhysicsActorComponent : XRComponent
     {

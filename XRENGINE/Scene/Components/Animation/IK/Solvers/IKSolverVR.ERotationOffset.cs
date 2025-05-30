@@ -1,4 +1,4 @@
-﻿namespace XREngine.Scene.Components.Animation
+﻿namespace XREngine.Components.Animation
 {
     public partial class IKSolverVR
     {

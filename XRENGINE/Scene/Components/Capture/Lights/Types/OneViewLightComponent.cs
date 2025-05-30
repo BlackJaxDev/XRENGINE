@@ -1,7 +1,7 @@
 ﻿using XREngine.Rendering;
 using XREngine.Scene.Transforms;
 
-namespace XREngine.Scene.Components.Capture.Lights.Types
+namespace XREngine.Components.Capture.Lights.Types
 {
     /// <summary>
     /// Base class to handle shadow mapping for a light that only has one view.

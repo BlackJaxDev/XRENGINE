@@ -7,7 +7,7 @@ using XREngine.Rendering.Models.Materials;
 using XREngine.Scene.Transforms;
 using static XREngine.Data.Core.XRMath;
 
-namespace XREngine.Scene.Components.Capture.Lights.Types
+namespace XREngine.Components.Capture.Lights.Types
 {
     public class SpotLightComponent(float distance, float outerCutoffDeg, float innerCutoffDeg, float brightness, float exponent) : OneViewLightComponent()
     {

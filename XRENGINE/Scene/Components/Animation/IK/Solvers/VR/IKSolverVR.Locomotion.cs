@@ -2,18 +2,18 @@
 using System.ComponentModel.DataAnnotations;
 using System.Numerics;
 using XREngine.Animation;
-using XREngine.Components;
 using XREngine.Data;
 using XREngine.Data.Core;
+using XREngine.Scene;
 
-namespace XREngine.Scene.Components.Animation
+namespace XREngine.Components.Animation
 {
     public partial class IKSolverVR
     {
-        [System.Serializable]
+        [Serializable]
         public partial class Locomotion
         {
-            [System.Serializable]
+            [Serializable]
             public enum Mode
             {
                 Procedural = 0,
@@ -29,7 +29,7 @@ namespace XREngine.Scene.Components.Animation
             /// Used for blending in/out of procedural/animated locomotion.
             /// </summary>
             [Range(0f, 1f)]
-            public float _weight = 1f;
+            public float _weight = 1.0f;
 
             public void Initialize(AnimStateMachineComponent? animator, Vector3[] positions, Quaternion[] rotations, bool hasToes, float scale)
             {
@@ -221,15 +221,15 @@ namespace XREngine.Scene.Components.Animation
                 if (rb is null)
                     return;
 
-                Vector3 rootUp = rb._solverRotation.Rotate(Globals.Up);
+                Vector3 rootUp = rb.SolverRotation.Rotate(Globals.Up);
 
                 // Substract any motion from parent transforms
-                Vector3 externalDelta = rb._solverPosition - _lastEndRootPos;
+                Vector3 externalDelta = rb.SolverPosition - _lastEndRootPos;
                 externalDelta -= _animator.StateMachine?.DeltaPosition ?? Vector3.Zero;
 
                 // Head target position
                 Vector3 headTargetPos = solver._spine._headPosition;
-                Vector3 standOffsetWorld = rb._solverRotation.Rotate(new Vector3(_standOffset.X, 0f, _standOffset.Y) * scale);
+                Vector3 standOffsetWorld = rb.SolverRotation.Rotate(new Vector3(_standOffset.X, 0f, _standOffset.Y) * scale);
                 headTargetPos += standOffsetWorld;
 
                 if (_firstFrame)
@@ -244,7 +244,7 @@ namespace XREngine.Scene.Components.Animation
                 headTargetVelocity = XRMath.Flatten(headTargetVelocity, rootUp);
 
                 // Head target offset
-                Vector3 offset = headTargetPos - rb._solverPosition;
+                Vector3 offset = headTargetPos - rb.SolverPosition;
                 offset -= externalDelta;
                 offset -= _lastCorrection;
                 offset = XRMath.Flatten(offset, rootUp);
@@ -252,9 +252,9 @@ namespace XREngine.Scene.Components.Animation
                 // Turning
                 Vector3 headForward = (solver._spine.IKRotationHead * solver._spine.AnchorRelativeToHead).Rotate(Globals.Forward);
                 headForward.Y = 0f;
-                Vector3 headForwardLocal = Quaternion.Inverse(rb._solverRotation).Rotate(headForward);
+                Vector3 headForwardLocal = Quaternion.Inverse(rb.SolverRotation).Rotate(headForward);
                 float angle = float.RadiansToDegrees(MathF.Atan2(headForwardLocal.X, headForwardLocal.Z));
-                angle += solver._spine._rootHeadingOffset;
+                angle += solver._spine.RootHeadingOffset;
                 float turnTarget = angle / 90f;
                 bool isTurning = true;
                 if (MathF.Abs(turnTarget) < 0.2f)
@@ -295,17 +295,23 @@ namespace XREngine.Scene.Components.Animation
 
                 // Max root angle
                 float maxRootAngleTarget = _isMoving ? _maxRootAngleMoving : _maxRootAngleStanding;
-                solver._spine._maxRootAngle = XRMath.SmoothDamp(solver._spine._maxRootAngle, maxRootAngleTarget, ref _maxRootAngleV, 0.2f, float.PositiveInfinity, deltaTime);
+                solver._spine.MaxRootAngle = XRMath.SmoothDamp(
+                    solver._spine.MaxRootAngle,
+                    maxRootAngleTarget,
+                    ref _maxRootAngleV,
+                    0.2f,
+                    float.PositiveInfinity,
+                    deltaTime);
 
                 _animator.SetBool(PARAM_IsMoving, _isMoving);
 
                 // Animation speed
-                Vector3 currentRootPos = rb._solverPosition;
+                Vector3 currentRootPos = rb.SolverPosition;
                 currentRootPos -= externalDelta;
                 currentRootPos -= _lastCorrection;
 
                 Vector3 rootVelocity = (currentRootPos - _lastSpeedRootPos) / deltaTime;
-                _lastSpeedRootPos = rb._solverPosition;
+                _lastSpeedRootPos = rb.SolverPosition;
                 float rootVelocityMag = rootVelocity.Length();
 
                 float animSpeedTarget = _minAnimationSpeed;
@@ -335,37 +341,37 @@ namespace XREngine.Scene.Components.Animation
                 _rootLerpSpeed = Interp.Lerp(_rootLerpSpeed, rootLerpSpeedTarget, deltaTime * 20f);
 
                 // Root lerp and limits
-                headTargetPos += XRMath.ExtractVertical(rb._solverPosition - headTargetPos, rootUp, 1f);
+                headTargetPos += XRMath.ExtractVertical(rb.SolverPosition - headTargetPos, rootUp, 1f);
 
                 if (_maxRootOffset > 0f)
                 {
                     // Lerp towards head target position
-                    Vector3 p = rb._solverPosition;
+                    Vector3 p = rb.SolverPosition;
 
                     if (_rootLerpSpeed > 0f)
-                        rb._solverPosition = Vector3.Lerp(rb._solverPosition, headTargetPos, _rootLerpSpeed * deltaTime * _weight);
+                        rb.SolverPosition = Vector3.Lerp(rb.SolverPosition, headTargetPos, _rootLerpSpeed * deltaTime * _weight);
                     
-                    _lastCorrection = rb._solverPosition - p;
+                    _lastCorrection = rb.SolverPosition - p;
 
                     // Max offset
-                    offset = headTargetPos - rb._solverPosition;
+                    offset = headTargetPos - rb.SolverPosition;
                     offset = XRMath.Flatten(offset, rootUp);
                     float offsetMag = offset.Length();
 
                     if (offsetMag > _maxRootOffset)
                     {
                         _lastCorrection += (offset - (offset / offsetMag) * _maxRootOffset) * _weight;
-                        rb._solverPosition += _lastCorrection;
+                        rb.SolverPosition += _lastCorrection;
                     }
                 }
                 else
                 {
                     // Snap to head target position
-                    _lastCorrection = (headTargetPos - rb._solverPosition) * _weight;
-                    rb._solverPosition += _lastCorrection;
+                    _lastCorrection = (headTargetPos - rb.SolverPosition) * _weight;
+                    rb.SolverPosition += _lastCorrection;
                 }
 
-                _lastEndRootPos = rb._solverPosition;
+                _lastEndRootPos = rb.SolverPosition;
             }
         }
     }

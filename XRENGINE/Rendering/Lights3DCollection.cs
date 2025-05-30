@@ -10,8 +10,8 @@ using XREngine.Data.Trees;
 using XREngine.Data.Vectors;
 using XREngine.Rendering;
 using XREngine.Rendering.Info;
-using XREngine.Scene.Components.Capture.Lights;
-using XREngine.Scene.Components.Capture.Lights.Types;
+using XREngine.Components.Capture.Lights;
+using XREngine.Components.Capture.Lights.Types;
 using XREngine.Scene.Transforms;
 
 namespace XREngine.Scene

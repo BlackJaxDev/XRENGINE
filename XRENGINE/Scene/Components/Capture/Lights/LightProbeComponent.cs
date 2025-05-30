@@ -11,7 +11,7 @@ using XREngine.Scene.Transforms;
 using XREngine.Timers;
 using YamlDotNet.Serialization;
 
-namespace XREngine.Scene.Components.Capture.Lights
+namespace XREngine.Components.Capture.Lights
 {
     public class LightProbeComponent : SceneCaptureComponent, IRenderable, IVertex
     {

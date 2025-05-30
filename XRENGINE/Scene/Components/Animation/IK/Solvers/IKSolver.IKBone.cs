@@ -2,7 +2,7 @@
 using XREngine.Data.Core;
 using XREngine.Scene.Transforms;
 
-namespace XREngine.Scene.Components.Animation
+namespace XREngine.Components.Animation
 {
     public abstract partial class IKSolver
     {

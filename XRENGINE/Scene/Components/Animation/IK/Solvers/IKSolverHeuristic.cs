@@ -2,7 +2,7 @@
 using System.Numerics;
 using XREngine.Scene.Transforms;
 
-namespace XREngine.Scene.Components.Animation
+namespace XREngine.Components.Animation
 {
     /// <summary>
     /// Contains methods common for all heuristic solvers.

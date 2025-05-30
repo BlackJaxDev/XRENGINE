@@ -543,6 +543,23 @@ namespace XREngine.Scene.Transforms
                 Rotation = Quaternion.Normalize(localDelta * Rotation);
         }
 
+        public void SetWorldTranslationRotation(Vector3 worldTranslation, Quaternion worldRotation, bool networkSmoothed = false)
+        {
+            var localTranslation = Vector3.Transform(worldTranslation, ParentInverseWorldMatrix);
+            var localRotation = Quaternion.Normalize(ParentInverseWorldRotation * worldRotation);
+
+            if (networkSmoothed)
+            {
+                TargetTranslation = localTranslation;
+                TargetRotation = localRotation;
+            }
+            else
+            {
+                Translation = localTranslation;
+                Rotation = localRotation;
+            }
+        }
+
         public void SetWorldRotation(Quaternion worldRotation, bool networkSmoothed = false)
         {
             Quaternion localRotation = Quaternion.Normalize(ParentInverseWorldRotation * worldRotation);
@@ -607,16 +624,6 @@ namespace XREngine.Scene.Transforms
             // localRotation = parentWorldRotation^-1 * worldRotation * parentWorldRotation
             return Quaternion.Normalize(Quaternion.Inverse(parentWorldRotation) * worldRotation * parentWorldRotation);
         }
-
-        public Quaternion ParentWorldRotation
-            => Parent?.WorldRotation ?? Quaternion.Identity;
-        public Vector3 ParentWorldTranslation
-            => Parent?.WorldTranslation ?? Vector3.Zero;
-
-        public Quaternion ParentInverseWorldRotation
-            => Parent?.InverseWorldRotation ?? Quaternion.Identity;
-        public Vector3 ParentInverseWorldTranslation
-            => Vector3.Transform(Vector3.Zero, ParentInverseWorldMatrix);
 
         public TransformState FrameState => _frameState;
         public TransformState BindState => _bindState;

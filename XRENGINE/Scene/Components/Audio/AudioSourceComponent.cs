@@ -7,7 +7,7 @@ using XREngine.Data;
 using XREngine.Data.Core;
 using static XREngine.Audio.AudioSource;
 
-namespace XREngine.Components.Scene
+namespace XREngine.Components
 {
     public class AudioSourceComponent : XRComponent
     {

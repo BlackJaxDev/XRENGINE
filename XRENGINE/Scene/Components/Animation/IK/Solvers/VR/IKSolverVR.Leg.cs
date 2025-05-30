@@ -5,16 +5,17 @@ using System.Numerics;
 using XREngine.Data.Core;
 using XREngine.Scene.Transforms;
 
-namespace XREngine.Scene.Components.Animation
+namespace XREngine.Components.Animation
 {
     public partial class IKSolverVR
     {        
         /// <summary>
         /// 4-segmented analytic leg chain.
         /// </summary>
-        [System.Serializable]
-        public class Leg : BodyPart
+        [Serializable]
+        public class LegSolver : BodyPart
         {
+            private Transform? _target;
             /// <summary>
             /// The foot/toe target.
             /// This should not be the foot tracker itself,
@@ -23,56 +24,96 @@ namespace XREngine.Scene.Components.Animation
             /// the solver will match the toe bone to this target. 
             /// If no toe bone assigned, foot bone will be used instead.
             /// </summary>
-            public Transform? _target;
+            public Transform? Target
+            {
+                get => _target;
+                set => SetField(ref _target, value);
+			}
 
-            /// <summary>
-            /// Positional weight of the toe/foot target.
-            /// Note that if you have nulled the target,
-            /// the foot will still be pulled to the last position of the target until you set this value to 0.
-            /// </summary>
-            [Range(0f, 1f)]
-            public float _positionWeight;
+            private float _positionWeight = 1.0f;
+			/// <summary>
+			/// Positional weight of the toe/foot target.
+			/// Note that if you have nulled the target,
+			/// the foot will still be pulled to the last position of the target until you set this value to 0.
+			/// </summary>
+			[Range(0.0f, 1.0f)]
+            public float PositionWeight
+            {
+                get => _positionWeight;
+                set => SetField(ref _positionWeight, value);
+            }
 
-            /// <summary>
-            /// Rotational weight of the toe/foot target.
-            /// Note that if you have nulled the target,
-            /// the foot will still be rotated to the last rotation of the target until you set this value to 0.
-            /// </summary>
-            [Range(0f, 1f)]
-            public float _rotationWeight;
+			private float _rotationWeight = 1.0f;
+			/// <summary>
+			/// Rotational weight of the toe/foot target.
+			/// Note that if you have nulled the target,
+			/// the foot will still be rotated to the last rotation of the target until you set this value to 0.
+			/// </summary>
+			[Range(0.0f, 1.0f)]
+			public float RotationWeight
+            {
+                get => _rotationWeight;
+                set => SetField(ref _rotationWeight, value);
+			}
 
+			private Transform? _bendGoal = null;
             /// <summary>
             /// The knee will be bent towards this Transform if 'Bend Goal Weight' > 0.
             /// </summary>
-            public Transform? _bendGoal;
+            public Transform? BendGoal
+            {
+                get => _bendGoal;
+                set => SetField(ref _bendGoal, value);
+			}
 
-            /// <summary>
-            /// If greater than 0, will bend the knee towards the 'Bend Goal' Transform.
-            /// </summary>
-            [Range(0f, 1f)]
-            public float _bendGoalWeight;
+			private float _bendGoalWeight;
+			/// <summary>
+			/// If greater than 0, will bend the knee towards the 'Bend Goal' Transform.
+			/// </summary>
+			[Range(0.0f, 1.0f)]
+			public float BendGoalWeight
+            {
+                get => _bendGoalWeight;
+                set => SetField(ref _bendGoalWeight, value);
+			}
 
-            /// <summary>
-            /// Angular offset of knee bending direction.
-            /// </summary>
-            [Range(-180f, 180f)]
-            public float _swivelOffset;
+			private float _swivelOffset;
+			/// <summary>
+			/// Angular offset of knee bending direction.
+			/// </summary>
+			[Range(-180.0f, 180.0f)]
+			public float SwivelOffset
+            {
+                get => _swivelOffset;
+                set => SetField(ref _swivelOffset, value);
+			}
 
-            /// <summary>
-            /// If 0, the bend plane will be locked to the rotation of the pelvis and rotating the foot will have no effect on the knee direction.
-            /// If 1, to the target rotation of the leg so that the knee will bend towards the forward axis of the foot.
-            /// Values in between will be slerped between the two.
-            /// </summary>
-            [Range(0f, 1f)]
-            public float _bendToTargetWeight = 0.5f;
+			private float _bendToTargetWeight = 0.5f;
+			/// <summary>
+			/// If 0, the bend plane will be locked to the rotation of the pelvis and rotating the foot will have no effect on the knee direction.
+			/// If 1, to the target rotation of the leg so that the knee will bend towards the forward axis of the foot.
+			/// Values in between will be slerped between the two.
+			/// </summary>
+			[Range(0.0f, 1.0f)]
+			public float BendToTargetWeight
+            {
+                get => _bendToTargetWeight;
+                set => SetField(ref _bendToTargetWeight, value);
+			}
 
-            /// <summary>
-            /// Use this to make the leg shorter/longer.
-            /// Works by displacement of foot and calf localPosition.
-            /// </summary>
-            [Range(0.01f, 2f)]
-            public float _legLengthMlp = 1f;
+            private float _legLengthScale = 1.0f;
+			/// <summary>
+			/// Use this to make the leg shorter/longer.
+			/// Works by displacement of foot and calf localPosition.
+			/// </summary>
+			[Range(0.01f, 2f)]
+			public float LegLengthScale
+            {
+                get => _legLengthScale;
+                set => SetField(ref _legLengthScale, value);
+            }
 
+			private AnimationCurve _stretchCurve = new();
             /// <summary>
             /// Evaluates stretching of the leg by target distance relative to leg length.
             /// Value at time 1 represents stretching amount at the point where distance to the target is equal to leg length.
@@ -82,55 +123,94 @@ namespace XREngine.Scene.Components.Animation
             /// Increase the range of stretching by moving the last key up and right at the same amount.
             /// Smoothing in the curve can help reduce knee snapping (start stretching the arm slightly before target distance reaches leg length).
             /// </summary>
-            public AnimationCurve _stretchCurve = new();
+            public AnimationCurve StretchCurve
+            {
+                get => _stretchCurve;
+                set => SetField(ref _stretchCurve, value);
+            }
 
+            [NonSerialized]
+            private Vector3 _ikPosition;
             /// <summary>
             /// Target position of the toe/foot. Will be overwritten if target is assigned.
             /// </summary>
-            [NonSerialized]
             [HideInInspector]
-            public Vector3 IKPosition;
+            public Vector3 IKPosition
+            {
+                get => _ikPosition;
+                set => _ikPosition = value;
+            }
 
+            [NonSerialized]
+            private Quaternion _ikRotation = Quaternion.Identity;
             /// <summary>
             /// Target rotation of the toe/foot. Will be overwritten if target is assigned.
             /// </summary>
-            [NonSerialized]
             [HideInInspector]
-            public Quaternion IKRotation = Quaternion.Identity;
+            public Quaternion IKRotation
+            {
+                get => _ikRotation;
+                set => _ikRotation = value;
+            }
 
+            [NonSerialized]
+            private Vector3 _footPositionOffset;
             /// <summary>
             /// Position offset of the toe/foot. Will be applied on top of target position and reset to Vector3.zero after each update.
             /// </summary>
-            [NonSerialized]
             [HideInInspector]
-            public Vector3 _footPositionOffset;
+            public Vector3 FootPositionOffset
+            {
+                get => _footPositionOffset;
+                set => SetField(ref _footPositionOffset, value);
+            }
 
+            [NonSerialized]
+            private Vector3 _heelPositionOffset;
             /// <summary>
             /// Position offset of the heel. Will be reset to Vector3.zero after each update.
             /// </summary>
-            [NonSerialized]
             [HideInInspector]
-            public Vector3 _heelPositionOffset;
+            public Vector3 HeelPositionOffset
+            {
+                get => _heelPositionOffset;
+                set => SetField(ref _heelPositionOffset, value);
+            }
 
+            [NonSerialized]
+            private Quaternion _footRotationOffset = Quaternion.Identity;
             /// <summary>
             /// Rotation offset of the toe/foot. Will be reset to Quaternion.identity after each update.
             /// </summary>
-            [NonSerialized]
             [HideInInspector]
-            public Quaternion _footRotationOffset = Quaternion.Identity;
+            public Quaternion FootRotationOffset
+            {
+                get => _footRotationOffset;
+                set => SetField(ref _footRotationOffset, value);
+            }
 
+            [NonSerialized]
+            private float _currentLength;
             /// <summary>
             /// The length of the leg (calculated in last read).
             /// </summary>
-            [NonSerialized]
             [HideInInspector]
-            public float _currentMag;
+            public float CurrentLength
+            {
+                get => _currentLength;
+                set => SetField(ref _currentLength, value);
+            }
 
+            private bool _useAnimatedBendNormal;
             /// <summary>
             /// If true, will sample the leg bend angle each frame from the animation.
             /// </summary>
             [HideInInspector]
-            public bool _useAnimatedBendNormal;
+            public bool UseAnimatedBendNormal
+            {
+                get => _useAnimatedBendNormal;
+                set => SetField(ref _useAnimatedBendNormal, value);
+            }
 
             public Vector3 Position { get; private set; }
             public Quaternion Rotation { get; private set; }
@@ -163,24 +243,27 @@ namespace XREngine.Scene.Components.Animation
 
                 if (!_initialized)
                 {
-                    this.HasToes = hasToes;
-                    _bones = new VirtualBone[hasToes ? 4 : 3];
-
-                    if (hasToes)
+                    if (HasToes = hasToes)
                     {
-                        _bones[0] = new VirtualBone(thighPos, thighRot);
-                        _bones[1] = new VirtualBone(calfPos, calfRot);
-                        _bones[2] = new VirtualBone(footPos, footRot);
-                        _bones[3] = new VirtualBone(toePos, toeRot);
+                        _bones =
+                        [
+                            new(thighPos, thighRot),
+                            new(calfPos, calfRot),
+                            new(footPos, footRot),
+                            new(toePos, toeRot),
+                        ];
 
                         IKPosition = toePos;
                         IKRotation = toeRot;
                     }
                     else
                     {
-                        _bones[0] = new VirtualBone(thighPos, thighRot);
-                        _bones[1] = new VirtualBone(calfPos, calfRot);
-                        _bones[2] = new VirtualBone(footPos, footRot);
+                        _bones =
+                        [
+                            new(thighPos, thighRot),
+                            new(calfPos, calfRot),
+                            new(footPos, footRot),
+                        ];
 
                         IKPosition = footPos;
                         IKRotation = footRot;
@@ -219,28 +302,28 @@ namespace XREngine.Scene.Components.Animation
                     IKRotation = _target.WorldRotation;
                 }
 
-                _footPosition = Foot._solverPosition;
-                _footRotation = Foot._solverRotation;
+                _footPosition = Foot.SolverPosition;
+                _footRotation = Foot.SolverRotation;
 
-                Position = LastBone._solverPosition;
-                Rotation = LastBone._solverRotation;
+                Position = LastBone.SolverPosition;
+                Rotation = LastBone.SolverRotation;
 
-                if (_rotationWeight > 0f)
+                if (_rotationWeight > 0.0f)
                     ApplyRotationOffset(XRMath.FromToRotation(Rotation, IKRotation), _rotationWeight);
                 
-                if (_positionWeight > 0f)
+                if (_positionWeight > 0.0f)
                     ApplyPositionOffset(IKPosition - Position, _positionWeight);
                 
-                ThighRelativeToPelvis = Quaternion.Inverse(_rootRotation).Rotate(Thigh._solverPosition - _rootPosition);
-                _calfRelToThigh = Quaternion.Inverse(Thigh._solverRotation) * Calf._solverRotation;
-                _thighRelToFoot = Quaternion.Inverse(LastBone._solverRotation) * Thigh._solverRotation;
+                ThighRelativeToPelvis = Quaternion.Inverse(_rootRotation).Rotate(Thigh.SolverPosition - _rootPosition);
+                _calfRelToThigh = Quaternion.Inverse(Thigh.SolverRotation) * Calf.SolverRotation;
+                _thighRelToFoot = Quaternion.Inverse(LastBone.SolverRotation) * Thigh.SolverRotation;
 
                 // Calculate bend plane normal
                 if (_useAnimatedBendNormal)
-                    _bendNormal = Vector3.Cross(Calf._solverPosition - Thigh._solverPosition, Foot._solverPosition - Calf._solverPosition);
-                else if (_bendToTargetWeight <= 0f)
+                    _bendNormal = Vector3.Cross(Calf.SolverPosition - Thigh.SolverPosition, Foot.SolverPosition - Calf.SolverPosition);
+                else if (_bendToTargetWeight <= 0.0f)
                     _bendNormal = _rootRotation.Rotate(BendNormalRelToPelvis);
-                else if (_bendToTargetWeight >= 1f)
+                else if (_bendToTargetWeight >= 1.0f)
                     _bendNormal = Rotation.Rotate(BendNormalRelToTarget);
                 else
                     _bendNormal = XRMath.Slerp(_rootRotation.Rotate(BendNormalRelToPelvis), Rotation.Rotate(BendNormalRelToTarget), _bendToTargetWeight);
@@ -249,8 +332,8 @@ namespace XREngine.Scene.Components.Animation
 
             public override void ApplyOffsets(float scale)
             {
-                ApplyPositionOffset(_footPositionOffset, 1f);
-                ApplyRotationOffset(_footRotationOffset, 1f);
+                ApplyPositionOffset(_footPositionOffset, 1.0f);
+                ApplyRotationOffset(_footRotationOffset, 1.0f);
 
                 // Heel position offset
                 Quaternion fromTo = XRMath.RotationBetweenVectors(_footPosition - Position, _footPosition + _heelPositionOffset - Position);
@@ -258,29 +341,29 @@ namespace XREngine.Scene.Components.Animation
                 _footRotation = fromTo * _footRotation;
 
                 // Bend normal offset
-                float bAngle = 0f;
+                float bAngle = 0.0f;
 
-                if (_bendGoal != null && _bendGoalWeight > 0f)
+                if (_bendGoal != null && _bendGoalWeight > 0.0f)
                 {
                     _bendGoal.RecalculateMatrices(true);
-                    Vector3 b = Vector3.Cross(_bendGoal.WorldTranslation - Thigh._solverPosition, Position - Thigh._solverPosition);
-                    Quaternion l = XRMath.LookRotation(_bendNormal, Thigh._solverPosition - Foot._solverPosition);
+                    Vector3 b = Vector3.Cross(_bendGoal.WorldTranslation - Thigh.SolverPosition, Position - Thigh.SolverPosition);
+                    Quaternion l = XRMath.LookRotation(_bendNormal, Thigh.SolverPosition - Foot.SolverPosition);
                     Vector3 bRelative = Quaternion.Inverse(l).Rotate(b);
                     bAngle = float.RadiansToDegrees(MathF.Atan2(bRelative.X, bRelative.Z)) * _bendGoalWeight;
                 }
                 float sO = _swivelOffset + bAngle;
-                if (sO != 0f)
+                if (sO != 0.0f)
                 {
                     sO = float.DegreesToRadians(sO);
-                    _bendNormal = Quaternion.CreateFromAxisAngle(Thigh._solverPosition - LastBone._solverPosition, sO).Rotate(_bendNormal);
-                    Thigh._solverRotation = Quaternion.CreateFromAxisAngle(Thigh._solverRotation.Rotate(Thigh._axis), -sO) * Thigh._solverRotation;
+                    _bendNormal = Quaternion.CreateFromAxisAngle(Thigh.SolverPosition - LastBone.SolverPosition, sO).Rotate(_bendNormal);
+                    Thigh.SolverRotation = Quaternion.CreateFromAxisAngle(Thigh.SolverRotation.Rotate(Thigh.Axis), -sO) * Thigh.SolverRotation;
                 }
             }
 
             // Foot position offset
             private void ApplyPositionOffset(Vector3 offset, float weight)
             {
-                if (weight <= 0f)
+                if (weight <= 0.0f)
                     return;
 
                 offset *= weight;
@@ -293,10 +376,10 @@ namespace XREngine.Scene.Components.Animation
             // Foot rotation offset
             private void ApplyRotationOffset(Quaternion offset, float weight)
             {
-                if (weight <= 0f)
+                if (weight <= 0.0f)
                     return;
 
-                if (weight < 1f)
+                if (weight < 1.0f)
                     offset = Quaternion.Lerp(Quaternion.Identity, offset, weight);
                 
                 _footRotation = offset * _footRotation;
@@ -307,11 +390,11 @@ namespace XREngine.Scene.Components.Animation
 
             public void Solve(bool stretch)
             {
-                if (stretch && _lod < 1)
+                if (stretch && _quality < EQuality.Semi)
                     Stretching();
 
                 // Foot pass
-                VirtualBone.SolveTrigonometric(_bones, 0, 1, 2, _footPosition, _bendNormal, 1f);
+                VirtualBone.SolveTrigonometric(_bones, 0, 1, 2, _footPosition, _bendNormal, 1.0f);
 
                 // Rotate foot back to where it was before the last solving
                 RotateTo(Foot, _footRotation);
@@ -324,88 +407,88 @@ namespace XREngine.Scene.Components.Animation
                 }
 
                 Vector3 b = Vector3.Cross(
-                    Foot._solverPosition - Thigh._solverPosition,
-                    Toes._solverPosition - Foot._solverPosition
+                    Foot.SolverPosition - Thigh.SolverPosition,
+                    Toes.SolverPosition - Foot.SolverPosition
                     ).Normalized();
 
-                VirtualBone.SolveTrigonometric(_bones, 0, 2, 3, Position, b, 1f);
+                VirtualBone.SolveTrigonometric(_bones, 0, 2, 3, Position, b, 1.0f);
 
                 // Fix thigh twist relative to target rotation
                 FixTwistRotations();
 
                 // Keep toe rotation fixed
-                Toes._solverRotation = Rotation;
+                Toes.SolverRotation = Rotation;
             }
 
             private void FixTwistRotations()
             {
-                if (_lod >= 1)
+                if (Quality >= EQuality.Semi)
                     return;
                 
-                if (_bendToTargetWeight > 0f)
+                if (_bendToTargetWeight > 0.0f)
                 {
                     // Fix thigh twist relative to target rotation
                     Quaternion thighRotation = Rotation * _thighRelToFoot;
-                    Quaternion f = XRMath.RotationBetweenVectors(thighRotation.Rotate(Thigh._axis), Calf._solverPosition - Thigh._solverPosition);
-                    if (_bendToTargetWeight < 1f)
-                        Thigh._solverRotation = Quaternion.Slerp(Thigh._solverRotation, f * thighRotation, _bendToTargetWeight);
+                    Quaternion f = XRMath.RotationBetweenVectors(thighRotation.Rotate(Thigh.Axis), Calf.SolverPosition - Thigh.SolverPosition);
+                    if (_bendToTargetWeight < 1.0f)
+                        Thigh.SolverRotation = Quaternion.Slerp(Thigh.SolverRotation, f * thighRotation, _bendToTargetWeight);
                     else
-                        Thigh._solverRotation = f * thighRotation;
+                        Thigh.SolverRotation = f * thighRotation;
                 }
 
                 // Fix calf twist relative to thigh
-                Quaternion calfRotation = Thigh._solverRotation * _calfRelToThigh;
-                Quaternion fromTo = XRMath.RotationBetweenVectors(calfRotation.Rotate(Calf._axis), Foot._solverPosition - Calf._solverPosition);
-                Calf._solverRotation = fromTo * calfRotation;
+                Quaternion calfRotation = Thigh.SolverRotation * _calfRelToThigh;
+                Quaternion fromTo = XRMath.RotationBetweenVectors(calfRotation.Rotate(Calf.Axis), Foot.SolverPosition - Calf.SolverPosition);
+                Calf.SolverRotation = fromTo * calfRotation;
             }
 
             private void Stretching()
             {
                 // Adjusting leg length
-                float legLength = Thigh._length + Calf._length;
+                float legLength = Thigh.Length + Calf.Length;
                 Vector3 kneeAdd = Vector3.Zero;
                 Vector3 footAdd = Vector3.Zero;
 
-                if (_legLengthMlp != 1f)
+                if (_legLengthScale != 1.0f)
                 {
-                    legLength *= _legLengthMlp;
-                    kneeAdd = (Calf._solverPosition - Thigh._solverPosition) * (_legLengthMlp - 1f);// * positionWeight;
-                    footAdd = (Foot._solverPosition - Calf._solverPosition) * (_legLengthMlp - 1f);// * positionWeight;
-                    Calf._solverPosition += kneeAdd;
-                    Foot._solverPosition += kneeAdd + footAdd;
+                    legLength *= _legLengthScale;
+                    kneeAdd = (Calf.SolverPosition - Thigh.SolverPosition) * (_legLengthScale - 1.0f);// * positionWeight;
+                    footAdd = (Foot.SolverPosition - Calf.SolverPosition) * (_legLengthScale - 1.0f);// * positionWeight;
+                    Calf.SolverPosition += kneeAdd;
+                    Foot.SolverPosition += kneeAdd + footAdd;
                     if (HasToes)
-                        Toes._solverPosition += kneeAdd + footAdd;
+                        Toes.SolverPosition += kneeAdd + footAdd;
                 }
 
                 // Stretching
-                float distanceToTarget = Vector3.Distance(Thigh._solverPosition, _footPosition);
+                float distanceToTarget = Vector3.Distance(Thigh.SolverPosition, _footPosition);
                 float stretchF = distanceToTarget / legLength;
 
                 float m = _stretchCurve.Evaluate(stretchF);// * positionWeight; mlp by positionWeight enables stretching only for foot trackers, but not for built-in or animated locomotion
 
-                kneeAdd = (Calf._solverPosition - Thigh._solverPosition) * m;
-                footAdd = (Foot._solverPosition - Calf._solverPosition) * m;
+                kneeAdd = (Calf.SolverPosition - Thigh.SolverPosition) * m;
+                footAdd = (Foot.SolverPosition - Calf.SolverPosition) * m;
 
-                Calf._solverPosition += kneeAdd;
-                Foot._solverPosition += kneeAdd + footAdd;
+                Calf.SolverPosition += kneeAdd;
+                Foot.SolverPosition += kneeAdd + footAdd;
                 if (HasToes)
-                    Toes._solverPosition += kneeAdd + footAdd;
+                    Toes.SolverPosition += kneeAdd + footAdd;
             }
 
             public override void Write(ref Vector3[] solvedPositions, ref Quaternion[] solvedRotations)
             {
-                solvedRotations[_index] = Thigh._solverRotation;
-                solvedRotations[_index + 1] = Calf._solverRotation;
-                solvedRotations[_index + 2] = Foot._solverRotation;
+                solvedRotations[_index] = Thigh.SolverRotation;
+                solvedRotations[_index + 1] = Calf.SolverRotation;
+                solvedRotations[_index + 2] = Foot.SolverRotation;
 
-                solvedPositions[_index] = Thigh._solverPosition;
-                solvedPositions[_index + 1] = Calf._solverPosition;
-                solvedPositions[_index + 2] = Foot._solverPosition;
+                solvedPositions[_index] = Thigh.SolverPosition;
+                solvedPositions[_index + 1] = Calf.SolverPosition;
+                solvedPositions[_index + 2] = Foot.SolverPosition;
 
                 if (HasToes)
                 {
-                    solvedRotations[_index + 3] = Toes._solverRotation;
-                    solvedPositions[_index + 3] = Toes._solverPosition;
+                    solvedRotations[_index + 3] = Toes.SolverRotation;
+                    solvedPositions[_index + 3] = Toes.SolverPosition;
                 }
             }
 

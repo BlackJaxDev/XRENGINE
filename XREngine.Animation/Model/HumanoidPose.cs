@@ -1,5 +1,5 @@
 ﻿//using XREngine.Data.Core;
-//using XREngine.Scene.Components.Animation;
+//using XREngine.Components.Animation;
 
 //namespace XREngine.Animation
 //{

@@ -13,7 +13,7 @@ using XREngine.Data.Geometry;
 using XREngine.Data.Trees;
 using XREngine.Rendering.Info;
 using XREngine.Scene;
-using XREngine.Scene.Components.Animation;
+using XREngine.Components.Animation;
 using XREngine.Scene.Transforms;
 using static XREngine.Engine;
 

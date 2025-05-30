@@ -2,7 +2,7 @@
 using System.Numerics;
 using XREngine.Core.Files;
 
-namespace XREngine.Scene.Components.Animation
+namespace XREngine.Components.Animation
 {
     public static partial class VRIKCalibrator
     {

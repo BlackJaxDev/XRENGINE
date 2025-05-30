@@ -3,11 +3,11 @@ using System.Net;
 using System.Numerics;
 using System.Text;
 using XREngine.Components;
-using XREngine.Scene.Components.Animation;
+using XREngine.Components.Animation;
 using XREngine.Scene.Transforms;
 using Extensions;
 
-namespace XREngine.Scene.Components;
+namespace XREngine.Components;
 
 public class FaceMotion3DCaptureComponent : XRComponent
 {

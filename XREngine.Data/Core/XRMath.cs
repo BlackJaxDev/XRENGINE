@@ -1557,7 +1557,12 @@ namespace XREngine.Data.Core
         /// <summary>
         /// Used for matching the rotations of objects that have different orientations.
         /// </summary>
-        public static Quaternion MatchRotation(Quaternion targetRotation, Vector3 targetAxis1, Vector3 targetAxis2, Vector3 axis1, Vector3 axis2)
+        public static Quaternion MatchRotation(
+            Quaternion targetRotation,
+            Vector3 targetAxis1,
+            Vector3 targetAxis2,
+            Vector3 axis1,
+            Vector3 axis2)
         {
             Quaternion f = LookRotation(axis1, axis2);
             Quaternion fTarget = LookRotation(targetAxis1, targetAxis2);
@@ -1619,30 +1624,61 @@ namespace XREngine.Data.Core
             => LookRotation(forward, Globals.Up);
         public static Quaternion LookRotation(Vector3 forward, Vector3 up)
         {
-            // Return identity if the forward vector is nearly zero.
+            //// Return identity if the forward vector is nearly zero.
+            //if (forward.LengthSquared() < Epsilon)
+            //    return Quaternion.Identity;
+
+            //// Normalize the forward vector.
+            //forward = Vector3.Normalize(forward);
+
+            //// If upwards is nearly zero length, fallback.
+            //if (up.LengthSquared() < Epsilon)
+            //    return RotationBetweenVectors(Vector3.UnitZ, forward);
+
+            //// Compute the right vector as cross(upwards, forward).
+            //Vector3 right = Vector3.Cross(up, forward);
+
+            //// If forward and upwards are colinear, fallback.
+            //if (right.LengthSquared() < Epsilon)
+            //    return RotationBetweenVectors(Vector3.UnitZ, forward);
+
+            //right = Vector3.Normalize(right);
+
+            //// Recalculate the up vector to ensure orthogonality.
+            //up = Vector3.Cross(forward, right);
+
+            //return Quaternion.CreateFromRotationMatrix(Matrix4x4.CreateWorld(Vector3.Zero, forward, up));
+
+            // Return identity if forward is nearly zero.
             if (forward.LengthSquared() < Epsilon)
                 return Quaternion.Identity;
+            forward = forward.Normalized();
 
-            // Normalize the forward vector.
-            forward = Vector3.Normalize(forward);
-
-            // If upwards is nearly zero length, fallback.
             if (up.LengthSquared() < Epsilon)
-                return RotationBetweenVectors(Vector3.UnitZ, forward);
+                return RotationBetweenVectors(Globals.Forward, forward);
 
-            // Compute the right vector as cross(upwards, forward).
+            // Build orthonormal basis
             Vector3 right = Vector3.Cross(up, forward);
-
-            // If forward and upwards are colinear, fallback.
             if (right.LengthSquared() < Epsilon)
-                return RotationBetweenVectors(Vector3.UnitZ, forward);
+                return RotationBetweenVectors(Globals.Forward, forward);
+            right = right.Normalized();
 
-            right = Vector3.Normalize(right);
+            Vector3 orthonormalUp = Vector3.Cross(forward, right);
 
-            // Recalculate the up vector to ensure orthogonality.
-            up = Vector3.Cross(forward, right);
+            // Rotate global forward to desired forward
+            Quaternion q1 = RotationBetweenVectors(Globals.Forward, forward);
 
-            return Quaternion.CreateFromRotationMatrix(Matrix4x4.CreateWorld(Vector3.Zero, forward, up));
+            // Rotate around 'forward' so that rotated +Y aligns with orthonormalUp
+            Vector3 newUp = Vector3.Transform(Globals.Up, q1);
+            float dot = Vector3.Dot(newUp, orthonormalUp).Clamp(-1.0f, 1.0f);
+            float angle = (float)MathF.Acos(dot);
+
+            // Determine sign of rotation (clockwise vs. counter-clockwise)
+            float sign = MathF.Sign(Vector3.Dot(Vector3.Cross(newUp, orthonormalUp), forward));
+            Quaternion q2 = Quaternion.CreateFromAxisAngle(forward, angle * sign);
+
+            // Combine and normalize
+            return Quaternion.Normalize(q2 * q1);
         }
 
         /// <summary>

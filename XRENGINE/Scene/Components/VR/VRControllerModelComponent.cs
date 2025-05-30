@@ -1,6 +1,6 @@
 ﻿using OpenVR.NET.Devices;
 
-namespace XREngine.Scene.Components.VR
+namespace XREngine.Components.VR
 {
     public class VRControllerModelComponent : VRDeviceModelComponent
     {
