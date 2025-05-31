@@ -2,7 +2,7 @@
 
 namespace XREngine.Native
 {
-    public static class NativeMethods
+    public static partial class NativeMethods
     {
         [DllImport("shell32.dll", CharSet = CharSet.Auto, SetLastError = true)]
         public static extern void SHChangeNotify(uint wEventId, uint uFlags, IntPtr dwItem1, IntPtr dwItem2);
@@ -28,6 +28,7 @@ namespace XREngine.Native
 
         [DllImport("user32.dll")]
         public static extern short GetKeyState(int nVirtKey);
+
         [DllImport("user32.dll")]
         public static extern int LockWindowUpdate(IntPtr hwnd);
 
@@ -148,5 +149,24 @@ namespace XREngine.Native
 
         [DllImport("user32.dll", CharSet = CharSet.Auto, SetLastError = true)]
         public static extern int GetWindowThreadProcessId(IntPtr handle, out int processId);
+
+        public static bool TryDetermineSystemCapsLockState(out bool capsOn)
+        {
+            if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
+                return DetermineWindowsCapsLockState(out capsOn);
+            else if (RuntimeInformation.IsOSPlatform(OSPlatform.Linux) || RuntimeInformation.IsOSPlatform(OSPlatform.FreeBSD))
+                return UNIX.DetermineCapsLockState(out capsOn);
+            else if (RuntimeInformation.IsOSPlatform(OSPlatform.OSX))
+                return OSX.DetermineCapsLockState(out capsOn);
+
+            capsOn = false;
+            return false;
+        }
+
+        private static bool DetermineWindowsCapsLockState(out bool capsOn)
+        {
+            capsOn = (GetKeyState(0x14) & 0x0001) != 0; // Windows Caps Lock
+            return true;
+        }
     }
 }

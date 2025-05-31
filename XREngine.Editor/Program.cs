@@ -1,4 +1,5 @@
-﻿using XREngine;
+﻿using Newtonsoft.Json;
+using XREngine;
 using XREngine.Editor;
 using XREngine.Native;
 using XREngine.Rendering.Commands;
@@ -7,6 +8,8 @@ using XREngine.Scene;
 
 internal class Program
 {
+    private const string UnitTestingWorldSettingsFileName = "UnitTestingWorldSettings.json";
+
     /// <summary>
     /// This project serves as a hardcoded game client for development purposes.
     /// This editor will autogenerate the client exe csproj to compile production games.
@@ -17,8 +20,23 @@ internal class Program
         RenderInfo2D.ConstructorOverride = RenderInfo2DConstructor;
         RenderInfo3D.ConstructorOverride = RenderInfo3DConstructor;
         CodeManager.Instance.CompileOnChange = true;
-
+        LoadUnitTestingSettings();
         Engine.Run(/*Engine.LoadOrGenerateGameSettings(() => */GetEngineSettings(UnitTestingWorld.CreateUnitTestWorld(true, false)/*), "startup", false*/), Engine.LoadOrGenerateGameState());
+    }
+
+    private static void LoadUnitTestingSettings()
+    {
+        string dir = Environment.CurrentDirectory;
+        string fileName = UnitTestingWorldSettingsFileName;
+        string filePath = Path.Combine(dir, fileName);
+        if (!File.Exists(filePath))
+            File.WriteAllText(filePath, JsonConvert.SerializeObject(UnitTestingWorld.Toggles, Formatting.Indented));
+        else
+        {
+            string? content = File.ReadAllText(filePath);
+            if (content is not null)
+                UnitTestingWorld.Toggles = JsonConvert.DeserializeObject<UnitTestingWorld.Settings>(content) ?? new UnitTestingWorld.Settings();
+        }
     }
 
     static EditorRenderInfo2D RenderInfo2DConstructor(IRenderable owner, RenderCommand[] commands)

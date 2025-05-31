@@ -115,6 +115,12 @@
   </ItemGroup>
 
   <ItemGroup>
+    <None Update="UnitTestingWorldSettings.json">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+  </ItemGroup>
+
+  <ItemGroup>
     <PackageReference Update="StirlingLabs.assimp.native.win-x64" Version="5.2.5.4" />
   </ItemGroup>
 

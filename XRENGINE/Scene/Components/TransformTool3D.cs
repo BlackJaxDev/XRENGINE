@@ -1189,18 +1189,18 @@ namespace XREngine.Actors.Types
 
             if (TransformMode == ETransformMode.Translate)
             {
-                _transPlaneMat[0].Parameter<ShaderVector4>(0)!.Value = _hiAxis.X && _hiAxis.Y ? (ColorF4)ColorF4.Yellow : ColorF4.Red;
-                _transPlaneMat[1].Parameter<ShaderVector4>(0)!.Value = _hiAxis.X && _hiAxis.Z ? (ColorF4)ColorF4.Yellow : ColorF4.Red;
-                _transPlaneMat[2].Parameter<ShaderVector4>(0)!.Value = _hiAxis.Y && _hiAxis.Z ? (ColorF4)ColorF4.Yellow : ColorF4.Green;
-                _transPlaneMat[3].Parameter<ShaderVector4>(0)!.Value = _hiAxis.Y && _hiAxis.X ? (ColorF4)ColorF4.Yellow : ColorF4.Green;
-                _transPlaneMat[4].Parameter<ShaderVector4>(0)!.Value = _hiAxis.Z && _hiAxis.X ? (ColorF4)ColorF4.Yellow : ColorF4.Blue;
-                _transPlaneMat[5].Parameter<ShaderVector4>(0)!.Value = _hiAxis.Z && _hiAxis.Y ? (ColorF4)ColorF4.Yellow : ColorF4.Blue;
+                _transPlaneMat[0].Parameter<ShaderVector4>(0)!.Value = _hiAxis.X && _hiAxis.Y ? ColorF4.Yellow : ColorF4.Red;
+                _transPlaneMat[1].Parameter<ShaderVector4>(0)!.Value = _hiAxis.X && _hiAxis.Z ? ColorF4.Yellow : ColorF4.Red;
+                _transPlaneMat[2].Parameter<ShaderVector4>(0)!.Value = _hiAxis.Y && _hiAxis.Z ? ColorF4.Yellow : ColorF4.Green;
+                _transPlaneMat[3].Parameter<ShaderVector4>(0)!.Value = _hiAxis.Y && _hiAxis.X ? ColorF4.Yellow : ColorF4.Green;
+                _transPlaneMat[4].Parameter<ShaderVector4>(0)!.Value = _hiAxis.Z && _hiAxis.X ? ColorF4.Yellow : ColorF4.Blue;
+                _transPlaneMat[5].Parameter<ShaderVector4>(0)!.Value = _hiAxis.Z && _hiAxis.Y ? ColorF4.Yellow : ColorF4.Blue;
             }
             else
             {
-                _scalePlaneMat[0].Parameter<ShaderVector4>(0)!.Value = _hiAxis.Y && _hiAxis.Z ? (ColorF4)ColorF4.Yellow : ColorF4.Red;
-                _scalePlaneMat[1].Parameter<ShaderVector4>(0)!.Value = _hiAxis.X && _hiAxis.Z ? (ColorF4)ColorF4.Yellow : ColorF4.Green;
-                _scalePlaneMat[2].Parameter<ShaderVector4>(0)!.Value = _hiAxis.X && _hiAxis.Y ? (ColorF4)ColorF4.Yellow : ColorF4.Blue;
+                _scalePlaneMat[0].Parameter<ShaderVector4>(0)!.Value = _hiAxis.Y && _hiAxis.Z ? ColorF4.Yellow : ColorF4.Red;
+                _scalePlaneMat[1].Parameter<ShaderVector4>(0)!.Value = _hiAxis.X && _hiAxis.Z ? ColorF4.Yellow : ColorF4.Green;
+                _scalePlaneMat[2].Parameter<ShaderVector4>(0)!.Value = _hiAxis.X && _hiAxis.Y ? ColorF4.Yellow : ColorF4.Blue;
             }
         }
 
