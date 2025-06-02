@@ -128,13 +128,14 @@ namespace XREngine.Components.Animation
         protected static Quaternion LimitTwist(Quaternion rotation, Vector3 axis, Vector3 orthoAxis, float twistLimit)
         {
             twistLimit = twistLimit.Clamp(0, 180);
-            if (twistLimit >= 180) return rotation;
+            if (twistLimit >= 180)
+                return rotation;
 
-            Vector3 normal = rotation.Rotate(axis);
+            Vector3 normal = rotation.Rotate(axis).Normalized();
             Vector3 orthoTangent = orthoAxis;
             XRMath.OrthoNormalize(ref normal, ref orthoTangent);
 
-            Vector3 rotatedOrthoTangent = rotation.Rotate(orthoAxis);
+            Vector3 rotatedOrthoTangent = rotation.Rotate(orthoAxis).Normalized();
             XRMath.OrthoNormalize(ref normal, ref rotatedOrthoTangent);
 
             Quaternion fixedRotation = XRMath.RotationBetweenVectors(rotatedOrthoTangent, orthoTangent) * rotation;

@@ -764,8 +764,8 @@ namespace XREngine.Rendering
                 if (dataTransform.HasValue)
                 {
                     value = Vector3.Transform(value, dataTransform.Value);
-                    if (vtx is not null)
-                        vtx.Position = value;
+                    //if (vtx is not null)
+                    //    vtx.Position = value;
                 }
 
                 @this.SetPosition((uint)i, value);
@@ -829,8 +829,8 @@ namespace XREngine.Rendering
                 if (dataTransform.HasValue)
                 {
                     value = Vector3.TransformNormal(value, dataTransform.Value);
-                    if (vtx is not null)
-                        vtx.Tangent = value;
+                    //if (vtx is not null)
+                    //    vtx.Tangent = value;
                 }
 
                 @this.SetTangent((uint)i, value);
@@ -846,8 +846,8 @@ namespace XREngine.Rendering
                 if (dataTransform.HasValue)
                 {
                     value = Vector3.TransformNormal(value, dataTransform.Value);
-                    if (vtx is not null)
-                        vtx.Normal = value;
+                    //if (vtx is not null)
+                    //    vtx.Normal = value;
                 }
 
                 @this.SetNormal((uint)i, value);

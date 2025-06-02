@@ -789,26 +789,26 @@ namespace XREngine
                 private static readonly ResourcePool<UIText> TextPool = new(() => new());
                 private static readonly ConcurrentQueue<(Vector3 pos, string text, ColorF4 color, float scale)> DebugTextUpdateQueue = new();
 
-                public static void RenderText(Vector3 bestPoint, string text, ColorF4 color, float scale = 0.001f)
+                public static void RenderText(Vector3 worldPosition, string text, ColorF4 color, float scale = 0.0006f)
                 {
                     if (Engine.IsRenderThread)
-                        UpdateDebugText(bestPoint, text, color);
+                        UpdateDebugText(worldPosition, text, color);
                     else
                     {
                         //lock (DebugTextUpdateQueue)
-                            DebugTextUpdateQueue.Enqueue((bestPoint, text, color, scale));
+                            DebugTextUpdateQueue.Enqueue((worldPosition, text, color, scale));
                     }
                 }
 
-                private static void UpdateDebugText(Vector3 bestPoint, string text, ColorF4 color, float scale = 0.001f)
+                private static void UpdateDebugText(Vector3 worldPosition, string text, ColorF4 color, float scale = 0.0006f)
                 {
-                    int hash = HashCode.Combine(text.GetHashCode(), bestPoint.GetHashCode());
+                    int hash = HashCode.Combine(text.GetHashCode(), worldPosition.GetHashCode());
                     DebugTexts.AddOrUpdate(hash, _ =>
                     {
                         UIText t = TextPool.Take();
                         t.Text = text;
                         t.Color = color;
-                        t.Translation = bestPoint;
+                        t.Translation = worldPosition;
                         //textObject.FontSize = 1.0f;
                         t.Scale = scale;
                         return (t, Engine.Time.Timer.Time());
@@ -817,7 +817,7 @@ namespace XREngine
                         var t = pair.text;
                         t.Text = text;
                         t.Color = color;
-                        t.Translation = bestPoint;
+                        t.Translation = worldPosition;
                         t.Scale = scale;
                         t.UpdateTextMatrix();
                         return pair;

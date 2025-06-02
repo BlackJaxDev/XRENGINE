@@ -69,7 +69,7 @@ namespace XREngine.Components.Animation
                 set => SetField(ref _handOffset, value);
             }
 
-            private Vector3 _headOffset;
+            private Vector3 _headOffset = Vector3.Zero;
             /// <summary>
             /// Offset of the head bone from the HMD in (headTrackerForward, headTrackerUp) space relative to the head tracker.
             /// </summary>

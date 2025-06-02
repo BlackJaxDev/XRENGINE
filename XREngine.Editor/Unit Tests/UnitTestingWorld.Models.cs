@@ -30,7 +30,7 @@ public static partial class UnitTestingWorld
             {
                 SceneNode? ImportAnimated()
                 {
-                    string fbxPathDesktop = Path.Combine(desktopDir, "misc", "main2025 casual.fbx");
+                    string fbxPathDesktop = Path.Combine(desktopDir, "misc", "Mitsuki.fbx");
                     using var importer = new ModelImporter(fbxPathDesktop, null, null);
                     importer.MakeMaterialAction = CreateHardcodedMaterial;
                     importer.MakeTextureAction = CreateHardcodedTexture;
@@ -203,7 +203,12 @@ public static partial class UnitTestingWorld
                     VRPlayerInputSet input = rigidBodyNode.GetComponent<VRPlayerInputSet>()!;
 
                     void EndCalibration(bool enabled)
-                        => player.EndCalibration();
+                    {
+                        if (player.IsCalibrating)
+                            player.EndCalibration();
+                        else
+                            player.BeginCalibration();
+                    }
 
                     input.IsMutedChanged += EndCalibration;
 
@@ -242,7 +247,7 @@ public static partial class UnitTestingWorld
                             headPos.Y += height;
                             Vector3 headTranslation = player.EyeOffsetFromHead + headPos;
 
-                            hmd?.Transform?.DeriveWorldMatrix(Matrix4x4.CreateTranslation(headTranslation), false);
+                            hmd?.Transform?.DeriveWorldMatrix(Matrix4x4.CreateWorld(headTranslation, Globals.Forward, Globals.Up), false);
                             rightController?.DeriveWorldMatrix(humanComp.Right.Wrist.Node!.Transform.WorldMatrix, false);
                             leftController?.DeriveWorldMatrix(humanComp.Left.Wrist.Node!.Transform.WorldMatrix, false);
 

@@ -73,7 +73,7 @@ namespace XREngine.Components.Animation
             _rightFootTarget = solver.RightLeg.Target;
 
             if (_hipsTarget != null && root != null)
-                HipsTargetRight = Quaternion.Inverse(_hipsTarget.WorldRotation).Rotate(root.WorldRight);
+                HipsTargetRight = Quaternion.Inverse(_hipsTarget.WorldRotation).Rotate(root.WorldRight).Normalized();
         }
 
         /// <summary>
@@ -116,23 +116,23 @@ namespace XREngine.Components.Animation
             var hipsTfm = solverComp.Humanoid?.Hips.Node?.GetTransformAs<Transform>(true);
             if (_hipsTarget != null && hipsTfm != null)
             {
-                // Position the root at the hips target's X/Z position, preserving the current Y height
+                ////Position the root at the hips target's X/Z position, preserving the current Y height
                 //root.SetWorldTranslation(new Vector3(
                 //    _hipsTarget.WorldTranslation.X,
                 //    root.WorldTranslation.Y,
                 //    _hipsTarget.WorldTranslation.Z));
 
-                // Calculate the forward direction by crossing the hips right vector with the world up
-                Vector3 f = Vector3.Cross(_hipsTarget.WorldRotation.Rotate(HipsTargetRight), root.WorldUp);
-                f.Y = 0f; // Ensure the forward vector is horizontal
-                root.SetWorldRotation(XRMath.LookRotation(f));
-                root.RecalculateMatrices(true);
+                ////Calculate the forward direction by crossing the hips right vector with the world up
+                //Vector3 f = Vector3.Cross(_hipsTarget.WorldRotation.Rotate(HipsTargetRight).Normalized(), root.WorldUp);
+                //f.Y = 0f; // Ensure the forward vector is horizontal
+                //root.SetWorldRotation(XRMath.LookRotation(f.Normalized()));
+                //root.RecalculateMatrices(true);
 
-                // Interpolate the hips position and rotation based on solver weights
-                hipsTfm.SetWorldTranslationRotation(
-                    Vector3.Lerp(hipsTfm.WorldTranslation, _hipsTarget.WorldTranslation, solverComp.Solver.Spine.HipsPositionWeight),
-                    Quaternion.Slerp(hipsTfm.WorldRotation, _hipsTarget.WorldRotation, solverComp.Solver.Spine.HipsRotationWeight));
-                hipsTfm.RecalculateMatrices(true);
+                ////Interpolate the hips position and rotation based on solver weights
+                //hipsTfm.SetWorldTranslationRotation(
+                //    Vector3.Lerp(hipsTfm.WorldTranslation, _hipsTarget.WorldTranslation, solverComp.Solver.Spine.HipsPositionWeight),
+                //    Quaternion.Slerp(hipsTfm.WorldRotation, _hipsTarget.WorldRotation, solverComp.Solver.Spine.HipsRotationWeight));
+                //hipsTfm.RecalculateMatrices(true);
             }
             else if (_leftFootTarget != null && _rightFootTarget != null)
             {

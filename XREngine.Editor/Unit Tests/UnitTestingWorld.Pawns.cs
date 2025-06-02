@@ -66,7 +66,7 @@ public static partial class UnitTestingWorld
         {
             SceneNode vrPlayspaceNode = rootNode.NewChild("VRPlayspaceNode");
             var characterTfm = vrPlayspaceNode.SetTransform<RigidBodyTransform>();
-            characterTfm.InterpolationMode = EInterpolationMode.Discrete;
+            characterTfm.InterpolationMode = EInterpolationMode.Interpolate;
 
             CharacterPawnComponent characterComp = vrPlayspaceNode.AddComponent<CharacterPawnComponent>("TestPawn")!;
             pawn = characterComp;

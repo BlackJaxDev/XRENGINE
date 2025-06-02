@@ -1,74 +1,68 @@
 ﻿using Extensions;
 using System.Numerics;
 using XREngine.Data.Core;
+using static XREngine.Components.Animation.IKSolverVR.SolverTransforms;
 
 namespace XREngine.Components.Animation
 {
     public partial class IKSolverVR
     {
         [Serializable]
-        public class VirtualBone : XRBase
+        public class VirtualBone(TransformPoses pose) : XRBase
         {
-            private Vector3 _readPosition;
-            public Vector3 ReadPosition
-            {
-                get => _readPosition;
-                set => _readPosition = value;
+            public TransformPoses Pose { get; } = pose ?? throw new ArgumentNullException(nameof(pose), "VirtualBone Pose cannot be null.");
+            public Quaternion SolverRotation
+            { 
+                get => Pose.Solved.Rotation;
+                set => Pose.Solved.Rotation = value;
             }
-
-            private Quaternion _readRotation;
-            public Quaternion ReadRotation
-            {
-                get => _readRotation;
-                set => _readRotation = value;
-            }
-
-            private Vector3 _solverPosition;
             public Vector3 SolverPosition
             {
-                get => _solverPosition;
-                set => _solverPosition = value;
+                get => Pose.Solved.Translation;
+                set => Pose.Solved.Translation = value;
             }
-
-            private Quaternion _solverRotation;
-            public Quaternion SolverRotation
+            public Vector3 DefaultPosition
             {
-                get => _solverRotation;
-                set => _solverRotation = value;
+                get => Pose.DefaultLocal.Translation;
+                set => Pose.DefaultLocal.Translation = value;
+            }
+            public Quaternion DefaultRotation
+            {
+                get => Pose.DefaultLocal.Rotation;
+                set => Pose.DefaultLocal.Rotation = value;
+            }
+            public Vector3 InputPosition
+            {
+                get => Pose.Input.Translation;
+                set => Pose.Input.Translation = value;
+            }
+            public Quaternion InputRotation
+            {
+                get => Pose.Input.Rotation;
+                set => Pose.Input.Rotation = value;
             }
 
-            private float _length;
+            private float _length = 0.0f;
             public float Length
             {
                 get => _length;
-                set => _length = value;
-            }
-
-            private float _lengthSquared;
-            public float LengthSquared
-            {
-                get => _lengthSquared;
-                set => _lengthSquared = value;
+                set => SetField(ref _length, value);
             }
 
             private Vector3 _axis;
             public Vector3 Axis
             {
                 get => _axis;
-                set => _axis = value;
+                set => SetField(ref _axis, value);
             }
 
-            public VirtualBone(Vector3 position, Quaternion rotation)
-                => Read(position, rotation);
-
-            public void Read(Vector3 position, Quaternion rotation)
-            {
-                _readPosition = position;
-                _readRotation = rotation;
-                SolverPosition = position;
-                SolverRotation = rotation;
-            }
-
+            /// <summary>
+            /// Applies a swing rotation to the bone chain starting from the specified index.
+            /// </summary>
+            /// <param name="bones"></param>
+            /// <param name="index"></param>
+            /// <param name="swingTarget"></param>
+            /// <param name="weight"></param>
             public static void SwingRotation(
                 VirtualBone[] bones,
                 int index,
@@ -78,56 +72,64 @@ namespace XREngine.Components.Animation
                 if (weight <= 0.0f)
                     return;
 
-                Quaternion r = XRMath.RotationBetweenVectors(
-                    bones[index].SolverRotation.Rotate(bones[index].Axis), 
-                    swingTarget - bones[index].SolverPosition);
+                var bone = bones[index];
+                var initialVector = bone.SolverRotation.Rotate(bone.Axis);
+                var targetVector = swingTarget - bone.SolverPosition;
 
+                Quaternion r = XRMath.RotationBetweenVectors(initialVector, targetVector);
                 if (weight < 1.0f)
                     r = Quaternion.Lerp(Quaternion.Identity, r, weight);
 
                 for (int i = index; i < bones.Length; i++)
-                    bones[i].SolverRotation = r * bones[i].SolverRotation;
+                {
+                    var b = bones[i];
+                    b.SolverRotation = r * b.SolverRotation;
+                }
             }
 
-            // Calculates bone lengths and axes, returns the length of the entire chain
+            /// <summary>
+            /// Calculates bone lengths and axes, returns the length of the entire chain
+            /// </summary>
+            /// <param name="bones"></param>
+            /// <returns></returns>
             public static float PreSolve(ref VirtualBone[] bones)
             {
                 float length = 0;
-
                 for (int i = 0; i < bones.Length; i++)
                 {
-                    if (i < bones.Length - 1)
-                    {
-                        bones[i]._lengthSquared = (bones[i + 1].SolverPosition - bones[i].SolverPosition).LengthSquared();
-                        bones[i]._length = MathF.Sqrt(bones[i]._lengthSquared);
-                        length += bones[i]._length;
-
-                        bones[i].Axis = Quaternion.Inverse(bones[i].SolverRotation).Rotate(bones[i + 1].SolverPosition - bones[i].SolverPosition);
-                    }
+                    var bone = bones[i];
+                    if (i == bones.Length - 1)
+                        bone.Length = 0.0f;
                     else
                     {
-                        bones[i]._lengthSquared = 0.0f;
-                        bones[i]._length = 0.0f;
+                        Vector3 diff = bones[i + 1].SolverPosition - bone.SolverPosition;
+                        float ls = diff.LengthSquared();
+                        float l = MathF.Sqrt(ls);
+
+                        bone.Length = l;
+                        bone.Axis = Quaternion.Inverse(bone.SolverRotation).Rotate(diff).Normalized();
+
+                        length += l;
                     }
                 }
-
                 return length;
             }
 
             public static void RotateAroundPoint(
                 VirtualBone[] bones,
-                int index,
+                int startIndex,
                 Vector3 point,
                 Quaternion rotation)
             {
-                for (int i = index; i < bones.Length; i++)
+                for (int i = startIndex; i < bones.Length; i++)
                 {
-                    if (bones[i] is null)
+                    var bone = bones[i];
+                    if (bone is null)
                         continue;
                     
-                    Vector3 dir = bones[i].SolverPosition - point;
-                    bones[i].SolverPosition = point + rotation.Rotate(dir);
-                    bones[i].SolverRotation = rotation * bones[i].SolverRotation;
+                    Vector3 dir = bone.SolverPosition - point;
+                    bone.SolverPosition = point + rotation.Rotate(dir);
+                    bone.SolverRotation = rotation * bone.SolverRotation;
                 }
             }
 
@@ -228,7 +230,15 @@ namespace XREngine.Components.Animation
 
             // TODO Move to IKSolverFABRIK
             // Solves a simple FABRIK pass for a bone hierarchy, not using rotation limits or singularity breaking here
-            public static void SolveFABRIK(VirtualBone[] bones, Vector3 startPosition, Vector3 targetPosition, float weight, float minNormalizedTargetDistance, int iterations, float length, Vector3 startOffset)
+            public static void SolveFABRIK(
+                VirtualBone[] bones,
+                Vector3 startPosition,
+                Vector3 targetPosition,
+                float weight,
+                float minNormalizedTargetDistance,
+                int iterations,
+                float length,
+                Vector3 startOffset)
             {
                 if (weight <= 0.0f)
                     return;
@@ -241,25 +251,42 @@ namespace XREngine.Components.Animation
                     targetPosition = Vector3.Lerp(targetPosition, tP, weight);
                 }
 
-                // Iterating the solver
                 for (int iteration = 0; iteration < iterations; iteration++)
                 {
-                    // Stage 1
-                    bones[^1].SolverPosition = Vector3.Lerp(bones[^1].SolverPosition, targetPosition, weight);
+                    //Stage 1: Backward pass
 
-                    // Finding joint positions
-                    for (int i = bones.Length - 2; i > -1; i--)
-                        bones[i].SolverPosition = SolveFABRIKJoint(bones[i].SolverPosition, bones[i + 1].SolverPosition, bones[i]._length);
-                    
-                    // Stage 2
+                    //Set the last bone to the target position
+                    bones[^1].SolverPosition = Vector3.Lerp(bones[^1].SolverPosition, targetPosition, weight);
+                    for (int i = bones.Length - 2; i >= 0; i--)
+                    {
+                        var currBone = bones[i];
+                        var prevBone = bones[i + 1];
+
+                        currBone.SolverPosition = SolveFABRIKJoint(
+                            currBone.SolverPosition,
+                            prevBone.SolverPosition,
+                            currBone.Length);
+                    }
+
+                    //Stage 2: Forward pass
+
+                    //If this is the first iteration, apply the start offset to all bones
                     if (iteration == 0)
                         foreach (VirtualBone bone in bones)
                             bone.SolverPosition += startOffset;
-                    
-                    bones[0].SolverPosition = startPosition;
 
+                    //Set the first bone to the start position
+                    bones[0].SolverPosition = startPosition;
                     for (int i = 1; i < bones.Length; i++)
-                        bones[i].SolverPosition = SolveFABRIKJoint(bones[i].SolverPosition, bones[i - 1].SolverPosition, bones[i - 1]._length);
+                    {
+                        var currBone = bones[i];
+                        var prevBone = bones[i - 1];
+
+                        currBone.SolverPosition = SolveFABRIKJoint(
+                            currBone.SolverPosition,
+                            prevBone.SolverPosition,
+                            prevBone.Length);
+                    }
                 }
 
                 for (int i = 0; i < bones.Length - 1; i++)
@@ -267,8 +294,8 @@ namespace XREngine.Components.Animation
             }
 
             // Solves a FABRIK joint between two bones.
-            private static Vector3 SolveFABRIKJoint(Vector3 pos1, Vector3 pos2, float length)
-                => pos2 + (pos1 - pos2).Normalized() * length;
+            private static Vector3 SolveFABRIKJoint(Vector3 end, Vector3 start, float length)
+                => start + (end - start).Normalized() * length;
 
             public static void SolveCCD(VirtualBone[] bones, Vector3 targetPosition, float weight, int iterations)
             {

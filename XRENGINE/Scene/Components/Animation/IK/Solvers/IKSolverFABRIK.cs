@@ -384,8 +384,8 @@ namespace XREngine.Components.Animation
             for (int i = 0; i < _bones.Length; i++)
             {
                 _bones[i]._solverRotation = XRMath.LookRotation(
-                    _bones[i]._solverRotation.Rotate(Globals.Forward), 
-                    _bones[i]._solverRotation.Rotate(Globals.Up));
+                    _bones[i]._solverRotation.Rotate(Globals.Forward).Normalized(), 
+                    _bones[i]._solverRotation.Rotate(Globals.Up).Normalized());
             }
         }
 

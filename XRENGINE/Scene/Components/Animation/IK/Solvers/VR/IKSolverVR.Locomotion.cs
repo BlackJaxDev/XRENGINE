@@ -221,7 +221,7 @@ namespace XREngine.Components.Animation
                 if (rb is null)
                     return;
 
-                Vector3 rootUp = rb.SolverRotation.Rotate(Globals.Up);
+                Vector3 rootUp = rb.SolverRotation.Rotate(Globals.Up).Normalized();
 
                 // Substract any motion from parent transforms
                 Vector3 externalDelta = rb.SolverPosition - _lastEndRootPos;
@@ -250,7 +250,7 @@ namespace XREngine.Components.Animation
                 offset = XRMath.Flatten(offset, rootUp);
 
                 // Turning
-                Vector3 headForward = (solver._spine.IKRotationHead * solver._spine.AnchorRelativeToHead).Rotate(Globals.Forward);
+                Vector3 headForward = (solver._spine.IKRotationHead * solver._spine._anchorRelativeToHead).Rotate(Globals.Forward);
                 headForward.Y = 0f;
                 Vector3 headForwardLocal = Quaternion.Inverse(rb.SolverRotation).Rotate(headForward);
                 float angle = float.RadiansToDegrees(MathF.Atan2(headForwardLocal.X, headForwardLocal.Z));
@@ -267,7 +267,7 @@ namespace XREngine.Components.Animation
                 _animator.SetFloat(PARAM_Turn, _turn * 2f);
 
                 // Local Velocity, animation smoothing
-                Vector3 velocityLocalTarget = Quaternion.Inverse(solver._readRotations[0]).Rotate(headTargetVelocity + offset);
+                Vector3 velocityLocalTarget = Quaternion.Inverse(solver.RootBone!.InputRotation).Rotate(headTargetVelocity + offset);
                 velocityLocalTarget *= _weight * _stepLengthMlp;
 
                 float animationSmoothTimeTarget = isTurning && !_isMoving ? 0.2f : _animationSmoothTime;

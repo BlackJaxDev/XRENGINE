@@ -1328,7 +1328,7 @@ namespace XREngine.Data.Core
             Quaternion q = Quaternion.Inverse(LookRotation(spaceUp, forward));
             up = Vector3.Transform(up, q);
             float result = float.RadiansToDegrees(MathF.Atan2(up.X, up.Z));
-            return result.Clamp(-180f, 180f);
+            return result.Clamp(-180.0f, 180.0f);
         }
 
         /// <summary>
@@ -1337,8 +1337,8 @@ namespace XREngine.Data.Core
         public static float GetYaw(Quaternion space, Quaternion rotation)
         {
             Vector3 dirLocal = Vector3.Transform(Vector3.Transform(Globals.Forward, rotation), Quaternion.Inverse(space));
-            if (dirLocal.X == 0f && dirLocal.Z == 0f || float.IsInfinity(dirLocal.X) || float.IsInfinity(dirLocal.Z))
-                return 0f;
+            if (dirLocal.X == 0.0f && dirLocal.Z == 0.0f || float.IsInfinity(dirLocal.X) || float.IsInfinity(dirLocal.Z))
+                return 0.0f;
             return float.RadiansToDegrees(MathF.Atan2(dirLocal.X, dirLocal.Z));
         }
 
@@ -1348,7 +1348,7 @@ namespace XREngine.Data.Core
         public static float GetPitch(Quaternion space, Quaternion rotation)
         {
             Vector3 dirLocal = Vector3.Transform(Vector3.Transform(Globals.Forward, rotation), Quaternion.Inverse(space));
-            if (MathF.Abs(dirLocal.Y) > 1f)
+            if (MathF.Abs(dirLocal.Y) > 1.0f)
                 dirLocal = dirLocal.Normalized();
             return float.RadiansToDegrees(-MathF.Asin(dirLocal.Y));
         }
@@ -1367,7 +1367,7 @@ namespace XREngine.Data.Core
             Quaternion q = Quaternion.Inverse(LookRotation(spaceUp, forward));
             up = Vector3.Transform(up, q);
             float result = float.RadiansToDegrees(MathF.Atan2(up.X, up.Z));
-            return result.Clamp(-180f, 180f);
+            return result.Clamp(-180.0f, 180.0f);
         }
 
         /// <summary>
@@ -1375,9 +1375,9 @@ namespace XREngine.Data.Core
         /// </summary>
         public static Quaternion Lerp(Quaternion fromRotation, Quaternion toRotation, float weight)
         {
-            if (weight <= 0f)
+            if (weight <= 0.0f)
                 return fromRotation;
-            if (weight >= 1f)
+            if (weight >= 1.0f)
                 return toRotation;
             return Quaternion.Lerp(fromRotation, toRotation, weight);
         }
@@ -1387,9 +1387,9 @@ namespace XREngine.Data.Core
         /// </summary>
         public static Quaternion Slerp(Quaternion fromRotation, Quaternion toRotation, float weight)
         {
-            if (weight <= 0f)
+            if (weight <= 0.0f)
                 return fromRotation;
-            if (weight >= 1f)
+            if (weight >= 1.0f)
                 return toRotation;
             return Quaternion.Slerp(fromRotation, toRotation, weight);
         }
@@ -1399,9 +1399,9 @@ namespace XREngine.Data.Core
         /// </summary>
         public static Quaternion LinearBlend(Quaternion q, float weight)
         {
-            if (weight <= 0f)
+            if (weight <= 0.0f)
                 return Quaternion.Identity;
-            if (weight >= 1f)
+            if (weight >= 1.0f)
                 return q;
             return Quaternion.Lerp(Quaternion.Identity, q, weight);
         }
@@ -1411,9 +1411,9 @@ namespace XREngine.Data.Core
         /// </summary>
         public static Quaternion SphericalBlend(Quaternion q, float weight)
         {
-            if (weight <= 0f)
+            if (weight <= 0.0f)
                 return Quaternion.Identity;
-            if (weight >= 1f)
+            if (weight >= 1.0f)
                 return q;
             return Quaternion.Slerp(Quaternion.Identity, q, weight);
         }
@@ -1499,25 +1499,22 @@ namespace XREngine.Data.Core
 
         public static Quaternion ClampRotation(Quaternion rotation, float clampWeight, int clampSmoothing)
         {
-            if (clampWeight >= 1f)
+            if (clampWeight >= 1.0f)
                 return Quaternion.Identity;
 
-            if (clampWeight <= 0f)
+            if (clampWeight <= 0.0f)
                 return rotation;
 
             float angle = AngleBetween(Quaternion.Identity, rotation);
-            float dot = 1f - (angle / 180f);
-            float targetClampMlp = (1f - ((clampWeight - dot) / (1f - dot))).Clamp(0f, 1f);
-            float clampMlp = (dot / clampWeight).Clamp(0f, 1f);
+            float dot = 1.0f - (angle / 180.0f);
+            float targetClampScale = (1.0f - ((clampWeight - dot) / (1.0f - dot))).Clamp(0.0f, 1.0f);
+            float clampScale = (dot / clampWeight).Clamp(0.0f, 1.0f);
 
             // Sine smoothing iterations
             for (int i = 0; i < clampSmoothing; i++)
-            {
-                float sinF = clampMlp * MathF.PI * 0.5f;
-                clampMlp = MathF.Sin(sinF);
-            }
-
-            return Quaternion.Slerp(Quaternion.Identity, rotation, clampMlp * targetClampMlp);
+                clampScale = MathF.Sin(clampScale * MathF.PI * 0.5f);
+            
+            return Quaternion.Slerp(Quaternion.Identity, rotation, clampScale * targetClampScale);
         }
 
         private static float AngleBetween(Quaternion from, Quaternion to)
@@ -1559,16 +1556,15 @@ namespace XREngine.Data.Core
         /// </summary>
         public static Quaternion MatchRotation(
             Quaternion targetRotation,
-            Vector3 targetAxis1,
-            Vector3 targetAxis2,
-            Vector3 axis1,
-            Vector3 axis2)
+            Vector3 targetForward,
+            Vector3 targetUp,
+            Vector3 forward,
+            Vector3 up)
         {
-            Quaternion f = LookRotation(axis1, axis2);
-            Quaternion fTarget = LookRotation(targetAxis1, targetAxis2);
-
+            Quaternion fCurrent = LookRotation(forward, up);
+            Quaternion fTarget = LookRotation(targetForward, targetUp);
             Quaternion d = targetRotation * fTarget;
-            return d * Quaternion.Inverse(f);
+            return d * Quaternion.Inverse(fCurrent);
         }
 
         /// <summary>
@@ -1624,61 +1620,61 @@ namespace XREngine.Data.Core
             => LookRotation(forward, Globals.Up);
         public static Quaternion LookRotation(Vector3 forward, Vector3 up)
         {
-            //// Return identity if the forward vector is nearly zero.
-            //if (forward.LengthSquared() < Epsilon)
-            //    return Quaternion.Identity;
-
-            //// Normalize the forward vector.
-            //forward = Vector3.Normalize(forward);
-
-            //// If upwards is nearly zero length, fallback.
-            //if (up.LengthSquared() < Epsilon)
-            //    return RotationBetweenVectors(Vector3.UnitZ, forward);
-
-            //// Compute the right vector as cross(upwards, forward).
-            //Vector3 right = Vector3.Cross(up, forward);
-
-            //// If forward and upwards are colinear, fallback.
-            //if (right.LengthSquared() < Epsilon)
-            //    return RotationBetweenVectors(Vector3.UnitZ, forward);
-
-            //right = Vector3.Normalize(right);
-
-            //// Recalculate the up vector to ensure orthogonality.
-            //up = Vector3.Cross(forward, right);
-
-            //return Quaternion.CreateFromRotationMatrix(Matrix4x4.CreateWorld(Vector3.Zero, forward, up));
-
-            // Return identity if forward is nearly zero.
+            // Return identity if the forward vector is nearly zero.
             if (forward.LengthSquared() < Epsilon)
                 return Quaternion.Identity;
-            forward = forward.Normalized();
 
+            // Normalize the forward vector.
+            forward = Vector3.Normalize(forward);
+
+            // If upwards is nearly zero length, fallback.
             if (up.LengthSquared() < Epsilon)
-                return RotationBetweenVectors(Globals.Forward, forward);
+                return RotationBetweenVectors(Vector3.UnitZ, forward);
 
-            // Build orthonormal basis
+            // Compute the right vector as cross(upwards, forward).
             Vector3 right = Vector3.Cross(up, forward);
+
+            // If forward and upwards are colinear, fallback.
             if (right.LengthSquared() < Epsilon)
-                return RotationBetweenVectors(Globals.Forward, forward);
-            right = right.Normalized();
+                return RotationBetweenVectors(Vector3.UnitZ, forward);
 
-            Vector3 orthonormalUp = Vector3.Cross(forward, right);
+            right = Vector3.Normalize(right);
 
-            // Rotate global forward to desired forward
-            Quaternion q1 = RotationBetweenVectors(Globals.Forward, forward);
+            // Recalculate the up vector to ensure orthogonality.
+            up = Vector3.Cross(forward, right);
 
-            // Rotate around 'forward' so that rotated +Y aligns with orthonormalUp
-            Vector3 newUp = Vector3.Transform(Globals.Up, q1);
-            float dot = Vector3.Dot(newUp, orthonormalUp).Clamp(-1.0f, 1.0f);
-            float angle = (float)MathF.Acos(dot);
+            return Quaternion.CreateFromRotationMatrix(Matrix4x4.CreateWorld(Vector3.Zero, forward, up));
 
-            // Determine sign of rotation (clockwise vs. counter-clockwise)
-            float sign = MathF.Sign(Vector3.Dot(Vector3.Cross(newUp, orthonormalUp), forward));
-            Quaternion q2 = Quaternion.CreateFromAxisAngle(forward, angle * sign);
+            //// Return identity if forward is nearly zero.
+            //if (forward.LengthSquared() < Epsilon)
+            //    return Quaternion.Identity;
+            //forward = forward.Normalized();
 
-            // Combine and normalize
-            return Quaternion.Normalize(q2 * q1);
+            //if (up.LengthSquared() < Epsilon)
+            //    return RotationBetweenVectors(Globals.Forward, forward);
+
+            //// Build orthonormal basis
+            //Vector3 right = Vector3.Cross(up, forward);
+            //if (right.LengthSquared() < Epsilon)
+            //    return RotationBetweenVectors(Globals.Forward, forward);
+            //right = right.Normalized();
+
+            //Vector3 orthonormalUp = Vector3.Cross(forward, right);
+
+            //// Rotate global forward to desired forward
+            //Quaternion q1 = RotationBetweenVectors(Globals.Forward, forward);
+
+            //// Rotate around 'forward' so that rotated +Y aligns with orthonormalUp
+            //Vector3 newUp = Vector3.Transform(Globals.Up, q1);
+            //float dot = Vector3.Dot(newUp, orthonormalUp).Clamp(-1.0f, 1.0f);
+            //float angle = (float)MathF.Acos(dot);
+
+            //// Determine sign of rotation (clockwise vs. counter-clockwise)
+            //float sign = MathF.Sign(Vector3.Dot(Vector3.Cross(newUp, orthonormalUp), forward));
+            //Quaternion q2 = Quaternion.CreateFromAxisAngle(forward, angle * sign);
+
+            //// Combine and normalize
+            //return Quaternion.Normalize(q2 * q1);
         }
 
         /// <summary>
@@ -1787,7 +1783,7 @@ namespace XREngine.Data.Core
         /// </summary>
         public static Vector3 ExtractVertical(Vector3 v, Vector3 verticalAxis, float weight)
         {
-            if (weight <= 0f)
+            if (weight <= 0.0f)
                 return Vector3.Zero;
             if (verticalAxis == Globals.Up)
                 return Globals.Up * v.Y * weight;

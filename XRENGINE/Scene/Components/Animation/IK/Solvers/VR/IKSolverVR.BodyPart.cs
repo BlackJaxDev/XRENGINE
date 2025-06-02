@@ -1,4 +1,5 @@
-﻿using System.Numerics;
+﻿using SharpFont;
+using System.Numerics;
 using XREngine.Data.Colors;
 using XREngine.Data.Core;
 
@@ -12,19 +13,9 @@ namespace XREngine.Components.Animation
         [Serializable]
         public abstract class BodyPart : XRBase
         {
-            protected abstract void OnRead(
-                Vector3[] positions,
-                Quaternion[] rotations,
-                bool hasChest,
-                bool hasNeck,
-                bool hasShoulders,
-                bool hasToes,
-                bool hasLegs,
-                int rootIndex,
-                int index);
+            protected abstract void OnRead(SolverTransforms transforms);
 
             public abstract void PreSolve(float scale);
-            public abstract void Write(ref Vector3[] solvedPositions, ref Quaternion[] solvedRotations);
             public abstract void ApplyOffsets(float scale);
             public abstract void ResetOffsets();
 
@@ -36,7 +27,6 @@ namespace XREngine.Components.Animation
             protected bool _initialized = false;
             protected Vector3 _rootPosition = Vector3.Zero;
             protected Quaternion _rootRotation = Quaternion.Identity;
-            protected int _index = -1;
 
             protected EQuality _quality = EQuality.Full;
             public EQuality Quality
@@ -57,22 +47,13 @@ namespace XREngine.Components.Animation
             /// <param name="hasLegs"></param>
             /// <param name="rootIndex"></param>
             /// <param name="index"></param>
-            public void Read(
-                Vector3[] positions,
-                Quaternion[] rotations,
-                bool hasChest,
-                bool hasNeck,
-                bool hasShoulders,
-                bool hasToes,
-                bool hasLegs,
-                int rootIndex,
-                int index)
+            public void Read(SolverTransforms transforms, int rootIndex)
             {
-                _index = index;
-                _rootPosition = positions[rootIndex];
-                _rootRotation = rotations[rootIndex];
+                var root = transforms[rootIndex];
+                _rootPosition = root.Input.Translation;
+                _rootRotation = root.Input.Rotation;
 
-                OnRead(positions, rotations, hasChest, hasNeck, hasShoulders, hasToes, hasLegs, rootIndex, index);
+                OnRead(transforms);
 
                 Length = VirtualBone.PreSolve(ref _bones);
                 LengthSquared = Length * Length;
@@ -99,6 +80,11 @@ namespace XREngine.Components.Animation
                 MoveRotation(rotation);
             }
 
+            /// <summary>
+            /// Updates the root position and rotation of this body part.
+            /// </summary>
+            /// <param name="newRootPos"></param>
+            /// <param name="newRootRot"></param>
             public void TranslateRoot(Vector3 newRootPos, Quaternion newRootRot)
             {
                 Vector3 deltaPosition = newRootPos - _rootPosition;
@@ -111,14 +97,14 @@ namespace XREngine.Components.Animation
                 VirtualBone.RotateAroundPoint(_bones, 0, newRootPos, deltaRotation);
             }
 
-            public void RotateTo(VirtualBone bone, Quaternion rotation, float weight = 1f)
+            public void RotateTo(VirtualBone bone, Quaternion rotation, float weight = 1.0f)
             {
-                if (weight <= 0f)
+                if (weight <= 0.0f)
                     return;
 
                 Quaternion q = XRMath.FromToRotation(bone.SolverRotation, rotation);
 
-                if (weight < 1f)
+                if (weight < 1.0f)
                     q = Quaternion.Slerp(Quaternion.Identity, q, weight);
 
                 for (int i = 0; i < _bones.Length; i++)
@@ -131,7 +117,7 @@ namespace XREngine.Components.Animation
                 }
             }
 
-            public void Visualize(ColorF4 color)
+            public virtual void Visualize(ColorF4 color)
             {
                 for (int i = 0; i < _bones.Length - 1; i++)
                     Engine.Rendering.Debug.RenderLine(_bones[i].SolverPosition, _bones[i + 1].SolverPosition, color);
