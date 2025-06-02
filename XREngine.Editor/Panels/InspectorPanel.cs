@@ -2,7 +2,6 @@
 using System.Drawing;
 using System.Numerics;
 using System.Reflection;
-using System.Text;
 using XREngine.Core.Files;
 using XREngine.Data.Colors;
 using XREngine.Editor.UI;

@@ -4,6 +4,7 @@ using System.Reflection;
 using XREngine.Components;
 using XREngine.Core.Attributes;
 using XREngine.Input.Devices;
+using XREngine.Native;
 using XREngine.Timers;
 
 namespace XREngine.Rendering.UI
@@ -14,6 +15,9 @@ namespace XREngine.Rendering.UI
     [RequireComponents(typeof(UITextComponent))]
     public class UITextInputComponent : UIInteractableComponent
     {
+        private const int DefaultKeyRepeatDelayMs = 500;
+        private const int DefaultKeyRepeatIntervalMs = 50;
+
         public UITextInputComponent() : base()
         {
             _keyRepeatTimer = new(this);
@@ -80,6 +84,8 @@ namespace XREngine.Rendering.UI
         protected internal override void OnComponentActivated()
         {
             base.OnComponentActivated();
+            if (NativeMethods.TryDetermineSystemCapsLockState(out bool capsOn))
+                _capsLock = capsOn;
         }
         protected internal override void OnComponentDeactivated()
         {
@@ -157,14 +163,22 @@ namespace XREngine.Rendering.UI
 
         private void CapsLock(bool pressed)
         {
+            if (pressed)
+                return; //Only toggle on release, not on press
 
+            if (NativeMethods.TryDetermineSystemCapsLockState(out bool capsOn))
+                _capsLock = capsOn;
+            else
+                _capsLock = !_capsLock;
         }
 
         private bool _shiftLeft = false;
         private bool _shiftRight = false;
+        private bool _capsLock = false;
 
         public bool AnyShift => _shiftLeft || _shiftRight;
-
+        public bool CapsLocked => _capsLock;
+        
         private void ShiftRight(bool pressed)
             => _shiftRight = pressed;
         private void ShiftLeft(bool pressed)
@@ -174,67 +188,73 @@ namespace XREngine.Rendering.UI
         private string? _lastChar = string.Empty;
         private EKey? _lastMovementInput = null;
 
-        private TimeSpan _keyRepeatDelay = TimeSpan.FromMilliseconds(500);
+        private TimeSpan _keyRepeatDelay = TimeSpan.FromMilliseconds(DefaultKeyRepeatDelayMs);
+        /// <summary>
+        /// This is how long it takes a key to be held until it begins to repeatedly add the same key more than once at a set interval.
+        /// </summary>
         public TimeSpan KeyRepeatDelay
         {
             get => _keyRepeatDelay;
             set => SetField(ref _keyRepeatDelay, value);
         }
 
-        private TimeSpan _keyRepeatInterval = TimeSpan.FromMilliseconds(50);
+        private TimeSpan _keyRepeatInterval = TimeSpan.FromMilliseconds(DefaultKeyRepeatIntervalMs);
+        /// <summary>
+        /// This is the time between repeated inputs when a key is held down.
+        /// </summary>
         public TimeSpan KeyRepeatInterval
         {
             get => _keyRepeatInterval;
             set => SetField(ref _keyRepeatInterval, value);
         }
 
-        private void A(bool pressed) => AddChar(pressed, AnyShift ? "A" : "a");
-        private void B(bool pressed) => AddChar(pressed, AnyShift ? "B" : "b");
-        private void C(bool pressed) => AddChar(pressed, AnyShift ? "C" : "c");
-        private void D(bool pressed) => AddChar(pressed, AnyShift ? "D" : "d");
-        private void E(bool pressed) => AddChar(pressed, AnyShift ? "E" : "e");
-        private void F(bool pressed) => AddChar(pressed, AnyShift ? "F" : "f");
-        private void G(bool pressed) => AddChar(pressed, AnyShift ? "G" : "g");
-        private void H(bool pressed) => AddChar(pressed, AnyShift ? "H" : "h");
-        private void I(bool pressed) => AddChar(pressed, AnyShift ? "I" : "i");
-        private void J(bool pressed) => AddChar(pressed, AnyShift ? "J" : "j");
-        private void K(bool pressed) => AddChar(pressed, AnyShift ? "K" : "k");
-        private void L(bool pressed) => AddChar(pressed, AnyShift ? "L" : "l");
-        private void M(bool pressed) => AddChar(pressed, AnyShift ? "M" : "m");
-        private void N(bool pressed) => AddChar(pressed, AnyShift ? "N" : "n");
-        private void O(bool pressed) => AddChar(pressed, AnyShift ? "O" : "o");
-        private void P(bool pressed) => AddChar(pressed, AnyShift ? "P" : "p");
-        private void Q(bool pressed) => AddChar(pressed, AnyShift ? "Q" : "q");
-        private void R(bool pressed) => AddChar(pressed, AnyShift ? "R" : "r");
-        private void S(bool pressed) => AddChar(pressed, AnyShift ? "S" : "s");
-        private void T(bool pressed) => AddChar(pressed, AnyShift ? "T" : "t");
-        private void U(bool pressed) => AddChar(pressed, AnyShift ? "U" : "u");
-        private void V(bool pressed) => AddChar(pressed, AnyShift ? "V" : "v");
-        private void W(bool pressed) => AddChar(pressed, AnyShift ? "W" : "w");
-        private void X(bool pressed) => AddChar(pressed, AnyShift ? "X" : "x");
-        private void Y(bool pressed) => AddChar(pressed, AnyShift ? "Y" : "y");
-        private void Z(bool pressed) => AddChar(pressed, AnyShift ? "Z" : "z");
-        private void Number0(bool pressed) => AddChar(pressed, AnyShift ? ")" : "0");
-        private void Number1(bool pressed) => AddChar(pressed, AnyShift ? "!" : "1");
-        private void Number2(bool pressed) => AddChar(pressed, AnyShift ? "@" : "2");
-        private void Number3(bool pressed) => AddChar(pressed, AnyShift ? "#" : "3");
-        private void Number4(bool pressed) => AddChar(pressed, AnyShift ? "$" : "4");
-        private void Number5(bool pressed) => AddChar(pressed, AnyShift ? "%" : "5");
-        private void Number6(bool pressed) => AddChar(pressed, AnyShift ? "^" : "6");
-        private void Number7(bool pressed) => AddChar(pressed, AnyShift ? "&" : "7");
-        private void Number8(bool pressed) => AddChar(pressed, AnyShift ? "*" : "8");
-        private void Number9(bool pressed) => AddChar(pressed, AnyShift ? "(" : "9");
+        private void A(bool pressed) => AddChar(pressed, AnyShift || CapsLocked ? "A" : "a");
+        private void B(bool pressed) => AddChar(pressed, AnyShift || CapsLocked ? "B" : "b");
+        private void C(bool pressed) => AddChar(pressed, AnyShift || CapsLocked ? "C" : "c");
+        private void D(bool pressed) => AddChar(pressed, AnyShift || CapsLocked ? "D" : "d");
+        private void E(bool pressed) => AddChar(pressed, AnyShift || CapsLocked ? "E" : "e");
+        private void F(bool pressed) => AddChar(pressed, AnyShift || CapsLocked ? "F" : "f");
+        private void G(bool pressed) => AddChar(pressed, AnyShift || CapsLocked ? "G" : "g");
+        private void H(bool pressed) => AddChar(pressed, AnyShift || CapsLocked ? "H" : "h");
+        private void I(bool pressed) => AddChar(pressed, AnyShift || CapsLocked ? "I" : "i");
+        private void J(bool pressed) => AddChar(pressed, AnyShift || CapsLocked ? "J" : "j");
+        private void K(bool pressed) => AddChar(pressed, AnyShift || CapsLocked ? "K" : "k");
+        private void L(bool pressed) => AddChar(pressed, AnyShift || CapsLocked ? "L" : "l");
+        private void M(bool pressed) => AddChar(pressed, AnyShift || CapsLocked ? "M" : "m");
+        private void N(bool pressed) => AddChar(pressed, AnyShift || CapsLocked ? "N" : "n");
+        private void O(bool pressed) => AddChar(pressed, AnyShift || CapsLocked ? "O" : "o");
+        private void P(bool pressed) => AddChar(pressed, AnyShift || CapsLocked ? "P" : "p");
+        private void Q(bool pressed) => AddChar(pressed, AnyShift || CapsLocked ? "Q" : "q");
+        private void R(bool pressed) => AddChar(pressed, AnyShift || CapsLocked ? "R" : "r");
+        private void S(bool pressed) => AddChar(pressed, AnyShift || CapsLocked ? "S" : "s");
+        private void T(bool pressed) => AddChar(pressed, AnyShift || CapsLocked ? "T" : "t");
+        private void U(bool pressed) => AddChar(pressed, AnyShift || CapsLocked ? "U" : "u");
+        private void V(bool pressed) => AddChar(pressed, AnyShift || CapsLocked ? "V" : "v");
+        private void W(bool pressed) => AddChar(pressed, AnyShift || CapsLocked ? "W" : "w");
+        private void X(bool pressed) => AddChar(pressed, AnyShift || CapsLocked ? "X" : "x");
+        private void Y(bool pressed) => AddChar(pressed, AnyShift || CapsLocked ? "Y" : "y");
+        private void Z(bool pressed) => AddChar(pressed, AnyShift || CapsLocked ? "Z" : "z");
+        private void Number0(bool pressed) => AddChar(pressed, AnyShift || CapsLocked ? ")" : "0");
+        private void Number1(bool pressed) => AddChar(pressed, AnyShift || CapsLocked ? "!" : "1");
+        private void Number2(bool pressed) => AddChar(pressed, AnyShift || CapsLocked ? "@" : "2");
+        private void Number3(bool pressed) => AddChar(pressed, AnyShift || CapsLocked ? "#" : "3");
+        private void Number4(bool pressed) => AddChar(pressed, AnyShift || CapsLocked ? "$" : "4");
+        private void Number5(bool pressed) => AddChar(pressed, AnyShift || CapsLocked ? "%" : "5");
+        private void Number6(bool pressed) => AddChar(pressed, AnyShift || CapsLocked ? "^" : "6");
+        private void Number7(bool pressed) => AddChar(pressed, AnyShift || CapsLocked ? "&" : "7");
+        private void Number8(bool pressed) => AddChar(pressed, AnyShift || CapsLocked ? "*" : "8");
+        private void Number9(bool pressed) => AddChar(pressed, AnyShift || CapsLocked ? "(" : "9");
         private void Tilde(bool pressed) => AddChar(pressed, "~");
         private void Grave(bool pressed) => AddChar(pressed, "`");
-        private void Minus(bool pressed) => AddChar(pressed, AnyShift ? "_" : "-");
-        private void Equal(bool pressed) => AddChar(pressed, AnyShift ? "+" : "=");
-        private void BracketLeft(bool pressed) => AddChar(pressed, AnyShift ? "{" : "[");
-        private void BracketRight(bool pressed) => AddChar(pressed, AnyShift ? "}" : "]");
-        private void Semicolon(bool pressed) => AddChar(pressed, AnyShift ? ":" : ";");
-        private void Apostrophe(bool pressed) => AddChar(pressed, AnyShift ? "\"" : "'");
-        private void Comma(bool pressed) => AddChar(pressed, AnyShift ? "<" : ",");
-        private void Period(bool pressed) => AddChar(pressed, AnyShift ? ">" : ".");
-        private void Slash(bool pressed) => AddChar(pressed, AnyShift ? "?" : "/");
+        private void Minus(bool pressed) => AddChar(pressed, AnyShift || CapsLocked ? "_" : "-");
+        private void Equal(bool pressed) => AddChar(pressed, AnyShift || CapsLocked ? "+" : "=");
+        private void BracketLeft(bool pressed) => AddChar(pressed, AnyShift || CapsLocked ? "{" : "[");
+        private void BracketRight(bool pressed) => AddChar(pressed, AnyShift || CapsLocked ? "}" : "]");
+        private void Semicolon(bool pressed) => AddChar(pressed, AnyShift || CapsLocked ? ":" : ";");
+        private void Apostrophe(bool pressed) => AddChar(pressed, AnyShift || CapsLocked ? "\"" : "'");
+        private void Comma(bool pressed) => AddChar(pressed, AnyShift || CapsLocked ? "<" : ",");
+        private void Period(bool pressed) => AddChar(pressed, AnyShift || CapsLocked ? ">" : ".");
+        private void Slash(bool pressed) => AddChar(pressed, AnyShift || CapsLocked ? "?" : "/");
         private void BackSlash(bool pressed) => AddChar(pressed, "\\");
         private void NonUSBackSlash(bool pressed) => AddChar(pressed, "|");
         private void Space(bool pressed) => AddChar(pressed, " ");
