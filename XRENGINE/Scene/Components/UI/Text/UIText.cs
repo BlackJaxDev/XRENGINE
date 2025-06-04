@@ -51,17 +51,20 @@ namespace XREngine.Rendering.UI
 
         public void UpdateTextMatrix()
         {
-            var cam = Engine.State.MainPlayer.ControlledPawn?.GetCamera();
+            var cam = Engine.Rendering.State.CurrentRenderingPipeline?.RenderState.SceneCamera;
             TransformBase? camTfm = cam?.Transform;
             if (camTfm is null)
                 return;
 
-            Vector3 pos = (TextTransform?.WorldTranslation ?? Vector3.Zero) + Translation;
-            Vector3 camUp = camTfm.WorldUp;
-            float scale = cam!.Camera.Transform.WorldTranslation.Distance(pos) * Scale;
+            Vector3 pos = (TextTransform?.RenderTranslation ?? Vector3.Zero) + Translation;
+            Vector3 camUp = camTfm.RenderUp;
+            Vector3 camFwd = cam!.RenderForward;
+            Vector3 scale = new(camTfm.RenderTranslation.Distance(pos) * Scale);
+            if (Engine.Rendering.State.IsReflectedMirrorPass)
+                scale.X *= -1.0f; //Mirror text scale for reflected mirror pass
             if (Roll != 0.0f)
-                camUp = Vector3.Transform(camUp, Quaternion.CreateFromAxisAngle(camTfm.WorldForward, float.DegreesToRadians(Roll)));
-            TextMatrix = Matrix4x4.CreateScale(scale) * Matrix4x4.CreateRotationY(float.DegreesToRadians(Roll)) * Matrix4x4.CreateWorld(pos, camTfm.WorldForward, camUp);
+                camUp = Vector3.Transform(camUp, Quaternion.CreateFromAxisAngle(camFwd, float.DegreesToRadians(Roll)));
+            TextMatrix = Matrix4x4.CreateScale(scale) * Matrix4x4.CreateRotationY(float.DegreesToRadians(Roll)) * Matrix4x4.CreateWorld(pos, camFwd, camUp);
         }
 
         private const string TextColorUniformName = "TextColor";
@@ -156,7 +159,7 @@ namespace XREngine.Rendering.UI
                 {
                     case nameof(TextTransform):
                         if (TextTransform is not null)
-                            TextTransform.WorldMatrixChanged -= OnTransformWorldMatrixChanged;
+                            TextTransform.RenderWorldMatrixChanged -= OnTransformWorldMatrixChanged;
                         break;
                 }
             }
@@ -178,7 +181,7 @@ namespace XREngine.Rendering.UI
                     break;
                 case nameof(TextTransform):
                     if (TextTransform is not null)
-                        TextTransform.WorldMatrixChanged += OnTransformWorldMatrixChanged;
+                        TextTransform.RenderWorldMatrixChanged += OnTransformWorldMatrixChanged;
                     UpdateTextMatrix();
                     break;
                 case nameof(Translation):

@@ -96,7 +96,7 @@ namespace XREngine.Components.Animation
                 float angleFrom = float.RadiansToDegrees(MathF.Atan2(from.X, from.Y));
                 float angleTo = float.RadiansToDegrees(MathF.Atan2(to.X, to.Y));
                 
-                _transform.SetWorldRotation(Quaternion.CreateFromAxisAngle(Globals.Backward, XRMath.DeltaAngle(angleFrom, angleTo) * weight) * _transform.WorldRotation);
+                _transform.SetWorldRotation(Quaternion.CreateFromAxisAngle(Globals.Forward, XRMath.DeltaAngle(angleFrom, angleTo) * weight) * _transform.WorldRotation);
             }
 
             public void SetToSolverPosition()

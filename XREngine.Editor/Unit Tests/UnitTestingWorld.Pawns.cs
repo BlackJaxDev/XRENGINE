@@ -142,19 +142,23 @@ public static partial class UnitTestingWorld
 
             if (Toggles.EmulatedVRPawn)
             {
-                hmdTfm.SceneNode!.AddComponent<DebugDrawComponent>()!.AddSphere(0.15f, Vector3.Zero, ColorF4.DarkRed, false);
+                var hmdDD = hmdTfm.SceneNode!.AddComponent<DebugDrawComponent>()!;
+                hmdDD.AddSphere(0.01f, Vector3.Zero, ColorF4.DarkRed, false);
 
                 var lf = coll.AddManualTracker("Left Foot");
                 lf.LocalMatrixOffset = Matrix4x4.CreateTranslation(-0.2f, 0, 0);
-                lf.SceneNode!.AddComponent<DebugDrawComponent>()!.AddSphere(0.05f, Vector3.Zero, ColorF4.DarkTeal, false);
+                var lfDD = lf.SceneNode!.AddComponent<DebugDrawComponent>()!;
+                lfDD.AddSphere(0.005f, Vector3.Zero, ColorF4.DarkTeal, false);
 
                 var rf = coll.AddManualTracker("Right Foot");
                 rf.LocalMatrixOffset = Matrix4x4.CreateTranslation(0.2f, 0, 0);
-                rf.SceneNode!.AddComponent<DebugDrawComponent>()!.AddSphere(0.05f, Vector3.Zero, ColorF4.DarkTeal, false);
+                var rfDD = rf.SceneNode!.AddComponent<DebugDrawComponent>()!;
+                rfDD.AddSphere(0.005f, Vector3.Zero, ColorF4.DarkTeal, false);
 
                 var hip = coll.AddManualTracker("Hip");
                 hip.LocalMatrixOffset = Matrix4x4.CreateTranslation(0, 0.4f, 0);
-                hip.SceneNode!.AddComponent<DebugDrawComponent>()!.AddSphere(0.05f, Vector3.Zero, ColorF4.DarkTeal, false);
+                var hipDD = hip.SceneNode!.AddComponent<DebugDrawComponent>()!;
+                hipDD.AddSphere(0.005f, Vector3.Zero, ColorF4.DarkTeal, false);
             }
 
             vrInput.LeftHandTransform = leftTfm;

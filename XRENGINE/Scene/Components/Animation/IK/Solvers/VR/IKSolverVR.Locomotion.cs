@@ -250,7 +250,7 @@ namespace XREngine.Components.Animation
                 offset = XRMath.Flatten(offset, rootUp);
 
                 // Turning
-                Vector3 headForward = (solver._spine.IKRotationHead * solver._spine._anchorRelativeToHead).Rotate(Globals.Forward);
+                Vector3 headForward = (solver._spine.IKRotationHead * solver._spine._anchorRelativeToHead).Rotate(Globals.Backward);
                 headForward.Y = 0f;
                 Vector3 headForwardLocal = Quaternion.Inverse(rb.SolverRotation).Rotate(headForward);
                 float angle = float.RadiansToDegrees(MathF.Atan2(headForwardLocal.X, headForwardLocal.Z));

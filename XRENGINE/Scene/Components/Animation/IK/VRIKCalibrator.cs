@@ -384,7 +384,7 @@ namespace XREngine.Components.Animation
                 target = leg.Target;
             else
             {
-                trackerNode.NewChildWithTransform(out target, $"{name} Leg Bend Goal");
+                trackerNode.NewChildWithTransform(out target, $"{name} Leg Target");
                 leg.Target = target;
             }
 

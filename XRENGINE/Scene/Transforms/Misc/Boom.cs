@@ -124,7 +124,7 @@ namespace XREngine.Components.Scene.Transforms
                 World?.PhysicsScene?.SweepSingle(
                     _traceSphere,
                     (ParentWorldMatrix.Translation, Quaternion.Identity),
-                    Vector3.Transform(Globals.Backward, Parent?.WorldRotation ?? Quaternion.Identity),
+                    Vector3.Transform(Globals.Forward, Parent?.WorldRotation ?? Quaternion.Identity),
                     MaxLength,
                     _layerMask,
                     _queryFilter,

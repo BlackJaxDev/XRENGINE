@@ -262,7 +262,7 @@ namespace XREngine.Rendering
         /// </summary>
         /// <returns></returns>
         public Plane GetNearPlane()
-            => XRMath.CreatePlaneFromPointAndNormal(CenterPointNearPlane, Transform.WorldForward);
+            => XRMath.CreatePlaneFromPointAndNormal(CenterPointNearPlane, GetWorldForward());
 
         /// <summary>
         /// Returns the camera's far plane as a plane object.
@@ -270,19 +270,19 @@ namespace XREngine.Rendering
         /// </summary>
         /// <returns></returns>
         public Plane GetFarPlane()
-            => XRMath.CreatePlaneFromPointAndNormal(CenterPointFarPlane, -Transform.WorldForward);
+            => XRMath.CreatePlaneFromPointAndNormal(CenterPointFarPlane, GetWorldForward());
 
         /// <summary>
         /// The center point of the camera's near plane in world space.
         /// </summary>
         public Vector3 CenterPointNearPlane
-            => Transform.WorldTranslation + Transform.WorldForward * Parameters.NearZ;
+            => Transform.WorldTranslation + GetWorldForward() * Parameters.NearZ;
 
         /// <summary>
         /// The center point of the camera's far plane in world space.
         /// </summary>
         public Vector3 CenterPointFarPlane
-            => Transform.WorldTranslation + Transform.WorldForward * Parameters.FarZ;
+            => Transform.WorldTranslation + GetWorldForward() * Parameters.FarZ;
 
         /// <summary>
         /// The distance from the camera's position to the given point in world space.
@@ -299,7 +299,7 @@ namespace XREngine.Rendering
         /// <returns></returns>
         public float DistanceFromNearPlane(Vector3 point)
         {
-            Vector3 forward = Transform.WorldForward;
+            Vector3 forward = GetWorldForward();
             Vector3 nearPoint = Transform.WorldTranslation + forward * Parameters.NearZ;
             return GeoUtil.DistancePlanePoint(forward, XRMath.GetPlaneDistance(nearPoint, forward), point);
         }
@@ -311,7 +311,7 @@ namespace XREngine.Rendering
         /// <returns></returns>
         public float DistanceFromFarPlane(Vector3 point)
         {
-            Vector3 forward = Transform.WorldForward;
+            Vector3 forward = GetWorldForward();
             Vector3 farPoint = Transform.WorldTranslation + forward * Parameters.FarZ;
             return GeoUtil.DistancePlanePoint(-forward, XRMath.GetPlaneDistance(farPoint, -forward), point);
         }
@@ -323,7 +323,7 @@ namespace XREngine.Rendering
         /// <returns></returns>
         public Vector3 ClosestPointOnNearPlane(Vector3 point)
         {
-            Vector3 forward = Transform.WorldForward;
+            Vector3 forward = GetWorldForward();
             Vector3 nearPoint = Transform.WorldTranslation + forward * Parameters.NearZ;
             return GeoUtil.ClosestPlanePointToPoint(forward, XRMath.GetPlaneDistance(nearPoint, forward), point);
         }
@@ -335,10 +335,16 @@ namespace XREngine.Rendering
         /// <returns></returns>
         public Vector3 ClosestPointOnFarPlane(Vector3 point)
         {
-            Vector3 forward = Transform.WorldForward;
+            Vector3 forward = GetWorldForward();
             Vector3 farPoint = Transform.WorldTranslation + forward * Parameters.FarZ;
             return GeoUtil.ClosestPlanePointToPoint(-forward, XRMath.GetPlaneDistance(farPoint, -forward), point);
         }
+
+        public Vector3 WorldForward => -Transform.WorldForward;
+        public Vector3 RenderForward => -Transform.RenderForward;
+        public Vector3 LocalForward => -Transform.LocalForward;
+        public Vector3 GetWorldForward()
+            => -Transform.GetWorldForward();
 
         /// <summary>
         /// The frustum of this camera in world space.
@@ -517,7 +523,7 @@ namespace XREngine.Rendering
             }
 
             program.Uniform(EEngineUniform.CameraPosition.ToString(), tfm.RenderTranslation);
-            program.Uniform(EEngineUniform.CameraForward.ToString(), tfm.RenderForward);
+            program.Uniform(EEngineUniform.CameraForward.ToString(), -tfm.RenderForward);
             program.Uniform(EEngineUniform.CameraUp.ToString(), tfm.RenderUp);
             program.Uniform(EEngineUniform.CameraRight.ToString(), tfm.RenderRight);
 

@@ -53,47 +53,6 @@ namespace XREngine.Data.Geometry
             }
         }
 
-        public Vector3 LeftBottomNear
-        {
-            get => _corners[0];
-            private set => _corners[0] = value;
-        }
-        public Vector3 LeftTopNear
-        {
-            get => _corners[1];
-            set => _corners[1] = value;
-        }
-        public Vector3 RightBottomNear
-        {
-            get => _corners[2];
-            set => _corners[2] = value;
-        }
-        public Vector3 RightTopNear
-        {
-            get => _corners[3];
-            set => _corners[3] = value;
-        }
-        public Vector3 LeftBottomFar
-        {
-            get => _corners[4];
-            set => _corners[4] = value;
-        }
-        public Vector3 LeftTopFar
-        {
-            get => _corners[5];
-            set => _corners[5] = value;
-        }
-        public Vector3 RightBottomFar
-        {
-            get => _corners[6];
-            set => _corners[6] = value;
-        }
-        public Vector3 RightTopFar
-        {
-            get => _corners[7];
-            set => _corners[7] = value;
-        }
-
         private readonly Plane[] _planes = new Plane[6];
         public IReadOnlyList<Plane> Planes => _planes;
 
@@ -225,16 +184,15 @@ namespace XREngine.Data.Geometry
         }
 
         public Frustum() { }
-
         public Frustum(Matrix4x4 invProj) : this(
-            DivideW(Vector4.Transform(new Vector3(-1.0f, -1.0f, 1.0f), invProj)),
-            DivideW(Vector4.Transform(new Vector3(1.0f, -1.0f, 1.0f), invProj)),
-            DivideW(Vector4.Transform(new Vector3(-1.0f, 1.0f, 1.0f), invProj)),
-            DivideW(Vector4.Transform(new Vector3(1.0f, 1.0f, 1.0f), invProj)),
             DivideW(Vector4.Transform(new Vector3(-1.0f, -1.0f, 0.0f), invProj)),
             DivideW(Vector4.Transform(new Vector3(1.0f, -1.0f, 0.0f), invProj)),
             DivideW(Vector4.Transform(new Vector3(-1.0f, 1.0f, 0.0f), invProj)),
-            DivideW(Vector4.Transform(new Vector3(1.0f, 1.0f, 0.0f), invProj))) { }
+            DivideW(Vector4.Transform(new Vector3(1.0f, 1.0f, 0.0f), invProj)),
+            DivideW(Vector4.Transform(new Vector3(-1.0f, -1.0f, 1.0f), invProj)),
+            DivideW(Vector4.Transform(new Vector3(1.0f, -1.0f, 1.0f), invProj)),
+            DivideW(Vector4.Transform(new Vector3(-1.0f, 1.0f, 1.0f), invProj)),
+            DivideW(Vector4.Transform(new Vector3(1.0f, 1.0f, 1.0f), invProj))) { }
         
         private static Vector3 DivideW(Vector4 v)
             => new(v.X / v.W, v.Y / v.W, v.Z / v.W);
@@ -257,7 +215,9 @@ namespace XREngine.Data.Geometry
                 out Vector3 nbl,
                 out Vector3 nbr);
 
-            UpdatePoints(fbl, fbr, ftl, ftr, nbl, nbr, ntl, ntr);
+            UpdatePoints(
+                nbl, nbr, ntl, ntr,
+                fbl, fbr, ftl, ftr);
 
             //float halfWidth = width / 2.0f;
             //float halfHeight = height / 2.0f;
@@ -311,36 +271,80 @@ namespace XREngine.Data.Geometry
                 fbl = farPos - fY - fX,
                 fbr = farPos - fY + fX;
 
-            UpdatePoints(fbl, fbr, ftl, ftr, nbl, nbr, ntl, ntr);
+            UpdatePoints(
+                nbl, nbr, ntl, ntr,
+                fbl, fbr, ftl, ftr);
         }
         public Frustum(
-            Vector3 farBottomLeft, Vector3 farBottomRight, Vector3 farTopLeft, Vector3 farTopRight,
-            Vector3 nearBottomLeft, Vector3 nearBottomRight, Vector3 nearTopLeft, Vector3 nearTopRight) : this()
+            Vector3 nearBottomLeft, Vector3 nearBottomRight, Vector3 nearTopLeft, Vector3 nearTopRight,
+            Vector3 farBottomLeft, Vector3 farBottomRight, Vector3 farTopLeft, Vector3 farTopRight) : this()
         {
             UpdatePoints(
-                farBottomLeft, farBottomRight, farTopLeft, farTopRight,
-                nearBottomLeft, nearBottomRight, nearTopLeft, nearTopRight);
+                nearBottomLeft, nearBottomRight, nearTopLeft, nearTopRight,
+                farBottomLeft, farBottomRight, farTopLeft, farTopRight);
         }
         private Frustum(
-            Vector3 farBottomLeft, Vector3 farBottomRight, Vector3 farTopLeft, Vector3 farTopRight,
             Vector3 nearBottomLeft, Vector3 nearBottomRight, Vector3 nearTopLeft, Vector3 nearTopRight,
+            Vector3 farBottomLeft, Vector3 farBottomRight, Vector3 farTopLeft, Vector3 farTopRight,
             Vector3 sphereCenter, float sphereRadius) : this()
             => UpdatePoints(
+                nearBottomLeft, nearBottomRight, nearTopLeft, nearTopRight,
                 farBottomLeft, farBottomRight, farTopLeft, farTopRight,
-                nearBottomLeft, nearBottomRight, nearTopLeft, nearTopRight, sphereCenter, sphereRadius);
+                sphereCenter, sphereRadius);
+
+        public Vector3 LeftBottomNear
+        {
+            get => _corners[0];
+            set => _corners[0] = value;
+        }
+        public Vector3 RightBottomNear
+        {
+            get => _corners[1];
+            set => _corners[1] = value;
+        }
+        public Vector3 LeftTopNear
+        {
+            get => _corners[2];
+            set => _corners[2] = value;
+        }
+        public Vector3 RightTopNear
+        {
+            get => _corners[3];
+            set => _corners[3] = value;
+        }
+        public Vector3 LeftBottomFar
+        {
+            get => _corners[4];
+            set => _corners[4] = value;
+        }
+        public Vector3 RightBottomFar
+        {
+            get => _corners[5];
+            set => _corners[5] = value;
+        }
+        public Vector3 LeftTopFar
+        {
+            get => _corners[6];
+            set => _corners[6] = value;
+        }
+        public Vector3 RightTopFar
+        {
+            get => _corners[7];
+            set => _corners[7] = value;
+        }
 
         public void UpdatePoints(
-           Vector3 farBottomLeft, Vector3 farBottomRight, Vector3 farTopLeft, Vector3 farTopRight,
-           Vector3 nearBottomLeft, Vector3 nearBottomRight, Vector3 nearTopLeft, Vector3 nearTopRight)
+           Vector3 nearBottomLeft, Vector3 nearBottomRight, Vector3 nearTopLeft, Vector3 nearTopRight,
+           Vector3 farBottomLeft, Vector3 farBottomRight, Vector3 farTopLeft, Vector3 farTopRight)
         {
-            _corners[0] = farBottomLeft;
-            _corners[1] = farBottomRight;
-            _corners[2] = farTopLeft;
-            _corners[3] = farTopRight;
-            _corners[4] = nearBottomLeft;
-            _corners[5] = nearBottomRight;
-            _corners[6] = nearTopLeft;
-            _corners[7] = nearTopRight;
+            _corners[0] = nearBottomLeft;
+            _corners[1] = nearBottomRight;
+            _corners[2] = nearTopLeft;
+            _corners[3] = nearTopRight;
+            _corners[4] = farBottomLeft;
+            _corners[5] = farBottomRight;
+            _corners[6] = farTopLeft;
+            _corners[7] = farTopRight;
 
             //near, far
             Near = Plane.CreateFromVertices(nearBottomRight, nearBottomLeft, nearTopRight);
@@ -358,18 +362,18 @@ namespace XREngine.Data.Geometry
         }
 
         private void UpdatePoints(
-            Vector3 farBottomLeft, Vector3 farBottomRight, Vector3 farTopLeft, Vector3 farTopRight,
             Vector3 nearBottomLeft, Vector3 nearBottomRight, Vector3 nearTopLeft, Vector3 nearTopRight,
+            Vector3 farBottomLeft, Vector3 farBottomRight, Vector3 farTopLeft, Vector3 farTopRight,
             Vector3 sphereCenter, float sphereRadius)
         {
-            _corners[0] = farBottomLeft;
-            _corners[1] = farBottomRight;
-            _corners[2] = farTopLeft;
-            _corners[3] = farTopRight;
-            _corners[4] = nearBottomLeft;
-            _corners[5] = nearBottomRight;
-            _corners[6] = nearTopLeft;
-            _corners[7] = nearTopRight;
+            _corners[0] = nearBottomLeft;
+            _corners[1] = nearBottomRight;
+            _corners[2] = nearTopLeft;
+            _corners[3] = nearTopRight;
+            _corners[4] = farBottomLeft;
+            _corners[5] = farBottomRight;
+            _corners[6] = farTopLeft;
+            _corners[7] = farTopRight;
 
             //near, far
             Near = Plane.CreateFromVertices(nearBottomRight, nearBottomLeft, nearTopRight);

@@ -64,6 +64,9 @@ namespace XREngine.Components.Animation
             public void MovePosition(Vector3 position)
             {
                 Vector3 delta = position - _bones[0].SolverPosition;
+                if (delta.LengthSquared() < float.Epsilon)
+                    return; // No movement, skip
+
                 foreach (VirtualBone bone in _bones)
                     bone.SolverPosition += delta;
             }
@@ -89,11 +92,14 @@ namespace XREngine.Components.Animation
             {
                 Vector3 deltaPosition = newRootPos - _rootPosition;
                 _rootPosition = newRootPos;
-                foreach (VirtualBone bone in _bones)
-                    bone.SolverPosition += deltaPosition;
 
+                if (deltaPosition.LengthSquared() >= float.Epsilon)
+                    foreach (VirtualBone bone in _bones)
+                        bone.SolverPosition += deltaPosition;
+                
                 Quaternion deltaRotation = XRMath.FromToRotation(_rootRotation, newRootRot);
                 _rootRotation = newRootRot;
+
                 VirtualBone.RotateAroundPoint(_bones, 0, newRootPos, deltaRotation);
             }
 

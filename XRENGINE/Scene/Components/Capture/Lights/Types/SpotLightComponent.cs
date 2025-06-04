@@ -25,13 +25,13 @@ namespace XREngine.Components.Capture.Lights.Types
 
         private Cone _outerCone = new(
             Vector3.Zero,
-            Globals.Backward,
+            Globals.Forward,
             MathF.Tan(DegToRad(outerCutoffDeg)) * distance,
             distance);
 
         private Cone _innerCone = new(
             Vector3.Zero,
-            Globals.Backward,
+            Globals.Forward,
             MathF.Tan(DegToRad(innerCutoffDeg)) * distance,
             distance);
 
@@ -63,9 +63,9 @@ namespace XREngine.Components.Capture.Lights.Types
         }
 
         public static XRMesh GetVolumeMesh()
-            => XRMesh.Shapes.SolidCone(Vector3.Zero, Globals.Backward, 1.0f, 1.0f, 32, true);
+            => XRMesh.Shapes.SolidCone(Vector3.Zero, Globals.Forward, 1.0f, 1.0f, 32, true);
         protected override XRMesh GetWireframeMesh()
-            => XRMesh.Shapes.WireframeCone(Vector3.Zero, Globals.Backward, 1.0f, 1.0f, 32);
+            => XRMesh.Shapes.WireframeCone(Vector3.Zero, Globals.Forward, 1.0f, 1.0f, 32);
 
         public Cone OuterCone => _outerCone;
         public Cone InnerCone => _innerCone;
@@ -98,7 +98,7 @@ namespace XREngine.Components.Capture.Lights.Types
             program.Uniform($"{targetStructName}WorldToLightInvViewMatrix", ShadowCamera?.Transform.RenderMatrix ?? Matrix4x4.Identity);
 
             program.Uniform($"{targetStructName}Position", Transform.RenderTranslation);
-            program.Uniform($"{targetStructName}Direction", Transform.RenderForward);
+            program.Uniform($"{targetStructName}Direction", -Transform.RenderForward);
             program.Uniform($"{targetStructName}Radius", Distance);
             program.Uniform($"{targetStructName}Brightness", Brightness);
             program.Uniform($"{targetStructName}Exponent", Exponent);
@@ -205,7 +205,7 @@ namespace XREngine.Components.Capture.Lights.Types
         private void UpdateCones()
         {
             float d = Distance;
-            Vector3 dir = Transform.RenderForward;
+            Vector3 dir = -Transform.RenderForward;
             Vector3 coneOrigin = Transform.RenderTranslation + dir * (d * 0.5f);
 
             SetField(ref _outerCone, new(coneOrigin, -dir, d, MathF.Tan(DegToRad(OuterCutoffAngleDegrees)) * d));
@@ -214,7 +214,7 @@ namespace XREngine.Components.Capture.Lights.Types
             if (ShadowCamera != null)
                 ShadowCamera.FarZ = d;
 
-            MeshCenterAdjustMatrix = Matrix4x4.CreateScale(OuterCone.Radius, OuterCone.Radius, OuterCone.Height) * Matrix4x4.CreateTranslation(Globals.Forward * (Distance * 0.5f));
+            MeshCenterAdjustMatrix = Matrix4x4.CreateScale(OuterCone.Radius, OuterCone.Radius, OuterCone.Height) * Matrix4x4.CreateTranslation(Globals.Backward * (Distance * 0.5f));
         }
     }
 }

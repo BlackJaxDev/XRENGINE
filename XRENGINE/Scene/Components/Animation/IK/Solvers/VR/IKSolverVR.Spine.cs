@@ -944,7 +944,7 @@ namespace XREngine.Components.Animation
 
                 // Position
                 // Move the body back when head is moving down
-                Vector3 rootForward = _rootRotation.Rotate(Globals.Forward).Normalized();
+                Vector3 rootForward = _rootRotation.Rotate(Globals.Forward);
                 float deltaY = XRMath.ExtractVertical(deltaPosition, _rootRotation.Rotate(Globals.Up), 1.0f).Length();
                 if (scale > 0.0f)
                     deltaY /= scale;
@@ -974,9 +974,9 @@ namespace XREngine.Components.Animation
                     {
                         Vector3 delta = pelvisPosition - Hips.SolverPosition;
                         Vector3 wantedThighPos = leg.Thigh.SolverPosition + delta;
-                        Vector3 toWantedThighPos = wantedThighPos - leg.Position;
+                        Vector3 toWantedThighPos = wantedThighPos - leg.TargetPosition;
                         float maxMag = useCurrentLegMag ? leg.CurrentLength : leg.Length;
-                        Vector3 limitedThighPos = leg.Position + toWantedThighPos.ClampMagnitude(maxMag);
+                        Vector3 limitedThighPos = leg.TargetPosition + toWantedThighPos.ClampMagnitude(maxMag);
                         pelvisPosition += limitedThighPos - wantedThighPos;
 
                         // TODO rotate pelvis to accommodate, rotate the spine back then

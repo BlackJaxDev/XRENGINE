@@ -3,7 +3,7 @@ using Transform = XREngine.Scene.Transforms.Transform;
 
 namespace XREngine.Components.Animation
 {
-public partial class IKSolverVR
+    public partial class IKSolverVR
     {
         public partial class SolverTransforms
         {
@@ -62,16 +62,17 @@ public partial class IKSolverVR
                 public void ReadInput()
                 {
                     _transform?.RecalculateMatrices(true);
-                    Input.Translation = _transform?.WorldTranslation ?? Vector3.Zero;
-                    Input.Rotation = _transform?.WorldRotation ?? Quaternion.Identity;
+                    Input.Translation = Solved.Translation = _transform?.WorldTranslation ?? Vector3.Zero;
+                    Input.Rotation = Solved.Rotation = _transform?.WorldRotation ?? Quaternion.Identity;
                 }
                 public void WriteSolved(float weight)
                 {
                     if (_transform is null)
                         return;
 
-                    if (IsTranslatable)
-                        _transform.SetWorldTranslation(Vector3.Lerp(Input.Translation, Solved.Translation, weight));
+                    _transform.Parent?.RecalculateMatrices(true);
+                    //if (IsTranslatable)
+                    //    _transform.SetWorldTranslation(Vector3.Lerp(Input.Translation, Solved.Translation, weight));
                     _transform.SetWorldRotation(Quaternion.Slerp(Input.Rotation, Solved.Rotation, weight));
                     _transform.RecalculateMatrices(true);
                 }

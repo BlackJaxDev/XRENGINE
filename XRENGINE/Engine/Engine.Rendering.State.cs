@@ -95,6 +95,19 @@ namespace XREngine
                 /// If true, the current render is a scene capture pass - only what's needed for scene captures is rendered.
                 /// </summary>
                 public static bool IsSceneCapturePass { get; internal set; }
+                /// <summary>
+                /// If this is greater than 0, the current render is a mirror pass.
+                /// </summary>
+                public static int MirrorPassIndex { get; internal set; } = 0;
+                /// <summary>
+                /// If true, the current render is a mirror pass - similar to a main pass, but the scene is reflected (or unreflected, depending on the mirror pass index).
+                /// </summary>
+                public static bool IsMirrorPass => MirrorPassIndex > 0;
+                /// <summary>
+                /// If the mirror pass is odd, the scene is reflected.
+                /// If the mirror pass is even, the scene is a normal unreflected pass.
+                /// </summary>
+                public static bool IsReflectedMirrorPass => (MirrorPassIndex & 1) == 1;
                 public static bool ReverseWinding { get; internal set; } = false;
                 public static bool ReverseCulling { get; internal set; } = false;
 
@@ -192,6 +205,20 @@ namespace XREngine
 
                 public static void ColorMask(bool red, bool green, bool blue, bool alpha)
                     => AbstractRenderer.Current?.ColorMask(red, green, blue, alpha);
+
+                public static void PushMirrorPass()
+                {
+                    IsSceneCapturePass = true;
+                    MirrorPassIndex++;
+                    ReverseCulling = IsReflectedMirrorPass;
+                }
+
+                public static void PopMirrorPass()
+                {
+                    MirrorPassIndex--;
+                    ReverseCulling = IsReflectedMirrorPass;
+                    IsSceneCapturePass = IsMirrorPass;
+                }
             }
         }
     }

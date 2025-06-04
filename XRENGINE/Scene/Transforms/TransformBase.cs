@@ -581,7 +581,14 @@ namespace XREngine.Scene.Transforms
         public Vector3 RenderUp => Vector3.TransformNormal(Globals.Up, RenderMatrix).Normalized();
         public Vector3 RenderRight => Vector3.TransformNormal(Globals.Right, RenderMatrix).Normalized();
         public Vector3 RenderTranslation => RenderMatrix.Translation;
-        public Quaternion RenderRotation => Quaternion.CreateFromRotationMatrix(RenderMatrix);
+        public Quaternion RenderRotation
+            {
+            get
+            {
+                Matrix4x4.Decompose(RenderMatrix, out _, out Quaternion rotation, out _);
+                return rotation;
+            }
+        }
 
         /// <summary>
         /// This transform's world up vector.
@@ -618,11 +625,39 @@ namespace XREngine.Scene.Transforms
         /// </summary>
         public Vector3 LocalTranslation => LocalMatrix.Translation;
 
-        public virtual Quaternion LocalRotation => Quaternion.CreateFromRotationMatrix(LocalMatrix);
-        public virtual Quaternion WorldRotation => Quaternion.CreateFromRotationMatrix(WorldMatrix);
+        public virtual Quaternion LocalRotation
+        {
+            get
+            {
+                Matrix4x4.Decompose(LocalMatrix, out _, out Quaternion rotation, out _);
+                return rotation;
+            }
+        }
+        public virtual Quaternion WorldRotation
+        {
+            get
+            {
+                Matrix4x4.Decompose(WorldMatrix, out _, out Quaternion rotation, out _);
+                return rotation;
+            }
+        }
 
-        public virtual Quaternion InverseLocalRotation => Quaternion.CreateFromRotationMatrix(InverseLocalMatrix);
-        public virtual Quaternion InverseWorldRotation => Quaternion.CreateFromRotationMatrix(InverseWorldMatrix);
+        public virtual Quaternion InverseLocalRotation
+        {
+            get
+            {
+                Matrix4x4.Decompose(InverseLocalMatrix, out _, out Quaternion rotation, out _);
+                return rotation;
+            }
+        }
+        public virtual Quaternion InverseWorldRotation
+        {
+            get
+            {
+                Matrix4x4.Decompose(InverseWorldMatrix, out _, out Quaternion rotation, out _);
+                return rotation;
+            }
+        }
 
         public Vector3 LossyWorldScale => WorldMatrix.ExtractScale();
 

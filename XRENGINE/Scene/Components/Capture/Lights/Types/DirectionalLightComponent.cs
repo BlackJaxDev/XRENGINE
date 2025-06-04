@@ -40,7 +40,7 @@ namespace XREngine.Components.Capture.Lights.Types
         {
             Parent = Transform,
             Order = ETransformOrder.TRS,
-            Translation = Globals.Backward * Scale.Z * 0.5f,
+            Translation = Globals.Forward * Scale.Z * 0.5f,
         };
 
         protected override void OnTransformChanged()
@@ -68,7 +68,7 @@ namespace XREngine.Components.Capture.Lights.Types
 
             targetStructName = $"{targetStructName ?? Engine.Rendering.Constants.LightsStructName}.";
 
-            program.Uniform($"{targetStructName}Direction", Transform.RenderForward);
+            program.Uniform($"{targetStructName}Direction", -Transform.RenderForward);
             program.Uniform($"{targetStructName}Color", _color);
             program.Uniform($"{targetStructName}DiffuseIntensity", _diffuseIntensity);
             program.Uniform($"{targetStructName}WorldToLightProjMatrix", ShadowCamera?.ProjectionMatrix ?? Matrix4x4.Identity);
@@ -125,7 +125,7 @@ namespace XREngine.Components.Capture.Lights.Types
                     break;
                 case nameof(Scale):
                     MeshCenterAdjustMatrix = Matrix4x4.CreateScale(Scale);
-                    ShadowCameraTransform.Translation = Globals.Backward * Scale.Z * 0.5f;
+                    ShadowCameraTransform.Translation = Globals.Forward * Scale.Z * 0.5f;
                     if (ShadowCamera is not null)
                     {
                         if (ShadowCamera.Parameters is not XROrthographicCameraParameters p)

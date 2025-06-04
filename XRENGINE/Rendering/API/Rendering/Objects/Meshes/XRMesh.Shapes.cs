@@ -86,7 +86,7 @@ namespace XREngine.Rendering
             }
             public static XRMesh WireframeSphere(Vector3 center, float radius, int pointCount)
             {
-                VertexLineStrip d1 = CircleLineStrip(radius, Globals.Forward, center, pointCount);
+                VertexLineStrip d1 = CircleLineStrip(radius, Globals.Backward, center, pointCount);
                 VertexLineStrip d2 = CircleLineStrip(radius, Globals.Up, center, pointCount);
                 VertexLineStrip d3 = CircleLineStrip(radius, Globals.Right, center, pointCount);
                 return Create(d1, d2, d3);
@@ -208,20 +208,20 @@ namespace XREngine.Rendering
                 Vector3 forwardNormal, rightNormal;
                 if (upAxis == Globals.Right)
                 {
-                    forwardNormal = Globals.Forward;
+                    forwardNormal = Globals.Backward;
                     rightNormal = Globals.Up;
                 }
                 else if (upAxis == -Globals.Right)
                 {
-                    forwardNormal = Globals.Forward;
+                    forwardNormal = Globals.Backward;
                     rightNormal = -Globals.Up;
                 }
-                else if (upAxis == Globals.Forward)
+                else if (upAxis == Globals.Backward)
                 {
                     forwardNormal = Globals.Up;
                     rightNormal = Globals.Right;
                 }
-                else if (upAxis == -Globals.Forward)
+                else if (upAxis == -Globals.Backward)
                 {
                     forwardNormal = -Globals.Up;
                     rightNormal = Globals.Right;
@@ -229,7 +229,7 @@ namespace XREngine.Rendering
                 else
                 {
                     forwardNormal = Vector3.Cross(Globals.Right, upAxis);
-                    rightNormal = Vector3.Cross(Globals.Forward, upAxis);
+                    rightNormal = Vector3.Cross(Globals.Backward, upAxis);
                 }
 
                 int pts = pointCountHalfCircle + 1;
@@ -360,20 +360,20 @@ namespace XREngine.Rendering
                 Vector3 forwardNormal, rightNormal;
                 if (upAxis == Globals.Right)
                 {
-                    forwardNormal = Globals.Forward;
+                    forwardNormal = Globals.Backward;
                     rightNormal = Globals.Up;
                 }
                 else if (upAxis == -Globals.Right)
                 {
-                    forwardNormal = Globals.Forward;
+                    forwardNormal = Globals.Backward;
                     rightNormal = -Globals.Up;
                 }
-                else if (upAxis == Globals.Forward)
+                else if (upAxis == Globals.Backward)
                 {
                     forwardNormal = Globals.Up;
                     rightNormal = Globals.Right;
                 }
-                else if (upAxis == -Globals.Forward)
+                else if (upAxis == -Globals.Backward)
                 {
                     forwardNormal = -Globals.Up;
                     rightNormal = Globals.Right;
@@ -381,7 +381,7 @@ namespace XREngine.Rendering
                 else
                 {
                     forwardNormal = Vector3.Cross(Globals.Right, upAxis);
-                    rightNormal = Vector3.Cross(Globals.Forward, upAxis);
+                    rightNormal = Vector3.Cross(Globals.Backward, upAxis);
                 }
 
                 int pts = pointCountHalfCircle + 1;
@@ -509,7 +509,7 @@ namespace XREngine.Rendering
                     out Vector3 BFR);
 
                 Vector3 rightNormal = inwardFacing ? Globals.Left : Globals.Right;
-                Vector3 frontNormal = inwardFacing ? Globals.Forward : Globals.Backward;
+                Vector3 frontNormal = inwardFacing ? Globals.Backward : Globals.Forward;
                 Vector3 topNormal = inwardFacing ? Globals.Down : Globals.Up;
                 Vector3 leftNormal = -rightNormal;
                 Vector3 backNormal = -frontNormal;

@@ -43,15 +43,14 @@ namespace XREngine.Components.Lights
         {
             XRCamera? camera = Engine.Rendering.State.RenderingCamera;
             UpdateRenderTransform(Transform);
-            if (camera is not null)
-            {
-                if (_renderingCameras.TryRemove(camera))
-                    UpdateMirrorCamera(camera, true);
-                else if (camera == Engine.VRState.ViewInformation.RightEyeCamera) //Bandaid fix for two-pass VR
-                    UpdateMirrorCamera(camera, true);
-            }
+            if (camera is not null && ShouldUpdateCamera(camera))
+                UpdateMirrorCamera(camera, true);
             RenderToFBO();
         }
+
+        private bool ShouldUpdateCamera(XRCamera camera) => 
+            _renderingCameras.TryRemove(camera) ||
+            camera == Engine.VRState.ViewInformation.RightEyeCamera; //Band-aid fix for two-pass VR
 
         /// <summary>
         /// All cameras that have captured this mirror, and will need a mirrored camera matrix.
@@ -163,7 +162,7 @@ namespace XREngine.Components.Lights
         {
             _displayQuadRC.WorldMatrix = transform.RenderMatrix;
             _renderInfo.CullingOffsetMatrix = transform.RenderMatrix;
-            _mirrorCamera?.SetObliqueClippingPlane(transform.RenderTranslation, -transform.RenderForward);
+            _mirrorCamera?.SetObliqueClippingPlane(transform.RenderTranslation, transform.RenderForward);
         }
 
         protected virtual void InitializeForCapture()
@@ -238,7 +237,7 @@ namespace XREngine.Components.Lights
 
         private void UpdateMirrorCamera(XRCamera camera, bool render)
         {
-            Matrix4x4 camMirrorWorld = CalculateMirrorCameraView(camera, Transform.RenderTranslation, Transform.RenderForward, render);
+            Matrix4x4 camMirrorWorld = CalculateMirrorCameraView(camera, Transform.RenderTranslation, -Transform.RenderForward, render);
 
             if (_mirrorCamera is not null)
             {
@@ -263,13 +262,13 @@ namespace XREngine.Components.Lights
             {
                 pos = tfm.RenderTranslation;
                 up = tfm.RenderUp;
-                fwd = tfm.RenderForward;
+                fwd = -tfm.RenderForward;
             }
             else
             {
                 pos = tfm.WorldTranslation;
                 up = tfm.WorldUp;
-                fwd = tfm.WorldForward;
+                fwd = -tfm.WorldForward;
             }
 
             Vector3 planePerpPoint = XRMath.ProjectPointToPlane(pos, mirrorPoint, mirrorNormal);
@@ -285,7 +284,7 @@ namespace XREngine.Components.Lights
             if (camUpDirMirror.LengthSquared() < 0.0001f)
                 camUpDirMirror = Globals.Up;
             if (camFwdDirMirror.LengthSquared() < 0.0001f)
-                camFwdDirMirror = Globals.Backward;
+                camFwdDirMirror = Globals.Forward;
 
             return Matrix4x4.CreateScale(new Vector3(-1.0f, 1.0f, 1.0f)) * Matrix4x4.CreateWorld(camPosMirror, camFwdDirMirror, camUpDirMirror);
         }
@@ -312,17 +311,13 @@ namespace XREngine.Components.Lights
             if (ResolutionChanged())
                 InitializeForCapture();
 
-            Engine.Rendering.State.IsSceneCapturePass = true;
-            Engine.Rendering.State.ReverseCulling = true;
-
             RenderFBO!.SetRenderTargets(
                 (_environmentTexture!, EFrameBufferAttachment.ColorAttachment0, 0, -1),
                 (GetDepthAttachment(), EFrameBufferAttachment.DepthStencilAttachment, 0, -1));
 
+            Engine.Rendering.State.PushMirrorPass();
             Viewport!.Render(RenderFBO, null, null, false, null);
-
-            Engine.Rendering.State.ReverseCulling = false;
-            Engine.Rendering.State.IsSceneCapturePass = false;
+            Engine.Rendering.State.PopMirrorPass();
         }
 
         private IFrameBufferAttachement GetDepthAttachment()

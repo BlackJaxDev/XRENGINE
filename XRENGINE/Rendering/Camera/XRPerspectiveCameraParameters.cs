@@ -81,7 +81,7 @@ namespace XREngine.Rendering
         }
 
         protected override Frustum CalculateUntransformedFrustum()
-            => new(VerticalFieldOfView, AspectRatio, NearZ, FarZ, Globals.Forward, Globals.Up, Vector3.Zero);
+            => new(VerticalFieldOfView, AspectRatio, NearZ, FarZ, Globals.Backward, Globals.Up, Vector3.Zero);
 
         public override void SetUniforms(XRRenderProgram program)
         {
@@ -99,7 +99,7 @@ namespace XREngine.Rendering
         }
 
         public Frustum GetUntransformedFrustumSlice(float nearZ, float farZ)
-            => new(VerticalFieldOfView, AspectRatio, nearZ, farZ, Globals.Forward, Globals.Up, Vector3.Zero);
+            => new(VerticalFieldOfView, AspectRatio, nearZ, farZ, Globals.Backward, Globals.Up, Vector3.Zero);
 
         public Matrix4x4 GetProjectionSlice(float nearZ, float farZ)
         {

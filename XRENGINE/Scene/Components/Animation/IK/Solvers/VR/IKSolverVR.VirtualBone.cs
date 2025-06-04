@@ -107,7 +107,7 @@ namespace XREngine.Components.Animation
                         float l = MathF.Sqrt(ls);
 
                         bone.Length = l;
-                        bone.Axis = Quaternion.Inverse(bone.SolverRotation).Rotate(diff).Normalized();
+                        bone.Axis = Quaternion.Inverse(bone.SolverRotation).Rotate(diff);
 
                         length += l;
                     }
@@ -121,14 +121,16 @@ namespace XREngine.Components.Animation
                 Vector3 point,
                 Quaternion rotation)
             {
+                if (rotation == Quaternion.Identity)
+                    return;
+
                 for (int i = startIndex; i < bones.Length; i++)
                 {
                     var bone = bones[i];
                     if (bone is null)
                         continue;
                     
-                    Vector3 dir = bone.SolverPosition - point;
-                    bone.SolverPosition = point + rotation.Rotate(dir);
+                    bone.SolverPosition = point + rotation.Rotate(bone.SolverPosition - point);
                     bone.SolverRotation = rotation * bone.SolverRotation;
                 }
             }
@@ -201,18 +203,18 @@ namespace XREngine.Components.Animation
                     toBendPoint);
 
                 if (weight < 1.0f)
-                    q1 = Quaternion.Lerp(Quaternion.Identity, q1, weight);
+                    q1 = Quaternion.Slerp(Quaternion.Identity, q1, weight);
 
-                RotateAroundPoint(bones, first, bones[first].SolverPosition, q1);
+                RotateAroundPoint(bones, first, bones[first].SolverPosition, Quaternion.Normalize(q1));
 
-                Quaternion q2 = XRMath.RotationBetweenVectors(
-                    bones[third].SolverPosition - bones[second].SolverPosition,
-                    targetPosition - bones[second].SolverPosition);
+                Vector3 secondToThird = bones[third].SolverPosition - bones[second].SolverPosition;
+                Vector3 secondToTarget = targetPosition - bones[second].SolverPosition;
+                Quaternion q2 = XRMath.RotationBetweenVectors(secondToThird, secondToTarget);
 
                 if (weight < 1.0f)
-                    q2 = Quaternion.Lerp(Quaternion.Identity, q2, weight);
+                    q2 = Quaternion.Slerp(Quaternion.Identity, q2, weight);
 
-                RotateAroundPoint(bones, second, bones[second].SolverPosition, q2);
+                RotateAroundPoint(bones, second, bones[second].SolverPosition, Quaternion.Normalize(q2));
             }
 
             //Calculates the bend direction based on the law of cosines. NB! Magnitude of the returned vector does not equal to the length of the first bone!
@@ -310,7 +312,7 @@ namespace XREngine.Components.Animation
                         Vector3 toLastBone = bones[^1].SolverPosition - bones[i].SolverPosition;
                         Vector3 toTarget = targetPosition - bones[i].SolverPosition;
                         Quaternion rotation = XRMath.RotationBetweenVectors(toLastBone, toTarget);
-                        RotateBy(bones, i, weight >= 1 ? rotation : Quaternion.Lerp(Quaternion.Identity, rotation, weight));
+                        RotateBy(bones, i, Quaternion.Normalize(weight >= 1 ? rotation : Quaternion.Slerp(Quaternion.Identity, rotation, weight)));
                     }
                 }
             }

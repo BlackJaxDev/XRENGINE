@@ -120,7 +120,7 @@ namespace XREngine.Rendering.UI
                     {
                         float depth = XRMath.DistanceToDepth(CameraDrawSpaceDistance, CameraSpaceCamera.NearZ, CameraSpaceCamera.FarZ);
                         var bottomLeft = CameraSpaceCamera.NormalizedViewportToWorldCoordinate(Vector2.Zero, depth);
-                        return Matrix4x4.CreateWorld(bottomLeft, CameraSpaceCamera.Transform.WorldForward, CameraSpaceCamera.Transform.WorldUp);
+                        return Matrix4x4.CreateWorld(bottomLeft, -CameraSpaceCamera.Transform.WorldForward, CameraSpaceCamera.Transform.WorldUp);
                     }
                     else
                         return base.CreateWorldMatrix();

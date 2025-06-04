@@ -98,7 +98,7 @@ namespace XREngine.Components.Animation
             => TargetIKTransform?.WorldTranslation ?? _root?.TransformPoint(RawIKPosition) ?? RawIKPosition;
 
         protected float _ikPositionWeight = 1.0f;
-        [Range(0f, 1f)]
+        [Range(0.0f, 1.0f)]
         public virtual float IKPositionWeight
         {
             get => _ikPositionWeight;

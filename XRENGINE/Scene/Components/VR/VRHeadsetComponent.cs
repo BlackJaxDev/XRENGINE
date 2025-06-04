@@ -1,4 +1,5 @@
-﻿using XREngine.Components;
+﻿using System.Numerics;
+using XREngine.Components;
 using XREngine.Core.Attributes;
 using XREngine.Data.Rendering;
 using XREngine.Rendering;

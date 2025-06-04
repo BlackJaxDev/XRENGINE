@@ -97,7 +97,7 @@ namespace XREngine.Components
 
             Listener.Velocity = delta > 0.0f ? (pos - Listener.Position) / delta : Vector3.Zero;
             Listener.Position = pos;
-            Listener.SetOrientation(Transform.WorldForward, Transform.WorldUp);
+            Listener.SetOrientation(-Transform.WorldForward, Transform.WorldUp);
         }
     }
 }

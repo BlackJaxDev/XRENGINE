@@ -32,8 +32,8 @@ namespace XREngine
                 private static void PreUpdate()
                 {
                     //lock (DebugTextUpdateQueue)
-                        DebugTextUpdateQueue.Clear();
-                    
+                    DebugTextUpdateQueue.Clear();
+
                     DebugPointsQueue.Clear();
                     DebugLinesQueue.Clear();
                     DebugTrianglesQueue.Clear();
@@ -128,8 +128,8 @@ namespace XREngine
                 public static void RenderShapes()
                 {
                     //lock (DebugTextUpdateQueue)
-                        foreach ((Vector3 pos, string text, ColorF4 color, float scale) in DebugTextUpdateQueue)
-                            UpdateDebugText(pos, text, color, scale);
+                    foreach ((Vector3 pos, string text, ColorF4 color, float scale) in DebugTextUpdateQueue)
+                        UpdateDebugText(pos, text, color, scale);
 
                     var hashes = DebugTexts.Keys.ToArray();
                     for (int i = 0; i < hashes.Length; i++)
@@ -244,11 +244,14 @@ namespace XREngine
                         DebugPointsQueue.Enqueue((position, color));
                 }
 
+                public static void RenderRay(Vector3 position, Vector3 direction, ColorF4 color)
+                    => RenderLine(position, position + direction, color);
+
                 public static unsafe void RenderLine(Vector3 start, Vector3 end, ColorF4 color)
                 {
                     if (!InCamera(start) && !InCamera(end))
                         return;
-                    
+
                     if (IsRenderThread)
                         _debugLines.Add((start, end, color));
                     else
@@ -796,7 +799,7 @@ namespace XREngine
                     else
                     {
                         //lock (DebugTextUpdateQueue)
-                            DebugTextUpdateQueue.Enqueue((worldPosition, text, color, scale));
+                        DebugTextUpdateQueue.Enqueue((worldPosition, text, color, scale));
                     }
                 }
 
@@ -867,9 +870,9 @@ namespace XREngine
 
                 public static void RenderCoordinateSystem(Matrix4x4 space, float lineScale = 1.0f, bool textPerAxis = false)
                 {
-                    Vector3 x = space.GetColumn(0).XYZ() * lineScale;
-                    Vector3 y = space.GetColumn(1).XYZ() * lineScale;
-                    Vector3 z = space.GetColumn(2).XYZ() * lineScale;
+                    Vector3 x = Vector3.TransformNormal(Vector3.UnitX * lineScale, space);
+                    Vector3 y = Vector3.TransformNormal(Vector3.UnitY * lineScale, space);
+                    Vector3 z = Vector3.TransformNormal(Vector3.UnitZ * lineScale, space);
                     Vector3 origin = space.Translation;
                     RenderLine(origin, origin + x, ColorF4.Red);
                     RenderLine(origin, origin + y, ColorF4.Green);
@@ -880,6 +883,32 @@ namespace XREngine
                         RenderText(origin + y * 1.1f, "Y", ColorF4.Green);
                         RenderText(origin + z * 1.1f, "Z", ColorF4.Blue);
                     }
+                }
+
+                public static void RenderCoordinateSystem(Vector3 position, Quaternion rotation, float lineScale = 1.0f, bool textPerAxis = false)
+                {
+                    Matrix4x4 space = Matrix4x4.CreateFromQuaternion(rotation) * Matrix4x4.CreateTranslation(position);
+                    RenderCoordinateSystem(space, lineScale, textPerAxis);
+                }
+
+                public static void RenderPlane(Vector3 position, Vector3 normal, ColorF4 color, float size = 1.0f, bool renderNormal = true)
+                {
+                    // Render a plane as a large quad centered at the position with the given normal.
+                    Vector3 up = Vector3.Cross(normal, Vector3.UnitX).Normalized();
+                    if (up.LengthSquared() < float.Epsilon)
+                        up = Vector3.Cross(normal, Vector3.UnitY).Normalized();
+                    Vector3 right = Vector3.Cross(normal, up).Normalized();
+                    up = Vector3.Cross(right, normal).Normalized();
+                    Vector3 p1 = position + right * size - up * size;
+                    Vector3 p2 = position + right * size + up * size;
+                    Vector3 p3 = position - right * size + up * size;
+                    Vector3 p4 = position - right * size - up * size;
+                    RenderLine(p1, p2, color);
+                    RenderLine(p2, p3, color);
+                    RenderLine(p3, p4, color);
+                    RenderLine(p4, p1, color);
+                    if (renderNormal)
+                        RenderLine(position, position + normal, color);
                 }
             }
         }

@@ -186,8 +186,7 @@ namespace XREngine.Components.Animation
             if (!Initialized)
                 return;
 
-            UpdateSolverTransforms();
-            Read();
+            ReadTransforms();
 
             _spine.ForwardDir = RootBone?.Pose.Input.Rotation.Rotate(Globals.Forward).Normalized() ?? Globals.Forward;
 
@@ -297,22 +296,9 @@ namespace XREngine.Components.Animation
             return keys;
         }
 
-        private void UpdateSolverTransforms()
-        {
-            if (_solverTransforms is null)
-            {
-                Debug.LogWarning("VRIK: Solver transforms are null, cannot update transforms.");
-                return;
-            }
-
-            foreach (var tfm in _solverTransforms)
-                tfm?.ReadInput();
-        }
-
         protected override void OnInitialize()
         {
-            UpdateSolverTransforms();
-            Read();
+            ReadTransforms();
         }
 
         protected override void OnUpdate()
@@ -329,35 +315,32 @@ namespace XREngine.Components.Animation
 
         private void UpdateNormal()
         {
-            bool read = false;
+            bool alreadyRead = false;
 
             if (_lastQuality != _quality)
-                QualityChanged(ref read);
+                QualityChanged(ref alreadyRead);
             
-            if (!read)
-            {
-                UpdateSolverTransforms();
-                Read();
-            }
-
+            if (!alreadyRead)
+                ReadTransforms();
+            
             Solve();
             ApplyTransforms();
         }
 
-		//private void UpdateCulled()
-  //      {
-  //          if (_locomotion._weight <= 0.0f || _root is null || _spine._headTarget is null)
-		//		return;
+        private void UpdateCulled()
+        {
+            if (/*_locomotion._weight <= 0.0f || */_root is null || _spine.HeadTarget is null)
+                return;
 
-		//	Vector3 forward = (_spine._headTarget.WorldRotation * _spine.AnchorRelativeToHead).Rotate(Globals.Forward);
-		//	forward.Y = 0f;
+            Vector3 forward = (_spine.HeadTarget.WorldRotation * _spine._anchorRelativeToHead).Rotate(Globals.Forward);
+            forward.Y = 0f;
 
-		//	Vector3 worldPos = new(_spine._headTarget.WorldTranslation.X, _root.WorldTranslation.Y, _spine._headTarget.WorldTranslation.Z);
-  //          Quaternion worldRot = XRMath.LookRotation(forward, _root.WorldUp);
+            Vector3 worldPos = new(_spine.HeadTarget.WorldTranslation.X, _root.WorldTranslation.Y, _spine.HeadTarget.WorldTranslation.Z);
+            Quaternion worldRot = XRMath.LookRotation(forward, _root.WorldUp);
 
-		//	_root.SetWorldTranslation(worldPos);
-  //          _root.SetWorldRotation(worldRot);
-  //      }
+            _root.SetWorldTranslation(worldPos);
+            _root.SetWorldRotation(worldRot);
+        }
 
         private void QualityChanged(ref bool read)
         {
@@ -417,11 +400,14 @@ namespace XREngine.Components.Animation
             }
         }
 
-        private void Read()
+        private void ReadTransforms()
         {
             if (_solverTransforms is null)
                 return;
-            
+
+            foreach (var tfm in _solverTransforms)
+                tfm?.ReadInput();
+
             RootBone ??= new VirtualBone(_solverTransforms.Root);
             
             _spine.Read(_solverTransforms, 0);
@@ -515,7 +501,7 @@ namespace XREngine.Components.Animation
 
         private float SubSolve(float dt)
         {
-            _spine.Solve(Animator, RootBone, _legs, _arms, _scale);
+            //_spine.Solve(Animator, RootBone, _legs, _arms, _scale);
 
             if (_solverTransforms is null)
                 return dt;
@@ -528,13 +514,13 @@ namespace XREngine.Components.Animation
 
             //_lastLocomotionWeight = _locomotion._weight;
 
-            //if (_hasLegs)
+            //if (_solverTransforms.HasLegs)
             //    SolveLegs();
             //else
             //    _spine.InverseTranslateToHead(_legs, false, false, _bodyOffset, 1.0f);
 
-            //if (_hasArms)
-            //    SolveArms();
+            if (_solverTransforms.HasArms)
+                SolveArms();
 
             return dt;
         }
@@ -658,7 +644,7 @@ namespace XREngine.Components.Animation
                 _arms[i].TranslateRoot(_spine.Chest.SolverPosition, _spine.Chest.SolverRotation);
 
             for (int i = 0; i < _arms.Length; i++)
-                _arms[i].Solve(i == 0);
+                _arms[i].Solve();
         }
 
         private void SolveLegs()
@@ -766,14 +752,14 @@ namespace XREngine.Components.Animation
             set => SetField(ref _spine, value);
         }
 
-        private ArmSolver _leftArm = new(false);
+        private ArmSolver _leftArm = new(true);
         public ArmSolver LeftArm
         {
             get => _leftArm;
             set => SetField(ref _leftArm, value);
         }
 
-        private ArmSolver _rightArm = new(true);
+        private ArmSolver _rightArm = new(false);
         public ArmSolver RightArm
         {
             get => _rightArm;

@@ -204,7 +204,7 @@ namespace XREngine.Rendering.UI
                 mtx *=
                     Matrix4x4.CreateTranslation(new Vector3(LocalPivotTranslation, 0.0f)) *
                     Matrix4x4.CreateScale(Scale) *
-                    Matrix4x4.CreateFromAxisAngle(Globals.Backward, RotationRadians) *
+                    Matrix4x4.CreateFromAxisAngle(Globals.Forward, RotationRadians) *
                     Matrix4x4.CreateTranslation(new Vector3(-LocalPivotTranslation, 0.0f));
             }
             UpdatePrevious();

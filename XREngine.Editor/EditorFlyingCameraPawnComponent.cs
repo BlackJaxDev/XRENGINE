@@ -9,7 +9,6 @@ using XREngine.Data.Colors;
 using XREngine.Data.Core;
 using XREngine.Data.Geometry;
 using XREngine.Data.Rendering;
-using XREngine.Data.Trees;
 using XREngine.Data.Vectors;
 using XREngine.Input.Devices;
 using XREngine.Rendering;
@@ -434,44 +433,69 @@ public partial class EditorFlyingCameraPawnComponent : FlyingCameraPawnComponent
             Vector3 worldDelta = vp.NormalizedViewportToWorldCoordinate(newNormCoord) - worldCoord;
             tfm.ApplyTranslation(worldDelta);
         }
-        if (rot.HasValue)
+        if (rot.HasValue && _arcballRotationPosition.HasValue)
         {
-            if (_lastRotatePoint.HasValue)
-            {
-                float x = rot.Value.X;
-                float y = rot.Value.Y;
-                ArcBallRotate(y, x, _lastRotatePoint.Value);
-            }
-            else if (WorldDragPoint.HasValue)
-            {
-                Vector3 worldCoord = WorldDragPoint.Value;
-                float x = rot.Value.X;
-                float y = rot.Value.Y;
-                ArcBallRotate(y, x, worldCoord);
-                _lastRotateDelta = null;
-            }
+            float x = rot.Value.X;
+            float y = rot.Value.Y;
+            ArcBallRotate(y, x, _arcballRotationPosition.Value);
         }
+    }
+
+    protected override void OnRightClick(bool pressed)
+    {
+        base.OnRightClick(pressed);
+
+        if (pressed)
+        {
+            if (GetAverageSelectionPoint(out Vector3 avgPoint))
+                _arcballRotationPosition = avgPoint;
+            else if (WorldDragPoint.HasValue)
+                _arcballRotationPosition = WorldDragPoint;
+            else
+                _arcballRotationPosition = null;
+        }
+        else
+            _arcballRotationPosition = null;
     }
 
     private Vector2? _lastRotateDelta = null;
-    private Vector3? _lastRotatePoint = null;
+    private Vector3? _arcballRotationPosition = null;
     protected override void MouseRotate(float x, float y)
     {
-        if (WorldDragPoint.HasValue)
+        if (_arcballRotationPosition is not null)
             _lastRotateDelta = new Vector2(-x * MouseRotateSpeed, y * MouseRotateSpeed);
-        else if (Selection.SceneNodes.Length > 0)
-        {
-            Vector3 avgPoint = Vector3.Zero;
-            foreach (var node in Selection.SceneNodes)
-                avgPoint += node.Transform.WorldTranslation;
-            avgPoint /= Selection.SceneNodes.Length;
-
-            _lastRotatePoint = avgPoint;
-            _lastRotateDelta = new Vector2(-x * MouseRotateSpeed, y * MouseRotateSpeed);
-        }
         else
             base.MouseRotate(x, y);
     }
+
+    private bool GetAverageSelectionPoint(out Vector3 avgPoint)
+    {
+        if (Selection.SceneNodes.Length == 0)
+        {
+            avgPoint = Vector3.Zero;
+            return false;
+        }
+
+        avgPoint = GetAverageSelectionPoint();
+
+        //Determine if the point is on screen
+        if (!(GetCamera()?.Camera?.WorldFrustum().ContainsPoint(avgPoint) ?? false))
+        {
+            avgPoint = Vector3.Zero;
+            return false;
+        }
+
+        return true;
+    }
+    private static Vector3 GetAverageSelectionPoint()
+    {
+        Vector3 avgPoint = Vector3.Zero;
+        foreach (var node in Selection.SceneNodes)
+            avgPoint += node.Transform.WorldTranslation;
+        avgPoint /= Selection.SceneNodes.Length;
+        return avgPoint;
+    }
+
     private Vector2? _lastMouseTranslationDelta = null;
     protected override void MouseTranslate(float x, float y)
     {

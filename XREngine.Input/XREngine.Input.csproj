@@ -40,8 +40,8 @@
     <PackageReference Include="Silk.NET.Input.Common" Version="2.22.0" />
     <PackageReference Include="Silk.NET.Input.Extensions" Version="2.22.0" />
     <PackageReference Include="Silk.NET.Input.Glfw" Version="2.22.0" />
-    <PackageReference Include="SixLabors.ImageSharp" Version="3.1.7" />
-    <PackageReference Include="System.Text.Json" Version="9.0.4" />
+    <PackageReference Include="SixLabors.ImageSharp" Version="3.1.8" />
+    <PackageReference Include="System.Text.Json" Version="9.0.5" />
   </ItemGroup>
 
   <ItemGroup>
