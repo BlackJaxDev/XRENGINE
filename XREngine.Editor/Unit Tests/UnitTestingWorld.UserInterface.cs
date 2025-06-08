@@ -9,6 +9,7 @@ using XREngine.Rendering.UI;
 using XREngine.Scene;
 using XREngine.Components.Scripting;
 using XREngine.Scene.Transforms;
+using XREngine.Scene.Components.UI;
 
 namespace XREngine.Editor;
 
@@ -91,6 +92,12 @@ public static partial class UnitTestingWorld
                 screenSpaceCamera.UserInterface = canvas;
 
             AddFPSText(null, rootCanvasNode);
+
+            if (Toggles.RiveUI)
+            {
+                var riveUI = rootCanvasNode.AddComponent<RiveUIComponent>()!;
+                riveUI.SetSource("RiveAssets/ball.riv");
+            }
 
             if (Toggles.AddEditorUI)
             {

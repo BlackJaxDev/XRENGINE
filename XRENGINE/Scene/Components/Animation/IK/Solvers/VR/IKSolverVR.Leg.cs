@@ -287,8 +287,8 @@ namespace XREngine.Components.Animation
                         new(side.Leg.Toes),
                     ];
 
-                    IKPosition = side.Leg.Toes.Input.Translation;
-                    IKRotation = side.Leg.Toes.Input.Rotation;
+                    IKPosition = side.Leg.Toes.InputWorld.Translation;
+                    IKRotation = side.Leg.Toes.InputWorld.Rotation;
                 }
                 else
                 {
@@ -299,13 +299,13 @@ namespace XREngine.Components.Animation
                         new(side.Leg.Foot),
                     ];
 
-                    IKPosition = side.Leg.Foot.Input.Translation;
-                    IKRotation = side.Leg.Foot.Input.Rotation;
+                    IKPosition = side.Leg.Foot.InputWorld.Translation;
+                    IKRotation = side.Leg.Foot.InputWorld.Rotation;
                 }
 
-                Vector3 calfPos = side.Leg.Knee.Input.Translation;
-                Vector3 thighPos = side.Leg.Leg.Input.Translation;
-                Vector3 footPos = side.Leg.Foot.Input.Translation;
+                Vector3 calfPos = side.Leg.Knee.InputWorld.Translation;
+                Vector3 thighPos = side.Leg.Leg.InputWorld.Translation;
+                Vector3 footPos = side.Leg.Foot.InputWorld.Translation;
 
                 Vector3 thighToCalf = calfPos - thighPos;
                 Vector3 calfToFoot = footPos - calfPos;
@@ -353,13 +353,12 @@ namespace XREngine.Components.Animation
                 {
                     Vector3 HipsRelNormal() => _rootRotation.Rotate(_bendNormalRelToHips);
                     Vector3 TargetRelNormal() => TargetRotation.Rotate(_bendNormalRelToTarget);
-
-                    if (_bendToTargetWeight <= 0.0f)
-                        bendNormal = HipsRelNormal();
-                    else if (_bendToTargetWeight >= 1.0f)
-                        bendNormal = TargetRelNormal();
-                    else
-                        bendNormal = XRMath.Slerp(HipsRelNormal(), TargetRelNormal(), _bendToTargetWeight);
+                    bendNormal = _bendToTargetWeight switch
+                    {
+                        <= 0.0f => HipsRelNormal(),
+                        >= 1.0f => TargetRelNormal(),
+                        _ => XRMath.Slerp(HipsRelNormal(), TargetRelNormal(), _bendToTargetWeight),
+                    };
                 }
                 _bendNormal = bendNormal.Normalized();
             }
@@ -471,7 +470,7 @@ namespace XREngine.Components.Animation
                     Quaternion thighRotation = TargetRotation * _thighRelToFoot;
                     Quaternion f = XRMath.RotationBetweenVectors(thighRotation.Rotate(Thigh.Axis), Calf.SolverPosition - Thigh.SolverPosition);
                     if (_bendToTargetWeight < 1.0f)
-                        Thigh.SolverRotation = Quaternion.Slerp(Thigh.SolverRotation, f * thighRotation, _bendToTargetWeight);
+                        Thigh.SolverRotation = Quaternion.Lerp(Thigh.SolverRotation, f * thighRotation, _bendToTargetWeight);
                     else
                         Thigh.SolverRotation = f * thighRotation;
                 }

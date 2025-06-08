@@ -230,6 +230,12 @@ namespace XREngine.Scene.Transforms
         public Vector3 TransformDirection(Vector3 localDirection, bool render)
             => Vector3.TransformNormal(localDirection, render ? RenderMatrix : WorldMatrix);
 
+        public Quaternion TransformRotation(Quaternion localRotation)
+            => Quaternion.Normalize(Quaternion.Concatenate(GetWorldRotation(), localRotation));
+
+        public Quaternion InverseTransformRotation(Quaternion worldRotation)
+            => Quaternion.Normalize(Quaternion.Concatenate(GetInverseWorldRotation(), worldRotation));
+
         public TransformBase? FirstChild()
         {
             lock (_children)

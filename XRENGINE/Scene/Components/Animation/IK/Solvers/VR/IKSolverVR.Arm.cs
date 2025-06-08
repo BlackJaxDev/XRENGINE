@@ -306,13 +306,13 @@ namespace XREngine.Components.Animation
                 if (_initialized)
                     return;
 
-                var rootRotation = transforms.Root.Input.Rotation;
+                var rootRotation = transforms.Root.InputWorld.Rotation;
                 var side = isLeft ? transforms.Left : transforms.Right;
-                var upperArmPosition = side.Arm.Arm.Input.Translation;
-                var upperArmRotation = side.Arm.Arm.Input.Rotation;
-                var forearmPosition = side.Arm.Elbow.Input.Translation;
-                var handPosition = side.Arm.Wrist.Input.Translation;
-                var handRotation = side.Arm.Wrist.Input.Rotation;
+                var upperArmPosition = side.Arm.Arm.InputWorld.Translation;
+                var upperArmRotation = side.Arm.Arm.InputWorld.Rotation;
+                var forearmPosition = side.Arm.Elbow.InputWorld.Translation;
+                var handPosition = side.Arm.Wrist.InputWorld.Translation;
+                var handRotation = side.Arm.Wrist.InputWorld.Rotation;
 
                 IKPosition = handPosition;
                 IKRotation = handRotation;
@@ -370,9 +370,9 @@ namespace XREngine.Components.Animation
                     _ikPosition = _target.WorldTranslation;
                     _ikRotation = _target.WorldRotation;
                 }
-
-                TargetPosition = XRMath.Lerp(Hand.SolverPosition, _ikPosition, _positionWeight);
-                TargetRotation = XRMath.Lerp(Hand.SolverRotation, _ikRotation, _rotationWeight);
+                 
+                TargetPosition = Vector3.Lerp(Hand.SolverPosition, _ikPosition, _positionWeight);
+                TargetRotation = Quaternion.Lerp(Hand.SolverRotation, _ikRotation, _rotationWeight);
 
                 Shoulder.Axis = Shoulder.Axis.Normalized();
                 _forearmRelToUpperArm = Quaternion.Inverse(UpperArm.SolverRotation) * Forearm.SolverRotation;
@@ -449,11 +449,11 @@ namespace XREngine.Components.Animation
                 UpperArm.SolverRotation = Quaternion.CreateFromAxisAngle(upperArmToForearm, angleRad * _positionWeight) * UpperArm.SolverRotation;
 
                 // Fix forearm twist relative to upper arm
-                Quaternion forearmFixed = Quaternion.Normalize(UpperArm.SolverRotation * _forearmRelToUpperArm);
+                Quaternion forearmFixed = UpperArm.SolverRotation * _forearmRelToUpperArm;
                 Vector3 from = forearmFixed.Rotate(Forearm.Axis);
                 Vector3 to = Hand.SolverPosition - Forearm.SolverPosition;
                 Quaternion fromTo = XRMath.RotationBetweenVectors(from, to);
-                RotateTo(Forearm, Quaternion.Normalize(fromTo * forearmFixed), _positionWeight);
+                RotateTo(Forearm, fromTo * forearmFixed, _positionWeight);
             }
 
             private Vector3 SolveTrigonometric()
@@ -509,7 +509,7 @@ namespace XREngine.Components.Animation
 
                 VirtualBone.RotateBy(_bones, r);
 
-                //StretchArm();
+                StretchArm();
 
                 VirtualBone.SolveTrigonometric(
                     _bones, 0, 2, 3,
@@ -615,16 +615,16 @@ namespace XREngine.Components.Animation
                 // Rotate bones
                 Quaternion sR = pitchRotation * yawRotation;
                 if (_shoulderRotationWeight * _positionWeight < 1.0f)
-                    sR = Quaternion.Slerp(Quaternion.Identity, sR, _shoulderRotationWeight * _positionWeight);
+                    sR = Quaternion.Lerp(Quaternion.Identity, sR, _shoulderRotationWeight * _positionWeight);
                 VirtualBone.RotateBy(_bones, sR);
 
-                //StretchArm();
+                StretchArm();
 
                 // Solve trigonometric
                 Vector3 upperArmToTarget = TargetPosition - UpperArm.SolverPosition;
                 bendNormal = GetBendNormal(upperArmToTarget);
 
-                RenderPlane(Forearm.SolverPosition, bendNormal, ColorF4.Red);
+                //RenderPlane(Forearm.SolverPosition, bendNormal, ColorF4.Red);
 
                 VirtualBone.SolveTrigonometric(_bones, 1, 2, 3, TargetPosition, bendNormal, _positionWeight);
 
@@ -633,7 +633,7 @@ namespace XREngine.Components.Animation
                 UpperArm.SolverRotation = Quaternion.CreateFromAxisAngle(UpperArm.SolverRotation.Rotate(isLeft ? UpperArm.Axis : -UpperArm.Axis), pitchRad) * UpperArm.SolverRotation;
 
                 // Additional pass to reach with the shoulders
-                //VirtualBone.SolveTrigonometric(bones, 0, 1, 3, position, Vector3.Cross(upperArm.solverPosition - shoulder.solverPosition, hand.solverPosition - shoulder.solverPosition), positionWeight * 0.5f);
+                VirtualBone.SolveTrigonometric(_bones, 0, 1, 3, TargetPosition, Vector3.Cross(UpperArm.SolverPosition - Shoulder.SolverPosition, Hand.SolverPosition - Shoulder.SolverPosition), _positionWeight * 0.5f);
                 return bendNormal;
             }
 
@@ -666,32 +666,32 @@ namespace XREngine.Components.Animation
                 if (_bendGoal != null)
                     _bendDirection = _bendGoal.WorldTranslation - _bones[1].SolverPosition;
 
-                Vector3 armDir = _bones[0].SolverRotation.Rotate(_bones[0].Axis).Normalized();
+                Vector3 armDir = _bones[0].SolverRotation.Rotate(_bones[0].Axis);
 
                 Vector3 f = Globals.Down;
-                Vector3 t = Quaternion.Inverse(_chestRotation).Rotate(dir.Normalized()).Normalized() + Globals.Forward;
+                Vector3 t = Quaternion.Inverse(_chestRotation).Rotate(dir.Normalized()) + Globals.Forward;
                 Quaternion q = XRMath.RotationBetweenVectors(f, t);
 
                 Vector3 b = q.Rotate(Globals.Backward);
 
-                f = Quaternion.Inverse(_chestRotation).Rotate(armDir).Normalized();
-                t = Quaternion.Inverse(_chestRotation).Rotate(dir).Normalized();
+                f = Quaternion.Inverse(_chestRotation).Rotate(armDir);
+                t = Quaternion.Inverse(_chestRotation).Rotate(dir);
                 q = XRMath.RotationBetweenVectors(f, t);
                 b = q.Rotate(b);
 
                 b = _chestRotation.Rotate(b);
 
                 b += armDir;
-                b -= TargetRotation.Rotate(_wristToPalmAxis).Normalized();
-                b -= TargetRotation.Rotate(_palmToThumbAxis).Normalized() * 0.5f;
+                b -= TargetRotation.Rotate(_wristToPalmAxis);
+                b -= TargetRotation.Rotate(_palmToThumbAxis) * 0.5f;
 
                 if (_bendGoalWeight > 0.0f)
                     b = XRMath.Slerp(b, _bendDirection, _bendGoalWeight);
-                
-                if (_swivelOffset != 0.0f)
-                    b = Quaternion.CreateFromAxisAngle(-dir, float.DegreesToRadians(_swivelOffset)).Rotate(b).Normalized();
 
-                return Vector3.Cross(b, dir).Normalized();
+                if (_swivelOffset != 0.0f)
+                    b = Quaternion.CreateFromAxisAngle(-dir, float.DegreesToRadians(_swivelOffset)).Rotate(b);
+
+                return Vector3.Cross(b, dir);
             }
 
             private static void Visualize(VirtualBone bone1, VirtualBone bone2, VirtualBone bone3, ColorF4 color)

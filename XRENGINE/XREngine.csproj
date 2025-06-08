@@ -125,7 +125,7 @@
     <PackageReference Include="Silk.NET.Windowing.Glfw" Version="2.22.0" />
     <PackageReference Include="Silk.NET.Windowing.Sdl" Version="2.22.0" />
     <PackageReference Include="Silk.NET.XInput" Version="2.22.0" />
-    <PackageReference Include="SixLabors.ImageSharp" Version="3.1.8" />
+    <PackageReference Include="SixLabors.ImageSharp" Version="3.1.9" />
     <PackageReference Include="SkiaSharp" Version="3.119.0" />
     <PackageReference Include="Steamworks.NET" Version="2024.8.0" />
     <PackageReference Include="System.IdentityModel.Tokens.Jwt" Version="8.12.0" />
@@ -157,6 +157,9 @@
     <Reference Include="OscCore">
       <HintPath>..\..\OscCore-NET9\bin\Release\net9.0\OscCore.dll</HintPath>
     </Reference>
+    <Reference Include="RiveSharp">
+      <HintPath>..\..\rive-sharp\RiveSharp\bin\Debug\netstandard2.0\RiveSharp.dll</HintPath>
+    </Reference>
   </ItemGroup>
 
   <ItemGroup>
@@ -185,6 +188,9 @@
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </None>
     <None Update="postproc-58.dll">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+    <None Update="rive.dll">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </None>
     <None Update="runtimes\win-x64\native\libmagicphysx.dll">

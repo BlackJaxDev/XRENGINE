@@ -13,13 +13,13 @@ namespace XREngine.Components.Animation
             public TransformPoses Pose { get; } = pose ?? throw new ArgumentNullException(nameof(pose), "VirtualBone Pose cannot be null.");
             public Quaternion SolverRotation
             { 
-                get => Pose.Solved.Rotation;
-                set => Pose.Solved.Rotation = value;
+                get => Pose.SolvedWorld.Rotation;
+                set => Pose.SolvedWorld.Rotation = value;
             }
             public Vector3 SolverPosition
             {
-                get => Pose.Solved.Translation;
-                set => Pose.Solved.Translation = value;
+                get => Pose.SolvedWorld.Translation;
+                set => Pose.SolvedWorld.Translation = value;
             }
             public Vector3 DefaultPosition
             {
@@ -33,13 +33,13 @@ namespace XREngine.Components.Animation
             }
             public Vector3 InputPosition
             {
-                get => Pose.Input.Translation;
-                set => Pose.Input.Translation = value;
+                get => Pose.InputWorld.Translation;
+                set => Pose.InputWorld.Translation = value;
             }
             public Quaternion InputRotation
             {
-                get => Pose.Input.Rotation;
-                set => Pose.Input.Rotation = value;
+                get => Pose.InputWorld.Rotation;
+                set => Pose.InputWorld.Rotation = value;
             }
 
             private float _length = 0.0f;
@@ -203,7 +203,7 @@ namespace XREngine.Components.Animation
                     toBendPoint);
 
                 if (weight < 1.0f)
-                    q1 = Quaternion.Slerp(Quaternion.Identity, q1, weight);
+                    q1 = Quaternion.Lerp(Quaternion.Identity, q1, weight);
 
                 RotateAroundPoint(bones, first, bones[first].SolverPosition, Quaternion.Normalize(q1));
 
@@ -212,7 +212,7 @@ namespace XREngine.Components.Animation
                 Quaternion q2 = XRMath.RotationBetweenVectors(secondToThird, secondToTarget);
 
                 if (weight < 1.0f)
-                    q2 = Quaternion.Slerp(Quaternion.Identity, q2, weight);
+                    q2 = Quaternion.Lerp(Quaternion.Identity, q2, weight);
 
                 RotateAroundPoint(bones, second, bones[second].SolverPosition, Quaternion.Normalize(q2));
             }
@@ -312,7 +312,7 @@ namespace XREngine.Components.Animation
                         Vector3 toLastBone = bones[^1].SolverPosition - bones[i].SolverPosition;
                         Vector3 toTarget = targetPosition - bones[i].SolverPosition;
                         Quaternion rotation = XRMath.RotationBetweenVectors(toLastBone, toTarget);
-                        RotateBy(bones, i, Quaternion.Normalize(weight >= 1 ? rotation : Quaternion.Slerp(Quaternion.Identity, rotation, weight)));
+                        RotateBy(bones, i, Quaternion.Normalize(weight >= 1 ? rotation : Quaternion.Lerp(Quaternion.Identity, rotation, weight)));
                     }
                 }
             }

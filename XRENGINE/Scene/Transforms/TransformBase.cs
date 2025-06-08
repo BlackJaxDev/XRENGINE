@@ -576,6 +576,8 @@ namespace XREngine.Scene.Transforms
             => Engine.IsRenderThread ? RenderTranslation : WorldTranslation;
         public Quaternion GetWorldRotation()
             => Engine.IsRenderThread ? RenderRotation : WorldRotation;
+        public Quaternion GetInverseWorldRotation()
+            => Engine.IsRenderThread ? InverseRenderRotation : InverseWorldRotation;
 
         public Vector3 RenderForward => Vector3.TransformNormal(Globals.Forward, RenderMatrix).Normalized();
         public Vector3 RenderUp => Vector3.TransformNormal(Globals.Up, RenderMatrix).Normalized();
@@ -586,6 +588,14 @@ namespace XREngine.Scene.Transforms
             get
             {
                 Matrix4x4.Decompose(RenderMatrix, out _, out Quaternion rotation, out _);
+                return rotation;
+            }
+        }
+        public Quaternion InverseRenderRotation
+        {
+            get
+            {
+                Matrix4x4.Decompose(InverseRenderMatrix, out _, out Quaternion rotation, out _);
                 return rotation;
             }
         }

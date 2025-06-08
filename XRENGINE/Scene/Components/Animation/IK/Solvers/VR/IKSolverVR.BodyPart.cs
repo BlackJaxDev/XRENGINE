@@ -1,5 +1,4 @@
-﻿using SharpFont;
-using System.Numerics;
+﻿using System.Numerics;
 using XREngine.Data.Colors;
 using XREngine.Data.Core;
 
@@ -50,8 +49,8 @@ namespace XREngine.Components.Animation
             public void Read(SolverTransforms transforms, int rootIndex)
             {
                 var root = transforms[rootIndex];
-                _rootPosition = root.Input.Translation;
-                _rootRotation = root.Input.Rotation;
+                _rootPosition = root.InputWorld.Translation;
+                _rootRotation = root.InputWorld.Rotation;
 
                 OnRead(transforms);
 

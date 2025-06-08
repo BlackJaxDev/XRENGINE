@@ -188,7 +188,7 @@ namespace XREngine.Components.Animation
 
             ReadTransforms();
 
-            _spine.ForwardDir = RootBone?.Pose.Input.Rotation.Rotate(Globals.Forward).Normalized() ?? Globals.Forward;
+            _spine.ForwardDir = RootBone?.Pose.InputWorld.Rotation.Rotate(Globals.Forward).Normalized() ?? Globals.Forward;
 
             //if (_hasLegs)
             //{
@@ -393,10 +393,10 @@ namespace XREngine.Components.Animation
                 if (tfm is null || tfm.Transform is null)
                     continue;
 
-                Vector3 lastLocalTrans = tfm.Transform.Translation;
+                //Vector3 lastLocalTrans = tfm.Transform.Translation;
                 tfm.WriteSolved(IKPositionWeight);
-                if (tfm.IsStretchable)
-                    tfm.Transform.Translation = XRMath.ProjectVector(tfm.Transform.Translation, lastLocalTrans);
+                //if (tfm.IsStretchable)
+                //    tfm.Transform.Translation = XRMath.ProjectVector(tfm.Transform.Translation, lastLocalTrans);
             }
         }
 

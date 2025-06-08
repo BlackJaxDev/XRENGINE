@@ -503,15 +503,15 @@ namespace XREngine.Components.Animation
             {
                 _hasLegs = transforms.HasLegs;
 
-                var rootRotation = transforms.Root.Input.Rotation;
-                var hipsPos = transforms.Hips.Input.Translation;
-                var hipsRot = transforms.Hips.Input.Rotation;
-                var chestRot = transforms.Chest.Input.Rotation;
-                var headPos = transforms.Head.Input.Translation;
-                var headRot = transforms.Head.Input.Rotation;
+                var rootRotation = transforms.Root.InputWorld.Rotation;
+                var hipsPos = transforms.Hips.InputWorld.Translation;
+                var hipsRot = transforms.Hips.InputWorld.Rotation;
+                var chestRot = transforms.Chest.InputWorld.Rotation;
+                var headPos = transforms.Head.InputWorld.Translation;
+                var headRot = transforms.Head.InputWorld.Rotation;
 
                 if (!transforms.HasChest)
-                    chestRot = transforms.Spine.Input.Rotation;
+                    chestRot = transforms.Spine.InputWorld.Rotation;
                 
                 if (!_initialized)
                     InitializeTransforms(transforms);
@@ -524,14 +524,14 @@ namespace XREngine.Components.Animation
 
             private void InitializeTransforms(SolverTransforms transforms)
             {
-                Quaternion rootRotation = transforms.Root.Input.Rotation;
+                Quaternion rootRotation = transforms.Root.InputWorld.Rotation;
                 Vector3 rootForward = rootRotation.Rotate(Globals.Forward).Normalized();
 
                 _hasChest = transforms.HasChest;
                 _hasNeck = transforms.HasNeck;
 
                 HeadHeight = XRMath.ExtractVertical(
-                    transforms.Head.Input.Translation - transforms.Root.Input.Translation,
+                    transforms.Head.InputWorld.Translation - transforms.Root.InputWorld.Translation,
                     rootRotation.Rotate(Globals.Up).Normalized(),
                     1.0f).Length();
 
@@ -576,11 +576,11 @@ namespace XREngine.Components.Animation
                 _chestRotationOffset = Quaternion.Identity;
                 _headRotationOffset = Quaternion.Identity;
 
-                Quaternion headRot = transforms.Head.Input.Rotation;
-                Vector3 headPos = transforms.Head.Input.Translation;
-                Vector3 hipsPos = transforms.Hips.Input.Translation;
-                Quaternion hipsRot = transforms.Hips.Input.Rotation;
-                Vector3 chestPos = transforms.Chest.Input.Translation;
+                Quaternion headRot = transforms.Head.InputWorld.Rotation;
+                Vector3 headPos = transforms.Head.InputWorld.Translation;
+                Vector3 hipsPos = transforms.Hips.InputWorld.Translation;
+                Quaternion hipsRot = transforms.Hips.InputWorld.Rotation;
+                Vector3 chestPos = transforms.Chest.InputWorld.Translation;
 
                 _anchorRelativeToHead = Quaternion.Inverse(headRot) * rootRotation;
                 _anchorRelativeToHips = Quaternion.Inverse(hipsRot) * rootRotation;

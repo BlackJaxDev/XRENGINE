@@ -216,9 +216,9 @@ public partial class IKSolverVR
             {
                 foreach (TransformPoses pose in this)
                 {
-                    pose.DefaultLocal = new PoseData(pose.Transform?.Translation ?? Vector3.Zero, pose.Transform?.Rotation ?? Quaternion.Identity);
-                    pose.Input = pose.DefaultLocal;
-                    pose.Solved = pose.DefaultLocal;
+                    pose.Transform?.RecalculateMatrices(true);
+                    pose.GetDefaultLocal();
+                    pose.ResetSolvedToDefault();
                 }
             }
 

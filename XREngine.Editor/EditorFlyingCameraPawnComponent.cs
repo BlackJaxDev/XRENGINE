@@ -433,11 +433,15 @@ public partial class EditorFlyingCameraPawnComponent : FlyingCameraPawnComponent
             Vector3 worldDelta = vp.NormalizedViewportToWorldCoordinate(newNormCoord) - worldCoord;
             tfm.ApplyTranslation(worldDelta);
         }
-        if (rot.HasValue && _arcballRotationPosition.HasValue)
+        if (rot.HasValue)
         {
-            float x = rot.Value.X;
-            float y = rot.Value.Y;
-            ArcBallRotate(y, x, _arcballRotationPosition.Value);
+            var pos = _arcballRotationPosition;
+            if (pos.HasValue)
+            {
+                float x = rot.Value.X;
+                float y = rot.Value.Y;
+                ArcBallRotate(y, x, pos.Value);
+            }
         }
     }
 

@@ -2,9 +2,9 @@
 
 namespace XREngine.Components.Animation
 {
-public partial class IKSolverVR
+    public partial class IKSolverVR
     {
-        public struct PoseData
+        public class PoseData
         {
             public Vector3 Translation;
             public Quaternion Rotation;

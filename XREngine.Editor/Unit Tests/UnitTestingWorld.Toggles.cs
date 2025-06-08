@@ -18,6 +18,7 @@ public static partial class UnitTestingWorld
         public bool AllowEditingInVR = true; //Allows the user to edit the scene from desktop in VR.
         public bool VideoStreaming = false; //Adds a video streaming component to the scene for testing video streaming.
         public bool VideoStreamingAudio = false; //Adds a video streaming audio component to the scene for testing video streaming audio.
+        public bool RiveUI = false; //Adds a Rive UI component to the scene for testing Rive animations.
 
         //Misc
         public bool Skybox = true; //Adds a skybox to the scene

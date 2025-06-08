@@ -30,6 +30,14 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <None Remove="RiveAssets\LockScreenLogo.scale-200.png" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Content Include="RiveAssets\LockScreenLogo.scale-200.png" />
+  </ItemGroup>
+
+  <ItemGroup>
     <PackageReference Include="AssimpNetter" Version="5.4.3.3" />
     <PackageReference Include="FFmpeg.AutoGen" Version="7.1.1" />
     <PackageReference Include="Google.Cloud.Speech.V1" Version="3.8.0" />
@@ -93,7 +101,7 @@
     <PackageReference Include="Silk.NET.Windowing.Glfw" Version="2.22.0" />
     <PackageReference Include="Silk.NET.Windowing.Sdl" Version="2.22.0" />
     <PackageReference Include="Silk.NET.XInput" Version="2.22.0" />
-    <PackageReference Include="SixLabors.ImageSharp" Version="3.1.8" />
+    <PackageReference Include="SixLabors.ImageSharp" Version="3.1.9" />
     <PackageReference Include="SkiaSharp" Version="3.119.0" />
     <PackageReference Include="Steamworks.NET" Version="2024.8.0" />
     <PackageReference Include="System.Text.Json" Version="9.0.5" />
@@ -115,6 +123,18 @@
   </ItemGroup>
 
   <ItemGroup>
+    <None Update="RiveAssets\ball.riv">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+    <None Update="RiveAssets\runner.riv">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+    <None Update="RiveAssets\switch_event_example.riv">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+    <None Update="RiveAssets\tape.riv">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
     <None Update="UnitTestingWorldSettings.json">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </None>
