@@ -44,6 +44,14 @@ namespace XREngine.Data.Rendering
         }
 
         public override void Render()
-            => Mesh?.Render(WorldMatrix, MaterialOverride);
+        {
+            var m = Mesh;
+            if (m is null)
+                return;
+
+            OnPreRender();
+            m.Render(WorldMatrix, MaterialOverride);
+            OnPostRender();
+        }
     }
 }

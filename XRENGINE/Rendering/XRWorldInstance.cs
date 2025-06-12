@@ -392,18 +392,20 @@ namespace XREngine.Rendering
             GetTickList(group, order)?.Remove(function);
         }
 
+        private readonly Lock _listGroupLock = new();
+
         /// <summary>
         /// Gets a list of items to tick (in no particular order) that were registered with the following parameters.
         /// </summary>
         private TickList GetTickList(ETickGroup group, int order)
         {
-            //lock (_lock)
-            //{
+            using (_listGroupLock.EnterScope())
+            {
                 SortedDictionary<int, TickList> dic = TickLists[group];
                 if (!dic.TryGetValue(order, out TickList? list))
                     dic.Add(order, list = new TickList(Engine.Rendering.Settings.TickGroupedItemsInParallel));
                 return list;
-            //}
+            }
         }
 
         /// <summary>
@@ -411,8 +413,8 @@ namespace XREngine.Rendering
         /// </summary>
         public void TickGroup(ETickGroup group)
         {
-            //lock (_lock)
-            //{
+            using (_listGroupLock.EnterScope())
+            {
                 var tickListDic = TickLists[group];
                 List<int> toRemove = [];
                 foreach (var kv in tickListDic)
@@ -423,7 +425,7 @@ namespace XREngine.Rendering
                 }
                 foreach (int key in toRemove)
                     tickListDic.Remove(key);
-            //}
+            }
         }
 
         //private readonly object _lock = new();

@@ -77,9 +77,11 @@ namespace XREngine.Rendering
             if (Mesh is null)
                 return;
 
+            OnPreRender();
             BeginCrop(WorldCropRegion);
             Mesh.Render(WorldMatrix, MaterialOverride, Instances);
             EndCrop();
+            OnPostRender();
         }
 
         private static void BeginCrop(BoundingRectangle? cropRegion)

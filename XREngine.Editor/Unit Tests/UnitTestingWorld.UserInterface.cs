@@ -85,26 +85,30 @@ public static partial class UnitTestingWorld
             canvasTfm.CameraDrawSpaceDistance = 10.0f;
             canvasTfm.Padding = new Vector4(0.0f);
 
+            if (Toggles.RiveUI || Toggles.AddEditorUI)
+                rootCanvasNode.AddComponent<UICanvasInputComponent>()!.OwningPawn = pawnForInput;
+
             if (Toggles.VisualizeQuadtree)
                 rootCanvasNode.AddComponent<DebugVisualizeQuadtreeComponent>();
 
             if (screenSpaceCamera is not null)
                 screenSpaceCamera.UserInterface = canvas;
 
-            AddFPSText(null, rootCanvasNode);
-
             if (Toggles.RiveUI)
             {
-                var riveUI = rootCanvasNode.AddComponent<RiveUIComponent>()!;
-                riveUI.SetSource("RiveAssets/ball.riv");
+                SceneNode riveNode = new(rootCanvasNode) { Name = "RIVE Node" };
+                var tfm = riveNode.SetTransform<UIBoundableTransform>();
+                //tfm.MaxAnchor = new Vector2(0.0f, 0.0f);
+                tfm.MaxAnchor = new Vector2(1.0f, 1.0f);
+                tfm.MinAnchor = new Vector2(0.0f, 0.0f);
+                tfm.NormalizedPivot = new Vector2(0.0f, 0.0f);
+                //tfm.Width = 500.0f;
+                //tfm.Height = 500.0f;
+                riveNode.AddComponent<RiveUIComponent>()!.SetSource("RiveAssets/switch_event_example.riv");
             }
-
+            
             if (Toggles.AddEditorUI)
             {
-                //Add input handler
-                var input = rootCanvasNode.AddComponent<UIInputComponent>()!;
-                input.OwningPawn = pawnForInput;
-
                 //This will take care of editor UI arrangement operations for us
                 var mainUINode = rootCanvasNode.NewChild<UIEditorComponent>(out UIEditorComponent? editorComp);
                 if (editorComp.UITransform is UIBoundableTransform tfm)
@@ -122,6 +126,8 @@ public static partial class UnitTestingWorld
                 GameCSProjLoader.OnAssemblyLoaded += GameCSProjLoader_OnAssemblyLoaded;
                 GameCSProjLoader.OnAssemblyUnloaded += GameCSProjLoader_OnAssemblyUnloaded;
             }
+
+            AddFPSText(null, rootCanvasNode);
 
             return canvas;
         }

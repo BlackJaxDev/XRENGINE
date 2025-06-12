@@ -38,6 +38,7 @@ namespace XREngine.Input.Devices
         protected List<DelButtonState?> _onStateChanged = [];
         protected Dictionary<EButtonInputType, List<Action?>?> _actions;
         protected HashSet<EButtonInputType> _usedTypes;
+        private Lock _actionsLock = new();
 
         protected float _holdDelaySeconds = 0.2f;
         protected float _maxSecondsBetweenPresses = 0.2f;
@@ -47,6 +48,8 @@ namespace XREngine.Input.Devices
         public virtual bool IsEmpty() => _usedTypes.Count == 0 && _onStateChanged.All(x => x is null);
         public void Register(Action func, EButtonInputType type, bool unregister)
         {
+            using var scope = _actionsLock.EnterScope();
+
             List<Action?>? list = _actions[type];
 
             if (unregister)
@@ -92,6 +95,8 @@ namespace XREngine.Input.Devices
         }
         public virtual void UnregisterAll()
         {
+            using var scope = _actionsLock.EnterScope();
+
             foreach (var type in _usedTypes)
                 _actions[type] = null;
             _usedTypes.Clear();
@@ -152,6 +157,8 @@ namespace XREngine.Input.Devices
         }
         private void ExecuteActionList(EButtonInputType type)
         {
+            using var scope = _actionsLock.EnterScope();
+
             List<Action?>? list = _actions[type];
             if (list is null)
                 return;
@@ -160,16 +167,23 @@ namespace XREngine.Input.Devices
             ActionExecuted?.Invoke(Index, type);
 
             //Run the input locally
-            foreach (Action? action in list)
+            try
             {
-                try
+                for (int i = 0; i < list.Count; i++)
                 {
-                    action?.Invoke();
+                    try
+                    {
+                        list[i]?.Invoke();
+                    }
+                    catch (Exception e)
+                    {
+                        Debug.WriteLine($"Error executing action for {Name} button: {e.Message}");
+                    }
                 }
-                catch (Exception e)
-                {
-                    Debug.WriteLine($"Error executing action for {Name} button: {e.Message}");
-                }
+            }
+            catch (Exception e)
+            {
+                Debug.WriteLine($"Error executing action list for {Name} button: {e.Message}");
             }
         }
         private void ExecutePressedStateList(bool pressed)

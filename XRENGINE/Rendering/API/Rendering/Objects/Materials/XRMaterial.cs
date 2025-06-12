@@ -200,19 +200,19 @@ namespace XREngine.Rendering
         }
 
         public static XRMaterial CreateUnlitAlphaTextureMaterialForward(XRTexture2D texture)
-            => new([texture], ShaderHelper.UnlitAlphaTextureFragForward());
+            => new([texture], ShaderHelper.UnlitAlphaTextureFragForward()) { RenderPass = (int)EDefaultRenderPass.TransparentForward };
 
         public static XRMaterial CreateUnlitTextureMaterialForward(XRTexture texture)
-            => new([texture], ShaderHelper.UnlitTextureFragForward());
+            => new([texture], ShaderHelper.UnlitTextureFragForward()) { RenderPass = (int)EDefaultRenderPass.OpaqueForward };
 
         public static XRMaterial CreateUnlitTextureMaterialForward()
-            => new(ShaderHelper.UnlitTextureFragForward());
+            => new(ShaderHelper.UnlitTextureFragForward()) { RenderPass = (int)EDefaultRenderPass.OpaqueForward };
 
         public static XRMaterial CreateLitTextureMaterial(bool deferred = true)
-            => new(deferred ? ShaderHelper.LitTextureFragDeferred() : ShaderHelper.LitTextureFragForward());
+            => new(deferred ? ShaderHelper.LitTextureFragDeferred() : ShaderHelper.LitTextureFragForward()) { RenderPass = (int)EDefaultRenderPass.OpaqueForward };
 
         public static XRMaterial CreateLitTextureMaterial(XRTexture2D texture, bool deferred = true)
-            => new([texture], deferred ? ShaderHelper.LitTextureFragDeferred() : ShaderHelper.LitTextureFragForward());
+            => new([texture], deferred ? ShaderHelper.LitTextureFragDeferred() : ShaderHelper.LitTextureFragForward()) { RenderPass = (int)EDefaultRenderPass.OpaqueForward };
 
         public static XRMaterial CreateUnlitColorMaterialForward()
             => CreateUnlitColorMaterialForward(Color.DarkTurquoise);
@@ -221,10 +221,10 @@ namespace XREngine.Rendering
             => CreateColorMaterialDeferred(Color.DarkTurquoise);
 
         public static XRMaterial CreateColorMaterialDeferred(ColorF4 color)
-            => new([new ShaderVector4(color, "BaseColor")], ShaderHelper.LitColorFragDeferred());
+            => new([new ShaderVector4(color, "BaseColor")], ShaderHelper.LitColorFragDeferred()) { RenderPass = (int)EDefaultRenderPass.OpaqueDeferredLit };
 
         public static XRMaterial CreateUnlitColorMaterialForward(ColorF4 color)
-            => new([new ShaderVector4(color, "MatColor")], ShaderHelper.UnlitColorFragForward());
+            => new([new ShaderVector4(color, "MatColor")], ShaderHelper.UnlitColorFragForward()) { RenderPass = (int)EDefaultRenderPass.OpaqueForward };
 
         public static XRMaterial CreateLitColorMaterial(bool deferred = true)
             => CreateLitColorMaterial(Color.DarkTurquoise, deferred);

@@ -189,5 +189,17 @@ namespace XREngine.Rendering.OpenGL
 
         public void CheckErrors()
             => Renderer.CheckFrameBufferErrors(this);
+
+        public int GetInteger(GLEnum parameter)
+        {
+            Api.GetNamedFramebufferParameter(BindingId, parameter, out int value);
+            return value;
+        }
+
+        public int GetAttachmentParameter(GLEnum attachment, GLEnum parameter)
+        {
+            Api.GetNamedFramebufferAttachmentParameter(BindingId, attachment, parameter, out int value);
+            return value;
+        }
     }
 }

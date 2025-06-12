@@ -153,8 +153,8 @@ namespace XREngine.Components
             set => SetField(ref _camera, value);
         }
 
-        private UIInputComponent? _userInterfaceInput = null;
-        public UIInputComponent? UserInterfaceInput
+        private UICanvasInputComponent? _userInterfaceInput = null;
+        public UICanvasInputComponent? UserInterfaceInput
         {
             get => _userInterfaceInput;
             set => SetField(ref _userInterfaceInput, value);

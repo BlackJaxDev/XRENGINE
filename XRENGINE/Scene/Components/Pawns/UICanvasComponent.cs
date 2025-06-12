@@ -100,7 +100,7 @@ namespace XREngine.Components
         /// Gets the user input component. Not a necessary component, so may be null.
         /// </summary>
         /// <returns></returns>
-        public UIInputComponent? GetInputComponent() => GetSiblingComponent<UIInputComponent>();
+        public UICanvasInputComponent? GetInputComponent() => GetSiblingComponent<UICanvasInputComponent>();
 
         public void RenderScreenSpace(XRViewport? viewport, XRFrameBuffer? outputFBO)
             => _renderPipeline.Render(

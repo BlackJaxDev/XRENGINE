@@ -116,6 +116,7 @@ namespace XREngine.Rendering
                 IsDither = true,
                 BlendMode = SKBlendMode.SrcOver,
                 IsAntialias = true,
+                TextAlign = SKTextAlign.Left,
             };
 
             using SKFont font = new(typeface, textSize);
@@ -130,7 +131,8 @@ namespace XREngine.Rendering
             foreach (string character in characters)
             {
                 // Get glyph indices
-                ushort[] glyphs = font.GetGlyphs(character);
+                ushort[] glyphs = new ushort[character.Length]; 
+                font.GetGlyphs(character.AsSpan(), glyphs.AsSpan());
                 if (glyphs.Length == 0 || glyphs[0] == 0)
                 {
                     // Skip characters without glyphs
@@ -138,7 +140,8 @@ namespace XREngine.Rendering
                 }
 
                 float[] widths = new float[glyphs.Length];
-                font.GetGlyphWidths(character, out SKRect[] bounds, paint);
+                SKRect[] bounds = new SKRect[glyphs.Length];
+                font.GetGlyphWidths(glyphs, widths.AsSpan(), bounds.AsSpan(), paint);
                 if (bounds.Length > 1)
                     Debug.LogWarning($"Multiple glyphs for character '{character}'");
 
@@ -160,7 +163,7 @@ namespace XREngine.Rendering
                 using (SKCanvas canvas = new(bitmap))
                 {
                     canvas.Clear(SKColors.Transparent);
-                    canvas.DrawText(character, x, y, SKTextAlign.Left, font, paint);
+                    canvas.DrawText(character, x, y, font, paint);
                 }
 
                 glyphBitmaps.Add(bitmap);

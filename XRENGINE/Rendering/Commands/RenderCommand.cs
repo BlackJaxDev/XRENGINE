@@ -34,6 +34,14 @@ namespace XREngine.Rendering.Commands
         public abstract int CompareTo(RenderCommand? other);
         public int CompareTo(object? obj) => CompareTo(obj as RenderCommand);
 
+        public event Action? PreRender;
+        public event Action? PostRender;
+
+        protected void OnPreRender()
+            => PreRender?.Invoke();
+        protected void OnPostRender()
+            => PostRender?.Invoke();
+
         public abstract void Render();
 
         /// <summary>

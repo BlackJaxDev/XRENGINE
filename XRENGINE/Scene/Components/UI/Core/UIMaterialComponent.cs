@@ -9,20 +9,65 @@ namespace XREngine.Rendering.UI
     /// <summary>
     /// A basic UI component that renders a quad with a material.
     /// </summary>
-    public class UIMaterialComponent(XRMaterial quadMaterial, bool flipVerticalUVCoord = false) : UIRenderableComponent
+    public class UIMaterialComponent : UIRenderableComponent
     {
-        public UIMaterialComponent() 
-            : this(XRMaterial.CreateUnlitColorMaterialForward(Color.Magenta), true) { }
+        public UIMaterialComponent()
+            : this(XRMaterial.CreateUnlitColorMaterialForward(Color.Magenta), false) { }
+
+        public UIMaterialComponent(XRMaterial quadMaterial, bool flipVerticalUVCoord = false)
+        {
+            _flipVerticalUVCoord = flipVerticalUVCoord;
+            RenderPass = quadMaterial.RenderPass;
+            quadMaterial.RenderOptions = _renderParameters;
+            RemakeMesh(quadMaterial);
+        }
+
+        private bool _flipVerticalUVCoord = false;
+        public bool FlipVerticalUVCoord
+        {
+            get => _flipVerticalUVCoord;
+            set => SetField(ref _flipVerticalUVCoord, value);
+        }
+
+        protected override void OnPropertyChanged<T>(string? propName, T prev, T field)
+        {
+            base.OnPropertyChanged(propName, prev, field);
+            switch (propName)
+            {
+                case nameof(FlipVerticalUVCoord):
+                    RemakeMesh();
+                    break;
+            }
+        }
 
         protected internal override void OnComponentActivated()
         {
             base.OnComponentActivated();
+            RemakeMesh();
+        }
 
-            RenderPass = (int)EDefaultRenderPass.OpaqueForward;
-            var quadMesh = XRMesh.Create(VertexQuad.PosZ(1.0f, true, 0.0f, flipVerticalUVCoord));
-            quadMaterial.RenderPass = (int)EDefaultRenderPass.OpaqueForward;
-            quadMaterial.RenderOptions = _renderParameters;
-            Mesh = new XRMeshRenderer(quadMesh, quadMaterial);
+        protected internal override void OnComponentDeactivated()
+        {
+            base.OnComponentDeactivated();
+            Mesh?.Destroy();
+            Mesh = null;
+        }
+
+        private void RemakeMesh()
+        {
+            if (Material is null)
+            {
+                var mat = XRMaterial.CreateUnlitColorMaterialForward(Color.Magenta);
+                mat.RenderOptions = _renderParameters;
+                Material = mat;
+            }
+            RemakeMesh(Material);
+        }
+
+        private void RemakeMesh(XRMaterial material)
+        {
+            Mesh?.Destroy();
+            Mesh = new XRMeshRenderer(XRMesh.Create(VertexQuad.PosZ(1.0f, true, 0.0f, FlipVerticalUVCoord)), material);
         }
 
         private readonly RenderingParameters _renderParameters = new()

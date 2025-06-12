@@ -135,7 +135,7 @@ namespace XREngine.Networking
             return pawnComp;
         }
 
-        private static void CreateConsoleUI(SceneNode rootNode, out UICanvasComponent uiCanvas, out UIInputComponent input)
+        private static void CreateConsoleUI(SceneNode rootNode, out UICanvasComponent uiCanvas, out UICanvasInputComponent input)
         {
             var rootCanvasNode = new SceneNode(rootNode) { Name = "Root Server UI Node" };
             uiCanvas = rootCanvasNode.AddComponent<UICanvasComponent>("Console Canvas")!;
@@ -149,7 +149,7 @@ namespace XREngine.Networking
             AddFPSText(null, rootCanvasNode);
 
             //Add input handler
-            input = rootCanvasNode.AddComponent<UIInputComponent>()!;
+            input = rootCanvasNode.AddComponent<UICanvasInputComponent>()!;
             var outputLogNode = rootCanvasNode.NewChild(out UIMaterialComponent outputLogBackground);
             outputLogBackground.Material = BackgroundMaterial;
 
@@ -172,7 +172,7 @@ namespace XREngine.Networking
         /// <param name="rootNode"></param>
         private static void CreateConsoleUI(SceneNode rootNode)
         {
-            CreateConsoleUI(rootNode, out UICanvasComponent uiCanvas, out UIInputComponent input);
+            CreateConsoleUI(rootNode, out UICanvasComponent uiCanvas, out UICanvasInputComponent input);
 
             var pawnForInput = Engine.State.MainPlayer.ControlledPawn;
             var pawnCam = pawnForInput?.GetSiblingComponent<CameraComponent>(false);
@@ -189,7 +189,7 @@ namespace XREngine.Networking
         /// <param name="pawnForInput"></param>
         private static void CreateConsoleUI(SceneNode rootNode, CameraComponent camComp, PawnComponent? pawnForInput = null)
         {
-            CreateConsoleUI(rootNode, out UICanvasComponent uiCanvas, out UIInputComponent input);
+            CreateConsoleUI(rootNode, out UICanvasComponent uiCanvas, out UICanvasInputComponent input);
 
             if (camComp is not null)
                 camComp.UserInterface = uiCanvas;

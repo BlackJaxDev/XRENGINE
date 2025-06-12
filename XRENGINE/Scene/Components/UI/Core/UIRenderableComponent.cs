@@ -98,7 +98,9 @@ namespace XREngine.Rendering.UI
             {
                 RenderCommand3D.Mesh = value;
                 RenderCommand2D.Mesh = value;
-                Material = value?.Material;
+
+                if (_material != value?.Material)
+                    Material = value?.Material;
             }
         }
 

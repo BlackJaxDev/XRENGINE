@@ -13,10 +13,10 @@ using XREngine.Rendering.UI;
 namespace XREngine.Components
 {
     /// <summary>
-    /// Dictates input for a UI canvas component.
+    /// Enables and manages input for a UI canvas component.
     /// </summary>
     [RequireComponents(typeof(UICanvasComponent))]
-    public class UIInputComponent : XRComponent
+    public class UICanvasInputComponent : XRComponent
     {
         /// <summary>
         /// Returns the canvas component this input component is controlling.

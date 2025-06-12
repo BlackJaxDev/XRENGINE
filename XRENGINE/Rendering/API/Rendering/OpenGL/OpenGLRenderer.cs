@@ -169,6 +169,7 @@ namespace XREngine.Rendering.OpenGL
             131218,
             131076,
             131139, //Rasterization quality warning: A non-fullscreen clear caused a fallback from CSAA to MSAA.
+            //131186, //Buffer performance warning: buffer is being copied/moved from video memory to host memory.
             //1282,
             //0,
             //9,

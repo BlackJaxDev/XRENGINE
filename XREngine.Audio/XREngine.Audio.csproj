@@ -51,7 +51,7 @@
     <PackageReference Include="Silk.NET.OpenAL.Extensions.Soft" Version="2.22.0" />
     <PackageReference Include="Silk.NET.OpenAL.Soft.Native" Version="1.23.1" />
     <PackageReference Include="SixLabors.ImageSharp" Version="3.1.9" />
-    <PackageReference Include="System.Text.Json" Version="9.0.5" />
+    <PackageReference Include="System.Text.Json" Version="9.0.6" />
   </ItemGroup>
 
   <ItemGroup>

@@ -22,6 +22,14 @@ namespace XREngine.Rendering.Commands
         public event DelRender? Rendered;
 
         public override void Render()
-            => Rendered?.Invoke();
+        {
+            var rendered = Rendered;
+            if (rendered is null)
+                return;
+
+            OnPreRender();
+            rendered();
+            OnPostRender();
+        }
     }
 }
