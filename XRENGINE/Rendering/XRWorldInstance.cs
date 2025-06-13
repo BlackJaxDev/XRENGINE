@@ -537,10 +537,10 @@ namespace XREngine.Rendering
                         //Debug.Out($"DirectItemTest: {transform.Name}");
 
                         var viewNode = Engine.State.MainPlayer.ControlledPawn?.GetCamera()?.Transform;
-                        if (viewNode != null && transform == viewNode)
+                        if ((viewNode != null && transform == viewNode) || transform.Capsule is null)
                             return (null, null);
 
-                        Capsule c = transform.Capsule;
+                        Capsule c = transform.Capsule.Value;
                         if (!c.IntersectsSegment(segment, out Vector3[] points))
                             break;
                         

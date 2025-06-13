@@ -111,7 +111,7 @@ namespace XREngine.Scene.Transforms
         protected override Matrix4x4 CreateLocalMatrix()
         {
             var parentUp = Parent?.WorldUp ?? Globals.Up;
-            var parentForward = Parent?.WorldForward ?? Globals.Forward;
+            var parentForward = Parent?.WorldForward ?? Globals.Backward;
             if (RotateToVelocity)
             {
                 var forward = CurrentVelocity;

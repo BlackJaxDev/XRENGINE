@@ -693,14 +693,15 @@ namespace XREngine.Components.Animation
             {
                 _chestTargetRotation = _headRotation * _chestRelativeRotation;
 
-                if (arms[0] != null)
-                    AdjustChestByHands(ref _chestTargetRotation, arms);
+                //if (arms[0] != null)
+                //    AdjustChestByHands(ref _chestTargetRotation, arms);
 
-                var anchorRight = _anchorRotation.Rotate(Globals.Right).Normalized();
-                var anchorForward = _anchorRotation.Rotate(Globals.Forward).Normalized();
-                var rootUp = rootBone.InputRotation.Rotate(Globals.Up).Normalized();
+                var anchorRight = _anchorRotation.Rotate(Globals.Right);
+                var anchorForward = _anchorRotation.Rotate(Globals.Forward);
 
-                ForwardDir = (Vector3.Cross(anchorRight, rootUp) + anchorForward).Normalized();
+                var rootUp = rootBone.InputRotation.Rotate(Globals.Up);
+
+                ForwardDir = Vector3.Cross(anchorRight, rootUp) + anchorForward;
             }
 
             public void Solve(

@@ -1,14 +1,16 @@
-﻿using Silk.NET.OpenAL;
+﻿using Extensions;
+using Silk.NET.OpenAL;
 using Silk.NET.OpenAL.Extensions.Creative;
 using Silk.NET.OpenAL.Extensions.Enumeration;
 using Silk.NET.OpenAL.Extensions.EXT;
 using System.Diagnostics;
 using System.Numerics;
 using XREngine.Core;
+using XREngine.Data.Core;
 
 namespace XREngine.Audio
 {
-    public sealed unsafe class ListenerContext : IDisposable
+    public sealed unsafe class ListenerContext : XRBase, IDisposable
     {
         //TODO: implement audio source priority
         //destroy sources with lower priority first to make room for higher priority sources.
@@ -82,6 +84,8 @@ namespace XREngine.Audio
             //    Capture = captureExtension;
             MakeCurrent();
             VerifyError();
+
+            _gain = GetGain();
 
             SourcePool = new ResourcePool<AudioSource>(() => new AudioSource(this));
             BufferPool = new ResourcePool<AudioBuffer>(() => new AudioBuffer(this));
@@ -190,11 +194,6 @@ namespace XREngine.Audio
             set => SetDistanceModel(value);
         }
 
-        public float Gain
-        {
-            get => GetGain();
-            set => SetGain(value);
-        }
         public Vector3 Position
         {
             get => GetPosition();
@@ -225,6 +224,53 @@ namespace XREngine.Audio
             }
             set => SetOrientation(value, Up);
         }
+
+        private float _gain = 1.0f;
+        public float Gain
+        {
+            get => _gain;
+            set => SetField(ref _gain, value);
+        }
+
+        private bool _enabled = true;
+        public bool Enabled
+        {
+            get => _enabled;
+            set => SetField(ref _enabled, value);
+        }
+
+        private float _gainScale = 1.0f;
+        public float GainScale
+        {
+            get => _gainScale;
+            set => SetField(ref _gainScale, value);
+        }
+
+        private float? _fadeInSeconds = null;
+        /// <summary>
+        /// If set to a non-null value, the listener will update GainScale over this duration.
+        /// </summary>
+        public float? FadeInSeconds
+        {
+            get => _fadeInSeconds;
+            set => SetField(ref _fadeInSeconds, value);
+        }
+
+        protected override void OnPropertyChanged<T>(string? propName, T prev, T field)
+        {
+            base.OnPropertyChanged(propName, prev, field);
+            switch (propName)
+            {
+                case nameof(Gain):
+                case nameof(GainScale):
+                case nameof(Enabled):
+                    UpdateGain();
+                    break;
+            }
+        }
+
+        private void UpdateGain()
+            => SetGain(Gain * GainScale * (Enabled ? 1.0f : 0.0f));
 
         private void SetPosition(Vector3 position)
         {
@@ -388,5 +434,36 @@ namespace XREngine.Audio
             => CalcInvDistGain(ClampDist(dist, refDist, maxDist), refDist, maxDist, rolloff);
         private static float CalcInvDistGain(float dist, float refDist, float maxDist, float rolloff)
             => refDist / (refDist + rolloff * (dist - refDist));
+
+        public void Tick(float deltaTime)
+        {
+            FadeGain(deltaTime);
+        }
+
+        public XREvent<ListenerContext>? FadeCompleted { get; set; } = null;
+
+        private void FadeGain(float deltaTime)
+        {
+            if (!FadeInSeconds.HasValue)
+                return;
+            
+            float fadeDt = deltaTime / FadeInSeconds.Value;
+            float gainScale = GainScale + fadeDt;
+
+            if (gainScale >= 1.0f)
+            {
+                GainScale = 1.0f;
+                FadeInSeconds = null; // Stop fading
+                FadeCompleted?.Invoke(this);
+            }
+            else if (gainScale <= 0.0f)
+            {
+                GainScale = 0.0f;
+                FadeInSeconds = null; // Stop fading
+                FadeCompleted?.Invoke(this);
+            }
+            else
+                GainScale = gainScale;
+        }
     }
 }

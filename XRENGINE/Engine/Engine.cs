@@ -161,6 +161,7 @@ namespace XREngine
 
                 //Creating windows first is most important, because they will initialize the render context and graphics API.
                 CreateWindows(startupSettings.StartupWindows);
+                XRWindow.AnyWindowFocusChanged += WindowFocusChanged;
 
                 //VR is allowed to initialize async in the background.
                 //Windows need to be created first if initializing VR in place.
@@ -192,6 +193,86 @@ namespace XREngine
                 BeginPlayAllWorlds();
 
             return success;
+        }
+
+        public static bool LastFocusState { get; private set; } = true;
+
+        private static void WindowFocusChanged(XRWindow window, bool isFocused)
+        {
+            bool anyWindowFocused = isFocused;
+            if (!anyWindowFocused)
+            {
+                foreach (var w in _windows)
+                {
+                    if (w == null || w.Window == null)
+                        continue; // Skip if the window is null or has been disposed
+
+                    if (w.IsFocused)
+                    {
+                        anyWindowFocused = true;
+                        break;
+                    }
+                }
+            }
+
+            if (LastFocusState == anyWindowFocused)
+                return;
+
+            LastFocusState = anyWindowFocused;
+            if (anyWindowFocused)
+                OnGainedFocus();
+            else
+                OnLostFocus();
+        }
+
+        public static XREvent<bool>? FocusChanged { get; set; }
+
+        private static void OnLostFocus()
+        {
+            Debug.Out("No windows are focused.");
+
+            //Disable audio if disabled on defocus
+            if (UserSettings.DisableAudioOnDefocus)
+            {
+                if (UserSettings.AudioDisableFadeSeconds > 0.0f)
+                    Audio.FadeOut(UserSettings.AudioDisableFadeSeconds);
+                else
+                    Audio.Enabled = false; // Disable audio immediately
+            }
+
+            //Set target FPS to unfocused value
+            //If in VR, the headset will handle this instead of window focus
+            if (UserSettings.UnfocusedTargetFramesPerSecond is not null && !VRState.IsInVR)
+            {
+                Time.Timer.TargetRenderFrequency = UserSettings.UnfocusedTargetFramesPerSecond.Value;
+                Debug.Out($"Unfocused target FPS set to {UserSettings.UnfocusedTargetFramesPerSecond}.");
+            }
+
+            FocusChanged?.Invoke(false);
+        }
+
+        private static void OnGainedFocus()
+        {
+            Debug.Out("At least one window is focused.");
+
+            //Enable audio if it was disabled on defocus
+            if (UserSettings.DisableAudioOnDefocus)
+            {
+                if (UserSettings.AudioDisableFadeSeconds > 0.0f)
+                    Audio.FadeIn(UserSettings.AudioDisableFadeSeconds);
+                else
+                    Audio.Enabled = true; // Enable audio immediately
+            }
+
+            //Set target FPS to focused value
+            //If in VR, the headset will handle this instead of window focus
+            if (UserSettings.UnfocusedTargetFramesPerSecond is not null && !VRState.IsInVR)
+            {
+                Time.Timer.TargetRenderFrequency = UserSettings.TargetFramesPerSecond ?? 0.0f;
+                Debug.Out($"Focused target FPS set to {UserSettings.TargetFramesPerSecond}.");
+            }
+
+            FocusChanged?.Invoke(true);
         }
 
         private static async Task<bool> InitializeVR(IVRGameStartupSettings vrSettings, bool runVRInPlace)

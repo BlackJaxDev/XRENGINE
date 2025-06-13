@@ -393,10 +393,7 @@ namespace XREngine.Components.Animation
                 if (tfm is null || tfm.Transform is null)
                     continue;
 
-                //Vector3 lastLocalTrans = tfm.Transform.Translation;
                 tfm.WriteSolved(IKPositionWeight);
-                //if (tfm.IsStretchable)
-                //    tfm.Transform.Translation = XRMath.ProjectVector(tfm.Transform.Translation, lastLocalTrans);
             }
         }
 

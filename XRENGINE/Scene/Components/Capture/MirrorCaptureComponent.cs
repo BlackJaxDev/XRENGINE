@@ -284,7 +284,7 @@ namespace XREngine.Components.Lights
             if (camUpDirMirror.LengthSquared() < 0.0001f)
                 camUpDirMirror = Globals.Up;
             if (camFwdDirMirror.LengthSquared() < 0.0001f)
-                camFwdDirMirror = Globals.Forward;
+                camFwdDirMirror = Globals.Backward;
 
             return Matrix4x4.CreateScale(new Vector3(-1.0f, 1.0f, 1.0f)) * Matrix4x4.CreateWorld(camPosMirror, camFwdDirMirror, camUpDirMirror);
         }

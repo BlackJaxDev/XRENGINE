@@ -154,8 +154,8 @@ namespace XREngine.Data.Geometry
             down = XRMath.CreatePlaneFromPointAndNormal(center - Globals.Up * extents.Y, -Globals.Up);
             left = XRMath.CreatePlaneFromPointAndNormal(center - Globals.Right * extents.X, -Globals.Right);
             right = XRMath.CreatePlaneFromPointAndNormal(center + Globals.Right * extents.X, Globals.Right);
-            front = XRMath.CreatePlaneFromPointAndNormal(center + Globals.Forward * extents.Z, Globals.Forward);
-            back = XRMath.CreatePlaneFromPointAndNormal(center - Globals.Forward * extents.Z, -Globals.Forward);
+            front = XRMath.CreatePlaneFromPointAndNormal(center + Globals.Backward * extents.Z, Globals.Backward);
+            back = XRMath.CreatePlaneFromPointAndNormal(center - Globals.Backward * extents.Z, -Globals.Backward);
         }
 
         /// <summary>

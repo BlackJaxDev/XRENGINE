@@ -135,8 +135,8 @@ namespace XREngine.Components.Scene.Transforms
 
             if (UseLookAtYawPitch)
             {
-                var currLookat = XRMath.LookatAngles(Vector3.Transform(Globals.Forward, currRot));
-                var destLookat = XRMath.LookatAngles(Vector3.Transform(Globals.Forward, destRot));
+                var currLookat = XRMath.LookatAngles(Vector3.Transform(Globals.Backward, currRot));
+                var destLookat = XRMath.LookatAngles(Vector3.Transform(Globals.Backward, destRot));
 
                 float currPitch = float.DegreesToRadians(currLookat.Pitch);
                 float currYaw = float.DegreesToRadians(currLookat.Yaw);

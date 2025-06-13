@@ -30,14 +30,6 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <None Remove="RiveAssets\LockScreenLogo.scale-200.png" />
-  </ItemGroup>
-
-  <ItemGroup>
-    <Content Include="RiveAssets\LockScreenLogo.scale-200.png" />
-  </ItemGroup>
-
-  <ItemGroup>
     <PackageReference Include="AssimpNetter" Version="5.4.3.3" />
     <PackageReference Include="FFmpeg.AutoGen" Version="7.1.1" />
     <PackageReference Include="Google.Cloud.Speech.V1" Version="3.8.0" />
@@ -128,10 +120,16 @@
     <None Update="RiveAssets\runner.riv">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </None>
+    <None Update="RiveAssets\switcher.riv">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
     <None Update="RiveAssets\switch_event_example.riv">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </None>
     <None Update="RiveAssets\tape.riv">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+    <None Update="RiveAssets\weather_icons_ss.riv">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </None>
     <None Update="UnitTestingWorldSettings.json">

@@ -317,8 +317,8 @@ namespace XREngine.Components
                         if (GeoUtil.SegmentIntersectsPlane(
                             localSegment.Start,
                             localSegment.End,
-                            XRMath.GetPlaneDistance(Vector3.Zero, Globals.Forward),
-                            Globals.Forward,
+                            XRMath.GetPlaneDistance(Vector3.Zero, Globals.Backward),
+                            Globals.Backward,
                             out Vector3 localIntersectionPoint))
                         {
                             // Check if the point is within the canvas' bounds

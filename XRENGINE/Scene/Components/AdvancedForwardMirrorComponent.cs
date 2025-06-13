@@ -89,7 +89,7 @@ namespace XREngine.Data.Components
             set => SetField(ref _mirrorWidth, value);
         }
 
-        public Plane ReflectionPlane { get; private set; } = new Plane(Globals.Forward, 0);
+        public Plane ReflectionPlane { get; private set; } = new Plane(Globals.Backward, 0);
         public Matrix4x4 ReflectionMatrix { get; private set; } = Matrix4x4.Identity;
         public AABB LocalCullingVolume { get; private set; } = new AABB(Vector3.Zero, Vector3.Zero);
         public Box WorldCullingVolume { get; private set; } = new Box(Vector3.Zero, Vector3.Zero, Matrix4x4.Identity);

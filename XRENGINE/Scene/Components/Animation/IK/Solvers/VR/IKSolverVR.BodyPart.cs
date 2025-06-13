@@ -92,9 +92,8 @@ namespace XREngine.Components.Animation
                 Vector3 deltaPosition = newRootPos - _rootPosition;
                 _rootPosition = newRootPos;
 
-                if (deltaPosition.LengthSquared() >= float.Epsilon)
-                    foreach (VirtualBone bone in _bones)
-                        bone.SolverPosition += deltaPosition;
+                foreach (VirtualBone bone in _bones)
+                    bone.SolverPosition += deltaPosition;
                 
                 Quaternion deltaRotation = XRMath.FromToRotation(_rootRotation, newRootRot);
                 _rootRotation = newRootRot;

@@ -1,4 +1,5 @@
 ﻿using System.Numerics;
+using XREngine.Data.Core;
 using Transform = XREngine.Scene.Transforms.Transform;
 
 namespace XREngine.Components.Animation
@@ -24,11 +25,11 @@ namespace XREngine.Components.Animation
 
                 private Transform? _transform;
 
-                public TransformPoses(Transform? tfm, bool isTranslatable, bool isStretchable)
+                public TransformPoses(Transform? tfm, bool isRootOrHips, bool isStretchable)
                 {
                     _transform = tfm;
                     TransformChanged();
-                    IsTranslatable = isTranslatable;
+                    IsRootOrHips = isRootOrHips;
                     IsStretchable = isStretchable;
                 }
 
@@ -42,7 +43,7 @@ namespace XREngine.Components.Animation
                     }
                 }
 
-                public bool IsTranslatable { get; }
+                public bool IsRootOrHips { get; }
                 public bool IsStretchable { get; }
 
                 public void ResetSolvedTranslation()
@@ -59,7 +60,7 @@ namespace XREngine.Components.Animation
                 public void ResetSolvedToDefault()
                 {
                     ResetSolvedRotation();
-                    if (IsTranslatable)
+                    if (IsRootOrHips)
                         ResetSolvedTranslation();
                 }
 
@@ -108,8 +109,23 @@ namespace XREngine.Components.Animation
                         return;
 
                     _transform.Parent?.RecalculateMatrices(true);
-                    //if (IsTranslatable)
-                    //    _transform.SetWorldTranslation(Vector3.Lerp(InputWorld.Translation, SolvedWorld.Translation, weight));
+
+                    if (IsRootOrHips)
+                        _transform.SetWorldTranslation(Vector3.Lerp(InputWorld.Translation, SolvedWorld.Translation, weight));
+
+                    //if (IsStretchable)
+                    //{
+                    //    Vector3 worldPos = Vector3.Lerp(InputWorld.Translation, SolvedWorld.Translation, weight);
+                    //    if (weight < 1.0f)
+                    //    {
+                    //        Vector3 lastLocalTrans = _transform.Translation;
+                    //        _transform.SetWorldTranslation(worldPos);
+                    //        _transform.Translation = XRMath.ProjectVector(_transform.Translation, lastLocalTrans);
+                    //    }
+                    //    else
+                    //        _transform.SetWorldTranslation(worldPos);
+                    //}
+
                     _transform.SetWorldRotation(Quaternion.Slerp(InputWorld.Rotation, SolvedWorld.Rotation, weight));
                     _transform.RecalculateMatrices(true);
                 }

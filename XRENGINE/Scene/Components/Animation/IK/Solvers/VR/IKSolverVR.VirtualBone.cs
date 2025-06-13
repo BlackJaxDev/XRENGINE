@@ -121,8 +121,8 @@ namespace XREngine.Components.Animation
                 Vector3 point,
                 Quaternion rotation)
             {
-                if (rotation == Quaternion.Identity)
-                    return;
+                //if (rotation == Quaternion.Identity)
+                //    return;
 
                 for (int i = startIndex; i < bones.Length; i++)
                 {
@@ -130,7 +130,8 @@ namespace XREngine.Components.Animation
                     if (bone is null)
                         continue;
                     
-                    bone.SolverPosition = point + rotation.Rotate(bone.SolverPosition - point);
+                    Vector3 dir = bone.SolverPosition - point;
+                    bone.SolverPosition = point + rotation.Rotate(dir);
                     bone.SolverRotation = rotation * bone.SolverRotation;
                 }
             }
@@ -154,9 +155,12 @@ namespace XREngine.Components.Animation
                 {
                     if (bones[i] is null)
                         continue;
-                    
+
                     if (i > 0)
-                        bones[i].SolverPosition = bones[0].SolverPosition + rotation.Rotate(bones[i].SolverPosition - bones[0].SolverPosition);
+                    {
+                        Vector3 dir = bones[i].SolverPosition - bones[0].SolverPosition;
+                        bones[i].SolverPosition = bones[0].SolverPosition + rotation.Rotate(dir);
+                    }
                     
                     bones[i].SolverRotation = rotation * bones[i].SolverRotation;
                 }
@@ -168,9 +172,8 @@ namespace XREngine.Components.Animation
                 RotateAroundPoint(bones, index, bones[index].SolverPosition, q);
             }
 
-            // TODO Move to IKSolverTrigonometric
             /// <summary>
-            /// Solve the bone chain virtually using both solverPositions and SolverRotations. This will work the same as IKSolverTrigonometric.Solve.
+            /// Solve the bone chain virtually using both solverPositions and SolverRotations.
             /// </summary>
             public static void SolveTrigonometric(VirtualBone[] bones, int first, int second, int third, Vector3 targetPosition, Vector3 bendNormal, float weight)
             {
@@ -192,7 +195,7 @@ namespace XREngine.Components.Animation
                 float sqrMag2 = (bones[third].SolverPosition - bones[second].SolverPosition).LengthSquared();
 
                 // Get the general world space bending direction
-                Vector3 bendDir = Vector3.Cross(dir, bendNormal);
+                Vector3 bendDir = Vector3.Cross(bendNormal, dir);
 
                 // Get the direction to the trigonometrically solved position of the second transform
                 Vector3 toBendPoint = GetDirectionToBendPoint(dir, length, bendDir, sqrMag1, sqrMag2);
@@ -205,7 +208,7 @@ namespace XREngine.Components.Animation
                 if (weight < 1.0f)
                     q1 = Quaternion.Lerp(Quaternion.Identity, q1, weight);
 
-                RotateAroundPoint(bones, first, bones[first].SolverPosition, Quaternion.Normalize(q1));
+                RotateAroundPoint(bones, first, bones[first].SolverPosition, q1);
 
                 Vector3 secondToThird = bones[third].SolverPosition - bones[second].SolverPosition;
                 Vector3 secondToTarget = targetPosition - bones[second].SolverPosition;
@@ -214,7 +217,7 @@ namespace XREngine.Components.Animation
                 if (weight < 1.0f)
                     q2 = Quaternion.Lerp(Quaternion.Identity, q2, weight);
 
-                RotateAroundPoint(bones, second, bones[second].SolverPosition, Quaternion.Normalize(q2));
+                RotateAroundPoint(bones, second, bones[second].SolverPosition, q2);
             }
 
             //Calculates the bend direction based on the law of cosines. NB! Magnitude of the returned vector does not equal to the length of the first bone!
@@ -224,10 +227,8 @@ namespace XREngine.Components.Animation
                     return Vector3.Zero;
 
                 float x = ((directionMag * directionMag) + (sqrMag1 - sqrMag2)) / 2.0f / directionMag;
-                return XRMath.LookRotation(direction, bendDirection).Rotate(new Vector3(
-                        0.0f,
-                        (float)Math.Sqrt((sqrMag1 - x * x).Clamp(0.0f, float.PositiveInfinity)),
-                        x));
+                float y = (float)Math.Sqrt((sqrMag1 - x * x).ClampMin(0.0f));
+                return XRMath.LookRotation(direction, bendDirection).Rotate(new Vector3(0.0f, y, -x));
             }
 
             // TODO Move to IKSolverFABRIK
@@ -312,7 +313,7 @@ namespace XREngine.Components.Animation
                         Vector3 toLastBone = bones[^1].SolverPosition - bones[i].SolverPosition;
                         Vector3 toTarget = targetPosition - bones[i].SolverPosition;
                         Quaternion rotation = XRMath.RotationBetweenVectors(toLastBone, toTarget);
-                        RotateBy(bones, i, Quaternion.Normalize(weight >= 1 ? rotation : Quaternion.Lerp(Quaternion.Identity, rotation, weight)));
+                        RotateBy(bones, i, weight >= 1.0f ? rotation : Quaternion.Lerp(Quaternion.Identity, rotation, weight));
                     }
                 }
             }

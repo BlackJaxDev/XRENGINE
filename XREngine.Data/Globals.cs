@@ -11,10 +11,10 @@ namespace XREngine
         public static readonly Vector3 Down = -Vector3.UnitY;
         public static readonly Vector3 Left = -Vector3.UnitX;
         public static readonly Vector3 Right = Vector3.UnitX;
-        public static readonly Vector3 Backward = -Vector3.UnitZ;
-        public static readonly Vector3 Forward = Vector3.UnitZ;
-        public static readonly Vector3 TowardsCamera = Forward;
-        public static readonly Vector3 AwayFromCamera = Backward;
+        public static readonly Vector3 Forward = -Vector3.UnitZ;
+        public static readonly Vector3 Backward = Vector3.UnitZ;
+        public static readonly Vector3 TowardsCamera = Backward;
+        public static readonly Vector3 AwayFromCamera = Forward;
 
         public static class Min
         {

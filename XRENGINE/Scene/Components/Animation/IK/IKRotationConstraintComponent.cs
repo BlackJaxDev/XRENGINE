@@ -14,7 +14,7 @@ namespace XREngine.Components.Animation
         /// <summary>
         /// The main axis of the rotation limit.
         /// </summary>
-        protected Vector3 _axis = Globals.Backward;
+        protected Vector3 _axis = Globals.Forward;
         public Vector3 Axis
         {
             get => _axis;
@@ -105,7 +105,7 @@ namespace XREngine.Components.Animation
             if (_axis == Vector3.Zero)
             {
                 Debug.LogWarning("Axis is Vector3.zero. Defaulting to Globals.Forward.");
-                _axis = Globals.Backward;
+                _axis = Globals.Forward;
             }
 
             _initiated = true;

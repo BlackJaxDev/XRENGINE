@@ -19,6 +19,9 @@ namespace XREngine
 
         private float? _targetFramesPerSecond = 90.0f;
         private IVector2 _windowedResolution = new(1920, 1080);
+        private double _debugOutputRecencySeconds = 0.0;
+        private bool _disableAudioOnDefocus = false;
+        private float? _unfocusedTargetFramesPerSecond = 10;
 
         public EVSyncMode VSync
         {
@@ -60,6 +63,21 @@ namespace XREngine
             get => _targetFramesPerSecond;
             set => SetField(ref _targetFramesPerSecond, value);
         }
-        public double DebugOutputRecencySeconds { get; set; } = 0.0;
+        public double DebugOutputRecencySeconds
+        {
+            get => _debugOutputRecencySeconds;
+            set => SetField(ref _debugOutputRecencySeconds, value);
+        }
+        public bool DisableAudioOnDefocus
+        {
+            get => _disableAudioOnDefocus;
+            set => SetField(ref _disableAudioOnDefocus, value);
+        }
+        public float AudioDisableFadeSeconds { get; set; } = 0.5f; // Default fade out time for audio when defocusing
+        public float? UnfocusedTargetFramesPerSecond
+        {
+            get => _unfocusedTargetFramesPerSecond;
+            set => SetField(ref _unfocusedTargetFramesPerSecond, value);
+        }
     }
 }

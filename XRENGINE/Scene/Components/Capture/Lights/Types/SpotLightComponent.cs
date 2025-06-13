@@ -25,13 +25,13 @@ namespace XREngine.Components.Capture.Lights.Types
 
         private Cone _outerCone = new(
             Vector3.Zero,
-            Globals.Forward,
+            Globals.Backward,
             MathF.Tan(DegToRad(outerCutoffDeg)) * distance,
             distance);
 
         private Cone _innerCone = new(
             Vector3.Zero,
-            Globals.Forward,
+            Globals.Backward,
             MathF.Tan(DegToRad(innerCutoffDeg)) * distance,
             distance);
 
@@ -63,9 +63,9 @@ namespace XREngine.Components.Capture.Lights.Types
         }
 
         public static XRMesh GetVolumeMesh()
-            => XRMesh.Shapes.SolidCone(Vector3.Zero, Globals.Forward, 1.0f, 1.0f, 32, true);
+            => XRMesh.Shapes.SolidCone(Vector3.Zero, Globals.Backward, 1.0f, 1.0f, 32, true);
         protected override XRMesh GetWireframeMesh()
-            => XRMesh.Shapes.WireframeCone(Vector3.Zero, Globals.Forward, 1.0f, 1.0f, 32);
+            => XRMesh.Shapes.WireframeCone(Vector3.Zero, Globals.Backward, 1.0f, 1.0f, 32);
 
         public Cone OuterCone => _outerCone;
         public Cone InnerCone => _innerCone;
@@ -214,7 +214,7 @@ namespace XREngine.Components.Capture.Lights.Types
             if (ShadowCamera != null)
                 ShadowCamera.FarZ = d;
 
-            MeshCenterAdjustMatrix = Matrix4x4.CreateScale(OuterCone.Radius, OuterCone.Radius, OuterCone.Height) * Matrix4x4.CreateTranslation(Globals.Backward * (Distance * 0.5f));
+            MeshCenterAdjustMatrix = Matrix4x4.CreateScale(OuterCone.Radius, OuterCone.Radius, OuterCone.Height) * Matrix4x4.CreateTranslation(Globals.Forward * (Distance * 0.5f));
         }
     }
 }

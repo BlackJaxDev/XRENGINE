@@ -114,7 +114,7 @@ namespace XREngine.Rendering.UI
 
         protected override Matrix4x4 CreateLocalMatrix() => 
             Matrix4x4.CreateScale(Scale) * 
-            Matrix4x4.CreateFromAxisAngle(Globals.Forward, RotationRadians) *
+            Matrix4x4.CreateFromAxisAngle(Globals.Backward, RotationRadians) *
             Matrix4x4.CreateTranslation(new Vector3(Translation, DepthTranslation));
 
         /// <summary>

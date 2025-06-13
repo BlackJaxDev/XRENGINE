@@ -507,7 +507,7 @@ namespace XREngine.Data.Core
             //dot == 0 is a 90 degree angle
 
             return dot > 0.999f || dot < -0.999f
-                ? Globals.Forward
+                ? Globals.Backward
                 : Vector3.Cross(initialVector, finalVector);
         }
         /// <summary>
@@ -527,12 +527,12 @@ namespace XREngine.Data.Core
 
             if (dot > 0.999f)
             {
-                axis = Globals.Forward;
+                axis = Globals.Backward;
                 rad = 0.0f;
             }
             else if (dot < -0.999f)
             {
-                axis = -Globals.Forward;
+                axis = -Globals.Backward;
                 rad = DegToRad(180.0f);
             }
             else
@@ -1283,13 +1283,20 @@ namespace XREngine.Data.Core
 
         public static float DeltaAngle(float angleFrom, float angleTo)
         {
-            float delta = angleTo - angleFrom;
-            if (delta > 180.0f)
-                delta -= 360.0f;
-            else if (delta < -180.0f)
-                delta += 360.0f;
-            return delta;
+            float num = Repeat(angleTo - angleFrom, 360.0f);
+            if (num > 180.0f)
+                num -= 360.0f;
+            return num;
         }
+
+        /// <summary>
+        /// Loops the value t to the range [0, length).
+        /// </summary>
+        /// <param name="t"></param>
+        /// <param name="length"></param>
+        /// <returns></returns>
+        public static float Repeat(float t, float length)
+            => Clamp(t - MathF.Floor(t / length) * length, 0.0f, length);
 
         /// <summary>
         /// Returns yaw angle (-180 - 180) of 'forward' vector relative to rotation space defined by spaceForward and spaceUp axes.
@@ -1336,7 +1343,7 @@ namespace XREngine.Data.Core
         /// </summary>
         public static float GetYaw(Quaternion space, Quaternion rotation)
         {
-            Vector3 dirLocal = Vector3.Transform(Vector3.Transform(Globals.Forward, rotation), Quaternion.Inverse(space));
+            Vector3 dirLocal = Vector3.Transform(Vector3.Transform(Globals.Backward, rotation), Quaternion.Inverse(space));
             if (dirLocal.X == 0.0f && dirLocal.Z == 0.0f || float.IsInfinity(dirLocal.X) || float.IsInfinity(dirLocal.Z))
                 return 0.0f;
             return float.RadiansToDegrees(MathF.Atan2(dirLocal.X, dirLocal.Z));
@@ -1347,7 +1354,7 @@ namespace XREngine.Data.Core
         /// </summary>
         public static float GetPitch(Quaternion space, Quaternion rotation)
         {
-            Vector3 dirLocal = Vector3.Transform(Vector3.Transform(Globals.Forward, rotation), Quaternion.Inverse(space));
+            Vector3 dirLocal = Vector3.Transform(Vector3.Transform(Globals.Backward, rotation), Quaternion.Inverse(space));
             if (MathF.Abs(dirLocal.Y) > 1.0f)
                 dirLocal = dirLocal.Normalized();
             return float.RadiansToDegrees(-MathF.Asin(dirLocal.Y));
@@ -1361,7 +1368,7 @@ namespace XREngine.Data.Core
             Vector3 spaceUp = Vector3.Transform(Globals.Up, space);
 
             Quaternion invSpace = Quaternion.Inverse(space);
-            Vector3 forward = Vector3.Transform(Vector3.Transform(Globals.Forward, rotation), invSpace);
+            Vector3 forward = Vector3.Transform(Vector3.Transform(Globals.Backward, rotation), invSpace);
             Vector3 up = Vector3.Transform(Vector3.Transform(Globals.Up, rotation), invSpace);
 
             Quaternion q = Quaternion.Inverse(LookRotation(spaceUp, forward));
@@ -1448,7 +1455,7 @@ namespace XREngine.Data.Core
         {
             angle = 2.0f * MathF.Acos(rotation.W);
             float den = MathF.Sqrt(1.0f - rotation.W * rotation.W);
-            axis = den > 0.0001f ? new(rotation.X / den, rotation.Y / den, rotation.Z / den) : Globals.Forward;
+            axis = den > 0.0001f ? new(rotation.X / den, rotation.Y / den, rotation.Z / den) : Globals.Backward;
         }
 
         /// <summary>
@@ -1485,11 +1492,11 @@ namespace XREngine.Data.Core
                 neg = y < 0f;
             }
 
-            float z = Vector3.Dot(v, Globals.Forward);
+            float z = Vector3.Dot(v, Globals.Backward);
             absDot = MathF.Abs(z);
             if (absDot > maxAbsDot)
             {
-                closest = Globals.Forward;
+                closest = Globals.Backward;
                 neg = z < 0f;
             }
 
@@ -1593,7 +1600,7 @@ namespace XREngine.Data.Core
         public static Quaternion MirrorYZ(Quaternion r, Quaternion space)
         {
             r = Quaternion.Inverse(space) * r;
-            Vector3 forward = Vector3.Transform(Globals.Forward, r);
+            Vector3 forward = Vector3.Transform(Globals.Backward, r);
             Vector3 up = Vector3.Transform(Globals.Up, r);
 
             forward.X *= -1;
@@ -1607,7 +1614,7 @@ namespace XREngine.Data.Core
         /// </summary>
         public static Quaternion MirrorYZ(Quaternion r)
         {
-            Vector3 forward = Vector3.Transform(Globals.Forward, r);
+            Vector3 forward = Vector3.Transform(Globals.Backward, r);
             Vector3 up = Vector3.Transform(Globals.Up, r);
 
             forward.X *= -1;
@@ -1620,36 +1627,26 @@ namespace XREngine.Data.Core
             => LookRotation(forward, Globals.Up);
         public static Quaternion LookRotation(Vector3 forward, Vector3 up)
         {
-            // Return identity if forward is nearly zero.
-            if (forward.LengthSquared() < Epsilon)
+            if (forward.LengthSquared() < float.Epsilon || float.IsNaN(forward.X) || float.IsNaN(forward.Y) || float.IsNaN(forward.Z))
                 return Quaternion.Identity;
+            if (up.LengthSquared() < float.Epsilon || float.IsNaN(up.X) || float.IsNaN(up.Y) || float.IsNaN(up.Z))
+                up = Globals.Up; // Default to world up if up is invalid
+
             forward = forward.Normalized();
+            up = up.Normalized();
 
-            if (up.LengthSquared() < Epsilon)
-                return RotationBetweenVectors(Globals.Forward, forward);
+            // If up is invalid or nearly parallel to forward, pick a safe up vector
+            if (Abs(Vector3.Dot(up, forward)) > 0.999f)
+            {
+                // Prefer world-up unless it's almost colinear, then choose world-right
+                up = Abs(Vector3.Dot(Globals.Up, forward)) < 0.99f
+                    ? Globals.Up
+                    : Globals.Right;
+            }
 
-            // Build orthonormal basis
-            Vector3 right = Vector3.Cross(up, forward);
-            if (right.LengthSquared() < Epsilon)
-                return RotationBetweenVectors(Globals.Forward, forward);
-            right = right.Normalized();
-
-            Vector3 orthonormalUp = Vector3.Cross(forward, right);
-
-            // Rotate global forward to desired forward
-            Quaternion q1 = RotationBetweenVectors(Globals.Forward, forward);
-
-            // Rotate around 'forward' so that rotated +Y aligns with orthonormalUp
-            Vector3 newUp = Vector3.Transform(Globals.Up, q1);
-            float dot = Vector3.Dot(newUp, orthonormalUp).Clamp(-1.0f, 1.0f);
-            float angle = (float)MathF.Acos(dot);
-
-            // Determine sign of rotation (clockwise vs. counter-clockwise)
-            float sign = MathF.Sign(Vector3.Dot(Vector3.Cross(newUp, orthonormalUp), forward));
-            Quaternion q2 = Quaternion.CreateFromAxisAngle(forward, angle * sign);
-
-            // Combine and normalize
-            return Quaternion.Normalize(q2 * q1);
+            Vector3 right = Vector3.Cross(forward, up).Normalized();
+            Vector3 orthoUp = Vector3.Cross(right, forward).Normalized();
+            return Quaternion.CreateFromRotationMatrix(Matrix4x4.CreateWorld(Vector3.Zero, forward, orthoUp));
         }
 
         /// <summary>
@@ -1771,12 +1768,22 @@ namespace XREngine.Data.Core
         /// <returns></returns>
         public static Vector3 ProjectVector(Vector3 vector, Vector3 normal)
         {
-            float sqrMag = normal.LengthSquared();
-            if (sqrMag < Epsilon)
-                return Vector3.Zero;
+            //float sqrMag = normal.LengthSquared();
+            //if (sqrMag < Epsilon)
+            //    return Vector3.Zero;
 
-            float dot = Vector3.Dot(vector, normal);
-            return normal * (dot / sqrMag);
+            //float dot = Vector3.Dot(vector, normal);
+            //return normal * (dot / sqrMag);
+
+            float num = Vector3.Dot(normal, normal);
+            if (num < float.Epsilon)
+                return Vector3.Zero;
+            
+            float num2 = Vector3.Dot(vector, normal);
+            return new Vector3(
+                normal.X * num2 / num,
+                normal.Y * num2 / num,
+                normal.Z * num2 / num);
         }
 
         /// <summary>
@@ -2087,7 +2094,7 @@ namespace XREngine.Data.Core
             {
                 Axis.X => Globals.Right,
                 Axis.Y => Globals.Up,
-                _ => Globals.Forward,
+                _ => Globals.Backward,
             };
         }
 
@@ -2133,7 +2140,7 @@ namespace XREngine.Data.Core
             if (dotY > dotX)
                 axis = Globals.Up;
             float dotZ = MathF.Abs(Vector3.Dot(r.Rotate(Globals.Forward), direction));
-            if (dotZ > dotX && dotZ > dotY)
+            if (dotZ < dotX && dotZ < dotY)
                 axis = Globals.Forward;
             return axis;
         }

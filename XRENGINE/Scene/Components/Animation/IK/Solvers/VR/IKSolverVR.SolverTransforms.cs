@@ -52,9 +52,9 @@ public partial class IKSolverVR
                 Transform? toes)
             {
                 public TransformPoses Leg { get; } = leg;
-                public TransformPoses Knee { get; } = new(knee, true, true);
-                public TransformPoses Foot { get; } = new(foot, true, true);
-                public TransformPoses Toes { get; } = new(toes, true, true);
+                public TransformPoses Knee { get; } = new(knee, false, true);
+                public TransformPoses Foot { get; } = new(foot, false, true);
+                public TransformPoses Toes { get; } = new(toes, false, true);
             }
             public class SolverTransformsArm(
                 Transform? shoulder,
@@ -64,12 +64,12 @@ public partial class IKSolverVR
             {
                 public TransformPoses Shoulder { get; } = shoulder;
                 public TransformPoses Arm { get; } = arm;
-                public TransformPoses Elbow { get; } = new(elbow, true, true);
-                public TransformPoses Wrist { get; } = new(wrist, true, true);
+                public TransformPoses Elbow { get; } = new(elbow, false, true);
+                public TransformPoses Wrist { get; } = new(wrist, false, true);
             }
 
-            public TransformPoses Root { get; } = root;
-            public TransformPoses Hips { get; } = new TransformPoses(hips, true, false);
+            public TransformPoses Root { get; } = new(root, true, false);
+            public TransformPoses Hips { get; } = new(hips, true, false);
             public TransformPoses Spine { get; } = spine;
             public TransformPoses Chest { get; } = chest;
             public TransformPoses Neck { get; } = neck;

@@ -1,5 +1,4 @@
 ﻿using Extensions;
-using System;
 using System.ComponentModel.DataAnnotations;
 using System.Numerics;
 using XREngine.Data.Colors;

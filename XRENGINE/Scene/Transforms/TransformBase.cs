@@ -44,9 +44,9 @@ namespace XREngine.Scene.Transforms
             set => SetField(ref _selectionRadius, value);
         }
 
-        private Capsule _capsule = new(Vector3.Zero, Vector3.UnitY, 0.01f, 0.5f);
+        private Capsule? _capsule = null;
         [YamlIgnore]
-        public Capsule Capsule
+        public Capsule? Capsule
         {
             get => _capsule;
             set => SetField(ref _capsule, value);
@@ -73,14 +73,14 @@ namespace XREngine.Scene.Transforms
             SetParent(parent, false, true);
         }
 
-        private void MakeCapsule()
+        private Capsule MakeCapsule()
         {
             Vector3 parentPos = Parent?.WorldTranslation ?? Vector3.Zero;
             Vector3 thisPos = WorldTranslation;
             Vector3 center = (parentPos + thisPos) / 2.0f;
             Vector3 dir = (thisPos - parentPos).Normalized();
             float halfHeight = Vector3.Distance(parentPos, thisPos) / 2.0f;
-            Capsule = new Capsule(center, dir, SelectionRadius, halfHeight);
+            return new Capsule(center, dir, SelectionRadius, halfHeight);
         }
 
         [YamlIgnore]
@@ -98,7 +98,7 @@ namespace XREngine.Scene.Transforms
 
         protected virtual RenderInfo[] GetDebugRenderInfo()
         {
-            RemakeCapsule();
+            //RemakeCapsule();
             return [RenderInfo];
         }
 
@@ -120,8 +120,8 @@ namespace XREngine.Scene.Transforms
                     RenderTranslation,
                     settings.TransformPointColor);
 
-            if (settings.RenderTransformCapsules)
-                Engine.Rendering.Debug.RenderCapsule(Capsule, settings.TransformCapsuleColor);
+            if (settings.RenderTransformCapsules && Capsule is not null)
+                Engine.Rendering.Debug.RenderCapsule(Capsule.Value, settings.TransformCapsuleColor);
         }
 
         private void ChildAdded(TransformBase e)
@@ -579,7 +579,7 @@ namespace XREngine.Scene.Transforms
         public Quaternion GetInverseWorldRotation()
             => Engine.IsRenderThread ? InverseRenderRotation : InverseWorldRotation;
 
-        public Vector3 RenderForward => Vector3.TransformNormal(Globals.Forward, RenderMatrix).Normalized();
+        public Vector3 RenderForward => Vector3.TransformNormal(Globals.Backward, RenderMatrix).Normalized();
         public Vector3 RenderUp => Vector3.TransformNormal(Globals.Up, RenderMatrix).Normalized();
         public Vector3 RenderRight => Vector3.TransformNormal(Globals.Right, RenderMatrix).Normalized();
         public Vector3 RenderTranslation => RenderMatrix.Translation;
@@ -611,7 +611,7 @@ namespace XREngine.Scene.Transforms
         /// <summary>
         /// This transform's world forward vector.
         /// </summary>
-        public Vector3 WorldForward => Vector3.TransformNormal(Globals.Forward, WorldMatrix).Normalized();
+        public Vector3 WorldForward => Vector3.TransformNormal(Globals.Backward, WorldMatrix).Normalized();
 
         /// <summary>
         /// This transform's local up vector.
@@ -624,16 +624,30 @@ namespace XREngine.Scene.Transforms
         /// <summary>
         /// This transform's local forward vector.
         /// </summary>
-        public Vector3 LocalForward => Vector3.TransformNormal(Globals.Forward, LocalMatrix).Normalized();
+        public Vector3 LocalForward => Vector3.TransformNormal(Globals.Backward, LocalMatrix).Normalized();
 
         /// <summary>
         /// This transform's position in world space.
         /// </summary>
-        public virtual Vector3 WorldTranslation => WorldMatrix.Translation;
+        public virtual Vector3 WorldTranslation
+        {
+            get
+            {
+                Matrix4x4.Decompose(WorldMatrix, out _, out _, out Vector3 translation);
+                return translation;
+            }
+        }
         /// <summary>
         /// This transform's position in local space relative to the parent.
         /// </summary>
-        public Vector3 LocalTranslation => LocalMatrix.Translation;
+        public Vector3 LocalTranslation
+        {
+            get
+            {
+                Matrix4x4.Decompose(LocalMatrix, out _, out _, out Vector3 translation);
+                return translation;
+            }
+        }
 
         public virtual Quaternion LocalRotation
         {
@@ -850,26 +864,28 @@ namespace XREngine.Scene.Transforms
 
         protected virtual void OnWorldMatrixChanged()
         {
-            RemakeCapsule();
+            //RemakeCapsule();
             World?.EnqueueRenderTransformChange(this);
             WorldMatrixChanged?.Invoke(this);
         }
 
         private void RemakeCapsule()
         {
-            MakeCapsule();
+            var c = MakeCapsule();
 
             bool axisAligned = Engine.Rendering.Settings.TransformCullingIsAxisAligned;
             if (axisAligned)
             {
-                RenderInfo.LocalCullingVolume = Capsule.GetAABB(true);
+                RenderInfo.LocalCullingVolume = c.GetAABB(true);
                 RenderInfo.CullingOffsetMatrix = Matrix4x4.Identity;
             }
             else
             {
-                RenderInfo.LocalCullingVolume = Capsule.GetAABB(false, true, out Quaternion dirToUp);
-                RenderInfo.CullingOffsetMatrix = Matrix4x4.CreateFromQuaternion(Quaternion.Normalize(Quaternion.Inverse(dirToUp))) * Matrix4x4.CreateTranslation(Capsule.Center);
+                RenderInfo.LocalCullingVolume = c.GetAABB(false, true, out Quaternion dirToUp);
+                RenderInfo.CullingOffsetMatrix = Matrix4x4.CreateFromQuaternion(Quaternion.Normalize(Quaternion.Inverse(dirToUp))) * Matrix4x4.CreateTranslation(c.Center);
             }
+
+            Capsule = c;
         }
 
         #endregion

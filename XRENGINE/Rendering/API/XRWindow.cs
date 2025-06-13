@@ -158,8 +158,16 @@ namespace XREngine.Rendering
             w.Load += Window_Load;
         }
 
+        private bool _isFocused = false;
+        public bool IsFocused
+        {
+            get => _isFocused;
+            private set => SetField(ref _isFocused, value);
+        }
+
         private void OnFocusChanged(bool focused)
         {
+            IsFocused = focused;
             FocusChanged?.Invoke(this, focused);
             AnyWindowFocusChanged?.Invoke(this, focused);
         }

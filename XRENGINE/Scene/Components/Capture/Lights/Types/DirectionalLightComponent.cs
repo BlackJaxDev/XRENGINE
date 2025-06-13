@@ -40,7 +40,7 @@ namespace XREngine.Components.Capture.Lights.Types
         {
             Parent = Transform,
             Order = ETransformOrder.TRS,
-            Translation = Globals.Forward * Scale.Z * 0.5f,
+            Translation = Globals.Backward * Scale.Z * 0.5f,
         };
 
         protected override void OnTransformChanged()
@@ -125,7 +125,7 @@ namespace XREngine.Components.Capture.Lights.Types
                     break;
                 case nameof(Scale):
                     MeshCenterAdjustMatrix = Matrix4x4.CreateScale(Scale);
-                    ShadowCameraTransform.Translation = Globals.Forward * Scale.Z * 0.5f;
+                    ShadowCameraTransform.Translation = Globals.Backward * Scale.Z * 0.5f;
                     if (ShadowCamera is not null)
                     {
                         if (ShadowCamera.Parameters is not XROrthographicCameraParameters p)

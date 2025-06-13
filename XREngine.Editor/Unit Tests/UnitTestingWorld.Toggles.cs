@@ -107,7 +107,7 @@ public static partial class UnitTestingWorld
         public bool SinglePassStereoVR = false;
         public bool RenderPhysicsDebug = false;
         public bool RenderWindowsWhileInVR = true;
-        public bool RenderTransformDebugInfo = false;
+        public bool RenderTransformDebugInfo = true;
         public bool RenderTransformPoints = true;
         public bool RenderTransformCapsules = false;
         public bool RenderTransformLines = true;

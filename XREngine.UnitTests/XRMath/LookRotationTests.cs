@@ -45,7 +45,7 @@ public class LookRotationTests
         Quaternion result = XRMath.LookRotation(forward, up);
 
         // After rotation, Globals.Forward (0,0,1) should map to (1,0,0)
-        Vector3 rotatedForward = Vector3.Transform(Globals.Forward, result);
+        Vector3 rotatedForward = Vector3.Transform(Globals.Backward, result);
         AssertAreEqual(Vector3.Normalize(forward), Vector3.Normalize(rotatedForward), Tolerance,
             "Rotated forward did not match desired forward when up was zero.");
     }
@@ -58,7 +58,7 @@ public class LookRotationTests
 
         Quaternion result = XRMath.LookRotation(forward, up);
 
-        Vector3 rotatedForward = Vector3.Transform(Globals.Forward, result);
+        Vector3 rotatedForward = Vector3.Transform(Globals.Backward, result);
         Vector3 rotatedUp = Vector3.Transform(Globals.Up, result);
 
         AssertAreEqual(Vector3.Normalize(forward), Vector3.Normalize(rotatedForward), Tolerance,
@@ -76,7 +76,7 @@ public class LookRotationTests
         Quaternion result = XRMath.LookRotation(forward, up);
 
         // Should rotate Globals.Forward (0,0,1) to (0,1,0)
-        Vector3 rotatedForward = Vector3.Transform(Globals.Forward, result);
+        Vector3 rotatedForward = Vector3.Transform(Globals.Backward, result);
         AssertAreEqual(Vector3.Normalize(forward), Vector3.Normalize(rotatedForward), Tolerance,
             "Forward axis did not align properly when forward and up are collinear.");
     }
@@ -90,7 +90,7 @@ public class LookRotationTests
         Quaternion result = XRMath.LookRotation(forward, up);
         Vector3 forwardNorm = Vector3.Normalize(forward);
 
-        Vector3 rotatedForward = Vector3.Transform(Globals.Forward, result);
+        Vector3 rotatedForward = Vector3.Transform(Globals.Backward, result);
         Vector3 rotatedUp = Vector3.Transform(Globals.Up, result);
 
         AssertAreEqual(forwardNorm, Vector3.Normalize(rotatedForward), Tolerance,
@@ -113,7 +113,7 @@ public class LookRotationTests
 
         Quaternion result = XRMath.LookRotation(forward, up);
 
-        Vector3 rotatedForward = Vector3.Transform(Globals.Forward, result);
+        Vector3 rotatedForward = Vector3.Transform(Globals.Backward, result);
         Vector3 rotatedUp = Vector3.Transform(Globals.Up, result);
 
         AssertAreEqual(Vector3.Normalize(forward), Vector3.Normalize(rotatedForward), Tolerance,
@@ -130,7 +130,7 @@ public class LookRotationTests
 
         Quaternion result = XRMath.LookRotation(forward, up);
 
-        Vector3 rotatedForward = Vector3.Transform(Globals.Forward, result);
+        Vector3 rotatedForward = Vector3.Transform(Globals.Backward, result);
         Vector3 rotatedUp = Vector3.Transform(Globals.Up, result);
 
         AssertAreEqual(Vector3.Normalize(forward), Vector3.Normalize(rotatedForward), Tolerance,
@@ -159,7 +159,7 @@ public class LookRotationTests
 
         Quaternion result = XRMath.LookRotation(forward, up);
 
-        Vector3 rotatedForward = Vector3.Transform(Globals.Forward, result);
+        Vector3 rotatedForward = Vector3.Transform(Globals.Backward, result);
         Vector3 rotatedUp = Vector3.Transform(Globals.Up, result);
 
         AssertAreEqual(Vector3.Normalize(forward), Vector3.Normalize(rotatedForward), Tolerance,

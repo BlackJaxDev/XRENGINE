@@ -104,7 +104,7 @@ public static partial class UnitTestingWorld
                 tfm.NormalizedPivot = new Vector2(0.0f, 0.0f);
                 //tfm.Width = 500.0f;
                 //tfm.Height = 500.0f;
-                riveNode.AddComponent<RiveUIComponent>()!.SetSource("RiveAssets/switch_event_example.riv");
+                riveNode.AddComponent<RiveUIComponent>()!.SetSource("RiveAssets/switcher.riv");
             }
             
             if (Toggles.AddEditorUI)
