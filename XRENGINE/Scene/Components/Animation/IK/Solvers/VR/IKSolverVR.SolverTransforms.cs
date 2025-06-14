@@ -218,7 +218,7 @@ public partial class IKSolverVR
                 {
                     pose.Transform?.RecalculateMatrices(true);
                     pose.GetDefaultLocal();
-                    pose.ResetSolvedToDefault();
+                    //pose.ResetSolvedToDefault();
                 }
             }
 

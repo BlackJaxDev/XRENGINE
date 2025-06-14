@@ -693,8 +693,8 @@ namespace XREngine.Components.Animation
             {
                 _chestTargetRotation = _headRotation * _chestRelativeRotation;
 
-                //if (arms[0] != null)
-                //    AdjustChestByHands(ref _chestTargetRotation, arms);
+                if (arms[0] != null)
+                    AdjustChestByHands(ref _chestTargetRotation, arms);
 
                 var anchorRight = _anchorRotation.Rotate(Globals.Right);
                 var anchorForward = _anchorRotation.Rotate(Globals.Forward);
@@ -916,9 +916,9 @@ namespace XREngine.Components.Animation
             }
 
             // Move the pelvis so that the head would remain fixed to the anchor
-            public void InverseTranslateToHead(LegSolver[] legs, bool limited, bool useCurrentLegMag, Vector3 offset, float w)
+            public void InverseTranslateToHead(LegSolver[] legs, bool limited, bool useCurrentLegMag, Vector3 offset, float weight)
             {
-                Vector3 delta = (_headPosition + offset - Head.SolverPosition) * w;// * (1f - pelvisPositionWeight); This makes the head lose its target when pelvisPositionWeight is between 0 and 1.
+                Vector3 delta = (_headPosition + offset - Head.SolverPosition) * weight;// * (1f - pelvisPositionWeight); This makes the head lose its target when pelvisPositionWeight is between 0 and 1.
 
                 Vector3 p = Hips.SolverPosition + delta;
                 MovePosition(limited ? LimitPelvisPosition(legs, p, useCurrentLegMag) : p);

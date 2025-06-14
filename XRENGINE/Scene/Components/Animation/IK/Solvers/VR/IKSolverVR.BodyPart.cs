@@ -63,9 +63,6 @@ namespace XREngine.Components.Animation
             public void MovePosition(Vector3 position)
             {
                 Vector3 delta = position - _bones[0].SolverPosition;
-                if (delta.LengthSquared() < float.Epsilon)
-                    return; // No movement, skip
-
                 foreach (VirtualBone bone in _bones)
                     bone.SolverPosition += delta;
             }

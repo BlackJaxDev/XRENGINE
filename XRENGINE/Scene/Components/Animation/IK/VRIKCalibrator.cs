@@ -3,6 +3,7 @@ using System.Numerics;
 using XREngine.Data.Core;
 using XREngine.Scene;
 using XREngine.Scene.Transforms;
+using static XREngine.Components.Animation.VRIKCalibrator.CalibrationData;
 using Transform = XREngine.Scene.Transforms.Transform;
 
 namespace XREngine.Components.Animation
@@ -106,7 +107,7 @@ namespace XREngine.Components.Animation
 
             CalibrationData data = new();
 
-            ik.Solver.ResetTransformToDefault();
+            //ik.Solver.ResetTransformToDefault();
 
             var root = ik.Root;
             if (root is null)
@@ -263,14 +264,7 @@ namespace XREngine.Components.Animation
                 return spine.HeadTarget;
             }
 
-            Transform headTarget;
-            if (spine.HeadTarget is not null)
-                headTarget = spine.HeadTarget;
-            else
-            {
-                headTrackerNode.NewChildWithTransform(out headTarget, "Head Target");
-                spine.HeadTarget = headTarget;
-            }
+            Transform headTarget = GetOrCreateHeadTarget(spine, headTrackerNode, "Head Target");
 
             head.RecalculateMatrices(true);
             headTarget.SetWorldTranslationRotation(head.WorldTranslation, head.WorldRotation);
@@ -315,14 +309,7 @@ namespace XREngine.Components.Animation
 
             if (hipTracker != null && hips != null)
             {
-                Transform hipsTarget;
-                if (spine.HipsTarget is not null)
-                    hipsTarget = spine.HipsTarget;
-                else
-                {
-                    hipTrackerNode.NewChildWithTransform(out hipsTarget, "Hips Target");
-                    spine.HipsTarget = hipsTarget;
-                }
+                Transform hipsTarget = GetOrCreateHipsTarget(spine, hipTrackerNode, "Hips Target");
 
                 hips.RecalculateMatrices(true);
                 hipsTarget.SetWorldTranslationRotation(hips.WorldTranslation, hips.WorldRotation);
@@ -379,14 +366,7 @@ namespace XREngine.Components.Animation
             string name,
             float rightMultiplier)
         {
-            Transform target;
-            if (leg.Target is not null)
-                target = leg.Target;
-            else
-            {
-                trackerNode.NewChildWithTransform(out target, $"{name} Leg Target");
-                leg.Target = target;
-            }
+            Transform target = GetOrAddLegTarget(trackerNode, leg, $"{name} Leg Target");
 
             //Space of the tracker heading
             Quaternion trackerSpace = tracker.WorldRotation * XRMath.LookRotation(settings.FootTrackerForward, settings.FootTrackerUp);
@@ -420,19 +400,10 @@ namespace XREngine.Components.Animation
             leg.PositionWeight = 1.0f;
             leg.RotationWeight = 1.0f;
 
-            Transform bendGoal;
-            if (leg.KneeTarget is not null)
-                bendGoal = leg.KneeTarget;
-            else
-            {
-                trackerNode.NewChildWithTransform(out bendGoal, $"{name} Leg Bend Goal");
-                leg.KneeTarget = bendGoal;
-            }
-
-            bendGoal.SetWorldTranslation(bendGoalTranslation);
-            bendGoal.RecalculateMatrices(true);
-
-            leg.KneeTargetWeight = 1.0f;
+            //Transform bendGoal = GetOrCreateKneeTarget(leg, trackerNode, $"{name} Leg Bend Goal");
+            //bendGoal.SetWorldTranslation(bendGoalTranslation);
+            //bendGoal.RecalculateMatrices(true);
+            leg.KneeTargetWeight = 0.0f;
         }
 
         ///// <summary>
@@ -603,18 +574,84 @@ namespace XREngine.Components.Animation
         //    leftArm.RotationWeight = weightVal;
         //}
 
+        #region Target Transforms
+
+        private static Transform GetOrCreateHeadTarget(IKSolverVR.SpineSolver spine, SceneNode headTrackerNode, string name)
+        {
+            Transform headTarget;
+            if (spine.HeadTarget is null)
+            {
+                headTrackerNode.NewChildWithTransform(out headTarget, name);
+                //headTarget.Rotation = Quaternion.Identity;
+                //headTarget.Translation = Vector3.Zero;
+                spine.HeadTarget = headTarget;
+            }
+            else
+                headTarget = spine.HeadTarget;
+            return headTarget;
+        }
+
+        private static Transform GetOrCreateHipsTarget(IKSolverVR.SpineSolver spine, SceneNode hipTrackerNode, string name)
+        {
+            Transform hipsTarget;
+            if (spine.HipsTarget is null)
+            {
+                hipTrackerNode.NewChildWithTransform(out hipsTarget, name);
+                //hipsTarget.Rotation = Quaternion.Identity;
+                //hipsTarget.Translation = Vector3.Zero;
+                spine.HipsTarget = hipsTarget;
+            }
+            else
+                hipsTarget = spine.HipsTarget;
+            return hipsTarget;
+        }
+
+        private static Transform GetOrCreateKneeTarget(IKSolverVR.LegSolver leg, SceneNode trackerNode, string name)
+        {
+            Transform bendGoal;
+            if (leg.KneeTarget is null)
+            {
+                trackerNode.NewChildWithTransform(out bendGoal, name);
+                //bendGoal.Rotation = Quaternion.Identity;
+                //bendGoal.Translation = Vector3.Zero;
+                leg.KneeTarget = bendGoal;
+            }
+            else
+                bendGoal = leg.KneeTarget;
+            return bendGoal;
+        }
+
+        private static Transform GetOrAddLegTarget(SceneNode trackerNode, IKSolverVR.LegSolver leg, string name)
+        {
+            Transform target;
+            if (leg.Target is null)
+            {
+                trackerNode.NewChildWithTransform(out target, name);
+                target.Rotation = Quaternion.Identity;
+                target.Translation = Vector3.Zero;
+                leg.Target = target;
+            }
+            else
+                target = leg.Target;
+            return target;
+        }
+
         private static Transform GetOrAddHandTarget(SceneNode handNode, IKSolverVR.ArmSolver arm, string name)
         {
             Transform target;
             if (arm.Target is null)
             {
                 handNode.NewChildWithTransform(out target, name);
+                target.Rotation = Quaternion.Identity;
+                target.Translation = Vector3.Zero;
                 arm.Target = target;
             }
             else
                 target = arm.Target;
             return target;
         }
+
+        #endregion
 
         //private static void CalibrateHips(
         //    VRIKSolverComponent ik,
@@ -638,7 +675,7 @@ namespace XREngine.Components.Animation
         //            hipsTarget = spine.HipsTarget;
         //        else
         //            hipTrackerNode.NewChildWithTransform(out hipsTarget, "Hips Target");
-                
+
         //        data.Hips.ApplyTo(hipsTarget);
         //        spine.HipsTarget = hipsTarget;
 
@@ -679,7 +716,7 @@ namespace XREngine.Components.Animation
         //        headTarget = spine.HeadTarget;
         //    else
         //        headTrackerNode.NewChildWithTransform(out headTarget, "Head Target");
-            
+
         //    data.Head?.ApplyTo(headTarget);
         //    spine.HeadTarget = headTarget;
         //}
@@ -750,7 +787,7 @@ namespace XREngine.Components.Animation
         //        target = leg.Target;
         //    else
         //        trackerNode.NewChildWithTransform(out target, $"{sideName} Foot Target");
-            
+
         //    foot?.ApplyTo(target);
         //    leg.Target = target;
         //    leg.PositionWeight = 1.0f;
@@ -761,7 +798,7 @@ namespace XREngine.Components.Animation
         //        bendGoal = leg.BendGoal;
         //    else
         //        trackerNode.NewChildWithTransform(out bendGoal, $"{sideName} Leg Bend Goal");
-            
+
         //    targetLegGoal?.ApplyTo(bendGoal);
         //    leg.BendGoal = bendGoal;
         //    leg.BendGoalWeight = 1.0f;

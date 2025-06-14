@@ -110,6 +110,8 @@ namespace XREngine.Components.Animation
 
                     _transform.Parent?.RecalculateMatrices(true);
 
+                    _transform.SetWorldRotation(Quaternion.Slerp(InputWorld.Rotation, SolvedWorld.Rotation, weight));
+
                     if (IsRootOrHips)
                         _transform.SetWorldTranslation(Vector3.Lerp(InputWorld.Translation, SolvedWorld.Translation, weight));
 
@@ -126,7 +128,6 @@ namespace XREngine.Components.Animation
                     //        _transform.SetWorldTranslation(worldPos);
                     //}
 
-                    _transform.SetWorldRotation(Quaternion.Slerp(InputWorld.Rotation, SolvedWorld.Rotation, weight));
                     _transform.RecalculateMatrices(true);
                 }
 

@@ -28,7 +28,10 @@ namespace XREngine.Components.Animation
 
             private Transform? _target = null;
 			/// <summary>
-			/// The hand target. This should not be the hand controller itself, but a child GameObject parented to it so you could adjust its position/rotation to match the orientation of the hand bone. The best practice for setup would be to move the hand controller to the avatar's hand as it it was held by the avatar, duplicate the avatar's hand bone and parent it to the hand controller. Then assign the duplicate to this slot.
+			/// The hand target.
+            /// This should not be the hand controller itself, but a child GameObject parented to it so you could adjust its position/rotation to match the orientation of the hand bone.
+            /// The best practice for setup would be to move the hand controller to the avatar's hand as it it was held by the avatar, duplicate the avatar's hand bone and parent it to the hand controller.
+            /// Then assign the duplicate to this slot.
 			/// </summary>
 			public Transform? Target
             {
@@ -38,7 +41,8 @@ namespace XREngine.Components.Animation
 
 			private float _positionWeight = 1.0f;
 			/// <summary>
-			/// Positional weight of the hand target. Note that if you have nulled the target, the hand will still be pulled to the last position of the target until you set this value to 0.
+			/// Positional weight of the hand target.
+            /// Note that if you have nulled the target, the hand will still be pulled to the last position of the target until you set this value to 0.
 			/// </summary>
 			[Range(0.0f, 1.0f)]
 			public float PositionWeight
@@ -49,7 +53,8 @@ namespace XREngine.Components.Animation
 
 			private float _rotationWeight = 1.0f;
 			/// <summary>
-			/// Rotational weight of the hand target. Note that if you have nulled the target, the hand will still be rotated to the last rotation of the target until you set this value to 0.
+			/// Rotational weight of the hand target.
+            /// Note that if you have nulled the target, the hand will still be rotated to the last rotation of the target until you set this value to 0.
 			/// </summary>
 			[Range(0.0f, 1.0f)]
 			public float RotationWeight
@@ -259,7 +264,7 @@ namespace XREngine.Components.Animation
             {
                 base.Visualize(color);
 
-                string side = isLeft ? "Right" : "Left";
+                string side = isLeft ? "Left" : "Right";
 
                 if (Target is not null)
                 {
@@ -473,7 +478,14 @@ namespace XREngine.Components.Animation
 
                 bendNormal = GetBendNormal(TargetPosition - UpperArm.SolverPosition);
                 int firstBoneIndex = _hasShoulder ? 1 : 0;
-                VirtualBone.SolveTrigonometric(_bones, firstBoneIndex, firstBoneIndex + 1, firstBoneIndex + 2, TargetPosition, bendNormal, _positionWeight);
+                VirtualBone.SolveTrigonometric(
+                    _bones,
+                    firstBoneIndex,
+                    firstBoneIndex + 1,
+                    firstBoneIndex + 2,
+                    TargetPosition,
+                    bendNormal,
+                    _positionWeight);
             }
 
             private void FullShoulderSolve(out Vector3 bendNormal)

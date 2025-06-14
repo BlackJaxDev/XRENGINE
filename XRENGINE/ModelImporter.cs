@@ -273,7 +273,7 @@ namespace XREngine
             {
                 rootNode = new(Path.GetFileNameWithoutExtension(SourceFilePath));
                 _nodeTransforms.Clear();
-                ProcessNode(true, scene.RootNode, scene, rootNode, null, Matrix4x4.Identity, removeAssimpFBXNodes);
+                ProcessNode(true, scene.RootNode, scene, rootNode, null, Matrix4x4.CreateScale(1.0f, 1.0f, -1.0f), removeAssimpFBXNodes);
                 NormalizeNodeScales(scene, rootNode);
             }
 
@@ -380,11 +380,11 @@ namespace XREngine
             AScene scene,
             SceneNode parentSceneNode,
             TransformBase? rootTransform,
-            Matrix4x4 parentWorldMatrix,
+            Matrix4x4 rootTransformMatrix,
             bool removeAssimpFBXNodes = true,
             Matrix4x4? fbxMatrixParent = null)
         {
-            Matrix4x4 nodeTransform = node.Transform.Transposed();
+            Matrix4x4 nodeTransform = node.Transform.Transposed() * rootTransformMatrix;
             Matrix4x4.Decompose(nodeTransform, out Vector3 scale, out _, out _);
 
             SceneNode sceneNode = CreateNode(
@@ -421,7 +421,7 @@ namespace XREngine
                     scene,
                     sceneNode,
                     rootTransform,
-                    sceneNode.Transform.LocalMatrix * parentWorldMatrix,
+                    Matrix4x4.Identity,
                     removeAssimpFBXNodes,
                     fbxMatrix);
             }

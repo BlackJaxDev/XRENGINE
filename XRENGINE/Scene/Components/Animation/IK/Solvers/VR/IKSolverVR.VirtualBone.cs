@@ -56,6 +56,13 @@ namespace XREngine.Components.Animation
                 set => SetField(ref _axis, value);
             }
 
+            private float _lengthSquared = 0.0f;
+            public float LengthSquared
+            {
+                get => _lengthSquared;
+                set => SetField(ref _lengthSquared, value);
+            }
+
             /// <summary>
             /// Applies a swing rotation to the bone chain starting from the specified index.
             /// </summary>
@@ -103,10 +110,13 @@ namespace XREngine.Components.Animation
                     else
                     {
                         Vector3 diff = bones[i + 1].SolverPosition - bone.SolverPosition;
-                        float ls = diff.LengthSquared();
-                        float l = MathF.Sqrt(ls);
 
+                        float ls = diff.LengthSquared();
+                        bone.LengthSquared = ls;
+
+                        float l = MathF.Sqrt(ls);
                         bone.Length = l;
+
                         bone.Axis = Quaternion.Inverse(bone.SolverRotation).Rotate(diff);
 
                         length += l;
@@ -172,9 +182,6 @@ namespace XREngine.Components.Animation
                 RotateAroundPoint(bones, index, bones[index].SolverPosition, q);
             }
 
-            /// <summary>
-            /// Solve the bone chain virtually using both solverPositions and SolverRotations.
-            /// </summary>
             public static void SolveTrigonometric(VirtualBone[] bones, int first, int second, int third, Vector3 targetPosition, Vector3 bendNormal, float weight)
             {
                 if (weight <= 0.0f)
@@ -183,27 +190,17 @@ namespace XREngine.Components.Animation
                 // Direction of the limb in solver
                 targetPosition = Vector3.Lerp(bones[third].SolverPosition, targetPosition, weight);
 
-                Vector3 dir = targetPosition - bones[first].SolverPosition;
-
-                // Distance between the first and the last transform solver positions
-                float sqrMag = dir.LengthSquared();
-                if (sqrMag == 0.0f)
-                    return;
-                float length = MathF.Sqrt(sqrMag);
-
-                float sqrMag1 = (bones[second].SolverPosition - bones[first].SolverPosition).LengthSquared();
-                float sqrMag2 = (bones[third].SolverPosition - bones[second].SolverPosition).LengthSquared();
-
-                // Get the general world space bending direction
-                Vector3 bendDir = Vector3.Cross(bendNormal, dir);
-
-                // Get the direction to the trigonometrically solved position of the second transform
-                Vector3 toBendPoint = GetDirectionToBendPoint(dir, length, bendDir, sqrMag1, sqrMag2);
+                Vector3 bendDir = GetBendDirection(
+                    bones,
+                    first,
+                    second,
+                    targetPosition,
+                    bendNormal);
 
                 // Position the second transform
                 Quaternion q1 = XRMath.RotationBetweenVectors(
                     bones[second].SolverPosition - bones[first].SolverPosition,
-                    toBendPoint);
+                    bendDir);
 
                 if (weight < 1.0f)
                     q1 = Quaternion.Lerp(Quaternion.Identity, q1, weight);
@@ -220,15 +217,32 @@ namespace XREngine.Components.Animation
                 RotateAroundPoint(bones, second, bones[second].SolverPosition, q2);
             }
 
-            //Calculates the bend direction based on the law of cosines. NB! Magnitude of the returned vector does not equal to the length of the first bone!
-            private static Vector3 GetDirectionToBendPoint(Vector3 direction, float directionMag, Vector3 bendDirection, float sqrMag1, float sqrMag2)
+            private static Vector3 GetBendDirection(
+                VirtualBone[] bones,
+                int first,
+                int second,
+                Vector3 targetPosition,
+                Vector3 bendNormal)
             {
-                if (direction == Vector3.Zero)
+                Vector3 dir = targetPosition - bones[first].SolverPosition;
+                if (dir == Vector3.Zero)
                     return Vector3.Zero;
 
-                float x = ((directionMag * directionMag) + (sqrMag1 - sqrMag2)) / 2.0f / directionMag;
+                // Distance between the first and the last transform solver positions
+                float sqrMag = dir.LengthSquared();
+                if (sqrMag < float.Epsilon)
+                    return Vector3.Zero;
+
+                float dirMag = MathF.Sqrt(sqrMag);
+                float sqrMag1 = bones[first].LengthSquared;
+                float sqrMag2 = bones[second].LengthSquared;
+
+                float x = ((dirMag * dirMag) + (sqrMag1 - sqrMag2)) / 2.0f / dirMag;
                 float y = (float)Math.Sqrt((sqrMag1 - x * x).ClampMin(0.0f));
-                return XRMath.LookRotation(direction, bendDirection).Rotate(new Vector3(0.0f, y, -x));
+
+                //Vector3 yDirection = Vector3.Cross(bendNormal, dir / dirMag);
+                Vector3 lookRot = Vector3.Cross(bendNormal, dir);
+                return XRMath.LookRotation(dir, lookRot).Rotate(new Vector3(0.0f, y, -x));
             }
 
             // TODO Move to IKSolverFABRIK

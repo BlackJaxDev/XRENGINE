@@ -247,7 +247,7 @@ public static partial class UnitTestingWorld
                             headPos.Y += height;
                             Vector3 headTranslation = player.EyeOffsetFromHead + headPos;
 
-                            hmd?.Transform?.DeriveWorldMatrix(Matrix4x4.CreateWorld(headTranslation, Globals.Backward, Globals.Up), false);
+                            hmd?.Transform?.DeriveWorldMatrix(Matrix4x4.CreateWorld(headTranslation, Globals.Forward, Globals.Up), false);
                             rightController?.DeriveWorldMatrix(humanComp.Right.Wrist.Node!.Transform.WorldMatrix, false);
                             leftController?.DeriveWorldMatrix(humanComp.Left.Wrist.Node!.Transform.WorldMatrix, false);
 

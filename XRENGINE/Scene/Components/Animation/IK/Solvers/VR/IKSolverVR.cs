@@ -511,10 +511,10 @@ namespace XREngine.Components.Animation
 
             //_lastLocomotionWeight = _locomotion._weight;
 
-            //if (_solverTransforms.HasLegs)
-            //    SolveLegs();
-            //else
-            //    _spine.InverseTranslateToHead(_legs, false, false, _bodyOffset, 1.0f);
+            if (_solverTransforms.HasLegs)
+                SolveLegs();
+            else
+                _spine.InverseTranslateToHead(_legs, false, false, _bodyOffset, 1.0f);
 
             if (_solverTransforms.HasArms)
                 SolveArms();
