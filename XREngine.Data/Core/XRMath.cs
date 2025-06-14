@@ -515,29 +515,26 @@ namespace XREngine.Data.Core
         /// </summary>
         public static void AxisAngleBetween(Vector3 initialVector, Vector3 finalVector, out Vector3 axis, out float rad)
         {
-            initialVector = initialVector.Normalized();
-            finalVector = finalVector.Normalized();
-
-            float dot = Vector3.Dot(initialVector, finalVector);
+            float dot = Vector3.Dot(initialVector.Normalized(), finalVector.Normalized());
 
             //dot is the cosine adj/hyp ratio between the two vectors, so
             //dot == 1 is same direction
             //dot == -1 is opposite direction
             //dot == 0 is a 90 degree angle
 
-            if (dot > 0.999f)
+            if (dot > 1.0f - float.Epsilon)
             {
                 axis = Globals.Backward;
                 rad = 0.0f;
             }
-            else if (dot < -0.999f)
+            else if (dot < -1.0f + float.Epsilon)
             {
                 axis = -Globals.Backward;
                 rad = DegToRad(180.0f);
             }
             else
             {
-                axis = Vector3.Cross(initialVector, finalVector);
+                axis = Vector3.Cross(initialVector, finalVector).Normalized();
                 rad = MathF.Acos(dot);
             }
         }
