@@ -327,8 +327,8 @@ public static partial class UnitTestingWorld
                 var knee = humanComp!.Right.Knee?.Node?.Transform;
                 var leg = humanComp!.Right.Leg?.Node?.Transform;
 
-                leg?.RegisterAnimationTick<Scene.Transforms.Transform>(t => t.Rotation = Quaternion.CreateFromAxisAngle(Globals.Right, XRMath.DegToRad(180 - 90.0f * (MathF.Cos(Engine.ElapsedTime) * 0.5f + 0.5f))));
-                knee?.RegisterAnimationTick<Scene.Transforms.Transform>(t => t.Rotation = Quaternion.CreateFromAxisAngle(Globals.Right, XRMath.DegToRad(90.0f * (MathF.Cos(Engine.ElapsedTime) * 0.5f + 0.5f))));
+                leg?.RegisterAnimationTick<Transform>(t => t.Rotation = Quaternion.CreateFromAxisAngle(Globals.Right, XRMath.DegToRad(180 - 90.0f * (MathF.Cos(Engine.ElapsedTime) * 0.5f + 0.5f))));
+                knee?.RegisterAnimationTick<Transform>(t => t.Rotation = Quaternion.CreateFromAxisAngle(Globals.Right, XRMath.DegToRad(90.0f * (MathF.Cos(Engine.ElapsedTime) * 0.5f + 0.5f))));
 
                 //var rootTfm = rootNode.FirstChild.GetTransformAs<Transform>(true)!;
                 ////rotate the root node in a circle, but still facing forward

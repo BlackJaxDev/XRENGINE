@@ -273,7 +273,7 @@ namespace XREngine
             {
                 rootNode = new(Path.GetFileNameWithoutExtension(SourceFilePath));
                 _nodeTransforms.Clear();
-                ProcessNode(true, scene.RootNode, scene, rootNode, null, Matrix4x4.CreateScale(1.0f, 1.0f, -1.0f), removeAssimpFBXNodes);
+                ProcessNode(true, scene.RootNode, scene, rootNode, null, Matrix4x4.Identity, removeAssimpFBXNodes);
                 NormalizeNodeScales(scene, rootNode);
             }
 
@@ -303,7 +303,8 @@ namespace XREngine
             _assimp.SetConfig(new BooleanPropertyConfig(AiConfigs.AI_CONFIG_IMPORT_FBX_READ_TEXTURES, true));
             _assimp.SetConfig(new BooleanPropertyConfig(AiConfigs.AI_CONFIG_GLOB_MULTITHREADING, multiThread));
             _assimp.Scale = scaleConversion;
-            _assimp.XAxisRotation = rotate;
+            _assimp.XAxisRotation = -rotate;
+            _assimp.ZAxisRotation = 180.0f;
         }
 
         //TODO: more extreme idea: allocate all initial meshes, and sequentially populate every mesh's buffers in parallel

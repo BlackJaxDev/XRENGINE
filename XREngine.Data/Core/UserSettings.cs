@@ -21,7 +21,7 @@ namespace XREngine
         private IVector2 _windowedResolution = new(1920, 1080);
         private double _debugOutputRecencySeconds = 0.0;
         private bool _disableAudioOnDefocus = false;
-        private float? _unfocusedTargetFramesPerSecond = 10;
+        private float? _unfocusedTargetFramesPerSecond = null;
 
         public EVSyncMode VSync
         {

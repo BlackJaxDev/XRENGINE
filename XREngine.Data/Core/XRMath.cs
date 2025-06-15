@@ -1509,7 +1509,7 @@ namespace XREngine.Data.Core
             if (clampWeight <= 0.0f)
                 return rotation;
 
-            float angle = AngleBetween(Quaternion.Identity, rotation);
+            float angle = DegreesBetween(Quaternion.Identity, rotation);
             float dot = 1.0f - (angle / 180.0f);
             float targetClampScale = (1.0f - ((clampWeight - dot) / (1.0f - dot))).Clamp(0.0f, 1.0f);
             float clampScale = (dot / clampWeight).Clamp(0.0f, 1.0f);
@@ -1521,14 +1521,17 @@ namespace XREngine.Data.Core
             return Quaternion.Slerp(Quaternion.Identity, rotation, clampScale * targetClampScale);
         }
 
-        private static float AngleBetween(Quaternion from, Quaternion to)
+        public static float DegreesBetween(Quaternion from, Quaternion to)
+            => float.RadiansToDegrees(RadiansBetween(from, to));
+
+        public static float RadiansBetween(Quaternion from, Quaternion to)
         {
             // Calculate the dot product and clamp it between -1 and 1
             float dot = Quaternion.Dot(from, to);
             dot = MathF.Min(MathF.Max(dot, -1.0f), 1.0f);
 
             // The angle between two quaternions is defined as 2 * acos(|dot|)
-            return float.RadiansToDegrees(2.0f * MathF.Acos(MathF.Abs(dot)));
+            return 2.0f * MathF.Acos(MathF.Abs(dot));
         }
 
         /// <summary>
@@ -1997,7 +2000,7 @@ namespace XREngine.Data.Core
 
         public static Quaternion RotateTowards(Quaternion from, Quaternion to, float maxDegreesDelta)
         {
-            float angle = AngleBetween(from, to);
+            float angle = DegreesBetween(from, to);
             if (angle == 0f)
                 return to;
             float t = MathF.Min(1f, maxDegreesDelta / angle);

@@ -383,7 +383,7 @@ namespace XREngine.Components.VR
 
             Transform characterTfm = h.Transform!.SceneNode!.GetTransformAs<Transform>(true)!;
             Transform footTfm = characterTfm.Parent!.SceneNode!.GetTransformAs<Transform>(true)!;
-            Transform playspaceTfm = characterTfm.Parent!.FirstChild()!.SceneNode!.GetTransformAs<Transform>(true)!;
+            //Transform playspaceTfm = characterTfm.Parent!.FirstChild()!.SceneNode!.GetTransformAs<Transform>(true)!;
             //TransformBase rotationNode = footNode.Parent!;
             //TransformBase rigidBodyNode = rotationNode.Parent!;
             CharacterMovement3DComponent? movement = GetCharacterMovement();
@@ -427,7 +427,7 @@ namespace XREngine.Components.VR
             var currPos = playspaceRootTfm.WorldTranslation;
 
             //Move character literally in the same direction as the headset, so opposite the opposite
-            var moveDelta = -(currPos - lastPos);
+            var moveDelta = lastPos - currPos;
             float dx = moveDelta.X;
             float dz = moveDelta.Z;
             GetCharacterMovement()?.AddLiteralInputDelta(new Vector3(dx, 0.0f, dz));
@@ -653,10 +653,11 @@ namespace XREngine.Components.VR
             var rootTfm = h.SceneNode.Transform;
             var headTfm = headNode.Transform;
 
-            float eyeY = headTfm.WorldMatrix.Translation.Y + EyeOffsetFromHead.Y;
-            float footY = rootTfm.WorldMatrix.Translation.Y;
+            float eyeY = headTfm.BindMatrix.Translation.Y + EyeOffsetFromHead.Y;
+            float footY = rootTfm.BindMatrix.Translation.Y;
             float height = eyeY - footY;
 
+            Debug.Out($"Calculated model height as {height}");
             Engine.VRState.ModelHeight = height;
         }
 

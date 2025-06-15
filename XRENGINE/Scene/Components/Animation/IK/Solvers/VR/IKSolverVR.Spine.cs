@@ -200,7 +200,7 @@ namespace XREngine.Components.Animation
                 set => SetField(ref _chestClampWeight, value);
             }
 
-            private float _rotateChestByHands = 1.0f;
+            private float _rotateChestByHands = 0.0f;
             /// <summary>
             /// The amount of rotation applied to the chest based on hand positions.
             /// </summary>
@@ -698,10 +698,9 @@ namespace XREngine.Components.Animation
 
                 var anchorRight = _anchorRotation.Rotate(Globals.Right);
                 var anchorForward = _anchorRotation.Rotate(Globals.Forward);
-
                 var rootUp = rootBone.InputRotation.Rotate(Globals.Up);
 
-                ForwardDir = Vector3.Cross(anchorRight, rootUp) + anchorForward;
+                ForwardDir = (Vector3.Cross(rootUp, anchorRight) + anchorForward).Normalized();
             }
 
             public void Solve(
@@ -897,7 +896,7 @@ namespace XREngine.Components.Animation
                 c.X += pLeft.Z * MathF.Abs(pLeft.Z);
                 c.X += pRight.X * MathF.Abs(pRight.X);
                 c.X -= pRight.Z * MathF.Abs(pRight.Z);
-                c.X *= 5f * _rotateChestByHands;
+                c.X *= 5.0f * _rotateChestByHands;
 
                 float angle = MathF.Atan2(c.X, c.Z);
                 Quaternion q = Quaternion.CreateFromAxisAngle(_rootRotation.Rotate(Globals.Up), angle);
@@ -943,8 +942,8 @@ namespace XREngine.Components.Animation
                 //RotateAroundPoint will move the head solver position
                 deltaPosition -= Head.SolverPosition - lastHeadPos;
 
-                // Position
-                // Move the body back when head is moving down
+                //Position
+                //Move the body back when head is moving down
                 Vector3 rootForward = _rootRotation.Rotate(Globals.Forward);
                 float deltaY = XRMath.ExtractVertical(deltaPosition, _rootRotation.Rotate(Globals.Up), 1.0f).Length();
                 if (scale > 0.0f)
