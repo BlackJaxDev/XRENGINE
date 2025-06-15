@@ -1,4 +1,5 @@
 ﻿using Extensions;
+using NAudio.SoundFont;
 using System.Numerics;
 using System.Reflection;
 using XREngine.Components;
@@ -95,55 +96,57 @@ namespace XREngine.Rendering.UI
         {
             base.RegisterInput(input);
 
-            input.RegisterKeyStateChange(EKey.A, A);
-            input.RegisterKeyStateChange(EKey.B, B);
-            input.RegisterKeyStateChange(EKey.C, C);
-            input.RegisterKeyStateChange(EKey.D, D);
-            input.RegisterKeyStateChange(EKey.E, E);
-            input.RegisterKeyStateChange(EKey.F, F);
-            input.RegisterKeyStateChange(EKey.G, G);
-            input.RegisterKeyStateChange(EKey.H, H);
-            input.RegisterKeyStateChange(EKey.I, I);
-            input.RegisterKeyStateChange(EKey.J, J);
-            input.RegisterKeyStateChange(EKey.K, K);
-            input.RegisterKeyStateChange(EKey.L, L);
-            input.RegisterKeyStateChange(EKey.M, M);
-            input.RegisterKeyStateChange(EKey.N, N);
-            input.RegisterKeyStateChange(EKey.O, O);
-            input.RegisterKeyStateChange(EKey.P, P);
-            input.RegisterKeyStateChange(EKey.Q, Q);
-            input.RegisterKeyStateChange(EKey.R, R);
-            input.RegisterKeyStateChange(EKey.S, S);
-            input.RegisterKeyStateChange(EKey.T, T);
-            input.RegisterKeyStateChange(EKey.U, U);
-            input.RegisterKeyStateChange(EKey.V, V);
-            input.RegisterKeyStateChange(EKey.W, W);
-            input.RegisterKeyStateChange(EKey.X, X);
-            input.RegisterKeyStateChange(EKey.Y, Y);
-            input.RegisterKeyStateChange(EKey.Z, Z);
-            input.RegisterKeyStateChange(EKey.Number0, Number0);
-            input.RegisterKeyStateChange(EKey.Number1, Number1);
-            input.RegisterKeyStateChange(EKey.Number2, Number2);
-            input.RegisterKeyStateChange(EKey.Number3, Number3);
-            input.RegisterKeyStateChange(EKey.Number4, Number4);
-            input.RegisterKeyStateChange(EKey.Number5, Number5);
-            input.RegisterKeyStateChange(EKey.Number6, Number6);
-            input.RegisterKeyStateChange(EKey.Number7, Number7);
-            input.RegisterKeyStateChange(EKey.Number8, Number8);
-            input.RegisterKeyStateChange(EKey.Number9, Number9);
-            input.RegisterKeyStateChange(EKey.Tilde, Tilde);
-            input.RegisterKeyStateChange(EKey.Grave, Grave);
-            input.RegisterKeyStateChange(EKey.Minus, Minus);
-            input.RegisterKeyStateChange(EKey.Equal, Equal);
-            input.RegisterKeyStateChange(EKey.BracketLeft, BracketLeft);
-            input.RegisterKeyStateChange(EKey.BracketRight, BracketRight);
-            input.RegisterKeyStateChange(EKey.Semicolon, Semicolon);
-            input.RegisterKeyStateChange(EKey.Apostrophe, Apostrophe);
-            input.RegisterKeyStateChange(EKey.Comma, Comma);
-            input.RegisterKeyStateChange(EKey.Period, Period);
-            input.RegisterKeyStateChange(EKey.Slash, Slash);
-            input.RegisterKeyStateChange(EKey.BackSlash, BackSlash);
-            //input.RegisterKeyStateChange(EKey.NonUSBackSlash, NonUSBackSlash);
+            input.RegisterKeyCharacter(OnCharacterTyped);
+            //input.RegisterKeyStateChange(EKey.A, A);
+            //input.RegisterKeyStateChange(EKey.B, B);
+            //input.RegisterKeyStateChange(EKey.C, C);
+            //input.RegisterKeyStateChange(EKey.D, D);
+            //input.RegisterKeyStateChange(EKey.E, E);
+            //input.RegisterKeyStateChange(EKey.F, F);
+            //input.RegisterKeyStateChange(EKey.G, G);
+            //input.RegisterKeyStateChange(EKey.H, H);
+            //input.RegisterKeyStateChange(EKey.I, I);
+            //input.RegisterKeyStateChange(EKey.J, J);
+            //input.RegisterKeyStateChange(EKey.K, K);
+            //input.RegisterKeyStateChange(EKey.L, L);
+            //input.RegisterKeyStateChange(EKey.M, M);
+            //input.RegisterKeyStateChange(EKey.N, N);
+            //input.RegisterKeyStateChange(EKey.O, O);
+            //input.RegisterKeyStateChange(EKey.P, P);
+            //input.RegisterKeyStateChange(EKey.Q, Q);
+            //input.RegisterKeyStateChange(EKey.R, R);
+            //input.RegisterKeyStateChange(EKey.S, S);
+            //input.RegisterKeyStateChange(EKey.T, T);
+            //input.RegisterKeyStateChange(EKey.U, U);
+            //input.RegisterKeyStateChange(EKey.V, V);
+            //input.RegisterKeyStateChange(EKey.W, W);
+            //input.RegisterKeyStateChange(EKey.X, X);
+            //input.RegisterKeyStateChange(EKey.Y, Y);
+            //input.RegisterKeyStateChange(EKey.Z, Z);
+            //input.RegisterKeyStateChange(EKey.Number0, Number0);
+            //input.RegisterKeyStateChange(EKey.Number1, Number1);
+            //input.RegisterKeyStateChange(EKey.Number2, Number2);
+            //input.RegisterKeyStateChange(EKey.Number3, Number3);
+            //input.RegisterKeyStateChange(EKey.Number4, Number4);
+            //input.RegisterKeyStateChange(EKey.Number5, Number5);
+            //input.RegisterKeyStateChange(EKey.Number6, Number6);
+            //input.RegisterKeyStateChange(EKey.Number7, Number7);
+            //input.RegisterKeyStateChange(EKey.Number8, Number8);
+            //input.RegisterKeyStateChange(EKey.Number9, Number9);
+            //input.RegisterKeyStateChange(EKey.Tilde, Tilde);
+            //input.RegisterKeyStateChange(EKey.Grave, Grave);
+            //input.RegisterKeyStateChange(EKey.Minus, Minus);
+            //input.RegisterKeyStateChange(EKey.Equal, Equal);
+            //input.RegisterKeyStateChange(EKey.BracketLeft, BracketLeft);
+            //input.RegisterKeyStateChange(EKey.BracketRight, BracketRight);
+            //input.RegisterKeyStateChange(EKey.Semicolon, Semicolon);
+            //input.RegisterKeyStateChange(EKey.Apostrophe, Apostrophe);
+            //input.RegisterKeyStateChange(EKey.Comma, Comma);
+            //input.RegisterKeyStateChange(EKey.Period, Period);
+            //input.RegisterKeyStateChange(EKey.Slash, Slash);
+            //input.RegisterKeyStateChange(EKey.BackSlash, BackSlash);
+            ////input.RegisterKeyStateChange(EKey.NonUSBackSlash, NonUSBackSlash);
+            ///
             input.RegisterKeyStateChange(EKey.Space, Space);
             input.RegisterKeyStateChange(EKey.Backspace, Backspace);
             input.RegisterKeyStateChange(EKey.Delete, Delete);
@@ -153,6 +156,11 @@ namespace XREngine.Rendering.UI
             input.RegisterKeyStateChange(EKey.ShiftRight, ShiftRight);
             input.RegisterKeyStateChange(EKey.CapsLock, CapsLock);
             input.RegisterKeyStateChange(EKey.Enter, Enter);
+        }
+
+        private void OnCharacterTyped(char character)
+        {
+            AddChar(true, character.ToString());
         }
 
         private void Enter(bool pressed)

@@ -57,6 +57,8 @@ namespace XREngine.Input.Devices
         /// <param name="func"></param>
         public abstract void RegisterKeyStateChange(EKey button, DelButtonState func);
         public abstract void RegisterKeyEvent(EKey button, EButtonInputType type, System.Action func);
+        public abstract void RegisterKeystroke(BaseKeyboard.DelKeystroke func);
+        public abstract void RegisterKeyCharacter(Action<char> func);
 
         public abstract void RegisterAxisButtonPressed(EGamePadAxis axis, DelButtonState func);
         public abstract void RegisterButtonPressed(EGamePadButton button, DelButtonState func);

@@ -85,7 +85,6 @@ public partial class HierarchyPanel : EditorPanel
         foreach (SceneNode node in copy)
         {
             var buttonNode = listNode.NewChild<UIButtonComponent, UIMaterialComponent>(out var button, out var background);
-            EditorUI.Styles.UpdateButton(button);
             button.Name = node.Name;
 
             var mat = XRMaterial.CreateUnlitColorMaterialForward(ColorF4.Transparent);
@@ -109,6 +108,7 @@ public partial class HierarchyPanel : EditorPanel
             text.HorizontalAlignment = EHorizontalAlignment.Left;
             text.VerticalAlignment = EVerticalAlignment.Center;
 
+            EditorUI.Styles.UpdateButton(button);
             CreateNodes(listNode, node.Transform.Children.Select(x => x.SceneNode!));
         }
     }

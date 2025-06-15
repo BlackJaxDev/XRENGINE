@@ -7,6 +7,14 @@ namespace XREngine.Input.Devices
     {
         public override bool HideCursor { get; set; }
 
+        public override void RegisterKeyCharacter(Action<char> func)
+        {
+            throw new NotImplementedException();
+        }
+        public override void RegisterKeystroke(BaseKeyboard.DelKeystroke func)
+        {
+            throw new NotImplementedException();
+        }
         public override bool GetAxisState(EGamePadAxis axis, EButtonInputType type)
         {
             throw new NotImplementedException();

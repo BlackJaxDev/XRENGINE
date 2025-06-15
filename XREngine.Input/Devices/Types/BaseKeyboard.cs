@@ -40,6 +40,35 @@
         }
         public void RegisterKeyEvent(EKey key, EButtonInputType type, Action func, bool unregister)
             => RegisterButtonEvent(unregister ? _buttonStates[(int)key] : FindOrCacheKey(key), type, func, unregister);
+
+        private readonly List<DelKeystroke> _keystrokeRegistrations = [];
+        private readonly List<Action<char>> _keyCharacterRegistrations = [];
+
+        public delegate void DelKeystroke(EKey key, bool pressed);
+        public void RegisterKeystroke(DelKeystroke func, bool unregister)
+        {
+            if (unregister)
+                _keystrokeRegistrations.Remove(func);
+            else
+                _keystrokeRegistrations.Add(func);
+        }
+        public void RegisterKeyCharacter(Action<char> action, bool unregister)
+        {
+            if (unregister)
+                _keyCharacterRegistrations.Remove(action);
+            else
+                _keyCharacterRegistrations.Add(action);
+        }
+        protected void Keystroke(EKey key, bool pressed)
+        {
+            foreach (var keystroke in _keystrokeRegistrations)
+                keystroke(key, pressed);
+        }
+        protected void KeyCharacter(char character)
+        {
+            foreach (var keyChara in _keyCharacterRegistrations)
+                keyChara(character);
+        }
         public bool GetKeyState(EKey key, EButtonInputType type)
             => FindOrCacheKey(key)?.GetState(type) ?? false;
         public bool Pressed(EKey key)

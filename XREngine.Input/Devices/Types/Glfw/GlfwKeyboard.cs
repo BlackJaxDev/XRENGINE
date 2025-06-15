@@ -23,15 +23,17 @@ namespace XREngine.Input.Devices.Glfw
 
         private void KeyChar(IKeyboard keyboard, char character)
         {
-
+            KeyCharacter(character);
         }
         private void KeyUp(IKeyboard keyboard, Key key, int i)
         {
-
+            EKey key2 = Conv(key);
+            Keystroke(key2, false);
         }
+
         private void KeyDown(IKeyboard keyboard, Key key, int i)
         {
-
+            Keystroke(Conv(key), true);
         }
 
         public override void TickStates(float delta)

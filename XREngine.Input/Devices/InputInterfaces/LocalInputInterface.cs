@@ -120,6 +120,10 @@ namespace XREngine.Input.Devices
             => Keyboard?.RegisterKeyPressed(button, func, Unregister);
         public override void RegisterKeyEvent(EKey button, EButtonInputType type, System.Action func)
             => Keyboard?.RegisterKeyEvent(button, type, func, Unregister);
+        public override void RegisterKeystroke(BaseKeyboard.DelKeystroke func)
+            => Keyboard?.RegisterKeystroke(func, Unregister);
+        public override void RegisterKeyCharacter(Action<char> func)
+            => Keyboard?.RegisterKeyCharacter(func, Unregister);
         #endregion
 
         #region Gamepad input registration
