@@ -1,9 +1,16 @@
 ﻿using System.Text;
+using System.Text.Json.Serialization;
 using XREngine.Data;
 using YamlDotNet.Serialization;
+using JsonIgnoreNewtonsoftAttribute = Newtonsoft.Json.JsonIgnoreAttribute;
+
 
 namespace XREngine.Core.Files
 {
+    /// <summary>
+    /// Main class for raw text files.
+    /// Overrides default serialization to save the raw text content instead of the object structure.
+    /// </summary>
     [XR3rdPartyExtensions("txt")]
     public class TextFile : XRAsset
     {
@@ -18,6 +25,8 @@ namespace XREngine.Core.Files
 
         private Encoding _encoding = Encoding.Default;
         [YamlIgnore]
+        [JsonIgnore]
+        [JsonIgnoreNewtonsoft]
         public Encoding Encoding
         {
             get
@@ -26,10 +35,8 @@ namespace XREngine.Core.Files
                     _encoding = GetEncoding(FilePath);
                 return _encoding;
             }
-            set
-            {
-                _encoding = value;
-            }
+
+            set => SetField(ref _encoding, value);
         }
 
         public int EncodingCodePage
@@ -107,18 +114,26 @@ namespace XREngine.Core.Files
         /// <returns>The detected encoding.</returns>
         public static Encoding GetEncoding(string path)
         {
-            byte[] bom = new byte[4];
-            using (FileMap map = FileMap.FromFile(path, FileMapProtect.Read, 0, 4))
-                bom = map.Address.GetBytes(4);
+            try
+            {
+                byte[] bom = new byte[4];
+                using (FileMap map = FileMap.FromFile(path, FileMapProtect.Read, 0, 4))
+                    bom = map.Address.GetBytes(4);
 
 #pragma warning disable SYSLIB0001 // Type or member is obsolete
-            if (bom[0] == 0x2B && bom[1] == 0x2F && bom[2] == 0x76) return Encoding.UTF7;
+                if (bom[0] == 0x2B && bom[1] == 0x2F && bom[2] == 0x76) return Encoding.UTF7;
 #pragma warning restore SYSLIB0001 // Type or member is obsolete
-            if (bom[0] == 0xEF && bom[1] == 0xBB && bom[2] == 0xBF) return Encoding.UTF8;
-            if (bom[0] == 0xFF && bom[1] == 0xFE) return Encoding.Unicode; //UTF-16LE
-            if (bom[0] == 0xFE && bom[1] == 0xFF) return Encoding.BigEndianUnicode; //UTF-16BE
-            if (bom[0] == 0 && bom[1] == 0 && bom[2] == 0xFE && bom[3] == 0xFF) return Encoding.UTF32;
-            return Encoding.Default;
+                if (bom[0] == 0xEF && bom[1] == 0xBB && bom[2] == 0xBF) return Encoding.UTF8;
+                if (bom[0] == 0xFF && bom[1] == 0xFE) return Encoding.Unicode; //UTF-16LE
+                if (bom[0] == 0xFE && bom[1] == 0xFF) return Encoding.BigEndianUnicode; //UTF-16BE
+                if (bom[0] == 0 && bom[1] == 0 && bom[2] == 0xFE && bom[3] == 0xFF) return Encoding.UTF32;
+                return Encoding.Default;
+            }
+            catch (Exception e)
+            {
+                Debug.LogWarning($"Failed to read encoding from file {path}: {e.Message}");
+                return Encoding.Default;
+            }
         }
         public static Encoding GetEncoding(FileMap file, out int bomLength)
         {
@@ -155,15 +170,21 @@ namespace XREngine.Core.Files
             return Encoding.Default;
         }
 
-        protected override void Reload3rdParty(string path)
+        public override void Reload(string path)
             => LoadText(path);
-        protected override async Task Reload3rdPartyAsync(string path)
+        public override async Task ReloadAsync(string path)
             => await LoadTextAsync(path);
 
         public override bool Load3rdParty(string filePath)
             => LoadText(filePath);
         public override async Task<bool> Load3rdPartyAsync(string filePath)
             => await LoadTextAsync(filePath);
+
+        public override void SerializeTo(string filePath, ISerializer defaultSerializer)
+            => SaveTo(filePath);
+
+        public override Task SerializeToAsync(string filePath, ISerializer defaultSerializer)
+            => SaveToAsync(filePath);
 
         public void SaveTo(string path)
             => File.WriteAllText(path, _text ?? string.Empty, Encoding);

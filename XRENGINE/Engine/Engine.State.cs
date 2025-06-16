@@ -13,25 +13,25 @@ namespace XREngine
 
         public static GameState LoadOrGenerateGameState(
             Func<GameState>? generateFactory = null,
-            string assetName = "state",
+            string assetName = "state.asset",
             bool allowLoading = true)
             => LoadOrGenerateAsset(() => generateFactory?.Invoke() ?? new GameState(), assetName, allowLoading);
 
         public static GameStartupSettings LoadOrGenerateGameSettings(
             Func<GameStartupSettings>? generateFactory = null,
-            string assetName = "startup",
+            string assetName = "startup.asset",
             bool allowLoading = true)
             => LoadOrGenerateAsset(() => generateFactory?.Invoke() ?? GenerateGameSettings(), assetName, allowLoading);
 
         public static T LoadOrGenerateGameState<[DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicConstructors)] T>(
             Func<T>? generateFactory = null,
-            string assetName = "state",
+            string assetName = "state.asset",
             bool allowLoading = true) where T : GameState, new()
             => LoadOrGenerateAsset(() => generateFactory?.Invoke() ?? new T(), assetName, allowLoading);
 
         public static T LoadOrGenerateGameSettings<[DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicConstructors)] T>(
             Func<T>? generateFactory = null,
-            string assetName = "startup",
+            string assetName = "startup.asset",
             bool allowLoading = true) where T : GameStartupSettings, new()
             => LoadOrGenerateAsset(() => generateFactory?.Invoke() ?? new T(), assetName, allowLoading);
 
@@ -44,13 +44,13 @@ namespace XREngine
             T? asset = null;
             if (allowLoading)
             {
-                asset = Assets.LoadGameAsset<T>($"{assetName}.asset");
+                asset = Assets.LoadGameAsset<T>(assetName);
                 if (asset != null)
                     return asset;
             }
             asset = generateFactory?.Invoke() ?? Activator.CreateInstance<T>();
             asset.Name = assetName;
-            Task.Run(() => Assets.SaveGameAssetTo(asset, folderNames));
+            /*Task.Run(() => */Assets.SaveGameAssetTo(asset, folderNames)/*)*/;
             return asset;
         }
 

@@ -187,7 +187,7 @@ namespace XREngine.Rendering
             }
         }
 
-        protected override void Reload3rdParty(string path)
+        public override void Reload(string path)
             => Load3rdParty(path);
         public override bool Load3rdParty(string filePath)
         {

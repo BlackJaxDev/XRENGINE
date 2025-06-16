@@ -2,6 +2,7 @@
 using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Diagnostics.CodeAnalysis;
+using System.IO;
 using System.Numerics;
 using System.Reflection;
 using XREngine.Core.Files;
@@ -140,7 +141,7 @@ namespace XREngine
             Debug.Out($"File '{args.FullPath}' was changed.");
             var asset = GetAssetByPath(args.FullPath);
             if (asset is not null)
-                await asset.Reload3rdPartyAssetAsync();
+                await asset.ReloadAsync(args.FullPath);
         }
 
         void OnEngineFileDeleted(object sender, FileSystemEventArgs args)
@@ -206,7 +207,7 @@ namespace XREngine
                 LoadedAssetsByOriginalPathInternal.TryAdd(args.FullPath, asset);
 
                 asset.OriginalPath = args.FullPath;
-                asset.Reload3rdPartyAsset();
+                asset.Reload();
             }
         }
 
@@ -371,10 +372,11 @@ namespace XREngine
         public static string VerifyAssetPath(XRAsset asset, string directory)
         {
             VerifyDirectoryExists(directory);
-            string name = string.IsNullOrWhiteSpace(asset.Name) ? asset.GetType().Name : asset.Name;
-            string fileName = $"{name}.{AssetExtension}";
-            string path = Path.Combine(directory, fileName);
-            return path;
+            string fileName = string.IsNullOrWhiteSpace(asset.Name) ? asset.GetType().Name : asset.Name;
+            //Add the asset extension for regular assets
+            if (!Path.HasExtension(fileName))
+                fileName = $"{fileName}.{AssetExtension}";
+            return Path.Combine(directory, fileName);
         }
 
         public Func<string, bool>? AllowOverwriteCallback { get; set; } = path => true;
@@ -406,6 +408,7 @@ namespace XREngine
         {
             if (newAsset)
                 CacheAsset(asset);
+            asset.ClearDirty();
             AssetSaved?.Invoke(asset);
         }
 
@@ -483,7 +486,7 @@ namespace XREngine
             {
 #endif
             using var t = Engine.Profiler.Start($"AssetManager.SaveAsync {asset.FilePath}");
-            await File.WriteAllTextAsync(asset.FilePath, Serializer.Serialize(asset));
+            await asset.SerializeToAsync(asset.FilePath, Serializer);
             PostSaved(asset, false);
 #if !DEBUG
             }
@@ -507,7 +510,7 @@ namespace XREngine
 #endif
             //Debug.Out($"Saving asset to '{asset.FilePath}'...");
             using var t = Engine.Profiler.Start($"AssetManager.Save {asset.FilePath}");
-            File.WriteAllText(asset.FilePath, Serializer.Serialize(asset));
+            asset.SerializeTo(asset.FilePath, Serializer);
             PostSaved(asset, false);
 #if !DEBUG
             }
@@ -534,7 +537,7 @@ namespace XREngine
 
             asset.FilePath = path;
             //Debug.Out($"Saving asset to '{path}'...");
-            File.WriteAllText(path, Serializer.Serialize(asset));
+            asset.SerializeTo(path, Serializer);
             PostSaved(asset, true);
 #if !DEBUG
             }
@@ -561,7 +564,7 @@ namespace XREngine
 
             asset.FilePath = path;
             //Debug.Out($"Saving asset to '{path}'...");
-            await File.WriteAllTextAsync(path, Serializer.Serialize(asset));
+            await asset.SerializeToAsync(path, Serializer);
             PostSaved(asset, true);
 #if !DEBUG
             }

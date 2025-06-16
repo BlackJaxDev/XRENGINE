@@ -78,7 +78,7 @@ namespace XREngine.Rendering
         public static async Task<XRShader?> EngineShaderAsync(string relativePath, EShaderType type)
             => await ShaderHelper.LoadEngineShaderAsync(relativePath, type);
 
-        protected override void Reload3rdParty(string filePath)
+        public override void Reload(string filePath)
         {
             Load3rdParty(filePath);
         }

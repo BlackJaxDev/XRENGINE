@@ -13,7 +13,7 @@ namespace XREngine.Rendering
     [XR3rdPartyExtensions("png", "jpg", "jpeg", "tif", "tiff", "tga", "exr", "hdr")]
     public partial class XRTexture2D : XRTexture, IFrameBufferAttachement
     {
-        protected override void Reload3rdParty(string path)
+        public override void Reload(string path)
         {
             Load3rdParty(path);
         }

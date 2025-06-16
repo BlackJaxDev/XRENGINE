@@ -543,8 +543,8 @@ namespace XREngine.Components.Animation
                 handTarget.SaveBindState();
                 handTarget.RecalculateMatrices(true);
             }
-            arm.PositionWeight = weightVal;
-            arm.RotationWeight = weightVal;
+            arm.Settings.PositionWeight = weightVal;
+            arm.Settings.RotationWeight = weightVal;
         }
 
         //private static void CalibrateLeftHand(VRIKSolverComponent ik, CalibrationData data, TransformBase? leftHandTracker)

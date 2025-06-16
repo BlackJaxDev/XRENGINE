@@ -115,39 +115,72 @@ namespace XREngine.Core.Files
         {
             IsDirty = true;
         }
-        internal void ClearDirty()
+        public void ClearDirty()
         {
             IsDirty = false;
         }
 
         public event Action<XRAsset>? Reloaded;
 
-        public void Reload3rdPartyAsset()
+        /// <summary>
+        /// Reloads the asset from its file path.
+        /// </summary>
+        public void Reload()
         {
-            if (OriginalPath is null)
+            if (FilePath is null)
                 return;
 
-            Reload3rdParty(OriginalPath);
+            Reload(FilePath);
             Reloaded?.Invoke(this);
         }
 
-        protected virtual void Reload3rdParty(string path)
+        /// <summary>
+        /// Reloads the asset from a file path.
+        /// </summary>
+        /// <param name="path"></param>
+        public virtual void Reload(string path)
         {
 
         }
 
-        public async Task Reload3rdPartyAssetAsync()
+        /// <summary>
+        /// Reloads the asset from its file path asynchronously.
+        /// </summary>
+        /// <returns></returns>
+        public async Task ReloadAsync()
         {
-            if (OriginalPath is null)
+            if (FilePath is null)
                 return;
 
-            await Reload3rdPartyAsync(OriginalPath);
+            await ReloadAsync(FilePath);
             Reloaded?.Invoke(this);
         }
 
-        protected virtual async Task Reload3rdPartyAsync(string path)
-        {
-            await Task.Run(() => Reload3rdParty(path));
-        }
+        /// <summary>
+        /// Reloads the asset from a file path asynchronously.
+        /// </summary>
+        /// <param name="path"></param>
+        /// <returns></returns>
+        public virtual async Task ReloadAsync(string path)
+            => await Task.Run(() => Reload(path));
+
+        /// <summary>
+        /// This is the main method to serialize the asset to a file using the provided serializer.
+        /// May be overridden to change the serialization behavior.
+        /// </summary>
+        /// <param name="filePath"></param>
+        /// <param name="defaultSerializer"></param>
+        public virtual void SerializeTo(string filePath, ISerializer defaultSerializer)
+            => File.WriteAllText(filePath, defaultSerializer.Serialize(this));
+
+        /// <summary>
+        /// This is the main method to serialize the asset to a file using the provided serializer asynchronously.
+        /// May be overridden to change the serialization behavior.
+        /// </summary>
+        /// <param name="filePath"></param>
+        /// <param name="defaultSerializer"></param>
+        /// <returns></returns>
+        public virtual async Task SerializeToAsync(string filePath, ISerializer defaultSerializer)
+            => await File.WriteAllTextAsync(filePath, defaultSerializer.Serialize(this));
     }
 }
