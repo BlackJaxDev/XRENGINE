@@ -1,0 +1,3 @@
+[submodule "OpenVR.NET"]
+	path = Build/Submodules/OpenVR.NET
+	url = https://github.com/BlackJaxDev/OpenVR.NET.git

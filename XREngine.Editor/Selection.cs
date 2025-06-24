@@ -23,7 +23,18 @@ public static class Selection
         {
             _sceneNodes = value;
             SelectionChanged?.Invoke(value);
-            Debug.Out($"Selection changed to {value.Length} nodes: {string.Join(", ", value.Select(n => n.Name))}");
+            switch (value.Length)
+            {
+                case 0:
+                    Debug.Out("Selection cleared");
+                    break;
+                case 1:
+                    Debug.Out($"Selection changed to {value[0].Name}");
+                    break;
+                default:
+                    Debug.Out($"Selection changed to {value.Length} nodes: {string.Join(", ", value.Select(n => n.Name))}");
+                    break;
+            }
         }
     }
 

@@ -77,8 +77,8 @@ namespace XREngine.Core.Files
 
         public static implicit operator string?(TextFile textFile)
             => textFile?.Text;
-        public static implicit operator TextFile(string text)
-            => FromText(text);
+        public static implicit operator TextFile(string? text)
+            => FromText(text ?? string.Empty);
 
         public unsafe void LoadTextFileMapped(string path)
         {

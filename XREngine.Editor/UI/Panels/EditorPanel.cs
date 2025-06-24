@@ -32,7 +32,7 @@ public partial class EditorPanel : XRComponent
         var bgShader = ShaderHelper.LoadEngineShader("UI\\GrabpassGaussian.frag");
         ShaderVar[] parameters =
         [
-            new ShaderVector4(new ColorF4(66/255.0f, 79/255.0f, 78/255.0f, 1.0f), "MatColor"),
+            new ShaderVector4(new ColorF4(166/255.0f, 179/255.0f, 178/255.0f, 1.0f), "MatColor"),
             new ShaderFloat(10.0f, "BlurStrength"),
             new ShaderInt(15, "SampleCount"),
         ];

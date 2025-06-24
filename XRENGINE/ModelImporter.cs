@@ -332,7 +332,7 @@ namespace XREngine
                 var transform = nodeInfo.SceneNode.GetTransformAs<Transform>(false)!;
 
                 // Store the original world position
-                Vector3 originalWorldPos = nodeInfo.SceneNode.Transform.WorldTranslation;
+                Vector3 originalWorldPos = nodeInfo.SceneNode.Transform.WorldMatrix.Translation;
 
                 // Create a new local matrix with unit scale but same rotation
                 // Extract rotation from original local matrix
@@ -346,17 +346,15 @@ namespace XREngine
                 transform.RecalculateMatrices(true, true);
 
                 // Calculate the position difference caused by scale removal
-                Vector3 newWorldPos = nodeInfo.SceneNode.Transform.WorldTranslation;
+                Vector3 newWorldPos = nodeInfo.SceneNode.Transform.WorldMatrix.Translation;
                 Vector3 positionOffset = originalWorldPos - newWorldPos;
 
                 // Adjust the local translation to compensate for scale removal
                 if (positionOffset != Vector3.Zero)
                 {
                     // For position offsets, use the full inverse transform
-                    Vector3 localOffset = transform.Parent?.InverseTransformPoint(originalWorldPos) ?? originalWorldPos;
-
                     // Then set the local translation directly
-                    transform.Translation = localOffset;
+                    transform.Translation = transform.Parent is null ? originalWorldPos : Vector3.Transform(originalWorldPos, transform.Parent.InverseWorldMatrix);
                     transform.RecalculateMatrices(true, true);
                 }
 
@@ -370,6 +368,13 @@ namespace XREngine
                     continue;
                 
                 var rootTransform = rootNode.Transform;
+
+                //var tfm = nodeInfo.SceneNode.Transform;
+                //Vector3 translation = tfm.WorldTranslation;
+                //Vector3 scale = tfm.LossyWorldScale;
+                //Quaternion rotation = tfm.WorldRotation;
+                //Debug.Out($"Processing node {nodeInfo.AssimpNode.Name} with world T[{translation}] R[{rotation}] S[{scale}]");
+
                 Matrix4x4 geometryTransform = nodeInfo.OriginalWorldMatrix * rootTransform.InverseWorldMatrix;
                 EnqueueProcessMeshes(nodeInfo.AssimpNode, scene, nodeInfo.SceneNode, geometryTransform, rootTransform);
             }

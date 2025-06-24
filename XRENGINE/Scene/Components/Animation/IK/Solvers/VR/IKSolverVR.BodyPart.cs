@@ -120,6 +120,9 @@ namespace XREngine.Components.Animation
 
             public virtual void Visualize(ColorF4 color)
             {
+                if (!_initialized)
+                    return;
+
                 for (int i = 0; i < _bones.Length - 1; i++)
                     Engine.Rendering.Debug.RenderLine(_bones[i].SolverPosition, _bones[i + 1].SolverPosition, color);
             }

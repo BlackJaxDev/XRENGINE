@@ -107,9 +107,7 @@ namespace XREngine.Rendering.Physics.Physx
         internal PhysxDynamicRigidBody(PxRigidDynamic* obj)
         {
             _obj = obj;
-            AllActors.Add((nint)_obj, this);
-            AllRigidActors.Add((nint)_obj, this);
-            AllDynamic.Add((nint)_obj, this);
+            CachePtr();
         }
 
         public PhysxDynamicRigidBody(
@@ -125,9 +123,7 @@ namespace XREngine.Rendering.Physics.Physx
             var shapeTfm = PhysxScene.MakeTransform(shapeOffsetTranslation, shapeOffsetRotation);
             using var structObj = geometry.GetPhysxStruct();
             _obj = PhysxScene.PhysicsPtr->PhysPxCreateDynamic(&tfm, structObj.ToStructPtr<PxGeometry>(), material.MaterialPtr, density, &shapeTfm);
-            AllActors.Add((nint)_obj, this);
-            AllRigidActors.Add((nint)_obj, this);
-            AllDynamic.Add((nint)_obj, this);
+            CachePtr();
         }
 
         public PhysxDynamicRigidBody(
@@ -138,9 +134,7 @@ namespace XREngine.Rendering.Physics.Physx
         {
             var tfm = PhysxScene.MakeTransform(position, rotation);
             _obj = PhysxScene.PhysicsPtr->PhysPxCreateDynamic1(&tfm, shape.ShapePtr, density);
-            AllActors.Add((nint)_obj, this);
-            AllRigidActors.Add((nint)_obj, this);
-            AllDynamic.Add((nint)_obj, this);
+            CachePtr();
         }
 
         public PhysxDynamicRigidBody(
@@ -149,6 +143,22 @@ namespace XREngine.Rendering.Physics.Physx
         {
             var tfm = PhysxScene.MakeTransform(position, rotation);
             _obj = PhysxScene.PhysicsPtr->CreateRigidDynamicMut(&tfm);
+            CachePtr();
+        }
+
+        public override void Release()
+        {
+            if (IsReleased)
+                return;
+            AllActors.Remove((nint)_obj);
+            AllRigidActors.Remove((nint)_obj);
+            AllDynamic.Remove((nint)_obj);
+            base.Release();
+
+        }
+
+        private void CachePtr()
+        {
             AllActors.Add((nint)_obj, this);
             AllRigidActors.Add((nint)_obj, this);
             AllDynamic.Add((nint)_obj, this);

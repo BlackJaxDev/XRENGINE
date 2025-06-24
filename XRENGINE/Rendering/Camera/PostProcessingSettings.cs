@@ -1,5 +1,17 @@
 ﻿namespace XREngine.Rendering
 {
+    public enum ETonemappingType
+    {
+        Linear,
+        Gamma,
+        Clip,
+        Reinhard,
+        Hable,
+        Mobius,
+        ACES,
+        Neutral,
+        Filmic
+    }
     public class PostProcessingSettings
     {
         public PostProcessingSettings()
@@ -16,6 +28,7 @@
             Dithering = new DitheringSettings();
             RayTracing = new RayTracingSettings();
             Shadows = new ShadowSettings();
+            Fog = new FogSettings();
         }
 
         public ShadowSettings Shadows { get; set; }
@@ -30,11 +43,17 @@
         public GrainSettings Grain { get; set; }
         public DitheringSettings Dithering { get; set; }
         public RayTracingSettings RayTracing { get; set; }
+        public FogSettings Fog { get; set; }
+        public ETonemappingType Tonemapping { get; set; } = ETonemappingType.Reinhard;
 
         public void SetUniforms(XRRenderProgram program)
         {
             Vignette.SetUniforms(program);
             ColorGrading.SetUniforms(program);
+            ChromaticAberration.SetUniforms(program);
+            Fog.SetUniforms(program);
+            LensDistortion.SetUniforms(program);
+            program.Uniform("TonemapType", (int)Tonemapping);
         }
     }
 }

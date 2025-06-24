@@ -14,7 +14,7 @@ namespace XREngine.Rendering.UI
     /// Handles textual input from the user.
     /// </summary>
     [RequireComponents(typeof(UITextComponent))]
-    public class UITextInputComponent : UIInteractableComponent
+    public class UITextInputComponent : UIInspectorEditorComponent
     {
         private const int DefaultKeyRepeatDelayMs = 500;
         private const int DefaultKeyRepeatIntervalMs = 50;
@@ -43,20 +43,6 @@ namespace XREngine.Rendering.UI
         {
             get => _postText;
             set => SetField(ref _postText, value);
-        }
-
-        private PropertyInfo? _property;
-        public PropertyInfo? Property
-        {
-            get => _property;
-            set => SetField(ref _property, value);
-        }
-
-        private object?[]? _targets;
-        public object?[]? Targets
-        {
-            get => _targets;
-            set => SetField(ref _targets, value);
         }
 
         /// <summary>

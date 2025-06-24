@@ -162,7 +162,7 @@ namespace XREngine.Components.Lights
         {
             _displayQuadRC.WorldMatrix = transform.RenderMatrix;
             _renderInfo.CullingOffsetMatrix = transform.RenderMatrix;
-            _mirrorCamera?.SetObliqueClippingPlane(transform.RenderTranslation, transform.RenderForward);
+            _mirrorCamera?.SetObliqueClippingPlane(transform.RenderTranslation, -transform.RenderForward);
         }
 
         protected virtual void InitializeForCapture()
@@ -237,7 +237,7 @@ namespace XREngine.Components.Lights
 
         private void UpdateMirrorCamera(XRCamera camera, bool render)
         {
-            Matrix4x4 camMirrorWorld = CalculateMirrorCameraView(camera, Transform.RenderTranslation, -Transform.RenderForward, render);
+            Matrix4x4 camMirrorWorld = CalculateMirrorCameraView(camera, Transform.RenderTranslation, Transform.RenderForward, render);
 
             if (_mirrorCamera is not null)
             {
@@ -262,13 +262,13 @@ namespace XREngine.Components.Lights
             {
                 pos = tfm.RenderTranslation;
                 up = tfm.RenderUp;
-                fwd = -tfm.RenderForward;
+                fwd = tfm.RenderForward;
             }
             else
             {
                 pos = tfm.WorldTranslation;
                 up = tfm.WorldUp;
-                fwd = -tfm.WorldForward;
+                fwd = tfm.WorldForward;
             }
 
             Vector3 planePerpPoint = XRMath.ProjectPointToPlane(pos, mirrorPoint, mirrorNormal);

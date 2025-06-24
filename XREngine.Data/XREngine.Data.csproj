@@ -33,7 +33,7 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <PackageReference Include="AssimpNetter" Version="5.4.3.3" />
+    <PackageReference Include="AssimpNetter" Version="6.0.2" />
     <PackageReference Include="LZMA-SDK" Version="22.1.1" />
     <PackageReference Include="Magick.NET-Q16-HDRI-OpenMP-x64" Version="14.6.0" />
     <PackageReference Include="Magick.NET.Core" Version="14.6.0" />
@@ -47,7 +47,7 @@
     <PackageReference Include="SharpFont.NetStandard" Version="1.0.5" />
     <PackageReference Include="SharpZipLib" Version="1.4.2" />
     <PackageReference Include="Silk.NET.OpenGLES.Extensions.EXT" Version="2.22.0" />
-    <PackageReference Include="SixLabors.ImageSharp" Version="3.1.9" />
+    <PackageReference Include="SixLabors.ImageSharp" Version="3.1.10" />
     <PackageReference Include="System.Drawing.Common" Version="9.0.6" />
     <PackageReference Include="System.Text.Json" Version="9.0.6" />
     <PackageReference Include="YamlDotNet" Version="16.3.0" />

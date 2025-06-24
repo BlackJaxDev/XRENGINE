@@ -26,11 +26,24 @@ struct ColorGradeStruct
     float Contrast;
     float Gamma;
 
-    float Hue;
-    float Saturation;
-    float Brightness;
+    float Hue; //1.0f = no change, 0.0f = red
+    float Saturation; //1.0f = no change, 0.0f = grayscale
+    float Brightness; //1.0f = no change, 0.0f = black
 };
 uniform ColorGradeStruct ColorGrade;
+
+uniform float ChromaticAberrationIntensity;
+
+struct DepthFogStruct
+{
+    float Intensity; //0.0f = no fog, 1.0f = full fog
+    float Start; //Start distance of fog
+    float End; //End distance of fog
+    vec3 Color; //Color of fog
+};
+uniform DepthFogStruct DepthFog;
+
+uniform float LensDistortionIntensity;
 
 vec3 RGBtoHSV(vec3 c)
 {
@@ -78,6 +91,83 @@ float GetStencilHighlightIntensity(vec2 uv)
     }
     return clamp(float(diff), 0.0f, 1.0f);
 }
+
+// Tonemapping selector
+uniform int TonemapType = 3; //Default to Reinhard
+
+vec3 LinearTM(vec3 c)
+{
+  return c * ColorGrade.Exposure;
+}
+vec3 GammaTM(vec3 c)
+{
+  return pow(c * ColorGrade.Exposure, vec3(1.0 / ColorGrade.Gamma));
+}
+vec3 ClipTM(vec3 c)
+{
+  return clamp(c * ColorGrade.Exposure, 0.0, 1.0);
+}
+vec3 ReinhardTM(vec3 c)
+{
+  vec3 x = c * ColorGrade.Exposure;
+  return x / (x + vec3(1.0));
+}
+vec3 HableTM(vec3 c)
+{
+  const float A = 0.15, B = 0.50, C = 0.10, D = 0.20, E = 0.02, F = 0.30;
+  vec3 x = max(c * ColorGrade.Exposure - E, vec3(0.0));
+  return ((x * (A * x + C * B) + D * E) / (x * (A * x + B) + D * F)) - E / F;
+}
+vec3 MobiusTM(vec3 c)
+{
+  float a = 0.6;
+  vec3 x = c * ColorGrade.Exposure;
+  return (x * (a + 1.0)) / (x + a);
+}
+vec3 ACESTM(vec3 c)
+{
+  vec3 x = c * ColorGrade.Exposure;
+  return (x * (2.51f * x + 0.03f)) / (x * (2.43f * x + 0.59f) + 0.14f);
+}
+vec3 FilmicTM(vec3 c)
+{
+  vec3 x = c * ColorGrade.Exposure;
+  return (x * (x + 0.0245786f)) / (x * (0.983729f * x + 0.432951f) + 0.238081f);
+}
+vec3 NeutralTM(vec3 c)
+{
+  vec3 x = c * ColorGrade.Exposure;
+  return (x * (x + 0.0245786f)) / (x * (0.983729f * x + 0.432951f) + 0.238081f);
+}
+
+vec3 Distort(sampler2D tex, vec2 uv, float intensity)
+{
+    //Distort UVs based on lens distortion
+    uv = uv - vec2(0.5);
+    float uva = atan(uv.x, uv.y);
+    float uvd = sqrt(dot(uv, uv));
+    uvd = uvd * (1.0 + intensity * uvd * uvd);
+    return texture(tex, vec2(0.5) + vec2(sin(uva), cos(uva)) * uvd).rgb;
+}
+
+vec3 SampleHDR(vec2 uv)
+{
+  if (LensDistortionIntensity != 0.0f)
+  {
+      //Apply lens distortion
+      return Distort(HDRSceneTex, uv, LensDistortionIntensity);
+  }
+  else
+  {
+      return texture(HDRSceneTex, uv).rgb;
+  }
+}
+vec3 SampleBloom(vec2 uv, float lod)
+{
+  //Sample bloom texture at given LOD
+  return textureLod(Texture1, uv, lod).rgb;
+}
+
 void main()
 {
   vec2 uv = FragPos.xy;
@@ -86,41 +176,91 @@ void main()
   //Normalize uv from [-1, 1] to [0, 1]
   uv = uv * 0.5f + 0.5f;
   
-	vec3 hdrSceneColor = texture(HDRSceneTex, uv).rgb;
-
+  //Perform HDR operations
+  vec3 hdrSceneColor;
+  
+  //Apply chromatic aberration with texel‐based offsets and clamping
+  if (ChromaticAberrationIntensity > 0.0f)
+  {
+      // Compute texel size for this texture
+      ivec2 texSize = textureSize(HDRSceneTex, 0);
+      vec2 texelSize = 1.0f / vec2(texSize);
+  
+      // Direction from center
+      vec2 dir = uv - 0.5;
+      // Scale by intensity and texel size
+      vec2 off = dir * ChromaticAberrationIntensity * texelSize;
+  
+      // Clamp UVs to avoid sampling outside [0,1]
+      vec2 uvR = clamp(uv + off, vec2(0.0f), vec2(1.0f));
+      vec2 uvG = uv;
+      vec2 uvB = clamp(uv - off, vec2(0.0f), vec2(1.0f));
+  
+      float r = SampleHDR(uvR).r;
+      float g = SampleHDR(uvG).g;
+      float b = SampleHDR(uvB).b;
+      hdrSceneColor = vec3(r, g, b);
+  }
+  else
+  {
+      hdrSceneColor = SampleHDR(uv);
+  }
+  
   //Add each blurred bloom mipmap
   //Starts at 1/2 size lod because original image is not blurred (and doesn't need to be)
   for (float lod = 1.0f; lod < 5.0f; lod += 1.0f)
-    hdrSceneColor += textureLod(Texture1, uv, lod).rgb;
+    hdrSceneColor += SampleBloom(uv, lod);
 
   //Tone mapping
-	vec3 ldrSceneColor = vec3(1.0f) - exp(-hdrSceneColor * ColorGrade.Exposure);
+  vec3 ldrSceneColor;
+  switch (TonemapType)
+  {
+      case 0:  ldrSceneColor = LinearTM(hdrSceneColor);   break;
+      case 1:  ldrSceneColor = GammaTM(hdrSceneColor);    break;
+      case 2:  ldrSceneColor = ClipTM(hdrSceneColor);     break;
+      case 3:  ldrSceneColor = ReinhardTM(hdrSceneColor); break;
+      case 4:  ldrSceneColor = HableTM(hdrSceneColor);    break;
+      case 5:  ldrSceneColor = MobiusTM(hdrSceneColor);   break;
+      case 6:  ldrSceneColor = ACESTM(hdrSceneColor);     break;
+      case 7:  ldrSceneColor = FilmicTM(hdrSceneColor);   break;
+      case 8:  ldrSceneColor = NeutralTM(hdrSceneColor);  break;
+      default: ldrSceneColor = ReinhardTM(hdrSceneColor); break;
+  }
+
+  //Apply depth-based fog
+  if (DepthFog.Intensity > 0.0f)
+  {
+      float depth = texture(Texture2, uv).r;
+      float fogFactor = clamp((depth - DepthFog.Start) / (DepthFog.End - DepthFog.Start), 0.0f, 1.0f);
+      ldrSceneColor = mix(ldrSceneColor, DepthFog.Color, fogFactor * DepthFog.Intensity);
+  }
 
 	//Color grading
-	//ldrSceneColor *= ColorGrade.Tint;
-	//vec3 hsv = RGBtoHSV(ldrSceneColor);
-	//hsv.x *= ColorGrade.Hue;
-	//hsv.y *= ColorGrade.Saturation;
-	//hsv.z *= ColorGrade.Brightness;
-	//ldrSceneColor = HSVtoRGB(hsv);
-	//ldrSceneColor = (ldrSceneColor - 0.5f) * ColorGrade.Contrast + 0.5f;
+	ldrSceneColor *= ColorGrade.Tint;
+  //if (ColorGrade.Hue != 1.0f || ColorGrade.Saturation != 1.0f || ColorGrade.Brightness != 1.0f)
+  //{
+  //    vec3 hsv = RGBtoHSV(ldrSceneColor);
+  //    hsv.x *= ColorGrade.Hue;
+  //    hsv.y *= ColorGrade.Saturation;
+  //    hsv.z *= ColorGrade.Brightness;
+  //    ldrSceneColor = HSVtoRGB(hsv);
+  //}
+	ldrSceneColor = (ldrSceneColor - 0.5f) * ColorGrade.Contrast + 0.5f;
 
-  //float highlight = GetStencilHighlightIntensity(uv);
-	//ldrSceneColor = mix(ldrSceneColor, HighlightColor, highlight);
+  //Apply highlight color to selected objects
+  float highlight = GetStencilHighlightIntensity(uv);
+	ldrSceneColor = mix(ldrSceneColor, HighlightColor, highlight);
 
 	//Vignette
-	//vec2 vigUV = uv * (1.0f - uv.yx);
- 	//float vig = clamp(pow(vigUV.x * vigUV.y * Vignette.Intensity, Vignette.Power), 0.0f, 1.0f);
-	//ldrSceneColor = mix(Vignette.Color, ldrSceneColor, vig);
+  //vec2 center = vec2(0.5f);
+  //float vignetteFactor = pow(clamp(length(uv - center) / (0.5f * Vignette.Intensity), 0.0f, 1.0f), Vignette.Power);
+  //ldrSceneColor = mix(ldrSceneColor, Vignette.Color, vignetteFactor);
 
 	//Gamma-correct
 	ldrSceneColor = pow(ldrSceneColor, vec3(1.0f / ColorGrade.Gamma));
+  
   //Fix subtle banding by applying fine noise
   ldrSceneColor += mix(-0.5f / 255.0f, 0.5f / 255.0f, rand(uv));
 
 	OutColor = vec4(ldrSceneColor, 1.0f);
-
-  //float depth = GetDistanceFromDepth(texture(Texture2, uv).r);
-  //uint stencil = texture(Texture3, uv).r;
-  //OutColor = vec4(vec3(float(stencil) / 255.0f), 1.0f);
 }

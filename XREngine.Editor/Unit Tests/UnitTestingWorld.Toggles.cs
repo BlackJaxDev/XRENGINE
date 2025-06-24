@@ -102,7 +102,7 @@ public static partial class UnitTestingWorld
         /// </summary>
         public bool AllowShaderPipelines = false;
         public bool RenderMeshBounds = true;
-        public Engine.Rendering.ELoopType RecalcChildMatricesType = Engine.Rendering.ELoopType.Parallel;
+        public Engine.Rendering.ELoopType RecalcChildMatricesType = Engine.Rendering.ELoopType.Asynchronous;
         public bool TickGroupedItemsInParallel = true;
         public bool SinglePassStereoVR = false;
         public bool RenderPhysicsDebug = false;
@@ -111,5 +111,8 @@ public static partial class UnitTestingWorld
         public bool RenderTransformPoints = true;
         public bool RenderTransformCapsules = false;
         public bool RenderTransformLines = true;
+
+        public bool BackgroundShader = false;
+        public bool AddCharacterIK = false;
     }
 }

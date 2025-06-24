@@ -836,24 +836,16 @@ namespace XREngine.Rendering.OpenGL
 
                 Sampler(location, glTex, textureUnit);
             }
-            public void Sampler(string name, XRTexture texture, int textureUnit)
-            {
-                if (!GetUniform(name, out int location))
-                    return;
 
-                Sampler(location, texture, textureUnit);
-            }
+            public void Sampler(string name, XRTexture texture, int textureUnit)
+                => Sampler(GetUniformLocation(name), texture, textureUnit);
+
             /// <summary>
             /// Passes a texture sampler into the fragment shader of this program by name.
             /// The name is cached so that retrieving the sampler's location is only required once.
             /// </summary>
             public void Sampler(string name, IGLTexture texture, int textureUnit)
-            {
-                if (!GetUniform(name, out int location))
-                    return;
-                
-                Sampler(location, texture, textureUnit);
-            }
+                => Sampler(GetUniformLocation(name), texture, textureUnit);
 
             /// <summary>
             /// Passes a texture sampler value into the fragment shader of this program by location.

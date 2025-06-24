@@ -579,7 +579,7 @@ namespace XREngine.Scene.Transforms
         public Quaternion GetInverseWorldRotation()
             => Engine.IsRenderThread ? InverseRenderRotation : InverseWorldRotation;
 
-        public Vector3 RenderForward => Vector3.TransformNormal(Globals.Backward, RenderMatrix).Normalized();
+        public Vector3 RenderForward => Vector3.TransformNormal(Globals.Forward, RenderMatrix).Normalized();
         public Vector3 RenderUp => Vector3.TransformNormal(Globals.Up, RenderMatrix).Normalized();
         public Vector3 RenderRight => Vector3.TransformNormal(Globals.Right, RenderMatrix).Normalized();
         public Vector3 RenderTranslation => RenderMatrix.Translation;
@@ -611,7 +611,7 @@ namespace XREngine.Scene.Transforms
         /// <summary>
         /// This transform's world forward vector.
         /// </summary>
-        public Vector3 WorldForward => Vector3.TransformNormal(Globals.Backward, WorldMatrix).Normalized();
+        public Vector3 WorldForward => Vector3.TransformNormal(Globals.Forward, WorldMatrix).Normalized();
 
         /// <summary>
         /// This transform's local up vector.
@@ -624,7 +624,7 @@ namespace XREngine.Scene.Transforms
         /// <summary>
         /// This transform's local forward vector.
         /// </summary>
-        public Vector3 LocalForward => Vector3.TransformNormal(Globals.Backward, LocalMatrix).Normalized();
+        public Vector3 LocalForward => Vector3.TransformNormal(Globals.Forward, LocalMatrix).Normalized();
 
         /// <summary>
         /// This transform's position in world space.

@@ -428,6 +428,9 @@ namespace XREngine.Components.Animation
 
             public override void Visualize(ColorF4 color)
             {
+                if (!_initialized)
+                    return;
+
                 base.Visualize(color);
 
                 if (HeadTarget != null)
@@ -518,14 +521,14 @@ namespace XREngine.Components.Animation
                 
                 _hipsRelativeRotation = Quaternion.Inverse(headRot) * hipsRot;
                 _chestRelativeRotation = Quaternion.Inverse(headRot) * chestRot;
-                _chestForward = Quaternion.Inverse(chestRot).Rotate((rootRotation.Rotate(Globals.Forward).Normalized())).Normalized();
+                _chestForward = Quaternion.Inverse(chestRot).Rotate(rootRotation.Rotate(Globals.Forward));
                 _sizeScale = Vector3.Distance(hipsPos, headPos) / 0.7f;
             }
 
             private void InitializeTransforms(SolverTransforms transforms)
             {
                 Quaternion rootRotation = transforms.Root.InputWorld.Rotation;
-                Vector3 rootForward = rootRotation.Rotate(Globals.Forward).Normalized();
+                Vector3 rootForward = rootRotation.Rotate(Globals.Forward);
 
                 _hasChest = transforms.HasChest;
                 _hasNeck = transforms.HasNeck;
@@ -700,7 +703,7 @@ namespace XREngine.Components.Animation
                 var anchorForward = _anchorRotation.Rotate(Globals.Forward);
                 var rootUp = rootBone.InputRotation.Rotate(Globals.Up);
 
-                ForwardDir = (Vector3.Cross(rootUp, anchorRight) + anchorForward).Normalized();
+                ForwardDir = Vector3.Cross(rootUp, anchorRight) + anchorForward;
             }
 
             public void Solve(
@@ -825,18 +828,21 @@ namespace XREngine.Components.Animation
 
                     Vector3 bendNormal = _anchorRotation.Rotate(Globals.Right);
 
-                    if (_hasChest && _hasNeck)
+                    if (_hasChest)
                     {
-                        VirtualBone.SolveTrigonometric(_bones, _spineIndex, _chestIndex, _headIndex, _headPosition, bendNormal, _hipsPositionWeight * 0.9f);
-                        VirtualBone.SolveTrigonometric(_bones, _chestIndex, _neckIndex, _headIndex, _headPosition, bendNormal, _hipsPositionWeight);
+                        if (_hasNeck)
+                        {
+                            VirtualBone.SolveTrigonometric(_bones, _spineIndex, _chestIndex, _headIndex, _headPosition, bendNormal, _hipsPositionWeight * 0.9f);
+                            VirtualBone.SolveTrigonometric(_bones, _chestIndex, _neckIndex, _headIndex, _headPosition, bendNormal, _hipsPositionWeight);
+                        }
+                        else
+                            VirtualBone.SolveTrigonometric(_bones, _spineIndex, _chestIndex, _headIndex, _headPosition, bendNormal, _hipsPositionWeight);
                     }
-                    else if (_hasChest && !_hasNeck)
-                        VirtualBone.SolveTrigonometric(_bones, _spineIndex, _chestIndex, _headIndex, _headPosition, bendNormal, _hipsPositionWeight);
-                    else if (!_hasChest && _hasNeck)
+                    else if (_hasNeck)
                         VirtualBone.SolveTrigonometric(_bones, _spineIndex, _neckIndex, _headIndex, _headPosition, bendNormal, _hipsPositionWeight);
-                    else if (!_hasNeck && !_hasChest)
+                    else
                         VirtualBone.SolveTrigonometric(_bones, _pelvisIndex, _spineIndex, _headIndex, _headPosition, bendNormal, _hipsPositionWeight);
-
+                    
                     Head.SolverRotation = headSolverRotation;
                 }
 

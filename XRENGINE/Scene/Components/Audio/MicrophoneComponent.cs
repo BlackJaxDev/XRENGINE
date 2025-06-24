@@ -1,11 +1,15 @@
 ﻿using NAudio.Wave;
+using NAudio.Lame;
 using System.Collections;
+using System.Net.Http;
+using System.Threading.Tasks;
+using System.Threading;
+using System.Text.Json;
 
 namespace XREngine.Components
 {
-
     //[RequireComponents(typeof(AudioSourceComponent))]
-    public class MicrophoneComponent : XRComponent
+    public partial class MicrophoneComponent : XRComponent
     {
         private const int DefaultBufferCapacity = 16;
 
@@ -36,8 +40,14 @@ namespace XREngine.Components
 
         public EBitsPerSample BitsPerSample
         {
-            get => (EBitsPerSample)_bitsPerSample;
-            set => _bitsPerSample = (int)value;
+            get => (EBitsPerSample)BitsPerSampleValue;
+            set => BitsPerSampleValue = (int)value;
+        }
+
+        public int BitsPerSampleValue
+        {
+            get => _bitsPerSample;
+            set => SetField(ref _bitsPerSample, value);
         }
 
         /// <summary>
@@ -283,12 +293,17 @@ namespace XREngine.Components
             return rmsSq >= _lowerCutOff * _lowerCutOff;
         }
 
+        public List<AudioConverter> AudioConverters { get; } = [];
+
         private void ReplicateCurrentBuffer()
         {
             //Denoise(ref _currentBuffer);
 
             if (!VerifyLowerCutoff())
                 return;
+
+            foreach (var converter in AudioConverters)
+                converter.ModifyBuffer(_currentBuffer, _bitsPerSample, _sampleRate);
 
             if (Loopback)
                 ReceiveData(nameof(_currentBuffer), _currentBuffer.ToArray());
@@ -471,6 +486,100 @@ namespace XREngine.Components
         }
 
         public event Action<byte[]>? BufferReceived;
+
+        /// <summary>
+        /// Adds an ElevenLabs voice converter to the audio processing pipeline.
+        /// </summary>
+        /// <param name="apiKey">Your ElevenLabs API key</param>
+        /// <param name="voiceId">The voice ID to convert to (default: "21m00Tcm4TlvDq8ikWAM" - Rachel)</param>
+        /// <param name="modelId">The model to use (default: "eleven_monolingual_v1")</param>
+        /// <returns>The created ElevenLabsConverter instance</returns>
+        public ElevenLabsConverter AddElevenLabsConverter(string apiKey, string voiceId = "21m00Tcm4TlvDq8ikWAM", string modelId = "eleven_monolingual_v1")
+        {
+            var converter = new ElevenLabsConverter(apiKey, voiceId, modelId);
+            AudioConverters.Add(converter);
+            return converter;
+        }
+
+        /// <summary>
+        /// Removes all ElevenLabs converters from the audio processing pipeline.
+        /// </summary>
+        public void RemoveAllElevenLabsConverters()
+        {
+            var convertersToRemove = AudioConverters.OfType<ElevenLabsConverter>().ToList();
+            foreach (var converter in convertersToRemove)
+            {
+                converter.ClearQueue();
+                AudioConverters.Remove(converter);
+            }
+        }
+
+        /// <summary>
+        /// Gets all active ElevenLabs converters.
+        /// </summary>
+        /// <returns>List of active ElevenLabs converters</returns>
+        public List<ElevenLabsConverter> GetElevenLabsConverters()
+        {
+            return [.. AudioConverters.OfType<ElevenLabsConverter>()];
+        }
+
+        /// <summary>
+        /// Waits for all ElevenLabs converters to finish processing their queues.
+        /// </summary>
+        public async Task WaitForAllElevenLabsConvertersAsync()
+        {
+            var converters = GetElevenLabsConverters();
+            var tasks = converters.Select(c => c.WaitForCompletionAsync());
+            await Task.WhenAll(tasks);
+        }
+
+        /// <summary>
+        /// Adds an RVC voice converter to the audio processing pipeline.
+        /// </summary>
+        /// <param name="modelPath">Path to the RVC model file (.pth)</param>
+        /// <param name="indexPath">Path to the index file (optional)</param>
+        /// <param name="rvcPythonPath">Path to Python executable (default: "python")</param>
+        /// <param name="rvcScriptPath">RVC script name (default: "rvc")</param>
+        /// <returns>The created RVCConverter instance</returns>
+        public RVCConverter AddRVCConverter(string modelPath, string indexPath = "", string rvcPythonPath = "python", string rvcScriptPath = "rvc")
+        {
+            var converter = new RVCConverter(modelPath, indexPath, rvcPythonPath, rvcScriptPath);
+            AudioConverters.Add(converter);
+            return converter;
+        }
+
+        /// <summary>
+        /// Removes all RVC converters from the audio processing pipeline.
+        /// </summary>
+        public void RemoveAllRVCConverters()
+        {
+            var convertersToRemove = AudioConverters.OfType<RVCConverter>().ToList();
+            foreach (var converter in convertersToRemove)
+            {
+                converter.ClearQueue();
+                converter.KillRVCProcess();
+                AudioConverters.Remove(converter);
+            }
+        }
+
+        /// <summary>
+        /// Gets all active RVC converters.
+        /// </summary>
+        /// <returns>List of active RVC converters</returns>
+        public List<RVCConverter> GetRVCConverters()
+        {
+            return [.. AudioConverters.OfType<RVCConverter>()];
+        }
+
+        /// <summary>
+        /// Waits for all RVC converters to finish processing their queues.
+        /// </summary>
+        public async Task WaitForAllRVCConvertersAsync()
+        {
+            var converters = GetRVCConverters();
+            var tasks = converters.Select(c => c.WaitForCompletionAsync());
+            await Task.WhenAll(tasks);
+        }
 
         //public byte[] GetByteBuffer()
         //{

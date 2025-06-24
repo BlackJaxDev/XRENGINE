@@ -157,12 +157,12 @@ namespace XREngine.Data.Rendering
             return matrix;
         }
 
-        public static unsafe Vertex FromAssimp(Mesh mesh, int vertexIndex)
+        public static unsafe Vertex FromAssimp(Mesh mesh, int vertexIndex, Matrix4x4 dataTransform)
         {
-            Vector3 pos = mesh.Vertices[vertexIndex];
-            Vector3? normal = (mesh.Normals?.TryGet(vertexIndex, out var temp1) ?? false) ? temp1 : null;
-            Vector3? tangent = (mesh.Tangents?.TryGet(vertexIndex, out var temp2) ?? false) ? temp2 : null;
-            Vector3? bitangent = (mesh.BiTangents?.TryGet(vertexIndex, out var temp3) ?? false) ? temp3 : null;
+            Vector3 pos = Vector3.Transform(mesh.Vertices[vertexIndex], dataTransform);
+            Vector3? normal = (mesh.Normals?.TryGet(vertexIndex, out var normalValue) ?? false) ? Vector3.TransformNormal(normalValue, dataTransform) : null;
+            Vector3? tangent = (mesh.Tangents?.TryGet(vertexIndex, out var tangentValue) ?? false) ? Vector3.TransformNormal(tangentValue, dataTransform) : null;
+            Vector3? bitangent = (mesh.BiTangents?.TryGet(vertexIndex, out var bitangentValue) ?? false) ? Vector3.TransformNormal(bitangentValue, dataTransform) : null;
 
             //If two of the three vectors are zero, the normal is calculated from the cross product of the other two.
             if (normal == null)
@@ -220,14 +220,14 @@ namespace XREngine.Data.Rendering
 
                     VertexData data = new()
                     {
-                        Position = blendshape.Vertices[vertexIndex]
+                        Position = Vector3.Transform(blendshape.Vertices[vertexIndex], dataTransform)
                     };
 
                     if (blendshape.Normals != null && blendshape.Normals.Count > vertexIndex)
-                        data.Normal = blendshape.Normals[vertexIndex];
+                        data.Normal = Vector3.TransformNormal(blendshape.Normals[vertexIndex], dataTransform);
 
                     if (blendshape.Tangents != null && blendshape.Tangents.Count > vertexIndex)
-                        data.Tangent = blendshape.Tangents[vertexIndex];
+                        data.Tangent = Vector3.TransformNormal(blendshape.Tangents[vertexIndex], dataTransform);
 
                     for (int j = 0; j < blendshape.TextureCoordinateChannelCount; ++j)
                     {

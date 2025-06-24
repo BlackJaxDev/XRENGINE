@@ -225,6 +225,9 @@ namespace XREngine.Components.Animation
 
             public override void Visualize(ColorF4 color)
             {
+                if (!_initialized)
+                    return;
+
                 base.Visualize(color);
 
                 string side = right ? "Right" : "Left";

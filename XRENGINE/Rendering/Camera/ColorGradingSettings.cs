@@ -1,5 +1,4 @@
-﻿
-using Extensions;
+﻿using Extensions;
 using System.ComponentModel;
 using System.Runtime.Intrinsics.X86;
 using XREngine.Data;
@@ -11,6 +10,11 @@ namespace XREngine.Rendering
     public class ColorGradingSettings : XRBase
     {
         public const string ColorGradeUniformName = "ColorGrade";
+
+        public ColorGradingSettings()
+        {
+            Contrast = 1.0f;
+        }
 
         private float _contrast = 0.0f;
         private float _contrastUniformValue;

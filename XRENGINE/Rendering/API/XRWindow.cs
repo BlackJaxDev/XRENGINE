@@ -230,8 +230,8 @@ namespace XREngine.Rendering
         private void FramebufferResizeCallback(Vector2D<int> obj)
         {
             //Debug.Out("Window resized to {0}x{1}", obj.X, obj.Y);
+            Viewports.ForEach(vp => vp.Resize((uint)obj.X, (uint)obj.Y, true));
             Renderer.FrameBufferInvalidated();
-            Viewports.ForEach(vp => vp.Resize((uint)obj.X, (uint)obj.Y, false));
 
             //var timer = Engine.Time.Timer;
             //await timer.DispatchCollectVisible();

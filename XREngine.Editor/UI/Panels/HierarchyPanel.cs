@@ -17,6 +17,7 @@ public partial class HierarchyPanel : EditorPanel
     }
 
     private const float Margin = 4.0f;
+    private const int DepthIncrement = 10;
 
     protected override void OnPropertyChanged<T>(string? propName, T prev, T field)
     {
@@ -84,8 +85,14 @@ public partial class HierarchyPanel : EditorPanel
         var copy = nodes.Where(x => x is not null).ToList();
         foreach (SceneNode node in copy)
         {
+            string? nodeName = node.Name;
+            if (string.IsNullOrWhiteSpace(nodeName))
+                nodeName = FormatUnnamedNode(node);
+            
             var buttonNode = listNode.NewChild<UIButtonComponent, UIMaterialComponent>(out var button, out var background);
-            button.Name = node.Name;
+            button.Name = nodeName;
+            button.UserData = node;
+            button.InteractAction += Button_InteractAction;
 
             var mat = XRMaterial.CreateUnlitColorMaterialForward(ColorF4.Transparent);
             mat.EnableTransparency();
@@ -101,8 +108,8 @@ public partial class HierarchyPanel : EditorPanel
             textTfm.Margins = new Vector4(10.0f, Margin, 10.0f, Margin);
 
             text.FontSize = 14;
-            text.Text = node.Name;
-            textTfm.Translation = new Vector2(node.Transform.Depth * 15, 0.0f);
+            text.Text = nodeName;
+            textTfm.Translation = new Vector2(node.Transform.Depth * DepthIncrement, 0.0f);
             textTfm.Width = null;
             textTfm.MaxAnchor = new Vector2(0.0f, 1.0f);
             text.HorizontalAlignment = EHorizontalAlignment.Left;
@@ -111,5 +118,28 @@ public partial class HierarchyPanel : EditorPanel
             EditorUI.Styles.UpdateButton(button);
             CreateNodes(listNode, node.Transform.Children.Select(x => x.SceneNode!));
         }
+    }
+
+    private static string FormatUnnamedNode(SceneNode node)
+    {
+        if (!string.IsNullOrWhiteSpace(node.Transform.Name))
+            return node.Transform.Name;
+
+        var comps = node.Components.Where(c => c is not null).ToList();
+        if (comps.Count == 1)
+            return comps[0].GetType().Name;
+
+        if (comps.Count > 1)
+            return $"({comps.Count} components)";
+
+        return "Unnamed Node";
+    }
+
+    private static void Button_InteractAction(UIInteractableComponent obj)
+    {
+        if (obj.UserData is not SceneNode node)
+            return;
+
+        Selection.SceneNode = node;
     }
 }

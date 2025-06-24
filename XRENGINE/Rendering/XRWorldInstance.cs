@@ -244,9 +244,12 @@ namespace XREngine.Rendering
 
         private static async Task RecalcTransformsParallel(IEnumerable<TransformBase> bag)
         {
+            if (!bag.Any())
+                return;
+
             await Task.Run(() => Parallel.ForEach(bag, async (TransformBase tfm) =>
             {
-                await tfm.RecalculateMatrixHeirarchy(true, false, Engine.Rendering.ELoopType.Asynchronous);
+                await tfm.RecalculateMatrixHeirarchy(true, false, Engine.Rendering.ELoopType.Parallel);
             }));
         }
 

@@ -22,6 +22,9 @@ namespace XREngine.Data.Core
 
         public int Count => Actions.Count;
 
+        public bool HasPendingAdds => !PendingAdds.IsEmpty;
+        public bool HasPendingRemoves => !PendingRemoves.IsEmpty;
+
         public void AddListener(Action action)
         {
             PendingAdds.Enqueue(action);
@@ -74,7 +77,7 @@ namespace XREngine.Data.Core
             if (e is null)
                 return null;
             e.RemoveListener(a);
-            if (e.Count == 0)
+            if (e.Count == 0 && !e.HasPendingAdds && !e.HasPendingRemoves)
                 return null;
             return e;
         }

@@ -270,7 +270,7 @@ namespace XREngine.Rendering
         /// </summary>
         /// <returns></returns>
         public Plane GetFarPlane()
-            => XRMath.CreatePlaneFromPointAndNormal(CenterPointFarPlane, GetWorldForward());
+            => XRMath.CreatePlaneFromPointAndNormal(CenterPointFarPlane, -GetWorldForward());
 
         /// <summary>
         /// The center point of the camera's near plane in world space.
@@ -340,11 +340,11 @@ namespace XREngine.Rendering
             return GeoUtil.ClosestPlanePointToPoint(-forward, XRMath.GetPlaneDistance(farPoint, -forward), point);
         }
 
-        public Vector3 WorldForward => -Transform.WorldForward;
-        public Vector3 RenderForward => -Transform.RenderForward;
-        public Vector3 LocalForward => -Transform.LocalForward;
+        public Vector3 WorldForward => Transform.WorldForward;
+        public Vector3 RenderForward => Transform.RenderForward;
+        public Vector3 LocalForward => Transform.LocalForward;
         public Vector3 GetWorldForward()
-            => -Transform.GetWorldForward();
+            => Transform.GetWorldForward();
 
         /// <summary>
         /// The frustum of this camera in world space.
@@ -523,7 +523,7 @@ namespace XREngine.Rendering
             }
 
             program.Uniform(EEngineUniform.CameraPosition.ToString(), tfm.RenderTranslation);
-            program.Uniform(EEngineUniform.CameraForward.ToString(), -tfm.RenderForward);
+            program.Uniform(EEngineUniform.CameraForward.ToString(), tfm.RenderForward);
             program.Uniform(EEngineUniform.CameraUp.ToString(), tfm.RenderUp);
             program.Uniform(EEngineUniform.CameraRight.ToString(), tfm.RenderRight);
 
@@ -578,5 +578,30 @@ namespace XREngine.Rendering
             => _obliqueNearClippingPlane = plane;
         public void ClearObliqueClippingPlane()
             => _obliqueNearClippingPlane = null;
+
+        /// <summary>
+        /// Converts nonlinear normalized depth between 0.0f and 1.0f
+        /// to a linear distance value between nearZ and farZ.
+        /// </summary>
+        public float DepthToDistance(float depth)
+        {
+            float nearZ = NearZ;
+            float farZ = FarZ;
+            float depthSample = 2.0f * depth - 1.0f;
+            float zLinear = 2.0f * nearZ * farZ / (farZ + nearZ - depthSample * (farZ - nearZ));
+            return zLinear;
+        }
+        /// <summary>
+        /// Converts a linear distance value between nearZ and farZ
+        /// to nonlinear normalized depth between 0.0f and 1.0f.
+        /// </summary>
+        public float DistanceToDepth(float z)
+        {
+            float nearZ = NearZ;
+            float farZ = FarZ;
+            float nonLinearDepth = (farZ + nearZ - 2.0f * nearZ * farZ / z.ClampMin(0.001f)) / (farZ - nearZ);
+            nonLinearDepth = (nonLinearDepth + 1.0f) / 2.0f;
+            return nonLinearDepth;
+        }
     }
 }

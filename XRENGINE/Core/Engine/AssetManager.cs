@@ -1,4 +1,5 @@
 ﻿using Microsoft.DotNet.PlatformAbstractions;
+using Newtonsoft.Json;
 using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Diagnostics.CodeAnalysis;

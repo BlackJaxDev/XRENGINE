@@ -100,8 +100,20 @@ namespace XREngine.Rendering.Physics.Physx
 
         public PxActorType ActorType => NativeMethods.PxActor_getType(ActorPtr);
 
+        private bool _isReleased = false;
+        public bool IsReleased
+        {
+            get => _isReleased;
+            protected set => SetField(ref _isReleased, value);
+        }
+
         public virtual void Release()
-            => ActorPtr->ReleaseMut();
+        {
+            if (IsReleased)
+                return;
+            IsReleased = true;
+            ActorPtr->ReleaseMut();
+        }
 
         public void Destroy(bool wakeOnLostTouch = false)
         {

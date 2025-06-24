@@ -900,14 +900,11 @@ namespace XREngine.Components.Animation
             if (forceXToZero)
                 avgEyePos.X = 0;
 
-            //(avgEyePos.Y, avgEyePos.Z) = (avgEyePos.Z, avgEyePos.Y);
-            //avgEyePos.Z = -avgEyePos.Z;
-
-            Vector3 rootToHead = headNode.Transform.BindMatrix.Translation - Transform.BindMatrix.Translation;
+            Vector3 rootToHead = headNode.Transform.WorldMatrix.Translation - Transform.WorldMatrix.Translation;
             avgEyePos -= rootToHead;
 
-            if (forceXToZero)
-                avgEyePos.X = 0;
+            //if (forceXToZero)
+            //    avgEyePos.X = 0;
 
             return avgEyePos;
         }
@@ -974,7 +971,7 @@ namespace XREngine.Components.Animation
                 if (!hasEyeBone)
                     return;
 
-                Vector3 pos = vertex.Position;
+                Vector3 pos = vertex.GetWorldPosition();
                 AtomicAdd(ref sumX, pos.X);
                 AtomicAdd(ref sumY, pos.Y);
                 AtomicAdd(ref sumZ, pos.Z);

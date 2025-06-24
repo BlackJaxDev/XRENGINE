@@ -1,7 +1,10 @@
 ﻿using XREngine.Components;
 using XREngine.Components.Scene;
 using XREngine.Core.Attributes;
+using XREngine.Data.Rendering;
 using XREngine.Editor.UI.Toolbar;
+using XREngine.Rendering;
+using XREngine.Rendering.Models.Materials;
 using XREngine.Rendering.UI;
 using XREngine.Scene;
 
@@ -50,14 +53,6 @@ public partial class UIEditorComponent : UIComponent
     {
         base.OnComponentActivated();
         RemakeChildren();
-        Selection.SelectionChanged += OnSelectionChanged;
-    }
-
-    private void OnSelectionChanged(SceneNode[] obj)
-    {
-        if (_inspector is null)
-            return;
-        _inspector.InspectedObjects = obj;
     }
 
     protected override void OnComponentDeactivated()
@@ -105,6 +100,27 @@ public partial class UIEditorComponent : UIComponent
             {
                 var audio = middleNode.AddComponent<AudioSourceComponent>();
             }
+        }
+        if (UnitTestingWorld.Toggles.BackgroundShader)
+        {
+            XRShader bgShader = ShaderHelper.LoadEngineShader("UI/Backgrounds/Surf2.fs", EShaderType.Fragment);
+            var mat = new XRMaterial(bgShader)
+            {
+                RenderPass = (int)EDefaultRenderPass.OnTopForward,
+                RenderOptions = new RenderingParameters
+                {
+                    CullMode = ECullMode.None,
+                    DepthTest = new DepthTest()
+                    {
+                        Enabled = ERenderParamUsage.Enabled,
+                        Function = EComparison.Always,
+                        UpdateDepth = false
+                    },
+                    RequiredEngineUniforms = EUniformRequirements.RenderTime | EUniformRequirements.ViewportDimensions,
+                }
+            };
+            var comp = middleNode.AddComponent<UIMaterialComponent>()!;
+            comp.Material = mat;
         }
 
         dockNode.NewChildWithTransform(out UIListTransform listTfm, out InspectorPanel inspector, "Inspector");

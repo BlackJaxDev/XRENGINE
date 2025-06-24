@@ -154,7 +154,7 @@ public partial class EditorFlyingCameraPawnComponent : FlyingCameraPawnComponent
     /// </summary>
     public Lock RaycastLock => _raycastLock;
 
-    private bool _queryDepth = false;
+    private bool _depthQueryRequested = false;
 
     private bool _allowWorldPicking = true;
     /// <summary>
@@ -272,13 +272,13 @@ public partial class EditorFlyingCameraPawnComponent : FlyingCameraPawnComponent
         if (tfmTool is not null && tfmTool.TryGetComponent<TransformTool3D>(out var comp))
             comp?.MouseMove(_lastRaycastSegment, cam.Camera, LeftClickPressed);
 
-        if (AllowWorldPicking)
+        if (AllowWorldPicking && !IsHoveringUI())
         {
             using (_raycastLock.EnterScope())
             {
                 _lastOctreePickResults.Clear();
                 _lastPhysicsPickResults.Clear();
-                vp.PickSceneAsync(p, false, true, false, _layerMask, _physxQueryFilter, _lastOctreePickResults, _lastPhysicsPickResults, OctreeRaycastCallback, PhysicsRaycastCallback);
+                vp.PickSceneAsync(p, false, true, true, _layerMask, _physxQueryFilter, _lastOctreePickResults, _lastPhysicsPickResults, OctreeRaycastCallback, PhysicsRaycastCallback);
             }
         }
 
@@ -363,7 +363,7 @@ public partial class EditorFlyingCameraPawnComponent : FlyingCameraPawnComponent
             DepthHitNormalizedViewportPoint = null;
             WorldDragPoint = null;
         }
-        _queryDepth = false;
+        _depthQueryRequested = false;
     }
 
     private static float? GetDepth(XRViewport vp, Vector2 internalSizeCoordinate)
@@ -379,7 +379,7 @@ public partial class EditorFlyingCameraPawnComponent : FlyingCameraPawnComponent
     }
 
     private bool NeedsDepthHit()
-        => _queryDepth;
+        => _depthQueryRequested;
 
     protected override void OnPropertyChanged<T>(string? propName, T prev, T field)
     {
@@ -387,8 +387,8 @@ public partial class EditorFlyingCameraPawnComponent : FlyingCameraPawnComponent
         switch (propName)
         {
             case nameof(RightClickPressed):
-                if (RightClickPressed)
-                    _queryDepth = true;
+                if (_rightClickPressed && !IsHoveringUI())
+                    _depthQueryRequested = true;
                 break;
         }
     }
@@ -449,7 +449,7 @@ public partial class EditorFlyingCameraPawnComponent : FlyingCameraPawnComponent
     {
         base.OnRightClick(pressed);
 
-        if (pressed)
+        if (pressed && !IsHoveringUI())
         {
             if (GetAverageSelectionPoint(out Vector3 avgPoint))
                 _arcballRotationPosition = avgPoint;
@@ -521,8 +521,11 @@ public partial class EditorFlyingCameraPawnComponent : FlyingCameraPawnComponent
     private float? _lastScrollDelta = null;
     protected override void OnScrolled(float diff)
     {
+        if (IsHoveringUI())
+            return;
+
         _lastScrollDelta = diff;
-        _queryDepth = true;
+        _depthQueryRequested = true;
     }
 
     private bool _wantsScreenshot = false;
@@ -564,7 +567,7 @@ public partial class EditorFlyingCameraPawnComponent : FlyingCameraPawnComponent
     private void Select()
     {
         //Don't select new nodes while the transform tool is active and highlighted
-        if (TransformTool3D.GetActiveInstance(out var tfmComp) && tfmComp is not null && tfmComp.Highlighted)
+        if (TransformTool3D.GetActiveInstance(out var tfmComp) && tfmComp is not null && tfmComp.Highlighted || IsHoveringUI())
             return;
 
         //Collect new hits from the last raycast results
@@ -585,11 +588,7 @@ public partial class EditorFlyingCameraPawnComponent : FlyingCameraPawnComponent
     {
         _lastHits = currentHits;
         _lastHitIndex = 0;
-
-        if (currentHits.Count >= 1)
-            Selection.SceneNodes = [currentHits[0]];
-        else
-            Selection.SceneNodes = [];
+        Selection.SceneNodes = currentHits.Count >= 1 ? [currentHits[0]] : [];
     }
 
     /// <summary>

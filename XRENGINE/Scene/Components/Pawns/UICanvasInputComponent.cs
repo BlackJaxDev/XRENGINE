@@ -154,6 +154,7 @@ namespace XREngine.Components
 
             _owningPawn.PropertyChanging -= OwningPawnPropertyChanging;
             _owningPawn.PropertyChanged -= OwningPawnPropertyChanged;
+            _owningPawn.LinkedUICanvasInputs.Remove(this);
 
             UnlinkInput();
         }
@@ -168,6 +169,7 @@ namespace XREngine.Components
 
             _owningPawn.PropertyChanging += OwningPawnPropertyChanging;
             _owningPawn.PropertyChanged += OwningPawnPropertyChanged;
+            _owningPawn.LinkedUICanvasInputs.Add(this);
 
             LinkInput();
         }
@@ -269,11 +271,12 @@ namespace XREngine.Components
         }
 
         private void CollectVisible()
-            => GetCameraCanvas()?.VisualScene2D?.RenderTree?.FindAllIntersectingSorted(CursorPositionWorld2D, InteractableIntersections, InteractablePredicate);
+            => GetCameraCanvas()?.VisualScene2D?.RenderTree?.FindAllIntersectingSorted(CursorPositionWorld2D, UIElementIntersections, UIElementPredicate);
 
         private void SwapBuffers()
         {
-            TopMostInteractable = InteractableIntersections.FirstOrDefault(x => x.Owner is UIInteractableComponent)?.Owner as UIInteractableComponent;
+            TopMostElement = UIElementIntersections.FirstOrDefault(x => x.Owner is UIComponent)?.Owner as UIComponent;
+            TopMostInteractable = UIElementIntersections.FirstOrDefault(x => x.Owner is UIInteractableComponent)?.Owner as UIInteractableComponent;
             //if (TopMostInteractable is not null)
             //    Debug.Out($"Topmost interactable: {TopMostInteractable.Name}");
             ValidateAndSwapIntersections();
@@ -345,9 +348,9 @@ namespace XREngine.Components
         /// </summary>
         private void ValidateAndSwapIntersections()
         {
-            LastInteractableIntersections.Union(InteractableIntersections).ForEach(ValidateIntersection);
-            (LastInteractableIntersections, InteractableIntersections) = (InteractableIntersections, LastInteractableIntersections);
-            InteractableIntersections.Clear();
+            LastUIElementIntersections.Union(UIElementIntersections).ForEach(ValidateIntersection);
+            (LastUIElementIntersections, UIElementIntersections) = (UIElementIntersections, LastUIElementIntersections);
+            UIElementIntersections.Clear();
         }
 
         private void OnGamepadInteractButtonDown()
@@ -442,20 +445,21 @@ namespace XREngine.Components
         /// Backgrounds and other non-interactive components will still be intersected with, but they will not be considered the topmost interactable.
         /// </summary>
         public UIInteractableComponent? TopMostInteractable { get; private set; }
+        public UIComponent? TopMostElement { get; private set; }
 
-        private SortedSet<RenderInfo2D> LastInteractableIntersections = new(new Comparer());
-        private SortedSet<RenderInfo2D> InteractableIntersections = new(new Comparer());
+        private SortedSet<RenderInfo2D> LastUIElementIntersections = new(new Comparer());
+        private SortedSet<RenderInfo2D> UIElementIntersections = new(new Comparer());
 
-        protected static bool InteractablePredicate(RenderInfo2D item)
-            => item.Owner is UIInteractableComponent ui && ui.BoundableTransform.IsVisibleInHierarchy;
+        protected static bool UIElementPredicate(RenderInfo2D item)
+            => item.Owner is UIComponent ui && ui.UITransform.IsVisibleInHierarchy;
         private void ValidateIntersection(RenderInfo2D item)
         {
             if (item.Owner is not UIInteractableComponent inter)
                 return;
 
             //Quick fix: sortedset uses a comparer to sort, but the comparer doesn't check for equality, resulting in invalid contains checks.
-            var last = LastInteractableIntersections.ToArray();
-            var curr = InteractableIntersections.ToArray();
+            var last = LastUIElementIntersections.ToArray();
+            var curr = UIElementIntersections.ToArray();
 
             if (last.Contains(item))
             {

@@ -1,4 +1,6 @@
-﻿namespace XREngine.Scene
+﻿using JoltPhysicsSharp;
+
+namespace XREngine.Scene
 {
     public struct LayerMask
     {
@@ -49,5 +51,8 @@
 
             return num;
         }
+
+        public readonly ObjectLayer AsJoltObjectLayer()
+            => new((uint)_mask);
     }
 }

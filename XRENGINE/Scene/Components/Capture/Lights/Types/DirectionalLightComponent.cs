@@ -68,7 +68,7 @@ namespace XREngine.Components.Capture.Lights.Types
 
             targetStructName = $"{targetStructName ?? Engine.Rendering.Constants.LightsStructName}.";
 
-            program.Uniform($"{targetStructName}Direction", -Transform.RenderForward);
+            program.Uniform($"{targetStructName}Direction", Transform.RenderForward);
             program.Uniform($"{targetStructName}Color", _color);
             program.Uniform($"{targetStructName}DiffuseIntensity", _diffuseIntensity);
             program.Uniform($"{targetStructName}WorldToLightProjMatrix", ShadowCamera?.ProjectionMatrix ?? Matrix4x4.Identity);

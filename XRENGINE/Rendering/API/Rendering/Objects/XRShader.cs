@@ -1,4 +1,5 @@
 ﻿
+using System.Collections.Concurrent;
 using XREngine.Core.Files;
 using XREngine.Data;
 using XREngine.Rendering.Models.Materials;
@@ -97,6 +98,39 @@ namespace XREngine.Rendering
             return true;
         }
 
+        protected override bool OnPropertyChanging<T>(string? propName, T field, T @new)
+        {
+            bool change = base.OnPropertyChanging(propName, field, @new);
+            if (change)
+            {
+                switch (propName)
+                {
+                    case nameof(Source):
+                        if (Source is not null)
+                            Source.TextChanged -= OnSourceTextChanged;
+                        break;
+                }
+            }
+            return change;
+        }
+        protected override void OnPropertyChanged<T>(string? propName, T prev, T field)
+        {
+            base.OnPropertyChanged(propName, prev, field);
+            switch (propName)
+            {
+                case nameof(Source):
+                    if (Source is not null)
+                        Source.TextChanged += OnSourceTextChanged;
+                    break;
+            }
+        }
+
+        private void OnSourceTextChanged()
+        {
+            //When the source text changes, we need to mark the shader as dirty so it can be recompiled
+            MarkDirty();
+        }
+
         public enum EExtensionBehavior
         {
             Enable,
@@ -150,6 +184,44 @@ namespace XREngine.Rendering
             };
 
             return allowedBehaviors.Contains(behaviorEnum);
+        }
+
+        public ConcurrentDictionary<string, bool> _existingUniforms = new();
+
+        public bool HasUniform(string uniformName)
+        {
+            //Check the cache first
+            if (_existingUniforms.TryGetValue(uniformName, out bool exists))
+                return exists;
+
+            if (Source is null)
+                return false;
+
+            string? text = Source.Text;
+            if (text is null)
+                return false;
+
+            //If the uniform name has a . in it, it's in a struct
+            if (uniformName.Contains('.'))
+            {
+                //Split the uniform name into parts
+                string[] parts = uniformName.Split('.');
+                if (parts.Length < 2)
+                    return false;
+
+                //Search for the struct declaration
+                int index = text.IndexOf($"struct {parts[0]}", StringComparison.InvariantCultureIgnoreCase);
+                if (index == -1)
+                    return false;
+
+                //Search for the uniform declaration within the struct
+                index = text.IndexOf($"uniform {parts[1]}", index, StringComparison.InvariantCultureIgnoreCase);
+                return index != -1;
+            }
+            else
+            {
+                return text.Contains($"uniform {uniformName}", StringComparison.InvariantCultureIgnoreCase);
+            }
         }
     }
 }

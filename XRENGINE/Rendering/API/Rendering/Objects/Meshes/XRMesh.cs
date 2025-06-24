@@ -1128,7 +1128,8 @@ namespace XREngine.Rendering
                 out points,
                 out lines,
                 out triangles,
-                out var faceRemap);
+                out var faceRemap,
+                dataTransform);
 
             SetTriangleIndices(triangles, false);
             SetLineIndices(lines, false);
@@ -1178,10 +1179,10 @@ namespace XREngine.Rendering
                 vertexActions.Values,
                 sourceList,
                 count,
-                dataTransform,
+                Matrix4x4.Identity,
                 Engine.Rendering.Settings.PopulateVertexDataInParallel);
 
-            PopulateAssimpBlendshapeData(mesh, dataTransform, sourceList);
+            PopulateAssimpBlendshapeData(mesh, sourceList);
 
             //mesh.BoundingBox.Deconstruct(out Vector3 min, out Vector3 max);
             //_bounds = new AABB(min, max);
@@ -1189,7 +1190,7 @@ namespace XREngine.Rendering
             Vertices = sourceList;
         }
 
-        private unsafe void PopulateAssimpBlendshapeData(Mesh mesh, Matrix4x4 dataTransform, Vertex[] sourceList)
+        private unsafe void PopulateAssimpBlendshapeData(Mesh mesh, Vertex[] sourceList)
         {
             if (!Engine.Rendering.Settings.AllowBlendshapes || !mesh.HasMeshAnimationAttachments)
                 return;
@@ -1199,7 +1200,7 @@ namespace XREngine.Rendering
                 names[i] = mesh.MeshAnimationAttachments[i].Name;
             BlendshapeNames = names;
 
-            PopulateBlendshapeBuffers(sourceList, dataTransform);
+            PopulateBlendshapeBuffers(sourceList);
         }
         private static void PopulateVerticesAssimpParallelPrecomputed(
             Mesh mesh,
@@ -1210,7 +1211,8 @@ namespace XREngine.Rendering
             out Vertex[] points,
             out Vertex[] lines,
             out Vertex[] triangles,
-            out Dictionary<int, List<int>> faceRemap)
+            out Dictionary<int, List<int>> faceRemap,
+            Matrix4x4 dataTransform)
         {
             int faceCount = mesh.FaceCount;
 
@@ -1282,7 +1284,8 @@ namespace XREngine.Rendering
                         ProcessAssimpVertexPrecomputed(face.Indices[0], pointsArray, baseOffset, mesh, vertexCache, vertexActions,
                             ref maxTexCoordCount, ref maxColorCount,
                             concurrentFaceRemap,
-                            ref hasNormalAction, ref hasTangentAction, ref hasTexCoordAction, ref hasColorAction);
+                            ref hasNormalAction, ref hasTangentAction, ref hasTexCoordAction, ref hasColorAction,
+                            dataTransform);
                     }
                     else if (numInd == 2)
                     {
@@ -1290,11 +1293,13 @@ namespace XREngine.Rendering
                         ProcessAssimpVertexPrecomputed(face.Indices[0], linesArray, baseOffset, mesh, vertexCache, vertexActions,
                             ref maxTexCoordCount, ref maxColorCount,
                             concurrentFaceRemap,
-                            ref hasNormalAction, ref hasTangentAction, ref hasTexCoordAction, ref hasColorAction);
+                            ref hasNormalAction, ref hasTangentAction, ref hasTexCoordAction, ref hasColorAction,
+                            dataTransform);
                         ProcessAssimpVertexPrecomputed(face.Indices[1], linesArray, baseOffset + 1, mesh, vertexCache, vertexActions,
                             ref maxTexCoordCount, ref maxColorCount,
                             concurrentFaceRemap,
-                            ref hasNormalAction, ref hasTangentAction, ref hasTexCoordAction, ref hasColorAction);
+                            ref hasNormalAction, ref hasTangentAction, ref hasTexCoordAction, ref hasColorAction,
+                            dataTransform);
                     }
                     else
                     {
@@ -1309,17 +1314,20 @@ namespace XREngine.Rendering
                             ProcessAssimpVertexPrecomputed(index0, trianglesArray, baseOffset + localOffset, mesh, vertexCache, vertexActions,
                                 ref maxTexCoordCount, ref maxColorCount,
                                 concurrentFaceRemap,
-                                ref hasNormalAction, ref hasTangentAction, ref hasTexCoordAction, ref hasColorAction);
+                                ref hasNormalAction, ref hasTangentAction, ref hasTexCoordAction, ref hasColorAction,
+                                dataTransform);
                             localOffset++;
                             ProcessAssimpVertexPrecomputed(index1, trianglesArray, baseOffset + localOffset, mesh, vertexCache, vertexActions,
                                 ref maxTexCoordCount, ref maxColorCount,
                                 concurrentFaceRemap,
-                                ref hasNormalAction, ref hasTangentAction, ref hasTexCoordAction, ref hasColorAction);
+                                ref hasNormalAction, ref hasTangentAction, ref hasTexCoordAction, ref hasColorAction,
+                                dataTransform);
                             localOffset++;
                             ProcessAssimpVertexPrecomputed(index2, trianglesArray, baseOffset + localOffset, mesh, vertexCache, vertexActions,
                                 ref maxTexCoordCount, ref maxColorCount,
                                 concurrentFaceRemap,
-                                ref hasNormalAction, ref hasTangentAction, ref hasTexCoordAction, ref hasColorAction);
+                                ref hasNormalAction, ref hasTangentAction, ref hasTexCoordAction, ref hasColorAction,
+                                dataTransform);
                             localOffset++;
                         }
                     }
@@ -1349,10 +1357,11 @@ namespace XREngine.Rendering
             ref bool hasNormalAction,
             ref bool hasTangentAction,
             ref bool hasTexCoordAction,
-            ref bool hasColorAction)
+            ref bool hasColorAction,
+            Matrix4x4 dataTransform)
         {
             // Get or create the vertex (thread-safe via the concurrent dictionary)
-            Vertex v = vertexCache.GetOrAdd(originalIndex, x => Vertex.FromAssimp(mesh, x));
+            Vertex v = vertexCache.GetOrAdd(originalIndex, x => Vertex.FromAssimp(mesh, x, dataTransform));
             if (v == null)
                 return;
 
@@ -1399,7 +1408,8 @@ namespace XREngine.Rendering
             ref int maxColorCount,
             ref int maxTexCoordCount,
             ConcurrentDictionary<int, Vertex> vertexCache,
-            out Dictionary<int, List<int>> faceRemap)
+            out Dictionary<int, List<int>> faceRemap,
+            Matrix4x4 dataTransform)
         {
             using var t = Engine.Profiler.Start();
 
@@ -1444,7 +1454,8 @@ namespace XREngine.Rendering
                             ref hasNormalAction,
                             ref hasTangentAction,
                             ref hasTexCoordAction,
-                            ref hasColorAction);
+                            ref hasColorAction,
+                            dataTransform);
                         ProcessAssimpVertex(
                             index1,
                             targetList,
@@ -1457,7 +1468,8 @@ namespace XREngine.Rendering
                             ref hasNormalAction,
                             ref hasTangentAction,
                             ref hasTexCoordAction,
-                            ref hasColorAction);
+                            ref hasColorAction,
+                            dataTransform);
                         ProcessAssimpVertex(
                             index2,
                             targetList,
@@ -1470,7 +1482,8 @@ namespace XREngine.Rendering
                             ref hasNormalAction,
                             ref hasTangentAction,
                             ref hasTexCoordAction,
-                            ref hasColorAction);
+                            ref hasColorAction,
+                            dataTransform);
                     }
                 }
                 else
@@ -1490,7 +1503,8 @@ namespace XREngine.Rendering
                             ref hasNormalAction,
                             ref hasTangentAction,
                             ref hasTexCoordAction,
-                            ref hasColorAction);
+                            ref hasColorAction,
+                            dataTransform);
                     }
                 }
             }
@@ -1508,11 +1522,12 @@ namespace XREngine.Rendering
             ref bool hasNormalAction,
             ref bool hasTangentAction,
             ref bool hasTexCoordAction,
-            ref bool hasColorAction)
+            ref bool hasColorAction,
+            Matrix4x4 dataTransform)
         {
             int newIndex = targetList.Count;
             // Reuse cached vertex or create if needed
-            Vertex v = vertexCache.GetOrAdd(originalIndex, x => Vertex.FromAssimp(mesh, x));
+            Vertex v = vertexCache.GetOrAdd(originalIndex, x => Vertex.FromAssimp(mesh, x, dataTransform));
             AddVertex(
                 targetList,
                 v,
@@ -1578,7 +1593,7 @@ namespace XREngine.Rendering
             }
         }
 
-        private unsafe void PopulateBlendshapeBuffers(Vertex[] sourceList, Matrix4x4 dataTransform)
+        private unsafe void PopulateBlendshapeBuffers(Vertex[] sourceList)
         {
             using var t = Engine.Profiler.Start();
 
@@ -1633,9 +1648,9 @@ namespace XREngine.Rendering
                     int nrmInd = 0;
                     int tanInd = 0;
 
-                    Vector3 tfmPos = Vector3.Transform(bsData.Position, dataTransform);
-                    Vector3 tfmNrm = Vector3.TransformNormal(bsData.Normal ?? Vector3.Zero, dataTransform).Normalized();
-                    Vector3 tfmTan = Vector3.TransformNormal(bsData.Tangent ?? Vector3.Zero, dataTransform).Normalized();
+                    Vector3 tfmPos = bsData.Position;
+                    Vector3 tfmNrm = bsData.Normal ?? Vector3.Zero;
+                    Vector3 tfmTan = bsData.Tangent ?? Vector3.Zero;
 
                     bsData.Position = tfmPos;
                     if (bsData.Normal != null)
@@ -1783,7 +1798,14 @@ namespace XREngine.Rendering
         {
             using var t = Engine.Profiler.Start();
 
-            CollectBoneWeights(mesh, nodeCache, faceRemap, sourceList, out int boneCount, out Dictionary<TransformBase, (float weight, Matrix4x4 invBindMatrix)>?[]? weightsPerVertex, out Dictionary<TransformBase, int> boneToIndexTable);
+            CollectBoneWeights(
+                mesh,
+                nodeCache,
+                faceRemap,
+                sourceList,
+                out int boneCount,
+                out Dictionary<TransformBase, (float weight, Matrix4x4 invBindMatrix)>?[]? weightsPerVertex,
+                out Dictionary<TransformBase, int> boneToIndexTable);
 
             //if (boneToIndexTable.Count < boneCount)
             //    Debug.Out($"{boneCount - boneToIndexTable.Count} unweighted bones were removed.");

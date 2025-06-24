@@ -16,9 +16,6 @@ namespace XREngine.Rendering.UI
     [RequiresTransform(typeof(UIBoundableTransform))]
     public abstract class UIRenderableComponent : UIComponent, IRenderable
     {
-        public const string UIWidthUniformName = "UIWidth";
-        public const string UIHeightUniformName = "UIHeight";
-
         public UIBoundableTransform BoundableTransform => TransformAs<UIBoundableTransform>(true)!;
         public UIRenderableComponent()
         {
@@ -112,8 +109,8 @@ namespace XREngine.Rendering.UI
                 switch (propName)
                 {
                     case nameof(Material):
-                        if (Material is not null)
-                            Material.SettingUniforms -= OnMaterialSettingUniforms;
+                        if (_material is not null)
+                            _material.SettingUniforms -= OnMaterialSettingUniforms;
                         break;
                 }
             }
@@ -127,25 +124,33 @@ namespace XREngine.Rendering.UI
                 case nameof(Material):
                     var m = Mesh;
                     if (m is not null)
-                        m.Material = Material;
-                    if (Material is not null)
-                        Material.SettingUniforms += OnMaterialSettingUniforms;
+                        m.Material = _material;
+                    if (_material is not null)
+                        _material.SettingUniforms += OnMaterialSettingUniforms;
                     break;
             }
         }
 
+        private Vector4 _lastBounds = Vector4.Zero;
         protected virtual void OnMaterialSettingUniforms(XRMaterialBase material, XRRenderProgram program)
         {
-            var m = Material;
-            if (m is null)
-                return;
-
             var tfm = BoundableTransform;
             var w = tfm.ActualWidth;
             var h = tfm.ActualHeight;
+            var bottomLeft = tfm.ActualLocalBottomLeftTranslation;
+            var x = bottomLeft.X;
+            var y = bottomLeft.Y;
+            //if (x == _lastBounds.X && y == _lastBounds.Y && w == _lastBounds.Z && h == _lastBounds.W)
+            //    return; //No change, no need to update uniforms
 
-            program.Uniform(UIWidthUniformName, w);
-            program.Uniform(UIHeightUniformName, h);
+            var bounds = new Vector4(x, y, w, h);
+
+            _lastBounds = bounds;
+            program.Uniform(EEngineUniform.UIWidth.ToString(), w);
+            program.Uniform(EEngineUniform.UIHeight.ToString(), h);
+            program.Uniform(EEngineUniform.UIX.ToString(), x);
+            program.Uniform(EEngineUniform.UIY.ToString(), y);
+            program.Uniform(EEngineUniform.UIXYWH.ToString(), bounds);
         }
 
         protected override void UITransformPropertyChanged(object? sender, IXRPropertyChangedEventArgs e)

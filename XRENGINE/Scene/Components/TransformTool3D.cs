@@ -1,4 +1,5 @@
 ﻿using Extensions;
+using MagicPhysX;
 using MathNet.Numerics;
 using System.Numerics;
 using XREngine.Components;
@@ -14,6 +15,8 @@ using XREngine.Rendering.Commands;
 using XREngine.Rendering.Info;
 using XREngine.Rendering.Models;
 using XREngine.Rendering.Models.Materials;
+using XREngine.Rendering.Physics.Physx;
+using XREngine.Rendering.Physics.Physx.Joints;
 using XREngine.Scene;
 using XREngine.Scene.Transforms;
 
@@ -412,6 +415,27 @@ namespace XREngine.Actors.Types
                 UpdateDisplayTransform();
         }
 
+        private PhysxDynamicRigidBody? _linkRB = null;
+
+        protected override bool OnPropertyChanging<T>(string? propName, T field, T @new)
+        {
+            bool change = base.OnPropertyChanging(propName, field, @new);
+            if (change)
+            {
+                switch (propName)
+                {
+                    case nameof(TargetSocket):
+                        if (_targetSocket != null)
+                        {
+                            _targetSocket.WorldMatrixChanged -= SocketTransformChangedCallback;
+                            _linkRB?.Destroy();
+                            _linkRB = null;
+                        }
+                        break;
+                }
+            }
+            return change;
+        }
         protected override void OnPropertyChanged<T>(string? propName, T prev, T field)
         {
             base.OnPropertyChanged(propName, prev, field);
@@ -420,12 +444,75 @@ namespace XREngine.Actors.Types
                 case nameof(TargetSocket):
                     {
                         if (_targetSocket != null)
+                        {
                             _targetSocket.WorldMatrixChanged += SocketTransformChangedCallback;
-
+                            LinkRigidBodySocket();
+                        }
                         UpdateDisplayTransform();
                     }
                     break;
             }
+        }
+
+        private void LinkRigidBodySocket()
+        {
+            if (_targetSocket is not RigidBodyTransform rbt)
+                return;
+
+            if (rbt.World?.PhysicsScene is not PhysxScene phys)
+                return;
+
+            var rb = rbt.RigidBody as PhysxDynamicRigidBody;
+            if (rb is not null && _linkRB is null)
+                phys.AddActor(_linkRB = new() { Flags = PxRigidBodyFlags.Kinematic, ActorFlags = PxActorFlags.DisableGravity });
+        }
+
+        private void LinkPhysxJoint()
+        {
+            if (_targetSocket is not RigidBodyTransform rbt)
+                return;
+
+            if (rbt.World?.PhysicsScene is not PhysxScene phys)
+                return;
+
+            var rb = rbt.RigidBody as PhysxDynamicRigidBody;
+            if (rb is not null)
+                LinkJoint(phys, rb);
+        }
+
+        private PhysxJoint? _dragJoint = null;
+        private void LinkJoint(PhysxScene phys, PhysxDynamicRigidBody rb)
+            => _dragJoint = MakeDistanceJoint(phys, rb);
+
+        private PhysxJoint_Distance MakeDistanceJoint(PhysxScene phys, PhysxDynamicRigidBody rb)
+        {
+            if (_linkRB is null)
+                phys.AddActor(_linkRB = new() { Flags = PxRigidBodyFlags.Kinematic, ActorFlags = PxActorFlags.DisableGravity });
+
+            (Vector3 Zero, Quaternion Identity) identityTfm = (Vector3.Zero, Quaternion.Identity);
+
+            if (_targetSocket is not null)
+                _linkRB.Transform = (_targetSocket.WorldTranslation, _targetSocket.WorldRotation);
+            
+            PhysxJoint_Distance? joint = phys.NewDistanceJoint(rb, identityTfm, _linkRB, identityTfm);
+            joint.MaxDistance = 0.0f;
+            joint.MinDistance = 0.0f;
+            joint.Stiffness = 10.0f;
+            joint.Damping = 0.1f;
+            joint.Tolerance = 0.1f;
+            joint.ContactDistance = 0.1f;
+            joint.DistanceFlags = PxDistanceJointFlags.MaxDistanceEnabled | PxDistanceJointFlags.SpringEnabled;
+            joint.Flags = PxConstraintFlags.CollisionEnabled;
+            return joint;
+        }
+
+        private void UnlinkPhysxJoint()
+        {
+            if (_dragJoint is null)
+                return;
+            
+            _dragJoint.Release();
+            _dragJoint = null;
         }
 
         private void ModeChanged()
@@ -521,22 +608,24 @@ namespace XREngine.Actors.Types
 
         private void MouseUpTranslation()
         {
-
+            UnlinkPhysxJoint();
         }
 
         private void MouseDownTranslation()
         {
             StoreInitialLocalTransform();
+            LinkPhysxJoint();
         }
 
         private void MouseUpRotation()
         {
-
+            UnlinkPhysxJoint();
         }
 
         private void MouseDownRotation()
         {
             StoreInitialLocalTransform();
+            LinkPhysxJoint();
         }
 
         private Vector3 _localTranslationDragStart = Vector3.Zero;
@@ -736,6 +825,20 @@ namespace XREngine.Actors.Types
 
             if (_targetSocket is Transform t)
                 t.Rotation = newRotationLocal;
+            else if (_targetSocket is RigidBodyTransform)
+            {
+                if (_linkRB is not null)
+                {
+                    Matrix4x4 localMatrix =
+                         Matrix4x4.CreateFromQuaternion(newRotationLocal) *
+                        Matrix4x4.CreateTranslation(_localTranslationDragStart);
+
+                    var parentMtx = _targetSocket.ParentWorldMatrix;
+                    Matrix4x4 worldMtx = localMatrix * parentMtx;
+                    if (Matrix4x4.Decompose(worldMtx, out _, out Quaternion rotation, out Vector3 translation))
+                        _linkRB.KinematicTarget = (translation, rotation);
+                }
+            }
             else
                 _targetSocket.DeriveLocalMatrix(
                     Matrix4x4.CreateScale(_localScaleDragStart) *
@@ -757,14 +860,32 @@ namespace XREngine.Actors.Types
 
             if (_snapTranslations && _snapInLocalSpace)
                 SnapAbsoluteTranslation(ref localDragPoint);
-            
+
             if (_targetSocket is Transform t) //Set directly for regular transforms
                 t.Translation = localDragPoint;
+            else if (_targetSocket is RigidBodyTransform)
+            {
+                if (_linkRB is not null)
+                {
+                    Matrix4x4 localMatrix =
+                        Matrix4x4.CreateFromQuaternion(_localRotationDragStart) *
+                        Matrix4x4.CreateTranslation(localDragPoint);
+
+                    var parentMtx = _targetSocket.ParentWorldMatrix;
+                    Matrix4x4 worldMtx = localMatrix * parentMtx;
+                    if (Matrix4x4.Decompose(worldMtx, out _, out Quaternion rotation, out Vector3 translation))
+                        _linkRB.KinematicTarget = (translation, rotation);
+                }
+            }
             else //Other transform types have to handle this themselves
-                _targetSocket.DeriveLocalMatrix(
+            {
+                Matrix4x4 localMatrix =
                     Matrix4x4.CreateScale(_localScaleDragStart) *
                     Matrix4x4.CreateFromQuaternion(_localRotationDragStart) *
-                    Matrix4x4.CreateTranslation(localDragPoint));
+                    Matrix4x4.CreateTranslation(localDragPoint);
+
+                _targetSocket.DeriveLocalMatrix(localMatrix);
+            }
 
         }
 

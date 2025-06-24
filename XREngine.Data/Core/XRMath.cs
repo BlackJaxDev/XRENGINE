@@ -1,10 +1,8 @@
 ﻿using Extensions;
 using SimpleScene.Util.ssBVH;
-using System;
 using System.Numerics;
 using XREngine.Data.Geometry;
 using XREngine.Data.Transforms.Rotations;
-using YamlDotNet.Core.Tokens;
 using static System.Math;
 
 namespace XREngine.Data.Core
@@ -2140,7 +2138,7 @@ namespace XREngine.Data.Core
             if (dotY > dotX)
                 axis = Globals.Up;
             float dotZ = MathF.Abs(Vector3.Dot(r.Rotate(Globals.Forward), direction));
-            if (dotZ < dotX && dotZ < dotY)
+            if (dotZ > dotX && dotZ > dotY)
                 axis = Globals.Forward;
             return axis;
         }

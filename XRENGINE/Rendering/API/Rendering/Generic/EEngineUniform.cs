@@ -54,5 +54,11 @@
 
         BillboardMode,
         VRMode,
+
+        UIWidth,
+        UIHeight,
+        UIX,
+        UIY,
+        UIXYWH,
     }
 }

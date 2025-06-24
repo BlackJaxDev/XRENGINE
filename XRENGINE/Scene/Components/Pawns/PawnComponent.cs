@@ -160,6 +160,8 @@ namespace XREngine.Components
             set => SetField(ref _userInterfaceInput, value);
         }
 
+        public EventList<UICanvasInputComponent> LinkedUICanvasInputs { get; } = [];
+
         public virtual void RegisterInput(InputInterface input) { }
 
         private IEnumerable<OptionalInputSetComponent>? _registeredOptionalSets = null;

@@ -152,17 +152,6 @@ namespace XREngine.Rendering
             set => SetField(ref _cullWithFrustum, value);
         }
 
-        private void CollectVisibleInternal()
-        {
-            if (AutomaticallyCollectVisible)
-                CollectVisible();
-        }
-        private void SwapBuffersInternal()
-        {
-            if (AutomaticallySwapBuffers)
-                SwapBuffers();
-        }
-
         /// <summary>
         /// Collects all visible items in the world and UI within the active camera for this viewport (ActiveCamera) and puts them into the render pipeline's render command collection.
         /// Use worldOverride to override the world instance to collect from.
@@ -339,6 +328,15 @@ namespace XREngine.Rendering
         private readonly XRRenderPipelineInstance _renderPipeline = new();
         public XRRenderPipelineInstance RenderPipelineInstance => _renderPipeline;
 
+        private void CollectVisibleAutomatic()
+        {
+            CollectVisible();
+        }
+        private void SwapBuffersAutomatic()
+        {
+            SwapBuffers();
+        }
+
         protected override bool OnPropertyChanging<T>(string? propName, T field, T @new)
         {
             bool change = base.OnPropertyChanging(propName, field, @new);
@@ -346,12 +344,24 @@ namespace XREngine.Rendering
             {
                 switch (propName)
                 {
+                    case nameof(AutomaticallySwapBuffers):
+                        if (_automaticallySwapBuffers && _camera is not null)
+                            Engine.Time.Timer.SwapBuffers -= SwapBuffersAutomatic;
+                        break;
+                    case nameof(AutomaticallyCollectVisible):
+                        if (_automaticallyCollectVisible && _camera is not null)
+                            Engine.Time.Timer.CollectVisible -= CollectVisibleAutomatic;
+                        break;
                     case nameof(Camera):
                         if (_camera is not null)
                         {
                             _camera.Viewports.Remove(this);
-                            Engine.Time.Timer.SwapBuffers -= SwapBuffersInternal;
-                            Engine.Time.Timer.CollectVisible -= CollectVisibleInternal;
+
+                            if (AutomaticallySwapBuffers)
+                                Engine.Time.Timer.SwapBuffers -= SwapBuffersAutomatic;
+
+                            if (AutomaticallyCollectVisible)
+                                Engine.Time.Timer.CollectVisible -= CollectVisibleAutomatic;
                         }
                         break;
                 }
@@ -363,14 +373,26 @@ namespace XREngine.Rendering
             base.OnPropertyChanged(propName, prev, field);
             switch (propName)
             {
+                case nameof(AutomaticallySwapBuffers):
+                    if (_automaticallySwapBuffers && _camera is not null)
+                        Engine.Time.Timer.SwapBuffers += SwapBuffersAutomatic;
+                    break;
+                case nameof(AutomaticallyCollectVisible):
+                    if (_automaticallyCollectVisible && _camera is not null)
+                        Engine.Time.Timer.CollectVisible += CollectVisibleAutomatic;
+                    break;
                 case nameof(Camera):
                     if (_camera is not null)
                     {
                         if (!_camera.Viewports.Contains(this))
                             _camera.Viewports.Add(this);
                         SetAspectRatioToCamera();
-                        Engine.Time.Timer.SwapBuffers += SwapBuffersInternal;
-                        Engine.Time.Timer.CollectVisible += CollectVisibleInternal;
+
+                        if (AutomaticallySwapBuffers)
+                            Engine.Time.Timer.SwapBuffers += SwapBuffersAutomatic;
+
+                        if (AutomaticallyCollectVisible)
+                            Engine.Time.Timer.CollectVisible += CollectVisibleAutomatic;
                     }
                     if (SetRenderPipelineFromCamera)
                         _renderPipeline.Pipeline = _camera?.RenderPipeline;

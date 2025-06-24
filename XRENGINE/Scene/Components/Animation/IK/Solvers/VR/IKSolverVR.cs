@@ -188,7 +188,7 @@ namespace XREngine.Components.Animation
 
             ReadTransforms();
 
-            _spine.ForwardDir = RootBone?.Pose.InputWorld.Rotation.Rotate(Globals.Forward).Normalized() ?? Globals.Forward;
+            _spine.ForwardDir = RootBone?.Pose.InputWorld.Rotation.Rotate(Globals.Forward) ?? Globals.Forward;
 
             //if (_hasLegs)
             //{
@@ -348,7 +348,7 @@ namespace XREngine.Components.Animation
 			if (_lastQuality != EQuality.Culled)
                 return;
 
-            _spine.ForwardDir = RootBone?.InputRotation.Rotate(Globals.Forward).Normalized() ?? Globals.Forward;
+            _spine.ForwardDir = RootBone?.InputRotation.Rotate(Globals.Forward) ?? Globals.Forward;
 
             //if (!_hasLegs)
             //    return;
@@ -434,7 +434,7 @@ namespace XREngine.Components.Animation
             if (!Initialized)
             {
                 _raycastOriginPelvis = _spine.Hips.InputPosition;
-                _spine.ForwardDir = RootBone.InputRotation.Rotate(Globals.Forward).Normalized();
+                _spine.ForwardDir = RootBone.InputRotation.Rotate(Globals.Forward);
             }
         }
 
@@ -498,7 +498,7 @@ namespace XREngine.Components.Animation
 
         private float SubSolve(float dt)
         {
-            _spine.Solve(Animator, RootBone, _legs, _arms, _scale);
+            //_spine.Solve(Animator, RootBone, _legs, _arms, _scale);
 
             if (_solverTransforms is null)
                 return dt;

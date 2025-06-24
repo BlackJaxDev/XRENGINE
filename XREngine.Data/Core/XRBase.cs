@@ -133,8 +133,12 @@ namespace XREngine.Data.Core
 
         protected virtual bool OnPropertyChanging<T>(string? propName, T field, T @new)
         {
+            var pc = PropertyChanging;
+            if (pc is null)
+                return true; // No subscribers, allow change by default.
+
             var args = new XRPropertyChangingEventArgs<T>(propName, field, @new);
-            PropertyChanging?.Invoke(this, args);
+            pc(this, args);
             return args.AllowChange;
         }
     }

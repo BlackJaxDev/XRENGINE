@@ -316,7 +316,7 @@ namespace XREngine.Components.VR
                 return;
 
             EyeOffsetFromHead = h.CalculateEyeOffsetFromHead(EyesModel, EyeLBoneName, EyeRBoneName);
-            Engine.VRState.CalibrationSettings.HeadOffset = -EyeOffsetFromHead;
+            //Engine.VRState.CalibrationSettings.HeadOffset = ScaledToRealWorldEyeOffsetFromHead;
             h.HeadTarget = (Headset, Matrix4x4.Identity);
             h.LeftHandTarget = (LeftController, Matrix4x4.Identity);
             h.RightHandTarget = (RightController, Matrix4x4.Identity);
@@ -447,11 +447,11 @@ namespace XREngine.Components.VR
 
             TransformBase.GetDirectionsXZ(hmdRelativeToFoot, out Vector3 forward, out _);
 
-            Matrix4x4 eyePosRot = Matrix4x4.CreateWorld(hmdRelativeToFoot.Translation, -forward, Globals.Up);
-            Matrix4x4 eyeToHead = Matrix4x4.CreateTranslation(-EyeOffsetFromHead);
+            Matrix4x4 eyePosRot = Matrix4x4.CreateWorld(hmdRelativeToFoot.Translation, forward, Globals.Up);
+            Matrix4x4 eyeToHead = Matrix4x4.CreateTranslation(-ScaledToRealWorldEyeOffsetFromHead);
             Matrix4x4 headToRoot = Matrix4x4.CreateTranslation(-GetHeadOffsetFromAvatarRoot(h));
             Matrix4x4 movementOffset = eyeToHead * eyePosRot;
-            Matrix4x4 rootMtx = headToRoot * eyeToHead * Matrix4x4.CreateScale(Engine.VRState.ModelToRealWorldHeightRatio) * eyePosRot;
+            Matrix4x4 rootMtx = headToRoot * eyeToHead * eyePosRot;
             Matrix4x4.Decompose(rootMtx, out _, out Quaternion rootRot, out Vector3 rootTrans);
 
             //Move the avatar root transform to match the headset's rotation and Y translation
@@ -512,7 +512,7 @@ namespace XREngine.Components.VR
 
             TransformBase.GetDirectionsXZ(deviceRelativeToFoot, out Vector3 forward, out _);
 
-            Matrix4x4 headMtx = deviceToBodyOffsetMtx * Matrix4x4.CreateWorld(deviceRelativeToFoot.Translation, -forward, Globals.Up);
+            Matrix4x4 headMtx = deviceToBodyOffsetMtx * Matrix4x4.CreateWorld(deviceRelativeToFoot.Translation, forward, Globals.Up);
 
             AddMovementInputFromDevice(playspaceRootTfm, headMtx.Translation);
         }
@@ -560,7 +560,7 @@ namespace XREngine.Components.VR
         //}
 
         private static Vector3 GetHeadOffsetFromAvatarRoot(HumanoidComponent h)
-            => h.Head.Node!.Transform.BindMatrix.Translation;
+            => h.Head.Node!.Transform.WorldMatrix.Translation - h.Transform!.WorldMatrix.Translation;
 
         private static Vector3 GetScaledBodyPartOffsetFromAvatarRoot(HumanoidComponent h, ETrackableBodyPart bodyPart)
         {

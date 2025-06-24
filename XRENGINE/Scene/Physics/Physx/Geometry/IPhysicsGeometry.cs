@@ -1,4 +1,5 @@
-﻿using MagicPhysX;
+﻿using JoltPhysicsSharp;
+using MagicPhysX;
 using System.Numerics;
 using XREngine.Data;
 using XREngine.Data.Geometry;
@@ -9,23 +10,24 @@ namespace XREngine.Rendering.Physics.Physx
     public unsafe interface IPhysicsGeometry
     {
         DataSource GetPhysxStruct();
-        public PxGeometry* AsPtr() => GetPhysxStruct().Address.As<PxGeometry>();
+        public PxGeometry* AsPhysxPtr() => GetPhysxStruct().Address.As<PxGeometry>();
+        public Shape AsJoltShape();
 
         public unsafe struct Sphere(float radius) : IPhysicsGeometry
         {
             public float Radius = radius;
 
             public readonly PxSphereGeometry GetGeometry() => PxSphereGeometry_new(Radius);
-
             public readonly DataSource GetPhysxStruct() => DataSource.FromStruct(GetGeometry());
+            public readonly Shape AsJoltShape() => new SphereShape(Radius);
         }
         public unsafe struct Box(Vector3 halfExtents) : IPhysicsGeometry
         {
             public Vector3 HalfExtents = halfExtents;
 
             public readonly PxBoxGeometry GetGeometry() => PxBoxGeometry_new(HalfExtents.X, HalfExtents.Y, HalfExtents.Z);
-
             public readonly DataSource GetPhysxStruct() => DataSource.FromStruct(GetGeometry());
+            public readonly Shape AsJoltShape() => new BoxShape(HalfExtents);
         }
         public unsafe struct Capsule(float radius, float halfHeight) : IPhysicsGeometry
         {
@@ -33,8 +35,8 @@ namespace XREngine.Rendering.Physics.Physx
             public float HalfHeight = halfHeight;
 
             public readonly PxCapsuleGeometry GetGeometry() => PxCapsuleGeometry_new(Radius, HalfHeight);
-
             public readonly DataSource GetPhysxStruct() => DataSource.FromStruct(GetGeometry());
+            public readonly Shape AsJoltShape() => new CapsuleShape(HalfHeight, Radius);
         }
         public unsafe struct ConvexMesh(PxConvexMesh* mesh, Vector3 scale, Quaternion rotation, bool tightBounds) : IPhysicsGeometry
         {
@@ -51,8 +53,8 @@ namespace XREngine.Rendering.Physics.Physx
                 PxConvexMeshGeometryFlags flags = TightBounds ? PxConvexMeshGeometryFlags.TightBounds : 0;
                 return PxConvexMeshGeometry_new(Mesh, &scaleRot, flags);
             }
-
             public readonly DataSource GetPhysxStruct() => DataSource.FromStruct(GetGeometry());
+            public readonly Shape AsJoltShape() => throw new NotImplementedException(); //new ConvexMeshShape(Mesh, Scale, Rotation, TightBounds);
         }
         public unsafe struct TriangleMesh(PxTriangleMesh* mesh, Vector3 scale, Quaternion rotation, bool tightBounds, bool doubleSided) : IPhysicsGeometry
         {
@@ -70,8 +72,8 @@ namespace XREngine.Rendering.Physics.Physx
                 PxMeshGeometryFlags flags = (TightBounds ? PxMeshGeometryFlags.TightBounds : 0) | (DoubleSided ? PxMeshGeometryFlags.DoubleSided : 0);
                 return PxTriangleMeshGeometry_new(Mesh, &scaleRot, flags);
             }
-
             public readonly DataSource GetPhysxStruct() => DataSource.FromStruct(GetGeometry());
+            public readonly Shape AsJoltShape() => throw new NotImplementedException(); //new TriangleMeshShape(Mesh, Scale, Rotation, TightBounds, DoubleSided);
         }
         public unsafe struct HeightField(PxHeightField* field, float heightScale, float rowScale, float columnScale, bool tightBounds, bool doubleSided) : IPhysicsGeometry
         {
@@ -87,14 +89,16 @@ namespace XREngine.Rendering.Physics.Physx
                 PxMeshGeometryFlags flags = (TightBounds ? PxMeshGeometryFlags.TightBounds : 0) | (DoubleSided ? PxMeshGeometryFlags.DoubleSided : 0);
                 return PxHeightFieldGeometry_new(Field, flags, HeightScale, RowScale, ColumnScale);
             }
-
             public readonly DataSource GetPhysxStruct() => DataSource.FromStruct(GetGeometry());
+            public readonly Shape AsJoltShape() => throw new NotImplementedException(); //new HeightFieldShape(Field, HeightScale, RowScale, ColumnScale, TightBounds, DoubleSided);
         }
         public unsafe struct Plane() : IPhysicsGeometry
         {
+            public System.Numerics.Plane PlaneData = new System.Numerics.Plane(Globals.Up, 0.0f);
+            
             public readonly PxPlaneGeometry GetGeometry() => PxPlaneGeometry_new();
-
             public readonly DataSource GetPhysxStruct() => DataSource.FromStruct(GetGeometry());
+            public readonly Shape AsJoltShape() => new PlaneShape(PlaneData);
         }
         public unsafe struct ParticleSystem(PxParticleSolverType solver) : IPhysicsGeometry
         {
@@ -106,8 +110,8 @@ namespace XREngine.Rendering.Physics.Physx
                 g.mSolverType = Solver;
                 return g;
             }
-
             public readonly DataSource GetPhysxStruct() => DataSource.FromStruct(GetGeometry());
+            public readonly Shape AsJoltShape() => throw new NotImplementedException(); //new ParticleSystemShape(Solver);
         }
         public unsafe struct TetrahedronMesh(PxTetrahedronMesh* mesh) : IPhysicsGeometry
         {
@@ -117,7 +121,10 @@ namespace XREngine.Rendering.Physics.Physx
                 => PxTetrahedronMeshGeometry_new(Mesh);
 
             public readonly DataSource GetPhysxStruct() => DataSource.FromStruct(GetGeometry());
+            public readonly Shape AsJoltShape() => throw new NotImplementedException(); //new TetrahedronMeshShape(Mesh);
         }
+
+        #region PhysX
 
         public PxGeometry* PhysxGeometry
             => (PxGeometry*)GetPhysxStruct().Address;
@@ -203,5 +210,7 @@ namespace XREngine.Rendering.Physics.Physx
             PxTransform hfPose = PhysxScene.MakeTransform(heightFieldPose.position, heightFieldPose.rotation);
             return PhysxGeometry->MeshQueryFindOverlapHeightField(&p, heightField, &hfPose, results, maxResults, startIndex, overflow, queryFlags);
         }
+
+        #endregion
     }
 }

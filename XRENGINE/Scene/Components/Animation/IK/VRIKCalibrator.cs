@@ -132,7 +132,7 @@ namespace XREngine.Components.Animation
             var spine = ik.Solver.Spine;
 
             //Vector3 headPos = CalibrateRoot(settings, headTracker, root);
-            Transform? headTarget = CalibrateHead(headTracker, head, spine);
+            Transform? headTarget = CalibrateHead(headTracker, head, spine, settings.HeadOffset);
             CalibrateScale(settings, root, head, headTarget);
             CalibrateHips(ik, settings, bodyTracker, leftFootTracker, rightFootTracker, hips, spine);
             CalibrateLeftHand(ik, settings, leftHandTracker);
@@ -255,7 +255,8 @@ namespace XREngine.Components.Animation
         private static Transform? CalibrateHead(
             TransformBase headTracker,
             Transform head,
-            IKSolverVR.SpineSolver spine)
+            IKSolverVR.SpineSolver spine,
+            Vector3 headOffset)
         {
             SceneNode? headTrackerNode = headTracker.SceneNode;
             if (headTrackerNode is null)
@@ -265,9 +266,8 @@ namespace XREngine.Components.Animation
             }
 
             Transform headTarget = GetOrCreateHeadTarget(spine, headTrackerNode, "Head Target");
-
             head.RecalculateMatrices(true);
-            headTarget.SetWorldTranslationRotation(head.WorldTranslation, head.WorldRotation);
+            headTarget.SetWorldTranslationRotation(head.WorldTranslation + headOffset, head.WorldRotation);
             headTarget.SaveBindState();
             headTarget.RecalculateMatrices(true);
             return headTarget;

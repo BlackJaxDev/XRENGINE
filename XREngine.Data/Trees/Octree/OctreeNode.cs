@@ -16,7 +16,7 @@ namespace XREngine.Data.Trees
     public class OctreeNode<T>(AABB bounds, int subDivIndex, int subDivLevel, OctreeNode<T>? parent, Octree<T> owner)
         : OctreeNodeBase(bounds, subDivIndex, subDivLevel) where T : class, IOctreeItem
     {
-        protected EventList<T> _items = new() { ThreadSafe = true };
+        protected EventList<T> _items = new() { ThreadSafe = false };
         protected OctreeNode<T>?[] _subNodes = new OctreeNode<T>[OctreeBase.MaxChildNodeCount];
         protected OctreeNode<T>? _parentNode = parent;
         //private readonly ReaderWriterLockSlim _lock;

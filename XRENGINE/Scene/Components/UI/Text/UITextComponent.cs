@@ -32,7 +32,7 @@ namespace XREngine.Rendering.UI
         private XRDataBuffer? _uvsBuffer;
         private XRDataBuffer? _transformsBuffer;
         private XRDataBuffer? _rotationsBuffer;
-        private readonly object _glyphLock = new();
+        private readonly Lock _glyphLock = new();
         public bool _pushFull = false;
         public bool _dataChanged = false;
         private uint _allocatedGlyphCount = 20;
@@ -168,13 +168,13 @@ namespace XREngine.Rendering.UI
         private float CalcAutoWidth(UIBoundableTransform transform)
         {
             //x = pos x, z = scale x
-            lock (_glyphLock)
+            using (_glyphLock.EnterScope())
             {
                 if (_glyphs is null || _glyphs.Count == 0)
                     return 0.0f;
 
                 //if (WrapMode != FontGlyphSet.EWrapMode.None)
-                    return _glyphs.Max(g => g.transform.X + g.transform.Z);
+                return _glyphs.Max(g => g.transform.X + g.transform.Z);
                 //else
                 //{
                 //    var last = _glyphs[^1];
@@ -186,7 +186,7 @@ namespace XREngine.Rendering.UI
         private float CalcAutoHeight(UIBoundableTransform transform)
         {
             //y = pos y, w = scale y
-            lock (_glyphLock)
+            using (_glyphLock.EnterScope())
             {
                 if (_glyphs is null || _glyphs.Count == 0)
                     return 0.0f;
@@ -251,18 +251,21 @@ namespace XREngine.Rendering.UI
         protected virtual void UpdateText(bool forceRemake, bool invalidateLayout = true)
         {
             Font ??= FontGlyphSet.LoadDefaultFont();
-            VerifyCreated(forceRemake, Font.Atlas);
-            uint count;
-            lock (_glyphLock)
-            {
-                var tfm = BoundableTransform;
-                float w = tfm.ActualWidth;
-                float h = tfm.ActualHeight;
-                Font.GetQuads(Text, _glyphs, FontSize, w, h, WrapMode, 5.0f, 2.0f);
-                AlignQuads(tfm, w, h);
-                count = (uint)(_glyphs?.Count ?? 0);
-            }
-            ResizeGlyphCount(count, invalidateLayout);
+            //Task.Run(() =>
+            //{
+                VerifyCreated(forceRemake, Font.Atlas);
+                uint count;
+                using (_glyphLock.EnterScope())
+                {
+                    var tfm = BoundableTransform;
+                    float w = tfm.ActualWidth;
+                    float h = tfm.ActualHeight;
+                    Font.GetQuads(Text, _glyphs, FontSize, w, h, WrapMode, 5.0f, 2.0f);
+                    AlignQuads(tfm, w, h);
+                    count = (uint)(_glyphs?.Count ?? 0);
+                }
+                ResizeGlyphCount(count, invalidateLayout);
+            //});
         }
 
         private void AlignQuads(UIBoundableTransform tfm, float w, float h)
@@ -524,7 +527,7 @@ namespace XREngine.Rendering.UI
                 return;
             
             (Vector4 transform, Vector4 uvs)[] glyphsCopy;
-            lock (_glyphLock)
+            using (_glyphLock.EnterScope())
                 glyphsCopy = [.. _glyphs];
 
             float* tfmPtr = (float*)_transformsBuffer.ClientSideSource!.Address.Pointer;

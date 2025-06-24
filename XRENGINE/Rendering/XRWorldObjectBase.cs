@@ -49,6 +49,13 @@ namespace XREngine
             public IReadOnlyList<string> CompressedPropertyNames => _compressedPropertyNames;
         }
 
+        private object? _userData;
+        public object? UserData
+        {
+            get => _userData;
+            set => SetField(ref _userData, value);
+        }
+
         public ReplicationInfo? GetReplicationInfo()
             => _replicatedTypes.TryGetValue(GetType(), out var repl) ? repl : null;
 

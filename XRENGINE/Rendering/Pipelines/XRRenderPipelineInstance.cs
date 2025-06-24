@@ -240,7 +240,8 @@ public sealed partial class XRRenderPipelineInstance : XRBase
     }
     public void InternalResolutionResized(int internalWidth, int internalHeight)
     {
-        //DestroyCache();
+        //We only need to destroy the internal resolution data
+        DestroyCache();
     }
 
     public T? GetTexture<T>(string name) where T : XRTexture

@@ -30,7 +30,7 @@ public static partial class UnitTestingWorld
             {
                 SceneNode? ImportAnimated()
                 {
-                    string fbxPathDesktop = Path.Combine(desktopDir, "misc", "Mitsuki.fbx");
+                    string fbxPathDesktop = Path.Combine(desktopDir, "misc", "test.fbx");
                     using var importer = new ModelImporter(fbxPathDesktop, null, null);
                     importer.MakeMaterialAction = CreateHardcodedMaterial;
                     importer.MakeTextureAction = CreateHardcodedTexture;
@@ -135,44 +135,47 @@ public static partial class UnitTestingWorld
             }
 
             VRIKSolverComponent? vrIKSolver = null;
-            if (!Toggles.VRPawn)
+            if (Toggles.AddCharacterIK)
             {
-                var humanik = rootNode.AddComponent<HumanoidIKSolverComponent>()!;
-
-                humanik.SetIKPositionWeight(ELimbEndEffector.LeftHand, 1.0f);
-                humanik.SetIKRotationWeight(ELimbEndEffector.LeftHand, 1.0f);
-
-                humanik.SetIKPositionWeight(ELimbEndEffector.RightHand, 1.0f);
-                humanik.SetIKRotationWeight(ELimbEndEffector.RightHand, 1.0f);
-
-                humanik.SetIKPositionWeight(ELimbEndEffector.LeftFoot, 1.0f);
-                humanik.SetIKRotationWeight(ELimbEndEffector.LeftFoot, 1.0f);
-
-                humanik.SetIKPositionWeight(ELimbEndEffector.RightFoot, 1.0f);
-                humanik.SetIKRotationWeight(ELimbEndEffector.RightFoot, 1.0f);
-
-                humanik.SetSpineWeight(0.0f);
-
-                SceneNode ikTargetNode = rootNode.NewChild("IKTargetNode");
-                var handTfm = humanComp.Left.Foot.Node!.GetTransformAs<Transform>(true)!;
-                ikTargetNode.GetTransformAs<Transform>(true)!.SetFrameState(new TransformState()
+                if (!Toggles.VRPawn)
                 {
-                    Order = ETransformOrder.TRS,
-                    Rotation = handTfm.WorldRotation,
-                    Scale = new Vector3(1.0f),
-                    Translation = handTfm.WorldTranslation
-                });
-                humanik.GetGoalIK(ELimbEndEffector.LeftFoot)!.TargetIKTransform = ikTargetNode.Transform;
-                UserInterface.EnableTransformToolForNode(ikTargetNode);
-                Selection.SceneNode = ikTargetNode;
-            }
-            else
-            {
-                var vrik = rootNode.AddComponent<VRIKSolverComponent>()!;
-                vrik.IsActive = false;
-                vrIKSolver = vrik;
-                //rootNode.AddComponent<VRIKRootControllerComponent>();
-                //vrik.GuessHandOrientations();
+                    var humanik = rootNode.AddComponent<HumanoidIKSolverComponent>()!;
+
+                    humanik.SetIKPositionWeight(ELimbEndEffector.LeftHand, 1.0f);
+                    humanik.SetIKRotationWeight(ELimbEndEffector.LeftHand, 1.0f);
+
+                    humanik.SetIKPositionWeight(ELimbEndEffector.RightHand, 1.0f);
+                    humanik.SetIKRotationWeight(ELimbEndEffector.RightHand, 1.0f);
+
+                    humanik.SetIKPositionWeight(ELimbEndEffector.LeftFoot, 1.0f);
+                    humanik.SetIKRotationWeight(ELimbEndEffector.LeftFoot, 1.0f);
+
+                    humanik.SetIKPositionWeight(ELimbEndEffector.RightFoot, 1.0f);
+                    humanik.SetIKRotationWeight(ELimbEndEffector.RightFoot, 1.0f);
+
+                    humanik.SetSpineWeight(0.0f);
+
+                    SceneNode ikTargetNode = rootNode.NewChild("IKTargetNode");
+                    var handTfm = humanComp.Left.Foot.Node!.GetTransformAs<Transform>(true)!;
+                    ikTargetNode.GetTransformAs<Transform>(true)!.SetFrameState(new TransformState()
+                    {
+                        Order = ETransformOrder.TRS,
+                        Rotation = handTfm.WorldRotation,
+                        Scale = new Vector3(1.0f),
+                        Translation = handTfm.WorldTranslation
+                    });
+                    humanik.GetGoalIK(ELimbEndEffector.LeftFoot)!.TargetIKTransform = ikTargetNode.Transform;
+                    UserInterface.EnableTransformToolForNode(ikTargetNode);
+                    Selection.SceneNode = ikTargetNode;
+                }
+                else
+                {
+                    var vrik = rootNode.AddComponent<VRIKSolverComponent>()!;
+                    vrik.IsActive = false;
+                    vrIKSolver = vrik;
+                    //rootNode.AddComponent<VRIKRootControllerComponent>();
+                    //vrik.GuessHandOrientations();
+                }
             }
 
             //TODO: only remove the head in VR
@@ -218,6 +221,7 @@ public static partial class UnitTestingWorld
                         var trackerColl = playspaceNode.LastChild!.GetComponent<VRTrackerCollectionComponent>()!;
 
                         var extOpt = rigidBodyNode.AddComponent<ExternalOptionalInputSetComponent>()!;
+                        extOpt.OnRegisterInput += RegisterEmulatorActions;
 
                         //Crazy band-aid to register these
                         if (Toggles.AllowEditingInVR)
@@ -245,7 +249,7 @@ public static partial class UnitTestingWorld
                             Vector3 headPos = humanComp.Head!.Node!.Transform.WorldTranslation;
                             headPos.Y = 0.0f; //Set the head position to the ground level
                             headPos.Y += height;
-                            Vector3 headTranslation = player.EyeOffsetFromHead + headPos;
+                            Vector3 headTranslation = player.ScaledToRealWorldEyeOffsetFromHead + headPos;
 
                             hmd?.Transform?.DeriveWorldMatrix(Matrix4x4.CreateWorld(headTranslation, Globals.Forward, Globals.Up), false);
                             rightController?.DeriveWorldMatrix(humanComp.Right.Wrist.Node!.Transform.WorldMatrix, false);
@@ -303,7 +307,6 @@ public static partial class UnitTestingWorld
                         {
 
                         }
-                        extOpt.OnRegisterInput += RegisterEmulatorActions;
                     }
                 }
                 else

@@ -111,7 +111,12 @@ namespace XREngine.Rendering.Physics.Physx
             => RigidActorPtr->DetachShapeMut(shape.ShapePtr, wakeOnLostTouch);
 
         public override void Release()
-            => RigidActorPtr->ReleaseMut();
+        {
+            if (IsReleased)
+                return;
+            IsReleased = true;
+            RigidActorPtr->ReleaseMut();
+        }
 
         public PxQueryFilterCallback* CreateRaycastFilterCallback()
             => RigidActorPtr->CreateRaycastFilterCallback();

@@ -33,7 +33,7 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <PackageReference Include="AssimpNetter" Version="5.4.3.3" />
+    <PackageReference Include="AssimpNetter" Version="6.0.2" />
     <PackageReference Include="FFmpeg.AutoGen" Version="7.1.1" />
     <PackageReference Include="Google.Cloud.Speech.V1" Version="3.8.0" />
     <PackageReference Include="Google.Cloud.TextToSpeech.V1" Version="3.12.0" />
@@ -50,7 +50,7 @@
     <PackageReference Include="Silk.NET.OpenAL.Extensions.EXT" Version="2.22.0" />
     <PackageReference Include="Silk.NET.OpenAL.Extensions.Soft" Version="2.22.0" />
     <PackageReference Include="Silk.NET.OpenAL.Soft.Native" Version="1.23.1" />
-    <PackageReference Include="SixLabors.ImageSharp" Version="3.1.9" />
+    <PackageReference Include="SixLabors.ImageSharp" Version="3.1.10" />
     <PackageReference Include="System.Text.Json" Version="9.0.6" />
   </ItemGroup>
 

@@ -70,10 +70,10 @@ namespace XREngine.Components
         private float _pitch;
 
         [Browsable(false)]
-        public bool Rotating => _rightClickPressed && _ctrlPressed;
+        public bool Rotating => _rightClickDragging && _ctrlPressed;
 
         [Browsable(false)]
-        public bool Translating => _rightClickPressed && !_ctrlPressed;
+        public bool Translating => _rightClickDragging && !_ctrlPressed;
 
         [Browsable(false)]
         public bool Moving => Rotating || Translating;
@@ -208,8 +208,29 @@ namespace XREngine.Components
                 CtrlPressed = pressed;
         }
 
+        public bool IsHoveringUI()
+            => LinkedUICanvasInputs.Any(x => x.TopMostElement is not null);
+
+        private bool _rightClickDragging = false;
+
         protected virtual void OnRightClick(bool pressed)
-            => RightClickPressed = pressed;
+        {
+            bool stateChanged = RightClickPressed != pressed;
+
+            RightClickPressed = pressed;
+
+            if (pressed)
+            {
+                if (!stateChanged)
+                    return;
+
+                _rightClickDragging = !IsHoveringUI();
+            }
+            else
+            {
+                _rightClickDragging = false;
+            }
+        }
         protected virtual void OnLeftClick(bool pressed)
             => LeftClickPressed = pressed;
 

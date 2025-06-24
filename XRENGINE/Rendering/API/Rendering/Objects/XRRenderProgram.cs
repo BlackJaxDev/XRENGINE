@@ -500,5 +500,10 @@ namespace XREngine.Rendering
 
         public void DispatchCompute(uint x, uint y, uint z, IEnumerable<(uint unit, XRTexture texture, int level, int? layer, EImageAccess access, EImageFormat format)>? textures = null)
             => DispatchComputeRequested?.Invoke(x, y, z, textures);
+
+        public bool HasUniform(EEngineUniform uniformName)
+            => HasUniform(uniformName.ToString());
+        public bool HasUniform(string uniformName)
+            => Shaders.Any(x => x.HasUniform(uniformName));
     }
 }

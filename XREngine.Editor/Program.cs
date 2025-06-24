@@ -1,4 +1,5 @@
 ﻿using Newtonsoft.Json;
+using Newtonsoft.Json.Converters;
 using XREngine;
 using XREngine.Editor;
 using XREngine.Native;
@@ -19,23 +20,38 @@ internal class Program
     {
         RenderInfo2D.ConstructorOverride = RenderInfo2DConstructor;
         RenderInfo3D.ConstructorOverride = RenderInfo3DConstructor;
-        CodeManager.Instance.CompileOnChange = true;
-        LoadUnitTestingSettings();
+        CodeManager.Instance.CompileOnChange = false;
+        JsonConvert.DefaultSettings = DefaultJsonSettings;
+        LoadUnitTestingSettings(false);
         Engine.Run(/*Engine.LoadOrGenerateGameSettings(() => */GetEngineSettings(UnitTestingWorld.CreateUnitTestWorld(true, false)/*), "startup", false*/), Engine.LoadOrGenerateGameState());
     }
 
-    private static void LoadUnitTestingSettings()
+    private static JsonSerializerSettings DefaultJsonSettings() => new()
+    {
+        Formatting = Formatting.Indented,
+        TypeNameHandling = TypeNameHandling.Auto,
+        ReferenceLoopHandling = ReferenceLoopHandling.Ignore,
+        PreserveReferencesHandling = PreserveReferencesHandling.All,
+        NullValueHandling = NullValueHandling.Include,
+        Converters = [new StringEnumConverter()]
+    };
+
+    private static void LoadUnitTestingSettings(bool writeBackAfterRead)
     {
         string dir = Environment.CurrentDirectory;
         string fileName = UnitTestingWorldSettingsFileName;
-        string filePath = Path.Combine(dir, fileName);
+        string filePath = Path.Combine(dir, "Assets", fileName);
         if (!File.Exists(filePath))
             File.WriteAllText(filePath, JsonConvert.SerializeObject(UnitTestingWorld.Toggles, Formatting.Indented));
         else
         {
             string? content = File.ReadAllText(filePath);
             if (content is not null)
+            {
                 UnitTestingWorld.Toggles = JsonConvert.DeserializeObject<UnitTestingWorld.Settings>(content) ?? new UnitTestingWorld.Settings();
+                if (writeBackAfterRead)
+                    File.WriteAllText(filePath, JsonConvert.SerializeObject(UnitTestingWorld.Toggles, Formatting.Indented));
+            }
         }
     }
 
@@ -49,7 +65,7 @@ internal class Program
         int w = 1920;
         int h = 1080;
         float updateHz = 60.0f;
-        float renderHz = 60.0f;
+        float renderHz = 0.0f;
         float fixedHz = 30.0f;
 
         int primaryX = NativeMethods.GetSystemMetrics(0);
