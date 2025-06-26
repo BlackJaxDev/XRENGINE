@@ -1,4 +1,5 @@
 ﻿using System.Diagnostics.CodeAnalysis;
+using System.Numerics;
 using System.Reflection;
 using System.Runtime.Serialization;
 using XREngine.Data.Core;
@@ -28,9 +29,6 @@ namespace XREngine.Components
         }
 
         public bool IsActiveInHierarchy => IsActive && SceneNode.IsActiveInHierarchy;
-
-        public XREvent<(XRComponent, TransformBase)>? LocalMatrixChanged;
-        public XREvent<(XRComponent, TransformBase)>? RenderWorldMatrixChanged;
 
         //TODO: figure out how to disallow users from constructing xrcomponents
 #pragma warning disable CS8618 // Non-nullable field must contain a non-null value when exiting constructor. Consider declaring as nullable.
@@ -184,7 +182,7 @@ namespace XREngine.Components
             if (SceneNode.IsTransformNull)
                 return;
 
-            Transform.RenderWorldMatrixChanged -= OnTransformRenderWorldMatrixChanged;
+            Transform.RenderMatrixChanged -= OnTransformRenderWorldMatrixChanged;
         }
 
         /// <summary>
@@ -196,12 +194,14 @@ namespace XREngine.Components
             if (SceneNode.IsTransformNull)
                 return;
 
-            Transform.RenderWorldMatrixChanged += OnTransformRenderWorldMatrixChanged;
-            OnTransformRenderWorldMatrixChanged(Transform);
+            Transform.RenderMatrixChanged += OnTransformRenderWorldMatrixChanged;
+            OnTransformRenderWorldMatrixChanged(Transform, Transform.RenderMatrix);
         }
 
-        protected virtual void OnTransformRenderWorldMatrixChanged(TransformBase transform)
-            => RenderWorldMatrixChanged?.Invoke((this, transform));
+        protected virtual void OnTransformRenderWorldMatrixChanged(TransformBase transform, Matrix4x4 renderMatrix)
+        {
+
+        }
 
         protected override bool OnPropertyChanging<T>(string? propName, T field, T @new)
         {

@@ -60,12 +60,12 @@ namespace XREngine.Components.Scene.Mesh
         void ComponentPropertyChanged(object? s, IXRPropertyChangedEventArgs e)
         {
             if (e.PropertyName == nameof(RenderableComponent.Transform) && !Component.SceneNode.IsTransformNull)
-                Component.Transform.RenderWorldMatrixChanged += Component_WorldMatrixChanged;
+                Component.Transform.RenderMatrixChanged += Component_WorldMatrixChanged;
         }
         void ComponentPropertyChanging(object? s, IXRPropertyChangingEventArgs e)
         {
             if (e.PropertyName == nameof(RenderableComponent.Transform) && !Component.SceneNode.IsTransformNull)
-                Component.Transform.RenderWorldMatrixChanged -= Component_WorldMatrixChanged;
+                Component.Transform.RenderMatrixChanged -= Component_WorldMatrixChanged;
         }
 
 #pragma warning disable CS8618 // Non-nullable field must contain a non-null value when exiting constructor. Consider adding the 'required' modifier or declaring as nullable.
@@ -204,13 +204,13 @@ namespace XREngine.Components.Scene.Mesh
                 {
                     case nameof(RootBone):
                         if (RootBone is not null)
-                            RootBone.RenderWorldMatrixChanged -= RootBone_WorldMatrixChanged;
+                            RootBone.RenderMatrixChanged -= RootBone_WorldMatrixChanged;
                         break;
 
                     case nameof(Component):
                         if (Component is not null)
                         {
-                            Component.Transform.RenderWorldMatrixChanged -= Component_WorldMatrixChanged;
+                            Component.Transform.RenderMatrixChanged -= Component_WorldMatrixChanged;
                             Component.PropertyChanged -= ComponentPropertyChanged;
                             Component.PropertyChanging -= ComponentPropertyChanging;
                         }
@@ -228,15 +228,15 @@ namespace XREngine.Components.Scene.Mesh
                 case nameof(RootBone):
                     if (RootBone is not null)
                     {
-                        RootBone.RenderWorldMatrixChanged += RootBone_WorldMatrixChanged;
-                        RootBone_WorldMatrixChanged(RootBone);
+                        RootBone.RenderMatrixChanged += RootBone_WorldMatrixChanged;
+                        RootBone_WorldMatrixChanged(RootBone, RootBone.RenderMatrix);
                     }
                     break;
                 case nameof(Component):
                     if (Component is not null)
                     {
-                        Component.Transform.RenderWorldMatrixChanged += Component_WorldMatrixChanged;
-                        Component_WorldMatrixChanged(Component.Transform);
+                        Component.Transform.RenderMatrixChanged += Component_WorldMatrixChanged;
+                        Component_WorldMatrixChanged(Component.Transform, Component.Transform.RenderMatrix);
                         Component.PropertyChanged += ComponentPropertyChanged;
                         Component.PropertyChanging += ComponentPropertyChanging;
                     }
@@ -265,7 +265,7 @@ namespace XREngine.Components.Scene.Mesh
         /// Updates the culling offset matrix for skinned meshes.
         /// </summary>
         /// <param name="rootBone"></param>
-        private void RootBone_WorldMatrixChanged(TransformBase rootBone)
+        private void RootBone_WorldMatrixChanged(TransformBase rootBone, Matrix4x4 renderMatrix)
         {
             //using var timer = Engine.Profiler.Start();
 
@@ -273,14 +273,14 @@ namespace XREngine.Components.Scene.Mesh
             if (!hasSkinning)
                 return;
             
-            RenderInfo.CullingOffsetMatrix = rootBone.RenderMatrix;
+            RenderInfo.CullingOffsetMatrix = renderMatrix;
         }
 
         /// <summary>
         /// Updates the culling offset matrix for non-skinned meshes.
         /// </summary>
         /// <param name="component"></param>
-        private void Component_WorldMatrixChanged(TransformBase component)
+        private void Component_WorldMatrixChanged(TransformBase component, Matrix4x4 renderMatrix)
         {
             //using var timer = Engine.Profiler.Start();
 
@@ -291,13 +291,11 @@ namespace XREngine.Components.Scene.Mesh
             if (component is null)
                 return;
             
-            var mtx = component.RenderMatrix;
-
             if (_rc is not null)
-                _rc.WorldMatrix = mtx;
+                _rc.WorldMatrix = renderMatrix;
 
             if (RenderInfo is not null/* && !hasSkinning*/)
-                RenderInfo.CullingOffsetMatrix = mtx;
+                RenderInfo.CullingOffsetMatrix = renderMatrix;
         }
     }
 }

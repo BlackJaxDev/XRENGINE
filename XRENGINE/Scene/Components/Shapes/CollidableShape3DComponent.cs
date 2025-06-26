@@ -105,12 +105,12 @@ namespace XREngine.Data.Components
             Transform.DeriveWorldMatrix(_collisionObject.WorldTransform);
         }
 
-        private void ThisMoved(TransformBase comp)
+        private void ThisMoved(TransformBase comp, Matrix4x4 worldMatrix)
         {
             if (_collisionObject is null)
                 return;
 
-            _collisionObject.WorldTransform = Transform.WorldMatrix;
+            _collisionObject.WorldTransform = worldMatrix;
         }
 
         private void PhysicsSimulationStateChanged(bool isSimulating)

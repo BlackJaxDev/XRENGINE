@@ -97,15 +97,15 @@ namespace XREngine.Scene.Transforms
                 if (delta)
                 {
                     // Encode only the difference between the current and last replicated transform
-                    var deltaMatrix = _localMatrix.Matrix - _lastReplicatedMatrix;
+                    var deltaMatrix = _localMatrix - _lastReplicatedMatrix;
                     var matrixBytes = MatrixToBytes(deltaMatrix);
                     gzipStream.Write(matrixBytes, 0, matrixBytes.Length);
                 }
                 else
                 {
-                    var matrixBytes = MatrixToBytes(_localMatrix.Matrix);
+                    var matrixBytes = MatrixToBytes(_localMatrix);
                     gzipStream.Write(matrixBytes, 0, matrixBytes.Length);
-                    _lastReplicatedMatrix = _localMatrix.Matrix;
+                    _lastReplicatedMatrix = _localMatrix;
                 }
             }
             return memoryStream.ToArray();
@@ -132,7 +132,7 @@ namespace XREngine.Scene.Transforms
             var matrix = BytesToMatrix(matrixBytes);
 
             if (delta)
-                DeriveLocalMatrix(_localMatrix.Matrix + matrix);
+                DeriveLocalMatrix(_localMatrix + matrix);
             else
                 DeriveLocalMatrix(matrix);
         }
@@ -298,47 +298,5 @@ namespace XREngine.Scene.Transforms
 
         public virtual void ResetPose(bool networkSmoothed = false)
             => DeriveLocalMatrix(ParentInverseBindMatrix * BindMatrix, networkSmoothed);
-
-        private class MatrixInfo
-        {
-            private readonly ReaderWriterLockSlim _modifiedLock = new();
-            private readonly ReaderWriterLockSlim _matrixLock = new();
-
-            private Matrix4x4 _matrix = Matrix4x4.Identity;
-            private bool _modified = true;
-
-            public bool NeedsRecalc
-            {
-                get
-                {
-                    //_modifiedLock.EnterReadLock();
-                    bool modified = _modified;
-                    //_modifiedLock.ExitReadLock();
-                    return modified;
-                }
-                set
-                {
-                    //_modifiedLock.EnterWriteLock();
-                    _modified = value;
-                    //_modifiedLock.ExitWriteLock();
-                }
-            }
-            public Matrix4x4 Matrix
-            {
-                get
-                {
-                    //_matrixLock.EnterReadLock();
-                    Matrix4x4 matrix = _matrix;
-                    //_matrixLock.ExitReadLock();
-                    return matrix;
-                }
-                set
-                {
-                    //_matrixLock.EnterWriteLock();
-                    _matrix = value;
-                    //_matrixLock.ExitWriteLock();
-                }
-            }
-        }
     }
 }

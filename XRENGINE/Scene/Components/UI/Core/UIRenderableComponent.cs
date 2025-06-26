@@ -46,9 +46,9 @@ namespace XREngine.Rendering.UI
             return canvas is not null && canvas.DrawSpace == ECanvasDrawSpace.Screen;
         }
 
-        protected override void OnTransformRenderWorldMatrixChanged(TransformBase transform)
+        protected override void OnTransformRenderWorldMatrixChanged(TransformBase transform, Matrix4x4 renderMatrix)
         {
-            base.OnTransformRenderWorldMatrixChanged(transform);
+            base.OnTransformRenderWorldMatrixChanged(transform, renderMatrix);
 
             if (transform is not UIBoundableTransform tfm)
                 return;

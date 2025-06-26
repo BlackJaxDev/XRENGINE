@@ -71,6 +71,7 @@ namespace XREngine.Timers
         private Task? RenderTask = null;
         private Task? SingleTask = null;
         private Task? FixedUpdateTask = null;
+        private Task? JobManagerTask = null;
 
         //private static bool IsApplicationIdle() => NativeMethods.PeekMessage(out _, IntPtr.Zero, 0, 0, 0) == 0;
 
@@ -99,6 +100,7 @@ namespace XREngine.Timers
             UpdateTask = Task.Run(UpdateThread);
             CollectVisibleTask = Task.Run(CollectVisibleThread);
             FixedUpdateTask = Task.Run(FixedUpdateThread);
+            JobManagerTask = Task.Run(JobManagerLoop);
             //There are 4 main threads: Update, Collect Visible, Render, and FixedUpdate.
             //Update runs as fast as requested without fences.
             //Collect Visible waits for Render to finish swapping buffers.
@@ -122,10 +124,10 @@ namespace XREngine.Timers
         /// <summary>
         /// Update is always running game logic as fast as requested.
         /// </summary>
-        private async Task UpdateThread()
+        private void UpdateThread()
         {
             while (IsRunning)
-                await DispatchUpdate();
+                DispatchUpdate();
         }
         /// <summary>
         /// This thread waits for the render thread to finish swapping the last frame's prerender buffers, 
@@ -147,6 +149,13 @@ namespace XREngine.Timers
                 _swapDone.Set();
             }
         }
+
+        private void JobManagerLoop()
+        {
+            while (IsRunning)
+                Engine.Jobs.Process();
+        }
+
         /// <summary>
         /// This thread runs at a fixed rate, executing logic that should not be tied to the update/render threads.
         /// Typical events occuring here are logic like physics calculations.
@@ -278,7 +287,7 @@ namespace XREngine.Timers
         private Task DispatchFixedUpdate()
             => (FixedUpdate?.InvokeAsync() ?? Task.CompletedTask);
 
-        public async Task DispatchUpdate()
+        public void DispatchUpdate()
         {
             try
             {
@@ -293,9 +302,9 @@ namespace XREngine.Timers
                     Update.Delta = elapsed;
                     Update.LastTimestamp = timestamp;
 
-                    await (PreUpdateFrame?.InvokeAsync() ?? Task.CompletedTask);
-                    await (UpdateFrame?.InvokeAsync() ?? Task.CompletedTask);
-                    await (PostUpdateFrame?.InvokeAsync() ?? Task.CompletedTask);
+                    PreUpdateFrame?.Invoke();
+                    UpdateFrame?.Invoke();
+                    PostUpdateFrame?.Invoke();
 
                     timestamp = Time();
                     Update.ElapsedTime = timestamp - Update.LastTimestamp;

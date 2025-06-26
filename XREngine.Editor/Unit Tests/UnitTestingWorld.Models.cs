@@ -5,6 +5,7 @@ using XREngine.Animation;
 using XREngine.Animation.IK;
 using XREngine.Components;
 using XREngine.Components.Animation;
+using XREngine.Components.Movement;
 using XREngine.Components.Scene.Mesh;
 using XREngine.Components.VR;
 using XREngine.Data.Components;
@@ -30,7 +31,7 @@ public static partial class UnitTestingWorld
             {
                 SceneNode? ImportAnimated()
                 {
-                    string fbxPathDesktop = Path.Combine(desktopDir, "misc", "test.fbx");
+                    string fbxPathDesktop = Path.Combine(desktopDir, Toggles.AnimatedModelDesktopPath);
                     using var importer = new ModelImporter(fbxPathDesktop, null, null);
                     importer.MakeMaterialAction = CreateHardcodedMaterial;
                     importer.MakeTextureAction = CreateHardcodedTexture;
@@ -120,6 +121,7 @@ public static partial class UnitTestingWorld
             humanComp.HipToHeadIKEnabled = false;
 
             var animator = rootNode.AddComponent<AnimStateMachineComponent>()!;
+            var heightScale = rootNode.AddComponent<HeightScaleComponent>()!;
 
             if (Toggles.FaceTracking)
             {
@@ -179,15 +181,16 @@ public static partial class UnitTestingWorld
             }
 
             //TODO: only remove the head in VR
-            if (Toggles.VRPawn || !Toggles.ThirdPersonPawn)
-            {
-                var headTfm = humanComp.Head?.Node?.GetTransformAs<Transform>();
-                if (headTfm is not null)
-                    headTfm.Scale = Vector3.Zero;
-            }
+            //if (Toggles.VRPawn || !Toggles.ThirdPersonPawn)
+            //{
+            //    var headTfm = humanComp.Head?.Node?.GetTransformAs<Transform>();
+            //    if (headTfm is not null)
+            //        headTfm.Scale = Vector3.Zero;
+            //}
 
             if (Toggles.Locomotion)
             {
+                SceneNode rigidBodyNode;
                 const string EyeLNodeName = "Eye_L";
                 const string EyeRNodeName = "Eye_R";
                 const string faceNodeName = "Face";
@@ -195,8 +198,11 @@ public static partial class UnitTestingWorld
                 if (Toggles.VRPawn)
                 {
                     var rotationNode = footNode.Parent!;
-                    var rigidBodyNode = rotationNode.Parent!;
+                    rigidBodyNode = rotationNode.Parent!;
+                    heightScale.CharacterMovementComponent = rigidBodyNode.GetComponent<CharacterMovement3DComponent>()!;
+
                     var player = rigidBodyNode.AddComponent<VRPlayerCharacterComponent>()!;
+                    player.HeightScaleComponent = heightScale;
                     player.IKSolver = vrIKSolver;
                     player.HumanoidComponent = humanComp;
                     player.EyeLBoneName = EyeLNodeName;
@@ -249,7 +255,7 @@ public static partial class UnitTestingWorld
                             Vector3 headPos = humanComp.Head!.Node!.Transform.WorldTranslation;
                             headPos.Y = 0.0f; //Set the head position to the ground level
                             headPos.Y += height;
-                            Vector3 headTranslation = player.ScaledToRealWorldEyeOffsetFromHead + headPos;
+                            Vector3 headTranslation = (player.GetHeightScaleComponent()?.ScaledToRealWorldEyeOffsetFromHead ?? Vector3.Zero) + headPos;
 
                             hmd?.Transform?.DeriveWorldMatrix(Matrix4x4.CreateWorld(headTranslation, Globals.Forward, Globals.Up), false);
                             rightController?.DeriveWorldMatrix(humanComp.Right.Wrist.Node!.Transform.WorldMatrix, false);
@@ -311,14 +317,18 @@ public static partial class UnitTestingWorld
                 }
                 else
                 {
-                    var eyeOffsetNode = footNode.FirstChild;
+                    var eyeOffsetNode = footNode.FirstChild!;
+                    rigidBodyNode = footNode.Parent!;
+                    heightScale.CharacterMovementComponent = rigidBodyNode.GetComponent<CharacterMovement3DComponent>()!;
+
                     ModelComponent? faceModel = humanComp.SceneNode.FindDescendant(x => x.Name?.Contains(faceNodeName, StringComparison.InvariantCultureIgnoreCase) ?? false)?.GetComponent<ModelComponent>();
                     if (faceModel is not null)
                     {
                         void FaceModel_ModelChanged()
                         {
-                            Vector3 offset = humanComp.CalculateEyeOffsetFromHead(faceModel, EyeLNodeName, EyeRNodeName);
-                            eyeOffsetNode!.GetTransformAs<Transform>(true)!.Translation = humanComp.Head.Node!.Transform.BindMatrix.Translation + offset;
+                            heightScale.MeasureAvatarHeight();
+                            heightScale.CalculateEyeOffsetFromHead(faceModel, EyeLNodeName, EyeRNodeName);
+                            eyeOffsetNode!.GetTransformAs<Transform>(true)!.Translation = VRPlayerCharacterComponent.GetScaledToRealWorldHeadOffsetFromAvatarRoot(humanComp) + heightScale.ScaledToRealWorldEyeOffsetFromHead;
                         }
                         faceModel.ModelChanged += FaceModel_ModelChanged;
                     }

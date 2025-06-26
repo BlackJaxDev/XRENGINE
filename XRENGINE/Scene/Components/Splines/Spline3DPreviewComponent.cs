@@ -374,18 +374,17 @@ void main()
         //    _scale.SetValueSilent(s);
         //    _rotation.SetRotationsNoUpdate(r.ToRotator());
         //}
-        protected override void OnTransformRenderWorldMatrixChanged(TransformBase transform)
+        protected override void OnTransformRenderWorldMatrixChanged(TransformBase transform, Matrix4x4 renderMatrix)
         {
-            base.OnTransformRenderWorldMatrixChanged(transform);
+            base.OnTransformRenderWorldMatrixChanged(transform, renderMatrix);
 
-            var mtx = transform.RenderMatrix;
-            _rcKfLines.WorldMatrix = mtx;
-            _rcSpline.WorldMatrix = mtx;
-            _rcVelocityTangents.WorldMatrix = mtx;
-            _rcPoints.WorldMatrix = mtx;
-            _rcKeyframeTangents.WorldMatrix = mtx;
-            _rcExtrema.WorldMatrix = mtx;
-            _rcCurrentPoint.WorldMatrix = mtx;
+            _rcKfLines.WorldMatrix = renderMatrix;
+            _rcSpline.WorldMatrix = renderMatrix;
+            _rcVelocityTangents.WorldMatrix = renderMatrix;
+            _rcPoints.WorldMatrix = renderMatrix;
+            _rcKeyframeTangents.WorldMatrix = renderMatrix;
+            _rcExtrema.WorldMatrix = renderMatrix;
+            _rcCurrentPoint.WorldMatrix = renderMatrix;
 
             //RenderInfo.LocalCullingVolume?.SetTransformMatrix(mtx * _cullingVolumeTranslation.AsTranslationMatrix());
         }

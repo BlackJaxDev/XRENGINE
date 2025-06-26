@@ -1,7 +1,6 @@
 ﻿using Extensions;
 using System.ComponentModel.DataAnnotations;
 using System.Numerics;
-using XREngine.Data;
 using XREngine.Data.Colors;
 using XREngine.Data.Core;
 using XREngine.Scene.Transforms;

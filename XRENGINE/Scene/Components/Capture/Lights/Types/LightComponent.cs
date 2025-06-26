@@ -1,5 +1,4 @@
 ﻿using System.Numerics;
-using XREngine.Components;
 using XREngine.Data.Colors;
 using XREngine.Data.Rendering;
 using XREngine.Rendering;
@@ -79,10 +78,10 @@ namespace XREngine.Components.Capture.Lights.Types
 
         protected abstract XRMesh GetWireframeMesh();
 
-        protected override void OnTransformRenderWorldMatrixChanged(TransformBase transform)
+        protected override void OnTransformRenderWorldMatrixChanged(TransformBase transform, Matrix4x4 renderMatrix)
         {
-            _shadowVolumeRC.WorldMatrix = _lightMatrix = MeshCenterAdjustMatrix * transform.RenderMatrix;
-            base.OnTransformRenderWorldMatrixChanged(transform);
+            _shadowVolumeRC.WorldMatrix = _lightMatrix = MeshCenterAdjustMatrix * renderMatrix;
+            base.OnTransformRenderWorldMatrixChanged(transform, renderMatrix);
         }
 
         public XRMaterialFrameBuffer? ShadowMap

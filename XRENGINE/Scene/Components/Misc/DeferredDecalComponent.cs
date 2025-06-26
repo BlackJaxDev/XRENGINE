@@ -83,10 +83,10 @@ namespace XREngine.Components
             }
         }
 
-        protected override void OnTransformRenderWorldMatrixChanged(TransformBase transform)
+        protected override void OnTransformRenderWorldMatrixChanged(TransformBase transform, Matrix4x4 renderMatrix)
         {
             UpdateRenderCommandMatrix();
-            base.OnTransformRenderWorldMatrixChanged(transform);
+            base.OnTransformRenderWorldMatrixChanged(transform, renderMatrix);
         }
 
         private void UpdateRenderCommandMatrix()

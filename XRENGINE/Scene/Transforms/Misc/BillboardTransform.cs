@@ -11,16 +11,9 @@ namespace XREngine.Scene.Transforms
     /// Calculates the rotation on the CPU.
     /// Use vertex shaders or set billboard parameters in render options on the mesh directly on meshes for better performance.
     /// </summary>
-    public class BillboardTransform : TransformBase
+    public class BillboardTransform(TransformBase? parent) : TransformBase(parent)
     {
         public BillboardTransform() : this(null) { }
-        public BillboardTransform(TransformBase? parent) : base(parent)
-            => XRCamera.CurrentRenderTargetChanged += OnCameraChanged;
-        ~BillboardTransform()
-            => XRCamera.CurrentRenderTargetChanged -= OnCameraChanged;
-
-        private void OnCameraChanged(XRCamera? camera)
-            => MarkWorldModified();
 
         private bool _perspective = false;
         /// <summary>
@@ -179,7 +172,7 @@ namespace XREngine.Scene.Transforms
             }
         }
 
-        private void OnConstrainDirectionChanged(TransformBase @base)
+        private void OnConstrainDirectionChanged(TransformBase @base, Matrix4x4 worldMatrix)
             => MarkWorldModified();
 
         protected internal override void OnSceneNodeActivated()
@@ -199,9 +192,9 @@ namespace XREngine.Scene.Transforms
             vp.ActiveCamera.Transform.WorldMatrixChanged -= CameraMoved;
         }
 
-        private void CameraMoved(TransformBase @base)
+        private void CameraMoved(TransformBase @base, Matrix4x4 worldMatrix)
         {
-            RecalcWorld();
+            RecalculateMatrixHeirarchy(true, false, Engine.Rendering.Settings.RecalcChildMatricesLoopType);
         }
 
         protected override Matrix4x4 CreateLocalMatrix()

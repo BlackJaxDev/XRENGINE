@@ -3,7 +3,6 @@ using System.Numerics;
 using XREngine.Data.Core;
 using XREngine.Scene;
 using XREngine.Scene.Transforms;
-using static XREngine.Components.Animation.VRIKCalibrator.CalibrationData;
 using Transform = XREngine.Scene.Transforms.Transform;
 
 namespace XREngine.Components.Animation

@@ -96,7 +96,7 @@ namespace XREngine.Scene.Transforms
             MarkWorldModified();
         }
 
-        private void OnSourceMatrixChanged(TransformBase @base)
+        private void OnSourceMatrixChanged(TransformBase @base, Matrix4x4 worldMatrix)
             => MarkWorldModified();
         
         protected override Matrix4x4 CreateWorldMatrix()

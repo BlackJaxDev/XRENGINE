@@ -248,7 +248,7 @@ namespace XREngine.Rendering.UI
         protected override void OnResizeActual(BoundingRectangleF parentBounds)
         {
             GetActualBounds(parentBounds, out Vector2 bottomLeftTranslation, out Vector2 size);
-            RemakeAxisAlignedRegion(size);
+            RemakeAxisAlignedRegion(size, WorldMatrix);
             ActualSize = size;
             ActualLocalBottomLeftTranslation = bottomLeftTranslation;
         }
@@ -461,16 +461,16 @@ namespace XREngine.Rendering.UI
                 MarkLocalModified();
         }
 
-        protected override void OnLocalMatrixChanged()
+        protected override void OnLocalMatrixChanged(Matrix4x4 localMatrix)
         {
-            base.OnLocalMatrixChanged();
+            base.OnLocalMatrixChanged(localMatrix);
             OnResizeChildComponents(ApplyPadding(GetActualBounds()));
         }
 
-        protected override void OnWorldMatrixChanged()
+        protected override void OnWorldMatrixChanged(Matrix4x4 worldMatrix)
         {
-            RemakeAxisAlignedRegion(ActualSize);
-            base.OnWorldMatrixChanged();
+            RemakeAxisAlignedRegion(ActualSize, worldMatrix);
+            base.OnWorldMatrixChanged(worldMatrix);
         }
 
         private BoundingRectangleF ApplyPadding(BoundingRectangleF bounds)
@@ -566,9 +566,9 @@ namespace XREngine.Rendering.UI
                 color);
         }
 
-        protected virtual void RemakeAxisAlignedRegion(Vector2 actualSize)
+        protected virtual void RemakeAxisAlignedRegion(Vector2 actualSize, Matrix4x4 worldMatrix)
         {
-            Matrix4x4 mtx = Matrix4x4.CreateScale(actualSize.X, actualSize.Y, 1.0f) * RenderMatrix;
+            Matrix4x4 mtx = Matrix4x4.CreateScale(actualSize.X, actualSize.Y, 1.0f) * worldMatrix;
 
             RegionWorldTransform = mtx;
 

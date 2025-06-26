@@ -777,7 +777,7 @@ namespace XREngine
                 }
             }
 
-            private static void EyeLocalMatrixChanged(TransformBase @base)
+            private static void EyeLocalMatrixChanged(TransformBase @base, Matrix4x4 localMatrix)
             {
                 RecalculateStereoCullingFrustum();
             }

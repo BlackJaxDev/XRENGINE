@@ -117,12 +117,12 @@ namespace XREngine.Components.Capture.Lights
                 _ => _environmentTextureCubemap is not null ? "Scene3D\\Cubemap.fs" : "Scene3D\\Equirect.fs",
             };
 
-        protected override void OnTransformRenderWorldMatrixChanged(TransformBase transform)
+        protected override void OnTransformRenderWorldMatrixChanged(TransformBase transform, Matrix4x4 renderMatrix)
         {
             if (_visualRC != null)
-                _visualRC.WorldMatrix = Transform.RenderMatrix;
+                _visualRC.WorldMatrix = renderMatrix;
             
-            base.OnTransformRenderWorldMatrixChanged(transform);
+            base.OnTransformRenderWorldMatrixChanged(transform, renderMatrix);
         }
 
         private uint _irradianceResolution = 64;

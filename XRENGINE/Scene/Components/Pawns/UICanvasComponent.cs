@@ -103,7 +103,11 @@ namespace XREngine.Components
         public UICanvasInputComponent? GetInputComponent() => GetSiblingComponent<UICanvasInputComponent>();
 
         public void RenderScreenSpace(XRViewport? viewport, XRFrameBuffer? outputFBO)
-            => _renderPipeline.Render(
+        {
+            if (!IsActive)
+                return;
+
+            _renderPipeline.Render(
                 VisualScene2D,
                 Camera2D,
                 null,
@@ -112,9 +116,13 @@ namespace XREngine.Components
                 null,
                 false,
                 false);
+        }
 
         public void SwapBuffersScreenSpace()
         {
+            if (!IsActive)
+                return;
+
             _renderPipeline.MeshRenderCommands.SwapBuffers();
             VisualScene2D.GlobalSwapBuffers();
         }
@@ -140,6 +148,9 @@ namespace XREngine.Components
 
         public void CollectVisibleItemsScreenSpace()
         {
+            if (!IsActive)
+                return;
+
             //Update the layout if it's invalid.
             CanvasTransform.UpdateLayout();
 

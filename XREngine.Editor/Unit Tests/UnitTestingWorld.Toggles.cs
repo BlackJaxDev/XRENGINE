@@ -114,5 +114,7 @@ public static partial class UnitTestingWorld
 
         public bool BackgroundShader = false;
         public bool AddCharacterIK = false;
+
+        public string AnimatedModelDesktopPath { get; set; } = "misc\\mitsuki.fbx";
     }
 }

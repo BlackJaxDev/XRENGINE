@@ -375,9 +375,9 @@ public static partial class UnitTestingWorld
 
             if (camComp is not null && setUI)
             {
-                UICanvasComponent canvas = UserInterface.CreateEditorUI(characterNode, camComp);
+                UICanvasComponent canvas = UserInterface.CreateEditorUI(rootNode, camComp);
                 canvas.IsActive = false;
-                characterComp.PauseToggled += () => UserInterface.ShowMenu(canvas, true, characterNode.Transform);
+                characterComp.PauseToggled += () => UserInterface.ShowMenu(canvas, true, rootNode.Transform);
             }
 
             characterComp.EnqueuePossessionByLocalPlayer(ELocalPlayerIndex.One);

@@ -95,9 +95,9 @@ namespace XREngine.Data.Components
         public Box WorldCullingVolume { get; private set; } = new Box(Vector3.Zero, Vector3.Zero, Matrix4x4.Identity);
         public RenderInfo[] RenderedObjects { get; }
 
-        protected override void OnTransformRenderWorldMatrixChanged(TransformBase transform)
+        protected override void OnTransformRenderWorldMatrixChanged(TransformBase transform, Matrix4x4 renderMatrix)
         {
-            base.OnTransformRenderWorldMatrixChanged(transform);
+            base.OnTransformRenderWorldMatrixChanged(transform, renderMatrix);
 
             ReflectionPlane = XRMath.CreatePlaneFromPointAndNormal(transform.RenderTranslation, transform.RenderForward);
             MakeReflectionMatrix();

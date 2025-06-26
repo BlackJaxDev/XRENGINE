@@ -22,9 +22,9 @@ namespace XREngine.Rendering.UI
             RenderedObjects = [RenderInfo2D, RenderInfo3D];
         }
 
-        protected override void OnTransformRenderWorldMatrixChanged(TransformBase transform)
+        protected override void OnTransformRenderWorldMatrixChanged(TransformBase transform, Matrix4x4 renderMatrix)
         {
-            base.OnTransformRenderWorldMatrixChanged(transform);
+            base.OnTransformRenderWorldMatrixChanged(transform, renderMatrix);
 
             if (transform is not UIBoundableTransform tfm)
                 return;

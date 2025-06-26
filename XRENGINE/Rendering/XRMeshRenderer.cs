@@ -392,7 +392,7 @@ namespace XREngine.Rendering
         private bool _bonesInvalidated = false;
         private bool _blendshapesInvalidated = false;
 
-        private unsafe void BoneRenderTransformUpdated(RenderBone bone)
+        private unsafe void BoneRenderTransformUpdated(RenderBone bone, Matrix4x4 renderMatrix)
         {
             if (BoneMatricesBuffer is null)
                 return;
@@ -418,7 +418,7 @@ namespace XREngine.Rendering
             //boneBuf[index + 15] = bone.Transform.RenderMatrix.M44;
             //if (bone.Transform.Name == "Hair_1_3")
             //    Debug.Out("");
-            BoneMatricesBuffer?.Set(bone.Index, bone.Transform.RenderMatrix);
+            BoneMatricesBuffer?.Set(bone.Index, renderMatrix);
             _bonesInvalidated = true;
         }
 

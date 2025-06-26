@@ -46,7 +46,7 @@ namespace XREngine.Rendering.UI
             private set => SetField(ref _textMatrix, value);
         }
 
-        protected void OnTransformWorldMatrixChanged(TransformBase transform)
+        protected void OnTransformRenderMatrixChanged(TransformBase transform, Matrix4x4 renderMatrix)
             => UpdateTextMatrix();
 
         public void UpdateTextMatrix()
@@ -159,7 +159,7 @@ namespace XREngine.Rendering.UI
                 {
                     case nameof(TextTransform):
                         if (TextTransform is not null)
-                            TextTransform.RenderWorldMatrixChanged -= OnTransformWorldMatrixChanged;
+                            TextTransform.RenderMatrixChanged -= OnTransformRenderMatrixChanged;
                         break;
                 }
             }
@@ -181,7 +181,7 @@ namespace XREngine.Rendering.UI
                     break;
                 case nameof(TextTransform):
                     if (TextTransform is not null)
-                        TextTransform.RenderWorldMatrixChanged += OnTransformWorldMatrixChanged;
+                        TextTransform.RenderMatrixChanged += OnTransformRenderMatrixChanged;
                     UpdateTextMatrix();
                     break;
                 case nameof(Translation):

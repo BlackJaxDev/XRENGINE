@@ -536,7 +536,7 @@ namespace XREngine.Components
         public event DelLeftHandOverlapChanged? LeftHandOverlapChanged;
         public event DelRightHandOverlapChanged? RightHandOverlapChanged;
 
-        private unsafe void RightHandTransform_WorldMatrixChanged(TransformBase tfm)
+        private unsafe void RightHandTransform_WorldMatrixChanged(TransformBase tfm, Matrix4x4 worldMatrix)
         {
             //Don't do anything if the hand doesn't exist or is constrained to an item already
             if (RightHandRigidBody is null || RightHandConstraint is not null)
@@ -548,7 +548,7 @@ namespace XREngine.Components
             //    RightHandOverlap = OverlapTest(tfm, px);
         }
 
-        private unsafe void LeftHandTransform_WorldMatrixChanged(TransformBase tfm)
+        private unsafe void LeftHandTransform_WorldMatrixChanged(TransformBase tfm, Matrix4x4 worldMatrix)
         {
             //Don't do anything if the hand doesn't exist or is constrained to an item already
             if (LeftHandRigidBody is null || LeftHandConstraint is not null)

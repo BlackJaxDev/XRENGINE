@@ -20,22 +20,6 @@ namespace XREngine.Rendering
     /// </summary>
     public class XRCamera : XRBase
     {
-        public static event Action<XRCamera?>? CurrentRenderTargetChanged;
-
-        private static XRCamera? _currentRenderTarget = null;
-        public static XRCamera? CurrentRenderTarget
-        {
-            get => _currentRenderTarget;
-            set
-            {
-                if (_currentRenderTarget == value)
-                    return;
-
-                _currentRenderTarget = value;
-                CurrentRenderTargetChanged?.Invoke(value);
-            }
-        }
-
         public EventList<XRViewport> Viewports { get; set; } = [];
 
         public event Action<XRCamera, XRViewport>? ViewportAdded;
@@ -127,7 +111,7 @@ namespace XREngine.Rendering
             {
                 case nameof(Transform):
                     if (_transform is not null)
-                        _transform.RenderWorldMatrixChanged -= WorldMatrixChanged;
+                        _transform.RenderMatrixChanged -= RenderMatrixChanged;
                     break;
             }
             return change;
@@ -139,16 +123,14 @@ namespace XREngine.Rendering
             {
                 case nameof(Transform):
                     if (_transform is not null)
-                        _transform.RenderWorldMatrixChanged += WorldMatrixChanged;
+                        _transform.RenderMatrixChanged += RenderMatrixChanged;
                     CalculateObliqueProjectionMatrix();
                     break;
             }
         }
 
-        private void WorldMatrixChanged(TransformBase @base)
-        {
-            CalculateObliqueProjectionMatrix();
-        }
+        private void RenderMatrixChanged(TransformBase @base, Matrix4x4 renderMatrix)
+            => CalculateObliqueProjectionMatrix();
 
         public Matrix4x4 ProjectionMatrix
             => _obliqueNearClippingPlane != null 

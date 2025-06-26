@@ -158,7 +158,7 @@ namespace XREngine.Rendering
             //await Task.WhenAll(_pushToRenderSnapshot.Select(x => x.tfm.SetRenderMatrix(x.renderMatrix, false)));
             //_pushToRenderSnapshot.Clear();
             while (_pushToRenderSnapshot.TryDequeue(out (TransformBase tfm, Matrix4x4 renderMatrix) item))
-                item.tfm.RenderMatrix = item.renderMatrix;
+                item.tfm.SetRenderMatrix(item.renderMatrix, false);
         }
 
         private void GlobalSwapBuffers()
@@ -199,24 +199,26 @@ namespace XREngine.Rendering
         private void PostUpdate()
         {
             var loopType = Engine.Rendering.Settings.RecalcChildMatricesLoopType;
-            Func<IEnumerable<TransformBase>, Task> recalc = loopType switch
+            Func<IEnumerable<TransformBase>, Task> recalcDepth = loopType switch
             {
-                Engine.Rendering.ELoopType.Asynchronous => RecalcTransformsAsync,
-                Engine.Rendering.ELoopType.Parallel => RecalcTransformsParallel,
-                _ => RecalcTransformsSequential,
+                Engine.Rendering.ELoopType.Asynchronous => RecalcTransformDepthAsync,
+                Engine.Rendering.ELoopType.Parallel => RecalcTransformDepthParallel,
+                _ => RecalcTransformDepthSequential,
             };
 
             //Sequentially iterate through each depth of modified transforms, in order
+            //This will set each transforms' WorldMatrix, which will push it into the _pushToRenderWrite queue
             foreach (var item in _invalidTransforms.OrderBy(x => x.Key))
-                recalc(item.Value).Wait();
+                recalcDepth(item.Value).Wait();
 
+            //Capture of a snapshot of the queue to be processed in the render thread
             _pushToRenderWrite = Interlocked.Exchange(ref _pushToRenderSnapshot, _pushToRenderWrite);
         }
 
-        public void EnqueueRenderTransformChange(TransformBase transform)
-            => _pushToRenderWrite.Enqueue((transform, transform.WorldMatrix));
+        public void EnqueueRenderTransformChange(TransformBase transform, Matrix4x4 worldMatrix)
+            => _pushToRenderWrite.Enqueue((transform, worldMatrix));
 
-        private static async Task RecalcTransformsSequential(IEnumerable<TransformBase> bag)
+        private static async Task RecalcTransformDepthSequential(IEnumerable<TransformBase> bag)
         {
             foreach (var transform in bag)
                 await transform.RecalculateMatrixHeirarchy(true, false, Engine.Rendering.ELoopType.Sequential);
@@ -228,21 +230,12 @@ namespace XREngine.Rendering
         /// </summary>
         /// <param name="bag"></param>
         /// <returns></returns>
-        private static async Task RecalcTransformsAsync(IEnumerable<TransformBase> bag)
+        private static async Task RecalcTransformDepthAsync(IEnumerable<TransformBase> bag)
         {
-            Task Calc(TransformBase tfm)
-                => tfm.RecalculateMatrixHeirarchy(true, false, Engine.Rendering.ELoopType.Asynchronous);
-
-            Task AsCalcTask(TransformBase tfm)
-            {
-                void AsyncCalc() => Calc(tfm);
-                return Task.Run(AsyncCalc);
-            }
-
-            await Task.WhenAll([.. bag.Select(AsCalcTask)]);
+            await Task.WhenAll([.. bag.Select(x => Task.Run(() => x.RecalculateMatrices(true, false)))]);
         }
 
-        private static async Task RecalcTransformsParallel(IEnumerable<TransformBase> bag)
+        private static async Task RecalcTransformDepthParallel(IEnumerable<TransformBase> bag)
         {
             if (!bag.Any())
                 return;

@@ -164,6 +164,8 @@ namespace XREngine.Scene.Transforms
             var (lastPosUpdate, lastRotUpdate) = LastPhysicsTransform;
             switch (mode)
             {
+                default:
+                    return;
                 //case EInterpolationMode.Discrete:
                 //    {
                 //        SetPositionAndRotation(lastPosUpdate, lastRotUpdate);
@@ -192,6 +194,8 @@ namespace XREngine.Scene.Transforms
                         break;
                     }
             }
+
+            RecalculateMatrixHeirarchy(true, false, Engine.Rendering.ELoopType.Asynchronous);
         }
 
         private (Vector3 position, Quaternion rotation) _lastPhysicsTransform;

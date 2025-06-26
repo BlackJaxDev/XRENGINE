@@ -1,4 +1,5 @@
-﻿using XREngine.Data.Colors;
+﻿using System.Numerics;
+using XREngine.Data.Colors;
 using XREngine.Data.Geometry;
 using XREngine.Physics;
 using XREngine.Rendering.Commands;
@@ -73,9 +74,9 @@ namespace XREngine.Data.Components
         protected override RenderCommand3D GetRenderCommand()
             => RenderCommand;
 
-        protected override void OnTransformRenderWorldMatrixChanged(TransformBase transform)
+        protected override void OnTransformRenderWorldMatrixChanged(TransformBase transform, Matrix4x4 renderMatrix)
         {
-            base.OnTransformRenderWorldMatrixChanged(transform);
+            base.OnTransformRenderWorldMatrixChanged(transform, renderMatrix);
             //_shape?.SetTransformMatrix(WorldMatrix);
         }
 

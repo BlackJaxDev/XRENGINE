@@ -163,7 +163,7 @@ namespace XREngine.Components.Capture.Lights.Types
             {
                 case nameof(Transform):
                 case nameof(Distance):
-                    UpdateCones();
+                    UpdateCones(Transform.RenderMatrix);
                     break;
                 case nameof(Type):
                     if (Type == ELightType.Dynamic)
@@ -193,20 +193,20 @@ namespace XREngine.Components.Capture.Lights.Types
             if (ShadowCamera != null && ShadowCamera.Parameters is XRPerspectiveCameraParameters p)
                 p.VerticalFieldOfView = Math.Max(outerDegrees, innerDegrees) * 2.0f;
 
-            UpdateCones();
+            UpdateCones(Transform.RenderMatrix);
         }
 
-        protected override void OnTransformRenderWorldMatrixChanged(TransformBase transform)
+        protected override void OnTransformRenderWorldMatrixChanged(TransformBase transform, Matrix4x4 renderMatrix)
         {
-            UpdateCones();
-            base.OnTransformRenderWorldMatrixChanged(transform);
+            UpdateCones(renderMatrix);
+            base.OnTransformRenderWorldMatrixChanged(transform, renderMatrix);
         }
 
-        private void UpdateCones()
+        private void UpdateCones(Matrix4x4 renderMatrix)
         {
             float d = Distance;
-            Vector3 dir = Transform.RenderForward;
-            Vector3 coneOrigin = Transform.RenderTranslation + dir * (d * 0.5f);
+            Vector3 dir = Vector3.TransformNormal(Globals.Forward, renderMatrix);
+            Vector3 coneOrigin = renderMatrix.Translation + dir * (d * 0.5f);
 
             SetField(ref _outerCone, new(coneOrigin, -dir, d, MathF.Tan(DegToRad(OuterCutoffAngleDegrees)) * d));
             SetField(ref _innerCone, new(coneOrigin, -dir, d, MathF.Tan(DegToRad(InnerCutoffAngleDegrees)) * d));

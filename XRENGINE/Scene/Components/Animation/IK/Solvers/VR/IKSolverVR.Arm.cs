@@ -85,7 +85,7 @@ namespace XREngine.Components.Animation
                     set => SetField(ref _shoulderTwistWeight, value);
                 }
 
-                private float _shoulderYawOffset = 45.0f;
+                private float _shoulderYawOffset = -45.0f;
                 /// <summary>
                 /// Tweak this value to adjust shoulder rotation around the yaw (up) axis.
                 /// </summary>
@@ -167,6 +167,13 @@ namespace XREngine.Components.Animation
                     set => SetField(ref _chestRelativePitchOffsetDegrees, value);
                 }
 
+                private float _chestRelativeYawOffsetDegrees = 90.0f;
+                public float ChestRelativeYawOffsetDegrees
+                {
+                    get => _chestRelativeYawOffsetDegrees;
+                    set => SetField(ref _chestRelativeYawOffsetDegrees, value);
+                }
+
                 private bool _negateChestRelativePitchOffsetOnRight = true;
                 public bool NegateChestRelativePitchOffsetOnRight
                 {
@@ -174,7 +181,14 @@ namespace XREngine.Components.Animation
                     set => SetField(ref _negateChestRelativePitchOffsetOnRight, value);
                 }
 
-                private bool _negateChestDirOnRight = false;
+                private bool _negateChestRelativeYawOffsetOnRight = true;
+                public bool NegateChestRelativeYawOffsetOnRight 
+                {
+                    get => _negateChestRelativeYawOffsetOnRight;
+                    set => SetField(ref _negateChestRelativeYawOffsetOnRight, value);
+                }
+
+                private bool _negateChestDirOnRight = true;
                 public bool NegateChestDirOnRight
                 {
                     get => _negateChestDirOnRight;
@@ -186,6 +200,13 @@ namespace XREngine.Components.Animation
                 {
                     get => _negatePitchOffsetOnRight;
                     set => SetField(ref _negatePitchOffsetOnRight, value);
+                }
+
+                private bool _negateYawOffsetOnRight = true;
+                public bool NegateYawOffsetOnRight
+                {
+                    get => _negateYawOffsetOnRight;
+                    set => SetField(ref _negateYawOffsetOnRight, value);
                 }
 
                 private bool _flipUpperArmBendAxis = false;
@@ -849,13 +870,29 @@ namespace XREngine.Components.Animation
 
             private void CalcYaw(out float yawDeg, out Quaternion yawRotation)
             {
-                float yawOffsetDeg =  -Settings.ShoulderYawOffset;
-                float yawOffsetStartDeg = 90.0f;
+                float yawOffsetDeg = Settings.ShoulderYawOffset;
+                float yawOffsetStartDeg = Settings.ChestRelativeYawOffsetDegrees;
 
-                if (!isLeft)
+                if (Settings!.NegateChestRelativeYawOffsetOnRight)
                 {
-                    yawOffsetDeg = -yawOffsetDeg;
-                    yawOffsetStartDeg = -yawOffsetStartDeg;
+                    if (!isLeft)
+                        yawOffsetStartDeg = -yawOffsetStartDeg;
+                }
+                else
+                {
+                    if (isLeft)
+                        yawOffsetStartDeg = -yawOffsetStartDeg;
+                }
+
+                if (Settings!.NegateYawOffsetOnRight)
+                {
+                    if (!isLeft)
+                        yawOffsetDeg = -yawOffsetDeg;
+                }
+                else
+                {
+                    if (isLeft)
+                        yawOffsetDeg = -yawOffsetDeg;
                 }
 
                 float yawOffsetRad = float.DegreesToRadians(yawOffsetStartDeg + yawOffsetDeg);
@@ -867,11 +904,11 @@ namespace XREngine.Components.Animation
 
                 yawDeg = float.RadiansToDegrees(MathF.Atan2(shoulderToTargetWorkingSpace.X, Settings.FlipZInAtan2 || Settings.FlipZInCalcYaw ? -shoulderToTargetWorkingSpace.Z : shoulderToTargetWorkingSpace.Z));
 
-                float dotY = Vector3.Dot(shoulderToTargetWorkingSpace, Globals.Up);
-                dotY = 1.0f - MathF.Abs(dotY);
-                yawDeg *= dotY;
-
+                float verticalDot = Vector3.Dot(shoulderToTargetWorkingSpace, Globals.Up);
+                verticalDot = 1.0f - MathF.Abs(verticalDot);
+                yawDeg *= verticalDot;
                 yawDeg -= yawOffsetDeg;
+
                 //float yawLimitMin = isLeft ? -20.0f : -50.0f;
                 //float yawLimitMax = isLeft ? 50.0f : 20.0f;
                 //yawDeg = DamperValue(yawDeg, yawLimitMin - yawOffsetDeg, yawLimitMax - yawOffsetDeg, 0.7f); // back, forward

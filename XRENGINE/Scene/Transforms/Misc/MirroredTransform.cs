@@ -68,7 +68,7 @@ namespace XREngine.Scene.Transforms
         /// <summary>
         /// When the reflection normal transform changes, we need to update our world matrix.
         /// </summary>
-        private void OnSourceMatrixChanged(TransformBase @base)
+        private void OnSourceMatrixChanged(TransformBase @base, Matrix4x4 worldMatrix)
             => MarkWorldModified();
 
         /// <summary>

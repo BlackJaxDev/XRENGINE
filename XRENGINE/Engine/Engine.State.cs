@@ -1,4 +1,6 @@
 ﻿using Extensions;
+using System.Collections;
+using System.Collections.Concurrent;
 using System.Diagnostics.CodeAnalysis;
 using XREngine.Core.Files;
 using XREngine.Input;
@@ -6,10 +8,30 @@ using XREngine.Native;
 
 namespace XREngine
 {
+    public abstract class Job
+    {
+        public abstract IEnumerable Process();
+    }
+    public class JobManager
+    {
+        public ConcurrentQueue<Job> Jobs { get; } = new ConcurrentQueue<Job>();
+
+        public void Process()
+        {
+            foreach (var job in Jobs)
+            {
+                foreach (var _ in job.Process())
+                {
+                    // Process each step of the job
+                }
+            }
+        }
+    }
     public static partial class Engine
     {
         public static bool IsEditor { get; private set; } = true;
         public static bool IsPlaying { get; private set; } = true;
+        public static JobManager Jobs { get; } = new JobManager();
 
         public static GameState LoadOrGenerateGameState(
             Func<GameState>? generateFactory = null,

@@ -691,7 +691,7 @@ namespace XREngine.Actors.Types
             return Matrix4x4.CreateFromQuaternion(rotation) with { Translation = translation };
         }
 
-        private void SocketTransformChangedCallback(TransformBase? socket)
+        private void SocketTransformChangedCallback(TransformBase? socket, Matrix4x4 worldMatrix)
         {
             if (TransformSpace != ETransformSpace.Screen)
                 UpdateDisplayTransform();

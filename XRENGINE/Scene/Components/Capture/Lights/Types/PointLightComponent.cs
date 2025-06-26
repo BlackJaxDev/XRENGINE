@@ -119,10 +119,10 @@ namespace XREngine.Components.Capture.Lights.Types
             base.OnTransformChanged();
         }
 
-        protected override void OnTransformRenderWorldMatrixChanged(TransformBase transform)
+        protected override void OnTransformRenderWorldMatrixChanged(TransformBase transform, Matrix4x4 renderMatrix)
         {
-            _influenceVolume.Center = Transform.RenderTranslation;
-            base.OnTransformRenderWorldMatrixChanged(transform);
+            _influenceVolume.Center = renderMatrix.Translation;
+            base.OnTransformRenderWorldMatrixChanged(transform, renderMatrix);
         }
 
         protected internal override void OnComponentActivated()

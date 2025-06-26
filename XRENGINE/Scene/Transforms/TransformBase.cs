@@ -4,7 +4,6 @@ using System.ComponentModel;
 using System.Diagnostics.CodeAnalysis;
 using System.Numerics;
 using System.Reflection;
-using XREngine.Data.Colors;
 using XREngine.Data.Geometry;
 using XREngine.Data.Rendering;
 using XREngine.Rendering.Commands;
@@ -30,11 +29,17 @@ namespace XREngine.Scene.Transforms
         public override string ToString()
             => $"{GetType().GetFriendlyName()} ({SceneNode?.Name ?? Name ?? "<no name>"})";
 
-        public event Action<TransformBase>? LocalMatrixChanged;
-        public event Action<TransformBase>? InverseLocalMatrixChanged;
-        public event Action<TransformBase>? WorldMatrixChanged;
-        public event Action<TransformBase>? InverseWorldMatrixChanged;
-        public event Action<TransformBase>? RenderWorldMatrixChanged;
+        public delegate void DelWorldMatrixChanged(TransformBase transform, Matrix4x4 worldMatrix);
+        public delegate void DelLocalMatrixChanged(TransformBase transform, Matrix4x4 localMatrix);
+        public delegate void DelInverseLocalMatrixChanged(TransformBase transform, Matrix4x4 localInverseMatrix);
+        public delegate void DelInverseWorldMatrixChanged(TransformBase transform, Matrix4x4 worldInverseMatrix);
+        public delegate void DelRenderMatrixChanged(TransformBase transform, Matrix4x4 renderMatrix);
+
+        public event DelLocalMatrixChanged? LocalMatrixChanged;
+        public event DelInverseLocalMatrixChanged? InverseLocalMatrixChanged;
+        public event DelWorldMatrixChanged? WorldMatrixChanged;
+        public event DelInverseWorldMatrixChanged? InverseWorldMatrixChanged;
+        public event DelRenderMatrixChanged? RenderMatrixChanged;
         
         private float _selectionRadius = 0.01f;
         [YamlIgnore]
@@ -61,10 +66,10 @@ namespace XREngine.Scene.Transforms
             _children.PostAnythingAdded += ChildAdded;
             _children.PostAnythingRemoved += ChildRemoved;
 
-            _localMatrix = new MatrixInfo { NeedsRecalc = true };
-            _worldMatrix = new MatrixInfo { NeedsRecalc = true };
-            _inverseLocalMatrix = new MatrixInfo { NeedsRecalc = true };
-            _inverseWorldMatrix = new MatrixInfo { NeedsRecalc = true };
+            _localMatrix = Matrix4x4.Identity;
+            _worldMatrix = Matrix4x4.Identity;
+            _inverseLocalMatrix = Matrix4x4.Identity;
+            _inverseWorldMatrix = Matrix4x4.Identity;
 
             RenderInfo = RenderInfo3D.New(this, new RenderCommandMethod3D((int)EDefaultRenderPass.OnTopForward, RenderDebug));
             RenderedObjects = GetDebugRenderInfo();
@@ -293,18 +298,13 @@ namespace XREngine.Scene.Transforms
                 case nameof(SelectionRadius):
                     MakeCapsule();
                     break;
-                case nameof(RenderMatrix):
-                    OnRenderMatrixChanged();
-                    break;
             }
         }
 
         protected virtual void OnRenderMatrixChanged()
         {
-            //using var t = Engine.Profiler.Start();
-
             _inverseRenderMatrix = null;
-            RenderWorldMatrixChanged?.Invoke(this);
+            RenderMatrixChanged?.Invoke(this, RenderMatrix);
         }
 
         private static readonly Queue<(TransformBase child, TransformBase? newParent, bool preserveWorldTransform)> _parentsToReassign = [];
@@ -322,35 +322,18 @@ namespace XREngine.Scene.Transforms
         /// </summary>
         public bool RecalculateMatrices(bool forceWorldRecalc = false, bool setRenderMatrixNow = false)
         {
-            //try
-            //{
-            //    if (BeginVerifyWorldMatrix())
-            //    {
-                    bool recalcChildren = VerifyWorldMatrix(forceWorldRecalc);
-                    if (setRenderMatrixNow || World is null)
-                        SetRenderMatrix(WorldMatrix, false).Wait();
-                    return recalcChildren;
-                //}
-                //else
-                //    return false;
-            //}
-            //finally
-            //{
-            //    EndVerifyWorldMatrix();
-            //}
-        }
+            bool worldChanged = _worldChanged;
 
-        public bool RecalculateInverseMatrices(bool forceInverseWorldRecalc = false)
-        {
-            //BeginVerifyWorldMatrix();
-            //try
-            //{
-                return VerifyWorldInv(forceInverseWorldRecalc);
-            //}
-            //finally
-            //{
-            //    EndVerifyWorldMatrix();
-            //}
+            if (_localChanged)
+                RecalcLocal();
+            
+            if (_worldChanged || forceWorldRecalc)
+                RecalcWorld();
+            
+            if (setRenderMatrixNow || World is null)
+                SetRenderMatrix(WorldMatrix, false).Wait();
+
+            return worldChanged;
         }
 
         /// <summary>
@@ -361,17 +344,14 @@ namespace XREngine.Scene.Transforms
         /// <param name="recalcChildrenNow"></param>
         /// <returns></returns>
         public virtual Task RecalculateMatrixHeirarchy(bool forceWorldRecalc, bool setRenderMatrixNow, ELoopType childRecalcType)
-        {
-            if (!RecalculateMatrices(forceWorldRecalc, setRenderMatrixNow))
-                return Task.CompletedTask;
-
-            return childRecalcType switch
-            {
-                ELoopType.Asynchronous => ChildrenRecalcAsync(setRenderMatrixNow),
-                ELoopType.Parallel => Task.Run(() => ChildrenRecalcParallel(setRenderMatrixNow)),
-                _ => ChildrenRecalcSequential(setRenderMatrixNow),
-            };
-        }
+            => RecalculateMatrices(forceWorldRecalc, setRenderMatrixNow)
+                ? childRecalcType switch
+                {
+                    ELoopType.Asynchronous => ChildrenRecalcAsync(setRenderMatrixNow),
+                    ELoopType.Parallel => Task.Run(() => ChildrenRecalcParallel(setRenderMatrixNow)),
+                    _ => ChildrenRecalcSequential(setRenderMatrixNow),
+                }
+                : Task.CompletedTask;
 
         private void ChildrenRecalcParallel(bool setRenderMatrixNow)
         {
@@ -403,6 +383,8 @@ namespace XREngine.Scene.Transforms
         public Task SetRenderMatrix(Matrix4x4 matrix, bool recalcAllChildRenderMatrices = true)
         {
             RenderMatrix = matrix;
+            OnRenderMatrixChanged();
+
             if (recalcAllChildRenderMatrices)
                 return RecalculateRenderMatrixHierarchy(Engine.Rendering.Settings.RecalcChildMatricesLoopType);
             else
@@ -685,6 +667,7 @@ namespace XREngine.Scene.Transforms
 
         public Vector3 LossyWorldScale => WorldMatrix.ExtractScale();
 
+        #region Render Matrix
         private Matrix4x4 _renderMatrix = Matrix4x4.Identity;
         public Matrix4x4 RenderMatrix
         {
@@ -694,165 +677,44 @@ namespace XREngine.Scene.Transforms
 
         private Matrix4x4? _inverseRenderMatrix = Matrix4x4.Identity;
         public Matrix4x4 InverseRenderMatrix => _inverseRenderMatrix ??= Matrix4x4.Invert(RenderMatrix, out var inverted) ? inverted : Matrix4x4.Identity;
+        #endregion
 
         #region Local Matrix
-        private readonly MatrixInfo _localMatrix;
-        private readonly ReaderWriterLockSlim _localMatrixLock = new(LockRecursionPolicy.SupportsRecursion);
+        private bool _localChanged = false;
+        private Matrix4x4 _localMatrix;
         /// <summary>
         /// This transform's local matrix relative to its parent.
         /// </summary>
-        public Matrix4x4 LocalMatrix
-        {
-            get
-            {
-                //try
-                //{
-                    //if (_localMatrixLock.TryEnterUpgradeableReadLock(1))
-                        VerifyLocalMatrix();
+        public Matrix4x4 LocalMatrix => _localMatrix;
 
-                    return _localMatrix.Matrix;
-                //}
-                //finally
-                //{
-                //    //ExitReadLock(_localMatrixLock);
-                //}
-            }
+        public void RecalcLocal()
+        {
+            Matrix4x4 localMatrix = CreateLocalMatrix();
+            _localMatrix = localMatrix;
+            RecalcLocalInv();
+            _localChanged = false;
+            OnLocalMatrixChanged(localMatrix);
         }
 
-        /// <summary>
-        /// Ensures that the world matrix is up-to-date.
-        /// If this is not called after values are changed and the matrix is invalidated,
-        /// the matrix will not be recalculated until swap buffers is called or the matrix is specifically requested.
-        /// </summary>
-        public bool VerifyLocalMatrix(bool force = false)
-        {
-            if (!_localMatrix.NeedsRecalc && !force)
-                return false;
-
-            _localMatrix.NeedsRecalc = false;
-            RecalcLocal();
-            return true;
-        }
-
-        internal void RecalcLocal()
-        {
-            _localMatrixLock.EnterWriteLock();
-            try
-            {
-                _localMatrix.Matrix = CreateLocalMatrix();
-                _inverseLocalMatrix.NeedsRecalc = true;
-                OnLocalMatrixChanged();
-            }
-            finally
-            {
-                _localMatrixLock.ExitWriteLock();
-            }
-        }
-
-        protected virtual void OnLocalMatrixChanged()
-            => LocalMatrixChanged?.Invoke(this);
+        protected virtual void OnLocalMatrixChanged(Matrix4x4 localMatrix)
+            => LocalMatrixChanged?.Invoke(this, localMatrix);
         #endregion
 
         #region World Matrix
-        private readonly MatrixInfo _worldMatrix;
-        private readonly ReaderWriterLockSlim _worldMatrixLock = new(LockRecursionPolicy.SupportsRecursion);
+        private bool _worldChanged = false;
+        private Matrix4x4 _worldMatrix;
         /// <summary>
         /// This transform's world matrix relative to the root of the scene (all ancestor transforms accounted for).
         /// </summary>
-        public Matrix4x4 WorldMatrix
+        public Matrix4x4 WorldMatrix => _worldMatrix;
+
+        public void RecalcWorld()
         {
-            get
-            {
-                //try
-                //{
-                    //if (BeginVerifyWorldMatrix())
-                        VerifyWorldMatrix();
-
-                    return _worldMatrix.Matrix;
-                //}
-                //finally
-                //{
-                //    //EndVerifyWorldMatrix();
-                //}
-            }
-        }
-
-        private void EndVerifyWorldMatrix()
-        {
-            ExitReadLock(_worldMatrixLock);
-            ExitReadLock(_localMatrixLock);
-            RecursiveUnlockParentWorldMatrix();
-        }
-
-        private bool BeginVerifyWorldMatrix()
-        {
-            return true;
-                //_worldMatrixLock.TryEnterUpgradeableReadLock(1) &&
-                //_localMatrixLock.TryEnterUpgradeableReadLock(1) &&
-                //RecursiveLockParentWorldMatrix();
-        }
-
-        /// <summary>
-        /// Ensures that the world matrix is up-to-date.
-        /// If this is not called after values are changed and the matrix is invalidated,
-        /// the matrix will not be recalculated until swap buffers is called or the matrix is specifically requested.
-        /// </summary>
-        public bool VerifyWorldMatrix(bool force = false)
-        {
-            force |= VerifyLocalMatrix(force) | VerifyParentWorldMatrix();
-
-            if (!_worldMatrix.NeedsRecalc && !force)
-                return false;
-
-            _worldMatrix.NeedsRecalc = false;
-            RecalcWorld();
-            return true;
-        }
-
-        private bool RecursiveLockParentWorldMatrix()
-        {
-            //if (Parent is null)
-                return true;
-
-            //bool locked = Parent._worldMatrixLock.TryEnterUpgradeableReadLock(1);
-            //if (!locked)
-            //    return false;
-
-            //return Parent.RecursiveLockParentWorldMatrix();
-        }
-        private void RecursiveUnlockParentWorldMatrix()
-        {
-            if (Parent is null)
-                return;
-
-            ExitReadLock(Parent._worldMatrixLock);
-            Parent.RecursiveUnlockParentWorldMatrix();
-        }
-
-        private bool VerifyParentWorldMatrix()
-            => Parent?.VerifyWorldMatrix() ?? false;
-
-        internal void RecalcWorld(/*bool allowSetLocal*/)
-        {
-            //_worldMatrixLock.EnterWriteLock();
-            //try
-            //{
-                _worldMatrix.Matrix = CreateWorldMatrix();
-                _inverseWorldMatrix.NeedsRecalc = true;
-
-                //if (allowSetLocal/* && !_localMatrix.NeedsRecalc*/)
-                //{
-                //    _localMatrix.Matrix = GenerateLocalMatrixFromWorld();
-                //    _inverseLocalMatrix.NeedsRecalc = true;
-                //    OnLocalMatrixChanged();
-                //}
-
-                OnWorldMatrixChanged();
-            //}
-            //finally
-            //{
-            //    //_worldMatrixLock.ExitWriteLock();
-            //}
+            Matrix4x4 worldMatrix = CreateWorldMatrix();
+            _worldMatrix = worldMatrix;
+            RecalcWorldInv();
+            _worldChanged = false;
+            OnWorldMatrixChanged(worldMatrix);
         }
 
         private Matrix4x4 GenerateLocalMatrixFromWorld()
@@ -860,13 +722,11 @@ namespace XREngine.Scene.Transforms
                 ? WorldMatrix
                 : WorldMatrix * inverted;
 
-
-
-        protected virtual void OnWorldMatrixChanged()
+        protected virtual void OnWorldMatrixChanged(Matrix4x4 worldMatrix)
         {
             //RemakeCapsule();
-            World?.EnqueueRenderTransformChange(this);
-            WorldMatrixChanged?.Invoke(this);
+            World?.EnqueueRenderTransformChange(this, worldMatrix);
+            WorldMatrixChanged?.Invoke(this, worldMatrix);
         }
 
         private void RemakeCapsule()
@@ -891,128 +751,40 @@ namespace XREngine.Scene.Transforms
         #endregion
 
         #region Inverse Local Matrix
-        private readonly MatrixInfo _inverseLocalMatrix;
+        private Matrix4x4 _inverseLocalMatrix;
         /// <summary>
         /// The inverse of this transform's local matrix.
-        /// Calculated when requested if needed and cached until invalidated.
         /// </summary>
-        public Matrix4x4 InverseLocalMatrix
-        {
-            get
-            {
-                //try
-                //{
-                    //if (_localMatrixLock.TryEnterUpgradeableReadLock(1))
-                        VerifyLocalInv();
-
-                    return _inverseLocalMatrix.Matrix;
-                //}
-                //finally
-                //{
-                //    //ExitReadLock(_localMatrixLock);
-                //}
-            }
-        }
-
-        private static void ExitReadLock(ReaderWriterLockSlim l)
-        {
-            if (l.IsReadLockHeld)
-                l.ExitReadLock();
-            else if (l.IsUpgradeableReadLockHeld)
-                l.ExitUpgradeableReadLock();
-        }
-
-        private void VerifyLocalInv()
-        {
-            VerifyLocalMatrix();
-
-            if (!_inverseLocalMatrix.NeedsRecalc)
-                return;
-
-            _inverseLocalMatrix.NeedsRecalc = false;
-            RecalcLocalInv();
-        }
+        public Matrix4x4 InverseLocalMatrix => _inverseLocalMatrix;
 
         internal void RecalcLocalInv()
         {
-            //_localMatrixLock.EnterWriteLock();
-            //try
-            //{
-                if (!TryCreateInverseLocalMatrix(out Matrix4x4 inverted))
-                    return;
+            if (!TryCreateInverseLocalMatrix(out Matrix4x4 inverted))
+                return;
 
-                _inverseLocalMatrix.Matrix = inverted;
-                OnInverseLocalMatrixChanged();
-            //}
-            //finally
-            //{
-            //    //_localMatrixLock.ExitWriteLock();
-            //}
+            _inverseLocalMatrix = inverted;
+            OnInverseLocalMatrixChanged(inverted);
         }
 
-        protected virtual void OnInverseLocalMatrixChanged()
-            => InverseLocalMatrixChanged?.Invoke(this);
+        protected virtual void OnInverseLocalMatrixChanged(Matrix4x4 localInverseMatrix)
+            => InverseLocalMatrixChanged?.Invoke(this, localInverseMatrix);
 
         #endregion
 
         #region Inverse World Matrix
-        private readonly MatrixInfo _inverseWorldMatrix;
+        private Matrix4x4 _inverseWorldMatrix;
         /// <summary>
         /// The inverse of this transform's world matrix.
-        /// Calculated when requested if needed and cached until invalidated.
         /// </summary>
-        public Matrix4x4 InverseWorldMatrix
+        public Matrix4x4 InverseWorldMatrix => _inverseWorldMatrix;
+
+        internal void RecalcWorldInv()
         {
-            get
-            {
-                try
-                {
-                    //if (BeginVerifyWorldMatrix())
-                        VerifyWorldInv();
+            if (!TryCreateInverseWorldMatrix(out Matrix4x4 inverted))
+                return;
 
-                    return _inverseWorldMatrix.Matrix;
-                }
-                finally
-                {
-                    //EndVerifyWorldMatrix();
-                }
-            }
-        }
-
-        private bool VerifyWorldInv(bool force = false)
-        {
-            force |= VerifyWorldMatrix();
-
-            if (!_inverseWorldMatrix.NeedsRecalc && !force)
-                return false;
-
-            _inverseWorldMatrix.NeedsRecalc = false;
-            RecalcWorldInv();
-            return true;
-        }
-
-        internal void RecalcWorldInv(/*bool allowSetLocal*/)
-        {
-            //_worldMatrixLock.EnterWriteLock();
-            //try
-            //{
-                if (!TryCreateInverseWorldMatrix(out Matrix4x4 inverted))
-                    return;
-
-                _inverseWorldMatrix.Matrix = inverted;
-
-                //if (allowSetLocal && !_inverseLocalMatrix.NeedsRecalc)
-                //{
-                //    _inverseLocalMatrix.Matrix = GenerateInverseLocalMatrixFromInverseWorld();
-                //    OnInverseLocalMatrixChanged();
-                //}
-
-                OnInverseWorldMatrixChanged();
-            //}
-            //finally
-            //{
-            //    //_worldMatrixLock.ExitWriteLock();
-            //}
+            _inverseWorldMatrix = inverted;
+            OnInverseWorldMatrixChanged(inverted);
         }
 
         private Matrix4x4 GenerateInverseLocalMatrixFromInverseWorld()
@@ -1020,8 +792,8 @@ namespace XREngine.Scene.Transforms
                 ? InverseWorldMatrix
                 : inverted * InverseWorldMatrix;
 
-        protected virtual void OnInverseWorldMatrixChanged()
-            => InverseWorldMatrixChanged?.Invoke(this);
+        protected virtual void OnInverseWorldMatrixChanged(Matrix4x4 worldInverseMatrix)
+            => InverseWorldMatrixChanged?.Invoke(this, worldInverseMatrix);
         #endregion
 
         #region Overridable Methods
@@ -1034,13 +806,26 @@ namespace XREngine.Scene.Transforms
         protected abstract Matrix4x4 CreateLocalMatrix();
         #endregion
 
+        private bool _immediateLocalMatrixRecalculation = true;
+        public bool ImmediateLocalMatrixRecalculation
+        {
+            get => _immediateLocalMatrixRecalculation;
+            set => SetField(ref _immediateLocalMatrixRecalculation, value);
+        }
+
         /// <summary>
         /// Marks the local matrix as modified, which will cause it to be recalculated on the next access.
         /// </summary>
         protected void MarkLocalModified()
         {
-            _localMatrix.NeedsRecalc = true;
-            _inverseLocalMatrix.NeedsRecalc = true;
+            if (ImmediateLocalMatrixRecalculation)
+            {
+                RecalcLocal();
+                _localChanged = false;
+            }
+            else
+                _localChanged = true;
+            
             MarkWorldModified();
             HasChanged = true;
         }
@@ -1050,10 +835,15 @@ namespace XREngine.Scene.Transforms
         /// </summary>
         protected void MarkWorldModified()
         {
-            _worldMatrix.NeedsRecalc = true;
-            _inverseWorldMatrix.NeedsRecalc = true;
+            //if (_worldChanged)
+            //    return; // Already marked as dirty
+
+            _worldChanged = true;
             World?.AddDirtyTransform(this);
             HasChanged = true;
+
+            foreach (TransformBase child in Children)
+                child.MarkWorldModified();
         }
 
         ///// <summary>
