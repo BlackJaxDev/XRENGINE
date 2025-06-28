@@ -54,7 +54,7 @@ namespace XREngine.Components.Animation
                     set => SetField(ref _rotationWeight, value);
                 }
 
-                private float _shoulderRotationWeight = 0.0f;
+                private float _shoulderRotationWeight = 1.0f;
                 /// <summary>
                 /// The weight of shoulder rotation.
                 /// </summary>
@@ -167,7 +167,7 @@ namespace XREngine.Components.Animation
                     set => SetField(ref _chestRelativePitchOffsetDegrees, value);
                 }
 
-                private float _chestRelativeYawOffsetDegrees = 90.0f;
+                private float _chestRelativeYawOffsetDegrees = -90.0f;
                 public float ChestRelativeYawOffsetDegrees
                 {
                     get => _chestRelativeYawOffsetDegrees;
@@ -248,7 +248,7 @@ namespace XREngine.Components.Animation
                     set => SetField(ref _flipZInAtan2, value);
                 }
 
-                private bool _flipZInSetUpperArmRotation = false;
+                private bool _flipZInSetUpperArmRotation = true;
                 /// <summary>
                 /// Individual setting to flip Z coordinates in SetUpperArmRotation atan2 calculation.
                 /// </summary>
@@ -278,7 +278,7 @@ namespace XREngine.Components.Animation
                     set => SetField(ref _flipZInCalcPitch, value);
                 }
 
-                private bool _flipZInCalcYaw = false;
+                private bool _flipZInCalcYaw = true;
                 /// <summary>
                 /// Individual setting to flip Z coordinates in CalcYaw atan2 calculation.
                 /// </summary>
