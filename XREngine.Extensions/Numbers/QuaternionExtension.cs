@@ -19,6 +19,8 @@ namespace Extensions
             return result;
         }
 
+        public static Quaternion Normalized(this Quaternion quaternion)
+            => Quaternion.Normalize(quaternion);
         public static Vector3 Rotate(this Quaternion rotation, Vector3 vector)
             => Vector3.Transform(vector, rotation);
         public static Vector3 PosZ(this Quaternion rotation)

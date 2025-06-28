@@ -117,8 +117,9 @@ namespace XREngine.Core.Files
             try
             {
                 byte[] bom = new byte[4];
-                using (FileMap map = FileMap.FromFile(path, FileMapProtect.Read, 0, 4))
-                    bom = map.Address.GetBytes(4);
+                //Read the first 4 bytes of the file to check for a BOM
+                using (FileStream fs = new(path, FileMode.Open, FileAccess.Read, FileShare.Read, 4, FileOptions.SequentialScan))
+                    fs.ReadExactly(bom, 0, 4);
 
 #pragma warning disable SYSLIB0001 // Type or member is obsolete
                 if (bom[0] == 0x2B && bom[1] == 0x2F && bom[2] == 0x76) return Encoding.UTF7;

@@ -197,10 +197,8 @@ namespace XREngine.Components.Animation
                     targetPosition,
                     bendNormal);
 
-                // Position the second transform
-                Quaternion q1 = XRMath.RotationBetweenVectors(
-                    bones[second].SolverPosition - bones[first].SolverPosition,
-                    bendDir);
+                Vector3 firstToSecond = bones[second].SolverPosition - bones[first].SolverPosition;
+                Quaternion q1 = XRMath.RotationBetweenVectors(firstToSecond, bendDir).Normalized();
 
                 if (weight < 1.0f)
                     q1 = Quaternion.Lerp(Quaternion.Identity, q1, weight);
@@ -209,7 +207,7 @@ namespace XREngine.Components.Animation
 
                 Vector3 secondToThird = bones[third].SolverPosition - bones[second].SolverPosition;
                 Vector3 secondToTarget = targetPosition - bones[second].SolverPosition;
-                Quaternion q2 = XRMath.RotationBetweenVectors(secondToThird, secondToTarget);
+                Quaternion q2 = XRMath.RotationBetweenVectors(secondToThird, secondToTarget).Normalized();
 
                 if (weight < 1.0f)
                     q2 = Quaternion.Lerp(Quaternion.Identity, q2, weight);

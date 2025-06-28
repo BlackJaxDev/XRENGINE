@@ -66,7 +66,7 @@ namespace XREngine
             T? asset = null;
             if (allowLoading)
             {
-                asset = Assets.LoadGameAsset<T>(assetName);
+                asset = Assets.LoadGameAsset<T>([.. folderNames, assetName]);
                 if (asset != null)
                     return asset;
             }

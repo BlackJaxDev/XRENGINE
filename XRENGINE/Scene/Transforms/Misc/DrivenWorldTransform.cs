@@ -20,7 +20,8 @@ namespace XREngine.Scene.Transforms
         public void SetWorldMatrix(Matrix4x4 matrix)
         {
             _worldMatrix = matrix;
-            MarkWorldModified();
+            //MarkWorldModified();
+            RecalculateMatrixHeirarchy(true, false, Engine.Rendering.ELoopType.Asynchronous);
         }
 
         protected override Matrix4x4 CreateWorldMatrix()

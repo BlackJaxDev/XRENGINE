@@ -54,7 +54,7 @@ namespace XREngine.Components.Animation
                     set => SetField(ref _rotationWeight, value);
                 }
 
-                private float _shoulderRotationWeight = 1.0f;
+                private float _shoulderRotationWeight = 0.0f;
                 /// <summary>
                 /// The weight of shoulder rotation.
                 /// </summary>
@@ -85,7 +85,7 @@ namespace XREngine.Components.Animation
                     set => SetField(ref _shoulderTwistWeight, value);
                 }
 
-                private float _shoulderYawOffset = -45.0f;
+                private float _shoulderYawOffset = 45.0f;
                 /// <summary>
                 /// Tweak this value to adjust shoulder rotation around the yaw (up) axis.
                 /// </summary>
@@ -105,7 +105,7 @@ namespace XREngine.Components.Animation
                     set => SetField(ref _shoulderPitchOffset, value);
                 }
 
-                private float _bendGoalWeight;
+                private float _bendGoalWeight = 0.0f;
                 /// <summary>
                 /// If greater than 0, will bend the elbow towards the 'Bend Goal' Transform.
                 /// </summary>
@@ -116,7 +116,7 @@ namespace XREngine.Components.Animation
                     set => SetField(ref _bendGoalWeight, value);
                 }
 
-                private float _swivelOffset;
+                private float _swivelOffset = 0.0f;
                 /// <summary>
                 /// Angular offset of the elbow bending direction.
                 /// </summary>
@@ -181,7 +181,7 @@ namespace XREngine.Components.Animation
                     set => SetField(ref _negateChestRelativePitchOffsetOnRight, value);
                 }
 
-                private bool _negateChestRelativeYawOffsetOnRight = true;
+                private bool _negateChestRelativeYawOffsetOnRight = false;
                 public bool NegateChestRelativeYawOffsetOnRight 
                 {
                     get => _negateChestRelativeYawOffsetOnRight;
@@ -202,14 +202,14 @@ namespace XREngine.Components.Animation
                     set => SetField(ref _negatePitchOffsetOnRight, value);
                 }
 
-                private bool _negateYawOffsetOnRight = true;
+                private bool _negateYawOffsetOnRight = false;
                 public bool NegateYawOffsetOnRight
                 {
                     get => _negateYawOffsetOnRight;
                     set => SetField(ref _negateYawOffsetOnRight, value);
                 }
 
-                private bool _flipUpperArmBendAxis = false;
+                private bool _flipUpperArmBendAxis = true;
                 public bool FlipUpperArmBendAxis
                 {
                     get => _flipUpperArmBendAxis;
@@ -237,7 +237,7 @@ namespace XREngine.Components.Animation
                     set => SetField(ref _flipBendNormal, value);
                 }
 
-                private bool _flipZInAtan2 = true;
+                private bool _flipZInAtan2 = false;
                 /// <summary>
                 /// Global setting to flip Z coordinates in all atan2 calculations.
                 /// Set to true when Z- is forward, false when Z+ is forward.
@@ -248,7 +248,7 @@ namespace XREngine.Components.Animation
                     set => SetField(ref _flipZInAtan2, value);
                 }
 
-                private bool _flipZInSetUpperArmRotation = true;
+                private bool _flipZInSetUpperArmRotation = false;
                 /// <summary>
                 /// Individual setting to flip Z coordinates in SetUpperArmRotation atan2 calculation.
                 /// </summary>
@@ -258,7 +258,7 @@ namespace XREngine.Components.Animation
                     set => SetField(ref _flipZInSetUpperArmRotation, value);
                 }
 
-                private bool _flipZInShoulderFromTo = true;
+                private bool _flipZInShoulderFromTo = false;
                 /// <summary>
                 /// Individual setting to flip Z coordinates in ShoulderFromTo atan2 calculations.
                 /// </summary>
@@ -268,7 +268,7 @@ namespace XREngine.Components.Animation
                     set => SetField(ref _flipZInShoulderFromTo, value);
                 }
 
-                private bool _flipZInCalcPitch = true;
+                private bool _flipZInCalcPitch = false;
                 /// <summary>
                 /// Individual setting to flip Z coordinates in CalcPitch atan2 calculation.
                 /// </summary>
@@ -278,7 +278,7 @@ namespace XREngine.Components.Animation
                     set => SetField(ref _flipZInCalcPitch, value);
                 }
 
-                private bool _flipZInCalcYaw = true;
+                private bool _flipZInCalcYaw = false;
                 /// <summary>
                 /// Individual setting to flip Z coordinates in CalcYaw atan2 calculation.
                 /// </summary>
@@ -599,7 +599,7 @@ namespace XREngine.Components.Animation
                 //RenderLine(Shoulder.SolverPosition, Shoulder.SolverPosition + _chestUp, ColorF4.Green);
 
                 Vector3 bendNormal = SolveTrigonometric();
-                SetUpperArmRotation(bendNormal);
+                FixUpperArmRotation(bendNormal);
                 SetHandRotation();
             }
 
@@ -612,7 +612,7 @@ namespace XREngine.Components.Animation
                     Hand.SolverRotation = Quaternion.Lerp(Hand.SolverRotation, TargetRotation, rw);
             }
 
-            private void SetUpperArmRotation(Vector3 bendNormal)
+            private void FixUpperArmRotation(Vector3 bendNormal)
             {
                 float pw = Settings.PositionWeight;
                 if (Quality >= EQuality.Semi || pw <= 0.0f)
@@ -621,19 +621,19 @@ namespace XREngine.Components.Animation
                 // Fix upperarm twist relative to bend normal
                 Vector3 forward = UpperArm.SolverRotation.Rotate(_upperArmBendAxis);
                 Vector3 up = Forearm.SolverPosition - UpperArm.SolverPosition;
-                Quaternion space = XRMath.LookRotation(forward, up);
+                Quaternion space = XRMath.LookRotation(-forward, up);
 
                 Vector3 upperArmTwist = Quaternion.Inverse(space).Rotate(bendNormal);
                 float zValue = Settings.FlipZInAtan2 || Settings.FlipZInSetUpperArmRotation ? -upperArmTwist.Z : upperArmTwist.Z;
-                float angleDeg = float.RadiansToDegrees(MathF.Atan2(upperArmTwist.X, zValue));
+                float angleDeg = -float.RadiansToDegrees(MathF.Atan2(upperArmTwist.X, zValue));
                 Vector3 upperArmToForearm = Forearm.SolverPosition - UpperArm.SolverPosition;
-                UpperArm.SolverRotation = Quaternion.CreateFromAxisAngle(upperArmToForearm, float.DegreesToRadians(angleDeg * pw)) * UpperArm.SolverRotation;
+                UpperArm.SolverRotation = Quaternion.CreateFromAxisAngle(upperArmToForearm.Normalized(), float.DegreesToRadians(angleDeg * pw)) * UpperArm.SolverRotation;
 
                 // Fix forearm twist relative to upper arm
                 Quaternion forearmFixed = UpperArm.SolverRotation * _forearmRelToUpperArm;
                 Vector3 from = forearmFixed.Rotate(Forearm.Axis);
                 Vector3 to = Hand.SolverPosition - Forearm.SolverPosition;
-                Quaternion fromTo = XRMath.RotationBetweenVectors(from, to);
+                Quaternion fromTo = XRMath.RotationBetweenVectors(from, to).Normalized();
                 RotateTo(Forearm, fromTo * forearmFixed, pw);
             }
 
@@ -794,8 +794,11 @@ namespace XREngine.Components.Animation
                 Vector3 shoulderAxisRotated = Shoulder.SolverRotation.Rotate(shoulderAxis);
                 Vector3 upperArmAxisRotated = UpperArm.SolverRotation.Rotate(upperArmAxis);
 
-                Shoulder.SolverRotation = Quaternion.CreateFromAxisAngle(shoulderAxisRotated, pitchRad) * Shoulder.SolverRotation;
-                UpperArm.SolverRotation = Quaternion.CreateFromAxisAngle(upperArmAxisRotated, pitchRad) * UpperArm.SolverRotation;
+                if (pitchRad != 0.0f)
+                {
+                    Shoulder.SolverRotation = Quaternion.CreateFromAxisAngle(shoulderAxisRotated, pitchRad) * Shoulder.SolverRotation;
+                    UpperArm.SolverRotation = Quaternion.CreateFromAxisAngle(upperArmAxisRotated, pitchRad) * UpperArm.SolverRotation;
+                }
 
                 // Additional pass to reach with the shoulders
                 if (Settings.ShoulderReachPass)
@@ -863,7 +866,7 @@ namespace XREngine.Components.Animation
 
                 pitchDeg = float.RadiansToDegrees(MathF.Atan2(shoulderToTargetWorkingSpace.Y, Settings.FlipZInAtan2 || Settings.FlipZInCalcPitch ? -shoulderToTargetWorkingSpace.Z : shoulderToTargetWorkingSpace.Z));
                 pitchDeg -= Settings.ShoulderPitchOffset;
-                //pitchDeg = DamperValue(pitchDeg, -45f - _shoulderPitchOffset, 45f - _shoulderPitchOffset);
+                //pitchDeg = DamperValue(pitchDeg, -45f - Settings.ShoulderPitchOffset, 45f - Settings.ShoulderPitchOffset);
 
                 pitchRotation = Quaternion.CreateFromAxisAngle(workingSpace.Rotate(Globals.Right), float.DegreesToRadians(-pitchDeg));
             }
@@ -909,14 +912,14 @@ namespace XREngine.Components.Animation
                 yawDeg *= verticalDot;
                 yawDeg -= yawOffsetDeg;
 
-                //float yawLimitMin = isLeft ? -20.0f : -50.0f;
-                //float yawLimitMax = isLeft ? 50.0f : 20.0f;
-                //yawDeg = DamperValue(yawDeg, yawLimitMin - yawOffsetDeg, yawLimitMax - yawOffsetDeg, 0.7f); // back, forward
+                float yawLimitMin = isLeft ? -20.0f : -50.0f;
+                float yawLimitMax = isLeft ? 50.0f : 20.0f;
+                yawDeg = DamperValue(yawDeg, yawLimitMin - yawOffsetDeg, yawLimitMax - yawOffsetDeg, 0.7f); // back, forward
 
                 Quaternion yawQuat = Quaternion.CreateFromAxisAngle(Globals.Up, float.DegreesToRadians(yawDeg));
 
                 Vector3 yawFromDir = Shoulder.SolverRotation.Rotate(Shoulder.Axis);
-                Vector3 yawToDir = workingSpace.Rotate(yawQuat.Rotate(Globals.Forward));
+                Vector3 yawToDir = workingSpace.Rotate(yawQuat.Rotate(Globals.Backward));
                 yawRotation = XRMath.RotationBetweenVectors(yawFromDir, yawToDir);
             }
 
