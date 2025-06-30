@@ -19,7 +19,7 @@ namespace XREngine.Rendering.UI
         }
 
         private Vector3 _position = Vector3.Zero;
-        public Vector3 Translation
+        public Vector3 LocalTranslation
         {
             get => _position;
             set => SetField(ref _position, value);
@@ -47,24 +47,45 @@ namespace XREngine.Rendering.UI
         }
 
         protected void OnTransformRenderMatrixChanged(TransformBase transform, Matrix4x4 renderMatrix)
-            => UpdateTextMatrix();
+        {
+            InvalidateTextMatrix();
+        }
 
-        public void UpdateTextMatrix()
+        public void InvalidateTextMatrix()
+        {
+            using (_matrixLock.EnterScope())
+                _textMatrixInvalidated = true;
+        }
+
+        private Matrix4x4 CreateTextMatrix(Matrix4x4 renderMatrix)
         {
             var cam = Engine.Rendering.State.CurrentRenderingPipeline?.RenderState.SceneCamera;
+
+            Vector3 camUp, camFwd, camPos;
             TransformBase? camTfm = cam?.Transform;
             if (camTfm is null)
-                return;
+            {
+                camUp = Globals.Up;
+                camFwd = Globals.Forward;
+                camPos = Vector3.Zero;
+            }
+            else
+            {
+                camUp = camTfm.RenderUp;
+                camFwd = camTfm.RenderForward;
+                camPos = camTfm.RenderTranslation;
+            }
 
-            Vector3 pos = (TextTransform?.RenderTranslation ?? Vector3.Zero) + Translation;
-            Vector3 camUp = camTfm.RenderUp;
-            Vector3 camFwd = cam!.RenderForward;
-            Vector3 scale = new(camTfm.RenderTranslation.Distance(pos) * Scale);
+            Vector3 textPos = renderMatrix.Translation + LocalTranslation;
+            Vector3 scale = new(camPos.Distance(textPos) * Scale);
+
             if (Engine.Rendering.State.IsReflectedMirrorPass)
                 scale.X *= -1.0f; //Mirror text scale for reflected mirror pass
+
             if (Roll != 0.0f)
                 camUp = Vector3.Transform(camUp, Quaternion.CreateFromAxisAngle(camFwd, float.DegreesToRadians(Roll)));
-            TextMatrix = Matrix4x4.CreateScale(scale) * Matrix4x4.CreateRotationY(float.DegreesToRadians(Roll)) * Matrix4x4.CreateWorld(pos, camFwd, camUp);
+
+            return Matrix4x4.CreateScale(scale) * Matrix4x4.CreateRotationY(float.DegreesToRadians(Roll)) * Matrix4x4.CreateWorld(textPos, camFwd, camUp);
         }
 
         private const string TextColorUniformName = "TextColor";
@@ -182,16 +203,16 @@ namespace XREngine.Rendering.UI
                 case nameof(TextTransform):
                     if (TextTransform is not null)
                         TextTransform.RenderMatrixChanged += OnTransformRenderMatrixChanged;
-                    UpdateTextMatrix();
+                    InvalidateTextMatrix();
                     break;
-                case nameof(Translation):
-                    UpdateTextMatrix();
+                case nameof(LocalTranslation):
+                    InvalidateTextMatrix();
                     break;
                 case nameof(Roll):
-                    UpdateTextMatrix();
+                    InvalidateTextMatrix();
                     break;
                 case nameof(Scale):
-                    UpdateTextMatrix();
+                    InvalidateTextMatrix();
                     break;
                 case nameof(GlyphRelativeTransforms):
                     MarkGlyphTransformsChanged();
@@ -302,11 +323,21 @@ namespace XREngine.Rendering.UI
             set => SetField(ref _renderPass, value);
         }
 
+        private readonly Lock _matrixLock = new();
+        private bool _textMatrixInvalidated = false;
         public void Render()
         {
             if (Mesh is null || _glyphCount <= 0)
                 return;
 
+            using (_matrixLock.EnterScope())
+            {
+                if (_textMatrixInvalidated)
+                {
+                    TextMatrix = CreateTextMatrix(TextTransform?.RenderMatrix ?? Matrix4x4.Identity);
+                    _textMatrixInvalidated = false;
+                }
+            }
             Mesh.Render(TextMatrix, null, _glyphCount);
         }
 

@@ -779,7 +779,7 @@ namespace XREngine.Components.Animation
                 CalcPitch(out float pitchDeg, out Quaternion pitchRotation);
 
                 //Rotate bones
-                Quaternion shoulderRotation = pitchRotation * yawRotation;
+                Quaternion shoulderRotation = pitchRotation;
                 if (Settings.ShoulderRotationWeight * Settings.PositionWeight < 1.0f)
                     shoulderRotation = Quaternion.Lerp(Quaternion.Identity, shoulderRotation, Settings.ShoulderRotationWeight * Settings.PositionWeight);
                 VirtualBone.RotateBy(_bones, shoulderRotation);
@@ -789,16 +789,16 @@ namespace XREngine.Components.Animation
                 Vector3 bendNormal = GetBendNormal();
                 VirtualBone.SolveTrigonometric(_bones, 1, 2, 3, TargetPosition, bendNormal, Settings.PositionWeight);
 
-                float pitchRad = float.DegreesToRadians((pitchDeg * Settings.PositionWeight * Settings.ShoulderRotationWeight * Settings.ShoulderTwistWeight * 2.0f).Clamp(0.0f, 180.0f));
+                //float pitchRad = float.DegreesToRadians((pitchDeg * Settings.PositionWeight * Settings.ShoulderRotationWeight * Settings.ShoulderTwistWeight * 2.0f).Clamp(0.0f, 180.0f));
 
-                Vector3 shoulderAxisRotated = Shoulder.SolverRotation.Rotate(shoulderAxis);
-                Vector3 upperArmAxisRotated = UpperArm.SolverRotation.Rotate(upperArmAxis);
+                //Vector3 shoulderAxisRotated = Shoulder.SolverRotation.Rotate(shoulderAxis);
+                //Vector3 upperArmAxisRotated = UpperArm.SolverRotation.Rotate(upperArmAxis);
 
-                if (pitchRad != 0.0f)
-                {
-                    Shoulder.SolverRotation = Quaternion.CreateFromAxisAngle(shoulderAxisRotated, pitchRad) * Shoulder.SolverRotation;
-                    UpperArm.SolverRotation = Quaternion.CreateFromAxisAngle(upperArmAxisRotated, pitchRad) * UpperArm.SolverRotation;
-                }
+                //if (pitchRad != 0.0f)
+                //{
+                //    Shoulder.SolverRotation = Quaternion.CreateFromAxisAngle(shoulderAxisRotated.Normalized(), pitchRad) * Shoulder.SolverRotation;
+                //    UpperArm.SolverRotation = Quaternion.CreateFromAxisAngle(upperArmAxisRotated.Normalized(), pitchRad) * UpperArm.SolverRotation;
+                //}
 
                 // Additional pass to reach with the shoulders
                 if (Settings.ShoulderReachPass)
@@ -819,7 +819,7 @@ namespace XREngine.Components.Animation
             private void CalcPitch(out float pitchDeg, out Quaternion pitchRotation)
             {
                 float chestRelPitchOffsetDeg = Settings!.ChestRelativePitchOffsetDegrees;
-                float pitchOffsetDeg = -Settings.ShoulderPitchOffset;
+                float pitchOffsetDeg = Settings.ShoulderPitchOffset;
                 Vector3 chestDir = Globals.Right;
 
                 if (Settings!.NegateChestRelativePitchOffsetOnRight)
@@ -853,22 +853,21 @@ namespace XREngine.Components.Animation
                         pitchOffsetDeg = -pitchOffsetDeg;
                 }
 
-                Quaternion pitchOffset = Quaternion.CreateFromAxisAngle(_chestUp, float.DegreesToRadians(chestRelPitchOffsetDeg));
+                Quaternion chestYaw = Quaternion.CreateFromAxisAngle(_chestUp, float.DegreesToRadians(chestRelPitchOffsetDeg)).Normalized();
+                Quaternion chestPitch = Quaternion.CreateFromAxisAngle(_chestForward, float.DegreesToRadians(pitchOffsetDeg)).Normalized();
+                Quaternion workingSpace = chestPitch * (chestYaw * _chestRotation);
 
-                Quaternion workingSpace = pitchOffset * _chestRotation;
+                Vector3 chestRelDir = _chestRotation.Rotate(chestDir * Length);
+                Vector3 tposeTarget = Shoulder.SolverPosition + chestRelDir;
+                Vector3 positionDiff = TargetPosition - tposeTarget;
+                Vector3 positionDiffWorkingSpace = Quaternion.Inverse(workingSpace).Rotate(positionDiff).Normalized();
 
-                workingSpace = Quaternion.CreateFromAxisAngle(_chestForward, pitchOffsetDeg) * workingSpace;
-
-                Vector3 chestRelDir = _chestRotation.Rotate(chestDir) * Length;
-                Vector3 shoulderPos = Shoulder.SolverPosition + chestRelDir;
-                Vector3 shoulderToTarget = TargetPosition - shoulderPos;
-                Vector3 shoulderToTargetWorkingSpace = Quaternion.Inverse(workingSpace).Rotate(shoulderToTarget);
-
-                pitchDeg = float.RadiansToDegrees(MathF.Atan2(shoulderToTargetWorkingSpace.Y, Settings.FlipZInAtan2 || Settings.FlipZInCalcPitch ? -shoulderToTargetWorkingSpace.Z : shoulderToTargetWorkingSpace.Z));
+                float Z = Settings.FlipZInAtan2 || Settings.FlipZInCalcPitch ? -positionDiffWorkingSpace.Z : positionDiffWorkingSpace.Z;
+                pitchDeg = float.RadiansToDegrees(MathF.Atan2(positionDiffWorkingSpace.Y, Z));
                 pitchDeg -= Settings.ShoulderPitchOffset;
-                //pitchDeg = DamperValue(pitchDeg, -45f - Settings.ShoulderPitchOffset, 45f - Settings.ShoulderPitchOffset);
+                pitchDeg = DamperValue(pitchDeg, -45f - Settings.ShoulderPitchOffset, 45f - Settings.ShoulderPitchOffset);
 
-                pitchRotation = Quaternion.CreateFromAxisAngle(workingSpace.Rotate(Globals.Right), float.DegreesToRadians(-pitchDeg));
+                pitchRotation = Quaternion.CreateFromAxisAngle(_chestRotation.Rotate(Globals.Backward), float.DegreesToRadians(-pitchDeg)).Normalized();
             }
 
             private void CalcYaw(out float yawDeg, out Quaternion yawRotation)

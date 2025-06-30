@@ -811,7 +811,7 @@ namespace XREngine
                         UIText t = TextPool.Take();
                         t.Text = text;
                         t.Color = color;
-                        t.Translation = worldPosition;
+                        t.LocalTranslation = worldPosition;
                         //textObject.FontSize = 1.0f;
                         t.Scale = scale;
                         return (t, Engine.Time.Timer.Time());
@@ -820,9 +820,9 @@ namespace XREngine
                         var t = pair.text;
                         t.Text = text;
                         t.Color = color;
-                        t.Translation = worldPosition;
+                        t.LocalTranslation = worldPosition;
                         t.Scale = scale;
-                        t.UpdateTextMatrix();
+                        t.InvalidateTextMatrix();
                         return pair;
                     });
                 }
