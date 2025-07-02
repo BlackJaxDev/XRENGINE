@@ -1,5 +1,4 @@
 ﻿using Extensions;
-using Newtonsoft.Json;
 using System.ComponentModel.DataAnnotations;
 using System.Numerics;
 using XREngine.Core.Files;
@@ -160,14 +159,14 @@ namespace XREngine.Components.Animation
                     set => SetField(ref _shoulderReachPass, value);
                 }
 
-                private float _chestRelativePitchOffsetDegrees = 90.0f;
+                private float _chestRelativePitchOffsetDegrees = -90.0f;
                 public float ChestRelativePitchOffsetDegrees
                 {
                     get => _chestRelativePitchOffsetDegrees;
                     set => SetField(ref _chestRelativePitchOffsetDegrees, value);
                 }
 
-                private float _chestRelativeYawOffsetDegrees = -90.0f;
+                private float _chestRelativeYawOffsetDegrees = 90.0f;
                 public float ChestRelativeYawOffsetDegrees
                 {
                     get => _chestRelativeYawOffsetDegrees;
@@ -195,14 +194,14 @@ namespace XREngine.Components.Animation
                     set => SetField(ref _negateChestDirOnRight, value);
                 }
 
-                private bool _negatePitchOffsetOnRight = true;
+                private bool _negatePitchOffsetOnRight = false;
                 public bool NegatePitchOffsetOnRight
                 {
                     get => _negatePitchOffsetOnRight;
                     set => SetField(ref _negatePitchOffsetOnRight, value);
                 }
 
-                private bool _negateYawOffsetOnRight = false;
+                private bool _negateYawOffsetOnRight = true;
                 public bool NegateYawOffsetOnRight
                 {
                     get => _negateYawOffsetOnRight;
@@ -278,7 +277,7 @@ namespace XREngine.Components.Animation
                     set => SetField(ref _flipZInCalcPitch, value);
                 }
 
-                private bool _flipZInCalcYaw = true;
+                private bool _flipZInCalcYaw = false;
                 /// <summary>
                 /// Individual setting to flip Z coordinates in CalcYaw atan2 calculation.
                 /// </summary>
@@ -286,6 +285,20 @@ namespace XREngine.Components.Animation
                 {
                     get => _flipZInCalcYaw;
                     set => SetField(ref _flipZInCalcYaw, value);
+                }
+
+                private float _maxShoulderReachDegrees = 50.0f;
+                public float MaxShoulderReachDegrees
+                {
+                    get => _maxShoulderReachDegrees;
+                    set => SetField(ref _maxShoulderReachDegrees, value);
+                }
+
+                private float _maxShoulderBackwardDegrees = 20.0f;
+                public float MaxShoulderBackwardDegrees
+                {
+                    get => _maxShoulderBackwardDegrees;
+                    set => SetField(ref _maxShoulderBackwardDegrees, value);
                 }
             }
 
@@ -599,7 +612,8 @@ namespace XREngine.Components.Animation
                 //RenderLine(Shoulder.SolverPosition, Shoulder.SolverPosition + _chestUp, ColorF4.Green);
 
                 Vector3 bendNormal = SolveTrigonometric();
-                FixUpperArmRotation(bendNormal);
+                FixShoulderTwist();
+                FixUpperArmTwist(bendNormal);
                 SetHandRotation();
             }
 
@@ -612,12 +626,12 @@ namespace XREngine.Components.Animation
                     Hand.SolverRotation = Quaternion.Lerp(Hand.SolverRotation, TargetRotation, rw);
             }
 
-            private void FixUpperArmRotation(Vector3 bendNormal)
+            private void FixUpperArmTwist(Vector3 bendNormal)
             {
                 float pw = Settings.PositionWeight;
                 if (Quality >= EQuality.Semi || pw <= 0.0f)
                     return;
-                
+
                 // Fix upperarm twist relative to bend normal
                 Vector3 forward = UpperArm.SolverRotation.Rotate(_upperArmBendAxis);
                 Vector3 up = Forearm.SolverPosition - UpperArm.SolverPosition;
@@ -635,6 +649,12 @@ namespace XREngine.Components.Animation
                 Vector3 to = Hand.SolverPosition - Forearm.SolverPosition;
                 Quaternion fromTo = XRMath.RotationBetweenVectors(from, to).Normalized();
                 RotateTo(Forearm, fromTo * forearmFixed, pw);
+            }
+
+            private void FixShoulderTwist()
+            {
+                if (_hasShoulder && Settings.ShoulderRotationWeight > 0.0f)
+                    Shoulder.SolverRotation = XRMath.LookRotation(Globals.Forward, UpperArm.SolverPosition - Shoulder.SolverPosition);
             }
 
             private Vector3 SolveTrigonometric()
@@ -775,24 +795,28 @@ namespace XREngine.Components.Animation
                         upperArmAxis = -upperArmAxis;
                 }
 
-                CalcYaw(out _, out Quaternion yawRotation);
+                CalcYaw(out float yawDeg, out Quaternion yawRotation);
                 CalcPitch(out float pitchDeg, out Quaternion pitchRotation);
+                //Debug.Out($"{(isLeft ? "Left" : "Right")} Shoulder | Yaw: {yawDeg} Pitch: {pitchDeg}");
 
                 //Rotate bones
-                Quaternion shoulderRotation = pitchRotation;
+                Quaternion shoulderRotation = pitchRotation * yawRotation;
                 if (Settings.ShoulderRotationWeight * Settings.PositionWeight < 1.0f)
                     shoulderRotation = Quaternion.Lerp(Quaternion.Identity, shoulderRotation, Settings.ShoulderRotationWeight * Settings.PositionWeight);
-                VirtualBone.RotateBy(_bones, shoulderRotation);
+                VirtualBone.RotateBy(_bones, shoulderRotation.Normalized());
 
                 StretchArm();
 
                 Vector3 bendNormal = GetBendNormal();
                 VirtualBone.SolveTrigonometric(_bones, 1, 2, 3, TargetPosition, bendNormal, Settings.PositionWeight);
 
-                //float pitchRad = float.DegreesToRadians((pitchDeg * Settings.PositionWeight * Settings.ShoulderRotationWeight * Settings.ShoulderTwistWeight * 2.0f).Clamp(0.0f, 180.0f));
+                Vector3 shoulderAxisRotated = Shoulder.SolverRotation.Rotate(shoulderAxis);
+                Vector3 upperArmAxisRotated = UpperArm.SolverRotation.Rotate(upperArmAxis);
 
-                //Vector3 shoulderAxisRotated = Shoulder.SolverRotation.Rotate(shoulderAxis);
-                //Vector3 upperArmAxisRotated = UpperArm.SolverRotation.Rotate(upperArmAxis);
+                //Fix shoulder twist
+                //.SolverRotation = XRMath.LookRotation(shoulderAxisRotated, Globals.Down) * Quaternion.CreateFromAxisAngle(Globals.Forward, float.DegreesToRadians(isLeft ? 90 : -90));
+
+                //float pitchRad = float.DegreesToRadians((pitchDeg * Settings.PositionWeight * Settings.ShoulderRotationWeight * Settings.ShoulderTwistWeight * 2.0f).Clamp(0.0f, 180.0f));
 
                 //if (pitchRad != 0.0f)
                 //{
@@ -867,8 +891,10 @@ namespace XREngine.Components.Animation
                 pitchDeg -= Settings.ShoulderPitchOffset;
                 pitchDeg = DamperValue(pitchDeg, -45f - Settings.ShoulderPitchOffset, 45f - Settings.ShoulderPitchOffset);
 
-                pitchRotation = Quaternion.CreateFromAxisAngle(_chestRotation.Rotate(Globals.Backward), float.DegreesToRadians(-pitchDeg)).Normalized();
+                pitchRotation = Quaternion.CreateFromAxisAngle(workingSpace.Rotate(Globals.Right), float.DegreesToRadians(-pitchDeg)).Normalized();
             }
+
+            private float _lastPitchDeg = 0.0f;
 
             private void CalcYaw(out float yawDeg, out Quaternion yawRotation)
             {
@@ -904,22 +930,22 @@ namespace XREngine.Components.Animation
                 Vector3 shoulderToTarget = (TargetPosition - Shoulder.SolverPosition).Normalized();
                 Vector3 shoulderToTargetWorkingSpace = Quaternion.Inverse(workingSpace).Rotate(shoulderToTarget);
 
-                yawDeg = float.RadiansToDegrees(MathF.Atan2(shoulderToTargetWorkingSpace.X, Settings.FlipZInAtan2 || Settings.FlipZInCalcYaw ? -shoulderToTargetWorkingSpace.Z : shoulderToTargetWorkingSpace.Z));
+                yawDeg = -float.RadiansToDegrees(MathF.Atan2(shoulderToTargetWorkingSpace.X, Settings.FlipZInAtan2 || Settings.FlipZInCalcYaw ? -shoulderToTargetWorkingSpace.Z : shoulderToTargetWorkingSpace.Z));
 
                 float verticalDot = Vector3.Dot(shoulderToTargetWorkingSpace, Globals.Up);
                 verticalDot = 1.0f - MathF.Abs(verticalDot);
                 yawDeg *= verticalDot;
                 yawDeg -= yawOffsetDeg;
 
-                float yawLimitMin = isLeft ? -20.0f : -50.0f;
-                float yawLimitMax = isLeft ? 50.0f : 20.0f;
-                yawDeg = DamperValue(yawDeg, yawLimitMin - yawOffsetDeg, yawLimitMax - yawOffsetDeg, 0.7f); // back, forward
+                //float yawLimitMin = isLeft ? -Settings.MaxShoulderReachDegrees : -Settings.MaxShoulderBackwardDegrees;
+                //float yawLimitMax = isLeft ? Settings.MaxShoulderBackwardDegrees : Settings.MaxShoulderReachDegrees;
+                //yawDeg = DamperValue(yawDeg, yawLimitMin - yawOffsetDeg, yawLimitMax - yawOffsetDeg, 0.7f); // back, forward
 
                 Quaternion yawQuat = Quaternion.CreateFromAxisAngle(Globals.Up, float.DegreesToRadians(yawDeg));
 
                 Vector3 yawFromDir = Shoulder.SolverRotation.Rotate(Shoulder.Axis);
-                Vector3 yawToDir = workingSpace.Rotate(yawQuat.Rotate(Globals.Backward));
-                yawRotation = XRMath.RotationBetweenVectors(yawFromDir, yawToDir);
+                Vector3 yawToDir = workingSpace.Rotate(yawQuat.Rotate(Globals.Forward));
+                yawRotation = XRMath.RotationBetweenVectors(yawFromDir, yawToDir).Normalized();
             }
 
             public override void ResetOffsets()
@@ -935,7 +961,7 @@ namespace XREngine.Components.Animation
                 {
                     float mid = max - range * 0.5f;
                     float v = value - mid;
-                    v *= 0.5f;
+                    v *= weight; //Scale the range
                     value = mid + v;
                 }
 

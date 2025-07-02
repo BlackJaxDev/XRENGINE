@@ -522,13 +522,11 @@ namespace XREngine.Data.Trees
             if (!_bounds.IntersectsSegment(segment))
                 return;
 
-            for (int i = 0; i < _items.Count; ++i)
+            IEnumerable<Task> tasks = _items.Select(item => Task.Run(() =>
             {
-                T item = _items[i];
-
                 var worldCullingVolume = item.WorldCullingVolume;
                 if (worldCullingVolume is null || !worldCullingVolume.Value.IntersectsSegment(segment))
-                    continue;
+                    return;
 
                 (float? dist, object? data) = directTest(item, segment);
                 if (dist is not null)
@@ -537,10 +535,29 @@ namespace XREngine.Data.Trees
                         items.Add(dist.Value, list = []);
                     list.Add((item, data));
                 }
-            }
+            }));
+
+            //for (int i = 0; i < _items.Count; ++i)
+            //{
+            //    T item = _items[i];
+
+            //    var worldCullingVolume = item.WorldCullingVolume;
+            //    if (worldCullingVolume is null || !worldCullingVolume.Value.IntersectsSegment(segment))
+            //        continue;
+
+            //    (float? dist, object? data) = directTest(item, segment);
+            //    if (dist is not null)
+            //    {
+            //        if (!items.TryGetValue(dist.Value, out List<(T item, object? data)>? list))
+            //            items.Add(dist.Value, list = []);
+            //        list.Add((item, data));
+            //    }
+            //}
 
             for (int i = 0; i < _subNodes.Length; ++i)
                 _subNodes[i]?.Raycast(segment, items, directTest);
+
+            Task.WaitAll(tasks);
         }
 
         /// <summary>

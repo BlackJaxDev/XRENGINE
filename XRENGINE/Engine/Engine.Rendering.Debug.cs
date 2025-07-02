@@ -31,9 +31,13 @@ namespace XREngine
 
                 private static void PreUpdate()
                 {
-                    //lock (DebugTextUpdateQueue)
-                    DebugTextUpdateQueue.Clear();
+                    //using (_debugShapeQueueLock.EnterScope())
+                    //ClearQueues();
+                }
 
+                private static void ClearQueues()
+                {
+                    DebugTextUpdateQueue.Clear();
                     DebugPointsQueue.Clear();
                     DebugLinesQueue.Clear();
                     DebugTrianglesQueue.Clear();
@@ -125,11 +129,17 @@ namespace XREngine
                     return _pointRenderer;
                 }
 
+                private static readonly Lock _debugShapeQueueLock = new();
                 public static void RenderShapes()
                 {
-                    //lock (DebugTextUpdateQueue)
-                    foreach ((Vector3 pos, string text, ColorF4 color, float scale) in DebugTextUpdateQueue)
-                        UpdateDebugText(pos, text, color, scale);
+                    if (!Engine.Rendering.State.IsMainPass)
+                        return;
+
+                    //using (_debugShapeQueueLock.EnterScope())
+                    //{
+                    DequeueDebugItems();
+                        //ClearQueues();
+                    //}
 
                     var hashes = DebugTexts.Keys.ToArray();
                     for (int i = 0; i < hashes.Length; i++)
@@ -148,13 +158,6 @@ namespace XREngine
                                 TextPool.Release(item.text);
                         }
                     }
-
-                    foreach (var updatePoint in DebugPointsQueue)
-                        _debugPoints.Add(updatePoint);
-                    foreach (var updateLine in DebugLinesQueue)
-                        _debugLines.Add(updateLine);
-                    foreach (var updateTriangle in DebugTrianglesQueue)
-                        _debugTriangles.Add(updateTriangle);
 
                     //while (_debugPointsQueue.TryDequeue(out var point))
                     //    _debugPoints.Add(point);
@@ -200,6 +203,27 @@ namespace XREngine
                     }
                 }
 
+                private static void DequeueDebugItems()
+                {
+                    //foreach ((Vector3 pos, string text, ColorF4 color, float scale) in DebugTextUpdateQueue)
+                    //    UpdateDebugText(pos, text, color, scale);
+                    //foreach (var updatePoint in DebugPointsQueue)
+                    //    _debugPoints.Add(updatePoint);
+                    //foreach (var updateLine in DebugLinesQueue)
+                    //    _debugLines.Add(updateLine);
+                    //foreach (var updateTriangle in DebugTrianglesQueue)
+                    //    _debugTriangles.Add(updateTriangle);
+
+                    while (DebugTextUpdateQueue.TryDequeue(out (Vector3 pos, string text, ColorF4 color, float scale) item))
+                        UpdateDebugText(item.pos, item.text, item.color, item.scale);
+                    while (DebugPointsQueue.TryDequeue(out var point))
+                        _debugPoints.Add(point);
+                    while (DebugLinesQueue.TryDequeue(out var line))
+                        _debugLines.Add(line);
+                    while (DebugTrianglesQueue.TryDequeue(out var triangle))
+                        _debugTriangles.Add(triangle);
+                }
+
                 private static Matrix4x4 CalculateLineMatrix(Vector3 pos0, Vector3 pos1, float lineWidth, Vector3 camForward, Vector3 camUp, Vector3 camRight)
                 {
                     Vector3 dir = pos1 - pos0;
@@ -241,7 +265,10 @@ namespace XREngine
                     if (IsRenderThread)
                         _debugPoints.Add((position, color));
                     else
-                        DebugPointsQueue.Enqueue((position, color));
+                    {
+                        using (_debugShapeQueueLock.EnterScope())
+                            DebugPointsQueue.Enqueue((position, color));
+                    }
                 }
 
                 public static void RenderRay(Vector3 position, Vector3 direction, ColorF4 color)
@@ -255,7 +282,10 @@ namespace XREngine
                     if (IsRenderThread)
                         _debugLines.Add((start, end, color));
                     else
-                        DebugLinesQueue.Enqueue((start, end, color));
+                    {
+                        using (_debugShapeQueueLock.EnterScope())
+                            DebugLinesQueue.Enqueue((start, end, color));
+                    }
                 }
 
                 public static void RenderTriangle(Triangle triangle, ColorF4 color, bool solid)
@@ -275,7 +305,10 @@ namespace XREngine
                         if (IsRenderThread)
                             _debugTriangles.Add((A, B, C, color));
                         else
-                            DebugTrianglesQueue.Enqueue((A, B, C, color));
+                        {
+                            using (_debugShapeQueueLock.EnterScope())
+                                DebugTrianglesQueue.Enqueue((A, B, C, color));
+                        }
                     }
                     else
                     {
@@ -798,8 +831,8 @@ namespace XREngine
                         UpdateDebugText(worldPosition, text, color);
                     else
                     {
-                        //lock (DebugTextUpdateQueue)
-                        DebugTextUpdateQueue.Enqueue((worldPosition, text, color, scale));
+                        using (_debugShapeQueueLock.EnterScope())
+                            DebugTextUpdateQueue.Enqueue((worldPosition, text, color, scale));
                     }
                 }
 

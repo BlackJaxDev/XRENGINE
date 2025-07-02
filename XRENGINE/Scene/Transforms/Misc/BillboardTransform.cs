@@ -193,14 +193,10 @@ namespace XREngine.Scene.Transforms
         }
 
         private void CameraMoved(TransformBase @base, Matrix4x4 worldMatrix)
-        {
-            RecalculateMatrixHeirarchy(true, false, Engine.Rendering.Settings.RecalcChildMatricesLoopType);
-        }
+            => RecalculateMatrixHeirarchy(true, false, Engine.Rendering.Settings.RecalcChildMatricesLoopType);
 
         protected override Matrix4x4 CreateLocalMatrix()
-        {
-            return Matrix4x4.Identity;
-        }
+            => Matrix4x4.Identity;
 
         protected override Matrix4x4 CreateWorldMatrix()
         {

@@ -110,6 +110,7 @@ namespace XREngine
                 public static bool IsReflectedMirrorPass => (MirrorPassIndex & 1) == 1;
                 public static bool ReverseWinding { get; internal set; } = false;
                 public static bool ReverseCulling { get; internal set; } = false;
+                public static bool IsMainPass => !IsMirrorPass && !IsSceneCapturePass && !IsLightProbePass;
 
                 //public static XRRenderPipelineInstance? CurrentCollectingVisiblePipeline => CollectingVisiblePipelineStack.Count > 0 ? CollectingVisiblePipelineStack.Peek() : null;
                 //public static XRRenderPipelineInstance.RenderingState? CollectingVisiblePipelineState => CurrentCollectingVisiblePipeline?.RenderState;

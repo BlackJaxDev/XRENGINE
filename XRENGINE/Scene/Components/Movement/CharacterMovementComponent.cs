@@ -697,7 +697,7 @@ namespace XREngine.Components.Movement
             set => SetField(ref _maxJumpDuration, value);
         }
 
-        private bool _tickInputWithPhysics = true; //Seems more responsive calculating on update, separate from physics
+        private bool _tickInputWithPhysics = false; //Seems more responsive calculating on update, separate from physics
         /// <summary>
         /// Whether to tick input with physics or not.
         /// </summary>

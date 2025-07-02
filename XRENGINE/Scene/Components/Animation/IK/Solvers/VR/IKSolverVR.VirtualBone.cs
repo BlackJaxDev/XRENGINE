@@ -152,29 +152,19 @@ namespace XREngine.Components.Animation
                 {
                     if (bones[i] is null)
                         continue;
-                    
-                    Vector3 dir = bones[i].SolverPosition - bones[index].SolverPosition;
-                    bones[i].SolverPosition = bones[index].SolverPosition + rotation.Rotate(dir);
+
+                    if (i > index)
+                    {
+                        Vector3 dir = bones[i].SolverPosition - bones[index].SolverPosition;
+                        bones[i].SolverPosition = bones[index].SolverPosition + rotation.Rotate(dir);
+                    }
+
                     bones[i].SolverRotation = rotation * bones[i].SolverRotation;
                 }
             }
 
             public static void RotateBy(VirtualBone[] bones, Quaternion rotation)
-            {
-                for (int i = 0; i < bones.Length; i++)
-                {
-                    if (bones[i] is null)
-                        continue;
-
-                    if (i > 0)
-                    {
-                        Vector3 dir = bones[i].SolverPosition - bones[0].SolverPosition;
-                        bones[i].SolverPosition = bones[0].SolverPosition + rotation.Rotate(dir);
-                    }
-                    
-                    bones[i].SolverRotation = rotation * bones[i].SolverRotation;
-                }
-            }
+                => RotateBy(bones, 0, rotation);
 
             public static void RotateTo(VirtualBone[] bones, int index, Quaternion rotation)
             {

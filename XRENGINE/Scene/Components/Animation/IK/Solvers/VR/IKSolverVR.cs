@@ -498,7 +498,7 @@ namespace XREngine.Components.Animation
 
         private float SubSolve(float dt)
         {
-            //_spine.Solve(Animator, RootBone, _legs, _arms, _scale);
+            _spine.Solve(Animator, RootBone, _legs, _arms, _scale);
 
             if (_solverTransforms is null)
                 return dt;

@@ -513,7 +513,10 @@ namespace XREngine.Data.Core
         /// </summary>
         public static void AxisAngleBetween(Vector3 initialVector, Vector3 finalVector, out Vector3 axis, out float rad)
         {
-            float dot = Vector3.Dot(initialVector.Normalized(), finalVector.Normalized());
+            initialVector = initialVector.Normalized();
+            finalVector = finalVector.Normalized();
+
+            float dot = Vector3.Dot(initialVector, finalVector);
 
             //dot is the cosine adj/hyp ratio between the two vectors, so
             //dot == 1 is same direction
