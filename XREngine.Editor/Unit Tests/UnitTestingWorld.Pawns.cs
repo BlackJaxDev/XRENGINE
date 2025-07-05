@@ -475,13 +475,13 @@ public static partial class UnitTestingWorld
                         inputSet.RegisterKeyEvent(Input.Devices.EKey.T, Input.Devices.EButtonInputType.Pressed, AddTracker);
                         inputSet.RegisterKeyEvent(Input.Devices.EKey.Y, Input.Devices.EButtonInputType.Pressed, player.EndCalibration);
                         inputSet.RegisterKeyEvent(Input.Devices.EKey.Number0, Input.Devices.EButtonInputType.Pressed, SelectHMD);
-                        inputSet.RegisterKeyEvent(Input.Devices.EKey.Number1, Input.Devices.EButtonInputType.Pressed, SelectRoot);
                         inputSet.RegisterKeyEvent(Input.Devices.EKey.Number9, Input.Devices.EButtonInputType.Pressed, SelectLeftController);
                         inputSet.RegisterKeyEvent(Input.Devices.EKey.Number8, Input.Devices.EButtonInputType.Pressed, SelectRightController);
                         inputSet.RegisterKeyEvent(Input.Devices.EKey.Number7, Input.Devices.EButtonInputType.Pressed, SelectLeftFootTracker);
                         inputSet.RegisterKeyEvent(Input.Devices.EKey.Number6, Input.Devices.EButtonInputType.Pressed, SelectRightFootTracker);
                         inputSet.RegisterKeyEvent(Input.Devices.EKey.Number5, Input.Devices.EButtonInputType.Pressed, SelectHipTracker);
                         inputSet.RegisterKeyEvent(Input.Devices.EKey.Number4, Input.Devices.EButtonInputType.Pressed, AutoSetTrackers);
+                        inputSet.RegisterKeyEvent(Input.Devices.EKey.Minus, Input.Devices.EButtonInputType.Pressed, SelectRoot);
                     }
                     void AutoSetTrackers()
                     {

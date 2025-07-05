@@ -20,7 +20,7 @@
   "LightProbe": true,
   "LightProbeCaptureMs": 100.0,
   "StopRealtimeCaptureSec": 5.0,
-  "VRPawn": true,
+  "VRPawn": false,
   "EmulatedVRPawn": true,
   "Locomotion": true,
   "ThirdPersonPawn": true,
@@ -56,5 +56,8 @@
   "RenderTransformLines": true,
   "BackgroundShader": false,
   "AddCharacterIK": true,
-  "AnimatedModelDesktopPath": "misc\\mitsuki.fbx"
+  "AnimatedModelDesktopPath": "misc\\mitsuki.fbx",
+  "UpdateFPS": 60.0,
+  "RenderFPS": 60.0,
+  "FixedFPS": 30.0
 }

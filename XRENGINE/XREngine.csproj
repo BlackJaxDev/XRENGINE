@@ -46,8 +46,8 @@
     <PackageReference Include="FFmpeg.AutoGen" Version="7.1.1" />
     <PackageReference Include="GraphQL" Version="8.5.0" />
     <PackageReference Include="ImmediateReflection" Version="2.0.0" />
-    <PackageReference Include="Jitter2" Version="2.7.0" />
-    <PackageReference Include="JoltPhysicsSharp" Version="2.17.2" />
+    <PackageReference Include="Jitter2" Version="2.7.1" />
+    <PackageReference Include="JoltPhysicsSharp" Version="2.17.4" />
     <PackageReference Include="LZMA-SDK" Version="22.1.1" />
     <PackageReference Include="Magick.NET-Q16-HDRI-OpenMP-x64" Version="14.6.0" />
     <PackageReference Include="Magick.NET.Core" Version="14.6.0" />

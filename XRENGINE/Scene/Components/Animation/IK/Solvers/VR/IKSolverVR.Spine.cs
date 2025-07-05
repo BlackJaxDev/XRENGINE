@@ -127,7 +127,7 @@ namespace XREngine.Components.Animation
                 set => SetField(ref _hipsTarget, value);
             }
 
-            private float _hipsPositionWeight;
+            private float _hipsPositionWeight = 1.0f;
             /// <summary>
             /// Positional weight of the pelvis target.
             /// Note that if you have nulled the pelvisTarget,
@@ -140,7 +140,7 @@ namespace XREngine.Components.Animation
                 set => SetField(ref _hipsPositionWeight, value);
             }
 
-            private float _hipsRotationWeight;
+            private float _hipsRotationWeight = 1.0f;
             /// <summary>
             /// Rotational weight of the pelvis target.
             /// Note that if you have nulled the pelvisTarget,
@@ -253,7 +253,7 @@ namespace XREngine.Components.Animation
                 set => SetField(ref _moveBodyBackWhenCrouching, value);
             }
 
-            private float _maxRootAngle = 25.0f;
+            private float _maxRootAngle = 180.0f;
             /// <summary>
             /// Will automatically rotate the root of the character if the head target has turned past this angle.
             /// </summary>
@@ -702,7 +702,8 @@ namespace XREngine.Components.Animation
                 var anchorForward = _anchorRotation.Rotate(Globals.Forward);
                 var rootUp = rootBone.InputRotation.Rotate(Globals.Up);
 
-                ForwardDir = Vector3.Cross(rootUp, anchorRight) + anchorForward;
+                var cross = Vector3.Cross(rootUp, anchorRight);
+                ForwardDir = cross + anchorForward;
             }
 
             public void Solve(

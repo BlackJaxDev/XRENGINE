@@ -116,5 +116,8 @@ public static partial class UnitTestingWorld
         public bool AddCharacterIK = false;
 
         public string AnimatedModelDesktopPath { get; set; } = "misc\\mitsuki.fbx";
+        public float RenderFPS = 0.0f;
+        public float UpdateFPS = 60.0f;
+        public float FixedFPS = 30.0f;
     }
 }

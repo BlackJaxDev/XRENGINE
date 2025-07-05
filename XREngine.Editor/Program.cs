@@ -64,9 +64,9 @@ internal class Program
     {
         int w = 1920;
         int h = 1080;
-        float updateHz = 60.0f;
-        float renderHz = 60.0f;
-        float fixedHz = 30.0f;
+        float updateHz = UnitTestingWorld.Toggles.UpdateFPS;
+        float renderHz = UnitTestingWorld.Toggles.RenderFPS;
+        float fixedHz = UnitTestingWorld.Toggles.FixedFPS;
 
         int primaryX = NativeMethods.GetSystemMetrics(0);
         int primaryY = NativeMethods.GetSystemMetrics(1);
