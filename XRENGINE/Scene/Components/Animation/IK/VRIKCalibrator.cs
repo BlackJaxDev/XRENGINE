@@ -369,7 +369,7 @@ namespace XREngine.Components.Animation
 
             //Space of the tracker heading
             Quaternion trackerSpace = tracker.WorldRotation * XRMath.LookRotation(settings.FootTrackerForward, settings.FootTrackerUp);
-            Vector3 f = trackerSpace.Rotate(Globals.Backward).Normalized();
+            Vector3 f = trackerSpace.Rotate(Globals.Forward).Normalized();
             f.Y = 0.0f;
             trackerSpace = XRMath.LookRotation(f);
 
@@ -390,7 +390,7 @@ namespace XREngine.Components.Animation
             float yaw = float.RadiansToDegrees(MathF.Atan2(fLocal.X, fLocal.Z));
             float yawOffset = rightMultiplier * settings.FootYawOffset;
             Quaternion rotation = Quaternion.CreateFromAxisAngle(Globals.Up, float.DegreesToRadians(yaw + yawOffset)) * lastBoneWorldRot;
-            Vector3 bendGoalTranslation = lastBone.WorldTranslation + trackerSpace.Rotate(Globals.Backward) + trackerSpace.Rotate(Globals.Up);// * 0.5f;
+            Vector3 bendGoalTranslation = lastBone.WorldTranslation + trackerSpace.Rotate(Globals.Forward) + trackerSpace.Rotate(Globals.Up);// * 0.5f;
 
             target.SetWorldTranslationRotation(translation, rotation);
             target.SaveBindState();
@@ -626,8 +626,8 @@ namespace XREngine.Components.Animation
             if (leg.Target is null)
             {
                 trackerNode.NewChildWithTransform(out target, name);
-                target.Rotation = Quaternion.Identity;
-                target.Translation = Vector3.Zero;
+                //target.Rotation = Quaternion.Identity;
+                //target.Translation = Vector3.Zero;
                 leg.Target = target;
             }
             else
@@ -641,8 +641,8 @@ namespace XREngine.Components.Animation
             if (arm.Target is null)
             {
                 handNode.NewChildWithTransform(out target, name);
-                target.Rotation = Quaternion.Identity;
-                target.Translation = Vector3.Zero;
+                //target.Rotation = Quaternion.Identity;
+                //target.Translation = Vector3.Zero;
                 arm.Target = target;
             }
             else

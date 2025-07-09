@@ -228,7 +228,7 @@ namespace XREngine.Components.Animation
                 externalDelta -= _animator.StateMachine?.DeltaPosition ?? Vector3.Zero;
 
                 // Head target position
-                Vector3 headTargetPos = solver._spine._headPosition;
+                Vector3 headTargetPos = solver._spine._headTargetPosition;
                 Vector3 standOffsetWorld = rb.SolverRotation.Rotate(new Vector3(_standOffset.X, 0f, _standOffset.Y) * scale);
                 headTargetPos += standOffsetWorld;
 
@@ -250,7 +250,7 @@ namespace XREngine.Components.Animation
                 offset = XRMath.Flatten(offset, rootUp);
 
                 // Turning
-                Vector3 headForward = (solver._spine.IKRotationHead * solver._spine._anchorRelativeToHead).Rotate(Globals.Forward);
+                Vector3 headForward = (solver._spine.IKRotationHead * solver._spine._rootRotationRelativeToHead).Rotate(Globals.Forward);
                 headForward.Y = 0f;
                 Vector3 headForwardLocal = Quaternion.Inverse(rb.SolverRotation).Rotate(headForward);
                 float angle = float.RadiansToDegrees(MathF.Atan2(headForwardLocal.X, headForwardLocal.Z));

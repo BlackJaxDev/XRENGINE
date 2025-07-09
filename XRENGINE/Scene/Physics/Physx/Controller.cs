@@ -179,6 +179,7 @@ namespace XREngine.Rendering.Physics.Physx
 
         public void Move(Vector3 delta, float minDist, float elapsedTime, PxControllerFilters* filters, PxObstacleContext* obstacles)
         {
+            PhysxScene.LogControllerMove(delta, minDist, elapsedTime);
             PxVec3 d = PxVec3_new_3(delta.X, delta.Y, delta.Z);
             PxControllerCollisionFlags flags = ControllerPtr->MoveMut(&d, minDist, elapsedTime, filters, null);
             CollidingSides = (flags & PxControllerCollisionFlags.CollisionSides) != 0;

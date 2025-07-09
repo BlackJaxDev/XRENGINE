@@ -195,6 +195,7 @@ namespace XREngine.Rendering.Physics.Physx
         public bool FetchResults(bool block, out uint errorState)
         {
             uint es = 0;
+            var lastMoveQueue = _moveQueue;
             bool result = _scene->FetchResultsMut(block, &es);
             errorState = es;
             return result;
@@ -1865,6 +1866,14 @@ namespace XREngine.Rendering.Physics.Physx
         {
             var p = _debugTriangles[i];
             return ((Vector3)p.pos0, (Vector3)p.pos1, (Vector3)p.pos2, ToColorF4(p.color0));
+        }
+
+        private static Queue<(Vector3 delta, float minDist, float elapsedTime)> _moveQueue = new();
+        public static void LogControllerMove(Vector3 delta, float minDist, float elapsedTime)
+        {
+            _moveQueue.Enqueue((delta, minDist, elapsedTime));
+            while (_moveQueue.Count > 10)
+                _moveQueue.Dequeue();
         }
     }
 }

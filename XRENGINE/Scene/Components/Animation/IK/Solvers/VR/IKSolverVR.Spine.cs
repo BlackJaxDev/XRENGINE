@@ -199,7 +199,7 @@ namespace XREngine.Components.Animation
                 set => SetField(ref _chestClampWeight, value);
             }
 
-            private float _rotateChestByHands = 0.0f;
+            private float _rotateChestByHands = 1.0f;
             /// <summary>
             /// The amount of rotation applied to the chest based on hand positions.
             /// </summary>
@@ -456,29 +456,36 @@ namespace XREngine.Components.Animation
                     RenderText(Chest.SolverPosition, "Chest", ColorF4.Black);
                 RenderText(Head.SolverPosition, "Head", ColorF4.Black);
                 RenderText(Neck.SolverPosition, "Neck", ColorF4.Black);
+
+                //Render chest goal position
+                if (Quality < EQuality.Semi && _chestGoalWeight > 0.0f)
+                {
+                    RenderPoint(_goalPositionChest, ColorF4.Red);
+                    RenderText(_goalPositionChest, "Chest Goal", ColorF4.Black);
+                }
             }
 
             [NonSerialized]
-            private Vector3 _faceDirection;
+            private Vector3 _forwardDir;
             [HideInInspector]
             public Vector3 ForwardDir
             {
-                get => _faceDirection;
-                set => SetField(ref _faceDirection, value);
+                get => _forwardDir;
+                set => SetField(ref _forwardDir, value);
             }
 
             [NonSerialized]
             [HideInInspector]
-            internal Vector3 _headPosition;
+            internal Vector3 _headTargetPosition;
 
             private Quaternion _anchorRotation = Quaternion.Identity;
             private Quaternion _headRotation = Quaternion.Identity;
             private Quaternion _hipsRotation = Quaternion.Identity;
-            internal Quaternion _anchorRelativeToHead = Quaternion.Identity;
-            private Quaternion _anchorRelativeToHips = Quaternion.Identity;
-            private Quaternion _hipsRelativeRotation = Quaternion.Identity;
-            private Quaternion _chestRelativeRotation = Quaternion.Identity;
-            private Vector3 _headDeltaPosition;
+            internal Quaternion _rootRotationRelativeToHead = Quaternion.Identity;
+            private Quaternion _rootRotationRelativeToHips = Quaternion.Identity;
+            private Quaternion _headRelativeHipsRotation = Quaternion.Identity;
+            private Quaternion _headRelativeChestRotation = Quaternion.Identity;
+            private Vector3 _headPosDt;
             private Quaternion _hipsDeltaRotation = Quaternion.Identity;
             private Quaternion _chestTargetRotation = Quaternion.Identity;
             private int _pelvisIndex = 0, _spineIndex = 1, _chestIndex = -1, _neckIndex = -1, _headIndex = -1;
@@ -518,9 +525,10 @@ namespace XREngine.Components.Animation
                 if (!_initialized)
                     InitializeTransforms(transforms);
                 
-                _hipsRelativeRotation = Quaternion.Inverse(headRot) * hipsRot;
-                _chestRelativeRotation = Quaternion.Inverse(headRot) * chestRot;
+                _headRelativeHipsRotation = Quaternion.Inverse(headRot) * hipsRot;
+                _headRelativeChestRotation = Quaternion.Inverse(headRot) * chestRot;
                 _chestForward = Quaternion.Inverse(chestRot).Rotate(rootRotation.Rotate(Globals.Forward));
+
                 _sizeScale = Vector3.Distance(hipsPos, headPos) / 0.7f;
             }
 
@@ -584,8 +592,8 @@ namespace XREngine.Components.Animation
                 Quaternion hipsRot = transforms.Hips.InputWorld.Rotation;
                 Vector3 chestPos = transforms.Chest.InputWorld.Translation;
 
-                _anchorRelativeToHead = Quaternion.Inverse(headRot) * rootRotation;
-                _anchorRelativeToHips = Quaternion.Inverse(hipsRot) * rootRotation;
+                _rootRotationRelativeToHead = Quaternion.Inverse(headRot) * rootRotation;
+                _rootRotationRelativeToHips = Quaternion.Inverse(hipsRot) * rootRotation;
 
                 ForwardDir = rootForward;
 
@@ -593,6 +601,7 @@ namespace XREngine.Components.Animation
                 _ikRotationHead = headRot;
                 _ikPositionHips = hipsPos;
                 _ikRotationHips = hipsRot;
+
                 _goalPositionChest = chestPos + rootForward;
             }
 
@@ -640,23 +649,23 @@ namespace XREngine.Components.Animation
                 //    }
                 //}
 
-                _headPosition = XRMath.Lerp(Head.SolverPosition, _ikPositionHead, _positionWeight);
+                _headTargetPosition = XRMath.Lerp(Head.SolverPosition, _ikPositionHead, _positionWeight);
                 _headRotation = XRMath.Lerp(Head.SolverRotation, _ikRotationHead, _rotationWeight);
                 _hipsRotation = XRMath.Lerp(Hips.SolverRotation, _ikRotationHips, _rotationWeight);
             }
 
             public override void ApplyOffsets(float scale)
             {
-                _headPosition += _headPositionOffset;
+                _headTargetPosition += _headPositionOffset;
 
                 float mHH = _minHeadHeight * scale;
 
                 Vector3 rootUp = _rootRotation.Rotate(Globals.Up).Normalized();
                 if (rootUp == Globals.Up)
-                    _headPosition.Y = Math.Max(_rootPosition.Y + mHH, _headPosition.Y);
+                    _headTargetPosition.Y = Math.Max(_rootPosition.Y + mHH, _headTargetPosition.Y);
                 else
                 {
-                    Vector3 toHead = _headPosition - _rootPosition;
+                    Vector3 toHead = _headTargetPosition - _rootPosition;
                     Vector3 hor = XRMath.ExtractHorizontal(toHead, rootUp, 1.0f);
                     Vector3 ver = toHead - hor;
                     float dot = Vector3.Dot(ver, rootUp);
@@ -670,33 +679,38 @@ namespace XREngine.Components.Animation
                         ver = -ver.Normalized() * mHH;
                     }
 
-                    _headPosition = _rootPosition + hor + ver;
+                    _headTargetPosition = _rootPosition + hor + ver;
                 }
 
-                _headRotation = _headRotationOffset * _headRotation;
-                _headDeltaPosition = _headPosition - Head.SolverPosition;
-                _hipsDeltaRotation = XRMath.FromToRotation(Hips.SolverRotation, _headRotation * _hipsRelativeRotation);
-                _anchorRotation = GetAnchorRotation();
+                if (_headRotationOffset != Quaternion.Identity)
+                    _headRotation = _headRotationOffset * _headRotation;
+
+                _headPosDt = _headTargetPosition - Head.SolverPosition;
+                _hipsDeltaRotation = XRMath.FromToRotation(Hips.SolverRotation, _headRotation * _headRelativeHipsRotation);
+                _anchorRotation = GetRootRotation();
             }
 
-            private Quaternion AnchorRotationRelHips() => _hipsRotation * _anchorRelativeToHips;
-            private Quaternion AnchorRotationRelHead() => _headRotation * _anchorRelativeToHead;
-            private Quaternion GetAnchorRotation() => _hipsRotationWeight switch
+            private Quaternion RootRotationRelHips() => _hipsRotation * _rootRotationRelativeToHips;
+            private Quaternion RootRotationRelHead() => _headRotation * _rootRotationRelativeToHead;
+            private Quaternion GetRootRotation() => _hipsRotationWeight switch
             {
-                <= 0.0f => AnchorRotationRelHead(),
-                >= 1.0f => AnchorRotationRelHips(),
+                <= 0.0f => RootRotationRelHead(),
+                >= 1.0f => RootRotationRelHips(),
                 _ => Quaternion.Lerp(
-                    AnchorRotationRelHead(),
-                    AnchorRotationRelHips(),
+                    RootRotationRelHead(),
+                    RootRotationRelHips(),
                     _hipsRotationWeight),
             };
 
             private void CalculateChestTargetRotation(VirtualBone rootBone, ArmSolver[] arms)
             {
-                _chestTargetRotation = _headRotation * _chestRelativeRotation;
+                _chestTargetRotation = _headRotation * _headRelativeChestRotation;
 
-                if (arms[0] != null)
-                    AdjustChestByHands(ref _chestTargetRotation, arms);
+                Vector3 v = XRMath.QuaternionToEuler(_headRelativeChestRotation).Each(float.RadiansToDegrees);
+                Debug.Out($"Chest target rotation: {v.X}, {v.Y}, {v.Z}");
+
+                //if (arms[0] != null)
+                //    AdjustChestByHands(ref _chestTargetRotation, arms);
 
                 var anchorRight = _anchorRotation.Rotate(Globals.Right);
                 var anchorForward = _anchorRotation.Rotate(Globals.Forward);
@@ -762,7 +776,7 @@ namespace XREngine.Components.Animation
                 Vector3 rootUp = rootBone.SolverRotation.Rotate(Globals.Up).Normalized();
 
                 //Translate hips to make the head's position & rotation match with the head target
-                TransformHips(legs, _headDeltaPosition, _hipsDeltaRotation, scale);
+                TransformHips(legs, _headPosDt, _hipsDeltaRotation, scale);
 
                 FABRIKPass(animatedPelvisPos, rootUp, _positionWeight);
 
@@ -806,7 +820,7 @@ namespace XREngine.Components.Animation
             private void FABRIKPass(Vector3 animatedPelvisPos, Vector3 rootUp, float weight)
             {
                 Vector3 startPos = Vector3.Lerp(Hips.SolverPosition, animatedPelvisPos, _maintainHipsPosition) + _hipsPositionOffset;// - chestPositionOffset;
-                Vector3 endPos = _headPosition - _chestPositionOffset;
+                Vector3 endPos = _headTargetPosition - _chestPositionOffset;
                 //Vector3 startOffset = rootUp * (bones[bones.Length - 1].solverPosition - bones[0].solverPosition).magnitude;
                 Vector3 startOffset = Vector3.Zero;// (bones[bones.Length - 1].solverPosition - bones[0].solverPosition) * weight;
 
@@ -817,63 +831,35 @@ namespace XREngine.Components.Animation
 
             private void SolvePelvis()
             {
-                // Pelvis target
-                if (_hipsPositionWeight > 0.0f)
+                if (_hipsPositionWeight <= 0.0f)
+                    return;
+                
+                Quaternion headSolverRotation = Head.SolverRotation;
+
+                Vector3 hipPos = _ikPositionHips + _hipsPositionOffset;
+                Vector3 hipDt = hipPos - Hips.SolverPosition;
+                Vector3 delta = hipDt * _hipsPositionWeight;
+                foreach (VirtualBone bone in _bones)
+                    bone.SolverPosition += delta;
+
+                Vector3 bendNormal = _anchorRotation.Rotate(Globals.Right);
+
+                if (_hasChest)
                 {
-                    Quaternion headSolverRotation = Head.SolverRotation;
-
-                    Vector3 delta = (_ikPositionHips + _hipsPositionOffset - Hips.SolverPosition) * _hipsPositionWeight;
-                    foreach (VirtualBone bone in _bones)
-                        bone.SolverPosition += delta;
-
-                    Vector3 bendNormal = _anchorRotation.Rotate(Globals.Right);
-
-                    if (_hasChest)
+                    if (_hasNeck)
                     {
-                        if (_hasNeck)
-                        {
-                            VirtualBone.SolveTrigonometric(_bones, _spineIndex, _chestIndex, _headIndex, _headPosition, bendNormal, _hipsPositionWeight * 0.9f);
-                            VirtualBone.SolveTrigonometric(_bones, _chestIndex, _neckIndex, _headIndex, _headPosition, bendNormal, _hipsPositionWeight);
-                        }
-                        else
-                            VirtualBone.SolveTrigonometric(_bones, _spineIndex, _chestIndex, _headIndex, _headPosition, bendNormal, _hipsPositionWeight);
+                        VirtualBone.SolveTrigonometric(_bones, _spineIndex, _chestIndex, _headIndex, _headTargetPosition, bendNormal, _hipsPositionWeight * 0.9f);
+                        VirtualBone.SolveTrigonometric(_bones, _chestIndex, _neckIndex, _headIndex, _headTargetPosition, bendNormal, _hipsPositionWeight);
                     }
-                    else if (_hasNeck)
-                        VirtualBone.SolveTrigonometric(_bones, _spineIndex, _neckIndex, _headIndex, _headPosition, bendNormal, _hipsPositionWeight);
                     else
-                        VirtualBone.SolveTrigonometric(_bones, _pelvisIndex, _spineIndex, _headIndex, _headPosition, bendNormal, _hipsPositionWeight);
-                    
-                    Head.SolverRotation = headSolverRotation;
+                        VirtualBone.SolveTrigonometric(_bones, _spineIndex, _chestIndex, _headIndex, _headTargetPosition, bendNormal, _hipsPositionWeight);
                 }
+                else if (_hasNeck)
+                    VirtualBone.SolveTrigonometric(_bones, _spineIndex, _neckIndex, _headIndex, _headTargetPosition, bendNormal, _hipsPositionWeight);
+                else
+                    VirtualBone.SolveTrigonometric(_bones, _pelvisIndex, _spineIndex, _headIndex, _headTargetPosition, bendNormal, _hipsPositionWeight);
 
-                /* FIK v 1.9 - pelvis rotation to pelvis target was not working right
-                // Pelvis target
-                if (pelvisPositionWeight > 0.0f) {
-                    Quaternion headSolverRotation = head.solverRotation;
-
-                    Vector3 delta = ((IKPositionPelvis + pelvisPositionOffset) - pelvis.solverPosition) * pelvisPositionWeight;
-                    foreach (VirtualBone bone in bones) bone.solverPosition += delta;
-
-                    Vector3 bendNormal = anchorRotation * Vector3.right;
-
-                    if (hasChest && hasNeck) {
-                        VirtualBone.SolveTrigonometric(bones, pelvisIndex, spineIndex, headIndex, headPosition, bendNormal, pelvisPositionWeight * 0.6f);
-                        VirtualBone.SolveTrigonometric(bones, pelvisIndex, chestIndex, headIndex, headPosition, bendNormal, pelvisPositionWeight * 0.6f);
-                        VirtualBone.SolveTrigonometric(bones, pelvisIndex, neckIndex, headIndex, headPosition, bendNormal, pelvisPositionWeight * 1f);
-                    } else if (hasChest && !hasNeck) {
-                        VirtualBone.SolveTrigonometric(bones, pelvisIndex, spineIndex, headIndex, headPosition, bendNormal, pelvisPositionWeight * 0.75f);
-                        VirtualBone.SolveTrigonometric(bones, pelvisIndex, chestIndex, headIndex, headPosition, bendNormal, pelvisPositionWeight * 1f);
-                    }
-                    else if (!hasChest && hasNeck) {
-                        VirtualBone.SolveTrigonometric(bones, pelvisIndex, spineIndex, headIndex, headPosition, bendNormal, pelvisPositionWeight * 0.75f);
-                        VirtualBone.SolveTrigonometric(bones, pelvisIndex, neckIndex, headIndex, headPosition, bendNormal, pelvisPositionWeight * 1f);
-                    } else if (!hasNeck && !hasChest) {
-                        VirtualBone.SolveTrigonometric(bones, pelvisIndex, spineIndex, headIndex, headPosition, bendNormal, pelvisPositionWeight);
-                    }
-
-                    head.solverRotation = headSolverRotation;
-                }
-                */
+                Head.SolverRotation = headSolverRotation;
             }
 
             public override void ResetOffsets()
@@ -894,14 +880,14 @@ namespace XREngine.Components.Animation
 
                 Quaternion h = Quaternion.Inverse(_anchorRotation);
 
-                Vector3 pLeft = h.Rotate(arms[0].TargetPosition - _headPosition) / _sizeScale;
-                Vector3 pRight = h.Rotate(arms[1].TargetPosition - _headPosition) / _sizeScale;
+                Vector3 pLeft = h.Rotate(arms[0].TargetPosition - _headTargetPosition) / _sizeScale;
+                Vector3 pRight = h.Rotate(arms[1].TargetPosition - _headTargetPosition) / _sizeScale;
 
-                Vector3 c = Globals.Forward;
+                Vector3 c = Globals.Backward;
                 c.X += pLeft.X * MathF.Abs(pLeft.X);
-                c.X += pLeft.Z * MathF.Abs(pLeft.Z);
+                c.X -= pLeft.Z * MathF.Abs(pLeft.Z);
                 c.X += pRight.X * MathF.Abs(pRight.X);
-                c.X -= pRight.Z * MathF.Abs(pRight.Z);
+                c.X += pRight.Z * MathF.Abs(pRight.Z);
                 c.X *= 5.0f * _rotateChestByHands;
 
                 float angle = MathF.Atan2(c.X, c.Z);
@@ -915,7 +901,7 @@ namespace XREngine.Components.Animation
                 t.X *= 0.5f * _rotateChestByHands;
 
                 angle = MathF.Atan2(t.X, t.Y);
-                q = Quaternion.CreateFromAxisAngle(_rootRotation.Rotate(Globals.Backward), angle);
+                q = Quaternion.CreateFromAxisAngle(_rootRotation.Rotate(Globals.Forward), angle);
 
                 chestTargetRotation = q * chestTargetRotation;
             }
@@ -923,7 +909,7 @@ namespace XREngine.Components.Animation
             // Move the pelvis so that the head would remain fixed to the anchor
             public void InverseTranslateToHead(LegSolver[] legs, bool limited, bool useCurrentLegMag, Vector3 offset, float weight)
             {
-                Vector3 delta = (_headPosition + offset - Head.SolverPosition) * weight;// * (1f - pelvisPositionWeight); This makes the head lose its target when pelvisPositionWeight is between 0 and 1.
+                Vector3 delta = (_headTargetPosition + offset - Head.SolverPosition) * weight;// * (1f - pelvisPositionWeight); This makes the head lose its target when pelvisPositionWeight is between 0 and 1.
 
                 Vector3 p = Hips.SolverPosition + delta;
                 MovePosition(limited ? LimitPelvisPosition(legs, p, useCurrentLegMag) : p);

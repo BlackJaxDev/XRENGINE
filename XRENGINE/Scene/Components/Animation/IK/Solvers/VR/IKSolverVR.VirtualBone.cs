@@ -188,21 +188,21 @@ namespace XREngine.Components.Animation
                     bendNormal);
 
                 Vector3 firstToSecond = bones[second].SolverPosition - bones[first].SolverPosition;
-                Quaternion q1 = XRMath.RotationBetweenVectors(firstToSecond, bendDir).Normalized();
+                Quaternion q1 = XRMath.RotationBetweenVectors(firstToSecond, bendDir);
 
                 if (weight < 1.0f)
                     q1 = Quaternion.Lerp(Quaternion.Identity, q1, weight);
 
-                RotateAroundPoint(bones, first, bones[first].SolverPosition, q1);
+                RotateAroundPoint(bones, first, bones[first].SolverPosition, q1.Normalized());
 
                 Vector3 secondToThird = bones[third].SolverPosition - bones[second].SolverPosition;
                 Vector3 secondToTarget = targetPosition - bones[second].SolverPosition;
-                Quaternion q2 = XRMath.RotationBetweenVectors(secondToThird, secondToTarget).Normalized();
+                Quaternion q2 = XRMath.RotationBetweenVectors(secondToThird, secondToTarget);
 
                 if (weight < 1.0f)
                     q2 = Quaternion.Lerp(Quaternion.Identity, q2, weight);
 
-                RotateAroundPoint(bones, second, bones[second].SolverPosition, q2);
+                RotateAroundPoint(bones, second, bones[second].SolverPosition, q2.Normalized());
             }
 
             private static Vector3 GetBendDirection(

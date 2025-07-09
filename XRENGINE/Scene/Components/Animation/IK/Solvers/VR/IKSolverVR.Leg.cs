@@ -274,9 +274,12 @@ namespace XREngine.Components.Animation
 
             protected override void OnRead(SolverTransforms transforms)
             {
-                if (_initialized)
-                    return;
-                
+                if (!_initialized)
+                    InitializeTransforms(transforms);
+            }
+
+            private void InitializeTransforms(SolverTransforms transforms)
+            {
                 var side = right ? transforms.Right : transforms.Left;
 
                 if (HasToes = transforms.HasToes)
@@ -318,7 +321,7 @@ namespace XREngine.Components.Animation
                     _bendNormal = _rootRotation.Rotate(Globals.Left).Normalized(); // Make knees bend towards root.forward
                 else
                     _bendNormal = Vector3.Cross(calfToFoot, thighToCalf).Normalized();
-                
+
                 _bendNormalRelToHips = Quaternion.Inverse(_rootRotation).Rotate(_bendNormal);
                 _bendNormalRelToTarget = Quaternion.Inverse(IKRotation).Rotate(_bendNormal);
             }
@@ -454,17 +457,21 @@ namespace XREngine.Components.Animation
                     return;
                 }
 
-                //Vector3 thighToFoot = Foot.SolverPosition - Thigh.SolverPosition;
-                //Vector3 footToToes = Toes.SolverPosition - Foot.SolverPosition;
-                //Vector3 b = Vector3.Cross(thighToFoot, footToToes).Normalized();
-
-                //VirtualBone.SolveTrigonometric(_bones, 0, 2, 3, TargetPosition, b, 1.0f);
+                //SolveToes();
 
                 // Fix thigh twist relative to target rotation
                 FixTwistRotations();
 
                 // Keep toe rotation fixed
                 Toes.SolverRotation = TargetRotation;
+            }
+
+            private void SolveToes()
+            {
+                Vector3 thighToFoot = Foot.SolverPosition - Thigh.SolverPosition;
+                Vector3 footToToes = Toes.SolverPosition - Foot.SolverPosition;
+                Vector3 b = Vector3.Cross(thighToFoot, footToToes).Normalized();
+                VirtualBone.SolveTrigonometric(_bones, 0, 2, 3, TargetPosition, b, 1.0f);
             }
 
             private void FixTwistRotations()

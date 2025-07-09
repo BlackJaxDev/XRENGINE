@@ -9,6 +9,15 @@ namespace Extensions
         //public static Assimp.Color4D ToAssimp(this Vector4 vector)
         //    => new(vector.X, vector.Y, vector.Z, vector.W);
 
+        /// <summary>
+        /// Modifies each component of the vector using the provided function.
+        /// </summary>
+        /// <param name="value"></param>
+        /// <param name="func"></param>
+        /// <returns></returns>
+        public static Vector4 Each(this Vector4 value, Func<float, float> func) =>
+            new(func(value.X), func(value.Y), func(value.Z), func(value.W));
+
         public static Vector4 Clamp(this Vector4 value, Vector4 min, Vector4 max) =>
             new(value.X.Clamp(min.X, max.X), value.Y.Clamp(min.Y, max.Y), value.Z.Clamp(min.Z, max.Z), value.W.Clamp(min.W, max.W));
 

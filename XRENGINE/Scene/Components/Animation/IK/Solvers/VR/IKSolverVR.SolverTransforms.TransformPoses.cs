@@ -68,7 +68,7 @@ namespace XREngine.Components.Animation
                 {
                     _transform?.RecalculateMatrices(true);
                     GetDefaultLocal();
-                    GetInputAndSolved();
+                    ReadInput();
                 }
 
                 /// <summary>
@@ -83,24 +83,24 @@ namespace XREngine.Components.Animation
                     DefaultLocal.Rotation = localRotation;
                 }
 
+                public void RecalculateTransform()
+                {
+                    _transform?.RecalculateMatrices(true);
+                }
+
                 /// <summary>
                 /// Retrieves the input and solved translation and rotations from the transform.
                 /// Does not recalculate matrices.
                 /// </summary>
-                public void GetInputAndSolved()
+                public void ReadInput()
                 {
+                    _transform?.RecalculateMatrices(true);
                     Vector3 worldTranslation = _transform?.WorldTranslation ?? Vector3.Zero;
                     Quaternion worldRotation = _transform?.WorldRotation ?? Quaternion.Identity;
                     InputWorld.Translation = worldTranslation;
                     InputWorld.Rotation = worldRotation;
                     SolvedWorld.Translation = worldTranslation;
                     SolvedWorld.Rotation = worldRotation;
-                }
-
-                public void ReadInput()
-                {
-                    _transform?.RecalculateMatrices(true);
-                    GetInputAndSolved();
                 }
 
                 public void WriteSolved(float weight)

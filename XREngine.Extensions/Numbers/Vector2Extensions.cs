@@ -9,6 +9,15 @@ namespace Extensions
         //public static Assimp.Vector2D ToAssimp(this Vector2 vector)
         //    => new(vector.X, vector.Y);
 
+        /// <summary>
+        /// Modifies each component of the vector using the provided function.
+        /// </summary>
+        /// <param name="value"></param>
+        /// <param name="func"></param>
+        /// <returns></returns>
+        public static Vector2 Each(this Vector2 value, Func<float, float> func) =>
+            new(func(value.X), func(value.Y));
+
         public static Vector2 Clamp(this Vector2 value, Vector2 min, Vector2 max) =>
             new(value.X.Clamp(min.X, max.X), value.Y.Clamp(min.Y, max.Y));
 

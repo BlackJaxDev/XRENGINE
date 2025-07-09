@@ -523,18 +523,26 @@ namespace XREngine.Data.Core
             //dot == -1 is opposite direction
             //dot == 0 is a 90 degree angle
 
-            if (dot > 1.0f - float.Epsilon)
+            if (dot > 1.0f - Epsilon)
             {
-                axis = Globals.Backward;
+                //Vectors are parallel and pointing in the same direction.
+                axis = Globals.Up; //Any non-zero axis is valid for a 0-degree rotation.
                 rad = 0.0f;
             }
-            else if (dot < -1.0f + float.Epsilon)
+            else if (dot < -1.0f + Epsilon)
             {
-                axis = -Globals.Backward;
-                rad = DegToRad(180.0f);
+                //Vectors are anti-parallel (pointing in opposite directions).
+                //The rotation axis can be any vector perpendicular to initialVector.
+                //We find a suitable axis by crossing with a non-parallel vector.
+                axis = Vector3.Cross(Globals.Up, initialVector);
+                if (axis.LengthSquared() < Epsilon * Epsilon) //Check if initialVector is parallel to Globals.Up
+                    axis = Vector3.Cross(Globals.Right, initialVector); //Use a different axis
+                axis = axis.Normalized();
+                rad = PIf; // PI radians is 180 degrees.
             }
             else
             {
+                //The general case for non-parallel vectors.
                 axis = Vector3.Cross(initialVector, finalVector).Normalized();
                 rad = MathF.Acos(dot);
             }

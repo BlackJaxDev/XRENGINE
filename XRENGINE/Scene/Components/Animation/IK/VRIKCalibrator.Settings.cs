@@ -89,7 +89,7 @@ namespace XREngine.Components.Animation
                 set => SetField(ref _footTrackerUp, value);
             }
 
-            private Vector3 _footTrackerForward = Globals.Backward;
+            private Vector3 _footTrackerForward = Globals.Forward;
             /// <summary>
             /// Local axis of the foot trackers towards the player's forward direction.
             /// </summary>
@@ -109,7 +109,7 @@ namespace XREngine.Components.Animation
                 set => SetField(ref _handTrackerUp, value);
             }
 
-            private Vector3 _handTrackerForward = Globals.Backward;
+            private Vector3 _handTrackerForward = Globals.Forward;
             /// <summary>
             /// Local axis of the hand trackers pointing from the wrist towards the palm.
             /// </summary>
@@ -129,7 +129,7 @@ namespace XREngine.Components.Animation
                 set => SetField(ref _headTrackerUp, value);
             }
 
-            private Vector3 _headTrackerForward = Globals.Backward;
+            private Vector3 _headTrackerForward = Globals.Forward;
             /// <summary>
             /// Local axis of the HMD facing forward.
             /// </summary>

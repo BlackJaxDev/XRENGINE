@@ -332,7 +332,7 @@ namespace XREngine.Components.Animation
             if (/*_locomotion._weight <= 0.0f || */_root is null || _spine.HeadTarget is null)
                 return;
 
-            Vector3 forward = (_spine.HeadTarget.WorldRotation * _spine._anchorRelativeToHead).Rotate(Globals.Forward);
+            Vector3 forward = (_spine.HeadTarget.WorldRotation * _spine._rootRotationRelativeToHead).Rotate(Globals.Forward);
             forward.Y = 0f;
 
             Vector3 worldPos = new(_spine.HeadTarget.WorldTranslation.X, _root.WorldTranslation.Y, _spine.HeadTarget.WorldTranslation.Z);

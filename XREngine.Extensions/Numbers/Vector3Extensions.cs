@@ -9,6 +9,15 @@ namespace Extensions
         //public static Assimp.Vector3D ToAssimp(this Vector3 vector)
         //    => new(vector.X, vector.Y, vector.Z);
 
+        /// <summary>
+        /// Modifies each component of the vector using the provided function.
+        /// </summary>
+        /// <param name="value"></param>
+        /// <param name="func"></param>
+        /// <returns></returns>
+        public static Vector3 Each(this Vector3 value, Func<float, float> func) =>
+            new(func(value.X), func(value.Y), func(value.Z));
+
         public static Vector3 Clamp(this Vector3 value, Vector3 min, Vector3 max) =>
             new(value.X.Clamp(min.X, max.X), value.Y.Clamp(min.Y, max.Y), value.Z.Clamp(min.Z, max.Z));
 
