@@ -134,6 +134,7 @@ This testing environment allows developers to verify engine functionality and ex
 ## 📚 Documentation
 
 ### **Core Concepts**
+- [Architecture Overview](docs/architecture/README.md)
 - [Component System](docs/components.md)
 - [Rendering Pipeline](docs/rendering.md)
 - [Physics System](docs/physics.md)
