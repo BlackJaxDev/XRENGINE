@@ -288,8 +288,12 @@ namespace XREngine.Rendering.Commands
         // Expose batches for the current pass for HybridRenderingManager
         public IReadOnlyList<HybridRenderingManager.DrawBatch>? CurrentBatches { get; private set; }
 
-        // Simple passthrough for DrawCountBuffer exposure
+        // Simple passthrough for count/flag/stat buffer exposure
+        public XRDataBuffer? CulledCountBuffer => _culledCountBuffer;
         public XRDataBuffer? DrawCountBuffer => _drawCountBuffer;
+        public XRDataBuffer? IndirectOverflowFlagBuffer => _indirectOverflowFlagBuffer;
+        public XRDataBuffer? TruncationFlagBuffer => _truncationFlagBuffer;
+        public XRDataBuffer? StatsBuffer => _statsBuffer;
 
         // Returns the current scene material map (ID -> XRMaterial)
         public IReadOnlyDictionary<uint, XRMaterial> GetMaterialMap(GPUScene scene)
