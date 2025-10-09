@@ -384,12 +384,31 @@ namespace XREngine.Rendering
             // Input: mesh data
             _indirectCompProgram.BindBuffer(meshDataBuffer, 2);
 
-            // Optional: parameter buffer for GPU-side draw count at binding 3
+            // Input: culled draw count written during the culling stage (std430 binding = 3)
+            var culledCountBuffer = renderPasses.CulledCountBuffer;
+            if (culledCountBuffer is not null)
+                _indirectCompProgram.BindBuffer(culledCountBuffer, 3);
+
+            // Optional: GPU-visible draw count buffer consumed by glMultiDraw*Count (std430 binding = 4)
             if (parameterBuffer is not null)
-                _indirectCompProgram.BindBuffer(parameterBuffer, 3);
+                _indirectCompProgram.BindBuffer(parameterBuffer, 4);
+
+            // Optional: overflow/truncation/stat buffers (std430 bindings = 5, 7, 8)
+            var indirectOverflowFlagBuffer = renderPasses.IndirectOverflowFlagBuffer;
+            if (indirectOverflowFlagBuffer is not null)
+                _indirectCompProgram.BindBuffer(indirectOverflowFlagBuffer, 5);
+
+            var truncationFlagBuffer = renderPasses.TruncationFlagBuffer;
+            if (truncationFlagBuffer is not null)
+                _indirectCompProgram.BindBuffer(truncationFlagBuffer, 7);
+
+            var statsBuffer = renderPasses.StatsBuffer;
+            if (statsBuffer is not null)
+                _indirectCompProgram.BindBuffer(statsBuffer, 8);
 
             // Set uniforms
             _indirectCompProgram.Uniform("CurrentRenderPass", currentRenderPass);
+            _indirectCompProgram.Uniform("MaxIndirectDraws", (int)indirectDrawBuffer.ElementCount);
 
             uint allocatedCommandCount = renderPasses.CulledSceneToRenderBuffer.ElementCount;
 
