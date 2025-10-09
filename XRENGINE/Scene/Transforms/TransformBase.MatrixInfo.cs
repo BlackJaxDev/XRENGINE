@@ -1,6 +1,7 @@
 ﻿using Extensions;
 using System.IO.Compression;
 using System.Numerics;
+using XREngine.Data;
 using XREngine.Data.Core;
 
 namespace XREngine.Scene.Transforms
@@ -279,18 +280,23 @@ namespace XREngine.Scene.Transforms
         /// <param name="right"></param>
         public static void GetDirectionsXZ(Matrix4x4 matrix, out Vector3 forward, out Vector3 right)
         {
+            const float lerpPoint = 0.5f;
+
             right = Vector3.TransformNormal(Globals.Right, matrix).Normalized();
             forward = Vector3.TransformNormal(Globals.Forward, matrix).Normalized();
 
             float dot = forward.Dot(Globals.Up);
-            if (Math.Abs(dot) >= 0.5f)
+            float absDot = Math.Abs(dot);
+            if (absDot >= lerpPoint)
             {
                 Vector3 up = Vector3.TransformNormal(Globals.Up, matrix);
                 //if dot is 1, looking straight up. need to use camera down for forward
                 //if dot is -1, looking straight down. need to use camera up for forward
-                forward = dot > 0.0f
+                Vector3 newForward = dot > 0.0f
                     ? -up
                     : up;
+                float t = (absDot - lerpPoint) / (1.0f - lerpPoint);
+                forward = Vector3.Lerp(forward, newForward, Interp.Float(t, EFloatInterpolationMode.InOutQuintic));
             }
             forward.Y = 0.0f;
             forward = forward.Normalized();

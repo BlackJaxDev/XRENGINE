@@ -1,12 +1,20 @@
 ﻿using System.Numerics;
 using XREngine.Data.Geometry;
+using XREngine.Data.Rendering;
 using XREngine.Rendering.Commands;
 using YamlDotNet.Serialization;
 
 namespace XREngine.Rendering
 {
-    public class RenderCommandMesh2D : RenderCommand2D
+    public class RenderCommandMesh2D : RenderCommand2D, IRenderCommandMesh
     {
+        private uint _gpuCommandIndex = uint.MaxValue;
+        public uint GPUCommandIndex
+        {
+            get => _gpuCommandIndex;
+            set => SetField(ref _gpuCommandIndex, value);
+        }
+
         private XRMeshRenderer? _mesh;
         private Matrix4x4 _worldMatrix = Matrix4x4.Identity;
         private XRMaterial? _materialOverride;
@@ -56,6 +64,8 @@ namespace XREngine.Rendering
             get => _worldCropRegion;
             set => SetField(ref _worldCropRegion, value);
         }
+
+        public bool WorldMatrixIsModelMatrix { get; set; }
 
         public RenderCommandMesh2D() : base() { }
         public RenderCommandMesh2D(int renderPass) : base(renderPass) { }

@@ -150,7 +150,14 @@ namespace XREngine.Rendering.Physics.Physx
         {
             //using var t = Engine.Profiler.Start();
 
-            Simulate(Engine.Time.Timer.FixedUpdateDelta, null, true);
+            float dt = Engine.Time.Timer.FixedUpdateDelta;
+
+            var controllers = _controllerManager?.Controllers?.Values;
+            if (controllers is not null)
+                foreach (var controller in controllers)
+                    controller.ConsumeInputBuffer(dt);
+                        
+            Simulate(dt, null, true);
             if (!FetchResults(true, out uint error))
             {
                 Debug.Out($"PhysX FetchResults error: {error}");
@@ -730,7 +737,7 @@ namespace XREngine.Rendering.Physics.Physx
             => _scene->WriteLockNewAlloc(file, line);
 
         private ControllerManager? _controllerManager;
-        public ControllerManager CreateOrCreateControllerManager(bool lockingEnabled = false)
+        public ControllerManager GetOrCreateControllerManager(bool lockingEnabled = false)
             => _controllerManager ??= new ControllerManager(_scene->PhysPxCreateControllerManager(lockingEnabled));
 
         public void ReleaseControllerManager()

@@ -1,0 +1,180 @@
+#version 460
+
+//declare max queue size
+#define MAX_QUEUE_SIZE 1024
+
+//declare max objects in octree
+#define MAX_OBJECTS 1024
+
+// Binding points for buffers
+layout(std430, binding = 0) buffer AABBs
+{
+    vec3 aabbMin[MAX_OBJECTS]; // Min bounds of AABBs
+    vec3 aabbMax[MAX_OBJECTS]; // Max bounds of AABBs
+};
+
+layout(std430, binding = 1) buffer Transformations
+{
+    mat4 transforms[MAX_OBJECTS]; // Transformation matrices
+};
+
+struct OctreeNode
+{
+    vec3 minBounds;
+    vec3 maxBounds;
+    int  childIndices[8];   // -1 for empty child
+    uint parentIndex;
+    uint objectStartIndex;  // Start index for leaf node objects
+    uint objectCount;       // Number of objects in the leaf (0 for internal)
+    uint _pad0;
+};
+
+layout(std430, binding = 2) buffer OctreeNodes
+{
+    uint numNodes;
+    uint rootIndex;
+    OctreeNode nodes[];
+};
+
+layout(std430, binding = 3) buffer Visibility
+{
+    uint visibility[MAX_OBJECTS]; // Visibility flags (1 = visible, 0 = not visible)
+};
+
+layout(std430, binding = 4) buffer Queue
+{
+    uint nodeCount;             // Current number of nodes in the queue for processing
+    uint queue[MAX_QUEUE_SIZE]; // Circular queue storing node indices
+    uint queueHead;             // Atomic index for dequeuing
+    uint queueTail;             // Atomic index for enqueuing
+};
+
+// Uniforms
+uniform mat4 viewProjection; // View-projection matrix for frustum culling
+
+// Frustum planes
+vec4 frustumPlanes[6];
+
+void extractFrustumPlanes(mat4 vp)
+{
+    // Left plane
+    frustumPlanes[0] = vp[3] + vp[0];
+    // Right plane
+    frustumPlanes[1] = vp[3] - vp[0];
+    // Bottom plane
+    frustumPlanes[2] = vp[3] + vp[1];
+    // Top plane
+    frustumPlanes[3] = vp[3] - vp[1];
+    // Near plane
+    frustumPlanes[4] = vp[3] + vp[2];
+    // Far plane
+    frustumPlanes[5] = vp[3] - vp[2];
+
+    // Normalize the planes
+    for (int i = 0; i < 6; ++i)
+    {
+        frustumPlanes[i] /= length(frustumPlanes[i].xyz);
+    }
+}
+
+// Helper functions
+bool isAABBVisible(vec3 minBounds, vec3 maxBounds)
+{
+    for (int i = 0; i < 6; ++i)
+    {
+        vec4 plane = frustumPlanes[i];
+        vec3 positiveVertex = vec3(
+            (plane.x > 0.0) ? maxBounds.x : minBounds.x,
+            (plane.y > 0.0) ? maxBounds.y : minBounds.y,
+            (plane.z > 0.0) ? maxBounds.z : minBounds.z
+        );
+        if (dot(plane.xyz, positiveVertex) + plane.w < 0.0)
+        {
+            return false; // Box is outside the frustum
+        }
+    }
+    return true;
+}
+
+void main()
+{
+    // One-time extraction of frustum planes
+    if (gl_GlobalInvocationID.x == 0)
+    {
+        extractFrustumPlanes(viewProjection);
+    }
+    barrier(); // Ensure all invocations have the planes
+
+    uint head = atomicAdd(queueHead, 1);
+
+    if (head >= nodeCount)
+    {
+        return; // No more nodes to process in this dispatch
+    }
+
+    uint nodeIndex = queue[head % MAX_QUEUE_SIZE];
+
+    // Process the node
+    OctreeNode node = nodes[nodeIndex];
+
+    // Check if the node is visible
+    if (!isAABBVisible(node.minBounds, node.maxBounds))
+    {
+        return; // Skip this node and its children
+    }
+
+    // Process leaf nodes
+    if (node.objectCount > 0u) 
+    {
+        // Leaf node
+        for (uint i = 0; i < node.objectCount; ++i)
+        {
+            uint objID = node.objectStartIndex + i;
+
+            // Transform AABB
+            vec3 objMin = aabbMin[objID];
+            vec3 objMax = aabbMax[objID];
+            mat4 transform = transforms[objID];
+            
+            // Get the 8 corners of the AABB
+            vec3 corners[8];
+            corners[0] = vec3(objMin.x, objMin.y, objMin.z);
+            corners[1] = vec3(objMax.x, objMin.y, objMin.z);
+            corners[2] = vec3(objMin.x, objMax.y, objMin.z);
+            corners[3] = vec3(objMax.x, objMax.y, objMin.z);
+            corners[4] = vec3(objMin.x, objMin.y, objMax.z);
+            corners[5] = vec3(objMax.x, objMin.y, objMax.z);
+            corners[6] = vec3(objMin.x, objMax.y, objMax.z);
+            corners[7] = vec3(objMax.x, objMax.y, objMax.z);
+
+            // Transform corners and find new AABB
+            vec3 transformedMin = (transform * vec4(corners[0], 1.0)).xyz;
+            vec3 transformedMax = transformedMin;
+            for(int c = 1; c < 8; ++c)
+            {
+                vec3 transformedCorner = (transform * vec4(corners[c], 1.0)).xyz;
+                transformedMin = min(transformedMin, transformedCorner);
+                transformedMax = max(transformedMax, transformedCorner);
+            }
+
+            // Visibility test
+            if (isAABBVisible(transformedMin, transformedMax))
+            {
+                atomicOr(visibility[objID], 1); // Mark as visible
+            }
+        }
+    }
+    else
+    {
+        // Enqueue visible child nodes
+        for (int i = 0; i < 8; ++i)
+        {
+            int childIndex = node.childIndices[i];
+            if (childIndex != -1)
+            {
+                uint tail = atomicAdd(queueTail, 1);
+                queue[tail % MAX_QUEUE_SIZE] = uint(childIndex);
+            }
+        }
+    }
+}

@@ -206,7 +206,7 @@ namespace XREngine.Components.Animation
                 return;
 
             foreach (var tfm in _solverTransforms)
-                tfm?.ResetSolvedToDefault();
+                tfm?.ResetTransformToDefault();
         }
 
         public override IKPoint[]? GetPoints() => null;
@@ -722,7 +722,7 @@ namespace XREngine.Components.Animation
             set => SetField(ref _scale, value);
 		}
 
-		private bool _plantFeet = true;
+		private bool _plantFeet = false;
 		/// <summary>
 		/// If true, will keep the toes planted even if head target is out of reach, 
         /// so this can cause the camera to exit the head if it is too high for the model to reach. 

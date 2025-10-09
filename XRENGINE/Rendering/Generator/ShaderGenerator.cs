@@ -18,7 +18,80 @@ namespace XREngine.Rendering.Shaders.Generator
 
         public XRMesh Mesh { get; } = mesh;
 
-        public abstract string Generate();
+        public List<Action> HelperMethodWriters { get; } = [];
+        public Dictionary<string, (EShaderVarType type, bool array)> UniformNames { get; } = [];
+        public Dictionary<string, (uint? location, EShaderVarType type)> InputVars { get; } = [];
+        public Dictionary<string, (uint? location, EShaderVarType type)> OutputVars { get; } = [];
+
+        public virtual string Generate()
+        {
+            WriteVersion();
+            WriteExtensions();
+            Line();
+            WriteOutputs();
+            Line();
+            WriteInputs();
+            Line();
+            WriteUniforms();
+            Line();
+            WriteHelperMethods();
+            Line();
+            using (StartMain())
+                WriteMain();
+            return End();
+        }
+
+        public bool WriteGLPerVertexOutStruct { get; set; } = true;
+
+        protected virtual void WriteInputs()
+        {
+            foreach (var kvp in InputVars)
+                if (kvp.Value.location.HasValue)
+                    WriteInVar(kvp.Value.location.Value, kvp.Value.type, kvp.Key);
+                else
+                    WriteInVar(kvp.Value.type, kvp.Key);
+        }
+
+        protected virtual void WriteOutputs()
+        {
+            foreach (var kvp in OutputVars)
+                if (kvp.Value.location.HasValue)
+                    WriteOutVar(kvp.Value.location.Value, kvp.Value.type, kvp.Key);
+                else
+                    WriteOutVar(kvp.Value.type, kvp.Key);
+
+            //For some reason, this is necessary when using shader pipelines
+            //if (Engine.Rendering.Settings.AllowShaderPipelines)
+            if (WriteGLPerVertexOutStruct)
+                WriteGLPerVertexOut();
+        }
+
+        /// <summary>
+        /// Adjoint is a faster way to calculate the inverse of a matrix when the matrix is orthogonal.
+        /// </summary>
+        protected void WriteAdjointMethod()
+        {
+            Line("mat3 adjoint(mat4 m)");
+            using (OpenBracketState())
+            {
+                Line("return mat3(");
+                Line("  cross(m[1].xyz, m[2].xyz),");
+                Line("  cross(m[2].xyz, m[0].xyz),");
+                Line("  cross(m[0].xyz, m[1].xyz));");
+            }
+        }
+
+        protected virtual void WriteUniforms()
+        {
+            foreach (var uniform in UniformNames)
+                WriteUniform(uniform.Value.type, uniform.Key, uniform.Value.array);
+        }
+
+        protected virtual void WriteHelperMethods()
+        {
+            foreach (Action writer in HelperMethodWriters)
+                writer.Invoke();
+        }
 
         #region String Helpers
         private string Tabs
@@ -46,7 +119,7 @@ namespace XREngine.Rendering.Shaders.Generator
         public void WriteInVar(EShaderVarType type, string name)
             => Line($"in {type.ToString()[1..]} {name};");
 
-        public void WriteOutVar(int layoutLocation, EShaderVarType type, string name)
+        public void WriteOutVar(uint layoutLocation, EShaderVarType type, string name)
             => Line($"layout (location = {layoutLocation}) out {type.ToString()[1..]} {name};");
         public void WriteOutVar(EShaderVarType type, string name)
             => Line($"out {type.ToString()[1..]} {name};");
@@ -190,6 +263,11 @@ namespace XREngine.Rendering.Shaders.Generator
             Line("else");
             using (OpenBracketState())
                 elseCode();
+        }
+        protected abstract void WriteMain();
+        protected virtual void WriteExtensions()
+        {
+
         }
         public enum EGLVertexShaderInput
         {

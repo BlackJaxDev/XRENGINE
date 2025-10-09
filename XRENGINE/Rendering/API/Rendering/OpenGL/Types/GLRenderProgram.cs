@@ -3,6 +3,7 @@ using Silk.NET.OpenGL;
 using System.Collections;
 using System.Collections.Concurrent;
 using System.Numerics;
+using System.Text;
 using XREngine.Data.Vectors;
 using static XREngine.Rendering.XRRenderProgram;
 
@@ -26,8 +27,14 @@ namespace XREngine.Rendering.OpenGL
                 _uniformCache = new(),
                 _attribCache = new();
 
+            private readonly ConcurrentDictionary<int, string> _locationNameCache = new();
+            private readonly ConcurrentDictionary<string, UniformInfo> _uniformMetadata = new();
+            private readonly ConcurrentDictionary<string, byte> _loggedUniformMismatches = new();
+
             private readonly ConcurrentBag<string> _failedAttributes = [];
             private readonly ConcurrentBag<string> _failedUniforms = [];
+
+            private readonly record struct UniformInfo(GLEnum Type, int Size);
 
             protected override void OnPropertyChanged<T>(string? propName, T prev, T field)
             {
@@ -36,12 +43,7 @@ namespace XREngine.Rendering.OpenGL
                 {
                     case nameof(Data.Shaders):
                         if (IsLinked)
-                        {
-                            //Force a recompilation? Programs cannot be relinked.
-                            Destroy();
-                            Generate();
-                            Link();
-                        }
+                            Relink();
                         break;
                 }
             }
@@ -65,6 +67,8 @@ namespace XREngine.Rendering.OpenGL
                     return -1;
 
                 _uniformCache.TryAdd(name, value);
+                if (value >= 0)
+                    _locationNameCache[value] = name;
                 return value;
             }
             private bool GetUniform(string name, out int location)
@@ -91,7 +95,6 @@ namespace XREngine.Rendering.OpenGL
             /// If the program has been generated and linked successfully,
             /// this will return the location of the attribute with the given name.
             /// Cached for performance and thread-safe.
-            /// </summary>
             /// <param name="name"></param>
             /// <returns></returns>
             public int GetAttributeLocation(string name)
@@ -135,9 +138,9 @@ namespace XREngine.Rendering.OpenGL
             {
                 if (!_shaderCache.TryRemove(item, out var shader) || shader is null)
                     return;
-                
+
                 shader.Destroy();
-                shader.ActivePrograms.Remove(this);
+                ShaderUncached(shader);
             }
 
             private void ShaderAdded(XRShader item)
@@ -148,8 +151,20 @@ namespace XREngine.Rendering.OpenGL
             {
                 GLShader shader = Renderer.GenericToAPI<GLShader>(data)!;
                 //Engine.EnqueueMainThreadTask(shader.Generate);
-                shader.ActivePrograms.Add(this);
+                ShaderCached(shader);
                 return shader;
+            }
+
+            private void ShaderCached(GLShader shader)
+            {
+                shader.ActivePrograms.Add(this);
+                shader.SourceChanged += Value_SourceChanged;
+            }
+
+            private void ShaderUncached(GLShader shader)
+            {
+                shader.ActivePrograms.Remove(this);
+                shader.SourceChanged -= Value_SourceChanged;
             }
 
             protected override void LinkData()
@@ -179,6 +194,9 @@ namespace XREngine.Rendering.OpenGL
                 Data.UniformSetIVector2Requested += Uniform;
                 Data.UniformSetIVector3Requested += Uniform;
                 Data.UniformSetIVector4Requested += Uniform;
+                Data.UniformSetIVector2ArrayRequested += Uniform;
+                Data.UniformSetIVector3ArrayRequested += Uniform;
+                Data.UniformSetIVector4ArrayRequested += Uniform;
 
                 //Data.UniformSetUVector2Requested += Uniform;
                 //Data.UniformSetUVector3Requested += Uniform;
@@ -192,11 +210,49 @@ namespace XREngine.Rendering.OpenGL
                 Data.SamplerRequestedByLocation += Sampler;
                 Data.BindImageTextureRequested += BindImageTexture;
                 Data.DispatchComputeRequested += DispatchCompute;
+                Data.BindBufferRequested += BindBuffer;
+
+                Data.LinkRequested += LinkRequested;
+                Data.UseRequested += UseRequested;
 
                 foreach (XRShader shader in Data.Shaders)
                     ShaderAdded(shader);
                 Data.Shaders.PostAnythingAdded += ShaderAdded;
                 Data.Shaders.PostAnythingRemoved += ShaderRemoved;
+            }
+
+            private void UseRequested(XRRenderProgram program)
+            {
+                if (Engine.InvokeOnMainThread(() => UseRequested(program)))
+                    return;
+
+                if (!IsLinked)
+                {
+                    //Debug.LogWarning("Cannot use program, it is not linked.");
+                    return;
+                }
+
+                Api.UseProgram(BindingId);
+            }
+
+            private void LinkRequested(XRRenderProgram program)
+            {
+                if (Engine.InvokeOnMainThread(() => LinkRequested(program)))
+                    return;
+
+                if (!Link())
+                {
+                    //Debug.LogWarning($"Failed to link program {Data.Name} with hash {Hash}.");
+                }
+            }
+
+            private void BindBuffer(uint index, XRDataBuffer buffer)
+            {
+                var glObj = Renderer.GetOrCreateAPIRenderObject(buffer);
+                if (glObj is not GLDataBuffer glBuf)
+                    return;
+
+                Api.BindBufferBase(GLEnum.ShaderStorageBuffer, index, glBuf.BindingId);
             }
 
             private void BindImageTexture(uint unit, XRTexture texture, int level, bool layered, int layer, EImageAccess access, EImageFormat format)
@@ -266,6 +322,22 @@ namespace XREngine.Rendering.OpenGL
                 uint z,
                 IEnumerable<(uint unit, XRTexture texture, int level, int? layer, EImageAccess access, EImageFormat format)>? textures = null)
             {
+                if (!IsLinked)
+                {
+                    if (Data.LinkReady)
+                    {
+                        if (!Link())
+                        {
+                            //Debug.LogWarning($"Failed to link program {Data.Name} with hash {Hash}.");
+                            return;
+                        }
+                    }
+                    else
+                    {
+                        Debug.LogWarning("Cannot dispatch compute shader, program is not linked.");
+                        return;
+                    }
+                }
                 Api.UseProgram(BindingId);
                 if (textures is not null)
                     foreach (var (unit, texture, level, layer, access, format) in textures)
@@ -298,6 +370,9 @@ namespace XREngine.Rendering.OpenGL
                 Data.UniformSetIVector2Requested -= Uniform;
                 Data.UniformSetIVector3Requested -= Uniform;
                 Data.UniformSetIVector4Requested -= Uniform;
+                Data.UniformSetIVector2ArrayRequested -= Uniform;
+                Data.UniformSetIVector3ArrayRequested -= Uniform;
+                Data.UniformSetIVector4ArrayRequested -= Uniform;
 
                 //Data.UniformSetUVector2Requested -= Uniform;
                 //Data.UniformSetUVector3Requested -= Uniform;
@@ -311,6 +386,10 @@ namespace XREngine.Rendering.OpenGL
                 Data.SamplerRequestedByLocation -= Sampler;
                 Data.BindImageTextureRequested -= BindImageTexture;
                 Data.DispatchComputeRequested -= DispatchCompute;
+                Data.BindBufferRequested -= BindBuffer;
+
+                Data.LinkRequested -= LinkRequested;
+                Data.UseRequested -= UseRequested;
 
                 Data.Shaders.PostAnythingAdded -= ShaderAdded;
                 Data.Shaders.PostAnythingRemoved -= ShaderRemoved;
@@ -327,6 +406,79 @@ namespace XREngine.Rendering.OpenGL
                 _uniformCache.Clear();
                 _failedAttributes.Clear();
                 _failedUniforms.Clear();
+                _locationNameCache.Clear();
+                _uniformMetadata.Clear();
+                _loggedUniformMismatches.Clear();
+            }
+
+            private void CacheActiveUniforms()
+            {
+                if (!IsLinked)
+                    return;
+
+                _uniformMetadata.Clear();
+
+                Api.GetProgram(BindingId, GLEnum.ActiveUniforms, out int uniformCount);
+                if (uniformCount <= 0)
+                    return;
+
+                Api.GetProgram(BindingId, GLEnum.ActiveUniformMaxLength, out int maxLength);
+                if (maxLength <= 0)
+                    maxLength = 256;
+
+                byte[] nameBuffer = new byte[maxLength];
+
+                fixed (byte* namePtr = nameBuffer)
+                {
+                    for (uint index = 0; index < (uint)uniformCount; index++)
+                    {
+                        uint length;
+                        int size;
+                        GLEnum type;
+
+                        Api.GetActiveUniform(BindingId, index, (uint)nameBuffer.Length, out length, out size, out type, namePtr);
+                        if (length == 0 || length > nameBuffer.Length)
+                            continue;
+
+                        string name = Encoding.UTF8.GetString(nameBuffer, 0, (int)length);
+                        _uniformMetadata[name] = new UniformInfo(type, size);
+                        if (name.EndsWith("[0]", StringComparison.Ordinal))
+                        {
+                            string baseName = name[..^3];
+                            _uniformMetadata[baseName] = new UniformInfo(type, size);
+                        }
+                    }
+                }
+            }
+
+            private bool ValidateUniformType(int location, params GLEnum[] expectedTypes)
+            {
+                if (location < 0)
+                    return false;
+
+                if (_locationNameCache.TryGetValue(location, out string? name))
+                    return ValidateUniformType(name, location, expectedTypes);
+
+                return true;
+            }
+
+            private bool ValidateUniformType(string name, int? location, params GLEnum[] expectedTypes)
+            {
+                if (!_uniformMetadata.TryGetValue(name, out var meta))
+                    return true;
+
+                foreach (var expected in expectedTypes)
+                    if (meta.Type == expected)
+                        return true;
+
+                if (_loggedUniformMismatches.TryAdd(name, 0))
+                {
+                    string expectedDesc = string.Join(", ", expectedTypes);
+                    string locDesc = location.HasValue ? location.Value.ToString() : "unknown";
+                    Debug.LogWarning($"Uniform '{name}' (location {locDesc}) expects GL type {meta.Type} (size {meta.Size}) but received upload for {expectedDesc}. Skipping to avoid GL_INVALID_OPERATION.");
+                }
+
+                return false;
             }
 
             public override void Destroy()
@@ -477,6 +629,7 @@ namespace XREngine.Rendering.OpenGL
                         else
                         {
                             IsLinked = true;
+                            CacheActiveUniforms();
                             return true;
                         }
                     }
@@ -536,6 +689,8 @@ namespace XREngine.Rendering.OpenGL
                             else
                                 PrintLinkDebug(bindingId);
                             IsLinked = linked;
+                            if (IsLinked)
+                                CacheActiveUniforms();
                         }
                         foreach (GLShader? shader in attached)
                         {
@@ -544,10 +699,32 @@ namespace XREngine.Rendering.OpenGL
 
                             Api.DetachShader(BindingId, shader.BindingId);
                         }
-                        _shaderCache.ForEach(x => x.Value.Destroy());
+                        _shaderCache.ForEach(x =>
+                        {
+                            x.Value.Destroy();
+                        });
                         return IsLinked;
                     }
                 //}
+            }
+
+            private void Value_SourceChanged()
+            {
+                //If the source of a shader changes, we need to relink the program.
+                //This will cause the program to be destroyed and recreated.
+                if (IsLinked)
+                    Relink();
+            }
+
+            private void Relink()
+            {
+                if (Engine.InvokeOnMainThread(Relink))
+                    return;
+
+                //Programs can't be relinked; destroy and recreate.
+                Destroy();
+                Generate();
+                Link();
             }
 
             private void PrintLinkDebug(uint bindingId)
@@ -679,25 +856,59 @@ namespace XREngine.Rendering.OpenGL
                 => Uniform(GetUniformLocation(name), p);
 
             public void Uniform(int location, Vector2 p)
-                => Api.ProgramUniform2(BindingId, location, p);
+            {
+                if (location < 0) return;
+                Api.ProgramUniform2(BindingId, location, p);
+            }
             public void Uniform(int location, Vector3 p)
-                => Api.ProgramUniform3(BindingId, location, p);
+            {
+                if (location < 0) return;
+                Api.ProgramUniform3(BindingId, location, p);
+            }
             public void Uniform(int location, Vector4 p)
-                => Api.ProgramUniform4(BindingId, location, p);
+            {
+                if (location < 0) return;
+                if (!ValidateUniformType(location, GLEnum.FloatVec4))
+                    return;
+                Api.ProgramUniform4(BindingId, location, p);
+            }
             public void Uniform(int location, Quaternion p)
-                => Api.ProgramUniform4(BindingId, location, p);
+            {
+                if (location < 0) return;
+                if (!ValidateUniformType(location, GLEnum.FloatVec4))
+                    return;
+                Api.ProgramUniform4(BindingId, location, p);
+            }
             public void Uniform(int location, int p)
-                => Api.ProgramUniform1(BindingId, location, p);
+            {
+                if (location < 0) return;
+                Api.ProgramUniform1(BindingId, location, p);
+            }
             public void Uniform(int location, float p)
-                => Api.ProgramUniform1(BindingId, location, p);
+            {
+                if (location < 0) return;
+                Api.ProgramUniform1(BindingId, location, p);
+            }
             public void Uniform(int location, uint p)
-                => Api.ProgramUniform1(BindingId, location, p);
+            {
+                if (location < 0) return;
+                Api.ProgramUniform1(BindingId, location, p);
+            }
             public void Uniform(int location, double p)
-                => Api.ProgramUniform1(BindingId, location, p);
+            {
+                if (location < 0) return;
+                Api.ProgramUniform1(BindingId, location, p);
+            }
             public void Uniform(int location, Matrix4x4 p)
-                => Api.ProgramUniformMatrix4(BindingId, location, 1, false, &p.M11);
+            {
+                if (location < 0) return;
+                Api.ProgramUniformMatrix4(BindingId, location, 1, false, &p.M11);
+            }
             public void Uniform(int location, bool p)
-                => Api.ProgramUniform1(BindingId, location, p ? 1 : 0);
+            {
+                if (location < 0) return;
+                Api.ProgramUniform1(BindingId, location, p ? 1 : 0);
+            }
 
             public void Uniform(string name, Vector2[] p)
                 => Uniform(GetUniformLocation(name), p);
@@ -721,17 +932,74 @@ namespace XREngine.Rendering.OpenGL
                 => Uniform(GetUniformLocation(name), p);
 
             public void Uniform(int location, IVector2 p)
-                => Api.ProgramUniform2(BindingId, location, p);
+            {
+                if (location < 0) return;
+                if (!ValidateUniformType(location, GLEnum.IntVec2))
+                    return;
+                Api.ProgramUniform2(BindingId, location, p.X, p.Y);
+            }
             public void Uniform(int location, IVector3 p)
-                => Api.ProgramUniform3(BindingId, location, p);
+            {
+                if (location < 0) return;
+                if (!ValidateUniformType(location, GLEnum.IntVec3))
+                    return;
+                Api.ProgramUniform3(BindingId, location, p.X, p.Y, p.Z);
+            }
             public void Uniform(int location, IVector4 p)
-                => Api.ProgramUniform4(BindingId, location, p);
+            {
+                if (location < 0) return;
+                if (!ValidateUniformType(location, GLEnum.IntVec4))
+                    return;
+                Api.ProgramUniform4(BindingId, location, p.X, p.Y, p.Z, p.W);
+            }
+            public void Uniform(int location, IVector2[] p)
+            {
+                if (location < 0 || p.Length == 0)
+                    return;
+                if (!ValidateUniformType(location, GLEnum.IntVec2))
+                    return;
+
+                fixed (IVector2* ptr = p)
+                {
+                    Api.ProgramUniform2(BindingId, location, (uint)p.Length, (int*)ptr);
+                }
+            }
+            public void Uniform(int location, IVector3[] p)
+            {
+                if (location < 0 || p.Length == 0)
+                    return;
+                if (!ValidateUniformType(location, GLEnum.IntVec3))
+                    return;
+
+                fixed (IVector3* ptr = p)
+                {
+                    Api.ProgramUniform3(BindingId, location, (uint)p.Length, (int*)ptr);
+                }
+            }
+            public void Uniform(int location, IVector4[] p)
+            {
+                if (location < 0 || p.Length == 0)
+                    return;
+                if (!ValidateUniformType(location, GLEnum.IntVec4))
+                    return;
+
+                fixed (IVector4* ptr = p)
+                {
+                    Api.ProgramUniform4(BindingId, location, (uint)p.Length, (int*)ptr);
+                }
+            }
 
             public void Uniform(string name, IVector2 p)
                 => Uniform(GetUniformLocation(name), p);
             public void Uniform(string name, IVector3 p)
                 => Uniform(GetUniformLocation(name), p);
             public void Uniform(string name, IVector4 p)
+                => Uniform(GetUniformLocation(name), p);
+            public void Uniform(string name, IVector2[] p)
+                => Uniform(GetUniformLocation(name), p);
+            public void Uniform(string name, IVector3[] p)
+                => Uniform(GetUniformLocation(name), p);
+            public void Uniform(string name, IVector4[] p)
                 => Uniform(GetUniformLocation(name), p);
 
             public void Uniform(int location, Vector2[] p)
@@ -756,6 +1024,8 @@ namespace XREngine.Rendering.OpenGL
             {
                 if (location < 0)
                     return;
+                if (!ValidateUniformType(location, GLEnum.FloatVec4))
+                    return;
                 fixed (Vector4* ptr = p)
                 {
                     Api.ProgramUniform4(BindingId, location, (uint)p.Length, (float*)ptr);
@@ -764,6 +1034,8 @@ namespace XREngine.Rendering.OpenGL
             public void Uniform(int location, Quaternion[] p)
             {
                 if (location < 0)
+                    return;
+                if (!ValidateUniformType(location, GLEnum.FloatVec4))
                     return;
                 fixed (Quaternion* ptr = p)
                 {

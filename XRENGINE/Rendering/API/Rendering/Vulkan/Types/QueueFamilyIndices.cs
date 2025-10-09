@@ -9,7 +9,7 @@ public unsafe partial class VulkanRenderer
         public uint? PresentFamilyIndex { get; set; }
 
         public readonly bool IsComplete()
-            => GraphicsFamilyIndex.HasValue;
+            => GraphicsFamilyIndex.HasValue && PresentFamilyIndex.HasValue;
     }
 
     private QueueFamilyIndices? _familyQueueIndicesCache = null;

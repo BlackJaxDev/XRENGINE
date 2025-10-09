@@ -1,0 +1,84 @@
+#version 460 core
+#extension GL_NV_mesh_shader : require
+
+layout(local_size_x = 32) in;
+layout(triangles, max_vertices = 64, max_primitives = 126) out;
+
+const uint GROUP_SIZE = 32u;
+
+struct Meshlet
+{
+    uint VertexOffset;   // Offset into vertexIndices[] for this meshlet's vertices
+    uint TriangleOffset; // Offset into triangleIndices[] (triplets, 3 bytes per triangle)
+    uint VertexCount;    // Number of vertices in this meshlet
+    uint TriangleCount;  // Number of triangles in this meshlet
+};
+
+struct Vertex { vec3 position; vec3 normal; vec2 texCoord; vec4 tangent; };
+
+layout(std430, binding = 0) buffer MeshletBuffer { Meshlet meshlets[]; };
+layout(std430, binding = 2) buffer VertexBuffer { Vertex vertices[]; };
+layout(std430, binding = 3) buffer IndexBuffer { uint vertexIndices[]; };
+layout(std430, binding = 4) buffer TriangleBuffer { uint triangleIndexData[]; };
+layout(std430, binding = 5) buffer TransformBuffer { mat4 worldMatrices[]; };
+
+struct TaskPayload { uint meshletIndices[GROUP_SIZE]; uint count; };
+
+taskNV in TaskPayload IN;
+
+layout(location = 0) out vec3 out_worldPos[];
+layout(location = 1) out vec3 out_normal[];
+layout(location = 2) out vec2 out_texCoord[];
+layout(location = 3) out vec4 out_tangent[];
+layout(location = 4) flat out uint out_materialID[]; // 0 for now
+
+uniform mat4 ViewProjectionMatrix;
+
+// triangle indices are stored as bytes; read k-th byte from uint array
+uint ReadTriIndex(uint byteIndex)
+{
+    uint word = triangleIndexData[byteIndex >> 2];
+    uint shift = (byteIndex & 3u) * 8u;
+    return (word >> shift) & 0xFFu;
+}
+
+void main()
+{
+    uint meshletIndexInTask = gl_WorkGroupID.x;
+    if (meshletIndexInTask >= IN.count)
+        return;
+
+    uint meshletIndex = IN.meshletIndices[meshletIndexInTask];
+    Meshlet m = meshlets[meshletIndex];
+
+    mat4 worldMatrix = mat4(1.0);
+    mat4 mvp = ViewProjectionMatrix * worldMatrix;
+    mat3 normalMatrix = mat3(1.0);
+
+    gl_PrimitiveCountNV = m.TriangleCount;
+
+    uint tid = gl_LocalInvocationID.x;
+    if (tid < m.VertexCount)
+    {
+        uint globalVtxIndex = vertexIndices[m.VertexOffset + tid];
+        Vertex v = vertices[globalVtxIndex];
+
+        vec4 wpos = worldMatrix * vec4(v.position, 1.0);
+        gl_MeshVerticesNV[tid].gl_Position = mvp * vec4(v.position, 1.0);
+        out_worldPos[tid] = wpos.xyz;
+        out_normal[tid] = normalize(normalMatrix * v.normal);
+        out_texCoord[tid] = v.texCoord;
+        out_tangent[tid] = vec4(normalize(normalMatrix * v.tangent.xyz), v.tangent.w);
+        out_materialID[tid] = 0u;
+    }
+
+    // triangleIndices: for triangle t in this meshlet, indices are bytes at
+    // base = (m.TriangleOffset + t) * 3
+    for (uint tri = tid; tri < m.TriangleCount; tri += GROUP_SIZE)
+    {
+        uint baseByte = (m.TriangleOffset + tri) * 3u;
+        gl_PrimitiveIndicesNV[tri * 3u + 0u] = ReadTriIndex(baseByte + 0u);
+        gl_PrimitiveIndicesNV[tri * 3u + 1u] = ReadTriIndex(baseByte + 1u);
+        gl_PrimitiveIndicesNV[tri * 3u + 2u] = ReadTriIndex(baseByte + 2u);
+    }
+}

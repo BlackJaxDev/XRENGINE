@@ -164,9 +164,9 @@ namespace XREngine.Rendering.UI
         {
             if (ParentCanvas != null && ParentCanvas != this)
                 ParentCanvas.InvalidateLayout();
-            MarkLocalModified();
-            if (Parent is UIBoundableTransform parent && parent.UsesAutoSizing)
-                parent.InvalidateLayout();
+            MarkLocalModified(true);
+            //if (Parent is UIBoundableTransform parent && parent.UsesAutoSizing)
+            //    parent.InvalidateLayout();
             OnLayoutInvalidated();
         }
 

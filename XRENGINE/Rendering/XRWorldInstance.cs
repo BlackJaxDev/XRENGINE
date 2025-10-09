@@ -86,6 +86,7 @@ namespace XREngine.Rendering
         public async Task BeginPlay()
         {
             PreBeginPlay?.Invoke(this);
+            VisualScene.Initialize();
             PhysicsScene.Initialize();
             await BeginPlayInternal();
             LinkTimeCallbacks();
@@ -112,6 +113,7 @@ namespace XREngine.Rendering
             PreEndPlay?.Invoke(this);
             UnlinkTimeCallbacks();
             PhysicsScene.Destroy();
+            VisualScene.Destroy();
             EndPlayInternal();
             PostEndPlay?.Invoke(this);
         }
@@ -232,7 +234,7 @@ namespace XREngine.Rendering
         /// <returns></returns>
         private static async Task RecalcTransformDepthAsync(IEnumerable<TransformBase> bag)
         {
-            await Task.WhenAll([.. bag.Select(x => Task.Run(() => x.RecalculateMatrices(true, false)))]);
+            await Task.WhenAll([.. bag.Select(x => Task.Run(() => x.RecalculateMatrices(false, false)))]);
         }
 
         private static async Task RecalcTransformDepthParallel(IEnumerable<TransformBase> bag)

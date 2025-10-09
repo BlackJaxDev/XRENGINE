@@ -1,0 +1,21 @@
+// Placeholder sorting shader adapted to new 32-float command struct.
+// Currently a no-op (pass-through) until a proper index-based GPU sort is implemented.
+#version 460 core
+
+layout(local_size_x = 256) in;
+
+layout(std430, binding = 0) buffer CommandsBuffer { float commands[]; };
+layout(std430, binding = 1) buffer CommandCountBuffer { uint CommandCount; };
+
+uniform int SortByDistance; // (unused placeholder)
+uniform int SortDirection;  // (unused placeholder)
+uniform int SortAlgorithm;  // (unused placeholder)
+
+const int COMMAND_FLOATS = 32;
+
+void main()
+{
+    // Intentionally empty: future implementation will sort an index list instead
+    // of shuffling 128-byte structs in-place.
+    if (gl_GlobalInvocationID.x >= CommandCount) return;
+}

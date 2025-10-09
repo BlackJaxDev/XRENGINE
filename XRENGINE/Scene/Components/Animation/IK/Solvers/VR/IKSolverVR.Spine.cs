@@ -707,7 +707,7 @@ namespace XREngine.Components.Animation
                 _chestTargetRotation = _headRotation * _headRelativeChestRotation;
 
                 Vector3 v = XRMath.QuaternionToEuler(_headRelativeChestRotation).Each(float.RadiansToDegrees);
-                Debug.Out($"Chest target rotation: {v.X}, {v.Y}, {v.Z}");
+                //Debug.Out($"Chest target rotation: {v.X}, {v.Y}, {v.Z}");
 
                 //if (arms[0] != null)
                 //    AdjustChestByHands(ref _chestTargetRotation, arms);

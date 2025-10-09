@@ -382,6 +382,10 @@ namespace XREngine.Rendering.OpenGL
                     EBufferTarget.TextureBuffer => GLEnum.TextureBuffer,
                     EBufferTarget.ParameterBuffer => GLEnum.ParameterBuffer,
                     EBufferTarget.ShaderStorageBuffer => GLEnum.ShaderStorageBuffer,
+                    EBufferTarget.DispatchIndirectBuffer => GLEnum.DispatchIndirectBuffer,
+                    EBufferTarget.QueryBuffer => GLEnum.QueryBuffer,
+                    EBufferTarget.AtomicCounterBuffer => GLEnum.AtomicCounterBuffer,
+                    EBufferTarget.DrawIndirectBuffer => GLEnum.DrawIndirectBuffer,
                     _ => throw new ArgumentOutOfRangeException(nameof(target), target, null),
                 };
 

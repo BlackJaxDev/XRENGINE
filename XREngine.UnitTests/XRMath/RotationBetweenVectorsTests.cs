@@ -1,6 +1,7 @@
 ﻿using NUnit.Framework;
 using System.Numerics;
 using XREngine.Data.Core;
+using Assert = NUnit.Framework.Assert;
 
 namespace XREngine.UnitTests
 {

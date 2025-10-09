@@ -6,10 +6,10 @@ using System.Text;
 
 public unsafe partial class OpenXRAPI
 {
-    private Instance instance;
+    private Instance _instance;
 
     private void DestroyInstance()
-        => Api!.DestroyInstance(instance);
+        => Api!.DestroyInstance(_instance);
 
     private void CreateInstance()
     {
@@ -24,7 +24,7 @@ public unsafe partial class OpenXRAPI
         Instance i = default;
         if (Api!.CreateInstance(&createInfo, &i) != Result.Success)
             throw new Exception("Failed to create OpenXR instance.");
-        instance = i;
+        _instance = i;
     }
 
     private void Free(ApplicationInfo appInfo, InstanceCreateInfo createInfo)

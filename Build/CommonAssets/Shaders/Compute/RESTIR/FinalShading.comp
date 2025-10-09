@@ -1,0 +1,28 @@
+#version 450 core
+layout(local_size_x = 16, local_size_y = 16) in;
+
+struct Reservoir
+{
+    vec3 Li;
+    float pdf;
+    vec3 Lprev;
+    float W;
+    int M;
+    int pad[2];
+};
+layout(std430, binding = 5) buffer SpatialReservoir
+{
+    Reservoir spatR[];
+};
+layout(binding = 6, rgba32f) uniform image2D outTex;
+
+uniform ivec2 resolution;
+
+void main()
+{
+    ivec2 pix = ivec2(gl_GlobalInvocationID.xy);
+    int idx = pix.y * resolution.x + pix.x;
+    Reservoir R = spatR[idx];
+    vec3 Lo = R.Li * (R.W / float(max(R.M, 1)));
+    imageStore(outTex, pix, vec4(Lo, 1.0f));
+}

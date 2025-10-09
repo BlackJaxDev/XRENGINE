@@ -17,6 +17,60 @@ namespace XREngine.Rendering.OpenGL
         /// </summary>
         public partial class GLMeshRenderer(OpenGLRenderer renderer, XRMeshRenderer.BaseVersion mesh) : GLObject<XRMeshRenderer.BaseVersion>(renderer, mesh)
         {
+            // -------------------------------------------------------------
+            // Verbose Debug Support
+            // Toggle s_DebugVerbose to enable/disable detailed lifecycle logs.
+            // -------------------------------------------------------------
+            // Runtime-configurable verbose logging -------------------------------------------------
+            private static volatile bool _verbose = false; // default on for now
+            private static readonly HashSet<string> _enabledDebugCategories = new(StringComparer.OrdinalIgnoreCase)
+            {
+                "Lifecycle",
+                "Buffers",
+                "Programs",
+                "Render",
+                "Atlas",
+                "General"
+            };
+            /// <summary>Enable/disable all verbose logs at runtime.</summary>
+            public static void SetVerbose(bool enabled)
+                => _verbose = enabled;
+            /// <summary>Enable a specific category (case-insensitive).</summary>
+            public static void EnableCategory(string category)
+            {
+                if (string.IsNullOrWhiteSpace(category)) return;
+                lock (_enabledDebugCategories) _enabledDebugCategories.Add(category);
+            }
+            /// <summary>Disable a specific category.</summary>
+            public static void DisableCategory(string category)
+            {
+                if (string.IsNullOrWhiteSpace(category)) return;
+                lock (_enabledDebugCategories) _enabledDebugCategories.Remove(category);
+            }
+            /// <summary>Replace enabled categories set.</summary>
+            public static void SetCategories(IEnumerable<string> categories)
+            {
+                lock (_enabledDebugCategories)
+                {
+                    _enabledDebugCategories.Clear();
+                    foreach (var c in categories.Distinct(StringComparer.OrdinalIgnoreCase))
+                        if (!string.IsNullOrWhiteSpace(c)) _enabledDebugCategories.Add(c);
+                }
+            }
+            [System.Diagnostics.Conditional("DEBUG")]
+            private static void Dbg(string msg, string category = "General")
+            {
+                if (!_verbose)
+                    return;
+
+                bool enabled;
+                lock (_enabledDebugCategories)
+                    enabled = _enabledDebugCategories.Contains(category) || _enabledDebugCategories.Contains("All");
+
+                if (enabled)
+                    Debug.Out($"[GLMeshRenderer/{category}] {msg}");
+            }
+
             public XRMeshRenderer MeshRenderer => Data.Parent;
             public XRMesh? Mesh => MeshRenderer.Mesh;
 
@@ -58,17 +112,17 @@ namespace XREngine.Rendering.OpenGL
             public GLDataBuffer? TriangleIndicesBuffer
             {
                 get => _triangleIndicesBuffer;
-                private set => _triangleIndicesBuffer = value;
+                set => _triangleIndicesBuffer = value;
             }
             public GLDataBuffer? LineIndicesBuffer
             {
                 get => _lineIndicesBuffer;
-                private set => _lineIndicesBuffer = value;
+                set => _lineIndicesBuffer = value;
             }
             public GLDataBuffer? PointIndicesBuffer
             {
                 get => _pointIndicesBuffer;
-                private set => _pointIndicesBuffer = value;
+                set => _pointIndicesBuffer = value;
             }
 
             public IndexSize TrianglesElementType
@@ -108,6 +162,7 @@ namespace XREngine.Rendering.OpenGL
 
             protected override void LinkData()
             {
+                Dbg($"LinkData start (MeshRenderer={MeshRenderer?.Name ?? "null"}, Mesh={Mesh?.Name ?? "null"})","Lifecycle");
                 Data.RenderRequested += Render;
                 MeshRenderer.PropertyChanged += OnMeshRendererPropertyChanged;
                 MeshRenderer.PropertyChanging += OnMeshRendererPropertyChanging;
@@ -115,20 +170,24 @@ namespace XREngine.Rendering.OpenGL
                 if (Mesh != null)
                     Mesh.DataChanged += OnMeshChanged;
                 OnMeshChanged(Mesh);
+                Dbg("LinkData complete","Lifecycle");
             }
 
             protected override void UnlinkData()
             {
+                Dbg("UnlinkData start","Lifecycle");
                 Data.RenderRequested -= Render;
                 MeshRenderer.PropertyChanged -= OnMeshRendererPropertyChanged;
                 MeshRenderer.PropertyChanging -= OnMeshRendererPropertyChanging;
 
                 if (Mesh != null)
                     Mesh.DataChanged -= OnMeshChanged;
+                Dbg("UnlinkData complete","Lifecycle");
             }
 
             private void OnMeshRendererPropertyChanged(object? sender, IXRPropertyChangedEventArgs e)
             {
+                Dbg($"OnMeshRendererPropertyChanged: {e.PropertyName}","Lifecycle");
                 switch (e.PropertyName)
                 {
                     case nameof(XRMeshRenderer.Mesh):
@@ -149,29 +208,36 @@ namespace XREngine.Rendering.OpenGL
 
             private void MakeIndexBuffers()
             {
-                _triangleIndicesBuffer?.Destroy();
-                _triangleIndicesBuffer = null;
-
-                _lineIndicesBuffer?.Destroy();
-                _lineIndicesBuffer = null;
-
-                _pointIndicesBuffer?.Destroy();
-                _pointIndicesBuffer = null;
+                Dbg("MakeIndexBuffers begin","Buffers");
 
                 var mesh = Mesh;
                 if (mesh is null)
+                {
+                    Dbg("MakeIndexBuffers aborted - mesh null","Buffers");
                     return;
+                }
 
+                _triangleIndicesBuffer?.Destroy();
                 SetIndexBuffer(ref _triangleIndicesBuffer, ref _trianglesElementType, mesh, EPrimitiveType.Triangles);
+
+                _lineIndicesBuffer?.Destroy();
                 SetIndexBuffer(ref _lineIndicesBuffer, ref _lineIndicesElementType, mesh, EPrimitiveType.Lines);
+
+                _pointIndicesBuffer?.Destroy();
                 SetIndexBuffer(ref _pointIndicesBuffer, ref _pointIndicesElementType, mesh, EPrimitiveType.Points);
+
+                Dbg($"MakeIndexBuffers done (tri={(TriangleIndicesBuffer!=null ? TriangleIndicesBuffer.Data?.ElementCount : 0)}, line={(LineIndicesBuffer!=null ? LineIndicesBuffer.Data?.ElementCount:0)}, point={(PointIndicesBuffer!=null ? PointIndicesBuffer.Data?.ElementCount:0)})","Buffers");
             }
 
             private void SetIndexBuffer(ref GLDataBuffer? buffer, ref IndexSize bufferElementSize, XRMesh mesh, EPrimitiveType type)
-                => buffer = Renderer.GenericToAPI<GLDataBuffer>(mesh.GetIndexBuffer(type, out bufferElementSize))!;
+            {
+                buffer = Renderer.GenericToAPI<GLDataBuffer>(mesh.GetIndexBuffer(type, out bufferElementSize))!;
+                Dbg($"SetIndexBuffer type={type} elementSize={bufferElementSize}","Buffers");
+            }
 
             private void OnMeshChanged(XRMesh? mesh)
             {
+                Dbg($"OnMeshChanged -> {(mesh?.Name ?? "null")}","Lifecycle");
                 _separatedVertexProgram?.Destroy();
                 _separatedVertexProgram = null;
 
@@ -201,15 +267,24 @@ namespace XREngine.Rendering.OpenGL
                 uint instances,
                 EMeshBillboardMode billboardMode)
             {
+                Dbg($"Render request (instances={instances}, billboard={billboardMode})","Render");
+
                 if (Data is null || !Renderer.Active)
+                {
+                    Dbg("Render early-out: Data null or renderer inactive","Render");
                     return;
+                }
 
                 if (!IsGenerated)
+                {
+                    Dbg("Not generated yet - calling Generate()","Render");
                     Generate();
+                }
 
                 GLMaterial material = GetRenderMaterial(materialOverride);
                 if (GetPrograms(material, out var vtx, out var mat))
                 {
+                    Dbg("Programs ready - binding SSBOs and uniforms","Render");
                     //Api.BindFragDataLocation(materialProgram.BindingId, 0, "OutColor");
 
                     if (!BuffersBound)
@@ -225,34 +300,25 @@ namespace XREngine.Rendering.OpenGL
                     material.SetUniforms(mat);
                     OnSettingUniforms(vtx!, mat!);
                     Renderer.RenderMesh(this, false, instances);
+                    Dbg("Render mesh submitted","Render");
                 }
                 else
                 {
+                    Dbg("GetPrograms failed - render skipped","Render");
                     //Debug.LogWarning("Failed to get programs for mesh renderer.");
                 }
             }
 
             private void BindSSBOs(GLRenderProgram program)
             {
+                int count = 0;
                 //TODO: make a more efficient way to bind these right before rendering (because apparently re-bufferbase-ing is important?)
                 foreach (var buffer in _bufferCache.Where(x => x.Value.Data.Target == EBufferTarget.ShaderStorageBuffer))
                 {
-                    var b = buffer.Value;
-                    uint resourceIndex = b.Data.BindingIndexOverride ?? Api.GetProgramResourceIndex(program!.BindingId, GLEnum.ShaderStorageBlock, b.Data.AttributeName);
-                    if (resourceIndex != uint.MaxValue)
-                    {
-                        b.Bind();
-                        Api.BindBufferBase(ToGLEnum(EBufferTarget.ShaderStorageBuffer), resourceIndex, b.BindingId);
-                        //Api.ShaderStorageBlockBinding(vertexProgram.BindingId, resourceIndex, b.BindingId);
-                        //b.PushSubData();
-                        b.Unbind();
-                    }
-                    else
-                    {
-                        //Debug.LogWarning($"Failed to bind shader storage buffer '{b.GetDescribingName()}' to program '{program.GetDescribingName()}' with name '{b.Data.BindingName}'.");
-                        //program.Data.Shaders.ForEach(x => Debug.Out(x?.Source?.Text ?? string.Empty));
-                    }
+                    buffer.Value.BindSSBO(program);
+                    count++;
                 }
+                if (count>0) Dbg($"BindSSBOs bound {count} SSBO(s)","Buffers");
             }
 
             private bool GetPrograms(
@@ -266,15 +332,20 @@ namespace XREngine.Rendering.OpenGL
             private bool GetCombinedProgram(out GLRenderProgram? vertexProgram, out GLRenderProgram? materialProgram)
             {
                 if ((vertexProgram = materialProgram = _combinedProgram) is null)
+                {
+                    Dbg("GetCombinedProgram: program null","Programs");
                     return false;
+                }
 
                 if (!vertexProgram.Link())
                 {
                     vertexProgram = null;
+                    Dbg("GetCombinedProgram: link failed","Programs");
                     return false;
                 }
 
                 vertexProgram.Use();
+                Dbg("GetCombinedProgram: linked & in use","Programs");
                 return true;
             }
 
@@ -313,10 +384,14 @@ namespace XREngine.Rendering.OpenGL
                 if (materialProgram?.Link() ?? false)
                 {
                     _pipeline!.Set(mask, materialProgram);
+                    Dbg("UseSuppliedVertexShader: material vertex shader linked & set","Programs");
                     return true;
                 }
                 else
+                {
+                    Dbg("UseSuppliedVertexShader: link failed","Programs");
                     return false;
+                }
             }
 
             private bool GenerateVertexShader(out GLRenderProgram? vertexProgram, GLRenderProgram? materialProgram, EProgramStageMask mask)
@@ -327,13 +402,20 @@ namespace XREngine.Rendering.OpenGL
                 if (materialProgram?.Link() ?? false)
                     _pipeline!.Set(mask, materialProgram);
                 else
+                {
+                    Dbg("GenerateVertexShader: material program link failed","Programs");
                     return false;
+                }
 
                 if (vertexProgram?.Link() ?? false)
                     _pipeline!.Set(EProgramStageMask.VertexShaderBit, vertexProgram);
                 else
+                {
+                    Dbg("GenerateVertexShader: vertex program link failed","Programs");
                     return false;
+                }
 
+                Dbg("GenerateVertexShader: success","Programs");
                 return true;
             }
 
@@ -390,24 +472,28 @@ namespace XREngine.Rendering.OpenGL
 
             private void GenProgramsAndBuffers()
             {
-                MakeIndexBuffers();
-
                 var material = Material;
-                //Debug.LogWarning("No material found for mesh renderer, using invalid material.");
-                //Don't use GetRenderMaterial here, global and local override materials are for current render only
-                //material ??= Renderer.GenericToAPI<GLMaterial>(Engine.Rendering.State.CurrentRenderingPipeline!.InvalidMaterial);
                 if (material is null)
                 {
-                    Debug.LogWarning("Failed to retrieve material or produce the invalid material.");
+                    _combinedProgram?.Destroy();
+                    _combinedProgram = null;
+
+                    _separatedVertexProgram?.Destroy();
+                    _separatedVertexProgram = null;
+
                     return;
                 }
 
-                bool hasNoVertexShaders = material.Data.VertexShaders.Count == 0;
+                Dbg("GenProgramsAndBuffers start", "Programs");
+                MakeIndexBuffers();
+
+                bool hasNoVertexShaders = (material?.Data.VertexShaders.Count ?? 0) == 0;
 
                 CollectBuffers();
+                Dbg($"Collected {_bufferCache.Count} buffer(s)","Buffers");
 
                 //Determine how we're combining the material and vertex shader here
-                if (Engine.Rendering.Settings.AllowShaderPipelines && Data.AllowShaderPipelines)
+                if (Engine.Rendering.Settings.AllowShaderPipelines && Data.AllowShaderPipelines && material is not null)
                 {
                     _combinedProgram = null;
 
@@ -419,18 +505,20 @@ namespace XREngine.Rendering.OpenGL
                         shaders,
                         Data.VertexShaderSelector,
                         () => Data.VertexShaderSource ?? string.Empty);
+                    Dbg("GenProgramsAndBuffers: pipeline mode - separated vertex program initiated","Programs");
                 }
                 else
                 {
                     _separatedVertexProgram = null;
 
-                    IEnumerable<XRShader> shaders = material.Data.Shaders;
+                    IEnumerable<XRShader> shaders = material?.Data?.Shaders ?? [];
                     CreateCombinedProgram(
                         ref _combinedProgram,
                         hasNoVertexShaders,
                         shaders,
                         Data.VertexShaderSelector,
                         () => Data.VertexShaderSource ?? string.Empty);
+                    Dbg("GenProgramsAndBuffers: combined program initiated","Programs");
                 }
             }
 
@@ -494,6 +582,7 @@ namespace XREngine.Rendering.OpenGL
             private void CollectBuffers()
             {
                 _bufferCache = [];
+                Dbg("CollectBuffers start","Buffers");
 
                 var meshBuffers = Mesh?.Buffers as IEventDictionary<string, XRDataBuffer>;
                 var rendBuffers = (IEventDictionary<string, XRDataBuffer>)MeshRenderer.Buffers;
@@ -504,6 +593,7 @@ namespace XREngine.Rendering.OpenGL
 
                 foreach (var pair in rendBuffers)
                     _bufferCache.Add(pair.Key, Renderer.GenericToAPI<GLDataBuffer>(pair.Value)!);
+                Dbg($"CollectBuffers end. Total={_bufferCache.Count}","Buffers");
 
                 //Data.Buffers.Added += Buffers_Added;
                 //Data.Buffers.Removed += Buffers_Removed;
@@ -524,6 +614,7 @@ namespace XREngine.Rendering.OpenGL
                 GLRenderProgram? program = s as GLRenderProgram;
                 if (e.PropertyName != nameof(GLRenderProgram.IsLinked) || !(program?.IsLinked ?? false))
                     return;
+                Dbg("CheckProgramLinked: program linked - binding buffers","Programs");
 
                 //Continue linking the program
                 program.PropertyChanged -= CheckProgramLinked;
@@ -547,9 +638,16 @@ namespace XREngine.Rendering.OpenGL
             {
                 var mesh = Mesh;
                 if (mesh is null || BuffersBound)
+                {
+                    if (mesh is null)
+                        Dbg("BindBuffers early-out: mesh null","Buffers");
+                    if (BuffersBound)
+                        Dbg("BindBuffers early-out: already bound","Buffers");
                     return;
+                }
 
-                Renderer.BindMesh(this);
+                Renderer.BindForRender(this);
+                Dbg("BindBuffers: binding attribute & index buffers","Buffers");
 
                 foreach (GLDataBuffer buffer in _bufferCache.Values)
                 {
@@ -564,9 +662,10 @@ namespace XREngine.Rendering.OpenGL
                 if (PointIndicesBuffer is not null)
                     Api.VertexArrayElementBuffer(BindingId, PointIndicesBuffer.BindingId);
 
-                Renderer.BindMesh(null);
+                Renderer.BindForRender(null);
 
                 BuffersBound = true;
+                Dbg("BindBuffers: complete","Buffers");
             }
 
             //struct DrawElementsIndirectCommand
@@ -755,17 +854,32 @@ namespace XREngine.Rendering.OpenGL
 
         public GLMeshRenderer? ActiveMeshRenderer { get; private set; } = null;
 
-        public void BindMesh(GLMeshRenderer? mesh)
+        public void Unbind()
+        {
+            Api.BindVertexArray(0);
+            ActiveMeshRenderer = null;
+        }
+        public void BindForRender(GLMeshRenderer? mesh)
         {
             Api.BindVertexArray(mesh?.BindingId ?? 0);
             ActiveMeshRenderer = mesh;
+            if (mesh == null) return;
+
+            // Ensure an element array buffer is bound (required for *ElementsIndirect* draws)
+            // Prefer triangle indices, else lines, else points.
+            GLDataBuffer? elem = mesh.TriangleIndicesBuffer ?? mesh.LineIndicesBuffer ?? mesh.PointIndicesBuffer;
+            if (elem != null)
+            {
+                elem.Generate(); // guarantee GL name
+                Api.VertexArrayElementBuffer(mesh.BindingId, elem.BindingId);
+            }
         }
         public void RenderMesh(GLMeshRenderer manager, bool preservePreviouslyBound = true, uint instances = 1)
         {
             GLMeshRenderer? prev = ActiveMeshRenderer;
-            BindMesh(manager);
+            BindForRender(manager);
             RenderCurrentMesh(instances);
-            BindMesh(preservePreviouslyBound ? prev : null);
+            BindForRender(preservePreviouslyBound ? prev : null);
         }
 
         //TODO: use instances for left eye, right eye, visible scene mirrors, and shadow maps in parallel
@@ -804,269 +918,5 @@ namespace XREngine.Rendering.OpenGL
             //Api.BindBuffer(GLEnum.DrawIndirectBuffer, ActiveMeshRenderer.IndirectBuffer);
             Api.MultiDrawElementsIndirect(GLEnum.Triangles, ToGLEnum(ActiveMeshRenderer.TrianglesElementType), null, meshCount, 0);
         }
-
-        public IGLTexture? BoundTexture { get; set; }
-
-        /// <summary>
-        /// Modifies the rendering API's state to adhere to the given material's settings.
-        /// </summary>
-        /// <param name="r"></param>
-        private void ApplyRenderParameters(RenderingParameters r)
-        {
-            if (r is null)
-                return;
-
-            //Api.PointSize(r.PointSize);
-            //Api.LineWidth(r.LineWidth.Clamp(0.0f, 1.0f));
-            Api.ColorMask(r.WriteRed, r.WriteGreen, r.WriteBlue, r.WriteAlpha);
-
-            var winding = r.Winding;
-            if (Engine.Rendering.State.ReverseWinding)
-                winding = winding == EWinding.Clockwise ? EWinding.CounterClockwise : EWinding.Clockwise;
-            Api.FrontFace(ToGLEnum(winding));
-
-            ApplyCulling(r);
-            ApplyDepth(r);
-            ApplyBlending(r);
-            ApplyStencil(r);
-            //Alpha testing is done in-shader
-        }
-
-        private GLEnum ToGLEnum(EWinding winding)
-            => winding switch
-            {
-                EWinding.Clockwise => GLEnum.CW,
-                EWinding.CounterClockwise => GLEnum.Ccw,
-                _ => GLEnum.Ccw
-            };
-
-        private void ApplyStencil(RenderingParameters r)
-        {
-            switch (r.StencilTest.Enabled)
-            {
-                case ERenderParamUsage.Enabled:
-                    {
-                        StencilTest st = r.StencilTest;
-                        StencilTestFace b = st.BackFace;
-                        StencilTestFace f = st.FrontFace;
-
-                        Api.StencilOpSeparate(GLEnum.Back,
-                            (StencilOp)(int)b.BothFailOp,
-                            (StencilOp)(int)b.StencilPassDepthFailOp,
-                            (StencilOp)(int)b.BothPassOp);
-
-                        Api.StencilOpSeparate(GLEnum.Front,
-                            (StencilOp)(int)f.BothFailOp,
-                            (StencilOp)(int)f.StencilPassDepthFailOp,
-                            (StencilOp)(int)f.BothPassOp);
-
-                        Api.StencilMaskSeparate(GLEnum.Back, b.WriteMask);
-                        Api.StencilMaskSeparate(GLEnum.Front, f.WriteMask);
-
-                        Api.StencilFuncSeparate(GLEnum.Back,
-                            StencilFunction.Never + (int)b.Function, b.Reference, b.ReadMask);
-                        Api.StencilFuncSeparate(GLEnum.Front,
-                            StencilFunction.Never + (int)f.Function, f.Reference, f.ReadMask);
-
-                        break;
-                    }
-
-                case ERenderParamUsage.Disabled:
-                    //GL.Disable(EnableCap.StencilTest);
-                    Api.StencilMask(0);
-                    Api.StencilOp(GLEnum.Keep, GLEnum.Keep, GLEnum.Keep);
-                    Api.StencilFunc(StencilFunction.Always, 0, 0);
-                    break;
-            }
-        }
-
-        private void ApplyBlending(RenderingParameters r)
-        {
-            if (r.BlendModeAllDrawBuffers is not null)
-            {
-                var x = r.BlendModeAllDrawBuffers;
-                if (x.Enabled == ERenderParamUsage.Enabled)
-                {
-                    Api.Enable(EnableCap.Blend);
-
-                    Api.BlendEquationSeparate(
-                        ToGLEnum(x.RgbEquation),
-                        ToGLEnum(x.AlphaEquation));
-
-                    Api.BlendFuncSeparate(
-                        ToGLEnum(x.RgbSrcFactor),
-                        ToGLEnum(x.RgbDstFactor),
-                        ToGLEnum(x.AlphaSrcFactor),
-                        ToGLEnum(x.AlphaDstFactor));
-                }
-                else if (x.Enabled == ERenderParamUsage.Disabled)
-                    Api.Disable(EnableCap.Blend);
-            }
-            else if (r.BlendModesPerDrawBuffer is not null)
-            {
-                if (r.BlendModesPerDrawBuffer.Any(r => r.Value.Enabled == ERenderParamUsage.Enabled))
-                {
-                    Api.Enable(EnableCap.Blend);
-                    foreach (KeyValuePair<uint, BlendMode> pair in r.BlendModesPerDrawBuffer)
-                    {
-                        uint drawBuffer = pair.Key;
-                        BlendMode x = pair.Value;
-                        if (x.Enabled == ERenderParamUsage.Enabled)
-                        {
-                            Api.BlendEquationSeparate(
-                                drawBuffer,
-                                ToGLEnum(x.RgbEquation),
-                                ToGLEnum(x.AlphaEquation));
-
-                            Api.BlendFuncSeparate(
-                                drawBuffer,
-                                ToGLEnum(x.RgbSrcFactor),
-                                ToGLEnum(x.RgbDstFactor),
-                                ToGLEnum(x.AlphaSrcFactor),
-                                ToGLEnum(x.AlphaDstFactor));
-                        }
-                        else
-                        {
-                            //Apply a blend mode that mimics non-blending for this draw buffer
-
-                            Api.BlendEquationSeparate(
-                                drawBuffer,
-                                GLEnum.FuncAdd,
-                                GLEnum.FuncAdd);
-
-                            Api.BlendFuncSeparate(
-                                drawBuffer,
-                                GLEnum.One,
-                                GLEnum.Zero,
-                                GLEnum.One,
-                                GLEnum.Zero);
-                        }
-                    }
-                }
-                else if (r.BlendModesPerDrawBuffer.Count == 0 || r.BlendModesPerDrawBuffer.Any(r => r.Value.Enabled == ERenderParamUsage.Disabled))
-                    Api.Disable(EnableCap.Blend);
-            }
-            else
-                Api.Disable(EnableCap.Blend);
-        }
-
-        private void ApplyCulling(RenderingParameters r)
-        {
-            if (r.CullMode == ECullMode.None)
-                Api.Disable(EnableCap.CullFace);
-            else
-            {
-                Api.Enable(EnableCap.CullFace);
-                var cullMode = r.CullMode;
-                if (Engine.Rendering.State.ReverseCulling)
-                    cullMode = cullMode switch
-                    {
-                        ECullMode.Front => ECullMode.Back,
-                        ECullMode.Back => ECullMode.Front,
-                        _ => cullMode
-                    };
-                Api.CullFace(ToGLEnum(cullMode));
-            }
-        }
-
-        private void ApplyDepth(RenderingParameters r)
-        {
-            switch (r.DepthTest.Enabled)
-            {
-                case ERenderParamUsage.Enabled:
-                    Api.Enable(EnableCap.DepthTest);
-                    Api.DepthFunc(ToGLEnum(r.DepthTest.Function));
-                    Api.DepthMask(r.DepthTest.UpdateDepth);
-                    break;
-
-                case ERenderParamUsage.Disabled:
-                    Api.Disable(EnableCap.DepthTest);
-                    break;
-            }
-        }
-
-        private GLEnum ToGLEnum(EBlendingFactor factor)
-            => factor switch
-            {
-                EBlendingFactor.Zero => GLEnum.Zero,
-                EBlendingFactor.One => GLEnum.One,
-                EBlendingFactor.SrcColor => GLEnum.SrcColor,
-                EBlendingFactor.OneMinusSrcColor => GLEnum.OneMinusSrcColor,
-                EBlendingFactor.DstColor => GLEnum.DstColor,
-                EBlendingFactor.OneMinusDstColor => GLEnum.OneMinusDstColor,
-                EBlendingFactor.SrcAlpha => GLEnum.SrcAlpha,
-                EBlendingFactor.OneMinusSrcAlpha => GLEnum.OneMinusSrcAlpha,
-                EBlendingFactor.DstAlpha => GLEnum.DstAlpha,
-                EBlendingFactor.OneMinusDstAlpha => GLEnum.OneMinusDstAlpha,
-                EBlendingFactor.ConstantColor => GLEnum.ConstantColor,
-                EBlendingFactor.OneMinusConstantColor => GLEnum.OneMinusConstantColor,
-                EBlendingFactor.ConstantAlpha => GLEnum.ConstantAlpha,
-                EBlendingFactor.OneMinusConstantAlpha => GLEnum.OneMinusConstantAlpha,
-                EBlendingFactor.SrcAlphaSaturate => GLEnum.SrcAlphaSaturate,
-                _ => GLEnum.Zero,
-            };
-
-        private GLEnum ToGLEnum(EBlendEquationMode equation)
-            => equation switch
-            {
-                EBlendEquationMode.FuncAdd => GLEnum.FuncAdd,
-                EBlendEquationMode.FuncSubtract => GLEnum.FuncSubtract,
-                EBlendEquationMode.FuncReverseSubtract => GLEnum.FuncReverseSubtract,
-                EBlendEquationMode.Min => GLEnum.Min,
-                EBlendEquationMode.Max => GLEnum.Max,
-                _ => GLEnum.FuncAdd,
-            };
-
-        private GLEnum ToGLEnum(EComparison function)
-            => function switch
-            {
-                EComparison.Never => GLEnum.Never,
-                EComparison.Less => GLEnum.Less,
-                EComparison.Equal => GLEnum.Equal,
-                EComparison.Lequal => GLEnum.Lequal,
-                EComparison.Greater => GLEnum.Greater,
-                EComparison.Nequal => GLEnum.Notequal,
-                EComparison.Gequal => GLEnum.Gequal,
-                EComparison.Always => GLEnum.Always,
-                _ => GLEnum.Never,
-            };
-
-        private GLEnum ToGLEnum(ECullMode cullMode)
-            => cullMode switch
-            {
-                ECullMode.Front => GLEnum.Front,
-                ECullMode.Back => GLEnum.Back,
-                _ => GLEnum.FrontAndBack,
-            };
-
-        private GLEnum ToGLEnum(IndexSize elementType)
-            => elementType switch
-            {
-                IndexSize.Byte => GLEnum.UnsignedByte,
-                IndexSize.TwoBytes => GLEnum.UnsignedShort,
-                IndexSize.FourBytes => GLEnum.UnsignedInt,
-                _ => GLEnum.UnsignedInt,
-            };
-
-        private GLEnum ToGLEnum(EPrimitiveType type)
-            => type switch
-            {
-                EPrimitiveType.Points => GLEnum.Points,
-                EPrimitiveType.Lines => GLEnum.Lines,
-                EPrimitiveType.LineLoop => GLEnum.LineLoop,
-                EPrimitiveType.LineStrip => GLEnum.LineStrip,
-                EPrimitiveType.Triangles => GLEnum.Triangles,
-                EPrimitiveType.TriangleStrip => GLEnum.TriangleStrip,
-                EPrimitiveType.TriangleFan => GLEnum.TriangleFan,
-                EPrimitiveType.LinesAdjacency => GLEnum.LinesAdjacency,
-                EPrimitiveType.LineStripAdjacency => GLEnum.LineStripAdjacency,
-                EPrimitiveType.TrianglesAdjacency => GLEnum.TrianglesAdjacency,
-                EPrimitiveType.TriangleStripAdjacency => GLEnum.TriangleStripAdjacency,
-                EPrimitiveType.Patches => GLEnum.Patches,
-                _ => GLEnum.Triangles,
-            };
-
-        public int GetInteger(GLEnum value)
-            => Api.GetInteger(value);
     }
 }

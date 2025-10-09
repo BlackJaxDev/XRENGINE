@@ -1,0 +1,29 @@
+#version 460 core
+
+// Compute shader to reset GPU counters used in GPU-based culling and rendering pipelines.
+// This shader should be dispatched with a single workgroup (1,1,1).
+
+layout(local_size_x = 1) in;
+
+// Buffers (same bindings as stage usage for simplicity)
+layout(std430, binding = 0) buffer CulledCountBuffer { uint CulledCount; };
+layout(std430, binding = 1) buffer DrawCountBuffer { uint DrawCount; };
+layout(std430, binding = 2) buffer CullingOverflowFlagBuffer { uint CullingOverflowFlag; };
+layout(std430, binding = 3) buffer IndirectOverflowFlagBuffer { uint IndirectOverflowFlag; };
+layout(std430, binding = 4) buffer TruncationFlagBuffer { uint TruncationFlag; };
+// Optional stats buffer (binding = 8) if bound: Input, Culled, Draw, RejectedFrustum, RejectedDistance
+layout(std430, binding = 8) buffer StatsBuffer { uint StatsInputCount; uint StatsCulledCount; uint StatsDrawCount; uint StatsRejectedFrustum; uint StatsRejectedDistance; };
+
+void main() {
+    CulledCount = 0u;
+    DrawCount = 0u;
+    CullingOverflowFlag = 0u;
+    IndirectOverflowFlag = 0u;
+    TruncationFlag = 0u;
+    // Reset stats (per-frame)
+    StatsInputCount = 0u;
+    StatsCulledCount = 0u;
+    StatsDrawCount = 0u;
+    StatsRejectedFrustum = 0u;
+    StatsRejectedDistance = 0u;
+}

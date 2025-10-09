@@ -10,6 +10,14 @@
         GeometryShaderBit = 04,
         TessControlShaderBit = 08,
         TessEvaluationShaderBit = 16,
-        ComputeShaderBit = 32
+        ComputeShaderBit = 32,
+        /// <summary>
+        /// Requires GL_NV_mesh_shader extension
+        /// </summary>
+        MeshShaderBit = 64,
+        /// <summary>
+        /// Requires GL_NV_mesh_shader extension
+        /// </summary>
+        TaskShaderBit = 128,
     }
 }

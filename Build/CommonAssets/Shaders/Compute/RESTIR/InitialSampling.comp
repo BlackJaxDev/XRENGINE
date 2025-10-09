@@ -1,0 +1,76 @@
+#version 460 core
+#extension GL_NV_ray_tracing : require
+
+layout(local_size_x = 16, local_size_y = 16) in;
+
+layout(binding = 0) uniform accelerationStructureNV topLevelAS;
+layout(binding = 1) uniform sampler2D gPosition;
+layout(binding = 2) uniform sampler2D gNormal;
+
+struct Reservoir 
+{
+    vec3 Li; 
+    float pdf; 
+    vec3 Lprev; 
+    float W; 
+    int M; 
+    int pad[3];
+};
+layout(std430, binding = 3) buffer InitialReservoir { Reservoir R[]; };
+
+uniform vec2 invRes;
+uniform uint frameIndex;
+
+uint wangHash(uint seed)
+{
+    seed = (seed ^ 61u) ^ (seed >> 16);
+    seed *= 9u;
+    seed = seed ^ (seed >> 4);
+    seed *= 0x27d4eb2du;
+    seed = seed ^ (seed >> 15);
+    return seed;
+}
+
+float rand(inout uint state)
+{
+    state = wangHash(state);
+    return float(state) / float(0xFFFFFFFFu);
+}
+
+vec3 sampleHemisphere(vec3 N, inout uint state)
+{
+    float u1 = rand(state);
+    float u2 = rand(state);
+    float r = sqrt(u1);
+    float theta = 2.0 * 3.14159265359 * u2;
+    vec3 H = vec3(r * cos(theta), r * sin(theta), sqrt(max(0.0, 1.0 - u1)));
+    vec3 T = normalize(cross(abs(N.z) < 0.999 ? vec3(0,0,1) : vec3(0,1,0), N));
+    vec3 B = cross(N, T);
+    return normalize(H.x * T + H.y * B + H.z * N);
+}
+
+void main()
+{
+    uvec2 pix = gl_GlobalInvocationID.xy;
+    uint idx = pix.y * uint(1.0 / invRes.x) + pix.x;
+
+    vec3 pos = texelFetch(gPosition, ivec2(pix), 0).xyz;
+    vec3 nor = normalize(texelFetch(gNormal, ivec2(pix), 0).xyz);
+
+    uint state = idx + frameIndex * 9781u;
+    vec3 wi = sampleHemisphere(nor, state);
+    float pdf = max(dot(nor, wi), 0.0) / 3.14159265359;
+
+    // Trace ray with payload
+    struct PRD { vec3 L; } prd;
+    prd.L = vec3(0.0);
+    traceRayNV(topLevelAS, 0, 0, 0, 0, pos, wi, 0.001, 1e30, 0, prd);
+
+    Reservoir res;
+    res.Li    = prd.L;
+    res.pdf   = pdf;
+    res.Lprev = prd.L;
+    res.W     = 1.0;
+    res.M     = 1;
+    R[idx]    = res;
+}

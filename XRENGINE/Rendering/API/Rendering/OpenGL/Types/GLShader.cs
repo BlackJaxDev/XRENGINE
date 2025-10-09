@@ -64,6 +64,8 @@ namespace XREngine.Rendering.OpenGL
                     EShaderType.TessControl => ShaderType.TessControlShader,
                     EShaderType.TessEvaluation => ShaderType.TessEvaluationShader,
                     EShaderType.Compute => ShaderType.ComputeShader,
+                    EShaderType.Task => (ShaderType)0x955A,
+                    EShaderType.Mesh => (ShaderType)0x9559,
                     _ => ShaderType.FragmentShader
                 };
 

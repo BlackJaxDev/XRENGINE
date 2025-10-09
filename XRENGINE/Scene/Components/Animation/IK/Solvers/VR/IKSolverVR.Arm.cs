@@ -881,6 +881,7 @@ namespace XREngine.Components.Animation
                 Vector3 chestRelDir = _chestRotation.Rotate(chestDir * Length);
                 Vector3 tposeTarget = Shoulder.SolverPosition + chestRelDir;
                 Vector3 positionDiff = TargetPosition - tposeTarget;
+                //Engine.Rendering.Debug.RenderLine(TargetPosition, tposeTarget, ColorF4.Magenta);
                 Vector3 positionDiffWorkingSpace = Quaternion.Inverse(workingSpace).Rotate(positionDiff).Normalized();
 
                 float Z = Settings.FlipZInAtan2 || Settings.FlipZInCalcPitch ? -positionDiffWorkingSpace.Z : positionDiffWorkingSpace.Z;
@@ -888,7 +889,9 @@ namespace XREngine.Components.Animation
                 pitchDeg -= Settings.ShoulderPitchOffset;
                 pitchDeg = DamperValue(pitchDeg, -45f - Settings.ShoulderPitchOffset, 45f - Settings.ShoulderPitchOffset);
 
-                pitchRotation = Quaternion.CreateFromAxisAngle(workingSpace.Rotate(Globals.Right), float.DegreesToRadians(-pitchDeg)).Normalized();
+                //Debug.Out($"{(isLeft ? "Left" : "Right")} Shoulder | Pitch: {-pitchDeg}");
+                //Engine.Rendering.Debug.RenderLine(tposeTarget, tposeTarget + workingSpace.Rotate(Globals.Right), ColorF4.Magenta);
+                pitchRotation = Quaternion.CreateFromAxisAngle(workingSpace.Rotate(Globals.Right), -float.DegreesToRadians(pitchDeg)).Normalized();
             }
 
             private void CalcYaw(out float yawDeg, out Quaternion yawRotation)
@@ -941,6 +944,9 @@ namespace XREngine.Components.Animation
                 Vector3 yawFromDir = Shoulder.SolverRotation.Rotate(Shoulder.Axis);
                 Vector3 yawToDir = workingSpace.Rotate(yawQuat.Rotate(Globals.Forward));
                 yawRotation = XRMath.RotationBetweenVectors(yawFromDir, yawToDir).Normalized();
+
+                //float dot = Vector3.Dot(yawFromDir, yawToDir);
+                //Debug.Out($"{(isLeft ? "Left" : "Right")} Shoulder | Yaw: {yawDeg} (dot: {dot})");
             }
 
             public override void ResetOffsets()

@@ -18,6 +18,26 @@ public class DefaultRenderPipeline : RenderPipeline
     private readonly NearToFarRenderCommandSorter _nearToFarSorter = new();
     private readonly FarToNearRenderCommandSorter _farToNearSorter = new();
 
+    private bool _gpuRenderDispatch = Engine.UserSettings.GPURenderDispatch;
+    /// <summary>
+    /// If true, the render pipeline will use GPU-based rendering for dispatching commands.
+    /// </summary>
+    public bool GpuRenderDispatch
+    {
+        get => _gpuRenderDispatch;
+        set
+        {
+            SetField(ref _gpuRenderDispatch, value);
+            _renderDispatchCommandType = null; // Invalidate cached type
+        }
+    }
+
+    private Type? _renderDispatchCommandType = null;
+    public Type RenderDispatchCommandType 
+        => _renderDispatchCommandType ??= GpuRenderDispatch
+            ? typeof(VPRC_RenderMeshesPassGPU)
+            : typeof(VPRC_RenderMeshesPassCPU);
+
     private string BrightPassShaderName() => 
         //Stereo ? "BrightPassStereo.fs" : 
         "BrightPass.fs";
@@ -101,12 +121,12 @@ public class DefaultRenderPipeline : RenderPipeline
         return c;
     }
 
-    public static ViewportRenderCommandContainer CreateFBOTargetCommands()
+    public ViewportRenderCommandContainer CreateFBOTargetCommands()
     {
         ViewportRenderCommandContainer c = [];
 
         c.Add<VPRC_SetClears>().Set(ColorF4.Transparent, 1.0f, 0);
-        c.Add<VPRC_RenderMeshesPass>().RenderPass = (int)EDefaultRenderPass.PreRender;
+        c.Add<VPRC_RenderMeshesPassCPU>().RenderPass = (int)EDefaultRenderPass.PreRender;
 
         using (c.AddUsing<VPRC_PushOutputFBORenderArea>())
         {
@@ -116,16 +136,16 @@ public class DefaultRenderPipeline : RenderPipeline
                 c.Add<VPRC_ClearByBoundFBO>();
                 c.Add<VPRC_DepthTest>().Enable = true;
                 c.Add<VPRC_DepthWrite>().Allow = false;
-                c.Add<VPRC_RenderMeshesPass>().RenderPass = (int)EDefaultRenderPass.Background;
+                c.Add(RenderDispatchCommandType, (int)EDefaultRenderPass.Background);
                 c.Add<VPRC_DepthWrite>().Allow = true;
-                c.Add<VPRC_RenderMeshesPass>().RenderPass = (int)EDefaultRenderPass.OpaqueDeferredLit;
-                c.Add<VPRC_RenderMeshesPass>().RenderPass = (int)EDefaultRenderPass.OpaqueForward;
-                c.Add<VPRC_RenderMeshesPass>().RenderPass = (int)EDefaultRenderPass.TransparentForward;
+                c.Add(RenderDispatchCommandType, (int)EDefaultRenderPass.OpaqueDeferredLit);
+                c.Add(RenderDispatchCommandType, (int)EDefaultRenderPass.OpaqueForward);
+                c.Add(RenderDispatchCommandType, (int)EDefaultRenderPass.TransparentForward);
                 c.Add<VPRC_DepthFunc>().Comp = EComparison.Always;
-                c.Add<VPRC_RenderMeshesPass>().RenderPass = (int)EDefaultRenderPass.OnTopForward;
+                c.Add(RenderDispatchCommandType, (int)EDefaultRenderPass.OnTopForward);
             }
         }
-        c.Add<VPRC_RenderMeshesPass>().RenderPass = (int)EDefaultRenderPass.PostRender;
+        c.Add<VPRC_RenderMeshesPassCPU>().RenderPass = (int)EDefaultRenderPass.PostRender;
         return c;
     }
 
@@ -138,7 +158,7 @@ public class DefaultRenderPipeline : RenderPipeline
         //Create FBOs only after all their texture dependencies have been cached.
 
         c.Add<VPRC_SetClears>().Set(ColorF4.Transparent, 1.0f, 0);
-        c.Add<VPRC_RenderMeshesPass>().RenderPass = (int)EDefaultRenderPass.PreRender;
+        c.Add<VPRC_RenderMeshesPassCPU>().RenderPass = (int)EDefaultRenderPass.PreRender;
 
         using (c.AddUsing<VPRC_PushViewportRenderArea>(t => t.UseInternalResolution = true))
         {
@@ -171,8 +191,8 @@ public class DefaultRenderPipeline : RenderPipeline
             {
                 c.Add<VPRC_StencilMask>().Set(~0u);
                 c.Add<VPRC_DepthTest>().Enable = true;
-                c.Add<VPRC_RenderMeshesPass>().RenderPass = (int)EDefaultRenderPass.OpaqueDeferredLit;
-                c.Add<VPRC_RenderMeshesPass>().RenderPass = (int)EDefaultRenderPass.DeferredDecals;
+                c.Add(RenderDispatchCommandType, (int)EDefaultRenderPass.OpaqueDeferredLit);
+                c.Add(RenderDispatchCommandType, (int)EDefaultRenderPass.DeferredDecals);
             }
 
             c.Add<VPRC_DepthTest>().Enable = false;
@@ -211,14 +231,14 @@ public class DefaultRenderPipeline : RenderPipeline
 
                 //No depth writing for backgrounds (skybox)
                 c.Add<VPRC_DepthTest>().Enable = false;
-                c.Add<VPRC_RenderMeshesPass>().RenderPass = (int)EDefaultRenderPass.Background;
+                c.Add(RenderDispatchCommandType, (int)EDefaultRenderPass.Background);
 
                 c.Add<VPRC_DepthTest>().Enable = true;
-                c.Add<VPRC_RenderMeshesPass>().RenderPass = (int)EDefaultRenderPass.OpaqueForward;
+                c.Add(RenderDispatchCommandType, (int)EDefaultRenderPass.OpaqueForward);
 
                 //c.Add<VPRC_DepthTest>().Enable = true;
-                c.Add<VPRC_RenderMeshesPass>().RenderPass = (int)EDefaultRenderPass.TransparentForward;
-                c.Add<VPRC_RenderMeshesPass>().RenderPass = (int)EDefaultRenderPass.OnTopForward;
+                c.Add(RenderDispatchCommandType, (int)EDefaultRenderPass.TransparentForward);
+                c.Add(RenderDispatchCommandType, (int)EDefaultRenderPass.OnTopForward);
 
                 c.Add<VPRC_RenderDebugShapes>();
                 c.Add<VPRC_RenderDebugPhysics>();
@@ -256,7 +276,7 @@ public class DefaultRenderPipeline : RenderPipeline
                 c.Add<VPRC_RenderScreenSpaceUI>()/*.OutputTargetFBOName = UserInterfaceFBOName*/;
             }
         }
-        c.Add<VPRC_RenderMeshesPass>().RenderPass = (int)EDefaultRenderPass.PostRender;
+        c.Add<VPRC_RenderMeshesPassCPU>().RenderPass = (int)EDefaultRenderPass.PostRender;
         return c;
     }
 

@@ -32,11 +32,11 @@ namespace XREngine.Rendering
             _window = window;
 
             //Set the initial object cache for this window of all existing render objects
-            lock (_roCacheLock)
+            using (_roCacheLock.EnterScope())
                 _renderObjectCache = Engine.Rendering.CreateObjectsForNewRenderer(this);
         }
 
-        private readonly object _roCacheLock = new();
+        private readonly Lock _roCacheLock = new();
         private readonly ConcurrentDictionary<GenericRenderObject, AbstractRenderAPIObject> _renderObjectCache = [];
         public IReadOnlyDictionary<GenericRenderObject, AbstractRenderAPIObject> RenderObjectCache => _renderObjectCache;
 
@@ -104,7 +104,7 @@ namespace XREngine.Rendering
                 return null;
 
             AbstractRenderAPIObject? obj;
-            lock (_roCacheLock)
+            using (_roCacheLock.EnterScope())
             {
                 obj = _renderObjectCache.GetOrAdd(renderObject, _ => CreateAPIRenderObject(renderObject));
                 if (generateNow && !obj.IsGenerated)
@@ -121,10 +121,8 @@ namespace XREngine.Rendering
                 apiObject = null;
                 return false;
             }
-            lock (_roCacheLock)
-            {
+            using (_roCacheLock.EnterScope())
                 return _renderObjectCache.TryGetValue(renderObject, out apiObject);
-            }
         }
 
         /// <summary>
@@ -187,7 +185,7 @@ namespace XREngine.Rendering
             //GC.SuppressFinalize(this);
         }
 
-        public abstract void DispatchCompute(XRRenderProgram program, int v1, int v2, int v3);
+        public abstract void DispatchCompute(XRRenderProgram program, int numGroupsX, int numGroupsY, int numGroupsZ);
 
         public abstract void GetScreenshotAsync(BoundingRectangle region, bool withTransparency, Action<MagickImage, int> imageCallback);
 
@@ -398,6 +396,65 @@ namespace XREngine.Rendering
 
         public abstract void MemoryBarrier(EMemoryBarrierMask mask);
         public abstract void ColorMask(bool red, bool green, bool blue, bool alpha);
+
+        // ===================== Indirect + Pipeline Abstraction (initial surface) =====================
+
+        /// <summary>
+        /// Binds the VAO (or equivalent) for the given mesh renderer version for subsequent draws.
+        /// Pass null to unbind.
+        /// </summary>
+        public abstract void BindVAOForRenderer(XRMeshRenderer.BaseVersion? version);
+
+        /// <summary>
+        /// Returns true if an index (element) buffer is bound for the currently bound VAO.
+        /// Implementations should check triangle/line/point element buffers according to active primitive.
+        /// </summary>
+        public abstract bool ValidateIndexedVAO(XRMeshRenderer.BaseVersion? version);
+
+        /// <summary>
+        /// Ensures vertex attributes and buffer bindings for the active program are configured on the VAO for the given mesh renderer version.
+        /// Should be called when switching programs to avoid missing attribute locations.
+        /// </summary>
+        public abstract void ConfigureVAOAttributesForProgram(XRRenderProgram program, XRMeshRenderer.BaseVersion? version);
+
+        /// <summary>
+        /// Bind the draw-indirect buffer target to the provided buffer.
+        /// </summary>
+        public abstract void BindDrawIndirectBuffer(XRDataBuffer buffer);
+        public abstract void UnbindDrawIndirectBuffer();
+
+        /// <summary>
+        /// Bind/unbind the parameter buffer (draw count source) if supported.
+        /// </summary>
+        public abstract void BindParameterBuffer(XRDataBuffer buffer);
+        public abstract void UnbindParameterBuffer();
+
+        /// <summary>
+        /// Issue indirect multi-draws.
+        /// </summary>
+        public abstract void MultiDrawElementsIndirect(uint drawCount, uint stride);
+        public abstract void MultiDrawElementsIndirectWithOffset(uint drawCount, uint stride, nuint byteOffset);
+    public abstract void MultiDrawElementsIndirectCount(uint maxDrawCount, uint stride, nuint byteOffset = 0);
+
+        /// <summary>
+        /// Apply the given render parameters (depth/blend/cull/stencil, etc.).
+        /// </summary>
+        public abstract void ApplyRenderParameters(RenderingParameters parameters);
+
+        /// <summary>
+        /// Set standard engine uniforms (e.g. camera) for the provided program.
+        /// </summary>
+        public abstract void SetEngineUniforms(XRRenderProgram program, XRCamera camera);
+
+        /// <summary>
+        /// Set material parameters/textures for the provided program.
+        /// </summary>
+        public abstract void SetMaterialUniforms(XRMaterial material, XRRenderProgram program);
+
+        /// <summary>
+        /// Returns whether the current API supports the Count variant for MultiDrawElementsIndirect.
+        /// </summary>
+        public abstract bool SupportsIndirectCountDraw();
     }
     [Flags]
     public enum EMemoryBarrierMask : int
@@ -409,16 +466,16 @@ namespace XREngine.Rendering
         TextureFetch = 0x8,
         ShaderGlobalAccess = 0x10,
         ShaderImageAccess = 0x20,
-        Command = 0x40,
-        PixelBuffer = 0x80,
-        TextureUpdate = 0x100,
-        BufferUpdate = 0x200,
-        Framebuffer = 0x400,
-        TransformFeedback = 0x800,
-        AtomicCounter = 0x1000,
-        ShaderStorage = 0x2000,
-        ClientMappedBuffer = 0x4000,
-        QueryBuffer = 0x8000,
+    Command = 0x40,
+    PixelBuffer = 0x80,
+    TextureUpdate = 0x100,
+    BufferUpdate = 0x200,
+    Framebuffer = 0x400,
+    TransformFeedback = 0x800,
+    AtomicCounter = 0x1000,
+    ShaderStorage = 0x2000,
+    ClientMappedBuffer = 0x4000,
+    QueryBuffer = 0x8000,
         All = unchecked((int)0xFFFFFFFF),
     }
     public abstract unsafe partial class AbstractRenderer<TAPI>(XRWindow window, bool shouldLinkWindow = true) : AbstractRenderer(window, shouldLinkWindow) where TAPI : NativeAPI

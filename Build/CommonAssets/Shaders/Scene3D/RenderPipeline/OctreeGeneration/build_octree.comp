@@ -1,0 +1,184 @@
+#version 460
+
+#define MAX_OBJECTS 1024
+
+// Input: Morton codes and original object IDs (pre-sorted by a GPU pass)
+struct MortonObject
+{
+    uint mortonCode;
+    uint objectId;
+};
+
+// Expect a pre-sorted array of morton codes/object IDs of length numObjects
+layout(std430, binding = 1) buffer MortonCodes
+{
+    MortonObject mortonObjects[];
+};
+
+// Input: Original AABBs for all objects
+layout(std430, binding = 0) buffer AABBs
+{
+    vec3 aabbMin[MAX_OBJECTS];
+    vec3 aabbMax[MAX_OBJECTS];
+};
+
+// Output: The constructed octree (leaf nodes first, internal nodes appended by a separate pass)
+struct OctreeNode
+{
+    vec3 minBounds;
+    vec3 maxBounds;
+    int  childIndices[8];   // -1 means empty, 8-way fan-out
+    uint parentIndex;       // Index to the parent node (uint(-1) if none)
+    uint objectStartIndex;  // Start index for leaf node objects (optional; 0 for internal nodes)
+    uint objectCount;       // For leaves, number of objects (usually 1). 0 for internal nodes.
+    uint _pad0;
+};
+
+layout(std430, binding = 2) buffer Octree
+{
+    uint numNodes;     // total nodes (set after build)
+    uint rootIndex;    // index of root node (set in finalize pass)
+    OctreeNode nodes[];
+};
+
+// Atomic counter for allocating internal nodes (optional; may be used by a follow-up pass)
+// No counters needed; we deterministically assign internal nodes at indices [numObjects .. numObjects+numObjects-2]
+
+uniform uint numObjects;
+uniform vec3 sceneMin;
+uniform vec3 sceneMax;
+
+// LCP using 32-bit morton codes (with guard values at ends)
+int clz(uint x)
+{
+    if (x == 0u)
+        return 32;
+
+    int n = 0;
+    if (x <= 0x0000FFFFu) { n += 16; x <<= 16; }
+    if (x <= 0x00FFFFFFu) { n += 8;  x <<= 8;  }
+    if (x <= 0x0FFFFFFFu) { n += 4;  x <<= 4;  }
+    if (x <= 0x3FFFFFFFu) { n += 2;  x <<= 2;  }
+    if (x <= 0x7FFFFFFFu) { n += 1; }
+    return n;
+}
+
+int lcp_safe(int i, int j)
+{
+    if (j < 0 || j >= int(numObjects))
+        return -1;
+    uint a = mortonObjects[i].mortonCode;
+    uint b = mortonObjects[j].mortonCode;
+    if (a == b)
+    {
+        // ensure distinct by index to break ties
+        return 32 + int(clz(uint(i) ^ uint(j)));
+    }
+    return int(clz(a ^ b));
+}
+
+ivec2 determineRange(int i)
+{
+    int lcpL = lcp_safe(i, i-1);
+    int lcpR = lcp_safe(i, i+1);
+    int d = (lcpR > lcpL) ? 1 : -1;
+    int lMax = 2;
+    while (lcp_safe(i, i + lMax * d) > lcp_safe(i, i + d))
+    {
+        lMax *= 2;
+    }
+    int l = 0;
+    for (int t = lMax; t > 1; t = (t+1) >> 1)
+    {
+        if (lcp_safe(i, i + (l + t) * d) > lcp_safe(i, i + d))
+        {
+            l += t;
+        }
+    }
+    int j = i + l * d;
+    int first = min(i, j);
+    int last  = max(i, j);
+    return ivec2(first, last);
+}
+
+int findSplit(int first, int last)
+{
+    int commonPrefix = lcp_safe(first, last);
+    int split = first;
+    int step = last - first;
+    do
+    {
+        step = (step + 1) >> 1;
+        int newSplit = split + step;
+        if (newSplit < last)
+        {
+            int prefix = lcp_safe(first, newSplit);
+            if (prefix > commonPrefix)
+                split = newSplit;
+        }
+    } while (step > 1);
+    return split;
+}
+
+layout (local_size_x = 256, local_size_y = 1, local_size_z = 1) in;
+
+void main()
+{
+    uint gid = gl_GlobalInvocationID.x;
+
+    // Thread 0: set numNodes (leaves + internal)
+    if (gid == 0u) {
+        numNodes = (numObjects > 0u) ? (2u * numObjects - 1u) : 0u;
+        rootIndex = (numObjects > 0u) ? (numObjects * 2u - 2u) : uint(-1);
+    }
+
+    // Create leaf nodes directly in this pass to avoid a separate dispatch
+    if (gid < numObjects)
+    {
+        uint objectId = mortonObjects[gid].objectId;
+        OctreeNode leaf;
+        leaf.minBounds = aabbMin[objectId];
+        leaf.maxBounds = aabbMax[objectId];
+        for (int c = 0; c < 8; ++c) leaf.childIndices[c] = -1;
+        leaf.parentIndex = uint(-1);
+        leaf.objectStartIndex = objectId;
+        leaf.objectCount = 1u;
+        leaf._pad0 = 0u;
+        nodes[gid] = leaf;
+    }
+
+    // Create internal nodes (binary LBVH), indices N..N+N-2
+    if (gid < max(numObjects, 1u) - 1u)
+    {
+        int i = int(gid);
+        ivec2 range = determineRange(i);
+        int first = range.x;
+        int last  = range.y;
+        int split = findSplit(first, last);
+
+        // Determine children
+        int leftIndex  = (split == first)     ? split      : (int(numObjects) + split);
+        int rightIndex = (split + 1 == last)  ? (split+1)  : (int(numObjects) + split + 1);
+
+        uint nodeIndex = numObjects + gid; // internal node array index
+
+        // Initialize node
+        OctreeNode n;
+        for (int c = 0; c < 8; ++c) n.childIndices[c] = -1;
+        n.minBounds = vec3(1e30);
+        n.maxBounds = vec3(-1e30);
+        n.parentIndex = uint(-1);
+        n.objectStartIndex = 0u;
+        n.objectCount = 0u; // internal node marker
+        n._pad0 = 0u;
+        nodes[nodeIndex] = n;
+
+        // Set children
+        nodes[nodeIndex].childIndices[0] = leftIndex;
+        nodes[nodeIndex].childIndices[1] = rightIndex;
+
+        // Set parent for children
+        atomicExchange(nodes[leftIndex].parentIndex, nodeIndex);
+        atomicExchange(nodes[rightIndex].parentIndex, nodeIndex);
+    }
+}

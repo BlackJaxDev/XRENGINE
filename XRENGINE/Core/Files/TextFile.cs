@@ -91,7 +91,8 @@ namespace XREngine.Core.Files
         {
             if (!string.IsNullOrWhiteSpace(path) && File.Exists(path))
             {
-                Text = await File.ReadAllTextAsync(path, Encoding = GetEncoding(path));
+                Encoding = GetEncoding(path);
+                Text = await File.ReadAllTextAsync(path, Encoding);
                 return true;
             }
             return false;
@@ -100,7 +101,8 @@ namespace XREngine.Core.Files
         {
             if (!string.IsNullOrWhiteSpace(path) && File.Exists(path))
             {
-                Text = File.ReadAllText(path, Encoding = GetEncoding(path));
+                Encoding = GetEncoding(path);
+                Text = File.ReadAllText(path, Encoding);
                 return true;
             }
             return false;

@@ -41,28 +41,56 @@
   </ItemGroup>
 
   <ItemGroup>
+    <None Remove="ffmpeg.exe" />
+    <None Remove="ffplay.exe" />
+    <None Remove="ffprobe.exe" />
+    <None Remove="openvr_api.dll" />
+    <None Remove="Rendering\GI\cmake" />
+    <None Remove="Rendering\GI\RestirGI.Native.cpp" />
+    <None Remove="rive.dll" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Content Include="C:\Users\dnedd\.nuget\packages\naudio.lame\2.1.0\build\libmp3lame.32.dll" />
+    <Content Include="C:\Users\dnedd\.nuget\packages\naudio.lame\2.1.0\build\libmp3lame.64.dll" />
+    <Content Include="ffmpeg.exe">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
+    <Content Include="ffplay.exe">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
+    <Content Include="ffprobe.exe">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
+    <Content Include="openvr_api.dll">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
+  </ItemGroup>
+
+  <ItemGroup>
     <PackageReference Include="AssimpNetter" Version="6.0.2" />
     <PackageReference Include="DotnetNoise" Version="1.0.0" />
     <PackageReference Include="FFmpeg.AutoGen" Version="7.1.1" />
-    <PackageReference Include="GraphQL" Version="8.5.0" />
+    <PackageReference Include="GraphQL" Version="8.6.0" />
     <PackageReference Include="ImmediateReflection" Version="2.0.0" />
-    <PackageReference Include="Jitter2" Version="2.7.1" />
-    <PackageReference Include="JoltPhysicsSharp" Version="2.17.4" />
+    <PackageReference Include="Jitter2" Version="2.7.2" />
+    <PackageReference Include="JoltPhysicsSharp" Version="2.18.5" />
     <PackageReference Include="LZMA-SDK" Version="22.1.1" />
-    <PackageReference Include="Magick.NET-Q16-HDRI-OpenMP-x64" Version="14.6.0" />
-    <PackageReference Include="Magick.NET.Core" Version="14.6.0" />
-    <PackageReference Include="Magick.NET.SystemDrawing" Version="8.0.6" />
+    <PackageReference Include="Magick.NET-Q16-HDRI-AnyCPU" Version="14.8.2" />
+    <PackageReference Include="Magick.NET.Core" Version="14.8.2" />
+    <PackageReference Include="Magick.NET.SystemDrawing" Version="8.0.10" />
     <PackageReference Include="MagicPhysX" Version="1.0.0" />
     <PackageReference Include="MathNet.Numerics" Version="5.0.0" />
     <PackageReference Include="MathNet.Numerics.Providers.CUDA" Version="5.0.0" />
     <PackageReference Include="MemoryPack" Version="1.21.4" />
+    <PackageReference Include="Meshoptimizer.NET" Version="1.0.7" />
     <PackageReference Include="MIConvexHull" Version="1.1.19.1019" />
     <PackageReference Include="NAudio" Version="2.2.1" />
     <PackageReference Include="NAudio.Lame" Version="2.1.0" />
     <PackageReference Include="NAudio.Sdl2" Version="2.2.6" />
     <PackageReference Include="NAudio.Vorbis" Version="1.5.0" />
     <PackageReference Include="NDILibDotNetCoreBase" Version="2024.7.22.1" />
-    <PackageReference Include="Newtonsoft.Json" Version="13.0.3" />
+    <PackageReference Include="Newtonsoft.Json" Version="13.0.4" />
     <PackageReference Include="NVorbis" Version="0.10.5" />
     <PackageReference Include="Raylib-cs" Version="7.0.1" />
     <PackageReference Include="RestSharp" Version="112.1.0" />
@@ -125,11 +153,11 @@
     <PackageReference Include="Silk.NET.Windowing.Glfw" Version="2.22.0" />
     <PackageReference Include="Silk.NET.Windowing.Sdl" Version="2.22.0" />
     <PackageReference Include="Silk.NET.XInput" Version="2.22.0" />
-    <PackageReference Include="SixLabors.ImageSharp" Version="3.1.10" />
+    <PackageReference Include="SixLabors.ImageSharp" Version="3.1.11" />
     <PackageReference Include="SkiaSharp" Version="2.88.9" />
     <PackageReference Include="Steamworks.NET" Version="2024.8.0" />
-    <PackageReference Include="System.IdentityModel.Tokens.Jwt" Version="8.12.1" />
-    <PackageReference Include="System.Text.Json" Version="9.0.6" />
+    <PackageReference Include="System.IdentityModel.Tokens.Jwt" Version="8.14.0" />
+    <PackageReference Include="System.Text.Json" Version="9.0.9" />
     <PackageReference Include="UltralightNet" Version="1.3.0" />
     <PackageReference Include="Vecc.YamlDotNet.Analyzers.StaticGenerator" Version="16.3.0" />
     <PackageReference Include="YamlDotNet" Version="16.3.0" />
@@ -149,10 +177,11 @@
   </ItemGroup>
 
   <ItemGroup>
+    <Reference Include="FlyleafLib">
+      <HintPath>..\Build\Submodules\Flyleaf\FlyleafLib\bin\Debug\net8.0-windows\FlyleafLib.dll</HintPath>
+    </Reference>
     <Reference Include="OpenVR.NET">
-      <HintPath>..\..\OpenVR.NET\OpenVR.NET\bin\Release\net6.0\OpenVR.NET.dll</HintPath>
-      <SpecificVersion>False</SpecificVersion>
-      <Private>True</Private>
+      <HintPath>..\..\OpenVR.NET\OpenVR.NET\bin\Debug\net6.0\OpenVR.NET.dll</HintPath>
     </Reference>
     <Reference Include="OscCore">
       <HintPath>..\..\OscCore-NET9\bin\Release\net9.0\OscCore.dll</HintPath>
@@ -178,29 +207,38 @@
     <None Update="avutil-59.dll">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </None>
-    <None Update="ffmpeg.exe">
-      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
-    </None>
-    <None Update="ffplay.exe">
-      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
-    </None>
-    <None Update="ffprobe.exe">
-      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
-    </None>
-    <None Update="postproc-58.dll">
-      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
-    </None>
-    <None Update="rive.dll">
-      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
-    </None>
-    <None Update="runtimes\win-x64\native\libmagicphysx.dll">
-      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
-    </None>
-    <None Update="openvr_api.dll">
-      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
-    </None>
     <None Update="OVRLipSync.dll">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+    <None Update="runtimes\win-x64\native\avcodec.dll">
+      <CopyToOutputDirectory>Always</CopyToOutputDirectory>
+    </None>
+    <None Update="runtimes\win-x64\native\avdevice.dll">
+      <CopyToOutputDirectory>Always</CopyToOutputDirectory>
+    </None>
+    <None Update="runtimes\win-x64\native\avfilter.dll">
+      <CopyToOutputDirectory>Always</CopyToOutputDirectory>
+    </None>
+    <None Update="runtimes\win-x64\native\avformat.dll">
+      <CopyToOutputDirectory>Always</CopyToOutputDirectory>
+    </None>
+    <None Update="runtimes\win-x64\native\avutil.dll">
+      <CopyToOutputDirectory>Always</CopyToOutputDirectory>
+    </None>
+    <None Update="runtimes\win-x64\native\libmagicphysx.dll">
+      <CopyToOutputDirectory>Always</CopyToOutputDirectory>
+    </None>
+    <None Update="runtimes\win-x64\native\postproc.dll">
+      <CopyToOutputDirectory>Always</CopyToOutputDirectory>
+    </None>
+    <None Update="runtimes\win-x64\native\rive.dll">
+      <CopyToOutputDirectory>Always</CopyToOutputDirectory>
+    </None>
+    <None Update="runtimes\win-x64\native\swresample.dll">
+      <CopyToOutputDirectory>Always</CopyToOutputDirectory>
+    </None>
+    <None Update="runtimes\win-x64\native\swscale.dll">
+      <CopyToOutputDirectory>Always</CopyToOutputDirectory>
     </None>
     <None Update="swresample-5.dll">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
@@ -215,7 +253,11 @@
   </ItemGroup>
 
   <ItemGroup>
-    <Folder Include="runtimes\win-x64\native\" />
+    <None Remove="C:\Users\dnedd\.nuget\packages\naudio.lame\2.1.0\build\libmp3lame.32.dll" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <None Remove="C:\Users\dnedd\.nuget\packages\naudio.lame\2.1.0\build\libmp3lame.64.dll" />
   </ItemGroup>
 
 </Project>

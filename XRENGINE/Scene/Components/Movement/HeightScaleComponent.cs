@@ -116,8 +116,9 @@ namespace XREngine.Components
             float footY = rootTfm.BindMatrix.Translation.Y;
             float height = eyeY - footY;
 
-            Debug.Out($"Calculated model height as {height}");
             Engine.VRState.ModelHeight = height;
+
+            Debug.Out($"Calculated model height as {height} meters. Real height set to {Engine.VRState.RealWorldHeight}; Real/Model ratio = {Engine.VRState.ModelToRealWorldHeightRatio}.");
         }
 
         /// <summary>

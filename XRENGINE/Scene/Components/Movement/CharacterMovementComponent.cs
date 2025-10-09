@@ -524,7 +524,7 @@ namespace XREngine.Components.Movement
             RegisterTick(TickInputWithPhysics ? ETickGroup.PrePhysics : ETickGroup.Late, (int)ETickOrder.Animation, MainUpdateTick);
             
             var scene = World?.PhysicsScene as PhysxScene;
-            var manager = scene?.CreateOrCreateControllerManager();
+            var manager = scene?.GetOrCreateControllerManager();
             if (manager is null)
                 return;
 
@@ -563,7 +563,7 @@ namespace XREngine.Components.Movement
             {
                 rb.OwningComponent = this;
                 RigidBody = rb;
-                //rb.Flags |= PxRigidBodyFlags.EnableCcd | PxRigidBodyFlags.EnableSpeculativeCcd | PxRigidBodyFlags.EnableCcdFriction;
+                rb.Flags |= PxRigidBodyFlags.EnableCcd | PxRigidBodyFlags.EnableSpeculativeCcd | PxRigidBodyFlags.EnableCcdFriction;
 
                 var tfm = RigidBodyTransform;
                 tfm.InterpolationMode = RigidBodyTransform.EInterpolationMode.Interpolate;
@@ -592,11 +592,6 @@ namespace XREngine.Components.Movement
             if (Controller is null)
                 return;
 
-            var scene = World?.PhysicsScene as PhysxScene;
-            var manager = scene?.CreateOrCreateControllerManager();
-            if (manager is null)
-                return;
-
             Velocity = RigidBodyTransform.RigidBody?.LinearVelocity ?? Vector3.Zero;
             Acceleration = (Velocity - LastVelocity) / DeltaTime;
 
@@ -604,7 +599,7 @@ namespace XREngine.Components.Movement
 
             var moveDelta = (_subUpdateTick?.Invoke(ConsumeInput()) ?? Vector3.Zero) + ConsumeLiteralInput();
             if (moveDelta.LengthSquared() > MinMoveDistance * MinMoveDistance)
-                Controller.Move(moveDelta, MinMoveDistance, DeltaTime, manager.ControllerFilters, null);
+                Controller.Move(moveDelta, MinMoveDistance, DeltaTime);
 
             if (Controller.CollidingDown)
             {
@@ -697,7 +692,7 @@ namespace XREngine.Components.Movement
             set => SetField(ref _maxJumpDuration, value);
         }
 
-        private bool _tickInputWithPhysics = false; //Seems more responsive calculating on update, separate from physics
+        private bool _tickInputWithPhysics = true; //Seems more responsive calculating on update, separate from physics
         /// <summary>
         /// Whether to tick input with physics or not.
         /// </summary>

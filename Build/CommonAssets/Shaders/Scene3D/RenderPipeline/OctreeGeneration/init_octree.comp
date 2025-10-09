@@ -1,0 +1,46 @@
+#version 460
+
+// Capacity is provided by the buffer binding; we clear up to a provided limit
+
+struct OctreeNode
+{
+    vec3 minBounds;
+    vec3 maxBounds;
+    int  childIndices[8];
+    uint parentIndex;
+    uint objectStartIndex;
+    uint objectCount;
+    uint _pad0;
+};
+
+layout(std430, binding = 2) buffer Octree
+{
+    uint numNodes;
+    uint rootIndex;
+    OctreeNode nodes[];
+};
+
+uniform uint clearLimit; // how many nodes to clear (power-of-two capacity), in elements
+
+layout (local_size_x = 256, local_size_y = 1, local_size_z = 1) in;
+
+void main()
+{
+    uint gid = gl_GlobalInvocationID.x;
+    if (gid == 0u)
+    {
+        numNodes = 0u;
+        rootIndex = uint(-1);
+    }
+    if (gid < clearLimit)
+    {
+        for (int i = 0; i < 8; ++i)
+            nodes[gid].childIndices[i] = -1;
+        nodes[gid].parentIndex = uint(-1);
+        nodes[gid].objectStartIndex = 0u;
+        nodes[gid].objectCount = 0u;
+        nodes[gid]._pad0 = 0u;
+        nodes[gid].minBounds = vec3(1e30);
+        nodes[gid].maxBounds = vec3(-1e30);
+    }
+}

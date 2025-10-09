@@ -1,16 +1,20 @@
 ﻿using Extensions;
 using ImageMagick;
 using Silk.NET.OpenGL;
+using Silk.NET.OpenGL.Extensions.ARB;
 using Silk.NET.OpenGL.Extensions.NV;
 using Silk.NET.OpenGL.Extensions.OVR;
 using Silk.NET.OpenGLES.Extensions.EXT;
 using Silk.NET.OpenGLES.Extensions.NV;
+using System;
 using System.Numerics;
+using XREngine.Data;
 using XREngine.Data.Colors;
 using XREngine.Data.Geometry;
 using XREngine.Data.Rendering;
 using XREngine.Rendering.Models.Materials;
 using XREngine.Rendering.Models.Materials.Textures;
+using XREngine.Rendering.Shaders.Generator;
 using PixelFormat = Silk.NET.OpenGL.PixelFormat;
 
 namespace XREngine.Rendering.OpenGL
@@ -20,6 +24,7 @@ namespace XREngine.Rendering.OpenGL
         public OvrMultiview? OVRMultiView { get; }
         public Silk.NET.OpenGL.Extensions.NV.NVMeshShader? NVMeshShader { get; }
         public Silk.NET.OpenGL.Extensions.NV.NVGpuShader5? NVGpuShader5 { get; }
+        public Silk.NET.OpenGL.Extensions.NV.NVPathRendering? NVPathRendering { get; }
         public Silk.NET.OpenGLES.GL ESApi { get; }
         public NVViewportArray? NVViewportArray { get; }
         public ExtMemoryObject? EXTMemoryObject { get; }
@@ -28,7 +33,9 @@ namespace XREngine.Rendering.OpenGL
         public ExtSemaphoreWin32? EXTSemaphoreWin32 { get; }
         public ExtSemaphoreFd? EXTSemaphoreFd { get; }
         public ExtMemoryObjectFd? EXTMemoryObjectFd { get; }
-        
+        public NVBindlessMultiDrawIndirectCount? NVBindlessMultiDrawIndirectCount { get; }
+        public ArbMultiDrawIndirect? ArbMultiDrawIndirect { get; }
+
         private static string? _version = null;
         public string? Version
         {
@@ -46,7 +53,6 @@ namespace XREngine.Rendering.OpenGL
             var api = Api;
             ESApi = Silk.NET.OpenGLES.GL.GetApi(Window.GLContext);
 
-            NVViewportArray = ESApi.TryGetExtension(out NVViewportArray ext10) ? ext10 : null;
             EXTMemoryObject = ESApi.TryGetExtension<ExtMemoryObject>(out var ext) ? ext : null;
             EXTSemaphore = ESApi.TryGetExtension<ExtSemaphore>(out var ext2) ? ext2 : null;
             EXTMemoryObjectWin32 = ESApi.TryGetExtension<ExtMemoryObjectWin32>(out var ext3) ? ext3 : null;
@@ -58,6 +64,11 @@ namespace XREngine.Rendering.OpenGL
             Engine.Rendering.State.HasOvrMultiViewExtension |= OVRMultiView is not null;
             NVMeshShader = api.TryGetExtension(out Silk.NET.OpenGL.Extensions.NV.NVMeshShader ext8) ? ext8 : null;
             NVGpuShader5 = api.TryGetExtension(out Silk.NET.OpenGL.Extensions.NV.NVGpuShader5 ext9) ? ext9 : null;
+            NVViewportArray = ESApi.TryGetExtension(out NVViewportArray ext10) ? ext10 : null;
+
+            NVBindlessMultiDrawIndirectCount = api.TryGetExtension<NVBindlessMultiDrawIndirectCount>(out var ext11) ? ext11 : null;
+            ArbMultiDrawIndirect = api.TryGetExtension<ArbMultiDrawIndirect>(out var ext12) ? ext12 : null;
+            NVPathRendering = api.TryGetExtension(out Silk.NET.OpenGL.Extensions.NV.NVPathRendering ext13) ? ext13 : null;
         }
 
         private static void InitGL(GL api)
@@ -235,6 +246,19 @@ namespace XREngine.Rendering.OpenGL
             //var error = renderer.Api.GetError();
             //if (error != GLEnum.NoError)
             //    Debug.LogWarning(name is null ? error.ToString() : $"{name}: {error}", 1);
+        }
+
+        public bool LogGlErrors(string context)
+        {
+            bool hadError = false;
+            GLEnum error;
+            while ((error = Api.GetError()) != GLEnum.NoError)
+            {
+                hadError = true;
+                Debug.LogWarning($"OpenGL error after {context}: {error}");
+            }
+
+            return hadError;
         }
 
         protected override AbstractRenderAPIObject CreateAPIRenderObject(GenericRenderObject renderObject)
@@ -565,12 +589,12 @@ namespace XREngine.Rendering.OpenGL
             return $"Mip{i} | {sides}";
         }
 
-        private static string FormatMipmap(int i, Mipmap2D[] mipmaps)
+        private static string FormatMipmap(int i, XREngine.Rendering.Mipmap2D[] mipmaps)
         {
             if (i >= mipmaps.Length)
                 return string.Empty;
 
-            Mipmap2D m = mipmaps[i];
+            var m = mipmaps[i];
             return $"Mip{i} | {m.Width}x{m.Height} | internal:{m.InternalFormat} | {m.PixelFormat}/{m.PixelType}";
         }
 
@@ -1682,7 +1706,7 @@ namespace XREngine.Rendering.OpenGL
             InternalFormat.Rgba12 => 6, // 48-bit, packed as 6 bytes
 
             // Dual formats
-            InternalFormat.DualAlpha4Sgis => 1,
+            InternalFormat.DualAlpha4Sgis =>  1,
             InternalFormat.DualAlpha8Sgis => 1,
             InternalFormat.DualAlpha12Sgis => 2,
             InternalFormat.DualAlpha16Sgis => 2,
@@ -1738,5 +1762,609 @@ namespace XREngine.Rendering.OpenGL
             // Default for unknown formats - conservative 4 bytes
             _ => 4
         };
+
+        // ===================== Indirect + Pipeline Abstraction (OpenGL) =====================
+        public override void BindVAOForRenderer(XRMeshRenderer.BaseVersion? version)
+        {
+            if (version is null)
+            {
+                Unbind();
+                return;
+            }
+            var glMesh = GenericToAPI<GLMeshRenderer>(version);
+            BindForRender(glMesh);
+        }
+
+        public override bool ValidateIndexedVAO(XRMeshRenderer.BaseVersion? version)
+        {
+            var glMesh = version != null ? GenericToAPI<GLMeshRenderer>(version) : ActiveMeshRenderer;
+            if (glMesh is null)
+                return false;
+            return (glMesh.TriangleIndicesBuffer?.Data?.ElementCount > 0) ||
+                   (glMesh.LineIndicesBuffer?.Data?.ElementCount > 0) ||
+                   (glMesh.PointIndicesBuffer?.Data?.ElementCount > 0);
+        }
+
+        public override void BindDrawIndirectBuffer(XRDataBuffer buffer)
+        {
+            var glBuf = GenericToAPI<GLDataBuffer>(buffer);
+            if (glBuf is null)
+                return;
+            Api.BindBuffer(GLEnum.DrawIndirectBuffer, glBuf.BindingId);
+        }
+
+        public override void UnbindDrawIndirectBuffer()
+        {
+            Api.BindBuffer(GLEnum.DrawIndirectBuffer, 0);
+        }
+
+        public override void BindParameterBuffer(XRDataBuffer buffer)
+        {
+            var glBuf = GenericToAPI<GLDataBuffer>(buffer);
+            if (glBuf is null)
+                return;
+            const GLEnum GL_PARAMETER_BUFFER = (GLEnum)0x80EE;
+            Api.BindBuffer(GL_PARAMETER_BUFFER, glBuf.BindingId);
+        }
+
+        public override void UnbindParameterBuffer()
+        {
+            const GLEnum GL_PARAMETER_BUFFER = (GLEnum)0x80EE;
+            Api.BindBuffer(GL_PARAMETER_BUFFER, 0);
+        }
+
+        private (PrimitiveType prim, DrawElementsType elem) GetActivePrimitiveAndElementType()
+        {
+            PrimitiveType primitiveType = PrimitiveType.Triangles;
+            DrawElementsType elementType = DrawElementsType.UnsignedInt;
+            var renderer = ActiveMeshRenderer;
+            if (renderer is not null)
+            {
+                if (renderer.TriangleIndicesBuffer is not null)
+                {
+                    primitiveType = PrimitiveType.Triangles;
+                    elementType = renderer.TrianglesElementType switch
+                    {
+                        IndexSize.Byte => DrawElementsType.UnsignedByte,
+                        IndexSize.TwoBytes => DrawElementsType.UnsignedShort,
+                        _ => DrawElementsType.UnsignedInt,
+                    };
+                }
+                else if (renderer.LineIndicesBuffer is not null)
+                {
+                    primitiveType = PrimitiveType.Lines;
+                    elementType = renderer.LineIndicesElementType switch
+                    {
+                        IndexSize.Byte => DrawElementsType.UnsignedByte,
+                        IndexSize.TwoBytes => DrawElementsType.UnsignedShort,
+                        _ => DrawElementsType.UnsignedInt,
+                    };
+                }
+                else if (renderer.PointIndicesBuffer is not null)
+                {
+                    primitiveType = PrimitiveType.Points;
+                    elementType = renderer.PointIndicesElementType switch
+                    {
+                        IndexSize.Byte => DrawElementsType.UnsignedByte,
+                        IndexSize.TwoBytes => DrawElementsType.UnsignedShort,
+                        _ => DrawElementsType.UnsignedInt,
+                    };
+                }
+            }
+            return (primitiveType, elementType);
+        }
+
+        public override unsafe void MultiDrawElementsIndirect(uint drawCount, uint stride)
+        {
+            var (prim, elem) = GetActivePrimitiveAndElementType();
+            Api.MultiDrawElementsIndirect(prim, elem, null, drawCount, stride);
+        }
+
+        public override unsafe void MultiDrawElementsIndirectWithOffset(uint drawCount, uint stride, nuint byteOffset)
+        {
+            var (prim, elem) = GetActivePrimitiveAndElementType();
+            Api.MultiDrawElementsIndirect(prim, elem, (void*)byteOffset, drawCount, stride);
+        }
+
+        public override unsafe void MultiDrawElementsIndirectCount(uint maxDrawCount, uint stride, nuint byteOffset)
+        {
+            var (prim, elem) = GetActivePrimitiveAndElementType();
+            Api.MultiDrawElementsIndirectCount(prim, elem, (void*)byteOffset, IntPtr.Zero, maxDrawCount, stride);
+        }
+
+        public unsafe void MultiDrawElementsIndirectCountNVBindless(uint drawCountOffset, uint maxDrawCount, uint stride)
+        {
+            var (prim, elem) = GetActivePrimitiveAndElementType();
+            NVBindlessMultiDrawIndirectCount?.MultiDrawElementsIndirectBindlessCount(
+                prim,
+                elem,
+                null,
+                drawCountOffset,
+                maxDrawCount,
+                stride,
+                1);
+        }
+
+        public unsafe void MultiDrawElementsIndirectCount(uint drawCountOffset, uint maxDrawCount, uint stride)
+        {
+            var (primitiveType, elementType) = GetActivePrimitiveAndElementType();
+            // Requires GL 4.6 or ARB_indirect_parameters
+            Api.MultiDrawElementsIndirectCount(
+                primitiveType,
+                elementType,
+                null,
+                (nint)drawCountOffset,
+                maxDrawCount,
+                stride);
+        }
+
+        //public unsafe void MultiDrawElementsIndirectCount(uint maxCommands, uint stride)
+        //{
+        //    //Get primitive type and element type from currently bound renderer
+        //    PrimitiveType primitiveType = PrimitiveType.Triangles;
+        //    DrawElementsType elementType = DrawElementsType.UnsignedInt;
+        //    var renderer = ActiveMeshRenderer;
+        //    if (renderer is not null)
+        //    {
+        //        if (renderer.TriangleIndicesBuffer is not null)
+        //        {
+        //            primitiveType = PrimitiveType.Triangles;
+        //            elementType = ToDrawElementsType(renderer.TrianglesElementType);
+        //        }
+        //        else if (renderer.LineIndicesBuffer is not null)
+        //        {
+        //            primitiveType = PrimitiveType.Lines;
+        //            elementType = ToDrawElementsType(renderer.LineIndicesElementType);
+        //        }
+        //        else if (renderer.PointIndicesBuffer is not null)
+        //        {
+        //            primitiveType = PrimitiveType.Points;
+        //            elementType = ToDrawElementsType(renderer.PointIndicesElementType);
+        //        }
+        //    }
+
+        //    // Requires GL 4.6 or ARB_indirect_parameters
+        //    Api.MultiDrawElementsIndirectCount(
+        //        primitiveType,
+        //        elementType,
+        //        null,
+        //        IntPtr.Zero,
+        //        maxCommands,
+        //        stride);
+        //}
+
+        //public unsafe void MultiDrawElementsIndirectWithOffset(uint drawCount, uint stride, nuint byteOffset)
+        //{
+        //    // Determine primitive and element types from currently bound renderer (ActiveMeshRenderer)
+        //    PrimitiveType primitiveType = PrimitiveType.Triangles;
+        //    DrawElementsType elementType = DrawElementsType.UnsignedInt;
+        //    var renderer = ActiveMeshRenderer;
+        //    if (renderer is not null)
+        //    {
+        //        if (renderer.TriangleIndicesBuffer is not null)
+        //        {
+        //            primitiveType = PrimitiveType.Triangles;
+        //            elementType = ToDrawElementsType(renderer.TrianglesElementType);
+        //        }
+        //        else if (renderer.LineIndicesBuffer is not null)
+        //        {
+        //            primitiveType = PrimitiveType.Lines;
+        //            elementType = ToDrawElementsType(renderer.LineIndicesElementType);
+        //        }
+        //        else if (renderer.PointIndicesBuffer is not null)
+        //        {
+        //            primitiveType = PrimitiveType.Points;
+        //            elementType = ToDrawElementsType(renderer.PointIndicesElementType);
+        //        }
+        //    }
+
+        //    Api.MultiDrawElementsIndirect(
+        //        primitiveType,
+        //        elementType,
+        //        (void*)byteOffset,
+        //        drawCount,
+        //        stride);
+        //}
+
+        public override bool SupportsIndirectCountDraw()
+        {
+            try
+            {
+                string? verStr = Version;
+                if (!string.IsNullOrWhiteSpace(verStr))
+                {
+                    var parts = verStr.Split(' ');
+                    var num = parts[0].Split('.');
+                    if (num.Length >= 2 && int.TryParse(num[0], out int maj) && int.TryParse(num[1], out int min))
+                    {
+                        if (maj > 4 || (maj == 4 && min >= 6))
+                            return true;
+                    }
+                }
+            }
+            catch { }
+            return Api.IsExtensionPresent("GL_ARB_indirect_parameters");
+        }
+
+        public IGLTexture? BoundTexture { get; set; }
+
+        /// <summary>
+        /// Modifies the rendering API's state to adhere to the given material's settings.
+        /// </summary>
+        /// <param name="parameters"></param>
+        public override void ApplyRenderParameters(RenderingParameters parameters)
+        {
+            if (parameters is null)
+                return;
+
+            //Api.PointSize(r.PointSize);
+            //Api.LineWidth(r.LineWidth.Clamp(0.0f, 1.0f));
+            Api.ColorMask(parameters.WriteRed, parameters.WriteGreen, parameters.WriteBlue, parameters.WriteAlpha);
+
+            var winding = parameters.Winding;
+            if (Engine.Rendering.State.ReverseWinding)
+                winding = winding == EWinding.Clockwise ? EWinding.CounterClockwise : EWinding.Clockwise;
+            Api.FrontFace(ToGLEnum(winding));
+
+            ApplyCulling(parameters);
+            ApplyDepth(parameters);
+            ApplyBlending(parameters);
+            ApplyStencil(parameters);
+            //Alpha testing is done in-shader
+        }
+
+        private GLEnum ToGLEnum(EWinding winding)
+            => winding switch
+            {
+                EWinding.Clockwise => GLEnum.CW,
+                EWinding.CounterClockwise => GLEnum.Ccw,
+                _ => GLEnum.Ccw
+            };
+
+        private void ApplyStencil(RenderingParameters r)
+        {
+            switch (r.StencilTest.Enabled)
+            {
+                case ERenderParamUsage.Enabled:
+                    {
+                        StencilTest st = r.StencilTest;
+                        StencilTestFace b = st.BackFace;
+                        StencilTestFace f = st.FrontFace;
+
+                        Api.StencilOpSeparate(GLEnum.Back,
+                            (StencilOp)(int)b.BothFailOp,
+                            (StencilOp)(int)b.StencilPassDepthFailOp,
+                            (StencilOp)(int)b.BothPassOp);
+
+                        Api.StencilOpSeparate(GLEnum.Front,
+                            (StencilOp)(int)f.BothFailOp,
+                            (StencilOp)(int)f.StencilPassDepthFailOp,
+                            (StencilOp)(int)f.BothPassOp);
+
+                        Api.StencilMaskSeparate(GLEnum.Back, b.WriteMask);
+                        Api.StencilMaskSeparate(GLEnum.Front, f.WriteMask);
+
+                        Api.StencilFuncSeparate(GLEnum.Back,
+                            StencilFunction.Never + (int)b.Function, b.Reference, b.ReadMask);
+                        Api.StencilFuncSeparate(GLEnum.Front,
+                            StencilFunction.Never + (int)f.Function, f.Reference, f.ReadMask);
+
+                        break;
+                    }
+
+                case ERenderParamUsage.Disabled:
+                    //GL.Disable(EnableCap.StencilTest);
+                    Api.StencilMask(0);
+                    Api.StencilOp(GLEnum.Keep, GLEnum.Keep, GLEnum.Keep);
+                    Api.StencilFunc(StencilFunction.Always, 0, 0);
+                    break;
+            }
+        }
+
+        private void ApplyBlending(RenderingParameters r)
+        {
+            if (r.BlendModeAllDrawBuffers is not null)
+            {
+                var x = r.BlendModeAllDrawBuffers;
+                if (x.Enabled == ERenderParamUsage.Enabled)
+                {
+                    Api.Enable(EnableCap.Blend);
+
+                    Api.BlendEquationSeparate(
+                        ToGLEnum(x.RgbEquation),
+                        ToGLEnum(x.AlphaEquation));
+
+                    Api.BlendFuncSeparate(
+                        ToGLEnum(x.RgbSrcFactor),
+                        ToGLEnum(x.RgbDstFactor),
+                        ToGLEnum(x.AlphaSrcFactor),
+                        ToGLEnum(x.AlphaDstFactor));
+                }
+                else if (x.Enabled == ERenderParamUsage.Disabled)
+                    Api.Disable(EnableCap.Blend);
+            }
+            else if (r.BlendModesPerDrawBuffer is not null)
+            {
+                if (r.BlendModesPerDrawBuffer.Any(r => r.Value.Enabled == ERenderParamUsage.Enabled))
+                {
+                    Api.Enable(EnableCap.Blend);
+                    foreach (KeyValuePair<uint, BlendMode> pair in r.BlendModesPerDrawBuffer)
+                    {
+                        uint drawBuffer = pair.Key;
+                        BlendMode x = pair.Value;
+                        if (x.Enabled == ERenderParamUsage.Enabled)
+                        {
+                            Api.BlendEquationSeparate(
+                                drawBuffer,
+                                ToGLEnum(x.RgbEquation),
+                                ToGLEnum(x.AlphaEquation));
+
+                            Api.BlendFuncSeparate(
+                                drawBuffer,
+                                ToGLEnum(x.RgbSrcFactor),
+                                ToGLEnum(x.RgbDstFactor),
+                                ToGLEnum(x.AlphaSrcFactor),
+                                ToGLEnum(x.AlphaDstFactor));
+                        }
+                        else
+                        {
+                            //Apply a blend mode that mimics non-blending for this draw buffer
+
+                            Api.BlendEquationSeparate(
+                                drawBuffer,
+                                GLEnum.FuncAdd,
+                                GLEnum.FuncAdd);
+
+                            Api.BlendFuncSeparate(
+                                drawBuffer,
+                                GLEnum.One,
+                                GLEnum.Zero,
+                                GLEnum.One,
+                                GLEnum.Zero);
+                        }
+                    }
+                }
+                else if (r.BlendModesPerDrawBuffer.Count == 0 || r.BlendModesPerDrawBuffer.Any(r => r.Value.Enabled == ERenderParamUsage.Disabled))
+                    Api.Disable(EnableCap.Blend);
+            }
+            else
+                Api.Disable(EnableCap.Blend);
+        }
+
+        private void ApplyCulling(RenderingParameters r)
+        {
+            if (r.CullMode == ECullMode.None)
+                Api.Disable(EnableCap.CullFace);
+            else
+            {
+                Api.Enable(EnableCap.CullFace);
+                var cullMode = r.CullMode;
+                if (Engine.Rendering.State.ReverseCulling)
+                    cullMode = cullMode switch
+                    {
+                        ECullMode.Front => ECullMode.Back,
+                        ECullMode.Back => ECullMode.Front,
+                        _ => cullMode
+                    };
+                Api.CullFace(ToGLEnum(cullMode));
+            }
+        }
+
+        private void ApplyDepth(RenderingParameters r)
+        {
+            switch (r.DepthTest.Enabled)
+            {
+                case ERenderParamUsage.Enabled:
+                    Api.Enable(EnableCap.DepthTest);
+                    Api.DepthFunc(ToGLEnum(r.DepthTest.Function));
+                    Api.DepthMask(r.DepthTest.UpdateDepth);
+                    break;
+
+                case ERenderParamUsage.Disabled:
+                    Api.Disable(EnableCap.DepthTest);
+                    break;
+            }
+        }
+
+        private GLEnum ToGLEnum(EBlendingFactor factor)
+            => factor switch
+            {
+                EBlendingFactor.Zero => GLEnum.Zero,
+                EBlendingFactor.One => GLEnum.One,
+                EBlendingFactor.SrcColor => GLEnum.SrcColor,
+                EBlendingFactor.OneMinusSrcColor => GLEnum.OneMinusSrcColor,
+                EBlendingFactor.DstColor => GLEnum.DstColor,
+                EBlendingFactor.OneMinusDstColor => GLEnum.OneMinusDstColor,
+                EBlendingFactor.SrcAlpha => GLEnum.SrcAlpha,
+                EBlendingFactor.OneMinusSrcAlpha => GLEnum.OneMinusSrcAlpha,
+                EBlendingFactor.DstAlpha => GLEnum.DstAlpha,
+                EBlendingFactor.OneMinusDstAlpha => GLEnum.OneMinusDstAlpha,
+                EBlendingFactor.ConstantColor => GLEnum.ConstantColor,
+                EBlendingFactor.OneMinusConstantColor => GLEnum.OneMinusConstantColor,
+                EBlendingFactor.ConstantAlpha => GLEnum.ConstantAlpha,
+                EBlendingFactor.OneMinusConstantAlpha => GLEnum.OneMinusConstantAlpha,
+                EBlendingFactor.SrcAlphaSaturate => GLEnum.SrcAlphaSaturate,
+                _ => GLEnum.Zero,
+            };
+
+        private GLEnum ToGLEnum(EBlendEquationMode equation)
+            => equation switch
+            {
+                EBlendEquationMode.FuncAdd => GLEnum.FuncAdd,
+                EBlendEquationMode.FuncSubtract => GLEnum.FuncSubtract,
+                EBlendEquationMode.FuncReverseSubtract => GLEnum.FuncReverseSubtract,
+                EBlendEquationMode.Min => GLEnum.Min,
+                EBlendEquationMode.Max => GLEnum.Max,
+                _ => GLEnum.FuncAdd,
+            };
+
+        private GLEnum ToGLEnum(EComparison function)
+            => function switch
+            {
+                EComparison.Never => GLEnum.Never,
+                EComparison.Less => GLEnum.Less,
+                EComparison.Equal => GLEnum.Equal,
+                EComparison.Lequal => GLEnum.Lequal,
+                EComparison.Greater => GLEnum.Greater,
+                EComparison.Nequal => GLEnum.Notequal,
+                EComparison.Gequal => GLEnum.Gequal,
+                EComparison.Always => GLEnum.Always,
+                _ => GLEnum.Never,
+            };
+
+        private GLEnum ToGLEnum(ECullMode cullMode)
+            => cullMode switch
+            {
+                ECullMode.Front => GLEnum.Front,
+                ECullMode.Back => GLEnum.Back,
+                _ => GLEnum.FrontAndBack,
+            };
+
+        private GLEnum ToGLEnum(IndexSize elementType)
+            => elementType switch
+            {
+                IndexSize.Byte => GLEnum.UnsignedByte,
+                IndexSize.TwoBytes => GLEnum.UnsignedShort,
+                IndexSize.FourBytes => GLEnum.UnsignedInt,
+                _ => GLEnum.UnsignedInt,
+            };
+
+        private GLEnum ToGLEnum(EPrimitiveType type)
+            => type switch
+            {
+                EPrimitiveType.Points => GLEnum.Points,
+                EPrimitiveType.Lines => GLEnum.Lines,
+                EPrimitiveType.LineLoop => GLEnum.LineLoop,
+                EPrimitiveType.LineStrip => GLEnum.LineStrip,
+                EPrimitiveType.Triangles => GLEnum.Triangles,
+                EPrimitiveType.TriangleStrip => GLEnum.TriangleStrip,
+                EPrimitiveType.TriangleFan => GLEnum.TriangleFan,
+                EPrimitiveType.LinesAdjacency => GLEnum.LinesAdjacency,
+                EPrimitiveType.LineStripAdjacency => GLEnum.LineStripAdjacency,
+                EPrimitiveType.TrianglesAdjacency => GLEnum.TrianglesAdjacency,
+                EPrimitiveType.TriangleStripAdjacency => GLEnum.TriangleStripAdjacency,
+                EPrimitiveType.Patches => GLEnum.Patches,
+                _ => GLEnum.Triangles,
+            };
+
+        public int GetInteger(GLEnum value)
+            => Api.GetInteger(value);
+
+        public unsafe bool IsExtensionSupported(string name)
+        {
+            if (string.IsNullOrEmpty(name))
+                return false;
+
+            //Check if the extension is already loaded
+            if (Api.IsExtensionPresent(name))
+                return true;
+
+            //Check if the extension is supported by the OpenGL context
+            byte* extensions = Api.GetString(GLEnum.Extensions);
+            if (extensions is null)
+                return false;
+
+            //Split the extensions string into individual extensions
+            string str = new((sbyte*)extensions);
+            string[] extList = str.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+
+            //Check if the requested extension is in the list
+            foreach (string ext in extList)
+                if (ext.Equals(name, StringComparison.OrdinalIgnoreCase))
+                    return true;
+
+            //If we reach here, the extension is not supported
+            return false;
+        }
+
+        private DrawElementsType ToDrawElementsType(IndexSize type) => type switch
+        {
+            IndexSize.Byte => DrawElementsType.UnsignedByte,
+            IndexSize.TwoBytes => DrawElementsType.UnsignedShort,
+            IndexSize.FourBytes => DrawElementsType.UnsignedInt,
+            _ => DrawElementsType.UnsignedInt,
+        };
+
+        public override void ConfigureVAOAttributesForProgram(XRRenderProgram program, XRMeshRenderer.BaseVersion? version)
+        {
+            var glProgram = GenericToAPI<GLRenderProgram>(program);
+            var glMesh = version is null ? ActiveMeshRenderer : GenericToAPI<GLMeshRenderer>(version);
+            if (glProgram is null || glMesh is null)
+                return;
+
+            // Bind VAO to ensure we write into the correct object
+            BindForRender(glMesh);
+
+            // Rebind mesh + renderer buffers against this program's attribute locations
+            // 1) Mesh vertex buffers
+            var mesh = glMesh.Mesh;
+            if (mesh?.Buffers is IEventDictionary<string, XRDataBuffer> meshBuffers)
+            {
+                foreach (var kv in meshBuffers)
+                {
+                    var glBuf = GenericToAPI<GLDataBuffer>(kv.Value);
+                    glBuf?.BindToRenderer(glProgram, glMesh);
+                }
+            }
+
+            // 2) Renderer extra buffers (SSBO/UBO/instance attributes)
+            var rendBuffers = glMesh.MeshRenderer.Buffers as IEventDictionary<string, XRDataBuffer>;
+            if (rendBuffers is not null)
+            {
+                foreach (var kv in rendBuffers)
+                {
+                    var glBuf = GenericToAPI<GLDataBuffer>(kv.Value);
+                    glBuf?.BindToRenderer(glProgram, glMesh);
+                }
+            }
+        }
+
+        public override void SetEngineUniforms(XRRenderProgram program, XRCamera camera)
+        {
+            var glProgram = GenericToAPI<GLRenderProgram>(program);
+            if (glProgram is null)
+                return;
+
+            // Mirror GLMaterial.SetEngineUniforms minimal camera bits
+            bool stereoPass = Engine.Rendering.State.IsStereoPass;
+            if (stereoPass)
+            {
+                var rightCam = Engine.Rendering.State.RenderingStereoRightEyeCamera;
+                PassCameraUniforms(glProgram, camera, EEngineUniform.LeftEyeInverseViewMatrix, EEngineUniform.LeftEyeProjMatrix);
+                PassCameraUniforms(glProgram, rightCam, EEngineUniform.RightEyeInverseViewMatrix, EEngineUniform.RightEyeProjMatrix);
+            }
+            else
+            {
+                PassCameraUniforms(glProgram, camera, EEngineUniform.InverseViewMatrix, EEngineUniform.ProjMatrix);
+            }
+        }
+
+        private static void PassCameraUniforms(GLRenderProgram program, XRCamera? camera, EEngineUniform invView, EEngineUniform proj)
+        {
+            Matrix4x4 inverseViewMatrix;
+            Matrix4x4 projMatrix;
+            if (camera != null)
+            {
+                inverseViewMatrix = camera.Transform.RenderMatrix;
+                projMatrix = camera.ProjectionMatrix;
+            }
+            else
+            {
+                inverseViewMatrix = Matrix4x4.Identity;
+                projMatrix = Matrix4x4.Identity;
+            }
+            program.Uniform($"{invView}{DefaultVertexShaderGenerator.VertexUniformSuffix}", inverseViewMatrix);
+            program.Uniform($"{proj}{DefaultVertexShaderGenerator.VertexUniformSuffix}", projMatrix);
+        }
+
+        public override void SetMaterialUniforms(XRMaterial material, XRRenderProgram program)
+        {
+            var glProgram = GenericToAPI<GLRenderProgram>(program);
+            var glMaterial = GenericToAPI<GLMaterial>(material);
+            if (glProgram is null || glMaterial is null)
+                return;
+
+            glMaterial.SetUniforms(glProgram);
+        }
     }
 }

@@ -59,5 +59,15 @@ public unsafe partial class VulkanRenderer
             Api.DestroyShaderModule(Renderer.device, ShaderStageCreateInfo.Module, null);
             SilkMarshal.Free((nint)ShaderStageCreateInfo.PName);
         }
+
+        protected override void UnlinkData()
+        {
+            throw new NotImplementedException();
+        }
+
+        protected override void LinkData()
+        {
+            throw new NotImplementedException();
+        }
     }
 }

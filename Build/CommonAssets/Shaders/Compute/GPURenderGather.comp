@@ -1,0 +1,27 @@
+#version 460 core
+// Gather full command structs into a dense culled buffer using an index list produced by SoA/HiZ culling.
+layout(local_size_x = 256) in;
+
+const int COMMAND_FLOATS = 32;
+
+// Full input commands
+layout(std430, binding = 0) buffer InCommands { float inCommands[]; };
+// Index list: element 0 = count, elements 1..count = original indices
+layout(std430, binding = 1) buffer IndexList { uint indices[]; };
+// Output culled commands buffer (float[32] * count)
+layout(std430, binding = 2) buffer OutCulled { float outCommands[]; };
+// Output culled count (same as indices[0])
+layout(std430, binding = 3) buffer CulledCountBuffer { uint CulledCount; };
+
+void main(){
+    uint id = gl_GlobalInvocationID.x;
+    uint count = indices[0];
+    if(id >= count) return;
+    uint srcIdx = indices[id+1];
+    int srcBase = int(srcIdx) * COMMAND_FLOATS;
+    int dstBase = int(id) * COMMAND_FLOATS;
+    // Bounds safety minimal (assume valid)
+    for(int i=0;i<COMMAND_FLOATS;i++)
+        outCommands[dstBase + i] = inCommands[srcBase + i];
+    if(id==0) CulledCount = count; // write once
+}

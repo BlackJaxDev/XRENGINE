@@ -20,6 +20,8 @@ namespace XREngine.Rendering.OpenGL
                 Data.BindRequested -= Bind;
                 Data.UnbindRequested -= Unbind;
                 Data.MapBufferDataRequested -= MapBufferData;
+                Data.UnmapBufferDataRequested -= UnmapBufferData;
+                Data.BindSSBORequested -= BindSSBO;
             }
             protected override void LinkData()
             {
@@ -32,6 +34,8 @@ namespace XREngine.Rendering.OpenGL
                 Data.BindRequested += Bind;
                 Data.UnbindRequested += Unbind;
                 Data.MapBufferDataRequested += MapBufferData;
+                Data.UnmapBufferDataRequested += UnmapBufferData;
+                Data.BindSSBORequested += BindSSBO;
             }
 
             public override GLObjectType Type => GLObjectType.Buffer;
@@ -39,41 +43,37 @@ namespace XREngine.Rendering.OpenGL
             protected internal override void PostGenerated()
             {
                 var rend = Renderer.ActiveMeshRenderer;
-                if (rend is not null)
+                // If a mesh renderer is active, bind attributes now; otherwise just allocate storage so future PushSubData works.
+                if (rend is not null && Data.Target == EBufferTarget.ArrayBuffer)
+                {
                     BindToRenderer(rend.GetVertexProgram(), rend);
+                }
+                else if (rend is null && Data.Target == EBufferTarget.ArrayBuffer)
+                {
+                    // Suppress noisy warning; atlas / generic buffers can legitimately be created before a renderer binds them.
+                    Debug.Out($"{GetDescribingName()} generated (no active mesh renderer yet) – delaying attribute binding.");
+                }
+
+                if (Data.Resizable)
+                {
+                    // Use dynamic mutable allocation path.
+                    PushData();
+                }
                 else
                 {
-                    var target = Data.Target;
-                    if (target == EBufferTarget.ArrayBuffer)
-                    {
-                        Debug.LogWarning($"{GetDescribingName()} generated without a mesh renderer.");
-                        return;
-                    }
-                }
-                if (Data.Resizable)
-                    PushData();
-                else
                     AllocateImmutable();
+                    _lastPushedLength = Data.Length;
+                }
             }
+
+            private string RangeFlagsString() => Data.RangeFlags.ToString();
+            private string StorageFlagsString() => Data.StorageFlags.ToString();
 
             public void BindToRenderer(GLRenderProgram vertexProgram, GLMeshRenderer? arrayBufferLink, bool pushDataNow = true)
             {
                 try
                 {
-                    //const int glVer = 2;
-                    //switch (glVer)
-                    //{
-                    //    case 0:
-                    //        BindV0(index, componentType, componentCount, integral);
-                    //        break;
-                    //    case 1:
-                    //        BindV1(index, componentType, componentCount, integral);
-                    //        break;
-                    //    default:
-                    //    case 2:
                     BindV2(vertexProgram, arrayBufferLink);
-                    //        break;
-                    //}
                 }
                 catch (Exception e)
                 {
@@ -105,8 +105,6 @@ namespace XREngine.Rendering.OpenGL
                                 bindingIndex = Data.BindingIndexOverride.Value;
                             else if (!TryGetAttributeLocation(vertexProgram, out bindingIndex))
                             {
-                                //Debug.LogWarning($"Failed to bind buffer {GetDescribingName()} to {Data.AttributeName}.");
-                                //vertexProgram.Data.Shaders.ForEach(x => Debug.Out(x?.Source?.Text ?? string.Empty));
                                 return;
                             }
 
@@ -156,8 +154,6 @@ namespace XREngine.Rendering.OpenGL
                                 bindingIndex = Data.BindingIndexOverride.Value;
                             else if (!TryGetAttributeLocation(vertexProgram, out bindingIndex))
                             {
-                                //Debug.LogWarning($"Failed to bind buffer {GetDescribingName()} to {Data.AttributeName}.");
-                                //vertexProgram.Data.Shaders.ForEach(x => Debug.Out(x?.Source?.Text ?? string.Empty));
                                 return;
                             }
 
@@ -168,39 +164,6 @@ namespace XREngine.Rendering.OpenGL
                         }
                 }
             }
-
-            //private void BindV1(uint index, int componentType, uint componentCount, bool integral)
-            //{
-            //    Api.BindVertexBuffer(index, BindingId, IntPtr.Zero, Data.ElementSize);
-            //    switch (Data.Target)
-            //    {
-            //        case EBufferTarget.ArrayBuffer:
-            //            Api.EnableVertexAttribArray(index);
-            //            Api.VertexAttribBinding(index, index);
-            //            if (integral)
-            //                Api.VertexAttribIFormat(index, (int)componentCount, GLEnum.Byte + componentType, 0);
-            //            else
-            //                Api.VertexAttribFormat(index, (int)componentCount, GLEnum.Byte + componentType, Data.Normalize, 0);
-            //            break;
-            //    }
-            //}
-
-            //private void BindV0(uint index, int componentType, uint componentCount, bool integral)
-            //{
-            //    Bind();
-            //    switch (Data.Target)
-            //    {
-            //        case EBufferTarget.ArrayBuffer:
-            //            Api.EnableVertexAttribArray(index);
-            //            void* addr = Data.Address;
-            //            if (integral)
-            //                Api.VertexAttribIPointer(index, (int)componentCount, GLEnum.Byte + componentType, 0, addr);
-            //            else
-            //                Api.VertexAttribPointer(index, (int)componentCount, GLEnum.Byte + componentType, Data.Normalize, 0, addr);
-            //            break;
-            //    }
-            //    Unbind();
-            //}
 
             private uint GetAttributeLocation(GLRenderProgram vertexProgram, string attributeName)
             {
@@ -290,6 +253,15 @@ namespace XREngine.Rendering.OpenGL
                 else
                 {
                     uint lastPushed = _lastPushedLength;
+
+                    // If resizable buffer was grown and we never (re)allocated on the GPU, fall back to full PushData.
+                    // Also do this if caller is pushing the whole buffer starting at 0.
+                    if (offset == 0 && (lastPushed == 0 || length > lastPushed))
+                    {
+                        PushData();
+                        return;
+                    }
+
                     if (offset + length > lastPushed)
                     {
                         int clamped = (int)lastPushed - offset;
@@ -299,7 +271,6 @@ namespace XREngine.Rendering.OpenGL
                             return;
                         }
 
-                        //Debug.LogWarning($"PushSubData called with offset {offset} and length {length} that exceeds the last fully-pushed length of {lastPushed}. Clamping length to {clamped}.");
                         length = (uint)clamped;
                     }
 
@@ -347,23 +318,14 @@ namespace XREngine.Rendering.OpenGL
             {
                 if (Data.ActivelyMapping.Contains(this))
                 {
-                    Debug.LogWarning($"Buffer {GetDescribingName()} is already mapped.");
                     return;
                 }
-                if (Data.Resizable)
-                {
-                    Debug.LogWarning($"Buffer {GetDescribingName()} is resizable and cannot be mapped.");
-                    return;
-                }
-                //if (!ImmutableStorageSet)
-                //{
-                //    Debug.LogWarning($"Buffer {GetDescribingName()} has not had immutable storage set.");
-                //    return;
-                //}
 
                 if (Engine.InvokeOnMainThread(MapBufferData))
                     return;
 
+                // Insert a client-mapped buffer barrier before mapping to ensure visibility of GPU writes to persistently mapped buffers
+                Renderer.Api.MemoryBarrier((uint)MemoryBarrierMask.ClientMappedBufferBarrierBit);
                 MapToClientSide();
             }
 
@@ -372,46 +334,41 @@ namespace XREngine.Rendering.OpenGL
                 uint id = BindingId;
                 uint length = GetLength();
                 GPUSideSource?.Dispose();
-                var addr = Api.MapNamedBufferRange(id, IntPtr.Zero, length, (uint)ToGLEnum(Data.RangeFlags));
+
+                var glRange = (uint)ToGLEnum(Data.RangeFlags);
+                var glStorage = (uint)ToGLEnum(Data.StorageFlags);
+                Debug.Out($"[GLBuffer/Map] {GetDescribingName()} id={id} len={length} target={Data.Target} storage={StorageFlagsString()} (0x{glStorage:X}) range={RangeFlagsString()} (0x{glRange:X})");
+
+                var addr = Api.MapNamedBufferRange(id, IntPtr.Zero, length, glRange);
                 if (addr is null)
                 {
-                    //Debug.LogWarning("Failed to map buffer.");
+                    Debug.LogWarning($"[GLBuffer/Map] {GetDescribingName()} returned null pointer.");
                     return;
                 }
                 GPUSideSource = new DataSource(addr, length);
                 Data.ActivelyMapping.Add(this);
             }
 
-            public void MapToClientSide(int offset, uint length)
-            {
-                uint id = BindingId;
-                GPUSideSource?.Dispose();
-                var addr = Api.MapNamedBufferRange(id, offset, length, (uint)ToGLEnum(Data.RangeFlags));
-                if (addr is null)
-                {
-                    //Debug.LogWarning("Failed to map buffer.");
-                    return;
-                }
-                GPUSideSource = new DataSource(addr, length);
-                Data.ActivelyMapping.Add(this);
-            }
-
-            public uint GetLength()
+            // ----- Added helpers for mapping/immutable storage -----
+            private uint GetLength()
             {
                 var existingSource = Data.ClientSideSource;
                 return existingSource is not null ? existingSource.Length : Data.Length;
             }
 
-            public void AllocateImmutable()
+            private void AllocateImmutable()
             {
                 uint id = BindingId;
                 uint length;
                 var existingSource = Data.ClientSideSource;
+                var glStorage = (uint)ToGLEnum(Data.StorageFlags);
+                Debug.Out($"[GLBuffer/Storage] {GetDescribingName()} id={id} len={(existingSource?.Length ?? Data.Length)} storage={StorageFlagsString()} (0x{glStorage:X})");
                 if (existingSource is not null)
-                    Api.NamedBufferStorage(id, length = existingSource.Length, existingSource.Address.Pointer, (uint)ToGLEnum(Data.StorageFlags));
+                    Api.NamedBufferStorage(id, length = existingSource.Length, existingSource.Address.Pointer, glStorage);
                 else
-                    Api.NamedBufferStorage(id, length = Data.Length, null, (uint)ToGLEnum(Data.StorageFlags));
+                    Api.NamedBufferStorage(id, length = Data.Length, null, glStorage);
             }
+            // ------------------------------------------------------
 
             public void UnmapBufferData()
             {
@@ -421,6 +378,7 @@ namespace XREngine.Rendering.OpenGL
                 if (Engine.InvokeOnMainThread(UnmapBufferData))
                     return;
 
+                Debug.Out($"[GLBuffer/Unmap] {GetDescribingName()} id={BindingId}");
                 Api.UnmapNamedBuffer(BindingId);
                 Data.ActivelyMapping.Remove(this);
 
@@ -441,6 +399,8 @@ namespace XREngine.Rendering.OpenGL
                     flags |= GLEnum.MapCoherentBit;
                 if (storageFlags.HasFlag(EBufferMapStorageFlags.ClientStorage))
                     flags |= GLEnum.ClientStorageBit;
+                if (storageFlags.HasFlag(EBufferMapStorageFlags.DynamicStorage))
+                    flags |= GLEnum.DynamicStorageBit;
                 return flags;
             }
 
@@ -519,6 +479,28 @@ namespace XREngine.Rendering.OpenGL
 
             public VoidPtr? GetMappedAddress()
                 => GPUSideSource?.Address;
+
+            public void BindSSBO(XRRenderProgram program, uint? bindindIndexOverride = null)
+            {
+                BindSSBO(Renderer.GenericToAPI<GLRenderProgram>(program), bindindIndexOverride);
+            }
+
+            public void BindSSBO(GLRenderProgram? program, uint? bindindIndexOverride = null)
+            {
+                if (program is null)
+                {
+                    Debug.LogWarning($"Failed to bind SSBO {GetDescribingName()} to program {program?.GetDescribingName() ?? "null"}.");
+                    return;
+                }
+
+                uint resourceIndex = bindindIndexOverride ?? Data.BindingIndexOverride ?? Api.GetProgramResourceIndex(program.BindingId, GLEnum.ShaderStorageBlock, Data.AttributeName);
+                if (resourceIndex == uint.MaxValue)
+                    return;
+
+                Bind();
+                Api.BindBufferBase(ToGLEnum(EBufferTarget.ShaderStorageBuffer), resourceIndex, BindingId);
+                Unbind();
+            }
         }
     }
 }

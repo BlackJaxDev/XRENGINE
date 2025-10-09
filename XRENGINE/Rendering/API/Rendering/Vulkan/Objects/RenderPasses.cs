@@ -3,10 +3,10 @@
 namespace XREngine.Rendering.Vulkan;
 public unsafe partial class VulkanRenderer
 {
-    private RenderPass renderPass;
+    private RenderPass _renderPass;
 
     private void DestroyRenderPasses()
-        => Api!.DestroyRenderPass(device, renderPass, null);
+        => Api!.DestroyRenderPass(device, _renderPass, null);
 
     private void CreateRenderPass()
     {
@@ -43,7 +43,7 @@ public unsafe partial class VulkanRenderer
             PSubpasses = &subpass,
         };
 
-        if (Api!.CreateRenderPass(device, ref renderPassInfo, null, out renderPass) != Result.Success)
+        if (Api!.CreateRenderPass(device, ref renderPassInfo, null, out _renderPass) != Result.Success)
             throw new Exception("Failed to create render pass.");
     }
 }

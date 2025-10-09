@@ -1,4 +1,5 @@
-﻿using Extensions;
+﻿using Assimp;
+using Extensions;
 using OpenVR.NET;
 using OpenVR.NET.Devices;
 using OpenVR.NET.Manifest;
@@ -11,6 +12,7 @@ using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using Valve.VR;
+using XREngine.Components.Animation;
 using XREngine.Data.Core;
 using XREngine.Data.Geometry;
 using XREngine.Data.Rendering;
@@ -18,7 +20,6 @@ using XREngine.Rendering;
 using XREngine.Rendering.Models.Materials;
 using XREngine.Rendering.OpenGL;
 using XREngine.Scene;
-using XREngine.Components.Animation;
 using XREngine.Scene.Transforms;
 using ETextureType = Valve.VR.ETextureType;
 
@@ -256,7 +257,10 @@ namespace XREngine
 
             private static bool Stereo => Rendering.Settings.RenderVRSinglePassStereo;
             //private static bool StereoUseTextureViews => Rendering.Settings.SubmitOpenVRTextureArrayAsTwoViews;
-            
+
+            private static uint _lastRenderWidth = 0u;
+            private static uint _lastRenderHeight = 0u;
+
             private static void InitRender(XRWindow window)
             {
                 window.RenderViewportsCallback += Render;
@@ -264,6 +268,8 @@ namespace XREngine
 
                 uint rW = 0u, rH = 0u;
                 Api.CVR.GetRecommendedRenderTargetSize(ref rW, ref rH);
+                _lastRenderWidth = rW;
+                _lastRenderHeight = rH;
 
                 SetNormalUpdate();
 
@@ -281,8 +287,33 @@ namespace XREngine
                 Engine.Time.Timer.CollectVisible += CollectVisibleTwoPass;
                 Engine.Time.Timer.SwapBuffers += SwapBuffersTwoPass;
 
+                RemakeTwoPass(window, rW, rH, left, right);
+
+                if (ViewInformation.LeftEyeCamera is not null)
+                    LeftEyeViewport!.Camera = ViewInformation.LeftEyeCamera;
+
+                if (ViewInformation.RightEyeCamera is not null)
+                    RightEyeViewport!.Camera = ViewInformation.RightEyeCamera;
+
+                if (ViewInformation.World is not null)
+                {
+                    LeftEyeViewport!.WorldInstanceOverride = ViewInformation.World;
+                    RightEyeViewport!.WorldInstanceOverride = ViewInformation.World;
+                }
+
+                _twoPassRenderPipeline = new XRRenderPipelineInstance(new DefaultRenderPipeline(false));
+                RecalculateStereoCullingFrustum();
+            }
+
+            private static void RemakeTwoPass(XRWindow window, uint rW, uint rH, XRTexture2D left, XRTexture2D right)
+            {
                 left.FrameBufferAttachment = EFrameBufferAttachment.ColorAttachment0;
                 right.FrameBufferAttachment = EFrameBufferAttachment.ColorAttachment0;
+
+                VRLeftEyeRenderTarget?.Destroy();
+                VRRightEyeRenderTarget?.Destroy();
+                VRLeftEyeViewTexture?.Destroy();
+                VRRightEyeViewTexture?.Destroy();
 
                 VRLeftEyeRenderTarget = MakeTwoPassFBO(rW, rH, VRLeftEyeViewTexture = left, LeftEyeViewport = new XRViewport(window)
                 {
@@ -296,21 +327,6 @@ namespace XREngine
                     AutomaticallyCollectVisible = false,
                     AutomaticallySwapBuffers = false
                 });
-
-                if (ViewInformation.LeftEyeCamera is not null)
-                    LeftEyeViewport.Camera = ViewInformation.LeftEyeCamera;
-
-                if (ViewInformation.RightEyeCamera is not null)
-                    RightEyeViewport.Camera = ViewInformation.RightEyeCamera;
-
-                if (ViewInformation.World is not null)
-                {
-                    LeftEyeViewport.WorldInstanceOverride = ViewInformation.World;
-                    RightEyeViewport.WorldInstanceOverride = ViewInformation.World;
-                }
-
-                _twoPassRenderPipeline = new XRRenderPipelineInstance(new DefaultRenderPipeline(false));
-                RecalculateStereoCullingFrustum();
             }
 
             private static void InitSinglePass(XRWindow window, uint rW, uint rH, XRTexture2D left, XRTexture2D right)
@@ -412,6 +428,28 @@ namespace XREngine
 
             private static void Render()
             {
+                uint rW = 0u, rH = 0u;
+                Api.CVR.GetRecommendedRenderTargetSize(ref rW, ref rH);
+                if (rW != _lastRenderWidth || rH != _lastRenderHeight)
+                {
+                    _lastRenderWidth = rW;
+                    _lastRenderHeight = rH;
+                    if (Stereo)
+                    {
+                        StereoViewport?.Resize(rW, rH);
+                        VRStereoRenderTarget?.Resize(rW, rH);
+                        //StereoLeftViewTexture?.Resize(rW, rH);
+                        //StereoRightViewTexture?.Resize(rW, rH);
+                    }
+                    else
+                    {
+                        var left = MakeFBOTexture(rW, rH);
+                        var right = MakeFBOTexture(rW, rH);
+                        RemakeTwoPass(Renderer!.XRWindow, rW, rH, left, right);
+                        _twoPassRenderPipeline.DestroyCache();
+                    }
+                }
+
                 //Begin drawing to the headset
                 var drawContext = Api.UpdateDraw(Origin);
 
@@ -585,11 +623,36 @@ namespace XREngine
                 IncludeFields = true
             };
 
-            public static float PosePredictionSec { get; set; } = 100f / 1000.0f;
+            //public static float PosePredictionSec { get; set; } = 0f / 1000.0f;
 
             private static void Update()
             {
-                Api.UpdateInput(PosePredictionSec);
+                if (Api.Headset is null)
+                    Api.UpdateInput(0);
+                else
+                {
+                    uint deviceIndex = Api.Headset!.DeviceIndex;
+                    ETrackedPropertyError error = ETrackedPropertyError.TrackedProp_Success;
+
+                    float secondsSinceLastVsync = 0.0f;
+                    ulong frameCount = 0uL;
+                    Api.CVR.GetTimeSinceLastVsync(ref secondsSinceLastVsync, ref frameCount);
+
+                    float displayFrequency = Api.CVR.GetFloatTrackedDeviceProperty(
+                        deviceIndex,
+                        ETrackedDeviceProperty.Prop_DisplayFrequency_Float,
+                        ref error);
+
+                    float motionToPhoton = Api.CVR.GetFloatTrackedDeviceProperty(
+                        deviceIndex,
+                        ETrackedDeviceProperty.Prop_SecondsFromVsyncToPhotons_Float,
+                        ref error);
+
+                    float frameDuration = 1.0f / displayFrequency;
+                    float fSecondsFromNow = frameDuration - secondsSinceLastVsync + motionToPhoton;
+
+                    Api.UpdateInput(fSecondsFromNow);
+                }
                 Api.Update();
             }
 
@@ -784,10 +847,11 @@ namespace XREngine
 
             private static void ReadStats()
             {
+                uint size = (uint)Marshal.SizeOf<Compositor_FrameTiming>();
                 Compositor_FrameTiming currentFrame = new();
                 Compositor_FrameTiming previousFrame = new();
-                currentFrame.m_nSize = (uint)Marshal.SizeOf<Compositor_FrameTiming>();
-                previousFrame.m_nSize = (uint)Marshal.SizeOf<Compositor_FrameTiming>();
+                currentFrame.m_nSize = size;
+                previousFrame.m_nSize = size;
                 Valve.VR.OpenVR.Compositor.GetFrameTiming(ref currentFrame, 0);
                 Valve.VR.OpenVR.Compositor.GetFrameTiming(ref previousFrame, 1);
 

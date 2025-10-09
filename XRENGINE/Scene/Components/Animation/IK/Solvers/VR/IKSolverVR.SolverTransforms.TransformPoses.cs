@@ -46,22 +46,26 @@ namespace XREngine.Components.Animation
                 public bool IsRootOrHips { get; }
                 public bool IsStretchable { get; }
 
-                public void ResetSolvedTranslation()
+                public void ResetTranslation()
                 {
-                    var parent = _transform?.Parent;
-                    SolvedWorld.Translation = parent is not null ? parent.TransformPoint(DefaultLocal.Translation) : DefaultLocal.Translation;
+                    if (_transform is null)
+                        return;
+
+                    _transform.Translation = DefaultLocal.Translation;
                 }
-                public void ResetSolvedRotation()
+                public void ResetRotation()
                 {
-                    var parent = _transform?.Parent;
-                    SolvedWorld.Rotation = parent is not null ? parent.TransformRotation(DefaultLocal.Rotation) : DefaultLocal.Rotation;
+                    if (_transform is null)
+                        return;
+
+                    _transform.Rotation = DefaultLocal.Rotation;
                 }
 
-                public void ResetSolvedToDefault()
+                public void ResetTransformToDefault()
                 {
-                    ResetSolvedRotation();
+                    ResetRotation();
                     if (IsRootOrHips)
-                        ResetSolvedTranslation();
+                        ResetTranslation();
                 }
 
                 private void TransformChanged()

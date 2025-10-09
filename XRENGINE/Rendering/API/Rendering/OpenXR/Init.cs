@@ -118,10 +118,10 @@ public unsafe partial class OpenXRAPI : XRBase
             Type = StructureType.GraphicsRequirementsVulkanKhr
         };
 
-        if (!Api.TryGetInstanceExtension<KhrVulkanEnable>("", instance, out var vulkanExtension))
+        if (!Api.TryGetInstanceExtension<KhrVulkanEnable>("", _instance, out var vulkanExtension))
             throw new Exception("Failed to get Vulkan extension");
 
-        if (vulkanExtension.GetVulkanGraphicsRequirements(instance, _systemId, ref requirements) != Result.Success)
+        if (vulkanExtension.GetVulkanGraphicsRequirements(_instance, _systemId, ref requirements) != Result.Success)
             throw new Exception("Failed to get Vulkan graphics requirements");
 
         Debug.Out($"Vulkan requirements: Min {requirements.MinApiVersionSupported}, Max {requirements.MaxApiVersionSupported}");
@@ -164,7 +164,7 @@ public unsafe partial class OpenXRAPI : XRBase
             SystemId = _systemId,
             Next = &vkBinding
         };
-        var result = Api.CreateSession(instance, ref createInfo, ref _session);
+        var result = Api.CreateSession(_instance, ref createInfo, ref _session);
         if (result != Result.Success)
             throw new Exception($"Failed to create session: {result}");
     }
@@ -221,9 +221,7 @@ public unsafe partial class OpenXRAPI : XRBase
         {
             // Sequential rendering path
             for (uint i = 0; i < _viewCount; i++)
-            {
                 RenderEye(i, renderCallback, projectionViews);
-            }
         }
 
         Api.EndFrame(_session, in frameEndInfo);
@@ -322,7 +320,7 @@ public unsafe partial class OpenXRAPI : XRBase
         // Get view configuration
         var viewConfigType = ViewConfigurationType.PrimaryStereo;
         _viewCount = 0;
-        Api.EnumerateViewConfigurationView(instance, _systemId, viewConfigType, 0, ref _viewCount, null);
+        Api.EnumerateViewConfigurationView(_instance, _systemId, viewConfigType, 0, ref _viewCount, null);
 
         if (_viewCount != 2)
         {
@@ -331,7 +329,7 @@ public unsafe partial class OpenXRAPI : XRBase
 
         fixed (ViewConfigurationView* viewConfigViewsPtr = _viewConfigViews)
         {
-            Api.EnumerateViewConfigurationView(instance, _systemId, viewConfigType, _viewCount, ref _viewCount, viewConfigViewsPtr);
+            Api.EnumerateViewConfigurationView(_instance, _systemId, viewConfigType, _viewCount, ref _viewCount, viewConfigViewsPtr);
         }
 
         // Create swapchains for each view
@@ -384,10 +382,12 @@ public unsafe partial class OpenXRAPI : XRBase
             case OpenGLRenderer renderer:
                 InitializeOpenGLSwapchains(renderer);
                 CreateOpenGLSession();
+                Window.RenderViewportsCallback += Window_RenderViewportsCallback;
                 break;
             case VulkanRenderer renderer:
                 InitializeVulkanSwapchains(renderer);
                 CreateVulkanSession();
+                Window.RenderViewportsCallback += Window_RenderViewportsCallback;
                 break;
             //case D3D12Renderer renderer:
             //    throw new NotImplementedException("DirectX 12 renderer not implemented");
@@ -395,6 +395,11 @@ public unsafe partial class OpenXRAPI : XRBase
                 throw new Exception("Unsupported renderer");
         }
         SetupDebugMessenger();
+    }
+
+    private void Window_RenderViewportsCallback()
+    {
+        RenderFrame(null);
     }
 
     /// <summary>
@@ -407,7 +412,7 @@ public unsafe partial class OpenXRAPI : XRBase
             Type = StructureType.SystemGetInfo,
             FormFactor = FormFactor.HeadMountedDisplay
         };
-        var result = Api.GetSystem(instance, in systemGetInfo, ref _systemId);
+        var result = Api.GetSystem(_instance, in systemGetInfo, ref _systemId);
         if (result != Result.Success)
         {
             throw new Exception($"Failed to get system: {result}");
@@ -475,10 +480,10 @@ public unsafe partial class OpenXRAPI : XRBase
             Type = StructureType.GraphicsRequirementsOpenglKhr
         };
 
-        if (!Api.TryGetInstanceExtension<KhrOpenglEnable>("", instance, out var openglExtension))
+        if (!Api.TryGetInstanceExtension<KhrOpenglEnable>("", _instance, out var openglExtension))
             throw new Exception("Failed to get OpenGL extension");
 
-        if (openglExtension.GetOpenGlgraphicsRequirements(instance, _systemId, ref requirements) != Result.Success)
+        if (openglExtension.GetOpenGlgraphicsRequirements(_instance, _systemId, ref requirements) != Result.Success)
             throw new Exception("Failed to get OpenGL graphics requirements");
 
         Debug.Out($"OpenGL requirements: Min {requirements.MinApiVersionSupported}, Max {requirements.MaxApiVersionSupported}");
@@ -496,7 +501,7 @@ public unsafe partial class OpenXRAPI : XRBase
             SystemId = _systemId,
             Next = &glBinding
         };
-        var result = Api.CreateSession(instance, ref createInfo, ref _session);
+        var result = Api.CreateSession(_instance, ref createInfo, ref _session);
         if (result != Result.Success)
             throw new Exception($"Failed to create session: {result}");
     }
@@ -541,16 +546,14 @@ public unsafe partial class OpenXRAPI : XRBase
         // Get view configuration
         var viewConfigType = ViewConfigurationType.PrimaryStereo;
         _viewCount = 0;
-        Api.EnumerateViewConfigurationView(instance, _systemId, viewConfigType, 0, ref _viewCount, null);
+        Api.EnumerateViewConfigurationView(_instance, _systemId, viewConfigType, 0, ref _viewCount, null);
 
         if (_viewCount != 2)
-        {
             throw new Exception($"Expected 2 views, got {_viewCount}");
-        }
-
+        
         fixed (ViewConfigurationView* viewConfigViewsPtr = _viewConfigViews)
         {
-            Api.EnumerateViewConfigurationView(instance, _systemId, viewConfigType, _viewCount, ref _viewCount, viewConfigViewsPtr);
+            Api.EnumerateViewConfigurationView(_instance, _systemId, viewConfigType, _viewCount, ref _viewCount, viewConfigViewsPtr);
         }
 
         // Create swapchains for each view
@@ -572,9 +575,7 @@ public unsafe partial class OpenXRAPI : XRBase
             fixed (Swapchain* swapchainPtr = &_swapchains[i])
             {
                 if (Api.CreateSwapchain(_session, in swapchainCreateInfo, swapchainPtr) != Result.Success)
-                {
                     throw new Exception($"Failed to create swapchain for view {i}");
-                }
             }
 
             // Get swapchain images
@@ -741,7 +742,7 @@ public unsafe partial class OpenXRAPI : XRBase
     private void PollEvents()
     {
         EventDataBuffer eventData = new();
-        while (Api.PollEvent(instance, ref eventData) == Result.Success)
+        while (Api.PollEvent(_instance, ref eventData) == Result.Success)
         {
             switch (eventData.Type)
             {

@@ -1,0 +1,70 @@
+#version 460
+
+// Single-workgroup bitonic sort for up to 1024 elements (one pass)
+
+struct MortonObject
+{
+    uint mortonCode;
+    uint objectId;
+};
+
+layout(std430, binding = 1) buffer MortonCodes
+{
+    MortonObject mortonObjects[];
+};
+
+uniform uint numObjects;
+
+// Simple in-place bitonic sort (power-of-two up to MAX_OBJECTS). For non-powers, extra elements are treated as max sentinel.
+bool greater(MortonObject a, MortonObject b)
+{
+    if (a.mortonCode != b.mortonCode)
+        return a.mortonCode > b.mortonCode;
+    return a.objectId > b.objectId;
+}
+
+layout (local_size_x = 1024, local_size_y = 1, local_size_z = 1) in;
+
+shared MortonObject sdata[1024];
+
+void main()
+{
+    // Single-dispatch bitonic network up to 1024 using shared memory, one workgroup
+    uint tid = gl_LocalInvocationID.x;
+    uint i = tid;
+
+    MortonObject val;
+    if (i < numObjects)
+        val = mortonObjects[i];
+    else
+    {
+        val.mortonCode = 0xFFFFFFFFu;
+        val.objectId = 0xFFFFFFFFu;
+    }
+    sdata[tid] = val;
+    barrier();
+
+    // bitonic sort across full shared array
+    for (uint k = 2u; k <= 1024u; k <<= 1u)
+    {
+        for (uint j = k >> 1u; j > 0u; j >>= 1u)
+        {
+            uint ixj = tid ^ j;
+            if (ixj > tid)
+            {
+                bool up = ((tid & k) == 0u);
+                MortonObject a = sdata[tid];
+                MortonObject b = sdata[ixj];
+                bool swap = up ? greater(a,b) : greater(b,a);
+                if (swap)
+                {
+                    sdata[tid] = b;
+                    sdata[ixj] = a;
+                }
+            }
+            barrier();
+        }
+    }
+
+    if (i < numObjects) mortonObjects[i] = sdata[tid];
+}

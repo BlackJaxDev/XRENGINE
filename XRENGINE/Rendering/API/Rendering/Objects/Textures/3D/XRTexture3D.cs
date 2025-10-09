@@ -1,193 +1,161 @@
 ﻿using System.Numerics;
+using XREngine.Data.Colors;
 using XREngine.Data.Rendering;
 
 namespace XREngine.Rendering
 {
     public class XRTexture3D : XRTexture
     {
-        //public XRTexture3D() : this(null, 1, 1, 1) { }
-        //public XRTexture3D(int width, int height, int depth)
-        //{
-        //    _mipmaps = null;
-        //    _width = width;
-        //    _height = height;
-        //    _internalFormat = EPixelInternalFormat.Rgba8;
-        //    _pixelFormat = EPixelFormat.Bgra;
-        //    _pixelType = EPixelType.UnsignedByte;
-        //}
-        //public XRTexture3D(string name, int width, int height, int depth,
-        //    ETPixelCompFmt bitmapFormat = ETPixelCompFmt.F16, int mipCount = 1)
-        //    : this(name, width, height, depth)
-        //{
-        //    _mipmaps = new Bitmap3D[mipCount];
-        //    for (int i = 0, scale = 1; i < mipCount; scale = 1 << ++i)
-        //    {
-        //        Bitmap3D tref = new(width / scale, height / scale, depth / scale, ETPixelType.Basic);
-        //        _mipmaps[i] = tref;
-        //    }
+        private ESizedInternalFormat _sizedInternalFormat = ESizedInternalFormat.Rgba8;
+        private ETexMagFilter _magFilter = ETexMagFilter.Nearest;
+        private ETexMinFilter _minFilter = ETexMinFilter.Nearest;
+        private ETexWrapMode _uWrap = ETexWrapMode.Repeat;
+        private ETexWrapMode _vWrap = ETexWrapMode.Repeat;
+        private ETexWrapMode _wWrap = ETexWrapMode.Repeat;
+        private float _lodBias = 0.0f;
+        private bool _resizable = true;
+        private bool _exclusiveSharing = true;
 
-        //    DetermineTextureFormat();
-        //}
-        //public XRTexture3D(string name, int width, int height, int depth,
-        //    EPixelInternalFormat internalFormat, EPixelFormat pixelFormat, EPixelType pixelType)
-        //    : this(name, width, height, depth)
-        //{
-        //    _mipmaps = null;
-        //    _internalFormat = internalFormat;
-        //    _pixelFormat = pixelFormat;
-        //    _pixelType = pixelType;
-        //    _width = width;
-        //    _height = height;
-        //}
-        ////public TexRef3D(string name, int width, int height, int depth,
-        ////    EPixelInternalFormat internalFormat, EPixelFormat pixelFormat, EPixelType pixelType)
-        ////    : this(name, width, height, depth, internalFormat, pixelFormat, pixelType)
-        ////{
-        ////    _mipmaps = new GlobalFileRef<TBitmap3D>[] { new TBitmap3D(width, height, depth, pixelType) };
-        ////}
-        //public XRTexture3D(params string[] mipMapPaths)
-        //{
-        //    _mipmaps = new Bitmap3D[mipMapPaths.Length];
-        //    for (int i = 0; i < mipMapPaths.Length; ++i)
-        //    {
-        //        string path = mipMapPaths[i];
-        //        if (path.StartsWith("file://"))
-        //            path = path.Substring(7);
-        //        _mipmaps =
-        //        [
-        //            new TBitmap3D(path)
-        //        ];
-        //    }
-        //}
-
-        //public Bitmap3D[] _mipmaps;
-        //public Bitmap3D[] Mipmaps
-        //{
-        //    get => _mipmaps;
-        //    set => SetField(ref _mipmaps, value);
-        //}
-
-        //protected RenderTex3D _texture;
-
-        //protected int _width;
-        //protected int _height;
-        //protected int _depth;
-
-        //private EPixelFormat _pixelFormat = EPixelFormat.Rgba;
-        //private EPixelType _pixelType = EPixelType.UnsignedByte;
-        //private EPixelInternalFormat _internalFormat = EPixelInternalFormat.Rgba8;
-
-        //public EPixelFormat PixelFormat
-        //{
-        //    get => _pixelFormat;
-        //    set
-        //    {
-        //        _pixelFormat = value;
-        //        if (_texture != null)
-        //        {
-        //            _texture.PixelFormat = _pixelFormat;
-        //            _texture.PushData();
-        //        }
-        //    }
-        //}
-
-        //public EPixelType PixelType
-        //{
-        //    get => _pixelType;
-        //    set
-        //    {
-        //        _pixelType = value;
-        //        if (_texture != null)
-        //        {
-        //            _texture.PixelType = _pixelType;
-        //            _texture.PushData();
-        //        }
-        //    }
-        //}
-
-        //public EPixelInternalFormat InternalFormat
-        //{
-        //    get => _internalFormat;
-        //    set
-        //    {
-        //        _internalFormat = value;
-        //        if (_texture != null)
-        //        {
-        //            _texture.InternalFormat = _internalFormat;
-        //            _texture.PushData();
-        //        }
-        //    }
-        //}
+        public override bool IsResizeable => Resizable;
 
         /// <summary>
         /// If false, calling resize will do nothing.
         /// Useful for repeating textures that must always be a certain size or textures that never need to be dynamically resized during the game.
         /// False by default.
         /// </summary>
-        public bool Resizable { get; set; } = true;
+        public bool Resizable
+        {
+            get => _resizable;
+            set => SetField(ref _resizable, value);
+        }
 
         public override Vector3 WidthHeightDepth => new(Width, Height, Depth);
 
         public EDepthStencilFmt DepthStencilFormat { get; set; } = EDepthStencilFmt.None;
 
-        public ETexMagFilter MagFilter { get; set; } = ETexMagFilter.Nearest;
+        public ETexMagFilter MagFilter
+        {
+            get => _magFilter;
+            set => SetField(ref _magFilter, value);
+        }
 
-        public ETexMinFilter MinFilter { get; set; } = ETexMinFilter.Nearest;
+        public ETexMinFilter MinFilter
+        {
+            get => _minFilter;
+            set => SetField(ref _minFilter, value);
+        }
 
-        public ETexWrapMode UWrap { get; set; } = ETexWrapMode.Repeat;
+        public ETexWrapMode UWrap
+        {
+            get => _uWrap;
+            set => SetField(ref _uWrap, value);
+        }
 
-        public ETexWrapMode VWrap { get; set; } = ETexWrapMode.Repeat;
+        public ETexWrapMode VWrap
+        {
+            get => _vWrap;
+            set => SetField(ref _vWrap, value);
+        }
 
-        public ETexWrapMode WWrap { get; set; } = ETexWrapMode.Repeat;
+        public ETexWrapMode WWrap
+        {
+            get => _wWrap;
+            set => SetField(ref _wWrap, value);
+        }
 
-        public float LodBias { get; set; } = 0.0f;
+        public float LodBias
+        {
+            get => _lodBias;
+            set => SetField(ref _lodBias, value);
+        }
 
-        private int _width;
-        private int _height;
-        private int _depth;
+        public ESizedInternalFormat SizedInternalFormat
+        {
+            get => _sizedInternalFormat;
+            set => SetField(ref _sizedInternalFormat, value);
+        }
 
-        public int Width => _width;
-        public int Height => _height;
-        public int Depth => _depth;
+        public bool ExclusiveSharing
+        {
+            get => _exclusiveSharing;
+            set => SetField(ref _exclusiveSharing, value);
+        }
 
-        //private bool _isLoading = false;
+        private uint _width;
+        private uint _height;
+        private uint _depth;
 
-        //public async Task<RenderTex3D> GetTextureAsync()
-        //{
-        //    if (_texture != null)
-        //        return _texture;
+        public uint Width => _width;
+        public uint Height => _height;
+        public uint Depth => _depth;
 
-        //    if (!_isLoading)
-        //        await Task.Run(LoadMipmaps);
+        public event Action? Resized;
 
-        //    return _texture;
-        //}
-        //public RenderTex3D GetTexture(bool loadSynchronously = false)
-        //{
-        //    if (_texture != null)
-        //        return _texture;
+        public XRTexture3D() : this(1, 1, 1, EPixelInternalFormat.Rgb8, EPixelFormat.Rgb, EPixelType.UnsignedByte, true) { }
 
-        //    if (!_isLoading)
-        //    {
-        //        if (loadSynchronously)
-        //        {
-        //            LoadMipmaps();
-        //            return _texture;
-        //        }
-        //        else
-        //        {
-        //            GetTextureAsync().ContinueWith(task => _texture = task.Result);
-        //        }
-        //    }
+        public XRTexture3D(uint width, uint height, uint depth) 
+            : this(width, height, depth, EPixelInternalFormat.Rgb8, EPixelFormat.Rgb, EPixelType.UnsignedByte, true) { }
 
-        //    return _texture;
-        //}
+        public XRTexture3D(uint width, uint height, uint depth, ColorF4 color)
+        {
+            _width = width;
+            _height = height;
+            _depth = depth;
+            
+            // Create a simple 3D texture filled with the specified color
+            // For now, we'll just set the dimensions and let the renderer handle the data
+            // In a full implementation, you might want to create actual 3D data here
+        }
+
+        public XRTexture3D(uint width, uint height, uint depth, EPixelInternalFormat internalFormat, EPixelFormat format, EPixelType type, bool allocateData = false)
+        {
+            _width = width;
+            _height = height;
+            _depth = depth;
+            
+            // Set default properties
+            _sizedInternalFormat = internalFormat switch
+            {
+                EPixelInternalFormat.Rgb8 => ESizedInternalFormat.Rgb8,
+                EPixelInternalFormat.Rgba8 => ESizedInternalFormat.Rgba8,
+                //EPixelInternalFormat.Rgb16 => ESizedInternalFormat.Rgb16,
+                EPixelInternalFormat.Rgba16 => ESizedInternalFormat.Rgba16,
+                EPixelInternalFormat.Rgb32f => ESizedInternalFormat.Rgb32f,
+                EPixelInternalFormat.Rgba32f => ESizedInternalFormat.Rgba32f,
+                _ => ESizedInternalFormat.Rgba8
+            };
+            
+            // In a full implementation, you might want to create actual 3D mipmap data here
+            // similar to how XRTexture2D creates Mipmap2D arrays
+        }
+
+        public XRTexture3D(uint width, uint height, uint depth, EPixelInternalFormat internalFormat, EPixelFormat format, EPixelType type, int mipmapCount)
+        {
+            _width = width;
+            _height = height;
+            _depth = depth;
+            
+            // Set default properties
+            _sizedInternalFormat = internalFormat switch
+            {
+                EPixelInternalFormat.Rgb8 => ESizedInternalFormat.Rgb8,
+                EPixelInternalFormat.Rgba8 => ESizedInternalFormat.Rgba8,
+                //EPixelInternalFormat.Rgb16 => ESizedInternalFormat.Rgb16,
+                EPixelInternalFormat.Rgba16 => ESizedInternalFormat.Rgba16,
+                EPixelInternalFormat.Rgb32f => ESizedInternalFormat.Rgb32f,
+                EPixelInternalFormat.Rgba32f => ESizedInternalFormat.Rgba32f,
+                _ => ESizedInternalFormat.Rgba8
+            };
+            
+            // In a full implementation, you would create mipmapCount levels of 3D data
+            // with each level having dimensions divided by 2
+        }
 
         /// <summary>
         /// Resizes the textures stored in memory.
         /// Does nothing if Resizeable is false.
         /// </summary>
-        public void Resize(int width, int height, int depth, bool resizeRenderTexture = true)
+        public void Resize(uint width, uint height, uint depth, bool resizeRenderTexture = true)
         {
             if (!Resizable)
                 return;
@@ -196,85 +164,94 @@ namespace XREngine.Rendering
             _height = height;
             _depth = depth;
 
-            //_mipmaps?.ForEach(x => x.File?.Resize(width, height, depth));
+            Resized?.Invoke();
         }
 
-        //public override int MaxDimension { get; }
+        public override uint MaxDimension => (uint)Math.Max(Math.Max(Width, Height), Depth);
 
-        ///// <summary>
-        ///// Call if you want to load all mipmap texture files, in a background thread for example.
-        ///// </summary>
-        //public void LoadMipmaps()
-        //{
-        //    _isLoading = true;
-        //    _mipmaps?.ForEach(tex => tex?.GetInstance());
-        //    DetermineTextureFormat(false);
-        //    CreateRenderTexture();
-        //    _isLoading = false;
-        //}
-        ///// <summary>
-        ///// Decides the best internal format, pixel format, and pixel type for the stored mipmaps.
-        ///// </summary>
-        ///// <param name="force">If true, sets the formats/type even if the mipmaps are loaded.</param>
-        //public void DetermineTextureFormat(bool force = true)
-        //{
-        //    if (_mipmaps != null && _mipmaps.Length > 0)
-        //    {
-        //        var tref = _mipmaps[0];
-        //        //if (!tref.IsLoaded && !force)
-        //        //    return;
-        //        var t = tref.File;
-        //        if (t != null)
-        //        {
-        //            //switch (t.Format)
-        //            //{
-        //            //    case System.Drawing.Imaging.PixelFormat.Format24bppRgb:
-        //            //        InternalFormat = EPixelInternalFormat.Rgb8;
-        //            //        PixelFormat = EPixelFormat.Bgr;
-        //            //        PixelType = EPixelType.UnsignedByte;
-        //            //        break;
-        //            //    case System.Drawing.Imaging.PixelFormat.Format32bppRgb:
-        //            //        InternalFormat = EPixelInternalFormat.Rgb8;
-        //            //        PixelFormat = EPixelFormat.Bgra;
-        //            //        PixelType = EPixelType.UnsignedByte;
-        //            //        break;
-        //            //    case System.Drawing.Imaging.PixelFormat.Format32bppArgb:
-        //            //    case System.Drawing.Imaging.PixelFormat.Format32bppPArgb:
-        //            //        InternalFormat = EPixelInternalFormat.Rgba8;
-        //            //        PixelFormat = EPixelFormat.Bgra;
-        //            //        PixelType = EPixelType.UnsignedByte;
-        //            //        break;
-        //            //    case System.Drawing.Imaging.PixelFormat.Format64bppArgb:
-        //            //    case System.Drawing.Imaging.PixelFormat.Format64bppPArgb:
-        //            //        InternalFormat = EPixelInternalFormat.Rgba16;
-        //            //        PixelFormat = EPixelFormat.Bgra;
-        //            //        PixelType = EPixelType.UnsignedShort;
-        //            //        break;
-        //            //}
-        //        }
-        //    }
-        //}
-        //protected virtual void CreateRenderTexture()
-        //{
-        //    if (_texture != null)
-        //    {
-        //        _texture.PostPushData -= SetParameters;
-        //        _texture.Destroy();
-        //    }
+        /// <summary>
+        /// Creates a new texture specifically for attaching to a framebuffer.
+        /// </summary>
+        /// <param name="width">The texture's width.</param>
+        /// <param name="height">The texture's height.</param>
+        /// <param name="depth">The texture's depth.</param>
+        /// <param name="internalFmt">The internal texture storage format.</param>
+        /// <param name="format">The format of the texture's pixels.</param>
+        /// <param name="pixelType">How pixels are stored.</param>
+        /// <param name="bufAttach">Where to attach to the framebuffer for rendering to.</param>
+        /// <returns>A new 3D texture reference.</returns>
+        public static XRTexture3D CreateFrameBufferTexture(uint width, uint height, uint depth,
+            EPixelInternalFormat internalFmt, EPixelFormat format, EPixelType type, EFrameBufferAttachment bufAttach)
+            => new(width, height, depth, internalFmt, format, type, false)
+            {
+                MinFilter = ETexMinFilter.Nearest,
+                MagFilter = ETexMagFilter.Nearest,
+                UWrap = ETexWrapMode.ClampToEdge,
+                VWrap = ETexWrapMode.ClampToEdge,
+                WWrap = ETexWrapMode.ClampToEdge,
+                AutoGenerateMipmaps = false,
+                FrameBufferAttachment = bufAttach,
+            };
 
-        //    if (_mipmaps != null && _mipmaps.Length > 0)
-        //        _texture = new RenderTex3D(InternalFormat, PixelFormat, PixelType, _mipmaps.Select(x => x.File).ToArray())
-        //        {
-        //            Resizable = Resizable,
-        //        };
-        //    else
-        //        _texture = new RenderTex3D(_width, _height, _depth, InternalFormat, PixelFormat, PixelType)
-        //        {
-        //            Resizable = Resizable
-        //        };
+        /// <summary>
+        /// Creates a new texture specifically for attaching to a framebuffer.
+        /// </summary>
+        /// <param name="width">The texture's width.</param>
+        /// <param name="height">The texture's height.</param>
+        /// <param name="depth">The texture's depth.</param>
+        /// <param name="internalFmt">The internal texture storage format.</param>
+        /// <param name="format">The format of the texture's pixels.</param>
+        /// <param name="pixelType">How pixels are stored.</param>
+        /// <returns>A new 3D texture reference.</returns>
+        public static XRTexture3D CreateFrameBufferTexture(uint width, uint height, uint depth, EPixelInternalFormat internalFormat, EPixelFormat format, EPixelType type)
+            => new(width, height, depth, internalFormat, format, type, false)
+            {
+                MinFilter = ETexMinFilter.Nearest,
+                MagFilter = ETexMagFilter.Nearest,
+                UWrap = ETexWrapMode.ClampToEdge,
+                VWrap = ETexWrapMode.ClampToEdge,
+                WWrap = ETexWrapMode.ClampToEdge,
+                AutoGenerateMipmaps = false,
+            };
 
-        //    _texture.PostPushData += SetParameters;
-        //}
-        public override uint MaxDimension { get; }
+        /// <summary>
+        /// Creates a new 3D texture filled with a specific color.
+        /// </summary>
+        /// <param name="width">The texture's width.</param>
+        /// <param name="height">The texture's height.</param>
+        /// <param name="depth">The texture's depth.</param>
+        /// <param name="color">The color to fill the texture with.</param>
+        /// <returns>A new 3D texture reference.</returns>
+        public static XRTexture3D CreateColorTexture(uint width, uint height, uint depth, ColorF4 color)
+            => new(width, height, depth, color)
+            {
+                MinFilter = ETexMinFilter.Linear,
+                MagFilter = ETexMagFilter.Linear,
+                UWrap = ETexWrapMode.ClampToEdge,
+                VWrap = ETexWrapMode.ClampToEdge,
+                WWrap = ETexWrapMode.ClampToEdge,
+                AutoGenerateMipmaps = true,
+            };
+
+        /// <summary>
+        /// Creates a new 3D texture with default settings.
+        /// </summary>
+        /// <param name="width">The texture's width.</param>
+        /// <param name="height">The texture's height.</param>
+        /// <param name="depth">The texture's depth.</param>
+        /// <param name="internalFormat">The internal texture storage format.</param>
+        /// <param name="format">The format of the texture's pixels.</param>
+        /// <param name="type">How pixels are stored.</param>
+        /// <returns>A new 3D texture reference.</returns>
+        public static XRTexture3D Create(uint width, uint height, uint depth, EPixelInternalFormat internalFormat = EPixelInternalFormat.Rgba8, EPixelFormat format = EPixelFormat.Rgba, EPixelType type = EPixelType.UnsignedByte)
+            => new(width, height, depth, internalFormat, format, type, true)
+            {
+                MinFilter = ETexMinFilter.Linear,
+                MagFilter = ETexMagFilter.Linear,
+                UWrap = ETexWrapMode.Repeat,
+                VWrap = ETexWrapMode.Repeat,
+                WWrap = ETexWrapMode.Repeat,
+                AutoGenerateMipmaps = true,
+            };
     }
 }

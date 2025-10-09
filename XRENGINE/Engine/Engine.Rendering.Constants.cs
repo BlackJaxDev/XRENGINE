@@ -17,6 +17,14 @@
                 public const string LightsStructName = "LightData";
 
                 public const string EngineFontsCommonFolderName = "Fonts";
+
+                public const string ShadowSamples = "ShadowSamples";
+                public const string ShadowFilterRadius = "ShadowFilterRadius";
+                public const string EnablePCSS = "EnablePCSS";
+                public const string EnableCascadedShadows = "EnableCascadedShadows";
+                public const string EnableContactShadows = "EnableContactShadows";
+                public const string ContactShadowDistance = "ContactShadowDistance";
+                public const string ContactShadowSamples = "ContactShadowSamples";
             }
         }
     }

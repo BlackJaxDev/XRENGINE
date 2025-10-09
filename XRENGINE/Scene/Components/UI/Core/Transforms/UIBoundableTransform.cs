@@ -158,7 +158,7 @@ namespace XREngine.Rendering.UI
                 case nameof(MaxHeight):
                 case nameof(MaxWidth):
                 case nameof(NormalizedPivot):
-                    InvalidateLayout();
+                    //InvalidateLayout();
                     break;
             }
         }
@@ -579,7 +579,7 @@ namespace XREngine.Rendering.UI
             Vector2 min = new(Math.Min(minPos.X, maxPos.X), Math.Min(minPos.Y, maxPos.Y));
             Vector2 max = new(Math.Max(minPos.X, maxPos.X), Math.Max(minPos.Y, maxPos.Y));
 
-            DebugRenderInfo2D.CullingVolume = AxisAlignedRegion = BoundingRectangleF.FromMinMaxSides(min.X, max.X, min.Y, max.Y, 0.0f, 0.0f);
+            //DebugRenderInfo2D.CullingVolume = AxisAlignedRegion = BoundingRectangleF.FromMinMaxSides(min.X, max.X, min.Y, max.Y, 0.0f, 0.0f);
             
             //Engine.PrintLine($"Axis-aligned region remade: {_axisAlignedRegion.Translation} {_axisAlignedRegion.Extents}");
         }
@@ -708,7 +708,7 @@ namespace XREngine.Rendering.UI
                 switch (info)
                 {
                     case RenderInfo2D renderInfo2D when ParentCanvas?.DrawSpace == ECanvasDrawSpace.Screen:
-                        renderInfo2D.CullingVolume = AxisAlignedRegion;
+                        //renderInfo2D.CullingVolume = AxisAlignedRegion;
                         break;
                     case RenderInfo3D renderInfo3D when ParentCanvas?.DrawSpace != ECanvasDrawSpace.Screen:
                         renderInfo3D.CullingOffsetMatrix = RegionWorldTransform;

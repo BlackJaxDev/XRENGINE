@@ -71,11 +71,24 @@ public unsafe partial class VulkanRenderer
                 if (value == _data)
                     return;
 
-                _data?.RemoveWrapper(this);
+                if (_data is not null)
+                {
+                    UnlinkData();
+                    _data.RemoveWrapper(this);
+                }
+
                 _data = value;
-                _data?.AddWrapper(this);
+
+                if (_data is not null)
+                {
+                    _data.AddWrapper(this);
+                    LinkData();
+                }
             }
         }
+
+        protected abstract void UnlinkData();
+        protected abstract void LinkData();
 
         protected internal override void PostGenerated()
         {

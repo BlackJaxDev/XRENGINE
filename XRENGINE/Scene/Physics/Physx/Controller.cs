@@ -1,9 +1,12 @@
-﻿using MagicPhysX;
+﻿using Jitter2;
+using MagicPhysX;
+using System.Collections.Concurrent;
 using System.Numerics;
 using System.Runtime.InteropServices;
 using XREngine.Data;
 using XREngine.Data.Core;
 using static MagicPhysX.NativeMethods;
+using static XREngine.Engine;
 
 namespace XREngine.Rendering.Physics.Physx
 {
@@ -177,20 +180,29 @@ namespace XREngine.Rendering.Physics.Physx
             private set => SetField(ref _collidingDown, value);
         }
 
-        public void Move(Vector3 delta, float minDist, float elapsedTime, PxControllerFilters* filters, PxObstacleContext* obstacles)
+        public ConcurrentQueue<(Vector3 delta, float minDist, float elapsedTime)> _inputBuffer = new();
+
+        public void Move(Vector3 delta, float minDist, float elapsedTime)
+            => _inputBuffer.Enqueue((delta, minDist, elapsedTime));
+
+        private void ConsumeMove(Vector3 delta, float minDist, float elapsedTime)
         {
-            PhysxScene.LogControllerMove(delta, minDist, elapsedTime);
+            var manager = Scene?.GetOrCreateControllerManager();
+            PxControllerFilters* filtersPtr = manager!.ControllerFilters;
+
             PxVec3 d = PxVec3_new_3(delta.X, delta.Y, delta.Z);
-            PxControllerCollisionFlags flags = ControllerPtr->MoveMut(&d, minDist, elapsedTime, filters, null);
+            PxControllerCollisionFlags flags = ControllerPtr->MoveMut(&d, minDist, elapsedTime, filtersPtr, null);
             CollidingSides = (flags & PxControllerCollisionFlags.CollisionSides) != 0;
             CollidingUp = (flags & PxControllerCollisionFlags.CollisionUp) != 0;
             CollidingDown = (flags & PxControllerCollisionFlags.CollisionDown) != 0;
-            //if (CollidingDown)
-            //    Debug.Out("Colliding Down");
-            //if (CollidingUp)
-            //    Debug.Out("Colliding Up");
-            //if (CollidingSides)
-            //    Debug.Out("Colliding Sides");
+        }
+
+        public void ConsumeInputBuffer(float delta)
+        {
+            Vector3 totalDelta = Vector3.Zero;
+            while (_inputBuffer.TryDequeue(out var input))
+                totalDelta += input.delta;
+            ConsumeMove(totalDelta, 0.00001f, delta);
         }
 
         public void Resize(float height)
@@ -207,7 +219,7 @@ namespace XREngine.Rendering.Physics.Physx
 
         public void Release()
         {
-            Scene.CreateOrCreateControllerManager().Controllers.Remove((nint)ControllerPtr);
+            Scene.GetOrCreateControllerManager().Controllers.Remove((nint)ControllerPtr);
             ControllerPtr->ReleaseMut();
         }
 

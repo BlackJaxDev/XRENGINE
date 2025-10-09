@@ -1,7 +1,9 @@
 ﻿using Extensions;
 using System.Diagnostics.CodeAnalysis;
 using System.Numerics;
+using System.Runtime.InteropServices;
 using XREngine.Core.Files;
+using XREngine.Data;
 using XREngine.Data.Colors;
 using XREngine.Data.Core;
 using XREngine.Data.Rendering;
@@ -14,7 +16,8 @@ using static XREngine.Rendering.XRMesh;
 namespace XREngine.Rendering
 {
     /// <summary>
-    /// A mesh renderer takes a mesh and a material and renders it.
+    /// A mesh renderer is in charge of rendering one or more meshes with one or more materials.
+    /// The API driver will optimize the rendering of these meshes as much as possible depending on how it's set up.
     /// </summary>
     public class XRMeshRenderer : XRAsset
     {
@@ -67,7 +70,8 @@ namespace XREngine.Rendering
                 => RenderRequested?.Invoke(modelMatrix, materialOverride, instances, billboardMode);
         }
 
-        public class Version<[DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicConstructors)] T>(XRMeshRenderer renderer, Func<XRShader, bool> vertexShaderSelector, bool allowShaderPipelines) : BaseVersion(renderer, vertexShaderSelector, allowShaderPipelines) where T : ShaderGeneratorBase
+        public class Version<[DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicConstructors)] T>(XRMeshRenderer renderer, Func<XRShader, bool> vertexShaderSelector, bool allowShaderPipelines) 
+            : BaseVersion(renderer, vertexShaderSelector, allowShaderPipelines) where T : ShaderGeneratorBase
         {
             protected override string? GenerateVertexShaderSource()
             {
@@ -79,7 +83,7 @@ namespace XREngine.Rendering
             }
         }
 
-        public Dictionary<int, BaseVersion> Versions { get; set; } = [];
+        public Dictionary<int, BaseVersion> GeneratedVertexShaderVersions { get; set; } = [];
 
         /// <summary>
         /// Automatically selects the correct version of this mesh to render based on the current rendering state.
@@ -102,9 +106,9 @@ namespace XREngine.Rendering
             return ver;
         }
 
-        public BaseVersion GetDefaultVersion() => Versions[0];
-        public BaseVersion GetOVRMultiViewVersion() => Versions[1];
-        public BaseVersion GetNVStereoVersion() => Versions[2];
+        public BaseVersion GetDefaultVersion() => GeneratedVertexShaderVersions[0];
+        public BaseVersion GetOVRMultiViewVersion() => GeneratedVertexShaderVersions[1];
+        public BaseVersion GetNVStereoVersion() => GeneratedVertexShaderVersions[2];
 
         private static bool HasNVStereoViewRendering(XRShader x)
             => x.HasExtension(GLShader.EXT_GL_NV_STEREO_VIEW_RENDERING, XRShader.EExtensionBehavior.Require);
@@ -114,15 +118,29 @@ namespace XREngine.Rendering
             !x.HasExtension(GLShader.EXT_GL_OVR_MULTIVIEW2, XRShader.EExtensionBehavior.Require) && 
             !x.HasExtension(GLShader.EXT_GL_NV_STEREO_VIEW_RENDERING, XRShader.EExtensionBehavior.Require);
 
+        public XRMeshRenderer() : this(null, null) { }
         public XRMeshRenderer(XRMesh? mesh, XRMaterial? material)
         {
             _mesh = mesh;
             _material = material;
             InitializeDrivableBuffers();
+            InitializeVersions();
+        }
+        public XRMeshRenderer(params (XRMesh mesh, XRMaterial material)[] submeshes)
+            : this((IEnumerable<(XRMesh mesh, XRMaterial material)>)submeshes) { }
+        public XRMeshRenderer(IEnumerable<(XRMesh mesh, XRMaterial material)> submeshes)
+        {
+            foreach (var (mesh, material) in submeshes)
+                Submeshes.Add(new SubMesh() { Mesh = mesh, Material = material, InstanceCount = 1 });
+            InitializeDrivableBuffers();
+            InitializeVersions();
+        }
 
-            Versions.Add(0, new Version<DefaultVertexShaderGenerator>(this, NoSpecialExtensions, true));
-            Versions.Add(1, new Version<OVRMultiViewVertexShaderGenerator>(this, HasOvrMultiView2, false));
-            Versions.Add(2, new Version<NVStereoVertexShaderGenerator>(this, HasNVStereoViewRendering, false));
+        private void InitializeVersions()
+        {
+            GeneratedVertexShaderVersions.Add(0, new Version<DefaultVertexShaderGenerator>(this, NoSpecialExtensions, true));
+            GeneratedVertexShaderVersions.Add(1, new Version<OVRMultiViewVertexShaderGenerator>(this, HasOvrMultiView2, false));
+            GeneratedVertexShaderVersions.Add(2, new Version<NVStereoVertexShaderGenerator>(this, HasNVStereoViewRendering, false));
         }
 
         private bool _generateAsync = false;
@@ -144,33 +162,66 @@ namespace XREngine.Rendering
 
         public delegate ShaderVar DelParameterRequested(int index);
 
-        private XRMesh? _mesh;
-        private XRMaterial? _material;
-
         public class SubMesh : XRBase
         {
             private XRMesh? _mesh;
-            private XRMaterial? _material;
-
+            /// <summary>
+            /// The mesh to render for this submesh.
+            /// </summary>
             public XRMesh? Mesh
             {
                 get => _mesh;
                 set => SetField(ref _mesh, value);
             }
+
+            private XRMaterial? _material;
+            /// <summary>
+            /// The material to use when rendering this submesh.
+            /// </summary>
             public XRMaterial? Material
             {
                 get => _material;
                 set => SetField(ref _material, value);
             }
+
+            private uint _instanceCount;
+            /// <summary>
+            /// How many instances of this submesh to render.
+            /// </summary>
+            public uint InstanceCount
+            {
+                get => _instanceCount;
+                set => SetField(ref _instanceCount, value);
+            }
         }
 
-        public SubMesh[] Submeshes { get; set; } = [];
+        private EventList<SubMesh> _submeshes = [];
+        /// <summary>
+        /// Represents multiple submeshes, each with their own mesh and material.
+        /// Use for the optimized case multiple meshes with multiple materials.
+        /// </summary>
+        public EventList<SubMesh> Submeshes
+        {
+            get => _submeshes;
+            set => SetField(ref _submeshes, value);
+        }
 
+        private XRMesh? _mesh;
+        /// <summary>
+        /// Represents the sole mesh this renderer will render.
+        /// Use for the most common case of a single mesh with a single material.
+        /// </summary>
         public XRMesh? Mesh
         {
             get => _mesh;
             set => SetField(ref _mesh, value);
         }
+
+        private XRMaterial? _material;
+        /// <summary>
+        /// Represents the sole material this renderer will use to render the mesh.
+        /// Use for the most common case of a single mesh with a single material.
+        /// </summary>
         public XRMaterial? Material
         {
             get => _material;
@@ -188,7 +239,161 @@ namespace XREngine.Rendering
                 case nameof(Mesh):
                     InitializeDrivableBuffers();
                     break;
+                case nameof(Submeshes):
+                    //Link added and removed events
+                    Submeshes.PostAnythingAdded += Submeshes_PostAnythingAdded;
+                    Submeshes.PostAnythingRemoved += Submeshes_PostAnythingRemoved;
+                    break;
             }
+        }
+        protected override bool OnPropertyChanging<T>(string? propName, T field, T @new)
+        {
+            bool change = base.OnPropertyChanging(propName, field, @new);
+            if (change)
+            {
+                switch (propName)
+                {
+                    case nameof(Mesh):
+                        ResetDrivableBuffers();
+                        break;
+                    case nameof(Submeshes):
+                        //Unlink added and removed events
+                        Submeshes.PostAnythingAdded -= Submeshes_PostAnythingAdded;
+                        Submeshes.PostAnythingRemoved -= Submeshes_PostAnythingRemoved;
+                        break;
+                }
+            }
+            return change;
+        }
+
+        private void Submeshes_PostAnythingRemoved(SubMesh item)
+            => UpdateIndirectDrawBuffer();
+        private void Submeshes_PostAnythingAdded(SubMesh item)
+            => UpdateIndirectDrawBuffer();
+
+        private void UpdateIndirectDrawBuffer()
+        {
+            //Initialize the indirect draw buffer to render each submesh with a single draw call
+            switch (IndirectDrawBuffer)
+            {
+                case null:
+                    uint componentCount = (uint)Marshal.SizeOf<DrawElementsIndirectCommand>() / sizeof(uint);
+                    IndirectDrawBuffer = new XRDataBuffer(
+                        $"{ECommonBufferType.IndirectDraw}Buffer",
+                        EBufferTarget.DrawIndirectBuffer,
+                        (uint)Submeshes.Count,
+                        EComponentType.UInt,
+                        componentCount,
+                        false,
+                        true)
+                    {
+                        Usage = EBufferUsage.StaticCopy,
+                        DisposeOnPush = false
+                    };
+                    break;
+                default:
+                    if (_submeshes.Count == 0)
+                    {
+                        IndirectDrawBuffer.Destroy();
+                        IndirectDrawBuffer = null;
+                        return;
+                    }
+                    IndirectDrawBuffer.Resize((uint)_submeshes.Count, false);
+                    break;
+            }
+
+            int indicesIndex = 0;
+            int verticesIndex = 0;
+            for (int i = 0; i < _submeshes.Count; i++)
+            {
+                var submesh = _submeshes[i];
+                var mesh = submesh?.Mesh;
+
+                // Use the current accumulated offsets (order of appearance)
+                int firstIndex = indicesIndex;
+                int baseVertex = verticesIndex;
+
+                DrawElementsIndirectCommand cmd = submesh is null || mesh is null
+                    ? new DrawElementsIndirectCommand()
+                    {
+                        Count = 0,
+                        InstanceCount = 0,
+                        FirstIndex = 0,
+                        BaseVertex = 0,
+                        BaseInstance = (uint)i
+                    }
+                    : new DrawElementsIndirectCommand()
+                    {
+                        Count = (uint)mesh.IndexCount,
+                        InstanceCount = submesh.InstanceCount,
+                        FirstIndex = (uint)firstIndex,
+                        BaseVertex = baseVertex,
+                        BaseInstance = (uint)i
+                    };
+
+                IndirectDrawBuffer.Set((uint)i, cmd);
+
+                // Advance offsets after writing the command, preserving order of appearance
+                if (mesh is not null)
+                {
+                    indicesIndex += mesh.IndexCount;
+                    verticesIndex += mesh.VertexCount;
+                }
+            }
+        }
+
+        public XRDataBuffer? GenerateCombinedIndexBuffer()
+        {
+            // Generate a combined index buffer for all submeshes
+            if (Submeshes.Count == 0)
+                return null;
+
+            int totalIndexCount = 0;
+            foreach (var submesh in Submeshes)
+                if (submesh.Mesh is not null)
+                    totalIndexCount += submesh.Mesh.IndexCount;
+            if (totalIndexCount == 0)
+                return null;
+
+            IndexSize indexSize = IndexSize.Byte;
+            if (totalIndexCount > ushort.MaxValue)
+                indexSize = IndexSize.FourBytes;
+            else if (totalIndexCount > byte.MaxValue)
+                indexSize = IndexSize.TwoBytes;
+            
+            XRDataBuffer combinedIndexBuffer = new(
+                "CombinedIndexBuffer",
+                EBufferTarget.ElementArrayBuffer,
+                (uint)totalIndexCount,
+                EComponentType.UInt,
+                1,
+                false,
+                true)
+            {
+                Usage = EBufferUsage.StaticCopy,
+                DisposeOnPush = false
+            };
+
+            int currentIndex = 0;
+            foreach (var submesh in Submeshes)
+            {
+                if (submesh.Mesh is null)
+                    continue;
+
+                int indexCount = submesh.Mesh.IndexCount;
+                if (indexCount == 0)
+                    continue;
+
+                var success = submesh.Mesh.PopulateIndexBuffer(EPrimitiveType.Triangles, combinedIndexBuffer, indexSize);
+                if (!success)
+                {
+                    Debug.LogWarning($"Failed to populate index buffer for submesh {submesh.Mesh.Name} in XRMeshRenderer.");
+                    continue;
+                }
+                currentIndex += indexCount;
+            }
+            combinedIndexBuffer.PushSubData();
+            return combinedIndexBuffer;
         }
 
         /// <summary>
@@ -350,6 +555,11 @@ namespace XREngine.Rendering
         /// </summary>
         public XRDataBuffer? BlendshapeWeights { get; private set; }
 
+        /// <summary>
+        /// Indirect draw buffer for the mesh - renders multiple meshes with a single draw call.
+        /// </summary>
+        public XRDataBuffer? IndirectDrawBuffer { get; private set; }
+
         private void PopulateBoneMatrixBuffers()
         {
             //using var timer = Engine.Profiler.Start();
@@ -463,5 +673,25 @@ namespace XREngine.Rendering
 
         internal void OnSettingUniforms(XRRenderProgram vertexProgram, XRRenderProgram materialProgram)
             => SettingUniforms?.Invoke(vertexProgram, materialProgram);
+
+        /// <summary>
+        /// Retrieve all meshes and materials used by this renderer.
+        /// </summary>
+        /// <returns></returns>
+        public (XRMesh? mesh, XRMaterial? material)[] GetMeshes()
+        {
+            if (Submeshes.Count <= 0)
+                return [(Mesh, Material)];
+            else
+            {
+                var arr = new (XRMesh? mesh, XRMaterial? material)[Submeshes.Count];
+                for (int i = 0; i < Submeshes.Count; i++)
+                {
+                    var sm = Submeshes[i];
+                    arr[i] = (sm.Mesh, sm.Material);
+                }
+                return arr;
+            }
+        }
     }
 }

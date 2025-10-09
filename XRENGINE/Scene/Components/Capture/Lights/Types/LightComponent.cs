@@ -120,13 +120,13 @@ namespace XREngine.Components.Capture.Lights.Types
             set => SetField(ref _shadowMaxBias, value);
         }
 
-        private uint _shadowMapResolutionWidth = 1024u;
+        private uint _shadowMapResolutionWidth = 4096u;
         public uint ShadowMapResolutionWidth
         {
             get => _shadowMapResolutionWidth;
             set => SetShadowMapResolution(value, ShadowMapResolutionHeight);
         }
-        private uint _shadowMapResolutionHeight = 1024u;
+        private uint _shadowMapResolutionHeight = 4096u;
         public uint ShadowMapResolutionHeight
         {
             get => _shadowMapResolutionHeight;
@@ -171,12 +171,29 @@ namespace XREngine.Components.Capture.Lights.Types
             ShadowMap?.Destroy();
         }
 
+        public int Samples { get; set; } = 1;
+        public float FilterRadius { get; set; } = 0.001f;
+        public bool EnablePCSS { get; set; } = true;
+        public bool EnableCascadedShadows { get; set; } = true;
+        public bool EnableContactShadows { get; set; } = true;
+        public float ContactShadowDistance { get; set; } = 0.1f;
+        public int ContactShadowSamples { get; set; } = 8;
+
         public virtual void SetUniforms(XRRenderProgram program, string? targetStructName = null)
         {
             program.Uniform(Engine.Rendering.Constants.ShadowExponentBaseUniform, ShadowExponentBase);
             program.Uniform(Engine.Rendering.Constants.ShadowExponentUniform, ShadowExponent);
             program.Uniform(Engine.Rendering.Constants.ShadowBiasMinUniform, ShadowMinBias);
             program.Uniform(Engine.Rendering.Constants.ShadowBiasMaxUniform, ShadowMaxBias);
+
+            program.Uniform(Engine.Rendering.Constants.ShadowSamples, Samples);
+            program.Uniform(Engine.Rendering.Constants.ShadowFilterRadius, FilterRadius);
+            program.Uniform(Engine.Rendering.Constants.EnablePCSS, EnablePCSS);
+
+            program.Uniform(Engine.Rendering.Constants.EnableCascadedShadows, EnableCascadedShadows);
+            program.Uniform(Engine.Rendering.Constants.EnableContactShadows, EnableContactShadows);
+            program.Uniform(Engine.Rendering.Constants.ContactShadowDistance, ContactShadowDistance);
+            program.Uniform(Engine.Rendering.Constants.ContactShadowSamples, ContactShadowSamples);
         }
 
         public abstract XRMaterial GetShadowMapMaterial(uint width, uint height, EDepthPrecision precision = EDepthPrecision.Flt32);

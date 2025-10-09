@@ -2,6 +2,15 @@
 
 namespace XREngine.Rendering.Commands
 {
+    public interface IRenderCommand
+    {
+        float RenderDistance { get; set; }
+        int RenderPass { get; set; }
+        bool Enabled { get; set; }
+
+        public event Action? PreRender;
+        public event Action? PostRender;
+    }
     public abstract class RenderCommand3D(int renderPass) : RenderCommand(renderPass)
     {
         private float _renderDistance = 0.0f;

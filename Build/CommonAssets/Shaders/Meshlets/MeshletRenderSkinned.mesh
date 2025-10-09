@@ -1,0 +1,104 @@
+#version 460 core
+#extension GL_NV_mesh_shader : require
+
+layout(local_size_x = 32) in;
+layout(triangles, max_vertices = 64, max_primitives = 126) out;
+
+const uint GROUP_SIZE = 32u;
+
+struct Meshlet { uint VertexOffset; uint TriangleOffset; uint VertexCount; uint TriangleCount; };
+struct Vertex { vec3 position; vec3 normal; vec2 texCoord; vec4 tangent; };
+struct VertexSkin { uvec4 indices; vec4 weights; };
+struct SkinningMeta { uint boneOffset; uint boneCount; };
+
+layout(std430, binding = 0) buffer MeshletBuffer { Meshlet meshlets[]; };
+layout(std430, binding = 2) buffer VertexBuffer { Vertex vertices[]; };
+layout(std430, binding = 3) buffer IndexBuffer { uint vertexIndices[]; };
+layout(std430, binding = 4) buffer TriangleBuffer { uint triangleIndexData[]; };
+layout(std430, binding = 5) buffer TransformBuffer { mat4 worldMatrices[]; };
+layout(std430, binding = 6) buffer SkinningBuffer { VertexSkin skinning[]; };
+layout(std430, binding = 7) buffer BonePaletteBuffer { mat4 boneMatrices[]; };
+layout(std430, binding = 8) buffer SkinningMetaBuffer { SkinningMeta skinningMeta[]; };
+
+struct TaskPayload { uint meshletIndices[GROUP_SIZE]; uint count; };
+
+taskNV in TaskPayload IN;
+
+layout(location = 0) out vec3 out_worldPos[];
+layout(location = 1) out vec3 out_normal[];
+layout(location = 2) out vec2 out_texCoord[];
+layout(location = 3) out vec4 out_tangent[];
+layout(location = 4) flat out uint out_materialID[];
+
+uniform mat4 ViewProjectionMatrix;
+
+uint ReadTriIndex(uint byteIndex)
+{
+    uint word = triangleIndexData[byteIndex >> 2];
+    uint shift = (byteIndex & 3u) * 8u;
+    return (word >> shift) & 0xFFu;
+}
+
+void SkinVertex(in Vertex v, in VertexSkin s, uint boneBase, out vec4 objPos, out mat3 objLinear)
+{
+    mat4 B0 = boneMatrices[boneBase + s.indices.x];
+    mat4 B1 = boneMatrices[boneBase + s.indices.y];
+    mat4 B2 = boneMatrices[boneBase + s.indices.z];
+    mat4 B3 = boneMatrices[boneBase + s.indices.w];
+
+    mat3 L0 = mat3(B0);
+    mat3 L1 = mat3(B1);
+    mat3 L2 = mat3(B2);
+    mat3 L3 = mat3(B3);
+
+    objPos = (B0 * vec4(v.position, 1.0)) * s.weights.x
+           + (B1 * vec4(v.position, 1.0)) * s.weights.y
+           + (B2 * vec4(v.position, 1.0)) * s.weights.z
+           + (B3 * vec4(v.position, 1.0)) * s.weights.w;
+
+    objLinear = L0 * s.weights.x + L1 * s.weights.y + L2 * s.weights.z + L3 * s.weights.w;
+}
+
+void main()
+{
+    uint meshletIndexInTask = gl_WorkGroupID.x;
+    if (meshletIndexInTask >= IN.count)
+        return;
+
+    uint meshletIndex = IN.meshletIndices[meshletIndexInTask];
+    Meshlet m = meshlets[meshletIndex];
+
+    mat4 worldMatrix = mat4(1.0);
+    mat4 mvp = ViewProjectionMatrix * worldMatrix;
+    mat3 worldNormalMatrix = mat3(1.0);
+
+    gl_PrimitiveCountNV = m.TriangleCount;
+
+    uint tid = gl_LocalInvocationID.x;
+    if (tid < m.VertexCount)
+    {
+        uint globalVtxIndex = vertexIndices[m.VertexOffset + tid];
+        Vertex v = vertices[globalVtxIndex];
+        VertexSkin s = skinning[globalVtxIndex];
+
+        uint boneBase = 0u;
+        vec4 objPos; mat3 objLinear;
+        SkinVertex(v, s, boneBase, objPos, objLinear);
+
+        vec4 wpos = worldMatrix * objPos;
+        gl_MeshVerticesNV[tid].gl_Position = mvp * objPos;
+        out_worldPos[tid] = wpos.xyz;
+        out_normal[tid] = normalize(worldNormalMatrix * (objLinear * v.normal));
+        out_texCoord[tid] = v.texCoord;
+        out_tangent[tid] = vec4(normalize(worldNormalMatrix * (objLinear * v.tangent.xyz)), v.tangent.w);
+        out_materialID[tid] = 0u;
+    }
+
+    for (uint tri = tid; tri < m.TriangleCount; tri += GROUP_SIZE)
+    {
+        uint baseByte = (m.TriangleOffset + tri) * 3u;
+        gl_PrimitiveIndicesNV[tri * 3u + 0u] = ReadTriIndex(baseByte + 0u);
+        gl_PrimitiveIndicesNV[tri * 3u + 1u] = ReadTriIndex(baseByte + 1u);
+        gl_PrimitiveIndicesNV[tri * 3u + 2u] = ReadTriIndex(baseByte + 2u);
+    }
+}

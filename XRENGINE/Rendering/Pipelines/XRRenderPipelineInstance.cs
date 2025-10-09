@@ -18,10 +18,7 @@ namespace XREngine.Rendering;
 public sealed partial class XRRenderPipelineInstance : XRBase
 {
     public XRRenderPipelineInstance() { }
-    public XRRenderPipelineInstance(RenderPipeline pipeline)
-    {
-        Pipeline = pipeline;
-    }
+    public XRRenderPipelineInstance(RenderPipeline pipeline) => Pipeline = pipeline;
 
     /// <summary>
     /// This collection contains mesh rendering commands pre-sorted for consuption by a render pass.
