@@ -12,100 +12,13 @@ using YamlDotNet.Serialization;
 
 namespace XREngine.Rendering
 {
-    public enum EBufferMapStorageFlags
-    {
-        Read = 0x0001,
-        Write = 0x0002,
-        ReadWrite = Read | Write,
-        /// <summary>
-        /// The client may request that the server read from or write to the buffer while it is mapped. 
-        /// The client's pointer to the data store remains valid so long as the data store is mapped, even during execution of drawing or dispatch commands.
-        /// If flags contains GL_MAP_PERSISTENT_BIT, it must also contain at least one of GL_MAP_READ_BIT or GL_MAP_WRITE_BIT.
-        /// </summary>
-        Persistent = 0x0040,
-        /// <summary>
-        /// Shared access to buffers that are simultaneously mapped for client access and are used by the server will be coherent, so long as that mapping is performed using glMapBufferRange. 
-        /// That is, data written to the store by either the client or server will be immediately visible to the other with no further action taken by the application.
-        /// In particular,
-        /// If not set and the client performs a write followed by a call to the glMemoryBarrier command with the GL_CLIENT_MAPPED_BUFFER_BARRIER_BIT set, then in subsequent commands the server will see the writes.
-        /// If set and the client performs a write, then in subsequent commands the server will see the writes.
-        /// If not set and the server performs a write, the application must call glMemoryBarrier with the GL_CLIENT_MAPPED_BUFFER_BARRIER_BIT set and then call glFenceSync with GL_SYNC_GPU_COMMANDS_COMPLETE (or glFinish). Then the CPU will see the writes after the sync is complete.
-        /// If set and the server does a write, the app must call glFenceSync with GL_SYNC_GPU_COMMANDS_COMPLETE(or glFinish). Then the CPU will see the writes after the sync is complete.
-        /// If flags contains GL_MAP_COHERENT_BIT, it must also contain GL_MAP_PERSISTENT_BIT.
-        /// </summary>
-        Coherent = 0x0041,
-        /// <summary>
-        /// When all other criteria for the buffer storage allocation are met, 
-        /// this bit may be used by an implementation to determine whether 
-        /// to use storage that is local to the server 
-        /// or to the client to serve as the backing store for the buffer.
-        /// </summary>
-        ClientStorage = 0x0042,
-    }
-    public enum EBufferMapRangeFlags
-    {
-        /// <summary>
-        /// GL_MAP_READ_BIT indicates that the returned pointer may be used to read buffer object data.
-        /// No GL error is generated if the pointer is used to query a mapping which excludes this flag,
-        /// but the result is undefined and system errors (possibly including program termination) may occur.
-        /// </summary>
-        Read = 0x0001,
-        /// <summary>
-        /// GL_MAP_WRITE_BIT indicates that the returned pointer may be used to modify buffer object data.
-        /// No GL error is generated if the pointer is used to modify a mapping which excludes this flag,
-        /// but the result is undefined and system errors (possibly including program termination) may occur. 
-        /// </summary>
-        Write = 0x0002,
-        ReadWrite = Read | Write,
-        /// <summary>
-        /// GL_MAP_PERSISTENT_BIT indicates that the mapping is to be made in a persistent fashion and that the client intends to hold and use the returned pointer during subsequent GL operation.
-        /// It is not an error to call drawing commands (render) while buffers are mapped using this flag.
-        /// It is an error to specify this flag if the buffer's data store was not allocated through a call to the glBufferStorage command in which the GL_MAP_PERSISTENT_BIT was also set. 
-        /// </summary>
-        Persistent = 0x0040,
-        /// <summary>
-        /// GL_MAP_COHERENT_BIT indicates that a persistent mapping is also to be coherent.
-        /// Coherent maps guarantee that the effect of writes to a buffer's data store by
-        /// either the client or server will eventually become visible to the other without further intervention from the application.
-        /// In the absence of this bit, persistent mappings are not coherent and modified ranges of the buffer store must be explicitly communicated to the GL,
-        /// either by unmapping the buffer, or through a call to glFlushMappedBufferRange or glMemoryBarrier.
-        /// </summary>
-        Coherent = 0x0041,
-        /// <summary>
-        /// GL_MAP_INVALIDATE_RANGE_BIT indicates that the previous contents of the specified range may be discarded.
-        /// Data within this range are undefined with the exception of subsequently written data.
-        /// No GL error is generated if subsequent GL operations access unwritten data, but the result is undefined and system errors (possibly including program termination) may occur.
-        /// This flag may not be used in combination with GL_MAP_READ_BIT.
-        /// </summary>
-        InvalidateRange = 0x0004,
-        /// <summary>
-        /// GL_MAP_INVALIDATE_BUFFER_BIT indicates that the previous contents of the entire buffer may be discarded.
-        /// Data within the entire buffer are undefined with the exception of subsequently written data.
-        /// No GL error is generated if subsequent GL operations access unwritten data, but the result is undefined and system errors (possibly including program termination) may occur.
-        /// This flag may not be used in combination with GL_MAP_READ_BIT.
-        /// </summary>
-        InvalidateBuffer = 0x0008,
-        /// <summary>
-        /// GL_MAP_FLUSH_EXPLICIT_BIT indicates that one or more discrete subranges of the mapping may be modified.
-        /// When this flag is set, modifications to each subrange must be explicitly flushed by calling glFlushMappedBufferRange.
-        /// No GL error is set if a subrange of the mapping is modified and not flushed, but data within the corresponding subrange of the buffer are undefined.
-        /// This flag may only be used in conjunction with GL_MAP_WRITE_BIT.
-        /// When this option is selected, flushing is strictly limited to regions that are explicitly indicated with calls to glFlushMappedBufferRange prior to unmap;
-        /// if this option is not selected glUnmapBuffer will automatically flush the entire mapped range when called.
-        /// </summary>
-        FlushExplicit = 0x0010,
-        /// <summary>
-        /// GL_MAP_UNSYNCHRONIZED_BIT indicates that the GL should not attempt to synchronize pending operations on the buffer prior to returning from glMapBufferRange or glMapNamedBufferRange.
-        /// No GL error is generated if pending operations which source or modify the buffer overlap the mapped region, but the result of such previous and any subsequent operations is undefined. 
-        /// </summary>
-        Unsynchronized = 0x0020,
-    }
     public class XRDataBuffer : GenericRenderObject, IDisposable
     {
         public delegate void DelPushSubData(int offset, uint length);
         public delegate void DelSetBlockName(XRRenderProgram program, string blockName);
         public delegate void DelSetBlockIndex(uint blockIndex);
         public delegate void DelFlushRange(int offset, uint length);
+        public delegate void DelBindSSBO(XRRenderProgram program, uint? bindingIndexOverride = null);
 
         public event Action? PushDataRequested;
         public event DelPushSubData? PushSubDataRequested;
@@ -118,6 +31,7 @@ namespace XREngine.Rendering
         public event Action? UnbindRequested;
         public event Action? FlushRequested;
         public event DelFlushRange? FlushRangeRequested;
+        public event DelBindSSBO? BindSSBORequested;
 
         public XRDataBuffer() { }
         public XRDataBuffer(
@@ -184,7 +98,7 @@ namespace XREngine.Rendering
         /// If the buffer is mapped, this means any updates to the buffer will be shown by the GPU immediately.
         /// If the buffer is not mapped, any updates will have to be pushed to the GPU using PushData or PushSubData.
         /// </summary>
-        public bool Mapped
+        public bool ShouldMap
         {
             get => _mapped;
             set => SetField(ref _mapped, value);
@@ -193,14 +107,15 @@ namespace XREngine.Rendering
         public IEnumerable<VoidPtr> GetMappedAddresses()
             => ActivelyMapping.Select(x => x.GetMappedAddress()).Where(x => x.HasValue).Select(x => x!.Value);
 
-        private EBufferMapStorageFlags _storageFlags = EBufferMapStorageFlags.Write | EBufferMapStorageFlags.Persistent | EBufferMapStorageFlags.Coherent | EBufferMapStorageFlags.ClientStorage;
+        // Defaults: no implicit bits. Callers set exactly what they need.
+        private EBufferMapStorageFlags _storageFlags = 0;
         public EBufferMapStorageFlags StorageFlags
         {
             get => _storageFlags;
             set => SetField(ref _storageFlags, value);
         }
 
-        private EBufferMapRangeFlags _rangeFlags = EBufferMapRangeFlags.Write | EBufferMapRangeFlags.Persistent | EBufferMapRangeFlags.Coherent;
+        private EBufferMapRangeFlags _rangeFlags = 0;
         public EBufferMapRangeFlags RangeFlags 
         {
             get => _rangeFlags;
@@ -241,7 +156,7 @@ namespace XREngine.Rendering
         private uint _componentCount;
         public uint ComponentCount
         {
-            get => _componentCount;
+            get => _componentType == EComponentType.Struct ? 1 : _componentCount;
             set => SetField(ref _componentCount, value);
         }
 
@@ -273,6 +188,9 @@ namespace XREngine.Rendering
         }
 
         private string _attributeName = string.Empty;
+        /// <summary>
+        /// The name of the attribute this buffer is bound to.
+        /// </summary>
         public string AttributeName
         {
             get => _attributeName;
@@ -280,6 +198,9 @@ namespace XREngine.Rendering
         }
 
         private InterleavedAttribute[] _interleavedAttributeNames = [];
+        /// <summary>
+        /// 
+        /// </summary>
         public InterleavedAttribute[] InterleavedAttributes
         {
             get => _interleavedAttributeNames;
@@ -342,6 +263,7 @@ namespace XREngine.Rendering
                 EComponentType.UInt => sizeof(uint),
                 EComponentType.Float => sizeof(float),
                 EComponentType.Double => sizeof(double),
+                EComponentType.Struct => _componentCount,
                 _ => 1,
             };
 
@@ -368,40 +290,6 @@ namespace XREngine.Rendering
             get => _disposeOnPush;
             set => SetField(ref _disposeOnPush, value);
         }
-
-        //TODO: Vulkan methods
-        //public Span<T> BeginUpdate()
-        //{
-        //    void* data;
-        //    Api!.MapMemory(Renderer.device, Memory, 0, Size, 0, &data);
-        //    return new Span<T>(data, (int)Size);
-        //}
-
-        //public void EndUpdate()
-        //    => Api!.UnmapMemory(Renderer.device, Memory);
-
-        //public void Set(int startIndex, params T[] items)
-        //{
-        //    var span = BeginUpdate();
-        //    for (int i = 0; i < items.Length; i++)
-        //        span[startIndex + i] = items[i];
-        //    EndUpdate();
-        //}
-        //public void Set(int startIndex, IEnumerable<T> items)
-        //{
-        //    var span = BeginUpdate();
-        //    int i = 0;
-        //    foreach (var item in items)
-        //        span[startIndex + i++] = item;
-        //    EndUpdate();
-        //}
-
-        //public void CopyTo(VkBuffer<T> other)
-        //{
-        //    using var scope = Renderer.NewCommandScope();
-        //    BufferCopy copyRegion = new() { Size = Size };
-        //    Api!.CmdCopyBuffer(scope.CommandBuffer, Buffer, other.Buffer, 1, ref copyRegion);
-        //}
 
         /// <summary>
         /// Allocates and pushes the buffer to the GPU.
@@ -440,7 +328,6 @@ namespace XREngine.Rendering
             => FlushRangeRequested?.Invoke(offset, length);
         public void Flush()
             => FlushRequested?.Invoke();
-
 
         /// <summary>
         /// Reads the struct value at the given offset into the buffer.
@@ -558,6 +445,30 @@ namespace XREngine.Rendering
         public T GetDataRawAtIndex<T>(uint index) where T : struct
             => Marshal.PtrToStructure<T>(_clientSideSource!.Address[index, ElementSize]);
 
+        public void SetDataArrayRawAtIndex<T>(uint index, T[] data) where T : struct
+        {
+            uint stride = ElementSize;
+            for (uint i = 0; i < data.Length; ++i)
+                Marshal.StructureToPtr(data[i], _clientSideSource!.Address[index + i, stride], true);
+        }
+
+        /// <summary>
+        /// Retrieves an array of structs from the buffer starting at the given index.
+        /// This method is client-side only and does not read from GPU memory.
+        /// </summary>
+        /// <typeparam name="T"></typeparam>
+        /// <param name="index"></param>
+        /// <param name="count"></param>
+        /// <returns></returns>
+        public T[] GetDataArrayRawAtIndex<T>(uint index, int count) where T : struct
+        {
+            T[] arr = new T[count];
+            uint stride = ElementSize;
+            for (uint i = 0; i < count; ++i)
+                arr[i] = Marshal.PtrToStructure<T>(_clientSideSource!.Address[index + i, stride]);
+            return arr;
+        }
+
         public unsafe void SetFloat(uint index, float data)
             => ((float*)_clientSideSource!.Address.Pointer)[index] = data;
         public unsafe float GetFloat(uint index)
@@ -594,7 +505,7 @@ namespace XREngine.Rendering
         public unsafe Vector4 GetVector4AtOffset(uint offset)
             => ((Vector4*)(_clientSideSource!.Address + offset).Pointer)[0];
 
-        public Remapper? SetDataRaw<T>(IList<T> list, bool remap = false) where T : struct
+        public Remapper? SetDataRaw<T>(IEnumerable<T> items, int count, bool remap = false) where T : struct
         {
             _componentCount = 1;
 
@@ -648,12 +559,97 @@ namespace XREngine.Rendering
                     throw new InvalidOperationException("Not a proper numeric data type.");
             }
 
-            //Engine.DebugPrint("\nSetting numeric vertex data for buffer " + Index + " - " + Name);
+            _normalize = false;
+            if (remap)
+            {
+                Remapper remapper = new();
+                var arr = items as T[] ?? [.. items];
+                remapper.Remap(arr, null);
+                _elementCount = remapper.ImplementationLength;
+                _clientSideSource = DataSource.Allocate(Length);
+                uint stride = ElementSize;
+                for (uint i = 0; i < remapper.ImplementationLength; ++i)
+                {
+                    VoidPtr addr = _clientSideSource.Address[i, stride];
+                    T value = arr[remapper.ImplementationTable![i]];
+                    Marshal.StructureToPtr(value, addr, true);
+                }
+                return remapper;
+            }
+            else
+            {
+                _elementCount = (uint)count;
+                _clientSideSource = DataSource.Allocate(Length);
+                uint stride = ElementSize;
+                uint i = 0;
+                foreach (var value in items)
+                {
+                    VoidPtr addr = _clientSideSource.Address[i, stride];
+                    Marshal.StructureToPtr(value, addr, true);
+                    i++;
+                }
+                return null;
+            }
+        }
+        public Remapper? SetDataRaw<T>(IList<T> list, bool remap = false) where T : struct
+        {
+            _componentCount = 1;
+
+            switch (typeof(T))
+            {
+                case Type t when t == typeof(sbyte):
+                    _componentType = EComponentType.SByte;
+                    break;
+                case Type t when t == typeof(byte):
+                    _componentType = EComponentType.Byte;
+                    break;
+                case Type t when t == typeof(short):
+                    _componentType = EComponentType.Short;
+                    break;
+                case Type t when t == typeof(ushort):
+                    _componentType = EComponentType.UShort;
+                    break;
+                case Type t when t == typeof(int):
+                    _componentType = EComponentType.Int;
+                    break;
+                case Type t when t == typeof(uint):
+                    _componentType = EComponentType.UInt;
+                    break;
+                case Type t when t == typeof(float):
+                    _componentType = EComponentType.Float;
+                    break;
+                case Type t when t == typeof(double):
+                    _componentType = EComponentType.Double;
+                    break;
+                case Type t when t == typeof(Vector2):
+                    _componentType = EComponentType.Float;
+                    _componentCount = 2;
+                    break;
+                case Type t when t == typeof(Vector3):
+                    _componentType = EComponentType.Float;
+                    _componentCount = 3;
+                    break;
+                case Type t when t == typeof(Vector4):
+                    _componentType = EComponentType.Float;
+                    _componentCount = 4;
+                    break;
+                case Type t when t == typeof(Matrix4x4):
+                    _componentType = EComponentType.Float;
+                    _componentCount = 16;
+                    break;
+                case Type t when t == typeof(Quaternion):
+                    _componentType = EComponentType.Float;
+                    _componentCount = 4;
+                    break;
+                default:
+                    _componentType = EComponentType.Struct;
+                    _componentCount = (uint)Marshal.SizeOf<T>();
+                    break;
+            }
 
             _normalize = false;
             if (remap)
             {
-                //Debug.Out($"Setting remapped buffer data for {BindingName}");
                 Remapper remapper = new();
                 remapper.Remap(list, null);
                 _elementCount = remapper.ImplementationLength;
@@ -663,15 +659,12 @@ namespace XREngine.Rendering
                 {
                     VoidPtr addr = _clientSideSource.Address[i, stride];
                     T value = list[remapper.ImplementationTable![i]];
-                    //Debug.Out($"{value} ");
                     Marshal.StructureToPtr(value, addr, true);
                 }
-                //Engine.DebugPrint();
                 return remapper;
             }
             else
             {
-                //Debug.Out($"Setting buffer data for {BindingName}");
                 _elementCount = (uint)list.Count;
                 _clientSideSource = DataSource.Allocate(Length);
                 uint stride = ElementSize;
@@ -679,17 +672,13 @@ namespace XREngine.Rendering
                 {
                     VoidPtr addr = _clientSideSource.Address[i, stride];
                     T value = list[(int)i];
-                    //Debug.Out($"{value} ");
                     Marshal.StructureToPtr(value, addr, true);
                 }
-                //Engine.DebugPrint("\n");
                 return null;
             }
         }
         public Remapper? SetData<T>(IList<T> list, bool remap = false) where T : unmanaged, IBufferable
         {
-            //Engine.DebugPrint("\nSetting vertex data for buffer " + Index + " - " + Name);
-
             IBufferable d = default(T);
             _componentType = d.ComponentType;
             _componentCount = d.ComponentCount;
@@ -697,7 +686,6 @@ namespace XREngine.Rendering
 
             if (remap)
             {
-                //Debug.Out($"Setting remapped buffer data for {BindingName}");
                 Remapper remapper = new();
                 remapper.Remap(list, null);
 
@@ -707,21 +695,18 @@ namespace XREngine.Rendering
                 for (uint i = 0; i < remapper.ImplementationLength; ++i)
                 {
                     var item = list[remapper.ImplementationTable![i]];
-                    //Debug.Out(item.ToString() ?? "");
                     item.Write(_clientSideSource.Address[i, stride]);
                 }
                 return remapper;
             }
             else
             {
-                //Debug.Out($"Setting buffer data for {BindingName}");
                 _elementCount = (uint)list.Count;
                 _clientSideSource = DataSource.Allocate(Length);
                 uint stride = ElementSize;
                 for (uint i = 0; i < list.Count; ++i)
                 {
                     var item = list[(int)i];
-                    //Debug.Out(item.ToString() ?? "");
                     item.Write(_clientSideSource.Address[i, stride]);
                 }
                 return null;
@@ -730,8 +715,6 @@ namespace XREngine.Rendering
 
         public Remapper? GetData<T>(out T[] array, bool remap = true) where T : unmanaged, IBufferable
         {
-            //Engine.DebugPrint("\nGetting vertex data from buffer " + Index + " - " + Name);
-
             IBufferable d = default(T);
             var componentType = d.ComponentType;
             var componentCount = d.ComponentCount;
@@ -808,7 +791,9 @@ namespace XREngine.Rendering
                     componentCount = 4;
                     break;
                 default:
-                    throw new InvalidOperationException("Not a proper numeric data type.");
+                    //componentType = EComponentType.Struct;
+                    componentCount = Marshal.SizeOf<T>();
+                    break;
             }
 
             if (componentType != _componentType || componentCount != _componentCount || normalize != _normalize)
@@ -897,6 +882,9 @@ namespace XREngine.Rendering
 
             _clientSideSource?.Dispose();
             _clientSideSource = newSource;
+
+            //TODO: inform api objects this changed
+
             return true;
         }
 
@@ -946,13 +934,16 @@ namespace XREngine.Rendering
             Debug.Out(sb.ToString());
         }
 
+        public void BindTo(XRRenderProgram program, uint index)
+            => BindSSBORequested?.Invoke(program, index);
+
         public static implicit operator VoidPtr(XRDataBuffer b) => b.Address;
     }
 
-    public record struct InterleavedAttribute(uint? attribIndexOverride, string attributeName, uint offset, EComponentType type, uint count, bool integral)
+    public record struct InterleavedAttribute(uint? AttribIndexOverride, string AttributeName, uint Offset, EComponentType Type, uint Count, bool Integral)
     {
         public static implicit operator (uint? attribIndexOverride, string attributeName, uint offset, EComponentType type, uint count, bool integral)(InterleavedAttribute value)
-            => (value.attribIndexOverride, value.attributeName, value.offset, value.type, value.count, value.integral);
+            => (value.AttribIndexOverride, value.AttributeName, value.Offset, value.Type, value.Count, value.Integral);
         public static implicit operator InterleavedAttribute((uint? attribIndexOverride, string attributeName, uint offset, EComponentType type, uint count, bool integral) value)
             => new(value.attribIndexOverride, value.attributeName, value.offset, value.type, value.count, value.integral);
     }

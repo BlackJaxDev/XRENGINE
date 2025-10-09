@@ -5,12 +5,11 @@ using XREngine.Animation;
 using XREngine.Animation.IK;
 using XREngine.Components;
 using XREngine.Components.Animation;
-using XREngine.Components.Movement;
 using XREngine.Components.Scene.Mesh;
-using XREngine.Components.VR;
+using XREngine.Data.Colors;
 using XREngine.Data.Components;
-using XREngine.Data.Components.Scene;
 using XREngine.Data.Core;
+using XREngine.Data.Geometry;
 using XREngine.Data.Rendering;
 using XREngine.Rendering;
 using XREngine.Rendering.Models;
@@ -27,6 +26,22 @@ public static partial class UnitTestingWorld
     {
         public static void ImportModels(string desktopDir, SceneNode rootNode, SceneNode characterParentNode)
         {
+            if (Toggles.CreateUnitBox)
+            {
+                SceneNode boxNode = new(rootNode) { Name = "UnitBox" };
+                ModelComponent boxComp = boxNode.AddComponent<ModelComponent>()!;
+                var mesh = XRMesh.Shapes.SolidBox(new Vector3(-0.5f), new Vector3(0.5f), true, XRMesh.Shapes.ECubemapTextureUVs.None);
+                var material = XRMaterial.CreateUnlitColorMaterialForward(ColorF4.Red);
+                material.RenderOptions.CullMode = ECullMode.None;
+                material.RenderPass = (int)EDefaultRenderPass.OpaqueForward;
+                boxComp.Model = new Model([new SubMesh(mesh, material)
+                {
+                    CullingBounds = 
+                        new AABB(new Vector3(-0.5f),
+                        new Vector3(0.5f)),
+                }]);
+            }
+
             if (Toggles.ImportAnimatedModel)
             {
                 SceneNode? ImportAnimated()

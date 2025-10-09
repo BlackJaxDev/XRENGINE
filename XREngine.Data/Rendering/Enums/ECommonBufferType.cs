@@ -81,5 +81,6 @@
         GlyphTexCoords,
 
         InterleavedVertex,
+        IndirectDraw,
     }
 }

@@ -1,0 +1,102 @@
+// Minimum working-set indirect draw build shader for compact 32-float command struct
+#version 460 core
+
+layout(local_size_x = 256) in;
+
+// Constants
+const int COMMAND_FLOATS = 32;      // 128 bytes per command
+const int DRAW_COMMAND_UINTS = 5;   // count, instanceCount, firstIndex, baseVertex, baseInstance
+
+/* Command layout (float[32]):
+ 00-15 WorldMatrix, 16-19 BoundingSphere, 20 MeshID, 21 SubmeshID, 22 MaterialID,
+ 23 InstanceCount, 24 RenderPass, 25 ShaderProgramID, 26 RenderDistance,
+ 27 LayerMask, 28 LODLevel, 29 Flags, 30 Reserved0, 31 Reserved1 */
+
+// === Buffers ===
+layout(std430, binding = 0) buffer CulledCommandsBuffer { float culled[]; };
+layout(std430, binding = 1) buffer IndirectDrawBuffer { uint indirectDraws[]; };
+layout(std430, binding = 2) buffer SubmeshDataBuffer { uint submeshData[]; }; // uint4 per submesh: indexCount, firstIndex, baseVertex, baseInstance
+layout(std430, binding = 3) buffer CulledCountBuffer { uint CulledCount; };
+layout(std430, binding = 4) buffer DrawCountBuffer { uint DrawCount; };
+
+// Overflow flag specific to indirect build (distinct from culling overflow)
+layout(std430, binding = 5) buffer IndirectOverflowFlagBuffer { uint IndirectOverflowFlag; };
+
+// Optional sorted key-index list: pairs [key, originalIndex]
+//layout(std430, binding = 6) buffer KeyIndexBuffer { uint keyIndexPairs[]; };
+
+// Truncation flag (optional) set if draw list exceeds capacity
+layout(std430, binding = 7) buffer TruncationFlagBuffer { uint TruncationFlag; };
+
+// Optional shared stats buffer (must match culling shader binding if used)
+layout(std430, binding = 8) buffer StatsBuffer
+{
+    uint StatsInputCount;
+    uint StatsCulledCount;
+    uint StatsDrawCount;
+    uint StatsRejectedFrustum;
+    uint StatsRejectedDistance;
+};
+
+// === Uniforms ===
+uniform int CurrentRenderPass;     // -1 accepts all
+uniform int MaxIndirectDraws;      // capacity in draws
+//uniform int UseSorted;             // 1 = use keyIndexPairs for ordering
+
+void main()
+{
+    uint logicalIdx = gl_GlobalInvocationID.x;
+    uint total = CulledCount; // snapshot
+
+    if (logicalIdx >= total)
+        return;
+
+    uint idx = logicalIdx;
+    //if (UseSorted != 0)
+    //{
+    //    // keyIndexPairs stores [key, originalIndex] sequentially
+    //    uint pairBase = logicalIdx * 2u;
+    //    if (pairBase + 1u < keyIndexPairs.length())
+    //        idx = keyIndexPairs[pairBase + 1u];
+    //}
+
+    int base = int(idx) * COMMAND_FLOATS;
+    uint renderPass = uint(culled[base + 24]);
+    uint instanceCount = uint(culled[base + 23]);
+
+    if (instanceCount == 0u)
+        return;
+
+    if (CurrentRenderPass >= 0 && renderPass != uint(CurrentRenderPass))
+        return; // skip (not compacted yet)
+
+    uint submeshID = uint(culled[base + 21]);
+    uint submeshOffset = submeshID * 4u;
+    if (submeshOffset + 3u >= submeshData.length())
+        return; // safety
+
+    uint indexCount = submeshData[submeshOffset + 0u];
+    if (indexCount == 0u)
+        return; // defensive skip
+    
+    uint firstIndex = submeshData[submeshOffset + 1u];
+    uint baseVertex = submeshData[submeshOffset + 2u];
+    uint baseInstance = submeshData[submeshOffset + 3u];
+
+    // Compact via atomic counter
+    uint outIndex = atomicAdd(DrawCount, 1u);
+    if (outIndex >= uint(MaxIndirectDraws))
+    {
+        atomicExchange(IndirectOverflowFlag, 1u);
+        atomicExchange(TruncationFlag, 1u);
+        return;
+    }
+
+    uint drawBase = outIndex * DRAW_COMMAND_UINTS;
+    indirectDraws[drawBase + 0u] = indexCount;
+    indirectDraws[drawBase + 1u] = instanceCount;
+    indirectDraws[drawBase + 2u] = firstIndex;
+    indirectDraws[drawBase + 3u] = baseVertex;
+    indirectDraws[drawBase + 4u] = baseInstance;
+    atomicAdd(StatsDrawCount, 1u);
+}

@@ -23,6 +23,18 @@ internal class Program
         CodeManager.Instance.CompileOnChange = false;
         JsonConvert.DefaultSettings = DefaultJsonSettings;
         LoadUnitTestingSettings(false);
+        GPURenderPassCollection.ConfigureIndirectDebug(opts =>
+        {
+            //opts.DisableCountDrawPath = true;
+            //opts.SkipIndirectTailClear = true;
+            opts.LogCountBufferWrites = true;
+            opts.ValidateBufferLayouts = true;
+            opts.ValidateLiveHandles = true;
+            opts.ForceParameterRemap = true;
+            opts.DumpIndirectArguments = true;
+            opts.SkipIndirectTailClear = false;
+            opts.DisableCountDrawPath = false;
+        });
         Engine.Run(/*Engine.LoadOrGenerateGameSettings(() => */GetEngineSettings(UnitTestingWorld.CreateUnitTestWorld(true, false)/*), "startup", false*/), Engine.LoadOrGenerateGameState());
     }
 

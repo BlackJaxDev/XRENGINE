@@ -4,36 +4,36 @@ namespace XREngine.Rendering.Vulkan
 {
     public unsafe partial class VulkanRenderer
     {
-        private CommandBuffer[]? commandBuffers;
+        private CommandBuffer[]? _commandBuffers;
 
         private void DestroyCommandBuffers()
         {
-            fixed (CommandBuffer* commandBuffersPtr = commandBuffers)
+            fixed (CommandBuffer* commandBuffersPtr = _commandBuffers)
             {
-                Api!.FreeCommandBuffers(device, commandPool, (uint)commandBuffers!.Length, commandBuffersPtr);
+                Api!.FreeCommandBuffers(device, commandPool, (uint)_commandBuffers!.Length, commandBuffersPtr);
             }
         }
 
         private void CreateCommandBuffers()
         {
-            commandBuffers = new CommandBuffer[swapChainFramebuffers!.Length];
+            _commandBuffers = new CommandBuffer[swapChainFramebuffers!.Length];
 
             CommandBufferAllocateInfo allocInfo = new()
             {
                 SType = StructureType.CommandBufferAllocateInfo,
                 CommandPool = commandPool,
                 Level = CommandBufferLevel.Primary,
-                CommandBufferCount = (uint)commandBuffers.Length,
+                CommandBufferCount = (uint)_commandBuffers.Length,
             };
 
-            fixed (CommandBuffer* commandBuffersPtr = commandBuffers)
+            fixed (CommandBuffer* commandBuffersPtr = _commandBuffers)
             {
                 if (Api!.AllocateCommandBuffers(device, ref allocInfo, commandBuffersPtr) != Result.Success)
                     throw new Exception("Failed to allocate command buffers.");
             }
 
-            for (int i = 0; i < commandBuffers.Length; i++)
-                RunCommand(i, commandBuffers[i]);
+            for (int i = 0; i < _commandBuffers.Length; i++)
+                RunCommand(i, _commandBuffers[i]);
         }
 
         private void RunCommand(int i, CommandBuffer cmd)
@@ -49,7 +49,7 @@ namespace XREngine.Rendering.Vulkan
             RenderPassBeginInfo renderPassInfo = new()
             {
                 SType = StructureType.RenderPassBeginInfo,
-                RenderPass = renderPass,
+                RenderPass = _renderPass,
                 Framebuffer = swapChainFramebuffers![i],
                 RenderArea =
                 {

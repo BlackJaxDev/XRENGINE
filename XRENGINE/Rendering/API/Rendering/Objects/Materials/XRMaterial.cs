@@ -42,6 +42,9 @@ namespace XREngine.Rendering
         private readonly List<XRShader> _tessEvalShaders = [];
         private readonly List<XRShader> _tessCtrlShaders = [];
         private readonly List<XRShader> _vertexShaders = [];
+        private readonly List<XRShader> _meshShaders = [];
+        private readonly List<XRShader> _taskShaders = [];
+        private readonly List<XRShader> _computeShaders = [];
         private EventList<XRShader> _shaders;
 
         public XRMaterial()
@@ -113,6 +116,12 @@ namespace XREngine.Rendering
             set => SetField(ref _billboardMode, value);
         }
 
+        /// <summary>
+        /// Returns the currently rendering pipeline's invalid material.
+        /// Returns null if the current rendering pipeline is not set or does not have an invalid material.
+        /// </summary>
+        public static XRMaterial? InvalidMaterial => Engine.Rendering.State.CurrentRenderingPipeline!.InvalidMaterial;
+
         protected override bool OnPropertyChanging<T>(string? propName, T field, T @new)
         {
             bool change = base.OnPropertyChanging(propName, field, @new);
@@ -169,6 +178,9 @@ namespace XREngine.Rendering
             _tessCtrlShaders.Clear();
             _tessEvalShaders.Clear();
             _vertexShaders.Clear();
+            _meshShaders.Clear();
+            _taskShaders.Clear();
+            _computeShaders.Clear();
 
             foreach (var shader in Shaders)
                 if (shader != null)
@@ -189,6 +201,15 @@ namespace XREngine.Rendering
                             break;
                         case EShaderType.TessEvaluation:
                             _tessEvalShaders.Add(shader);
+                            break;
+                        case EShaderType.Mesh:
+                            _meshShaders.Add(shader);
+                            break;
+                        case EShaderType.Task:
+                            _taskShaders.Add(shader);
+                            break;
+                        case EShaderType.Compute:
+                            _computeShaders.Add(shader);
                             break;
                     }
                 }

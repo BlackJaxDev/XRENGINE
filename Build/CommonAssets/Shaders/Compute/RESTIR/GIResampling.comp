@@ -1,0 +1,71 @@
+#version 450 core
+layout(local_size_x = 16, local_size_y = 16) in;
+
+struct Reservoir { vec3 Li; float pdf; vec3 Lprev; float W; int M; int pad[2]; };
+layout(std430, binding = 3) buffer InitialReservoir { Reservoir initR[]; };
+layout(std430, binding = 4) buffer TemporalReservoir { Reservoir tempR[]; };
+layout(std430, binding = 5) buffer SpatialReservoir { Reservoir spatR[]; };
+
+uniform ivec2 resolution;
+uniform uint frameIndex;
+
+uint wangHash(uint seed)
+{ 
+    seed ^= seed >> 16; 
+    seed *= 0x7feb352du; 
+    seed ^= seed >> 15; 
+    return seed; 
+}
+
+float rand(inout uint state)
+{
+    state = wangHash(state);
+    return float(state) / float(0xFFFFFFFFu);
+}
+
+void reservoirUpdate(inout Reservoir R, Reservoir S, float q, inout uint state) 
+{
+    R.M++;
+    if (R.M == 1)
+    {
+        R.Li = S.Li;
+        R.pdf = S.pdf;
+        R.W = 1.0;
+        R.Lprev = R.Li;
+    }
+    else 
+    {
+        float w = q;
+        if (rand(state) < (w / (R.W + w)))
+        {
+            R.Li = S.Li;
+            R.pdf = S.pdf;
+        }
+        R.W += w;
+    }
+}
+
+void main()
+{
+    ivec2 pix = ivec2(gl_GlobalInvocationID.xy);
+    int idx = pix.y * resolution.x + pix.x;
+
+    // Temporal: simply reuse last frame
+    tempR[idx] = initR[idx];
+    barrier();
+
+    // Spatial resampling
+    Reservoir R = tempR[idx];
+    uint state = uint(idx + frameIndex * 6247);
+    for (int i = 0; i < 4; ++i)
+    {
+        ivec2 offs = ivec2(int(rand(state) * 3.0) - 1, int(rand(state) * 3.0) - 1);
+        ivec2 nPix = clamp(pix + offs, ivec2(0), resolution - 1);
+        int nIdx = nPix.y * resolution.x + nPix.x;
+        Reservoir S = tempR[nIdx];
+        float g = 1.0; // approximate geometry term
+        float q = S.pdf * g;
+        reservoirUpdate(R, S, q, state);
+    }
+    spatR[idx] = R;
+}

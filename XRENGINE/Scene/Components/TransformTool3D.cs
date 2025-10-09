@@ -1,6 +1,5 @@
 ﻿using Extensions;
 using MagicPhysX;
-using MathNet.Numerics;
 using System.Numerics;
 using XREngine.Components;
 using XREngine.Components.Scene.Mesh;

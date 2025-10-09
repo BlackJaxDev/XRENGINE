@@ -621,12 +621,12 @@ namespace XREngine
 
                 string path = slot.FilePath;
                 bool skip = false;
-                foreach (var existingTexPath in _textureInfoCache.Keys)
+                foreach (var pair in _textureInfoCache)
                 {
-                    if (!string.Equals(existingTexPath, path, StringComparison.OrdinalIgnoreCase))
+                    if (!string.Equals(pair.Key, path, StringComparison.OrdinalIgnoreCase))
                         continue;
 
-                    textures.Add(_textureInfoCache[existingTexPath]);
+                    textures.Add(pair.Value);
                     skip = true;
                     break;
                 }

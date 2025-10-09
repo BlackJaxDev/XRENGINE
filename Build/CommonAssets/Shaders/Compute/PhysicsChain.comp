@@ -1,256 +1,272 @@
 #version 450
 
-layout(local_size_x = 1, local_size_y = 1, local_size_z = 1) in;
+layout(local_size_x = 128, local_size_y = 1, local_size_z = 1) in;
+
+// --- Struct Definitions ---
 
 struct Particle
 {
-    vec3 position;
-    vec3 prevPosition;
-    vec3 endOffset;
-    vec3 initLocalPosition;
-    vec4 initLocalRotation;
-    vec3 transformPosition;
-    vec3 transformLocalPosition;
-    mat4 transformLocalToWorldMatrix;
-    float damping;
-    float elasticity;
-    float stiffness;
-    float inert;
-    float friction;
-    float radius;
-    float boneLength;
-    bool isCollide;
-    int parentIndex;
-    int childCount;
+    vec3 Position;
+    float _pad0;
+    vec3 PrevPosition;
+    float _pad1;
+    vec3 TransformPosition;
+    float _pad2;
+    vec3 TransformLocalPosition;
+    float _pad3;
+    int ParentIndex;
+    float Damping;
+    float Elasticity;
+    float Stiffness;
+    float Inert;
+    float Friction;
+    float Radius;
+    float BoneLength;
+    int IsColliding;
+    int _pad4;
+    int _pad5;
+    int _pad6;
 };
 
-struct ParticleTree
+struct ParticleTreeData
 {
-    vec3 localGravity;
-    mat4 rootWorldToLocalMatrix;
-    float boneTotalLength;
-    Particle particles[];
-    vec3 restGravity;
+    vec3 LocalGravity;
+    float _pad0;
+    vec3 RestGravity;
+    float _pad1;
+    int ParticleStart;
+    int ParticleCount;
+    float _pad2;
+    float _pad3;
+    mat4 RootWorldToLocal;
+    float BoneTotalLength;
+    int _pad4;
+    int _pad5;
+    int _pad6;
 };
 
-layout(std430, binding = 0) buffer ParticleTrees
+struct ColliderData
 {
-    ParticleTree particleTrees[];
+    vec4 Center;   // xyz = position, w = radius
+    vec4 Params;   // type-specific
+    int Type;      // 0=sphere,1=capsule,2=box
+    int _pad0;
+    int _pad1;
+    int _pad2;
 };
 
-layout(std430, binding = 1) buffer EffectiveColliders
+// --- Buffers ---
+
+layout(std430, binding = 0) buffer ParticlesBuffer 
 {
-    vec4 colliders[];
+    Particle Particles[];
 };
 
-uniform float deltaTime;
-uniform float weight;
-uniform vec3 gravity;
-uniform vec3 force;
-uniform float objectScale;
-uniform vec3 objectMove;
-uniform int updateMode;
-uniform float updateRate;
-uniform float blendWeight;
-uniform int freezeAxis;
-uniform bool distantDisable;
-uniform vec3 referenceObjectPosition;
-uniform float distanceToObject;
-
-void main() 
+layout(std430, binding = 1) buffer ParticleTreesBuffer
 {
-    uint index = gl_GlobalInvocationID.x;
-    ParticleTree pt = particleTrees[index];
+    ParticleTreeData ParticleTrees[];
+};
 
-    float timeVar = 1.0;
-    int loop = 1;
-    float dt = deltaTime;
+layout(std430, binding = 2) buffer TransformMatricesBuffer 
+{
+    mat4 TransformMatrices[];
+};
 
-    if (updateMode == 0)
+layout(std430, binding = 3) buffer CollidersBuffer
+{
+    ColliderData Colliders[];
+};
+
+// --- Uniforms ---
+
+uniform float DeltaTime;
+uniform float ObjectScale;
+uniform float Weight;
+uniform vec3 Force;
+uniform vec3 Gravity;
+uniform vec3 ObjectMove;
+uniform int FreezeAxis;
+uniform int ColliderCount;
+uniform int UpdateMode;
+uniform float UpdateRate;
+
+// --- Collision Helpers ---
+
+bool sphereColliderCollision(vec3 center, float rad, inout vec3 pos, float r)
+{
+    vec3 d = pos - center;
+    float dist = length(d);
+    float minD = r + rad;
+    if (dist < minD)
     {
-        // Default
-        if (updateRate > 0.0)
-            timeVar = dt * updateRate;
+        pos = center + d * (minD / max(dist, 1e-4));
+        return true;
     }
-    else if (updateRate > 0.0)
-    {
-        float frameTime = 1.0 / updateRate;
-        float time = 0.0;
-        loop = 0;
-
-        while (time >= frameTime)
-        {
-            time -= frameTime;
-            if (++loop >= 3)
-            {
-                time = 0.0;
-                break;
-            }
-        }
-    }
-
-    if (loop > 0)
-    {
-        for (int i = 0; i < loop; ++i)
-        {
-            UpdateParticles1(pt, timeVar, i);
-            UpdateParticles2(pt, timeVar);
-        }
-    }
-
-    ApplyParticlesToTransforms(pt);
+    return false;
 }
 
-void UpdateParticles1(ParticleTree pt, float timeVar, int loopIndex)
+bool capsuleColliderCollision(vec3 start, vec3 end, float rad, inout vec3 pos, float r)
 {
-    vec3 force = gravity;
-    vec3 fdir = normalize(gravity);
-    vec3 pf = fdir * max(dot(pt.restGravity, fdir), 0.0); // project current gravity to rest gravity
-    force -= pf; // remove projected gravity
-    force = (force + force) * (objectScale * timeVar);
-
-    vec3 objectMove = loopIndex == 0 ? objectMove : vec3(0.0); // only first loop consider object move
-
-    for (int i = 0; i < pt.particles.length(); ++i)
+    vec3 dir = end - start;
+    float len = length(dir);
+    if (len < 1e-4)
     {
-        Particle p = pt.particles[i];
-        if (p.parentIndex >= 0)
-        {
-            // verlet integration
-            vec3 v = p.position - p.prevPosition;
-            vec3 rmove = objectMove * p.inert;
-            p.prevPosition = p.position + rmove;
-            float damping = p.damping;
-            if (p.isCollide)
-            {
-                damping += p.friction;
-                if (damping > 1.0)
-                    damping = 1.0;
-                p.isCollide = false;
-            }
-            p.position += v * (1.0 - damping) + force + rmove;
-        }
-        else
-        {
-            p.prevPosition = p.position;
-            p.position = p.transformPosition;
-        }
+        return sphereColliderCollision(start, rad, pos, r);
     }
+    vec3 norm = dir / len;
+    float proj = clamp(dot(pos - start, norm), 0.0, len);
+    vec3 closest = start + norm * proj;
+    return sphereColliderCollision(closest, rad, pos, r);
 }
 
-void UpdateParticles2(ParticleTree pt, float timeVar)
+bool boxColliderCollision(vec3 center, vec3 halfExt, inout vec3 pos, float r)
 {
-    for (int i = 1; i < pt.particles.length(); ++i)
+    vec3 local = pos - center;
+    vec3 clamped = clamp(local, -halfExt, halfExt);
+    vec3 closest = center + clamped;
+    return sphereColliderCollision(closest, 1e-4, pos, r);
+}
+
+bool processColliders(inout vec3 pos, float r)
+{
+    bool coll = false;
+    for (int i = 0; i < ColliderCount; ++i)
     {
-        Particle p = pt.particles[i];
-        Particle p0 = pt.particles[p.parentIndex];
-
-        float restLen = length(p0.transformPosition - p.transformPosition);
-
-        // keep shape
-        float stiffness = mix(1.0, p.stiffness, weight);
-        if (stiffness > 0.0 || p.elasticity > 0.0)
+        ColliderData c = Colliders[i];
+        if (c.Type == 0) 
         {
-            mat4 m0 = p0.transformLocalToWorldMatrix;
-            m0[3] = vec4(p0.position, 1.0);
-            vec3 restPos = vec3(m0 * vec4(p.transformLocalPosition, 1.0));
-            vec3 d = restPos - p.position;
-            p.position += d * (p.elasticity * timeVar);
+            coll = coll || sphereColliderCollision(c.Center.xyz, c.Center.w, pos, r);
+        }
+        else if (c.Type == 1)
+        {
+            coll = coll || capsuleColliderCollision(c.Center.xyz, c.Params.xyz, c.Center.w, pos, r);
+        }
+        else if (c.Type == 2)
+        {
+            coll = coll || boxColliderCollision(c.Center.xyz, c.Params.xyz, pos, r);
+        }
+    }
+    return coll;
+}
 
-            if (stiffness > 0.0)
-            {
-                d = restPos - p.position;
-                float len = length(d);
-                float maxlen = restLen * (1.0 - stiffness) * 2.0;
-                if (len > maxlen)
-                    p.position += d * ((len - maxlen) / len);
-            }
+// --- Freeze Axis Helper ---
+
+void applyFreezeAxis(inout vec3 pos, vec3 parentPos, mat4 parentMat)
+{
+    if (FreezeAxis < 1 || FreezeAxis > 3)
+        return;
+    
+    vec3 normal;
+    if (FreezeAxis == 1)
+        normal = normalize(parentMat[0].xyz);
+    else if (FreezeAxis == 2)
+        normal = normalize(parentMat[1].xyz);
+    else
+        normal = normalize(parentMat[2].xyz);
+    
+    float d = dot(pos - parentPos, normal);
+    pos -= normal * d;
+}
+
+// --- Main Physics Update ---
+
+void main()
+{
+    uint pid = gl_GlobalInvocationID.x;
+    
+    // Find the tree this particle belongs to
+    int treeIndex = -1;
+    for (int i = 0; i < int(ParticleTrees.length()); ++i)
+    {
+        int start = ParticleTrees[i].ParticleStart;
+        int cnt   = ParticleTrees[i].ParticleCount;
+        if (int(pid) >= start && int(pid) < start + cnt)
+        {
+            treeIndex = i;
+            break;
+        }
+    }
+
+    if (treeIndex < 0)
+        return;
+
+    Particle p = Particles[pid];
+
+    if (p.ParentIndex >= 0)
+    {
+        // Verlet integration - identical to CPU version
+        vec3 v = p.Position - p.PrevPosition;
+        vec3 rmove = ObjectMove * p.Inert;
+        p.PrevPosition = p.Position + rmove;
+
+        float damp = p.Damping;
+        if (p.IsColliding > 0)
+        {
+            damp += p.Friction;
+            damp = min(damp, 1.0);
+            p.IsColliding = 0;
         }
 
-        // collide
-        if (p.radius > 0.0)
+        // Force calculation - identical to CPU version
+        vec3 force = Gravity;
+        vec3 fdir = normalize(Gravity);
+        vec3 pf = fdir * max(dot(ParticleTrees[treeIndex].RestGravity, fdir), 0.0);
+        force -= pf;
+        force = (force + Force) * (ObjectScale * DeltaTime);
+
+        p.Position += v * (1.0 - damp) + force + rmove;
+        
+        // Apply constraints - identical to CPU version
+        Particle parent = Particles[p.ParentIndex];
+        
+        // Stiffness & elasticity constraints
+        float stiff = mix(1.0, p.Stiffness, Weight);
+        if (stiff > 0.0 || p.Elasticity > 0.0)
         {
-            for (int j = 0; j < colliders.length(); ++j)
+            mat4 m = TransformMatrices[p.ParentIndex];
+            m[3].xyz = parent.Position;
+            vec3 restPos = (m * vec4(p.TransformLocalPosition, 1.0)).xyz;
+            vec3 d = restPos - p.Position;
+            
+            // Elasticity
+            p.Position += d * (p.Elasticity * DeltaTime);
+            
+            // Stiffness constraint
+            if (stiff > 0.0)
             {
-                vec4 collider = colliders[j];
-                vec3 cpos = collider.xyz;
-                float crad = collider.w;
-                vec3 d = p.position - cpos;
+                d = restPos - p.Position;
                 float len = length(d);
-                if (len < p.radius + crad)
+                float baseLen = length(parent.TransformPosition - p.TransformPosition);
+                float maxLen = baseLen * (1.0 - stiff) * 2.0;
+                if (len > maxLen)
                 {
-                    p.position = cpos + normalize(d) * (p.radius + crad);
-                    p.isCollide = true;
+                    p.Position += d * ((len - maxLen) / len);
                 }
             }
         }
-
-        // freeze axis, project to plane 
-        if (freezeAxis != 0)
+        
+        // Collision detection
+        float pr = p.Radius * ObjectScale;
+        p.IsColliding = processColliders(p.Position, pr) ? 1 : 0;
+        
+        // Freeze axis constraint
+        applyFreezeAxis(p.Position, parent.Position, TransformMatrices[p.ParentIndex]);
+        
+        // Length constraint
+        vec3 diff = parent.Position - p.Position;
+        float L = length(diff);
+        if (L > 1e-4)
         {
-            vec4 planeNormal = p0.transformLocalToWorldMatrix[freezeAxis - 1];
-            vec3 movePlaneNormal = normalize(planeNormal.xyz);
-            float distance = dot(movePlaneNormal, p.position - p0.position);
-            p.position -= movePlaneNormal * distance;
+            float restLen = length(parent.TransformPosition - p.TransformPosition);
+            p.Position += diff * ((L - restLen) / L);
         }
-
-        // keep length
-        vec3 dd = p0.position - p.position;
-        float leng = length(dd);
-        if (leng > 0.0)
-            p.position += dd * ((leng - restLen) / leng);
     }
-}
-
-void ApplyParticlesToTransforms(ParticleTree pt)
-{
-    for (int i = 1; i < pt.particles.length(); ++i)
+    else
     {
-        Particle p = pt.particles[i];
-        Particle p0 = pt.particles[p.parentIndex];
-
-        if (p0.childCount <= 1)
-        {
-            // do not modify bone orientation if has more than one child
-            vec3 localPos = p.transformLocalPosition;
-            vec3 v0 = vec3(p0.transformLocalToWorldMatrix * vec4(localPos, 1.0));
-            vec3 v1 = p.position - p0.position;
-            vec4 rot = rotationBetweenVectors(v0, v1);
-            p0.transformLocalToWorldMatrix = mat4_cast(rot) * p0.transformLocalToWorldMatrix;
-        }
-
-        p.transformPosition = p.position;
-    }
-}
-
-vec4 rotationBetweenVectors(vec3 start, vec3 dest)
-{
-    start = normalize(start);
-    dest = normalize(dest);
-
-    float cosTheta = dot(start, dest);
-    vec3 rotationAxis;
-
-    if (cosTheta < -1.0 + 0.001)
-    {
-        rotationAxis = cross(vec3(0.0, 0.0, 1.0), start);
-
-        if (length(rotationAxis) < 0.01)
-            rotationAxis = cross(vec3(1.0, 0.0, 0.0), start);
-
-        rotationAxis = normalize(rotationAxis);
-        return quat(180.0, rotationAxis);
+        // Root is anchored - identical to CPU version
+        p.PrevPosition = p.Position;
+        p.Position     = p.TransformPosition;
     }
 
-    rotationAxis = cross(start, dest);
-
-    float s = sqrt((1.0 + cosTheta) * 2.0);
-    float invs = 1.0 / s;
-
-    return quat(
-        s * 0.5,
-        rotationAxis.x * invs,
-        rotationAxis.y * invs,
-        rotationAxis.z * invs
-    );
+    Particles[pid] = p;
 }

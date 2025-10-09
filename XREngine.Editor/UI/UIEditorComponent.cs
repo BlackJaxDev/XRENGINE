@@ -123,13 +123,13 @@ public partial class UIEditorComponent : UIComponent
             comp.Material = mat;
         }
 
-        dockNode.NewChildWithTransform(out UIListTransform listTfm, out InspectorPanel inspector, "Inspector");
-        listTfm.DisplayHorizontal = false;
-        listTfm.ItemAlignment = EListAlignment.TopOrLeft;
+        //dockNode.NewChildWithTransform(out UIListTransform listTfm, out InspectorPanel inspector, "Inspector");
+        //listTfm.DisplayHorizontal = false;
+        //listTfm.ItemAlignment = EListAlignment.TopOrLeft;
 
-        //World.Name = "TestWorld";
-        _inspector = inspector;
-        inspector.InspectedObjects = [Engine.Rendering.Settings];
+        ////World.Name = "TestWorld";
+        //_inspector = inspector;
+        //inspector.InspectedObjects = [Engine.Rendering.Settings];
 
         ////Create the dockable windows transform for panels
         //var dockableNode = splitChild.NewChild<UIDockingRootComponent>(out var root);

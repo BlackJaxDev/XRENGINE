@@ -60,6 +60,16 @@ public unsafe partial class VulkanRenderer
         {
             throw new NotImplementedException();
         }
+
+        protected override void LinkData()
+        {
+            throw new NotImplementedException();
+        }
+
+        protected override void UnlinkData()
+        {
+            throw new NotImplementedException();
+        }
     }
     public class VkTexture2D(VulkanRenderer api, XRTexture2D data) : VkTexture<XRTexture2D>(api, data)
     {
@@ -343,5 +353,15 @@ public unsafe partial class VulkanRenderer
             ImageView = view,
             Sampler = sampler,
         };
+
+        protected override void UnlinkData()
+        {
+            throw new NotImplementedException();
+        }
+
+        protected override void LinkData()
+        {
+            throw new NotImplementedException();
+        }
     }
 }

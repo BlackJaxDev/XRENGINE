@@ -4,6 +4,7 @@ using XREngine.Data.Rendering;
 
 namespace XREngine.Data.Trees
 {
+
     /// <summary>
     /// A 3D space partitioning tree that recursively divides aabbs into 8 smaller aabbs depending on the items they contain.
     /// </summary>

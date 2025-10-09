@@ -1,0 +1,57 @@
+#version 460
+
+// Copy render commands from input SSBO to output SSBO (passthrough culling path)
+// One thread copies one command (32 floats / 128 bytes).
+
+layout(local_size_x = 256, local_size_y = 1, local_size_z = 1) in;
+
+// Number of commands is equal to the number of dispatched invocations.
+// No explicit CopyCount uniform is required.
+
+// Input command buffer: tightly packed float[32] per command
+layout(std430, binding = 0) readonly buffer InCommands
+{
+    float InData[];
+};
+
+// Output command buffer: tightly packed float[32] per command
+layout(std430, binding = 1) writeonly buffer OutCommands
+{
+    float OutData[];
+};
+
+// Optional count buffer to mirror visible count on GPU
+layout(std430, binding = 2) writeonly buffer VisibleCount
+{
+    uint OutCount[];
+};
+
+void main()
+{
+    // Flatten the global invocation ID to a 1D linear index so this also
+    // works if the CPU dispatches work across Y/Z dimensions.
+    const uvec3 localSize = gl_WorkGroupSize;             // compile-time constant
+    uvec3 globalSize = gl_NumWorkGroups * localSize;      // total grid size across all dims
+
+    uint cmdIndex = gl_GlobalInvocationID.x
+                  + gl_GlobalInvocationID.y * globalSize.x
+                  + gl_GlobalInvocationID.z * (globalSize.x * globalSize.y);
+
+    // Each command is 32 floats
+    const uint CommandStride = 32u;
+
+    uint inBase  = cmdIndex * CommandStride;
+    uint outBase = cmdIndex * CommandStride;
+
+    // Unrolled copy for better performance on some drivers
+    // But keep a simple loop for clarity and flexibility
+    for (uint i = 0u; i < CommandStride; ++i)
+        OutData[outBase + i] = InData[inBase + i];
+
+    // Thread 0 writes the visible count as the number of dispatched threads
+    if (cmdIndex == 0u)
+    {
+        uint totalThreads = globalSize.x * globalSize.y * globalSize.z;
+        OutCount[0] = totalThreads;
+    }
+}

@@ -1,0 +1,68 @@
+// create_leaves.comp
+#version 460
+
+#define MAX_OBJECTS 1024
+#define MAX_OCTREE_NODES (MAX_OBJECTS * 2 - 1)
+
+// Input: Sorted Morton codes and original object IDs
+struct MortonObject
+{
+    uint mortonCode;
+    uint objectId;
+};
+
+// Sorted Morton codes and their corresponding object IDs
+layout(std430, binding = 1) buffer MortonCodes
+{
+    MortonObject mortonObjects[MAX_OBJECTS];
+};
+
+// Input: Original AABBs for all objects
+layout(std430, binding = 0) buffer AABBs
+{
+    vec3 aabbMin[MAX_OBJECTS];
+    vec3 aabbMax[MAX_OBJECTS];
+};
+
+// Output: The constructed octree
+struct OctreeNode
+{
+    vec3 minBounds;
+    vec3 maxBounds;
+    int  childIndices[8];   // -1 means empty
+    uint parentIndex;       // Index to the parent node, uint(-1) if none
+    uint objectStartIndex;  // Start index for leaf node objects
+    uint objectCount;       // For leaves, number of objects (usually 1)
+    uint _pad0;
+};
+
+layout(std430, binding = 2) buffer Octree
+{
+    uint numNodes;
+    OctreeNode nodes[MAX_OCTREE_NODES];
+};
+
+uniform uint numObjects;
+
+layout (local_size_x = 256, local_size_y = 1, local_size_z = 1) in;
+
+void main()
+{
+    uint gid = gl_GlobalInvocationID.x;
+    if (gid >= numObjects) return;
+
+    uint objectId = mortonObjects[gid].objectId;
+
+    OctreeNode n;
+    n.minBounds = aabbMin[objectId];
+    n.maxBounds = aabbMax[objectId];
+    for (int i = 0; i < 8; ++i) n.childIndices[i] = -1;
+    n.parentIndex = uint(-1); // Unassigned for now
+    n.objectStartIndex = objectId;
+    n.objectCount = 1u;       // Leaf
+    n._pad0 = 0u;
+    nodes[gid] = n;
+    if (gid == 0u) {
+        numNodes = numObjects; // leaves only for now; internal nodes appended in next pass
+    }
+}

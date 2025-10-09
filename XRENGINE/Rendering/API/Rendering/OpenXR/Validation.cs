@@ -35,14 +35,14 @@ public unsafe partial class OpenXRAPI
         if (!EnableValidationLayers)
             return;
 
-        if (Api!.TryGetInstanceExtension(null, instance, out debugUtils))
+        if (Api!.TryGetInstanceExtension(null, _instance, out debugUtils))
             return;
 
         DebugUtilsMessengerCreateInfoEXT createInfo = new();
         PopulateDebugMessengerCreateInfo(ref createInfo);
 
         var d = new DebugUtilsMessengerEXT();
-        if (debugUtils!.CreateDebugUtilsMessenger(instance, &createInfo, &d) != Result.Success)
+        if (debugUtils!.CreateDebugUtilsMessenger(_instance, &createInfo, &d) != Result.Success)
             throw new Exception("Failed to set up OpenXR debug messenger.");
         debugMessenger = d;
     }

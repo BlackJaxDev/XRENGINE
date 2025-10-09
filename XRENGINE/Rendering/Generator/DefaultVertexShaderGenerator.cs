@@ -15,8 +15,117 @@ namespace XREngine.Rendering.Shaders.Generator
     /// <summary>
     /// Generates a typical vertex shader for use with most models.
     /// </summary>
-    public class DefaultVertexShaderGenerator(XRMesh mesh) : ShaderGeneratorBase(mesh)
+    public class DefaultVertexShaderGenerator : ShaderGeneratorBase
     {
+        public DefaultVertexShaderGenerator(XRMesh mesh) : base(mesh)
+        {
+            HelperMethodWriters.Add(WriteAdjointMethod);
+            AddUniforms();
+            AddOutputs();
+            AddInputs();
+        }
+
+        private void AddInputs()
+        {
+            uint location = 0u;
+
+            InputVars.Add(ECommonBufferType.Position.ToString(), (location++, EShaderVarType._vec3));
+
+            if (Mesh.HasNormals)
+                InputVars.Add(ECommonBufferType.Normal.ToString(), (location++, EShaderVarType._vec3));
+
+            if (Mesh.HasTangents)
+                InputVars.Add(ECommonBufferType.Tangent.ToString(), (location++, EShaderVarType._vec3));
+
+            if (Mesh.HasTexCoords)
+                for (uint i = 0; i < Mesh.TexCoordCount; ++i)
+                    InputVars.Add($"{ECommonBufferType.TexCoord}{i}", (location++, EShaderVarType._vec2));
+
+            if (Mesh.HasColors)
+                for (uint i = 0; i < Mesh.ColorCount; ++i)
+                    InputVars.Add($"{ECommonBufferType.Color}{i}", (location++, EShaderVarType._vec4));
+
+            if (Mesh.HasSkinning && Engine.Rendering.Settings.AllowSkinning)
+            {
+                bool optimizeTo4Weights = Engine.Rendering.Settings.OptimizeSkinningTo4Weights || (Engine.Rendering.Settings.OptimizeSkinningWeightsIfPossible && Mesh.MaxWeightCount <= 4);
+                if (optimizeTo4Weights)
+                {
+                    EShaderVarType intVecVarType = Engine.Rendering.Settings.UseIntegerUniformsInShaders
+                        ? EShaderVarType._ivec4
+                        : EShaderVarType._vec4;
+
+                    InputVars.Add(ECommonBufferType.BoneMatrixOffset.ToString(), (location++, intVecVarType));
+                    InputVars.Add(ECommonBufferType.BoneMatrixCount.ToString(), (location++, EShaderVarType._vec4));
+                }
+                else
+                {
+                    EShaderVarType intVarType = Engine.Rendering.Settings.UseIntegerUniformsInShaders
+                        ? EShaderVarType._int
+                        : EShaderVarType._float;
+
+                    InputVars.Add(ECommonBufferType.BoneMatrixOffset.ToString(), (location++, intVarType));
+                    InputVars.Add(ECommonBufferType.BoneMatrixCount.ToString(), (location++, intVarType));
+                }
+            }
+
+            if (Mesh.BlendshapeCount > 0 && !Engine.Rendering.Settings.CalculateBlendshapesInComputeShader && Engine.Rendering.Settings.AllowBlendshapes)
+            {
+                EShaderVarType intVarType = Engine.Rendering.Settings.UseIntegerUniformsInShaders
+                    ? EShaderVarType._ivec2
+                    : EShaderVarType._vec2;
+
+                InputVars.Add(ECommonBufferType.BlendshapeCount.ToString(), (location++, intVarType));
+            }
+        }
+
+        private void AddOutputs()
+        {
+            OutputVars.Add(FragPosName, (0, EShaderVarType._vec3));
+
+            // Always provide FragNorm to satisfy fragment inputs expecting it
+            OutputVars.Add(FragNormName, (1, EShaderVarType._vec3));
+
+            if (Mesh.HasTangents)
+            {
+                OutputVars.Add(FragTanName, (2, EShaderVarType._vec3));
+                OutputVars.Add(FragBinormName, (3, EShaderVarType._vec3)); //Binormal is created in vertex shader if tangents exist
+            }
+
+            if (Mesh.HasTexCoords)
+                for (int i = 0; i < Mesh.TexCoordCount.ClampMax(8); ++i)
+                    OutputVars.Add(string.Format(FragUVName, i), (4u + (uint)i, EShaderVarType._vec2));
+
+            if (Mesh.HasColors)
+                for (int i = 0; i < Mesh.ColorCount.ClampMax(8); ++i)
+                    OutputVars.Add(string.Format(FragColorName, i), (12u + (uint)i, EShaderVarType._vec4));
+
+            OutputVars.Add(FragPosLocalName, (20, EShaderVarType._vec3)); //Local position in model space
+        }
+
+        private void AddUniforms()
+        {
+            UniformNames.Add(EEngineUniform.ModelMatrix.ToString(), (EShaderVarType._mat4, false));
+
+            if (UseOVRMultiView || UseNVStereo)
+            {
+                UniformNames.Add($"{EEngineUniform.LeftEyeInverseViewMatrix}{VertexUniformSuffix}", (EShaderVarType._mat4, false));
+                UniformNames.Add($"{EEngineUniform.RightEyeInverseViewMatrix}{VertexUniformSuffix}", (EShaderVarType._mat4, false));
+                UniformNames.Add($"{EEngineUniform.LeftEyeProjMatrix}{VertexUniformSuffix}", (EShaderVarType._mat4, false));
+                UniformNames.Add($"{EEngineUniform.RightEyeProjMatrix}{VertexUniformSuffix}", (EShaderVarType._mat4, false));
+            }
+            else
+            {
+                UniformNames.Add($"{EEngineUniform.InverseViewMatrix}{VertexUniformSuffix}", (EShaderVarType._mat4, false));
+                UniformNames.Add($"{EEngineUniform.ProjMatrix}{VertexUniformSuffix}", (EShaderVarType._mat4, false));
+            }
+
+            if (Mesh.SupportsBillboarding)
+                UniformNames.Add(EEngineUniform.BillboardMode.ToString(), (EShaderVarType._int, false));
+
+            if (!UseOVRMultiView && !UseNVStereo) //Include toggle for manual stereo VR calculations in shader if not using OVR multi-view or NV stereo
+                UniformNames.Add(EEngineUniform.VRMode.ToString(), (EShaderVarType._bool, false));
+        }
+
         //Buffers leaving the vertex shader for each vertex
         public const string FragPosLocalName = "FragPosLocal";
         public const string FragPosName = "FragPos";
@@ -38,100 +147,48 @@ namespace XREngine.Rendering.Shaders.Generator
         public virtual bool UseOVRMultiView => false;
         public virtual bool UseNVStereo => false;
 
-        /// <summary>
-        /// Adjoint is a faster way to calculate the inverse of a matrix when the matrix is orthogonal.
-        /// </summary>
-        private void WriteAdjointMethod()
-        {
-            Line("mat3 adjoint(mat4 m)");
-            using (OpenBracketState())
-            {
-                Line("return mat3(");
-                Line("  cross(m[1].xyz, m[2].xyz),");
-                Line("  cross(m[2].xyz, m[0].xyz),");
-                Line("  cross(m[0].xyz, m[1].xyz));");
-            }
-        }
-
         private const string ViewMatrixName = "ViewMatrix";
         private const string ModelViewMatrixName = "mvMatrix";
         private const string ModelViewProjMatrixName = "mvpMatrix";
         private const string ViewProjMatrixName = "vpMatrix";
         private const string NormalMatrixName = "normalMatrix";
 
-        /// <summary>
-        /// Creates the vertex shader to render a typical model.
-        /// </summary>
-        /// <param name="info"></param>
-        /// <param name="allowMeshMorphing"></param>
-        /// <param name="useMorphMultiRig"></param>
-        /// <param name="allowColorMorphing"></param>
-        /// <returns></returns>
-        public override string Generate()
+        protected override void WriteMain()
         {
-            WriteVersion();
-            WriteExtensions();
-            Line();
-            WriteInputs();
-            WriteOutputs();
-            WriteAdjointMethod();
-            using (StartMain())
+            //Normal matrix is used to transform normals, tangents, and binormals in mesh transform calculations
+            if (Mesh.HasNormals)
             {
-                //Normal matrix is used to transform normals, tangents, and binormals in mesh transform calculations
-                if (Mesh.HasNormals)
-                {
-                    Line($"mat3 {NormalMatrixName} = adjoint({EEngineUniform.ModelMatrix});");
-                    Line();
-                }
-
-                //Transform position, normals and tangents
-                WriteMeshTransforms(Mesh.HasSkinning && Engine.Rendering.Settings.AllowSkinning);
-                if (UseNVStereo)
-                    Line("gl_Layer = 0;");
-                
-                WriteColorOutputs();
-                WriteTexCoordOutputs();
+                Line($"mat3 {NormalMatrixName} = adjoint({EEngineUniform.ModelMatrix});");
+                Line();
             }
-            return End();
+
+            //Transform position, normals and tangents
+            WriteMeshTransforms(Mesh.HasSkinning && Engine.Rendering.Settings.AllowSkinning);
+            if (UseNVStereo)
+                Line("gl_Layer = 0;");
+
+            // Ensure FragNorm is always initialized to a sensible default when normals are absent
+            if (!Mesh.HasNormals)
+                Line($"{FragNormName} = vec3(0.0f, 0.0f, 1.0f);");
+
+            if (Mesh.ColorCount != 0)
+                for (int i = 0; i < Mesh.ColorCount; ++i)
+                    Line($"{string.Format(FragColorName, i)} = {ECommonBufferType.Color}{i};");
+
+            if (Mesh.TexCoordCount != 0)
+                for (int i = 0; i < Mesh.TexCoordCount; ++i)
+                    Line($"{string.Format(FragUVName, i)} = {ECommonBufferType.TexCoord}{i};");
         }
 
-        /// <summary>
-        /// Writes the shader outputs to the fragment shader.
-        /// </summary>
-        private void WriteOutputs()
+        protected override void WriteOutputs()
         {
             if (UseNVStereo)
                 Line("layout(secondary_view_offset = 1) out highp int gl_Layer;"); //Apply secondary view offset to the layer output
-            
-            WriteOutVar(0, EShaderVarType._vec3, FragPosName);
 
-            if (Mesh.HasNormals)
-                WriteOutVar(1, EShaderVarType._vec3, FragNormName);
-
-            if (Mesh.HasTangents)
-            {
-                WriteOutVar(2, EShaderVarType._vec3, FragTanName);
-                WriteOutVar(3, EShaderVarType._vec3, FragBinormName);
-            }
-
-            if (Mesh.HasTexCoords)
-                for (int i = 0; i < Mesh.TexCoordCount.ClampMax(8); ++i)
-                    WriteOutVar(4 + i, EShaderVarType._vec2, string.Format(FragUVName, i));
-
-            if (Mesh.HasColors)
-                for (int i = 0; i < Mesh.ColorCount.ClampMax(8); ++i)
-                    WriteOutVar(12 + i, EShaderVarType._vec4, string.Format(FragColorName, i));
-
-            WriteOutVar(20, EShaderVarType._vec3, FragPosLocalName);
-
-            Line();
-
-            //For some reason, this is necessary when using shader pipelines
-            //if (Engine.Rendering.Settings.AllowShaderPipelines)
-            WriteGLPerVertexOut();
+            base.WriteOutputs();
         }
 
-        private void WriteExtensions()
+        protected override void WriteExtensions()
         {
             if (UseOVRMultiView)
             {
@@ -146,128 +203,26 @@ namespace XREngine.Rendering.Shaders.Generator
             }
         }
 
-        private void WriteInputs()
+        protected override void WriteInputs()
         {
             if (UseOVRMultiView)
                 Line("layout(num_views = 2) in;");
 
-            WriteBuffers();
-            WriteBufferBlocks();
-            WriteUniforms();
-        }
-
-        private void WriteTexCoordOutputs()
-        {
-            if (Mesh.TexCoordCount == 0)
-                return;
-
-            for (int i = 0; i < Mesh.TexCoordCount; ++i)
-                Line($"{string.Format(FragUVName, i)} = {ECommonBufferType.TexCoord}{i};");
-        }
-
-        private void WriteColorOutputs()
-        {
-            if (Mesh.ColorCount == 0)
-                return;
-
-            for (int i = 0; i < Mesh.ColorCount; ++i)
-                Line($"{string.Format(FragColorName, i)} = {ECommonBufferType.Color}{i};");
-        }
-
-        private void WriteBuffers()
-        {
-            //uint blendshapeCount = Mesh.BlendshapeCount;
-            uint location = 0u;
-
-            WriteInVar(location++, EShaderVarType._vec3, ECommonBufferType.Position.ToString());
-
-            if (Mesh.HasNormals)
-                WriteInVar(location++, EShaderVarType._vec3, ECommonBufferType.Normal.ToString());
-
-            if (Mesh.HasTangents)
-                WriteInVar(location++, EShaderVarType._vec3, ECommonBufferType.Tangent.ToString());
-
-            if (Mesh.HasTexCoords)
-                for (uint i = 0; i < Mesh.TexCoordCount; ++i)
-                    WriteInVar(location++, EShaderVarType._vec2, $"{ECommonBufferType.TexCoord}{i}");
-
-            if (Mesh.HasColors)
-                for (uint i = 0; i < Mesh.ColorCount; ++i)
-                    WriteInVar(location++, EShaderVarType._vec4, $"{ECommonBufferType.Color}{i}");
-
-            if (Mesh.HasSkinning && Engine.Rendering.Settings.AllowSkinning)
-            {
-                bool optimizeTo4Weights = Engine.Rendering.Settings.OptimizeSkinningTo4Weights || (Engine.Rendering.Settings.OptimizeSkinningWeightsIfPossible && Mesh.MaxWeightCount <= 4);
-                if (optimizeTo4Weights)
-                {
-                    EShaderVarType intVecVarType = Engine.Rendering.Settings.UseIntegerUniformsInShaders
-                        ? EShaderVarType._ivec4
-                        : EShaderVarType._vec4;
-
-                    WriteInVar(location++, intVecVarType, ECommonBufferType.BoneMatrixOffset.ToString());
-                    WriteInVar(location++, EShaderVarType._vec4, ECommonBufferType.BoneMatrixCount.ToString());
-                }
-                else
-                {
-                    EShaderVarType intVarType = Engine.Rendering.Settings.UseIntegerUniformsInShaders
-                        ? EShaderVarType._int
-                        : EShaderVarType._float;
-
-                    WriteInVar(location++, intVarType, ECommonBufferType.BoneMatrixOffset.ToString());
-                    WriteInVar(location++, intVarType, ECommonBufferType.BoneMatrixCount.ToString());
-                }
-            }
-            if (Mesh.BlendshapeCount > 0 && !Engine.Rendering.Settings.CalculateBlendshapesInComputeShader && Engine.Rendering.Settings.AllowBlendshapes)
-            {
-                EShaderVarType intVarType = Engine.Rendering.Settings.UseIntegerUniformsInShaders
-                    ? EShaderVarType._ivec2
-                    : EShaderVarType._vec2;
-
-                WriteInVar(location++, intVarType, ECommonBufferType.BlendshapeCount.ToString());
-            }
-            Line();
+            base.WriteInputs();
         }
 
         public const string VertexUniformSuffix = "_VTX";
 
-        private void WriteUniforms()
+        protected override void WriteUniforms()
         {
-            WriteUniform(EShaderVarType._mat4, EEngineUniform.ModelMatrix.ToString());
-
-            if (UseOVRMultiView || UseNVStereo)
-            {
-                WriteUniform(EShaderVarType._mat4, $"{EEngineUniform.LeftEyeInverseViewMatrix}{VertexUniformSuffix}");
-                WriteUniform(EShaderVarType._mat4, $"{EEngineUniform.RightEyeInverseViewMatrix}{VertexUniformSuffix}");
-                WriteUniform(EShaderVarType._mat4, $"{EEngineUniform.LeftEyeProjMatrix}{VertexUniformSuffix}");
-                WriteUniform(EShaderVarType._mat4, $"{EEngineUniform.RightEyeProjMatrix}{VertexUniformSuffix}");
-            }
-            else
-            {
-                WriteUniform(EShaderVarType._mat4, $"{EEngineUniform.InverseViewMatrix}{VertexUniformSuffix}");
-                WriteUniform(EShaderVarType._mat4, $"{EEngineUniform.ProjMatrix}{VertexUniformSuffix}");
-            }
-
-            //WriteUniform(EShaderVarType._vec3, EEngineUniform.CameraPosition.ToString());
-            //WriteUniform(EShaderVarType._vec3, EEngineUniform.CameraForward.ToString());
-            //WriteUniform(EShaderVarType._vec3, EEngineUniform.CameraUp.ToString());
-            //WriteUniform(EShaderVarType._vec3, EEngineUniform.CameraRight.ToString());
-
-            if (Mesh.SupportsBillboarding)
-                WriteUniform(EShaderVarType._int, EEngineUniform.BillboardMode.ToString());
-
-            if (!UseOVRMultiView && !UseNVStereo) //Include toggle for manual stereo VR calculations in shader if not using OVR multi-view or NV stereo
-                WriteUniform(EShaderVarType._bool, EEngineUniform.VRMode.ToString());
-
-            //if (Mesh.HasSkinning && Engine.Rendering.Settings.AllowSkinning)
-            //    WriteUniform(EShaderVarType._mat4, EEngineUniform.RootInvModelMatrix.ToString());
-
-            Line();
+            WriteUniformBufferBlocks();
+            base.WriteUniforms();
         }
 
         /// <summary>
         /// Shader buffer objects
         /// </summary>
-        private void WriteBufferBlocks()
+        private void WriteUniformBufferBlocks()
         {
             //These buffers have to be in this order to work - GPU boundary alignment is picky as f
 
@@ -368,42 +323,6 @@ namespace XREngine.Rendering.Shaders.Generator
 
             ResolvePosition(FinalPositionName);
         }
-
-        ///// <summary>
-        ///// Calculates positions, and optionally normals, tangents, and binormals for a static mesh.
-        ///// </summary>
-        //private void WriteStaticMeshInputs()
-        //{
-        //    Line($"vec4 position = vec4({ECommonBufferType.Position}, 1.0f);");
-        //    if (Mesh.NormalsBuffer is not null)
-        //        Line($"vec3 normal = {ECommonBufferType.Normal};");
-        //    if (Mesh.TangentsBuffer is not null)
-        //        Line($"vec3 tangent = {ECommonBufferType.Tangent};");
-        //    Line();
-
-        //    bool wroteBlendshapes = WriteBlendshapeCalc();
-        //    if (!wroteBlendshapes)
-        //    {
-        //        Line("vec4 finalPosition = position;");
-        //        if (Mesh.NormalsBuffer is not null)
-        //            Line("vec3 finalNormal = normal;");
-        //        if (Mesh.TangentsBuffer is not null)
-        //            Line("vec3 finalTangent = tangent;");
-        //    }
-
-        //    ResolvePosition("position");
-
-        //    if (Mesh.NormalsBuffer is not null)
-        //    {
-        //        Line($"{FragNormName} = normalize(normalMatrix * normal);");
-        //        if (Mesh.TangentsBuffer is not null)
-        //        {
-        //            Line($"{FragTanName} = normalize(normalMatrix * tangent);");
-        //            Line("vec3 binormal = cross(normal, tangent);");
-        //            Line($"{FragBinormName} = normalize(normalMatrix * binormal);");
-        //        }
-        //    }
-        //}
 
         private bool NeedsSkinningCalc()
             => Mesh.HasSkinning && !Engine.Rendering.Settings.CalculateSkinningInComputeShader;

@@ -27,6 +27,8 @@ namespace XREngine.Rendering.OpenGL
                     EProgramStageMask.GeometryShaderBit => UseProgramStageMask.GeometryShaderBit,
                     EProgramStageMask.FragmentShaderBit => UseProgramStageMask.FragmentShaderBit,
                     EProgramStageMask.ComputeShaderBit => UseProgramStageMask.ComputeShaderBit,
+                    EProgramStageMask.MeshShaderBit => (UseProgramStageMask)64,
+                    EProgramStageMask.TaskShaderBit => (UseProgramStageMask)128,
                     _ => 0,
                 };
 

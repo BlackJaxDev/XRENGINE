@@ -1,8 +1,5 @@
 ﻿using System.Drawing;
 using System.Numerics;
-using XREngine.Components;
-using XREngine.Components.Lights;
-using XREngine.Data;
 using XREngine.Data.Geometry;
 using XREngine.Data.Rendering;
 using XREngine.Data.Trees;
@@ -21,7 +18,11 @@ namespace XREngine.Scene
 
         public void SetBounds(AABB bounds)
         {
-            RenderTree.Remake(bounds);
+            if (Engine.UserSettings.GPURenderDispatch)
+                GPUCommands.Bounds = bounds;
+            else
+                RenderTree.Remake(bounds);
+
             //Lights.LightProbeTree.Remake(bounds);
         }
 
@@ -71,12 +72,20 @@ namespace XREngine.Scene
         public void AddRenderable(RenderInfo3D renderable)
         {
             _renderables.Add(renderable);
-            RenderTree.Add(renderable);
+
+            if (Engine.UserSettings.GPURenderDispatch)
+                GPUCommands.Add(renderable);
+            else
+                RenderTree.Add(renderable);
         }
         public void RemoveRenderable(RenderInfo3D renderable)
         {
+            if (Engine.UserSettings.GPURenderDispatch)
+                GPUCommands.Remove(renderable);
+            else
+                RenderTree.Remove(renderable);
+
             _renderables.Remove(renderable);
-            RenderTree.Remove(renderable);
         }
 
         public override IEnumerator<RenderInfo> GetEnumerator()

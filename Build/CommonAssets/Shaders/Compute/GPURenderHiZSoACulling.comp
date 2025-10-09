@@ -1,0 +1,73 @@
+#version 460 core
+// HiZ + SoA culling: early HiZ occlusion before frustum to reduce plane tests.
+layout(local_size_x = 256) in;
+
+layout(std430, binding = 0) buffer InBoundingSpheres { vec4 inSpheres[]; };
+layout(std430, binding = 1) buffer InMetadata { uvec4 inMeta[]; }; // (InstanceCount, RenderPass, LayerMask, Flags)
+layout(std430, binding = 2) buffer OutIndices { uint outIndices[]; }; // index 0 holds count
+layout(std430, binding = 3) buffer CulledCountBuffer { uint CulledCount; };
+layout(std430, binding = 4) buffer OverflowFlagBuffer { uint CullingOverflowFlag; };
+layout(std430, binding = 8) buffer StatsBuffer { uint StatsInputCount; uint StatsCulledCount; uint StatsDrawCount; uint StatsRejectedFrustum; uint StatsRejectedDistance; };
+
+uniform vec4 FrustumPlanes[6];
+uniform vec3 CameraPosition;
+uniform float MaxRenderDistance;
+uniform uint CameraLayerMask;
+uniform int CurrentRenderPass;
+uniform uint DisabledFlagsMask;
+uniform int InputCommandCount;
+// HiZ
+layout(binding = 0) uniform sampler2D HiZDepth; // separate texture unit binding by app
+uniform mat4 ViewProj;
+uniform int HiZMaxMip; // highest mip index used
+uniform float ZNear;
+uniform float ZFar;
+
+bool FrustumSphereVisible(vec3 center, float radius){
+    for(int i=0;i<6;++i){ vec4 p=FrustumPlanes[i]; if(dot(p.xyz,center)+p.w < -radius) return false; } return true; }
+
+float LinearizeDepth(float zClip){ // assumes clip space z = post-projection
+    return zClip; // placeholder (engine specific); assume depth already comparable to HiZ
+}
+
+bool HiZOccluded(vec3 worldCenter, float radius){
+    // Project center to clip
+    vec4 clip = ViewProj * vec4(worldCenter,1.0);
+    if(clip.w <= 0.0) return false; // behind camera, let frustum reject
+    vec3 ndc = clip.xyz / clip.w;
+    vec2 uv = ndc.xy * 0.5 + 0.5;
+    if(any(lessThan(uv, vec2(0))) || any(greaterThan(uv, vec2(1)))) return false; // outside screen -> frustum will cull
+    float depthValue = ndc.z * 0.5 + 0.5; // 0..1
+    // Traverse mips: coarse to fine (simple loop)
+    int mip = HiZMaxMip;
+    for(; mip >=0; --mip){
+        ivec2 size = textureSize(HiZDepth, mip);
+        ivec2 texel = ivec2(uv * vec2(size));
+        float maxDepth = texelFetch(HiZDepth, texel, mip).r;
+        if(depthValue - (radius / clip.w) <= maxDepth) return false; // visible
+    }
+    return true; // fully hidden by HiZ
+}
+
+void main(){
+    uint idx = gl_GlobalInvocationID.x;
+    if(idx >= uint(InputCommandCount)) return;
+    if(idx==0u) StatsInputCount = uint(InputCommandCount);
+    vec4 sphere = inSpheres[idx];
+    uvec4 meta = inMeta[idx];
+    uint instanceCount = meta.x; uint renderPass = meta.y; uint layerMask = meta.z; uint flags = meta.w;
+    if(instanceCount==0u) return;
+    if((layerMask & CameraLayerMask)==0u) return;
+    if(DisabledFlagsMask!=0u && (flags & DisabledFlagsMask)!=0u) return;
+    if(CurrentRenderPass>=0 && renderPass != uint(CurrentRenderPass)) return;
+    vec3 center = sphere.xyz;
+    float radius = sphere.w;
+    vec3 toCenter = center - CameraPosition; float dist2 = dot(toCenter,toCenter);
+    if(dist2 > MaxRenderDistance){ atomicAdd(StatsRejectedDistance,1u); return; }
+    if(HiZOccluded(center, radius)) { atomicAdd(StatsRejectedFrustum,1u); return; }
+    if(!FrustumSphereVisible(center,radius)){ atomicAdd(StatsRejectedFrustum,1u); return; }
+    uint outIndex = atomicAdd(CulledCount,1u);
+    if(outIndex >= 0xFFFFFFFEu){ atomicExchange(CullingOverflowFlag,1u); return; }
+    outIndices[outIndex+1u] = idx; // store source index
+    atomicAdd(StatsCulledCount,1u);
+}

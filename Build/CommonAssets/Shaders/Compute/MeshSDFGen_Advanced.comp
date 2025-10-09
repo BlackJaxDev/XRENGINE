@@ -1,0 +1,208 @@
+#version 430
+
+// Optimized work group size for modern GPUs
+layout(local_size_x = 16, local_size_y = 8, local_size_z = 4) in;
+
+// Output 3D texture to store the SDF values
+layout(r32f, binding = 0) uniform writeonly image3D sdfTexture;
+
+// Mesh data buffers SSBO
+layout(std430, binding = 1) buffer Vertices
+{
+    vec3 vertices[];
+};
+
+layout(std430, binding = 2) buffer Indices
+{
+    uvec3 indices[]; // Each uvec3 represents a triangle (vertex indices)
+};
+
+// Spatial acceleration structure - Octree or BVH nodes
+layout(std430, binding = 3) buffer SpatialNodes
+{
+    vec4 nodes[]; // xyz = center, w = radius, or use separate structure
+};
+
+// Triangle to node mapping for spatial acceleration
+layout(std430, binding = 4) buffer TriangleToNode
+{
+    uint triangleToNode[]; // Maps triangle index to spatial node index
+};
+
+// Uniforms defining the SDF grid
+uniform vec3 sdfMinBounds;     // Minimum corner of the bounding box
+uniform vec3 sdfMaxBounds;     // Maximum corner of the bounding box
+uniform ivec3 sdfResolution;   // Resolution of the 3D texture (number of voxels)
+uniform float maxDistance;     // Maximum distance to consider (early termination)
+uniform int useSpatialAccel;   // Whether to use spatial acceleration
+uniform float epsilon;         // Numerical precision epsilon
+uniform int maxIterations;     // Maximum iterations for early termination
+
+// Constants for numerical stability
+const float EPSILON = 1e-8;
+const float CLOSE_THRESHOLD = 0.001;
+
+// Improved function to compute the signed distance from a point to a triangle
+// Uses more robust numerical methods and handles edge cases better
+float sdTriangle(vec3 p, vec3 a, vec3 b, vec3 c)
+{
+    // Compute edge vectors
+    vec3 ba = b - a;
+    vec3 ca = c - a;
+    vec3 pa = p - a;
+
+    // Compute normal of the triangle
+    vec3 n = cross(ba, ca);
+    float area = length(n);
+    
+    // Handle degenerate triangles
+    if (area < EPSILON)
+        return maxDistance;
+    
+    n = normalize(n);
+
+    // Signed distance from point to the plane of the triangle
+    float distPlane = dot(pa, n);
+
+    // Project point onto the plane
+    vec3 projectedP = p - distPlane * n;
+
+    // Compute barycentric coordinates using more stable method
+    vec3 v0 = ba;
+    vec3 v1 = ca;
+    vec3 v2 = projectedP - a;
+
+    float d00 = dot(v0, v0);
+    float d01 = dot(v0, v1);
+    float d11 = dot(v1, v1);
+    float d20 = dot(v2, v0);
+    float d21 = dot(v2, v1);
+
+    float denom = d00 * d11 - d01 * d01;
+    
+    // Handle near-degenerate cases
+    if (abs(denom) < EPSILON)
+        return maxDistance;
+    
+    float v = (d11 * d20 - d01 * d21) / denom;
+    float w = (d00 * d21 - d01 * d20) / denom;
+    float u = 1.0 - v - w;
+
+    // Check if point is inside the triangle with numerical tolerance
+    bool insideTriangle = (u >= -epsilon) && (v >= -epsilon) && (w >= -epsilon);
+
+    if (insideTriangle)
+    {
+        // Return signed distance (inside the triangle plane)
+        return distPlane;
+    }
+    else 
+    {
+        // Compute distances to edges and vertices more efficiently
+        // Use precomputed dot products where possible
+        float distEdgeAB = length(ba * clamp(dot(ba, pa) / d00, 0.0, 1.0) - pa);
+        float distEdgeBC = length((c - b) * clamp(dot(c - b, p - b) / dot(c - b, c - b), 0.0, 1.0) - (p - b));
+        float distEdgeCA = length((a - c) * clamp(dot(a - c, p - c) / dot(a - c, a - c), 0.0, 1.0) - (p - c));
+        
+        // Also check distances to vertices
+        float distVertexA = length(pa);
+        float distVertexB = length(p - b);
+        float distVertexC = length(p - c);
+        
+        float dist = min(min(distEdgeAB, distEdgeBC), distEdgeCA);
+        dist = min(dist, min(min(distVertexA, distVertexB), distVertexC));
+        
+        // Return unsigned distance (outside the triangle plane)
+        return sqrt(dist * dist + distPlane * distPlane);
+    }
+}
+
+// Fast bounding sphere test for early termination
+bool triangleInSphere(vec3 p, vec3 a, vec3 b, vec3 c, float maxDist)
+{
+    // Compute triangle center
+    vec3 center = (a + b + c) * 0.333333333;
+    
+    // Compute bounding radius (distance from center to farthest vertex)
+    float radius = max(max(length(a - center), length(b - center)), length(c - center));
+    
+    // Check if point is within expanded sphere
+    return length(p - center) <= (radius + maxDist);
+}
+
+// Hierarchical spatial acceleration test
+bool testSpatialAcceleration(vec3 p, uint triangleIndex, float maxDist)
+{
+    if (useSpatialAccel == 0)
+        return true;
+    
+    uint nodeIndex = triangleToNode[triangleIndex];
+    vec4 node = nodes[nodeIndex];
+    
+    // node.xyz = center, node.w = radius
+    return length(p - node.xyz) <= (node.w + maxDist);
+}
+
+// Main compute shader function with advanced optimizations
+void main() 
+{
+    ivec3 gid = ivec3(gl_GlobalInvocationID);
+
+    // Bounds check
+    if (any(greaterThanEqual(gid, sdfResolution)))
+        return;
+
+    // Map grid coordinates to world space position
+    vec3 uvw = vec3(gid) / vec3(sdfResolution - 1);
+    vec3 p = mix(sdfMinBounds, sdfMaxBounds, uvw);
+
+    float minDist = maxDistance;
+    bool foundCloser = false;
+    int iterations = 0;
+
+    // Number of triangles in the mesh
+    uint numTriangles = indices.length();
+
+    // Loop over all triangles in the mesh with multiple optimization strategies
+    for (uint i = 0; i < numTriangles && iterations < maxIterations; ++i)
+    {
+        uvec3 tri = indices[i];
+        vec3 a = vertices[tri.x];
+        vec3 b = vertices[tri.y];
+        vec3 c = vertices[tri.z];
+
+        // Early termination: skip triangles that are too far using spatial acceleration
+        if (useSpatialAccel != 0 && !testSpatialAcceleration(p, i, abs(minDist)))
+            continue;
+
+        // Additional early termination: simple bounding sphere test
+        if (!triangleInSphere(p, a, b, c, abs(minDist)))
+            continue;
+
+        // Compute signed distance to the triangle
+        float dist = sdTriangle(p, a, b, c);
+
+        // Keep the minimum (closest) distance
+        if (abs(dist) < abs(minDist))
+        {
+            minDist = dist;
+            foundCloser = true;
+            
+            // Early termination: if we're very close to the surface, we can stop
+            if (abs(dist) < CLOSE_THRESHOLD)
+                break;
+        }
+        
+        iterations++;
+    }
+
+    // If no triangle was found within range, use maxDistance
+    if (!foundCloser)
+        minDist = maxDistance;
+
+    // Clamp the result to prevent extreme values
+    minDist = clamp(minDist, -maxDistance, maxDistance);
+
+    // Store the signed distance in the 3D texture
+    imageStore(sdfTexture, gid, vec4(minDist));
+} 

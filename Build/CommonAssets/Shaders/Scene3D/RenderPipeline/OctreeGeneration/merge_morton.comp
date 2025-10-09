@@ -1,0 +1,44 @@
+#version 460
+
+// Bitonic merge pass across the entire array for a given (K, J)
+
+struct MortonObject {
+    uint mortonCode;
+    uint objectId;
+};
+
+layout(std430, binding = 1) buffer MortonCodes
+{
+    MortonObject mortonObjects[];
+};
+
+uniform uint paddedCount; // power-of-two length
+uniform uint K; // current bitonic run length (2,4,8,...)
+uniform uint J; // current inner stage (K/2, K/4, ..., 1)
+
+bool greater(MortonObject a, MortonObject b) {
+    if (a.mortonCode != b.mortonCode) return a.mortonCode > b.mortonCode;
+    return a.objectId > b.objectId;
+}
+
+layout (local_size_x = 256, local_size_y = 1, local_size_z = 1) in;
+
+void main() {
+    uint i = gl_GlobalInvocationID.x;
+    if (i >= paddedCount) return;
+
+    uint p = i ^ J;
+    if (p <= i) return; // one writer per pair
+    if ((i / K) != (p / K)) return; // must be in same K-block
+
+    bool up = ((i & K) == 0u);
+
+    MortonObject a = mortonObjects[i];
+    MortonObject b = mortonObjects[p];
+
+    bool swap = up ? greater(a,b) : greater(b,a);
+    if (swap) {
+        mortonObjects[i] = b;
+        mortonObjects[p] = a;
+    }
+}

@@ -79,5 +79,6 @@ namespace XREngine
             get => _unfocusedTargetFramesPerSecond;
             set => SetField(ref _unfocusedTargetFramesPerSecond, value);
         }
+        public bool GPURenderDispatch { get; set; } = true;
     }
 }

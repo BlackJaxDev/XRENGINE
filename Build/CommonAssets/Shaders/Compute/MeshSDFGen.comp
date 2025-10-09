@@ -1,7 +1,7 @@
 #version 430
 
-// Define the size of the work group (adjust as needed)
-layout(local_size_x = 8, local_size_y = 8, local_size_z = 8) in;
+// Define the size of the work group (optimized for modern GPUs)
+layout(local_size_x = 16, local_size_y = 8, local_size_z = 4) in;
 
 // Output 3D texture to store the SDF values
 layout(r32f, binding = 0) uniform writeonly image3D sdfTexture;
@@ -17,12 +17,20 @@ layout(std430, binding = 2) buffer Indices
     uvec3 indices[]; // Each uvec3 represents a triangle (vertex indices)
 };
 
+// Optional: Spatial acceleration structure (bounding boxes for triangles)
+layout(std430, binding = 3) buffer TriangleBounds
+{
+    vec4 bounds[]; // xyz = min, w = max.x, or use separate min/max buffers
+};
+
 // Uniforms defining the SDF grid
 uniform vec3 sdfMinBounds;     // Minimum corner of the bounding box
 uniform vec3 sdfMaxBounds;     // Maximum corner of the bounding box
 uniform ivec3 sdfResolution;   // Resolution of the 3D texture (number of voxels)
+uniform float maxDistance;     // Maximum distance to consider (early termination)
+uniform int useSpatialAccel;   // Whether to use spatial acceleration
 
-// Function to compute the signed distance from a point to a triangle
+// Improved function to compute the signed distance from a point to a triangle
 float sdTriangle(vec3 p, vec3 a, vec3 b, vec3 c)
 {
     // Compute edge vectors
@@ -33,6 +41,11 @@ float sdTriangle(vec3 p, vec3 a, vec3 b, vec3 c)
     // Compute normal of the triangle
     vec3 n = cross(ba, ca);
     float area = length(n);
+    
+    // Handle degenerate triangles
+    if (area < 1e-8)
+        return 1e20;
+    
     n = normalize(n);
 
     // Signed distance from point to the plane of the triangle
@@ -41,7 +54,7 @@ float sdTriangle(vec3 p, vec3 a, vec3 b, vec3 c)
     // Project point onto the plane
     vec3 projectedP = p - distPlane * n;
 
-    // Compute barycentric coordinates
+    // Compute barycentric coordinates more efficiently
     vec3 v0 = ba;
     vec3 v1 = ca;
     vec3 v2 = projectedP - a;
@@ -53,12 +66,18 @@ float sdTriangle(vec3 p, vec3 a, vec3 b, vec3 c)
     float d21 = dot(v2, v1);
 
     float denom = d00 * d11 - d01 * d01;
+    
+    // Handle near-degenerate cases
+    if (abs(denom) < 1e-8)
+        return 1e20;
+    
     float v = (d11 * d20 - d01 * d21) / denom;
     float w = (d00 * d21 - d01 * d20) / denom;
     float u = 1.0 - v - w;
 
-    // Check if point is inside the triangle
-    bool insideTriangle = (u >= 0.0) && (v >= 0.0) && (w >= 0.0);
+    // Check if point is inside the triangle with small epsilon
+    const float epsilon = 1e-6;
+    bool insideTriangle = (u >= -epsilon) && (v >= -epsilon) && (w >= -epsilon);
 
     if (insideTriangle)
     {
@@ -67,15 +86,37 @@ float sdTriangle(vec3 p, vec3 a, vec3 b, vec3 c)
     }
     else 
     {
-        // Compute distances to edges and vertices
-        float distEdgeAB = length(ba * clamp(dot(ba, pa) / dot(ba, ba), 0.0, 1.0) - pa);
+        // Compute distances to edges and vertices more efficiently
+        float distEdgeAB = length(ba * clamp(dot(ba, pa) / d00, 0.0, 1.0) - pa);
         float distEdgeBC = length((c - b) * clamp(dot(c - b, p - b) / dot(c - b, c - b), 0.0, 1.0) - (p - b));
         float distEdgeCA = length((a - c) * clamp(dot(a - c, p - c) / dot(a - c, a - c), 0.0, 1.0) - (p - c));
+        
+        // Also check distances to vertices
+        float distVertexA = length(pa);
+        float distVertexB = length(p - b);
+        float distVertexC = length(p - c);
+        
         float dist = min(min(distEdgeAB, distEdgeBC), distEdgeCA);
+        dist = min(dist, min(min(distVertexA, distVertexB), distVertexC));
         
         // Return unsigned distance (outside the triangle plane)
         return sqrt(dist * dist + distPlane * distPlane);
     }
+}
+
+// Fast bounding box test for early termination
+bool triangleInRange(vec3 p, vec3 a, vec3 b, vec3 c, float maxDist)
+{
+    // Compute triangle bounding box
+    vec3 minPos = min(min(a, b), c);
+    vec3 maxPos = max(max(a, b), c);
+    
+    // Expand by maxDist
+    minPos -= vec3(maxDist);
+    maxPos += vec3(maxDist);
+    
+    // Check if point is outside expanded bounding box
+    return all(greaterThanEqual(p, minPos)) && all(lessThanEqual(p, maxPos));
 }
 
 // Main compute shader function
@@ -91,12 +132,13 @@ void main()
     vec3 uvw = vec3(gid) / vec3(sdfResolution - 1);
     vec3 p = mix(sdfMinBounds, sdfMaxBounds, uvw);
 
-    float minDist = 1e20;
+    float minDist = maxDistance;
+    bool foundCloser = false;
 
     // Number of triangles in the mesh
     uint numTriangles = indices.length();
 
-    // Loop over all triangles in the mesh
+    // Loop over all triangles in the mesh with early termination
     for (uint i = 0; i < numTriangles; ++i)
     {
         uvec3 tri = indices[i];
@@ -104,13 +146,28 @@ void main()
         vec3 b = vertices[tri.y];
         vec3 c = vertices[tri.z];
 
+        // Early termination: skip triangles that are too far
+        if (useSpatialAccel != 0 && !triangleInRange(p, a, b, c, abs(minDist)))
+            continue;
+
         // Compute signed distance to the triangle
         float dist = sdTriangle(p, a, b, c);
 
         // Keep the minimum (closest) distance
         if (abs(dist) < abs(minDist))
+        {
             minDist = dist;
+            foundCloser = true;
+            
+            // Early termination: if we're very close to the surface, we can stop
+            if (abs(dist) < 0.001)
+                break;
+        }
     }
+
+    // If no triangle was found within range, use maxDistance
+    if (!foundCloser)
+        minDist = maxDistance;
 
     // Store the signed distance in the 3D texture
     imageStore(sdfTexture, gid, vec4(minDist));

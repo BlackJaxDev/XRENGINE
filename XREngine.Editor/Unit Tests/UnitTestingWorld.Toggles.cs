@@ -48,8 +48,8 @@ public static partial class UnitTestingWorld
         public int PhysicsBallCount = 10; //The number of physics balls to add to the scene.
 
         //Models
-        public bool ImportStaticModel = false; //Imports a scene model to be rendered.
-        public bool ImportAnimatedModel = true; //Imports a character model to be animated.
+        public bool ImportStaticModel = true; //Imports a scene model to be rendered.
+        public bool ImportAnimatedModel = false; //Imports a character model to be animated.
         public float AnimatedModelScale = 1.0f; //The scale of the model when imported.
         public bool AnimatedModelZUp = false; //If true, the model will be rotated 90 degrees around the X axis.
 
@@ -116,6 +116,11 @@ public static partial class UnitTestingWorld
         public bool AddCharacterIK = false;
 
         public string AnimatedModelDesktopPath { get; set; } = "misc\\mitsuki.fbx";
+        /// <summary>
+        /// If true, creates a 1x1x1 box at the origin.
+        /// </summary>
+        public bool CreateUnitBox { get; set; } = true;
+
         public float RenderFPS = 0.0f;
         public float UpdateFPS = 60.0f;
         public float FixedFPS = 30.0f;

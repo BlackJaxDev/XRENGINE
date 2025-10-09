@@ -36,7 +36,6 @@ namespace XREngine.Rendering.Vulkan
         {
             DestroyAllSwapChainObjects();
             DestroyDescriptorSetLayout();
-            //DestroyTestModel();
 
             DestroySyncObjects();
             DestroyCommandPool();
@@ -142,29 +141,6 @@ namespace XREngine.Rendering.Vulkan
         {
             throw new NotImplementedException();
         }
-
-        //private VkModel? _testModel;
-
-        //private void CreateTestModel()
-        //{
-        //    VkTexture tex = new(this, "Assets/Textures/test.png")
-        //    {
-        //        CreateSampler = true
-        //    };
-        //    tex.Allocate();
-
-        //    _testModel = new VkModel(this)
-        //    {
-        //        Textures = [tex]
-        //    };
-        //    _testModel.Generate();
-        //    //_testModel.LoadFromOBJ("Assets/Models/test.obj");
-        //}
-
-        //private void DestroyTestModel()
-        //{
-        //    _testModel?.Destroy();
-        //}
 
         public void DeviceWaitIdle()
             => Api!.DeviceWaitIdle(device);

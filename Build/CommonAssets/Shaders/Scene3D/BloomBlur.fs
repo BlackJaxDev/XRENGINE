@@ -8,6 +8,18 @@ uniform sampler2D Texture0;
 uniform float Ping;
 uniform int LOD;
 uniform float Radius = 1.0f;
+uniform float BloomThreshold = 0.4f;
+uniform bool UseThreshold = true;
+uniform float BloomSoftKnee = 1f;
+
+// Soft knee helper for bloom thresholding
+float BloomSoftThreshold(in vec3 col)
+{
+    float brightness = max(max(col.r, col.g), col.b);
+    float knee = BloomSoftKnee + 1e-6f;
+    float weight = clamp((brightness - BloomThreshold + knee) / knee, 0.0f, 1.0f);
+    return weight * weight;
+}
 
 //We can use 5 texture lookups instead of 9 by using linear filtering and averaging the offsets and weights
 uniform float Offset[3] = float[](0.0f, 1.3846153846f, 3.2307692308f);
@@ -15,26 +27,32 @@ uniform float Weight[3] = float[](0.2270270270f, 0.3162162162f, 0.0702702703f);
 
 void main()
 {
-      vec2 uv = FragPos.xy;
-      if (uv.x > 1.0f || uv.y > 1.0f)
-         discard;
-      //Normalize uv from [-1, 1] to [0, 1]
-      uv = uv * 0.5f + 0.5f;
+      // Transform clip-space coords to UV and clamp edges
+      vec2 clipUV = clamp(FragPos.xy, -1.0f, 1.0f);
+      vec2 uv = clipUV * 0.5f + 0.5f;
+      uv = clamp(uv, 0.0f, 1.0f);
 
       vec2 scale = vec2(Ping, 1.0f - Ping);
       vec2 texelSize = 1.0f / textureSize(Texture0, LOD) * scale;
       float lodf = float(LOD);
-      vec3 result = textureLod(Texture0, uv, lodf).rgb * Weight[0];
+      // Sample center and apply soft-knee bloom threshold weight
+      vec3 centerCol = textureLod(Texture0, uv, lodf).rgb;
+      float centerW = UseThreshold ? BloomSoftThreshold(centerCol) : 1.0f;
+      vec3 result = centerCol * Weight[0] * centerW;
 
-      for (int i = 1; i <= 2; ++i)
-      {
-         float weight = Weight[i];
-         float offset = Offset[i] * Radius;
-         vec2 uvOffset = texelSize * offset;
+       for (int i = 1; i <= 2; ++i)
+       {
+          float weight = Weight[i];
+          float offset = Offset[i] * Radius;
+          vec2 uvOffset = texelSize * offset;
 
-         result += textureLod(Texture0, uv + uvOffset, lodf).rgb * weight;
-         result += textureLod(Texture0, uv - uvOffset, lodf).rgb * weight;
-      }
+          vec3 sampleCol = textureLod(Texture0, uv + uvOffset, lodf).rgb;
+          float sampleW = UseThreshold ? BloomSoftThreshold(sampleCol) : 1.0f;
+          result += sampleCol * weight * sampleW;
+          sampleCol = textureLod(Texture0, uv - uvOffset, lodf).rgb;
+          sampleW = UseThreshold ? BloomSoftThreshold(sampleCol) : 1.0f;
+          result += sampleCol * weight * sampleW;
+       }
 
-      BloomColor = result;
+       BloomColor = result;
 }

@@ -1,0 +1,17 @@
+// LEGACY / UNUSED: Placeholder radix sort shader retained temporarily for reference.
+// New path uses GPURenderBuildKeys.comp + GPURenderRadixIndexSort.comp multi-dispatch.
+// Safe to delete after full validation.
+#version 460 core
+
+layout(local_size_x = 256) in;
+
+layout(std430, binding = 0) buffer CommandsBuffer { float commands[]; };
+layout(std430, binding = 1) buffer CommandCountBuffer { uint CommandCount; };
+
+uniform int SortByDistance; // unused
+uniform int SortDirection;  // unused
+uniform int RadixPass;      // unused
+
+void main() {
+    if (gl_GlobalInvocationID.x >= CommandCount) return; // no-op
+}

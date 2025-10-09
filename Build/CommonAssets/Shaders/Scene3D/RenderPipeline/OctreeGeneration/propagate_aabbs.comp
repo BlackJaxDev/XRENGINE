@@ -1,0 +1,53 @@
+// propagate_aabbs.comp
+#version 460
+
+#define MAX_OBJECTS 1024
+#define MAX_OCTREE_NODES (MAX_OBJECTS * 2 - 1)
+
+layout (local_size_x = 256, local_size_y = 1, local_size_z = 1) in;
+
+// Output: The constructed octree
+struct OctreeNode
+{
+    vec3 minBounds;
+    vec3 maxBounds;
+    int  childIndices[8];   // -1 means empty
+    uint parentIndex;       // Index to the parent node
+    uint objectStartIndex;  // Start index for leaf objects
+    uint objectCount;       // For leaves, number of objects (>0)
+    uint _pad0;
+};
+
+// Input: Octree nodes
+layout(std430, binding = 2) buffer OctreeNodes
+{
+    uint numNodes; // Total number of nodes
+    uint rootIndex; // Root index
+    OctreeNode nodes[MAX_OCTREE_NODES];
+};
+
+void main() 
+{
+    uint gid = gl_GlobalInvocationID.x;
+
+    if (gid >= numNodes) return;
+
+    // Only process internal nodes (objectCount == 0)
+    if (nodes[gid].objectCount == 0u)
+    {
+        vec3 localMin = vec3(1e30);
+        vec3 localMax = vec3(-1e30);
+
+        for (int i = 0; i < 8; ++i)
+        {
+            int childIndex = nodes[gid].childIndices[i];
+            if (childIndex != -1)
+            {
+                localMin = min(localMin, nodes[childIndex].minBounds);
+                localMax = max(localMax, nodes[childIndex].maxBounds);
+            }
+        }
+        nodes[gid].minBounds = localMin;
+        nodes[gid].maxBounds = localMax;
+    }
+}

@@ -32,6 +32,26 @@ namespace XREngine.Rendering
         public bool HasColors => ColorCount > 0;
         public bool HasTexCoords => TexCoordCount > 0;
 
+        public int IndexCount => _type switch
+        {
+            EPrimitiveType.Triangles => _triangles?.Count * 3 ?? 0,
+            EPrimitiveType.Lines => _lines?.Count * 2 ?? 0,
+            EPrimitiveType.Points => _points?.Count ?? 0,
+            EPrimitiveType.LineStrip => _lines?.Count + 1 ?? 0,
+            EPrimitiveType.LineLoop => _lines?.Count ?? 0,
+            EPrimitiveType.TriangleStrip => _triangles?.Count + 2 ?? 0,
+            EPrimitiveType.TriangleFan => _triangles?.Count + 2 ?? 0,
+            EPrimitiveType.Quads => throw new NotImplementedException(),
+            EPrimitiveType.QuadStrip => throw new NotImplementedException(),
+            EPrimitiveType.Polygon => throw new NotImplementedException(),
+            EPrimitiveType.LinesAdjacency => throw new NotImplementedException(),
+            EPrimitiveType.LineStripAdjacency => throw new NotImplementedException(),
+            EPrimitiveType.TrianglesAdjacency => throw new NotImplementedException(),
+            EPrimitiveType.TriangleStripAdjacency => throw new NotImplementedException(),
+            EPrimitiveType.Patches => throw new NotImplementedException(),
+            _ => throw new NotImplementedException(),
+        };
+
         public class BufferCollection : XRBase, IEventDictionary<string, XRDataBuffer>
         {
             private EventDictionary<string, XRDataBuffer> _buffers = [];
@@ -72,7 +92,7 @@ namespace XREngine.Rendering
                 XRDataBuffer buffer = new(bindingName, target, integral)
                 {
                     InstanceDivisor = instanceDivisor,
-                    Mapped = isMapped,
+                    ShouldMap = isMapped,
                 };
                 AddOrUpdateBufferRaw(
                     bufferData,
@@ -96,7 +116,7 @@ namespace XREngine.Rendering
                 XRDataBuffer buffer = new(bindingName, target, integral)
                 {
                     InstanceDivisor = instanceDivisor,
-                    Mapped = isMapped
+                    ShouldMap = isMapped
                 };
                 AddOrUpdateBuffer(bufferData, bindingName, remap, instanceDivisor, buffer);
                 return buffer;

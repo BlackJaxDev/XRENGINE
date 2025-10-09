@@ -12,7 +12,9 @@ namespace XREngine.Scene
     public abstract class VisualScene : XRBase, IEnumerable<RenderInfo>
     {
         public abstract IRenderTree GenericRenderTree { get; }
-
+        public GPUScene GPUCommands { get; } = new();
+        public XRMeshRenderer? IndirectDrawBuffer { get; set; } = null;
+        
         /// <summary>
         /// Collects render commands for all renderables in the scene that intersect with the given volume.
         /// If the volume is null, all renderables are collected.
@@ -59,6 +61,16 @@ namespace XREngine.Scene
         {
             //using var t = Engine.Profiler.Start();
             GenericRenderTree.Swap();
+        }
+
+        public void Initialize()
+        {
+            GPUCommands.Initialize();
+        }
+
+        public void Destroy()
+        {
+            GPUCommands.Destroy();
         }
 
         public abstract IEnumerator<RenderInfo> GetEnumerator();

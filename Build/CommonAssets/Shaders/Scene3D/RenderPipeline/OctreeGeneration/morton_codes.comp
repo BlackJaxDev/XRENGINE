@@ -1,0 +1,77 @@
+#version 460
+
+#define MAX_OBJECTS 1024
+#define MAX_OCTREE_NODES (MAX_OBJECTS * 2 - 1)
+
+// Input: Object AABBs
+layout(std430, binding = 0) buffer AABBs
+{
+    vec3 aabbMin[MAX_OBJECTS]; // Min bounds of AABBs
+    vec3 aabbMax[MAX_OBJECTS]; // Max bounds of AABBs
+};
+
+// Output: Morton codes and corresponding object IDs
+struct MortonObject
+{
+    uint mortonCode;
+    uint objectId;
+};
+
+layout(std430, binding = 1) buffer MortonCodes
+{
+    MortonObject mortonObjects[MAX_OBJECTS];
+};
+
+// Uniforms for scene bounds
+uniform vec3 sceneMin;
+uniform vec3 sceneMax;
+uniform uint numObjects;
+
+// Helper function to expand bits for Morton code calculation.
+// This interleaves the bits of a 10-bit integer into a 30-bit integer.
+uint expandBits(uint v)
+{
+    v = (v * 0x00010001u) & 0xFF0000FFu;
+    v = (v * 0x00000101u) & 0x0F00F00Fu;
+    v = (v * 0x00000011u) & 0xC30C30C3u;
+    v = (v * 0x00000005u) & 0x49249249u;
+    return v;
+}
+
+// Calculates a 3D Morton code for a 10-bit-per-axis position.
+uint morton3D(vec3 normalizedPos)
+{
+    uint x = uint(normalizedPos.x * 1023.0);
+    uint y = uint(normalizedPos.y * 1023.0);
+    uint z = uint(normalizedPos.z * 1023.0);
+    uint xx = expandBits(x);
+    uint yy = expandBits(y);
+    uint zz = expandBits(z);
+    return xx | (yy << 1) | (zz << 2);
+}
+
+layout (local_size_x = 256, local_size_y = 1, local_size_z = 1) in;
+
+void main()
+{
+    uint gid = gl_GlobalInvocationID.x;
+    if (gid >= numObjects)
+    {
+        return;
+    }
+
+    // Calculate object center
+    vec3 center = (aabbMin[gid] + aabbMax[gid]) * 0.5;
+
+    // Normalize position within the scene bounds to [0, 1]
+    vec3 range = sceneMax - sceneMin;
+    // Avoid division by zero if range is zero on any axis
+    vec3 normalizedPos = (center - sceneMin) / max(range, vec3(0.00001));
+
+    // Clamp to ensure the position is within bounds
+    normalizedPos = clamp(normalizedPos, 0.0, 1.0);
+
+    // Calculate and store the Morton code and object ID
+    mortonObjects[gid].mortonCode = morton3D(normalizedPos);
+    mortonObjects[gid].objectId = gid;
+}

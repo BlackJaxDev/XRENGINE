@@ -5,6 +5,7 @@ using System.Numerics;
 using System.Runtime.InteropServices;
 using XREngine.Data.Colors;
 using XREngine.Data.Core;
+using XREngine.Data.Rendering;
 using XREngine.Rendering;
 using XREngine.Rendering.Info;
 using XREngine.Rendering.Models.Materials;
@@ -184,9 +185,9 @@ public class GPUPhysicsChainComponent : XRComponent, IRenderable
 
     #region Private Fields
 
-    private XRRenderProgram? _computeProgram;
-    private XRShader _calculateParticlesShader;
-    private XRShader _applyConstraintsShader;
+    private XRRenderProgram? _mainPhysicsProgram;
+    private XRRenderProgram? _skipUpdateParticlesProgram;
+    private XRShader _mainPhysicsShader;
     private XRShader _skipUpdateParticlesShader;
 
     private XRDataBuffer? _particlesBuffer;
@@ -220,10 +221,13 @@ public class GPUPhysicsChainComponent : XRComponent, IRenderable
 
     protected internal override void OnComponentActivated()
     {
-        // Load compute shader
-        _calculateParticlesShader = ShaderHelper.LoadEngineShader("Compute/CalculateParticles");
-        _applyConstraintsShader = ShaderHelper.LoadEngineShader("Compute/ApplyConstraints");
-        _skipUpdateParticlesShader = ShaderHelper.LoadEngineShader("Compute/SkipUpdateParticles");
+        // Load compute shaders
+        _mainPhysicsShader = ShaderHelper.LoadEngineShader("Compute/PhysicsChain", EShaderType.Compute);
+        _skipUpdateParticlesShader = ShaderHelper.LoadEngineShader("Compute/PhysicsChain/SkipUpdateParticles", EShaderType.Compute);
+
+        // Create render programs
+        _mainPhysicsProgram = new XRRenderProgram(true, false, _mainPhysicsShader);
+        _skipUpdateParticlesProgram = new XRRenderProgram(true, false, _skipUpdateParticlesShader);
 
         SetupParticles();
         RegisterTick(ETickGroup.PostPhysics, ETickOrder.Animation, FixedUpdate);
@@ -238,6 +242,7 @@ public class GPUPhysicsChainComponent : XRComponent, IRenderable
         base.OnComponentDeactivated();
         InitTransforms();
         CleanupBuffers();
+        CleanupPrograms();
     }
 
     protected override void OnPropertyChanged<T>(string? propName, T prev, T field)
@@ -382,7 +387,7 @@ public class GPUPhysicsChainComponent : XRComponent, IRenderable
 
     private void UpdateParticles()
     {
-        if (_particleTrees.Count <= 0 || _computeProgram == null)
+        if (_particleTrees.Count <= 0)
             return;
 
         int loop = 1;
@@ -420,8 +425,7 @@ public class GPUPhysicsChainComponent : XRComponent, IRenderable
         {
             for (int i = 0; i < loop; ++i)
             {
-                DispatchCalculateParticles(timeVar, i == 0);
-                DispatchApplyConstraints(timeVar);
+                DispatchMainPhysics(timeVar, i == 0);
             }
         }
         else
@@ -430,55 +434,53 @@ public class GPUPhysicsChainComponent : XRComponent, IRenderable
         }
 
         // Read back results from GPU
-        //_particlesBuffer?.GetData(_particlesData);
         UpdateParticlesFromGPUData();
     }
 
-    private void DispatchCalculateParticles(float timeVar, bool applyObjectMove)
+    private void DispatchMainPhysics(float timeVar, bool applyObjectMove)
     {
-        //_computeProgram!.SetFloat("DeltaTime", timeVar);
-        //_computeProgram.SetFloat("ObjectScale", _objectScale);
-        //_computeProgram.SetFloat("Weight", _weight);
-        //_computeProgram.SetVector("Force", new Vector4(Force.X, Force.Y, Force.Z, 0));
-        //_computeProgram.SetVector("Gravity", new Vector4(Gravity.X, Gravity.Y, Gravity.Z, 0));
-        //_computeProgram.SetVector("ObjectMove", applyObjectMove ? new Vector4(_objectMove.X, _objectMove.Y, _objectMove.Z, 0) : Vector4.Zero);
-        //_computeProgram.SetInt("FreezeAxis", (int)FreezeAxis);
+        if (_mainPhysicsProgram == null || _particlesBuffer == null)
+            return;
 
-        //// Set buffer bindings
-        //_computeProgram.SetBuffer(_calculateParticlesKernel, "Particles", _particlesBuffer);
-        //_computeProgram.SetBuffer(_calculateParticlesKernel, "ParticleTrees", _particleTreesBuffer);
-        //_computeProgram.SetBuffer(_calculateParticlesKernel, "TransformMatrices", _transformMatricesBuffer);
+        // Set uniforms
+        _mainPhysicsProgram.Uniform("DeltaTime", timeVar);
+        _mainPhysicsProgram.Uniform("ObjectScale", _objectScale);
+        _mainPhysicsProgram.Uniform("Weight", _weight);
+        _mainPhysicsProgram.Uniform("Force", new Vector4(Force.X, Force.Y, Force.Z, 0));
+        _mainPhysicsProgram.Uniform("Gravity", new Vector4(Gravity.X, Gravity.Y, Gravity.Z, 0));
+        _mainPhysicsProgram.Uniform("ObjectMove", applyObjectMove ? new Vector4(_objectMove.X, _objectMove.Y, _objectMove.Z, 0) : Vector4.Zero);
+        _mainPhysicsProgram.Uniform("FreezeAxis", (int)FreezeAxis);
+        _mainPhysicsProgram.Uniform("ColliderCount", _collidersData.Count);
+        _mainPhysicsProgram.Uniform("UpdateMode", (int)UpdateMode);
+        _mainPhysicsProgram.Uniform("UpdateRate", UpdateRate);
+
+        // Bind buffers
+        _mainPhysicsProgram.BindBuffer(_particlesBuffer, 0);
+        _mainPhysicsProgram.BindBuffer(_particleTreesBuffer, 1);
+        _mainPhysicsProgram.BindBuffer(_transformMatricesBuffer, 2);
+        _mainPhysicsProgram.BindBuffer(_collidersBuffer, 3);
         
-        //// Dispatch compute shader
-        //int threadGroupsX = (_totalParticleCount + 127) / 128;
-        //_computeProgram.DispatchCompute(_calculateParticlesKernel, threadGroupsX, 1, 1);
-    }
-
-    private void DispatchApplyConstraints(float timeVar)
-    {
-        //_computeProgram!.SetFloat("DeltaTime", timeVar);
-
-        //// Set buffer bindings
-        //_computeProgram.SetBuffer(_applyConstraintsKernel, "Particles", _particlesBuffer);
-        //_computeProgram.SetBuffer(_applyConstraintsKernel, "TransformMatrices", _transformMatricesBuffer);
-        //_computeProgram.SetBuffer(_applyConstraintsKernel, "Colliders", _collidersBuffer);
-        //_computeProgram.SetInt("ColliderCount", _collidersData.Count);
-        
-        //// Dispatch compute shader
-        //int threadGroupsX = (_totalParticleCount + 127) / 128;
-        //_computeProgram.Dispatch(_applyConstraintsKernel, threadGroupsX, 1, 1);
+        // Dispatch compute shader
+        int threadGroupsX = (_totalParticleCount + 127) / 128;
+        _mainPhysicsProgram.DispatchCompute((uint)threadGroupsX, 1, 1);
     }
 
     private void DispatchSkipUpdateParticles()
     {
-        //// Set buffer bindings
-        //_computeProgram!.SetBuffer(_skipUpdateParticlesKernel, "Particles", _particlesBuffer);
-        //_computeProgram.SetBuffer(_skipUpdateParticlesKernel, "TransformMatrices", _transformMatricesBuffer);
-        //_computeProgram.SetVector("ObjectMove", new Vector4(_objectMove.X, _objectMove.Y, _objectMove.Z, 0));
+        if (_skipUpdateParticlesProgram == null || _particlesBuffer == null)
+            return;
+
+        // Set uniforms
+        _skipUpdateParticlesProgram.Uniform("ObjectMove", new Vector4(_objectMove.X, _objectMove.Y, _objectMove.Z, 0));
+        _skipUpdateParticlesProgram.Uniform("Weight", _weight);
         
-        //// Dispatch compute shader
-        //int threadGroupsX = (_totalParticleCount + 127) / 128;
-        //_computeProgram.Dispatch(_skipUpdateParticlesKernel, threadGroupsX, 1, 1);
+        // Bind buffers
+        _skipUpdateParticlesProgram.BindBuffer(_particlesBuffer, 0);
+        _skipUpdateParticlesProgram.BindBuffer(_transformMatricesBuffer, 2);
+        
+        // Dispatch compute shader
+        int threadGroupsX = (_totalParticleCount + 127) / 128;
+        _skipUpdateParticlesProgram.DispatchCompute((uint)threadGroupsX, 1, 1);
     }
 
     private void InitializeBuffers()
@@ -488,11 +490,22 @@ public class GPUPhysicsChainComponent : XRComponent, IRenderable
         // Prepare GPU data
         PrepareGPUData();
 
-        // Create GPU buffers
-        //_particlesBuffer = new XRDataBuffer(BufferType.Structured, _particlesData.Count, Marshal.SizeOf<ParticleData>(), false);
-        //_particleTreesBuffer = new XRDataBuffer(BufferType.Structured, _particleTreesData.Count, Marshal.SizeOf<ParticleTreeData>(), false);
-        //_transformMatricesBuffer = new XRDataBuffer(BufferType.Structured, _transformMatrices.Count, Marshal.SizeOf<Matrix4x4>(), false);
-        //_collidersBuffer = new XRDataBuffer(BufferType.Structured, Math.Max(_collidersData.Count, 1), Marshal.SizeOf<ColliderData>(), false);
+        // Create GPU buffers with proper binding indices
+        // Particle: 16 floats (vec3 + float + vec3 + float + vec3 + float + vec3 + float + int + float + float + float + float + float + float + int + int + int + int)
+        _particlesBuffer = new XRDataBuffer("Particles", EBufferTarget.ShaderStorageBuffer, (uint)_particlesData.Count, EComponentType.Float, 16, false, false);
+        _particlesBuffer.SetBlockIndex(0); // Binding 0
+        
+        // ParticleTree: 20 floats (vec3 + float + vec3 + float + int + int + float + float + mat4 + float + int + int + int)
+        _particleTreesBuffer = new XRDataBuffer("ParticleTrees", EBufferTarget.ShaderStorageBuffer, (uint)_particleTreesData.Count, EComponentType.Float, 20, false, false);
+        _particleTreesBuffer.SetBlockIndex(1); // Binding 1
+        
+        // TransformMatrix: 16 floats (mat4)
+        _transformMatricesBuffer = new XRDataBuffer("TransformMatrices", EBufferTarget.ShaderStorageBuffer, (uint)_transformMatrices.Count, EComponentType.Float, 16, false, false);
+        _transformMatricesBuffer.SetBlockIndex(2); // Binding 2
+        
+        // Collider: 16 floats (vec4 + vec4 + int + int + int + int)
+        _collidersBuffer = new XRDataBuffer("Colliders", EBufferTarget.ShaderStorageBuffer, (uint)Math.Max(_collidersData.Count, 1), EComponentType.Float, 16, false, false);
+        _collidersBuffer.SetBlockIndex(3); // Binding 3
 
         // Set initial data
         UpdateBufferData();
@@ -506,10 +519,10 @@ public class GPUPhysicsChainComponent : XRComponent, IRenderable
         PrepareGPUData();
 
         // Update buffer data
-        //_particlesBuffer?.SetData(_particlesData);
-        //_particleTreesBuffer?.SetData(_particleTreesData);
-        //_transformMatricesBuffer?.SetData(_transformMatrices);
-        //_collidersBuffer?.SetData(_collidersData);
+        _particlesBuffer?.SetDataRaw(_particlesData);
+        _particleTreesBuffer?.SetDataRaw(_particleTreesData);
+        _transformMatricesBuffer?.SetDataRaw(_transformMatrices);
+        _collidersBuffer?.SetDataRaw(_collidersData);
     }
 
     private void PrepareGPUData()
@@ -573,40 +586,40 @@ public class GPUPhysicsChainComponent : XRComponent, IRenderable
         }
 
         // Prepare collider data
-        //foreach (var collider in _effectiveColliders)
-        //{
-        //    if (collider is PhysicsChainSphereCollider sphereCollider)
-        //    {
-        //        _collidersData.Add(new ColliderData
-        //        {
-        //            Center = new Vector4(
-        //                sphereCollider.Transform.WorldTranslation,
-        //                sphereCollider.Radius),
-        //            Type = 0
-        //        });
-        //    }
-        //    else if (collider is PhysicsChainCapsuleCollider capsuleCollider)
-        //    {
-        //        Vector3 start = capsuleCollider.Transform.WorldTranslation;
-        //        Vector3 end = capsuleCollider.Transform.TransformPoint(new Vector3(0, capsuleCollider.Height, 0));
+        foreach (var collider in _effectiveColliders)
+        {
+            if (collider is PhysicsChainSphereCollider sphereCollider)
+            {
+                _collidersData.Add(new ColliderData
+                {
+                    Center = new Vector4(
+                        sphereCollider.Transform.WorldTranslation,
+                        sphereCollider.Radius),
+                    Type = 0
+                });
+            }
+            else if (collider is PhysicsChainCapsuleCollider capsuleCollider)
+            {
+                Vector3 start = capsuleCollider.Transform.WorldTranslation;
+                Vector3 end = capsuleCollider.Transform.TransformPoint(new Vector3(0, capsuleCollider.Height, 0));
                 
-        //        _collidersData.Add(new ColliderData
-        //        {
-        //            Center = new Vector4(start, capsuleCollider.Radius),
-        //            Params = new Vector4(end, 0),
-        //            Type = 1
-        //        });
-        //    }
-        //    else if (collider is PhysicsChainBoxCollider boxCollider)
-        //    {
-        //        _collidersData.Add(new ColliderData
-        //        {
-        //            Center = new Vector4(boxCollider.Transform.WorldTranslation, 0),
-        //            Params = new Vector4(boxCollider.Size * 0.5f, 0),
-        //            Type = 2
-        //        });
-        //    }
-        //}
+                _collidersData.Add(new ColliderData
+                {
+                    Center = new Vector4(start, capsuleCollider.Radius),
+                    Params = new Vector4(end, 0),
+                    Type = 1
+                });
+            }
+            else if (collider is PhysicsChainBoxCollider boxCollider)
+            {
+                _collidersData.Add(new ColliderData
+                {
+                    Center = new Vector4(boxCollider.Transform.WorldTranslation, 0),
+                    Params = new Vector4(boxCollider.Size * 0.5f, 0),
+                    Type = 2
+                });
+            }
+        }
     }
 
     private void UpdateParticlesFromGPUData()
@@ -647,6 +660,15 @@ public class GPUPhysicsChainComponent : XRComponent, IRenderable
         _collidersBuffer = null;
         
         _buffersInitialized = false;
+    }
+
+    private void CleanupPrograms()
+    {
+        _mainPhysicsProgram?.Destroy();
+        _skipUpdateParticlesProgram?.Destroy();
+        
+        _mainPhysicsProgram = null;
+        _skipUpdateParticlesProgram = null;
     }
 
     #endregion

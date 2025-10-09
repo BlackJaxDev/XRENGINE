@@ -5,8 +5,24 @@ using YamlDotNet.Serialization;
 
 namespace XREngine.Data.Rendering
 {
-    public class RenderCommandMesh3D : RenderCommand3D
+    public interface IRenderCommandMesh : IRenderCommand
     {
+        uint GPUCommandIndex { get; set; }
+        uint Instances { get; set; }
+        XRMeshRenderer? Mesh { get; set; }
+        Matrix4x4 WorldMatrix { get; set; }
+        bool WorldMatrixIsModelMatrix { get; set; }
+        XRMaterial? MaterialOverride { get; set; }
+    }
+    public class RenderCommandMesh3D : RenderCommand3D, IRenderCommandMesh
+    {
+        private uint _gpuCommandIndex = uint.MaxValue;
+        public uint GPUCommandIndex
+        {
+            get => _gpuCommandIndex;
+            set => SetField(ref _gpuCommandIndex, value);
+        }
+
         private XRMeshRenderer? _mesh;
         private Matrix4x4 _worldMatrix = Matrix4x4.Identity;
         private XRMaterial? _materialOverride;

@@ -1,5 +1,10 @@
 ﻿using FFmpeg.AutoGen;
+using FlyleafLib;
+using FlyleafLib.Controls;
+using FlyleafLib.MediaPlayer;
 using System.Collections.Concurrent;
+using System.ComponentModel;
+using System.Reflection.Metadata;
 using System.Runtime.InteropServices;
 using System.Text.Json;
 using XREngine.Components;
@@ -8,8 +13,308 @@ using XREngine.Data.Vectors;
 
 namespace XREngine.Rendering.UI
 {
+    //public class UIVideoComponent2 : UIMaterialComponent, IHostPlayer
+    //{
+    //    /* TODO
+    // *
+    // * Attached: (UserControl) Host = Surface
+    // * Detached: (Form) Surface
+    // * (Form) Overlay
+    // *
+    // */
+
+    //    #region Properties / Variables
+    //    PlayerGL? _Player;
+    //    public PlayerGL? Player
+    //    {
+    //        get => _Player;
+    //        set
+    //        {
+    //            if (_Player == value)
+    //                return;
+
+    //            var oldPlayer = _Player;
+    //            _Player = value;
+    //            SetPlayer(oldPlayer);
+    //            //Raise(nameof(Player));
+    //        }
+    //    }
+
+    //    bool _IsFullScreen;
+    //    public bool IsFullScreen
+    //    {
+    //        get => _IsFullScreen;
+    //        set
+    //        {
+    //            if (_IsFullScreen == value)
+    //                return;
+
+    //            //if (value)
+    //            //    FullScreen();
+    //            //else
+    //            //    NormalScreen();
+    //        }
+    //    }
+
+    //    bool _ToggleFullScreenOnDoubleClick = true;
+    //    public bool ToggleFullScreenOnDoubleClick
+    //    { get => _ToggleFullScreenOnDoubleClick; set => SetField(ref _ToggleFullScreenOnDoubleClick, value); }
+
+    //    public int UniqueId { get; private set; } = -1;
+
+    //    bool _KeyBindings = true;
+    //    public bool KeyBindings { get => _KeyBindings; set => SetField(ref _KeyBindings, value); }
+
+    //    bool _PanMoveOnCtrl = true;
+    //    public bool PanMoveOnCtrl { get => _PanMoveOnCtrl; set => SetField(ref _PanMoveOnCtrl, value); }
+
+    //    bool _PanZoomOnCtrlWheel = true;
+    //    public bool PanZoomOnCtrlWheel { get => _PanZoomOnCtrlWheel; set => SetField(ref _PanZoomOnCtrlWheel, value); }
+
+    //    bool _PanRotateOnShiftWheel = true;
+    //    public bool PanRotateOnShiftWheel { get => _PanRotateOnShiftWheel; set => SetField(ref _PanRotateOnShiftWheel, value); }
+
+    //    bool _DragMove = true;
+    //    public bool DragMove { get => _DragMove; set => SetField(ref _DragMove, value); }
+
+    //    bool _SwapDragEnterOnShift = true;
+    //    public bool SwapDragEnterOnShift { get => _SwapDragEnterOnShift; set => SetField(ref _SwapDragEnterOnShift, value); }
+
+
+    //    int panPrevX, panPrevY;
+    //    LogHandler Log;
+    //    bool designMode = LicenseManager.UsageMode == LicenseUsageMode.Designtime;
+    //    static int idGenerator;
+
+    //    private class FlyleafHostDropWrap { public UIVideoComponent2? FlyleafHost; } // To allow non FlyleafHosts to drag & drop
+    //    #endregion
+
+    //    public UIVideoComponent2()
+    //    {
+    //        UniqueId = idGenerator++;
+
+    //        if (designMode)
+    //            return;
+
+    //        Log = new LogHandler(("[#" + UniqueId + "]").PadRight(8, ' ') + $" [FlyleafHost NP] ");
+
+    //        //KeyUp += Host_KeyUp;
+    //        //KeyDown += Host_KeyDown;
+    //        //DoubleClick += Host_DoubleClick;
+    //        //MouseDown += Host_MouseDown;
+    //        //MouseMove += Host_MouseMove;
+    //        //MouseWheel += Host_MouseWheel;
+    //        //DragEnter += Host_DragEnter;
+    //        //DragDrop += Host_DragDrop;
+    //    }
+
+    //    //private void Host_DragDrop(object sender, DragEventArgs e)
+    //    //{
+    //    //    if (Player == null)
+    //    //        return;
+
+    //    //    FlyleafHostDropWrap hostWrap = (FlyleafHostDropWrap)e.Data.GetData(typeof(FlyleafHostDropWrap));
+
+    //    //    if (hostWrap != null)
+    //    //    {
+    //    //        (hostWrap.FlyleafHost.Player, Player) = (Player, hostWrap.FlyleafHost.Player);
+    //    //        return;
+    //    //    }
+
+    //    //    if (e.Data.GetDataPresent(DataFormats.FileDrop))
+    //    //    {
+    //    //        string filename = ((string[])e.Data.GetData(DataFormats.FileDrop, false))[0];
+    //    //        Player.OpenAsync(filename);
+    //    //    }
+    //    //    else if (e.Data.GetDataPresent(DataFormats.Text))
+    //    //    {
+    //    //        string text = e.Data.GetData(DataFormats.Text, false).ToString();
+    //    //        if (text.Length > 0)
+    //    //            Player.OpenAsync(text);
+    //    //    }
+    //    //}
+    //    //private void Host_DragEnter(object sender, DragEventArgs e) { if (Player != null) e.Effect = DragDropEffects.All; }
+    //    //private void Host_MouseWheel(object sender, MouseEventArgs e)
+    //    //{
+    //    //    if (Player == null || e.Delta == 0)
+    //    //        return;
+
+    //    //    if (PanZoomOnCtrlWheel && ModifierKeys.HasFlag(Keys.Control))
+    //    //    {
+    //    //        System.Windows.Point curDpi = new(e.Location.X, e.Location.Y);
+    //    //        if (e.Delta > 0)
+    //    //            Player.ZoomIn(curDpi);
+    //    //        else
+    //    //            Player.ZoomOut(curDpi);
+    //    //    }
+    //    //    else if (PanRotateOnShiftWheel && ModifierKeys.HasFlag(Keys.Shift))
+    //    //    {
+    //    //        if (e.Delta > 0)
+    //    //            Player.RotateRight();
+    //    //        else
+    //    //            Player.RotateLeft();
+    //    //    }
+    //    //}
+    //    //private void Host_MouseMove(object sender, MouseEventArgs e)
+    //    //{
+    //    //    if (Player == null)
+    //    //        return;
+
+    //    //    if (e.Location != mouseMoveLastPoint)
+    //    //    {
+    //    //        Player.Activity.RefreshFullActive();
+    //    //        mouseMoveLastPoint = e.Location;
+    //    //    }
+
+    //    //    if (e.Button != MouseButtons.Left)
+    //    //        return;
+
+    //    //    if (PanMoveOnCtrl && ModifierKeys.HasFlag(Keys.Control))
+    //    //    {
+    //    //        Player.PanXOffset = panPrevX + e.X - mouseLeftDownPoint.X;
+    //    //        Player.PanYOffset = panPrevY + e.Y - mouseLeftDownPoint.Y;
+    //    //    }
+    //    //    else if (DragMove && Capture && ParentForm != null && !IsFullScreen)
+    //    //    {
+    //    //        ParentForm.Location = new Point(ParentForm.Location.X + e.X - mouseLeftDownPoint.X, ParentForm.Location.Y + e.Y - mouseLeftDownPoint.Y);
+    //    //    }
+    //    //}
+    //    //private void Host_MouseDown(object sender, MouseEventArgs e)
+    //    //{
+    //    //    if (e.Button != MouseButtons.Left)
+    //    //        return;
+
+    //    //    mouseLeftDownPoint = new Point(e.X, e.Y);
+
+    //    //    if (Player != null)
+    //    //    {
+    //    //        Player.Activity.RefreshFullActive();
+
+    //    //        panPrevX = Player.PanXOffset;
+    //    //        panPrevY = Player.PanYOffset;
+
+    //    //        if (ModifierKeys.HasFlag(Keys.Shift))
+    //    //        {
+    //    //            DoDragDrop(new FlyleafHostDropWrap() { FlyleafHost = this }, DragDropEffects.Move);
+    //    //        }
+    //    //    }
+    //    //}
+    //    //private void Host_DoubleClick(object sender, EventArgs e) { if (!ToggleFullScreenOnDoubleClick) return; IsFullScreen = !IsFullScreen; }
+    //    //private void Host_KeyDown(object sender, KeyEventArgs e) { if (KeyBindings) Player.KeyDown(Player, e); }
+    //    //private void Host_KeyUp(object sender, KeyEventArgs e) { if (KeyBindings) Player.KeyUp(Player, e); }
+
+    //    public void SetPlayer(Player? oldPlayer)
+    //    {
+    //        // De-assign old Player's Handle/FlyleafHost
+    //        if (oldPlayer != null)
+    //        {
+    //            Log.Debug($"De-assign Player #{oldPlayer.PlayerId}");
+
+    //            oldPlayer.VideoDecoder.DestroySwapChain();
+    //            oldPlayer.Host = null;
+    //        }
+
+    //        if (Player == null)
+    //            return;
+
+    //        Log.Prefix = ("[#" + UniqueId + "]").PadRight(8, ' ') + $" [FlyleafHost #{Player.PlayerId}] ";
+
+    //        // De-assign new Player's Handle/FlyleafHost
+    //        Player.Host?.Player_Disposed();
+
+
+    //        // Assign new Player's (Handle/FlyleafHost)
+    //        Log.Debug($"Assign Player #{Player.PlayerId}");
+
+    //        Player.Host = this;
+    //        Player.VideoDecoder.CreateSwapChain(Handle);
+
+    //        //BackColor = Utils.WPFToWinFormsColor(Player.Config.Video.BackgroundColor);
+    //    }
+
+    //    protected override void OnMaterialSettingUniforms(XRMaterialBase material, XRRenderProgram program)
+    //    {
+    //        base.OnMaterialSettingUniforms(material, program);
+    //        Player?.WFPresent();
+    //    }
+
+    //    protected internal override void OnComponentActivated()
+    //    {
+    //        base.OnComponentActivated();
+    //    }
+
+    //    //public void FullScreen()
+    //    //{
+    //    //    if (ParentForm == null)
+    //    //        return;
+
+    //    //    oldStyle = ParentForm.FormBorderStyle;
+    //    //    oldLocation = Location;
+    //    //    oldSize = Size;
+    //    //    oldParent = Parent;
+
+    //    //    ParentForm.FormBorderStyle = FormBorderStyle.None;
+    //    //    ParentForm.WindowState = FormWindowState.Maximized;
+    //    //    Parent = ParentForm;
+    //    //    Location = new Point(0, 0);
+    //    //    Size = ParentForm.ClientSize;
+
+    //    //    BringToFront();
+    //    //    Focus();
+
+    //    //    _IsFullScreen = true;
+    //    //    Raise(nameof(IsFullScreen));
+    //    //}
+    //    //public void NormalScreen()
+    //    //{
+    //    //    if (ParentForm == null)
+    //    //        return;
+
+    //    //    ParentForm.FormBorderStyle = oldStyle;
+    //    //    ParentForm.WindowState = FormWindowState.Normal;
+    //    //    Parent = oldParent;
+
+    //    //    Location = oldLocation;
+    //    //    Size = oldSize;
+
+    //    //    Focus();
+
+    //    //    _IsFullScreen = false;
+    //    //    Raise(nameof(IsFullScreen));
+    //    //}
+
+    //    public bool Player_CanHideCursor() => false;
+    //    public bool Player_GetFullScreen() => IsFullScreen;
+    //    public void Player_SetFullScreen(bool value) => IsFullScreen = value;
+    //    public void Player_Disposed() => Player = null;
+
+    //    //protected override bool IsInputKey(Keys keyData) => Player != null && Player.Host != null;  // Required to allow keybindings such as arrows etc.
+
+    //    // TBR: Related to Renderer's WndProc
+    //    //protected override void OnPaintBackground(PaintEventArgs pe)
+    //    //{
+    //    //    if (Player == null || (Player != null && !Player.WFPresent()))
+    //    //        base.OnPaintBackground(pe);
+    //    //}
+    //    //protected override void OnPaint(PaintEventArgs pe) { }
+    //}
     public class UIVideoComponent : UIMaterialComponent
     {
+        static UIVideoComponent()
+        {
+            var current = AppContext.BaseDirectory;
+            var probe = Path.Combine(current, "runtimes", "win-x64", "native");
+            Console.WriteLine($"[FFmpeg] Probing native libs in: {probe}");
+            if (!RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
+                return;
+            
+            var path = Environment.GetEnvironmentVariable("PATH") ?? "";
+            if (!path.Split(Path.PathSeparator).Contains(probe, StringComparer.OrdinalIgnoreCase))
+                Environment.SetEnvironmentVariable("PATH", $"{probe}{Path.PathSeparator}{path}");
+
+            ffmpeg.RootPath = probe;
+        }
+
         //Optional AudioSourceComponent for audio streaming
         public AudioSourceComponent? AudioSource => GetSiblingComponent<AudioSourceComponent>();
 
@@ -100,7 +405,7 @@ namespace XREngine.Rendering.UI
 
             //Construct the M3U8 URL
             string m3u8Url = $"https://usher.ttvnw.net/api/channel/hls/{username}.m3u8" +
-                $"?player=twitchweb" +
+                "?player=twitchweb" +
                 $"&token={Uri.EscapeDataString(token)}" +
                 $"&sig={sig}" +
                 "&allow_source=true" +
@@ -316,8 +621,9 @@ namespace XREngine.Rendering.UI
                 {
                     Resizable = false,
                     Usage = EBufferUsage.StreamDraw,
-                    RangeFlags = EBufferMapRangeFlags.Write | EBufferMapRangeFlags.Persistent,
-                    StorageFlags = EBufferMapStorageFlags.Write | EBufferMapStorageFlags.Coherent | EBufferMapStorageFlags.Persistent | EBufferMapStorageFlags.ClientStorage,
+                    // Avoid ClientStorage due to driver instability; keep persistent/coherent mapping if required
+                    RangeFlags = EBufferMapRangeFlags.Write | EBufferMapRangeFlags.Persistent | EBufferMapRangeFlags.Coherent,
+                    StorageFlags = EBufferMapStorageFlags.Write | EBufferMapStorageFlags.Coherent | EBufferMapStorageFlags.Persistent,
                 };
             }
 
@@ -631,7 +937,7 @@ namespace XREngine.Rendering.UI
             //{
             //try
             //{
-            GetTwitchStreamURL("Sykkuno").ContinueWith(t => StartDecode());
+            GetTwitchStreamURL("saintsakura").ContinueWith(t => StartDecode());
                     //StartDecode();
                 //}
                 //catch (Exception ex)

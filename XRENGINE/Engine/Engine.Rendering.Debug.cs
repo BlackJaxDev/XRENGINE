@@ -27,6 +27,7 @@ namespace XREngine
                 static Debug()
                 {
                     Engine.Time.Timer.PreUpdateFrame += PreUpdate;
+                    Engine.Time.Timer.SwapBuffers += SwapBuffers;
                 }
 
                 private static void PreUpdate()
@@ -59,7 +60,12 @@ namespace XREngine
                 public static void SwapBuffers()
                 {
                     if (!Engine.Rendering.State.DebugInstanceRenderingAvailable)
+                    {
+                        _debugPoints.Clear();
+                        _debugLines.Clear();
+                        _debugTriangles.Clear();
                         return;
+                    }
 
                     Task tp = Task.Run(PopulatePoints);
                     Task tl = Task.Run(PopulateLines);
@@ -180,7 +186,6 @@ namespace XREngine
                         //    rend.Material!.SetVector4(0, color);
                         //    rend.Render(pointScale * Matrix4x4.CreateWorld(pos, fwd, up));
                         //}
-                        _debugPoints.Clear();
                         //var lineWidth = 0.02f;
                         //foreach (var (pos0, pos1, color) in _debugLines)
                         //{
@@ -189,16 +194,13 @@ namespace XREngine
                         //    Matrix4x4 matrix = CalculateLineMatrix(pos0, pos1, lineWidth, fwd, up, right);
                         //    rend.Render(matrix);
                         //}
-                        _debugLines.Clear();
                         //foreach (var (pos0, pos1, pos2, color) in _debugTriangles)
                         //{
 
                         //}
-                        _debugTriangles.Clear();
                     }
                     else
                     {
-                        SwapBuffers();
                         _instancedDebugVisualizer.Render();
                     }
                 }

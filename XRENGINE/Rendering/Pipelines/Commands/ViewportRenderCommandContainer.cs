@@ -84,6 +84,15 @@ namespace XREngine.Rendering.Pipelines.Commands
             Add(cmd);
             return cmd;
         }
+        public ViewportRenderCommand Add([DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicParameterlessConstructor)] Type t, params object[] arguments)
+        {
+            if (!typeof(ViewportRenderCommand).IsAssignableFrom(t))
+                throw new ArgumentException("Type must be a subclass of ViewportRenderCommand.", nameof(t));
+
+            ViewportRenderCommand cmd = (ViewportRenderCommand)Activator.CreateInstance(t, arguments) ?? throw new ArgumentException("Type must have a public constructor with the specified arguments.", nameof(t));
+            Add(cmd);
+            return cmd;
+        }
         /// <summary>
         /// Adds a command to the viewport render command list.
         /// </summary>

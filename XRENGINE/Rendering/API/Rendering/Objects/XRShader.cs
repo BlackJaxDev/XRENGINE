@@ -7,9 +7,9 @@ using XREngine.Rendering.Models.Materials;
 namespace XREngine.Rendering
 {
     [XR3rdPartyExtensions(
-        "glsl",
-        "frag", "vert", "geom", "tesc", "tese", "comp",
-        "fs", "vs", "gs", "tcs", "tes", "cs")]
+        "glsl", "shader",
+        "frag", "vert", "geom", "tesc", "tese", "comp", "task", "mesh",
+        "fs", "vs", "gs", "tcs", "tes", "cs", "ts", "ms")]
     public class XRShader : GenericRenderObject
     {
         internal EShaderType _type = EShaderType.Fragment;
@@ -56,6 +56,8 @@ namespace XREngine.Rendering
                 "tcs" or "tesc" => EShaderType.TessControl,
                 "tes" or "tese" => EShaderType.TessEvaluation,
                 "cs" or "comp" => EShaderType.Compute,
+                "ts" or "task" => EShaderType.Task,
+                "ms" or "mesh" => EShaderType.Mesh,
                 _ => EShaderType.Fragment,
             };
         }
@@ -121,6 +123,7 @@ namespace XREngine.Rendering
                 case nameof(Source):
                     if (Source is not null)
                         Source.TextChanged += OnSourceTextChanged;
+                    OnSourceTextChanged();
                     break;
             }
         }

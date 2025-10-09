@@ -26,51 +26,81 @@ namespace XREngine.Rendering.Commands
         {
             _updatingPasses = passIndicesAndSorters.ToDictionary(x => x.Key, x => x.Value is null ? [] : (ICollection<RenderCommand>)new SortedSet<RenderCommand>(x.Value));
 
-            //Copy the updating passes setup to rendering passes
             _renderingPasses = [];
-            foreach (var pass in _updatingPasses)
+            _gpuPasses = [];
+            foreach (KeyValuePair<int, ICollection<RenderCommand>> pass in _updatingPasses)
+            {
                 _renderingPasses.Add(pass.Key, []);
+                _gpuPasses.Add(pass.Key, new(pass.Key));
+            }
         }
 
         private int _numCommandsRecentlyAddedToUpdate = 0;
 
         private Dictionary<int, ICollection<RenderCommand>> _updatingPasses = [];
         private Dictionary<int, ICollection<RenderCommand>> _renderingPasses = [];
+        private Dictionary<int, GPURenderPassCollection> _gpuPasses = [];
 
         public RenderCommandCollection() { }
         public RenderCommandCollection(Dictionary<int, IComparer<RenderCommand>?> passIndicesAndSorters)
             => SetRenderPasses(passIndicesAndSorters);
 
-        private object _lock = new();
-        public void Add(RenderCommand item)
+        private readonly Lock _lock = new();
+
+        public void AddRangeCPU(IEnumerable<RenderCommand> renderCommands)
+        {
+            foreach (RenderCommand renderCommand in renderCommands)
+                AddCPU(renderCommand);
+        }
+        public void AddCPU(RenderCommand item)
         {
             int pass = item.RenderPass;
             if (!_updatingPasses.TryGetValue(pass, out var set))
-            {
-                //Debug.Out($"No render pass {pass} found.");
-                return;
-            }
-            lock (_lock)
+                return; // No CPU pass found for this render command
+
+            using (_lock.EnterScope())
             {
                 set.Add(item);
                 ++_numCommandsRecentlyAddedToUpdate;
             }
         }
-        internal int GetCommandsAddedCount()
+
+        public int GetCommandsAddedCount()
         {
             int added = _numCommandsRecentlyAddedToUpdate;
             _numCommandsRecentlyAddedToUpdate = 0;
             return added;
         }
-        internal void Render(int pass)
+
+        public void RenderCPU(int renderPass)
         {
-            if (!_renderingPasses.TryGetValue(pass, out ICollection<RenderCommand>? list))
+            if (!_renderingPasses.TryGetValue(renderPass, out ICollection<RenderCommand>? list))
             {
-                //Debug.Out($"No render pass {pass} found.");
+                //Debug.Out($"No CPU render pass {renderPass} found.");
                 return;
             }
             list.ForEach(x => x?.Render());
         }
+        public void RenderGPU( int renderPass)
+        {
+            if (!_gpuPasses.TryGetValue(renderPass, out GPURenderPassCollection? gpuPass))
+                return;
+            
+            var renderState = Engine.Rendering.State.CurrentRenderingPipeline?.RenderState;
+            if (renderState is null)
+                return;
+
+            XRCamera? camera = renderState.SceneCamera;
+            if (camera is null)
+                return;
+
+            var scene = renderState.RenderingScene;
+            if (scene is null)
+                return;
+
+            gpuPass.Render(scene.GPUCommands);
+        }
+
         public void SwapBuffers()
         {
             static void Clear(ICollection<RenderCommand> x)
@@ -84,12 +114,6 @@ namespace XREngine.Rendering.Commands
             _updatingPasses.Values.ForEach(Clear);
 
             _numCommandsRecentlyAddedToUpdate = 0;
-        }
-
-        public void AddRange(IEnumerable<RenderCommand> renderCommands)
-        {
-            foreach (RenderCommand renderCommand in renderCommands)
-                Add(renderCommand);
         }
     }
 }

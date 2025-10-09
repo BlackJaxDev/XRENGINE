@@ -2,7 +2,6 @@
 using XREngine.Components.Lights;
 using XREngine.Data;
 using XREngine.Data.Colors;
-using XREngine.Data.Core;
 using XREngine.Data.Geometry;
 using XREngine.Data.Rendering;
 using XREngine.Data.Trees;

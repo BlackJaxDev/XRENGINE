@@ -111,7 +111,12 @@ namespace XREngine.Components.Scene.Mesh
                 Engine.Rendering.Debug.RenderBox(box.Value.LocalHalfExtents, box.Value.LocalCenter, box.Value.Transform, false, ColorF4.White);
 
             if (RootBone is not null)
-                Engine.Rendering.Debug.RenderPoint(RootBone.RenderTranslation, ColorF4.Red);
+            {
+                Vector3 rootTranslation = RootBone.RenderTranslation;
+                Engine.Rendering.Debug.RenderPoint(rootTranslation, ColorF4.Red);
+                if (RootBone.Name is not null)
+                    Engine.Rendering.Debug.RenderText(rootTranslation, RootBone.Name, ColorF4.Black);
+            }
         }
 
         private void SettingUniforms(XRRenderProgram vertexProgram, XRRenderProgram materialProgram)

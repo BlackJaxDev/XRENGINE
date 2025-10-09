@@ -20,7 +20,7 @@ namespace XREngine
             public static AbstractRenderAPIObject?[] CreateObjectsForAllWindows(GenericRenderObject obj)
             {
                 lock (Windows)
-                    return Windows.Select(window => window.Renderer.GetOrCreateAPIRenderObject(obj)).ToArray();
+                    return [.. Windows.Select(window => window.Renderer.GetOrCreateAPIRenderObject(obj))];
             }
 
             /// <summary>

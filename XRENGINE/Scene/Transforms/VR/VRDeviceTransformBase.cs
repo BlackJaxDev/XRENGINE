@@ -80,7 +80,7 @@ namespace XREngine.Data.Components.Scene
             }
             else
             {
-                mtx = device.DeviceToAbsoluteTrackingMatrix;
+                mtx = device.RenderDeviceToAbsoluteTrackingMatrix;
                 if (LocalMatrixOffset.HasValue)
                     mtx *= LocalMatrixOffset.Value;
             }

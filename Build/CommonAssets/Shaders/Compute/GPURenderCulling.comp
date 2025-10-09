@@ -1,0 +1,134 @@
+// Minimum working-set culling shader (no octree) using a compact 32-float command struct
+#version 460 core
+
+layout(local_size_x = 256) in;
+
+/*
+ Compact GPUIndirectRenderCommand (float[32], 128 bytes):
+  00-15 : WorldMatrix (mat4, column-major)
+  16-19 : BoundingSphere (vec4: xyz center, w radius)
+  20 : MeshID (uint as float)
+  21 : SubmeshID (uint as float)  (optional / may mirror meshID if not flattened)
+  22 : MaterialID (uint)
+  23 : InstanceCount (uint)
+  24 : RenderPass (uint)
+  25 : ShaderProgramID (uint)
+  26 : RenderDistance (float)  (camera-space depth or squared distance)
+  27 : LayerMask (uint)
+  28 : LODLevel (uint)
+  29 : Flags (uint)
+  30 : Reserved0
+  31 : Reserved1
+*/
+
+// === Buffers ===
+// Input commands (unsorted, uncropped). Count is provided via uniform.
+layout(std430, binding = 0) buffer InputCommandsBuffer { float inCommands[]; };
+// Output culled commands (densely packed). Uses atomic counter to append.
+layout(std430, binding = 1) buffer CulledCommandsBuffer { float outCommands[]; };
+// Atomic counter (single uint) storing number of written culled commands.
+layout(std430, binding = 2) buffer CulledCountBuffer { uint CulledCount; };
+// Overflow / debug flag (0 = ok, 1 = overflow / truncated) for culling stage.
+layout(std430, binding = 3) buffer OverflowFlagBuffer { uint CullingOverflowFlag; };
+// Optional statistics buffer (binding = 8) shared across stages
+layout(std430, binding = 8) buffer StatsBuffer {
+    uint StatsInputCount;        // 0
+    uint StatsCulledCount;       // 1
+    uint StatsDrawCount;         // 2 (written in indirect stage)
+    uint StatsRejectedFrustum;   // 3
+    uint StatsRejectedDistance;  // 4
+};
+
+// === Uniforms ===
+uniform vec4 FrustumPlanes[6];      // Normalized planes (xyz = normal, w = -d)
+uniform float MaxRenderDistance;    // Max allowed render distance (distance metric squared)
+uniform uint CameraLayerMask;       // Active camera layer mask
+uniform int  CurrentRenderPass;     // -1 = accept all passes, else match command RenderPass
+uniform int  InputCommandCount;     // Number of source commands
+uniform int  MaxCulledCommands;     // Capacity (in commands) of outCommands buffer
+uniform uint DisabledFlagsMask;     // Bitmask: discard if (Flags & DisabledFlagsMask)!=0
+uniform vec3 CameraPosition;        // World-space camera position (for distance metric)
+// === Flag bit layout (must match C# GPUCommandFlags) ===
+#define FLAG_TRANSPARENT    (1u<<0)
+#define FLAG_CAST_SHADOW    (1u<<1)
+#define FLAG_SKINNED        (1u<<2)
+#define FLAG_DYNAMIC        (1u<<3)
+#define FLAG_DOUBLE_SIDED   (1u<<4)
+
+
+// === Constants ===
+const int COMMAND_FLOATS = 32;
+
+// Direct field extraction performed inline to avoid parameterized unsized array issues in some GLSL drivers.
+
+bool FrustumSphereVisible(vec3 center, float radius)
+{
+    // Sphere vs plane: dot(n, p) + d >= -r  (plane.w stores d term already)
+    for (int i = 0; i < 6; ++i)
+    {
+        vec4 p = FrustumPlanes[i];
+        float dist = dot(p.xyz, center) + p.w; // plane eq n.x*x + n.y*y + n.z*z + d
+        if (dist < -radius)
+            return false;
+    }
+    return true;
+}
+
+void main()
+{
+    uint idx = gl_GlobalInvocationID.x;
+    if (idx >= uint(InputCommandCount))
+        return;
+
+    // Thread 0 seeds input count (race-benign if repeated)
+    if (idx == 0u)
+        StatsInputCount = uint(InputCommandCount);
+
+    int base = int(idx) * COMMAND_FLOATS;
+    // Bounds safety against malformed counts
+    if (base + COMMAND_FLOATS > inCommands.length())
+        return;
+
+    // Read frequently used fields
+    vec4 bs = vec4(inCommands[base+16], inCommands[base+17], inCommands[base+18], inCommands[base+19]); // bounding sphere
+    vec3 center = bs.xyz;
+    float radius = bs.w;
+    uint layerMask = uint(inCommands[base+27]);
+    uint renderPass = uint(inCommands[base+24]);
+    uint instanceCount = uint(inCommands[base+23]);
+    // Compute distance metric (squared distance from camera to bounding sphere center)
+    vec3 toCenter = center - CameraPosition;
+    float renderDistance = dot(toCenter, toCenter);
+    uint flags = uint(inCommands[base+29]);
+
+    // Basic validity / trivially reject
+    if (instanceCount == 0u) return;
+    if ((layerMask & CameraLayerMask) == 0u) return;
+    if (DisabledFlagsMask != 0u && (flags & DisabledFlagsMask) != 0u) return;
+    if (CurrentRenderPass >= 0 && renderPass != uint(CurrentRenderPass)) return;
+    if (renderDistance > MaxRenderDistance) {
+        atomicAdd(StatsRejectedDistance, 1u);
+        return;
+    }
+    if (!FrustumSphereVisible(center, radius)) {
+        atomicAdd(StatsRejectedFrustum, 1u);
+        return;
+    }
+
+    // Append
+    uint outIndex = atomicAdd(CulledCount, 1u);
+    if (outIndex >= uint(MaxCulledCommands))
+    {
+        atomicExchange(CullingOverflowFlag, 1u); // signal overflow
+        return;
+    }
+
+    int outBase = int(outIndex) * COMMAND_FLOATS;
+    // Copy 32 floats (loop keeps code small; driver may unroll)
+    for (int i = 0; i < COMMAND_FLOATS; ++i)
+        outCommands[outBase + i] = inCommands[base + i];
+    // Overwrite computed distance metric at slot 26
+    outCommands[outBase + 26] = renderDistance;
+
+    atomicAdd(StatsCulledCount, 1u);
+}

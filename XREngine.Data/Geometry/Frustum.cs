@@ -1,5 +1,4 @@
 ﻿using Extensions;
-using Silk.NET.Maths;
 using System.Collections;
 using System.Numerics;
 using XREngine.Data.Core;

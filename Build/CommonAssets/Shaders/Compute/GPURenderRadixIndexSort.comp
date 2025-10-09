@@ -1,0 +1,97 @@
+#version 460 core
+
+// Index-based 32-bit key radix sort (LSD) over culled command indices.
+// Performs one pass per dispatch (set RadixPass uniform 0..3).
+// Buffers:
+//  binding 0: KeyIndexIn  (uint2 sequence flattened: [key0, idx0, key1, idx1, ...])
+//  binding 1: KeyIndexOut (uint2 sequence for output)
+//  binding 2: Histogram   (uint[256]) cleared prior to BuildHistogram phase; reused for prefix scan + in-place counters.
+//  binding 3: CountBuffer (uint TotalPairs)
+// Uniforms:
+//  RadixPass (0..3), SortDirection (1 ascending, -1 descending)
+//  Phase: 0=BuildHistogram, 1=PrefixScan, 2=Scatter
+// Dispatch strategy per pass: run 3 sequential dispatches: histogram, scan (single WG), scatter.
+// After pass 0..3 completes, CPU swaps in/out buffers for next pass (or shader does if using ping-pong flag).
+
+layout(local_size_x = 256) in;
+
+layout(std430, binding = 0) buffer KeyIndexInBuffer  { uint keyIndexIn[]; };
+layout(std430, binding = 1) buffer KeyIndexOutBuffer { uint keyIndexOut[]; };
+layout(std430, binding = 2) buffer HistogramBuffer   { uint histogram[]; };
+layout(std430, binding = 3) buffer CountBuffer       { uint PairCount; };
+
+uniform int RadixPass;        // 0..3
+uniform int SortDirection;    // 1 or -1
+uniform int Phase;            // 0 build, 1 scan, 2 scatter
+
+const uint RADIX_BITS = 8u;
+const uint RADIX_SIZE = 256u;
+const uint RADIX_MASK = 0xFFu;
+
+// Build histogram: each thread processes one pair (key, index).
+void BuildHistogram()
+{
+    uint pairIdx = gl_GlobalInvocationID.x;
+    uint count = PairCount;
+    if (pairIdx >= count) return;
+    uint key = keyIndexIn[pairIdx * 2u + 0u];
+    uint digit = (key >> (uint(RadixPass) * RADIX_BITS)) & RADIX_MASK;
+    if (SortDirection < 0) digit = RADIX_MASK - digit; // invert for descending
+    atomicAdd(histogram[digit], 1u);
+}
+
+// Prefix scan (exclusive). Single workgroup recommended.
+shared uint temp[RADIX_SIZE];
+void PrefixScan()
+{
+    uint lid = gl_LocalInvocationID.x;
+    if (lid < RADIX_SIZE)
+        temp[lid] = histogram[lid];
+    barrier();
+    // Hillis-Steele exclusive scan
+    for (uint offset = 1u; offset < RADIX_SIZE; offset <<= 1u)
+    {
+        uint val = 0u;
+        if (lid >= offset && lid < RADIX_SIZE)
+            val = temp[lid - offset];
+        barrier();
+        if (lid < RADIX_SIZE)
+            temp[lid] += val;
+        barrier();
+    }
+    if (lid == RADIX_SIZE - 1u)
+        temp[lid] = temp[lid - 1u]; // convert last to exclusive end; though not strictly needed
+    barrier();
+    if (lid == 0u) temp[0u] = 0u; // first becomes zero
+    barrier();
+    if (lid < RADIX_SIZE)
+        histogram[lid] = temp[lid];
+}
+
+// Scatter: use atomicAdd on per-digit counters derived from prefix base.
+void Scatter()
+{
+    uint pairIdx = gl_GlobalInvocationID.x;
+    uint count = PairCount;
+    if (pairIdx >= count) return;
+    uint key = keyIndexIn[pairIdx * 2u + 0u];
+    uint originalIndex = keyIndexIn[pairIdx * 2u + 1u];
+    uint digit = (key >> (uint(RadixPass) * RADIX_BITS)) & RADIX_MASK;
+    if (SortDirection < 0) digit = RADIX_MASK - digit;
+    // We need per-digit running counters: reuse histogram by doing atomicAdd and writing at base + offset
+    uint writeBase = histogram[digit];
+    uint offset = atomicAdd(histogram[digit], 1u); // histogram[digit] now acts as counter after prefix base stored
+    uint outPos = writeBase + offset;
+    keyIndexOut[outPos * 2u + 0u] = key;
+    keyIndexOut[outPos * 2u + 1u] = originalIndex;
+}
+
+void main()
+{
+    if (Phase == 0)
+        BuildHistogram();
+    else if (Phase == 1)
+        PrefixScan();
+    else if (Phase == 2)
+        Scatter();
+}

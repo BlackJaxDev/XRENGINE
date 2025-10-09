@@ -1,5 +1,6 @@
 ﻿using System.Collections;
 using System.Numerics;
+using XREngine.Data.Core;
 using XREngine.Data.Rendering;
 using XREngine.Data.Vectors;
 
@@ -12,6 +13,9 @@ namespace XREngine.Rendering
         /// </summary>
         public EventList<XRShader> Shaders { get; } = [];
 
+        public XREvent<XRRenderProgram>? LinkRequested = null;
+        public XREvent<XRRenderProgram>? UseRequested = null;
+
         public bool LinkReady { get; private set; } = false;
 
         private bool _separable = true;
@@ -21,11 +25,20 @@ namespace XREngine.Rendering
             set => SetField(ref _separable, value);
         }
 
+        public void Use()
+            => UseRequested?.Invoke(this);
+
         /// <summary>
         /// Call this once all shaders have been added to the Shaders list to finalize the program.
         /// </summary>
         public void AllowLink()
             => LinkReady = true;
+
+        public void Link()
+        {
+            AllowLink();
+            LinkRequested?.Invoke(this);
+        }
 
         public event Action<string, Matrix4x4>? UniformSetMatrix4x4Requested = null;
         public event Action<string, Quaternion>? UniformSetQuaternionRequested = null;
@@ -88,6 +101,7 @@ namespace XREngine.Rendering
 
         public event Action<uint, XRTexture, int, bool, int, EImageAccess, EImageFormat>? BindImageTextureRequested = null;
         public event Action<uint, uint, uint, IEnumerable<(uint unit, XRTexture texture, int level, int? layer, EImageAccess access, EImageFormat format)>?>? DispatchComputeRequested = null;
+        public event Action<uint, XRDataBuffer>? BindBufferRequested = null;
 
         /// <summary>
         /// Mask of the shader types included in the program.
@@ -117,6 +131,12 @@ namespace XREngine.Rendering
                     case EShaderType.Compute:
                         mask |= EProgramStageMask.ComputeShaderBit;
                         break;
+                    case EShaderType.Task:
+                        mask |= EProgramStageMask.TaskShaderBit;
+                        break;
+                    case EShaderType.Mesh:
+                        mask |= EProgramStageMask.MeshShaderBit;
+                        break;
                 }
             }
             return mask;
@@ -130,7 +150,10 @@ namespace XREngine.Rendering
             Separable = separable;
             Shaders.AddRange(shaders);
             if (linkNow)
-                AllowLink();
+            {
+                Generate();
+                Link();
+            }
         }
 
         public IEnumerator<XRShader> GetEnumerator()
@@ -498,6 +521,13 @@ namespace XREngine.Rendering
         public void BindImageTexture(uint unit, XRTexture texture, int level, bool layered, int layer, EImageAccess access, EImageFormat format)
             => BindImageTextureRequested?.Invoke(unit, texture, level, layered, layer, access, format);
 
+        /// <summary>
+        /// Dispatch the program for compute.
+        /// </summary>
+        /// <param name="x"></param>
+        /// <param name="y"></param>
+        /// <param name="z"></param>
+        /// <param name="textures"></param>
         public void DispatchCompute(uint x, uint y, uint z, IEnumerable<(uint unit, XRTexture texture, int level, int? layer, EImageAccess access, EImageFormat format)>? textures = null)
             => DispatchComputeRequested?.Invoke(x, y, z, textures);
 
@@ -505,5 +535,56 @@ namespace XREngine.Rendering
             => HasUniform(uniformName.ToString());
         public bool HasUniform(string uniformName)
             => Shaders.Any(x => x.HasUniform(uniformName));
+
+        public void BindBuffer(XRDataBuffer buffer, uint location)
+        {
+            if (buffer is null)
+                throw new ArgumentNullException(nameof(buffer), "Cannot bind a null buffer to the shader program.");
+            BindBufferRequested?.Invoke(location, buffer);
+        }
+
+        /// <summary>
+        /// Dispatch the program for compute and then issue a memory barrier.
+        /// </summary>
+        /// <param name="x"></param>
+        /// <param name="y"></param>
+        /// <param name="z"></param>
+        /// <param name="barrierMask"></param>
+        /// <param name="textures"></param>
+        public void DispatchCompute(
+            uint x,
+            uint y,
+            uint z,
+            EMemoryBarrierMask barrierMask,
+            IEnumerable<(uint unit, XRTexture texture, int level, int? layer, EImageAccess access, EImageFormat format)>? textures = null)
+        {
+            DispatchCompute(x, y, z, textures);
+            AbstractRenderer.Current?.MemoryBarrier(barrierMask);
+        }
+    }
+
+    public static class ComputeDispatch
+    {
+        public static (uint x, uint y, uint z) ForCommands(uint commandCount, uint localSizeX = 256, uint maxGroupsPerDim = 65535)
+        {
+            // Total workgroups needed (ceil)
+            ulong groupsNeeded = (commandCount + (localSizeX - 1)) / localSizeX;
+
+            // Distribute across X/Y/Z with per-dimension cap, using ceil at each step.
+            ulong gx = Math.Min(groupsNeeded, (ulong)maxGroupsPerDim);
+            ulong remainingAfterX = (groupsNeeded + gx - 1) / gx;
+
+            ulong gy = Math.Min(remainingAfterX, (ulong)maxGroupsPerDim);
+            ulong remainingAfterY = (remainingAfterX + gy - 1) / gy;
+
+            ulong gz = Math.Min(remainingAfterY, (ulong)maxGroupsPerDim);
+
+            // Sanity: if even after packing we still need more than Max in Z, N is astronomically large.
+            if (gx * gy * gz < groupsNeeded)
+                throw new ArgumentOutOfRangeException(nameof(commandCount),
+                    $"Too many commands for single dispatch under per-dimension limit {maxGroupsPerDim}.");
+
+            return ((uint)gx, (uint)gy, (uint)gz);
+        }
     }
 }

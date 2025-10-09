@@ -813,12 +813,16 @@ namespace XREngine.Scene.Transforms
             set => SetField(ref _immediateLocalMatrixRecalculation, value);
         }
 
+        protected void MarkLocalModified()
+        {
+            MarkLocalModified(false);
+        }
         /// <summary>
         /// Marks the local matrix as modified, which will cause it to be recalculated on the next access.
         /// </summary>
-        protected void MarkLocalModified()
+        protected void MarkLocalModified(bool forceDefer)
         {
-            if (ImmediateLocalMatrixRecalculation)
+            if (ImmediateLocalMatrixRecalculation && !forceDefer)
             {
                 RecalcLocal();
                 _localChanged = false;

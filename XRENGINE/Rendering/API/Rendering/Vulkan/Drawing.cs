@@ -4,6 +4,7 @@ using System.Numerics;
 using XREngine.Data.Colors;
 using XREngine.Data.Geometry;
 using XREngine.Data.Rendering;
+using XREngine.Rendering.Models.Materials;
 
 namespace XREngine.Rendering.Vulkan
 {
@@ -151,7 +152,7 @@ namespace XREngine.Rendering.Vulkan
             var waitSemaphores = stackalloc[] { imageAvailableSemaphores[currentFrame] };
             var waitStages = stackalloc[] { PipelineStageFlags.ColorAttachmentOutputBit };
 
-            var buffer = commandBuffers![imageIndex];
+            var buffer = _commandBuffers![imageIndex];
 
             submitInfo = submitInfo with
             {
@@ -201,6 +202,84 @@ namespace XREngine.Rendering.Vulkan
                 throw new Exception("Failed to present swap chain image.");
 
             currentFrame = (currentFrame + 1) % MAX_FRAMES_IN_FLIGHT;
+        }
+
+        // =========== Indirect + Pipeline Abstraction stubs for Vulkan ===========
+        public override void BindVAOForRenderer(XRMeshRenderer.BaseVersion? version)
+        {
+            // Vulkan has no VAO; this is a no-op for now.
+        }
+
+        public override bool ValidateIndexedVAO(XRMeshRenderer.BaseVersion? version)
+        {
+            // Vulkan path not implemented yet
+            return false;
+        }
+
+        public override void BindDrawIndirectBuffer(XRDataBuffer buffer)
+        {
+            // TODO: Record binding in command buffer in a later Vulkan implementation
+        }
+
+        public override void UnbindDrawIndirectBuffer()
+        {
+            // No-op for Vulkan for now
+        }
+
+        public override void BindParameterBuffer(XRDataBuffer buffer)
+        {
+            // TODO: Hook up to VK_KHR_draw_indirect_count when implemented
+        }
+
+        public override void UnbindParameterBuffer()
+        {
+            // No-op
+        }
+
+        public override void MultiDrawElementsIndirect(uint drawCount, uint stride)
+        {
+            // TODO: Record vkCmdDrawIndexedIndirect with drawCount/stride when implemented
+            throw new NotImplementedException();
+        }
+
+        public override void MultiDrawElementsIndirectWithOffset(uint drawCount, uint stride, nuint byteOffset)
+        {
+            // TODO: Record vkCmdDrawIndexedIndirect with first=offset when implemented
+            throw new NotImplementedException();
+        }
+
+        public override void MultiDrawElementsIndirectCount(uint maxDrawCount, uint stride, nuint byteOffset)
+        {
+            // TODO: Use vkCmdDrawIndexedIndirectCountKHR if VK_KHR_draw_indirect_count is available
+            throw new NotImplementedException();
+        }
+
+        public override void ApplyRenderParameters(XREngine.Rendering.Models.Materials.RenderingParameters parameters)
+        {
+            // TODO: Bake into pipeline state / dynamic state for Vulkan path
+            throw new NotImplementedException();
+        }
+
+        public override bool SupportsIndirectCountDraw()
+        {
+            // TODO: query VK_KHR_draw_indirect_count at device creation
+            return false;
+        }
+
+        public override void ConfigureVAOAttributesForProgram(XRRenderProgram program, XRMeshRenderer.BaseVersion? version)
+        {
+            // Vulkan does not use VAOs; pipeline vertex input state handles this.
+            // No-op for now.
+        }
+
+        public override void SetEngineUniforms(XRRenderProgram program, XRCamera camera)
+        {
+            // Not implemented: Vulkan path will set camera data via descriptor sets / push constants
+        }
+
+        public override void SetMaterialUniforms(XRMaterial material, XRRenderProgram program)
+        {
+            // Not implemented: Vulkan path will set material parameters via descriptor sets
         }
     }
 }

@@ -14,36 +14,50 @@ namespace XREngine.Rendering.Shaders.Generator
         public string? OpacityTextureUniformName { get; set; }
         public string? AmbientOcclusionTextureUniformName { get; set; }
 
-        public override string Generate()
+        protected override void WriteMain()
         {
-            WriteVersion();
-            WriteExtensions();
-            Line();
-            WriteOutData();
-            WriteInData();
-            WriteUniforms();
-            using (StartMain())
-            {
-                Line("Normal = normalize(FragNorm);");
-                Line("AlbedoOpacity = vec4(BaseColor, Opacity);");
-                Line("RMSE = vec4(Roughness, Metallic, Specular, Emission);");
-            }
-            return End();
+            Line("Normal = normalize(FragNorm);");
+            Line("AlbedoOpacity = vec4(BaseColor, Opacity);");
+            Line("RMSE = vec4(Roughness, Metallic, Specular, Emission);");
         }
 
-        private void WriteExtensions()
+        protected override void WriteExtensions()
         {
 
         }
 
-        private void WriteOutData()
+        protected override void WriteOutputs()
         {
             WriteOutVar(0, EShaderVarType._vec4, "AlbedoOpacity");
             WriteOutVar(1, EShaderVarType._vec3, "Normal");
             WriteOutVar(2, EShaderVarType._vec4, "RMSE");
         }
 
-        private void WriteUniforms()
+        protected override void WriteInputs()
+        {
+            WriteInVar(0, EShaderVarType._vec3, DefaultVertexShaderGenerator.FragPosName);
+
+            if (Mesh.HasNormals)
+                WriteInVar(1, EShaderVarType._vec3, DefaultVertexShaderGenerator.FragNormName);
+
+            if (Mesh.HasTangents)
+            {
+                WriteInVar(2, EShaderVarType._vec3, DefaultVertexShaderGenerator.FragTanName);
+                WriteInVar(3, EShaderVarType._vec3, DefaultVertexShaderGenerator.FragBinormName);
+            }
+
+            if (Mesh.HasTexCoords)
+                for (int i = 0; i < Mesh.TexCoordCount.ClampMax(8); ++i)
+                    WriteInVar(4u + (uint)i, EShaderVarType._vec2, string.Format(DefaultVertexShaderGenerator.FragUVName, i));
+
+            if (Mesh.HasColors)
+                for (int i = 0; i < Mesh.ColorCount.ClampMax(8); ++i)
+                    WriteInVar(12u + (uint)i, EShaderVarType._vec4, string.Format(DefaultVertexShaderGenerator.FragColorName, i));
+
+            WriteInVar(20, EShaderVarType._vec3, DefaultVertexShaderGenerator.FragPosLocalName);
+        }
+
+        protected override void WriteUniforms()
         {
             WriteUniform(EShaderVarType._vec3, "BaseColor");
             WriteUniform(EShaderVarType._float, "Opacity");
@@ -75,37 +89,6 @@ namespace XREngine.Rendering.Shaders.Generator
 
             if (AmbientOcclusionTextureUniformName != null)
                 WriteUniform(EShaderVarType._sampler2D, AmbientOcclusionTextureUniformName);
-
-            Line();
-        }
-
-        /// <summary>
-        /// This information is sent to the fragment shader.
-        /// </summary>
-        private void WriteInData()
-        {
-            WriteInVar(0, EShaderVarType._vec3, DefaultVertexShaderGenerator.FragPosName);
-
-            if (Mesh.HasNormals)
-                WriteInVar(1, EShaderVarType._vec3, DefaultVertexShaderGenerator.FragNormName);
-
-            if (Mesh.HasTangents)
-            {
-                WriteInVar(2, EShaderVarType._vec3, DefaultVertexShaderGenerator.FragTanName);
-                WriteInVar(3, EShaderVarType._vec3, DefaultVertexShaderGenerator.FragBinormName);
-            }
-
-            if (Mesh.HasTexCoords)
-                for (int i = 0; i < Mesh.TexCoordCount.ClampMax(8); ++i)
-                    WriteInVar(4u + (uint)i, EShaderVarType._vec2, string.Format(DefaultVertexShaderGenerator.FragUVName, i));
-
-            if (Mesh.HasColors)
-                for (int i = 0; i < Mesh.ColorCount.ClampMax(8); ++i)
-                    WriteInVar(12u + (uint)i, EShaderVarType._vec4, string.Format(DefaultVertexShaderGenerator.FragColorName, i));
-
-            WriteInVar(20, EShaderVarType._vec3, DefaultVertexShaderGenerator.FragPosLocalName);
-
-            Line();
         }
     }
 }

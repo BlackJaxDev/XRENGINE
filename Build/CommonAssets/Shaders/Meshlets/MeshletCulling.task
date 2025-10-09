@@ -1,0 +1,52 @@
+#version 460 core
+#extension GL_NV_mesh_shader : require
+
+layout(local_size_x = 32) in;
+
+const uint GROUP_SIZE = 32u;
+
+struct Meshlet
+{
+    uint VertexOffset;
+    uint TriangleOffset;
+    uint VertexCount;
+    uint TriangleCount;
+};
+
+layout(std430, binding = 0) buffer MeshletBuffer { Meshlet meshlets[]; };
+
+struct TaskPayload { uint meshletIndices[GROUP_SIZE]; uint count; };
+
+taskNV out TaskPayload OUT;
+
+shared uint sVisibleCount;
+shared uint sIndices[GROUP_SIZE];
+
+void main()
+{
+    if (gl_LocalInvocationID.x == 0)
+        sVisibleCount = 0u;
+    barrier();
+
+    uint idx = gl_WorkGroupID.x * GROUP_SIZE + gl_LocalInvocationID.x;
+
+    // Mark visible if within range
+    bool visible = (idx < meshlets.length());
+    if (visible)
+    {
+        uint dst = atomicAdd(sVisibleCount, 1u);
+        if (dst < GROUP_SIZE)
+            sIndices[dst] = idx;
+    }
+
+    barrier();
+
+    if (gl_LocalInvocationID.x == 0)
+    {
+        uint count = min(sVisibleCount, GROUP_SIZE);
+        OUT.count = count;
+        for (uint i = 0u; i < count; ++i)
+            OUT.meshletIndices[i] = sIndices[i];
+        gl_TaskCountNV = count;
+    }
+}
