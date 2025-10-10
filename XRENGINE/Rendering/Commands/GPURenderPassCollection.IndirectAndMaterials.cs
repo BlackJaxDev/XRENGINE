@@ -238,6 +238,7 @@ namespace XREngine.Rendering.Commands
                 _cullingComputeShader?.Destroy();
                 _indirectRenderTaskShader?.Destroy();
                 _indirectRenderer?.Destroy();
+                _buffersMapped = false;
                 _initialized = false; _disposed = true;
             }
 
