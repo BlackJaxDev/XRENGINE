@@ -1,8 +1,11 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.Runtime.InteropServices;
+using XREngine;
 using XREngine.Data.Core;
 using XREngine.Data.Rendering;
+using XREngine.Rendering;
 using XREngine.Rendering.Materials;
 
 namespace XREngine.Rendering.Commands
@@ -125,8 +128,10 @@ namespace XREngine.Rendering.Commands
             }
         }
         
+        private XRRenderPipelineInstance? _ownerPipeline;
+
         [System.Diagnostics.Conditional("DEBUG")]
-        private static void Dbg(string msg, string cat = "General")
+        private void Dbg(string msg, string cat = "General")
         {
             if (!_verbose)
                 return;
@@ -136,7 +141,20 @@ namespace XREngine.Rendering.Commands
                 enabled = _debugCategories.Contains(cat) || _debugCategories.Contains("All");
 
             if (enabled)
-                Debug.Out($"[GPURenderPass/{cat}] {msg}");
+                Debug.Out($"{FormatDebugPrefix(cat)} {msg}");
+        }
+
+        private string FormatDebugPrefix(string cat)
+        {
+            XRRenderPipelineInstance? pipeline = _ownerPipeline ?? Engine.Rendering.State.CurrentRenderingPipeline;
+            string descriptor = pipeline?.DebugDescriptor ?? "Pipeline=<none>";
+            return $"[GPURenderPass/{cat}] {descriptor} Pass={RenderPass}";
+        }
+
+        internal void SetDebugContext(XRRenderPipelineInstance? pipeline, int passIndex)
+        {
+            _ownerPipeline = pipeline;
+            RenderPass = passIndex;
         }
 
         // Primary working buffers

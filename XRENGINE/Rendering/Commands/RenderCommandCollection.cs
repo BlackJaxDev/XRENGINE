@@ -1,5 +1,6 @@
 ﻿using Extensions;
 using XREngine.Data.Core;
+using XREngine.Rendering;
 
 namespace XREngine.Rendering.Commands
 {
@@ -31,7 +32,9 @@ namespace XREngine.Rendering.Commands
             foreach (KeyValuePair<int, ICollection<RenderCommand>> pass in _updatingPasses)
             {
                 _renderingPasses.Add(pass.Key, []);
-                _gpuPasses.Add(pass.Key, new(pass.Key));
+                var gpuPass = new GPURenderPassCollection(pass.Key);
+                gpuPass.SetDebugContext(_ownerPipeline, pass.Key);
+                _gpuPasses.Add(pass.Key, gpuPass);
             }
         }
 
@@ -40,10 +43,18 @@ namespace XREngine.Rendering.Commands
         private Dictionary<int, ICollection<RenderCommand>> _updatingPasses = [];
         private Dictionary<int, ICollection<RenderCommand>> _renderingPasses = [];
         private Dictionary<int, GPURenderPassCollection> _gpuPasses = [];
+        private XRRenderPipelineInstance? _ownerPipeline;
 
         public RenderCommandCollection() { }
         public RenderCommandCollection(Dictionary<int, IComparer<RenderCommand>?> passIndicesAndSorters)
             => SetRenderPasses(passIndicesAndSorters);
+
+        internal void SetOwnerPipeline(XRRenderPipelineInstance pipeline)
+        {
+            _ownerPipeline = pipeline;
+            foreach (KeyValuePair<int, GPURenderPassCollection> pair in _gpuPasses)
+                pair.Value.SetDebugContext(_ownerPipeline, pair.Key);
+        }
 
         private readonly Lock _lock = new();
 

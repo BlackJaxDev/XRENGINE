@@ -158,7 +158,7 @@ namespace XREngine.Rendering.Commands
             }
             catch (Exception ex)
             {
-                Debug.LogWarning($"Failed to initialize GPURenderPassCollection for pass {RenderPass}: {ex}");
+                Debug.LogWarning($"{FormatDebugPrefix("Lifecycle")} Failed to initialize GPURenderPassCollection: {ex}");
                 _initialized = false;
                 Dbg("Initialization failed","Lifecycle");
             }
@@ -329,7 +329,7 @@ namespace XREngine.Rendering.Commands
                 if (strideMismatch || countMismatch)
                 {
                     if (strideMismatch)
-                        Debug.LogWarning("Indirect draw buffer stride mismatch detected. Forcing recreation.");
+                        Debug.LogWarning($"{FormatDebugPrefix("Buffers")} Indirect draw buffer stride mismatch detected. Forcing recreation.");
                     else
                         Dbg("Resizing indirect draw buffer to match new capacity.", "Buffers");
                     _indirectDrawBuffer.Destroy();
@@ -361,7 +361,7 @@ namespace XREngine.Rendering.Commands
                 bool invalidLayout = buffer.ElementCount != 1 || buffer.ComponentType != EComponentType.UInt;
                 if (invalidLayout)
                 {
-                    Debug.LogWarning($"Parameter buffer {name} has unexpected layout. Recreating.");
+                    Debug.LogWarning($"{FormatDebugPrefix("Buffers")} Parameter buffer {name} has unexpected layout. Recreating.");
                     buffer.Destroy();
                     buffer = null;
                     requiresMapping = true;
@@ -439,37 +439,37 @@ namespace XREngine.Rendering.Commands
         {
             if (_indirectDrawBuffer is null)
             {
-                Debug.LogWarning("Indirect draw buffer is null before rendering.");
+                Debug.LogWarning($"{FormatDebugPrefix("Buffers")} Indirect draw buffer is null before rendering.");
                 return;
             }
 
             if (_indirectDrawBuffer.ElementSize != _indirectCommandStride)
             {
-                Debug.LogWarning($"Indirect draw stride mismatch. Expected {_indirectCommandStride} bytes, buffer reports {_indirectDrawBuffer.ElementSize}.");
+                Debug.LogWarning($"{FormatDebugPrefix("Buffers")} Indirect draw stride mismatch. Expected {_indirectCommandStride} bytes, buffer reports {_indirectDrawBuffer.ElementSize}.");
             }
 
             if (_indirectDrawBuffer.ElementCount < capacity)
             {
-                Debug.LogWarning($"Indirect draw buffer smaller than required capacity (buffer={_indirectDrawBuffer.ElementCount}, required={capacity}).");
+                Debug.LogWarning($"{FormatDebugPrefix("Buffers")} Indirect draw buffer smaller than required capacity (buffer={_indirectDrawBuffer.ElementCount}, required={capacity}).");
             }
 
             if (_drawCountBuffer is not null && _drawCountBuffer.ElementSize < sizeof(uint))
             {
-                Debug.LogWarning($"Draw count buffer is undersized ({_drawCountBuffer.ElementSize} bytes); expected at least {sizeof(uint)}.");
+                Debug.LogWarning($"{FormatDebugPrefix("Buffers")} Draw count buffer is undersized ({_drawCountBuffer.ElementSize} bytes); expected at least {sizeof(uint)}.");
             }
 
             if (_culledCountBuffer is not null && _culledCountBuffer.ElementSize < sizeof(uint))
             {
-                Debug.LogWarning($"Culled count buffer is undersized ({_culledCountBuffer.ElementSize} bytes); expected at least {sizeof(uint)}.");
+                Debug.LogWarning($"{FormatDebugPrefix("Buffers")} Culled count buffer is undersized ({_culledCountBuffer.ElementSize} bytes); expected at least {sizeof(uint)}.");
             }
 
             if (IndirectDebug.ValidateLiveHandles && !remapPending)
             {
                 if (_drawCountBuffer is not null && _drawCountBuffer.ActivelyMapping.Count == 0)
-                    Debug.LogWarning("Draw count buffer is not mapped; GPU count reads may see stale data.");
+                    Debug.LogWarning($"{FormatDebugPrefix("Buffers")} Draw count buffer is not mapped; GPU count reads may see stale data.");
 
                 if (_culledCountBuffer is not null && _culledCountBuffer.ActivelyMapping.Count == 0)
-                    Debug.LogWarning("Culled count buffer is not mapped; visibility counters may be invalid.");
+                    Debug.LogWarning($"{FormatDebugPrefix("Buffers")} Culled count buffer is not mapped; visibility counters may be invalid.");
             }
         }
 
