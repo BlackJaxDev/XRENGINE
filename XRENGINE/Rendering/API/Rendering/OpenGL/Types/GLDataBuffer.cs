@@ -68,6 +68,7 @@ namespace XREngine.Rendering.OpenGL
 
             private string RangeFlagsString() => Data.RangeFlags.ToString();
             private string StorageFlagsString() => Data.StorageFlags.ToString();
+            private string BufferNameOrTarget() => string.IsNullOrWhiteSpace(Data.AttributeName) ? Data.Target.ToString() : Data.AttributeName;
 
             public void BindToRenderer(GLRenderProgram vertexProgram, GLMeshRenderer? arrayBufferLink, bool pushDataNow = true)
             {
@@ -316,7 +317,8 @@ namespace XREngine.Rendering.OpenGL
 
             public void MapBufferData()
             {
-                if (Data.ActivelyMapping.Contains(this))
+                // If any API wrapper has already mapped this XRDataBuffer, skip remapping
+                if (Data.ActivelyMapping.Count > 0)
                 {
                     return;
                 }
@@ -337,12 +339,12 @@ namespace XREngine.Rendering.OpenGL
 
                 var glRange = (uint)ToGLEnum(Data.RangeFlags);
                 var glStorage = (uint)ToGLEnum(Data.StorageFlags);
-                Debug.Out($"[GLBuffer/Map] {GetDescribingName()} id={id} len={length} target={Data.Target} storage={StorageFlagsString()} (0x{glStorage:X}) range={RangeFlagsString()} (0x{glRange:X})");
+                Debug.Out($"[GLBuffer/Map] {GetDescribingName()} name={BufferNameOrTarget()} id={id} len={length} target={Data.Target} storage={StorageFlagsString()} (0x{glStorage:X}) range={RangeFlagsString()} (0x{glRange:X})");
 
                 var addr = Api.MapNamedBufferRange(id, IntPtr.Zero, length, glRange);
                 if (addr is null)
                 {
-                    Debug.LogWarning($"[GLBuffer/Map] {GetDescribingName()} returned null pointer.");
+                    Debug.LogWarning($"[GLBuffer/Map] {GetDescribingName()} name={BufferNameOrTarget()} returned null pointer.");
                     return;
                 }
                 GPUSideSource = new DataSource(addr, length);
@@ -362,7 +364,7 @@ namespace XREngine.Rendering.OpenGL
                 uint length;
                 var existingSource = Data.ClientSideSource;
                 var glStorage = (uint)ToGLEnum(Data.StorageFlags);
-                Debug.Out($"[GLBuffer/Storage] {GetDescribingName()} id={id} len={(existingSource?.Length ?? Data.Length)} storage={StorageFlagsString()} (0x{glStorage:X})");
+                Debug.Out($"[GLBuffer/Storage] {GetDescribingName()} name={BufferNameOrTarget()} id={id} len={(existingSource?.Length ?? Data.Length)} storage={StorageFlagsString()} (0x{glStorage:X})");
                 if (existingSource is not null)
                     Api.NamedBufferStorage(id, length = existingSource.Length, existingSource.Address.Pointer, glStorage);
                 else
@@ -378,7 +380,7 @@ namespace XREngine.Rendering.OpenGL
                 if (Engine.InvokeOnMainThread(UnmapBufferData))
                     return;
 
-                Debug.Out($"[GLBuffer/Unmap] {GetDescribingName()} id={BindingId}");
+                Debug.Out($"[GLBuffer/Unmap] {GetDescribingName()} name={BufferNameOrTarget()} id={BindingId}");
                 Api.UnmapNamedBuffer(BindingId);
                 Data.ActivelyMapping.Remove(this);
 
