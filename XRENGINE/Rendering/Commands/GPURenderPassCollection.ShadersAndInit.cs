@@ -8,70 +8,40 @@ namespace XREngine.Rendering.Commands
 {
     public sealed partial class GPURenderPassCollection
     {
+        private static void EnsurePersistentReadbackMapping(XRDataBuffer buffer)
+        {
+            if (buffer.ActivelyMapping.Count > 0)
+                return;
+
+            buffer.StorageFlags |= EBufferMapStorageFlags.DynamicStorage | EBufferMapStorageFlags.Read | EBufferMapStorageFlags.Persistent | EBufferMapStorageFlags.Coherent;
+            buffer.RangeFlags   |= EBufferMapRangeFlags.Read | EBufferMapRangeFlags.Persistent | EBufferMapRangeFlags.Coherent;
+            buffer.DisposeOnPush = false;
+            buffer.Usage = EBufferUsage.StreamRead;
+            buffer.Resizable = false;
+            buffer.MapBufferData();
+        }
+
         private void MapBuffers()
         {
             Dbg("MapBuffers begin","Buffers");
 
             if (_culledCountBuffer is not null)
-            {
-                // Persistent mapped readback for counters
-                _culledCountBuffer.StorageFlags |= EBufferMapStorageFlags.DynamicStorage | EBufferMapStorageFlags.Read | EBufferMapStorageFlags.Persistent | EBufferMapStorageFlags.Coherent;
-                _culledCountBuffer.RangeFlags   |= EBufferMapRangeFlags.Read | EBufferMapRangeFlags.Persistent | EBufferMapRangeFlags.Coherent;
-                _culledCountBuffer.DisposeOnPush = false;
-                _culledCountBuffer.Usage = EBufferUsage.StreamRead;
-                _culledCountBuffer.Resizable = false;
-                _culledCountBuffer.MapBufferData();
-            }
+                EnsurePersistentReadbackMapping(_culledCountBuffer);
 
             if (_drawCountBuffer is not null)
-            {
-                _drawCountBuffer.StorageFlags |= EBufferMapStorageFlags.DynamicStorage | EBufferMapStorageFlags.Read | EBufferMapStorageFlags.Persistent | EBufferMapStorageFlags.Coherent;
-                _drawCountBuffer.RangeFlags   |= EBufferMapRangeFlags.Read | EBufferMapRangeFlags.Persistent | EBufferMapRangeFlags.Coherent;
-                _drawCountBuffer.DisposeOnPush = false;
-                _drawCountBuffer.Usage = EBufferUsage.StreamRead;
-                _drawCountBuffer.Resizable = false;
-                _drawCountBuffer.MapBufferData();
-            }
+                EnsurePersistentReadbackMapping(_drawCountBuffer);
 
             if (_cullingOverflowFlagBuffer is not null)
-            {
-                _cullingOverflowFlagBuffer.StorageFlags |= EBufferMapStorageFlags.DynamicStorage | EBufferMapStorageFlags.Read | EBufferMapStorageFlags.Persistent | EBufferMapStorageFlags.Coherent;
-                _cullingOverflowFlagBuffer.RangeFlags   |= EBufferMapRangeFlags.Read | EBufferMapRangeFlags.Persistent | EBufferMapRangeFlags.Coherent;
-                _cullingOverflowFlagBuffer.DisposeOnPush = false;
-                _cullingOverflowFlagBuffer.Usage = EBufferUsage.StreamRead;
-                _cullingOverflowFlagBuffer.Resizable = false;
-                _cullingOverflowFlagBuffer.MapBufferData();
-            }
+                EnsurePersistentReadbackMapping(_cullingOverflowFlagBuffer);
 
             if (_indirectOverflowFlagBuffer is not null)
-            {
-                _indirectOverflowFlagBuffer.StorageFlags |= EBufferMapStorageFlags.DynamicStorage | EBufferMapStorageFlags.Read | EBufferMapStorageFlags.Persistent | EBufferMapStorageFlags.Coherent;
-                _indirectOverflowFlagBuffer.RangeFlags   |= EBufferMapRangeFlags.Read | EBufferMapRangeFlags.Persistent | EBufferMapRangeFlags.Coherent;
-                _indirectOverflowFlagBuffer.DisposeOnPush = false;
-                _indirectOverflowFlagBuffer.Usage = EBufferUsage.StreamRead;
-                _indirectOverflowFlagBuffer.Resizable = false;
-                _indirectOverflowFlagBuffer.MapBufferData();
-            }
+                EnsurePersistentReadbackMapping(_indirectOverflowFlagBuffer);
 
             if (_statsBuffer is not null)
-            {
-                _statsBuffer.StorageFlags |= EBufferMapStorageFlags.DynamicStorage | EBufferMapStorageFlags.Read | EBufferMapStorageFlags.Persistent | EBufferMapStorageFlags.Coherent;
-                _statsBuffer.RangeFlags   |= EBufferMapRangeFlags.Read | EBufferMapRangeFlags.Persistent | EBufferMapRangeFlags.Coherent;
-                _statsBuffer.DisposeOnPush = false;
-                _statsBuffer.Usage = EBufferUsage.StreamRead;
-                _statsBuffer.Resizable = false;
-                _statsBuffer.MapBufferData();
-            }
+                EnsurePersistentReadbackMapping(_statsBuffer);
 
             if (_truncationFlagBuffer is not null)
-            {
-                _truncationFlagBuffer.StorageFlags |= EBufferMapStorageFlags.DynamicStorage | EBufferMapStorageFlags.Read | EBufferMapStorageFlags.Persistent | EBufferMapStorageFlags.Coherent;
-                _truncationFlagBuffer.RangeFlags   |= EBufferMapRangeFlags.Read | EBufferMapRangeFlags.Persistent | EBufferMapRangeFlags.Coherent;
-                _truncationFlagBuffer.DisposeOnPush = false;
-                _truncationFlagBuffer.Usage = EBufferUsage.StreamRead;
-                _truncationFlagBuffer.Resizable = false;
-                _truncationFlagBuffer?.MapBufferData();
-            }
+                EnsurePersistentReadbackMapping(_truncationFlagBuffer);
 
             Dbg("MapBuffers complete","Buffers");
         }
