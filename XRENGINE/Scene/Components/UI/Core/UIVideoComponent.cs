@@ -1,7 +1,4 @@
 ﻿using FFmpeg.AutoGen;
-using FlyleafLib;
-using FlyleafLib.Controls;
-using FlyleafLib.MediaPlayer;
 using System.Collections.Concurrent;
 using System.ComponentModel;
 using System.Reflection.Metadata;
