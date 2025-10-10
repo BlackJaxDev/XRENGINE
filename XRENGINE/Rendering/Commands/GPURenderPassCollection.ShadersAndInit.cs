@@ -23,6 +23,12 @@ namespace XREngine.Rendering.Commands
 
         private void MapBuffers()
         {
+            if (_buffersMapped)
+            {
+                Dbg("MapBuffers skipped; already mapped","Buffers");
+                return;
+            }
+
             Dbg("MapBuffers begin","Buffers");
 
             if (_culledCountBuffer is not null)
@@ -43,6 +49,8 @@ namespace XREngine.Rendering.Commands
             if (_truncationFlagBuffer is not null)
                 EnsurePersistentReadbackMapping(_truncationFlagBuffer);
 
+            _buffersMapped = true;
+
             Dbg("MapBuffers complete","Buffers");
         }
 
@@ -57,6 +65,8 @@ namespace XREngine.Rendering.Commands
             //_histogramIndexBuffer?.UnmapBufferData();
             _statsBuffer?.UnmapBufferData();
             _truncationFlagBuffer?.UnmapBufferData();
+
+            _buffersMapped = false;
 
             Dbg("UnmapBuffers complete","Buffers");
         }
@@ -109,7 +119,7 @@ namespace XREngine.Rendering.Commands
             _lastMaxCommands = max;
             bool remapNeeded = RegenerateBuffers(scene);
 
-            if (remapNeeded)
+            if (remapNeeded || !_buffersMapped)
                 MapBuffers();
 
             Dbg($"Capacity change -> RegenerateBuffers newMax={max}", "Buffers");
@@ -122,7 +132,7 @@ namespace XREngine.Rendering.Commands
 
             bool remapNeeded = RegenerateBuffers(scene);
             GenerateShaders();
-            if (remapNeeded)
+            if (remapNeeded || !_buffersMapped)
                 MapBuffers();
             MakeIndirectRenderer(scene);
 
@@ -287,7 +297,7 @@ namespace XREngine.Rendering.Commands
 
         private bool EnsureParameterBuffer(ref XRDataBuffer? buffer, string name)
         {
-            bool created = false;
+            bool requiresMapping = false;
 
             if (buffer is not null)
             {
@@ -297,6 +307,7 @@ namespace XREngine.Rendering.Commands
                     Debug.LogWarning($"Parameter buffer {name} has unexpected layout. Recreating.");
                     buffer.Destroy();
                     buffer = null;
+                    requiresMapping = true;
                 }
             }
 
@@ -314,21 +325,27 @@ namespace XREngine.Rendering.Commands
                 buffer.Generate();
                 buffer.SetDataRawAtIndex(0, 0u);
                 buffer.PushSubData();
-                created = true;
+                requiresMapping = true;
             }
 
-            if (!created && IndirectDebug.ForceParameterRemap && buffer is not null)
+            if (!requiresMapping && IndirectDebug.ForceParameterRemap && buffer is not null)
             {
                 buffer.UnmapBufferData();
-                created = true;
+                requiresMapping = true;
             }
 
-            return created || (buffer is not null && buffer.ActivelyMapping.Count == 0);
+            if (buffer is not null && buffer.ActivelyMapping.Count == 0)
+                requiresMapping = true;
+
+            if (requiresMapping)
+                _buffersMapped = false;
+
+            return requiresMapping;
         }
 
         private bool EnsureFlagBuffer(ref XRDataBuffer? buffer, string name)
         {
-            bool created = false;
+            bool requiresMapping = false;
 
             if (buffer is null)
             {
@@ -345,10 +362,16 @@ namespace XREngine.Rendering.Commands
                 buffer.Generate();
                 buffer.SetDataRawAtIndex(0, 0u);
                 buffer.PushSubData();
-                created = true;
+                requiresMapping = true;
             }
 
-            return created || (buffer is not null && buffer.ActivelyMapping.Count == 0);
+            if (buffer is not null && buffer.ActivelyMapping.Count == 0)
+                requiresMapping = true;
+
+            if (requiresMapping)
+                _buffersMapped = false;
+
+            return requiresMapping;
         }
 
         private void ValidateIndirectBufferLayout(uint capacity, bool remapPending)

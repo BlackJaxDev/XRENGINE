@@ -150,6 +150,7 @@ namespace XREngine.Rendering.Commands
         private bool _disposed = false;
         private bool _initialized = false;
         private uint _lastMaxCommands = 0;
+        private bool _buffersMapped = false;
 
         // Configuration flags
         //public bool UseSoA { get; set; } = false;  // Experimental Structure-of-Arrays path
