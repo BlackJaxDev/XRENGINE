@@ -8,8 +8,20 @@ namespace XREngine.Rendering.Commands
 {
     public sealed partial class GPURenderPassCollection
     {
+        // Per-buffer remap flags so we only remap what actually needs it
+        private bool _culledCountNeedsMap;
+        private bool _drawCountNeedsMap;
+        private bool _cullingOverflowNeedsMap;
+        private bool _indirectOverflowNeedsMap;
+        private bool _statsNeedsMap;
+        private bool _truncationNeedsMap;
+
         private static void EnsurePersistentReadbackMapping(XRDataBuffer buffer)
         {
+            // Never persistently map GL parameter buffers; drivers may stall or misbehave
+            if (buffer.Target == EBufferTarget.ParameterBuffer)
+                return;
+
             if (buffer.ActivelyMapping.Count > 0)
                 return;
 
@@ -23,31 +35,72 @@ namespace XREngine.Rendering.Commands
 
         private void MapBuffers()
         {
-            if (_buffersMapped)
+            // Determine if any buffer specifically needs to be remapped
+            bool anyFlagged = _culledCountNeedsMap || _drawCountNeedsMap || _cullingOverflowNeedsMap || _indirectOverflowNeedsMap || _statsNeedsMap || _truncationNeedsMap;
+
+            // If nothing is flagged and we've already mapped previously, skip
+            if (!anyFlagged && _buffersMapped)
             {
-                Dbg("MapBuffers skipped; already mapped","Buffers");
+                Dbg("MapBuffers skipped; no buffers flagged for remap","Buffers");
                 return;
             }
 
             Dbg("MapBuffers begin","Buffers");
 
-            if (_culledCountBuffer is not null)
-                EnsurePersistentReadbackMapping(_culledCountBuffer);
+            // If nothing is flagged but we haven't mapped yet, perform initial mapping for any existing buffers
+            if (!anyFlagged && !_buffersMapped)
+            {
+                // Do NOT map parameter buffers; only map SSBO/flag buffers for readback
+                if (_cullingOverflowFlagBuffer is not null)
+                    EnsurePersistentReadbackMapping(_cullingOverflowFlagBuffer);
+                if (_indirectOverflowFlagBuffer is not null)
+                    EnsurePersistentReadbackMapping(_indirectOverflowFlagBuffer);
+                if (_statsBuffer is not null)
+                    EnsurePersistentReadbackMapping(_statsBuffer);
+                if (_truncationFlagBuffer is not null)
+                    EnsurePersistentReadbackMapping(_truncationFlagBuffer);
 
-            if (_drawCountBuffer is not null)
-                EnsurePersistentReadbackMapping(_drawCountBuffer);
+                _buffersMapped = true;
+                Dbg("MapBuffers complete (initial)","Buffers");
+                return;
+            }
 
-            if (_cullingOverflowFlagBuffer is not null)
+            // Otherwise, selectively map only the buffers that were flagged
+            if (_culledCountNeedsMap && _culledCountBuffer is not null)
+            {
+                // Skip mapping for parameter buffers; just clear the flag
+                _culledCountNeedsMap = false;
+            }
+
+            if (_drawCountNeedsMap && _drawCountBuffer is not null)
+            {
+                // Skip mapping for parameter buffers; just clear the flag
+                _drawCountNeedsMap = false;
+            }
+
+            if (_cullingOverflowNeedsMap && _cullingOverflowFlagBuffer is not null)
+            {
                 EnsurePersistentReadbackMapping(_cullingOverflowFlagBuffer);
+                _cullingOverflowNeedsMap = false;
+            }
 
-            if (_indirectOverflowFlagBuffer is not null)
+            if (_indirectOverflowNeedsMap && _indirectOverflowFlagBuffer is not null)
+            {
                 EnsurePersistentReadbackMapping(_indirectOverflowFlagBuffer);
+                _indirectOverflowNeedsMap = false;
+            }
 
-            if (_statsBuffer is not null)
+            if (_statsNeedsMap && _statsBuffer is not null)
+            {
                 EnsurePersistentReadbackMapping(_statsBuffer);
+                _statsNeedsMap = false;
+            }
 
-            if (_truncationFlagBuffer is not null)
+            if (_truncationNeedsMap && _truncationFlagBuffer is not null)
+            {
                 EnsurePersistentReadbackMapping(_truncationFlagBuffer);
+                _truncationNeedsMap = false;
+            }
 
             _buffersMapped = true;
 
@@ -214,7 +267,6 @@ namespace XREngine.Rendering.Commands
         {
             Dbg("RegenerateBuffers begin","Buffers");
             uint capacity = gpuScene.AllocatedMaxCommandCount;
-            bool remapNeeded = false;
 
             if (_culledSceneToRenderBuffer is null || _culledSceneToRenderBuffer.ElementCount != capacity)
             {
@@ -222,11 +274,12 @@ namespace XREngine.Rendering.Commands
                 _culledSceneToRenderBuffer = MakeCulledSceneToRenderBuffer(capacity);
             }
 
-            remapNeeded |= EnsureIndirectDrawBuffer(capacity);
-            remapNeeded |= EnsureParameterBuffer(ref _culledCountBuffer, "CulledCount");
-            remapNeeded |= EnsureParameterBuffer(ref _drawCountBuffer, "DrawCount");
-            remapNeeded |= EnsureFlagBuffer(ref _cullingOverflowFlagBuffer, "CullingOverflowFlag");
-            remapNeeded |= EnsureFlagBuffer(ref _indirectOverflowFlagBuffer, "IndirectOverflowFlag");
+            // Track remap needs per-buffer
+            bool indirectDrawRecreated = EnsureIndirectDrawBuffer(capacity);
+            _culledCountNeedsMap = EnsureParameterBuffer(ref _culledCountBuffer, "CulledCount");
+            _drawCountNeedsMap = EnsureParameterBuffer(ref _drawCountBuffer, "DrawCount");
+            _cullingOverflowNeedsMap = EnsureFlagBuffer(ref _cullingOverflowFlagBuffer, "CullingOverflowFlag");
+            _indirectOverflowNeedsMap = EnsureFlagBuffer(ref _indirectOverflowFlagBuffer, "IndirectOverflowFlag");
 
             if (_sortedCommandBuffer is null || _sortedCommandBuffer.ElementCount != capacity)
             {
@@ -252,12 +305,16 @@ namespace XREngine.Rendering.Commands
             // Ensure material IDs buffer exists for batching keys
             EnsureMaterialIDs(capacity);
 
+            // Aggregate whether any buffer mapping is pending
+            bool anyRemapPending = _culledCountNeedsMap || _drawCountNeedsMap || _cullingOverflowNeedsMap || _indirectOverflowNeedsMap || _statsNeedsMap || _truncationNeedsMap;
+
             if (IndirectDebug.ValidateBufferLayouts)
-                ValidateIndirectBufferLayout(capacity, remapNeeded);
+                ValidateIndirectBufferLayout(capacity, anyRemapPending);
 
             Dbg($"RegenerateBuffers complete capacity={capacity}","Buffers");
 
-            return remapNeeded;
+            // Return whether any mapping work is pending (independent of indirect draw recreation)
+            return anyRemapPending;
         }
 
         private bool EnsureIndirectDrawBuffer(uint capacity)
@@ -328,18 +385,18 @@ namespace XREngine.Rendering.Commands
                 requiresMapping = true;
             }
 
-            if (!requiresMapping && IndirectDebug.ForceParameterRemap && buffer is not null)
+            // Only force a remap before the initial mapping has occurred
+            if (!requiresMapping && IndirectDebug.ForceParameterRemap && buffer is not null && !_buffersMapped)
             {
                 buffer.UnmapBufferData();
                 requiresMapping = true;
             }
 
-            if (buffer is not null && buffer.ActivelyMapping.Count == 0)
+            // If nothing has been mapped yet, mark for mapping; otherwise, keep persistent mapping
+            if (buffer is not null && buffer.ActivelyMapping.Count == 0 && !_buffersMapped)
                 requiresMapping = true;
 
-            if (requiresMapping)
-                _buffersMapped = false;
-
+            // Do not toggle a global mapping state here; just return the per-buffer requirement
             return requiresMapping;
         }
 
@@ -362,15 +419,19 @@ namespace XREngine.Rendering.Commands
                 buffer.Generate();
                 buffer.SetDataRawAtIndex(0, 0u);
                 buffer.PushSubData();
-                requiresMapping = true;
+
+                // Map immediately on creation to avoid later stalls when GPU may be using the buffer
+                EnsurePersistentReadbackMapping(buffer);
+                requiresMapping = false; // already mapped
+            }
+            else
+            {
+                // If nothing has been mapped yet and we're still in pre-mapping stage, request mapping
+                if (buffer.ActivelyMapping.Count == 0 && !_buffersMapped)
+                    requiresMapping = true;
             }
 
-            if (buffer is not null && buffer.ActivelyMapping.Count == 0)
-                requiresMapping = true;
-
-            if (requiresMapping)
-                _buffersMapped = false;
-
+            // Do not toggle a global mapping state here; just return the per-buffer requirement
             return requiresMapping;
         }
 
