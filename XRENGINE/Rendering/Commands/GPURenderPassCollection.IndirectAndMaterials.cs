@@ -57,7 +57,7 @@ namespace XREngine.Rendering.Commands
 
                 if (cullOv != 0 || indOv != 0 || trunc != 0)
                 {
-                    Debug.LogWarning($"GPU Render Overflow: Culling={cullOv} Indirect={indOv} Trunc={trunc}");
+                    Debug.LogWarning($"{FormatDebugPrefix("Stats")} GPU Render Overflow: Culling={cullOv} Indirect={indOv} Trunc={trunc}");
                     Dbg($"Overflow flags cull={cullOv} indirect={indOv} trunc={trunc}", "Stats");
                 }
             }
@@ -73,7 +73,7 @@ namespace XREngine.Rendering.Commands
                 uint frustumRej = values[3];
                 uint distRej = values[4];
 
-                Debug.Out($"[GPU Stats] In={input} CulledOut={culled} Draws={drawn} RejFrustum={frustumRej} RejDist={distRej}");
+                Debug.Out($"{FormatDebugPrefix("Stats")} [GPU Stats] In={input} CulledOut={culled} Draws={drawn} RejFrustum={frustumRej} RejDist={distRej}");
                 Dbg($"Stats in={input} culled={culled} draws={drawn} frustumRej={frustumRej} distRej={distRej}", "Stats");
             }
             Dbg("Render end", "Lifecycle");
@@ -163,7 +163,7 @@ namespace XREngine.Rendering.Commands
             uint drawReported = ReadUInt(_drawCountBuffer);
 
             if (IndirectDebug.LogCountBufferWrites)
-                Debug.Out($"[Indirect/Count] GPU reported {drawReported} visible={VisibleCommandCount}");
+                Debug.Out($"{FormatDebugPrefix("Indirect")} [Indirect/Count] GPU reported {drawReported} visible={VisibleCommandCount}");
 
             if (IndirectDebug.DumpIndirectArguments)
                 DumpIndirectSummary(drawReported);
@@ -180,8 +180,9 @@ namespace XREngine.Rendering.Commands
             uint sampleCount = drawReported == 0 ? VisibleCommandCount : drawReported;
             sampleCount = Math.Min(sampleCount, 8u);
 
+            string prefix = FormatDebugPrefix("Indirect");
             var message = new StringBuilder()
-                .AppendLine($"[Indirect/Dump] drawReported={drawReported} visible={VisibleCommandCount} batches={CurrentBatches?.Count ?? 0}")
+                .AppendLine($"{prefix} [Indirect/Dump] drawReported={drawReported} visible={VisibleCommandCount} batches={CurrentBatches?.Count ?? 0}")
                 .AppendLine($"  CountBufferMapped={(_drawCountBuffer?.ActivelyMapping.Count > 0)} CulledBufferMapped={(_culledCountBuffer?.ActivelyMapping.Count > 0)}")
                 .AppendLine($"  SampleCount={sampleCount}");
 

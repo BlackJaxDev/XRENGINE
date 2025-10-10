@@ -1,4 +1,5 @@
 ﻿using ImageMagick;
+using System.Collections.Generic;
 using System.Numerics;
 using XREngine.Components;
 using XREngine.Core;
@@ -17,8 +18,15 @@ namespace XREngine.Rendering;
 /// </summary>
 public sealed partial class XRRenderPipelineInstance : XRBase
 {
-    public XRRenderPipelineInstance() { }
-    public XRRenderPipelineInstance(RenderPipeline pipeline) => Pipeline = pipeline;
+    public XRRenderPipelineInstance()
+    {
+        MeshRenderCommands.SetOwnerPipeline(this);
+    }
+
+    public XRRenderPipelineInstance(RenderPipeline pipeline) : this()
+    {
+        Pipeline = pipeline;
+    }
 
     /// <summary>
     /// This collection contains mesh rendering commands pre-sorted for consuption by a render pass.
@@ -33,6 +41,60 @@ public sealed partial class XRRenderPipelineInstance : XRBase
     {
         get => _pipeline ?? SetFieldReturn(ref _pipeline, new DefaultRenderPipeline());
         set => SetField(ref _pipeline, value);
+    }
+
+    /// <summary>
+    /// Builds a human-readable descriptor for debugging the active pipeline state.
+    /// </summary>
+    public string DebugDescriptor
+    {
+        get
+        {
+            RenderPipeline? pipeline = _pipeline ?? Pipeline;
+            string pipelineName = pipeline?.DebugName ?? "UnknownPipeline";
+
+            string cameraDescription = RenderState.SceneCamera is { } cam
+                ? DescribeCamera(cam)
+                : "Camera=<none>";
+
+            string viewportDescription = RenderState.WindowViewport is { } viewport
+                ? DescribeViewport(viewport)
+                : "Viewport=<none>";
+
+            string extraTags = BuildTagString(RenderState.ShadowPass, RenderState.StereoPass);
+
+            return string.IsNullOrEmpty(extraTags)
+                ? $"{pipelineName} | {cameraDescription} | {viewportDescription}"
+                : $"{pipelineName} | {cameraDescription} | {viewportDescription} {extraTags}";
+        }
+    }
+
+    private static string DescribeCamera(XRCamera cam)
+    {
+        string typeName = cam.GetType().Name;
+        string? nodeName = cam.Transform.SceneNode?.Name;
+        if (!string.IsNullOrWhiteSpace(nodeName))
+            return $"Camera={nodeName} ({typeName})";
+        return $"Camera={typeName}";
+    }
+
+    private static string DescribeViewport(XRViewport viewport)
+    {
+        string baseName = viewport.Window?.Window?.Title;
+        if (string.IsNullOrWhiteSpace(baseName))
+            baseName = "Viewport";
+        return $"Viewport={baseName}#{viewport.Index} ({viewport.Width}x{viewport.Height})";
+    }
+
+    private static string BuildTagString(bool isShadow, bool isStereo)
+    {
+        var tags = new List<string>(2);
+        if (isShadow)
+            tags.Add("Shadow");
+        if (isStereo)
+            tags.Add("Stereo");
+
+        return tags.Count == 0 ? string.Empty : $"[{string.Join(",", tags)}]";
     }
 
     /// <summary>

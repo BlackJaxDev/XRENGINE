@@ -17,11 +17,11 @@ namespace XREngine.Rendering.Commands
         /// <param name="values">The span to populate with the unsigned integer values read from the buffer. The length of the span
         /// determines the number of values to read.</param>
         /// <exception cref="Exception">Thrown if the buffer's mapped address is null.</exception>
-        private static unsafe void ReadUints(XRDataBuffer buf, Span<uint> values)
+        private unsafe void ReadUints(XRDataBuffer buf, Span<uint> values)
         {
             if (buf.APIWrappers.FirstOrDefault() is GLDataBuffer firstApiWrapper && !firstApiWrapper.IsMapped)
             {
-                Debug.LogWarning("ReadUints failed - buffer not mapped");
+                Debug.LogWarning($"{FormatDebugPrefix("Buffers")} ReadUints failed - buffer not mapped");
                 for (int i = 0; i < values.Length; i++)
                     values[i] = 0;
                 return;
@@ -45,7 +45,7 @@ namespace XREngine.Rendering.Commands
         /// caller is responsible for ensuring that the buffer has sufficient capacity to store the values.</remarks>
         /// <param name="buf">The data buffer to which the unsigned integers will be written.</param>
         /// <param name="values">An array of unsigned integers to write to the buffer. This parameter can be empty.</param>
-        private static unsafe void WriteUints(XRDataBuffer buf, params uint[] values)
+        private unsafe void WriteUints(XRDataBuffer buf, params uint[] values)
             => WriteUints(buf, values.AsSpan());
 
         /// <summary>
@@ -58,7 +58,7 @@ namespace XREngine.Rendering.Commands
         /// this method.</param>
         /// <param name="values">A read-only span of unsigned integers to write to the buffer.</param>
         /// <exception cref="Exception">Thrown if the buffer's mapped address is null.</exception>
-        private static unsafe void WriteUints(XRDataBuffer buf, ReadOnlySpan<uint> values)
+        private unsafe void WriteUints(XRDataBuffer buf, ReadOnlySpan<uint> values)
         {
             var glWrapper = buf.APIWrappers.FirstOrDefault() as GLDataBuffer;
             bool isMapped = glWrapper?.IsMapped ?? false;
@@ -96,7 +96,7 @@ namespace XREngine.Rendering.Commands
         /// <param name="index">The zero-based index of the value to read within the mapped memory.</param>
         /// <returns>The unsigned 32-bit integer located at the specified index.</returns>
         /// <exception cref="Exception">Thrown if the mapped memory address is null.</exception>
-        private static unsafe uint ReadUIntAt(XRDataBuffer buf, uint index)
+        private unsafe uint ReadUIntAt(XRDataBuffer buf, uint index)
         {
             var glWrapper = buf.APIWrappers.FirstOrDefault() as GLDataBuffer;
             bool isMapped = glWrapper?.IsMapped ?? false;
@@ -124,7 +124,7 @@ namespace XREngine.Rendering.Commands
         /// <param name="index">The zero-based index within the buffer's mapped memory where the value will be written.</param>
         /// <param name="value">The unsigned integer value to write at the specified index.</param>
         /// <exception cref="Exception">Thrown if the buffer's mapped address is null.</exception>
-        private static unsafe void WriteUIntAt(XRDataBuffer buf, uint index, uint value)
+        private unsafe void WriteUIntAt(XRDataBuffer buf, uint index, uint value)
         {
             var glWrapper = buf.APIWrappers.FirstOrDefault() as GLDataBuffer;
             bool isMapped = glWrapper?.IsMapped ?? false;
@@ -155,7 +155,7 @@ namespace XREngine.Rendering.Commands
         /// <param name="buf">The <see cref="XRDataBuffer"/> from which to read the value. The buffer must be mapped.</param>
         /// <returns>The unsigned integer value read from the buffer. Returns 0 if the buffer is not mapped.</returns>
         /// <exception cref="Exception">Thrown if the buffer is mapped but the mapped address is a null pointer.</exception>
-        private static uint ReadUInt(XRDataBuffer buf)
+        private uint ReadUInt(XRDataBuffer buf)
         {
             var glWrapper = buf.APIWrappers.FirstOrDefault() as GLDataBuffer;
             bool isMapped = glWrapper?.IsMapped ?? false;
@@ -180,7 +180,7 @@ namespace XREngine.Rendering.Commands
         /// <param name="value">The unsigned integer value to write to the buffer.</param>
         /// <returns></returns>
         /// <exception cref="Exception"></exception>
-        private static uint WriteUInt(XRDataBuffer buf, uint value)
+        private uint WriteUInt(XRDataBuffer buf, uint value)
         {
             var glWrapper = buf.APIWrappers.FirstOrDefault() as GLDataBuffer;
             bool isMapped = glWrapper?.IsMapped ?? false;
@@ -206,7 +206,7 @@ namespace XREngine.Rendering.Commands
             if (IndirectDebug.LogCountBufferWrites)
             {
                 string label = buf.AttributeName ?? buf.Target.ToString();
-                Debug.Out($"[Indirect/Count] {label} <= {value}");
+                Debug.Out($"{FormatDebugPrefix("Indirect")} [Indirect/Count] {label} <= {value}");
             }
 
             return value;
@@ -330,7 +330,7 @@ namespace XREngine.Rendering.Commands
 
             if (spheres is null || meta is null)
             {
-                Debug.LogWarning("SoA extraction buffers not available");
+                Debug.LogWarning($"{FormatDebugPrefix("SoA")} SoA extraction buffers not available");
                 return;
             }
 

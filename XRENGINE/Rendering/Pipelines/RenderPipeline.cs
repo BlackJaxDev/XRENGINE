@@ -15,8 +15,14 @@ public abstract class RenderPipeline : XRBase
     public List<XRRenderPipelineInstance> Instances { get; } = [];
 
     protected abstract Lazy<XRMaterial> InvalidMaterialFactory { get; }
-    public XRMaterial InvalidMaterial 
+    public XRMaterial InvalidMaterial
         => InvalidMaterialFactory.Value;
+
+    /// <summary>
+    /// Human readable identifier for debug output.
+    /// Derived pipelines can override this to expose a friendlier label.
+    /// </summary>
+    public virtual string DebugName => GetType().Name;
 
     private bool _isShadowPass;
     public bool IsShadowPass
