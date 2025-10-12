@@ -377,13 +377,24 @@ namespace XREngine.Rendering.Commands
                     Resizable = false,
                     PadEndingToVec4 = false,
                 };
-                buffer.StorageFlags |= EBufferMapStorageFlags.DynamicStorage | EBufferMapStorageFlags.Read | EBufferMapStorageFlags.Persistent | EBufferMapStorageFlags.Coherent;
-                buffer.RangeFlags |= EBufferMapRangeFlags.Read | EBufferMapRangeFlags.Persistent | EBufferMapRangeFlags.Coherent;
+
                 buffer.Generate();
                 buffer.SetDataRawAtIndex(0, 0u);
                 buffer.PushSubData();
                 requiresMapping = true;
             }
+
+            // Parameter buffers participate in GPU writes via compute shaders and are rebound as
+            // GL_PARAMETER_BUFFER for multi-draw indirect count submissions.  Several desktop
+            // drivers will hard-stall if these buffers are created with the persistent/coherent
+            // mapping bits set, so keep them as simple readback buffers that can be mapped on
+            // demand.  We still request DynamicStorage so the GPU can update the contents without
+            // forcing a reallocation, but omit Persistent/Coherent so glMapNamedBufferRange issues
+            // a one-off read-only mapping instead of a long-lived persistent map.
+            buffer.StorageFlags &= ~(EBufferMapStorageFlags.Persistent | EBufferMapStorageFlags.Coherent);
+            buffer.RangeFlags &= ~(EBufferMapRangeFlags.Persistent | EBufferMapRangeFlags.Coherent);
+            buffer.StorageFlags |= EBufferMapStorageFlags.DynamicStorage | EBufferMapStorageFlags.Read;
+            buffer.RangeFlags |= EBufferMapRangeFlags.Read;
 
             // Only force a remap before the initial mapping has occurred
             if (!requiresMapping && IndirectDebug.ForceParameterRemap && buffer is not null && !_buffersMapped)
