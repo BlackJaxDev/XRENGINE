@@ -1,4 +1,5 @@
-﻿using Silk.NET.Vulkan;
+using System;
+using Silk.NET.Vulkan;
 
 namespace XREngine.Rendering.Vulkan
 {
@@ -8,15 +9,25 @@ namespace XREngine.Rendering.Vulkan
 
         private void DestroyCommandBuffers()
         {
+            if (_commandBuffers is null)
+                return;
+
             fixed (CommandBuffer* commandBuffersPtr = _commandBuffers)
             {
-                Api!.FreeCommandBuffers(device, commandPool, (uint)_commandBuffers!.Length, commandBuffersPtr);
+                if (_commandBuffers.Length > 0)
+                    Api!.FreeCommandBuffers(device, commandPool, (uint)_commandBuffers.Length, commandBuffersPtr);
             }
+
+            _commandBuffers = null;
+            _commandBufferDirtyFlags = null;
         }
 
         private void CreateCommandBuffers()
         {
-            _commandBuffers = new CommandBuffer[swapChainFramebuffers!.Length];
+            if (swapChainFramebuffers is null || swapChainFramebuffers.Length == 0)
+                throw new InvalidOperationException("Framebuffers must be created before allocating command buffers.");
+
+            _commandBuffers = new CommandBuffer[swapChainFramebuffers.Length];
 
             CommandBufferAllocateInfo allocInfo = new()
             {
@@ -32,82 +43,98 @@ namespace XREngine.Rendering.Vulkan
                     throw new Exception("Failed to allocate command buffers.");
             }
 
-            for (int i = 0; i < _commandBuffers.Length; i++)
-                RunCommand(i, _commandBuffers[i]);
+            AllocateCommandBufferDirtyFlags();
         }
 
-        private void RunCommand(int i, CommandBuffer cmd)
+        private void EnsureCommandBufferRecorded(uint imageIndex)
         {
+            if (_commandBuffers is null)
+                throw new InvalidOperationException("Command buffers have not been allocated yet.");
+
+            if (_commandBufferDirtyFlags is null || imageIndex >= _commandBufferDirtyFlags.Length)
+                throw new InvalidOperationException("Command buffer dirty flags are not initialised correctly.");
+
+            if (!_commandBufferDirtyFlags[imageIndex])
+                return;
+
+            RecordCommandBuffer(imageIndex);
+            _commandBufferDirtyFlags[imageIndex] = false;
+        }
+
+        private void RecordCommandBuffer(uint imageIndex)
+        {
+            var commandBuffer = _commandBuffers![imageIndex];
+
+            Api!.ResetCommandBuffer(commandBuffer, 0);
+
             CommandBufferBeginInfo beginInfo = new()
             {
                 SType = StructureType.CommandBufferBeginInfo,
             };
 
-            if (Api!.BeginCommandBuffer(cmd, ref beginInfo) != Result.Success)
+            if (Api!.BeginCommandBuffer(commandBuffer, ref beginInfo) != Result.Success)
                 throw new Exception("Failed to begin recording command buffer.");
 
             RenderPassBeginInfo renderPassInfo = new()
             {
                 SType = StructureType.RenderPassBeginInfo,
                 RenderPass = _renderPass,
-                Framebuffer = swapChainFramebuffers![i],
-                RenderArea =
+                Framebuffer = swapChainFramebuffers![imageIndex],
+                RenderArea = new Rect2D
                 {
-                    Offset = { X = 0, Y = 0 },
-                    Extent = swapChainExtent,
+                    Offset = new Offset2D(0, 0),
+                    Extent = swapChainExtent
                 }
             };
 
-            var clearValues = new ClearValue[]
-            {
-                new()
-                {
-                    Color = new (){ Float32_0 = 0, Float32_1 = 0, Float32_2 = 0, Float32_3 = 1 },
-                },
-                new()
-                {
-                    DepthStencil = new () { Depth = 1, Stencil = 0 }
-                }
-            };
+            const uint attachmentCount = 1;
+            ClearValue* clearValues = stackalloc ClearValue[(int)attachmentCount];
+            _state.WriteClearValues(clearValues, attachmentCount);
 
-            fixed (ClearValue* clearValuesPtr = clearValues)
-            {
-                renderPassInfo.ClearValueCount = (uint)clearValues.Length;
-                renderPassInfo.PClearValues = clearValuesPtr;
+            renderPassInfo.ClearValueCount = attachmentCount;
+            renderPassInfo.PClearValues = clearValues;
 
-                Api!.CmdBeginRenderPass(cmd, &renderPassInfo, SubpassContents.Inline);
-            }
+            Api!.CmdBeginRenderPass(commandBuffer, &renderPassInfo, SubpassContents.Inline);
 
-            //_testModel?.Draw(cmd, descriptorSets![i]);
+            ApplyDynamicState(commandBuffer);
 
-            Api!.CmdEndRenderPass(cmd);
+            Api!.CmdEndRenderPass(commandBuffer);
 
-            if (Api!.EndCommandBuffer(cmd) != Result.Success)
+            if (Api!.EndCommandBuffer(commandBuffer) != Result.Success)
                 throw new Exception("Failed to record command buffer.");
         }
 
-        public class CommandScope(VulkanRenderer api, CommandBuffer cmd) : IDisposable
+        private void ApplyDynamicState(CommandBuffer commandBuffer)
         {
-            public CommandBuffer CommandBuffer => cmd;
+            Viewport viewport = _state.GetViewport();
+            Api!.CmdSetViewport(commandBuffer, 0, 1, &viewport);
+
+            Rect2D scissor = _state.GetScissor();
+            Api!.CmdSetScissor(commandBuffer, 0, 1, &scissor);
+        }
+
+        public class CommandScope : IDisposable
+        {
+            private readonly VulkanRenderer _api;
+
+            public CommandScope(VulkanRenderer api, CommandBuffer cmd)
+            {
+                _api = api;
+                CommandBuffer = cmd;
+            }
+
+            public CommandBuffer CommandBuffer { get; }
 
             public void Dispose()
             {
-                api.CommandsStop(CommandBuffer);
+                _api.CommandsStop(CommandBuffer);
                 GC.SuppressFinalize(this);
             }
         }
 
-        /// <summary>
-        /// Allocates a new command buffer scope.
-        /// </summary>
-        /// <returns></returns>
         private CommandScope NewCommandScope()
             => new(this, CommandsStart());
 
-        /// <summary>
-        /// Starts a new set of commands to execute.
-        /// </summary>
-        /// <returns></returns>
         private CommandBuffer CommandsStart()
         {
             CommandBufferAllocateInfo allocateInfo = new()
@@ -131,10 +158,6 @@ namespace XREngine.Rendering.Vulkan
             return commandBuffer;
         }
 
-        /// <summary>
-        /// Finishes the current set of commands and submits them to the graphics queue.
-        /// </summary>
-        /// <param name="commandBuffer"></param>
         private void CommandsStop(CommandBuffer commandBuffer)
         {
             Api!.EndCommandBuffer(commandBuffer);
@@ -150,6 +173,19 @@ namespace XREngine.Rendering.Vulkan
             Api!.QueueWaitIdle(graphicsQueue);
 
             Api!.FreeCommandBuffers(device, commandPool, 1, ref commandBuffer);
+        }
+
+        private void AllocateCommandBufferDirtyFlags()
+        {
+            if (_commandBuffers is null)
+            {
+                _commandBufferDirtyFlags = null;
+                return;
+            }
+
+            _commandBufferDirtyFlags = new bool[_commandBuffers.Length];
+            for (int i = 0; i < _commandBufferDirtyFlags.Length; i++)
+                _commandBufferDirtyFlags[i] = true;
         }
     }
 }

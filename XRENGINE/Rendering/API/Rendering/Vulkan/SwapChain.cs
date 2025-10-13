@@ -170,6 +170,7 @@ public unsafe partial class VulkanRenderer
 
         swapChainImageFormat = surfaceFormat.Format;
         swapChainExtent = extent;
+        OnSwapchainExtentChanged(swapChainExtent);
     }
 
     private SurfaceFormatKHR ChooseSwapSurfaceFormat(IReadOnlyList<SurfaceFormatKHR> availableFormats)
