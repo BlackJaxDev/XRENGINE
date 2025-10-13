@@ -8,36 +8,45 @@ public unsafe partial class VulkanRenderer
 
     private void DestroyFrameBuffers()
     {
-        foreach (var framebuffer in swapChainFramebuffers!)
-            Api!.DestroyFramebuffer(device, framebuffer, null);
+        if (swapChainFramebuffers is null)
+            return;
+
+        foreach (var framebuffer in swapChainFramebuffers)
+        {
+            if (framebuffer.Handle != 0)
+                Api!.DestroyFramebuffer(device, framebuffer, null);
+        }
+
+        swapChainFramebuffers = null;
     }
 
     private void CreateFramebuffers()
     {
-        swapChainFramebuffers = new Framebuffer[swapChainImageViews!.Length];
+        if (swapChainImageViews is null || swapChainImageViews.Length == 0)
+            throw new InvalidOperationException("Swapchain image views must be created before framebuffers.");
+
+        swapChainFramebuffers = new Framebuffer[swapChainImageViews.Length];
 
         for (int i = 0; i < swapChainImageViews.Length; i++)
         {
-            //ImageView[]? attachments = _depth == null 
-            //    ? ([swapChainImageViews[i]])
-            //    : ([swapChainImageViews[i], _depth.View]);
+            ImageView* attachmentsPtr = stackalloc ImageView[1];
+            attachmentsPtr[0] = swapChainImageViews[i];
 
-            //fixed (ImageView* attachmentsPtr = attachments)
-            //{
-            //    FramebufferCreateInfo framebufferInfo = new()
-            //    {
-            //        SType = StructureType.FramebufferCreateInfo,
-            //        RenderPass = renderPass,
-            //        AttachmentCount = (uint)attachments.Length,
-            //        PAttachments = attachmentsPtr,
-            //        Width = swapChainExtent.Width,
-            //        Height = swapChainExtent.Height,
-            //        Layers = 1,
-            //    };
+            FramebufferCreateInfo framebufferInfo = new()
+            {
+                SType = StructureType.FramebufferCreateInfo,
+                RenderPass = _renderPass,
+                AttachmentCount = 1,
+                PAttachments = attachmentsPtr,
+                Width = swapChainExtent.Width,
+                Height = swapChainExtent.Height,
+                Layers = 1,
+            };
 
-            //    if (Api!.CreateFramebuffer(device, ref framebufferInfo, null, out swapChainFramebuffers[i]) != Result.Success)
-            //        throw new Exception("Failed to create framebuffer.");
-            //}
+            if (Api!.CreateFramebuffer(device, ref framebufferInfo, null, out swapChainFramebuffers[i]) != Result.Success)
+                throw new Exception("Failed to create framebuffer.");
         }
+
+        AllocateCommandBufferDirtyFlags();
     }
 }
