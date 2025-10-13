@@ -248,7 +248,7 @@ namespace XREngine.Rendering.OpenGL
             //    Debug.LogWarning(name is null ? error.ToString() : $"{name}: {error}", 1);
         }
 
-        public bool LogGlErrors(string context)
+        public bool LogGLErrors(string context)
         {
             bool hadError = false;
             GLEnum error;

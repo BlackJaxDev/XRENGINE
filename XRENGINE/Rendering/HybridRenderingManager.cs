@@ -1,5 +1,4 @@
 using System;
-using System.Linq;
 using System.Runtime.InteropServices;
 using XREngine.Data.Core;
 using XREngine.Data.Rendering;
@@ -94,31 +93,7 @@ namespace XREngine.Rendering
         private static bool TryReadDrawCount(XRDataBuffer? parameterBuffer, out uint drawCount)
         {
             drawCount = 0;
-            if (parameterBuffer is null)
-                return false;
-
-            if (DebugSettings.ForceCpuFallbackCount)
-                return false;
-
-            if (!EnsureParameterBufferReady(parameterBuffer))
-                return false;
-
-            AbstractRenderer.Current?.MemoryBarrier(EMemoryBarrierMask.ClientMappedBuffer);
-
-            try
-            {
-                var addr = parameterBuffer.GetMappedAddresses().FirstOrDefault();
-                if (addr == IntPtr.Zero)
-                    return false;
-
-                drawCount = addr.UInt;
-                return true;
-            }
-            catch (Exception ex)
-            {
-                Debug.LogWarning($"Failed to read draw count from parameter buffer: {ex.Message}");
-                return false;
-            }
+            return false; // GPU pipeline operates without CPU readbacks.
         }
 
         private static void ClearIndirectTail(XRDataBuffer indirectDrawBuffer, XRDataBuffer? parameterBuffer, uint maxCommands)
@@ -194,24 +169,33 @@ namespace XREngine.Rendering
             if (DebugSettings.ValidateBufferLayouts)
                 ValidateIndirectBufferState(indirectDrawBuffer, maxCommands, stride);
 
-            if (useCount)
+            try
             {
-                renderer.BindParameterBuffer(parameterBuffer!);
-                renderer.MemoryBarrier(EMemoryBarrierMask.ClientMappedBuffer | EMemoryBarrierMask.Command);
-                LogIndirectPath(true, maxCommands, stride);
-                //renderer.MultiDrawElementsIndirectCount(maxCommands, stride);
-                renderer.UnbindParameterBuffer();
-            }
-            else
-            {
-                if (drawCount == 0)
-                    drawCount = maxCommands;
-                LogIndirectPath(false, drawCount, stride);
-                //renderer.MultiDrawElementsIndirect(drawCount, stride);
-            }
+                if (useCount)
+                {
+                    renderer.BindParameterBuffer(parameterBuffer!);
+                    renderer.MemoryBarrier(EMemoryBarrierMask.ClientMappedBuffer | EMemoryBarrierMask.Command);
+                    LogIndirectPath(true, maxCommands, stride);
+                    renderer.MultiDrawElementsIndirectCount(maxCommands, stride);
+                }
+                else
+                {
+                    if (drawCount == 0)
+                        drawCount = maxCommands;
+                    LogIndirectPath(false, drawCount, stride);
+                    renderer.MultiDrawElementsIndirect(drawCount, stride);
+                }
 
-            renderer.UnbindDrawIndirectBuffer();
-            renderer.BindVAOForRenderer(null);
+                LogGLErrors(renderer, useCount ? "MultiDrawElementsIndirectCount" : "MultiDrawElementsIndirect");
+            }
+            finally
+            {
+                if (useCount)
+                    renderer.UnbindParameterBuffer();
+
+                renderer.UnbindDrawIndirectBuffer();
+                renderer.BindVAOForRenderer(null);
+            }
         }
 
         private static void DispatchRenderIndirectRange(
@@ -247,23 +231,6 @@ namespace XREngine.Rendering
             nuint byteOffset = (nuint)(drawOffset * stride);
 
             uint effectiveDrawCount = drawCount;
-            if (TryReadDrawCount(parameterBuffer, out uint totalDraws))
-            {
-                if (drawOffset >= totalDraws)
-                {
-                    Debug.LogWarning($"Skipping indirect range: drawOffset={drawOffset} exceeds GPU draw count={totalDraws}.");
-                    renderer.UnbindDrawIndirectBuffer();
-                    renderer.BindVAOForRenderer(null);
-                    return;
-                }
-
-                uint remaining = totalDraws - drawOffset;
-                if (effectiveDrawCount > remaining)
-                {
-                    Debug.LogWarning($"Clamping indirect range count from {effectiveDrawCount} to remaining {remaining} (offset={drawOffset}, total={totalDraws}).");
-                    effectiveDrawCount = remaining;
-                }
-            }
 
             if (effectiveDrawCount == 0)
             {
@@ -293,7 +260,7 @@ namespace XREngine.Rendering
                 else
                     renderer.MultiDrawElementsIndirectWithOffset(effectiveDrawCount, stride, byteOffset);
 
-                LogGlErrors(renderer, usingCountPath ? "MultiDrawElementsIndirectCount" : "MultiDrawElementsIndirectWithOffset");
+                LogGLErrors(renderer, usingCountPath ? "MultiDrawElementsIndirectCount" : "MultiDrawElementsIndirectWithOffset");
             }
             finally
             {
@@ -305,13 +272,13 @@ namespace XREngine.Rendering
             }
         }
 
-        private static void LogGlErrors(AbstractRenderer renderer, string context)
+        private static void LogGLErrors(AbstractRenderer renderer, string context)
         {
             if (renderer is OpenGLRenderer glRenderer)
-                glRenderer.LogGlErrors(context);
+                glRenderer.LogGLErrors(context);
         }
 
-        private static bool EnsureParameterBufferReady(XRDataBuffer parameterBuffer)
+        private static bool EnsureParameterBufferReady(XRDataBuffer parameterBuffer, bool requireMapped = false)
         {
             if (DebugSettings.ValidateLiveHandles && parameterBuffer.APIWrappers.Count == 0)
             {
@@ -319,14 +286,21 @@ namespace XREngine.Rendering
                 return false;
             }
 
-            if (parameterBuffer.ActivelyMapping.Count == 0)
+            if (requireMapped)
             {
-                parameterBuffer.MapBufferData();
                 if (parameterBuffer.ActivelyMapping.Count == 0)
                 {
-                    Debug.LogWarning("Failed to map parameter buffer; falling back to non-count draw path.");
-                    return false;
+                    parameterBuffer.MapBufferData();
+                    if (parameterBuffer.ActivelyMapping.Count == 0)
+                    {
+                        Debug.LogWarning("Failed to map parameter buffer; falling back to non-count draw path.");
+                        return false;
+                    }
                 }
+            }
+            else if (parameterBuffer.ActivelyMapping.Count > 0)
+            {
+                parameterBuffer.UnmapBufferData();
             }
 
             return true;

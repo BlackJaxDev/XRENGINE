@@ -359,9 +359,12 @@ namespace XREngine.Rendering.Commands
             if (buffer is not null)
             {
                 bool invalidLayout = buffer.ElementCount != 1 || buffer.ComponentType != EComponentType.UInt;
-                if (invalidLayout)
+                bool missingStorage = (buffer.StorageFlags & (EBufferMapStorageFlags.DynamicStorage | EBufferMapStorageFlags.Read)) != (EBufferMapStorageFlags.DynamicStorage | EBufferMapStorageFlags.Read);
+                bool missingRange = !buffer.RangeFlags.HasFlag(EBufferMapRangeFlags.Read);
+
+                if (invalidLayout || missingStorage || missingRange)
                 {
-                    Debug.LogWarning($"{FormatDebugPrefix("Buffers")} Parameter buffer {name} has unexpected layout. Recreating.");
+                    Debug.LogWarning($"{FormatDebugPrefix("Buffers")} Parameter buffer {name} missing required layout/flags. Recreating.");
                     buffer.Destroy();
                     buffer = null;
                     requiresMapping = true;
@@ -376,6 +379,8 @@ namespace XREngine.Rendering.Commands
                     DisposeOnPush = false,
                     Resizable = false,
                     PadEndingToVec4 = false,
+                    StorageFlags = EBufferMapStorageFlags.DynamicStorage | EBufferMapStorageFlags.Read,
+                    RangeFlags = EBufferMapRangeFlags.Read,
                 };
 
                 buffer.Generate();
