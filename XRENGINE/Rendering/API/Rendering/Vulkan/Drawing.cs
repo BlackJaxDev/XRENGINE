@@ -32,11 +32,16 @@ namespace XREngine.Rendering.Vulkan
         }
         public override void MemoryBarrier(EMemoryBarrierMask mask)
         {
-            throw new NotImplementedException();
+            if (mask == EMemoryBarrierMask.None)
+                return;
+
+            _state.RegisterMemoryBarrier(mask);
+            MarkCommandBuffersDirty();
         }
         public override void ColorMask(bool red, bool green, bool blue, bool alpha)
         {
-            throw new NotImplementedException();
+            _state.SetColorMask(red, green, blue, alpha);
+            MarkCommandBuffersDirty();
         }
 
         public override void Blit(
@@ -94,7 +99,8 @@ namespace XREngine.Rendering.Vulkan
         }
         public override void ClearColor(ColorF4 color)
         {
-            throw new NotImplementedException();
+            _state.SetClearColor(color);
+            MarkCommandBuffersDirty();
         }
         public override bool CalcDotLuminance(XRTexture2DArray texture, Vector3 luminance, out float dotLuminance, bool genMipmapsNow)
         {
@@ -110,11 +116,13 @@ namespace XREngine.Rendering.Vulkan
         }
         public override void CropRenderArea(BoundingRectangle region)
         {
-            throw new NotImplementedException();
+            _state.SetScissor(region);
+            MarkCommandBuffersDirty();
         }
         public override void SetRenderArea(BoundingRectangle region)
         {
-            throw new NotImplementedException();
+            _state.SetViewport(region);
+            MarkCommandBuffersDirty();
         }
 
         private const int MAX_FRAMES_IN_FLIGHT = 2;
@@ -151,6 +159,8 @@ namespace XREngine.Rendering.Vulkan
 
             var waitSemaphores = stackalloc[] { imageAvailableSemaphores[currentFrame] };
             var waitStages = stackalloc[] { PipelineStageFlags.ColorAttachmentOutputBit };
+
+            EnsureCommandBufferRecorded(imageIndex);
 
             var buffer = _commandBuffers![imageIndex];
 

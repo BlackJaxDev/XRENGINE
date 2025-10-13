@@ -91,27 +91,33 @@ namespace XREngine.Rendering.Vulkan
 
         public override void StencilMask(uint mask)
         {
-            throw new NotImplementedException();
+            _state.SetStencilWriteMask(mask);
+            MarkCommandBuffersDirty();
         }
         public override void AllowDepthWrite(bool v)
         {
-            throw new NotImplementedException();
+            _state.SetDepthWriteEnabled(v);
+            MarkCommandBuffersDirty();
         }
         public override void ClearDepth(float v)
         {
-            throw new NotImplementedException();
+            _state.SetClearDepth(v);
+            MarkCommandBuffersDirty();
         }
         public override void ClearStencil(int v)
         {
-            throw new NotImplementedException();
+            _state.SetClearStencil(v);
+            MarkCommandBuffersDirty();
         }
         public override void EnableDepthTest(bool v)
         {
-            throw new NotImplementedException();
+            _state.SetDepthTestEnabled(v);
+            MarkCommandBuffersDirty();
         }
         public override void DepthFunc(EComparison always)
         {
-            throw new NotImplementedException();
+            _state.SetDepthCompare(ToVulkanCompareOp(always));
+            MarkCommandBuffersDirty();
         }
         public override void DispatchCompute(XRRenderProgram program, int numGroupsX, int numGroupsY, int numGroupsZ)
         {
@@ -131,7 +137,8 @@ namespace XREngine.Rendering.Vulkan
         }
         public override void Clear(bool color, bool depth, bool stencil)
         {
-            throw new NotImplementedException();
+            _state.SetClearState(color, depth, stencil);
+            MarkCommandBuffersDirty();
         }
         public override byte GetStencilIndex(float x, float y)
         {
@@ -139,7 +146,8 @@ namespace XREngine.Rendering.Vulkan
         }
         public override void SetCroppingEnabled(bool enabled)
         {
-            throw new NotImplementedException();
+            _state.SetCroppingEnabled(enabled);
+            MarkCommandBuffersDirty();
         }
 
         public void DeviceWaitIdle()
@@ -149,5 +157,19 @@ namespace XREngine.Rendering.Vulkan
         {
             return false;
         }
+
+        private static CompareOp ToVulkanCompareOp(EComparison comparison)
+            => comparison switch
+            {
+                EComparison.Never => CompareOp.Never,
+                EComparison.Less => CompareOp.Less,
+                EComparison.Equal => CompareOp.Equal,
+                EComparison.Lequal => CompareOp.LessOrEqual,
+                EComparison.Greater => CompareOp.Greater,
+                EComparison.Nequal => CompareOp.NotEqual,
+                EComparison.Gequal => CompareOp.GreaterOrEqual,
+                EComparison.Always => CompareOp.Always,
+                _ => CompareOp.Always
+            };
     }
 }
