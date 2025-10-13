@@ -153,6 +153,10 @@ namespace XREngine.Rendering.Commands
             if (_drawCountBuffer is null || _culledCountBuffer is null)
                 return;
 
+            bool allowCpuReadback = !IndirectDebug.DisableCpuReadbackCount || IndirectDebug.ForceCpuFallbackCount;
+            if (!allowCpuReadback)
+                return;
+
             if (IndirectDebug.ForceCpuFallbackCount)
             {
                 WriteUInt(_drawCountBuffer, VisibleCommandCount);
@@ -168,7 +172,7 @@ namespace XREngine.Rendering.Commands
             if (IndirectDebug.DumpIndirectArguments)
                 DumpIndirectSummary(drawReported);
 
-            if (drawReported == 0 && VisibleCommandCount > 0)
+            if (drawReported == 0 && VisibleCommandCount > 0 && !IndirectDebug.DisableCpuReadbackCount)
             {
                 WriteUInt(_drawCountBuffer, VisibleCommandCount);
                 Dbg("Indirect CPU fallback set draw count", "Indirect");

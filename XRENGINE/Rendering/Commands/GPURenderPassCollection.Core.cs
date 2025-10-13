@@ -69,6 +69,12 @@ namespace XREngine.Rendering.Commands
             /// Enables additional sanity checks against freed/invalid GPU objects.
             /// </summary>
             public bool ValidateLiveHandles { get; set; } = true;
+
+            /// <summary>
+            /// Disables CPU-side readback of the GPU draw-count buffer to avoid costly map/unmap cycles.
+            /// When disabled, systems relying on TryReadDrawCount will fall back to conservative defaults.
+            /// </summary>
+            public bool DisableCpuReadbackCount { get; set; } = true;
         }
 
         private static readonly IndirectDebugSettings _indirectDebug = new();
