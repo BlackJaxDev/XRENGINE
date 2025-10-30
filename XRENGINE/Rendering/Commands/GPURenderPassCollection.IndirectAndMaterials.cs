@@ -4,6 +4,10 @@ namespace XREngine.Rendering.Commands
 {
     public sealed partial class GPURenderPassCollection
     {
+        /// <summary>
+        /// Renders this pass using indirect rendering fully on-GPU.
+        /// </summary>
+        /// <param name="scene"></param>
         public void Render(GPUScene scene)
         {
             Dbg("Render begin", "Lifecycle");
@@ -34,14 +38,12 @@ namespace XREngine.Rendering.Commands
                 return;
             }
 
-            // MVP: material IDs for batch building (even if we don't sort yet)
             PopulateMaterialIDs(scene);
 
             BuildIndirectCommandBuffer(scene);
             Dbg("Indirect build complete", "Indirect");
 
-            // MVP: single batch fallback (no sorting yet)
-            var batches = BuildMaterialBatches(scene) ?? [new HybridRenderingManager.DrawBatch(0, VisibleCommandCount, 0)];
+            List<HybridRenderingManager.DrawBatch> batches = BuildMaterialBatches(scene) ?? [new HybridRenderingManager.DrawBatch(0, VisibleCommandCount, 0)];
             CurrentBatches = batches;
 
             _renderManager.Render(this, camera, scene, _indirectDrawBuffer, _indirectRenderer, RenderPass, _drawCountBuffer, batches);
@@ -108,24 +110,10 @@ namespace XREngine.Rendering.Commands
             Dbg("BuildIndirect begin", "Indirect");
 
             if (_indirectRenderTaskShader is null || _indirectDrawBuffer is null)
+            {
+                Dbg("BuildIndirect abort - shaders or draw buffer null", "Indirect");
                 return;
-
-            UpdateIndirectBuildProgram(scene);
-
-            (uint x, uint y, uint z) = ComputeDispatch.ForCommands(VisibleCommandCount);
-            if (x <= 0)
-                x = 1;
-
-            _indirectRenderTaskShader.DispatchCompute(x, 1, 1, EMemoryBarrierMask.ShaderStorage | EMemoryBarrierMask.Command);
-
-            Dbg($"Indirect dispatch groups={x} visible={VisibleCommandCount}", "Indirect");
-            ReadDrawCount();
-        }
-
-        private void UpdateIndirectBuildProgram(GPUScene scene)
-        {
-            if (_indirectRenderTaskShader is null || _indirectDrawBuffer is null)
-                return;
+            }
 
             _indirectRenderTaskShader.Uniform("CurrentRenderPass", RenderPass);
             _indirectRenderTaskShader.Uniform("MaxIndirectDraws", (int)_indirectDrawBuffer.ElementCount);
@@ -146,38 +134,50 @@ namespace XREngine.Rendering.Commands
             }
 
             _statsBuffer?.BindTo(_indirectRenderTaskShader, 8);
+
+            (uint x, uint y, uint z) = ComputeDispatch.ForCommands(VisibleCommandCount);
+            if (x <= 0)
+                x = 1;
+
+            _indirectRenderTaskShader.DispatchCompute(x, 1, 1, EMemoryBarrierMask.ShaderStorage | EMemoryBarrierMask.Command);
+
+            Dbg($"Indirect dispatch groups={x} visible={VisibleCommandCount}", "Indirect");
+            //ReadDrawCount();
         }
 
-        private void ReadDrawCount()
-        {
-            if (_drawCountBuffer is null || _culledCountBuffer is null)
-                return;
+        //private void ReadDrawCount()
+        //{
+        //    if (_drawCountBuffer is null || _culledCountBuffer is null)
+        //    {
+        //        Dbg("ReadDrawCount abort - count buffers null", "Indirect");
+        //        return;
+        //    }
 
-            bool allowCpuReadback = !IndirectDebug.DisableCpuReadbackCount || IndirectDebug.ForceCpuFallbackCount;
-            if (!allowCpuReadback)
-                return;
+        //    bool allowCpuReadback = !IndirectDebug.DisableCpuReadbackCount || IndirectDebug.ForceCpuFallbackCount;
+        //    if (!allowCpuReadback)
+        //        return;
 
-            if (IndirectDebug.ForceCpuFallbackCount)
-            {
-                WriteUInt(_drawCountBuffer, VisibleCommandCount);
-                Dbg("Indirect count forced to CPU fallback", "Indirect");
-                return;
-            }
+        //    if (IndirectDebug.ForceCpuFallbackCount)
+        //    {
+        //        WriteUInt(_drawCountBuffer, VisibleCommandCount);
+        //        Dbg("Indirect count forced to CPU fallback", "Indirect");
+        //        return;
+        //    }
 
-            uint drawReported = ReadUInt(_drawCountBuffer);
+        //    uint drawReported = ReadUInt(_drawCountBuffer);
 
-            if (IndirectDebug.LogCountBufferWrites)
-                Debug.Out($"{FormatDebugPrefix("Indirect")} [Indirect/Count] GPU reported {drawReported} visible={VisibleCommandCount}");
+        //    if (IndirectDebug.LogCountBufferWrites)
+        //        Debug.Out($"{FormatDebugPrefix("Indirect")} [Indirect/Count] GPU reported {drawReported} visible={VisibleCommandCount}");
 
-            if (IndirectDebug.DumpIndirectArguments)
-                DumpIndirectSummary(drawReported);
+        //    if (IndirectDebug.DumpIndirectArguments)
+        //        DumpIndirectSummary(drawReported);
 
-            if (drawReported == 0 && VisibleCommandCount > 0 && !IndirectDebug.DisableCpuReadbackCount)
-            {
-                WriteUInt(_drawCountBuffer, VisibleCommandCount);
-                Dbg("Indirect CPU fallback set draw count", "Indirect");
-            }
-        }
+        //    if (drawReported == 0 && VisibleCommandCount > 0 && !IndirectDebug.DisableCpuReadbackCount)
+        //    {
+        //        WriteUInt(_drawCountBuffer, VisibleCommandCount);
+        //        Dbg("Indirect CPU fallback set draw count", "Indirect");
+        //    }
+        //}
 
         private void DumpIndirectSummary(uint drawReported)
         {
@@ -193,9 +193,13 @@ namespace XREngine.Rendering.Commands
             Debug.Out(message.ToString());
         }
 
+        /// <summary>
+        /// Collects all material IDs from the scene's commands into a dedicated buffer.
+        /// </summary>
+        /// <param name="scene"></param>
         private void PopulateMaterialIDs(GPUScene scene)
         {
-            if (!UseMaterialBatchKey || _materialIDsBuffer == null)
+            if (_materialIDsBuffer is null)
                 return;
 
             uint count = scene.TotalCommandCount;
@@ -212,15 +216,21 @@ namespace XREngine.Rendering.Commands
         }
 
         /// <summary>
-        /// MVP batcher: if we don't have sort keys, just return a single batch spanning VisibleCommandCount.
+        /// Creates draw batches based on material IDs.
         /// </summary>
+        /// <param name="scene"></param>
+        /// <returns></returns>
         private List<HybridRenderingManager.DrawBatch>? BuildMaterialBatches(GPUScene scene)
         {
             uint count = VisibleCommandCount;
-            if (count == 0)
+            if (count == 0 || _materialIDsBuffer == null)
                 return null;
 
-            return [ new XREngine.Rendering.HybridRenderingManager.DrawBatch(0, count, 0) ];
+            Dbg($"BuildMaterialBatches count={count}", "Materials");
+
+            //Collect unique material ID batches from the culled commands
+            var materialBatches = new Dictionary<uint, HybridRenderingManager.DrawBatch>();
+
         }
 
         public void Dispose()

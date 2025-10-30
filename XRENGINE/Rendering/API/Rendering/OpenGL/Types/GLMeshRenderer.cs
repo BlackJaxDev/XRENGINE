@@ -148,6 +148,13 @@ namespace XREngine.Rendering.OpenGL
             private IndexSize _lineIndicesElementType;
             private IndexSize _pointIndicesElementType;
 
+            public void SetTriangleIndexBuffer(GLDataBuffer? buffer, IndexSize elementType)
+            {
+                TriangleIndicesBuffer = buffer;
+                _trianglesElementType = elementType;
+                BuffersBound = false;
+            }
+
             /// <summary>
             /// Determines how to use the results of the <see cref="ConditionalRenderQuery"/>.
             /// </summary>
@@ -286,6 +293,9 @@ namespace XREngine.Rendering.OpenGL
                 {
                     Dbg("Programs ready - binding SSBOs and uniforms","Render");
                     //Api.BindFragDataLocation(materialProgram.BindingId, 0, "OutColor");
+
+                    if (!BuffersBound)
+                        BindBuffers(vtx!);
 
                     if (!BuffersBound)
                         return;
@@ -637,17 +647,17 @@ namespace XREngine.Rendering.OpenGL
             public void BindBuffers(GLRenderProgram program)
             {
                 var mesh = Mesh;
-                if (mesh is null || BuffersBound)
+                if (BuffersBound)
                 {
-                    if (mesh is null)
-                        Dbg("BindBuffers early-out: mesh null","Buffers");
                     if (BuffersBound)
                         Dbg("BindBuffers early-out: already bound","Buffers");
                     return;
                 }
 
                 Renderer.BindForRender(this);
-                Dbg("BindBuffers: binding attribute & index buffers","Buffers");
+                Dbg(mesh is null
+                    ? "BindBuffers: binding renderer buffers (mesh=null)"
+                    : "BindBuffers: binding attribute & index buffers","Buffers");
 
                 foreach (GLDataBuffer buffer in _bufferCache.Values)
                 {

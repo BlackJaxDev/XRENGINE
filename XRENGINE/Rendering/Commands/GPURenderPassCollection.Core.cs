@@ -22,6 +22,19 @@ namespace XREngine.Rendering.Commands
         // Verbose debug infra (shared across partials)
         private static volatile bool _verbose = true;
 
+        private int _renderPass = 0;
+        public int RenderPass
+        {
+            get => _renderPass;
+            set => SetField(ref _renderPass, value);
+        }
+
+        /// <summary>
+        /// The resulting culled commands that will be rendered in this pass.
+        /// </summary>
+        public XRDataBuffer CulledSceneToRenderBuffer
+            => _culledSceneToRenderBuffer ??= MakeCulledSceneToRenderBuffer(GPUScene.MinCommandCount);
+
         /// <summary>
         /// Debug switches for diagnosing the indirect rendering pipeline.
         /// Call <see cref="ConfigureIndirectDebug"/> to modify at runtime.
@@ -43,17 +56,24 @@ namespace XREngine.Rendering.Commands
             /// <summary>
             /// Skips clearing stale entries in the indirect buffer tail to measure impact.
             /// </summary>
-            public bool SkipIndirectTailClear { get; set; }
+            public bool SkipIndirectTailClear { get; set; } = false;
 
             /// <summary>
             /// Dumps the first few indirect commands and draw count whenever they change.
             /// </summary>
-            public bool DumpIndirectArguments { get; set; }
+            public bool DumpIndirectArguments { get; set; } = true;
+
+            /// <summary>
+            /// Rebuilds indirect draw commands on the CPU using the scene's mesh metadata instead
+            /// of the GPU compute shader. Useful for confirming VAO/material state independent of
+            /// the GPU build path.
+            /// </summary>
+            public bool ForceCpuIndirectBuild { get; set; } = false;
 
             /// <summary>
             /// Logs writes into the shared draw-count buffer for visibility.
             /// </summary>
-            public bool LogCountBufferWrites { get; set; }
+            public bool LogCountBufferWrites { get; set; } = true;
 
             /// <summary>
             /// Forces parameter buffers to remap if mapping state looks stale.
@@ -166,6 +186,9 @@ namespace XREngine.Rendering.Commands
         // Primary working buffers
         private XRDataBuffer? _sortedCommandBuffer;        // Sorted output buffer (some algorithms)
         //private XRDataBuffer? _histogramBuffer;            // Histogram for direct radix sort
+        /// <summary>
+        /// The finalized indirect draw command buffer for this render pass to use in the multi draw indirect command.
+        /// </summary>
         private XRDataBuffer? _indirectDrawBuffer;         // DrawElementsIndirectCommand array
         private XRDataBuffer? _culledSceneToRenderBuffer;  // Compacted visible commands
 
@@ -179,19 +202,6 @@ namespace XREngine.Rendering.Commands
         // Configuration flags
         //public bool UseSoA { get; set; } = false;  // Experimental Structure-of-Arrays path
         //public bool UseHiZ { get; set; } = false;  // HiZ acceleration (requires UseSoA)
-
-        private int _renderPass = 0;
-        public int RenderPass
-        {
-            get => _renderPass;
-            set => SetField(ref _renderPass, value);
-        }
-
-        /// <summary>
-        /// Culled command buffer accessor (lazy alloc).
-        /// </summary>
-        public XRDataBuffer CulledSceneToRenderBuffer
-            => _culledSceneToRenderBuffer ??= MakeCulledSceneToRenderBuffer(GPUScene.MinCommandCount);
 
         private static XRDataBuffer MakeCulledSceneToRenderBuffer(uint capacity)
         {
@@ -264,7 +274,7 @@ namespace XREngine.Rendering.Commands
         private XRRenderProgram? _extractSoAComputeShader;
         private XRRenderProgram? _soACullingComputeShader;
         //private XRRenderProgram? HiZSoACullingComputeShader;
-        private XRRenderProgram? _gatherProgram;
+        //private XRRenderProgram? _gatherProgram;
         private XRDataBuffer? _soaIndexList;
         //public int HiZMaxMip { get; set; } = 0;
         //private XRTexture? _hiZDepthPyramid;
@@ -285,7 +295,7 @@ namespace XREngine.Rendering.Commands
         /// <summary>
         /// If true, the material ID is included in the sorting key to reduce overdraw.
         /// </summary>
-        public bool UseMaterialBatchKey { get; set; } = false;
+        //public bool UseMaterialBatchKey { get; set; } = false;
 
         private XRDataBuffer? _materialIDsBuffer;
 
