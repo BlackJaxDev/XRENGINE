@@ -73,7 +73,15 @@ void main()
     uint submeshID = uint(culled[base + 21]);
     uint submeshOffset = submeshID * 4u;
     if (submeshOffset + 3u >= submeshData.length())
-        return; // safety
+    {
+        // Fallback for packed mesh-data buffers indexed purely by meshID.
+        uint meshID = submeshID >> 16u;
+        uint fallbackOffset = meshID * 4u;
+        if (fallbackOffset + 3u >= submeshData.length())
+            return; // unable to resolve mesh metadata
+
+        submeshOffset = fallbackOffset;
+    }
 
     uint indexCount = submeshData[submeshOffset + 0u];
     if (indexCount == 0u)

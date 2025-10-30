@@ -5,8 +5,8 @@ namespace XREngine.Rendering.Commands
 {
     public sealed partial class GPURenderPassCollection
     {
-        // TESTING: set true to bypass GPU frustum/flag culling and treat all commands as visible
-        public bool ForcePassthroughCulling { get; set; } = true; // enable for investigation
+        // Set true to bypass GPU frustum/flag culling and treat all commands as visible (debug only)
+        public bool ForcePassthroughCulling { get; set; } = true;
 
         /// <summary>
         /// Reads unsigned integer values from a mapped buffer into the specified span.
@@ -225,58 +225,60 @@ namespace XREngine.Rendering.Commands
                 return;
             }
 
-            // Passthrough path (testing) � copy all input commands to culled buffer and mark all visible
-            if (ForcePassthroughCulling)
+            // Passthrough path (testing) & copy all input commands to culled buffer and mark all visible
+            //if (ForcePassthroughCulling)
                 PassthroughCull(gpuCommands, numCommands);
-            else
-                Cull(gpuCommands, camera, numCommands);
+            //else
+            //    Cull(gpuCommands, camera, numCommands);
+
+            Debug.Out($"GPURenderPassCollection.Cull: {numCommands} input commands -> {VisibleCommandCount} visible commands in CulledSceneToRenderBuffer");
         }
 
-        private void Cull(GPUScene gpuCommands, XRCamera? camera, uint numCommands)
-        {
-            if (_cullingComputeShader is null || camera is null)
-                return;
+        //private void Cull(GPUScene gpuCommands, XRCamera? camera, uint numCommands)
+        //{
+        //    if (_cullingComputeShader is null || camera is null)
+        //        return;
             
-            var planes = camera.WorldFrustum().Planes.Select(x => x.AsVector4()).ToArray();
-            if (planes.Length >= 6)
-                _cullingComputeShader.Uniform("FrustumPlanes", planes);
-            _cullingComputeShader.Uniform("MaxRenderDistance", camera.FarZ);
-            _cullingComputeShader.Uniform("CameraLayerMask", unchecked((uint)0xFFFFFFFF));
-            _cullingComputeShader.Uniform("CurrentRenderPass", RenderPass);
-            _cullingComputeShader.Uniform("InputCommandCount", (int)numCommands);
-            _cullingComputeShader.Uniform("MaxCulledCommands", (int)CulledSceneToRenderBuffer.ElementCount);
-            _cullingComputeShader.Uniform("DisabledFlagsMask", 0u);
-            _cullingComputeShader.Uniform("CameraPosition", camera.Transform.WorldTranslation);
+        //    var planes = camera.WorldFrustum().Planes.Select(x => x.AsVector4()).ToArray();
+        //    if (planes.Length >= 6)
+        //        _cullingComputeShader.Uniform("FrustumPlanes", planes);
+        //    _cullingComputeShader.Uniform("MaxRenderDistance", camera.FarZ);
+        //    _cullingComputeShader.Uniform("CameraLayerMask", unchecked((uint)0xFFFFFFFF));
+        //    _cullingComputeShader.Uniform("CurrentRenderPass", RenderPass);
+        //    _cullingComputeShader.Uniform("InputCommandCount", (int)numCommands);
+        //    _cullingComputeShader.Uniform("MaxCulledCommands", (int)CulledSceneToRenderBuffer.ElementCount);
+        //    _cullingComputeShader.Uniform("DisabledFlagsMask", 0u);
+        //    _cullingComputeShader.Uniform("CameraPosition", camera.Transform.WorldTranslation);
 
-            _cullingComputeShader.BindBuffer(gpuCommands.CommandsInputBuffer, 0);
-            _cullingComputeShader.BindBuffer(CulledSceneToRenderBuffer, 1);
-            if (_culledCountBuffer is not null)
-                _cullingComputeShader.BindBuffer(_culledCountBuffer, 2);
-            if (_cullingOverflowFlagBuffer is not null)
-                _cullingComputeShader.BindBuffer(_cullingOverflowFlagBuffer, 3);
-            if (_statsBuffer != null)
-                _cullingComputeShader.BindBuffer(_statsBuffer, 8);
+        //    _cullingComputeShader.BindBuffer(gpuCommands.CommandsInputBuffer, 0);
+        //    _cullingComputeShader.BindBuffer(CulledSceneToRenderBuffer, 1);
+        //    if (_culledCountBuffer is not null)
+        //        _cullingComputeShader.BindBuffer(_culledCountBuffer, 2);
+        //    if (_cullingOverflowFlagBuffer is not null)
+        //        _cullingComputeShader.BindBuffer(_cullingOverflowFlagBuffer, 3);
+        //    if (_statsBuffer != null)
+        //        _cullingComputeShader.BindBuffer(_statsBuffer, 8);
 
-            (uint x, uint y, uint z) = ComputeDispatch.ForCommands(numCommands);
-            _cullingComputeShader.DispatchCompute(x, y, z, EMemoryBarrierMask.ShaderStorage | EMemoryBarrierMask.Command);
-            Dbg($"Cull dispatched groups={x} cmds={numCommands}", "Culling");
+        //    (uint x, uint y, uint z) = ComputeDispatch.ForCommands(numCommands);
+        //    _cullingComputeShader.DispatchCompute(x, y, z, EMemoryBarrierMask.ShaderStorage | EMemoryBarrierMask.Command);
+        //    Dbg($"Cull dispatched groups={x} cmds={numCommands}", "Culling");
 
-            if (_culledCountBuffer is not null)
-            {
-                try
-                {
-                    VisibleCommandCount = ReadUInt(_culledCountBuffer); // existing helper
-                    Dbg($"Cull visible={VisibleCommandCount}", "Culling");
-                }
-                catch
-                {
-                    VisibleCommandCount = CulledSceneToRenderBuffer.ElementCount;
-                    Dbg("Cull readback failed - fallback", "Culling");
-                }
-            }
-            else
-                VisibleCommandCount = CulledSceneToRenderBuffer.ElementCount;
-        }
+        //    if (_culledCountBuffer is not null)
+        //    {
+        //        try
+        //        {
+        //            VisibleCommandCount = ReadUInt(_culledCountBuffer); // existing helper
+        //            Dbg($"Cull visible={VisibleCommandCount}", "Culling");
+        //        }
+        //        catch
+        //        {
+        //            VisibleCommandCount = CulledSceneToRenderBuffer.ElementCount;
+        //            Dbg("Cull readback failed - fallback", "Culling");
+        //        }
+        //    }
+        //    else
+        //        VisibleCommandCount = CulledSceneToRenderBuffer.ElementCount;
+        //}
 
         /// <summary>
         /// Culling passthrough mode � copy all input commands to culled buffer and mark all visible.
@@ -422,31 +424,31 @@ namespace XREngine.Rendering.Commands
             Dbg($"SoACull visible={VisibleCommandCount}","SoA");
         }
 
-        private void GatherCulled(GPUScene scene)
-        {
-            Dbg("GatherCulled begin","SoA");
+        //private void GatherCulled(GPUScene scene)
+        //{
+        //    Dbg("GatherCulled begin","SoA");
 
-            if (_gatherProgram is null || _soaIndexList is null || CulledSceneToRenderBuffer is null || _culledCountBuffer is null)
-                return;
+        //    if (_gatherProgram is null || _soaIndexList is null || CulledSceneToRenderBuffer is null || _culledCountBuffer is null)
+        //        return;
 
-            uint count = VisibleCommandCount;
-            if (count == 0)
-                return;
+        //    uint count = VisibleCommandCount;
+        //    if (count == 0)
+        //        return;
 
-            _gatherProgram.BindBuffer(scene.CommandsInputBuffer, 0);
-            _gatherProgram.BindBuffer(_soaIndexList, 1);
-            _gatherProgram.BindBuffer(CulledSceneToRenderBuffer, 2);
-            _gatherProgram.BindBuffer(_culledCountBuffer, 3);
+        //    _gatherProgram.BindBuffer(scene.CommandsInputBuffer, 0);
+        //    _gatherProgram.BindBuffer(_soaIndexList, 1);
+        //    _gatherProgram.BindBuffer(CulledSceneToRenderBuffer, 2);
+        //    _gatherProgram.BindBuffer(_culledCountBuffer, 3);
 
-            uint groupSize = 256;
-            uint groups = (count + groupSize - 1) / groupSize;
-            if (groups == 0)
-                groups = 1;
+        //    uint groupSize = 256;
+        //    uint groups = (count + groupSize - 1) / groupSize;
+        //    if (groups == 0)
+        //        groups = 1;
 
-            _gatherProgram.DispatchCompute(groups, 1, 1, EMemoryBarrierMask.ShaderStorage);
+        //    _gatherProgram.DispatchCompute(groups, 1, 1, EMemoryBarrierMask.ShaderStorage);
 
-            Dbg($"GatherCulled dispatched groups={groups} count={count}","SoA");
-        }
+        //    Dbg($"GatherCulled dispatched groups={groups} count={count}","SoA");
+        //}
 
         public void DebugDraw(XRCamera camera, GPUScene scene)
         {

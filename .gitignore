@@ -363,3 +363,5 @@ Build/Engine/Debug/
 Build/Editor/Release/
 Build/Engine/Release/
 Build/Submodules/
+XREngine.Editor/Build/Editor/Debug/
+XRENGINE/Build/Engine/Debug/

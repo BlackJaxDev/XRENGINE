@@ -242,8 +242,19 @@ namespace XREngine.Rendering.Commands
                 GLMeshRenderer? r = obj as GLMeshRenderer;
                 if (r is not null)
                 {
-                    var buf = GetIndexBuffer(scene, out IndexSize elementSize);
-                    r.TriangleIndicesBuffer = rend.GenericToAPI<GLDataBuffer>(buf);
+                    GLDataBuffer? indexBuffer = null;
+                    IndexSize elementSize = IndexSize.FourBytes;
+
+                    if (scene.AtlasIndices is not null)
+                        indexBuffer = rend.GenericToAPI<GLDataBuffer>(scene.AtlasIndices);
+                    else
+                    {
+                        var buf = GetIndexBuffer(scene, out elementSize);
+                        if (buf is not null)
+                            indexBuffer = rend.GenericToAPI<GLDataBuffer>(buf);
+                    }
+
+                    r.SetTriangleIndexBuffer(indexBuffer, elementSize);
                 }
             }
 
@@ -321,22 +332,6 @@ namespace XREngine.Rendering.Commands
         {
             bool recreated = false;
 
-            if (_indirectDrawBuffer is not null)
-            {
-                bool strideMismatch = _indirectDrawBuffer.ElementSize != _indirectCommandStride;
-                bool countMismatch = _indirectDrawBuffer.ElementCount != capacity;
-
-                if (strideMismatch || countMismatch)
-                {
-                    if (strideMismatch)
-                        Debug.LogWarning($"{FormatDebugPrefix("Buffers")} Indirect draw buffer stride mismatch detected. Forcing recreation.");
-                    else
-                        Dbg("Resizing indirect draw buffer to match new capacity.", "Buffers");
-                    _indirectDrawBuffer.Destroy();
-                    _indirectDrawBuffer = null;
-                }
-            }
-
             if (_indirectDrawBuffer is null)
             {
                 _indirectDrawBuffer = new XRDataBuffer("IndirectDraw_Pass", EBufferTarget.DrawIndirectBuffer, capacity, EComponentType.UInt, _indirectCommandComponentCount, false, true)
@@ -347,6 +342,20 @@ namespace XREngine.Rendering.Commands
                 };
                 _indirectDrawBuffer.Generate();
                 recreated = true;
+            }
+            else
+            {
+                bool strideMismatch = _indirectDrawBuffer.ElementSize != _indirectCommandStride;
+                bool countMismatch = _indirectDrawBuffer.ElementCount != capacity;
+                if (strideMismatch || countMismatch)
+                {
+                    if (strideMismatch)
+                        Debug.LogWarning($"{FormatDebugPrefix("Buffers")} Indirect draw buffer stride mismatch detected. Forcing recreation.");
+                    else
+                        Dbg("Resizing indirect draw buffer to match new capacity.", "Buffers");
+                    _indirectDrawBuffer.Destroy();
+                    _indirectDrawBuffer = null;
+                }
             }
 
             return recreated;

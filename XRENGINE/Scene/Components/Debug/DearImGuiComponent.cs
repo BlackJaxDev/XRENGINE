@@ -1,6 +1,7 @@
 using ImGuiNET;
 using System;
 using XREngine.Core.Attributes;
+using XREngine.Data.Rendering;
 using XREngine.Rendering;
 using XREngine.Rendering.Commands;
 using XREngine.Rendering.Info;

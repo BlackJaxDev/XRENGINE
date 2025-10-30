@@ -19,6 +19,7 @@ using XREngine.Rendering.Models.Materials.Textures;
 using XREngine.Rendering.UI;
 using XREngine.Rendering.Shaders.Generator;
 using PixelFormat = Silk.NET.OpenGL.PixelFormat;
+using XREngine.Components;
 
 namespace XREngine.Rendering.OpenGL
 {
@@ -133,13 +134,13 @@ namespace XREngine.Rendering.OpenGL
                 displaySize = Vector2.One;
 
             io.DisplaySize = displaySize;
-            io.DisplayPos = displayPos;
+            //io.DisplayPos = displayPos;
             io.DisplayFramebufferScale = framebufferScale;
         }
 
         public bool TryRenderImGui(XRViewport? viewport, UICanvasComponent? canvas, XRCamera? camera, Action draw)
         {
-            if (Engine.Rendering.State.ShadowPass)
+            if (Engine.Rendering.State.IsShadowPass)
                 return false;
 
             if (viewport?.Window is null)
