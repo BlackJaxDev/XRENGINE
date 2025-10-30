@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
 using System.Text;
 using XREngine.Data.Core;
@@ -27,7 +28,19 @@ namespace XREngine.Rendering
         }
 
     // Cache of graphics programs created per material (combined program MVP)
-    private readonly Dictionary<uint, XRRenderProgram> _materialPrograms = [];
+    private readonly struct MaterialProgramCache
+    {
+        public readonly XRRenderProgram Program;
+        public readonly XRShader? GeneratedVertexShader;
+
+        public MaterialProgramCache(XRRenderProgram program, XRShader? generatedVertexShader)
+        {
+            Program = program;
+            GeneratedVertexShader = generatedVertexShader;
+        }
+    }
+
+    private readonly Dictionary<(uint materialId, int rendererKey), MaterialProgramCache> _materialPrograms = [];
 
     private static GPURenderPassCollection.IndirectDebugSettings DebugSettings => GPURenderPassCollection.IndirectDebug;
 
@@ -429,6 +442,19 @@ namespace XREngine.Rendering
                 Debug.Out($"VAO buffers: {string.Join(", ", vaoRenderer.Buffers.Keys)}");
             }
 
+            XRDataBuffer culledBuffer = renderPasses.CulledSceneToRenderBuffer;
+            uint culledCapacity = culledBuffer.ElementCount;
+            uint visibleCount = renderPasses.VisibleCommandCount;
+            if (culledCapacity > 0 && visibleCount > culledCapacity)
+                visibleCount = culledCapacity;
+
+            uint indirectCapacity = indirectDrawBuffer.ElementCount;
+            uint maxDrawAllowed = visibleCount > 0
+                ? Math.Min(indirectCapacity, visibleCount)
+                : Math.Min(indirectCapacity, culledCapacity);
+
+            Debug.Out($"Visible commands={visibleCount} culledCapacity={culledCapacity} indirectCapacity={indirectCapacity}");
+
             // Declare these once at the method start to avoid shadowing issues
             var matMap = renderPasses.GetMaterialMap(scene);
             Debug.Out($"Material map count: {matMap.Count}");
@@ -457,9 +483,12 @@ namespace XREngine.Rendering
                     var renderer = AbstractRenderer.Current;
                     if (renderer != null)
                     {
-                        renderer.SetMaterialUniforms(defaultMat, renderProgram);
-                        renderer.ApplyRenderParameters(defaultMat.RenderOptions);
-                        Debug.Out("Material uniforms and render parameters set");
+                        if (renderProgram is not null)
+                        {
+                            renderer.SetMaterialUniforms(defaultMat, renderProgram);
+                            renderer.ApplyRenderParameters(defaultMat.RenderOptions);
+                            Debug.Out("Material uniforms and render parameters set");
+                        }
                     }
                 }
                 else
@@ -476,10 +505,9 @@ namespace XREngine.Rendering
             {
                 Debug.Out("Using CPU indirect build path");
                 
-                uint visibleCommands = renderPasses.VisibleCommandCount;
+                uint visibleCommands = visibleCount;
                 if (visibleCommands == 0)
                 {
-                    uint culledCapacity = renderPasses.CulledSceneToRenderBuffer?.ElementCount ?? 0;
                     visibleCommands = Math.Min(scene.TotalCommandCount, culledCapacity);
                 }
 
@@ -528,8 +556,8 @@ namespace XREngine.Rendering
             Debug.Out("Compute program bound");
 
             // Input: culled commands
-            _indirectCompProgram.BindBuffer(renderPasses.CulledSceneToRenderBuffer, 0);
-            Debug.Out($"Bound culled commands buffer: elements={renderPasses.CulledSceneToRenderBuffer.ElementCount}");
+            _indirectCompProgram.BindBuffer(culledBuffer, 0);
+            Debug.Out($"Bound culled commands buffer: elements={culledBuffer.ElementCount}");
 
             // Output: indirect draw commands
             _indirectCompProgram.BindBuffer(indirectDrawBuffer, 1);
@@ -576,30 +604,33 @@ namespace XREngine.Rendering
                 Debug.Out("Bound stats buffer");
             }
 
+            if (visibleCount == 0)
+            {
+                Debug.Out("VisibleCommandCount == 0; skipping GPU indirect build path.");
+                return;
+            }
+
             // Set uniforms
             _indirectCompProgram.Uniform("CurrentRenderPass", currentRenderPass);
             _indirectCompProgram.Uniform("MaxIndirectDraws", (int)indirectDrawBuffer.ElementCount);
             Debug.Out($"Set uniforms: CurrentRenderPass={currentRenderPass}, MaxIndirectDraws={indirectDrawBuffer.ElementCount}");
 
-            uint allocatedCommandCount = renderPasses.CulledSceneToRenderBuffer.ElementCount;
-            Debug.Out($"Allocated command count: {allocatedCommandCount}");
+            uint dispatchCount = visibleCount;
+            Debug.Out($"Dispatch command count: {dispatchCount}");
 
             // Dispatch compute shader
             uint groupSize = 32; // Should match local_size_x in shader
-            uint numGroups = (allocatedCommandCount + groupSize - 1) / groupSize;
-            if (numGroups == 0)
-                numGroups = 1; // ensure at least one group to write zeroed commands
+            (uint groupsX, uint groupsY, uint groupsZ) = ComputeDispatch.ForCommands(dispatchCount, groupSize);
 
-            Debug.Out($"Dispatching compute: numGroups={numGroups}, groupSize={groupSize}");
-            _indirectCompProgram.DispatchCompute(numGroups, 1, 1, EMemoryBarrierMask.ShaderStorage | EMemoryBarrierMask.Command);
+            Debug.Out($"Dispatching compute: groups=({groupsX},{groupsY},{groupsZ}) groupSize={groupSize}");
+            _indirectCompProgram.DispatchCompute(groupsX, groupsY, groupsZ, EMemoryBarrierMask.ShaderStorage | EMemoryBarrierMask.Command);
             //Debug.Out("Compute dispatch complete");
 
             // Conservative barrier before consuming indirect buffer
             AbstractRenderer.Current?.MemoryBarrier(EMemoryBarrierMask.ShaderStorage | EMemoryBarrierMask.Command);
             //Debug.Out("Memory barrier issued");
 
-            //uint maxCommands = Math.Min(allocatedCommandCount, indirectDrawBuffer.ElementCount);
-            //ClearIndirectTail(indirectDrawBuffer, parameterBuffer, maxCommands);
+            //ClearIndirectTail(indirectDrawBuffer, parameterBuffer, maxDrawAllowed);
 
             Debug.Out($"Dispatching indirect render: program={(renderProgram != null ? "valid" : "NULL")}");
             
@@ -607,8 +638,8 @@ namespace XREngine.Rendering
             DispatchRenderIndirect(
                 indirectDrawBuffer,
                 vaoRenderer,
-                0,
-                allocatedCommandCount,
+                visibleCount,
+                maxDrawAllowed,
                 parameterBuffer,
                 renderProgram,
                 camera);
@@ -766,10 +797,11 @@ namespace XREngine.Rendering
         {
             Debug.Out($"=== EnsureCombinedProgram: materialID={materialID} ===");
             
-            if (_materialPrograms.TryGetValue(materialID, out var existing))
+            int rendererKey = vaoRenderer is null ? 0 : RuntimeHelpers.GetHashCode(vaoRenderer);
+            if (_materialPrograms.TryGetValue((materialID, rendererKey), out var existing))
             {
                 Debug.Out("Using cached program");
-                return existing;
+                return existing.Program;
             }
 
             Debug.Out($"Creating new program for material: {material.Name ?? "<unnamed>"}");
@@ -786,7 +818,7 @@ namespace XREngine.Rendering
             // Ensure we only ever attach a single vertex shader to this combined program
             int existingVertexIndex = shaderList.FindIndex(shader => shader.Type == EShaderType.Vertex);
             Debug.Out($"Existing vertex shader index: {existingVertexIndex}");
-            
+
             if (existingVertexIndex >= 0)
             {
                 for (int i = shaderList.Count - 1; i >= 0; --i)
@@ -799,35 +831,16 @@ namespace XREngine.Rendering
                 }
             }
 
+            XRShader? generatedVertexShader = null;
+
             // If the material lacks a vertex shader, generate a default one using the VAO's mesh
             if (existingVertexIndex < 0)
             {
                 Debug.Out("Material lacks vertex shader - generating default");
-                XRShader? generatedVS = null;
-                var mesh = vaoRenderer?.Mesh;
-                if (mesh is not null)
+                generatedVertexShader = CreateDefaultVertexShader(vaoRenderer);
+                if (generatedVertexShader is not null)
                 {
-                    Debug.Out($"Generating vertex shader from mesh: {mesh.Name ?? "<unnamed>"}");
-                    var gen = new DefaultVertexShaderGenerator(mesh)
-                    {
-                        // Emit a lean shader (no redundant gl_PerVertex struct when using separable programs)
-                        WriteGLPerVertexOutStruct = false
-                    };
-                    string vertexShaderSource = gen.Generate();
-                    Debug.Out($"Generated vertex shader ({vertexShaderSource.Length} chars)");
-                    generatedVS = new XRShader(EShaderType.Vertex, vertexShaderSource);
-                }
-                else
-                {
-                    Debug.Out("No mesh available - using fallback vertex shader");
-                    string fallbackSource = BuildFallbackVertexShader(vaoRenderer);
-                    Debug.Out($"Generated fallback vertex shader ({fallbackSource.Length} chars)");
-                    generatedVS = new XRShader(EShaderType.Vertex, fallbackSource);
-                }
-
-                if (generatedVS is not null)
-                {
-                    shaderList.Add(generatedVS);
+                    shaderList.Add(generatedVertexShader);
                     Debug.Out("Vertex shader added to shader list");
                 }
             }
@@ -841,10 +854,48 @@ namespace XREngine.Rendering
             
             Debug.Out($"Program created and linked: {(program != null ? "SUCCESS" : "FAILED")}");
 
-            _materialPrograms[materialID] = program;
+            if (program is null)
+            {
+                Debug.LogWarning("Failed to create render program for material; skipping cache.");
+                return null;
+            }
+
+            _materialPrograms[(materialID, rendererKey)] = new MaterialProgramCache(program, generatedVertexShader);
             Debug.Out("Program cached");
             
             return program;
+        }
+
+        private XRShader? CreateDefaultVertexShader(XRMeshRenderer? vaoRenderer)
+        {
+            XRShader? generatedVS = null;
+            var mesh = vaoRenderer?.Mesh;
+            if (mesh is not null)
+            {
+                Debug.Out($"Generating vertex shader from mesh: {mesh.Name ?? "<unnamed>"}");
+                var gen = new DefaultVertexShaderGenerator(mesh)
+                {
+                    WriteGLPerVertexOutStruct = false
+                };
+                string vertexShaderSource = gen.Generate();
+                Debug.Out($"Generated vertex shader ({vertexShaderSource.Length} chars)");
+                generatedVS = new XRShader(EShaderType.Vertex, vertexShaderSource)
+                {
+                    Name = (mesh.Name ?? "Generated") + "_AutoVS"
+                };
+            }
+            else
+            {
+                Debug.Out("No mesh available - using fallback vertex shader");
+                string fallbackSource = BuildFallbackVertexShader(vaoRenderer);
+                Debug.Out($"Generated fallback vertex shader ({fallbackSource.Length} chars)");
+                generatedVS = new XRShader(EShaderType.Vertex, fallbackSource)
+                {
+                    Name = "FallbackGeneratedVS"
+                };
+            }
+
+            return generatedVS;
         }
 
         private static string BuildFallbackVertexShader(XRMeshRenderer? vaoRenderer)
@@ -976,7 +1027,7 @@ namespace XREngine.Rendering
             }
 
             XRDataBuffer? dispatchParameterBuffer = parameterBuffer;
-            uint cpuBuiltCount = 0;
+            //uint cpuBuiltCount = 0;
             //bool usingCpuIndirect = DebugSettings.ForceCpuIndirectBuild;
             List<DrawBatch>? overrideBatches = null;
             List<uint>? cpuMaterialOrder = null;
@@ -1098,8 +1149,8 @@ namespace XREngine.Rendering
         public void Dispose()
         {
             _indirectCompProgram?.Destroy();
-            foreach (var kv in _materialPrograms)
-                kv.Value.Destroy();
+            foreach (var cache in _materialPrograms.Values)
+                cache.Program.Destroy();
             _materialPrograms.Clear();
             GC.SuppressFinalize(this);
         }

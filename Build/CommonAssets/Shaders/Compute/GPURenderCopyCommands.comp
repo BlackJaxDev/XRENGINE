@@ -5,6 +5,8 @@
 
 layout(local_size_x = 256, local_size_y = 1, local_size_z = 1) in;
 
+uniform uint CopyCount;
+
 // Number of commands is equal to the number of dispatched invocations.
 // No explicit CopyCount uniform is required.
 
@@ -37,6 +39,9 @@ void main()
                   + gl_GlobalInvocationID.y * globalSize.x
                   + gl_GlobalInvocationID.z * (globalSize.x * globalSize.y);
 
+    if (cmdIndex >= CopyCount)
+        return;
+
     // Each command is 32 floats
     const uint CommandStride = 32u;
 
@@ -48,10 +53,12 @@ void main()
     for (uint i = 0u; i < CommandStride; ++i)
         OutData[outBase + i] = InData[inBase + i];
 
-    // Thread 0 writes the visible count as the number of dispatched threads
-    if (cmdIndex == 0u)
+    // Thread (0,0,0) writes the visible count as the actual copy count
+    if (gl_GlobalInvocationID.x == 0u &&
+        gl_GlobalInvocationID.y == 0u &&
+        gl_GlobalInvocationID.z == 0u)
     {
-        uint totalThreads = globalSize.x * globalSize.y * globalSize.z;
-        OutCount[0] = totalThreads;
+        if (OutCount.length() > 0)
+            OutCount[0] = CopyCount;
     }
 }

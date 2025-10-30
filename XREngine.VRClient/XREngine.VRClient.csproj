@@ -39,7 +39,7 @@
 
   <ItemGroup>
     <Reference Include="OpenVR.NET, Version=0.8.5.0, Culture=neutral, PublicKeyToken=null">
-      <HintPath>..\..\OpenVR.NET\OpenVR.NET\bin\Release\net6.0\OpenVR.NET.dll</HintPath>
+      <HintPath>..\Build\Submodules\OpenVR.NET\OpenVR.NET\bin\$(Configuration)\net6.0\OpenVR.NET.dll</HintPath>
       <SpecificVersion>False</SpecificVersion>
       <Private>True</Private>
     </Reference>

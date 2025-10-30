@@ -365,3 +365,4 @@ Build/Engine/Release/
 Build/Submodules/
 XREngine.Editor/Build/Editor/Debug/
 XRENGINE/Build/Engine/Debug/
+XREngine.Editor/ShaderCache/

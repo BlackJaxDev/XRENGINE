@@ -210,7 +210,7 @@ namespace XREngine.Rendering.Commands
 
             for (uint i = 0; i < count; i++)
             {
-                var cmd = scene.CommandsInputBuffer.GetDataRawAtIndex<GPUIndirectRenderCommand>(i);
+                var cmd = scene.AllLoadedCommandsBuffer.GetDataRawAtIndex<GPUIndirectRenderCommand>(i);
                 _materialIDsBuffer.SetDataRawAtIndex(i, cmd.MaterialID);
             }
         }
@@ -223,14 +223,110 @@ namespace XREngine.Rendering.Commands
         private List<HybridRenderingManager.DrawBatch>? BuildMaterialBatches(GPUScene scene)
         {
             uint count = VisibleCommandCount;
-            if (count == 0 || _materialIDsBuffer == null)
+            if (count == 0)
                 return null;
 
             Dbg($"BuildMaterialBatches count={count}", "Materials");
 
-            //Collect unique material ID batches from the culled commands
-            var materialBatches = new Dictionary<uint, HybridRenderingManager.DrawBatch>();
+            List<HybridRenderingManager.DrawBatch> batches = new((int)Math.Min(count, 64));
 
+            uint currentMaterial = uint.MaxValue;
+            uint batchStart = 0;
+            uint batchCount = 0;
+
+            for (uint i = 0; i < count; ++i)
+            {
+                uint materialId = ResolveMaterialId(scene, i);
+
+                if (batchCount > 0 && materialId == currentMaterial)
+                {
+                    batchCount++;
+                    continue;
+                }
+
+                if (batchCount > 0)
+                    batches.Add(new HybridRenderingManager.DrawBatch(batchStart, batchCount, currentMaterial));
+
+                currentMaterial = materialId;
+                batchStart = i;
+                batchCount = 1;
+            }
+
+            if (batchCount > 0)
+                batches.Add(new HybridRenderingManager.DrawBatch(batchStart, batchCount, currentMaterial));
+
+            if (batches.Count == 0)
+                return null;
+
+            LogMaterialBatches(scene, batches);
+            return batches;
+        }
+
+        private uint ResolveMaterialId(GPUScene scene, uint visibleIndex)
+        {
+            try
+            {
+                if (_culledSceneToRenderBuffer is not null && visibleIndex < _culledSceneToRenderBuffer.ElementCount)
+                {
+                    GPUIndirectRenderCommand culledCmd = _culledSceneToRenderBuffer.GetDataRawAtIndex<GPUIndirectRenderCommand>(visibleIndex);
+                    if (culledCmd.MaterialID != 0)
+                        return culledCmd.MaterialID;
+                }
+            }
+            catch (Exception ex)
+            {
+                Dbg($"ResolveMaterialId culled buffer read failed idx={visibleIndex} ex={ex.Message}", "Materials");
+            }
+
+            try
+            {
+                if (_materialIDsBuffer is not null && visibleIndex < _materialIDsBuffer.ElementCount)
+                {
+                    uint id = _materialIDsBuffer.GetDataRawAtIndex<uint>(visibleIndex);
+                    if (id != 0)
+                        return id;
+                }
+            }
+            catch (Exception ex)
+            {
+                Dbg($"ResolveMaterialId material buffer read failed idx={visibleIndex} ex={ex.Message}", "Materials");
+            }
+
+            try
+            {
+                XRDataBuffer commands = scene.AllLoadedCommandsBuffer;
+                if (visibleIndex < commands.ElementCount)
+                {
+                    GPUIndirectRenderCommand cmd = commands.GetDataRawAtIndex<GPUIndirectRenderCommand>(visibleIndex);
+                    return cmd.MaterialID;
+                }
+            }
+            catch (Exception ex)
+            {
+                Dbg($"ResolveMaterialId fallback read failed idx={visibleIndex} ex={ex.Message}", "Materials");
+            }
+
+            return 0;
+        }
+
+        private void LogMaterialBatches(GPUScene scene, List<HybridRenderingManager.DrawBatch> batches)
+        {
+            IReadOnlyDictionary<uint, XRMaterial> materialMap = scene.MaterialMap;
+
+            var sb = new StringBuilder();
+            sb.Append($"BuildMaterialBatches produced {batches.Count} batches:");
+
+            for (int i = 0; i < batches.Count; i++)
+            {
+                HybridRenderingManager.DrawBatch batch = batches[i];
+                string materialName = materialMap.TryGetValue(batch.MaterialID, out XRMaterial? mat) && mat is not null
+                    ? (mat.Name ?? $"Material#{batch.MaterialID}")
+                    : (batch.MaterialID == 0 ? "<Invalid>" : $"Material#{batch.MaterialID}");
+
+                sb.Append($" [#{i}] {materialName} -> {batch.Count} draws");
+            }
+
+            Dbg(sb.ToString(), "Materials");
         }
 
         public void Dispose()

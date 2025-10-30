@@ -118,7 +118,7 @@
 
   <ItemGroup>
     <Reference Include="OpenVR.NET">
-      <HintPath>..\..\OpenVR.NET\OpenVR.NET\bin\Debug\net6.0\OpenVR.NET.dll</HintPath>
+      <HintPath>..\Build\Submodules\OpenVR.NET\OpenVR.NET\bin\$(Configuration)\net6.0\OpenVR.NET.dll</HintPath>
     </Reference>
   </ItemGroup>
 

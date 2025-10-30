@@ -291,13 +291,23 @@ namespace XREngine.Rendering.Commands
                 return;
             
             //TODO: use compute shader to avoid CPU roundtripping
-            XRDataBuffer src = scene.CommandsInputBuffer;
+            XRDataBuffer src = scene.AllLoadedCommandsBuffer;
             XRDataBuffer dst = CulledSceneToRenderBuffer;
 
             uint capacity = CulledSceneToRenderBuffer.ElementCount;
             uint copyCount = Math.Min(numCommands, capacity);
 
+            if (copyCount == 0)
+            {
+                VisibleCommandCount = 0;
+                if (_culledCountBuffer is not null)
+                    WriteUInt(_culledCountBuffer, 0u);
+                Dbg("Cull passthrough no commands", "Culling");
+                return;
+            }
+
             //Copy commands
+            _copyCommandsProgram.Uniform("CopyCount", copyCount);
             _copyCommandsProgram?.BindBuffer(src, 0);
             _copyCommandsProgram?.BindBuffer(dst, 1);
             _copyCommandsProgram?.BindBuffer(_culledCountBuffer, 2);
@@ -337,7 +347,7 @@ namespace XREngine.Rendering.Commands
             }
 
             _extractSoAComputeShader.Uniform("InputCommandCount", (int)count);
-            _extractSoAComputeShader.BindBuffer(scene.CommandsInputBuffer, 0);
+            _extractSoAComputeShader.BindBuffer(scene.AllLoadedCommandsBuffer, 0);
             _extractSoAComputeShader.BindBuffer(spheres, 1);
             _extractSoAComputeShader.BindBuffer(meta, 2);
 
@@ -362,6 +372,12 @@ namespace XREngine.Rendering.Commands
                 return;
 
             EnsureIndexList(count);
+
+            if (_soaIndexList is null)
+            {
+                Dbg("SoACull missing index list", "SoA");
+                return;
+            }
 
             var spheres = _useBufferAForRender
                 ? _soaBoundingSpheresA
@@ -468,7 +484,7 @@ namespace XREngine.Rendering.Commands
             _debugDrawProgram.Uniform("CulledCommandCount", (int)ReadUInt(_culledCountBuffer));
 
             _debugDrawProgram.BindBuffer(_culledSceneToRenderBuffer, 0);
-            _debugDrawProgram.BindBuffer(scene.CommandsInputBuffer, 1);
+            _debugDrawProgram.BindBuffer(scene.AllLoadedCommandsBuffer, 1);
             _debugDrawProgram.BindBuffer(_culledCountBuffer, 2);
 
             uint groupSize = 256;
