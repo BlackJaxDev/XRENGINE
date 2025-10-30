@@ -136,7 +136,7 @@ namespace XREngine.Rendering.Commands
             _extractSoAComputeShader = new XRRenderProgram(true, false, ShaderHelper.LoadEngineShader("Compute/GPURenderExtractSoA.comp", EShaderType.Compute));
             _soACullingComputeShader = new XRRenderProgram(true, false, ShaderHelper.LoadEngineShader("Compute/GPURenderCullingSoA.comp", EShaderType.Compute));
             //HiZSoACullingComputeShader = new XRRenderProgram(true, false, ShaderHelper.LoadEngineShader("Compute/GPURenderHiZSoACulling.comp", EShaderType.Compute));
-            _gatherProgram = new XRRenderProgram(true, false, ShaderHelper.LoadEngineShader("Compute/GPURenderGather.comp", EShaderType.Compute));
+            //_gatherProgram = new XRRenderProgram(true, false, ShaderHelper.LoadEngineShader("Compute/GPURenderGather.comp", EShaderType.Compute));
             _copyCommandsProgram = new XRRenderProgram(true, false, ShaderHelper.LoadEngineShader("Compute/GPURenderCopyCommands.comp", EShaderType.Compute));
 
             Dbg("GenerateShaders complete","Lifecycle");
@@ -229,6 +229,7 @@ namespace XREngine.Rendering.Commands
         private void MakeIndirectRenderer(GPUScene scene)
         {
             scene.EnsureAtlasBuffers();
+            scene.RebuildAtlasIfDirty();
 
             _indirectRenderer = new XRMeshRenderer();
             var defVer = _indirectRenderer.GetDefaultVersion();
@@ -245,16 +246,24 @@ namespace XREngine.Rendering.Commands
                     GLDataBuffer? indexBuffer = null;
                     IndexSize elementSize = IndexSize.FourBytes;
 
-                    if (scene.AtlasIndices is not null)
-                        indexBuffer = rend.GenericToAPI<GLDataBuffer>(scene.AtlasIndices);
+                    XRDataBuffer? atlasIndexBuffer = scene.AtlasIndices;
+
+                    if (atlasIndexBuffer is not null)
+                        indexBuffer = rend.GenericToAPI<GLDataBuffer>(atlasIndexBuffer);
                     else
                     {
                         var buf = GetIndexBuffer(scene, out elementSize);
                         if (buf is not null)
+                        {
+                            atlasIndexBuffer = buf;
                             indexBuffer = rend.GenericToAPI<GLDataBuffer>(buf);
+                        }
                     }
 
-                    r.SetTriangleIndexBuffer(indexBuffer, elementSize);
+                    if (indexBuffer is null)
+                        Debug.LogWarning("Indirect renderer created without an index buffer; indirect draws will be skipped.");
+                    else
+                        r.SetTriangleIndexBuffer(indexBuffer, elementSize);
                 }
             }
 

@@ -65,6 +65,10 @@
     <Content Include="openvr_api.dll">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </Content>
+    <Content Include="$(NuGetPackageRoot)sharpfont.dependencies\2.5.5\bin\msvc12\x64\freetype6.dll">
+      <Link>freetype6.dll</Link>
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
   </ItemGroup>
 
   <ItemGroup>
@@ -95,6 +99,7 @@
     <PackageReference Include="Raylib-cs" Version="7.0.2" />
     <PackageReference Include="RestSharp" Version="112.1.0" />
     <PackageReference Include="SharpFont.NetStandard" Version="1.0.5" />
+  <PackageReference Include="SharpFont.Dependencies" Version="2.5.5" />
     <PackageReference Include="Silk.NET" Version="2.22.0" />
     <PackageReference Include="Silk.NET.Core" Version="2.22.0" />
     <PackageReference Include="Silk.NET.Core.Win32Extras" Version="2.22.0" />
@@ -178,16 +183,16 @@
 
   <ItemGroup>
     <Reference Include="FlyleafLib">
-      <HintPath>..\Build\Submodules\Flyleaf\FlyleafLib\bin\Debug\net8.0-windows\FlyleafLib.dll</HintPath>
+      <HintPath>..\Build\Submodules\Flyleaf\FlyleafLib\bin\$(Configuration)\net8.0-windows\FlyleafLib.dll</HintPath>
     </Reference>
     <Reference Include="OpenVR.NET">
-      <HintPath>..\..\OpenVR.NET\OpenVR.NET\bin\Debug\net6.0\OpenVR.NET.dll</HintPath>
+      <HintPath>..\Build\Submodules\OpenVR.NET\OpenVR.NET\bin\$(Configuration)\net6.0\OpenVR.NET.dll</HintPath>
     </Reference>
     <Reference Include="OscCore">
-      <HintPath>..\..\OscCore-NET9\bin\Release\net9.0\OscCore.dll</HintPath>
+      <HintPath>..\Build\Submodules\OscCore-NET9\bin\$(Configuration)\net9.0\OscCore.dll</HintPath>
     </Reference>
     <Reference Include="RiveSharp">
-      <HintPath>..\..\rive-sharp\RiveSharp\bin\Debug\netstandard2.0\RiveSharp.dll</HintPath>
+      <HintPath>..\Build\Submodules\rive-sharp\RiveSharp\bin\$(Configuration)\netstandard2.0\RiveSharp.dll</HintPath>
     </Reference>
   </ItemGroup>
 

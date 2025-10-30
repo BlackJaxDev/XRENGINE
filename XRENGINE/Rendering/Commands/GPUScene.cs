@@ -30,10 +30,10 @@ namespace XREngine.Rendering.Commands
         // Consolidated (batched) vertex + index data for all meshes referenced by commands.
         // Currently linear appended; future optimization could bin by vertex format / material.
         private XRDataBuffer? _atlasPositions;     // Position vec3
-    private XRDataBuffer? _atlasNormals;       // Normal vec3
-    private XRDataBuffer? _atlasTangents;      // Tangent vec4
-    private XRDataBuffer? _atlasUV0;           // UV0 vec2
-    private XRDataBuffer? _atlasIndices;       // Element indices
+        private XRDataBuffer? _atlasNormals;       // Normal vec3
+        private XRDataBuffer? _atlasTangents;      // Tangent vec4
+        private XRDataBuffer? _atlasUV0;           // UV0 vec2
+        private XRDataBuffer? _atlasIndices;       // Element indices
         private bool _atlasDirty = false;          // Indicates atlas rebuild needed after adds/removes
         private int _atlasVertexCount = 0;        // Running vertex count for packing
         private int _atlasIndexCount = 0;         // Running index count for packing
@@ -47,14 +47,14 @@ namespace XREngine.Rendering.Commands
         public XRDataBuffer? AtlasNormals => _atlasNormals;
         public XRDataBuffer? AtlasTangents => _atlasTangents;
         public XRDataBuffer? AtlasUV0 => _atlasUV0;
-    public XRDataBuffer? AtlasIndices => _atlasIndices;
+        public XRDataBuffer? AtlasIndices => _atlasIndices;
 
         /// <summary>
         /// Maps XRMaterial -> ID and reverse ID -> XRMaterial to resolve materials during rendering.
         /// </summary>
-    private readonly ConcurrentDictionary<XRMaterial, uint> _materialIDMap = new();
-    private readonly ConcurrentDictionary<uint, XRMaterial> _idToMaterial = new();
-    private readonly ConcurrentDictionary<uint, XRMesh> _idToMesh = new();
+        private readonly ConcurrentDictionary<XRMaterial, uint> _materialIDMap = new();
+        private readonly ConcurrentDictionary<uint, XRMaterial> _idToMaterial = new();
+        private readonly ConcurrentDictionary<uint, XRMesh> _idToMesh = new();
         private uint _nextMaterialID = 1;
 
         /// <summary>
@@ -327,16 +327,16 @@ namespace XREngine.Rendering.Commands
             _meshDataBuffer?.Destroy();
             _meshDataBuffer = MakeMeshDataBuffer();
 
-            _commandsInputBuffer?.Destroy();
-            _commandsInputBuffer = MakeCommandsInputBuffer();
+            _allLoadedCommandsBuffer?.Destroy();
+            _allLoadedCommandsBuffer = MakeCommandsInputBuffer();
         }
 
         public void Destroy()
         {
             _meshDataBuffer?.Destroy();
             _meshDataBuffer = null;
-            _commandsInputBuffer?.Destroy();
-            _commandsInputBuffer = null;
+            _allLoadedCommandsBuffer?.Destroy();
+            _allLoadedCommandsBuffer = null;
             _meshIDMap.Clear();
             _materialIDMap.Clear();
             _idToMaterial.Clear();
@@ -414,12 +414,12 @@ namespace XREngine.Rendering.Commands
             public uint BaseInstance;
         }
 
-        private XRDataBuffer? _commandsInputBuffer;
+        private XRDataBuffer? _allLoadedCommandsBuffer;
         /// <summary>
         /// This buffer holds all commands that are relevant to this scene.
         /// A render pipeline will take these and execute them with GPU culling using <see cref="GPURenderPassCollection"/>."/>
         /// </summary>
-        public XRDataBuffer CommandsInputBuffer => _commandsInputBuffer ??= MakeCommandsInputBuffer();
+        public XRDataBuffer AllLoadedCommandsBuffer => _allLoadedCommandsBuffer ??= MakeCommandsInputBuffer();
 
         private readonly MeshletCollection _meshlets = new();
         public MeshletCollection Meshlets => _meshlets;
@@ -445,7 +445,7 @@ namespace XREngine.Rendering.Commands
         /// <summary>
         /// The amount of commands the buffer can currently hold without resizing.
         /// </summary>
-        public uint AllocatedMaxCommandCount => CommandsInputBuffer.ElementCount;
+        public uint AllocatedMaxCommandCount => AllLoadedCommandsBuffer.ElementCount;
 
         /// <summary>
         /// Tracks all GPU command indices produced per mesh command (multi-submesh support).
@@ -524,7 +524,7 @@ namespace XREngine.Rendering.Commands
 
                         indices.Add(index);
                         _commandIndexLookup.Add(index, (meshCmd, subMeshIndex));
-                        CommandsInputBuffer.SetDataRawAtIndex(index, gpuCommand.Value);
+                        AllLoadedCommandsBuffer.SetDataRawAtIndex(index, gpuCommand.Value);
                         anyAdded = true;
 
                         // Acquire or assign meshID
@@ -543,7 +543,7 @@ namespace XREngine.Rendering.Commands
                 if (anyAdded)
                 {
                     // Upload modified command entries (full buffer for simplicity)
-                    CommandsInputBuffer.PushSubData();
+                    AllLoadedCommandsBuffer.PushSubData();
                     Debug.Out($"GPUScene.Add: Added commands, total now {_totalCommandCount} in CommandsInputBuffer");
                 }
                 RebuildAtlasIfDirty();
@@ -682,7 +682,7 @@ namespace XREngine.Rendering.Commands
                 // Resize once after batch removals
                 VerifyCommandBufferSize(_totalCommandCount);
                 if (anyRemoved)
-                    CommandsInputBuffer.PushSubData();
+                    AllLoadedCommandsBuffer.PushSubData();
             }
         }
 
@@ -697,8 +697,8 @@ namespace XREngine.Rendering.Commands
             uint lastIndex = _totalCommandCount - 1;
             if (targetIndex < lastIndex)
             {
-                GPUIndirectRenderCommand lastCommand = CommandsInputBuffer.GetDataRawAtIndex<GPUIndirectRenderCommand>(lastIndex);
-                CommandsInputBuffer.SetDataRawAtIndex(targetIndex, lastCommand);
+                GPUIndirectRenderCommand lastCommand = AllLoadedCommandsBuffer.GetDataRawAtIndex<GPUIndirectRenderCommand>(lastIndex);
+                AllLoadedCommandsBuffer.SetDataRawAtIndex(targetIndex, lastCommand);
 
                 RemoveSubmeshFromAtlasAt(targetIndex);
 
@@ -750,11 +750,11 @@ namespace XREngine.Rendering.Commands
         private void VerifyCommandBufferSize(uint requiredSize)
         {
             uint nextPowerOfTwo = XRMath.NextPowerOfTwo(requiredSize).ClampMin(MinCommandCount);
-            if (nextPowerOfTwo == CommandsInputBuffer.ElementCount)
+            if (nextPowerOfTwo == AllLoadedCommandsBuffer.ElementCount)
                 return;
 
-            Debug.Out($"Resizing command buffer from {CommandsInputBuffer.ElementCount} to {nextPowerOfTwo}.");
-            CommandsInputBuffer.Resize(nextPowerOfTwo);
+            Debug.Out($"Resizing command buffer from {AllLoadedCommandsBuffer.ElementCount} to {nextPowerOfTwo}.");
+            AllLoadedCommandsBuffer.Resize(nextPowerOfTwo);
         }
 
         private GPUIndirectRenderCommand? ConvertToGPUCommand(RenderInfo renderInfo, IRenderCommandMesh command, XRMesh? mesh, XRMaterial? material, uint submeshLocalIndex)

@@ -23,21 +23,34 @@ namespace XREngine
 
         public AssetManager(string? engineAssetsDirPath = null)
         {
+            string? resolvedEngineAssetsPath = null;
             if (!string.IsNullOrWhiteSpace(engineAssetsDirPath) && Directory.Exists(engineAssetsDirPath))
-                EngineAssetsPath = engineAssetsDirPath;
+            {
+                resolvedEngineAssetsPath = engineAssetsDirPath;
+            }
             else
             {
                 string? basePath = ApplicationEnvironment.ApplicationBasePath;
-                //Iterate up the directory tree until we find the Build directory
-                while (basePath is not null && !Directory.Exists(Path.Combine(basePath, "Build")))
+                //Iterate up the directory tree until we find a Build directory that contains CommonAssets
+                while (basePath is not null)
+                {
+                    string candidate = Path.Combine(basePath, "Build", "CommonAssets");
+                    if (Directory.Exists(candidate) && Directory.Exists(Path.Combine(candidate, "Shaders")))
+                    {
+                        resolvedEngineAssetsPath = candidate;
+                        break;
+                    }
                     basePath = Path.GetDirectoryName(basePath);
-                if (basePath is null)
-                    throw new DirectoryNotFoundException("Could not find the Build directory in the application path.");
-                string buildDirectory = Path.Combine(basePath, "Build");
-                EngineAssetsPath = Path.Combine(buildDirectory, "CommonAssets");
+                }
+
+                resolvedEngineAssetsPath ??= Path.Combine(ApplicationEnvironment.ApplicationBasePath, "Build", "CommonAssets");
             }
 
+            EngineAssetsPath = resolvedEngineAssetsPath;
+
             VerifyDirectoryExists(GameAssetsPath);
+            if (!Directory.Exists(EngineAssetsPath))
+                throw new DirectoryNotFoundException($"Could not find the engine assets directory at '{EngineAssetsPath}'.");
 
             GameWatcher.Path = GameAssetsPath;
             GameWatcher.Filter = "*.*";
