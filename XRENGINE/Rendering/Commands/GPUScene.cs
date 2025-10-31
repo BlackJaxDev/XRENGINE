@@ -482,7 +482,11 @@ namespace XREngine.Rendering.Commands
                     var subMeshes = meshCmd.Mesh?.GetMeshes();
                     if (subMeshes is null || subMeshes.Length == 0)
                     {
-                        Debug.Out($"Skipping adding mesh command with no submeshes.");
+                        Debug.Out($"Skipping adding mesh command with no submeshes. Mesh={(meshCmd.Mesh != null ? "present" : "null")} SubMeshes={(subMeshes != null ? $"empty array (length {subMeshes.Length})" : "null")}");
+                        if (meshCmd.Mesh != null)
+                        {
+                            Debug.Out($"  Mesh details: Name={meshCmd.Mesh.Mesh?.Name ?? "<null>"}, Submeshes.Count={meshCmd.Mesh.Submeshes.Count}");
+                        }
                         continue;
                     }
 

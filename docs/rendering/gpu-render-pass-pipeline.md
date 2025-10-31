@@ -21,9 +21,11 @@
 - **HybridRenderingManager** – Binds material programs, configures the shared VAO, and dispatches indirect draws (batched or monolithic).
 
 ## Potential Issues / Watch Points
+- **RenderableMesh timing**: `RenderableMesh` must set `_rc.Mesh = CurrentLODRenderer` in its constructor (not just in `BeforeAdd`) so GPUScene can access mesh data immediately when models are added. Otherwise, `meshCmd.Mesh?.GetMeshes()` returns null and the model is skipped.
 - `BuildMaterialBatches` now groups contiguous commands per material and logs the batch summary each frame. Keep an eye on those logs when introducing new materials.
 - The passthrough copy shader clamps the reported culled count to the actual copy count. If you still observe zero draws, inspect the copy shader warnings for mismatched counts.
 - Graphics programs must include at least one vertex and fragment shader. Missing stages trigger warnings and abort indirect draws.
 - The indirect renderer now rebuilds atlas buffers before binding and warns if no index buffer is available; investigate any such warning immediately.
 - GPU dispatch sizing uses `VisibleCommandCount`, so verify that value is non-zero before expecting any draw output.
 - Overflow and stats buffers are polled after each render. Treat any logged non-zero values as actionable GPU-side issues.
+- Fixed pre-existing bug: `_renderBoundsCommand` in `RenderableMesh` was incorrectly using `RenderCommandMesh3D` instead of `RenderCommandMethod3D`.
