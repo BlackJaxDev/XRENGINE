@@ -22,6 +22,7 @@ namespace XREngine
         private double _debugOutputRecencySeconds = 0.0;
         private bool _disableAudioOnDefocus = false;
         private float? _unfocusedTargetFramesPerSecond = null;
+    private bool _useDebugOpaquePipeline = true;
 
         public EVSyncMode VSync
         {
@@ -80,5 +81,10 @@ namespace XREngine
             set => SetField(ref _unfocusedTargetFramesPerSecond, value);
         }
         public bool GPURenderDispatch { get; set; } = true;
+        public bool UseDebugOpaquePipeline
+        {
+            get => _useDebugOpaquePipeline;
+            set => SetField(ref _useDebugOpaquePipeline, value);
+        }
     }
 }

@@ -89,7 +89,8 @@ namespace XREngine.Rendering.Commands
                 {
                     Name = "MeshAtlas_Positions",
                     Usage = EBufferUsage.StreamDraw,
-                    DisposeOnPush = false
+                    DisposeOnPush = false,
+                    BindingIndexOverride = 0
                 };
                 _atlasPositions.Generate();
             }
@@ -99,7 +100,8 @@ namespace XREngine.Rendering.Commands
                 {
                     Name = "MeshAtlas_Normals",
                     Usage = EBufferUsage.StreamDraw,
-                    DisposeOnPush = false
+                    DisposeOnPush = false,
+                    BindingIndexOverride = 1
                 };
                 _atlasNormals.Generate();
             }
@@ -109,7 +111,8 @@ namespace XREngine.Rendering.Commands
                 {
                     Name = "MeshAtlas_Tangents",
                     Usage = EBufferUsage.StreamDraw,
-                    DisposeOnPush = false
+                    DisposeOnPush = false,
+                    BindingIndexOverride = 2
                 };
                 _atlasTangents.Generate();
             }
@@ -119,7 +122,8 @@ namespace XREngine.Rendering.Commands
                 {
                     Name = "MeshAtlas_UV0",
                     Usage = EBufferUsage.StreamDraw,
-                    DisposeOnPush = false
+                    DisposeOnPush = false,
+                    BindingIndexOverride = 3
                 };
                 _atlasUV0.Generate();
             }
@@ -133,6 +137,10 @@ namespace XREngine.Rendering.Commands
                 };
                 _atlasIndices.Generate();
             }
+                _atlasPositions!.BindingIndexOverride ??= 0;
+                _atlasNormals!.BindingIndexOverride ??= 1;
+                _atlasTangents!.BindingIndexOverride ??= 2;
+                _atlasUV0!.BindingIndexOverride ??= 3;
         }
 
         /// <summary>

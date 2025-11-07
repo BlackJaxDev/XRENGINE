@@ -19,6 +19,7 @@ namespace XREngine
     public static partial class Engine
     {
         private static readonly EventList<XRWindow> _windows = [];
+        private static UserSettings _userSettings = null!;
 
         static Engine()
         {
@@ -86,7 +87,29 @@ namespace XREngine
         /// <summary>
         /// User-defined settings, such as graphical and audio options.
         /// </summary>
-        public static UserSettings UserSettings { get; set; }
+        public static UserSettings UserSettings
+        {
+            get => _userSettings;
+            set
+            {
+                if (ReferenceEquals(_userSettings, value) && value is not null)
+                    return;
+
+                if (_userSettings is not null)
+                    _userSettings.PropertyChanged -= HandleUserSettingsChanged;
+
+                _userSettings = value ?? new UserSettings();
+                _userSettings.PropertyChanged += HandleUserSettingsChanged;
+
+                Rendering.ApplyRenderPipelinePreference();
+            }
+        }
+
+        private static void HandleUserSettingsChanged(object? sender, IXRPropertyChangedEventArgs e)
+        {
+            if (e.PropertyName == nameof(UserSettings.UseDebugOpaquePipeline))
+                Rendering.ApplyRenderPipelinePreference();
+        }
         /// <summary>
         /// Game-defined settings, such as initial world and libraries.
         /// </summary>
@@ -368,6 +391,7 @@ namespace XREngine
             CreateViewports(windowSettings.LocalPlayers, window);
             window.UpdateViewportSizes();
             _windows.Add(window);
+            Rendering.ApplyRenderPipelinePreference();
 
             /*Task.Run(() => */window.SetWorld(windowSettings.TargetWorld);
         }

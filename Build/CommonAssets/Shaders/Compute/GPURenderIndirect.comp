@@ -41,6 +41,7 @@ layout(std430, binding = 8) buffer StatsBuffer
 // === Uniforms ===
 uniform int CurrentRenderPass;     // -1 accepts all
 uniform int MaxIndirectDraws;      // capacity in draws
+uniform uint StatsEnabled;         // 0 when stats buffer is unbound
 //uniform int UseSorted;             // 1 = use keyIndexPairs for ordering
 
 void main()
@@ -61,21 +62,18 @@ void main()
     //}
 
     int base = int(idx) * COMMAND_FLOATS;
-    uint renderPass = uint(culled[base + 24]);
-    uint instanceCount = uint(culled[base + 23]);
+    uint renderPass = floatBitsToUint(culled[base + 24]);
+    uint instanceCount = floatBitsToUint(culled[base + 23]);
 
     if (instanceCount == 0u)
         return;
 
-    if (CurrentRenderPass >= 0 && renderPass != uint(CurrentRenderPass))
-        return; // skip (not compacted yet)
-
-    uint submeshID = uint(culled[base + 21]);
+    uint submeshID = floatBitsToUint(culled[base + 21]);
     uint submeshOffset = submeshID * 4u;
     if (submeshOffset + 3u >= submeshData.length())
     {
         // Fallback for packed mesh-data buffers indexed purely by meshID.
-        uint meshID = submeshID >> 16u;
+    uint meshID = submeshID >> 16u;
         uint fallbackOffset = meshID * 4u;
         if (fallbackOffset + 3u >= submeshData.length())
             return; // unable to resolve mesh metadata
@@ -106,5 +104,6 @@ void main()
     indirectDraws[drawBase + 2u] = firstIndex;
     indirectDraws[drawBase + 3u] = baseVertex;
     indirectDraws[drawBase + 4u] = baseInstance;
-    atomicAdd(StatsDrawCount, 1u);
+    if (StatsEnabled != 0u)
+        atomicAdd(StatsDrawCount, 1u);
 }
