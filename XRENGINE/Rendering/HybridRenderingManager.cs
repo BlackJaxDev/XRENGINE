@@ -1175,7 +1175,7 @@ namespace XREngine.Rendering
             program.Link();
             
             Debug.Out($"Program created and linked: {(program != null ? "SUCCESS" : "FAILED")}");
-
+            
             if (program is null)
             {
                 Debug.LogWarning("Failed to create render program for material; skipping cache.");
@@ -1348,9 +1348,12 @@ namespace XREngine.Rendering
                 return;
             }
 
-            Matrix4x4 modelMatrix = Matrix4x4.Identity;
-            if (renderPasses.VisibleCommandCount > 0 && TryReadWorldMatrix(renderPasses.CulledSceneToRenderBuffer, 0, out Matrix4x4 firstWorldMatrix))
-                modelMatrix = firstWorldMatrix;
+            Matrix4x4 defaultModelMatrix = Matrix4x4.Identity;
+            if (renderPasses.VisibleCommandCount > 0 &&
+                TryReadWorldMatrix(renderPasses.CulledSceneToRenderBuffer, 0, out Matrix4x4 firstWorldMatrix))
+            {
+                defaultModelMatrix = firstWorldMatrix;
+            }
 
             XRDataBuffer? dispatchParameterBuffer = parameterBuffer;
             //uint cpuBuiltCount = 0;
@@ -1482,8 +1485,29 @@ namespace XREngine.Rendering
 
                 Debug.Out($"Batch draw: materialID={lookupMaterialId} offset={batch.Offset} count={effectiveCount}");
 
-                // Issue indirect multi-draw for the batch range
-                DispatchRenderIndirectRange(indirectDrawBuffer, vaoRenderer, batch.Offset, effectiveCount, dispatchParameterBuffer, program, camera, modelMatrix);
+                for (uint drawIndex = 0; drawIndex < effectiveCount; ++drawIndex)
+                {
+                    uint commandIndex = batch.Offset + drawIndex;
+                    if (commandIndex >= renderPasses.VisibleCommandCount)
+                    {
+                        Debug.LogWarning($"Command index {commandIndex} out of range for visible count {renderPasses.VisibleCommandCount}; skipping remaining draws in batch.");
+                        break;
+                    }
+
+                    Matrix4x4 batchModelMatrix = defaultModelMatrix;
+                    if (TryReadWorldMatrix(renderPasses.CulledSceneToRenderBuffer, commandIndex, out Matrix4x4 perDrawMatrix))
+                        batchModelMatrix = perDrawMatrix;
+
+                    DispatchRenderIndirectRange(
+                        indirectDrawBuffer,
+                        vaoRenderer,
+                        commandIndex,
+                        1,
+                        dispatchParameterBuffer,
+                        program,
+                        camera,
+                        batchModelMatrix);
+                }
             }
         }
 
