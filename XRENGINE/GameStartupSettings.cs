@@ -11,6 +11,7 @@ namespace XREngine
         private ETwoPlayerPreference _twoPlayerViewportPreference;
         private EThreePlayerPreference _threePlayerViewportPreference;
         private EOutputVerbosity _outputVerbosity = EOutputVerbosity.Verbose;
+        private bool _logOutputToFile = true;
         private bool _useIntegerWeightingIds = true;
         private UserSettings _defaultUserSettings = new();
         private string _texturesFolder = "";
@@ -33,6 +34,11 @@ namespace XREngine
         {
             get => _outputVerbosity;
             set => SetField(ref _outputVerbosity, value);
+        }
+        public bool LogOutputToFile
+        {
+            get => _logOutputToFile;
+            set => SetField(ref _logOutputToFile, value);
         }
         public bool UseIntegerWeightingIds
         {
