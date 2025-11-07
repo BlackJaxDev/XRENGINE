@@ -90,6 +90,12 @@ namespace XREngine.Rendering.OpenGL
 
             private void BindV2(GLRenderProgram vertexProgram, GLMeshRenderer? arrayBufferLink)
             {
+                if (vertexProgram is null)
+                {
+                    Debug.LogWarning("[GLDataBuffer] Cannot bind buffer without an active GLRenderProgram.");
+                    return;
+                }
+
                 switch (Data.Target)
                 {
                     case EBufferTarget.ArrayBuffer:
@@ -106,6 +112,8 @@ namespace XREngine.Rendering.OpenGL
                                 bindingIndex = Data.BindingIndexOverride.Value;
                             else if (!TryGetAttributeLocation(vertexProgram, out bindingIndex))
                             {
+                                string programName = vertexProgram.Data?.Name ?? "<unnamed>";
+                                Debug.Out($"[GLDataBuffer] Attribute '{Data.AttributeName}' missing in program '{programName}' while binding buffer '{GetDescribingName()}'.");
                                 return;
                             }
 
@@ -124,6 +132,11 @@ namespace XREngine.Rendering.OpenGL
                                             Api.VertexArrayAttribIFormat(vaoId, attribIndex, (int)componentCount, GLEnum.Byte + (int)componentType, offset);
                                         else
                                             Api.VertexArrayAttribFormat(vaoId, attribIndex, (int)componentCount, GLEnum.Byte + (int)componentType, Data.Normalize, offset);
+                                    }
+                                    else
+                                    {
+                                        string programName = vertexProgram.Data?.Name ?? "<unnamed>";
+                                        Debug.Out($"[GLDataBuffer] Interleaved attribute '{name}' missing in program '{programName}' for buffer '{GetDescribingName()}'.");
                                     }
                                 }
                                 // Bind the interleaved buffer once

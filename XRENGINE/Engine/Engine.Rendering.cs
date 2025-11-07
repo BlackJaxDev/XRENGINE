@@ -64,7 +64,38 @@ namespace XREngine
                 => new();
 
             public static RenderPipeline NewRenderPipeline()
-                => new DefaultRenderPipeline();
+                => Engine.UserSettings.UseDebugOpaquePipeline
+                    ? new DebugOpaqueRenderPipeline()
+                    : new DefaultRenderPipeline();
+
+            public static void ApplyRenderPipelinePreference()
+            {
+                bool preferDebug = Engine.UserSettings.UseDebugOpaquePipeline;
+
+                foreach (XRWindow window in Engine.Windows)
+                {
+                    foreach (XRViewport viewport in window.Viewports)
+                    {
+                        RenderPipeline? pipeline = viewport.RenderPipeline;
+
+                        if (pipeline is null)
+                        {
+                            viewport.RenderPipeline = NewRenderPipeline();
+                            continue;
+                        }
+
+                        if (preferDebug)
+                        {
+                            if (pipeline is DefaultRenderPipeline defaultPipeline && !defaultPipeline.Stereo)
+                                viewport.RenderPipeline = new DebugOpaqueRenderPipeline();
+                        }
+                        else if (pipeline is DebugOpaqueRenderPipeline)
+                        {
+                            viewport.RenderPipeline = new DefaultRenderPipeline();
+                        }
+                    }
+                }
+            }
         }
     }
 }

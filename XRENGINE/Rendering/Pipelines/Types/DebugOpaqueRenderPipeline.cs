@@ -1,0 +1,134 @@
+using System;
+using System.Collections.Generic;
+using System.Diagnostics.CodeAnalysis;
+using System.Threading;
+using Extensions;
+using XREngine.Data.Colors;
+using XREngine.Data.Rendering;
+using XREngine.Rendering.Commands;
+using XREngine.Rendering.Models.Materials;
+using XREngine.Rendering.Pipelines.Commands;
+using static XREngine.Engine.Rendering.State;
+
+namespace XREngine.Rendering;
+
+/// <summary>
+/// Minimal render pipeline for debugging opaque geometry. Renders background, deferred opaque, and forward opaque passes only.
+/// </summary>
+public sealed class DebugOpaqueRenderPipeline : RenderPipeline
+{
+    private readonly NearToFarRenderCommandSorter _nearToFarSorter = new();
+
+    private bool _gpuRenderDispatch = Engine.UserSettings.GPURenderDispatch;
+
+    /// <summary>
+    /// When true, the pipeline dispatches opaque passes using GPU-driven rendering.
+    /// </summary>
+    public bool GpuRenderDispatch
+    {
+        get => _gpuRenderDispatch;
+        set
+        {
+            SetField(ref _gpuRenderDispatch, value);
+            _renderDispatchCommandType = null;
+        }
+    }
+
+    [DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicParameterlessConstructor)]
+    private Type? _renderDispatchCommandType;
+
+    [DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicParameterlessConstructor)]
+    public Type RenderDispatchCommandType
+        => _renderDispatchCommandType ??= GpuRenderDispatch
+            ? typeof(VPRC_RenderMeshesPassGPU)
+            : typeof(VPRC_RenderMeshesPassCPU);
+
+    protected override Lazy<XRMaterial> InvalidMaterialFactory
+        => new(MakeInvalidMaterial, LazyThreadSafetyMode.PublicationOnly);
+
+    public override string DebugName => "DebugOpaquePipeline";
+
+    public DebugOpaqueRenderPipeline() : base(true)
+    {
+        CommandChain = GenerateCommandChain();
+    }
+
+    protected override ViewportRenderCommandContainer GenerateCommandChain()
+    {
+        ViewportRenderCommandContainer container = [];
+        var ifElse = container.Add<VPRC_IfElse>();
+        ifElse.ConditionEvaluator = () => State.WindowViewport is not null;
+        ifElse.TrueCommands = CreateViewportTargetCommands();
+        ifElse.FalseCommands = CreateFBOTargetCommands();
+        return container;
+    }
+
+    protected override Dictionary<int, IComparer<RenderCommand>?> GetPassIndicesAndSorters()
+        => new()
+        {
+            { (int)EDefaultRenderPass.PreRender, null },
+            { (int)EDefaultRenderPass.Background, null },
+            { (int)EDefaultRenderPass.OpaqueDeferredLit, _nearToFarSorter },
+            { (int)EDefaultRenderPass.OpaqueForward, _nearToFarSorter },
+            { (int)EDefaultRenderPass.PostRender, null },
+        };
+
+    private static XRMaterial MakeInvalidMaterial()
+        => XRMaterial.CreateColorMaterialDeferred();
+
+    private ViewportRenderCommandContainer CreateViewportTargetCommands()
+    {
+        ViewportRenderCommandContainer commands = [];
+
+        commands.Add<VPRC_SetClears>().Set(ColorF4.Black, 1.0f, 0);
+        commands.Add<VPRC_RenderMeshesPassCPU>().RenderPass = (int)EDefaultRenderPass.PreRender;
+
+        using (commands.AddUsing<VPRC_PushViewportRenderArea>(options => options.UseInternalResolution = true))
+        {
+            using (commands.AddUsing<VPRC_BindOutputFBO>())
+            {
+                commands.Add<VPRC_StencilMask>().Set(~0u);
+                commands.Add<VPRC_ClearByBoundFBO>();
+
+                commands.Add<VPRC_DepthTest>().Enable = true;
+                commands.Add<VPRC_DepthWrite>().Allow = false;
+                commands.Add(RenderDispatchCommandType, (int)EDefaultRenderPass.Background);
+
+                commands.Add<VPRC_DepthWrite>().Allow = true;
+                commands.Add(RenderDispatchCommandType, (int)EDefaultRenderPass.OpaqueDeferredLit);
+                commands.Add(RenderDispatchCommandType, (int)EDefaultRenderPass.OpaqueForward);
+            }
+        }
+
+        commands.Add<VPRC_RenderMeshesPassCPU>().RenderPass = (int)EDefaultRenderPass.PostRender;
+        return commands;
+    }
+
+    private ViewportRenderCommandContainer CreateFBOTargetCommands()
+    {
+        ViewportRenderCommandContainer commands = [];
+
+        commands.Add<VPRC_SetClears>().Set(ColorF4.Black, 1.0f, 0);
+        commands.Add<VPRC_RenderMeshesPassCPU>().RenderPass = (int)EDefaultRenderPass.PreRender;
+
+        using (commands.AddUsing<VPRC_PushOutputFBORenderArea>())
+        {
+            using (commands.AddUsing<VPRC_BindOutputFBO>())
+            {
+                commands.Add<VPRC_StencilMask>().Set(~0u);
+                commands.Add<VPRC_ClearByBoundFBO>();
+
+                commands.Add<VPRC_DepthTest>().Enable = true;
+                commands.Add<VPRC_DepthWrite>().Allow = false;
+                commands.Add(RenderDispatchCommandType, (int)EDefaultRenderPass.Background);
+
+                commands.Add<VPRC_DepthWrite>().Allow = true;
+                commands.Add(RenderDispatchCommandType, (int)EDefaultRenderPass.OpaqueDeferredLit);
+                commands.Add(RenderDispatchCommandType, (int)EDefaultRenderPass.OpaqueForward);
+            }
+        }
+
+        commands.Add<VPRC_RenderMeshesPassCPU>().RenderPass = (int)EDefaultRenderPass.PostRender;
+        return commands;
+    }
+}

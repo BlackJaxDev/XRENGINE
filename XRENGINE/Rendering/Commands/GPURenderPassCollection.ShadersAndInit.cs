@@ -341,6 +341,28 @@ namespace XREngine.Rendering.Commands
         {
             bool recreated = false;
 
+            EBufferMapStorageFlags requiredStorage = EBufferMapStorageFlags.DynamicStorage | EBufferMapStorageFlags.Read;
+            EBufferMapRangeFlags requiredRange = EBufferMapRangeFlags.Read;
+
+            if (_indirectDrawBuffer is not null)
+            {
+                bool strideMismatch = _indirectDrawBuffer.ElementSize != _indirectCommandStride;
+                bool countMismatch = _indirectDrawBuffer.ElementCount != capacity;
+                bool missingStorage = (_indirectDrawBuffer.StorageFlags & requiredStorage) != requiredStorage;
+                bool missingRange = (_indirectDrawBuffer.RangeFlags & requiredRange) != requiredRange;
+                if (strideMismatch || countMismatch || missingStorage || missingRange)
+                {
+                    if (strideMismatch)
+                        Debug.LogWarning($"{FormatDebugPrefix("Buffers")} Indirect draw buffer stride mismatch detected. Forcing recreation.");
+                    else if (countMismatch)
+                        Dbg("Resizing indirect draw buffer to match new capacity.", "Buffers");
+                    else
+                        Debug.LogWarning($"{FormatDebugPrefix("Buffers")} Indirect draw buffer missing required readback flags. Recreating with map-read support.");
+                    _indirectDrawBuffer.Destroy();
+                    _indirectDrawBuffer = null;
+                }
+            }
+
             if (_indirectDrawBuffer is null)
             {
                 _indirectDrawBuffer = new XRDataBuffer("IndirectDraw_Pass", EBufferTarget.DrawIndirectBuffer, capacity, EComponentType.UInt, _indirectCommandComponentCount, false, true)
@@ -349,22 +371,10 @@ namespace XREngine.Rendering.Commands
                     DisposeOnPush = false,
                     Resizable = true,
                 };
+                _indirectDrawBuffer.StorageFlags |= requiredStorage;
+                _indirectDrawBuffer.RangeFlags |= requiredRange;
                 _indirectDrawBuffer.Generate();
                 recreated = true;
-            }
-            else
-            {
-                bool strideMismatch = _indirectDrawBuffer.ElementSize != _indirectCommandStride;
-                bool countMismatch = _indirectDrawBuffer.ElementCount != capacity;
-                if (strideMismatch || countMismatch)
-                {
-                    if (strideMismatch)
-                        Debug.LogWarning($"{FormatDebugPrefix("Buffers")} Indirect draw buffer stride mismatch detected. Forcing recreation.");
-                    else
-                        Dbg("Resizing indirect draw buffer to match new capacity.", "Buffers");
-                    _indirectDrawBuffer.Destroy();
-                    _indirectDrawBuffer = null;
-                }
             }
 
             return recreated;

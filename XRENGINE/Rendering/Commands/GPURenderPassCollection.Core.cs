@@ -217,6 +217,8 @@ namespace XREngine.Rendering.Commands
                 Usage = EBufferUsage.StreamDraw, //We're copying commands from the gpu scene buffer to this one every frame, preferably culled using the camera
                 DisposeOnPush = false,
                 Resizable = false,
+                StorageFlags = EBufferMapStorageFlags.DynamicStorage | EBufferMapStorageFlags.Read,
+                RangeFlags = EBufferMapRangeFlags.Read,
             };
             buffer.Generate();
             return buffer;

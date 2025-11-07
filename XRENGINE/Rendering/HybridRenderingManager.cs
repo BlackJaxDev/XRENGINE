@@ -1,9 +1,11 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Numerics;
 using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
 using System.Text;
+using XREngine.Data;
 using XREngine.Data.Core;
 using XREngine.Data.Rendering;
 using XREngine.Rendering.Commands;
@@ -162,7 +164,8 @@ namespace XREngine.Rendering
             uint maxCommands,
             XRDataBuffer? parameterBuffer,
             XRRenderProgram? graphicsProgram,
-            XRCamera? camera)
+            XRCamera? camera,
+            Matrix4x4 modelMatrix)
         {
             Debug.Out("=== DispatchRenderIndirect START ===");
             Debug.Out($"Parameters: drawCount={drawCount}, maxCommands={maxCommands}");
@@ -189,7 +192,6 @@ namespace XREngine.Rendering
                 graphicsProgram.Use();
                 Debug.Out("Graphics program bound successfully");
                 
-                // Set camera/engine uniforms
                 if (camera is not null)
                 {
                     Debug.Out("Setting engine uniforms...");
@@ -200,6 +202,13 @@ namespace XREngine.Rendering
                 {
                     Debug.LogWarning("No camera provided for uniforms!");
                 }
+
+                bool isIdentity = Matrix4x4.Equals(modelMatrix, Matrix4x4.Identity);
+                graphicsProgram.Uniform(EEngineUniform.ModelMatrix.ToString(), modelMatrix);
+                if (!isIdentity)
+                    Debug.Out($"Model matrix translation=({modelMatrix.M41:F3},{modelMatrix.M42:F3},{modelMatrix.M43:F3})");
+                else
+                    Debug.Out("Model matrix uniform set to identity");
             }
             else
             {
@@ -277,6 +286,301 @@ namespace XREngine.Rendering
             Debug.Out("=== DispatchRenderIndirect END ===");
         }
 
+        private static void DumpGpuIndirectArguments(
+            GPURenderPassCollection renderPasses,
+            XRDataBuffer indirectDrawBuffer,
+            uint maxDrawAllowed,
+            XRDataBuffer? parameterBuffer,
+            uint visibleCount)
+        {
+            Debug.Out($"[GPUIndirect] dump invoked tick={Environment.TickCount64}");
+            XRDataBuffer? drawCountBuffer = renderPasses.DrawCountBuffer ?? parameterBuffer;
+            XRDataBuffer? culledCountBuffer = renderPasses.CulledCountBuffer;
+            XRDataBuffer culledCommandBuffer = renderPasses.CulledSceneToRenderBuffer;
+            bool mappedIndirectHere = false;
+            bool mappedDrawCountHere = false;
+            bool mappedCulledCountHere = false;
+            bool mappedCulledCommandsHere = false;
+            try
+            {
+                if (indirectDrawBuffer.ActivelyMapping.Count == 0)
+                {
+                    indirectDrawBuffer.MapBufferData();
+                    mappedIndirectHere = true;
+                }
+
+                if (drawCountBuffer is not null && drawCountBuffer.ActivelyMapping.Count == 0)
+                {
+                    drawCountBuffer.MapBufferData();
+                    mappedDrawCountHere = true;
+                }
+
+                if (culledCountBuffer is not null && culledCountBuffer.ActivelyMapping.Count == 0)
+                {
+                    culledCountBuffer.MapBufferData();
+                    mappedCulledCountHere = true;
+                }
+
+                VoidPtr indirectPtr = indirectDrawBuffer
+                    .GetMappedAddresses()
+                    .FirstOrDefault(ptr => ptr.IsValid);
+
+                if (!indirectPtr.IsValid)
+                {
+                    Debug.LogWarning("Failed to map indirect draw buffer for argument dump.");
+                    return;
+                }
+
+                uint gpuDrawCount = 0;
+                if (drawCountBuffer is not null)
+                {
+                    VoidPtr countPtr = drawCountBuffer
+                        .GetMappedAddresses()
+                        .FirstOrDefault(ptr => ptr.IsValid);
+
+                    if (countPtr.IsValid)
+                    {
+                        unsafe
+                        {
+                            gpuDrawCount = Unsafe.ReadUnaligned<uint>(countPtr.Pointer);
+                        }
+                    }
+                }
+
+                uint culledDrawCount = 0;
+                if (culledCountBuffer is not null)
+                {
+                    VoidPtr culledPtr = culledCountBuffer
+                        .GetMappedAddresses()
+                        .FirstOrDefault(ptr => ptr.IsValid);
+
+                    if (culledPtr.IsValid)
+                    {
+                        unsafe
+                        {
+                            culledDrawCount = Unsafe.ReadUnaligned<uint>(culledPtr.Pointer);
+                        }
+                    }
+                }
+
+                uint fallbackCount = Math.Min(visibleCount, indirectDrawBuffer.ElementCount);
+                if (fallbackCount == 0 && maxDrawAllowed > 0)
+                    fallbackCount = Math.Min(maxDrawAllowed, indirectDrawBuffer.ElementCount);
+
+                uint sampleCount = gpuDrawCount != 0 ? gpuDrawCount : fallbackCount;
+                sampleCount = Math.Min(sampleCount, indirectDrawBuffer.ElementCount);
+                sampleCount = Math.Min(sampleCount, 8u);
+
+                var sb = new StringBuilder();
+                bool usingGpuCount = gpuDrawCount != 0;
+                sb.Append($"[GPUIndirect] tick={Environment.TickCount64} drawCount={gpuDrawCount} culled={culledDrawCount} visible={visibleCount} maxAllowed={maxDrawAllowed} sample={sampleCount} source={(usingGpuCount ? "GPU" : "Fallback")}");
+
+                if (sampleCount > 0)
+                {
+                    uint stride = indirectDrawBuffer.ElementSize;
+                    if (stride == 0)
+                        stride = (uint)Marshal.SizeOf<DrawElementsIndirectCommand>();
+
+                    unsafe
+                    {
+                        byte* basePtr = (byte*)indirectPtr.Pointer;
+                        for (uint i = 0; i < sampleCount; ++i)
+                        {
+                            var cmd = Unsafe.ReadUnaligned<DrawElementsIndirectCommand>(basePtr + (int)(i * stride));
+                            sb.Append($" |[{i}] count={cmd.Count} firstIndex={cmd.FirstIndex} baseVertex={cmd.BaseVertex} instances={cmd.InstanceCount}");
+                        }
+                    }
+                }
+
+                Debug.Out(sb.ToString());
+
+                bool culledSupportsReadback =
+                    (culledCommandBuffer.StorageFlags & EBufferMapStorageFlags.Read) != 0 &&
+                    (culledCommandBuffer.RangeFlags & EBufferMapRangeFlags.Read) != 0;
+
+                if (!usingGpuCount && visibleCount > 0 && culledSupportsReadback)
+                {
+                    try
+                    {
+                        if (culledCommandBuffer.ActivelyMapping.Count == 0)
+                        {
+                            culledCommandBuffer.MapBufferData();
+                            mappedCulledCommandsHere = true;
+                        }
+
+                        VoidPtr culledPtr = culledCommandBuffer
+                            .GetMappedAddresses()
+                            .FirstOrDefault(ptr => ptr.IsValid);
+
+                        if (culledPtr.IsValid)
+                        {
+                            uint culledStride = culledCommandBuffer.ElementSize;
+                            if (culledStride == 0)
+                                culledStride = (uint)Marshal.SizeOf<GPUIndirectRenderCommand>();
+
+                            uint inspectCount = Math.Min(visibleCount, 3u);
+                            unsafe
+                            {
+                                byte* culledBase = (byte*)culledPtr.Pointer;
+                                for (uint i = 0; i < inspectCount; ++i)
+                                {
+                                    var culledCmd = Unsafe.ReadUnaligned<GPUIndirectRenderCommand>(culledBase + (int)(i * culledStride));
+                                    Debug.Out($"[GPUIndirect] culled[{i}] mesh={culledCmd.MeshID} submesh={culledCmd.SubmeshID} material={culledCmd.MaterialID} instances={culledCmd.InstanceCount} pass={culledCmd.RenderPass}");
+                                }
+                            }
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        Debug.LogWarning($"Failed to inspect culled commands: {ex.Message}");
+                    }
+                    finally
+                    {
+                        if (mappedCulledCommandsHere)
+                            culledCommandBuffer.UnmapBufferData();
+                    }
+                }
+                else if (!usingGpuCount && visibleCount > 0 && !culledSupportsReadback)
+                {
+                    Debug.Out("[GPUIndirect] Culled command buffer lacks read-mapping flags; skipping culled dump.");
+                }
+            }
+            catch (Exception ex)
+            {
+                Debug.LogWarning($"Failed to dump GPU indirect arguments: {ex.Message}");
+            }
+            finally
+            {
+                if (mappedDrawCountHere && drawCountBuffer is not null)
+                    drawCountBuffer.UnmapBufferData();
+
+                if (mappedCulledCountHere && culledCountBuffer is not null)
+                    culledCountBuffer.UnmapBufferData();
+
+                if (mappedIndirectHere)
+                    indirectDrawBuffer.UnmapBufferData();
+            }
+        }
+
+        private static void DumpCulledCommandData(
+            GPURenderPassCollection renderPasses,
+            GPUScene scene,
+            uint visibleCount)
+        {
+            if (!DebugSettings.DumpIndirectArguments || visibleCount == 0)
+                return;
+
+            XRDataBuffer culledBuffer = renderPasses.CulledSceneToRenderBuffer;
+            bool mappedHere = false;
+            try
+            {
+                if (culledBuffer.ActivelyMapping.Count == 0)
+                {
+                    culledBuffer.MapBufferData();
+                    mappedHere = true;
+                }
+
+                VoidPtr ptr = culledBuffer
+                    .GetMappedAddresses()
+                    .FirstOrDefault(p => p.IsValid);
+
+                if (!ptr.IsValid)
+                {
+                    Debug.Out("[GPUIndirect] Failed to map culled buffer for inspection.");
+                    return;
+                }
+
+                uint stride = culledBuffer.ElementSize;
+                if (stride == 0)
+                    stride = GPUScene.CommandFloatCount * sizeof(float);
+
+                uint samples = Math.Min(visibleCount, 3u);
+                unsafe
+                {
+                    byte* basePtr = (byte*)ptr.Pointer;
+                    for (uint i = 0; i < samples; ++i)
+                    {
+                        var cmd = Unsafe.ReadUnaligned<GPUIndirectRenderCommand>(basePtr + (int)(i * stride));
+                        var sb = new StringBuilder();
+                        sb.Append($"[GPUIndirect] visible[{i}] mesh={cmd.MeshID} submesh={cmd.SubmeshID & 0xFFFF} material={cmd.MaterialID} instances={cmd.InstanceCount} pass={cmd.RenderPass}");
+                        Vector3 translation = cmd.WorldMatrix.Translation;
+                        sb.Append($" | worldPos=({translation.X:F3},{translation.Y:F3},{translation.Z:F3})");
+                        if (scene.TryGetMeshDataEntry(cmd.MeshID, out GPUScene.MeshDataEntry meshEntry))
+                        {
+                            sb.Append($" | meshData indexCount={meshEntry.IndexCount} firstIndex={meshEntry.FirstIndex} firstVertex={meshEntry.FirstVertex}");
+                        }
+                        else
+                        {
+                            sb.Append(" | meshData=<missing>");
+                        }
+
+                        Debug.Out(sb.ToString());
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                Debug.LogWarning($"[GPUIndirect] Failed to dump culled command data: {ex.Message}");
+            }
+            finally
+            {
+                if (mappedHere)
+                    culledBuffer.UnmapBufferData();
+            }
+        }
+
+        private static bool TryReadWorldMatrix(
+            XRDataBuffer culledBuffer,
+            uint commandIndex,
+            out Matrix4x4 worldMatrix)
+        {
+            worldMatrix = Matrix4x4.Identity;
+
+            if (commandIndex >= culledBuffer.ElementCount)
+                return false;
+
+            bool mappedHere = false;
+            try
+            {
+                if (culledBuffer.ActivelyMapping.Count == 0)
+                {
+                    culledBuffer.MapBufferData();
+                    mappedHere = true;
+                }
+
+                VoidPtr ptr = culledBuffer
+                    .GetMappedAddresses()
+                    .FirstOrDefault(p => p.IsValid);
+
+                if (!ptr.IsValid)
+                    return false;
+
+                uint stride = culledBuffer.ElementSize;
+                if (stride == 0)
+                    stride = GPUScene.CommandFloatCount * sizeof(float);
+
+                unsafe
+                {
+                    byte* basePtr = (byte*)ptr.Pointer;
+                    byte* commandPtr = basePtr + (commandIndex * stride);
+                    var command = Unsafe.ReadUnaligned<GPUIndirectRenderCommand>(commandPtr);
+                    worldMatrix = command.WorldMatrix;
+                    return true;
+                }
+            }
+            catch (Exception ex)
+            {
+                Debug.LogWarning($"[GPUIndirect] Failed to read world matrix at index {commandIndex}: {ex.Message}");
+            }
+            finally
+            {
+                if (mappedHere)
+                    culledBuffer.UnmapBufferData();
+            }
+
+            return false;
+        }
+
         private static void DispatchRenderIndirectRange(
             XRDataBuffer? indirectDrawBuffer,
             XRMeshRenderer? vaoRenderer,
@@ -284,7 +588,8 @@ namespace XREngine.Rendering
             uint drawCount,
             XRDataBuffer? parameterBuffer,
             XRRenderProgram? graphicsProgram,
-            XRCamera? camera)
+            XRCamera? camera,
+            Matrix4x4 modelMatrix)
         {
             var renderer = AbstractRenderer.Current;
             if (renderer is null)
@@ -304,6 +609,7 @@ namespace XREngine.Rendering
                 // Set camera/engine uniforms
                 if (camera is not null)
                     renderer.SetEngineUniforms(graphicsProgram, camera);
+                graphicsProgram.Uniform(EEngineUniform.ModelMatrix.ToString(), modelMatrix);
             }
 
             // Bind VAO
@@ -448,6 +754,10 @@ namespace XREngine.Rendering
             if (culledCapacity > 0 && visibleCount > culledCapacity)
                 visibleCount = culledCapacity;
 
+            Matrix4x4 modelMatrix = Matrix4x4.Identity;
+            if (visibleCount > 0 && TryReadWorldMatrix(culledBuffer, 0, out Matrix4x4 firstWorldMatrix))
+                modelMatrix = firstWorldMatrix;
+
             uint indirectCapacity = indirectDrawBuffer.ElementCount;
             uint maxDrawAllowed = visibleCount > 0
                 ? Math.Min(indirectCapacity, visibleCount)
@@ -501,6 +811,8 @@ namespace XREngine.Rendering
                 Debug.LogWarning("No default material available!");
             }
 
+            DumpCulledCommandData(renderPasses, scene, visibleCount);
+
             if (DebugSettings.ForceCpuIndirectBuild)
             {
                 Debug.Out("Using CPU indirect build path");
@@ -533,7 +845,8 @@ namespace XREngine.Rendering
                     built,
                     null,
                     renderProgram,
-                    camera);
+                    camera,
+                    modelMatrix);
 
                 Debug.Out("=== RenderTraditional END (CPU path) ===");
                 return;
@@ -598,11 +911,14 @@ namespace XREngine.Rendering
             }
 
             var statsBuffer = renderPasses.StatsBuffer;
-            if (statsBuffer is not null)
+            bool statsEnabled = statsBuffer is not null;
+            if (statsEnabled)
             {
-                _indirectCompProgram.BindBuffer(statsBuffer, 8);
+                _indirectCompProgram.BindBuffer(statsBuffer!, 8);
                 Debug.Out("Bound stats buffer");
             }
+
+            _indirectCompProgram.Uniform("StatsEnabled", statsEnabled ? 1u : 0u);
 
             if (visibleCount == 0)
             {
@@ -627,8 +943,15 @@ namespace XREngine.Rendering
             //Debug.Out("Compute dispatch complete");
 
             // Conservative barrier before consuming indirect buffer
-            AbstractRenderer.Current?.MemoryBarrier(EMemoryBarrierMask.ShaderStorage | EMemoryBarrierMask.Command);
+            AbstractRenderer.Current?.MemoryBarrier(
+                EMemoryBarrierMask.ShaderStorage |
+                EMemoryBarrierMask.Command |
+                EMemoryBarrierMask.ClientMappedBuffer |
+                EMemoryBarrierMask.BufferUpdate);
             //Debug.Out("Memory barrier issued");
+
+            //if (DebugSettings.DumpIndirectArguments)
+                DumpGpuIndirectArguments(renderPasses, indirectDrawBuffer, maxDrawAllowed, parameterBuffer, visibleCount);
 
             //ClearIndirectTail(indirectDrawBuffer, parameterBuffer, maxDrawAllowed);
 
@@ -642,7 +965,8 @@ namespace XREngine.Rendering
                 maxDrawAllowed,
                 parameterBuffer,
                 renderProgram,
-                camera);
+                camera,
+                modelMatrix);
 
             Debug.Out("=== RenderTraditional END (GPU path) ===");
         }
@@ -698,8 +1022,6 @@ namespace XREngine.Rendering
 
                 if (gpuCommand.MeshID == 0)
                     skipReason = "meshID=0";
-                else if (currentRenderPass >= 0 && gpuCommand.RenderPass != (uint)currentRenderPass)
-                    skipReason = $"renderPass mismatch command={gpuCommand.RenderPass} current={currentRenderPass}";
 
                 GPUScene.MeshDataEntry meshEntry = default;
                 if (skipReason is null)
@@ -1026,6 +1348,10 @@ namespace XREngine.Rendering
                 return;
             }
 
+            Matrix4x4 modelMatrix = Matrix4x4.Identity;
+            if (renderPasses.VisibleCommandCount > 0 && TryReadWorldMatrix(renderPasses.CulledSceneToRenderBuffer, 0, out Matrix4x4 firstWorldMatrix))
+                modelMatrix = firstWorldMatrix;
+
             XRDataBuffer? dispatchParameterBuffer = parameterBuffer;
             //uint cpuBuiltCount = 0;
             //bool usingCpuIndirect = DebugSettings.ForceCpuIndirectBuild;
@@ -1086,6 +1412,28 @@ namespace XREngine.Rendering
 
             var activeBatches = overrideBatches ?? batches;
 
+            if (DebugSettings.DumpIndirectArguments)
+            {
+                AbstractRenderer.Current?.MemoryBarrier(
+                    EMemoryBarrierMask.ShaderStorage |
+                    EMemoryBarrierMask.Command |
+                    EMemoryBarrierMask.ClientMappedBuffer |
+                    EMemoryBarrierMask.BufferUpdate);
+
+                uint visible = renderPasses.VisibleCommandCount;
+                uint maxAllowed = indirectDrawBuffer.ElementCount;
+                if (activeBatches.Count > 0)
+                {
+                    var lastBatch = activeBatches[^1];
+                    uint batchEnd = lastBatch.Offset + lastBatch.Count;
+                    if (batchEnd > 0)
+                        maxAllowed = Math.Min(maxAllowed, batchEnd);
+                }
+
+                DumpCulledCommandData(renderPasses, scene, visible);
+                DumpGpuIndirectArguments(renderPasses, indirectDrawBuffer, maxAllowed, dispatchParameterBuffer, visible);
+            }
+
             foreach (var batch in activeBatches)
             {
                 if (batch.Count == 0)
@@ -1135,7 +1483,7 @@ namespace XREngine.Rendering
                 Debug.Out($"Batch draw: materialID={lookupMaterialId} offset={batch.Offset} count={effectiveCount}");
 
                 // Issue indirect multi-draw for the batch range
-                DispatchRenderIndirectRange(indirectDrawBuffer, vaoRenderer, batch.Offset, effectiveCount, dispatchParameterBuffer, program, camera);
+                DispatchRenderIndirectRange(indirectDrawBuffer, vaoRenderer, batch.Offset, effectiveCount, dispatchParameterBuffer, program, camera, modelMatrix);
             }
         }
 

@@ -133,7 +133,11 @@ namespace XREngine.Rendering.Commands
                 _truncationFlagBuffer.BindTo(_indirectRenderTaskShader, 7);
             }
 
-            _statsBuffer?.BindTo(_indirectRenderTaskShader, 8);
+            bool statsEnabled = _statsBuffer is not null;
+            if (statsEnabled)
+                _statsBuffer!.BindTo(_indirectRenderTaskShader, 8);
+
+            _indirectRenderTaskShader.Uniform("StatsEnabled", statsEnabled ? 1u : 0u);
 
             (uint x, uint y, uint z) = ComputeDispatch.ForCommands(VisibleCommandCount);
             if (x <= 0)
@@ -208,9 +212,16 @@ namespace XREngine.Rendering.Commands
 
             Dbg($"PopulateMaterialIDs count={count}", "Materials");
 
+            bool loggedSentinel = false;
+
             for (uint i = 0; i < count; i++)
             {
                 var cmd = scene.AllLoadedCommandsBuffer.GetDataRawAtIndex<GPUIndirectRenderCommand>(i);
+                if (!loggedSentinel && cmd.MaterialID == uint.MaxValue)
+                {
+                    Dbg($"PopulateMaterialIDs source materialID=uint.MaxValue @sceneIndex={i} mesh={cmd.MeshID}", "Materials");
+                    loggedSentinel = true;
+                }
                 _materialIDsBuffer.SetDataRawAtIndex(i, cmd.MaterialID);
             }
         }
@@ -270,7 +281,11 @@ namespace XREngine.Rendering.Commands
                 {
                     GPUIndirectRenderCommand culledCmd = _culledSceneToRenderBuffer.GetDataRawAtIndex<GPUIndirectRenderCommand>(visibleIndex);
                     if (culledCmd.MaterialID != 0)
+                    {
+                        if (culledCmd.MaterialID == uint.MaxValue)
+                            Dbg($"ResolveMaterialId detected sentinel materialID=uint.MaxValue from culled buffer @idx={visibleIndex} mesh={culledCmd.MeshID}", "Materials");
                         return culledCmd.MaterialID;
+                    }
                 }
             }
             catch (Exception ex)
@@ -284,7 +299,11 @@ namespace XREngine.Rendering.Commands
                 {
                     uint id = _materialIDsBuffer.GetDataRawAtIndex<uint>(visibleIndex);
                     if (id != 0)
+                    {
+                        if (id == uint.MaxValue)
+                            Dbg($"ResolveMaterialId detected sentinel materialID=uint.MaxValue from material buffer @idx={visibleIndex}", "Materials");
                         return id;
+                    }
                 }
             }
             catch (Exception ex)
@@ -298,6 +317,8 @@ namespace XREngine.Rendering.Commands
                 if (visibleIndex < commands.ElementCount)
                 {
                     GPUIndirectRenderCommand cmd = commands.GetDataRawAtIndex<GPUIndirectRenderCommand>(visibleIndex);
+                    if (cmd.MaterialID == uint.MaxValue)
+                        Dbg($"ResolveMaterialId detected sentinel materialID=uint.MaxValue from scene commands @idx={visibleIndex}", "Materials");
                     return cmd.MaterialID;
                 }
             }

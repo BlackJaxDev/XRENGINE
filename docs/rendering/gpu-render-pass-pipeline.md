@@ -29,3 +29,8 @@
 - GPU dispatch sizing uses `VisibleCommandCount`, so verify that value is non-zero before expecting any draw output.
 - Overflow and stats buffers are polled after each render. Treat any logged non-zero values as actionable GPU-side issues.
 - Fixed pre-existing bug: `_renderBoundsCommand` in `RenderableMesh` was incorrectly using `RenderCommandMesh3D` instead of `RenderCommandMethod3D`.
+
+## Debug Opaque Pipeline
+- Toggle `Engine.UserSettings.UseDebugOpaquePipeline` to replace the default render pipeline with `DebugOpaqueRenderPipeline` for standard (non-stereo) viewports.
+- The debug pipeline clears to black and only runs the background, deferred opaque, and forward opaque passes—no SSAO, bloom, or post-processing.
+- `Engine.Rendering.ApplyRenderPipelinePreference()` rebinds existing viewport pipelines when the toggle changes; new windows automatically receive the active preference.

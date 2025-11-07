@@ -39,7 +39,7 @@ public sealed partial class XRRenderPipelineInstance : XRBase
     private RenderPipeline? _pipeline;
     public RenderPipeline? Pipeline
     {
-        get => _pipeline ?? SetFieldReturn(ref _pipeline, new DefaultRenderPipeline());
+        get => _pipeline ?? SetFieldReturn(ref _pipeline, Engine.Rendering.NewRenderPipeline());
         set => SetField(ref _pipeline, value);
     }
 
@@ -80,7 +80,7 @@ public sealed partial class XRRenderPipelineInstance : XRBase
 
     private static string DescribeViewport(XRViewport viewport)
     {
-        string baseName = viewport.Window?.Window?.Title;
+        string? baseName = viewport.Window?.Window?.Title;
         if (string.IsNullOrWhiteSpace(baseName))
             baseName = "Viewport";
         return $"Viewport={baseName}#{viewport.Index} ({viewport.Width}x{viewport.Height})";
