@@ -4,20 +4,26 @@
 layout(local_size_x = 16, local_size_y = 16) in;
 
 layout(binding = 0) uniform accelerationStructureNV topLevelAS;
-layout(binding = 1) uniform sampler2D gPosition;
+layout(binding = 1) uniform sampler2D gDepth;
 layout(binding = 2) uniform sampler2D gNormal;
 
 struct Reservoir 
 {
     vec3 Li; 
     float pdf; 
-    vec3 Lprev; 
+    vec3 sampleDir; 
     float W; 
     int M; 
     int pad[3];
 };
 layout(std430, binding = 3) buffer InitialReservoir { Reservoir R[]; };
 
+layout(location = 0) rayPayloadNV vec3 payloadRadiance;
+
+uniform ivec2 resolution;
+uniform mat4 invProjMatrix;
+uniform mat4 cameraToWorldMatrix;
+uniform vec3 cameraPosition;
 uniform vec2 invRes;
 uniform uint frameIndex;
 
@@ -34,7 +40,23 @@ uint wangHash(uint seed)
 float rand(inout uint state)
 {
     state = wangHash(state);
-    return float(state) / float(0xFFFFFFFFu);
+    return float(state) * 2.3283064365386963e-10;
+}
+
+float luminance(vec3 v)
+{
+    return dot(v, vec3(0.2126, 0.7152, 0.0722));
+}
+
+vec3 reconstructWorldPosition(ivec2 pix, float depth)
+{
+    vec2 uv = (vec2(pix) + 0.5) * invRes;
+    float z = depth * 2.0 - 1.0;
+    vec4 clip = vec4(uv * 2.0 - 1.0, z, 1.0);
+    vec4 view = invProjMatrix * clip;
+    view /= max(view.w, 1e-6);
+    vec4 world = cameraToWorldMatrix * view;
+    return world.xyz;
 }
 
 vec3 sampleHemisphere(vec3 N, inout uint state)
@@ -52,25 +74,51 @@ vec3 sampleHemisphere(vec3 N, inout uint state)
 void main()
 {
     uvec2 pix = gl_GlobalInvocationID.xy;
-    uint idx = pix.y * uint(1.0 / invRes.x) + pix.x;
+    if (pix.x >= uint(resolution.x) || pix.y >= uint(resolution.y))
+    {
+        return;
+    }
+    uint idx = pix.y * uint(resolution.x) + pix.x;
 
-    vec3 pos = texelFetch(gPosition, ivec2(pix), 0).xyz;
-    vec3 nor = normalize(texelFetch(gNormal, ivec2(pix), 0).xyz);
+    ivec2 ipix = ivec2(pix);
+    float depth = texelFetch(gDepth, ipix, 0).r;
+    if (depth >= 1.0)
+    {
+        Reservoir emptyRes;
+        emptyRes.Li = vec3(0.0);
+        emptyRes.pdf = 1.0;
+        emptyRes.sampleDir = vec3(0.0);
+        emptyRes.W = 0.0;
+        emptyRes.M = 0;
+        emptyRes.pad[0] = emptyRes.pad[1] = emptyRes.pad[2] = 0;
+        R[idx] = emptyRes;
+        return;
+    }
+
+    vec3 pos = reconstructWorldPosition(ipix, depth);
+    vec3 nor = normalize(texelFetch(gNormal, ipix, 0).xyz);
+    if (all(lessThan(abs(nor), vec3(1e-5))))
+    {
+        nor = vec3(0.0, 1.0, 0.0);
+    }
 
     uint state = idx + frameIndex * 9781u;
     vec3 wi = sampleHemisphere(nor, state);
-    float pdf = max(dot(nor, wi), 0.0) / 3.14159265359;
+    float cosTheta = max(dot(nor, wi), 0.0);
+    float pdf = cosTheta / 3.14159265359;
+    pdf = max(pdf, 1e-6);
 
     // Trace ray with payload
-    struct PRD { vec3 L; } prd;
-    prd.L = vec3(0.0);
-    traceRayNV(topLevelAS, 0, 0, 0, 0, pos, wi, 0.001, 1e30, 0, prd);
+    payloadRadiance = vec3(0.0);
+    traceNV(topLevelAS, 0, 0xFF, 0, 0, 0, pos, 0.001, wi, 1e30, payloadRadiance);
 
     Reservoir res;
-    res.Li    = prd.L;
+    res.Li    = payloadRadiance;
     res.pdf   = pdf;
-    res.Lprev = prd.L;
-    res.W     = 1.0;
+    res.sampleDir = wi;
+    float energy = max(luminance(res.Li), 0.0);
+    res.W     = energy * cosTheta / pdf;
     res.M     = 1;
+    res.pad[0] = res.pad[1] = res.pad[2] = 0;
     R[idx]    = res;
 }

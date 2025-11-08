@@ -1,4 +1,5 @@
-﻿using Extensions;
+﻿using System.Diagnostics.CodeAnalysis;
+using Extensions;
 using XREngine.Components.Scene.Mesh;
 using XREngine.Data.Colors;
 using XREngine.Data.Rendering;
@@ -19,6 +20,7 @@ public class DefaultRenderPipeline : RenderPipeline
     private readonly FarToNearRenderCommandSorter _farToNearSorter = new();
 
     private bool _gpuRenderDispatch = Engine.UserSettings.GPURenderDispatch;
+    private bool _enableRestirGI;
     /// <summary>
     /// If true, the render pipeline will use GPU-based rendering for dispatching commands.
     /// </summary>
@@ -32,7 +34,15 @@ public class DefaultRenderPipeline : RenderPipeline
         }
     }
 
+    public bool EnableRestirGI
+    {
+        get => _enableRestirGI;
+        set => SetField(ref _enableRestirGI, value);
+    }
+
+    [DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicParameterlessConstructor)]
     private Type? _renderDispatchCommandType = null;
+    [DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicParameterlessConstructor)]
     public Type RenderDispatchCommandType 
         => _renderDispatchCommandType ??= GpuRenderDispatch
             ? typeof(VPRC_RenderMeshesPassGPU)
@@ -86,6 +96,7 @@ public class DefaultRenderPipeline : RenderPipeline
     public const string ForwardPassFBOName = "ForwardPassFBO";
     public const string PostProcessFBOName = "PostProcessFBO";
     public const string UserInterfaceFBOName = "UserInterfaceFBO";
+    public const string RestirCompositeFBOName = "RestirCompositeFBO";
 
     //Textures
     public const string SSAONoiseTextureName = "SSAONoiseTexture";
@@ -102,6 +113,7 @@ public class DefaultRenderPipeline : RenderPipeline
     public const string BloomBlurTextureName = "BloomBlurTexture";
     public const string UserInterfaceTextureName = "HUDTex";
     public const string BRDFTextureName = "BRDF";
+    public const string RestirGITextureName = "RestirGITexture";
 
     public DefaultRenderPipeline(bool stereo = false) : base(true)
     {
@@ -222,6 +234,11 @@ public class DefaultRenderPipeline : RenderPipeline
                 CreateForwardPassFBO,
                 GetDesiredFBOSizeInternal);
 
+            c.Add<VPRC_CacheOrCreateFBO>().SetOptions(
+                RestirCompositeFBOName,
+                CreateRestirCompositeFBO,
+                GetDesiredFBOSizeInternal);
+
             //Render forward pass - GBuffer results + forward lit meshes + debug data
             using (c.AddUsing<VPRC_BindFBOByName>(x => x.SetOptions(ForwardPassFBOName, true, false, false,false)))
             {
@@ -239,6 +256,8 @@ public class DefaultRenderPipeline : RenderPipeline
                 //c.Add<VPRC_DepthTest>().Enable = true;
                 c.Add(RenderDispatchCommandType, (int)EDefaultRenderPass.TransparentForward);
                 c.Add(RenderDispatchCommandType, (int)EDefaultRenderPass.OnTopForward);
+
+                c.Add<VPRC_ReSTIRPass>();
 
                 c.Add<VPRC_RenderDebugShapes>();
                 c.Add<VPRC_RenderDebugPhysics>();
@@ -353,6 +372,12 @@ public class DefaultRenderPipeline : RenderPipeline
         c.Add<VPRC_CacheOrCreateTexture>().SetOptions(
             HDRSceneTextureName,
             CreateHDRSceneTexture,
+            NeedsRecreateTextureInternalSize,
+            ResizeTextureInternalSize);
+
+        c.Add<VPRC_CacheOrCreateTexture>().SetOptions(
+            RestirGITextureName,
+            CreateRestirGITexture,
             NeedsRecreateTextureInternalSize,
             ResizeTextureInternalSize);
 
@@ -590,6 +615,39 @@ public class DefaultRenderPipeline : RenderPipeline
             return t;
         }
     }
+    private XRTexture CreateRestirGITexture()
+    {
+        if (Stereo)
+        {
+            var t = XRTexture2DArray.CreateFrameBufferTexture(
+                2,
+                InternalWidth, InternalHeight,
+                EPixelInternalFormat.Rgba16f,
+                EPixelFormat.Rgba,
+                EPixelType.HalfFloat);
+            t.OVRMultiViewParameters = new(0, 2u);
+            t.Resizable = false;
+            t.SizedInternalFormat = ESizedInternalFormat.Rgba16f;
+            t.MinFilter = ETexMinFilter.Nearest;
+            t.MagFilter = ETexMagFilter.Nearest;
+            t.SamplerName = "Texture0";
+            t.Name = RestirGITextureName;
+            return t;
+        }
+        else
+        {
+            var t = XRTexture2D.CreateFrameBufferTexture(
+                InternalWidth, InternalHeight,
+                EPixelInternalFormat.Rgba16f,
+                EPixelFormat.Rgba,
+                EPixelType.HalfFloat);
+            t.MinFilter = ETexMinFilter.Nearest;
+            t.MagFilter = ETexMagFilter.Nearest;
+            t.SamplerName = "Texture0";
+            t.Name = RestirGITextureName;
+            return t;
+        }
+    }
     private XRTexture CreateHDRSceneTexture()
     {
         if (Stereo)
@@ -716,7 +774,7 @@ public class DefaultRenderPipeline : RenderPipeline
             {
                 DepthTest = new DepthTest()
                 {
-                    Enabled = ERenderParamUsage.Unchanged,
+                    Enabled = ERenderParamUsage.Enabled,
                     Function = EComparison.Always,
                     UpdateDepth = false,
                 },
@@ -807,6 +865,37 @@ public class DefaultRenderPipeline : RenderPipeline
         lightCombineFBO.SettingUniforms += LightCombineFBO_SettingUniforms;
         return lightCombineFBO;
     }
+    private XRFrameBuffer CreateRestirCompositeFBO()
+    {
+        XRTexture restirTexture = GetTexture<XRTexture>(RestirGITextureName)!;
+        XRShader restirCompositeShader = XRShader.EngineShader(Path.Combine(SceneShaderPath, "RestirComposite.fs"), EShaderType.Fragment);
+        BlendMode additiveBlend = new()
+        {
+            Enabled = ERenderParamUsage.Enabled,
+            RgbSrcFactor = EBlendingFactor.One,
+            AlphaSrcFactor = EBlendingFactor.One,
+            RgbDstFactor = EBlendingFactor.One,
+            AlphaDstFactor = EBlendingFactor.One,
+            RgbEquation = EBlendEquationMode.FuncAdd,
+            AlphaEquation = EBlendEquationMode.FuncAdd
+        };
+        XRMaterial restirCompositeMaterial = new([restirTexture], restirCompositeShader)
+        {
+            RenderOptions = new RenderingParameters()
+            {
+                DepthTest = new DepthTest()
+                {
+                    Enabled = ERenderParamUsage.Unchanged,
+                    Function = EComparison.Always,
+                    UpdateDepth = false,
+                },
+                BlendModeAllDrawBuffers = additiveBlend
+            }
+        };
+        var fbo = new XRQuadFrameBuffer(restirCompositeMaterial) { Name = RestirCompositeFBOName };
+        fbo.SettingUniforms += RestirCompositeFBO_SettingUniforms;
+        return fbo;
+    }
 
     #endregion
 
@@ -857,6 +946,15 @@ public class DefaultRenderPipeline : RenderPipeline
             if (tex != null)
                 program.Sampler("Prefilter", tex, baseCount);
         }
+    }
+
+    private void RestirCompositeFBO_SettingUniforms(XRRenderProgram program)
+    {
+    var region = RenderingPipelineState?.CurrentRenderRegion;
+        float width = region?.Width > 0 ? region.Value.Width : InternalWidth;
+        float height = region?.Height > 0 ? region.Value.Height : InternalHeight;
+        program.Uniform("ScreenWidth", width);
+        program.Uniform("ScreenHeight", height);
     }
 
     #endregion

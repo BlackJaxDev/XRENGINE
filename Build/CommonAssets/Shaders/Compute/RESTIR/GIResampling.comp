@@ -1,11 +1,17 @@
 #version 450 core
 layout(local_size_x = 16, local_size_y = 16) in;
 
-struct Reservoir { vec3 Li; float pdf; vec3 Lprev; float W; int M; int pad[2]; };
+layout(binding = 0) uniform sampler2D gDepth;
+layout(binding = 1) uniform sampler2D gNormal;
+
+struct Reservoir { vec3 Li; float pdf; vec3 sampleDir; float W; int M; int pad[3]; };
 layout(std430, binding = 3) buffer InitialReservoir { Reservoir initR[]; };
 layout(std430, binding = 4) buffer TemporalReservoir { Reservoir tempR[]; };
 layout(std430, binding = 5) buffer SpatialReservoir { Reservoir spatR[]; };
 
+uniform mat4 invProjMatrix;
+uniform mat4 cameraToWorldMatrix;
+uniform vec2 invRes;
 uniform ivec2 resolution;
 uniform uint frameIndex;
 
@@ -20,52 +26,176 @@ uint wangHash(uint seed)
 float rand(inout uint state)
 {
     state = wangHash(state);
-    return float(state) / float(0xFFFFFFFFu);
+    return float(state) * 2.3283064365386963e-10; // 1/2^32
 }
 
-void reservoirUpdate(inout Reservoir R, Reservoir S, float q, inout uint state) 
+float luminance(vec3 v)
 {
-    R.M++;
-    if (R.M == 1)
+    return dot(v, vec3(0.2126, 0.7152, 0.0722));
+}
+
+vec3 reconstructWorldPosition(ivec2 pix, float depth)
+{
+    vec2 uv = (vec2(pix) + 0.5) * invRes;
+    float z = depth * 2.0 - 1.0;
+    vec4 clip = vec4(uv * 2.0 - 1.0, z, 1.0);
+    vec4 view = invProjMatrix * clip;
+    view /= max(view.w, 1e-6);
+    vec4 world = cameraToWorldMatrix * view;
+    return world.xyz;
+}
+
+float candidateWeight(Reservoir S, vec3 normal)
+{
+    if (S.M <= 0)
+    {
+        return 0.0;
+    }
+    float pdf = max(S.pdf, 1e-6);
+    float dirLenSq = dot(S.sampleDir, S.sampleDir);
+    if (dirLenSq <= 1e-6)
+    {
+        return 0.0;
+    }
+    vec3 dir = S.sampleDir * inversesqrt(dirLenSq);
+    float cosTheta = max(dot(normal, dir), 0.0);
+    if (cosTheta <= 0.0)
+    {
+        return 0.0;
+    }
+    float energy = max(luminance(S.Li), 0.0);
+    return (energy * cosTheta) / pdf;
+}
+
+void reservoirUpdate(inout Reservoir R, Reservoir S, float weight, int sampleCount, inout uint state)
+{
+    sampleCount = max(sampleCount, 0);
+    if (sampleCount == 0)
+    {
+        return;
+    }
+    if (weight <= 0.0)
+    {
+        R.M += sampleCount;
+        return;
+    }
+
+    float newWSum = R.W + weight;
+    float threshold = rand(state) * newWSum;
+    if (threshold < weight)
     {
         R.Li = S.Li;
         R.pdf = S.pdf;
-        R.W = 1.0;
-        R.Lprev = R.Li;
+        R.sampleDir = S.sampleDir;
     }
-    else 
-    {
-        float w = q;
-        if (rand(state) < (w / (R.W + w)))
-        {
-            R.Li = S.Li;
-            R.pdf = S.pdf;
-        }
-        R.W += w;
-    }
+    R.W = newWSum;
+    R.M += sampleCount;
 }
 
 void main()
 {
     ivec2 pix = ivec2(gl_GlobalInvocationID.xy);
+    if (pix.x >= resolution.x || pix.y >= resolution.y)
+    {
+        return;
+    }
     int idx = pix.y * resolution.x + pix.x;
 
-    // Temporal: simply reuse last frame
-    tempR[idx] = initR[idx];
-    barrier();
-
-    // Spatial resampling
-    Reservoir R = tempR[idx];
-    uint state = uint(idx + frameIndex * 6247);
-    for (int i = 0; i < 4; ++i)
+    float depth = texelFetch(gDepth, pix, 0).r;
+    if (depth >= 1.0)
     {
-        ivec2 offs = ivec2(int(rand(state) * 3.0) - 1, int(rand(state) * 3.0) - 1);
+        Reservoir emptyRes;
+        emptyRes.Li = vec3(0.0);
+        emptyRes.pdf = 1.0;
+        emptyRes.sampleDir = vec3(0.0);
+        emptyRes.W = 0.0;
+        emptyRes.M = 0;
+        emptyRes.pad[0] = emptyRes.pad[1] = emptyRes.pad[2] = 0;
+        tempR[idx] = emptyRes;
+        spatR[idx] = emptyRes;
+        return;
+    }
+
+    vec3 pos = reconstructWorldPosition(pix, depth);
+    vec3 normal = normalize(texelFetch(gNormal, pix, 0).xyz);
+    if (all(lessThan(abs(normal), vec3(1e-5))))
+    {
+        normal = vec3(0.0, 1.0, 0.0);
+    }
+
+    Reservoir current = initR[idx];
+    current.M = max(current.M, 1);
+
+    Reservoir history = tempR[idx];
+    history.M = max(history.M, 0);
+
+    Reservoir result;
+    result.Li = vec3(0.0);
+    result.pdf = 1.0;
+    result.sampleDir = normal;
+    result.W = 0.0;
+    result.M = 0;
+    result.pad[0] = result.pad[1] = result.pad[2] = 0;
+
+    uint state = uint(idx + frameIndex * 6247u);
+
+    float temporalWeight = candidateWeight(current, normal);
+    reservoirUpdate(result, current, temporalWeight, current.M, state);
+
+    float historyWeight = candidateWeight(history, normal);
+    if (historyWeight > 0.0)
+    {
+        int historySamples = clamp(history.M, 1, 64);
+        historyWeight *= 0.9; // slightly reduce history influence to limit ghosting
+        reservoirUpdate(result, history, historyWeight, historySamples, state);
+    }
+
+    const int spatialSamples = 4;
+    for (int i = 0; i < spatialSamples; ++i)
+    {
+        ivec2 offs = ivec2(int(rand(state) * 5.0) - 2, int(rand(state) * 5.0) - 2);
         ivec2 nPix = clamp(pix + offs, ivec2(0), resolution - 1);
         int nIdx = nPix.y * resolution.x + nPix.x;
-        Reservoir S = tempR[nIdx];
-        float g = 1.0; // approximate geometry term
-        float q = S.pdf * g;
-        reservoirUpdate(R, S, q, state);
+
+        if (nIdx == idx)
+        {
+            continue;
+        }
+
+        vec3 nNormal = normalize(texelFetch(gNormal, nPix, 0).xyz);
+        if (all(lessThan(abs(nNormal), vec3(1e-5))))
+        {
+            nNormal = normal;
+        }
+        float normalSimilarity = max(dot(normal, nNormal), 0.0);
+        if (normalSimilarity <= 0.0)
+        {
+            continue;
+        }
+
+        float nDepth = texelFetch(gDepth, nPix, 0).r;
+        if (nDepth >= 1.0)
+        {
+            continue;
+        }
+
+        vec3 nPos = reconstructWorldPosition(nPix, nDepth);
+        float distance = length(nPos - pos);
+        float depthWeight = exp(-distance * 0.25);
+        float normalWeight = pow(normalSimilarity, 8.0);
+
+        Reservoir candidate = initR[nIdx];
+        candidate.M = max(candidate.M, 1);
+        float weight = candidateWeight(candidate, normal) * depthWeight * normalWeight;
+        if (weight <= 0.0)
+        {
+            continue;
+        }
+
+        reservoirUpdate(result, candidate, weight, candidate.M, state);
     }
-    spatR[idx] = R;
+
+    result.pad[0] = result.pad[1] = result.pad[2] = 0;
+    tempR[idx] = result;
+    spatR[idx] = result;
 }
