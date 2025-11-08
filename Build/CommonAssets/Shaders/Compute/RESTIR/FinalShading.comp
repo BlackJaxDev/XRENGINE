@@ -5,24 +5,35 @@ struct Reservoir
 {
     vec3 Li;
     float pdf;
-    vec3 Lprev;
+    vec3 sampleDir;
     float W;
     int M;
-    int pad[2];
+    int pad[3];
 };
 layout(std430, binding = 5) buffer SpatialReservoir
 {
     Reservoir spatR[];
 };
-layout(binding = 6, rgba32f) uniform image2D outTex;
+layout(binding = 6, rgba16f) uniform image2D outTex;
 
 uniform ivec2 resolution;
 
 void main()
 {
     ivec2 pix = ivec2(gl_GlobalInvocationID.xy);
+    if (pix.x >= resolution.x || pix.y >= resolution.y)
+    {
+        return;
+    }
     int idx = pix.y * resolution.x + pix.x;
     Reservoir R = spatR[idx];
-    vec3 Lo = R.Li * (R.W / float(max(R.M, 1)));
-    imageStore(outTex, pix, vec4(Lo, 1.0f));
+    if (R.M <= 0 || R.W <= 0.0)
+    {
+        imageStore(outTex, pix, vec4(0.0));
+        return;
+    }
+
+    float normalization = R.W / float(R.M);
+    vec3 Lo = R.Li * normalization;
+    imageStore(outTex, pix, vec4(Lo, 0.0f));
 }
