@@ -20,9 +20,13 @@ namespace XREngine
         private float? _targetFramesPerSecond = 90.0f;
         private IVector2 _windowedResolution = new(1920, 1080);
         private double _debugOutputRecencySeconds = 0.0;
+        private bool _enableFrameLogging = false;
+        private float _debugOutputMinElapsedMs = 1.0f;
+        private bool _enableGpuIndirectDebugLogging = true;
+        private bool _enableGpuIndirectCpuFallback = false;
         private bool _disableAudioOnDefocus = false;
         private float? _unfocusedTargetFramesPerSecond = null;
-    private bool _useDebugOpaquePipeline = true;
+        private bool _useDebugOpaquePipeline = false;
 
         public EVSyncMode VSync
         {
@@ -69,6 +73,16 @@ namespace XREngine
             get => _debugOutputRecencySeconds;
             set => SetField(ref _debugOutputRecencySeconds, value);
         }
+        public bool EnableFrameLogging
+        {
+            get => _enableFrameLogging;
+            set => SetField(ref _enableFrameLogging, value);
+        }
+        public float DebugOutputMinElapsedMs
+        {
+            get => _debugOutputMinElapsedMs;
+            set => SetField(ref _debugOutputMinElapsedMs, value);
+        }
         public bool DisableAudioOnDefocus
         {
             get => _disableAudioOnDefocus;
@@ -85,6 +99,16 @@ namespace XREngine
         {
             get => _useDebugOpaquePipeline;
             set => SetField(ref _useDebugOpaquePipeline, value);
+        }
+        public bool EnableGpuIndirectDebugLogging
+        {
+            get => _enableGpuIndirectDebugLogging;
+            set => SetField(ref _enableGpuIndirectDebugLogging, value);
+        }
+        public bool EnableGpuIndirectCpuFallback
+        {
+            get => _enableGpuIndirectCpuFallback;
+            set => SetField(ref _enableGpuIndirectCpuFallback, value);
         }
     }
 }

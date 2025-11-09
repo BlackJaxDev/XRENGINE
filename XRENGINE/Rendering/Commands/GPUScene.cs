@@ -1,11 +1,16 @@
 using Extensions;
+using System;
 using System.Collections.Concurrent;
+using System.IO;
 using System.Numerics;
 using System.Runtime.InteropServices;
+using System.Threading;
+using XREngine.Components;
 using XREngine.Data;
 using XREngine.Data.Core;
 using XREngine.Data.Geometry;
 using XREngine.Data.Rendering;
+using XREngine.Rendering;
 using XREngine.Rendering.Info;
 using XREngine.Rendering.Meshlets;
 
@@ -56,6 +61,29 @@ namespace XREngine.Rendering.Commands
         private readonly ConcurrentDictionary<uint, XRMaterial> _idToMaterial = new();
         private readonly ConcurrentDictionary<uint, XRMesh> _idToMesh = new();
         private uint _nextMaterialID = 1;
+        private int _materialDebugLogBudget = 16;
+    private int _commandBuildLogBudget = 12;
+    private int _commandRoundtripLogBudget = 8;
+    private int _commandRoundtripMismatchLogBudget = 4;
+
+        private static bool IsGpuSceneLoggingEnabled()
+            => Engine.UserSettings?.EnableGpuIndirectDebugLogging ?? false;
+
+        private static void SceneLog(string message, params object[] args)
+        {
+            if (!IsGpuSceneLoggingEnabled())
+                return;
+
+            Debug.Out(message, args);
+        }
+
+        private static void SceneLog(FormattableString message)
+        {
+            if (!IsGpuSceneLoggingEnabled())
+                return;
+
+            Debug.Out(message.ToString());
+        }
 
         /// <summary>
         /// Exposes a read-only view of the current material ID map (ID -> XRMaterial).
@@ -92,7 +120,7 @@ namespace XREngine.Rendering.Commands
                     DisposeOnPush = false,
                     BindingIndexOverride = 0
                 };
-                _atlasPositions.Generate();
+                //_atlasPositions.Generate();
             }
             if (_atlasNormals is null)
             {
@@ -103,7 +131,7 @@ namespace XREngine.Rendering.Commands
                     DisposeOnPush = false,
                     BindingIndexOverride = 1
                 };
-                _atlasNormals.Generate();
+                //_atlasNormals.Generate();
             }
             if (_atlasTangents is null)
             {
@@ -114,7 +142,7 @@ namespace XREngine.Rendering.Commands
                     DisposeOnPush = false,
                     BindingIndexOverride = 2
                 };
-                _atlasTangents.Generate();
+                //_atlasTangents.Generate();
             }
             if (_atlasUV0 is null)
             {
@@ -125,7 +153,7 @@ namespace XREngine.Rendering.Commands
                     DisposeOnPush = false,
                     BindingIndexOverride = 3
                 };
-                _atlasUV0.Generate();
+                //_atlasUV0.Generate();
             }
             if (_atlasIndices is null)
             {
@@ -135,29 +163,33 @@ namespace XREngine.Rendering.Commands
                     DisposeOnPush = false,
                     PadEndingToVec4 = false
                 };
-                _atlasIndices.Generate();
+                //_atlasIndices.Generate();
             }
-                _atlasPositions!.BindingIndexOverride ??= 0;
-                _atlasNormals!.BindingIndexOverride ??= 1;
-                _atlasTangents!.BindingIndexOverride ??= 2;
-                _atlasUV0!.BindingIndexOverride ??= 3;
+            _atlasPositions!.BindingIndexOverride ??= 0;
+            _atlasNormals!.BindingIndexOverride ??= 1;
+            _atlasTangents!.BindingIndexOverride ??= 2;
+            _atlasUV0!.BindingIndexOverride ??= 3;
         }
 
         /// <summary>
         /// Incrementally appends mesh geometry into atlas client-side buffers.
         /// For now we only pack index offsets (MeshDataBuffer keeps logical mapping). Vertex packing TODO.
         /// </summary>
-        private void AppendMeshToAtlas(XRMesh mesh)
+        private bool AppendMeshToAtlas(XRMesh mesh, string meshLabel, out string? failureReason)
         {
+            failureReason = null;
             //Make sure the buffers exist - positions, normals, etc
             EnsureAtlasBuffers();
 
             if (_atlasMeshOffsets.ContainsKey(mesh))
-                return; // already packed
+                return true; // already packed
 
             int vertexCount = mesh.VertexCount;
             if (vertexCount <= 0)
-                return;
+            {
+                failureReason = "contains no vertices";
+                return false;
+            }
 
             //Gather attributes
             //TODO: only do this when interleaved; direct memory copy otherwise
@@ -176,7 +208,7 @@ namespace XREngine.Rendering.Commands
 
             // Indices: expand mesh primitive lists into triangle list (only triangle topology supported here)
             int indexCountAdded = 0;
-            if (mesh.Triangles != null)
+            if (mesh.Triangles is not null && mesh.Triangles.Count > 0)
             {
                 foreach (IndexTriangle tri in mesh.Triangles)
                 {
@@ -188,11 +220,31 @@ namespace XREngine.Rendering.Commands
                     indexCountAdded += 3;
                 }
             }
-            else if (mesh.IndexCount > 0)
+            else if (mesh.Type == EPrimitiveType.Triangles && mesh.IndexCount > 0)
             {
-                // Other primitive types not yet supported for atlas packing.
-                Debug.LogWarning($"Mesh '{mesh.Name}' uses unsupported primitive topology for atlas packing.");
-                return;
+                int[]? indices = mesh.GetIndices(EPrimitiveType.Triangles);
+                if (indices is null || indices.Length == 0)
+                {
+                    failureReason = "has no triangle indices";
+                    return false;
+                }
+
+                if (indices.Length % 3 != 0)
+                    Debug.LogWarning($"Mesh '{meshLabel}' triangle index count {indices.Length} is not divisible by 3; trailing vertices will be ignored.");
+
+                for (int i = 0; i + 2 < indices.Length; i += 3)
+                {
+                    _indirectFaceIndices.Add(new IndexTriangle(
+                        indices[i],
+                        indices[i + 1],
+                        indices[i + 2]));
+                    indexCountAdded += 3;
+                }
+            }
+            else
+            {
+                failureReason = "has no index data";
+                return false;
             }
 
             int firstVertex = _atlasVertexCount;
@@ -233,6 +285,7 @@ namespace XREngine.Rendering.Commands
             _atlasIndexCount = firstIndex + indexCountAdded;
             _atlasMeshOffsets[mesh] = (firstVertex, firstIndex, indexCountAdded);
             _atlasDirty = true; // we've written client-side; PushSubData below in rebuild
+            return true;
         }
 
         private void VerifyBufferLengths(int needed)
@@ -245,6 +298,30 @@ namespace XREngine.Rendering.Commands
                 _atlasTangents.Resize((uint)XRMath.NextPowerOfTwo(needed));
             if (_atlasUV0!.ElementCount < needed)
                 _atlasUV0.Resize((uint)XRMath.NextPowerOfTwo(needed));
+        }
+
+        private bool TryPrepareAtlasIndexBuffer(int requiredIndices)
+        {
+            if (_atlasIndices is null)
+                return false;
+
+            if (requiredIndices <= 0)
+                return false;
+
+            uint desiredCapacity = XRMath.NextPowerOfTwo((uint)Math.Max(requiredIndices, 1));
+            if (desiredCapacity < (uint)requiredIndices)
+                desiredCapacity = (uint)requiredIndices;
+
+            if (_atlasIndices.ElementCount < desiredCapacity)
+                _atlasIndices.Resize(desiredCapacity);
+
+            if (_atlasIndices.TryGetAddress(out var writeBase) && writeBase.IsValid)
+                return true;
+
+            _atlasIndices.ClientSideSource?.Dispose();
+            _atlasIndices.ClientSideSource = DataSource.Allocate(desiredCapacity * (uint)sizeof(uint));
+
+            return _atlasIndices.TryGetAddress(out writeBase) && writeBase.IsValid;
         }
 
         /// <summary>
@@ -277,23 +354,40 @@ namespace XREngine.Rendering.Commands
 
             if (_atlasIndices is not null)
             {
-                int requiredIndices = _indirectFaceIndices.Count * 3;
+                IndexTriangle[] faceSnapshot = _indirectFaceIndices.Count > 0
+                    ? _indirectFaceIndices.ToArray()
+                    : Array.Empty<IndexTriangle>();
+
+                int requiredIndices = faceSnapshot.Length * 3;
                 if (requiredIndices > 0)
                 {
                     _atlasIndexCount = requiredIndices;
-                    uint desiredCapacity = (uint)XRMath.NextPowerOfTwo(requiredIndices);
-                    if (_atlasIndices.ElementCount < desiredCapacity)
-                        _atlasIndices.Resize(desiredCapacity);
 
-                    uint writeIndex = 0;
-                    foreach (var tri in _indirectFaceIndices)
+                    if (!TryPrepareAtlasIndexBuffer(requiredIndices))
                     {
+                        Debug.LogWarning("[GPUScene] Failed to prepare atlas index buffer; skipping atlas upload to avoid memory corruption.");
+                        return;
+                    }
+
+                    uint capacity = _atlasIndices.ElementCount;
+                    uint writeIndex = 0;
+
+                    for (int i = 0; i < faceSnapshot.Length; ++i)
+                    {
+                        if (writeIndex + 2 >= capacity)
+                        {
+                            Debug.LogWarning($"[GPUScene] Atlas index buffer overflow when rebuilding atlas (capacity={capacity}, required={requiredIndices}).");
+                            break;
+                        }
+
+                        var tri = faceSnapshot[i];
                         _atlasIndices.SetDataRawAtIndex(writeIndex++, (uint)tri.Point0);
                         _atlasIndices.SetDataRawAtIndex(writeIndex++, (uint)tri.Point1);
                         _atlasIndices.SetDataRawAtIndex(writeIndex++, (uint)tri.Point2);
                     }
 
-                    uint byteLength = (uint)(requiredIndices * sizeof(uint));
+                    _atlasIndexCount = (int)writeIndex;
+                    uint byteLength = writeIndex * (uint)sizeof(uint);
                     _atlasIndices.PushSubData(0, byteLength);
                 }
                 else
@@ -374,7 +468,7 @@ namespace XREngine.Rendering.Commands
                 DisposeOnPush = false,
                 Resizable = true
             };
-            buffer.Generate();
+            //buffer.Generate();
             return buffer;
         }
 
@@ -406,6 +500,8 @@ namespace XREngine.Rendering.Commands
         private readonly ConcurrentDictionary<XRMesh, uint> _meshIDMap = new();
         private uint _nextMeshID = 1;
         private readonly Lock _lock = new();
+        private readonly ConcurrentDictionary<XRMesh, string> _meshDebugLabels = new();
+        private readonly ConcurrentDictionary<XRMesh, string> _unsupportedMeshMessages = new();
 
         private XRDataBuffer? _meshDataBuffer;
         /// <summary>
@@ -477,23 +573,23 @@ namespace XREngine.Rendering.Commands
             using (_lock.EnterScope())
             {
                 bool anyAdded = false;
-                Debug.Out($"Adding commands for {renderInfo.Owner?.GetType().Name ?? "<null>"}");
+                SceneLog($"Adding commands for {renderInfo.Owner?.GetType().Name ?? "<null>"}");
                 for (int i = 0; i < renderInfo.RenderCommands.Count; i++)
                 {
                     RenderCommand command = renderInfo.RenderCommands[i];
                     if (command is not IRenderCommandMesh meshCmd)
                     {
-                        Debug.Out($"Skipping adding command of type {command.GetType().Name}");
+                        SceneLog($"Skipping adding command of type {command.GetType().Name}");
                         continue; // Only mesh commands supported
                     }
 
                     var subMeshes = meshCmd.Mesh?.GetMeshes();
                     if (subMeshes is null || subMeshes.Length == 0)
                     {
-                        Debug.Out($"Skipping adding mesh command with no submeshes. Mesh={(meshCmd.Mesh != null ? "present" : "null")} SubMeshes={(subMeshes != null ? $"empty array (length {subMeshes.Length})" : "null")}");
+                        SceneLog($"Skipping adding mesh command with no submeshes. Mesh={(meshCmd.Mesh != null ? "present" : "null")} SubMeshes={(subMeshes != null ? $"empty array (length {subMeshes.Length})" : "null")}");
                         if (meshCmd.Mesh != null)
                         {
-                            Debug.Out($"  Mesh details: Name={meshCmd.Mesh.Mesh?.Name ?? "<null>"}, Submeshes.Count={meshCmd.Mesh.Submeshes.Count}");
+                            SceneLog($"  Mesh details: Name={meshCmd.Mesh.Mesh?.Name ?? "<null>"}, Submeshes.Count={meshCmd.Mesh.Submeshes.Count}");
                         }
                         continue;
                     }
@@ -512,21 +608,43 @@ namespace XREngine.Rendering.Commands
                         (XRMesh? mesh, XRMaterial? mat) = subMeshes[subMeshIndex];
                         if (mesh is null)
                         {
-                            Debug.Out($"Skipping adding mesh command submesh {subMeshIndex} due to null mesh.");
+                            SceneLog($"Skipping adding mesh command submesh {subMeshIndex} due to null mesh.");
                             continue;
                         }
 
                         XRMaterial? m = meshCmd.MaterialOverride ?? mat;
                         if (m is null)
                         {
-                            Debug.Out($"Skipping adding mesh command submesh {subMeshIndex} due to null material.");
+                            SceneLog($"Skipping adding mesh command submesh {subMeshIndex} due to null material.");
+                            continue;
+                        }
+
+                        string meshLabel = EnsureMeshDebugLabel(mesh, meshCmd.Mesh, renderInfo, subMeshIndex);
+
+                        if (_unsupportedMeshMessages.ContainsKey(mesh))
+                        {
+                            SceneLog($"Skipping mesh command submesh {subMeshIndex} ('{meshLabel}') because it was previously marked unsupported.");
+                            continue;
+                        }
+
+                        if (!ValidateMeshForGpu(mesh, out var validationFailure))
+                        {
+                            RecordUnsupportedMesh(mesh, meshLabel, validationFailure);
+                            continue;
+                        }
+
+                        GetOrCreateMeshID(mesh, out uint meshID);
+
+                        if (!AddSubmeshToAtlas(mesh, meshID, meshLabel, out var atlasFailure))
+                        {
+                            RecordUnsupportedMesh(mesh, meshLabel, atlasFailure ?? "atlas registration failed");
                             continue;
                         }
 
                         var gpuCommand = ConvertToGPUCommand(renderInfo, meshCmd, mesh, m, (uint)subMeshIndex);
                         if (gpuCommand is null)
                         {
-                            Debug.Out($"Skipping adding mesh command submesh {subMeshIndex} due to conversion failure.");
+                            SceneLog($"Skipping adding mesh command submesh {subMeshIndex} due to conversion failure.");
                             continue;
                         }
 
@@ -537,12 +655,32 @@ namespace XREngine.Rendering.Commands
                         indices.Add(index);
                         _commandIndexLookup.Add(index, (meshCmd, subMeshIndex));
                         AllLoadedCommandsBuffer.SetDataRawAtIndex(index, gpuCommand.Value);
-                        anyAdded = true;
 
-                        // Acquire or assign meshID
-                        GetOrCreateMeshID(mesh, out uint meshID);
-                        GetOrCreateMaterialID(mat, out uint materialID);
-                        AddSubmeshToAtlas(mesh, meshID);
+                        if (IsGpuSceneLoggingEnabled())
+                        {
+                            if (_commandBuildLogBudget > 0 && Interlocked.Decrement(ref _commandBuildLogBudget) >= 0)
+                            {
+                                SceneLog($"[GPUScene/Build] idx={index} mesh={gpuCommand.Value.MeshID} material={gpuCommand.Value.MaterialID} pass={gpuCommand.Value.RenderPass} instances={gpuCommand.Value.InstanceCount}");
+                            }
+
+                            GPUIndirectRenderCommand roundTrip = AllLoadedCommandsBuffer.GetDataRawAtIndex<GPUIndirectRenderCommand>(index);
+                            bool matches = roundTrip.MeshID == gpuCommand.Value.MeshID
+                                && roundTrip.MaterialID == gpuCommand.Value.MaterialID
+                                && roundTrip.RenderPass == gpuCommand.Value.RenderPass;
+
+                            if (!matches)
+                            {
+                                if (_commandRoundtripMismatchLogBudget > 0 && Interlocked.Decrement(ref _commandRoundtripMismatchLogBudget) >= 0)
+                                    Debug.LogWarning($"[GPUScene/RoundTrip] mismatch idx={index} mesh(write={gpuCommand.Value.MeshID}/read={roundTrip.MeshID}) material(write={gpuCommand.Value.MaterialID}/read={roundTrip.MaterialID}) pass(write={gpuCommand.Value.RenderPass}/read={roundTrip.RenderPass})");
+                            }
+                            else if (_commandRoundtripLogBudget > 0 && Interlocked.Decrement(ref _commandRoundtripLogBudget) >= 0)
+                            {
+                                SceneLog($"[GPUScene/RoundTrip] idx={index} pass={roundTrip.RenderPass} verified ok");
+                            }
+                        }
+
+                        anyAdded = true;
+                        _meshDebugLabels[mesh] = meshLabel;
 
                         // _meshlets.AddMesh(mesh, meshID, materialID, Matrix4x4.Identity);
                     }
@@ -556,7 +694,7 @@ namespace XREngine.Rendering.Commands
                 {
                     // Upload modified command entries (full buffer for simplicity)
                     AllLoadedCommandsBuffer.PushSubData();
-                    Debug.Out($"GPUScene.Add: Added commands, total now {_totalCommandCount} in CommandsInputBuffer");
+                    SceneLog($"GPUScene.Add: Added commands, total now {_totalCommandCount} in CommandsInputBuffer");
                 }
                 RebuildAtlasIfDirty();
             }
@@ -567,42 +705,125 @@ namespace XREngine.Rendering.Commands
             if (mesh is null || !_atlasMeshOffsets.TryGetValue(mesh, out var atlas))
                 return;
 
-            //Remove data from the atlas - currently we do not compact the buffers, just adjust counts
+            // Remove data from the atlas and compact client-side buffers so later meshes keep valid offsets.
             int indexOffset = atlas.firstIndex;
             int indexCount = atlas.indexCount;
-            while (indexCount-- > 0)
-                _indirectFaceIndices.RemoveAt(indexOffset);
-
             int vertexOffset = atlas.firstVertex;
             int vertexCount = mesh.VertexCount;
 
-            //TODO: memory management to reuse freed space. We'll just adjust counts for now.
-            _atlasVertexCount -= mesh.VertexCount;
-            _atlasIndexCount -= atlas.indexCount;
+            // Convert index counts from index-space (per uint) to triangle-space (per IndexTriangle).
+            int triangleOffset = indexOffset / 3;
+            int triangleCount = indexCount / 3;
+
+            if (indexCount % 3 != 0)
+            {
+                Debug.LogWarning($"Mesh '{mesh.Name}' stored with a non-multiple-of-three index count ({indexCount}). Clamping removal to available triangles.");
+                triangleCount = System.Math.Min(triangleCount + 1, _indirectFaceIndices.Count - triangleOffset);
+            }
+
+            if (triangleOffset < 0 || triangleOffset >= _indirectFaceIndices.Count)
+            {
+                Debug.LogWarning($"Atlas removal offset out of range for mesh '{mesh.Name}'. Offset={triangleOffset}, Count={triangleCount}, Total={_indirectFaceIndices.Count}.");
+                triangleCount = 0;
+            }
+            else if (triangleOffset + triangleCount > _indirectFaceIndices.Count)
+            {
+                triangleCount = _indirectFaceIndices.Count - triangleOffset;
+            }
+
+            int removedTriangleCount = triangleCount > 0 ? triangleCount : 0;
+            if (removedTriangleCount > 0)
+                _indirectFaceIndices.RemoveRange(triangleOffset, removedTriangleCount);
+
+            int removedIndexCount = removedTriangleCount * 3;
+
+            // Compact vertex attribute buffers by sliding higher ranges down over the removed span.
+            if (vertexCount > 0)
+            {
+                int verticesToMove = _atlasVertexCount - (vertexOffset + vertexCount);
+                if (verticesToMove > 0)
+                {
+                    unsafe
+                    {
+                        static void SlideDown(XRDataBuffer? buffer, int startIndex, int removeCount, int elementsToMove)
+                        {
+                            if (buffer is null || elementsToMove <= 0)
+                                return;
+
+                            uint byteCount = (uint)(elementsToMove * buffer.ElementSize);
+                            VoidPtr dst = buffer.Address + (int)(startIndex * buffer.ElementSize);
+                            VoidPtr src = buffer.Address + (int)((startIndex + removeCount) * buffer.ElementSize);
+                            Memory.Move(dst, src, byteCount);
+                        }
+
+                        SlideDown(_atlasPositions, vertexOffset, vertexCount, verticesToMove);
+                        SlideDown(_atlasNormals, vertexOffset, vertexCount, verticesToMove);
+                        SlideDown(_atlasTangents, vertexOffset, vertexCount, verticesToMove);
+                        SlideDown(_atlasUV0, vertexOffset, vertexCount, verticesToMove);
+                    }
+                }
+            }
+
+            // Update offsets for remaining meshes now that we compacted buffers.
+            List<XRMesh> meshesToAdjust = new(_atlasMeshOffsets.Keys);
+            foreach (XRMesh otherMesh in meshesToAdjust)
+            {
+                if (otherMesh == mesh)
+                    continue;
+
+                var entry = _atlasMeshOffsets[otherMesh];
+                if (vertexCount > 0 && entry.firstVertex > vertexOffset)
+                    entry.firstVertex -= vertexCount;
+                if (removedIndexCount > 0 && entry.firstIndex > indexOffset)
+                    entry.firstIndex -= removedIndexCount;
+                _atlasMeshOffsets[otherMesh] = entry;
+            }
+
+            _atlasMeshOffsets.Remove(mesh);
+
+            // Adjust aggregated counts after compaction.
+            _atlasVertexCount -= vertexCount;
+            _atlasIndexCount -= removedIndexCount;
             if (_atlasVertexCount < 0)
                 _atlasVertexCount = 0;
             if (_atlasIndexCount < 0)
                 _atlasIndexCount = 0;
 
-            _atlasMeshOffsets.Remove(mesh);
             MarkAtlasDirty();
         }
 
-        private void AddSubmeshToAtlas(XRMesh mesh, uint meshID)
+        private bool AddSubmeshToAtlas(XRMesh mesh, uint meshID, string meshLabel, out string? failureReason)
         {
+            failureReason = null;
             //Ensure mesh geometry recorded in atlas buffers: vertex + index data
             //Increasees vertex & index counts and adds offsets to _atlasMeshOffsets
-            AppendMeshToAtlas(mesh);
+            if (!AppendMeshToAtlas(mesh, meshLabel, out failureReason))
+            {
+                EnsureMeshDataCapacity(meshID + 1);
+                MeshDataBuffer.Set(meshID, default(MeshDataEntry));
+                _meshDataDirty = true;
+                return false;
+            }
 
             if (!_atlasMeshOffsets.TryGetValue(mesh, out var atlas))
             {
-                Debug.LogWarning($"Atlas offsets missing for mesh '{mesh.Name}' after append.");
-                return;
+                failureReason = "did not produce atlas offsets";
+                EnsureMeshDataCapacity(meshID + 1);
+                MeshDataBuffer.Set(meshID, default(MeshDataEntry));
+                _meshDataDirty = true;
+                return false;
             }
 
             //Update length of mesh data buffer if needed - this provides indices into the atlas data
             EnsureMeshDataCapacity(meshID + 1); // +1 because index-based capacity
             (int vFirst, int iFirst, int iCount) = atlas;
+            if (iCount <= 0)
+            {
+                failureReason = "produced zero indices after atlas packing";
+                MeshDataBuffer.Set(meshID, default(MeshDataEntry));
+                _meshDataDirty = true;
+                return false;
+            }
             MeshDataEntry entry = new()
             {
                 IndexCount = (uint)iCount,
@@ -613,6 +834,7 @@ namespace XREngine.Rendering.Commands
             MeshDataBuffer.Set(meshID, entry);
 
             _meshDataDirty = true;
+            return true;
         }
 
         private readonly Dictionary<uint, (IRenderCommandMesh command, int subMeshIndex)> _commandIndexLookup = [];
@@ -636,7 +858,19 @@ namespace XREngine.Rendering.Commands
 
             if (_idToMesh.TryGetValue(meshID, out var mesh) && mesh is not null)
             {
-                AddSubmeshToAtlas(mesh, meshID);
+                if (_unsupportedMeshMessages.ContainsKey(mesh))
+                    return false;
+
+                string meshLabel = _meshDebugLabels.TryGetValue(mesh, out var storedLabel)
+                    ? storedLabel
+                    : mesh.Name ?? $"Mesh_{meshID}";
+
+                if (!AddSubmeshToAtlas(mesh, meshID, meshLabel, out var hydrationFailure))
+                {
+                    hydrationFailure ??= "atlas registration failed during lookup";
+                    RecordUnsupportedMesh(mesh, meshLabel, hydrationFailure);
+                    return false;
+                }
                 if (_meshDataDirty)
                 {
                     MeshDataBuffer.PushSubData();
@@ -660,7 +894,7 @@ namespace XREngine.Rendering.Commands
                 return;
 
             uint newCapacity = XRMath.NextPowerOfTwo(requiredEntries).ClampMin(MinMeshDataEntries);
-            Debug.Out($"Resizing MeshDataBuffer from {buffer.ElementCount} to {newCapacity} (need {requiredEntries}).");
+            SceneLog($"Resizing MeshDataBuffer from {buffer.ElementCount} to {newCapacity} (need {requiredEntries}).");
             buffer.Resize(newCapacity);
         }
 
@@ -761,12 +995,38 @@ namespace XREngine.Rendering.Commands
         //TODO: Optimize to avoid frequent resizes (eg, remove and add right after each other at the boundary)
         private void VerifyCommandBufferSize(uint requiredSize)
         {
+            uint currentCapacity = AllLoadedCommandsBuffer.ElementCount;
             uint nextPowerOfTwo = XRMath.NextPowerOfTwo(requiredSize).ClampMin(MinCommandCount);
-            if (nextPowerOfTwo == AllLoadedCommandsBuffer.ElementCount)
+            if (nextPowerOfTwo == currentCapacity)
                 return;
 
-            Debug.Out($"Resizing command buffer from {AllLoadedCommandsBuffer.ElementCount} to {nextPowerOfTwo}.");
+            SceneLog($"Resizing command buffer from {currentCapacity} to {nextPowerOfTwo}.");
             AllLoadedCommandsBuffer.Resize(nextPowerOfTwo);
+            uint newCapacity = AllLoadedCommandsBuffer.ElementCount;
+            if (newCapacity > currentCapacity)
+                ZeroCommandRange(currentCapacity, newCapacity - currentCapacity);
+        }
+
+        private void ZeroCommandRange(uint startIndex, uint count)
+        {
+            if (count == 0)
+                return;
+
+            var blank = default(GPUIndirectRenderCommand);
+            uint end = startIndex + count;
+            for (uint i = startIndex; i < end; ++i)
+                AllLoadedCommandsBuffer.SetDataRawAtIndex(i, blank);
+
+            uint elementSize = AllLoadedCommandsBuffer.ElementSize;
+            if (elementSize == 0)
+                elementSize = (uint)(CommandFloatCount * sizeof(float));
+
+            uint byteOffset = startIndex * elementSize;
+            uint byteCount = count * elementSize;
+            AllLoadedCommandsBuffer.PushSubData((int)byteOffset, byteCount);
+
+            if (IsGpuSceneLoggingEnabled())
+                SceneLog($"Zeroed command buffer range [{startIndex}, {end}) ({byteCount} bytes)");
         }
 
         private GPUIndirectRenderCommand? ConvertToGPUCommand(RenderInfo renderInfo, IRenderCommandMesh command, XRMesh? mesh, XRMaterial? material, uint submeshLocalIndex)
@@ -822,6 +1082,109 @@ namespace XREngine.Rendering.Commands
             return gpuCommand;
         }
 
+        private string EnsureMeshDebugLabel(XRMesh mesh, XRMeshRenderer? renderer, RenderInfo renderInfo, int subMeshIndex)
+        {
+            if (_meshDebugLabels.TryGetValue(mesh, out var existing))
+                return existing;
+
+            string baseName = !string.IsNullOrWhiteSpace(mesh.Name)
+                ? mesh.Name!
+                : !string.IsNullOrWhiteSpace(renderer?.Name)
+                    ? renderer!.Name!
+                    : !string.IsNullOrWhiteSpace(mesh.OriginalPath)
+                        ? Path.GetFileName(mesh.OriginalPath) ?? string.Empty
+                        : !string.IsNullOrWhiteSpace(mesh.FilePath)
+                            ? Path.GetFileName(mesh.FilePath) ?? string.Empty
+                            : ResolveOwnerLabel(renderInfo.Owner);
+
+            if (string.IsNullOrWhiteSpace(baseName))
+                baseName = $"mesh_{mesh.ID.ToString("N")[..8]}";
+
+            string label = subMeshIndex >= 0 ? $"{baseName} (submesh {subMeshIndex})" : baseName;
+
+            if (string.IsNullOrWhiteSpace(mesh.Name))
+                mesh.Name = baseName;
+
+            _meshDebugLabels[mesh] = label;
+            return label;
+        }
+
+        private bool ValidateMeshForGpu(XRMesh mesh, out string reason)
+        {
+            if (mesh.VertexCount <= 0)
+            {
+                reason = "contains no vertices";
+                return false;
+            }
+
+            if (mesh.IndexCount <= 0)
+            {
+                reason = "contains no indices";
+                return false;
+            }
+
+            if (mesh.Type != EPrimitiveType.Triangles)
+            {
+                reason = $"uses unsupported primitive topology '{mesh.Type}'";
+                return false;
+            }
+
+            bool hasTriangleList = mesh.Triangles is not null && mesh.Triangles.Count > 0;
+            bool hasIndexedTriangles = mesh.IndexCount >= 3 && mesh.GetIndices(EPrimitiveType.Triangles)?.Length >= 3;
+
+            if (!hasTriangleList && !hasIndexedTriangles)
+            {
+                reason = "has no triangle faces";
+                return false;
+            }
+
+            reason = string.Empty;
+            return true;
+        }
+
+        private void RecordUnsupportedMesh(XRMesh mesh, string meshLabel, string reason)
+        {
+            if (string.IsNullOrWhiteSpace(reason))
+                reason = "is not compatible with GPU rendering";
+
+            string message = $"Skipping mesh '{meshLabel}': {reason}.";
+            if (reason.IndexOf("unsupported primitive topology", StringComparison.OrdinalIgnoreCase) >= 0)
+                message += " Convert the mesh to a triangle list before import.";
+
+            string? sourceHint = !string.IsNullOrWhiteSpace(mesh.OriginalPath)
+                ? mesh.OriginalPath
+                : !string.IsNullOrWhiteSpace(mesh.FilePath)
+                    ? mesh.FilePath
+                    : null;
+
+            if (sourceHint is not null)
+                message += $" Source: {sourceHint}.";
+
+            if (_unsupportedMeshMessages.TryAdd(mesh, message))
+                Debug.LogWarning(message);
+        }
+
+        private static string ResolveOwnerLabel(IRenderable? owner)
+        {
+            if (owner is null)
+                return string.Empty;
+
+            if (owner is XRObjectBase obj && !string.IsNullOrWhiteSpace(obj.Name))
+                return obj.Name!;
+
+            if (owner is XRComponent component)
+            {
+                if (!string.IsNullOrWhiteSpace(component.Name))
+                    return component.Name!;
+
+                string? sceneNodeName = component.SceneNode?.Name;
+                if (!string.IsNullOrWhiteSpace(sceneNodeName))
+                    return sceneNodeName!;
+            }
+
+            return owner.GetType().Name;
+        }
+
         /// <summary>
         /// Gets or creates a unique mesh ID for the given mesh.
         /// Incremental IDs start at 1. Returns true if the mesh was already known, false if newly added.
@@ -858,6 +1221,18 @@ namespace XREngine.Rendering.Commands
             index = _materialIDMap.GetOrAdd(material, _ => Interlocked.Increment(ref _nextMaterialID));
             // Maintain reverse mapping for render-time lookups
             _idToMaterial.TryAdd(index, material);
+
+            if (!contains)
+            {
+                int remaining = Interlocked.Decrement(ref _materialDebugLogBudget);
+                if (remaining >= 0)
+                {
+                    string matName = material.Name ?? "<unnamed>";
+                    SceneLog($"[GPUScene] Assigned MaterialID={index} to '{matName}' (hash=0x{material.GetHashCode():X8}). Remaining logs: {remaining}");
+                    if (remaining == 0)
+                        SceneLog("[GPUScene] MaterialID assignment log budget exhausted; suppressing further logs.");
+                }
+            }
             return contains;
         }
     }

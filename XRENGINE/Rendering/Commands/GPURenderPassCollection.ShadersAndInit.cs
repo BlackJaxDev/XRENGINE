@@ -1,3 +1,4 @@
+using XREngine;
 using XREngine.Data;
 using XREngine.Data.Rendering;
 using XREngine.Rendering.Models.Materials;
@@ -509,11 +510,15 @@ namespace XREngine.Rendering.Commands
 
             if (IndirectDebug.ValidateLiveHandles && !remapPending)
             {
+                bool logBuffers = Engine.UserSettings?.EnableGpuIndirectDebugLogging ?? false;
+                if (!logBuffers)
+                    return;
+
                 if (_drawCountBuffer is not null && _drawCountBuffer.ActivelyMapping.Count == 0)
-                    Debug.LogWarning($"{FormatDebugPrefix("Buffers")} Draw count buffer is not mapped; GPU count reads may see stale data.");
+                    Debug.Out($"{FormatDebugPrefix("Buffers")} Draw count buffer is not mapped; GPU count reads may see stale data.");
 
                 if (_culledCountBuffer is not null && _culledCountBuffer.ActivelyMapping.Count == 0)
-                    Debug.LogWarning($"{FormatDebugPrefix("Buffers")} Culled count buffer is not mapped; visibility counters may be invalid.");
+                    Debug.Out($"{FormatDebugPrefix("Buffers")} Culled count buffer is not mapped; visibility counters may be invalid.");
             }
         }
 

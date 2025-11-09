@@ -1,5 +1,7 @@
 ﻿using Extensions;
+using System;
 using System.Collections.Concurrent;
+using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
 using System.Linq;
@@ -8,12 +10,69 @@ namespace XREngine
 {
     public class Debug
     {
+        private enum LogCategory
+        {
+            General,
+            Rendering,
+            OpenGL,
+        }
+
         private static readonly ConcurrentDictionary<string, DateTime> RecentMessageCache = new();
         public static Queue<(string, DateTime)> Output { get; } = new Queue<(string, DateTime)>();
         public static bool AllowOutput { get; set; } = true;
         private const int MaxLogFileCount = 10;
         private static readonly object LogWriterLock = new();
-        private static StreamWriter? _logWriter;
+        private static readonly Dictionary<LogCategory, StreamWriter?> LogWriters = new()
+        {
+            [LogCategory.General] = null,
+            [LogCategory.Rendering] = null,
+            [LogCategory.OpenGL] = null,
+        };
+        private static string? _logSessionId;
+        private static readonly List<(string Token, bool RequireBoundary)> OpenGlTokens = new()
+        {
+            ("opengl", false),
+            ("gl error", true),
+            ("gl warning", true),
+            ("gl_debug", true),
+            ("gl debug", true),
+            ("gl_invalid", true),
+            ("gl_out_of", true),
+            ("silk.net.opengl", false),
+        };
+
+        private static readonly List<(string Token, bool RequireBoundary)> RenderingTokens = new()
+        {
+            ("xreengine.rendering", false),
+            ("\\rendering\\", false),
+            ("/rendering/", false),
+            ("gpurenderpass", false),
+            ("gpu", false),
+            ("glbuffer", false),
+            ("gldatabuffer", false),
+            ("renderpass", false),
+            ("renderer", false),
+            ("rendering", false),
+            (" render", false),
+            ("render target", false),
+            ("drawcall", false),
+            ("framebuffer", false),
+            ("shader", false),
+            ("ensurecombinedprogram", false),
+            ("batch draw", false),
+            ("materialid", false),
+            ("creating new program", false),
+            ("program created and linked", false),
+            ("program cached", false),
+            ("added new viewport", false),
+            ("viewport", false),
+            ("xrwindow", false),
+            ("xrmesh", false),
+            ("mesh ", false),
+            ("mesh.", false),
+            ("mesh:", false),
+            ("mesh=", false),
+        };
 
         /// <summary>
         /// Prints a message for debugging purposes.
@@ -162,8 +221,10 @@ namespace XREngine
 
             lock (LogWriterLock)
             {
-                writer = EnsureLogWriterInternal(logToFile);
-                writer?.WriteLine(message);
+                LogCategory category = ClassifyMessage(message);
+                writer = EnsureLogWriterInternal(category, logToFile);
+                if (writer is not null)
+                    writer.WriteLine($"{DateTime.Now:O} {message}");
             }
 
             if (writer is null)
@@ -173,34 +234,90 @@ namespace XREngine
             }
         }
 
-        private static StreamWriter? EnsureLogWriterInternal(bool logToFile)
+        private static StreamWriter? EnsureLogWriterInternal(LogCategory category, bool logToFile)
         {
             if (!logToFile)
             {
-                if (_logWriter is not null)
-                {
-                    _logWriter.Dispose();
-                    _logWriter = null;
-                }
+                ResetLogWriters();
                 return null;
             }
 
-            if (_logWriter is null)
+            if (_logSessionId is null)
+                _logSessionId = DateTime.Now.ToString("yyyyMMdd_HHmmss");
+
+            if (LogWriters[category] is null)
             {
                 string baseDirectory = AppContext.BaseDirectory;
                 string logsDirectory = Path.Combine(baseDirectory, "Logs");
                 Directory.CreateDirectory(logsDirectory);
                 EnforceLogFileLimit(logsDirectory);
-                string fileName = $"log_{DateTime.Now:yyyyMMdd_HHmmss}.txt";
+                string fileSuffix = category switch
+                {
+                    LogCategory.OpenGL => "opengl",
+                    LogCategory.Rendering => "rendering",
+                    _ => "general",
+                };
+                string fileName = $"log_{fileSuffix}_{_logSessionId}.txt";
                 string filePath = Path.Combine(logsDirectory, fileName);
-                _logWriter = new StreamWriter(new FileStream(filePath, FileMode.Create, FileAccess.Write, FileShare.Read))
+                var writer = new StreamWriter(new FileStream(filePath, FileMode.Create, FileAccess.Write, FileShare.Read))
                 {
                     AutoFlush = true
                 };
-                _logWriter.WriteLine($"Log started {DateTime.Now:O}");
+                writer.WriteLine($"Log ({fileSuffix}) started {DateTime.Now:O}");
+                LogWriters[category] = writer;
             }
 
-            return _logWriter;
+            return LogWriters[category];
+        }
+
+        private static LogCategory ClassifyMessage(string message)
+        {
+            if (string.IsNullOrWhiteSpace(message))
+                return LogCategory.General;
+
+            string normalized = message.ToLowerInvariant();
+
+            foreach (var entry in OpenGlTokens)
+            {
+                if (ContainsToken(normalized, entry.Token, entry.RequireBoundary))
+                    return LogCategory.OpenGL;
+            }
+
+            if (normalized.StartsWith("render"))
+                return LogCategory.Rendering;
+
+            foreach (var entry in RenderingTokens)
+            {
+                if (ContainsToken(normalized, entry.Token, entry.RequireBoundary))
+                    return LogCategory.Rendering;
+            }
+
+            return LogCategory.General;
+        }
+
+        private static bool ContainsToken(string source, string token, bool requireWordBoundary)
+        {
+            int index = source.IndexOf(token, StringComparison.Ordinal);
+            while (index >= 0)
+            {
+                if (!requireWordBoundary || index == 0 || !char.IsLetterOrDigit(source[index - 1]))
+                    return true;
+
+                index = source.IndexOf(token, index + token.Length, StringComparison.Ordinal);
+            }
+
+            return false;
+        }
+
+        private static void ResetLogWriters()
+        {
+            foreach (LogCategory category in LogWriters.Keys.ToArray())
+            {
+                LogWriters[category]?.Dispose();
+                LogWriters[category] = null;
+            }
+
+            _logSessionId = null;
         }
 
         private static void EnforceLogFileLimit(string logsDirectory)

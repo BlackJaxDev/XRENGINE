@@ -6,6 +6,10 @@
 layout(local_size_x = 256, local_size_y = 1, local_size_z = 1) in;
 
 uniform uint CopyCount;
+uniform int TargetPass;
+uniform int DebugEnabled;
+uniform int DebugMaxSamples;
+uniform int DebugInstanceStride;
 
 // Number of commands is equal to the number of dispatched invocations.
 // No explicit CopyCount uniform is required.
@@ -28,6 +32,14 @@ layout(std430, binding = 2) writeonly buffer VisibleCount
     uint OutCount[];
 };
 
+layout(std430, binding = 3) writeonly buffer DebugSamples
+{
+    uint DebugData[];
+};
+
+const uint CommandStride = 32u;
+const uint RenderPassIndex = 24u;
+
 void main()
 {
     // Flatten the global invocation ID to a 1D linear index so this also
@@ -42,23 +54,44 @@ void main()
     if (cmdIndex >= CopyCount)
         return;
 
-    // Each command is 32 floats
-    const uint CommandStride = 32u;
-
     uint inBase  = cmdIndex * CommandStride;
-    uint outBase = cmdIndex * CommandStride;
+    uint commandPass = floatBitsToUint(InData[inBase + RenderPassIndex]);
+    uint expectedPass = TargetPass >= 0 ? uint(TargetPass) : 0xFFFFFFFFu;
+
+    bool passMatches = true;
+
+    if (TargetPass >= 0)
+    {
+        if (commandPass != expectedPass && commandPass != 0xFFFFFFFFu)
+            passMatches = false;
+    }
+
+    if (DebugEnabled == 1)
+    {
+        uint maxSamples = uint(DebugMaxSamples);
+        if (maxSamples > 0u)
+        {
+            uint stride = DebugInstanceStride > 0 ? uint(DebugInstanceStride) : CommandStride;
+            uint debugIndex = cmdIndex;
+            if (debugIndex < maxSamples)
+            {
+                uint baseIndex = debugIndex * stride;
+                DebugData[baseIndex + 0u] = cmdIndex;
+                DebugData[baseIndex + 1u] = commandPass;
+                DebugData[baseIndex + 2u] = passMatches ? 1u : 0u;
+                DebugData[baseIndex + 3u] = expectedPass;
+            }
+        }
+    }
+
+    if (!passMatches)
+        return;
+
+    uint outIndex = atomicAdd(OutCount[0], 1u);
+    uint outBase = outIndex * CommandStride;
 
     // Unrolled copy for better performance on some drivers
     // But keep a simple loop for clarity and flexibility
     for (uint i = 0u; i < CommandStride; ++i)
         OutData[outBase + i] = InData[inBase + i];
-
-    // Thread (0,0,0) writes the visible count as the actual copy count
-    if (gl_GlobalInvocationID.x == 0u &&
-        gl_GlobalInvocationID.y == 0u &&
-        gl_GlobalInvocationID.z == 0u)
-    {
-        if (OutCount.length() > 0)
-            OutCount[0] = CopyCount;
-    }
 }

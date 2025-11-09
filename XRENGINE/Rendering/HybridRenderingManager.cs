@@ -45,6 +45,25 @@ namespace XREngine.Rendering
     private readonly Dictionary<(uint materialId, int rendererKey), MaterialProgramCache> _materialPrograms = [];
 
     private static GPURenderPassCollection.IndirectDebugSettings DebugSettings => GPURenderPassCollection.IndirectDebug;
+    private static readonly HashSet<uint> _warnedMultiVertexMaterials = [];
+    private static bool IsGpuIndirectLoggingEnabled()
+        => Engine.UserSettings?.EnableGpuIndirectDebugLogging ?? false;
+
+    private static void GpuDebug(string message, params object[] args)
+    {
+        if (!IsGpuIndirectLoggingEnabled())
+            return;
+
+        Debug.Out(message, args);
+    }
+
+    private static void GpuDebug(FormattableString message)
+    {
+        if (!IsGpuIndirectLoggingEnabled())
+            return;
+
+        Debug.Out(message.ToString());
+    }
 
         public HybridRenderingManager()
         {
@@ -117,11 +136,14 @@ namespace XREngine.Rendering
 
         private static void LogIndirectPath(bool useCount, uint drawCountOrMax, uint stride, uint? offset = null)
         {
+            if (!IsGpuIndirectLoggingEnabled())
+                return;
+
             string path = useCount ? "IndirectCount" : (offset.HasValue ? "IndirectWithOffset" : "Indirect");
             string msg = offset.HasValue
                 ? $"GPU-Indirect path={path} count/max={drawCountOrMax} stride={stride} byteOffset={offset.Value}"
                 : $"GPU-Indirect path={path} count/max={drawCountOrMax} stride={stride}";
-            Debug.Out(msg);
+            GpuDebug("{0}", msg);
         }
 
         //private static bool TryReadDrawCount(XRDataBuffer? parameterBuffer, out uint drawCount)
@@ -167,10 +189,14 @@ namespace XREngine.Rendering
             XRCamera? camera,
             Matrix4x4 modelMatrix)
         {
-            Debug.Out("=== DispatchRenderIndirect START ===");
-            Debug.Out($"Parameters: drawCount={drawCount}, maxCommands={maxCommands}");
-            Debug.Out($"graphicsProgram={(graphicsProgram != null ? "present" : "NULL")}");
-            Debug.Out($"camera={(camera != null ? "present" : "null")}");
+            bool logGpu = IsGpuIndirectLoggingEnabled();
+            if (logGpu)
+            {
+                GpuDebug("=== DispatchRenderIndirect START ===");
+                GpuDebug("Parameters: drawCount={0}, maxCommands={1}", drawCount, maxCommands);
+                GpuDebug("graphicsProgram={0}", graphicsProgram != null ? "present" : "NULL");
+                GpuDebug("camera={0}", camera != null ? "present" : "null");
+            }
             
             var renderer = AbstractRenderer.Current;
             if (renderer is null)
@@ -188,15 +214,19 @@ namespace XREngine.Rendering
             // Bind graphics program for rendering (vertex/fragment shaders)
             if (graphicsProgram is not null)
             {
-                Debug.Out("Binding graphics program...");
+                if (logGpu)
+                    GpuDebug("Binding graphics program...");
                 graphicsProgram.Use();
-                Debug.Out("Graphics program bound successfully");
+                if (logGpu)
+                    GpuDebug("Graphics program bound successfully");
                 
                 if (camera is not null)
                 {
-                    Debug.Out("Setting engine uniforms...");
+                    if (logGpu)
+                        GpuDebug("Setting engine uniforms...");
                     renderer.SetEngineUniforms(graphicsProgram, camera);
-                    Debug.Out("Engine uniforms set");
+                    if (logGpu)
+                        GpuDebug("Engine uniforms set");
                 }
                 else
                 {
@@ -205,10 +235,13 @@ namespace XREngine.Rendering
 
                 bool isIdentity = Matrix4x4.Equals(modelMatrix, Matrix4x4.Identity);
                 graphicsProgram.Uniform(EEngineUniform.ModelMatrix.ToString(), modelMatrix);
-                if (!isIdentity)
-                    Debug.Out($"Model matrix translation=({modelMatrix.M41:F3},{modelMatrix.M42:F3},{modelMatrix.M43:F3})");
-                else
-                    Debug.Out("Model matrix uniform set to identity");
+                if (logGpu)
+                {
+                    if (!isIdentity)
+                        GpuDebug("Model matrix translation=({0:F3},{1:F3},{2:F3})", modelMatrix.M41, modelMatrix.M42, modelMatrix.M43);
+                    else
+                        GpuDebug("Model matrix uniform set to identity");
+                }
             }
             else
             {
@@ -218,15 +251,18 @@ namespace XREngine.Rendering
 
             // Bind the provided VAO (if any)
             var version = vaoRenderer?.GetDefaultVersion();
-            Debug.Out($"Binding VAO: version={(version != null ? "present" : "null")}");
+            if (logGpu)
+                GpuDebug("Binding VAO: version={0}", version != null ? "present" : "null");
             renderer.BindVAOForRenderer(version);
 
             // Configure VAO attributes for the bound program
             if (graphicsProgram is not null && vaoRenderer is not null)
             {
-                Debug.Out("Configuring VAO attributes for program...");
+                if (logGpu)
+                    GpuDebug("Configuring VAO attributes for program...");
                 renderer.ConfigureVAOAttributesForProgram(graphicsProgram, version);
-                Debug.Out("VAO attributes configured");
+                if (logGpu)
+                    GpuDebug("VAO attributes configured");
             }
 
             // Validate element buffer presence (required for *ElementsIndirect* variants)
@@ -236,16 +272,19 @@ namespace XREngine.Rendering
                 renderer.BindVAOForRenderer(null);
                 return;
             }
-            Debug.Out("VAO validation passed - index buffer present");
+            if (logGpu)
+                GpuDebug("VAO validation passed - index buffer present");
 
-            Debug.Out("Binding indirect draw buffer...");
+            if (logGpu)
+                GpuDebug("Binding indirect draw buffer...");
             renderer.BindDrawIndirectBuffer(indirectDrawBuffer);
 
             uint stride = (uint)Marshal.SizeOf<DrawElementsIndirectCommand>();
             bool parameterReady = parameterBuffer is not null && EnsureParameterBufferReady(parameterBuffer);
             bool useCount = parameterReady && !DebugSettings.DisableCountDrawPath && renderer.SupportsIndirectCountDraw();
 
-            Debug.Out($"Draw mode: useCount={useCount}, stride={stride}");
+            if (logGpu)
+                GpuDebug("Draw mode: useCount={0}, stride={1}", useCount, stride);
 
             if (DebugSettings.ValidateBufferLayouts)
                 ValidateIndirectBufferState(indirectDrawBuffer, maxCommands, stride);
@@ -254,21 +293,25 @@ namespace XREngine.Rendering
             {
                 if (useCount)
                 {
-                    Debug.Out("Using MultiDrawElementsIndirectCount path");
+                    if (logGpu)
+                        GpuDebug("Using MultiDrawElementsIndirectCount path");
                     renderer.BindParameterBuffer(parameterBuffer!);
                     renderer.MemoryBarrier(EMemoryBarrierMask.ClientMappedBuffer | EMemoryBarrierMask.Command);
                     LogIndirectPath(true, maxCommands, stride);
                     renderer.MultiDrawElementsIndirectCount(maxCommands, stride);
-                    Debug.Out("MultiDrawElementsIndirectCount issued");
+                    if (logGpu)
+                        GpuDebug("MultiDrawElementsIndirectCount issued");
                 }
                 else
                 {
                     if (drawCount == 0)
                         drawCount = maxCommands;
-                    Debug.Out($"Using MultiDrawElementsIndirect path with count={drawCount}");
+                    if (logGpu)
+                        GpuDebug("Using MultiDrawElementsIndirect path with count={0}", drawCount);
                     LogIndirectPath(false, drawCount, stride);
                     renderer.MultiDrawElementsIndirect(drawCount, stride);
-                    Debug.Out("MultiDrawElementsIndirect issued");
+                    if (logGpu)
+                        GpuDebug("MultiDrawElementsIndirect issued");
                 }
 
                 LogGLErrors(renderer, useCount ? "MultiDrawElementsIndirectCount" : "MultiDrawElementsIndirect");
@@ -280,10 +323,12 @@ namespace XREngine.Rendering
 
                 renderer.UnbindDrawIndirectBuffer();
                 renderer.BindVAOForRenderer(null);
-                Debug.Out("Cleanup complete");
+                if (logGpu)
+                    GpuDebug("Cleanup complete");
             }
             
-            Debug.Out("=== DispatchRenderIndirect END ===");
+            if (logGpu)
+                GpuDebug("=== DispatchRenderIndirect END ===");
         }
 
         private static void DumpGpuIndirectArguments(
@@ -293,7 +338,10 @@ namespace XREngine.Rendering
             XRDataBuffer? parameterBuffer,
             uint visibleCount)
         {
-            Debug.Out($"[GPUIndirect] dump invoked tick={Environment.TickCount64}");
+            if (!IsGpuIndirectLoggingEnabled())
+                return;
+
+            GpuDebug("[GPUIndirect] dump invoked tick={0}", Environment.TickCount64);
             XRDataBuffer? drawCountBuffer = renderPasses.DrawCountBuffer ?? parameterBuffer;
             XRDataBuffer? culledCountBuffer = renderPasses.CulledCountBuffer;
             XRDataBuffer culledCommandBuffer = renderPasses.CulledSceneToRenderBuffer;
@@ -392,7 +440,7 @@ namespace XREngine.Rendering
                     }
                 }
 
-                Debug.Out(sb.ToString());
+                GpuDebug(sb.ToString());
 
                 bool culledSupportsReadback =
                     (culledCommandBuffer.StorageFlags & EBufferMapStorageFlags.Read) != 0 &&
@@ -425,7 +473,13 @@ namespace XREngine.Rendering
                                 for (uint i = 0; i < inspectCount; ++i)
                                 {
                                     var culledCmd = Unsafe.ReadUnaligned<GPUIndirectRenderCommand>(culledBase + (int)(i * culledStride));
-                                    Debug.Out($"[GPUIndirect] culled[{i}] mesh={culledCmd.MeshID} submesh={culledCmd.SubmeshID} material={culledCmd.MaterialID} instances={culledCmd.InstanceCount} pass={culledCmd.RenderPass}");
+                                    GpuDebug("[GPUIndirect] culled[{0}] mesh={1} submesh={2} material={3} instances={4} pass={5}",
+                                        i,
+                                        culledCmd.MeshID,
+                                        culledCmd.SubmeshID,
+                                        culledCmd.MaterialID,
+                                        culledCmd.InstanceCount,
+                                        culledCmd.RenderPass);
                                 }
                             }
                         }
@@ -442,7 +496,7 @@ namespace XREngine.Rendering
                 }
                 else if (!usingGpuCount && visibleCount > 0 && !culledSupportsReadback)
                 {
-                    Debug.Out("[GPUIndirect] Culled command buffer lacks read-mapping flags; skipping culled dump.");
+                    GpuDebug("[GPUIndirect] Culled command buffer lacks read-mapping flags; skipping culled dump.");
                 }
             }
             catch (Exception ex)
@@ -467,7 +521,7 @@ namespace XREngine.Rendering
             GPUScene scene,
             uint visibleCount)
         {
-            if (!DebugSettings.DumpIndirectArguments || visibleCount == 0)
+            if (!IsGpuIndirectLoggingEnabled() || !DebugSettings.DumpIndirectArguments || visibleCount == 0)
                 return;
 
             XRDataBuffer culledBuffer = renderPasses.CulledSceneToRenderBuffer;
@@ -486,7 +540,7 @@ namespace XREngine.Rendering
 
                 if (!ptr.IsValid)
                 {
-                    Debug.Out("[GPUIndirect] Failed to map culled buffer for inspection.");
+                    GpuDebug("[GPUIndirect] Failed to map culled buffer for inspection.");
                     return;
                 }
 
@@ -514,7 +568,7 @@ namespace XREngine.Rendering
                             sb.Append(" | meshData=<missing>");
                         }
 
-                        Debug.Out(sb.ToString());
+                        GpuDebug(sb.ToString());
                     }
                 }
             }
@@ -635,7 +689,7 @@ namespace XREngine.Rendering
 
             if (effectiveDrawCount == 0)
             {
-                Debug.Out($"Skipping indirect range: zero draws for offset {drawOffset}.");
+                GpuDebug("Skipping indirect range: zero draws for offset {0}.", drawOffset);
                 renderer.UnbindDrawIndirectBuffer();
                 renderer.BindVAOForRenderer(null);
                 return;
@@ -726,7 +780,9 @@ namespace XREngine.Rendering
             int currentRenderPass,
             XRDataBuffer? parameterBuffer)
         {
-            Debug.Out("=== RenderTraditional START ===");
+            bool logGpu = IsGpuIndirectLoggingEnabled();
+            if (logGpu)
+                GpuDebug("=== RenderTraditional START ===");
             
             if (_indirectCompProgram is null)
             {
@@ -741,11 +797,12 @@ namespace XREngine.Rendering
                 return;
             }
 
-            Debug.Out($"Scene state: TotalCommands={scene.TotalCommandCount}, MaterialCount={scene.MaterialMap.Count}");
-            Debug.Out($"VAO state: vaoRenderer={(vaoRenderer != null ? "present" : "null")}");
-            if (vaoRenderer != null)
+            if (logGpu)
             {
-                Debug.Out($"VAO buffers: {string.Join(", ", vaoRenderer.Buffers.Keys)}");
+                GpuDebug("Scene state: TotalCommands={0}, MaterialCount={1}", scene.TotalCommandCount, scene.MaterialMap.Count);
+                GpuDebug("VAO state: vaoRenderer={0}", vaoRenderer != null ? "present" : "null");
+                if (vaoRenderer != null)
+                    GpuDebug("VAO buffers: {0}", string.Join(", ", vaoRenderer.Buffers.Keys));
             }
 
             XRDataBuffer culledBuffer = renderPasses.CulledSceneToRenderBuffer;
@@ -763,31 +820,37 @@ namespace XREngine.Rendering
                 ? Math.Min(indirectCapacity, visibleCount)
                 : Math.Min(indirectCapacity, culledCapacity);
 
-            Debug.Out($"Visible commands={visibleCount} culledCapacity={culledCapacity} indirectCapacity={indirectCapacity}");
+            if (logGpu)
+                GpuDebug("Visible commands={0} culledCapacity={1} indirectCapacity={2}", visibleCount, culledCapacity, indirectCapacity);
 
             // Declare these once at the method start to avoid shadowing issues
             var matMap = renderPasses.GetMaterialMap(scene);
-            Debug.Out($"Material map count: {matMap.Count}");
+            if (logGpu)
+                GpuDebug("Material map count: {0}", matMap.Count);
             
             XRMaterial? defaultMat = matMap.Values.FirstOrDefault() ?? XRMaterial.InvalidMaterial;
-            Debug.Out($"Default material: {(defaultMat != null ? defaultMat.Name ?? "<unnamed>" : "null")}");
+            if (logGpu)
+                GpuDebug("Default material: {0}", defaultMat != null ? defaultMat.Name ?? "<unnamed>" : "null");
             
             XRRenderProgram? renderProgram = null;
             if (defaultMat is not null)
             {
                 uint matKey = (uint)defaultMat.GetHashCode();
-                Debug.Out($"Creating/getting program for material hash: {matKey}");
+                if (logGpu)
+                    GpuDebug("Creating/getting program for material hash: {0}", matKey);
                 
                 renderProgram = EnsureCombinedProgram(matKey, defaultMat, vaoRenderer);
                 
                 if (renderProgram != null)
                 {
-                    Debug.Out($"Graphics program obtained: ShaderCount={defaultMat.Shaders.Count}, ProgramValid={renderProgram != null}");
+                    if (logGpu)
+                        GpuDebug("Graphics program obtained: ShaderCount={0}, ProgramValid={1}", defaultMat.Shaders.Count, renderProgram != null);
                     
                     // Validate the program has required shaders
                     bool hasVertex = defaultMat.Shaders.Any(s => s?.Type == EShaderType.Vertex);
                     bool hasFragment = defaultMat.Shaders.Any(s => s?.Type == EShaderType.Fragment);
-                    Debug.Out($"Program shader types: Vertex={hasVertex}, Fragment={hasFragment}");
+                    if (logGpu)
+                        GpuDebug("Program shader types: Vertex={0}, Fragment={1}", hasVertex, hasFragment);
 
                     // Set material uniforms
                     var renderer = AbstractRenderer.Current;
@@ -797,7 +860,8 @@ namespace XREngine.Rendering
                         {
                             renderer.SetMaterialUniforms(defaultMat, renderProgram);
                             renderer.ApplyRenderParameters(defaultMat.RenderOptions);
-                            Debug.Out("Material uniforms and render parameters set");
+                            if (logGpu)
+                                GpuDebug("Material uniforms and render parameters set");
                         }
                     }
                 }
@@ -815,7 +879,8 @@ namespace XREngine.Rendering
 
             if (DebugSettings.ForceCpuIndirectBuild)
             {
-                Debug.Out("Using CPU indirect build path");
+                if (logGpu)
+                    GpuDebug("Using CPU indirect build path");
                 
                 uint visibleCommands = visibleCount;
                 if (visibleCommands == 0)
@@ -826,7 +891,8 @@ namespace XREngine.Rendering
                 if (visibleCommands == 0)
                     visibleCommands = Math.Min(scene.TotalCommandCount, indirectDrawBuffer.ElementCount);
 
-                Debug.Out($"CPU build: visibleCommands={visibleCommands}");
+                if (logGpu)
+                    GpuDebug("CPU build: visibleCommands={0}", visibleCommands);
 
                 uint built = BuildIndirectCommandsCpu(renderPasses, scene, indirectDrawBuffer, visibleCommands, currentRenderPass, null);
 
@@ -836,7 +902,8 @@ namespace XREngine.Rendering
                     return;
                 }
 
-                Debug.Out($"CPU indirect build generated {built} draw command(s) (requested {visibleCommands}).");
+                if (logGpu)
+                    GpuDebug("CPU indirect build generated {0} draw command(s) (requested {1}).", built, visibleCommands);
 
                 DispatchRenderIndirect(
                     indirectDrawBuffer,
@@ -848,15 +915,18 @@ namespace XREngine.Rendering
                     camera,
                     modelMatrix);
 
-                Debug.Out("=== RenderTraditional END (CPU path) ===");
+                if (logGpu)
+                    GpuDebug("=== RenderTraditional END (CPU path) ===");
                 return;
             }
 
-            Debug.Out("Using GPU indirect build path");
+            if (logGpu)
+                GpuDebug("Using GPU indirect build path");
 
             // Ensure the program actually contains a compute shader stage
             var mask = _indirectCompProgram.GetShaderTypeMask();
-            Debug.Out($"Compute program shader mask: {mask}");
+            if (logGpu)
+                GpuDebug("Compute program shader mask: {0}", mask);
             
             if ((mask & EProgramStageMask.ComputeShaderBit) == 0)
             {
@@ -866,33 +936,39 @@ namespace XREngine.Rendering
 
             // Use traditional compute shader program
             _indirectCompProgram.Use();
-            Debug.Out("Compute program bound");
+            if (logGpu)
+                GpuDebug("Compute program bound");
 
             // Input: culled commands
             _indirectCompProgram.BindBuffer(culledBuffer, 0);
-            Debug.Out($"Bound culled commands buffer: elements={culledBuffer.ElementCount}");
+            if (logGpu)
+                GpuDebug("Bound culled commands buffer: elements={0}", culledBuffer.ElementCount);
 
             // Output: indirect draw commands
             _indirectCompProgram.BindBuffer(indirectDrawBuffer, 1);
-            Debug.Out($"Bound indirect draw buffer: elements={indirectDrawBuffer.ElementCount}");
+            if (logGpu)
+                GpuDebug("Bound indirect draw buffer: elements={0}", indirectDrawBuffer.ElementCount);
 
             // Input: mesh data
             _indirectCompProgram.BindBuffer(meshDataBuffer, 2);
-            Debug.Out($"Bound mesh data buffer: elements={meshDataBuffer.ElementCount}");
+            if (logGpu)
+                GpuDebug("Bound mesh data buffer: elements={0}", meshDataBuffer.ElementCount);
 
             // Input: culled draw count written during the culling stage (std430 binding = 3)
             var culledCountBuffer = renderPasses.CulledCountBuffer;
             if (culledCountBuffer is not null)
             {
                 _indirectCompProgram.BindBuffer(culledCountBuffer, 3);
-                Debug.Out("Bound culled count buffer");
+                if (logGpu)
+                    GpuDebug("Bound culled count buffer");
             }
 
             // Optional: GPU-visible draw count buffer consumed by glMultiDraw*Count (std430 binding = 4)
             if (parameterBuffer is not null)
             {
                 _indirectCompProgram.BindBuffer(parameterBuffer, 4);
-                Debug.Out("Bound parameter buffer");
+                if (logGpu)
+                    GpuDebug("Bound parameter buffer");
             }
 
             // Optional: overflow/truncation/stat buffers (std430 bindings = 5, 7, 8)
@@ -900,14 +976,16 @@ namespace XREngine.Rendering
             if (indirectOverflowFlagBuffer is not null)
             {
                 _indirectCompProgram.BindBuffer(indirectOverflowFlagBuffer, 5);
-                Debug.Out("Bound overflow flag buffer");
+                if (logGpu)
+                    GpuDebug("Bound overflow flag buffer");
             }
 
             var truncationFlagBuffer = renderPasses.TruncationFlagBuffer;
             if (truncationFlagBuffer is not null)
             {
                 _indirectCompProgram.BindBuffer(truncationFlagBuffer, 7);
-                Debug.Out("Bound truncation flag buffer");
+                if (logGpu)
+                    GpuDebug("Bound truncation flag buffer");
             }
 
             var statsBuffer = renderPasses.StatsBuffer;
@@ -915,30 +993,35 @@ namespace XREngine.Rendering
             if (statsEnabled)
             {
                 _indirectCompProgram.BindBuffer(statsBuffer!, 8);
-                Debug.Out("Bound stats buffer");
+                if (logGpu)
+                    GpuDebug("Bound stats buffer");
             }
 
             _indirectCompProgram.Uniform("StatsEnabled", statsEnabled ? 1u : 0u);
 
             if (visibleCount == 0)
             {
-                Debug.Out("VisibleCommandCount == 0; skipping GPU indirect build path.");
+                if (logGpu)
+                    GpuDebug("VisibleCommandCount == 0; skipping GPU indirect build path.");
                 return;
             }
 
             // Set uniforms
             _indirectCompProgram.Uniform("CurrentRenderPass", currentRenderPass);
             _indirectCompProgram.Uniform("MaxIndirectDraws", (int)indirectDrawBuffer.ElementCount);
-            Debug.Out($"Set uniforms: CurrentRenderPass={currentRenderPass}, MaxIndirectDraws={indirectDrawBuffer.ElementCount}");
+            if (logGpu)
+                GpuDebug("Set uniforms: CurrentRenderPass={0}, MaxIndirectDraws={1}", currentRenderPass, indirectDrawBuffer.ElementCount);
 
             uint dispatchCount = visibleCount;
-            Debug.Out($"Dispatch command count: {dispatchCount}");
+            if (logGpu)
+                GpuDebug("Dispatch command count: {0}", dispatchCount);
 
             // Dispatch compute shader
             uint groupSize = 32; // Should match local_size_x in shader
             (uint groupsX, uint groupsY, uint groupsZ) = ComputeDispatch.ForCommands(dispatchCount, groupSize);
 
-            Debug.Out($"Dispatching compute: groups=({groupsX},{groupsY},{groupsZ}) groupSize={groupSize}");
+            if (logGpu)
+                GpuDebug("Dispatching compute: groups=({0},{1},{2}) groupSize={3}", groupsX, groupsY, groupsZ, groupSize);
             _indirectCompProgram.DispatchCompute(groupsX, groupsY, groupsZ, EMemoryBarrierMask.ShaderStorage | EMemoryBarrierMask.Command);
             //Debug.Out("Compute dispatch complete");
 
@@ -955,7 +1038,8 @@ namespace XREngine.Rendering
 
             //ClearIndirectTail(indirectDrawBuffer, parameterBuffer, maxDrawAllowed);
 
-            Debug.Out($"Dispatching indirect render: program={(renderProgram != null ? "valid" : "NULL")}");
+            if (logGpu)
+                GpuDebug("Dispatching indirect render: program={0}", renderProgram != null ? "valid" : "NULL");
             
             // Use the graphics program obtained at the start of the method
             DispatchRenderIndirect(
@@ -968,7 +1052,8 @@ namespace XREngine.Rendering
                 camera,
                 modelMatrix);
 
-            Debug.Out("=== RenderTraditional END (GPU path) ===");
+            if (logGpu)
+                GpuDebug("=== RenderTraditional END (GPU path) ===");
         }
 
         private struct PassDebugStats
@@ -997,7 +1082,7 @@ namespace XREngine.Rendering
             if (totalCommands == 0)
             {
                 if (DebugSettings.DumpIndirectArguments)
-                    Debug.Out("CPU indirect build found no commands in culled buffer.");
+                    GpuDebug("CPU indirect build found no commands in culled buffer.");
                 return 0;
             }
 
@@ -1043,7 +1128,7 @@ namespace XREngine.Rendering
                 if (skipReason is not null)
                 {
                     if (diagnosticsRemaining-- > 0)
-                        Debug.Out($"CPU indirect skip[{i}] reason={skipReason}");
+                        GpuDebug($"CPU indirect skip[{i}] reason={skipReason}");
                     if (skipBuckets is not null)
                     {
                         skipBuckets.TryGetValue(skipReason, out uint count);
@@ -1071,7 +1156,7 @@ namespace XREngine.Rendering
 
                 if (DebugSettings.DumpIndirectArguments && written < 8)
                 {
-                    Debug.Out($"CPU indirect[{written}] mesh={gpuCommand.MeshID} submesh={gpuCommand.SubmeshID & 0xFFFF} count={drawCmd.Count} firstIndex={drawCmd.FirstIndex} baseVertex={drawCmd.BaseVertex} material={gpuCommand.MaterialID}");
+                    GpuDebug($"CPU indirect[{written}] mesh={gpuCommand.MeshID} submesh={gpuCommand.SubmeshID & 0xFFFF} count={drawCmd.Count} firstIndex={drawCmd.FirstIndex} baseVertex={drawCmd.BaseVertex} material={gpuCommand.MaterialID}");
                 }
 
                 written++;
@@ -1084,12 +1169,12 @@ namespace XREngine.Rendering
 
             if (DebugSettings.DumpIndirectArguments)
             {
-                Debug.Out($"CPU indirect build final count={written} (requested {requestedCount}, buffer cap {indirectDrawBuffer.ElementCount}).");
+                GpuDebug($"CPU indirect build final count={written} (requested {requestedCount}, buffer cap {indirectDrawBuffer.ElementCount}).");
 
                 if (sampleLines is not null && sampleLines.Count > 0)
                 {
                     foreach (string line in sampleLines)
-                        Debug.Out(line);
+                        GpuDebug(line);
                 }
 
                 if (passStats is not null && passStats.Count > 0)
@@ -1097,7 +1182,7 @@ namespace XREngine.Rendering
                     var histogram = passStats
                         .OrderBy(kvp => kvp.Key)
                         .Select(kvp => $"pass={kvp.Key} seen={kvp.Value.Total} emitted={kvp.Value.Emitted}");
-                    Debug.Out("CPU indirect pass histogram: " + string.Join(", ", histogram));
+                    GpuDebug("CPU indirect pass histogram: " + string.Join(", ", histogram));
                 }
 
                 if (skipBuckets is not null && skipBuckets.Count > 0)
@@ -1105,11 +1190,11 @@ namespace XREngine.Rendering
                     var skipSummary = skipBuckets
                         .OrderByDescending(kvp => kvp.Value)
                         .Select(kvp => $"{kvp.Key}={kvp.Value}");
-                    Debug.Out("CPU indirect skip reasons: " + string.Join(", ", skipSummary));
+                    GpuDebug("CPU indirect skip reasons: " + string.Join(", ", skipSummary));
                 }
             }
 
-            Debug.Out($"HybridRenderingManager.BuildIndirectCommandsCpu: Built {written} indirect draw commands from {totalCommands} culled commands");
+            GpuDebug($"HybridRenderingManager.BuildIndirectCommandsCpu: Built {written} indirect draw commands from {totalCommands} culled commands");
 
             return written;
         }
@@ -1117,29 +1202,29 @@ namespace XREngine.Rendering
         // Ensure or create a combined graphics program for the given material ID (MVP: combined program only)
         private XRRenderProgram? EnsureCombinedProgram(uint materialID, XRMaterial material, XRMeshRenderer? vaoRenderer)
         {
-            Debug.Out($"=== EnsureCombinedProgram: materialID={materialID} ===");
+            GpuDebug($"=== EnsureCombinedProgram: materialID={materialID} ===");
             
             int rendererKey = vaoRenderer is null ? 0 : RuntimeHelpers.GetHashCode(vaoRenderer);
             if (_materialPrograms.TryGetValue((materialID, rendererKey), out var existing))
             {
-                Debug.Out("Using cached program");
+                //Debug.Out("Using cached program");
                 return existing.Program;
             }
 
-            Debug.Out($"Creating new program for material: {material.Name ?? "<unnamed>"}");
-            Debug.Out($"Material has {material.Shaders.Count} shaders");
+            GpuDebug($"Creating new program for material: {material.Name ?? "<unnamed>"}");
+            GpuDebug($"Material has {material.Shaders.Count} shaders");
 
             var shaderList = new List<XRShader>(material.Shaders.Where(shader => shader is not null));
-            Debug.Out($"Non-null shaders: {shaderList.Count}");
+            GpuDebug($"Non-null shaders: {shaderList.Count}");
             
             foreach (var shader in shaderList)
             {
-                Debug.Out($"  Shader type: {shader.Type}");
+                GpuDebug($"  Shader type: {shader.Type}");
             }
 
             // Ensure we only ever attach a single vertex shader to this combined program
             int existingVertexIndex = shaderList.FindIndex(shader => shader.Type == EShaderType.Vertex);
-            Debug.Out($"Existing vertex shader index: {existingVertexIndex}");
+            GpuDebug($"Existing vertex shader index: {existingVertexIndex}");
 
             if (existingVertexIndex >= 0)
             {
@@ -1147,7 +1232,8 @@ namespace XREngine.Rendering
                 {
                     if (shaderList[i].Type == EShaderType.Vertex && i != existingVertexIndex)
                     {
-                        Debug.LogWarning($"Material {material.Name ?? "<unnamed>"} has multiple vertex shaders; keeping the first and discarding the rest for combined program.");
+                        if (_warnedMultiVertexMaterials.Add(materialID) && (Engine.UserSettings?.EnableGpuIndirectDebugLogging ?? false))
+                            Debug.Out($"Material {material.Name ?? "<unnamed>"} has multiple vertex shaders; keeping the first and discarding the rest for combined program.");
                         shaderList.RemoveAt(i);
                     }
                 }
@@ -1158,23 +1244,21 @@ namespace XREngine.Rendering
             // If the material lacks a vertex shader, generate a default one using the VAO's mesh
             if (existingVertexIndex < 0)
             {
-                Debug.Out("Material lacks vertex shader - generating default");
+                GpuDebug("Material lacks vertex shader - generating default");
                 generatedVertexShader = CreateDefaultVertexShader(vaoRenderer);
                 if (generatedVertexShader is not null)
                 {
                     shaderList.Add(generatedVertexShader);
-                    Debug.Out("Vertex shader added to shader list");
+                    GpuDebug("Vertex shader added to shader list");
                 }
             }
 
-            Debug.Out($"Final shader list count: {shaderList.Count}");
-            Debug.Out("Creating and linking program...");
+            GpuDebug($"Final shader list count: {shaderList.Count}");
+            //Debug.Out("Creating and linking program...");
             
             var program = new XRRenderProgram(linkNow: false, separable: false, shaderList);
             program.AllowLink();
             program.Link();
-            
-            Debug.Out($"Program created and linked: {(program != null ? "SUCCESS" : "FAILED")}");
             
             if (program is null)
             {
@@ -1183,7 +1267,7 @@ namespace XREngine.Rendering
             }
 
             _materialPrograms[(materialID, rendererKey)] = new MaterialProgramCache(program, generatedVertexShader);
-            Debug.Out("Program cached");
+            //Debug.Out("Program cached");
             
             return program;
         }
@@ -1194,13 +1278,13 @@ namespace XREngine.Rendering
             var mesh = vaoRenderer?.Mesh;
             if (mesh is not null)
             {
-                Debug.Out($"Generating vertex shader from mesh: {mesh.Name ?? "<unnamed>"}");
+                GpuDebug($"Generating vertex shader from mesh: {mesh.Name ?? "<unnamed>"}");
                 var gen = new DefaultVertexShaderGenerator(mesh)
                 {
                     WriteGLPerVertexOutStruct = false
                 };
                 string vertexShaderSource = gen.Generate();
-                Debug.Out($"Generated vertex shader ({vertexShaderSource.Length} chars)");
+                GpuDebug($"Generated vertex shader ({vertexShaderSource.Length} chars)");
                 generatedVS = new XRShader(EShaderType.Vertex, vertexShaderSource)
                 {
                     Name = (mesh.Name ?? "Generated") + "_AutoVS"
@@ -1208,9 +1292,9 @@ namespace XREngine.Rendering
             }
             else
             {
-                Debug.Out("No mesh available - using fallback vertex shader");
+                GpuDebug("No mesh available - using fallback vertex shader");
                 string fallbackSource = BuildFallbackVertexShader(vaoRenderer);
-                Debug.Out($"Generated fallback vertex shader ({fallbackSource.Length} chars)");
+                GpuDebug($"Generated fallback vertex shader ({fallbackSource.Length} chars)");
                 generatedVS = new XRShader(EShaderType.Vertex, fallbackSource)
                 {
                     Name = "FallbackGeneratedVS"
@@ -1415,6 +1499,19 @@ namespace XREngine.Rendering
 
             var activeBatches = overrideBatches ?? batches;
 
+            if (materialMap.Count > 0)
+            {
+                string[] sample = materialMap
+                    .Select(kvp => $"{kvp.Key}:{kvp.Value?.Name ?? "<null>"}")
+                    .Take(16)
+                    .ToArray();
+                GpuDebug($"MaterialMap snapshot ({materialMap.Count} entries){(materialMap.Count > sample.Length ? " (truncated)" : string.Empty)}: {string.Join(", ", sample)}");
+            }
+            else
+            {
+                GpuDebug("MaterialMap snapshot: empty");
+            }
+
             if (DebugSettings.DumpIndirectArguments)
             {
                 AbstractRenderer.Current?.MemoryBarrier(
@@ -1464,9 +1561,19 @@ namespace XREngine.Rendering
                 if (lookupMaterialId == uint.MaxValue && cpuMaterialOrder is not null && batch.Offset < cpuMaterialOrder.Count)
                     lookupMaterialId = cpuMaterialOrder[(int)batch.Offset];
 
-                XRMaterial? material = lookupMaterialId != 0 && materialMap.TryGetValue(lookupMaterialId, out var mat)
-                    ? mat
-                    : XRMaterial.InvalidMaterial;
+                XRMaterial? material = null;
+                bool foundMaterial = false;
+                if (lookupMaterialId != 0)
+                    foundMaterial = materialMap.TryGetValue(lookupMaterialId, out material);
+
+                if (!foundMaterial)
+                {
+                    string reason = lookupMaterialId == 0
+                        ? "ID=0 (invalid)"
+                        : "material not found in map";
+                    GpuDebug($"Material lookup miss for ID={lookupMaterialId} (batch offset={batch.Offset}, count={effectiveCount}): {reason}");
+                    material = XRMaterial.InvalidMaterial;
+                }
 
                 if (material is null)
                 {
@@ -1483,7 +1590,7 @@ namespace XREngine.Rendering
                 renderer.SetMaterialUniforms(material, program);
                 renderer.ApplyRenderParameters(material.RenderOptions);
 
-                Debug.Out($"Batch draw: materialID={lookupMaterialId} offset={batch.Offset} count={effectiveCount}");
+                GpuDebug("Batch draw: materialID={0} offset={1} count={2}", lookupMaterialId, batch.Offset, effectiveCount);
 
                 for (uint drawIndex = 0; drawIndex < effectiveCount; ++drawIndex)
                 {

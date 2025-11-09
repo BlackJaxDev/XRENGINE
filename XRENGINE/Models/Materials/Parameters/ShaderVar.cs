@@ -103,9 +103,9 @@ namespace XREngine.Rendering.Models.Materials
         public abstract object GenericValue { get; }
 
         protected bool _valueChanged = true;
-        public void SetUniform(XRRenderProgram program, string? nameOverride = null)
+        public void SetUniform(XRRenderProgram program, string? nameOverride = null, bool forceUpdate = false)
         {
-            if (!_valueChanged)
+            if (!_valueChanged && !forceUpdate)
                 return;
             
             SetProgramUniform(program, nameOverride ?? Name);

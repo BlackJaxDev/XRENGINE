@@ -133,7 +133,7 @@ namespace XREngine.Components.Scene.Mesh
         private bool BeforeAdd(RenderInfo info, RenderCommandCollection passes, XRCamera? camera)
         {
             var rend = CurrentLODRenderer;
-            Debug.Out($"RenderableMesh.BeforeAdd: LODs.Count={LODs.Count}, CurrentLOD={(CurrentLOD != null ? "present" : "null")}, rend={(rend != null ? "present" : "null")}");
+            //Debug.Out($"RenderableMesh.BeforeAdd: LODs.Count={LODs.Count}, CurrentLOD={(CurrentLOD != null ? "present" : "null")}, rend={(rend != null ? "present" : "null")}");
             
             bool skinned = (rend?.Mesh?.HasSkinning ?? false) && Engine.Rendering.Settings.AllowSkinning;
             TransformBase tfm = skinned ? RootBone ?? Component.Transform : Component.Transform;
@@ -143,7 +143,7 @@ namespace XREngine.Components.Scene.Mesh
                 UpdateLOD(distance);
 
             _rc.Mesh = rend;
-            Debug.Out($"RenderableMesh.BeforeAdd: Set _rc.Mesh={(rend != null ? "present" : "null")}");
+            //Debug.Out($"RenderableMesh.BeforeAdd: Set _rc.Mesh={(rend != null ? "present" : "null")}");
             //RenderInfo.CullingOffsetMatrix = _rc.WorldMatrix = skinned ? Matrix4x4.Identity : Component.Transform.WorldMatrix;
             _rc.RenderDistance = distance;
 

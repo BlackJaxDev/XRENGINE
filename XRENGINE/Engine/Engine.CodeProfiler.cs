@@ -32,11 +32,13 @@ namespace XREngine
             private readonly ResourcePool<CodeProfilerTimer> _timerPool = new(() => new CodeProfilerTimer());
 
             private readonly ConcurrentDictionary<Guid, CodeProfilerTimer> _asyncTimers = [];
+            private readonly ThreadLocal<ThreadContext> _threadContext;
 
             public delegate void DelTimerCallback(string? methodName, float elapsedMs);
 
             public CodeProfiler()
             {
+                _threadContext = new ThreadLocal<ThreadContext>(() => new ThreadContext(), trackAllValues: false);
                 Time.Timer.SwapBuffers += ClearFrameLog;
             }
             ~CodeProfiler()
@@ -46,78 +48,93 @@ namespace XREngine
 
             public class CodeProfilerTimer(string? name = null) : IPoolable
             {
-                public float StartTime { get; private set; } = new();
-                public float EndTime { get; private set; } = new();
-                public float ElapsedSec => MathF.Round(EndTime - StartTime, 5);
-                public float ElapsedMs => MathF.Round((EndTime - StartTime) * 1000.0f, 5);
-                public string? Name { get; set; } = name;
-                public int ThreadId { get; set; }
-                public int Depth { get; set; }
+                private readonly List<CodeProfilerTimer> _children = new(4);
 
-                /// <summary>
-                /// Completed sub-entries that are ready to be printed.
-                /// </summary>
-                private readonly ConcurrentQueue<CodeProfilerTimer> _completedSubEntries = new();
-                /// <summary>
-                /// The currently active sub-entry that's being timed.
-                /// </summary>
-                private CodeProfilerTimer? _activeSubEntry;
+                public float StartTime { get; private set; }
+                public float EndTime { get; private set; }
+                public float ElapsedMs { get; private set; }
+                public float ElapsedSec => ElapsedMs * 0.001f;
+                public string Name { get; private set; } = name ?? string.Empty;
+                public int ThreadId { get; private set; }
+                public int Depth { get; private set; }
 
-                public void Start()
-                    => StartTime = Time.Timer.Time();
+                internal CodeProfilerTimer? Parent { get; private set; }
+                internal DelTimerCallback? Callback { get; set; }
+
+                [MethodImpl(MethodImplOptions.AggressiveInlining)]
+                internal void Begin(string? name, int threadId, CodeProfilerTimer? parent)
+                {
+                    Name = name ?? string.Empty;
+                    ThreadId = threadId;
+                    Parent = parent;
+                    Depth = parent is null ? 0 : parent.Depth + 1;
+                    StartTime = Time.Timer.Time();
+                    EndTime = StartTime;
+                    ElapsedMs = 0f;
+                }
+
+                [MethodImpl(MethodImplOptions.AggressiveInlining)]
                 public void Stop()
-                    => EndTime = Time.Timer.Time();
+                {
+                    EndTime = Time.Timer.Time();
+                    ElapsedMs = (EndTime - StartTime) * 1000.0f;
+                }
+
+                internal void AddChild(CodeProfilerTimer child)
+                    => _children.Add(child);
 
                 public void OnPoolableDestroyed() { }
                 public void OnPoolableReleased() { }
                 public void OnPoolableReset()
                 {
                     Depth = 0;
-                    _completedSubEntries.Clear();
-                    _activeSubEntry = null;
-                }
-
-                public void PushEntry(CodeProfilerTimer entry)
-                {
-                    entry.Depth = Depth + 1;
-                    if (_activeSubEntry is null)
-                        _activeSubEntry = entry;
-                    else
-                        _activeSubEntry.PushEntry(entry);
-                }
-
-                public void PopEntry(CodeProfilerTimer entry)
-                {
-                    if (_activeSubEntry == entry)
-                    {
-                        _activeSubEntry = null;
-                        _completedSubEntries.Enqueue(entry);
-                    }
-                    else
-                    {
-                        _activeSubEntry?.PopEntry(entry);
-                    }
+                    ThreadId = 0;
+                    Parent = null;
+                    Callback = null;
+                    Name = string.Empty;
+                    StartTime = 0f;
+                    EndTime = 0f;
+                    ElapsedMs = 0f;
+                    _children.Clear();
                 }
 
                 internal void PrintSubEntries(StringBuilder sb, ResourcePool<CodeProfilerTimer> timerPool, float debugOutputMinElapsedMs)
                 {
                     float totalMs = ElapsedMs;
                     bool hadSubEntries = false;
-                    while (_completedSubEntries.TryDequeue(out var subEntry))
+
+                    for (int i = 0; i < _children.Count; ++i)
                     {
-                        string indent = new(' ', subEntry.Depth * 2);
-                        if (subEntry.ElapsedMs >= debugOutputMinElapsedMs)
+                        var child = _children[i];
+                        if (child.ElapsedMs >= debugOutputMinElapsedMs)
                         {
-                            sb.Append($"{indent}{subEntry.Name} took {FormatMs(subEntry.ElapsedMs)}\n");
-                            subEntry.PrintSubEntries(sb, timerPool, debugOutputMinElapsedMs);
-                            totalMs -= subEntry.ElapsedMs;
                             hadSubEntries = true;
+                            string indent = new(' ', child.Depth * 2);
+                            sb.Append($"{indent}{child.Name} took {FormatMs(child.ElapsedMs)}\n");
+                            child.PrintSubEntries(sb, timerPool, debugOutputMinElapsedMs);
+                            totalMs -= child.ElapsedMs;
                         }
-                        timerPool.Release(subEntry);
+
+                        timerPool.Release(child);
                     }
+
+                    _children.Clear();
+
                     if (hadSubEntries && totalMs >= debugOutputMinElapsedMs)
                         sb.Append($"{new(' ', (Depth + 1) * 2)}<Remaining>: {FormatMs(totalMs)}\n");
                 }
+            }
+
+            private sealed class ThreadContext
+            {
+                public ThreadContext()
+                {
+                    ThreadId = Environment.CurrentManagedThreadId;
+                    ActiveStack = new Stack<CodeProfilerTimer>(32);
+                }
+
+                public int ThreadId { get; }
+                public Stack<CodeProfilerTimer> ActiveStack { get; }
             }
 
             public void ClearFrameLog()
@@ -149,38 +166,6 @@ namespace XREngine
                 return $"{MathF.Round(elapsedMs)}ms";
             }
 
-            private void PushEntry(CodeProfilerTimer entry)
-            {
-                entry.Depth = 0;
-                RootEntriesPerThread.AddOrUpdate(
-                    entry.ThreadId, //key
-                    entry, //add
-                    (tid, rootEntry) => //update
-                    {
-                        rootEntry.PushEntry(entry);
-                        return rootEntry;
-                    });
-                entry.Start();
-            }
-
-            private void PopEntry(CodeProfilerTimer entry)
-            {
-                entry.Stop();
-
-                if (!RootEntriesPerThread.TryGetValue(entry.ThreadId, out var rootEntry))
-                    return;
-
-                if (rootEntry != entry)
-                    rootEntry.PopEntry(entry);
-                else
-                {
-                    RootEntriesPerThread.TryRemove(entry.ThreadId, out _);
-                    _completedEntries.Enqueue(entry);
-                }
-            }
-
-            private StateObject so = new();
-
             /// <summary>
             /// Starts a timer and returns a StateObject that will stop the timer when it is disposed.
             /// </summary>
@@ -192,11 +177,20 @@ namespace XREngine
                 if (!EnableFrameLogging)
                     return StateObject.New();
 
+                var context = _threadContext.Value;
+                var stack = context.ActiveStack;
+                var parent = stack.Count > 0 ? stack.Peek() : null;
+
                 var entry = _timerPool.Take();
-                //entry.Name = methodName;
-                //entry.ThreadId = Environment.CurrentManagedThreadId;
-                //PushEntry(entry);
-                return StateObject.New(() => Stop(entry, callback));
+                entry.Begin(methodName ?? string.Empty, context.ThreadId, parent);
+                entry.Callback = callback;
+
+                stack.Push(entry);
+
+                if (parent is null)
+                    RootEntriesPerThread[context.ThreadId] = entry;
+
+                return StateObject.New(() => Stop(entry));
             }
             public StateObject Start([CallerMemberName] string? methodName = null)
                 => Start(null, methodName);
@@ -204,11 +198,47 @@ namespace XREngine
             /// Stops a timer and calls the callback if available.
             /// </summary>
             /// <param name="entry"></param>
-            /// <param name="callback"></param>
-            private void Stop(CodeProfilerTimer entry, DelTimerCallback? callback)
+            private void Stop(CodeProfilerTimer entry)
             {
-                callback?.Invoke(entry.Name ?? string.Empty, entry.ElapsedMs);
-                //PopEntry(entry);
+                var context = _threadContext.Value;
+                var stack = context.ActiveStack;
+                CodeProfilerTimer? parent = null;
+
+                if (stack.Count > 0 && ReferenceEquals(stack.Peek(), entry))
+                {
+                    stack.Pop();
+                    parent = stack.Count > 0 ? stack.Peek() : null;
+                }
+                else if (stack.Count > 0 && stack.Contains(entry))
+                {
+                    // Out-of-order disposal; unwind until we drop the target entry.
+                    while (stack.Count > 0 && !ReferenceEquals(stack.Peek(), entry))
+                        stack.Pop();
+
+                    if (stack.Count > 0 && ReferenceEquals(stack.Peek(), entry))
+                    {
+                        stack.Pop();
+                        parent = stack.Count > 0 ? stack.Peek() : null;
+                    }
+                }
+                else
+                {
+                    parent = entry.Parent;
+                }
+
+                entry.Stop();
+
+                entry.Callback?.Invoke(entry.Name, entry.ElapsedMs);
+                entry.Callback = null;
+
+                if (parent is not null)
+                {
+                    parent.AddChild(entry);
+                    return;
+                }
+
+                RootEntriesPerThread.TryRemove(entry.ThreadId, out _);
+                _completedEntries.Enqueue(entry);
             }
             /// <summary>
             /// Starts an async timer and returns the id of the timer.
@@ -223,7 +253,8 @@ namespace XREngine
                     return id;
 
                 var entry = _timerPool.Take();
-                entry.Name = methodName ?? string.Empty;
+                entry.Begin(methodName ?? string.Empty, Environment.CurrentManagedThreadId, null);
+                entry.Callback = callback;
                 _asyncTimers.TryAdd(id, entry);
                 return id;
             }
@@ -242,10 +273,17 @@ namespace XREngine
                 }
 
                 if (_asyncTimers.TryRemove(id, out var entry))
-                    PopEntry(entry);
+                {
+                    entry.Stop();
+                    entry.Callback?.Invoke(entry.Name, entry.ElapsedMs);
+                    entry.Callback = null;
+                    methodName = entry.Name;
+                    _completedEntries.Enqueue(entry);
+                    return entry.ElapsedMs;
+                }
 
-                methodName = entry?.Name;
-                return entry?.ElapsedMs ?? 0.0f;
+                methodName = string.Empty;
+                return 0.0f;
             }
             /// <summary>
             /// Stops an async timer by id and returns the elapsed time in milliseconds.
@@ -259,9 +297,15 @@ namespace XREngine
                     return 0.0f;
 
                 if (_asyncTimers.TryRemove(id, out var entry))
-                    PopEntry(entry);
-                
-                return entry?.ElapsedMs ?? 0.0f;
+                {
+                    entry.Stop();
+                    entry.Callback?.Invoke(entry.Name, entry.ElapsedMs);
+                    entry.Callback = null;
+                    _completedEntries.Enqueue(entry);
+                    return entry.ElapsedMs;
+                }
+
+                return 0.0f;
             }
         }
     }

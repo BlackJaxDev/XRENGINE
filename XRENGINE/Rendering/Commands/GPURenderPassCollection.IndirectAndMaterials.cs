@@ -1,4 +1,5 @@
 using System.Text;
+using System.Threading;
 
 namespace XREngine.Rendering.Commands
 {
@@ -75,7 +76,8 @@ namespace XREngine.Rendering.Commands
                 uint frustumRej = values[3];
                 uint distRej = values[4];
 
-                Debug.Out($"{FormatDebugPrefix("Stats")} [GPU Stats] In={input} CulledOut={culled} Draws={drawn} RejFrustum={frustumRej} RejDist={distRej}");
+                if (Engine.UserSettings?.EnableGpuIndirectDebugLogging ?? false)
+                    Debug.Out($"{FormatDebugPrefix("Stats")} [GPU Stats] In={input} CulledOut={culled} Draws={drawn} RejFrustum={frustumRej} RejDist={distRej}");
                 Dbg($"Stats in={input} culled={culled} draws={drawn} frustumRej={frustumRej} distRej={distRej}", "Stats");
             }
             Dbg("Render end", "Lifecycle");
@@ -194,7 +196,8 @@ namespace XREngine.Rendering.Commands
                 .AppendLine($"  CountBufferMapped={(_drawCountBuffer?.ActivelyMapping.Count > 0)} CulledBufferMapped={(_culledCountBuffer?.ActivelyMapping.Count > 0)}")
                 .AppendLine($"  SampleCount={sampleCount}");
 
-            Debug.Out(message.ToString());
+            if (Engine.UserSettings?.EnableGpuIndirectDebugLogging ?? false)
+                Debug.Out(message.ToString());
         }
 
         /// <summary>
@@ -273,6 +276,26 @@ namespace XREngine.Rendering.Commands
             return batches;
         }
 
+        private int _resolveMaterialLogBudget = 16;
+
+        private bool TryValidateMaterialId(GPUScene scene, uint sourceId, string sourceName)
+        {
+            if (sourceId == 0)
+                return false;
+
+            if (scene.MaterialMap.ContainsKey(sourceId))
+                return true;
+
+            int remaining = Interlocked.Decrement(ref _resolveMaterialLogBudget);
+            if (remaining >= 0)
+            {
+                Dbg($"ResolveMaterialId rejected id={sourceId} from {sourceName} (not present in MaterialMap). Remaining logs: {remaining}", "Materials");
+                if (remaining == 0)
+                    Dbg("ResolveMaterialId rejection log budget exhausted; suppressing further logs.", "Materials");
+            }
+            return false;
+        }
+
         private uint ResolveMaterialId(GPUScene scene, uint visibleIndex)
         {
             try
@@ -280,7 +303,7 @@ namespace XREngine.Rendering.Commands
                 if (_culledSceneToRenderBuffer is not null && visibleIndex < _culledSceneToRenderBuffer.ElementCount)
                 {
                     GPUIndirectRenderCommand culledCmd = _culledSceneToRenderBuffer.GetDataRawAtIndex<GPUIndirectRenderCommand>(visibleIndex);
-                    if (culledCmd.MaterialID != 0)
+                    if (TryValidateMaterialId(scene, culledCmd.MaterialID, "culled buffer"))
                     {
                         if (culledCmd.MaterialID == uint.MaxValue)
                             Dbg($"ResolveMaterialId detected sentinel materialID=uint.MaxValue from culled buffer @idx={visibleIndex} mesh={culledCmd.MeshID}", "Materials");
@@ -298,7 +321,7 @@ namespace XREngine.Rendering.Commands
                 if (_materialIDsBuffer is not null && visibleIndex < _materialIDsBuffer.ElementCount)
                 {
                     uint id = _materialIDsBuffer.GetDataRawAtIndex<uint>(visibleIndex);
-                    if (id != 0)
+                    if (TryValidateMaterialId(scene, id, "material buffer"))
                     {
                         if (id == uint.MaxValue)
                             Dbg($"ResolveMaterialId detected sentinel materialID=uint.MaxValue from material buffer @idx={visibleIndex}", "Materials");
@@ -317,9 +340,14 @@ namespace XREngine.Rendering.Commands
                 if (visibleIndex < commands.ElementCount)
                 {
                     GPUIndirectRenderCommand cmd = commands.GetDataRawAtIndex<GPUIndirectRenderCommand>(visibleIndex);
+                    if (TryValidateMaterialId(scene, cmd.MaterialID, "scene command buffer"))
+                    {
+                        if (cmd.MaterialID == uint.MaxValue)
+                            Dbg($"ResolveMaterialId detected sentinel materialID=uint.MaxValue from scene commands @idx={visibleIndex}", "Materials");
+                        return cmd.MaterialID;
+                    }
                     if (cmd.MaterialID == uint.MaxValue)
                         Dbg($"ResolveMaterialId detected sentinel materialID=uint.MaxValue from scene commands @idx={visibleIndex}", "Materials");
-                    return cmd.MaterialID;
                 }
             }
             catch (Exception ex)
@@ -366,6 +394,7 @@ namespace XREngine.Rendering.Commands
                 _indirectOverflowFlagBuffer?.Dispose();
                 _sortedCommandBuffer?.Dispose();
                 _culledSceneToRenderBuffer?.Dispose();
+                _passFilterDebugBuffer?.Dispose();
                 _materialIDsBuffer?.Dispose();
                 _cullingComputeShader?.Destroy();
                 _indirectRenderTaskShader?.Destroy();

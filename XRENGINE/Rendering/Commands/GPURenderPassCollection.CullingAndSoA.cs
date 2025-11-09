@@ -1,4 +1,15 @@
+using System;
+using System.Collections.Generic;
+using System.Linq;
 using System.Numerics;
+using System.Runtime.CompilerServices;
+using System.Text;
+using System.Threading;
+using XREngine;
+using XREngine.Data;
+using XREngine.Data.Rendering;
+using XREngine.Rendering;
+using XREngine.Rendering.OpenGL;
 using static XREngine.Rendering.OpenGL.OpenGLRenderer;
 
 namespace XREngine.Rendering.Commands
@@ -7,6 +18,20 @@ namespace XREngine.Rendering.Commands
     {
         // Set true to bypass GPU frustum/flag culling and treat all commands as visible (debug only)
         public bool ForcePassthroughCulling { get; set; } = true;
+
+        private int _culledSanitizerLogBudget = 8;
+        private int _passthroughFallbackLogBudget = 4;
+        private int _passthroughFallbackForceLogBudget = 2;
+        private int _cpuFallbackRejectLogBudget = 6;
+        private int _cpuFallbackDetailLogBudget = 8;
+    private int _sanitizerDetailLogBudget = 4;
+    private int _sanitizerSampleLogBudget = 12;
+        private bool _skipGpuSubmissionThisPass;
+        private string? _skipGpuSubmissionReason;
+        private long _lastMaterialSnapshotTick = -1;
+
+        private const uint PassFilterDebugComponentsPerSample = 4;
+        private const uint PassFilterDebugMaxSamples = 32;
 
         /// <summary>
         /// Reads unsigned integer values from a mapped buffer into the specified span.
@@ -100,18 +125,33 @@ namespace XREngine.Rendering.Commands
         {
             var glWrapper = buf.APIWrappers.FirstOrDefault() as GLDataBuffer;
             bool isMapped = glWrapper?.IsMapped ?? false;
+            bool mappedTemporarily = false;
 
-            if (!isMapped)
-                return buf.GetDataRawAtIndex<uint>(index);
+            try
+            {
+                if (!isMapped)
+                {
+                    buf.MapBufferData();
+                    glWrapper = buf.APIWrappers.FirstOrDefault() as GLDataBuffer;
+                    isMapped = glWrapper?.IsMapped ?? false;
+                    if (!isMapped)
+                        return buf.GetDataRawAtIndex<uint>(index);
+                    mappedTemporarily = true;
+                }
 
-            AbstractRenderer.Current?.MemoryBarrier(EMemoryBarrierMask.ClientMappedBuffer);
+                AbstractRenderer.Current?.MemoryBarrier(EMemoryBarrierMask.ClientMappedBuffer);
 
-            var addr = buf.GetMappedAddresses().FirstOrDefault();
-            if (addr == IntPtr.Zero)
-                throw new Exception("ReadUIntAt failed - null pointer");
-            uint value = ((uint*)addr.Pointer)[index];
+                var addr = buf.GetMappedAddresses().FirstOrDefault();
+                if (addr == IntPtr.Zero)
+                    throw new Exception("ReadUIntAt failed - null pointer");
 
-            return value;
+                return ((uint*)addr.Pointer)[index];
+            }
+            finally
+            {
+                if (mappedTemporarily)
+                    buf.UnmapBufferData();
+            }
         }
 
         /// <summary>
@@ -159,18 +199,33 @@ namespace XREngine.Rendering.Commands
         {
             var glWrapper = buf.APIWrappers.FirstOrDefault() as GLDataBuffer;
             bool isMapped = glWrapper?.IsMapped ?? false;
+            bool mappedTemporarily = false;
 
-            if (!isMapped)
-                return buf.GetDataRawAtIndex<uint>(0);
+            try
+            {
+                if (!isMapped)
+                {
+                    buf.MapBufferData();
+                    glWrapper = buf.APIWrappers.FirstOrDefault() as GLDataBuffer;
+                    isMapped = glWrapper?.IsMapped ?? false;
+                    if (!isMapped)
+                        return buf.GetDataRawAtIndex<uint>(0);
+                    mappedTemporarily = true;
+                }
 
-            AbstractRenderer.Current?.MemoryBarrier(EMemoryBarrierMask.ClientMappedBuffer);
+                AbstractRenderer.Current?.MemoryBarrier(EMemoryBarrierMask.ClientMappedBuffer);
 
-            var addr = buf.GetMappedAddresses().FirstOrDefault();
-            if (addr == IntPtr.Zero)
-                throw new Exception("ReadUInt failed - null pointer");
-            var value = addr.UInt;
+                var addr = buf.GetMappedAddresses().FirstOrDefault();
+                if (addr == IntPtr.Zero)
+                    throw new Exception("ReadUInt failed - null pointer");
 
-            return value;
+                return addr.UInt;
+            }
+            finally
+            {
+                if (mappedTemporarily)
+                    buf.UnmapBufferData();
+            }
         }
 
         /// <summary>
@@ -203,13 +258,102 @@ namespace XREngine.Rendering.Commands
                 AbstractRenderer.Current?.MemoryBarrier(EMemoryBarrierMask.ClientMappedBuffer | EMemoryBarrierMask.Command);
             }
 
-            if (IndirectDebug.LogCountBufferWrites)
+            if (IndirectDebug.LogCountBufferWrites && (Engine.UserSettings?.EnableGpuIndirectDebugLogging ?? false))
             {
                 string label = buf.AttributeName ?? buf.Target.ToString();
                 Debug.Out($"{FormatDebugPrefix("Indirect")} [Indirect/Count] {label} <= {value}");
             }
 
             return value;
+        }
+
+        private void EnsurePassFilterDebugBuffer(uint sampleCount)
+        {
+            if (sampleCount == 0)
+                return;
+
+            uint requiredElements = Math.Max(sampleCount * PassFilterDebugComponentsPerSample, 1u);
+
+            if (_passFilterDebugBuffer is null || _passFilterDebugBuffer.ElementCount < requiredElements)
+            {
+                _passFilterDebugBuffer?.Dispose();
+                _passFilterDebugBuffer = new XRDataBuffer("PassFilterDebug", EBufferTarget.ShaderStorageBuffer, requiredElements, EComponentType.UInt, 1, false, true)
+                {
+                    Usage = EBufferUsage.DynamicCopy,
+                    DisposeOnPush = false,
+                    Resizable = true
+                };
+                _passFilterDebugBuffer.StorageFlags |= EBufferMapStorageFlags.DynamicStorage | EBufferMapStorageFlags.Read;
+                _passFilterDebugBuffer.RangeFlags |= EBufferMapRangeFlags.Read;
+                _passFilterDebugBuffer.Generate();
+            }
+
+            for (uint i = 0; i < requiredElements; ++i)
+                _passFilterDebugBuffer!.SetDataRawAtIndex(i, 0u);
+
+            uint byteCount = requiredElements * (uint)sizeof(uint);
+            _passFilterDebugBuffer!.PushSubData(0, byteCount);
+        }
+
+        private unsafe void DumpPassFilterDebug(uint sampleCount)
+        {
+            if (! (Engine.UserSettings?.EnableGpuIndirectDebugLogging ?? false))
+                return;
+
+            if (_passFilterDebugBuffer is null || sampleCount == 0)
+                return;
+
+            bool mappedLocally = false;
+
+            try
+            {
+                if (_passFilterDebugBuffer.ActivelyMapping.Count == 0)
+                {
+                    _passFilterDebugBuffer.MapBufferData();
+                    mappedLocally = true;
+                }
+
+                VoidPtr mapped = _passFilterDebugBuffer.GetMappedAddresses().FirstOrDefault();
+                if (!mapped.IsValid)
+                {
+                    if (mappedLocally)
+                        _passFilterDebugBuffer.UnmapBufferData();
+                    Dbg("PassFilterDebug aborted; debug buffer not mapped.", "Culling");
+                    return;
+                }
+
+                AbstractRenderer.Current?.MemoryBarrier(EMemoryBarrierMask.ClientMappedBuffer);
+
+                uint* data = (uint*)mapped.Pointer;
+                uint loggedSamples = Math.Min(sampleCount, PassFilterDebugMaxSamples);
+
+                var sb = new StringBuilder();
+                sb.Append("PassFilterDebug samples: ");
+
+                for (uint i = 0; i < loggedSamples; ++i)
+                {
+                    uint baseIndex = i * PassFilterDebugComponentsPerSample;
+                    uint cmdIndex = data[baseIndex + 0];
+                    uint passValue = data[baseIndex + 1];
+                    uint accepted = data[baseIndex + 2];
+                    uint expected = data[baseIndex + 3];
+
+                    if (i > 0)
+                        sb.Append(" | ");
+
+                    sb.Append('#').Append(cmdIndex).Append(" pass=").Append(passValue);
+                    if (expected != 0xFFFFFFFFu)
+                        sb.Append(" expected=").Append(expected);
+                    sb.Append(accepted == 1 ? " accepted" : " rejected");
+                }
+
+                Dbg(sb.ToString(), "Culling");
+            }
+            finally
+            {
+                if (mappedLocally)
+                    _passFilterDebugBuffer?.UnmapBufferData();
+            }
         }
 
         public void Cull(GPUScene gpuCommands, XRCamera? camera)
@@ -231,7 +375,24 @@ namespace XREngine.Rendering.Commands
             //else
             //    Cull(gpuCommands, camera, numCommands);
 
-            Debug.Out($"GPURenderPassCollection.Cull: {numCommands} input commands -> {VisibleCommandCount} visible commands in CulledSceneToRenderBuffer");
+            bool sanitizerOk = true;
+            if (VisibleCommandCount > 0)
+                sanitizerOk = SanitizeCulledCommands(gpuCommands);
+
+            if (_skipGpuSubmissionThisPass || !sanitizerOk)
+            {
+                if (_culledCountBuffer is not null)
+                    WriteUInt(_culledCountBuffer, 0u);
+
+                VisibleCommandCount = 0;
+
+                string reason = _skipGpuSubmissionReason ?? "command corruption detected";
+                Debug.LogWarning($"{FormatDebugPrefix("Culling")} Skipping GPU submission: {reason}");
+                return;
+            }
+
+            if (Engine.UserSettings?.EnableGpuIndirectDebugLogging ?? false)
+                Debug.Out($"GPURenderPassCollection.Cull: {numCommands} input commands -> {VisibleCommandCount} visible commands in CulledSceneToRenderBuffer");
         }
 
         //private void Cull(GPUScene gpuCommands, XRCamera? camera, uint numCommands)
@@ -287,6 +448,9 @@ namespace XREngine.Rendering.Commands
         /// <param name="numCommands"></param>
         private void PassthroughCull(GPUScene scene, uint numCommands)
         {
+            _skipGpuSubmissionThisPass = false;
+            _skipGpuSubmissionReason = null;
+
             if (CulledSceneToRenderBuffer is null || _copyCommandsProgram is null || _culledCountBuffer is null)
                 return;
             
@@ -307,7 +471,29 @@ namespace XREngine.Rendering.Commands
             }
 
             //Copy commands
+            WriteUInt(_culledCountBuffer, 0u);
+
+            bool debugLoggingEnabled = Engine.UserSettings?.EnableGpuIndirectDebugLogging ?? false;
+            uint debugSamples = debugLoggingEnabled ? Math.Min(copyCount, PassFilterDebugMaxSamples) : 0u;
+
+            if (debugSamples > 0)
+            {
+                EnsurePassFilterDebugBuffer(debugSamples);
+                _copyCommandsProgram.Uniform("DebugEnabled", 1);
+                _copyCommandsProgram.Uniform("DebugMaxSamples", (int)debugSamples);
+                _copyCommandsProgram.Uniform("DebugInstanceStride", (int)PassFilterDebugComponentsPerSample);
+                if (_passFilterDebugBuffer is not null)
+                    _copyCommandsProgram.BindBuffer(_passFilterDebugBuffer, 3);
+            }
+            else
+            {
+                _copyCommandsProgram.Uniform("DebugEnabled", 0);
+                _copyCommandsProgram.Uniform("DebugMaxSamples", 0);
+                _copyCommandsProgram.Uniform("DebugInstanceStride", (int)PassFilterDebugComponentsPerSample);
+            }
+
             _copyCommandsProgram.Uniform("CopyCount", copyCount);
+            _copyCommandsProgram.Uniform("TargetPass", RenderPass);
             _copyCommandsProgram?.BindBuffer(src, 0);
             _copyCommandsProgram?.BindBuffer(dst, 1);
             _copyCommandsProgram?.BindBuffer(_culledCountBuffer, 2);
@@ -315,13 +501,211 @@ namespace XREngine.Rendering.Commands
             (uint x, uint y, uint z) = ComputeDispatch.ForCommands(copyCount);
             _copyCommandsProgram?.DispatchCompute(x, y, z, EMemoryBarrierMask.ShaderStorage | EMemoryBarrierMask.Command);
 
-            VisibleCommandCount = copyCount;
-            Dbg($"Cull passthrough visible={VisibleCommandCount}", "Culling");
+            AbstractRenderer.Current?.MemoryBarrier(EMemoryBarrierMask.ShaderStorage | EMemoryBarrierMask.Command);
+
+            if (debugSamples > 0)
+                DumpPassFilterDebug(debugSamples);
+
+            uint filteredCount = ReadUInt(_culledCountBuffer);
+            bool allowCpuFallback = Engine.UserSettings?.EnableGpuIndirectCpuFallback ?? false;
+            if (!allowCpuFallback && debugLoggingEnabled)
+            {
+                allowCpuFallback = true;
+                if (_passthroughFallbackForceLogBudget > 0)
+                {
+                    Debug.LogWarning($"{FormatDebugPrefix("Culling")} Forcing CPU fallback while GPU indirect debug logging is active (pass {RenderPass}).");
+                    _passthroughFallbackForceLogBudget--;
+                }
+            }
+
+            if (filteredCount == 0 && RenderPass >= 0)
+            {
+                if (allowCpuFallback)
+                {
+                    uint cpuRecovered = CpuCopyCommandsForPass(scene, copyCount, commit: true);
+                    if (cpuRecovered > 0)
+                    {
+                        filteredCount = cpuRecovered;
+                        WriteUInt(_culledCountBuffer, cpuRecovered);
+                        if (_passthroughFallbackLogBudget > 0)
+                        {
+                            Debug.LogWarning($"{FormatDebugPrefix("Culling")} GPU pass filter returned 0; CPU fallback restored {cpuRecovered} commands for pass {RenderPass}.");
+                            _passthroughFallbackLogBudget--;
+                        }
+                        Dbg($"Cull passthrough GPU produced 0; CPU fallback restored {cpuRecovered} commands", "Culling");
+                    }
+                }
+                else
+                {
+                    if (_passthroughFallbackLogBudget > 0)
+                    {
+                        Debug.LogWarning($"{FormatDebugPrefix("Culling")} GPU pass filter returned 0 for pass {RenderPass}; CPU fallback disabled (set UserSettings.EnableGpuIndirectCpuFallback to true to allow recovery).");
+                        _passthroughFallbackLogBudget--;
+                    }
+                    if (Engine.UserSettings?.EnableGpuIndirectDebugLogging ?? false)
+                        LogCommandPassSample(scene, copyCount);
+                }
+            }
+
+            VisibleCommandCount = Math.Min(filteredCount, copyCount);
+            Dbg($"Cull passthrough visible={VisibleCommandCount} (input={copyCount})", "Culling");
+        }
+
+        private uint CpuCopyCommandsForPass(GPUScene scene, uint copyCount, bool commit)
+        {
+            if (CulledSceneToRenderBuffer is null)
+                return 0;
+
+            bool matchAll = RenderPass < 0;
+            uint targetPass = unchecked((uint)RenderPass);
+
+            XRDataBuffer src = scene.AllLoadedCommandsBuffer;
+            XRDataBuffer dst = CulledSceneToRenderBuffer;
+
+            uint elementSize = dst.ElementSize;
+            if (elementSize == 0)
+                elementSize = GPUScene.CommandFloatCount * sizeof(float);
+
+            uint outIndex = 0;
+            uint rejected = 0;
+            uint fatalRejected = 0;
+            string? firstFatalRejection = null;
+            for (uint i = 0; i < copyCount; ++i)
+            {
+                GPUIndirectRenderCommand cmd = src.GetDataRawAtIndex<GPUIndirectRenderCommand>(i);
+                if (!TryPrepareCpuFallbackCommand(scene, matchAll, targetPass, ref cmd, out string? rejectionReason))
+                {
+                    rejected++;
+                    bool isFatal = IsFatalCpuFallbackRejection(rejectionReason);
+                    if (isFatal)
+                    {
+                        fatalRejected++;
+                        if (rejectionReason is not null && _cpuFallbackDetailLogBudget > 0 && Interlocked.Decrement(ref _cpuFallbackDetailLogBudget) >= 0)
+                            Debug.LogWarning($"{FormatDebugPrefix("Culling")} CPU fallback reject idx={i} reason={rejectionReason} {FormatCommandSnapshot(cmd)}");
+
+                        if (firstFatalRejection is null)
+                        {
+                            string commandSummary = FormatCommandSnapshot(cmd);
+                            firstFatalRejection = $"idx={i} reason={rejectionReason ?? "unknown"} {commandSummary}";
+                        }
+                    }
+                    continue;
+                }
+
+                if (commit)
+                    dst.SetDataRawAtIndex(outIndex, cmd);
+                outIndex++;
+            }
+
+            if (fatalRejected > 0)
+            {
+                if (_cpuFallbackRejectLogBudget > 0)
+                {
+                    Debug.LogWarning($"{FormatDebugPrefix("Culling")} CPU fallback rejected {fatalRejected} commands for pass {RenderPass} due to invalid metadata.");
+                    _cpuFallbackRejectLogBudget--;
+                }
+
+                _skipGpuSubmissionThisPass = true;
+                if (string.IsNullOrEmpty(_skipGpuSubmissionReason))
+                {
+                    string detailSuffix = firstFatalRejection is not null ? $" (first {firstFatalRejection})" : string.Empty;
+                    _skipGpuSubmissionReason = $"CPU fallback rejected {fatalRejected} of {copyCount} commands{detailSuffix}.";
+                }
+            }
+            else if (rejected > 0)
+            {
+                Dbg($"CPU fallback skipped {rejected} commands for pass {RenderPass} (non-fatal reasons).", "Culling");
+            }
+
+            if (commit && outIndex > 0)
+            {
+                uint byteCount = outIndex * elementSize;
+                dst.PushSubData(0, byteCount);
+            }
+
+            return outIndex;
+        }
+
+        private static bool IsFatalCpuFallbackRejection(string? reason)
+        {
+            if (string.IsNullOrWhiteSpace(reason))
+                return true;
+
+            if (reason.StartsWith("render-pass-mismatch", StringComparison.OrdinalIgnoreCase))
+                return false;
+
+            return true;
+        }
+
+        private bool TryPrepareCpuFallbackCommand(GPUScene scene, bool matchAll, uint targetPass, ref GPUIndirectRenderCommand cmd, out string? reason)
+        {
+            reason = null;
+
+            if (!matchAll && cmd.RenderPass != targetPass && cmd.RenderPass != uint.MaxValue)
+            {
+                reason = $"render-pass-mismatch (cmd={cmd.RenderPass} expected={targetPass})";
+                return false;
+            }
+
+            if (cmd.MaterialID == 0u || cmd.MaterialID == uint.MaxValue)
+            {
+                reason = "material-sentinel";
+                return false;
+            }
+
+            if (!scene.MaterialMap.ContainsKey(cmd.MaterialID))
+            {
+                reason = $"material-missing id={cmd.MaterialID}";
+                return false;
+            }
+
+            if (cmd.MeshID == 0u || cmd.MeshID == uint.MaxValue)
+            {
+                reason = "mesh-sentinel";
+                return false;
+            }
+
+            if (!scene.TryGetMeshDataEntry(cmd.MeshID, out GPUScene.MeshDataEntry meshEntry) || meshEntry.IndexCount == 0)
+            {
+                reason = $"mesh-metadata-missing id={cmd.MeshID}";
+                return false;
+            }
+
+            if (cmd.InstanceCount == 0u)
+                cmd.InstanceCount = 1u;
+
+            return true;
+        }
+
+        private void LogCommandPassSample(GPUScene scene, uint copyCount)
+        {
+            try
+            {
+                uint sampleCount = Math.Min(copyCount, 8u);
+                if (sampleCount == 0)
+                    return;
+
+                GPUIndirectRenderCommand[] sample = scene.AllLoadedCommandsBuffer.GetDataArrayRawAtIndex<GPUIndirectRenderCommand>(0, (int)sampleCount);
+                var sb = new StringBuilder();
+                sb.Append("Cull passthrough sample passes (target=").Append(RenderPass).Append("): ");
+                for (int i = 0; i < sample.Length; i++)
+                {
+                    if (i > 0)
+                        sb.Append(", ");
+                    sb.Append('[').Append(i).Append("]=").Append(sample[i].RenderPass);
+                }
+
+                Dbg(sb.ToString(), "Culling");
+            }
+            catch (Exception ex)
+            {
+                Debug.LogWarning($"{FormatDebugPrefix("Culling")} Failed to log pass sample: {ex.Message}");
+            }
         }
 
         private void ExtractSoA(GPUScene scene)
         {
-            Dbg("ExtractSoA begin","SoA");
+            Dbg("ExtractSoA begin", "SoA");
 
             if (_extractSoAComputeShader is null)
                 return;
@@ -355,7 +739,325 @@ namespace XREngine.Rendering.Commands
             uint groups = (count + groupSize - 1) / groupSize;
             _extractSoAComputeShader.DispatchCompute(groups, 1, 1, EMemoryBarrierMask.ShaderStorage);
 
-            Dbg($"ExtractSoA dispatched groups={groups} count={count}","SoA");
+            Dbg($"ExtractSoA dispatched groups={groups} count={count}", "SoA");
+        }
+
+        private struct SoftIssueInfo
+        {
+            public int Count;
+            public uint FirstIndex;
+            public GPUIndirectRenderCommand FirstCommand;
+        }
+
+        private static void RecordSoftIssue(Dictionary<string, SoftIssueInfo> map, string reason, uint index, in GPUIndirectRenderCommand cmd)
+        {
+            if (map.TryGetValue(reason, out SoftIssueInfo info))
+            {
+                info.Count++;
+                map[reason] = info;
+            }
+            else
+            {
+                map[reason] = new SoftIssueInfo
+                {
+                    Count = 1,
+                    FirstIndex = index,
+                    FirstCommand = cmd
+                };
+            }
+        }
+
+        private void CollectSoftIssues(in GPUIndirectRenderCommand cmd, uint index, Dictionary<string, SoftIssueInfo> softIssues)
+        {
+            if (cmd.InstanceCount == 0)
+                RecordSoftIssue(softIssues, "instance-count-zero", index, cmd);
+
+            if (RenderPass >= 0 && cmd.RenderPass != (uint)RenderPass && cmd.RenderPass != uint.MaxValue)
+                RecordSoftIssue(softIssues, "render-pass-mismatch", index, cmd);
+        }
+
+        private unsafe bool SanitizeCulledCommands(GPUScene scene)
+        {
+            if (_culledSceneToRenderBuffer is null || _culledCountBuffer is null)
+                return true;
+
+            uint visible = VisibleCommandCount;
+            if (visible == 0)
+                return true;
+
+            var invalidCommands = new List<(uint index, GPUIndirectRenderCommand command, string reason)>();
+            var softIssues = new Dictionary<string, SoftIssueInfo>(StringComparer.OrdinalIgnoreCase);
+            var missingMaterialIds = new HashSet<uint>();
+            uint writeIndex = 0u;
+
+            bool mappedLocally = false;
+            VoidPtr mappedPtr = default;
+            try
+            {
+                if (_culledSceneToRenderBuffer.ActivelyMapping.Count == 0)
+                {
+                    _culledSceneToRenderBuffer.StorageFlags |= EBufferMapStorageFlags.Read;
+                    _culledSceneToRenderBuffer.RangeFlags |= EBufferMapRangeFlags.Read;
+                    _culledSceneToRenderBuffer.MapBufferData();
+                    mappedLocally = true;
+                }
+
+                mappedPtr = _culledSceneToRenderBuffer.GetMappedAddresses().FirstOrDefault();
+                if (!mappedPtr.IsValid)
+                {
+                    if (mappedLocally)
+                        _culledSceneToRenderBuffer.UnmapBufferData();
+                    Dbg("SanitizeCulledCommands aborted; culled buffer not mapped for read.", "Materials");
+                    return true;
+                }
+
+                AbstractRenderer.Current?.MemoryBarrier(EMemoryBarrierMask.ClientMappedBuffer | EMemoryBarrierMask.Command);
+
+                byte* basePtr = (byte*)mappedPtr.Pointer;
+                uint elementSize = _culledSceneToRenderBuffer.ElementSize;
+                if (elementSize == 0)
+                    elementSize = GPUScene.CommandFloatCount * sizeof(float);
+
+                for (uint i = 0; i < visible; ++i)
+                {
+                    byte* src = basePtr + (i * elementSize);
+                    GPUIndirectRenderCommand cmd = Unsafe.ReadUnaligned<GPUIndirectRenderCommand>(src);
+
+                    if ((Engine.UserSettings?.EnableGpuIndirectDebugLogging ?? false) && _sanitizerSampleLogBudget > 0)
+                    {
+                        if (Interlocked.Decrement(ref _sanitizerSampleLogBudget) >= 0)
+                        {
+                            bool materialKnown = scene.MaterialMap.ContainsKey(cmd.MaterialID);
+                            string sampleInfo = 
+                                $"Sanitize sample idx={i} material={cmd.MaterialID} known={materialKnown} mesh={cmd.MeshID} pass={cmd.RenderPass} instances={cmd.InstanceCount}";
+                            Dbg(sampleInfo, "Materials");
+                        }
+                    }
+
+                    CollectSoftIssues(cmd, i, softIssues);
+
+                    if (IsCulledCommandValid(scene, cmd, missingMaterialIds, out string? failureReason))
+                    {
+                        _culledSceneToRenderBuffer.SetDataRawAtIndex(writeIndex, cmd);
+                        writeIndex++;
+                    }
+                    else
+                    {
+                        string reason = failureReason ?? "invalid";
+                        invalidCommands.Add((i, cmd, reason));
+                        if (_sanitizerDetailLogBudget > 0 && Interlocked.Decrement(ref _sanitizerDetailLogBudget) >= 0)
+                            Debug.LogWarning($"{FormatDebugPrefix("Materials")} Sanitize drop idx={i} reason={reason} {FormatCommandSnapshot(cmd)}");
+                    }
+                }
+
+                bool hasSoftIssues = softIssues.Count > 0;
+
+                if (invalidCommands.Count == 0)
+                {
+                    if (hasSoftIssues && _culledSanitizerLogBudget > 0)
+                    {
+                        string softSummary = BuildSoftIssueSummary(visible, softIssues, RenderPass);
+                        Dbg(softSummary, "Materials");
+                        _culledSanitizerLogBudget--;
+                    }
+                    return true;
+                }
+
+                for (uint destIndex = writeIndex; destIndex < visible; ++destIndex)
+                    _culledSceneToRenderBuffer.SetDataRawAtIndex(destIndex, default(GPUIndirectRenderCommand));
+
+                uint bytes = visible * (_culledSceneToRenderBuffer.ElementSize == 0
+                    ? GPUScene.CommandFloatCount * sizeof(float)
+                    : _culledSceneToRenderBuffer.ElementSize);
+                _culledSceneToRenderBuffer.PushSubData(0, bytes);
+
+                uint newVisible = writeIndex;
+                VisibleCommandCount = newVisible;
+                WriteUInt(_culledCountBuffer, newVisible);
+
+                if (_culledSanitizerLogBudget > 0)
+                {
+                    string summary = BuildSanitizerSummary(visible, invalidCommands, softIssues, RenderPass);
+                    Dbg(summary, "Materials");
+                    _culledSanitizerLogBudget--;
+                }
+
+                if (missingMaterialIds.Count > 0)
+                    LogMaterialSnapshot(scene, missingMaterialIds);
+
+                string dropSummary = BuildSanitizerSummary(visible, invalidCommands, softIssues, RenderPass);
+                if (Engine.UserSettings?.EnableGpuIndirectDebugLogging ?? false)
+                {
+                    Dbg($"MaterialMap count={scene.MaterialMap.Count}", "Materials");
+                }
+                _skipGpuSubmissionThisPass = true;
+                _skipGpuSubmissionReason = dropSummary;
+
+                return false;
+            }
+            finally
+            {
+                if (mappedLocally)
+                    _culledSceneToRenderBuffer.UnmapBufferData();
+            }
+
+            return invalidCommands.Count == 0;
+        }
+
+        private static string FormatCommandSnapshot(in GPUIndirectRenderCommand cmd)
+            => $"mesh={cmd.MeshID} material={cmd.MaterialID} pass={cmd.RenderPass} instances={cmd.InstanceCount}";
+
+        private bool IsCulledCommandValid(GPUScene scene, in GPUIndirectRenderCommand cmd, ISet<uint> missingMaterialIds, out string? reason)
+        {
+            if (cmd.MaterialID == 0u || cmd.MaterialID == uint.MaxValue)
+            {
+                reason = "material-sentinel";
+                return false;
+            }
+
+            if (!scene.MaterialMap.ContainsKey(cmd.MaterialID))
+            {
+                reason = "material-missing";
+                missingMaterialIds.Add(cmd.MaterialID);
+                return false;
+            }
+
+            if (!scene.TryGetMeshDataEntry(cmd.MeshID, out GPUScene.MeshDataEntry entry) || entry.IndexCount == 0)
+            {
+                reason = "mesh-metadata-missing";
+                return false;
+            }
+
+            reason = null;
+            return true;
+        }
+
+        private static string BuildSanitizerSummary(uint originalCount, IReadOnlyCollection<(uint index, GPUIndirectRenderCommand command, string reason)> invalidCommands, IReadOnlyDictionary<string, SoftIssueInfo> softIssues, int expectedPass)
+        {
+            var sb = new StringBuilder();
+            sb.Append($"SanitizeCulledCommands dropped {invalidCommands.Count} of {originalCount} commands");
+
+            if (invalidCommands.Count > 0)
+            {
+                var reasonCounts = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+                foreach (var entry in invalidCommands)
+                {
+                    string key = entry.reason;
+                    if (reasonCounts.TryGetValue(key, out int existing))
+                        reasonCounts[key] = existing + 1;
+                    else
+                        reasonCounts[key] = 1;
+                }
+
+                sb.Append(" | reasons: ");
+                sb.Append(string.Join(", ", reasonCounts.Select(kvp => $"{kvp.Key}={kvp.Value}")));
+
+                var first = invalidCommands.First();
+                sb.Append($" | first idx={first.index} mesh={first.command.MeshID} material={first.command.MaterialID} pass={first.command.RenderPass}");
+                if (expectedPass >= 0)
+                    sb.Append($" expectedPass={expectedPass}");
+            }
+
+            if (softIssues.Count > 0)
+            {
+                sb.Append(" | warnings: ");
+                sb.Append(BuildSoftIssueDetails(softIssues, expectedPass));
+            }
+
+            return sb.ToString();
+        }
+
+        private static string BuildSoftIssueSummary(uint originalCount, IReadOnlyDictionary<string, SoftIssueInfo> softIssues, int expectedPass)
+        {
+            var sb = new StringBuilder();
+            sb.Append($"SanitizeCulledCommands retained {originalCount} commands with warnings");
+            sb.Append(" | warnings: ");
+            sb.Append(BuildSoftIssueDetails(softIssues, expectedPass));
+            return sb.ToString();
+        }
+
+        private static string BuildSoftIssueDetails(IReadOnlyDictionary<string, SoftIssueInfo> softIssues, int expectedPass)
+        {
+            if (softIssues.Count == 0)
+                return string.Empty;
+
+            var parts = new List<string>(softIssues.Count);
+            foreach (var kvp in softIssues)
+            {
+                string reason = kvp.Key;
+                SoftIssueInfo info = kvp.Value;
+                string descriptor = reason;
+
+                if (reason.Equals("render-pass-mismatch", StringComparison.OrdinalIgnoreCase))
+                {
+                    descriptor += $"={info.Count}(first idx={info.FirstIndex} actualPass={info.FirstCommand.RenderPass}";
+                    if (expectedPass >= 0)
+                        descriptor += $" expectedPass={expectedPass}";
+                    descriptor += $" mesh={info.FirstCommand.MeshID} material={info.FirstCommand.MaterialID})";
+                }
+                else if (reason.Equals("instance-count-zero", StringComparison.OrdinalIgnoreCase))
+                {
+                    descriptor += $"={info.Count}(first idx={info.FirstIndex} mesh={info.FirstCommand.MeshID} material={info.FirstCommand.MaterialID})";
+                }
+                else
+                {
+                    descriptor += $"={info.Count}(first idx={info.FirstIndex} mesh={info.FirstCommand.MeshID} material={info.FirstCommand.MaterialID})";
+                }
+
+                parts.Add(descriptor);
+            }
+
+            return string.Join(", ", parts);
+        }
+
+        private void LogMaterialSnapshot(GPUScene scene, IReadOnlyCollection<uint> missingMaterialIds)
+        {
+            if (!(Engine.UserSettings?.EnableGpuIndirectDebugLogging ?? false))
+                return;
+
+            const long SnapshotCooldownMs = 1_500;
+            long now = Environment.TickCount64;
+
+            if (_lastMaterialSnapshotTick >= 0 && now - _lastMaterialSnapshotTick < SnapshotCooldownMs)
+                return;
+
+            _lastMaterialSnapshotTick = now;
+
+            var missingPreview = missingMaterialIds
+                .OrderBy(id => id)
+                .Take(8)
+                .Select(id => id.ToString())
+                .ToArray();
+
+            var materialMap = scene.MaterialMap;
+            var materialSample = materialMap
+                .OrderBy(kvp => kvp.Key)
+                .Take(12)
+                .Select(kvp =>
+                {
+                    string? name = kvp.Value?.Name;
+                    if (string.IsNullOrWhiteSpace(name) && kvp.Value is not null)
+                        name = kvp.Value.GetType().Name;
+                    return $"{kvp.Key}:{name ?? "<null>"}";
+                })
+                .ToArray();
+
+            var sb = new StringBuilder();
+            sb.Append($"Material snapshot missing={missingMaterialIds.Count}");
+            if (missingPreview.Length > 0)
+            {
+                string previewText = string.Join(", ", missingPreview);
+                if (missingMaterialIds.Count > missingPreview.Length)
+                    previewText += ", ...";
+                sb.Append($" ids=[{previewText}]");
+            }
+
+            sb.Append($" mapCount={materialMap.Count}");
+
+            if (materialSample.Length > 0)
+                sb.Append($" sample=[{string.Join(", ", materialSample)}]");
+
+            Dbg(sb.ToString(), "Materials");
         }
 
         //public void SetHiZDepthPyramid(XRTexture? tex, int maxMip) { _hiZDepthPyramid = tex; HiZMaxMip = maxMip; }
