@@ -2,6 +2,7 @@
 using System.Numerics;
 using XREngine.Data.Rendering;
 using XREngine.Rendering.Models.Materials;
+using XREngine.Rendering;
 
 namespace XREngine.Rendering.OpenGL
 {
@@ -12,6 +13,8 @@ namespace XREngine.Rendering.OpenGL
             public override GLObjectType Type => GLObjectType.Material;
 
             private float _secondsLive = 0.0f;
+            private uint _lastUniformProgramBindingId = uint.MaxValue;
+            private XRRenderProgram? _lastUniformProgram;
             public float SecondsLive
             {
                 get => _secondsLive;
@@ -63,8 +66,15 @@ namespace XREngine.Rendering.OpenGL
                 if (materialProgram is null)
                     return;
 
+                bool forceUniformUpdate = !ReferenceEquals(_lastUniformProgram, materialProgram.Data) ||
+                    _lastUniformProgramBindingId != materialProgram.BindingId;
+
+                _lastUniformProgram = materialProgram.Data;
+                _lastUniformProgramBindingId = materialProgram.BindingId;
+
+                // Ensure uniforms are resident on every program variant that renders this material.
                 foreach (ShaderVar param in Data.Parameters)
-                    param.SetUniform(materialProgram.Data);
+                    param.SetUniform(materialProgram.Data, forceUpdate: forceUniformUpdate);
 
                 SetTextureUniforms(materialProgram);
                 SetEngineUniforms(materialProgram);

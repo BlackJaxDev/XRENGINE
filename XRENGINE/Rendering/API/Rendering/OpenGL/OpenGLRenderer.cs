@@ -283,7 +283,8 @@ namespace XREngine.Rendering.OpenGL
             131218,
             131076,
             131139, //Rasterization quality warning: A non-fullscreen clear caused a fallback from CSAA to MSAA.
-            //131186, //Buffer performance warning: buffer is being copied/moved from video memory to host memory.
+            131186, //Buffer performance warning: buffer is being copied/moved from video memory to host memory.
+            131188, //Buffer usage warning: Analysis of buffer object usage indicates that CPU is consuming buffer object data.  The usage hint supplied with this buffer object, GL_DYNAMIC_COPY, is inconsistent with this usage pattern.  Try using GL_STREAM_READ_ARB, GL_STATIC_READ_ARB, or GL_DYNAMIC_READ_ARB instead.
             //1282,
             //0,
             //9,

@@ -101,14 +101,32 @@ namespace XREngine
                 _userSettings = value ?? new UserSettings();
                 _userSettings.PropertyChanged += HandleUserSettingsChanged;
 
+                Profiler.EnableFrameLogging = _userSettings.EnableFrameLogging;
+                Profiler.DebugOutputMinElapsedMs = _userSettings.DebugOutputMinElapsedMs;
                 Rendering.ApplyRenderPipelinePreference();
             }
         }
 
         private static void HandleUserSettingsChanged(object? sender, IXRPropertyChangedEventArgs e)
         {
-            if (e.PropertyName == nameof(UserSettings.UseDebugOpaquePipeline))
-                Rendering.ApplyRenderPipelinePreference();
+            switch (e.PropertyName)
+            {
+                case nameof(UserSettings.UseDebugOpaquePipeline):
+                    Rendering.ApplyRenderPipelinePreference();
+                    break;
+                case nameof(UserSettings.EnableFrameLogging):
+                    Profiler.EnableFrameLogging = UserSettings.EnableFrameLogging;
+                    break;
+                case nameof(UserSettings.DebugOutputMinElapsedMs):
+                    Profiler.DebugOutputMinElapsedMs = UserSettings.DebugOutputMinElapsedMs;
+                    break;
+                case null:
+                case "":
+                    Rendering.ApplyRenderPipelinePreference();
+                    Profiler.EnableFrameLogging = UserSettings.EnableFrameLogging;
+                    Profiler.DebugOutputMinElapsedMs = UserSettings.DebugOutputMinElapsedMs;
+                    break;
+            }
         }
         /// <summary>
         /// Game-defined settings, such as initial world and libraries.

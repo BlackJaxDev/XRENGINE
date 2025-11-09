@@ -242,7 +242,20 @@ namespace XREngine.Rendering
             => CreateColorMaterialDeferred(Color.DarkTurquoise);
 
         public static XRMaterial CreateColorMaterialDeferred(ColorF4 color)
-            => new([new ShaderVector4(color, "BaseColor")], ShaderHelper.LitColorFragDeferred()) { RenderPass = (int)EDefaultRenderPass.OpaqueDeferredLit };
+        {
+            ShaderVar[] parameters =
+            [
+                new ShaderVector3((ColorF3)color, "BaseColor"),
+                new ShaderFloat(color.A, "Opacity"),
+            ];
+
+            XRMaterial material = new(parameters, ShaderHelper.LitColorFragDeferred()!)
+            {
+                RenderPass = (int)EDefaultRenderPass.OpaqueDeferredLit
+            };
+
+            return material;
+        }
 
         public static XRMaterial CreateUnlitColorMaterialForward(ColorF4 color)
             => new([new ShaderVector4(color, "MatColor")], ShaderHelper.UnlitColorFragForward()) { RenderPass = (int)EDefaultRenderPass.OpaqueForward };
@@ -265,9 +278,8 @@ namespace XREngine.Rendering
         /// <returns></returns>
         public static XRMaterial CreateLitColorMaterial(ColorF4 color, bool deferred = true)
         {
-            ShaderVar[] parameters;
             XRShader? frag = deferred ? ShaderHelper.LitColorFragDeferred() : ShaderHelper.LitColorFragForward();
-            parameters =
+            ShaderVar[] parameters =
             [
                 new ShaderVector3((ColorF3)color, "BaseColor"),
                 new ShaderFloat(color.A, "Opacity"),
@@ -276,7 +288,13 @@ namespace XREngine.Rendering
                 new ShaderFloat(0.0f, "Metallic"),
                 new ShaderFloat(1.0f, "IndexOfRefraction"),
             ];
-            return new(parameters, frag!);
+
+            XRMaterial material = new(parameters, frag!);
+            material.RenderPass = deferred
+                ? (int)EDefaultRenderPass.OpaqueDeferredLit
+                : (int)EDefaultRenderPass.OpaqueForward;
+
+            return material;
         }
         public enum EOpaque
         {

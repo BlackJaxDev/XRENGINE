@@ -1,5 +1,6 @@
 ﻿using Extensions;
 using Silk.NET.OpenGL;
+using XREngine;
 using XREngine.Data;
 using XREngine.Data.Rendering;
 
@@ -23,6 +24,9 @@ namespace XREngine.Rendering.OpenGL
                 Data.UnmapBufferDataRequested -= UnmapBufferData;
                 Data.BindSSBORequested -= BindSSBO;
             }
+            private static bool IsGpuBufferLoggingEnabled()
+                => Engine.UserSettings?.EnableGpuIndirectDebugLogging ?? false;
+
             protected override void LinkData()
             {
                 Data.PushDataRequested += PushData;
@@ -48,7 +52,7 @@ namespace XREngine.Rendering.OpenGL
                 {
                     BindToRenderer(rend.GetVertexProgram(), rend);
                 }
-                else if (rend is null && Data.Target == EBufferTarget.ArrayBuffer)
+                else if (rend is null && Data.Target == EBufferTarget.ArrayBuffer && IsGpuBufferLoggingEnabled())
                 {
                     // Suppress noisy warning; atlas / generic buffers can legitimately be created before a renderer binds them.
                     Debug.Out($"{GetDescribingName()} generated (no active mesh renderer yet) – delaying attribute binding.");
@@ -352,7 +356,8 @@ namespace XREngine.Rendering.OpenGL
 
                 var glRange = (uint)ToGLEnum(Data.RangeFlags);
                 var glStorage = (uint)ToGLEnum(Data.StorageFlags);
-                Debug.Out($"[GLBuffer/Map] {GetDescribingName()} name={BufferNameOrTarget()} id={id} len={length} target={Data.Target} storage={StorageFlagsString()} (0x{glStorage:X}) range={RangeFlagsString()} (0x{glRange:X})");
+                if (IsGpuBufferLoggingEnabled())
+                    Debug.Out($"[GLBuffer/Map] {GetDescribingName()} name={BufferNameOrTarget()} id={id} len={length} target={Data.Target} storage={StorageFlagsString()} (0x{glStorage:X}) range={RangeFlagsString()} (0x{glRange:X})");
 
                 var addr = Api.MapNamedBufferRange(id, IntPtr.Zero, length, glRange);
                 if (addr is null)
@@ -377,7 +382,8 @@ namespace XREngine.Rendering.OpenGL
                 uint length;
                 var existingSource = Data.ClientSideSource;
                 var glStorage = (uint)ToGLEnum(Data.StorageFlags);
-                Debug.Out($"[GLBuffer/Storage] {GetDescribingName()} name={BufferNameOrTarget()} id={id} len={(existingSource?.Length ?? Data.Length)} storage={StorageFlagsString()} (0x{glStorage:X})");
+                if (IsGpuBufferLoggingEnabled())
+                    Debug.Out($"[GLBuffer/Storage] {GetDescribingName()} name={BufferNameOrTarget()} id={id} len={(existingSource?.Length ?? Data.Length)} storage={StorageFlagsString()} (0x{glStorage:X})");
                 if (existingSource is not null)
                     Api.NamedBufferStorage(id, length = existingSource.Length, existingSource.Address.Pointer, glStorage);
                 else
@@ -393,7 +399,8 @@ namespace XREngine.Rendering.OpenGL
                 if (Engine.InvokeOnMainThread(UnmapBufferData))
                     return;
 
-                Debug.Out($"[GLBuffer/Unmap] {GetDescribingName()} name={BufferNameOrTarget()} id={BindingId}");
+                if (IsGpuBufferLoggingEnabled())
+                    Debug.Out($"[GLBuffer/Unmap] {GetDescribingName()} name={BufferNameOrTarget()} id={BindingId}");
                 Api.UnmapNamedBuffer(BindingId);
                 Data.ActivelyMapping.Remove(this);
 

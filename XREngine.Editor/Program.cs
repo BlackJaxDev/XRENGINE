@@ -106,6 +106,7 @@ internal class Program
             {
                 TargetFramesPerSecond = renderHz,
                 VSync = EVSyncMode.Off,
+                UseDebugOpaquePipeline = UnitTestingWorld.Toggles.ForceDebugOpaquePipeline,
             },
             TargetUpdatesPerSecond = updateHz,
             FixedFramesPerSecond = fixedHz,

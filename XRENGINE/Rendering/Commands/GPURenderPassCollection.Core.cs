@@ -162,6 +162,9 @@ namespace XREngine.Rendering.Commands
             if (!_verbose)
                 return;
 
+            if (!(Engine.UserSettings?.EnableGpuIndirectDebugLogging ?? false))
+                return;
+
             bool enabled;
             lock (_debugCategories)
                 enabled = _debugCategories.Contains(cat) || _debugCategories.Contains("All");
@@ -189,8 +192,9 @@ namespace XREngine.Rendering.Commands
         /// <summary>
         /// The finalized indirect draw command buffer for this render pass to use in the multi draw indirect command.
         /// </summary>
-        private XRDataBuffer? _indirectDrawBuffer;         // DrawElementsIndirectCommand array
-        private XRDataBuffer? _culledSceneToRenderBuffer;  // Compacted visible commands
+    private XRDataBuffer? _indirectDrawBuffer;         // DrawElementsIndirectCommand array
+    private XRDataBuffer? _culledSceneToRenderBuffer;  // Compacted visible commands
+    private XRDataBuffer? _passFilterDebugBuffer;      // Optional GPU pass-filter instrumentation
 
         // Synchronization & lifecycle
         private readonly Lock _lock = new();

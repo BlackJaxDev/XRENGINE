@@ -26,6 +26,7 @@ public static partial class UnitTestingWorld
         public bool DeferredDecal = false; //Adds a deferred decal to the scene.
         public bool AddCameraVRPickup = false; //Adds a camera pickup to the scene for testing VR camera pickup.
         public bool Mirror = true; //Adds a mirror to the scene for testing mirror reflection.
+        public bool ForceDebugOpaquePipeline = false; //Forces the debug opaque render pipeline instead of the default pipeline.
 
         //Light
         public bool DirLight = true;
