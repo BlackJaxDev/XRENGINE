@@ -1,3 +1,15 @@
 [submodule "OpenVR.NET"]
 	path = Build/Submodules/OpenVR.NET
 	url = https://github.com/BlackJaxDev/OpenVR.NET.git
+
+[submodule "Flyleaf"]
+	path = Build/Submodules/Flyleaf
+	url = https://github.com/BlackJaxDev/Flyleaf.git
+
+[submodule "OscCore-NET9"]
+	path = Build/Submodules/OscCore-NET9
+	url = https://github.com/BlackJaxDev/OscCore-NET9.git
+
+[submodule "rive-sharp"]
+	path = Build/Submodules/rive-sharp
+	url = https://github.com/rive-app/rive-sharp.git

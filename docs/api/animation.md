@@ -1,698 +1,78 @@
-# Animation API Reference
+# Animation System
 
-XRENGINE's animation API provides comprehensive character animation capabilities including skeletal animation, inverse kinematics, state machines, and GPU acceleration.
+The animation module in XRENGINE mixes traditional timeline playback, data-driven property animation, blend trees, state machines, and inverse kinematics to drive characters and props. This document explains how those systems are structured in the repository and how they work together at runtime.
 
-## Core Animation Classes
+## Design Goals
+- Treat animations as reusable assets (`XRAsset`) that can be authoring-time data or generated on the fly.
+- Decouple animation data from scene graph objects so clips can target arbitrary properties, not just skeletal transforms.
+- Support multiple blend strategies (1D, 2D, direct) with deterministic evaluation order.
+- Provide extensible state machines with layered blending, parameter-driven transitions, and deterministic root-motion output.
+- Offer humanoid helpers and full body IK that auto-detect rig structure and can be driven from VR tracking or procedural inputs.
+- Allow authoring data to be baked for runtime efficiency while keeping keyframe precision for editing tools.
 
-### BaseAnimation
-Base class for all animation types.
+## Timeline Primitives
 
-```csharp
-public abstract class BaseAnimation : XRAsset
-{
-    public float LengthInSeconds { get; set; }
-    public float Speed { get; set; }
-    public float CurrentTime { get; set; }
-    public bool Looped { get; set; }
-    public EAnimationState State { get; set; }
-    
-    public event Action<BaseAnimation>? AnimationStarted;
-    public event Action<BaseAnimation>? AnimationEnded;
-    public event Action<BaseAnimation>? AnimationPaused;
-    
-    public abstract void Update(float deltaTime);
-    public abstract void Play();
-    public abstract void Stop();
-    public abstract void Pause();
-    public abstract void Reset();
-}
-```
+- **BaseAnimation** (`XREngine.Animation/BaseAnimation.cs`) is the core timeline abstraction. It tracks length, playback speed (including reverse playback), loop state, current time, and raises start/stop/pause notifications. The `Tick` method advances time, handles loop remapping, and delegates per-frame logic to subclasses via `OnProgressed`.
+- **Property Animations** inherit from `BasePropAnim` (`Property/Core/BasePropAnim.cs`). These classes evaluate a value for a given time (`GetCurrentValueGeneric`) and optionally expose baked frame data. Vector implementations like `PropAnimFloat`, `PropAnimVector3`, and `PropAnimQuaternion` support keyframes, smoothing, tangent evaluation, velocity/acceleration tracking, and optional frame-rate constraints for lower-resolution data. Baking (see `PropAnimVector.Bake`) precomputes values into arrays when runtime cost must be minimized.
+- **AnimationMember** (`Property/Core/AnimationMember.cs`) represents a binding from a clip to a field, property, or method on a target object. Members build a tree mirroring the scene hierarchy or object graph. They cache reflection lookups using ImmediateReflection to minimize per-frame overhead and store each member’s default value so blends can bias toward rest pose.
 
-### AnimationClip
-Represents a single animation clip.
+## Motion Assets
 
-```csharp
-public class AnimationClip : MotionBase
-{
-    public EAnimTreeTraversalMethod TraversalMethod { get; set; }
-    public AnimationMember RootMember { get; set; }
-    public float FrameRate { get; set; }
-    public bool IsLooping { get; set; }
-    
-    public void AddEvent(float time, Action callback);
-    public void RemoveEvent(float time);
-    public void ClearEvents();
-}
-```
+- **MotionBase** (`Property/Core/MotionBase.cs`) collects animation outputs into dictionaries keyed by member paths (e.g., `SceneNode/Transform/SetWorldRotation`). Each motion registers its members, evaluates child motions, and exposes helper methods to blend the resulting dictionaries (linear, tri-linear, quad-linear) depending on blend tree dimensionality.
+- **AnimationClip** (`Property/Core/AnimationClip.cs`) owns a tree of `AnimationMember` nodes. When started, it registers all animations, tracks how many sub-animations are active, and loops or stops once they have finished. During evaluation it computes weighted values per member (default-to-animated interpolation) and populates the parent motion’s value dictionary. The clip can import MikuMikuDance VMD files, generating property animations and IK bindings directly from third-party data.
+- **Blend Trees**:
+  - `BlendTree1D` sorts children by threshold and blends between the two bounding motions based on a float parameter.
+  - `BlendTree2D` supports Cartesian (bilinear), barycentric, and directional modes. It pre-sorts children along axes, finds bounding motions, and computes weights using inverse-distance, barycentric, or directional logic.
+  - `BlendTreeDirect` (not shown above but present in `Property/Core`) maps inputs to weights explicitly, useful for additive or scripted blending.
+  Each blend tree tick calls into child motions, gathers their value dictionaries, and blends the results into the parent motion using the helper methods on `MotionBase`.
 
-## Skeletal Animation
+## State Machine Architecture
 
-### SkeletalAnimation
-Handles bone-based animation for skeletal meshes.
+- **AnimStateMachine** (`State Machine/AnimStateMachine.cs`) aggregates layers, variables, and root motion data. It maintains dictionaries of default values and currently blended values, calling `ApplyAnimationValues` to write results back through `AnimationMember.ApplyAnimationValue`. Root motion support stores pivot delta information so callers can decide how to apply movement.
+- **Variables** (`State Machine/Parameters`) are strongly typed wrappers (`AnimFloat`, `AnimInt`, `AnimBool`) derived from `AnimVar`. They expose getter/setter pairs, bit-packing helpers for replication, and comparison logic used by `AnimTransitionCondition`. The state machine raises a `VariableChanged` event whenever a parameter mutates.
+- **AnimLayer** (`State Machine/Layers/AnimLayer.cs`) owns states, applies layer-level weights, and defines whether values override or add to previous layers. It maintains a dictionary of animated values for the current evaluation pass and uses `BlendManager` to transition between states smoothly. The layer also contains an `AnyState` for global transitions and keeps track of `CurrentState`, `NextState`, and the active `AnimStateTransition` object.
+- **AnimState** (`State Machine/Layers/States/AnimState.cs`) associates a `MotionBase` (clip or blend tree) with optional components (custom per-state logic) and metadata such as start/end time slices. States call `Motion.EvaluateRootMotion`, tick their property animations, and notify components of enter/exit events.
+- **Transitions** (`State Machine/Layers/States/Transitions`) capture duration, blend curve (linear, cosine, quadratic, or custom via `PropAnimFloat`), priority, exit time, interruption behavior, and conditions. `AnimTransitionCondition` compares variables using numeric or boolean comparisons and caches parameter names for fast lookup. `BlendManager` computes a normalized blend clock, applies easing, and writes blended values back into the layer dictionary each frame until the transition completes.
 
-```csharp
-public class SkeletalAnimation : BaseAnimation
-{
-    public Dictionary<string, BoneAnimation> BoneAnimations { get; set; }
-    public List<AnimationEvent> Events { get; set; }
-    
-    public void UpdateSkeleton(HumanoidComponent skeleton);
-    public void UpdateSkeletonBlended(HumanoidComponent skeleton, SkeletalAnimation other, float weight, EAnimBlendType blendType);
-    public void AddBoneAnimation(string boneName, BoneAnimation animation);
-    public BoneAnimation? GetBoneAnimation(string boneName);
-}
-```
+## Runtime Components and Integration
 
-### BoneAnimation
-Individual bone animation data.
+- **AnimStateMachineComponent** (`XRENGINE/Scene/Components/AnimStateMachineComponent.cs`) is the runtime bridge. It instantiates a state machine, wires it into the scene node, registers per-frame ticks, and optionally links to a `HumanoidComponent` for convenience functions like `SetHumanoidValue`. It tracks which variables changed during evaluation, packs them into a bit buffer, and enqueues replication payloads labeled `PARAMS` so remote clients can stay in sync.
+- **AnimationClipComponent** (`Scene/Components/Animation/AnimationClipComponent.cs`) provides a lightweight way to play a single clip on activation. It starts the clip, registers a tick, and forwards stop events when the component is disabled. This component is often used for simple looping ambient motions or testing imported data before wiring it into a state machine.
+- Other systems hook into these components: `FaceTrackingReceiverComponent` writes incoming blendshape weights straight into state machine parameters, while VR controllers feed IK targets through the humanoid component.
 
-```csharp
-public class BoneAnimation : XRBase
-{
-    public string Name { get; set; }
-    public bool UseKeyframes { get; set; }
-    public float LengthInSeconds { get; }
-    
-    // Transform tracks
-    public PropAnimFloat TranslationX { get; }
-    public PropAnimFloat TranslationY { get; }
-    public PropAnimFloat TranslationZ { get; }
-    public PropAnimFloat RotationX { get; }
-    public PropAnimFloat RotationY { get; }
-    public PropAnimFloat RotationZ { get; }
-    public PropAnimFloat ScaleX { get; }
-    public PropAnimFloat ScaleY { get; }
-    public PropAnimFloat ScaleZ { get; }
-    
-    public void AddKeyframe(float time, Vector3 translation, Quaternion rotation, Vector3 scale);
-    public void ClearKeyframes();
-    public void OptimizeKeyframes(float tolerance);
-}
-```
+## Humanoid Rigging and IK
 
-## Humanoid System
+- **HumanoidComponent** (`Scene/Components/Animation/HumanoidComponent.cs`) represents a rigged character. When added to a `SceneNode`, it traverses the hierarchy to locate bones by name pattern or spatial hints, populating `BoneDef` entries for hips, spine, limbs, fingers, and eyes. It caches bone bind poses, exposes setters for blendshape weights and bone transforms, and optionally renders debug lines for solved chains.
+- The component stores IK targets as pairs of transform references plus calibration offsets. It can reset poses, clear targets, and toggle IK per limb. During late tick it calls `InverseKinematics.SolveFullBodyIK`, a FABRIK-style solver implemented in `Scene/Components/Animation/IK/InverseKinematics.cs`. That solver supports single-target and dual-target chains, optional elbow/knee/chest goals, and constraint hooks for future limit enforcement.
+- **IK Components** (`Scene/Components/Animation/IK/`) include:
+  - `HumanoidIKSolverComponent` for humanoid-specific solver management.
+  - `VRIKSolverComponent` plus `VRIKCalibrator` to map VR device poses into the humanoid skeleton, including calibration data for headset/hand/foot offsets.
+  - `IKRotationConstraintComponent` and `IKHingeConstraintComponent` to clamp joint ranges.
+  - `SingleTargetIKComponent` for simple chains outside the humanoid rig.
 
-### HumanoidComponent
-Complete humanoid character system with full body IK.
+## Data Import and Authoring
 
-```csharp
-public class HumanoidComponent : XRComponent, IRenderable
-{
-    public HumanoidSettings Settings { get; set; }
-    public bool SolveIK { get; set; }
-    
-    // Body parts
-    public BodySide Left { get; }
-    public BodySide Right { get; }
-    
-    // IK targets
-    public Transform? HeadTarget { get; set; }
-    public Transform? HipsTarget { get; set; }
-    public Transform? LeftHandTarget { get; set; }
-    public Transform? RightHandTarget { get; set; }
-    public Transform? LeftFootTarget { get; set; }
-    public Transform? RightFootTarget { get; set; }
-    
-    // Bone references
-    public Transform? Hips { get; set; }
-    public Transform? Spine { get; set; }
-    public Transform? Head { get; set; }
-    public Transform? LeftShoulder { get; set; }
-    public Transform? RightShoulder { get; set; }
-    public Transform? LeftArm { get; set; }
-    public Transform? RightArm { get; set; }
-    public Transform? LeftForeArm { get; set; }
-    public Transform? RightForeArm { get; set; }
-    public Transform? LeftHand { get; set; }
-    public Transform? RightHand { get; set; }
-    public Transform? LeftUpLeg { get; set; }
-    public Transform? RightUpLeg { get; set; }
-    public Transform? LeftLeg { get; set; }
-    public Transform? RightLeg { get; set; }
-    public Transform? LeftFoot { get; set; }
-    public Transform? RightFoot { get; set; }
-    
-    public void SetBoneReference(EHumanoidBone bone, Transform transform);
-    public Transform? GetBoneReference(EHumanoidBone bone);
-    public void UpdateIK();
-}
-```
+- **External Formats**: `AnimationClip` can load `.vmd` files (`Load3rdParty` / `LoadFromVMD`). During import it constructs property animations for bone translation and rotation, respecting Bézier curves baked into the source file, and optionally routes foot targets through humanoid IK APIs.
+- **Authoring Blendshape Animations**: `AnimationMember.SetBlendshapeNormalized` and related helpers build method-call animations that drive `ModelComponent` blendshapes. Because members can cache method call results, the system avoids repeated scene graph searches each frame.
+- **Baking & Optimization**: Property animation classes expose options like `ConstrainKeyframedFPS`, `LerpConstrainedFPS`, and `Bake(framesPerSecond)` so authoring tools can reduce runtime evaluation cost while preserving spline fidelity. The `GetMinMax` helpers on `PropAnimVector` compute extrema for editor bounds checking or LOD heuristics.
 
-### HumanoidSettings
-Configuration for humanoid characters.
+## Performance Considerations
 
-```csharp
-public class HumanoidSettings
-{
-    public Vector2 LeftEyeDownUpRange { get; set; }
-    public Vector2 LeftEyeInOutRange { get; set; }
-    public Vector2 RightEyeDownUpRange { get; set; }
-    public Vector2 RightEyeInOutRange { get; set; }
-    public float ArmStretch { get; set; }
-    public float LegStretch { get; set; }
-    public float UpperArmTwist { get; set; }
-    public float LowerArmTwist { get; set; }
-    public float UpperLegTwist { get; set; }
-    public float LowerLegTwist { get; set; }
-    public float FeetSpacing { get; set; }
-    public bool HasTranslationDoF { get; set; }
-    
-    public void SetValue(EHumanoidValue value, float amount);
-    public float GetValue(EHumanoidValue value);
-    public void ResetToDefaults();
-}
-```
+- Reflection lookups are cached the first time an animation member initializes against a target. Subsequent frames reuse `ImmediateReflection` handles and cached default values.
+- Motion evaluation populates dictionaries once per tick and reuses them during blending to avoid allocation.
+- Blend trees pre-sort children and reuse temporary arrays for bounding child search, preventing per-frame allocations even with large blends.
+- Networking writes only the bits for parameters that changed in the last evaluation pass, keeping replication payloads minimal.
 
-## Inverse Kinematics
+## Extending the System
 
-### IKSolverComponent
-Base class for IK solvers.
-
-```csharp
-public abstract class IKSolverComponent : XRComponent, IRenderable
-{
-    protected abstract IKSolver GetIKSolver();
-    protected virtual void InitializeSolver() { }
-    protected virtual void UpdateSolver() { }
-    public abstract void Visualize();
-    
-    public bool Enabled { get; set; }
-    public int Iterations { get; set; }
-    public float Tolerance { get; set; }
-}
-```
-
-### VRIKSolverComponent
-VR-specific IK solver for realistic VR character movement.
-
-```csharp
-public class VRIKSolverComponent : IKSolverComponent
-{
-    public IKSolverVR Solver { get; }
-    public HumanoidComponent Humanoid { get; }
-    
-    public bool CalibrateOnStart { get; set; }
-    public bool UseHandOrientations { get; set; }
-    public bool UseFootTracking { get; set; }
-    
-    public void GuessHandOrientations();
-    public void Calibrate();
-    public void SetCalibrationData(VRIKCalibrator.Settings settings);
-}
-```
-
-### IKSolverVR
-Advanced VR IK solver with full body support.
-
-```csharp
-public class IKSolverVR : IKSolver
-{
-    public void SetToReferences(HumanoidComponent humanoid);
-    public void SolveFullBodyIK(
-        TransformChain hipToHead,
-        TransformChain leftLegToAnkle,
-        TransformChain rightLegToAnkle,
-        TransformChain leftShoulderToWrist,
-        TransformChain rightShoulderToWrist,
-        Transform? headTarget,
-        Transform? hipsTarget,
-        Transform? leftHandTarget,
-        Transform? rightHandTarget,
-        Transform? leftFootTarget,
-        Transform? rightFootTarget,
-        int iterations);
-    
-    public void SetArmStretch(float stretch);
-    public void SetLegStretch(float stretch);
-    public void SetLocomotionWeight(float weight);
-    public void SetLegsWeight(float weight);
-    public void SetArmsWeight(float weight);
-}
-```
-
-## Animation State Machine
-
-### AnimStateMachine
-Complex animation blending and state management.
-
-```csharp
-public class AnimStateMachine : XRAsset
-{
-    public bool AnimatePhysics { get; set; }
-    public EventList<AnimLayer> Layers { get; set; }
-    public Dictionary<string, object?> Variables { get; set; }
-    public AnimState? CurrentState { get; }
-    
-    public void Initialize(object? rootObject);
-    public void EvaluationTick(object? rootObject, float delta);
-    public void SetVariable(string name, object value);
-    public T? GetVariable<T>(string name);
-    public void TriggerTransition(string transitionName);
-}
-```
-
-### AnimLayer
-Individual layer in the state machine.
-
-```csharp
-public class AnimLayer : XRBase
-{
-    public EApplyType ApplyType { get; set; }
-    public EventList<AnimState> States { get; set; }
-    public float Weight { get; set; }
-    public int InitialStateIndex { get; set; }
-    public AnimState? CurrentState { get; set; }
-    public bool Enabled { get; set; }
-    
-    public void AddState(AnimState state);
-    public void RemoveState(AnimState state);
-    public void SetWeight(float weight);
-}
-```
-
-### AnimState
-Individual animation state.
-
-```csharp
-public class AnimState : XRBase
-{
-    public string Name { get; set; }
-    public float Speed { get; set; }
-    public bool Loop { get; set; }
-    public EventList<AnimTransition> Transitions { get; set; }
-    public AnimationClip? Animation { get; set; }
-    public float Weight { get; set; }
-    
-    public void AddTransition(AnimTransition transition);
-    public void RemoveTransition(AnimTransition transition);
-    public void SetAnimation(AnimationClip animation);
-}
-```
-
-### AnimTransition
-Transition between animation states.
-
-```csharp
-public class AnimTransition : XRBase
-{
-    public AnimState? FromState { get; set; }
-    public AnimState? ToState { get; set; }
-    public float Duration { get; set; }
-    public ETransitionType Type { get; set; }
-    public AnimCondition[] Conditions { get; set; }
-    
-    public bool CanTransition();
-    public void Trigger();
-}
-```
-
-## Animation Components
-
-### AnimStateMachineComponent
-Manages animation state machines.
-
-```csharp
-public class AnimStateMachineComponent : XRComponent
-{
-    public AnimStateMachine StateMachine { get; set; }
-    public HumanoidComponent? Humanoid { get; set; }
-    
-    public bool AutoStart { get; set; }
-    public bool UpdateOnTick { get; set; }
-    
-    protected internal void EvaluationTick();
-    public void SetState(string stateName);
-    public void TriggerTransition(string transitionName);
-}
-```
-
-### AnimationClipComponent
-Plays individual animation clips.
-
-```csharp
-public class AnimationClipComponent : XRComponent
-{
-    public AnimationClip? Animation { get; set; }
-    public bool StartOnActivate { get; set; }
-    public float Weight { get; set; }
-    public float Speed { get; set; }
-    public bool Loop { get; set; }
-    
-    public void Start();
-    public void Stop();
-    public void Pause();
-    public void Resume();
-    public void Reset();
-    
-    public event Action? AnimationStarted;
-    public event Action? AnimationEnded;
-    public event Action? AnimationPaused;
-}
-```
-
-## Keyframe Animation
-
-### IKeyframe
-Base interface for keyframes.
-
-```csharp
-public interface IKeyframe
-{
-    float Time { get; set; }
-    EInterpolationType InterpolationType { get; set; }
-    EaseType EaseType { get; set; }
-}
-```
-
-### Keyframe Types
-
-#### FloatKeyframe
-```csharp
-public class FloatKeyframe : IKeyframe
-{
-    public float Time { get; set; }
-    public float Value { get; set; }
-    public EInterpolationType InterpolationType { get; set; }
-    public EaseType EaseType { get; set; }
-    
-    public FloatKeyframe(float time, float value);
-}
-```
-
-#### Vector3Keyframe
-```csharp
-public class Vector3Keyframe : IKeyframe
-{
-    public float Time { get; set; }
-    public Vector3 Value { get; set; }
-    public EInterpolationType InterpolationType { get; set; }
-    public EaseType EaseType { get; set; }
-    
-    public Vector3Keyframe(float time, Vector3 value);
-}
-```
-
-#### QuaternionKeyframe
-```csharp
-public class QuaternionKeyframe : IKeyframe
-{
-    public float Time { get; set; }
-    public Quaternion Value { get; set; }
-    public EInterpolationType InterpolationType { get; set; }
-    public EaseType EaseType { get; set; }
-    
-    public QuaternionKeyframe(float time, Quaternion value);
-}
-```
-
-### Interpolation Types
-```csharp
-public enum EInterpolationType
-{
-    Linear,
-    Bezier,
-    Step,
-    Smooth
-}
-```
-
-### Ease Types
-```csharp
-public enum EaseType
-{
-    None,
-    EaseIn,
-    EaseOut,
-    EaseInOut
-}
-```
-
-## Animation Blending
-
-### Blend Types
-```csharp
-public enum EAnimBlendType
-{
-    Override,    // Replace current animation
-    Additive,    // Add to current animation
-    Multiply,    // Multiply with current animation
-    Blend        // Smooth blend between animations
-}
-```
-
-### Blend Trees
-Complex animation blending with multiple inputs.
-
-```csharp
-public class BlendTree : XRBase
-{
-    public List<BlendTreeChild> Children { get; set; }
-    public EBlendType BlendType { get; set; }
-    public float BlendParameter { get; set; }
-    public AnimationClip? Result { get; }
-    
-    public void AddChild(BlendTreeChild child);
-    public void RemoveChild(BlendTreeChild child);
-    public void SetBlendParameter(float parameter);
-}
-```
-
-### BlendTreeChild
-```csharp
-public class BlendTreeChild : XRBase
-{
-    public AnimationClip? Animation { get; set; }
-    public float Weight { get; set; }
-    public float Threshold { get; set; }
-    public Vector2 Position { get; set; }
-}
-```
-
-## GPU Acceleration
-
-### GPU Skinning
-Compute shader-based skeletal animation.
-
-```csharp
-public class GPUSkinning
-{
-    public ComputeShader SkinningShader { get; }
-    public ComputeBuffer BoneMatricesBuffer { get; }
-    public ComputeBuffer BoneWeightsBuffer { get; }
-    public ComputeBuffer BoneIndicesBuffer { get; }
-    
-    public void UpdateBoneMatrices(Matrix4x4[] boneMatrices);
-    public void DispatchSkinning(int vertexCount);
-    public void BindBuffers();
-    public void UnbindBuffers();
-}
-```
-
-### Physics Chains
-GPU-accelerated physics chains for cloth and hair.
-
-```csharp
-public class GPUPhysicsChainComponent : XRComponent, IRenderable
-{
-    public Transform? Root { get; set; }
-    public float Damping { get; set; }
-    public float Elasticity { get; set; }
-    public float Stiffness { get; set; }
-    public float Inert { get; set; }
-    public int LinkCount { get; set; }
-    
-    public ComputeShader PhysicsShader { get; }
-    public ComputeBuffer PositionsBuffer { get; }
-    public ComputeBuffer VelocitiesBuffer { get; }
-    
-    protected override void UpdatePhysics();
-    public void SetChainParameters(float damping, float elasticity, float stiffness, float inert);
-}
-```
-
-## VR-Specific Features
-
-### VR IK Calibration
-VR-specific IK calibration for accurate tracking.
-
-```csharp
-public class VRIKCalibrator
-{
-    public class Settings
-    {
-        public float HeadHeight { get; set; }
-        public float ArmLength { get; set; }
-        public float LegLength { get; set; }
-        public float ShoulderWidth { get; set; }
-        public float HipWidth { get; set; }
-        public float FootLength { get; set; }
-    }
-    
-    public static void Calibrate(HumanoidComponent humanoid, Settings settings);
-    public static Settings GetDefaultSettings();
-    public static void AutoCalibrate(HumanoidComponent humanoid);
-}
-```
-
-### VR Device Animation
-Animation for VR devices (controllers, trackers).
-
-```csharp
-public class VRDeviceModelComponent : ModelComponent
-{
-    protected abstract DeviceModel? GetRenderModel(VrDevice? device);
-    public void LoadModelAsync(DeviceModel? deviceModel);
-    public void SetDevice(VrDevice? device);
-    public void UpdateModel();
-    
-    public bool ShowDeviceModel { get; set; }
-    public bool AnimateDevice { get; set; }
-}
-```
-
-## Example: Creating an Animated Character
-
-```csharp
-// Create a humanoid character
-var character = new SceneNode();
-var humanoid = character.AddComponent<HumanoidComponent>();
-var animStateMachine = character.AddComponent<AnimStateMachineComponent>();
-
-// Configure humanoid settings
-humanoid.Settings.LeftEyeDownUpRange = new Vector2(-30, 30);
-humanoid.Settings.RightEyeDownUpRange = new Vector2(-30, 30);
-humanoid.Settings.ArmStretch = 0.05f;
-humanoid.Settings.LegStretch = 0.05f;
-
-// Set up animation state machine
-var stateMachine = new AnimStateMachine();
-var idleState = new AnimState { Name = "Idle", Animation = idleClip };
-var walkState = new AnimState { Name = "Walk", Animation = walkClip };
-var runState = new AnimState { Name = "Run", Animation = runClip };
-
-// Create transitions
-var idleToWalk = new AnimTransition
-{
-    FromState = idleState,
-    ToState = walkState,
-    Duration = 0.25f,
-    Type = ETransitionType.Blend
-};
-
-var walkToRun = new AnimTransition
-{
-    FromState = walkState,
-    ToState = runState,
-    Duration = 0.15f,
-    Type = ETransitionType.Blend
-};
-
-// Set up layer
-var layer = new AnimLayer();
-layer.States.Add(idleState);
-layer.States.Add(walkState);
-layer.States.Add(runState);
-layer.InitialStateIndex = 0;
-
-stateMachine.Layers.Add(layer);
-animStateMachine.StateMachine = stateMachine;
-```
-
-## Example: VR IK Setup
-
-```csharp
-// Add VR IK solver
-var vrIK = character.AddComponent<VRIKSolverComponent>();
-
-// Set up IK targets
-humanoid.HeadTarget = headsetTransform;
-humanoid.LeftHandTarget = leftControllerTransform;
-humanoid.RightHandTarget = rightControllerTransform;
-
-// Configure IK settings
-vrIK.Solver.SetToReferences(humanoid);
-vrIK.Iterations = 10;
-vrIK.Tolerance = 0.001f;
-vrIK.UseHandOrientations = true;
-
-// Calibrate VR IK
-var calibrationSettings = new VRIKCalibrator.Settings
-{
-    HeadHeight = 1.7f,
-    ArmLength = 0.7f,
-    LegLength = 0.9f,
-    ShoulderWidth = 0.4f
-};
-
-VRIKCalibrator.Calibrate(humanoid, calibrationSettings);
-```
-
-## Example: Animation Events
-
-```csharp
-// Create animation clip with events
-var attackClip = new AnimationClip();
-attackClip.LengthInSeconds = 1.5f;
-attackClip.FrameRate = 30.0f;
-
-// Add animation events
-attackClip.AddEvent(0.2f, () => PlaySwordSwingSound());
-attackClip.AddEvent(0.5f, () => EnableSwordCollision());
-attackClip.AddEvent(0.8f, () => DisableSwordCollision());
-attackClip.AddEvent(1.2f, () => PlayImpactEffect());
-
-// Create animation component
-var animComponent = character.AddComponent<AnimationClipComponent>();
-animComponent.Animation = attackClip;
-animComponent.StartOnActivate = false;
-
-// Subscribe to events
-animComponent.AnimationStarted += () => Debug.Out("Attack started");
-animComponent.AnimationEnded += () => Debug.Out("Attack ended");
-```
-
-## Example: GPU Skinning
-
-```csharp
-// Set up GPU skinning
-var gpuSkinning = new GPUSkinning();
-gpuSkinning.SkinningShader = new ComputeShader(skinningShaderSource);
-
-// Create buffers
-gpuSkinning.BoneMatricesBuffer = new ComputeBuffer<Matrix4x4>(boneCount);
-gpuSkinning.BoneWeightsBuffer = new ComputeBuffer<Vector4>(vertexCount);
-gpuSkinning.BoneIndicesBuffer = new ComputeBuffer<Vector4>(vertexCount);
-
-// Update bone matrices
-var boneMatrices = humanoid.GetBoneMatrices();
-gpuSkinning.UpdateBoneMatrices(boneMatrices);
-
-// Dispatch skinning
-gpuSkinning.BindBuffers();
-gpuSkinning.DispatchSkinning(vertexCount);
-gpuSkinning.UnbindBuffers();
-```
-
-## Configuration
-
-### Animation Settings
-```json
-{
-  "Animation": {
-    "EnableGPUSkinning": true,
-    "MaxBoneCount": 128,
-    "AnimationLOD": true,
-    "IKIterations": 10,
-    "BlendTreeDepth": 8,
-    "KeyframeOptimization": true,
-    "EventPrecision": 0.001
-  }
-}
-```
+- Add new timeline types by deriving from `BaseAnimation` or `BasePropAnim`. Override `OnProgressed` to compute custom values.
+- Create procedural motions by subclassing `MotionBase` and populating `_animationValues` directly.
+- Register custom state components by inheriting from `AnimStateComponent` (located with states) to inject gameplay logic on enter/exit/tick without modifying the state machine runtime.
+- Extend IK by adding solvers under `Scene/Components/Animation/IK/Solvers` and exposing them through `BaseIKSolverComponent`.
 
 ## Related Documentation
-- [Component System](../components.md)
-- [Scene System](../scene.md)
-- [Rendering System](../rendering.md)
-- [Physics System](../physics.md)
-- [VR Development](../vr-development.md) 
+- [Component System](components.md)
+- [Scene System](scene.md)
+- [Rendering System](rendering.md)
+- [Physics System](physics.md)
+- [VR Development](vr-development.md)
