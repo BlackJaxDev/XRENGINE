@@ -1,629 +1,139 @@
-# Physics API Reference
-
-XRENGINE's physics API provides a unified interface for multiple physics engines with support for rigid body dynamics, character controllers, and GPU acceleration.
-
-## Core Physics Classes
-
-### AbstractPhysicsScene
-Base class for physics scene management.
-
-```csharp
-public abstract class AbstractPhysicsScene : XRBase
-{
-    public abstract Vector3 Gravity { get; set; }
-    public abstract void Initialize();
-    public abstract void StepSimulation(float deltaTime);
-    public abstract void AddActor(IAbstractPhysicsActor actor);
-    public abstract void RemoveActor(IAbstractPhysicsActor actor);
-    
-    public abstract bool RaycastSingle(Ray ray, LayerMask layerMask, out HitResult result);
-    public abstract bool RaycastMultiple(Ray ray, LayerMask layerMask, List<HitResult> results);
-    public abstract bool SweepSingle(IPhysicsGeometry geometry, Pose pose, Vector3 direction, float distance, LayerMask layerMask, out HitResult result);
-    public abstract bool OverlapMultiple(IPhysicsGeometry geometry, Pose pose, LayerMask layerMask, List<OverlapResult> results);
-}
-```
-
-### PhysicsScene
-Concrete implementation of physics scene.
-
-```csharp
-public class PhysicsScene : AbstractPhysicsScene
-{
-    public PhysXScene? PhysXScene { get; }
-    public JoltPhysicsWorld? JoltWorld { get; }
-    public JitterWorld? JitterWorld { get; }
-    
-    public override void Initialize();
-    public override void StepSimulation(float deltaTime);
-    public override void AddActor(IAbstractPhysicsActor actor);
-    public override void RemoveActor(IAbstractPhysicsActor actor);
-}
-```
-
-## Physics Actors
-
-### IAbstractPhysicsActor
-Base interface for all physics objects.
-
-```csharp
-public interface IAbstractPhysicsActor
-{
-    void Destroy(bool wakeOnLostTouch = false);
-    bool IsActive { get; }
-    LayerMask CollisionLayer { get; set; }
-}
-```
-
-### IAbstractRigidPhysicsActor
-Interface for rigid body physics objects.
-
-```csharp
-public interface IAbstractRigidPhysicsActor : IAbstractPhysicsActor
-{
-    (Vector3 position, Quaternion rotation) Transform { get; }
-    Vector3 LinearVelocity { get; set; }
-    Vector3 AngularVelocity { get; set; }
-    float Mass { get; set; }
-    bool IsSleeping { get; }
-    bool IsKinematic { get; set; }
-    
-    void AddForce(Vector3 force, EForceMode mode = EForceMode.Force);
-    void AddTorque(Vector3 torque, EForceMode mode = EForceMode.Force);
-    void SetLinearVelocity(Vector3 velocity);
-    void SetAngularVelocity(Vector3 velocity);
-}
-```
-
-### PhysXRigidActor
-PhysX-specific rigid body implementation.
-
-```csharp
-public class PhysXRigidActor : IAbstractRigidPhysicsActor
-{
-    public PxRigidActor* Actor { get; }
-    public PhysxMaterial? Material { get; set; }
-    public IPhysicsGeometry? Geometry { get; set; }
-    
-    public void SetGeometry(IPhysicsGeometry geometry);
-    public void SetMaterial(PhysxMaterial material);
-    public void SetCollisionLayer(LayerMask layer);
-}
-```
-
-## Physics Geometry
-
-### IPhysicsGeometry
-Interface for collision shapes.
-
-```csharp
-public interface IPhysicsGeometry
-{
-    DataSource GetPhysxStruct();
-    PxGeometry* AsPhysxPtr();
-    Shape AsJoltShape();
-    JitterShape AsJitterShape();
-}
-```
-
-### Geometry Types
-
-#### Sphere
-```csharp
-public class Sphere : IPhysicsGeometry
-{
-    public float Radius { get; set; }
-    
-    public Sphere(float radius);
-}
-```
-
-#### Box
-```csharp
-public class Box : IPhysicsGeometry
-{
-    public Vector3 HalfExtents { get; set; }
-    
-    public Box(Vector3 halfExtents);
-    public Box(float halfExtent);
-}
-```
-
-#### Capsule
-```csharp
-public class Capsule : IPhysicsGeometry
-{
-    public float Radius { get; set; }
-    public float HalfHeight { get; set; }
-    
-    public Capsule(float radius, float halfHeight);
-}
-```
-
-#### ConvexHull
-```csharp
-public class ConvexHull : IPhysicsGeometry
-{
-    public List<Vector3> Vertices { get; }
-    public List<int> Indices { get; }
-    
-    public ConvexHull(List<Vector3> vertices, List<int> indices);
-}
-```
-
-#### TriangleMesh
-```csharp
-public class TriangleMesh : IPhysicsGeometry
-{
-    public List<Vector3> Vertices { get; }
-    public List<int> Indices { get; }
-    
-    public TriangleMesh(List<Vector3> vertices, List<int> indices);
-}
-```
-
-## Physics Materials
-
-### PhysxMaterial
-PhysX material properties.
-
-```csharp
-public class PhysxMaterial : XRBase
-{
-    public float StaticFriction { get; set; }
-    public float DynamicFriction { get; set; }
-    public float Restitution { get; set; }
-    
-    public PhysxMaterial(float staticFriction = 0.5f, float dynamicFriction = 0.5f, float restitution = 0.0f);
-}
-```
-
-### Common Materials
-```csharp
-public static class PhysicsMaterials
-{
-    public static PhysxMaterial Default { get; } = new PhysxMaterial(0.5f, 0.5f, 0.0f);
-    public static PhysxMaterial Ice { get; } = new PhysxMaterial(0.02f, 0.02f, 0.1f);
-    public static PhysxMaterial Rubber { get; } = new PhysxMaterial(0.8f, 0.8f, 0.8f);
-    public static PhysxMaterial Metal { get; } = new PhysxMaterial(0.6f, 0.4f, 0.1f);
-}
-```
-
-## Character Controllers
-
-### CapsuleController
-Advanced character controller with climbing and sliding.
-
-```csharp
-public class CapsuleController : XRBase
-{
-    public float Radius { get; set; }
-    public float Height { get; set; }
-    public float StepOffset { get; set; }
-    public float SlopeLimit { get; set; }
-    public Vector3 Position { get; set; }
-    public Vector3 Velocity { get; set; }
-    
-    public void Move(Vector3 displacement);
-    public void Resize(float height);
-    public bool IsGrounded();
-    public Vector3 GetGroundNormal();
-}
-```
-
-### CharacterMovement3DComponent
-Component-based character movement.
-
-```csharp
-public class CharacterMovement3DComponent : PlayerMovementComponentBase
-{
-    public float MaxSpeed { get; set; }
-    public float JumpHeight { get; set; }
-    public float GroundFriction { get; set; }
-    public float StepOffset { get; set; }
-    public float SlopeLimit { get; set; }
-    public bool ConstrainedClimbing { get; set; }
-    
-    public CapsuleController Controller { get; }
-    
-    protected override void UpdateMovement();
-    protected override void UpdateJump();
-}
-```
-
-## Joints and Constraints
-
-### PhysxJoint
-Base class for PhysX joints.
-
-```csharp
-public class PhysxJoint : XRBase
-{
-    public abstract PxJoint* JointBase { get; }
-    public float BreakForce { get; set; }
-    public float BreakTorque { get; set; }
-    
-    public void SetBreakForce(float force);
-    public void SetBreakTorque(float torque);
-    public bool IsBroken();
-}
-```
-
-### Joint Types
-
-#### FixedJoint
-```csharp
-public class FixedJoint : PhysxJoint
-{
-    public FixedJoint(IAbstractRigidPhysicsActor actor0, IAbstractRigidPhysicsActor actor1, Transform localPose0, Transform localPose1);
-    
-    public override PxJoint* JointBase { get; }
-}
-```
-
-#### HingeJoint
-```csharp
-public class HingeJoint : PhysxJoint
-{
-    public float Angle { get; }
-    public float Velocity { get; set; }
-    public float LowerLimit { get; set; }
-    public float UpperLimit { get; set; }
-    
-    public HingeJoint(IAbstractRigidPhysicsActor actor0, IAbstractRigidPhysicsActor actor1, Transform localPose0, Transform localPose1, Vector3 axis);
-    
-    public override PxJoint* JointBase { get; }
-}
-```
-
-#### PrismaticJoint
-```csharp
-public class PrismaticJoint : PhysxJoint
-{
-    public float Position { get; }
-    public float Velocity { get; set; }
-    public float LowerLimit { get; set; }
-    public float UpperLimit { get; set; }
-    
-    public PrismaticJoint(IAbstractRigidPhysicsActor actor0, IAbstractRigidPhysicsActor actor1, Transform localPose0, Transform localPose1, Vector3 axis);
-    
-    public override PxJoint* JointBase { get; }
-}
-```
-
-#### SphericalJoint
-```csharp
-public class SphericalJoint : PhysxJoint
-{
-    public Quaternion Rotation { get; }
-    public Vector3 AngularVelocity { get; set; }
-    public float ConeLimit { get; set; }
-    
-    public SphericalJoint(IAbstractRigidPhysicsActor actor0, IAbstractRigidPhysicsActor actor1, Transform localPose0, Transform localPose1);
-    
-    public override PxJoint* JointBase { get; }
-}
-```
-
-## Collision Detection
-
-### Raycasting
-```csharp
-public class PhysicsScene
-{
-    public bool RaycastSingle(Ray ray, LayerMask layerMask, out HitResult result);
-    public bool RaycastMultiple(Ray ray, LayerMask layerMask, List<HitResult> results);
-    public bool RaycastAll(Ray ray, LayerMask layerMask, List<HitResult> results);
-}
-```
-
-### HitResult
-```csharp
-public struct HitResult
-{
-    public Vector3 Point { get; set; }
-    public Vector3 Normal { get; set; }
-    public float Distance { get; set; }
-    public IAbstractPhysicsActor? Actor { get; set; }
-    public int FaceIndex { get; set; }
-}
-```
-
-### Sweep Tests
-```csharp
-public class PhysicsScene
-{
-    public bool SweepSingle(IPhysicsGeometry geometry, Pose pose, Vector3 direction, float distance, LayerMask layerMask, out HitResult result);
-    public bool SweepMultiple(IPhysicsGeometry geometry, Pose pose, Vector3 direction, float distance, LayerMask layerMask, List<HitResult> results);
-}
-```
-
-### Overlap Tests
-```csharp
-public class PhysicsScene
-{
-    public bool OverlapSingle(IPhysicsGeometry geometry, Pose pose, LayerMask layerMask, out OverlapResult result);
-    public bool OverlapMultiple(IPhysicsGeometry geometry, Pose pose, LayerMask layerMask, List<OverlapResult> results);
-}
-```
-
-### OverlapResult
-```csharp
-public struct OverlapResult
-{
-    public IAbstractPhysicsActor? Actor { get; set; }
-    public int FaceIndex { get; set; }
-}
-```
-
-## Collision Layers
-
-### LayerMask
-```csharp
-public struct LayerMask
-{
-    public uint Mask { get; set; }
-    
-    public static LayerMask FromLayer(ELayer layer);
-    public static LayerMask operator |(LayerMask a, LayerMask b);
-    public static LayerMask operator &(LayerMask a, LayerMask b);
-    public static LayerMask operator ~(LayerMask a);
-}
-```
-
-### Layer Enum
-```csharp
-public enum ELayer
-{
-    Default = 0,
-    Player = 1,
-    Environment = 2,
-    Triggers = 3,
-    UI = 4,
-    Water = 5,
-    Debris = 6
-}
-```
-
-## GPU Physics
-
-### PhysicsChainComponent
-GPU-accelerated physics chains for cloth and hair.
-
-```csharp
-public class PhysicsChainComponent : XRComponent, IRenderable
-{
-    public Transform? Root { get; set; }
-    public float Damping { get; set; }
-    public float Elasticity { get; set; }
-    public float Stiffness { get; set; }
-    public float Inert { get; set; }
-    
-    public List<ChainLink> Links { get; }
-    
-    protected override void UpdatePhysics();
-}
-```
-
-### ChainLink
-```csharp
-public struct ChainLink
-{
-    public Vector3 Position { get; set; }
-    public Vector3 Velocity { get; set; }
-    public Vector3 Force { get; set; }
-    public float Mass { get; set; }
-}
-```
-
-## Physics Components
-
-### DynamicRigidBodyComponent
-Component for dynamic physics objects.
-
-```csharp
-public class DynamicRigidBodyComponent : XRComponent
-{
-    public float Mass { get; set; }
-    public Vector3 LinearVelocity { get; set; }
-    public Vector3 AngularVelocity { get; set; }
-    public float LinearDamping { get; set; }
-    public float AngularDamping { get; set; }
-    public bool IsKinematic { get; set; }
-    
-    public IPhysicsGeometry? Geometry { get; set; }
-    public PhysxMaterial? Material { get; set; }
-    
-    public IAbstractRigidPhysicsActor? RigidBody { get; }
-    
-    protected internal override void OnComponentActivated();
-    protected internal override void OnComponentDeactivated();
-}
-```
-
-### StaticRigidBodyComponent
-Component for static physics objects.
-
-```csharp
-public class StaticRigidBodyComponent : XRComponent
-{
-    public IPhysicsGeometry? Geometry { get; set; }
-    public PhysxMaterial? Material { get; set; }
-    
-    public IAbstractPhysicsActor? StaticBody { get; }
-    
-    protected internal override void OnComponentActivated();
-    protected internal override void OnComponentDeactivated();
-}
-```
-
-## Physics Debugging
-
-### PhysicsDebugVisualizer
-```csharp
-public class PhysicsDebugVisualizer : XRComponent
-{
-    public bool ShowCollisionShapes { get; set; }
-    public bool ShowContactPoints { get; set; }
-    public bool ShowVelocities { get; set; }
-    public bool ShowForces { get; set; }
-    public bool ShowJointLimits { get; set; }
-    
-    protected internal override void OnComponentActivated();
-    protected internal override void OnComponentDeactivated();
-}
-```
-
-### Physics Profiler
-```csharp
-public class PhysicsProfiler
-{
-    public float SimulationTime { get; }
-    public int ActiveBodies { get; }
-    public int ContactCount { get; }
-    public float MemoryUsage { get; }
-    
-    public void BeginFrame();
-    public void EndFrame();
-    public void Reset();
-}
-```
-
-## Example: Creating a Physics Object
-
-```csharp
-// Create a dynamic physics object
-var physicsObject = new SceneNode();
-var rigidBody = physicsObject.AddComponent<DynamicRigidBodyComponent>();
-
-// Configure physics properties
-rigidBody.Mass = 10.0f;
-rigidBody.LinearDamping = 0.1f;
-rigidBody.AngularDamping = 0.1f;
-
-// Add collision geometry
-var collisionShape = new Box(new Vector3(1, 1, 1));
-rigidBody.Geometry = collisionShape;
-
-// Add physics material
-var material = new PhysxMaterial
-{
-    StaticFriction = 0.5f,
-    DynamicFriction = 0.3f,
-    Restitution = 0.2f
-};
-rigidBody.Material = material;
-
-// Add force
-rigidBody.RigidBody?.AddForce(new Vector3(0, 100, 0), EForceMode.Impulse);
-```
-
-## Example: Character Controller
-
-```csharp
-// Create a character
-var character = new SceneNode();
-var movement = character.AddComponent<CharacterMovement3DComponent>();
-
-// Configure movement
-movement.MaxSpeed = 10.0f;
-movement.JumpHeight = 2.0f;
-movement.GroundFriction = 0.1f;
-movement.StepOffset = 0.3f;
-movement.SlopeLimit = 0.7f;
-
-// Add character controller
-var controller = movement.Controller;
-controller.Radius = 0.5f;
-controller.Height = 2.0f;
-
-// Move character
-controller.Move(new Vector3(1, 0, 0) * Engine.Time.Delta);
-```
-
-## Example: Physics Queries
-
-```csharp
-public class PhysicsQuerySystem : XRComponent
-{
-    protected internal override void OnComponentActivated()
-    {
-        base.OnComponentActivated();
-        RegisterTick(ETickGroup.Normal, ETickOrder.Physics, UpdateQueries);
-    }
-    
-    private void UpdateQueries()
-    {
-        var camera = Camera.Main;
-        var ray = camera.ScreenPointToRay(Engine.Input.MousePosition);
-        
-        // Raycast
-        if (Engine.PhysicsScene.RaycastSingle(ray, LayerMask.FromLayer(ELayer.Environment), out var hit))
-        {
-            Debug.Out($"Hit point: {hit.Point}, Distance: {hit.Distance}");
-        }
-        
-        // Sweep test
-        var sphere = new Sphere(1.0f);
-        var pose = new Pose(camera.Position, Quaternion.Identity);
-        
-        if (Engine.PhysicsScene.SweepSingle(sphere, pose, camera.Forward, 10.0f, LayerMask.FromLayer(ELayer.Environment), out var sweepHit))
-        {
-            Debug.Out($"Sweep hit at: {sweepHit.Point}");
-        }
-    }
-}
-```
-
-## Example: Joints
-
-```csharp
-// Create two rigid bodies
-var body1 = new SceneNode();
-var rigidBody1 = body1.AddComponent<DynamicRigidBodyComponent>();
-rigidBody1.Geometry = new Box(new Vector3(1, 1, 1));
-
-var body2 = new SceneNode();
-var rigidBody2 = body2.AddComponent<DynamicRigidBodyComponent>();
-rigidBody2.Geometry = new Sphere(0.5f);
-
-// Create a hinge joint
-var joint = new HingeJoint(
-    rigidBody1.RigidBody!,
-    rigidBody2.RigidBody!,
-    Transform.Identity,
-    Transform.Identity,
-    Vector3.Up
-);
-
-joint.LowerLimit = -90.0f;
-joint.UpperLimit = 90.0f;
-joint.BreakForce = 1000.0f;
-
-// Add joint to physics scene
-Engine.PhysicsScene.AddJoint(joint);
-```
-
-## Configuration
-
-### Physics Settings
-```json
-{
-  "Physics": {
-    "Engine": "PhysX",
-    "Gravity": [0, -9.81, 0],
-    "SubstepCount": 2,
-    "EnableGPUPhysics": true,
-    "MaxBodies": 1024,
-    "MaxBodyPairs": 1024,
-    "MaxContactConstraints": 1024,
-    "EnableDebugVisualization": false
-  }
-}
-```
+# Physics Architecture
+
+XREngine wraps multiple physics backends behind a single scene interface so gameplay, tools, and runtime code do not need to care which solver is active. The integration is centered around `AbstractPhysicsScene`, a host-side class that the world owns and ticks every fixed update. Concrete scenes translate high-level requests (actor management, queries, character control) into calls to the selected middleware while keeping compatible data structures such as `Segment`, `LayerMask`, `RaycastHit`, `SweepHit`, and `OverlapHit`.
+
+Most gameplay features ship against the PhysX backend (`XREngine.Rendering.Physics.Physx` namespace). Jolt and Jitter2 scenes exist as experimental alternatives; they share the same surface API but are still catching up on feature coverage.
+
+---
+
+## Scene Lifecycle
+- `AbstractPhysicsScene.Initialize()` and `Destroy()` are called by the world when a scene instance is created or torn down. Implementations allocate backend resources here (PhysX creates a foundation/physics instance, Jolt spins up job systems, etc.).
+- `StepSimulation()` is always driven from the engine’s fixed timestep. PhysX uses `Engine.Time.Timer.FixedUpdateDelta`, injects pending controller moves, calls `PxScene::simulate`, then fetches results and pushes transforms back to `RigidBodyTransform` owners. The scene raises `OnSimulationStep` after every successful fetch so listeners can post-process collisions or telemetry.
+- `AddActor`, `RemoveActor`, and `NotifyShapeChanged` let components attach or detach backend objects without knowing which solver is in use. PhysX scenes map raw pointers back to managed wrappers through global dictionaries so ownership can be tracked across callbacks.
+
+Every query variant in `AbstractPhysicsScene` works with engine concepts:
+- `Segment` (start/end) replaces raw ray parameters.
+- `LayerMask` is converted to backend filter data (PhysX uses `PxFilterData`, Jolt uses object layers). The helper types live in `XREngine.Scene`.
+- Results return owning `XRComponent` references alongside backend-specific hit payloads so higher-level systems can resolve game objects quickly.
+
+---
+
+## PhysX Backend
+PhysX 5 is the primary, fully-featured integration. It lives in `XREngine.Rendering.Physics.Physx` and exposes the entire PxScene API surface area the engine relies on.
+
+### Initialization & Lifetime
+- `PhysxScene.Init()` is invoked once (via the static ctor) to construct a global `PxFoundation` and `PxPhysics` instance. `Release()` tears them down when the runtime exits.
+- Each `PhysxScene` allocates `PxScene` objects with GPU dynamics enabled by default (`PxSceneFlags.EnableGpuDynamics`, `PxSceneFlags.EnableActiveActors`, GPU broadphase). Custom dispatcher, filter shader, and simulation callbacks are wired up during `Initialize()`.
+- Instances register themselves in `PhysxScene.Scenes`. This allows static helper code (controllers, debug renderers, wrapper classes) to look up their parent scene by raw pointer.
+
+### Simulation Step
+`StepSimulation()` performs the full PhysX pipeline:
+1. Consume buffered character-controller moves (`ControllerManager.Controllers`) before stepping.
+2. Call `Simulate()` with the engine’s fixed delta, optionally reusing a scratch memory block when GPU features request it.
+3. `FetchResults()` followed by optional debug buffer extraction (`PxRenderBuffer`) if visualization is enabled.
+4. Iterate over `GetActiveActorsMut` to synchronize every active rigid body back to the owning `RigidBodyTransform`. This invokes `RigidBodyTransform.OnPhysicsStepped()` on both dynamic and static actors so components can pull updated poses.
+5. Fire `NotifySimulationStepped()` for listeners that registered via `OnSimulationStep`.
+
+### Actor, Shape, and Material Wrappers
+- `PhysxActor`, `PhysxRigidActor`, `PhysxRigidBody`, `PhysxDynamicRigidBody`, and `PhysxStaticRigidBody` wrap the corresponding Px types. They cache themselves inside `AllActors`, `AllRigidActors`, etc., keyed by unmanaged pointers, which lets callback code recover managed objects quickly.
+- `PhysxShape` wraps `PxShape` objects, stores simulation/query flags, filter data, and offers convenience helpers (`ExtRaycast`, `ExtSweep`, `ExtGetWorldBounds`). Shapes can be created directly from an `IPhysicsGeometry` and material bundle.
+- `PhysxMaterial` inherits `AbstractPhysicsMaterial` and exposes PhysX 5 material flags (disable friction, improved patch friction, compliant contact) and combine modes. All materials live in a static registry for pointer resolution.
+
+### Geometry Interop
+`IPhysicsGeometry` (in `Physx/Geometry/IPhysicsGeometry.cs`) provides value-type shapes that work with every backend:
+- Primitive types (`Sphere`, `Box`, `Capsule`, `Plane`) directly construct `Px*Geometry` structs and also expose `AsJoltShape()` where possible.
+- Mesh types (`ConvexMesh`, `TriangleMesh`, `HeightField`, `TetrahedronMesh`, `ParticleSystem`) wrap PhysX mesh pointers and expose transformation parameters (scale, rotation, flags). Jolt conversion is marked TODO for complex meshes.
+- Helper methods provide mass properties, Poisson sampling, and mesh overlap queries by forwarding to PhysX geometry utilities.
+
+### Scene Queries & Filtering
+PhysX exposes each query variant (`RaycastAny`, `RaycastMultiple`, `Sweep*`, `Overlap*`) via `PxQueryExt`. XREngine adds a thin layer that converts engine-specific masks and optional `PhysxQueryFilter` structs to the native filter callbacks:
+- `GetFiltering` builds `PxFilterData`, attaches optional pre/post delegates, and configures hit flags and sweep inflation.
+- Query wrappers normalize results into shared structs (`RaycastHit`, `SweepHit`, `OverlapHit`) and automatically resolve the owning `XRComponent` so higher-level systems can dispatch gameplay logic.
+- `PhysxScene.Native.CreateVTable` dynamically constructs vtables for delegates so filters and controller callbacks can hop across managed/unmanaged boundaries.
+
+### Character Controllers
+PhysX character controllers are fully supported:
+- `ControllerManager` owns the `PxControllerManager`, controller filter callbacks, and obstacle contexts. It also manages debug rendering flags, tessellation settings, and overlap recovery toggles.
+- `Controller` subclasses (`CapsuleController`, `BoxController`) wrap `PxController` derivatives. They buffer engine-side move requests (`Move(Vector3 delta, ...)`) into a thread-safe queue that the scene flushes every simulation step.
+- Controller hit reports and behavior callbacks are surfaced as .NET events so gameplay can react when controllers bump into shapes or other controllers.
+
+### Joint Library & Debugging
+- PhysX joints (`PhysxJoint_*`) are created and tracked by the scene to maintain managed wrappers for Px joint pointers. Utility constructors centralize the PxTransform plumbing needed to connect two actors.
+- Debug visualization uses `InstancedDebugVisualizer` to stream data from `PxRenderBuffer` (points, lines, triangles). Runtime toggles link back to `Engine.Rendering.Settings.PhysicsVisualizeSettings`, so enabling debug flags in the engine UI automatically pushes the same configuration into the PxScene.
+- `ShiftOrigin`, solver parameters, CCD controls, and GPU copy helpers are also exposed for advanced tooling and streaming scenarios.
+
+---
+
+## Jolt Backend (Experimental)
+The Jolt integration lives in `XREngine.Scene.Physics.Jolt`. It already shares the same public surface area but remains feature-incomplete compared to PhysX.
+
+- `JoltScene` spins up a `PhysicsSystem` and `JobSystemThreadPool` during `Initialize()`. The default settings mirror PhysX defaults (gravity, solver iterations, cache sizes) to keep gameplay tuning similar.
+- Actors (`JoltActor`, `JoltRigidActor`, `JoltDynamicRigidBody`, `JoltStaticRigidBody`) wrap Jolt `BodyID`s and read poses/velocities through the `PhysicsSystem.BodyInterface`. Components opt-in by storing a reference to their owning body wrapper.
+- Queries (ray, sweep, overlap) currently create temporary bodies and run through `NarrowPhaseQuery`. The implementation covers happy paths but lacks per-layer filtering and proper hit metadata; expect to extend this before shipping anything that relies on high query fidelity.
+- `StepSimulation()` updates the world with deterministic settings but leaves transform propagation commented out for now. Consumers should treat Jolt as a sandbox backend while parity work continues.
+
+---
+
+## Jitter2 Backend (Prototype)
+`JitterScene` (under `Scene/Physics/Jitter2`) demonstrates how another solver can plug into `AbstractPhysicsScene`. At the moment only gravity, stepping (`World.Step`), and scene teardown are wired. All query and actor-management methods throw `NotImplementedException`. Use this scene as a template when adding future engines rather than a production-ready backend.
+
+---
+
+## Engine Components & Transforms
+Physics components live in `Scene/Components/Physics` and abstract simulation specifics away from gameplay code.
+
+- `DynamicRigidBodyComponent` and `StaticRigidBodyComponent` both require a `RigidBodyTransform`. When the `RigidBody` property changes, the component automatically removes the old actor from the world, rebinds ownership (`OwningComponent` on the PhysX wrapper), and re-adds the new actor if the component is active. The world then pulls updated poses inside `RigidBodyTransform.OnPhysicsStepped()`.
+- `PhysicsActorComponent` defines the shared activation/deactivation behavior for components that manage any physics actor. It uses the world reference exposed by `XRComponent` to locate the current `AbstractPhysicsScene` and registers actors appropriately.
+- `LayerMask` (in `Scene/LayerMask.cs`) is a lightweight bitmask structure with helpers to map between engine layer names and backend-specific filters. PhysX converts it to `PxFilterData.word0`; Jolt turns it into an `ObjectLayer`.
+
+---
+
+## Physics Chain Simulation
+`PhysicsChainComponent` powers rope/cloth/hair-style simulations without depending on an external solver.
+
+- Particles are organized per root transform (`ParticleTree`). The component supports multiple roots, optional exclusions, and automatically inserts end bones based on `EndLength`/`EndOffset`.
+- Integration uses a verlet-style step with damping, elasticity, stiffness, and inertia curves that can vary along the length of the chain via distribution assets. Gravity, external forces, and object motion (to allow parenting to animated rigs) all feed into the solver.
+- Collision support is provided through lightweight collider components (`PhysicsChainSphereCollider`, `PhysicsChainBoxCollider`, `PhysicsChainCapsuleCollider`, `PhysicsChainPlaneCollider`). Colliders implement `Prepare()`/`Collide()` so they can be shared across multiple chains each frame.
+- A multithreaded worker pool kicks in when `Multithread` is enabled. The component queues pending work during the main update, the pool processes particle updates in parallel, and results are blended back during `LateUpdate()`.
+- Distance-based disabling (`DistantDisable`) and blend weights allow gameplay systems to fade simulation in/out depending on camera proximity or animation needs. Debug rendering uses `Engine.Rendering.Debug` helpers to visualize particle positions, radii, and parent links.
+
+---
+
+## Queries & Result Handling
+`AbstractPhysicsScene` returns results in sorted dictionaries keyed by distance. Each entry contains the `XRComponent` that owns the hit actor plus backend-specific payloads (`RaycastHit`, `SweepHit`, `OverlapHit`). Consumers often pass the dictionary through helper callbacks to translate hits into gameplay events.
+
+When you implement a new query mode or backend:
+1. Convert the incoming `Segment`/geometry pose into your solver’s data structures.
+2. Apply layer filtering by translating `LayerMask.Value` into the solver’s collision mask representation.
+3. Resolve solver results back to `XRComponent` instances by consulting whatever registries your backend maintains.
+4. Store data in the shared structs so tooling (editor pickers, physics picking) continues to work uniformly across backends.
+
+---
+
+## Debugging & Tooling Hooks
+- All PhysX visualization toggles mirror properties on `Engine.Rendering.Settings.PhysicsVisualizeSettings`. The scene listens for property-changed events and pushes new flags straight into `PxScene::setVisualizationParameter`.
+- `PhysxScene.DebugRender()` feeds the buffered data into `InstancedDebugVisualizer`, which lazily renders points, lines, and triangles. Use this when diagnosing contact manifolds, joint frames, or CCD issues.
+- Controller managers expose `SetDebugRenderingFlags`, `ComputeInteractions`, and tessellation controls so level designers can inspect controller capsules in editor builds.
+
+---
+
+## Extending or Swapping Backends
+To add features or integrate a new solver:
+1. Implement `AbstractPhysicsScene` for the target library. Reuse the PhysX scene as a reference for method semantics and data conversions.
+2. Provide wrapper classes for actors, shapes, materials, and joints that keep track of unmanaged handles and owning components.
+3. Ensure the world-level components (`DynamicRigidBodyComponent`, etc.) remain oblivious to the backend. If new solver-specific state is required, hide it behind the abstractions.
+4. Mirror the query and filtering behavior so tooling (selection rays, physics picking) continues to work regardless of the active backend.
+
+Known gaps to keep in mind:
+- Jolt queries need proper layer filtering, hit normals, and distance calculations.
+- Jitter2 lacks actor support entirely and currently cannot be selected as a runtime backend.
+- PhysX GPU workflows rely on `PhysXDevice`/CUDA availability. When running without a compatible GPU, ensure the project toggles `EnableGpuDynamics` off during scene creation.
+
+---
 
 ## Related Documentation
-- [Component System](../components.md)
-- [Scene System](../scene.md)
-- [Rendering System](../rendering.md)
-- [Animation System](../animation.md)
-- [VR Development](../vr-development.md) 
+- [Component System](components.md)
+- [Scene System](scene.md)
+- [Rendering System](rendering.md)
+- [Animation System](animation.md)
+- [GPU Physics Chain Verification](../gpu-physics-chain-engine-verification.md)

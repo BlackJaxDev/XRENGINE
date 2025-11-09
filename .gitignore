@@ -363,7 +363,10 @@ Build/Engine/Debug/
 Build/Editor/Release/
 Build/Engine/Release/
 Build/Submodules/
+!Build/Submodules/
+!Build/Submodules/**
 XREngine.Editor/Build/Editor/Debug/
 XRENGINE/Build/Engine/Debug/
 XREngine.Editor/ShaderCache/
 XRENGINE/Rendering/GI/build/
+Build/Submodules/OpenVR.NET/
