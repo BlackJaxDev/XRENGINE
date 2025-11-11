@@ -510,12 +510,12 @@ namespace XREngine.Rendering.Commands
             bool allowCpuFallback = Engine.UserSettings?.EnableGpuIndirectCpuFallback ?? false;
             if (!allowCpuFallback && debugLoggingEnabled)
             {
-                allowCpuFallback = true;
-                if (_passthroughFallbackForceLogBudget > 0)
-                {
-                    Debug.LogWarning($"{FormatDebugPrefix("Culling")} Forcing CPU fallback while GPU indirect debug logging is active (pass {RenderPass}).");
-                    _passthroughFallbackForceLogBudget--;
-                }
+                // allowCpuFallback = true;
+                // if (_passthroughFallbackForceLogBudget > 0)
+                // {
+                //     Debug.LogWarning($"{FormatDebugPrefix("Culling")} Forcing CPU fallback while GPU indirect debug logging is active (pass {RenderPass}).");
+                //     _passthroughFallbackForceLogBudget--;
+                // }
             }
 
             if (filteredCount == 0 && RenderPass >= 0)
@@ -863,14 +863,6 @@ namespace XREngine.Rendering.Commands
                     return true;
                 }
 
-                for (uint destIndex = writeIndex; destIndex < visible; ++destIndex)
-                    _culledSceneToRenderBuffer.SetDataRawAtIndex(destIndex, default(GPUIndirectRenderCommand));
-
-                uint bytes = visible * (_culledSceneToRenderBuffer.ElementSize == 0
-                    ? GPUScene.CommandFloatCount * sizeof(float)
-                    : _culledSceneToRenderBuffer.ElementSize);
-                _culledSceneToRenderBuffer.PushSubData(0, bytes);
-
                 uint newVisible = writeIndex;
                 VisibleCommandCount = newVisible;
                 WriteUInt(_culledCountBuffer, newVisible);
@@ -885,23 +877,15 @@ namespace XREngine.Rendering.Commands
                 if (missingMaterialIds.Count > 0)
                     LogMaterialSnapshot(scene, missingMaterialIds);
 
-                string dropSummary = BuildSanitizerSummary(visible, invalidCommands, softIssues, RenderPass);
-                if (Engine.UserSettings?.EnableGpuIndirectDebugLogging ?? false)
-                {
-                    Dbg($"MaterialMap count={scene.MaterialMap.Count}", "Materials");
-                }
-                _skipGpuSubmissionThisPass = true;
-                _skipGpuSubmissionReason = dropSummary;
-
-                return false;
+                // Even if we dropped some commands, the sanitization itself was successful.
+                // The remaining commands in the buffer are valid and ready to be rendered.
+                return true;
             }
             finally
             {
                 if (mappedLocally)
                     _culledSceneToRenderBuffer.UnmapBufferData();
             }
-
-            return invalidCommands.Count == 0;
         }
 
         private static string FormatCommandSnapshot(in GPUIndirectRenderCommand cmd)
