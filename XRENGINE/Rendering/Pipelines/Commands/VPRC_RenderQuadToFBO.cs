@@ -22,11 +22,11 @@
             if (SourceQuadFBOName is null)
                 return;
 
-            XRQuadFrameBuffer? sourceFBO = Pipeline.GetFBO<XRQuadFrameBuffer>(SourceQuadFBOName);
+            XRQuadFrameBuffer? sourceFBO = ActivePipelineInstance.GetFBO<XRQuadFrameBuffer>(SourceQuadFBOName);
             if (sourceFBO is null)
                 return;
 
-            sourceFBO.Render(DestinationFBOName is null ? null : Pipeline.GetFBO<XRFrameBuffer>(DestinationFBOName));
+            sourceFBO.Render(DestinationFBOName is null ? null : ActivePipelineInstance.GetFBO<XRFrameBuffer>(DestinationFBOName));
         }
     }
 }

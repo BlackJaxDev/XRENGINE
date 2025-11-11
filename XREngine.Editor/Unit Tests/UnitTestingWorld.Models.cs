@@ -644,7 +644,7 @@ public static partial class UnitTestingWorld
             }
             mat.Name = name;
             // Set a default render pass (opaque deferred lighting in this example)
-            mat.RenderPass = (int)EDefaultRenderPass.OpaqueDeferredLit;
+            mat.RenderPass = (int)EDefaultRenderPass.OpaqueDeferred;
         }
         public static XRTexture2D CreateHardcodedTexture(string path)
         {

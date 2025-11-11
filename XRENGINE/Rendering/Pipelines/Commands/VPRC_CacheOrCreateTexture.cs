@@ -31,7 +31,7 @@
 
         protected override void Execute()
         {
-            if (Name is null || Pipeline.TryGetTexture(Name, out var texture) && (texture is null || !(NeedsRecreate?.Invoke(texture) ?? false)))
+            if (Name is null || ActivePipelineInstance.TryGetTexture(Name, out var texture) && (texture is null || !(NeedsRecreate?.Invoke(texture) ?? false)))
                 return;
 
             if (texture is not null && Resize is not null)
@@ -40,7 +40,7 @@
             {
                 texture = TextureFactory();
                 texture.Name = Name;
-                Pipeline.SetTexture(texture);
+                ActivePipelineInstance.SetTexture(texture);
             }
         }
     }

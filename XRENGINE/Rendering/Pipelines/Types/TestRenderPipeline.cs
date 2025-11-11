@@ -22,7 +22,7 @@ public class TestRenderPipeline : RenderPipeline
 
     protected override ViewportRenderCommandContainer GenerateCommandChain()
     {
-        ViewportRenderCommandContainer c = [];
+        ViewportRenderCommandContainer c = new(this);
 
         c.Add<VPRC_CacheOrCreateTexture>().SetOptions(
             DepthStencilTextureName,
@@ -55,7 +55,7 @@ public class TestRenderPipeline : RenderPipeline
                     ClearDepth(1.0f);
                     AllowDepthWrite(true);
                 };
-                c.Add<VPRC_RenderMeshesPassCPU>().RenderPass = (int)EDefaultRenderPass.OpaqueForward;
+                c.Add<VPRC_RenderMeshesPass>().RenderPass = (int)EDefaultRenderPass.OpaqueForward;
             }
         }
         using (c.AddUsing<VPRC_PushViewportRenderArea>(t => t.UseInternalResolution = false))

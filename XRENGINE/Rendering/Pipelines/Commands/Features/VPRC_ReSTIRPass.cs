@@ -38,14 +38,14 @@ namespace XREngine.Rendering.Pipelines.Commands
 
         protected override void Execute()
         {
-            if (Pipeline.Pipeline is not DefaultRenderPipeline defaultPipeline || !defaultPipeline.EnableRestirGI)
+            if (ActivePipelineInstance.Pipeline is not DefaultRenderPipeline defaultPipeline || !defaultPipeline.UsesRestirGI)
                 return;
 
-            var camera = Pipeline.RenderState.SceneCamera;
+            var camera = ActivePipelineInstance.RenderState.SceneCamera;
             if (camera is null)
                 return;
 
-            var region = Pipeline.RenderState.CurrentRenderRegion;
+            var region = ActivePipelineInstance.RenderState.CurrentRenderRegion;
             if (region.Width <= 0 || region.Height <= 0)
                 return;
 
@@ -64,15 +64,15 @@ namespace XREngine.Rendering.Pipelines.Commands
             if (!EnsureResources(width, height))
                 return;
 
-            if (Pipeline.GetTexture<XRTexture>(DepthTextureName) is not XRTexture2D depthTex ||
-                Pipeline.GetTexture<XRTexture>(NormalTextureName) is not XRTexture2D normalTex ||
-                Pipeline.GetTexture<XRTexture>(RestirOutputTextureName) is not XRTexture2D restirTex)
+            if (ActivePipelineInstance.GetTexture<XRTexture>(DepthTextureName) is not XRTexture2D depthTex ||
+                ActivePipelineInstance.GetTexture<XRTexture>(NormalTextureName) is not XRTexture2D normalTex ||
+                ActivePipelineInstance.GetTexture<XRTexture>(RestirOutputTextureName) is not XRTexture2D restirTex)
             {
                 return;
             }
 
-            XRQuadFrameBuffer? compositeFbo = Pipeline.GetFBO<XRQuadFrameBuffer>(CompositeQuadFBOName);
-            XRFrameBuffer? forwardFbo = Pipeline.GetFBO<XRFrameBuffer>(ForwardFBOName);
+            XRQuadFrameBuffer? compositeFbo = ActivePipelineInstance.GetFBO<XRQuadFrameBuffer>(CompositeQuadFBOName);
+            XRFrameBuffer? forwardFbo = ActivePipelineInstance.GetFBO<XRFrameBuffer>(ForwardFBOName);
             if (compositeFbo is null || forwardFbo is null)
                 return;
 

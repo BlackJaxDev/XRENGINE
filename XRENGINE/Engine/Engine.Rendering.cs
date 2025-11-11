@@ -96,6 +96,20 @@ namespace XREngine
                     }
                 }
             }
+
+            public static void ApplyGlobalIlluminationModePreference()
+            {
+                var mode = Engine.UserSettings.GlobalIlluminationMode;
+
+                foreach (XRWindow window in Engine.Windows)
+                {
+                    foreach (XRViewport viewport in window.Viewports)
+                    {
+                        if (viewport.RenderPipeline is DefaultRenderPipeline defaultPipeline)
+                            defaultPipeline.GlobalIlluminationMode = mode;
+                    }
+                }
+            }
         }
     }
 }

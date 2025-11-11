@@ -22,7 +22,7 @@
 
         protected override void Execute()
         {
-            var fbo = Pipeline.RenderState.OutputFBO;
+            var fbo = ActivePipelineInstance.RenderState.OutputFBO;
             if (fbo is null)
                 return;
             

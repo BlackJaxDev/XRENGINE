@@ -30,13 +30,13 @@ namespace XREngine.Rendering.Pipelines.Commands
 
         protected override void Execute()
         {
-            if (Pipeline.RenderState.Scene is null)
+            if (ActivePipelineInstance.RenderState.Scene is null)
                 return;
 
-            var albOpacTex = Pipeline.GetTexture<XRTexture>(AlbedoOpacityTexture);
-            var normTex = Pipeline.GetTexture<XRTexture>(NormalTexture);
-            var rmseTex = Pipeline.GetTexture<XRTexture>(RMSETexture);
-            var depthViewTex = Pipeline.GetTexture<XRTexture>(DepthViewTexture);
+            var albOpacTex = ActivePipelineInstance.GetTexture<XRTexture>(AlbedoOpacityTexture);
+            var normTex = ActivePipelineInstance.GetTexture<XRTexture>(NormalTexture);
+            var rmseTex = ActivePipelineInstance.GetTexture<XRTexture>(RMSETexture);
+            var depthViewTex = ActivePipelineInstance.GetTexture<XRTexture>(DepthViewTexture);
             if (albOpacTex is null || normTex is null || rmseTex is null || depthViewTex is null)
                 throw new Exception("One or more required textures are missing.");
 
@@ -52,11 +52,11 @@ namespace XREngine.Rendering.Pipelines.Commands
                 CreateLightRenderers(albOpacTex, normTex, rmseTex, depthViewTex);
             }
 
-            var lights = Pipeline.RenderState.WindowViewport?.World?.Lights;
+            var lights = ActivePipelineInstance.RenderState.WindowViewport?.World?.Lights;
             if (lights is null)
                 return;
 
-            using (Pipeline.RenderState.PushRenderingCamera(Pipeline.RenderState.SceneCamera))
+            using (ActivePipelineInstance.RenderState.PushRenderingCamera(ActivePipelineInstance.RenderState.SceneCamera))
             {
                 foreach (PointLightComponent c in lights.DynamicPointLights)
                     RenderPointLight(c);

@@ -9,7 +9,8 @@ namespace XREngine.Rendering.Pipelines.Commands
         private bool _executeInShadowPass = false;
 
         public ViewportRenderCommandContainer? CommandContainer { get; internal set; }
-        public static XRRenderPipelineInstance Pipeline => Engine.Rendering.State.CurrentRenderingPipeline!;
+        public RenderPipeline? ParentPipeline => CommandContainer?.ParentPipeline;
+        public static XRRenderPipelineInstance ActivePipelineInstance => Engine.Rendering.State.CurrentRenderingPipeline!;
 
         /// <summary>
         /// If true, the command will execute in the shadow pass.
@@ -46,6 +47,14 @@ namespace XREngine.Rendering.Pipelines.Commands
         {
 
         }
+
+    internal virtual void OnAttachedToContainer()
+    {
+    }
+
+    internal virtual void OnParentPipelineAssigned()
+    {
+    }
         public void ExecuteIfShould()
         {
             if (ShouldExecute)

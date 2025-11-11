@@ -827,8 +827,12 @@ namespace XREngine.Rendering
             var matMap = renderPasses.GetMaterialMap(scene);
             if (logGpu)
                 GpuDebug("Material map count: {0}", matMap.Count);
-            
-            XRMaterial? defaultMat = matMap.Values.FirstOrDefault() ?? XRMaterial.InvalidMaterial;
+
+            XRMaterial? overrideMaterial = Engine.Rendering.State.OverrideMaterial;
+            if (overrideMaterial is not null && logGpu)
+                GpuDebug("Override material active: {0}", overrideMaterial.Name ?? "<unnamed>");
+
+            XRMaterial? defaultMat = overrideMaterial ?? matMap.Values.FirstOrDefault() ?? XRMaterial.InvalidMaterial;
             if (logGpu)
                 GpuDebug("Default material: {0}", defaultMat != null ? defaultMat.Name ?? "<unnamed>" : "null");
             
@@ -1561,12 +1565,23 @@ namespace XREngine.Rendering
                 if (lookupMaterialId == uint.MaxValue && cpuMaterialOrder is not null && batch.Offset < cpuMaterialOrder.Count)
                     lookupMaterialId = cpuMaterialOrder[(int)batch.Offset];
 
-                XRMaterial? material = null;
-                bool foundMaterial = false;
-                if (lookupMaterialId != 0)
-                    foundMaterial = materialMap.TryGetValue(lookupMaterialId, out material);
+                XRMaterial? overrideMaterial = Engine.Rendering.State.OverrideMaterial;
+                bool usingOverrideMaterial = overrideMaterial is not null;
 
-                if (!foundMaterial)
+                uint effectiveMaterialId = lookupMaterialId;
+                XRMaterial? material = null;
+
+                if (usingOverrideMaterial)
+                {
+                    material = overrideMaterial;
+                    effectiveMaterialId = (uint)overrideMaterial!.GetHashCode();
+                }
+                else if (lookupMaterialId != 0)
+                {
+                    materialMap.TryGetValue(lookupMaterialId, out material);
+                }
+
+                if (!usingOverrideMaterial && material is null)
                 {
                     string reason = lookupMaterialId == 0
                         ? "ID=0 (invalid)"
@@ -1582,7 +1597,7 @@ namespace XREngine.Rendering
                 }
 
                 // Ensure/Use graphics program (combined MVP)
-                var program = EnsureCombinedProgram(lookupMaterialId, material, vaoRenderer);
+                var program = EnsureCombinedProgram(effectiveMaterialId, material, vaoRenderer);
                 if (program is null)
                     continue;
 
@@ -1590,7 +1605,7 @@ namespace XREngine.Rendering
                 renderer.SetMaterialUniforms(material, program);
                 renderer.ApplyRenderParameters(material.RenderOptions);
 
-                GpuDebug("Batch draw: materialID={0} offset={1} count={2}", lookupMaterialId, batch.Offset, effectiveCount);
+                GpuDebug("Batch draw: materialID={0} offset={1} count={2}", effectiveMaterialId, batch.Offset, effectiveCount);
 
                 for (uint drawIndex = 0; drawIndex < effectiveCount; ++drawIndex)
                 {

@@ -45,15 +45,15 @@
 
         protected override void Execute()
         {
-            var ui = Pipeline.RenderState.ScreenSpaceUserInterface;
+            var ui = ActivePipelineInstance.RenderState.ScreenSpaceUserInterface;
             if (ui is null || !ui.IsActive)
                 return;
 
-            var fbo = OutputTargetFBOName is null ? null : Pipeline.GetFBO<XRFrameBuffer>(OutputTargetFBOName);
+            var fbo = OutputTargetFBOName is null ? null : ActivePipelineInstance.GetFBO<XRFrameBuffer>(OutputTargetFBOName);
             if (FailRenderIfNoOutputFBO && fbo is null)
                 return;
 
-            ui.RenderScreenSpace(Pipeline.RenderState.RenderingViewport, fbo);
+            ui.RenderScreenSpace(ActivePipelineInstance.RenderState.RenderingViewport, fbo);
         }
     }
 }

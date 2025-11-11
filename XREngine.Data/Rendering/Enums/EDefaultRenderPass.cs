@@ -13,7 +13,7 @@
         /// <summary>
         /// Use for any fully opaque objects that are always lit.
         /// </summary>
-        OpaqueDeferredLit,
+        OpaqueDeferred,
         /// <summary>
         /// Renders right after all opaque deferred objects.
         /// More than just decals can be rendered in this pass, it is simply for deferred renderables after all opaque deferred objects have been rendered.

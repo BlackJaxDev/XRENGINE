@@ -4,8 +4,8 @@
     {
         protected override void Execute()
         {
-            Pipeline.RenderState.PopRenderArea();
-            Pipeline.RenderState.PopCropArea();
+            ActivePipelineInstance.RenderState.PopRenderArea();
+            ActivePipelineInstance.RenderState.PopCropArea();
         }
     }
 }

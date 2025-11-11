@@ -11,7 +11,7 @@
 
         protected override void Execute()
         {
-            var vp = Pipeline.RenderState.WindowViewport;
+            var vp = ActivePipelineInstance.RenderState.WindowViewport;
             if (vp is null)
             {
                 PopCommand.ShouldExecute = false;
@@ -22,8 +22,8 @@
                 ? vp.InternalResolutionRegion
                 : vp.Region;
 
-            Pipeline.RenderState.PushRenderArea(res);
-            Pipeline.RenderState.PushCropArea(res);
+            ActivePipelineInstance.RenderState.PushRenderArea(res);
+            ActivePipelineInstance.RenderState.PushCropArea(res);
         }
     }
 }

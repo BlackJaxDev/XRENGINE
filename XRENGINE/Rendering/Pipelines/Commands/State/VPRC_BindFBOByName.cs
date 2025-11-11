@@ -22,7 +22,7 @@
             if (FrameBufferName is null)
                 return;
 
-            var fbo = Pipeline.GetFBO<XRFrameBuffer>(FrameBufferName);
+            var fbo = ActivePipelineInstance.GetFBO<XRFrameBuffer>(FrameBufferName);
             if (fbo is null)
                 return;
 

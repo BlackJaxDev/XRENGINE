@@ -1,5 +1,6 @@
 ﻿namespace XREngine.Rendering.Pipelines.Commands
 {
+    /*
     public class VPRC_RenderMeshesPassCPU : ViewportStateRenderCommand<VPRC_PopRenderArea>
     {
         public VPRC_RenderMeshesPassCPU()
@@ -15,8 +16,9 @@
 
         protected override void Execute()
         {
-            using (Pipeline.RenderState.PushRenderingCamera(Pipeline.RenderState.SceneCamera))
-                Pipeline.RenderState.MeshRenderCommands?.RenderCPU(RenderPass);
+            using (ActivePipelineInstance.RenderState.PushRenderingCamera(ActivePipelineInstance.RenderState.SceneCamera))
+                ActivePipelineInstance.RenderState.MeshRenderCommands?.RenderCPU(RenderPass);
         }
     }
+    */
 }

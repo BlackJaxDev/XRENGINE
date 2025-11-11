@@ -1,4 +1,5 @@
-﻿using XREngine.Data.Core;
+﻿using System;
+using XREngine.Data.Core;
 using XREngine.Data.Geometry;
 using XREngine.Data.Rendering;
 using XREngine.Data.Vectors;
@@ -31,7 +32,22 @@ public abstract class RenderPipeline : XRBase
         set => SetField(ref _isShadowPass, value);
     }
 
-    public ViewportRenderCommandContainer CommandChain { get; protected set; }
+    private ViewportRenderCommandContainer? _commandChain;
+    public ViewportRenderCommandContainer CommandChain
+    {
+        get => _commandChain ?? throw new InvalidOperationException("Command chain has not been initialized.");
+        protected set
+        {
+            ArgumentNullException.ThrowIfNull(value);
+            SetField(ref _commandChain, value,
+                prev =>
+                {
+                    if (prev is { } existing)
+                        existing.ParentPipeline = null;
+                },
+                chain => chain!.ParentPipeline = this);
+        }
+    }
     public Dictionary<int, IComparer<RenderCommand>?> PassIndicesAndSorters { get; protected set; }
 
     protected RenderPipeline(bool deferCommandChainGeneration = false)

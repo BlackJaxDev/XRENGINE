@@ -4,14 +4,14 @@
     {
         protected override void Execute()
         {
-            var fbo = Pipeline.RenderState.OutputFBO;
+            var fbo = ActivePipelineInstance.RenderState.OutputFBO;
             if (fbo is null)
             {
                 PopCommand.ShouldExecute = false;
                 return;
             }
 
-            Pipeline.RenderState.PushRenderArea((int)fbo.Width, (int)fbo.Height);
+            ActivePipelineInstance.RenderState.PushRenderArea((int)fbo.Width, (int)fbo.Height);
         }
     }
 }
