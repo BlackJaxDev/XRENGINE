@@ -487,7 +487,7 @@ namespace XREngine.Rendering.Commands
                 Usage = EBufferUsage.DynamicCopy,
                 DisposeOnPush = false
             };
-            buffer.Generate();
+            //buffer.Generate();
             return buffer;
         }
 

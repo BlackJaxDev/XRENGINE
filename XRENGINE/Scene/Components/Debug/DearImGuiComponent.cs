@@ -20,7 +20,7 @@ public class DearImGuiComponent : UIComponent, IRenderable
     private readonly RenderInfo2D _renderInfo;
     private readonly RenderCommandMethod2D _renderCommand;
 
-    private bool _showDemoWindow = true;
+    private bool _showDemoWindow = false;
 
     public DearImGuiComponent()
     {
