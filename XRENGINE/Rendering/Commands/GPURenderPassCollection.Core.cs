@@ -95,6 +95,21 @@ namespace XREngine.Rendering.Commands
             /// When disabled, systems relying on TryReadDrawCount will fall back to conservative defaults.
             /// </summary>
             public bool DisableCpuReadbackCount { get; set; } = true;
+
+            /// <summary>
+            /// Dumps a snapshot of source commands before the GPU copy shader runs.
+            /// </summary>
+            public bool ProbeSourceCommandsBeforeCopy { get; set; } = true;
+
+            /// <summary>
+            /// Number of commands to sample when <see cref="ProbeSourceCommandsBeforeCopy"/> is enabled.
+            /// </summary>
+            public uint ProbeSourceCommandCount { get; set; } = 8;
+
+            /// <summary>
+            /// Enables bounds checking for the copy shader's atomic counter to detect overflow.
+            /// </summary>
+            public bool ValidateCopyCommandAtomicBounds { get; set; } = true;
         }
 
         private static readonly IndirectDebugSettings _indirectDebug = new();

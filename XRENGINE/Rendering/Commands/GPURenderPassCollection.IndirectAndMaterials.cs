@@ -1,5 +1,9 @@
+using System;
+using System.Runtime.CompilerServices;
 using System.Text;
 using System.Threading;
+using XREngine.Data;
+using XREngine.Data.Lists.Unsafe;
 
 namespace XREngine.Rendering.Commands
 {
@@ -244,13 +248,90 @@ namespace XREngine.Rendering.Commands
 
             List<HybridRenderingManager.DrawBatch> batches = new((int)Math.Min(count, 64));
 
+            bool mappedCulledHere = false;
+            VoidPtr culledPtr = default;
+            uint culledStride = 0;
+
+            if (_culledSceneToRenderBuffer is not null)
+            {
+                try
+                {
+                    if (_culledSceneToRenderBuffer.ActivelyMapping.Count == 0)
+                    {
+                        _culledSceneToRenderBuffer.StorageFlags |= EBufferMapStorageFlags.Read;
+                        _culledSceneToRenderBuffer.RangeFlags |= EBufferMapRangeFlags.Read;
+                        _culledSceneToRenderBuffer.MapBufferData();
+                        mappedCulledHere = true;
+                    }
+
+                    culledPtr = _culledSceneToRenderBuffer
+                        .GetMappedAddresses()
+                        .FirstOrDefault(ptr => ptr.IsValid);
+
+                    if (culledPtr.IsValid)
+                    {
+                        AbstractRenderer.Current?.MemoryBarrier(EMemoryBarrierMask.ClientMappedBuffer | EMemoryBarrierMask.Command);
+                        culledStride = _culledSceneToRenderBuffer.ElementSize;
+                        if (culledStride == 0)
+                            culledStride = GPUScene.CommandFloatCount * sizeof(float);
+                    }
+                    else if (mappedCulledHere)
+                    {
+                        _culledSceneToRenderBuffer.UnmapBufferData();
+                        mappedCulledHere = false;
+                    }
+                }
+                catch (Exception ex)
+                {
+                    Dbg($"BuildMaterialBatches map failed: {ex.Message}", "Materials");
+                    if (mappedCulledHere)
+                    {
+                        _culledSceneToRenderBuffer.UnmapBufferData();
+                        mappedCulledHere = false;
+                    }
+                    culledPtr = default;
+                    culledStride = 0;
+                }
+            }
+
+            IntPtr culledBasePtr = IntPtr.Zero;
+            if (culledPtr.IsValid)
+            {
+                unsafe
+                {
+                    culledBasePtr = (IntPtr)culledPtr.Pointer;
+                }
+            }
+
             uint currentMaterial = uint.MaxValue;
             uint batchStart = 0;
             uint batchCount = 0;
 
             for (uint i = 0; i < count; ++i)
             {
-                uint materialId = ResolveMaterialId(scene, i);
+                uint materialId;
+
+                if (culledBasePtr != IntPtr.Zero)
+                {
+                    GPUIndirectRenderCommand culledCmd;
+                    unsafe
+                    {
+                        byte* basePtr = (byte*)culledBasePtr + (i * culledStride);
+                        culledCmd = Unsafe.ReadUnaligned<GPUIndirectRenderCommand>(basePtr);
+                    }
+                    if (TryValidateMaterialId(scene, culledCmd.MaterialID, "culled buffer"))
+                    {
+                        materialId = culledCmd.MaterialID;
+                    }
+                    else
+                    {
+                        materialId = ResolveMaterialId(scene, i);
+                    }
+                }
+                else
+                {
+                    materialId = ResolveMaterialId(scene, i);
+                }
 
                 if (batchCount > 0 && materialId == currentMaterial)
                 {
@@ -268,6 +349,9 @@ namespace XREngine.Rendering.Commands
 
             if (batchCount > 0)
                 batches.Add(new HybridRenderingManager.DrawBatch(batchStart, batchCount, currentMaterial));
+
+            if (mappedCulledHere)
+                _culledSceneToRenderBuffer!.UnmapBufferData();
 
             if (batches.Count == 0)
                 return null;
