@@ -94,17 +94,39 @@ public static partial class UnitTestingWorld
             if (screenSpaceCamera is not null)
                 screenSpaceCamera.UserInterface = canvas;
 
-            if (Toggles.RiveUI)
+            if (UnitTestingWorld.Toggles.RiveUI)
             {
+                bool disableRiveUi = false;
                 SceneNode riveNode = new(rootCanvasNode) { Name = "RIVE Node" };
                 var tfm = riveNode.SetTransform<UIBoundableTransform>();
-                //tfm.MaxAnchor = new Vector2(0.0f, 0.0f);
                 tfm.MaxAnchor = new Vector2(1.0f, 1.0f);
                 tfm.MinAnchor = new Vector2(0.0f, 0.0f);
                 tfm.NormalizedPivot = new Vector2(0.0f, 0.0f);
-                //tfm.Width = 500.0f;
-                //tfm.Height = 500.0f;
-                riveNode.AddComponent<RiveUIComponent>()!.SetSource("RiveAssets/switcher.riv");
+
+                try
+                {
+                    var riveComponent = riveNode.AddComponent<RiveUIComponent>();
+                    if (riveComponent is null)
+                        disableRiveUi = true;
+                    else
+                        riveComponent.SetSource("RiveAssets/switcher.riv");
+                }
+                catch (DllNotFoundException ex)
+                {
+                    Debug.LogWarning($"Rive native library missing: {ex.Message}. Disabling Rive UI.");
+                    disableRiveUi = true;
+                }
+                catch (TypeInitializationException ex) when (ex.InnerException is DllNotFoundException dllEx)
+                {
+                    Debug.LogWarning($"Rive native library failed to load: {dllEx.Message}. Disabling Rive UI.");
+                    disableRiveUi = true;
+                }
+
+                if (disableRiveUi)
+                {
+                    Toggles.RiveUI = false;
+                    riveNode.Parent = null;
+                }
             }
             
             if (Toggles.AddEditorUI)
