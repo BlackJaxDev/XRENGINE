@@ -11,7 +11,7 @@ public static class Endian
     /// <summary>
     /// This is the endian that the engine de/serializer will write files and expect files to be written in.
     /// </summary>
-    public static EOrder SerializeOrder { get; set; } = EOrder.Big;
+    public static EOrder SerializeOrder { get; set; } = EOrder.Little;
     /// <summary>
     /// <see langword="true"/> if the de/serializer will read/write with big endian.
     /// </summary>

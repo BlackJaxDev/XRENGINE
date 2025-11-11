@@ -26,6 +26,8 @@ namespace XREngine.Rendering.Commands
         private int _cpuFallbackDetailLogBudget = 8;
     private int _sanitizerDetailLogBudget = 4;
     private int _sanitizerSampleLogBudget = 12;
+        private int _copyAtomicOverflowLogBudget = 4;
+        private int _filteredCountLogBudget = 6;
         private bool _skipGpuSubmissionThisPass;
         private string? _skipGpuSubmissionReason;
         private long _lastMaterialSnapshotTick = -1;
@@ -195,7 +197,7 @@ namespace XREngine.Rendering.Commands
         /// <param name="buf">The <see cref="XRDataBuffer"/> from which to read the value. The buffer must be mapped.</param>
         /// <returns>The unsigned integer value read from the buffer. Returns 0 if the buffer is not mapped.</returns>
         /// <exception cref="Exception">Thrown if the buffer is mapped but the mapped address is a null pointer.</exception>
-        private uint ReadUInt(XRDataBuffer buf)
+    private unsafe uint ReadUInt(XRDataBuffer buf)
         {
             var glWrapper = buf.APIWrappers.FirstOrDefault() as GLDataBuffer;
             bool isMapped = glWrapper?.IsMapped ?? false;
@@ -219,7 +221,7 @@ namespace XREngine.Rendering.Commands
                 if (addr == IntPtr.Zero)
                     throw new Exception("ReadUInt failed - null pointer");
 
-                return addr.UInt;
+                return *((uint*)addr.Pointer);
             }
             finally
             {
@@ -235,7 +237,7 @@ namespace XREngine.Rendering.Commands
         /// <param name="value">The unsigned integer value to write to the buffer.</param>
         /// <returns></returns>
         /// <exception cref="Exception"></exception>
-        private uint WriteUInt(XRDataBuffer buf, uint value)
+    private unsafe uint WriteUInt(XRDataBuffer buf, uint value)
         {
             var glWrapper = buf.APIWrappers.FirstOrDefault() as GLDataBuffer;
             bool isMapped = glWrapper?.IsMapped ?? false;
@@ -253,7 +255,8 @@ namespace XREngine.Rendering.Commands
                 var addr = buf.GetMappedAddresses().FirstOrDefault();
                 if (addr == IntPtr.Zero)
                     throw new Exception("WriteUInt failed - null pointer");
-                addr.UInt = value;
+
+                *((uint*)addr.Pointer) = value;
 
                 AbstractRenderer.Current?.MemoryBarrier(EMemoryBarrierMask.ClientMappedBuffer | EMemoryBarrierMask.Command);
             }
@@ -470,10 +473,16 @@ namespace XREngine.Rendering.Commands
                 return;
             }
 
-            //Copy commands
-            WriteUInt(_culledCountBuffer, 0u);
-
             bool debugLoggingEnabled = Engine.UserSettings?.EnableGpuIndirectDebugLogging ?? false;
+
+            if (IndirectDebug.ProbeSourceCommandsBeforeCopy)
+                DumpSourceCommandProbe(scene, copyCount);
+
+            // Copy commands
+            WriteUInt(_culledCountBuffer, 0u);
+            if (_cullingOverflowFlagBuffer is not null)
+                WriteUInt(_cullingOverflowFlagBuffer, 0u);
+
             uint debugSamples = debugLoggingEnabled ? Math.Min(copyCount, PassFilterDebugMaxSamples) : 0u;
 
             if (debugSamples > 0)
@@ -494,9 +503,14 @@ namespace XREngine.Rendering.Commands
 
             _copyCommandsProgram.Uniform("CopyCount", copyCount);
             _copyCommandsProgram.Uniform("TargetPass", RenderPass);
+            _copyCommandsProgram.Uniform("OutputCapacity", capacity);
+            int boundsCheckEnabled = (IndirectDebug.ValidateCopyCommandAtomicBounds && _cullingOverflowFlagBuffer is not null) ? 1 : 0;
+            _copyCommandsProgram.Uniform("BoundsCheckEnabled", boundsCheckEnabled);
             _copyCommandsProgram?.BindBuffer(src, 0);
             _copyCommandsProgram?.BindBuffer(dst, 1);
             _copyCommandsProgram?.BindBuffer(_culledCountBuffer, 2);
+            if (_cullingOverflowFlagBuffer is not null)
+                _copyCommandsProgram?.BindBuffer(_cullingOverflowFlagBuffer, 4);
 
             (uint x, uint y, uint z) = ComputeDispatch.ForCommands(copyCount);
             _copyCommandsProgram?.DispatchCompute(x, y, z, EMemoryBarrierMask.ShaderStorage | EMemoryBarrierMask.Command);
@@ -506,7 +520,28 @@ namespace XREngine.Rendering.Commands
             if (debugSamples > 0)
                 DumpPassFilterDebug(debugSamples);
 
+            if (boundsCheckEnabled == 1 && _cullingOverflowFlagBuffer is not null)
+            {
+                uint overflowMarker = ReadUInt(_cullingOverflowFlagBuffer);
+                if (overflowMarker != 0u)
+                {
+                    uint offendingIndex = overflowMarker - 1u;
+                    if (_copyAtomicOverflowLogBudget > 0)
+                    {
+                        Debug.LogWarning($"{FormatDebugPrefix("Culling")} Copy shader overflow detected at cmd={offendingIndex} (capacity={capacity}, copyCount={copyCount}).");
+                        _copyAtomicOverflowLogBudget--;
+                    }
+                    _skipGpuSubmissionThisPass = true;
+                    _skipGpuSubmissionReason ??= $"copy shader overflow detected at cmd={offendingIndex}";
+                }
+            }
+
             uint filteredCount = ReadUInt(_culledCountBuffer);
+            if (_filteredCountLogBudget > 0)
+            {
+                Debug.Out($"{FormatDebugPrefix("Culling")} Copy shader reported filteredCount={filteredCount} (copyCount={copyCount})");
+                _filteredCountLogBudget--;
+            }
             bool allowCpuFallback = Engine.UserSettings?.EnableGpuIndirectCpuFallback ?? false;
             if (!allowCpuFallback && debugLoggingEnabled)
             {
@@ -675,6 +710,34 @@ namespace XREngine.Rendering.Commands
                 cmd.InstanceCount = 1u;
 
             return true;
+        }
+
+        private void DumpSourceCommandProbe(GPUScene scene, uint copyCount)
+        {
+            uint requested = Math.Max(IndirectDebug.ProbeSourceCommandCount, 1u);
+            uint sampleCount = Math.Min(copyCount, requested);
+
+            if (sampleCount == 0)
+                return;
+
+            try
+            {
+                GPUIndirectRenderCommand[] sample = scene.AllLoadedCommandsBuffer.GetDataArrayRawAtIndex<GPUIndirectRenderCommand>(0, (int)sampleCount);
+                var sb = new StringBuilder();
+                sb.Append("Pre-pass copy probe (target=").Append(RenderPass).Append(" count=").Append(sampleCount).Append("): ");
+                for (int i = 0; i < sample.Length; i++)
+                {
+                    if (i > 0)
+                        sb.Append(" | ");
+                    sb.Append('#').Append(i).Append(' ').Append(FormatCommandSnapshot(sample[i]));
+                }
+
+                Debug.Out($"{FormatDebugPrefix("Culling")} ProbeSource {sb}");
+            }
+            catch (Exception ex)
+            {
+                Debug.LogWarning($"{FormatDebugPrefix("Culling")} Failed to probe source commands: {ex.Message}");
+            }
         }
 
         private void LogCommandPassSample(GPUScene scene, uint copyCount)

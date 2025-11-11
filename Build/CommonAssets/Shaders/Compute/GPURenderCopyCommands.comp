@@ -10,6 +10,8 @@ uniform int TargetPass;
 uniform int DebugEnabled;
 uniform int DebugMaxSamples;
 uniform int DebugInstanceStride;
+uniform uint OutputCapacity;
+uniform int BoundsCheckEnabled;
 
 // Number of commands is equal to the number of dispatched invocations.
 // No explicit CopyCount uniform is required.
@@ -35,6 +37,11 @@ layout(std430, binding = 2) writeonly buffer VisibleCount
 layout(std430, binding = 3) writeonly buffer DebugSamples
 {
     uint DebugData[];
+};
+
+layout(std430, binding = 4) buffer OverflowFlag
+{
+    uint OverflowData[];
 };
 
 const uint CommandStride = 32u;
@@ -88,6 +95,16 @@ void main()
         return;
 
     uint outIndex = atomicAdd(OutCount[0], 1u);
+
+    if (BoundsCheckEnabled == 1)
+    {
+        if (outIndex >= OutputCapacity)
+        {
+            atomicMin(OutCount[0], OutputCapacity);
+            atomicCompSwap(OverflowData[0], 0u, cmdIndex + 1u);
+            return;
+        }
+    }
     uint outBase = outIndex * CommandStride;
 
     // Unrolled copy for better performance on some drivers
