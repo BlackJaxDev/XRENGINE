@@ -106,11 +106,11 @@ namespace XREngine.Rendering.Pipelines.Commands
 
         protected override void Execute()
         {
-            XRTexture? normalTex = Pipeline.GetTexture<XRTexture>(NormalTextureName);
-            XRTexture? depthViewTex = Pipeline.GetTexture<XRTexture>(DepthViewTextureName);
-            XRTexture? albedoTex = Pipeline.GetTexture<XRTexture>(AlbedoTextureName);
-            XRTexture? rmseTex = Pipeline.GetTexture<XRTexture>(RMSETextureName);
-            XRTexture? depthStencilTex = Pipeline.GetTexture<XRTexture>(DepthStencilTextureName);
+            XRTexture? normalTex = ActivePipelineInstance.GetTexture<XRTexture>(NormalTextureName);
+            XRTexture? depthViewTex = ActivePipelineInstance.GetTexture<XRTexture>(DepthViewTextureName);
+            XRTexture? albedoTex = ActivePipelineInstance.GetTexture<XRTexture>(AlbedoTextureName);
+            XRTexture? rmseTex = ActivePipelineInstance.GetTexture<XRTexture>(RMSETextureName);
+            XRTexture? depthStencilTex = ActivePipelineInstance.GetTexture<XRTexture>(DepthStencilTextureName);
 
             if (normalTex is null ||
                 depthViewTex is null ||
@@ -195,7 +195,7 @@ namespace XREngine.Rendering.Pipelines.Commands
                 ssaoTex = t;
             }
 
-            Pipeline.SetTexture(ssaoTex);
+            ActivePipelineInstance.SetTexture(ssaoTex);
 
             RenderingParameters renderParams = new()
             {
@@ -259,9 +259,9 @@ namespace XREngine.Rendering.Pipelines.Commands
                 Name = GBufferFBOFBOName
             };
 
-            Pipeline.SetFBO(ssaoGenFBO);
-            Pipeline.SetFBO(ssaoBlurFBO);
-            Pipeline.SetFBO(gbufferFBO);
+            ActivePipelineInstance.SetFBO(ssaoGenFBO);
+            ActivePipelineInstance.SetFBO(ssaoBlurFBO);
+            ActivePipelineInstance.SetFBO(gbufferFBO);
         }
 
         private void SSAOGen_SetUniforms(XRRenderProgram program)
@@ -269,18 +269,18 @@ namespace XREngine.Rendering.Pipelines.Commands
             program.Uniform("NoiseScale", NoiseScale);
             program.Uniform("Samples", Kernel!);
 
-            var rc = Pipeline.RenderState.SceneCamera;
+            var rc = ActivePipelineInstance.RenderState.SceneCamera;
             if (rc is null)
                 return;
             
             rc.SetUniforms(program);
 
             if (Engine.Rendering.State.IsStereoPass)
-                Pipeline.RenderState.StereoRightEyeCamera?.SetUniforms(program, false);
+                ActivePipelineInstance.RenderState.StereoRightEyeCamera?.SetUniforms(program, false);
 
             rc.SetAmbientOcclusionUniforms(program);
 
-            var region = Pipeline.RenderState.CurrentRenderRegion;
+            var region = ActivePipelineInstance.RenderState.CurrentRenderRegion;
             program.Uniform(EEngineUniform.ScreenWidth.ToString(), region.Width);
             program.Uniform(EEngineUniform.ScreenHeight.ToString(), region.Height);
             program.Uniform(EEngineUniform.ScreenOrigin.ToString(), 0.0f);
@@ -314,7 +314,7 @@ namespace XREngine.Rendering.Pipelines.Commands
                 ]
             };
 
-            Pipeline.SetTexture(noiseTex);
+            ActivePipelineInstance.SetTexture(noiseTex);
             noiseTex.PushData();
             return NoiseTexture = noiseTex;
         }

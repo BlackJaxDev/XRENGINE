@@ -1,6 +1,7 @@
 ﻿using System.Collections;
 using System.Diagnostics.CodeAnalysis;
 using XREngine.Data.Core;
+using XREngine.Rendering;
 
 namespace XREngine.Rendering.Pipelines.Commands
 {
@@ -11,6 +12,30 @@ namespace XREngine.Rendering.Pipelines.Commands
 
         private readonly List<ViewportRenderCommand> _collecVisibleCommands = [];
         public IReadOnlyList<ViewportRenderCommand> CollecVisibleCommands => _collecVisibleCommands;
+
+        private RenderPipeline? _parentPipeline;
+        public RenderPipeline? ParentPipeline
+        {
+            get => _parentPipeline;
+            internal set
+            {
+                if (ReferenceEquals(_parentPipeline, value))
+                    return;
+
+                _parentPipeline = value;
+
+                if (_parentPipeline is not null)
+                {
+                    for (int i = 0; i < _commands.Count; i++)
+                        _commands[i].OnParentPipelineAssigned();
+                }
+            }
+        }
+
+        public ViewportRenderCommandContainer(RenderPipeline? parentPipeline = null)
+        {
+            ParentPipeline = parentPipeline;
+        }
 
         //public bool FBOsInitialized { get; private set; } = false;
         //public bool ModifyingFBOs { get; protected set; } = false;
@@ -101,6 +126,9 @@ namespace XREngine.Rendering.Pipelines.Commands
         {
             cmd.CommandContainer = this;
             _commands.Add(cmd);
+            cmd.OnAttachedToContainer();
+            if (_parentPipeline is not null)
+                cmd.OnParentPipelineAssigned();
             if (cmd.NeedsCollecVisible)
                 _collecVisibleCommands.Add(cmd);
         }

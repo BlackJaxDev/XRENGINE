@@ -1,12 +1,14 @@
-﻿using XREngine.Data;
+﻿using System;
+using XREngine.Data;
 using XREngine.Data.Core;
+using XREngine;
 
 namespace XREngine.Rendering
 {
     public class AmbientOcclusionSettings : XRBase
     {
         private bool _enabled = true;
-        private EType _type = EType.ScreenSpace;
+        private EType _type = EType.MultiViewAmbientOcclusion;
         private float _resolutionScale;
         private float _samplesPerPixel;
         private float _distance;
@@ -23,14 +25,47 @@ namespace XREngine.Rendering
         private float _depthPhi;
         private float _normalPhi;
         private int _samples;
+        private float _secondaryRadius = 1.6f;
+        private float _multiViewBlend = 0.6f;
+        private float _multiViewSpread = 0.5f;
 
         public enum EType
         {
             ScreenSpace,
+            MultiViewAmbientOcclusion,
             ScalableAmbientObscurance,
             MultiScaleVolumetricObscurance,
             HorizonBased,
             HorizonBasedPlus,
+        }
+
+        public AmbientOcclusionSettings()
+        {
+            _enabled = true;
+            _type = Engine.UserSettings?.AmbientOcclusionMode switch
+            {
+                EAmbientOcclusionMode.MultiView => EType.MultiViewAmbientOcclusion,
+                _ => EType.ScreenSpace,
+            };
+            _resolutionScale = 1.0f;
+            _samplesPerPixel = 1.0f;
+            _distance = 1.0f;
+            _distanceIntensity = 1.0f;
+            _intensity = 1.0f;
+            _color = 0.0f;
+            _bias = 0.05f;
+            _thickness = 1.0f;
+            _iterations = 1;
+            _radius = 0.9f;
+            _power = 1.4f;
+            _rings = 4.0f;
+            _lumaPhi = 4.0f;
+            _depthPhi = 4.0f;
+            _normalPhi = 64.0f;
+            _samples = 64;
+            _secondaryRadius = 1.6f;
+            _multiViewBlend = 0.6f;
+            _multiViewSpread = 0.5f;
         }
 
         public bool Enabled
@@ -171,6 +206,33 @@ namespace XREngine.Rendering
             set => SetField(ref _samples, value);
         }
 
+        /// <summary>
+        /// The radius used for the secondary multi-view sample set in world units.
+        /// </summary>
+        public float SecondaryRadius
+        {
+            get => _secondaryRadius;
+            set => SetField(ref _secondaryRadius, value);
+        }
+
+        /// <summary>
+        /// Blends between the forward hemisphere gather and the tangent multi-view gather.
+        /// </summary>
+        public float MultiViewBlend
+        {
+            get => _multiViewBlend;
+            set => SetField(ref _multiViewBlend, value);
+        }
+
+        /// <summary>
+        /// Controls how far along the tangent directions the multi-view gather samples are placed.
+        /// </summary>
+        public float MultiViewSpread
+        {
+            get => _multiViewSpread;
+            set => SetField(ref _multiViewSpread, value);
+        }
+
         public void Lerp(AmbientOcclusionSettings from, AmbientOcclusionSettings to, float time)
         {
             Radius = Interp.Lerp(from.Radius, to.Radius, time);
@@ -184,6 +246,25 @@ namespace XREngine.Rendering
                 case EType.ScreenSpace:
                     program.Uniform("Radius", Radius);
                     program.Uniform("Power", Power);
+                    break;
+                case EType.MultiViewAmbientOcclusion:
+                    float radius = Radius > 0.0f ? Radius : 0.9f;
+                    float secondary = SecondaryRadius > 0.0f ? SecondaryRadius : 1.6f;
+                    float power = Power > 0.0f ? Power : 1.4f;
+                    float bias = Bias > 0.0f ? Bias : 0.03f;
+                    float blend = Math.Clamp(MultiViewBlend, 0.0f, 1.0f);
+                    float spread = Math.Clamp(MultiViewSpread, 0.0f, 1.0f);
+                    float depthPhi = DepthPhi > 0.0f ? DepthPhi : 4.0f;
+                    float normalPhi = NormalPhi > 0.0f ? NormalPhi : 64.0f;
+
+                    program.Uniform("Radius", radius);
+                    program.Uniform("SecondaryRadius", secondary);
+                    program.Uniform("Bias", bias);
+                    program.Uniform("Power", power);
+                    program.Uniform("MultiViewBlend", blend);
+                    program.Uniform("MultiViewSpread", spread);
+                    program.Uniform("DepthPhi", depthPhi);
+                    program.Uniform("NormalPhi", normalPhi);
                     break;
                 case EType.MultiScaleVolumetricObscurance:
                     program.Uniform("Bias", Bias);

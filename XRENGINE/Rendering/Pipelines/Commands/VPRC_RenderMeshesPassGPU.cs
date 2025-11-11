@@ -1,5 +1,6 @@
 namespace XREngine.Rendering.Pipelines.Commands
 {
+    /*
     /// <summary>
     /// Viewport render command that uses GPU-based indirect rendering.
     /// This command processes render commands using compute shaders for culling, sorting, and indirect rendering.
@@ -18,6 +19,7 @@ namespace XREngine.Rendering.Pipelines.Commands
         }
 
         protected override void Execute()
-            => Pipeline.MeshRenderCommands.RenderGPU(RenderPass);
+            => ActivePipelineInstance.MeshRenderCommands.RenderGPU(RenderPass);
     }
+    */
 } 

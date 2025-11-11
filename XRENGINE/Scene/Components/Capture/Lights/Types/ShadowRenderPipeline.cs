@@ -17,10 +17,10 @@ namespace XREngine.Components.Capture.Lights.Types
 
         protected override ViewportRenderCommandContainer GenerateCommandChain()
         {
-            ViewportRenderCommandContainer c = [];
+            ViewportRenderCommandContainer c = new(this);
 
             c.Add<VPRC_SetClears>().Set(ColorF4.Transparent, 1.0f, 0);
-            c.Add<VPRC_RenderMeshesPassCPU>().RenderPass = (int)EDefaultRenderPass.PreRender;
+            c.Add<VPRC_RenderMeshesPass>().RenderPass = (int)EDefaultRenderPass.PreRender;
 
             using (c.AddUsing<VPRC_PushOutputFBORenderArea>())
             {
@@ -31,12 +31,12 @@ namespace XREngine.Components.Capture.Lights.Types
                     c.Add<VPRC_ColorMask>().Set(false, false, false, false);
                     c.Add<VPRC_DepthTest>().Enable = true;
                     c.Add<VPRC_DepthWrite>().Allow = true;
-                    c.Add<VPRC_RenderMeshesPassCPU>().RenderPass = (int)EDefaultRenderPass.OpaqueDeferredLit;
-                    c.Add<VPRC_RenderMeshesPassCPU>().RenderPass = (int)EDefaultRenderPass.OpaqueForward;
-                    c.Add<VPRC_RenderMeshesPassCPU>().RenderPass = (int)EDefaultRenderPass.TransparentForward;
+                    c.Add<VPRC_RenderMeshesPass>().RenderPass = (int)EDefaultRenderPass.OpaqueDeferred;
+                    c.Add<VPRC_RenderMeshesPass>().RenderPass = (int)EDefaultRenderPass.OpaqueForward;
+                    c.Add<VPRC_RenderMeshesPass>().RenderPass = (int)EDefaultRenderPass.TransparentForward;
                 }
             }
-            c.Add<VPRC_RenderMeshesPassCPU>().RenderPass = (int)EDefaultRenderPass.PostRender;
+            c.Add<VPRC_RenderMeshesPass>().RenderPass = (int)EDefaultRenderPass.PostRender;
             return c;
         }
         protected override Dictionary<int, IComparer<RenderCommand>?> GetPassIndicesAndSorters()

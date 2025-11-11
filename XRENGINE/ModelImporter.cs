@@ -94,7 +94,7 @@ namespace XREngine
                     ];
             }
 
-            mat.RenderPass = transp ? (int)EDefaultRenderPass.TransparentForward : (int)EDefaultRenderPass.OpaqueDeferredLit;
+            mat.RenderPass = transp ? (int)EDefaultRenderPass.TransparentForward : (int)EDefaultRenderPass.OpaqueDeferred;
             mat.Name = name;
             mat.RenderOptions = new RenderingParameters()
             {

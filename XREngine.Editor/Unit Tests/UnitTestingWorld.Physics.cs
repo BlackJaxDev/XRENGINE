@@ -71,7 +71,7 @@ public static partial class UnitTestingWorld
             XRMaterial floorMat = XRMaterial.CreateLitColorMaterial(ColorF4.Gray);
             floorMat.RenderOptions.CullMode = ECullMode.None;
             //floorMat.RenderOptions.RequiredEngineUniforms = EUniformRequirements.Camera;
-            floorMat.RenderPass = (int)EDefaultRenderPass.OpaqueDeferredLit;
+            floorMat.RenderPass = (int)EDefaultRenderPass.OpaqueDeferred;
             //floorMat.EnableTransparency();
 
             var floorModel = floor.AddComponent<ModelComponent>()!;
@@ -120,7 +120,7 @@ public static partial class UnitTestingWorld
                 random.NextSingle());
 
             var ballMat = XRMaterial.CreateLitColorMaterial(color);
-            ballMat.RenderPass = (int)EDefaultRenderPass.OpaqueDeferredLit;
+            ballMat.RenderPass = (int)EDefaultRenderPass.OpaqueDeferred;
             ballMat.Parameter<ShaderFloat>("Roughness")!.Value = random.NextSingle();
             ballMat.Parameter<ShaderFloat>("Metallic")!.Value = random.NextSingle();
             ballModel.Model = new Model([new SubMesh(XRMesh.Shapes.SolidSphere(Vector3.Zero, ballRadius, 32), ballMat)]);

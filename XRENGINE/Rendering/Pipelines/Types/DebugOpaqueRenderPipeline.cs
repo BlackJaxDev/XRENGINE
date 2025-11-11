@@ -30,18 +30,8 @@ public sealed class DebugOpaqueRenderPipeline : RenderPipeline
         set
         {
             SetField(ref _gpuRenderDispatch, value);
-            _renderDispatchCommandType = null;
         }
     }
-
-    [DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicParameterlessConstructor)]
-    private Type? _renderDispatchCommandType;
-
-    [DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicParameterlessConstructor)]
-    public Type RenderDispatchCommandType
-        => _renderDispatchCommandType ??= GpuRenderDispatch
-            ? typeof(VPRC_RenderMeshesPassGPU)
-            : typeof(VPRC_RenderMeshesPassCPU);
 
     protected override Lazy<XRMaterial> InvalidMaterialFactory
         => new(MakeInvalidMaterial, LazyThreadSafetyMode.PublicationOnly);
@@ -55,7 +45,7 @@ public sealed class DebugOpaqueRenderPipeline : RenderPipeline
 
     protected override ViewportRenderCommandContainer GenerateCommandChain()
     {
-        ViewportRenderCommandContainer container = [];
+        ViewportRenderCommandContainer container = new(this);
         var ifElse = container.Add<VPRC_IfElse>();
         ifElse.ConditionEvaluator = () => State.WindowViewport is not null;
         ifElse.TrueCommands = CreateViewportTargetCommands();
@@ -68,7 +58,7 @@ public sealed class DebugOpaqueRenderPipeline : RenderPipeline
         {
             { (int)EDefaultRenderPass.PreRender, null },
             { (int)EDefaultRenderPass.Background, null },
-            { (int)EDefaultRenderPass.OpaqueDeferredLit, _nearToFarSorter },
+            { (int)EDefaultRenderPass.OpaqueDeferred, _nearToFarSorter },
             { (int)EDefaultRenderPass.OpaqueForward, _nearToFarSorter },
             { (int)EDefaultRenderPass.PostRender, null },
         };
@@ -78,10 +68,10 @@ public sealed class DebugOpaqueRenderPipeline : RenderPipeline
 
     private ViewportRenderCommandContainer CreateViewportTargetCommands()
     {
-        ViewportRenderCommandContainer commands = [];
+        ViewportRenderCommandContainer commands = new(this);
 
         commands.Add<VPRC_SetClears>().Set(ColorF4.Black, 1.0f, 0);
-        commands.Add<VPRC_RenderMeshesPassCPU>().RenderPass = (int)EDefaultRenderPass.PreRender;
+        commands.Add<VPRC_RenderMeshesPass>().SetOptions((int)EDefaultRenderPass.PreRender, false);
 
         using (commands.AddUsing<VPRC_PushViewportRenderArea>(options => options.UseInternalResolution = true))
         {
@@ -92,24 +82,24 @@ public sealed class DebugOpaqueRenderPipeline : RenderPipeline
 
                 commands.Add<VPRC_DepthTest>().Enable = true;
                 commands.Add<VPRC_DepthWrite>().Allow = false;
-                commands.Add(RenderDispatchCommandType, (int)EDefaultRenderPass.Background);
+                commands.Add<VPRC_RenderMeshesPass>().SetOptions((int)EDefaultRenderPass.Background, GpuRenderDispatch);
 
                 commands.Add<VPRC_DepthWrite>().Allow = true;
-                commands.Add(RenderDispatchCommandType, (int)EDefaultRenderPass.OpaqueDeferredLit);
-                commands.Add(RenderDispatchCommandType, (int)EDefaultRenderPass.OpaqueForward);
+                commands.Add<VPRC_RenderMeshesPass>().SetOptions((int)EDefaultRenderPass.OpaqueDeferred, GpuRenderDispatch);
+                commands.Add<VPRC_RenderMeshesPass>().SetOptions((int)EDefaultRenderPass.OpaqueForward, GpuRenderDispatch);
             }
         }
 
-        commands.Add<VPRC_RenderMeshesPassCPU>().RenderPass = (int)EDefaultRenderPass.PostRender;
+        commands.Add<VPRC_RenderMeshesPass>().SetOptions((int)EDefaultRenderPass.PostRender, false);
         return commands;
     }
 
     private ViewportRenderCommandContainer CreateFBOTargetCommands()
     {
-        ViewportRenderCommandContainer commands = [];
+        ViewportRenderCommandContainer commands = new(this);
 
         commands.Add<VPRC_SetClears>().Set(ColorF4.Black, 1.0f, 0);
-        commands.Add<VPRC_RenderMeshesPassCPU>().RenderPass = (int)EDefaultRenderPass.PreRender;
+        commands.Add<VPRC_RenderMeshesPass>().SetOptions((int)EDefaultRenderPass.PreRender, false);
 
         using (commands.AddUsing<VPRC_PushOutputFBORenderArea>())
         {
@@ -120,15 +110,15 @@ public sealed class DebugOpaqueRenderPipeline : RenderPipeline
 
                 commands.Add<VPRC_DepthTest>().Enable = true;
                 commands.Add<VPRC_DepthWrite>().Allow = false;
-                commands.Add(RenderDispatchCommandType, (int)EDefaultRenderPass.Background);
+                commands.Add<VPRC_RenderMeshesPass>().SetOptions((int)EDefaultRenderPass.Background, GpuRenderDispatch);
 
                 commands.Add<VPRC_DepthWrite>().Allow = true;
-                commands.Add(RenderDispatchCommandType, (int)EDefaultRenderPass.OpaqueDeferredLit);
-                commands.Add(RenderDispatchCommandType, (int)EDefaultRenderPass.OpaqueForward);
+                commands.Add<VPRC_RenderMeshesPass>().SetOptions((int)EDefaultRenderPass.OpaqueDeferred, GpuRenderDispatch);
+                commands.Add<VPRC_RenderMeshesPass>().SetOptions((int)EDefaultRenderPass.OpaqueForward, GpuRenderDispatch);
             }
         }
 
-        commands.Add<VPRC_RenderMeshesPassCPU>().RenderPass = (int)EDefaultRenderPass.PostRender;
+        commands.Add<VPRC_RenderMeshesPass>().SetOptions((int)EDefaultRenderPass.PostRender, false);
         return commands;
     }
 }

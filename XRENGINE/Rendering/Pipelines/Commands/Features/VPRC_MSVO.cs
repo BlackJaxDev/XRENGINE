@@ -39,11 +39,11 @@ namespace XREngine.Rendering.Pipelines.Commands
 
         protected override void Execute()
         {
-            XRTexture? normalTex = Pipeline.GetTexture<XRTexture>(NormalTextureName);
-            XRTexture? depthViewTex = Pipeline.GetTexture<XRTexture>(DepthViewTextureName);
-            XRTexture? albedoTex = Pipeline.GetTexture<XRTexture>(AlbedoTextureName);
-            XRTexture? rmseTex = Pipeline.GetTexture<XRTexture>(RMSETextureName);
-            XRTexture? depthStencilTex = Pipeline.GetTexture<XRTexture>(DepthStencilTextureName);
+            XRTexture? normalTex = ActivePipelineInstance.GetTexture<XRTexture>(NormalTextureName);
+            XRTexture? depthViewTex = ActivePipelineInstance.GetTexture<XRTexture>(DepthViewTextureName);
+            XRTexture? albedoTex = ActivePipelineInstance.GetTexture<XRTexture>(AlbedoTextureName);
+            XRTexture? rmseTex = ActivePipelineInstance.GetTexture<XRTexture>(RMSETextureName);
+            XRTexture? depthStencilTex = ActivePipelineInstance.GetTexture<XRTexture>(DepthStencilTextureName);
 
             if (normalTex is null ||
                 depthViewTex is null ||
@@ -92,7 +92,7 @@ namespace XREngine.Rendering.Pipelines.Commands
             msvoTex.Name = MSVOIntensityTextureName;
             msvoTex.MinFilter = ETexMinFilter.Nearest;
             msvoTex.MagFilter = ETexMagFilter.Nearest;
-            Pipeline.SetTexture(msvoTex);
+            ActivePipelineInstance.SetTexture(msvoTex);
 
             RenderingParameters renderParams = new()
             {
@@ -141,23 +141,23 @@ namespace XREngine.Rendering.Pipelines.Commands
                 Name = GBufferFBOFBOName
             };
 
-            Pipeline.SetFBO(msvoGenFBO);
-            Pipeline.SetFBO(gbufferFBO);
+            ActivePipelineInstance.SetFBO(msvoGenFBO);
+            ActivePipelineInstance.SetFBO(gbufferFBO);
         }
 
         private void MSVOGen_SetUniforms(XRRenderProgram program)
         {
             program.Uniform("ScaleFactors", ScaleFactors);
 
-            var rc = Pipeline.RenderState.SceneCamera;
+            var rc = ActivePipelineInstance.RenderState.SceneCamera;
             if (rc is null)
                 return;
 
             rc.SetUniforms(program);
             rc.SetAmbientOcclusionUniforms(program);
 
-            program.Uniform(EEngineUniform.ScreenWidth.ToString(), (float)Pipeline.RenderState.CurrentRenderRegion.Width);
-            program.Uniform(EEngineUniform.ScreenHeight.ToString(), (float)Pipeline.RenderState.CurrentRenderRegion.Height);
+            program.Uniform(EEngineUniform.ScreenWidth.ToString(), (float)ActivePipelineInstance.RenderState.CurrentRenderRegion.Width);
+            program.Uniform(EEngineUniform.ScreenHeight.ToString(), (float)ActivePipelineInstance.RenderState.CurrentRenderRegion.Height);
             program.Uniform(EEngineUniform.ScreenOrigin.ToString(), 0.0f);
         }
     }

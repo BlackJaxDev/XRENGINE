@@ -21,6 +21,8 @@ namespace XREngine
         private static readonly EventList<XRWindow> _windows = [];
         private static UserSettings _userSettings = null!;
 
+        public static XREvent<UserSettings>? UserSettingsChanged;
+
         static Engine()
         {
             UserSettings = new UserSettings();
@@ -97,14 +99,20 @@ namespace XREngine
 
                 if (_userSettings is not null)
                     _userSettings.PropertyChanged -= HandleUserSettingsChanged;
-
                 _userSettings = value ?? new UserSettings();
                 _userSettings.PropertyChanged += HandleUserSettingsChanged;
-
-                Profiler.EnableFrameLogging = _userSettings.EnableFrameLogging;
-                Profiler.DebugOutputMinElapsedMs = _userSettings.DebugOutputMinElapsedMs;
-                Rendering.ApplyRenderPipelinePreference();
+                
+                OnUserSettingsChanged();
             }
+        }
+
+        private static void OnUserSettingsChanged()
+        {
+            Profiler.EnableFrameLogging = _userSettings.EnableFrameLogging;
+            Profiler.DebugOutputMinElapsedMs = _userSettings.DebugOutputMinElapsedMs;
+            Rendering.ApplyRenderPipelinePreference();
+            Rendering.ApplyGlobalIlluminationModePreference();
+            UserSettingsChanged?.Invoke(_userSettings);
         }
 
         private static void HandleUserSettingsChanged(object? sender, IXRPropertyChangedEventArgs e)
@@ -113,6 +121,9 @@ namespace XREngine
             {
                 case nameof(UserSettings.UseDebugOpaquePipeline):
                     Rendering.ApplyRenderPipelinePreference();
+                    break;
+                case nameof(UserSettings.GlobalIlluminationMode):
+                    Rendering.ApplyGlobalIlluminationModePreference();
                     break;
                 case nameof(UserSettings.EnableFrameLogging):
                     Profiler.EnableFrameLogging = UserSettings.EnableFrameLogging;
@@ -123,6 +134,7 @@ namespace XREngine
                 case null:
                 case "":
                     Rendering.ApplyRenderPipelinePreference();
+                    Rendering.ApplyGlobalIlluminationModePreference();
                     Profiler.EnableFrameLogging = UserSettings.EnableFrameLogging;
                     Profiler.DebugOutputMinElapsedMs = UserSettings.DebugOutputMinElapsedMs;
                     break;

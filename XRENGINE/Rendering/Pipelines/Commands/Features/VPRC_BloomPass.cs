@@ -106,7 +106,7 @@ namespace XREngine.Rendering.Pipelines.Commands
                 outputTexture = t;
             }
 
-            Pipeline.SetTexture(outputTexture);
+            ActivePipelineInstance.SetTexture(outputTexture);
 
             XRMaterial bloomBlurMat = new
             (
@@ -144,24 +144,24 @@ namespace XREngine.Rendering.Pipelines.Commands
             blur8.SetRenderTargets((outputAttach, EFrameBufferAttachment.ColorAttachment0, 3, -1));
             blur16.SetRenderTargets((outputAttach, EFrameBufferAttachment.ColorAttachment0, 4, -1));
 
-            Pipeline.SetFBO(blur1);
-            Pipeline.SetFBO(blur2);
-            Pipeline.SetFBO(blur4);
-            Pipeline.SetFBO(blur8);
-            Pipeline.SetFBO(blur16);
+            ActivePipelineInstance.SetFBO(blur1);
+            ActivePipelineInstance.SetFBO(blur2);
+            ActivePipelineInstance.SetFBO(blur4);
+            ActivePipelineInstance.SetFBO(blur8);
+            ActivePipelineInstance.SetFBO(blur16);
         }
 
         protected override void Execute()
         {
-            var inputFBO = Pipeline.GetFBO<XRQuadFrameBuffer>(InputFBOName);
+            var inputFBO = ActivePipelineInstance.GetFBO<XRQuadFrameBuffer>(InputFBOName);
             if (inputFBO is null)
                 return;
 
-            var blur16 = Pipeline.GetFBO<XRQuadFrameBuffer>(BloomBlur16FBOName);
-            var blur8 = Pipeline.GetFBO<XRQuadFrameBuffer>(BloomBlur8FBOName);
-            var blur4 = Pipeline.GetFBO<XRQuadFrameBuffer>(BloomBlur4FBOName);
-            var blur2 = Pipeline.GetFBO<XRQuadFrameBuffer>(BloomBlur2FBOName);
-            var blur1 = Pipeline.GetFBO<XRQuadFrameBuffer>(BloomBlur1FBOName);
+            var blur16 = ActivePipelineInstance.GetFBO<XRQuadFrameBuffer>(BloomBlur16FBOName);
+            var blur8 = ActivePipelineInstance.GetFBO<XRQuadFrameBuffer>(BloomBlur8FBOName);
+            var blur4 = ActivePipelineInstance.GetFBO<XRQuadFrameBuffer>(BloomBlur4FBOName);
+            var blur2 = ActivePipelineInstance.GetFBO<XRQuadFrameBuffer>(BloomBlur2FBOName);
+            var blur1 = ActivePipelineInstance.GetFBO<XRQuadFrameBuffer>(BloomBlur1FBOName);
 
             if (blur16 is null ||
                 blur8 is null ||
@@ -170,11 +170,11 @@ namespace XREngine.Rendering.Pipelines.Commands
                 blur1 is null)
             {
                 RegenerateFBOs(inputFBO.Width, inputFBO.Height);
-                blur16 = Pipeline.GetFBO<XRQuadFrameBuffer>(BloomBlur16FBOName);
-                blur8 = Pipeline.GetFBO<XRQuadFrameBuffer>(BloomBlur8FBOName);
-                blur4 = Pipeline.GetFBO<XRQuadFrameBuffer>(BloomBlur4FBOName);
-                blur2 = Pipeline.GetFBO<XRQuadFrameBuffer>(BloomBlur2FBOName);
-                blur1 = Pipeline.GetFBO<XRQuadFrameBuffer>(BloomBlur1FBOName);
+                blur16 = ActivePipelineInstance.GetFBO<XRQuadFrameBuffer>(BloomBlur16FBOName);
+                blur8 = ActivePipelineInstance.GetFBO<XRQuadFrameBuffer>(BloomBlur8FBOName);
+                blur4 = ActivePipelineInstance.GetFBO<XRQuadFrameBuffer>(BloomBlur4FBOName);
+                blur2 = ActivePipelineInstance.GetFBO<XRQuadFrameBuffer>(BloomBlur2FBOName);
+                blur1 = ActivePipelineInstance.GetFBO<XRQuadFrameBuffer>(BloomBlur1FBOName);
             }
             else if (inputFBO.Width != _lastWidth ||
                 inputFBO.Height != _lastHeight)
@@ -183,7 +183,7 @@ namespace XREngine.Rendering.Pipelines.Commands
             using (blur1!.BindForWritingState())
                 inputFBO!.Render();
 
-            var tex = Pipeline.GetTexture<XRTexture>(BloomOutputTextureName);
+            var tex = ActivePipelineInstance.GetTexture<XRTexture>(BloomOutputTextureName);
             tex?.GenerateMipmapsGPU();
 
             BloomScaledPass(blur16!, BloomRect16, 4);
@@ -192,11 +192,11 @@ namespace XREngine.Rendering.Pipelines.Commands
             BloomScaledPass(blur2!, BloomRect2, 1);
             //Don't blur original image, barely makes a difference to result
         }
-        private static void BloomScaledPass(XRQuadFrameBuffer fbo, BoundingRectangle rect, int mipmap)
+        private void BloomScaledPass(XRQuadFrameBuffer fbo, BoundingRectangle rect, int mipmap)
         {
             using (fbo.BindForWritingState())
             {
-                using (Pipeline.RenderState.PushRenderArea(rect))
+                using (ActivePipelineInstance.RenderState.PushRenderArea(rect))
                 {
                     BloomBlur(fbo, mipmap, 0.0f);
                     BloomBlur(fbo, mipmap, 1.0f);

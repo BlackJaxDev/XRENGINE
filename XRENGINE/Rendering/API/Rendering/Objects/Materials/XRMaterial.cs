@@ -251,7 +251,7 @@ namespace XREngine.Rendering
 
             XRMaterial material = new(parameters, ShaderHelper.LitColorFragDeferred()!)
             {
-                RenderPass = (int)EDefaultRenderPass.OpaqueDeferredLit
+                RenderPass = (int)EDefaultRenderPass.OpaqueDeferred
             };
 
             return material;
@@ -291,7 +291,7 @@ namespace XREngine.Rendering
 
             XRMaterial material = new(parameters, frag!);
             material.RenderPass = deferred
-                ? (int)EDefaultRenderPass.OpaqueDeferredLit
+                ? (int)EDefaultRenderPass.OpaqueDeferred
                 : (int)EDefaultRenderPass.OpaqueForward;
 
             return material;

@@ -1,5 +1,8 @@
 ﻿using System.Diagnostics.CodeAnalysis;
+using System.IO;
+using System.Threading;
 using Extensions;
+using XREngine;
 using XREngine.Components.Scene.Mesh;
 using XREngine.Data.Colors;
 using XREngine.Data.Rendering;
@@ -19,34 +22,23 @@ public class DefaultRenderPipeline : RenderPipeline
     private readonly NearToFarRenderCommandSorter _nearToFarSorter = new();
     private readonly FarToNearRenderCommandSorter _farToNearSorter = new();
 
-    private bool _gpuRenderDispatch = Engine.UserSettings.GPURenderDispatch;
-    private bool _enableRestirGI;
-    /// <summary>
-    /// If true, the render pipeline will use GPU-based rendering for dispatching commands.
-    /// </summary>
-    public bool GpuRenderDispatch
+    //TODO: these options below should not be controlled by this render pipeline object, 
+    // but rather in branches in the command chain.
+
+    private readonly Lazy<XRMaterial> _voxelConeTracingVoxelizationMaterial;
+
+    private EGlobalIlluminationMode _globalIlluminationMode;
+    public EGlobalIlluminationMode GlobalIlluminationMode
     {
-        get => _gpuRenderDispatch;
-        set
-        {
-            SetField(ref _gpuRenderDispatch, value);
-            _renderDispatchCommandType = null; // Invalidate cached type
-        }
+        get => _globalIlluminationMode;
+        set => SetField(ref _globalIlluminationMode, value);
     }
 
-    public bool EnableRestirGI
-    {
-        get => _enableRestirGI;
-        set => SetField(ref _enableRestirGI, value);
-    }
+    public bool UsesRestirGI => _globalIlluminationMode == EGlobalIlluminationMode.Restir;
+    public bool UsesVoxelConeTracing => _globalIlluminationMode == EGlobalIlluminationMode.VoxelConeTracing;
+    public bool UsesLightProbeGI => _globalIlluminationMode == EGlobalIlluminationMode.LightProbesAndIbl;
 
-    [DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicParameterlessConstructor)]
-    private Type? _renderDispatchCommandType = null;
-    [DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicParameterlessConstructor)]
-    public Type RenderDispatchCommandType 
-        => _renderDispatchCommandType ??= GpuRenderDispatch
-            ? typeof(VPRC_RenderMeshesPassGPU)
-            : typeof(VPRC_RenderMeshesPassCPU);
+    protected static bool GPURenderDispatch => Engine.UserSettings.GPURenderDispatch;
 
     private string BrightPassShaderName() => 
         //Stereo ? "BrightPassStereo.fs" : 
@@ -74,7 +66,7 @@ public class DefaultRenderPipeline : RenderPipeline
         {
             { (int)EDefaultRenderPass.PreRender, null },
             { (int)EDefaultRenderPass.Background, null },
-            { (int)EDefaultRenderPass.OpaqueDeferredLit, _nearToFarSorter },
+            { (int)EDefaultRenderPass.OpaqueDeferred, _nearToFarSorter },
             { (int)EDefaultRenderPass.DeferredDecals, _farToNearSorter },
             { (int)EDefaultRenderPass.OpaqueForward, _nearToFarSorter },
             { (int)EDefaultRenderPass.TransparentForward, _farToNearSorter },
@@ -114,18 +106,24 @@ public class DefaultRenderPipeline : RenderPipeline
     public const string UserInterfaceTextureName = "HUDTex";
     public const string BRDFTextureName = "BRDF";
     public const string RestirGITextureName = "RestirGITexture";
+    public const string VoxelConeTracingVolumeTextureName = "VoxelConeTracingVolume";
 
     public DefaultRenderPipeline(bool stereo = false) : base(true)
     {
         Stereo = stereo;
+        GlobalIlluminationMode = Engine.UserSettings.GlobalIlluminationMode;
+        _voxelConeTracingVoxelizationMaterial = new Lazy<XRMaterial>(CreateVoxelConeTracingVoxelizationMaterial, LazyThreadSafetyMode.PublicationOnly);
         CommandChain = GenerateCommandChain();
     }
+
+    internal XRMaterial GetVoxelConeTracingVoxelizationMaterial()
+        => _voxelConeTracingVoxelizationMaterial.Value;
 
     #region Command Chain Generation
 
     protected override ViewportRenderCommandContainer GenerateCommandChain()
     {
-        ViewportRenderCommandContainer c = [];
+        ViewportRenderCommandContainer c = new(this);
         var ifElse = c.Add<VPRC_IfElse>();
         ifElse.ConditionEvaluator = () => State.WindowViewport is not null;
         ifElse.TrueCommands = CreateViewportTargetCommands();
@@ -135,10 +133,10 @@ public class DefaultRenderPipeline : RenderPipeline
 
     public ViewportRenderCommandContainer CreateFBOTargetCommands()
     {
-        ViewportRenderCommandContainer c = [];
+        ViewportRenderCommandContainer c = new(this);
 
         c.Add<VPRC_SetClears>().Set(ColorF4.Transparent, 1.0f, 0);
-        c.Add<VPRC_RenderMeshesPassCPU>().RenderPass = (int)EDefaultRenderPass.PreRender;
+        c.Add<VPRC_RenderMeshesPass>().SetOptions((int)EDefaultRenderPass.PreRender, false);
 
         using (c.AddUsing<VPRC_PushOutputFBORenderArea>())
         {
@@ -148,63 +146,52 @@ public class DefaultRenderPipeline : RenderPipeline
                 c.Add<VPRC_ClearByBoundFBO>();
                 c.Add<VPRC_DepthTest>().Enable = true;
                 c.Add<VPRC_DepthWrite>().Allow = false;
-                c.Add(RenderDispatchCommandType, (int)EDefaultRenderPass.Background);
+                c.Add<VPRC_RenderMeshesPass>().SetOptions((int)EDefaultRenderPass.Background, GPURenderDispatch);
                 c.Add<VPRC_DepthWrite>().Allow = true;
-                c.Add(RenderDispatchCommandType, (int)EDefaultRenderPass.OpaqueDeferredLit);
-                c.Add(RenderDispatchCommandType, (int)EDefaultRenderPass.OpaqueForward);
-                c.Add(RenderDispatchCommandType, (int)EDefaultRenderPass.TransparentForward);
+                c.Add<VPRC_RenderMeshesPass>().SetOptions((int)EDefaultRenderPass.OpaqueDeferred, GPURenderDispatch);
+                c.Add<VPRC_RenderMeshesPass>().SetOptions((int)EDefaultRenderPass.OpaqueForward, GPURenderDispatch);
+                c.Add<VPRC_RenderMeshesPass>().SetOptions((int)EDefaultRenderPass.TransparentForward, GPURenderDispatch);
                 c.Add<VPRC_DepthFunc>().Comp = EComparison.Always;
-                c.Add(RenderDispatchCommandType, (int)EDefaultRenderPass.OnTopForward);
+                c.Add<VPRC_RenderMeshesPass>().SetOptions((int)EDefaultRenderPass.OnTopForward, GPURenderDispatch);
             }
         }
-        c.Add<VPRC_RenderMeshesPassCPU>().RenderPass = (int)EDefaultRenderPass.PostRender;
+        c.Add<VPRC_RenderMeshesPass>().SetOptions((int)EDefaultRenderPass.PostRender, GPURenderDispatch);
         return c;
     }
 
     private ViewportRenderCommandContainer CreateViewportTargetCommands()
     {
-        ViewportRenderCommandContainer c = [];
+        ViewportRenderCommandContainer c = new(this);
 
         CacheTextures(c);
 
+        c.Add<VPRC_VoxelConeTracingPass>().SetOptions(VoxelConeTracingVolumeTextureName,
+            [
+                (int)EDefaultRenderPass.OpaqueDeferred,
+                (int)EDefaultRenderPass.OpaqueForward
+            ],
+            GPURenderDispatch,
+            true);
+            
         //Create FBOs only after all their texture dependencies have been cached.
 
         c.Add<VPRC_SetClears>().Set(ColorF4.Transparent, 1.0f, 0);
-        c.Add<VPRC_RenderMeshesPassCPU>().RenderPass = (int)EDefaultRenderPass.PreRender;
+        c.Add<VPRC_RenderMeshesPass>().SetOptions((int)EDefaultRenderPass.PreRender, false);
 
         using (c.AddUsing<VPRC_PushViewportRenderArea>(t => t.UseInternalResolution = true))
         {
-            //Render to the SSAO FBO
-            var aoCmd = c.Add<VPRC_SSAOPass>();
-
-            aoCmd.SetOptions(
-                VPRC_SSAOPass.DefaultSamples,
-                VPRC_SSAOPass.DefaultNoiseWidth,
-                VPRC_SSAOPass.DefaultNoiseHeight,
-                VPRC_SSAOPass.DefaultMinSampleDist,
-                VPRC_SSAOPass.DefaultMaxSampleDist,
-                Stereo);
-
-            aoCmd.SetGBufferInputTextureNames(
-                NormalTextureName,
-                DepthViewTextureName,
-                AlbedoOpacityTextureName,
-                RMSETextureName,
-                DepthStencilTextureName);
-
-            aoCmd.SetOutputNames(
-                SSAONoiseTextureName,
-                AmbientOcclusionIntensityTextureName,
-                AmbientOcclusionFBOName,
-                AmbientOcclusionBlurFBOName,
-                GBufferFBOName);
+            //Render to the ambient occlusion FBO using SSAO or MVAO depending on the active settings
+            var ambientOcclusionChoice = c.Add<VPRC_IfElse>();
+            ambientOcclusionChoice.ConditionEvaluator = ShouldUseMVAO;
+            ambientOcclusionChoice.TrueCommands = CreateMVAOPassCommands();
+            ambientOcclusionChoice.FalseCommands = CreateSSAOPassCommands();
 
             using (c.AddUsing<VPRC_BindFBOByName>(x => x.SetOptions(AmbientOcclusionFBOName)))
             {
                 c.Add<VPRC_StencilMask>().Set(~0u);
                 c.Add<VPRC_DepthTest>().Enable = true;
-                c.Add(RenderDispatchCommandType, (int)EDefaultRenderPass.OpaqueDeferredLit);
-                c.Add(RenderDispatchCommandType, (int)EDefaultRenderPass.DeferredDecals);
+                c.Add<VPRC_RenderMeshesPass>().SetOptions((int)EDefaultRenderPass.OpaqueDeferred, GPURenderDispatch);
+                c.Add<VPRC_RenderMeshesPass>().SetOptions((int)EDefaultRenderPass.DeferredDecals, GPURenderDispatch);
             }
 
             c.Add<VPRC_DepthTest>().Enable = false;
@@ -248,15 +235,14 @@ public class DefaultRenderPipeline : RenderPipeline
 
                 //No depth writing for backgrounds (skybox)
                 c.Add<VPRC_DepthTest>().Enable = false;
-                c.Add(RenderDispatchCommandType, (int)EDefaultRenderPass.Background);
+                c.Add<VPRC_RenderMeshesPass>().SetOptions((int)EDefaultRenderPass.Background, GPURenderDispatch);
 
                 c.Add<VPRC_DepthTest>().Enable = true;
-                c.Add(RenderDispatchCommandType, (int)EDefaultRenderPass.OpaqueForward);
+                c.Add<VPRC_RenderMeshesPass>().SetOptions((int)EDefaultRenderPass.OpaqueForward, GPURenderDispatch);
 
                 //c.Add<VPRC_DepthTest>().Enable = true;
-                c.Add(RenderDispatchCommandType, (int)EDefaultRenderPass.TransparentForward);
-                c.Add(RenderDispatchCommandType, (int)EDefaultRenderPass.OnTopForward);
-
+                c.Add<VPRC_RenderMeshesPass>().SetOptions((int)EDefaultRenderPass.TransparentForward, GPURenderDispatch);
+                c.Add<VPRC_RenderMeshesPass>().SetOptions((int)EDefaultRenderPass.OnTopForward, GPURenderDispatch);
                 c.Add<VPRC_ReSTIRPass>();
 
                 c.Add<VPRC_RenderDebugShapes>();
@@ -295,7 +281,7 @@ public class DefaultRenderPipeline : RenderPipeline
                 c.Add<VPRC_RenderScreenSpaceUI>()/*.OutputTargetFBOName = UserInterfaceFBOName*/;
             }
         }
-        c.Add<VPRC_RenderMeshesPassCPU>().RenderPass = (int)EDefaultRenderPass.PostRender;
+        c.Add<VPRC_RenderMeshesPass>().SetOptions((int)EDefaultRenderPass.PostRender, false);
         return c;
     }
 
@@ -381,6 +367,12 @@ public class DefaultRenderPipeline : RenderPipeline
             NeedsRecreateTextureInternalSize,
             ResizeTextureInternalSize);
 
+        c.Add<VPRC_CacheOrCreateTexture>().SetOptions(
+            VoxelConeTracingVolumeTextureName,
+            CreateVoxelConeTracingVolumeTexture,
+            NeedsRecreateVoxelVolumeTexture,
+            ResizeVoxelVolumeTexture);
+
         //HDR Scene texture 2
         //c.Add<VPRC_CacheOrCreateTexture>().SetOptions(
         //    HDRSceneTexture2Name,
@@ -394,6 +386,83 @@ public class DefaultRenderPipeline : RenderPipeline
         //    CreateHUDTexture,
         //    NeedsRecreateTextureFullSize,
         //    ResizeTextureFullSize);
+    }
+
+    private ViewportRenderCommandContainer CreateSSAOPassCommands()
+    {
+        var container = new ViewportRenderCommandContainer(this);
+        ConfigureSSAOPass(container.Add<VPRC_SSAOPass>());
+        return container;
+    }
+
+    private ViewportRenderCommandContainer CreateMVAOPassCommands()
+    {
+        var container = new ViewportRenderCommandContainer(this);
+        ConfigureMVAOPass(container.Add<VPRC_MVAOPass>());
+        return container;
+    }
+
+    private void ConfigureSSAOPass(VPRC_SSAOPass pass)
+    {
+        pass.SetOptions(
+            VPRC_SSAOPass.DefaultSamples,
+            VPRC_SSAOPass.DefaultNoiseWidth,
+            VPRC_SSAOPass.DefaultNoiseHeight,
+            VPRC_SSAOPass.DefaultMinSampleDist,
+            VPRC_SSAOPass.DefaultMaxSampleDist,
+            Stereo);
+
+        pass.SetGBufferInputTextureNames(
+            NormalTextureName,
+            DepthViewTextureName,
+            AlbedoOpacityTextureName,
+            RMSETextureName,
+            DepthStencilTextureName);
+
+        pass.SetOutputNames(
+            SSAONoiseTextureName,
+            AmbientOcclusionIntensityTextureName,
+            AmbientOcclusionFBOName,
+            AmbientOcclusionBlurFBOName,
+            GBufferFBOName);
+    }
+
+    private void ConfigureMVAOPass(VPRC_MVAOPass pass)
+    {
+        pass.SetOptions(
+            VPRC_MVAOPass.DefaultSamples,
+            VPRC_MVAOPass.DefaultNoiseWidth,
+            VPRC_MVAOPass.DefaultNoiseHeight,
+            VPRC_MVAOPass.DefaultMinSampleDist,
+            VPRC_MVAOPass.DefaultMaxSampleDist,
+            Stereo);
+
+        pass.SetGBufferInputTextureNames(
+            NormalTextureName,
+            DepthViewTextureName,
+            AlbedoOpacityTextureName,
+            RMSETextureName,
+            DepthStencilTextureName);
+
+        pass.SetOutputNames(
+            SSAONoiseTextureName,
+            AmbientOcclusionIntensityTextureName,
+            AmbientOcclusionFBOName,
+            AmbientOcclusionBlurFBOName,
+            GBufferFBOName);
+    }
+
+    private static bool ShouldUseMVAO()
+    {
+        var aoSettings = State.SceneCamera?.PostProcessing?.AmbientOcclusion;
+
+        if (aoSettings is { Enabled: true })
+            return aoSettings.Type == AmbientOcclusionSettings.EType.MultiViewAmbientOcclusion;
+
+        if (aoSettings is { Enabled: false })
+            return false;
+
+        return Engine.UserSettings.AmbientOcclusionMode == EAmbientOcclusionMode.MultiView;
     }
 
     #endregion
@@ -647,6 +716,53 @@ public class DefaultRenderPipeline : RenderPipeline
             t.Name = RestirGITextureName;
             return t;
         }
+    }
+
+    private XRTexture CreateVoxelConeTracingVolumeTexture()
+    {
+        XRTexture3D texture = XRTexture3D.Create(128, 128, 128, EPixelInternalFormat.Rgba8, EPixelFormat.Rgba, EPixelType.UnsignedByte);
+        texture.MinFilter = ETexMinFilter.LinearMipmapLinear;
+        texture.MagFilter = ETexMagFilter.Linear;
+        texture.UWrap = ETexWrapMode.ClampToEdge;
+        texture.VWrap = ETexWrapMode.ClampToEdge;
+        texture.WWrap = ETexWrapMode.ClampToEdge;
+        texture.AutoGenerateMipmaps = true;
+        texture.Name = VoxelConeTracingVolumeTextureName;
+        return texture;
+    }
+
+    private XRMaterial CreateVoxelConeTracingVoxelizationMaterial()
+    {
+        XRShader vertexShader = XRShader.EngineShader(Path.Combine(SceneShaderPath, "VoxelConeTracing", "voxelization.vert"), EShaderType.Vertex);
+        XRShader geometryShader = XRShader.EngineShader(Path.Combine(SceneShaderPath, "VoxelConeTracing", "voxelization.geom"), EShaderType.Geometry);
+        XRShader fragmentShader = XRShader.EngineShader(Path.Combine(SceneShaderPath, "VoxelConeTracing", "voxelization.frag"), EShaderType.Fragment);
+
+        XRMaterial material = new(vertexShader, geometryShader, fragmentShader)
+        {
+            Name = "VoxelConeTracingVoxelization"
+        };
+
+        var options = material.RenderOptions;
+        options.RequiredEngineUniforms = EUniformRequirements.Camera | EUniformRequirements.Lights;
+        options.CullMode = ECullMode.None;
+        options.WriteRed = false;
+        options.WriteGreen = false;
+        options.WriteBlue = false;
+        options.WriteAlpha = false;
+        options.DepthTest.Enabled = ERenderParamUsage.Disabled;
+        options.DepthTest.UpdateDepth = false;
+        options.DepthTest.Function = EComparison.Always;
+
+        return material;
+    }
+
+    private static bool NeedsRecreateVoxelVolumeTexture(XRTexture texture)
+        => texture is not XRTexture3D tex3D || tex3D.Width != 128 || tex3D.Height != 128 || tex3D.Depth != 128;
+
+    private static void ResizeVoxelVolumeTexture(XRTexture texture)
+    {
+        if (texture is XRTexture3D tex3D)
+            tex3D.Resize(128, 128, 128);
     }
     private XRTexture CreateHDRSceneTexture()
     {
@@ -924,6 +1040,9 @@ public class DefaultRenderPipeline : RenderPipeline
     }
     private void LightCombineFBO_SettingUniforms(XRRenderProgram program)
     {
+        if (!UsesLightProbeGI)
+            return;
+
         if (RenderingWorld is null || RenderingWorld.Lights.LightProbes.Count == 0)
             return;
 

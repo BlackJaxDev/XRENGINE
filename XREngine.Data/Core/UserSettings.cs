@@ -27,6 +27,9 @@ namespace XREngine
         private bool _disableAudioOnDefocus = false;
         private float? _unfocusedTargetFramesPerSecond = null;
         private bool _useDebugOpaquePipeline = false;
+        private bool _gpuRenderDispatch = true;
+        private EGlobalIlluminationMode _globalIlluminationMode = EGlobalIlluminationMode.LightProbesAndIbl;
+        private EAmbientOcclusionMode _ambientOcclusionMode = EAmbientOcclusionMode.ScreenSpace;
 
         public EVSyncMode VSync
         {
@@ -94,7 +97,11 @@ namespace XREngine
             get => _unfocusedTargetFramesPerSecond;
             set => SetField(ref _unfocusedTargetFramesPerSecond, value);
         }
-        public bool GPURenderDispatch { get; set; } = true;
+        public bool GPURenderDispatch
+        {
+            get => _gpuRenderDispatch;
+            set => SetField(ref _gpuRenderDispatch, value);
+        }
         public bool UseDebugOpaquePipeline
         {
             get => _useDebugOpaquePipeline;
@@ -109,6 +116,16 @@ namespace XREngine
         {
             get => _enableGpuIndirectCpuFallback;
             set => SetField(ref _enableGpuIndirectCpuFallback, value);
+        }
+        public EGlobalIlluminationMode GlobalIlluminationMode
+        {
+            get => _globalIlluminationMode;
+            set => SetField(ref _globalIlluminationMode, value);
+        }
+        public EAmbientOcclusionMode AmbientOcclusionMode
+        {
+            get => _ambientOcclusionMode;
+            set => SetField(ref _ambientOcclusionMode, value);
         }
     }
 }

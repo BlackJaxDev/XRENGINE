@@ -10,11 +10,11 @@
             if (FrameBufferName is null)
                 return;
 
-            var inputFBO = Pipeline.GetFBO<XRQuadFrameBuffer>(FrameBufferName);
+            var inputFBO = ActivePipelineInstance.GetFBO<XRQuadFrameBuffer>(FrameBufferName);
             if (inputFBO is null)
                 return;
 
-            inputFBO.Render(TargetFrameBufferName != null ? Pipeline.GetFBO<XRFrameBuffer>(TargetFrameBufferName) : null);
+            inputFBO.Render(TargetFrameBufferName != null ? ActivePipelineInstance.GetFBO<XRFrameBuffer>(TargetFrameBufferName) : null);
         }
     }
 }

@@ -41,20 +41,20 @@ public class UserInterfaceRenderPipeline : RenderPipeline
 
     protected override ViewportRenderCommandContainer GenerateCommandChain()
     {
-        ViewportRenderCommandContainer c = [];
+        ViewportRenderCommandContainer c = new(this);
         var ifElse = c.Add<VPRC_IfElse>();
         ifElse.ConditionEvaluator = () => State.WindowViewport is not null;
         ifElse.TrueCommands = CreateViewportTargetCommands();
-        ifElse.FalseCommands = CreateFBOTargetCommands();
+        ifElse.FalseCommands = CreateFBOTargetCommands(this);
         return c;
     }
 
-    public static ViewportRenderCommandContainer CreateFBOTargetCommands()
+    public static ViewportRenderCommandContainer CreateFBOTargetCommands(RenderPipeline? pipeline = null)
     {
-        ViewportRenderCommandContainer c = [];
+        ViewportRenderCommandContainer c = new(pipeline);
 
         c.Add<VPRC_SetClears>().Set(ColorF4.Red, 1.0f, 0);
-        c.Add<VPRC_RenderMeshesPassCPU>().RenderPass = (int)EDefaultRenderPass.PreRender;
+        c.Add<VPRC_RenderMeshesPass>().RenderPass = (int)EDefaultRenderPass.PreRender;
 
         using (c.AddUsing<VPRC_PushOutputFBORenderArea>())
         {
@@ -67,28 +67,28 @@ public class UserInterfaceRenderPipeline : RenderPipeline
                 c.Add<VPRC_DepthWrite>().Allow = true;
 
                 c.Add<VPRC_DepthTest>().Enable = false;
-                c.Add<VPRC_RenderMeshesPassCPU>().RenderPass = (int)EDefaultRenderPass.Background;
+                c.Add<VPRC_RenderMeshesPass>().RenderPass = (int)EDefaultRenderPass.Background;
                 c.Add<VPRC_DepthWrite>().Allow = true;
-                c.Add<VPRC_RenderMeshesPassCPU>().RenderPass = (int)EDefaultRenderPass.OpaqueForward;
-                c.Add<VPRC_RenderMeshesPassCPU>().RenderPass = (int)EDefaultRenderPass.TransparentForward;
+                c.Add<VPRC_RenderMeshesPass>().RenderPass = (int)EDefaultRenderPass.OpaqueForward;
+                c.Add<VPRC_RenderMeshesPass>().RenderPass = (int)EDefaultRenderPass.TransparentForward;
                 c.Add<VPRC_DepthFunc>().Comp = EComparison.Always;
-                c.Add<VPRC_RenderMeshesPassCPU>().RenderPass = (int)EDefaultRenderPass.OnTopForward;
+                c.Add<VPRC_RenderMeshesPass>().RenderPass = (int)EDefaultRenderPass.OnTopForward;
             }
         }
-        c.Add<VPRC_RenderMeshesPassCPU>().RenderPass = (int)EDefaultRenderPass.PostRender;
+        c.Add<VPRC_RenderMeshesPass>().RenderPass = (int)EDefaultRenderPass.PostRender;
         return c;
     }
 
     private ViewportRenderCommandContainer CreateViewportTargetCommands()
     {
-        ViewportRenderCommandContainer c = [];
+        ViewportRenderCommandContainer c = new(this);
 
         CacheTextures(c);
 
         //Create FBOs only after all their texture dependencies have been cached.
 
         c.Add<VPRC_SetClears>().Set(ColorF4.Red, 1.0f, 0);
-        c.Add<VPRC_RenderMeshesPassCPU>().RenderPass = (int)EDefaultRenderPass.PreRender;
+        c.Add<VPRC_RenderMeshesPass>().RenderPass = (int)EDefaultRenderPass.PreRender;
         
         using (c.AddUsing<VPRC_PushViewportRenderArea>(t => t.UseInternalResolution = false))
         {
@@ -101,14 +101,14 @@ public class UserInterfaceRenderPipeline : RenderPipeline
                 c.Add<VPRC_DepthWrite>().Allow = true;
 
                 c.Add<VPRC_DepthTest>().Enable = false;
-                c.Add<VPRC_RenderMeshesPassCPU>().RenderPass = (int)EDefaultRenderPass.Background;
+                c.Add<VPRC_RenderMeshesPass>().RenderPass = (int)EDefaultRenderPass.Background;
                 c.Add<VPRC_DepthTest>().Enable = true;
-                c.Add<VPRC_RenderMeshesPassCPU>().RenderPass = (int)EDefaultRenderPass.OpaqueForward;
-                c.Add<VPRC_RenderMeshesPassCPU>().RenderPass = (int)EDefaultRenderPass.TransparentForward;
-                c.Add<VPRC_RenderMeshesPassCPU>().RenderPass = (int)EDefaultRenderPass.OnTopForward;
+                c.Add<VPRC_RenderMeshesPass>().RenderPass = (int)EDefaultRenderPass.OpaqueForward;
+                c.Add<VPRC_RenderMeshesPass>().RenderPass = (int)EDefaultRenderPass.TransparentForward;
+                c.Add<VPRC_RenderMeshesPass>().RenderPass = (int)EDefaultRenderPass.OnTopForward;
             }
         }
-        c.Add<VPRC_RenderMeshesPassCPU>().RenderPass = (int)EDefaultRenderPass.PostRender;
+        c.Add<VPRC_RenderMeshesPass>().RenderPass = (int)EDefaultRenderPass.PostRender;
         return c;
     }
 

@@ -30,7 +30,7 @@
             if (Name is null)
                 return;
 
-            if (Pipeline.TryGetFBO(Name, out var fbo))
+            if (ActivePipelineInstance.TryGetFBO(Name, out var fbo))
             {
                 if (fbo is null || SizeVerifier is null)
                     return;
@@ -44,7 +44,7 @@
             {
                 fbo = FrameBufferFactory();
                 fbo.Name = Name;
-                Pipeline.SetFBO(fbo);
+                ActivePipelineInstance.SetFBO(fbo);
             }
         }
     }
