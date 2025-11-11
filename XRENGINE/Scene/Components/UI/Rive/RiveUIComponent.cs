@@ -3,6 +3,7 @@ using Silk.NET.OpenGL;
 using SkiaSharp;
 using System.Collections.Concurrent;
 using System.Numerics;
+using System.Runtime.InteropServices;
 using XREngine.Core.Attributes;
 using XREngine.Data.Colors;
 using XREngine.Data.Geometry;
@@ -59,8 +60,15 @@ public class RiveUIComponent : UIInteractableComponent
 
     public void SetSource(string newSourceName)
     {
+        if (!TryCreateScene())
+            return;
+
         // Clear the current Scene while we wait for the new one to load.
-        _sceneActionsQueue.Enqueue(() => _scene = new RiveSharp.Scene());
+        _sceneActionsQueue.Enqueue(() =>
+        {
+            _scene = null;
+            TryCreateScene();
+        });
         _activeSourceFileLoader?.Cancel();
         _activeSourceFileLoader = new CancellationTokenSource();
         // Defer state machine inputs here until the new file is loaded.
@@ -71,6 +79,8 @@ public class RiveUIComponent : UIInteractableComponent
     protected override void OnPropertyChanged<T>(string? propName, T prev, T field)
     {
         base.OnPropertyChanged(propName, prev, field);
+        if (!TryCreateScene())
+            return;
         switch (propName)
         {
             case nameof(ArtboardName):
@@ -84,7 +94,97 @@ public class RiveUIComponent : UIInteractableComponent
     }
 
     // _scene is used on the render thread exclusively.
-    private RiveSharp.Scene _scene = new();
+    private RiveSharp.Scene? _scene;
+    private bool _riveUnavailable;
+    private static bool _reportedMissingNative;
+    private static bool _nativeAttempted;
+    private static bool _nativeAvailable;
+    private static IntPtr _nativeHandle = IntPtr.Zero;
+
+    private bool TryCreateScene()
+    {
+        if (_riveUnavailable)
+            return false;
+
+        if (_scene is not null)
+            return true;
+
+        if (!EnsureRiveNative())
+        {
+            ReportMissingRive(new DllNotFoundException("rive.dll could not be located."));
+            return false;
+        }
+
+        try
+        {
+            _scene = new RiveSharp.Scene();
+            return true;
+        }
+        catch (TypeInitializationException ex) when (ex.InnerException is DllNotFoundException inner)
+        {
+            ReportMissingRive(inner);
+        }
+        catch (DllNotFoundException ex)
+        {
+            ReportMissingRive(ex);
+        }
+
+        _riveUnavailable = true;
+        return false;
+    }
+
+    private void ReportMissingRive(DllNotFoundException ex)
+    {
+        _riveUnavailable = true;
+        if (_reportedMissingNative)
+            return;
+
+        _reportedMissingNative = true;
+        Debug.LogWarning($"Rive native library failed to load: {ex.Message}. Rive UI component will be disabled.");
+    }
+
+    private RiveSharp.Scene? GetActiveScene()
+        => TryCreateScene() ? _scene : null;
+
+    private static bool EnsureRiveNative()
+    {
+        if (_nativeAttempted)
+            return _nativeAvailable;
+
+        _nativeAttempted = true;
+
+        if (NativeLibrary.TryLoad("rive", out _nativeHandle))
+        {
+            _nativeAvailable = true;
+            return true;
+        }
+
+        string baseDir = AppContext.BaseDirectory;
+        string currentDir = Environment.CurrentDirectory;
+        string arch = RuntimeInformation.ProcessArchitecture.ToString().ToLowerInvariant();
+        string[] candidatePaths =
+        [
+            Path.Combine(baseDir, "rive.dll"),
+            Path.Combine(currentDir, "rive.dll"),
+            Path.Combine(baseDir, "runtimes", $"win-{arch}", "native", "rive.dll"),
+            Path.Combine(currentDir, "runtimes", $"win-{arch}", "native", "rive.dll"),
+        ];
+
+        foreach (string path in candidatePaths)
+        {
+            if (!File.Exists(path))
+                continue;
+
+            if (NativeLibrary.TryLoad(path, out _nativeHandle))
+            {
+                _nativeAvailable = true;
+                return true;
+            }
+        }
+
+        _nativeAvailable = false;
+        return false;
+    }
 
     // Source actions originating from other threads must be funneled through this queue.
     readonly ConcurrentQueue<Action> _sceneActionsQueue = new();
@@ -200,20 +300,31 @@ public class RiveUIComponent : UIInteractableComponent
     // State machine inputs to set once the current async file load finishes.
     private List<Action>? _deferredSMInputsDuringFileLoad = null;
 
-    private void EnqueueStateMachineInput(Action stateMachineInput)
+    private void EnqueueStateMachineInput(Action<RiveSharp.Scene> stateMachineInput)
     {
+        if (_riveUnavailable)
+            return;
+
+        void Wrapped()
+        {
+            var scene = GetActiveScene();
+            if (scene is null)
+                return;
+            stateMachineInput(scene);
+        }
+
         if (_deferredSMInputsDuringFileLoad != null)
-            _deferredSMInputsDuringFileLoad.Add(stateMachineInput); // A source file is currently loading async. Don't set this input until it completes.
+            _deferredSMInputsDuringFileLoad.Add(Wrapped); // A source file is currently loading async. Don't set this input until it completes.
         else
-            _sceneActionsQueue.Enqueue(stateMachineInput);
+            _sceneActionsQueue.Enqueue(Wrapped);
     }
 
     public void SetBool(string name, bool value)
-        => EnqueueStateMachineInput(() => _scene.SetBool(name, value));
+        => EnqueueStateMachineInput(scene => scene.SetBool(name, value));
     public void SetNumber(string name, float value)
-        => EnqueueStateMachineInput(() => _scene.SetNumber(name, value));
+        => EnqueueStateMachineInput(scene => scene.SetNumber(name, value));
     public void FireTrigger(string name)
-        => EnqueueStateMachineInput(() => _scene.FireTrigger(name));
+        => EnqueueStateMachineInput(scene => scene.FireTrigger(name));
 
     private delegate void PointerHandler(Vec2D pos);
 
@@ -230,20 +341,24 @@ public class RiveUIComponent : UIInteractableComponent
     {
         base.MouseMoved(lastPosLocal, posLocal);
         _mousePosition = posLocal; // Update the mouse position for the next pointer event.
-        HandlePointerEvent(_scene.PointerMove);
+        HandlePointerEvent((scene, vec) => scene.PointerMove(vec));
     }
 
     private void MouseUp()
-        => HandlePointerEvent(_scene.PointerUp);
+        => HandlePointerEvent((scene, vec) => scene.PointerUp(vec));
     private void MouseDown()
-        => HandlePointerEvent(_scene.PointerDown);
+        => HandlePointerEvent((scene, vec) => scene.PointerDown(vec));
 
-    private void HandlePointerEvent(Action<Vec2D> handler)
+    private void HandlePointerEvent(Action<RiveSharp.Scene, Vec2D> handler)
     {
         // Ignore pointer events while a new scene is loading.
         if (_activeSourceFileLoader != null)
             return;
         
+        var scene = GetActiveScene();
+        if (scene is null)
+            return;
+
         // Capture the viewSize and pointerPos at the time of the event.
         var viewSize = BoundableTransform.ActualSize;
         var pointerPos = _mousePosition;
@@ -252,9 +367,13 @@ public class RiveUIComponent : UIInteractableComponent
         // Forward the pointer event to the render thread.
         void Action()
         {
-            Mat2D mat = ComputeAlignment(viewSize.X, viewSize.Y);
+            Mat2D mat = Renderer.ComputeAlignment(
+                Fit.Contain,
+                Alignment.Center,
+                new RiveSharp.AABB(0, 0, (float)viewSize.X, (float)viewSize.Y),
+                new RiveSharp.AABB(0, 0, scene.Width, scene.Height));
             if (mat.Invert(out var inverse))
-                handler(inverse * new Vec2D(pointerPos.X, pointerPos.Y));
+                handler(scene, inverse * new Vec2D(pointerPos.X, pointerPos.Y));
         }
         _sceneActionsQueue.Enqueue(Action);
     }
@@ -268,6 +387,10 @@ public class RiveUIComponent : UIInteractableComponent
 
     private void RenderFBO()
     {
+        var scene = GetActiveScene();
+        if (scene is null)
+            return;
+
         var viewSize = BoundableTransform.ActualSize;
         if (viewSize.X <= float.Epsilon || viewSize.Y <= float.Epsilon)
         {
@@ -287,7 +410,7 @@ public class RiveUIComponent : UIInteractableComponent
         if (!VerifyContext() || !VerifyRenderTarget(sKSizeI))
             return;
 
-        RenderToCanvas();
+        RenderToCanvas(scene);
 
         _context?.Flush();
     }
@@ -323,7 +446,7 @@ public class RiveUIComponent : UIInteractableComponent
 
     private Renderer? _renderer;
 
-    private void RenderToCanvas()
+    private void RenderToCanvas(RiveSharp.Scene initialScene)
     {
         if (_renderTarget is null || _renderFBO is null || _context is null)
         {
@@ -354,15 +477,19 @@ public class RiveUIComponent : UIInteractableComponent
             while (_sceneActionsQueue.TryDequeue(out var action))
                 action();
 
+            var scene = _scene ?? initialScene;
+            if (scene is null)
+                return;
+
             _surface.Canvas.Clear();
             _renderer!.Save();
-            _renderer.Transform(ComputeAlignment(_renderTarget.Width, _renderTarget.Height));
+            _renderer.Transform(ComputeAlignment(scene, _renderTarget.Width, _renderTarget.Height));
 
             float accumDt = GetRenderDelta();
             if (accumDt > 0.0f)
-                _scene.AdvanceAndApply(accumDt);
+                scene.AdvanceAndApply(accumDt);
 
-            _scene.Draw(_renderer);
+            scene.Draw(_renderer);
 
             _renderer.Restore();
         }
@@ -486,29 +613,48 @@ public class RiveUIComponent : UIInteractableComponent
     // Called from the render thread. Updates _scene according to updates.
     private void UpdateScene(SceneUpdates updates, byte[]? sourceFileData = null)
     {
-        if (updates >= SceneUpdates.File)
-            _scene.LoadFile(sourceFileData);
+        var scene = GetActiveScene();
+        if (scene is null)
+            return;
+
+        if (updates >= SceneUpdates.File && sourceFileData is not null)
+            scene.LoadFile(sourceFileData);
         
         if (updates >= SceneUpdates.Artboard)
-            _scene.LoadArtboard(_artboardName);
+            scene.LoadArtboard(_artboardName);
         
         if (updates >= SceneUpdates.AnimationOrStateMachine)
         {
             if (!string.IsNullOrEmpty(_stateMachineName))
-                _scene.LoadStateMachine(_stateMachineName);
+                scene.LoadStateMachine(_stateMachineName);
             else if (!string.IsNullOrEmpty(_animationName))
-                _scene.LoadAnimation(_animationName);
-            else if (!_scene.LoadStateMachine(null))
-                _scene.LoadAnimation(null);
+                scene.LoadAnimation(_animationName);
+            else if (!scene.LoadStateMachine(null))
+                scene.LoadAnimation(null);
         }
     }
 
+    private Mat2D ComputeAlignment(RiveSharp.Scene scene, double width, double height)
+        => Renderer.ComputeAlignment(
+            Fit.Contain,
+            Alignment.Center,
+            new RiveSharp.AABB(0, 0, (float)width, (float)height),
+            new RiveSharp.AABB(0, 0, scene.Width, scene.Height));
+
     // Called from the render thread. Computes alignment based on the size of _scene.
     private Mat2D ComputeAlignment(double width, double height)
-        => ComputeAlignment(new RiveSharp.AABB(0, 0, (float)width, (float)height));
+    {
+        var scene = _scene;
+        return scene is null ? Mat2D.Identity : ComputeAlignment(scene, width, height);
+    }
 
     // Called from the render thread.
     // Computes alignment based on the size of _scene.
     private Mat2D ComputeAlignment(RiveSharp.AABB frame)
-        => Renderer.ComputeAlignment(Fit.Contain, Alignment.Center, frame, new RiveSharp.AABB(0, 0, _scene.Width, _scene.Height));
+    {
+        var scene = _scene;
+        return scene is null
+            ? Mat2D.Identity
+            : Renderer.ComputeAlignment(Fit.Contain, Alignment.Center, frame, new RiveSharp.AABB(0, 0, scene.Width, scene.Height));
+    }
 }
