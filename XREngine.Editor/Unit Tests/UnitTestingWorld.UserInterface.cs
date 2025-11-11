@@ -1,4 +1,5 @@
-﻿using Silk.NET.Input;
+﻿using ImGuiNET;
+using Silk.NET.Input;
 using System.Numerics;
 using XREngine.Actors.Types;
 using XREngine.Components;
@@ -20,6 +21,7 @@ public static partial class UnitTestingWorld
         private const bool DockFPSTopLeft = false;
 
         private static readonly Queue<float> _fpsAvg = new();
+        private static int _imguiClickCount = 0;
         private static void TickFPS(UITextComponent t)
         {
             _fpsAvg.Enqueue(1.0f / Engine.Time.Timer.Render.Delta);
@@ -85,7 +87,7 @@ public static partial class UnitTestingWorld
             canvasTfm.CameraDrawSpaceDistance = 10.0f;
             canvasTfm.Padding = new Vector4(0.0f);
 
-            if (Toggles.RiveUI || Toggles.AddEditorUI)
+            if (Toggles.RiveUI || Toggles.DearImGuiUI || Toggles.AddEditorUI)
                 rootCanvasNode.AddComponent<UICanvasInputComponent>()!.OwningPawn = pawnForInput;
 
             if (Toggles.VisualizeQuadtree)
@@ -126,6 +128,28 @@ public static partial class UnitTestingWorld
                 {
                     Toggles.RiveUI = false;
                     riveNode.Parent = null;
+                }
+            }
+
+            if (UnitTestingWorld.Toggles.DearImGuiUI)
+            {
+                SceneNode dearImGuiNode = new(rootCanvasNode) { Name = "Dear ImGui Node" };
+                var tfm = dearImGuiNode.SetTransform<UIBoundableTransform>();
+                tfm.MinAnchor = new Vector2(0.0f, 0.0f);
+                tfm.MaxAnchor = new Vector2(1.0f, 1.0f);
+                tfm.NormalizedPivot = new Vector2(0.0f, 0.0f);
+                tfm.Width = null;
+                tfm.Height = null;
+
+                var dearImGuiComponent = dearImGuiNode.AddComponent<DearImGuiComponent>();
+                if (dearImGuiComponent is null)
+                {
+                    Toggles.DearImGuiUI = false;
+                    dearImGuiNode.Parent = null;
+                }
+                else
+                {
+                    dearImGuiComponent.Draw += DrawDearImGuiTest;
                 }
             }
             
@@ -238,6 +262,24 @@ public static partial class UnitTestingWorld
                 TransformTool3D.GetInstance(node.Transform);
             else
                 node.Activated += Edit;
+        }
+
+        private static void DrawDearImGuiTest()
+        {
+            if (!ImGui.Begin("Unit Testing UI"))
+            {
+                ImGui.End();
+                return;
+            }
+
+            ImGui.Text("Dear ImGui test window");
+            if (ImGui.Button("Increment Counter"))
+                _imguiClickCount++;
+
+            ImGui.SameLine();
+            ImGui.Text($"Count: {_imguiClickCount}");
+
+            ImGui.End();
         }
     }
 }

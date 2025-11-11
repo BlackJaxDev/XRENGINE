@@ -43,6 +43,7 @@
   "RenderTransformLines": false,
   "RenderTransformPoints": false,
   "RenderWindowsWhileInVR": true,
+  "DearImGuiUI": true,
   "RiveUI": false,
   "SinglePassStereoVR": false,
   "Skybox": true,

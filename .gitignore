@@ -372,3 +372,4 @@ XRENGINE/Rendering/GI/build/
 Build/Submodules/OpenVR.NET/
 Build/Tools/
 ShaderCache/
+XREngine.Editor/imgui.ini
