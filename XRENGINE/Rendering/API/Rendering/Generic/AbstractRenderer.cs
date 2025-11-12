@@ -1,16 +1,20 @@
 ﻿using ImageMagick;
+using ImGuiNET;
 using Silk.NET.Core.Attributes;
 using Silk.NET.Core.Native;
 using Silk.NET.Windowing;
+using System;
 using System.Collections.Concurrent;
 using System.Numerics;
 using System.Runtime.InteropServices;
+using XREngine.Components;
 using XREngine.Data.Colors;
 using XREngine.Data.Core;
 using XREngine.Data.Geometry;
 using XREngine.Data.Rendering;
 using XREngine.Data.Transforms.Rotations;
 using XREngine.Rendering.Models.Materials;
+using XREngine.Rendering.UI;
 
 namespace XREngine.Rendering
 {
@@ -65,6 +69,110 @@ namespace XREngine.Rendering
         /// Use this to retrieve the currently rendering window renderer.
         /// </summary>
         public static AbstractRenderer? Current { get; internal set; }
+
+        private float _lastImGuiTimestamp = float.MinValue;
+
+        protected interface IImGuiRendererBackend
+        {
+            void MakeCurrent();
+            void Update(float deltaSeconds);
+            void Render();
+        }
+
+        protected virtual bool SupportsImGui => false;
+
+        protected virtual bool ShouldRenderImGui(XRViewport? viewport)
+            => viewport?.Window is not null;
+
+        protected virtual IImGuiRendererBackend? GetImGuiBackend(XRViewport? viewport)
+            => null;
+
+        protected void ResetImGuiFrameMarker()
+            => _lastImGuiTimestamp = float.MinValue;
+
+        protected static void ConfigureImGuiDisplay(UICanvasComponent? canvas, XRViewport? viewport, XRCamera? camera)
+        {
+            var io = ImGui.GetIO();
+
+            Vector2 displaySize;
+            Vector2 displayPos = Vector2.Zero;
+            Vector2 framebufferScale = Vector2.One;
+
+            if (canvas?.CanvasTransform is { } canvasTransform)
+            {
+                displaySize = canvasTransform.ActualSize;
+                if (canvasTransform.DrawSpace != ECanvasDrawSpace.Screen)
+                    displayPos = canvasTransform.ActualLocalBottomLeftTranslation;
+
+                if (viewport is not null && displaySize.X > 0 && displaySize.Y > 0)
+                {
+                    var region = viewport.Region;
+                    framebufferScale = new Vector2(
+                        region.Width / displaySize.X,
+                        region.Height / displaySize.Y);
+                }
+            }
+            else if (viewport is not null)
+            {
+                var region = viewport.Region;
+                displaySize = new Vector2(region.Width, region.Height);
+            }
+            else if (camera?.Parameters is XROrthographicCameraParameters ortho)
+            {
+                displaySize = new Vector2(ortho.Width, ortho.Height);
+                displayPos = ortho.Origin;
+            }
+            else
+            {
+                displaySize = Vector2.One;
+            }
+
+            if (displaySize.X <= 0 || displaySize.Y <= 0)
+                displaySize = Vector2.One;
+
+            io.DisplaySize = displaySize;
+            //io.DisplayPos = displayPos;
+            io.DisplayFramebufferScale = framebufferScale;
+        }
+
+        public bool TryRenderImGui(XRViewport? viewport, UICanvasComponent? canvas, XRCamera? camera, Action draw)
+        {
+            if (!SupportsImGui)
+                return false;
+
+            if (Engine.Rendering.State.IsShadowPass)
+                return false;
+
+            if (!ShouldRenderImGui(viewport))
+                return false;
+
+            var backend = GetImGuiBackend(viewport);
+            if (backend is null)
+                return false;
+
+            float timestamp = Engine.Time.Timer.Render.LastTimestamp;
+            if (MathF.Abs(timestamp - _lastImGuiTimestamp) <= float.Epsilon)
+                return false;
+
+            _lastImGuiTimestamp = timestamp;
+
+            var previousContext = ImGui.GetCurrentContext();
+            backend.MakeCurrent();
+
+            try
+            {
+                ConfigureImGuiDisplay(canvas, viewport, camera);
+                backend.Update(Engine.Time.Timer.Render.Delta);
+                draw();
+                backend.Render();
+            }
+            finally
+            {
+                ImGui.SetCurrentContext(previousContext);
+            }
+
+            return true;
+        }
 
         protected Dictionary<string, bool> _verifiedExtensions = [];
         protected void LogExtension(string name, bool exists)

@@ -127,7 +127,12 @@ namespace XREngine.Timers
         private void UpdateThread()
         {
             while (IsRunning)
-                DispatchUpdate();
+            {
+                //using (Engine.Profiler.Start("EngineTimer.UpdateThread.DispatchUpdate"))
+                //{
+                    DispatchUpdate();
+                //}
+            }
         }
         /// <summary>
         /// This thread waits for the render thread to finish swapping the last frame's prerender buffers, 
@@ -137,13 +142,27 @@ namespace XREngine.Timers
         {
             while (IsRunning)
             {
-                //Collects visible object and generates render commands for the game's current state
-                DispatchCollectVisible();
+                using (Engine.Profiler.Start("EngineTimer.CollectVisibleThread"))
+                {
+                    //Collects visible object and generates render commands for the game's current state
+                    using (Engine.Profiler.Start("EngineTimer.CollectVisibleThread.DispatchCollectVisible"))
+                    {
+                        DispatchCollectVisible();
+                    }
 
-                //Wait for the render thread to swap update buffers with render buffers
-                _renderDone.Wait(-1);
-                _renderDone.Reset();
-                DispatchSwapBuffers();
+                    //Wait for the render thread to swap update buffers with render buffers
+                    //using (Engine.Profiler.Start("EngineTimer.CollectVisibleThread.WaitForRender"))
+                    //{
+                        _renderDone.Wait(-1);
+                    //}
+
+                    _renderDone.Reset();
+
+                    using (Engine.Profiler.Start("EngineTimer.CollectVisibleThread.DispatchSwapBuffers"))
+                    {
+                        DispatchSwapBuffers();
+                    }
+                }
 
                 //Inform the render thread that the swap is done
                 _swapDone.Set();
@@ -153,7 +172,12 @@ namespace XREngine.Timers
         private void JobManagerLoop()
         {
             while (IsRunning)
-                Engine.Jobs.Process();
+            {
+                //using (Engine.Profiler.Start("EngineTimer.JobManager.Process"))
+                //{
+                    Engine.Jobs.Process();
+                //}
+            }
         }
 
         /// <summary>
@@ -171,7 +195,10 @@ namespace XREngine.Timers
                 
                 FixedUpdateManager.Delta = elapsed;
                 FixedUpdateManager.LastTimestamp = timestamp;
-                await DispatchFixedUpdate();
+                using (Engine.Profiler.Start("EngineTimer.FixedUpdateThread.DispatchFixedUpdate"))
+                {
+                    await DispatchFixedUpdate();
+                }
                 timestamp = Time();
                 FixedUpdateManager.ElapsedTime = timestamp - FixedUpdateManager.LastTimestamp;
             }
@@ -266,6 +293,8 @@ namespace XREngine.Timers
         {
             try
             {
+                using var sample = Engine.Profiler.Start("EngineTimer.DispatchCollectVisible");
+
                 float timestamp = Time();
                 float elapsed = (timestamp - Collect.LastTimestamp).Clamp(0.0f, 1.0f);
                 Collect.Delta = elapsed;
@@ -291,6 +320,8 @@ namespace XREngine.Timers
         {
             try
             {
+                //using var sample = Engine.Profiler.Start("EngineTimer.DispatchUpdate");
+
                 int runningSlowlyRetries = 4;
 
                 float timestamp = Time();
@@ -299,12 +330,25 @@ namespace XREngine.Timers
                 //Raise UpdateFrame events until we catch up with the target update period
                 while (IsRunning && elapsed > 0.0f && elapsed + _updateTimeDiff >= TargetUpdatePeriod)
                 {
+                    //using var updateIterationSample = Engine.Profiler.Start("EngineTimer.DispatchUpdate.Iteration");
+
                     Update.Delta = elapsed;
                     Update.LastTimestamp = timestamp;
 
-                    PreUpdateFrame?.Invoke();
-                    UpdateFrame?.Invoke();
-                    PostUpdateFrame?.Invoke();
+                    using (Engine.Profiler.Start("EngineTimer.DispatchUpdate.PreUpdate"))
+                    {
+                        PreUpdateFrame?.Invoke();
+                    }
+
+                    using (Engine.Profiler.Start("EngineTimer.DispatchUpdate.Update"))
+                    {
+                        UpdateFrame?.Invoke();
+                    }
+
+                    using (Engine.Profiler.Start("EngineTimer.DispatchUpdate.PostUpdate"))
+                    {
+                        PostUpdateFrame?.Invoke();
+                    }
 
                     timestamp = Time();
                     Update.ElapsedTime = timestamp - Update.LastTimestamp;

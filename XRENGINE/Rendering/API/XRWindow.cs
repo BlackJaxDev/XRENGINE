@@ -108,6 +108,8 @@ namespace XREngine.Rendering
         public bool IsTickLinked { get; private set; } = false;
         private void VerifyTick()
         {
+            using var sample = Engine.Profiler.Start("XRWindow.VerifyTick");
+
             if (ShouldBeRendering())
             {
                 if (IsTickLinked)
@@ -128,8 +130,13 @@ namespace XREngine.Rendering
 
         public void RenderViewports()
         {
+            using var sample = Engine.Profiler.Start("XRWindow.RenderViewportsLoop");
+
             foreach (var viewport in Viewports)
+            {
+                using var viewportSample = Engine.Profiler.Start($"XRViewport.Render[{viewport.Index}]");
                 viewport.Render();
+            }
         }
 
         private void UnlinkWindow()
@@ -174,6 +181,8 @@ namespace XREngine.Rendering
 
         private void EndTick()
         {
+            using var sample = Engine.Profiler.Start("XRWindow.EndTick");
+
             Engine.Time.Timer.SwapBuffers -= SwapBuffers;
             Engine.Time.Timer.RenderFrame -= RenderFrame;
             //Engine.Rendering.DestroyObjectsForRenderer(Renderer);
@@ -183,6 +192,8 @@ namespace XREngine.Rendering
 
         private void BeginTick()
         {
+            using var sample = Engine.Profiler.Start("XRWindow.BeginTick");
+
             Renderer.Initialize();
             Engine.Time.Timer.SwapBuffers += SwapBuffers;
             Engine.Time.Timer.RenderFrame += RenderFrame;
@@ -195,8 +206,17 @@ namespace XREngine.Rendering
 
         private void RenderFrame()
         {
-            Window.DoEvents();
-            Window.DoRender();
+            using var sample = Engine.Profiler.Start("XRWindow.Timer.RenderFrame");
+
+            {
+                using var eventsSample = Engine.Profiler.Start("XRWindow.Timer.DoEvents");
+                Window.DoEvents();
+            }
+
+            {
+                using var doRenderSample = Engine.Profiler.Start("XRWindow.Timer.DoRender");
+                Window.DoRender();
+            }
         }
 
         public event Action? RenderViewportsCallback;
@@ -204,17 +224,26 @@ namespace XREngine.Rendering
         //private float _lastFrameTime = 0.0f;
         private void RenderCallback(double delta)
         {
-            //using var d = Profiler.Start();
+            using var frameSample = Engine.Profiler.Start("XRWindow.RenderFrame");
 
             try
             {
                 Renderer.Active = true;
                 AbstractRenderer.Current = Renderer;
 
+                using var preRenderSample = Engine.Profiler.Start("XRWindow.GlobalPreRender");
                 TargetWorldInstance?.GlobalPreRender();
+
+                using var renderCallbackSample = Engine.Profiler.Start("XRWindow.RenderViewportsCallback");
                 RenderViewportsCallback?.Invoke();
+
                 if (!Engine.VRState.IsInVR || Engine.Rendering.Settings.RenderWindowsWhileInVR)
+                {
+                    using var renderViewportsSample = Engine.Profiler.Start("XRWindow.RenderViewports");
                     RenderViewports();
+                }
+
+                using var postRenderSample = Engine.Profiler.Start("XRWindow.GlobalPostRender");
                 TargetWorldInstance?.GlobalPostRender();
             }
             finally
@@ -229,6 +258,8 @@ namespace XREngine.Rendering
 
         private void FramebufferResizeCallback(Vector2D<int> obj)
         {
+            using var sample = Engine.Profiler.Start("XRWindow.FramebufferResize");
+
             //Debug.Out("Window resized to {0}x{1}", obj.X, obj.Y);
             Viewports.ForEach(vp => vp.Resize((uint)obj.X, (uint)obj.Y, true));
             Renderer.FrameBufferInvalidated();
@@ -244,6 +275,8 @@ namespace XREngine.Rendering
 
         private XRViewport AddViewportForPlayer(LocalPlayerController? controller, bool autoSizeAllViewports)
         {
+            using var sample = Engine.Profiler.Start("XRWindow.AddViewportForPlayer");
+
             XRViewport newViewport = XRViewport.ForTotalViewportCount(this, Viewports.Count);
             newViewport.AssociatedPlayer = controller;
             Viewports.Add(newViewport);
@@ -261,6 +294,8 @@ namespace XREngine.Rendering
         /// </summary>
         public void ResizeAllViewportsAccordingToPlayers()
         {
+            using var sample = Engine.Profiler.Start("XRWindow.ResizeAllViewportsAccordingToPlayers");
+
             LocalPlayerController[] players = [.. Viewports.Select(x => x.AssociatedPlayer).Where(x => x is not null).Distinct().OrderBy(x => (int)x!.LocalPlayerIndex)];
             foreach (var viewport in Viewports)
                 viewport.Destroy();
@@ -268,6 +303,7 @@ namespace XREngine.Rendering
             for (int i = 0; i < players.Length; i++)
                 AddViewportForPlayer(players[i], false);
         }
+
 
         public void RegisterLocalPlayer(ELocalPlayerIndex playerIndex, bool autoSizeAllViewports)
             => RegisterController(Engine.State.GetOrCreateLocalPlayer(playerIndex), autoSizeAllViewports);
@@ -351,6 +387,8 @@ namespace XREngine.Rendering
 
         private void ResizeViewports(Vector2D<int> obj)
         {
+            using var sample = Engine.Profiler.Start("XRWindow.ResizeViewports");
+
             void SetSize(XRViewport vp)
             {
                 vp.Resize((uint)obj.X, (uint)obj.Y, true);
@@ -361,7 +399,10 @@ namespace XREngine.Rendering
         }
 
         public void UpdateViewportSizes()
-            => ResizeViewports(Window.Size);
+        {
+            using var sample = Engine.Profiler.Start("XRWindow.UpdateViewportSizes");
+            ResizeViewports(Window.Size);
+        }
 
         public void SetWorld(XRWorld? targetWorld)
         {
