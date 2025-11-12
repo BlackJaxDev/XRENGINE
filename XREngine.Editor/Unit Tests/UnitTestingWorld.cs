@@ -35,6 +35,8 @@ public static partial class UnitTestingWorld
         if (Toggles.RenderPhysicsDebug)
             s.PhysicsVisualizeSettings.SetAllTrue();
 
+        Engine.Profiler.EnableFrameLogging = Toggles.EnableProfilerLogging;
+
         string desktopDir = Environment.GetFolderPath(Environment.SpecialFolder.DesktopDirectory);
         //UnityPackageExtractor.ExtractAsync(Path.Combine(desktopDir, "Animations.unitypackage"), Path.Combine(desktopDir, "Extracted"), true);
 

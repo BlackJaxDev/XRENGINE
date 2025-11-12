@@ -5,7 +5,6 @@ using XREngine.Data.Rendering;
 using XREngine.Rendering;
 using XREngine.Rendering.Commands;
 using XREngine.Rendering.Info;
-using XREngine.Rendering.OpenGL;
 using XREngine.Rendering.UI;
 
 namespace XREngine.Components;
@@ -51,7 +50,7 @@ public class DearImGuiComponent : UIComponent, IRenderable
 
     private void RenderImGui()
     {
-        if (AbstractRenderer.Current is not OpenGLRenderer renderer)
+        if (AbstractRenderer.Current is not { } renderer)
             return;
 
         var viewport = Engine.Rendering.State.RenderingViewport;

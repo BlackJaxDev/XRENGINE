@@ -1,6 +1,5 @@
 ﻿using Extensions;
 using ImageMagick;
-using ImGuiNET;
 using Silk.NET.OpenGL;
 using Silk.NET.OpenGL.Extensions.ARB;
 using Silk.NET.OpenGL.Extensions.ImGui;
@@ -76,7 +75,23 @@ namespace XREngine.Rendering.OpenGL
         }
 
         private ImGuiController? _imguiController;
-        private float _lastImGuiTimestamp = float.MinValue;
+        private OpenGLImGuiBackend? _imguiBackend;
+
+        protected override bool SupportsImGui => true;
+
+        private sealed class OpenGLImGuiBackend(ImGuiController controller) : IImGuiRendererBackend
+        {
+            private readonly ImGuiController _controller = controller;
+
+            public void MakeCurrent()
+                => _controller.MakeCurrent();
+
+            public void Update(float deltaSeconds)
+                => _controller.Update(deltaSeconds);
+
+            public void Render()
+                => _controller.Render();
+        }
 
         private ImGuiController? GetImGuiController()
         {
@@ -90,89 +105,21 @@ namespace XREngine.Rendering.OpenGL
 
             controller = new ImGuiController(Api, XRWindow.Window, input);
             _imguiController = controller;
+            _imguiBackend = null;
             return controller;
         }
 
-        private static void ConfigureImGuiDisplay(UICanvasComponent? canvas, XRViewport? viewport, XRCamera? camera)
+        private OpenGLImGuiBackend? GetOrCreateImGuiBackend()
         {
-            var io = ImGui.GetIO();
-
-            Vector2 displaySize;
-            Vector2 displayPos = Vector2.Zero;
-            Vector2 framebufferScale = Vector2.One;
-
-            if (canvas?.CanvasTransform is { } canvasTransform)
-            {
-                displaySize = canvasTransform.ActualSize;
-                if (canvasTransform.DrawSpace != ECanvasDrawSpace.Screen)
-                    displayPos = canvasTransform.ActualLocalBottomLeftTranslation;
-
-                if (viewport is not null && displaySize.X > 0 && displaySize.Y > 0)
-                {
-                    var region = viewport.Region;
-                    framebufferScale = new Vector2(
-                        region.Width / displaySize.X,
-                        region.Height / displaySize.Y);
-                }
-            }
-            else if (viewport is not null)
-            {
-                var region = viewport.Region;
-                displaySize = new Vector2(region.Width, region.Height);
-            }
-            else if (camera?.Parameters is XROrthographicCameraParameters ortho)
-            {
-                displaySize = new Vector2(ortho.Width, ortho.Height);
-                displayPos = ortho.Origin;
-            }
-            else
-            {
-                displaySize = Vector2.One;
-            }
-
-            if (displaySize.X <= 0 || displaySize.Y <= 0)
-                displaySize = Vector2.One;
-
-            io.DisplaySize = displaySize;
-            //io.DisplayPos = displayPos;
-            io.DisplayFramebufferScale = framebufferScale;
-        }
-
-        public bool TryRenderImGui(XRViewport? viewport, UICanvasComponent? canvas, XRCamera? camera, Action draw)
-        {
-            if (Engine.Rendering.State.IsShadowPass)
-                return false;
-
-            if (viewport?.Window is null)
-                return false;
-
             var controller = GetImGuiController();
             if (controller is null)
-                return false;
+                return null;
 
-            float timestamp = Engine.Time.Timer.Render.LastTimestamp;
-            if (MathF.Abs(timestamp - _lastImGuiTimestamp) <= float.Epsilon)
-                return false;
-
-            _lastImGuiTimestamp = timestamp;
-
-            var previousContext = ImGui.GetCurrentContext();
-            controller.MakeCurrent();
-
-            try
-            {
-                ConfigureImGuiDisplay(canvas, viewport, camera);
-                controller.Update(Engine.Time.Timer.Render.Delta);
-                draw();
-                controller.Render();
-            }
-            finally
-            {
-                ImGui.SetCurrentContext(previousContext);
-            }
-
-            return true;
+            return _imguiBackend ??= new OpenGLImGuiBackend(controller);
         }
+
+        protected override IImGuiRendererBackend? GetImGuiBackend(XRViewport? viewport)
+            => GetOrCreateImGuiBackend();
 
         private static void InitGL(GL api)
         {
@@ -433,7 +380,8 @@ namespace XREngine.Rendering.OpenGL
         {
             _imguiController?.Dispose();
             _imguiController = null;
-            _lastImGuiTimestamp = float.MinValue;
+            _imguiBackend = null;
+            ResetImGuiFrameMarker();
         }
 
         protected override void WindowRenderCallback(double delta)

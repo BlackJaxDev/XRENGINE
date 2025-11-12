@@ -1,4 +1,6 @@
 ﻿using System.Collections.Concurrent;
+using System.Collections.Generic;
+using System.Linq;
 using System.Runtime.CompilerServices;
 using System.Text;
 using XREngine.Core;
@@ -33,6 +35,11 @@ namespace XREngine
 
             private readonly ConcurrentDictionary<Guid, CodeProfilerTimer> _asyncTimers = [];
             private readonly ThreadLocal<ThreadContext> _threadContext;
+
+            private readonly object _snapshotLock = new();
+            private ProfilerFrameSnapshot? _lastFrameSnapshot;
+            private readonly Dictionary<int, Queue<float>> _threadFrameHistory = [];
+            private const int ThreadHistoryCapacity = 240;
 
             public delegate void DelTimerCallback(string? methodName, float elapsedMs);
 
@@ -82,6 +89,9 @@ namespace XREngine
 
                 internal void AddChild(CodeProfilerTimer child)
                     => _children.Add(child);
+
+                internal IReadOnlyList<CodeProfilerTimer> Children => _children;
+                internal void ClearChildren() => _children.Clear();
 
                 public void OnPoolableDestroyed() { }
                 public void OnPoolableReleased() { }
@@ -140,21 +150,55 @@ namespace XREngine
             public void ClearFrameLog()
             {
                 StringBuilder sb = new();
+                Dictionary<int, List<ProfilerNodeSnapshot>> frameThreads = [];
+
                 _completedEntriesPrinting.Clear();
                 _completedEntriesPrinting = Interlocked.Exchange(ref _completedEntries, _completedEntriesPrinting);
+
                 while (_completedEntriesPrinting.TryDequeue(out var entry))
                 {
-                    if (entry.ElapsedMs >= DebugOutputMinElapsedMs)
+                    var snapshot = BuildSnapshot(entry, DebugOutputMinElapsedMs, sb, out _);
+                    if (!frameThreads.TryGetValue(entry.ThreadId, out var list))
                     {
-                        sb.Append($"{new(' ', entry.Depth * 2)}{entry.Name} took {FormatMs(entry.ElapsedMs)}\n");
-                        entry.PrintSubEntries(sb, _timerPool, DebugOutputMinElapsedMs);
+                        list = [];
+                        frameThreads[entry.ThreadId] = list;
                     }
+                    list.Add(snapshot);
                     _timerPool.Release(entry);
                 }
+
                 string logStr = sb.ToString();
                 if (!string.IsNullOrWhiteSpace(logStr))
                     Debug.Out(logStr);
                 sb.Clear();
+
+                ProfilerFrameSnapshot? frameSnapshot = null;
+                if (frameThreads.Count > 0)
+                {
+                    List<ProfilerThreadSnapshot> threads = new(frameThreads.Count);
+                    foreach (var kvp in frameThreads)
+                        threads.Add(new ProfilerThreadSnapshot(kvp.Key, kvp.Value.AsReadOnly()));
+
+                    frameSnapshot = new ProfilerFrameSnapshot(Time.Timer.Time(), threads.AsReadOnly());
+                }
+
+                lock (_snapshotLock)
+                {
+                    _lastFrameSnapshot = frameSnapshot;
+
+                    if (frameSnapshot is not null)
+                    {
+                        foreach (var threadSnapshot in frameSnapshot.Threads)
+                        {
+                            if (!_threadFrameHistory.TryGetValue(threadSnapshot.ThreadId, out var history))
+                                history = _threadFrameHistory[threadSnapshot.ThreadId] = new Queue<float>(ThreadHistoryCapacity);
+
+                            history.Enqueue(threadSnapshot.TotalTimeMs);
+                            while (history.Count > ThreadHistoryCapacity)
+                                history.Dequeue();
+                        }
+                    }
+                }
             }
 
             private static string FormatMs(float elapsedMs)
@@ -177,7 +221,7 @@ namespace XREngine
                 if (!EnableFrameLogging)
                     return StateObject.New();
 
-                var context = _threadContext.Value;
+                var context = _threadContext.Value!;
                 var stack = context.ActiveStack;
                 var parent = stack.Count > 0 ? stack.Peek() : null;
 
@@ -200,7 +244,7 @@ namespace XREngine
             /// <param name="entry"></param>
             private void Stop(CodeProfilerTimer entry)
             {
-                var context = _threadContext.Value;
+                var context = _threadContext.Value!;
                 var stack = context.ActiveStack;
                 CodeProfilerTimer? parent = null;
 
@@ -306,6 +350,76 @@ namespace XREngine
                 }
 
                 return 0.0f;
+            }
+
+            public ProfilerFrameSnapshot? GetLastFrameSnapshot()
+            {
+                lock (_snapshotLock)
+                    return _lastFrameSnapshot;
+            }
+
+            public Dictionary<int, float[]> GetThreadHistorySnapshot()
+            {
+                lock (_snapshotLock)
+                    return _threadFrameHistory.ToDictionary(static kvp => kvp.Key, static kvp => kvp.Value.ToArray());
+            }
+
+            private ProfilerNodeSnapshot BuildSnapshot(CodeProfilerTimer timer, float threshold, StringBuilder logBuilder, out bool subtreeLogged)
+            {
+                bool wroteHere = false;
+                if (timer.ElapsedMs >= threshold)
+                {
+                    logBuilder.Append($"{new string(' ', timer.Depth * 2)}{timer.Name} took {FormatMs(timer.ElapsedMs)}\n");
+                    wroteHere = true;
+                }
+
+                var children = timer.Children;
+                int childCount = children.Count;
+                List<ProfilerNodeSnapshot> childSnapshots = new(childCount);
+                float remaining = timer.ElapsedMs;
+                bool childLogged = false;
+
+                for (int i = 0; i < childCount; ++i)
+                {
+                    var childTimer = children[i];
+                    var childSnapshot = BuildSnapshot(childTimer, threshold, logBuilder, out bool childSubtreeLogged);
+                    childSnapshots.Add(childSnapshot);
+
+                    if (childSubtreeLogged)
+                        childLogged = true;
+
+                    remaining -= childTimer.ElapsedMs;
+                    _timerPool.Release(childTimer);
+                }
+
+                timer.ClearChildren();
+
+                if (wroteHere && childLogged && remaining >= threshold)
+                    logBuilder.Append($"{new string(' ', (timer.Depth + 1) * 2)}<Remaining>: {FormatMs(remaining)}\n");
+
+                subtreeLogged = wroteHere || childLogged;
+
+                return new ProfilerNodeSnapshot(timer.Name, timer.ElapsedMs, childSnapshots.AsReadOnly());
+            }
+
+            public sealed class ProfilerFrameSnapshot(float frameTime, IReadOnlyList<ProfilerThreadSnapshot> threads)
+            {
+                public float FrameTime { get; } = frameTime;
+                public IReadOnlyList<ProfilerThreadSnapshot> Threads { get; } = threads;
+            }
+
+            public sealed class ProfilerThreadSnapshot(int threadId, IReadOnlyList<ProfilerNodeSnapshot> rootNodes)
+            {
+                public int ThreadId { get; } = threadId;
+                public IReadOnlyList<ProfilerNodeSnapshot> RootNodes { get; } = rootNodes;
+                public float TotalTimeMs { get; } = rootNodes.Sum(static n => n.ElapsedMs);
+            }
+
+            public sealed class ProfilerNodeSnapshot(string name, float elapsedMs, IReadOnlyList<ProfilerNodeSnapshot> children)
+            {
+                public string Name { get; } = name;
+                public float ElapsedMs { get; } = elapsedMs;
+                public IReadOnlyList<ProfilerNodeSnapshot> Children { get; } = children;
             }
         }
     }

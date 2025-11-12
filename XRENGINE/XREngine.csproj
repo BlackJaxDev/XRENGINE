@@ -148,8 +148,8 @@
     <PackageReference Include="Silk.NET.Vulkan.Extensions.KHR" Version="2.22.0" />
     <PackageReference Include="Silk.NET.Vulkan.Extensions.NV" Version="2.22.0" />
     <PackageReference Include="Silk.NET.Vulkan.Extensions.NVX" Version="2.22.0" />
-    <PackageReference Include="Silk.NET.Vulkan.Extensions.QNX" Version="2.22.0" />
-    <PackageReference Include="Silk.NET.Vulkan.Extensions.VALVE" Version="2.22.0" />
+  <PackageReference Include="Silk.NET.Vulkan.Extensions.QNX" Version="2.22.0" />
+  <PackageReference Include="Silk.NET.Vulkan.Extensions.VALVE" Version="2.22.0" />
     <PackageReference Include="Silk.NET.Vulkan.Loader.Native" Version="2024.10.25" />
     <PackageReference Include="Silk.NET.WGL.Extensions.ARB" Version="2.22.0" />
     <PackageReference Include="Silk.NET.Windowing" Version="2.22.0" />

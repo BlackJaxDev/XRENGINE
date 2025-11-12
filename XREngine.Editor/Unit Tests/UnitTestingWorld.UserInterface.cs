@@ -1,6 +1,11 @@
 ﻿using ImGuiNET;
 using Silk.NET.Input;
+using System.Collections.Generic;
+using System.Globalization;
+using System.Linq;
 using System.Numerics;
+using System.Reflection;
+using System.Runtime.CompilerServices;
 using XREngine.Actors.Types;
 using XREngine.Components;
 using XREngine.Editor.UI.Components;
@@ -18,10 +23,22 @@ public static partial class UnitTestingWorld
 {
     public static class UserInterface
     {
-        private const bool DockFPSTopLeft = false;
+    private static readonly bool DockFPSTopLeft = false;
 
-        private static readonly Queue<float> _fpsAvg = new();
-        private static int _imguiClickCount = 0;
+    private static readonly Queue<float> _fpsAvg = new();
+    private static int _imguiClickCount = 0;
+    private static DateTime _worstFrameWindowStart = DateTime.MinValue;
+    private static float _worstFrameWindowMaxMs = 0.0f;
+    private static float _worstFrameDisplayMs = 0.0f;
+    private static Engine.CodeProfiler.ProfilerFrameSnapshot? _worstFrameWindowSnapshot;
+    private static Engine.CodeProfiler.ProfilerFrameSnapshot? _worstFrameDisplaySnapshot;
+    private static readonly TimeSpan WorstFrameWindowDuration = TimeSpan.FromSeconds(0.5);
+    private static bool _profilerDockLeftEnabled = false;
+    private static bool _profilerUndockNextFrame = false;
+    private static float _profilerDockWidth = 480.0f;
+    private static bool _profilerDockDragging = false;
+    private static float _profilerDockDragStartWidth = 0.0f;
+    private static float _profilerDockDragStartMouseX = 0.0f;
         private static void TickFPS(UITextComponent t)
         {
             _fpsAvg.Enqueue(1.0f / Engine.Time.Timer.Render.Delta);
@@ -87,7 +104,7 @@ public static partial class UnitTestingWorld
             canvasTfm.CameraDrawSpaceDistance = 10.0f;
             canvasTfm.Padding = new Vector4(0.0f);
 
-            if (Toggles.RiveUI || Toggles.DearImGuiUI || Toggles.AddEditorUI)
+            if (Toggles.RiveUI || Toggles.DearImGuiUI || Toggles.DearImGuiProfiler || Toggles.AddEditorUI)
                 rootCanvasNode.AddComponent<UICanvasInputComponent>()!.OwningPawn = pawnForInput;
 
             if (Toggles.VisualizeQuadtree)
@@ -131,7 +148,8 @@ public static partial class UnitTestingWorld
                 }
             }
 
-            if (UnitTestingWorld.Toggles.DearImGuiUI)
+            bool addDearImGui = UnitTestingWorld.Toggles.DearImGuiUI || UnitTestingWorld.Toggles.DearImGuiProfiler;
+            if (addDearImGui)
             {
                 SceneNode dearImGuiNode = new(rootCanvasNode) { Name = "Dear ImGui Node" };
                 var tfm = dearImGuiNode.SetTransform<UIBoundableTransform>();
@@ -145,6 +163,7 @@ public static partial class UnitTestingWorld
                 if (dearImGuiComponent is null)
                 {
                     Toggles.DearImGuiUI = false;
+                    Toggles.DearImGuiProfiler = false;
                     dearImGuiNode.Parent = null;
                 }
                 else
@@ -266,20 +285,443 @@ public static partial class UnitTestingWorld
 
         private static void DrawDearImGuiTest()
         {
-            if (!ImGui.Begin("Unit Testing UI"))
+            bool showUnitWindow = Toggles.DearImGuiUI;
+            bool showProfiler = Toggles.DearImGuiProfiler;
+
+            Engine.Profiler.EnableFrameLogging = Toggles.EnableProfilerLogging || showProfiler;
+
+            if (!showUnitWindow && !showProfiler)
+                return;
+
+            if (showUnitWindow)
+            {
+                bool windowOpen = ImGui.Begin("Unit Testing UI");
+                if (windowOpen)
+                {
+                    ImGui.Text("Dear ImGui test window");
+                    if (ImGui.Button("Increment Counter"))
+                        _imguiClickCount++;
+
+                    ImGui.SameLine();
+                    ImGui.Text($"Count: {_imguiClickCount}");
+
+                    ImGui.Separator();
+                    DrawSettingsDebugPanel();
+                }
+                ImGui.End();
+            }
+
+            if (showProfiler)
+                DrawProfilerOverlay();
+        }
+
+        private static void DrawProfilerOverlay()
+        {
+            var overlayViewport = ImGui.GetMainViewport();
+            ImGuiWindowFlags windowFlags = ImGuiWindowFlags.None;
+            if (_profilerDockLeftEnabled)
+            {
+                float maxWidth = MathF.Max(240.0f, overlayViewport.WorkSize.X - 50.0f);
+                float dockWidth = Math.Clamp(_profilerDockWidth, 240.0f, maxWidth);
+                _profilerDockWidth = dockWidth;
+                ImGui.SetNextWindowPos(overlayViewport.WorkPos, ImGuiCond.Always);
+                ImGui.SetNextWindowSize(new Vector2(dockWidth, overlayViewport.WorkSize.Y), ImGuiCond.Always);
+                ImGui.SetNextWindowViewport(overlayViewport.ID);
+                windowFlags |= ImGuiWindowFlags.NoScrollbar | ImGuiWindowFlags.NoScrollWithMouse | ImGuiWindowFlags.NoMove;
+            }
+            else if (_profilerUndockNextFrame)
+            {
+                var viewport = ImGui.GetMainViewport();
+                var defaultSize = new Vector2(640.0f, 480.0f);
+                var pos = viewport.WorkPos + (viewport.WorkSize - defaultSize) * 0.5f;
+                ImGui.SetNextWindowPos(pos, ImGuiCond.Always);
+                ImGui.SetNextWindowSize(defaultSize, ImGuiCond.Always);
+                _profilerUndockNextFrame = false;
+            }
+
+            var frameSnapshot = Engine.Profiler.GetLastFrameSnapshot();
+            var history = Engine.Profiler.GetThreadHistorySnapshot();
+
+            if (!ImGui.Begin("Engine Profiler", windowFlags))
             {
                 ImGui.End();
                 return;
             }
 
-            ImGui.Text("Dear ImGui test window");
-            if (ImGui.Button("Increment Counter"))
-                _imguiClickCount++;
+            if (frameSnapshot is null || frameSnapshot.Threads.Count == 0)
+            {
+                ImGui.Text("No profiler samples captured yet.");
+                ImGui.End();
+                return;
+            }
 
-            ImGui.SameLine();
-            ImGui.Text($"Count: {_imguiClickCount}");
+            UpdateWorstFrameStatistics(frameSnapshot);
+            var snapshotForDisplay = GetSnapshotForHierarchy(frameSnapshot, out float hierarchyFrameMs, out bool showingWorstWindowSample);
+            float worstFrameToDisplay = hierarchyFrameMs;
+
+            ImGui.Text($"Captured at {frameSnapshot.FrameTime:F3}s");
+            ImGui.Text($"Worst frame (0.5s window): {worstFrameToDisplay:F3} ms");
+            if (showingWorstWindowSample)
+                ImGui.Text("Hierarchy shows worst frame snapshot from the rolling window.");
+            if (ImGui.Button(_profilerDockLeftEnabled ? "Undock" : "Dock Left"))
+            {
+                if (_profilerDockLeftEnabled)
+                {
+                    _profilerDockLeftEnabled = false;
+                    _profilerUndockNextFrame = true;
+                }
+                else
+                {
+                    float maxWidth = MathF.Max(240.0f, overlayViewport.WorkSize.X - 50.0f);
+                    _profilerDockWidth = Math.Clamp(_profilerDockWidth, 240.0f, maxWidth);
+                    _profilerDockLeftEnabled = true;
+                }
+            }
+
+            ImGui.Separator();
+
+            foreach (var thread in snapshotForDisplay.Threads.OrderBy(t => t.ThreadId))
+            {
+                string headerLabel = $"Thread {thread.ThreadId} ({thread.TotalTimeMs:F3} ms)";
+                if (ImGui.CollapsingHeader($"{headerLabel}##ProfilerThread{thread.ThreadId}", ImGuiTreeNodeFlags.DefaultOpen))
+                {
+                    if (history.TryGetValue(thread.ThreadId, out var samples) && samples.Length > 0)
+                    {
+                        float min = samples.Min();
+                        float max = samples.Max();
+                        if (!float.IsFinite(min) || !float.IsFinite(max))
+                        {
+                            min = 0.0f;
+                            max = 0.0f;
+                        }
+                        if (MathF.Abs(max - min) < 0.001f)
+                            max = min + 0.001f;
+
+                        ImGui.PlotLines($"Frame time (ms)##ProfilerThreadPlot{thread.ThreadId}", ref samples[0], samples.Length, 0, null, min, max, new Vector2(-1.0f, 70.0f));
+                    }
+
+                    ImGui.Separator();
+                    ImGui.Text("Hierarchy");
+                    foreach (var root in thread.RootNodes)
+                        DrawProfilerNode(root, $"T{thread.ThreadId}");
+                }
+            }
+
+            if (_profilerDockLeftEnabled)
+                HandleProfilerDockResize(overlayViewport);
 
             ImGui.End();
+        }
+
+        private static void DrawProfilerNode(Engine.CodeProfiler.ProfilerNodeSnapshot node, string path)
+        {
+            string id = $"{path}/{node.Name}";
+            bool hasChildren = node.Children.Count > 0;
+            string label = $"{node.Name} ({node.ElapsedMs:F3} ms)##{id}";
+
+            if (hasChildren)
+            {
+                if (ImGui.TreeNodeEx(label, ImGuiTreeNodeFlags.DefaultOpen))
+                {
+                    foreach (var child in node.Children)
+                        DrawProfilerNode(child, id);
+                    ImGui.TreePop();
+                }
+            }
+            else
+            {
+                ImGui.TreeNodeEx(label, ImGuiTreeNodeFlags.Leaf | ImGuiTreeNodeFlags.Bullet | ImGuiTreeNodeFlags.NoTreePushOnOpen);
+            }
+        }
+
+        private static Engine.CodeProfiler.ProfilerFrameSnapshot GetSnapshotForHierarchy(Engine.CodeProfiler.ProfilerFrameSnapshot currentSnapshot, out float frameMs, out bool usingWorstSnapshot)
+        {
+            if (_worstFrameDisplaySnapshot is not null)
+            {
+                usingWorstSnapshot = true;
+                frameMs = _worstFrameDisplayMs;
+                return _worstFrameDisplaySnapshot;
+            }
+
+            usingWorstSnapshot = false;
+            frameMs = currentSnapshot.Threads.Max(t => t.TotalTimeMs);
+            return currentSnapshot;
+        }
+
+        private static void UpdateWorstFrameStatistics(Engine.CodeProfiler.ProfilerFrameSnapshot snapshot)
+        {
+            var now = DateTime.UtcNow;
+            if (_worstFrameWindowStart == DateTime.MinValue)
+                _worstFrameWindowStart = now;
+
+            float currentFrameMs = snapshot.Threads.Max(t => t.TotalTimeMs);
+            if (_worstFrameWindowSnapshot is null || currentFrameMs > _worstFrameWindowMaxMs)
+            {
+                _worstFrameWindowMaxMs = currentFrameMs;
+                _worstFrameWindowSnapshot = snapshot;
+            }
+
+            if (now - _worstFrameWindowStart >= WorstFrameWindowDuration)
+            {
+                _worstFrameDisplayMs = _worstFrameWindowMaxMs;
+                _worstFrameDisplaySnapshot = _worstFrameWindowSnapshot;
+
+                _worstFrameWindowMaxMs = currentFrameMs;
+                _worstFrameWindowSnapshot = snapshot;
+                _worstFrameWindowStart = now;
+            }
+        }
+
+        private static void HandleProfilerDockResize(ImGuiViewportPtr viewport)
+        {
+            const float minWidth = 240.0f;
+            const float reservedMargin = 50.0f;
+            const float handleWidth = 12.0f;
+
+            Vector2 originalCursor = ImGui.GetCursorScreenPos();
+            Vector2 windowPos = ImGui.GetWindowPos();
+            Vector2 windowSize = ImGui.GetWindowSize();
+            Vector2 handlePos = new(windowPos.X + windowSize.X - handleWidth, windowPos.Y);
+
+            ImGui.SetCursorScreenPos(handlePos);
+            ImGui.PushID("ProfilerDockResize");
+            ImGui.InvisibleButton(string.Empty, new Vector2(handleWidth, windowSize.Y), ImGuiButtonFlags.MouseButtonLeft);
+            bool hovered = ImGui.IsItemHovered();
+            bool active = ImGui.IsItemActive();
+            bool activated = ImGui.IsItemActivated();
+            bool deactivated = ImGui.IsItemDeactivated();
+
+            if (hovered || active)
+                ImGui.SetMouseCursor(ImGuiMouseCursor.ResizeEW);
+
+            if (activated)
+            {
+                _profilerDockDragging = true;
+                _profilerDockDragStartWidth = _profilerDockWidth;
+                _profilerDockDragStartMouseX = ImGui.GetIO().MousePos.X;
+            }
+
+            if (active && _profilerDockDragging)
+            {
+                var io = ImGui.GetIO();
+                float delta = io.MousePos.X - _profilerDockDragStartMouseX;
+                float newWidth = _profilerDockDragStartWidth + delta;
+                float maxWidth = MathF.Max(minWidth, viewport.WorkSize.X - reservedMargin);
+                newWidth = Math.Clamp(newWidth, minWidth, maxWidth);
+                if (MathF.Abs(newWidth - _profilerDockWidth) > float.Epsilon)
+                {
+                    _profilerDockWidth = newWidth;
+                    ImGui.SetWindowSize(new Vector2(_profilerDockWidth, windowSize.Y));
+                    windowSize = ImGui.GetWindowSize();
+                }
+            }
+
+            if (deactivated)
+                _profilerDockDragging = false;
+
+            var drawList = ImGui.GetWindowDrawList();
+            uint color = ImGui.GetColorU32(active ? ImGuiCol.SeparatorActive : hovered ? ImGuiCol.SeparatorHovered : ImGuiCol.Separator);
+            Vector2 rectMin = new(windowPos.X + windowSize.X - handleWidth, windowPos.Y);
+            Vector2 rectMax = new(windowPos.X + windowSize.X, windowPos.Y + windowSize.Y);
+            drawList.AddRectFilled(rectMin, rectMax, color);
+            ImGui.PopID();
+            ImGui.SetCursorScreenPos(originalCursor);
+        }
+
+        private static void DrawSettingsDebugPanel()
+        {
+            if (!ImGui.CollapsingHeader("Engine & User Settings", ImGuiTreeNodeFlags.DefaultOpen))
+                return;
+
+            var visited = new HashSet<object>(ReferenceEqualityComparer.Instance);
+
+            var engineSettings = Engine.Rendering.Settings;
+            if (engineSettings is not null)
+                DrawSettingsObject(engineSettings, "Engine Settings", visited, true);
+
+            var userSettings = Engine.UserSettings;
+            if (userSettings is not null)
+                DrawSettingsObject(userSettings, "User Settings", visited, true);
+        }
+
+        private static void DrawSettingsObject(object obj, string label, HashSet<object> visited, bool defaultOpen)
+        {
+            if (!visited.Add(obj))
+            {
+                ImGui.TextUnformatted($"{label}: <circular reference>");
+                return;
+            }
+
+            ImGui.PushID(label);
+            string treeLabel = $"{label} ({obj.GetType().Name})";
+            if (ImGui.TreeNodeEx(treeLabel, defaultOpen ? ImGuiTreeNodeFlags.DefaultOpen : ImGuiTreeNodeFlags.None))
+            {
+                DrawSettingsProperties(obj, visited);
+                ImGui.TreePop();
+            }
+            ImGui.PopID();
+
+            visited.Remove(obj);
+        }
+
+        private static void DrawSettingsProperties(object obj, HashSet<object> visited)
+        {
+            var properties = obj.GetType()
+                .GetProperties(BindingFlags.Instance | BindingFlags.Public)
+                .Where(p => p.GetIndexParameters().Length == 0)
+                .OrderBy(p => p.Name)
+                .ToArray();
+
+            var simpleProps = new List<(PropertyInfo Property, object? Value)>();
+            var complexProps = new List<(PropertyInfo Property, object? Value)>();
+
+            foreach (var prop in properties)
+            {
+                object? value = null;
+                bool valueRetrieved = false;
+                try
+                {
+                    value = prop.GetValue(obj);
+                    valueRetrieved = true;
+                }
+                catch
+                {
+                }
+
+                if (!valueRetrieved)
+                {
+                    simpleProps.Add((prop, null));
+                    continue;
+                }
+
+                if (value is null || IsSimpleSettingType(prop.PropertyType))
+                    simpleProps.Add((prop, value));
+                else
+                    complexProps.Add((prop, value));
+            }
+
+            if (simpleProps.Count > 0 && ImGui.BeginTable("Properties", 2, ImGuiTableFlags.SizingStretchProp | ImGuiTableFlags.RowBg))
+            {
+                foreach (var (property, value) in simpleProps)
+                    DrawSimplePropertyRow(obj, property, value);
+                ImGui.EndTable();
+            }
+
+            foreach (var (property, value) in complexProps)
+            {
+                if (value is null)
+                {
+                    ImGui.TextUnformatted($"{property.Name}: <null>");
+                    continue;
+                }
+
+                DrawSettingsObject(value, property.Name, visited, false);
+            }
+        }
+
+        private static void DrawSimplePropertyRow(object owner, PropertyInfo property, object? value)
+        {
+            ImGui.TableNextRow();
+            ImGui.TableSetColumnIndex(0);
+            ImGui.TextUnformatted(property.Name);
+            ImGui.TableSetColumnIndex(1);
+            ImGui.PushID(property.Name);
+
+            Type propertyType = property.PropertyType;
+            Type? underlyingType = Nullable.GetUnderlyingType(propertyType);
+            bool isNullable = underlyingType is not null;
+            Type effectiveType = underlyingType ?? propertyType;
+            bool canWrite = property.CanWrite && property.SetMethod?.IsPublic == true;
+
+            if (!isNullable && effectiveType == typeof(bool))
+            {
+                bool boolValue = value is bool b && b;
+                if (!canWrite)
+                    ImGui.BeginDisabled();
+                if (ImGui.Checkbox("##Value", ref boolValue) && canWrite)
+                    property.SetValue(owner, boolValue);
+                if (!canWrite)
+                    ImGui.EndDisabled();
+            }
+            else if (!isNullable && effectiveType.IsEnum)
+            {
+                string[] enumNames = Enum.GetNames(effectiveType);
+                int currentIndex = value is null ? -1 : Array.IndexOf(enumNames, Enum.GetName(effectiveType, value));
+                if (currentIndex < 0)
+                    currentIndex = 0;
+
+                int selectedIndex = currentIndex;
+                if (!canWrite || enumNames.Length == 0)
+                    ImGui.BeginDisabled();
+
+                if (enumNames.Length > 0 && ImGui.Combo("##Value", ref selectedIndex, enumNames, enumNames.Length) && canWrite && selectedIndex >= 0 && selectedIndex < enumNames.Length)
+                {
+                    object newValue = Enum.Parse(effectiveType, enumNames[selectedIndex]);
+                    property.SetValue(owner, newValue);
+                }
+
+                if (!canWrite || enumNames.Length == 0)
+                    ImGui.EndDisabled();
+            }
+            else
+            {
+                ImGui.TextUnformatted(FormatSettingValue(value));
+            }
+
+            ImGui.PopID();
+        }
+
+        private static bool IsSimpleSettingType(Type type)
+        {
+            Type effectiveType = Nullable.GetUnderlyingType(type) ?? type;
+            if (effectiveType == typeof(string))
+                return true;
+            if (effectiveType.IsPrimitive || effectiveType.IsEnum)
+                return true;
+            if (effectiveType == typeof(decimal))
+                return true;
+            if (effectiveType == typeof(Vector2) || effectiveType == typeof(Vector3) || effectiveType == typeof(Vector4))
+                return true;
+            if (effectiveType.IsValueType)
+                return true;
+            return false;
+        }
+
+        private static string FormatSettingValue(object? value)
+        {
+            if (value is null)
+                return "<null>";
+
+            return value switch
+            {
+                bool b => b ? "True" : "False",
+                float f => f.ToString("0.###", CultureInfo.InvariantCulture),
+                double d => d.ToString("0.###", CultureInfo.InvariantCulture),
+                decimal m => m.ToString("0.###", CultureInfo.InvariantCulture),
+                int i => i.ToString(CultureInfo.InvariantCulture),
+                uint ui => ui.ToString(CultureInfo.InvariantCulture),
+                long l => l.ToString(CultureInfo.InvariantCulture),
+                ulong ul => ul.ToString(CultureInfo.InvariantCulture),
+                short s => s.ToString(CultureInfo.InvariantCulture),
+                ushort us => us.ToString(CultureInfo.InvariantCulture),
+                byte by => by.ToString(CultureInfo.InvariantCulture),
+                sbyte sb => sb.ToString(CultureInfo.InvariantCulture),
+                Vector2 v2 => $"({v2.X:0.###}, {v2.Y:0.###})",
+                Vector3 v3 => $"({v3.X:0.###}, {v3.Y:0.###}, {v3.Z:0.###})",
+                Vector4 v4 => $"({v4.X:0.###}, {v4.Y:0.###}, {v4.Z:0.###}, {v4.W:0.###})",
+                _ => value.ToString() ?? string.Empty
+            };
+        }
+
+        private sealed class ReferenceEqualityComparer : IEqualityComparer<object>
+        {
+            public static readonly ReferenceEqualityComparer Instance = new();
+
+            bool IEqualityComparer<object>.Equals(object? x, object? y)
+                => ReferenceEquals(x, y);
+
+            int IEqualityComparer<object>.GetHashCode(object obj)
+                => RuntimeHelpers.GetHashCode(obj);
         }
     }
 }

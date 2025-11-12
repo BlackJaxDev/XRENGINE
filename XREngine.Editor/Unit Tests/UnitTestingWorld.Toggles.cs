@@ -6,7 +6,7 @@ public static partial class UnitTestingWorld
 {
     public static Settings Toggles { get; set; } = new();
 
-    public  class Settings
+    public class Settings
     {
         //Debug visualize
         public bool VisualizeOctree = false;
@@ -18,7 +18,9 @@ public static partial class UnitTestingWorld
         public bool AllowEditingInVR = true; //Allows the user to edit the scene from desktop in VR.
         public bool VideoStreaming = false; //Adds a video streaming component to the scene for testing video streaming.
         public bool VideoStreamingAudio = false; //Adds a video streaming audio component to the scene for testing video streaming audio.
-    public bool DearImGuiUI = false; //Adds a Dear ImGui overlay to the scene for testing immediate-mode UI.
+        public bool DearImGuiUI = false; //Adds a Dear ImGui overlay to the scene for testing immediate-mode UI.
+        public bool DearImGuiProfiler = true; //Renders the engine profiler overlay within Dear ImGui.
+    public bool EnableProfilerLogging = false; //Enables Engine.Profiler frame logging even without Dear ImGui.
         public bool RiveUI = false; //Adds a Rive UI component to the scene for testing Rive animations.
 
         //Misc
