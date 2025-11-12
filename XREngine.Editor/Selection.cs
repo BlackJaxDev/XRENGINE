@@ -13,6 +13,7 @@ public static class Selection
     public static event Action<SceneNode[]>? SelectionChanged;
 
     private static SceneNode[] _sceneNodes = [];
+    private static SceneNode? _lastSceneNode;
     /// <summary>
     /// The currently selected scene nodes.
     /// </summary>
@@ -22,6 +23,8 @@ public static class Selection
         set
         {
             _sceneNodes = value;
+            if (value.Length > 0)
+                _lastSceneNode = value[0];
             SelectionChanged?.Invoke(value);
             switch (value.Length)
             {
@@ -37,6 +40,11 @@ public static class Selection
             }
         }
     }
+
+    /// <summary>
+    /// The most recently selected scene node, even if the current selection is empty.
+    /// </summary>
+    public static SceneNode? LastSceneNode => _lastSceneNode;
 
     /// <summary>
     /// The first selected scene node, if any.
