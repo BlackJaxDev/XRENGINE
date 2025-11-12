@@ -25,9 +25,10 @@ namespace XREngine
         private bool _enableGpuIndirectDebugLogging = true;
         private bool _enableGpuIndirectCpuFallback = false;
         private bool _disableAudioOnDefocus = false;
+        private float _audioDisableFadeSeconds = 0.5f;
         private float? _unfocusedTargetFramesPerSecond = null;
         private bool _useDebugOpaquePipeline = false;
-        private bool _gpuRenderDispatch = true;
+        private bool _gpuRenderDispatch = false;
         private EGlobalIlluminationMode _globalIlluminationMode = EGlobalIlluminationMode.LightProbesAndIbl;
         private EAmbientOcclusionMode _ambientOcclusionMode = EAmbientOcclusionMode.ScreenSpace;
 
@@ -91,7 +92,11 @@ namespace XREngine
             get => _disableAudioOnDefocus;
             set => SetField(ref _disableAudioOnDefocus, value);
         }
-        public float AudioDisableFadeSeconds { get; set; } = 0.5f; // Default fade out time for audio when defocusing
+        public float AudioDisableFadeSeconds
+        {
+            get => _audioDisableFadeSeconds;
+            set => SetField(ref _audioDisableFadeSeconds, value);
+        }
         public float? UnfocusedTargetFramesPerSecond
         {
             get => _unfocusedTargetFramesPerSecond;

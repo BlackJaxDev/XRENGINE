@@ -152,6 +152,12 @@ void main()
         public static XRShader? UnlitColorFragForward()
              => LoadEngineShader(Path.Combine("Common", "UnlitColoredForward.fs"));
 
+        public static XRShader? GaussianSplatVertex()
+            => LoadEngineShader(Path.Combine("Gaussian", "GaussianSplat.vs"));
+
+        public static XRShader? GaussianSplatFragment()
+            => LoadEngineShader(Path.Combine("Gaussian", "GaussianSplat.fs"));
+
         public static XRShader LitColorFragForward()
         {
             string source = @"

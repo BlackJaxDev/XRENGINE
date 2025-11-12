@@ -112,6 +112,7 @@ namespace XREngine
             Profiler.DebugOutputMinElapsedMs = _userSettings.DebugOutputMinElapsedMs;
             Rendering.ApplyRenderPipelinePreference();
             Rendering.ApplyGlobalIlluminationModePreference();
+            Rendering.ApplyGpuRenderDispatchPreference();
             UserSettingsChanged?.Invoke(_userSettings);
         }
 
@@ -131,12 +132,16 @@ namespace XREngine
                 case nameof(UserSettings.DebugOutputMinElapsedMs):
                     Profiler.DebugOutputMinElapsedMs = UserSettings.DebugOutputMinElapsedMs;
                     break;
+                case nameof(UserSettings.GPURenderDispatch):
+                    Rendering.ApplyGpuRenderDispatchPreference();
+                    break;
                 case null:
                 case "":
                     Rendering.ApplyRenderPipelinePreference();
                     Rendering.ApplyGlobalIlluminationModePreference();
                     Profiler.EnableFrameLogging = UserSettings.EnableFrameLogging;
                     Profiler.DebugOutputMinElapsedMs = UserSettings.DebugOutputMinElapsedMs;
+                    Rendering.ApplyGpuRenderDispatchPreference();
                     break;
             }
         }

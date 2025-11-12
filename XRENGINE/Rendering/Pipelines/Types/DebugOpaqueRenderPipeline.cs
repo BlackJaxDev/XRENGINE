@@ -121,4 +121,12 @@ public sealed class DebugOpaqueRenderPipeline : RenderPipeline
         commands.Add<VPRC_RenderMeshesPass>().SetOptions((int)EDefaultRenderPass.PostRender, false);
         return commands;
     }
+
+    protected override void OnPropertyChanged<T>(string? propName, T prev, T field)
+    {
+        base.OnPropertyChanged(propName, prev, field);
+
+        if (propName == nameof(GpuRenderDispatch))
+            Engine.Rendering.ApplyGpuRenderDispatchToPipeline(this, GpuRenderDispatch);
+    }
 }

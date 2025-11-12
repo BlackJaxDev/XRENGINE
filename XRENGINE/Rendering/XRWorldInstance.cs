@@ -192,6 +192,11 @@ namespace XREngine.Rendering
             //Lights.CaptureLightProbes();
         }
 
+        internal void ApplyRenderDispatchPreference(bool useGpu)
+        {
+            VisualScene?.ApplyRenderDispatchPreference(useGpu);
+        }
+
         private void PreUpdate()
         {
             _pushToRenderWrite.Clear();

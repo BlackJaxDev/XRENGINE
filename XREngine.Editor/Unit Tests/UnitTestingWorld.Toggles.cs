@@ -20,8 +20,9 @@ public static partial class UnitTestingWorld
         public bool VideoStreamingAudio = false; //Adds a video streaming audio component to the scene for testing video streaming audio.
         public bool DearImGuiUI = false; //Adds a Dear ImGui overlay to the scene for testing immediate-mode UI.
         public bool DearImGuiProfiler = true; //Renders the engine profiler overlay within Dear ImGui.
-    public bool EnableProfilerLogging = false; //Enables Engine.Profiler frame logging even without Dear ImGui.
+        public bool EnableProfilerLogging = false; //Enables Engine.Profiler frame logging even without Dear ImGui.
         public bool RiveUI = false; //Adds a Rive UI component to the scene for testing Rive animations.
+        public bool GPURenderDispatch = false; //Uses GPU render dispatch for rendering instead of CPU culling and issuing draw calls.
 
         //Misc
         public bool Skybox = true; //Adds a skybox to the scene
