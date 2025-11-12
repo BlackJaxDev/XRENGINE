@@ -15,10 +15,16 @@ namespace XREngine.Scene
     public class VisualScene3D : VisualScene
     {
         public Octree<RenderInfo3D> RenderTree { get; } = new Octree<RenderInfo3D>(new AABB());
+        private AABB _sceneBounds;
+        private bool _hasSceneBounds = false;
+        private bool _isGpuDispatchActive = Engine.UserSettings?.GPURenderDispatch ?? false;
 
         public void SetBounds(AABB bounds)
         {
-            if (Engine.UserSettings.GPURenderDispatch)
+            _sceneBounds = bounds;
+            _hasSceneBounds = true;
+
+            if (_isGpuDispatchActive)
                 GPUCommands.Bounds = bounds;
             else
                 RenderTree.Remake(bounds);
@@ -73,19 +79,52 @@ namespace XREngine.Scene
         {
             _renderables.Add(renderable);
 
-            if (Engine.UserSettings.GPURenderDispatch)
+            if (_isGpuDispatchActive)
                 GPUCommands.Add(renderable);
             else
                 RenderTree.Add(renderable);
         }
         public void RemoveRenderable(RenderInfo3D renderable)
         {
-            if (Engine.UserSettings.GPURenderDispatch)
+            if (_isGpuDispatchActive)
                 GPUCommands.Remove(renderable);
             else
                 RenderTree.Remove(renderable);
 
             _renderables.Remove(renderable);
+        }
+
+        public void ApplyRenderDispatchPreference(bool useGpu)
+        {
+            if (useGpu == _isGpuDispatchActive)
+                return;
+
+            if (useGpu)
+            {
+                RenderTree.RemoveRange(_renderables);
+                RenderTree.Swap();
+
+                if (_hasSceneBounds)
+                    GPUCommands.Bounds = _sceneBounds;
+
+                foreach (var renderable in _renderables)
+                    GPUCommands.Add(renderable);
+            }
+            else
+            {
+                foreach (var renderable in _renderables)
+                    GPUCommands.Remove(renderable);
+
+                if (_hasSceneBounds)
+                    RenderTree.Remake(_sceneBounds);
+                else
+                    RenderTree.Remake();
+
+                RenderTree.AddRange(_renderables);
+                RenderTree.Swap();
+            }
+
+            _isGpuDispatchActive = useGpu;
         }
 
         public override IEnumerator<RenderInfo> GetEnumerator()

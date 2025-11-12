@@ -23,22 +23,23 @@ public static partial class UnitTestingWorld
 {
     public static class UserInterface
     {
-    private static readonly bool DockFPSTopLeft = false;
+        private static readonly bool DockFPSTopLeft = false;
 
-    private static readonly Queue<float> _fpsAvg = new();
-    private static int _imguiClickCount = 0;
-    private static DateTime _worstFrameWindowStart = DateTime.MinValue;
-    private static float _worstFrameWindowMaxMs = 0.0f;
-    private static float _worstFrameDisplayMs = 0.0f;
-    private static Engine.CodeProfiler.ProfilerFrameSnapshot? _worstFrameWindowSnapshot;
-    private static Engine.CodeProfiler.ProfilerFrameSnapshot? _worstFrameDisplaySnapshot;
-    private static readonly TimeSpan WorstFrameWindowDuration = TimeSpan.FromSeconds(0.5);
-    private static bool _profilerDockLeftEnabled = false;
-    private static bool _profilerUndockNextFrame = false;
-    private static float _profilerDockWidth = 480.0f;
-    private static bool _profilerDockDragging = false;
-    private static float _profilerDockDragStartWidth = 0.0f;
-    private static float _profilerDockDragStartMouseX = 0.0f;
+        private static readonly Queue<float> _fpsAvg = new();
+        private static int _imguiClickCount = 0;
+        private static DateTime _worstFrameWindowStart = DateTime.MinValue;
+        private static float _worstFrameWindowMaxMs = 0.0f;
+        private static float _worstFrameDisplayMs = 0.0f;
+        private static Engine.CodeProfiler.ProfilerFrameSnapshot? _worstFrameWindowSnapshot;
+        private static Engine.CodeProfiler.ProfilerFrameSnapshot? _worstFrameDisplaySnapshot;
+        private static readonly TimeSpan WorstFrameWindowDuration = TimeSpan.FromSeconds(0.5);
+        private static bool _profilerDockLeftEnabled = false;
+        private static bool _profilerUndockNextFrame = false;
+        private static float _profilerDockWidth = 480.0f;
+        private static bool _profilerDockDragging = false;
+        private static float _profilerDockDragStartWidth = 0.0f;
+        private static float _profilerDockDragStartMouseX = 0.0f;
+
         private static void TickFPS(UITextComponent t)
         {
             _fpsAvg.Enqueue(1.0f / Engine.Time.Timer.Render.Delta);
@@ -285,34 +286,194 @@ public static partial class UnitTestingWorld
 
         private static void DrawDearImGuiTest()
         {
-            bool showUnitWindow = Toggles.DearImGuiUI;
+            bool showSettings = Toggles.DearImGuiUI;
             bool showProfiler = Toggles.DearImGuiProfiler;
 
             Engine.Profiler.EnableFrameLogging = Toggles.EnableProfilerLogging || showProfiler;
 
-            if (!showUnitWindow && !showProfiler)
+            if (!showSettings && !showProfiler)
                 return;
 
-            if (showUnitWindow)
+            // Unified left-docked window with tabs for Profiler, Settings, and Hierarchy
+            DrawDebugDockWindow(showProfiler, showSettings);
+        }
+
+        private static void DrawDebugDockWindow(bool includeProfiler, bool includeSettings)
+        {
+            var overlayViewport = ImGui.GetMainViewport();
+            ImGuiWindowFlags windowFlags = ImGuiWindowFlags.None;
+            if (_profilerDockLeftEnabled)
             {
-                bool windowOpen = ImGui.Begin("Unit Testing UI");
-                if (windowOpen)
-                {
-                    ImGui.Text("Dear ImGui test window");
-                    if (ImGui.Button("Increment Counter"))
-                        _imguiClickCount++;
-
-                    ImGui.SameLine();
-                    ImGui.Text($"Count: {_imguiClickCount}");
-
-                    ImGui.Separator();
-                    DrawSettingsDebugPanel();
-                }
-                ImGui.End();
+                float maxWidth = MathF.Max(240.0f, overlayViewport.WorkSize.X - 50.0f);
+                float dockWidth = Math.Clamp(_profilerDockWidth, 240.0f, maxWidth);
+                _profilerDockWidth = dockWidth;
+                ImGui.SetNextWindowPos(overlayViewport.WorkPos, ImGuiCond.Always);
+                ImGui.SetNextWindowSize(new Vector2(dockWidth, overlayViewport.WorkSize.Y), ImGuiCond.Always);
+                ImGui.SetNextWindowViewport(overlayViewport.ID);
+                windowFlags |= ImGuiWindowFlags.NoScrollbar | ImGuiWindowFlags.NoScrollWithMouse | ImGuiWindowFlags.NoMove;
+            }
+            else if (_profilerUndockNextFrame)
+            {
+                var viewport = ImGui.GetMainViewport();
+                var defaultSize = new Vector2(800.0f, 600.0f);
+                var pos = viewport.WorkPos + (viewport.WorkSize - defaultSize) * 0.5f;
+                ImGui.SetNextWindowPos(pos, ImGuiCond.Always);
+                ImGui.SetNextWindowSize(defaultSize, ImGuiCond.Always);
+                _profilerUndockNextFrame = false;
             }
 
-            if (showProfiler)
-                DrawProfilerOverlay();
+            if (!ImGui.Begin("Debug", windowFlags))
+            {
+                ImGui.End();
+                return;
+            }
+
+            // Toolbar row
+            if (ImGui.Button(_profilerDockLeftEnabled ? "Undock" : "Dock Left"))
+            {
+                if (_profilerDockLeftEnabled)
+                {
+                    _profilerDockLeftEnabled = false;
+                    _profilerUndockNextFrame = true;
+                }
+                else
+                {
+                    float maxWidth = MathF.Max(240.0f, overlayViewport.WorkSize.X - 50.0f);
+                    _profilerDockWidth = Math.Clamp(_profilerDockWidth, 240.0f, maxWidth);
+                    _profilerDockLeftEnabled = true;
+                }
+            }
+
+            ImGui.Separator();
+
+            if (ImGui.BeginTabBar("DebugTabs"))
+            {
+                if (includeProfiler && ImGui.BeginTabItem("Profiler"))
+                {
+                    DrawProfilerTabContent();
+                    ImGui.EndTabItem();
+                }
+
+                if (includeSettings && ImGui.BeginTabItem("Settings"))
+                {
+                    DrawSettingsDebugPanel();
+                    ImGui.EndTabItem();
+                }
+
+                if (ImGui.BeginTabItem("Hierarchy"))
+                {
+                    DrawWorldHierarchyTab();
+                    ImGui.EndTabItem();
+                }
+
+                ImGui.EndTabBar();
+            }
+
+            if (_profilerDockLeftEnabled)
+                HandleProfilerDockResize(overlayViewport);
+
+            ImGui.End();
+        }
+
+        private static void DrawProfilerTabContent()
+        {
+            var frameSnapshot = Engine.Profiler.GetLastFrameSnapshot();
+            var history = Engine.Profiler.GetThreadHistorySnapshot();
+
+            if (frameSnapshot is null || frameSnapshot.Threads.Count == 0)
+            {
+                ImGui.Text("No profiler samples captured yet.");
+                return;
+            }
+
+            UpdateWorstFrameStatistics(frameSnapshot);
+            var snapshotForDisplay = GetSnapshotForHierarchy(frameSnapshot, out float hierarchyFrameMs, out bool showingWorstWindowSample);
+            float worstFrameToDisplay = hierarchyFrameMs;
+
+            ImGui.Text($"Captured at {frameSnapshot.FrameTime:F3}s");
+            ImGui.Text($"Worst frame (0.5s window): {worstFrameToDisplay:F3} ms");
+            if (showingWorstWindowSample)
+                ImGui.Text("Hierarchy shows worst frame snapshot from the rolling window.");
+
+            ImGui.Separator();
+
+            foreach (var thread in snapshotForDisplay.Threads.OrderBy(t => t.ThreadId))
+            {
+                string headerLabel = $"Thread {thread.ThreadId} ({thread.TotalTimeMs:F3} ms)";
+                if (ImGui.CollapsingHeader($"{headerLabel}##ProfilerThread{thread.ThreadId}", ImGuiTreeNodeFlags.DefaultOpen))
+                {
+                    if (history.TryGetValue(thread.ThreadId, out var samples) && samples.Length > 0)
+                    {
+                        float min = samples.Min();
+                        float max = samples.Max();
+                        if (!float.IsFinite(min) || !float.IsFinite(max))
+                        {
+                            min = 0.0f;
+                            max = 0.0f;
+                        }
+                        if (MathF.Abs(max - min) < 0.001f)
+                            max = min + 0.001f;
+
+                        ImGui.PlotLines($"Frame time (ms)##ProfilerThreadPlot{thread.ThreadId}", ref samples[0], samples.Length, 0, null, min, max, new Vector2(-1.0f, 70.0f));
+                    }
+
+                    ImGui.Separator();
+                    ImGui.Text("Hierarchy");
+                    foreach (var root in thread.RootNodes)
+                        DrawProfilerNode(root, $"T{thread.ThreadId}");
+                }
+            }
+        }
+
+        private static void DrawWorldHierarchyTab()
+        {
+            var world = Engine.Rendering.State.RenderingWorld ?? Engine.WorldInstances.FirstOrDefault();
+            if (world is null)
+            {
+                ImGui.Text("No world instance available.");
+                return;
+            }
+
+            if (world.RootNodes.Count == 0)
+            {
+                ImGui.Text("World has no root nodes.");
+                return;
+            }
+
+            // Optional info header
+            ImGui.Text($"GameMode: {world.GameMode?.GetType().Name ?? "<none>"}");
+            ImGui.Separator();
+
+            int idx = 0;
+            foreach (var root in world.RootNodes)
+            {
+                DrawSceneNodeTree(root, $"Root{idx++}");
+            }
+        }
+
+        private static void DrawSceneNodeTree(SceneNode node, string path)
+        {
+            string id = $"{path}/{node.ID}";
+            var transform = node.Transform;
+            int childCount = transform.Children.Count;
+            string label = $"{node.Name ?? "<unnamed>"} ({childCount})##{id}";
+
+            if (childCount > 0)
+            {
+                if (ImGui.TreeNodeEx(label, ImGuiTreeNodeFlags.DefaultOpen))
+                {
+                    foreach (var child in transform.Children)
+                    {
+                        if (child?.SceneNode is SceneNode childNode)
+                            DrawSceneNodeTree(childNode, id);
+                    }
+                    ImGui.TreePop();
+                }
+            }
+            else
+            {
+                ImGui.TreeNodeEx(label, ImGuiTreeNodeFlags.Leaf | ImGuiTreeNodeFlags.Bullet | ImGuiTreeNodeFlags.NoTreePushOnOpen);
+            }
         }
 
         private static void DrawProfilerOverlay()
@@ -633,42 +794,385 @@ public static partial class UnitTestingWorld
             Type effectiveType = underlyingType ?? propertyType;
             bool canWrite = property.CanWrite && property.SetMethod?.IsPublic == true;
 
-            if (!isNullable && effectiveType == typeof(bool))
+            object? currentValue = value;
+            bool isCurrentlyNull = currentValue is null;
+            bool handled = false;
+
+            if (effectiveType == typeof(bool))
             {
-                bool boolValue = value is bool b && b;
-                if (!canWrite)
-                    ImGui.BeginDisabled();
-                if (ImGui.Checkbox("##Value", ref boolValue) && canWrite)
-                    property.SetValue(owner, boolValue);
-                if (!canWrite)
-                    ImGui.EndDisabled();
+                bool boolValue = currentValue is bool b && b;
+                using (new ImGuiDisabledScope(!canWrite))
+                {
+                    if (ImGui.Checkbox("##Value", ref boolValue) && canWrite)
+                    {
+                        property.SetValue(owner, boolValue);
+                        currentValue = boolValue;
+                        isCurrentlyNull = false;
+                    }
+                }
+                handled = true;
             }
-            else if (!isNullable && effectiveType.IsEnum)
+            else if (effectiveType.IsEnum)
             {
                 string[] enumNames = Enum.GetNames(effectiveType);
-                int currentIndex = value is null ? -1 : Array.IndexOf(enumNames, Enum.GetName(effectiveType, value));
+                int currentIndex = currentValue is null ? -1 : Array.IndexOf(enumNames, Enum.GetName(effectiveType, currentValue));
                 if (currentIndex < 0)
                     currentIndex = 0;
 
                 int selectedIndex = currentIndex;
-                if (!canWrite || enumNames.Length == 0)
-                    ImGui.BeginDisabled();
-
-                if (enumNames.Length > 0 && ImGui.Combo("##Value", ref selectedIndex, enumNames, enumNames.Length) && canWrite && selectedIndex >= 0 && selectedIndex < enumNames.Length)
+                using (new ImGuiDisabledScope(!canWrite || enumNames.Length == 0))
                 {
-                    object newValue = Enum.Parse(effectiveType, enumNames[selectedIndex]);
-                    property.SetValue(owner, newValue);
+                    if (enumNames.Length > 0 && ImGui.Combo("##Value", ref selectedIndex, enumNames, enumNames.Length) && canWrite && selectedIndex >= 0 && selectedIndex < enumNames.Length)
+                    {
+                        object newValue = Enum.Parse(effectiveType, enumNames[selectedIndex]);
+                        property.SetValue(owner, newValue);
+                        currentValue = newValue;
+                        isCurrentlyNull = false;
+                    }
                 }
-
-                if (!canWrite || enumNames.Length == 0)
-                    ImGui.EndDisabled();
+                handled = true;
             }
-            else
+            else if (TryDrawNumericProperty(owner, property, effectiveType, canWrite, ref currentValue, ref isCurrentlyNull))
             {
-                ImGui.TextUnformatted(FormatSettingValue(value));
+                handled = true;
+            }
+
+            if (!handled)
+            {
+                if (currentValue is null)
+                    ImGui.TextDisabled("<null>");
+                else
+                    ImGui.TextUnformatted(FormatSettingValue(currentValue));
+            }
+
+            if (isNullable && canWrite)
+            {
+                if (isCurrentlyNull)
+                {
+                    if (TryGetDefaultValue(effectiveType, out var defaultValue))
+                    {
+                        ImGui.SameLine();
+                        if (ImGui.SmallButton("Set"))
+                        {
+                            property.SetValue(owner, defaultValue);
+                            currentValue = defaultValue;
+                            isCurrentlyNull = false;
+                        }
+                    }
+                }
+                else
+                {
+                    ImGui.SameLine();
+                    if (ImGui.SmallButton("Clear"))
+                    {
+                        property.SetValue(owner, null);
+                        currentValue = null;
+                        isCurrentlyNull = true;
+                    }
+                }
             }
 
             ImGui.PopID();
+        }
+
+        private static unsafe bool TryDrawNumericProperty(object owner, PropertyInfo property, Type effectiveType, bool canWrite, ref object? currentValue, ref bool isCurrentlyNull)
+        {
+            if (effectiveType == typeof(float))
+            {
+                float floatValue = currentValue is float f ? f : 0f;
+                using (new ImGuiDisabledScope(!canWrite))
+                {
+                    if (ImGui.InputFloat("##Value", ref floatValue) && canWrite && float.IsFinite(floatValue))
+                    {
+                        property.SetValue(owner, floatValue);
+                        currentValue = floatValue;
+                        isCurrentlyNull = false;
+                    }
+                }
+                return true;
+            }
+
+            if (effectiveType == typeof(double))
+            {
+                double doubleValue = currentValue is double d ? d : 0.0;
+                using (new ImGuiDisabledScope(!canWrite))
+                {
+                    if (ImGui.InputDouble("##Value", ref doubleValue) && canWrite && double.IsFinite(doubleValue))
+                    {
+                        property.SetValue(owner, doubleValue);
+                        currentValue = doubleValue;
+                        isCurrentlyNull = false;
+                    }
+                }
+                return true;
+            }
+
+            if (effectiveType == typeof(decimal))
+            {
+                double doubleValue = currentValue is decimal dec ? (double)dec : 0.0;
+                using (new ImGuiDisabledScope(!canWrite))
+                {
+                    if (ImGui.InputDouble("##Value", ref doubleValue) && canWrite && double.IsFinite(doubleValue))
+                    {
+                        try
+                        {
+                            decimal newValue = Convert.ToDecimal(doubleValue);
+                            property.SetValue(owner, newValue);
+                            currentValue = newValue;
+                            isCurrentlyNull = false;
+                        }
+                        catch (OverflowException)
+                        {
+                            decimal clamped = doubleValue > 0 ? decimal.MaxValue : decimal.MinValue;
+                            property.SetValue(owner, clamped);
+                            currentValue = clamped;
+                            isCurrentlyNull = false;
+                        }
+                    }
+                }
+                return true;
+            }
+
+            if (effectiveType == typeof(int))
+            {
+                int intValue = currentValue is int i ? i : 0;
+                using (new ImGuiDisabledScope(!canWrite))
+                {
+                    if (InputScalar("##Value", ImGuiDataType.S32, ref intValue) && canWrite)
+                    {
+                        property.SetValue(owner, intValue);
+                        currentValue = intValue;
+                        isCurrentlyNull = false;
+                    }
+                }
+                return true;
+            }
+
+            if (effectiveType == typeof(uint))
+            {
+                uint uintValue = currentValue is uint u ? u : 0u;
+                using (new ImGuiDisabledScope(!canWrite))
+                {
+                    if (InputScalar("##Value", ImGuiDataType.U32, ref uintValue) && canWrite)
+                    {
+                        property.SetValue(owner, uintValue);
+                        currentValue = uintValue;
+                        isCurrentlyNull = false;
+                    }
+                }
+                return true;
+            }
+
+            if (effectiveType == typeof(long))
+            {
+                long longValue = currentValue is long l ? l : 0L;
+                using (new ImGuiDisabledScope(!canWrite))
+                {
+                    if (InputScalar("##Value", ImGuiDataType.S64, ref longValue) && canWrite)
+                    {
+                        property.SetValue(owner, longValue);
+                        currentValue = longValue;
+                        isCurrentlyNull = false;
+                    }
+                }
+                return true;
+            }
+
+            if (effectiveType == typeof(ulong))
+            {
+                ulong ulongValue = currentValue is ulong ul ? ul : 0UL;
+                using (new ImGuiDisabledScope(!canWrite))
+                {
+                    if (InputScalar("##Value", ImGuiDataType.U64, ref ulongValue) && canWrite)
+                    {
+                        property.SetValue(owner, ulongValue);
+                        currentValue = ulongValue;
+                        isCurrentlyNull = false;
+                    }
+                }
+                return true;
+            }
+
+            if (effectiveType == typeof(short))
+            {
+                short shortValue = currentValue is short s ? s : (short)0;
+                using (new ImGuiDisabledScope(!canWrite))
+                {
+                    if (InputScalar("##Value", ImGuiDataType.S16, ref shortValue) && canWrite)
+                    {
+                        property.SetValue(owner, shortValue);
+                        currentValue = shortValue;
+                        isCurrentlyNull = false;
+                    }
+                }
+                return true;
+            }
+
+            if (effectiveType == typeof(ushort))
+            {
+                ushort ushortValue = currentValue is ushort us ? us : (ushort)0;
+                using (new ImGuiDisabledScope(!canWrite))
+                {
+                    if (InputScalar("##Value", ImGuiDataType.U16, ref ushortValue) && canWrite)
+                    {
+                        property.SetValue(owner, ushortValue);
+                        currentValue = ushortValue;
+                        isCurrentlyNull = false;
+                    }
+                }
+                return true;
+            }
+
+            if (effectiveType == typeof(byte))
+            {
+                byte byteValue = currentValue is byte by ? by : (byte)0;
+                using (new ImGuiDisabledScope(!canWrite))
+                {
+                    if (InputScalar("##Value", ImGuiDataType.U8, ref byteValue) && canWrite)
+                    {
+                        property.SetValue(owner, byteValue);
+                        currentValue = byteValue;
+                        isCurrentlyNull = false;
+                    }
+                }
+                return true;
+            }
+
+            if (effectiveType == typeof(sbyte))
+            {
+                sbyte sbyteValue = currentValue is sbyte sb ? sb : (sbyte)0;
+                using (new ImGuiDisabledScope(!canWrite))
+                {
+                    if (InputScalar("##Value", ImGuiDataType.S8, ref sbyteValue) && canWrite)
+                    {
+                        property.SetValue(owner, sbyteValue);
+                        currentValue = sbyteValue;
+                        isCurrentlyNull = false;
+                    }
+                }
+                return true;
+            }
+
+            return false;
+        }
+
+        private static unsafe bool InputScalar<T>(string label, ImGuiDataType dataType, ref T value)
+            where T : unmanaged
+        {
+            T localValue = value;
+            void* ptr = Unsafe.AsPointer(ref localValue);
+            bool changed = ImGui.InputScalar(label, dataType, new IntPtr(ptr));
+
+            if (changed)
+                value = localValue;
+
+            return changed;
+        }
+
+        private readonly struct ImGuiDisabledScope : IDisposable
+        {
+            private readonly bool _disabled;
+
+            public ImGuiDisabledScope(bool disabled)
+            {
+                _disabled = disabled;
+                if (disabled)
+                    ImGui.BeginDisabled();
+            }
+
+            public void Dispose()
+            {
+                if (_disabled)
+                    ImGui.EndDisabled();
+            }
+        }
+
+        private static bool TryGetDefaultValue(Type type, out object? value)
+        {
+            if (type == typeof(bool))
+            {
+                value = false;
+                return true;
+            }
+
+            if (type == typeof(float))
+            {
+                value = 0f;
+                return true;
+            }
+
+            if (type == typeof(double))
+            {
+                value = 0.0;
+                return true;
+            }
+
+            if (type == typeof(decimal))
+            {
+                value = 0m;
+                return true;
+            }
+
+            if (type == typeof(int))
+            {
+                value = 0;
+                return true;
+            }
+
+            if (type == typeof(uint))
+            {
+                value = 0u;
+                return true;
+            }
+
+            if (type == typeof(long))
+            {
+                value = 0L;
+                return true;
+            }
+
+            if (type == typeof(ulong))
+            {
+                value = 0UL;
+                return true;
+            }
+
+            if (type == typeof(short))
+            {
+                value = (short)0;
+                return true;
+            }
+
+            if (type == typeof(ushort))
+            {
+                value = (ushort)0;
+                return true;
+            }
+
+            if (type == typeof(byte))
+            {
+                value = (byte)0;
+                return true;
+            }
+
+            if (type == typeof(sbyte))
+            {
+                value = (sbyte)0;
+                return true;
+            }
+
+            if (type.IsEnum)
+            {
+                string[] names = Enum.GetNames(type);
+                if (names.Length > 0)
+                {
+                    value = Enum.Parse(type, names[0]);
+                    return true;
+                }
+            }
+
+            value = null;
+            return false;
         }
 
         private static bool IsSimpleSettingType(Type type)

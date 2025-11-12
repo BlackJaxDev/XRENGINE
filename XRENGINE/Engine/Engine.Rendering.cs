@@ -1,6 +1,8 @@
 ﻿using System.Collections.Concurrent;
+using System.Collections.Generic;
 using XREngine.Rendering;
 using XREngine.Rendering.Physics.Physx;
+using XREngine.Rendering.Pipelines.Commands;
 using XREngine.Scene;
 
 namespace XREngine
@@ -107,6 +109,89 @@ namespace XREngine
                     {
                         if (viewport.RenderPipeline is DefaultRenderPipeline defaultPipeline)
                             defaultPipeline.GlobalIlluminationMode = mode;
+                    }
+                }
+            }
+
+            public static void ApplyGpuRenderDispatchPreference()
+            {
+                bool useGpu = Engine.UserSettings.GPURenderDispatch;
+
+                void Apply()
+                {
+                    foreach (var worldInstance in Engine.WorldInstances)
+                        worldInstance?.ApplyRenderDispatchPreference(useGpu);
+
+                    foreach (XRWindow window in Engine.Windows)
+                    {
+                        foreach (XRViewport viewport in window.Viewports)
+                        {
+                            RenderPipeline? pipeline = viewport.RenderPipeline;
+                            if (pipeline is null)
+                                continue;
+
+                            if (pipeline is DebugOpaqueRenderPipeline debugPipeline)
+                                debugPipeline.GpuRenderDispatch = useGpu;
+                            else
+                                ApplyGpuRenderDispatchToPipeline(pipeline, useGpu);
+                        }
+                    }
+                }
+
+                Engine.InvokeOnMainThread(() => Apply(), true);
+            }
+
+            internal static void ApplyGpuRenderDispatchToPipeline(RenderPipeline pipeline, bool useGpu)
+            {
+                foreach (ViewportRenderCommand command in EnumerateCommands(pipeline.CommandChain))
+                {
+                    switch (command)
+                    {
+                        case VPRC_RenderMeshesPass renderPass:
+                            renderPass.GPUDispatch = useGpu;
+                            break;
+                        case VPRC_VoxelConeTracingPass voxelPass:
+                            voxelPass.GpuDispatch = useGpu;
+                            break;
+                    }
+                }
+            }
+
+            private static IEnumerable<ViewportRenderCommand> EnumerateCommands(ViewportRenderCommandContainer container)
+            {
+                foreach (ViewportRenderCommand command in container.Commands)
+                {
+                    yield return command;
+
+                    switch (command)
+                    {
+                        case VPRC_IfElse ifElse:
+                            if (ifElse.TrueCommands is not null)
+                            {
+                                foreach (var nested in EnumerateCommands(ifElse.TrueCommands))
+                                    yield return nested;
+                            }
+                            if (ifElse.FalseCommands is not null)
+                            {
+                                foreach (var nested in EnumerateCommands(ifElse.FalseCommands))
+                                    yield return nested;
+                            }
+                            break;
+                        case VPRC_Switch switchCommand:
+                            if (switchCommand.Cases is not null)
+                            {
+                                foreach (var caseContainer in switchCommand.Cases.Values)
+                                {
+                                    foreach (var nested in EnumerateCommands(caseContainer))
+                                        yield return nested;
+                                }
+                            }
+                            if (switchCommand.DefaultCase is not null)
+                            {
+                                foreach (var nested in EnumerateCommands(switchCommand.DefaultCase))
+                                    yield return nested;
+                            }
+                            break;
                     }
                 }
             }

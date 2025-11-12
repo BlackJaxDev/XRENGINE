@@ -1,7 +1,11 @@
 ﻿using MagicPhysX;
+using System.Linq;
 using System.Numerics;
+using XREngine.Components.Scene.Mesh;
 using XREngine.Core.Files;
 using XREngine.Data.Colors;
+using XREngine.Data.Core;
+using XREngine.Scene;
 
 namespace XREngine
 {
@@ -12,6 +16,11 @@ namespace XREngine
             public static event Action? SettingsChanged;
 
             private static EngineSettings _settings = new();
+            static Rendering()
+            {
+                _settings.PropertyChanged += HandleSettingsPropertyChanged;
+                _settings.PhysicsVisualizeSettings.PropertyChanged += HandlePhysicsVisualizeSettingsChanged;
+            }
             /// <summary>
             /// The global rendering settings for the engine.
             /// </summary>
@@ -20,12 +29,41 @@ namespace XREngine
                 get => _settings;
                 set
                 {
-                    if (_settings == value)
+                    if (ReferenceEquals(_settings, value) && value is not null)
                         return;
 
-                    _settings = value;
+                    if (_settings is not null)
+                    {
+                        _settings.PropertyChanged -= HandleSettingsPropertyChanged;
+                        _settings.PhysicsVisualizeSettings.PropertyChanged -= HandlePhysicsVisualizeSettingsChanged;
+                    }
+
+                    _settings = value ?? new EngineSettings();
+                    _settings.PropertyChanged += HandleSettingsPropertyChanged;
+                    _settings.PhysicsVisualizeSettings.PropertyChanged += HandlePhysicsVisualizeSettingsChanged;
+                    ApplyEngineSettingChange(null);
                     SettingsChanged?.Invoke();
                 }
+            }
+
+            private static void HandleSettingsPropertyChanged(object? sender, IXRPropertyChangedEventArgs e)
+            {
+                if (e.PropertyName == nameof(EngineSettings.PhysicsVisualizeSettings))
+                {
+                    if (e.PreviousValue is PhysicsVisualizeSettings previous)
+                        previous.PropertyChanged -= HandlePhysicsVisualizeSettingsChanged;
+
+                    if (e.NewValue is PhysicsVisualizeSettings current)
+                        current.PropertyChanged += HandlePhysicsVisualizeSettingsChanged;
+                }
+
+                ApplyEngineSettingChange(e.PropertyName);
+                SettingsChanged?.Invoke();
+            }
+
+            private static void HandlePhysicsVisualizeSettingsChanged(object? sender, IXRPropertyChangedEventArgs e)
+            {
+                SettingsChanged?.Invoke();
             }
             public enum ELoopType
             {
@@ -64,6 +102,29 @@ namespace XREngine
                 private bool _preview3DWorldOctree = false;
                 private bool _preview2DWorldQuadtree = false;
                 private bool _previewTraces = false;
+                private ColorF4 _quadtreeIntersectedBoundsColor = ColorF4.LightGray;
+                private ColorF4 _quadtreeContainedBoundsColor = ColorF4.Yellow;
+                private ColorF4 _octreeIntersectedBoundsColor = ColorF4.LightGray;
+                private ColorF4 _octreeContainedBoundsColor = ColorF4.Yellow;
+                private ColorF4 _bounds2DColor = ColorF4.LightLavender;
+                private ColorF4 _bounds3DColor = ColorF4.LightLavender;
+                private ColorF4 _transformPointColor = ColorF4.Orange;
+                private ColorF4 _transformLineColor = ColorF4.LightRed;
+                private ColorF4 _transformCapsuleColor = ColorF4.LightOrange;
+                private bool _allowSkinning = true;
+                private bool _allowBlendshapes = true;
+                private bool _remapBlendshapeDeltas = true;
+                private bool _useAbsoluteBlendshapePositions = false;
+                private bool _logVRFrameTimes = false;
+                private bool _preferNVStereo = true;
+                private bool _renderVRSinglePassStereo = false;
+                private bool _renderWindowsWhileInVR = true;
+                private bool _populateVertexDataInParallel = true;
+                private bool _processMeshImportsAsynchronously = true;
+                private bool _useInterleavedMeshBuffer = true;
+                private bool _transformCullingIsAxisAligned = true;
+                private bool _renderCullingVolumes = false;
+                private float _debugTextMaxLifespan = 0.0f;
 
                 /// <summary>
                 /// If true, the engine will render the octree for the 3D world.
@@ -264,28 +325,96 @@ namespace XREngine
                     get => _defaultFontFileName;
                     set => SetField(ref _defaultFontFileName, value);
                 }
-                public ColorF4 QuadtreeIntersectedBoundsColor { get; set; } = ColorF4.LightGray;
-                public ColorF4 QuadtreeContainedBoundsColor { get; set; } = ColorF4.Yellow;
-                public ColorF4 OctreeIntersectedBoundsColor { get; set; } = ColorF4.LightGray;
-                public ColorF4 OctreeContainedBoundsColor { get; set; } = ColorF4.Yellow;
-                public ColorF4 Bounds2DColor { get; set; } = ColorF4.LightLavender;
-                public ColorF4 Bounds3DColor { get; set; } = ColorF4.LightLavender;
-                public ColorF4 TransformPointColor { get; set; } = ColorF4.Orange;
-                public ColorF4 TransformLineColor { get; set; } = ColorF4.LightRed;
-                public ColorF4 TransformCapsuleColor { get; set; } = ColorF4.LightOrange;
-                public bool AllowSkinning { get; set; } = true;
-                public bool AllowBlendshapes { get; set; } = true;
-                public bool RemapBlendshapeDeltas { get; set; } = true;
-                public bool UseAbsoluteBlendshapePositions { get; set; } = false;
-                public bool LogVRFrameTimes { get; set; } = false;
+                public ColorF4 QuadtreeIntersectedBoundsColor
+                {
+                    get => _quadtreeIntersectedBoundsColor;
+                    set => SetField(ref _quadtreeIntersectedBoundsColor, value);
+                }
+                public ColorF4 QuadtreeContainedBoundsColor
+                {
+                    get => _quadtreeContainedBoundsColor;
+                    set => SetField(ref _quadtreeContainedBoundsColor, value);
+                }
+                public ColorF4 OctreeIntersectedBoundsColor
+                {
+                    get => _octreeIntersectedBoundsColor;
+                    set => SetField(ref _octreeIntersectedBoundsColor, value);
+                }
+                public ColorF4 OctreeContainedBoundsColor
+                {
+                    get => _octreeContainedBoundsColor;
+                    set => SetField(ref _octreeContainedBoundsColor, value);
+                }
+                public ColorF4 Bounds2DColor
+                {
+                    get => _bounds2DColor;
+                    set => SetField(ref _bounds2DColor, value);
+                }
+                public ColorF4 Bounds3DColor
+                {
+                    get => _bounds3DColor;
+                    set => SetField(ref _bounds3DColor, value);
+                }
+                public ColorF4 TransformPointColor
+                {
+                    get => _transformPointColor;
+                    set => SetField(ref _transformPointColor, value);
+                }
+                public ColorF4 TransformLineColor
+                {
+                    get => _transformLineColor;
+                    set => SetField(ref _transformLineColor, value);
+                }
+                public ColorF4 TransformCapsuleColor
+                {
+                    get => _transformCapsuleColor;
+                    set => SetField(ref _transformCapsuleColor, value);
+                }
+                public bool AllowSkinning
+                {
+                    get => _allowSkinning;
+                    set => SetField(ref _allowSkinning, value);
+                }
+                public bool AllowBlendshapes
+                {
+                    get => _allowBlendshapes;
+                    set => SetField(ref _allowBlendshapes, value);
+                }
+                public bool RemapBlendshapeDeltas
+                {
+                    get => _remapBlendshapeDeltas;
+                    set => SetField(ref _remapBlendshapeDeltas, value);
+                }
+                public bool UseAbsoluteBlendshapePositions
+                {
+                    get => _useAbsoluteBlendshapePositions;
+                    set => SetField(ref _useAbsoluteBlendshapePositions, value);
+                }
+                public bool LogVRFrameTimes
+                {
+                    get => _logVRFrameTimes;
+                    set => SetField(ref _logVRFrameTimes, value);
+                }
                 /// <summary>
                 /// If true, the engine will prefer NVidia stereo rendering over OVR_MultiView2.
                 /// NV supports geometry, tess eval, and tess control shaders in stereo mode, but only supports 2 layers.
                 /// OVR does not support extra shaders, but supports more layers.
                 /// </summary>
-                public bool PreferNVStereo { get; set; } = true;
-                public bool RenderVRSinglePassStereo { get; set; } = false;
-                public bool RenderWindowsWhileInVR { get; set; } = true;
+                public bool PreferNVStereo
+                {
+                    get => _preferNVStereo;
+                    set => SetField(ref _preferNVStereo, value);
+                }
+                public bool RenderVRSinglePassStereo
+                {
+                    get => _renderVRSinglePassStereo;
+                    set => SetField(ref _renderVRSinglePassStereo, value);
+                }
+                public bool RenderWindowsWhileInVR
+                {
+                    get => _renderWindowsWhileInVR;
+                    set => SetField(ref _renderWindowsWhileInVR, value);
+                }
 
                 private PhysicsVisualizeSettings _physicsVisualizeSettings = new();
                 public PhysicsVisualizeSettings PhysicsVisualizeSettings
@@ -293,15 +422,90 @@ namespace XREngine
                     get => _physicsVisualizeSettings;
                     set => SetField(ref _physicsVisualizeSettings, value);
                 }
-                public bool PopulateVertexDataInParallel { get; set; } = true;
-                public bool ProcessMeshImportsAsynchronously { get; set; } = true;
-                public bool UseInterleavedMeshBuffer { get; set; } = true;
-                public bool TransformCullingIsAxisAligned { get; set; } = true;
-                public bool RenderCullingVolumes { get; set; } = false;
+                public bool PopulateVertexDataInParallel
+                {
+                    get => _populateVertexDataInParallel;
+                    set => SetField(ref _populateVertexDataInParallel, value);
+                }
+                public bool ProcessMeshImportsAsynchronously
+                {
+                    get => _processMeshImportsAsynchronously;
+                    set => SetField(ref _processMeshImportsAsynchronously, value);
+                }
+                public bool UseInterleavedMeshBuffer
+                {
+                    get => _useInterleavedMeshBuffer;
+                    set => SetField(ref _useInterleavedMeshBuffer, value);
+                }
+                public bool TransformCullingIsAxisAligned
+                {
+                    get => _transformCullingIsAxisAligned;
+                    set => SetField(ref _transformCullingIsAxisAligned, value);
+                }
+                public bool RenderCullingVolumes
+                {
+                    get => _renderCullingVolumes;
+                    set => SetField(ref _renderCullingVolumes, value);
+                }
                 /// <summary>
                 /// How long a cache object for text rendering should exist for without receiving any further updates.
                 /// </summary>
-                public float DebugTextMaxLifespan { get; set; } = 0.0f;
+                public float DebugTextMaxLifespan
+                {
+                    get => _debugTextMaxLifespan;
+                    set => SetField(ref _debugTextMaxLifespan, value);
+                }
+            }
+
+            private static void ApplyEngineSettingChange(string? propertyName)
+            {
+                bool applyAll = string.IsNullOrEmpty(propertyName);
+
+                if (applyAll || propertyName == nameof(EngineSettings.RenderMesh3DBounds))
+                    ApplyRenderMeshBoundsSetting();
+
+                if (applyAll || propertyName == nameof(EngineSettings.RenderTransformDebugInfo))
+                    ApplyTransformDebugSetting();
+            }
+
+            private static void ApplyRenderMeshBoundsSetting()
+            {
+                bool renderBounds = Settings.RenderMesh3DBounds;
+
+                void Apply()
+                {
+                    foreach (var worldInstance in Engine.WorldInstances)
+                    {
+                        foreach (SceneNode rootNode in worldInstance.RootNodes)
+                        {
+                            rootNode.IterateComponents<RenderableComponent>(component =>
+                            {
+                                foreach (var mesh in component.Meshes.ToArray())
+                                    mesh.RenderBounds = renderBounds;
+                            }, true);
+                        }
+                    }
+                }
+
+                Engine.InvokeOnMainThread(() => Apply(), true);
+            }
+
+            private static void ApplyTransformDebugSetting()
+            {
+                bool enable = Settings.RenderTransformDebugInfo;
+
+                void Apply()
+                {
+                    foreach (var worldInstance in Engine.WorldInstances)
+                    {
+                        foreach (SceneNode rootNode in worldInstance.RootNodes)
+                        {
+                            rootNode.IterateHierarchy(node => node.Transform.DebugRender = enable);
+                        }
+                    }
+                }
+
+                Engine.InvokeOnMainThread(() => Apply(), true);
             }
         }
     }

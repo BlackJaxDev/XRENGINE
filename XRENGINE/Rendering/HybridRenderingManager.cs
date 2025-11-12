@@ -30,19 +30,13 @@ namespace XREngine.Rendering
         }
 
     // Cache of graphics programs created per material (combined program MVP)
-    private readonly struct MaterialProgramCache
-    {
-        public readonly XRRenderProgram Program;
-        public readonly XRShader? GeneratedVertexShader;
-
-        public MaterialProgramCache(XRRenderProgram program, XRShader? generatedVertexShader)
+    private readonly struct MaterialProgramCache(XRRenderProgram program, XRShader? generatedVertexShader)
         {
-            Program = program;
-            GeneratedVertexShader = generatedVertexShader;
+        public readonly XRRenderProgram Program = program;
+        public readonly XRShader? GeneratedVertexShader = generatedVertexShader;
         }
-    }
 
-    private readonly Dictionary<(uint materialId, int rendererKey), MaterialProgramCache> _materialPrograms = [];
+        private readonly Dictionary<(uint materialId, int rendererKey), MaterialProgramCache> _materialPrograms = [];
 
     private static GPURenderPassCollection.IndirectDebugSettings DebugSettings => GPURenderPassCollection.IndirectDebug;
     private static readonly HashSet<uint> _warnedMultiVertexMaterials = [];
