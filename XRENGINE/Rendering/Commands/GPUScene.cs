@@ -62,9 +62,9 @@ namespace XREngine.Rendering.Commands
         private readonly ConcurrentDictionary<uint, XRMesh> _idToMesh = new();
         private uint _nextMaterialID = 1;
         private int _materialDebugLogBudget = 16;
-    private int _commandBuildLogBudget = 12;
-    private int _commandRoundtripLogBudget = 8;
-    private int _commandRoundtripMismatchLogBudget = 4;
+        private int _commandBuildLogBudget = 12;
+        private int _commandRoundtripLogBudget = 8;
+        private int _commandRoundtripMismatchLogBudget = 4;
 
         private static bool IsGpuSceneLoggingEnabled()
             => Engine.UserSettings?.EnableGpuIndirectDebugLogging ?? false;
@@ -111,60 +111,40 @@ namespace XREngine.Rendering.Commands
         /// </summary>
         public void EnsureAtlasBuffers()
         {
-            if (_atlasPositions is null)
+            _atlasPositions ??= new XRDataBuffer(ECommonBufferType.Position.ToString(), EBufferTarget.ArrayBuffer, 0, EComponentType.Float, 3, false, false)
             {
-                _atlasPositions = new XRDataBuffer(ECommonBufferType.Position.ToString(), EBufferTarget.ArrayBuffer, 0, EComponentType.Float, 3, false, false)
-                {
-                    Name = "MeshAtlas_Positions",
-                    Usage = EBufferUsage.StreamDraw,
-                    DisposeOnPush = false,
-                    BindingIndexOverride = 0
-                };
-                //_atlasPositions.Generate();
-            }
-            if (_atlasNormals is null)
+                Name = "MeshAtlas_Positions",
+                Usage = EBufferUsage.StreamDraw,
+                DisposeOnPush = false,
+                BindingIndexOverride = 0
+            };
+            _atlasNormals ??= new XRDataBuffer(ECommonBufferType.Normal.ToString(), EBufferTarget.ArrayBuffer, 0, EComponentType.Float, 3, false, false)
             {
-                _atlasNormals = new XRDataBuffer(ECommonBufferType.Normal.ToString(), EBufferTarget.ArrayBuffer, 0, EComponentType.Float, 3, false, false)
-                {
-                    Name = "MeshAtlas_Normals",
-                    Usage = EBufferUsage.StreamDraw,
-                    DisposeOnPush = false,
-                    BindingIndexOverride = 1
-                };
-                //_atlasNormals.Generate();
-            }
-            if (_atlasTangents is null)
+                Name = "MeshAtlas_Normals",
+                Usage = EBufferUsage.StreamDraw,
+                DisposeOnPush = false,
+                BindingIndexOverride = 1
+            };
+            _atlasTangents ??= new XRDataBuffer(ECommonBufferType.Tangent.ToString(), EBufferTarget.ArrayBuffer, 0, EComponentType.Float, 4, false, false)
             {
-                _atlasTangents = new XRDataBuffer(ECommonBufferType.Tangent.ToString(), EBufferTarget.ArrayBuffer, 0, EComponentType.Float, 4, false, false)
-                {
-                    Name = "MeshAtlas_Tangents",
-                    Usage = EBufferUsage.StreamDraw,
-                    DisposeOnPush = false,
-                    BindingIndexOverride = 2
-                };
-                //_atlasTangents.Generate();
-            }
-            if (_atlasUV0 is null)
+                Name = "MeshAtlas_Tangents",
+                Usage = EBufferUsage.StreamDraw,
+                DisposeOnPush = false,
+                BindingIndexOverride = 2
+            };
+            _atlasUV0 ??= new XRDataBuffer($"{ECommonBufferType.TexCoord}0", EBufferTarget.ArrayBuffer, 0, EComponentType.Float, 2, false, false)
             {
-                _atlasUV0 = new XRDataBuffer($"{ECommonBufferType.TexCoord}0", EBufferTarget.ArrayBuffer, 0, EComponentType.Float, 2, false, false)
-                {
-                    Name = "MeshAtlas_UV0",
-                    Usage = EBufferUsage.StreamDraw,
-                    DisposeOnPush = false,
-                    BindingIndexOverride = 3
-                };
-                //_atlasUV0.Generate();
-            }
-            if (_atlasIndices is null)
+                Name = "MeshAtlas_UV0",
+                Usage = EBufferUsage.StreamDraw,
+                DisposeOnPush = false,
+                BindingIndexOverride = 3
+            };
+            _atlasIndices ??= new XRDataBuffer("MeshAtlas_Indices", EBufferTarget.ElementArrayBuffer, 0, EComponentType.UInt, 1, false, true)
             {
-                _atlasIndices = new XRDataBuffer("MeshAtlas_Indices", EBufferTarget.ElementArrayBuffer, 0, EComponentType.UInt, 1, false, true)
-                {
-                    Usage = EBufferUsage.StreamDraw,
-                    DisposeOnPush = false,
-                    PadEndingToVec4 = false
-                };
-                //_atlasIndices.Generate();
-            }
+                Usage = EBufferUsage.StreamDraw,
+                DisposeOnPush = false,
+                PadEndingToVec4 = false
+            };
             _atlasPositions!.BindingIndexOverride ??= 0;
             _atlasNormals!.BindingIndexOverride ??= 1;
             _atlasTangents!.BindingIndexOverride ??= 2;
