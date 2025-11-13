@@ -1,0 +1,423 @@
+using System;
+using System.Collections.Generic;
+using System.IO;
+using System.Linq;
+using System.Numerics;
+using System.Reflection;
+using System.Runtime.InteropServices;
+using System.Text;
+using ImGuiNET;
+using XREngine;
+using XREngine.Core.Files;
+using XREngine.Rendering;
+using XREngine.Rendering.Models;
+
+namespace XREngine.Editor;
+
+internal static class ImGuiAssetUtilities
+{
+    public const string AssetPayloadType = "XR_ASSET_PATH";
+    private const string AssetPickerPopupId = "AssetPicker";
+    private static readonly Dictionary<AssetPickerKey, object> _assetPickerStates = new();
+
+    public static void SetPathPayload(string path)
+    {
+        if (string.IsNullOrWhiteSpace(path))
+            return;
+
+        string normalized = Path.GetFullPath(path);
+        byte[] utf8 = Encoding.UTF8.GetBytes(normalized + '\0');
+        var handle = GCHandle.Alloc(utf8, GCHandleType.Pinned);
+        try
+        {
+            ImGui.SetDragDropPayload(AssetPayloadType, handle.AddrOfPinnedObject(), (uint)utf8.Length);
+        }
+        finally
+        {
+            if (handle.IsAllocated)
+                handle.Free();
+        }
+    }
+
+    public static string? GetPathFromPayload(ImGuiPayloadPtr payload)
+    {
+        if (payload.Data == IntPtr.Zero || payload.DataSize == 0)
+            return null;
+
+        int size = (int)payload.DataSize;
+        if (size <= 0)
+            return null;
+
+        try
+        {
+            // The payload includes a null terminator appended during creation.
+            int length = Math.Max(0, size - 1);
+            string? value = Marshal.PtrToStringUTF8(payload.Data, length);
+            return value is null ? null : Path.GetFullPath(value);
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    public static void DrawAssetField<TAsset>(string id, TAsset? current, Action<TAsset?> assign, AssetFieldOptions? options = null)
+        where TAsset : XRAsset, new()
+    {
+        options ??= AssetFieldOptions.ForType<TAsset>();
+    var state = GetPickerState<TAsset>(options);
+
+        ImGui.PushID(id);
+
+        var style = ImGui.GetStyle();
+        float availableWidth = ImGui.GetContentRegionAvail().X;
+        float clearWidth = ImGui.CalcTextSize("Clear").X + style.FramePadding.X * 2.0f;
+        float browseWidth = ImGui.CalcTextSize("Browse").X + style.FramePadding.X * 2.0f;
+        float fieldWidth = MathF.Max(80.0f, availableWidth - clearWidth - browseWidth - style.ItemSpacing.X * 2.0f);
+
+        bool openPopup = false;
+        string preview = GetAssetDisplayName(current);
+        if (ImGui.Selectable(preview, false, ImGuiSelectableFlags.AllowDoubleClick, new Vector2(fieldWidth, 0.0f)))
+            openPopup = true;
+
+        if (current is not null)
+        {
+            string? path = current.FilePath ?? current.OriginalPath;
+            if (!string.IsNullOrEmpty(path) && ImGui.IsItemHovered())
+                ImGui.SetTooltip(path);
+        }
+
+        if (ImGui.BeginDragDropTarget())
+        {
+            var payload = ImGui.AcceptDragDropPayload(AssetPayloadType);
+            if (payload.Data != IntPtr.Zero && payload.DataSize > 0)
+            {
+                string? path = GetPathFromPayload(payload);
+                if (!string.IsNullOrEmpty(path))
+                {
+                    var asset = LoadAssetFromPath<TAsset>(path);
+                    if (asset is not null)
+                        assign(asset);
+                }
+            }
+            ImGui.EndDragDropTarget();
+        }
+
+        ImGui.SameLine();
+        if (ImGui.SmallButton("Clear"))
+            assign(null);
+
+        ImGui.SameLine();
+        if (ImGui.SmallButton("Browse"))
+            openPopup = true;
+
+        if (openPopup)
+            ImGui.OpenPopup(AssetPickerPopupId);
+
+        if (ImGui.BeginPopup(AssetPickerPopupId))
+        {
+            DrawAssetPickerPopup(state, current, assign);
+            ImGui.EndPopup();
+        }
+
+        ImGui.PopID();
+    }
+
+    private static void DrawAssetPickerPopup<TAsset>(AssetPickerState<TAsset> state, TAsset? current, Action<TAsset?> assign)
+        where TAsset : XRAsset, new()
+    {
+        if (state.NeedsRefresh)
+            RefreshAssetPickerState(state, force: true);
+
+        bool includeGame = state.IncludeGame;
+        if (ImGui.Checkbox("Game Assets", ref includeGame))
+        {
+            state.IncludeGame = includeGame;
+            state.NeedsRefresh = true;
+        }
+
+        ImGui.SameLine();
+
+        bool includeEngine = state.IncludeEngine;
+        if (ImGui.Checkbox("Engine Assets", ref includeEngine))
+        {
+            state.IncludeEngine = includeEngine;
+            state.NeedsRefresh = true;
+        }
+
+        ImGui.SameLine();
+        if (ImGui.SmallButton("Refresh"))
+            RefreshAssetPickerState(state, force: true);
+
+        if (state.NeedsRefresh)
+            RefreshAssetPickerState(state, force: true);
+
+        ImGui.Separator();
+
+        string searchBuffer = state.Search;
+        if (ImGui.InputTextWithHint("##AssetSearch", "Search...", ref searchBuffer, 256u))
+            state.Search = searchBuffer.Trim();
+
+        ImGui.Separator();
+
+        Vector2 listSize = new(0.0f, 260.0f);
+        if (ImGui.BeginChild("AssetPickerList", listSize, ImGuiChildFlags.Border))
+        {
+            bool any = false;
+            foreach (var candidate in EnumerateFilteredCandidates(state))
+            {
+                any = true;
+                bool selected = ReferenceEquals(candidate.Asset, current);
+                string label = candidate.DisplayName;
+                if (candidate.IsEngine)
+                    label += "  [Engine]";
+
+                if (ImGui.Selectable(label, selected))
+                {
+                    assign(candidate.Asset);
+                    ImGui.CloseCurrentPopup();
+                }
+
+                if (ImGui.IsItemHovered())
+                    ImGui.SetTooltip(candidate.Path);
+
+                if (selected)
+                    ImGui.SetItemDefaultFocus();
+            }
+
+            if (!any)
+                ImGui.TextDisabled("No assets found. Adjust filters or refresh.");
+
+            ImGui.EndChild();
+        }
+
+        if (ImGui.Button("Clear Selection"))
+        {
+            assign(null);
+            ImGui.CloseCurrentPopup();
+        }
+    }
+
+    private static AssetPickerState<TAsset> GetPickerState<TAsset>(AssetFieldOptions options) where TAsset : XRAsset, new()
+    {
+        string extensionKey = options.ExtensionsKey(typeof(TAsset));
+        var key = new AssetPickerKey(typeof(TAsset), extensionKey);
+
+        if (_assetPickerStates.TryGetValue(key, out var existing) && existing is AssetPickerState<TAsset> typed)
+            return typed;
+
+        var state = new AssetPickerState<TAsset>(options.ResolveExtensions(typeof(TAsset)));
+        _assetPickerStates[key] = state;
+        return state;
+    }
+
+    private static void RefreshAssetPickerState<TAsset>(AssetPickerState<TAsset> state, bool force = false) where TAsset : XRAsset, new()
+    {
+        if (!force && !state.NeedsRefresh)
+            return;
+
+        state.NeedsRefresh = false;
+        state.Candidates.Clear();
+
+        var assetManager = Engine.Assets;
+        if (assetManager is null)
+            return;
+
+        var roots = new List<(string Path, bool IsEngine)>();
+        if (state.IncludeGame && Directory.Exists(assetManager.GameAssetsPath))
+            roots.Add((assetManager.GameAssetsPath, false));
+        if (state.IncludeEngine && Directory.Exists(assetManager.EngineAssetsPath))
+            roots.Add((assetManager.EngineAssetsPath, true));
+
+        if (roots.Count == 0)
+            return;
+
+        var seenPaths = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        foreach (var (root, isEngine) in roots)
+        {
+            foreach (var file in EnumerateAssetFiles(root, state.Extensions))
+            {
+                if (!seenPaths.Add(file))
+                    continue;
+
+                var asset = LoadAssetFromPath<TAsset>(file);
+                if (asset is null)
+                    continue;
+
+                string displayName = string.IsNullOrWhiteSpace(asset.Name)
+                    ? Path.GetFileNameWithoutExtension(file)
+                    : asset.Name;
+
+                state.Candidates.Add(new AssetCandidate<TAsset>(asset, file, isEngine, displayName));
+            }
+        }
+
+        state.Candidates.Sort((a, b) => string.Compare(a.DisplayName, b.DisplayName, StringComparison.OrdinalIgnoreCase));
+    }
+
+    private static IEnumerable<AssetCandidate<TAsset>> EnumerateFilteredCandidates<TAsset>(AssetPickerState<TAsset> state)
+        where TAsset : XRAsset
+    {
+        string search = state.Search;
+        if (string.IsNullOrWhiteSpace(search))
+        {
+            foreach (var candidate in state.Candidates)
+                yield return candidate;
+            yield break;
+        }
+
+        search = search.Trim();
+
+        foreach (var candidate in state.Candidates)
+        {
+            if (candidate.DisplayName.Contains(search, StringComparison.OrdinalIgnoreCase)
+                || candidate.Path.Contains(search, StringComparison.OrdinalIgnoreCase))
+            {
+                yield return candidate;
+            }
+        }
+    }
+
+    private static IEnumerable<string> EnumerateAssetFiles(string root, IReadOnlyList<string> extensions)
+    {
+        if (!Directory.Exists(root))
+            yield break;
+
+        HashSet<string> extensionSet = new(extensions, StringComparer.OrdinalIgnoreCase);
+
+        IEnumerable<string> files;
+        try
+        {
+            files = Directory.EnumerateFiles(root, "*", SearchOption.AllDirectories).ToArray();
+        }
+        catch
+        {
+            yield break;
+        }
+
+        foreach (string file in files)
+        {
+            string ext = Path.GetExtension(file);
+            if (extensionSet.Contains(ext))
+                yield return Path.GetFullPath(file);
+        }
+    }
+
+    private static TAsset? LoadAssetFromPath<TAsset>(string path) where TAsset : XRAsset, new()
+    {
+        if (string.IsNullOrWhiteSpace(path))
+            return null;
+
+        var assets = Engine.Assets;
+        if (assets is null)
+            return null;
+
+        try
+        {
+            return assets.Load<TAsset>(path);
+        }
+        catch (Exception ex)
+        {
+            Debug.LogWarning($"Failed to load asset '{path}' as {typeof(TAsset).Name}: {ex.Message}");
+            return null;
+        }
+    }
+
+    private static string GetAssetDisplayName<T>(T? asset) where T : class
+    {
+        if (asset is null)
+            return "<none>";
+
+        string? preferredName = null;
+        PropertyInfo? nameProperty = asset.GetType().GetProperty("Name", BindingFlags.Instance | BindingFlags.Public);
+        if (nameProperty?.GetValue(asset) is string name && !string.IsNullOrWhiteSpace(name))
+            preferredName = name;
+
+        return FormatAssetLabel(preferredName, asset);
+    }
+
+    private static string FormatAssetLabel(string? preferredName, object? fallback)
+    {
+        if (!string.IsNullOrWhiteSpace(preferredName))
+            return preferredName!;
+
+        return fallback?.GetType().Name ?? "<none>";
+    }
+
+    private static readonly Dictionary<Type, string[]> DefaultExtensions = new()
+    {
+        { typeof(Model), new[] { ".asset" } },
+        { typeof(XRMesh), new[] { ".asset", ".mesh", ".model" } },
+        { typeof(XRMaterial), new[] { ".asset", ".material" } }
+    };
+
+    private static string[] GetDefaultExtensions(Type assetType)
+        => DefaultExtensions.TryGetValue(assetType, out var exts)
+            ? exts
+            : new[] { ".asset" };
+
+    public sealed class AssetFieldOptions
+    {
+        private readonly string[] _customExtensions;
+
+        private AssetFieldOptions(IEnumerable<string>? extensions)
+        {
+            _customExtensions = extensions?
+                .Select(NormalizeExtension)
+                .Where(static e => !string.IsNullOrEmpty(e))
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToArray() ?? Array.Empty<string>();
+        }
+
+        public static AssetFieldOptions ForType<TAsset>() where TAsset : XRAsset
+            => new(null);
+
+        public static AssetFieldOptions ForMeshes()
+            => new(new[] { ".asset", ".mesh", ".model" });
+
+        public static AssetFieldOptions ForMaterials()
+            => new(new[] { ".asset", ".material" });
+
+        public static AssetFieldOptions WithExtensions(IEnumerable<string> extensions)
+            => new(extensions);
+
+        public string[] ResolveExtensions(Type assetType)
+            => _customExtensions.Length > 0 ? _customExtensions : GetDefaultExtensions(assetType);
+
+        public string ExtensionsKey(Type assetType)
+        {
+            if (_customExtensions.Length == 0)
+                return string.Join(';', GetDefaultExtensions(assetType));
+            return string.Join(';', _customExtensions);
+        }
+
+        private static string NormalizeExtension(string ext)
+        {
+            if (string.IsNullOrWhiteSpace(ext))
+                return string.Empty;
+
+            string trimmed = ext.Trim();
+            if (!trimmed.StartsWith('.'))
+                trimmed = "." + trimmed;
+            return trimmed.ToLowerInvariant();
+        }
+    }
+
+    private sealed class AssetPickerState<TAsset> where TAsset : XRAsset
+    {
+        public AssetPickerState(string[] extensions)
+            => Extensions = extensions;
+
+        public string Search { get; set; } = string.Empty;
+        public bool IncludeGame { get; set; } = true;
+        public bool IncludeEngine { get; set; } = true;
+        public bool NeedsRefresh { get; set; } = true;
+        public IReadOnlyList<string> Extensions { get; }
+        public List<AssetCandidate<TAsset>> Candidates { get; } = new();
+    }
+
+    private sealed record AssetCandidate<TAsset>(TAsset Asset, string Path, bool IsEngine, string DisplayName) where TAsset : XRAsset;
+
+    private readonly record struct AssetPickerKey(Type AssetType, string ExtensionsKey);
+}

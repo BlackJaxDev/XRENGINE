@@ -1062,6 +1062,13 @@ public static partial class UnitTestingWorld
                     if (hovered)
                         ImGui.SetTooltip(entry.Path);
 
+                    if (!entry.IsDirectory && ImGui.BeginDragDropSource(ImGuiDragDropFlags.SourceAllowNullID))
+                    {
+                        ImGuiAssetUtilities.SetPathPayload(entry.Path);
+                        ImGui.TextUnformatted(entry.Name);
+                        ImGui.EndDragDropSource();
+                    }
+
                     if (entry.IsDirectory)
                     {
                         if (activated || (hovered && ImGui.IsMouseDoubleClicked(ImGuiMouseButton.Left)))
