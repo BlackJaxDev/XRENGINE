@@ -403,9 +403,6 @@ public static partial class UnitTestingWorld
                 if (ImGui.MenuItem("Add Child Scene Node"))
                     CreateChildSceneNode(node);
 
-                if (ImGui.MenuItem("Add Component..."))
-                    BeginAddComponentForHierarchyNode(node);
-
                 ImGui.EndPopup();
             }
 
@@ -1272,8 +1269,14 @@ public static partial class UnitTestingWorld
 
             ImGui.Separator();
             ImGui.TextUnformatted("Components");
+            ImGui.SameLine();
+            if (ImGui.Button("Add Component..."))
+                BeginAddComponentForHierarchyNode(node);
+
             ImGui.Spacing();
             DrawComponentInspectors(node, visited);
+
+            DrawHierarchyAddComponentPopup();
 
             ImGui.PopID();
         }
@@ -1399,20 +1402,72 @@ public static partial class UnitTestingWorld
         private static void DrawComponentInspectors(SceneNode node, HashSet<object> visited)
         {
             using var profilerScope = Engine.Profiler.Start("UI.DrawComponentInspectors");
+            var componentsSnapshot = node.Components.ToArray();
             bool anyComponentsDrawn = false;
+            List<XRComponent>? componentsToRemove = null;
 
-            foreach (var component in node.Components)
+            foreach (var component in componentsSnapshot)
             {
                 if (component is null)
                     continue;
 
                 anyComponentsDrawn = true;
-                string headerLabel = $"{component.GetType().Name}##Component{component.GetHashCode()}";
-                if (ImGui.CollapsingHeader(headerLabel, ImGuiTreeNodeFlags.DefaultOpen))
+                int componentHash = component.GetHashCode();
+                ImGui.PushID(componentHash);
+
+                float removeButtonWidth = ImGui.CalcTextSize("Remove").X + ImGui.GetStyle().FramePadding.X * 2f;
+                float availableWidth = ImGui.GetContentRegionAvail().X;
+                float firstColumnWidth = MathF.Max(0f, availableWidth - removeButtonWidth - ImGui.GetStyle().ItemSpacing.X);
+
+                ImGui.Columns(2, null, false);
+                ImGui.SetColumnWidth(0, firstColumnWidth);
+                ImGui.SetColumnWidth(1, removeButtonWidth);
+
+                string headerLabel = $"{component.GetType().Name}##Component{componentHash}";
+                ImGuiTreeNodeFlags headerFlags = ImGuiTreeNodeFlags.DefaultOpen | ImGuiTreeNodeFlags.SpanAvailWidth;
+                bool open = ImGui.CollapsingHeader(headerLabel, headerFlags);
+
+                ImGui.NextColumn();
+                using (new ImGuiDisabledScope(component.IsDestroyed))
                 {
-                    ImGui.PushID(component.GetHashCode());
+                    if (ImGui.SmallButton("Remove"))
+                    {
+                        componentsToRemove ??= new List<XRComponent>();
+                        componentsToRemove.Add(component);
+                    }
+                }
+
+                ImGui.NextColumn();
+                ImGui.Columns(1);
+
+                if (open)
+                {
                     DrawInspectableObject(component, "ComponentProperties", visited);
-                    ImGui.PopID();
+                }
+
+                ImGui.PopID();
+            }
+
+            if (componentsToRemove is not null)
+            {
+                foreach (var component in componentsToRemove)
+                {
+                    if (component is null || component.IsDestroyed)
+                        continue;
+
+                    var componentCapture = component;
+                    EnqueueSceneEdit(() =>
+                    {
+                        try
+                        {
+                            if (componentCapture is not null && !componentCapture.IsDestroyed)
+                                componentCapture.Destroy();
+                        }
+                        catch (Exception ex)
+                        {
+                            Debug.LogException(ex, $"Failed to remove component '{componentCapture?.GetType().Name}'.");
+                        }
+                    });
                 }
             }
 
