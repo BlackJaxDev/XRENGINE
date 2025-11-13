@@ -1,6 +1,7 @@
 ﻿using Extensions;
 using System.Collections.Concurrent;
 using System.Diagnostics.CodeAnalysis;
+using XREngine.Components;
 using XREngine.Data.Geometry;
 using XREngine.Rendering;
 using XREngine.Rendering.Models;
@@ -8,6 +9,7 @@ using XREngine.Rendering.Models;
 namespace XREngine.Components.Scene.Mesh
 {
     [Serializable]
+    [XRComponentEditor("XREngine.Editor.ComponentEditors.ModelComponentEditor")]
     public class ModelComponent : RenderableComponent
     {
         private readonly ConcurrentDictionary<SubMesh, RenderableMesh> _meshLinks = new();

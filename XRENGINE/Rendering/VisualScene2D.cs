@@ -1,4 +1,6 @@
-﻿using System.Numerics;
+﻿using System.Collections.Concurrent;
+using System.Collections.Generic;
+using System.Numerics;
 using XREngine.Components;
 using XREngine.Data.Colors;
 using XREngine.Data.Geometry;
@@ -57,6 +59,8 @@ namespace XREngine.Scene
         /// <param name="camera"></param>
         public void CollectRenderedItems(RenderCommandCollection commands, BoundingRectangleF? collectionVolume, XRCamera? camera)
         {
+            ProcessPendingRenderableOperations();
+
             bool IntersectionTest(RenderInfo2D item, BoundingRectangleF cullingVolume, bool containsOnly)
             {
                 if (item.CullingVolume is null)
@@ -78,21 +82,45 @@ namespace XREngine.Scene
 
         public IReadOnlyList<RenderInfo2D> Renderables => _renderables;
         private readonly List<RenderInfo2D> _renderables = [];
+        private readonly HashSet<RenderInfo2D> _renderableSet = [];
+        private readonly ConcurrentQueue<(RenderInfo2D renderable, bool add)> _pendingRenderableOperations = new(); // staged until GlobalPreRender runs on the render thread
+
         public void AddRenderable(RenderInfo2D renderable)
-        {
-            _renderables.Add(renderable);
-            RenderTree.Add(renderable);
-        }
+            => _pendingRenderableOperations.Enqueue((renderable, true));
+
         public void RemoveRenderable(RenderInfo2D renderable)
+            => _pendingRenderableOperations.Enqueue((renderable, false));
+
+        public override void GlobalPreRender()
         {
-            _renderables.Remove(renderable);
-            RenderTree.Remove(renderable);
+            base.GlobalPreRender();
+            ProcessPendingRenderableOperations();
         }
 
         public override IEnumerator<RenderInfo> GetEnumerator()
         {
             foreach (var renderable in _renderables)
                 yield return renderable;
+        }
+
+        private void ProcessPendingRenderableOperations()
+        {
+            while (_pendingRenderableOperations.TryDequeue(out var operation))
+            {
+                if (operation.add)
+                {
+                    if (_renderableSet.Add(operation.renderable))
+                    {
+                        _renderables.Add(operation.renderable);
+                        RenderTree.Add(operation.renderable);
+                    }
+                }
+                else if (_renderableSet.Remove(operation.renderable))
+                {
+                    _renderables.Remove(operation.renderable);
+                    RenderTree.Remove(operation.renderable);
+                }
+            }
         }
     }
 }
