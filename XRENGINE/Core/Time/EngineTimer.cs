@@ -330,7 +330,7 @@ namespace XREngine.Timers
                 //Raise UpdateFrame events until we catch up with the target update period
                 while (IsRunning && elapsed > 0.0f && elapsed + _updateTimeDiff >= TargetUpdatePeriod)
                 {
-                    //using var updateIterationSample = Engine.Profiler.Start("EngineTimer.DispatchUpdate.Iteration");
+                    using var updateIterationSample = Engine.Profiler.Start("EngineTimer.DispatchUpdate.Iteration");
 
                     Update.Delta = elapsed;
                     Update.LastTimestamp = timestamp;

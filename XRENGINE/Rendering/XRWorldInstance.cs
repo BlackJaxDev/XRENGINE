@@ -85,6 +85,8 @@ namespace XREngine.Rendering
 
         public async Task BeginPlay()
         {
+            using var profilerScope = Engine.Profiler.Start("WorldInstance.BeginPlay");
+
             PreBeginPlay?.Invoke(this);
             VisualScene.Initialize();
             PhysicsScene.Initialize();
@@ -110,6 +112,8 @@ namespace XREngine.Rendering
 
         public void EndPlay()
         {
+            using var profilerScope = Engine.Profiler.Start("WorldInstance.EndPlay");
+            
             PreEndPlay?.Invoke(this);
             UnlinkTimeCallbacks();
             PhysicsScene.Destroy();
@@ -150,12 +154,15 @@ namespace XREngine.Rendering
 
         public void GlobalCollectVisible()
         {
+            using var profilerScope = Engine.Profiler.Start("WorldInstance.GlobalCollectVisible");
+            
             Lights.CollectVisibleItems();
         }
 
         private void ApplyRenderMatrixChanges()
         {
-            //using var t = Engine.Profiler.Start();
+            using var profilerScope = Engine.Profiler.Start("WorldInstance.ApplyRenderMatrixChanges");
+            
             //var arr = ArrayPool<(TransformBase tfm, Matrix4x4 renderMatrix)>.Shared.Rent(_pushToRenderSnapshot.Count);
             //await Task.WhenAll(_pushToRenderSnapshot.Select(x => x.tfm.SetRenderMatrix(x.renderMatrix, false)));
             //_pushToRenderSnapshot.Clear();
@@ -165,6 +172,8 @@ namespace XREngine.Rendering
 
         private void GlobalSwapBuffers()
         {
+            using var profilerScope = Engine.Profiler.Start("WorldInstance.GlobalSwapBuffers");
+
             //using var t = Engine.Profiler.Start();
 
             ApplyRenderMatrixChanges();
@@ -178,6 +187,8 @@ namespace XREngine.Rendering
         /// </summary>
         public void GlobalPreRender()
         {
+            using var profilerScope = Engine.Profiler.Start("WorldInstance.GlobalPreRender");
+
             VisualScene.GlobalPreRender();
             Lights.RenderShadowMaps(false);
         }
@@ -187,6 +198,8 @@ namespace XREngine.Rendering
         /// </summary>
         public void GlobalPostRender()
         {
+            using var profilerScope = Engine.Profiler.Start("WorldInstance.GlobalPostRender");
+
             //using var d = Profiler.Start();
             VisualScene.GlobalPostRender();
             //Lights.CaptureLightProbes();
@@ -199,12 +212,16 @@ namespace XREngine.Rendering
 
         private void PreUpdate()
         {
+            using var profilerScope = Engine.Profiler.Start("WorldInstance.PreUpdate");
+
             _pushToRenderWrite.Clear();
             _invalidTransforms.ForEach(x => x.Value.Clear());
         }
 
         private void PostUpdate()
         {
+            using var profilerScope = Engine.Profiler.Start("WorldInstance.PostUpdate");
+
             var loopType = Engine.Rendering.Settings.RecalcChildMatricesLoopType;
             Func<IEnumerable<TransformBase>, Task> recalcDepth = loopType switch
             {
