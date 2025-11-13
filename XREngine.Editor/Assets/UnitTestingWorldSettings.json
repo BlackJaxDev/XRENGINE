@@ -34,7 +34,7 @@
   "Microphone": false,
   "Mirror": false,
   "PhysicsBallCount": 10,
-  "PhysicsChain": false,
+  "PhysicsChain": true,
   "PointLight": false,
   "RecalcChildMatricesType": "Asynchronous",
   "RenderFPS": 0.0,

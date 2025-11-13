@@ -1,4 +1,6 @@
-﻿using System.Drawing;
+﻿using System.Collections.Concurrent;
+using System.Collections.Generic;
+using System.Drawing;
 using System.Numerics;
 using XREngine.Data.Geometry;
 using XREngine.Data.Rendering;
@@ -55,12 +57,16 @@ namespace XREngine.Scene
             IVolume? collectionVolumeOverride,
             bool collectMirrors)
         {
+            //ProcessPendingRenderableOperations();
+
             XRCamera? cullingCamera = cullingCameraOverride?.Invoke() ?? camera;
             IVolume? collectionVolume = collectionVolumeOverride ?? (cullWithFrustum ? cullingCamera?.WorldFrustum() : null);
             CollectRenderedItems(meshRenderCommands, collectionVolume, camera, collectMirrors);
         }
         public void CollectRenderedItems(RenderCommandCollection commands, IVolume? collectionVolume, XRCamera? camera, bool collectMirrors)
         {
+            //ProcessPendingRenderableOperations();
+
             bool IntersectionTest(RenderInfo3D item, IVolume? cullingVolume, bool containsOnly)
                 => item.AllowRender(cullingVolume, commands, camera, containsOnly, collectMirrors);
 
@@ -75,23 +81,19 @@ namespace XREngine.Scene
 
         public IReadOnlyList<RenderInfo3D> Renderables => _renderables;
         private readonly List<RenderInfo3D> _renderables = [];
+        private readonly HashSet<RenderInfo3D> _renderableSet = [];
+        private readonly ConcurrentQueue<(RenderInfo3D renderable, bool add)> _pendingRenderableOperations = new(); // staged until GlobalPreRender runs on the render thread
+
         public void AddRenderable(RenderInfo3D renderable)
-        {
-            _renderables.Add(renderable);
+            => _pendingRenderableOperations.Enqueue((renderable, true));
 
-            if (_isGpuDispatchActive)
-                GPUCommands.Add(renderable);
-            else
-                RenderTree.Add(renderable);
-        }
         public void RemoveRenderable(RenderInfo3D renderable)
-        {
-            if (_isGpuDispatchActive)
-                GPUCommands.Remove(renderable);
-            else
-                RenderTree.Remove(renderable);
+            => _pendingRenderableOperations.Enqueue((renderable, false));
 
-            _renderables.Remove(renderable);
+        public override void GlobalPreRender()
+        {
+            base.GlobalPreRender();
+            ProcessPendingRenderableOperations();
         }
 
         public void ApplyRenderDispatchPreference(bool useGpu)
@@ -131,6 +133,34 @@ namespace XREngine.Scene
         {
             foreach (var renderable in _renderables)
                 yield return renderable;
+        }
+
+        private void ProcessPendingRenderableOperations()
+        {
+            while (_pendingRenderableOperations.TryDequeue(out var operation))
+            {
+                if (operation.add)
+                {
+                    if (_renderableSet.Add(operation.renderable))
+                    {
+                        _renderables.Add(operation.renderable);
+
+                        if (_isGpuDispatchActive)
+                            GPUCommands.Add(operation.renderable);
+                        else
+                            RenderTree.Add(operation.renderable);
+                    }
+                }
+                else if (_renderableSet.Remove(operation.renderable))
+                {
+                    if (_isGpuDispatchActive)
+                        GPUCommands.Remove(operation.renderable);
+                    else
+                        RenderTree.Remove(operation.renderable);
+
+                    _renderables.Remove(operation.renderable);
+                }
+            }
         }
     }
 }

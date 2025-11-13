@@ -12,12 +12,13 @@ using System.Runtime.CompilerServices;
 using System.Text;
 using ImGuiNET;
 using XREngine;
-using XREngine.Animation;
 using XREngine.Components;
+using XREngine.Animation;
 using XREngine.Rendering;
 using XREngine.Scene;
 using XREngine.Scene.Components.UI;
 using XREngine.Scene.Transforms;
+using XREngine.Editor.ComponentEditors;
 
 namespace XREngine.Editor;
 
@@ -29,6 +30,7 @@ public static partial class UnitTestingWorld
         private static readonly List<ComponentTypeDescriptor> _componentTypeDescriptors = [];
         private static readonly byte[] _renameBuffer = new byte[256];
         private static readonly List<ComponentTypeDescriptor> _filteredComponentTypes = [];
+        private static readonly Dictionary<Type, IXRComponentEditor?> _componentEditorCache = new();
         private static readonly Dictionary<int, ProfilerThreadCacheEntry> _profilerThreadCache = new();
         private static readonly Dictionary<string, bool> _profilerNodeOpenCache = new();
         private static readonly TimeSpan ProfilerThreadCacheTimeout = TimeSpan.FromSeconds(15.0);
@@ -44,19 +46,22 @@ public static partial class UnitTestingWorld
         private static string _componentPickerSearch = string.Empty;
         private static string? _componentPickerError;
 
-    private static bool _profilerDockLeftEnabled = true;
+        private static bool _addComponentPopupOpen;
+        private static bool _addComponentPopupRequested;
+
+        private static bool _profilerDockLeftEnabled = true;
         private static bool _profilerUndockNextFrame;
         private static bool _profilerDockDragging;
         private static float _profilerDockWidth = 360.0f;
         private static float _profilerDockDragStartWidth = 360.0f;
         private static float _profilerDockDragStartMouseX;
 
-    private static bool _inspectorDockRightEnabled = true;
-    private static bool _inspectorUndockNextFrame;
-    private static bool _inspectorDockDragging;
-    private static float _inspectorDockWidth = 380.0f;
-    private static float _inspectorDockDragStartWidth = 380.0f;
-    private static float _inspectorDockDragStartMouseX;
+        private static bool _inspectorDockRightEnabled = true;
+        private static bool _inspectorUndockNextFrame;
+        private static bool _inspectorDockDragging;
+        private static float _inspectorDockWidth = 380.0f;
+        private static float _inspectorDockDragStartWidth = 380.0f;
+        private static float _inspectorDockDragStartMouseX;
 
         private static bool _assetExplorerDockBottomEnabled = true;
         private static bool _assetExplorerDockTopEnabled;
@@ -71,7 +76,7 @@ public static partial class UnitTestingWorld
         private static readonly AssetExplorerTabState _assetExplorerEngineState = new("EngineCommon", "Engine Assets");
         private static readonly List<AssetExplorerEntry> _assetExplorerScratchEntries = new();
 
-    private static readonly ConcurrentQueue<Action> _queuedSceneEdits = new();
+        private static readonly ConcurrentQueue<Action> _queuedSceneEdits = new();
 
         private static Engine.CodeProfiler.ProfilerFrameSnapshot? _worstFrameDisplaySnapshot;
         private static Engine.CodeProfiler.ProfilerFrameSnapshot? _worstFrameWindowSnapshot;
@@ -288,6 +293,11 @@ public static partial class UnitTestingWorld
                                         | ImGuiTableFlags.BordersInnerV;
 
             Vector2 tableSize = ImGui.GetContentRegionAvail();
+            ImGui.PushStyleVar(ImGuiStyleVar.IndentSpacing, 14.0f);
+            ImGui.PushStyleVar(ImGuiStyleVar.FramePadding, new Vector2(4.0f, 2.0f));
+            ImGui.PushStyleVar(ImGuiStyleVar.ItemSpacing, new Vector2(4.0f, 2.0f));
+            ImGui.PushStyleVar(ImGuiStyleVar.CellPadding, new Vector2(4.0f, 2.0f));
+            ImGui.SetWindowFontScale(0.95f);
             if (ImGui.BeginTable("HierarchyTree", 2, tableFlags, tableSize))
             {
                 ImGui.TableSetupColumn("Node", ImGuiTableColumnFlags.WidthStretch, 1.0f);
@@ -301,8 +311,8 @@ public static partial class UnitTestingWorld
 
                 ImGui.EndTable();
             }
-
-            DrawHierarchyAddComponentPopup();
+            ImGui.SetWindowFontScale(1.0f);
+            ImGui.PopStyleVar(4);
         }
 
         private static void DrawSceneNodeTree(SceneNode node, XRWorldInstance world)
@@ -314,7 +324,7 @@ public static partial class UnitTestingWorld
                 nodeLabel += $" ({childCount})";
             ImGuiTreeNodeFlags flags = childCount > 0
                 ? ImGuiTreeNodeFlags.DefaultOpen
-                : ImGuiTreeNodeFlags.Leaf | ImGuiTreeNodeFlags.Bullet;
+                : ImGuiTreeNodeFlags.Leaf | ImGuiTreeNodeFlags.Bullet | ImGuiTreeNodeFlags.NoTreePushOnOpen;
 
             bool nodeOpen = DrawSceneNodeEntry(node, world, nodeLabel, flags);
 
@@ -456,117 +466,126 @@ public static partial class UnitTestingWorld
             _nodePendingAddComponent = node;
             _componentPickerSearch = string.Empty;
             _componentPickerError = null;
-            ImGui.OpenPopup(HierarchyAddComponentPopupId);
+            _addComponentPopupOpen = true;
+            _addComponentPopupRequested = true;
         }
 
         private static void DrawHierarchyAddComponentPopup()
         {
-            if (_nodePendingAddComponent is null)
+            if (_nodePendingAddComponent is null && !_addComponentPopupOpen)
                 return;
+
+            if (_addComponentPopupRequested)
+            {
+                ImGui.OpenPopup(HierarchyAddComponentPopupId);
+                _addComponentPopupRequested = false;
+            }
 
             ImGui.SetNextWindowSize(new Vector2(640f, 520f), ImGuiCond.FirstUseEver);
-            bool popupOpen = ImGui.BeginPopupModal(HierarchyAddComponentPopupId, ImGuiWindowFlags.NoCollapse);
-            if (!popupOpen)
+            if (ImGui.BeginPopupModal(HierarchyAddComponentPopupId, ref _addComponentPopupOpen, ImGuiWindowFlags.NoCollapse))
             {
-                ResetComponentPickerState();
-                return;
-            }
-
-            var targetNode = _nodePendingAddComponent;
-            if (targetNode is null)
-            {
-                ResetComponentPickerState();
-                ImGui.CloseCurrentPopup();
-                ImGui.EndPopup();
-                return;
-            }
-
-            ImGui.TextUnformatted($"Add Component to '{targetNode.Name ?? SceneNode.DefaultName}'");
-            ImGui.Spacing();
-
-            if (!string.IsNullOrEmpty(_componentPickerError))
-            {
-                ImGui.PushStyleColor(ImGuiCol.Text, new Vector4(1.0f, 0.4f, 0.4f, 1.0f));
-                ImGui.TextWrapped(_componentPickerError);
-                ImGui.PopStyleColor();
-                ImGui.Spacing();
-            }
-
-            ImGui.InputText("Search", ref _componentPickerSearch, 256, ImGuiInputTextFlags.AutoSelectAll);
-            if (ImGui.IsItemHovered())
-                ImGui.SetTooltip("Filter by component name, namespace, or assembly.");
-
-            var filteredTypes = GetFilteredComponentTypes(_componentPickerSearch);
-
-            ImGui.Separator();
-
-            const float ComponentListHeight = 360.0f;
-            Type? requestedComponent = null;
-
-            if (ImGui.BeginChild("ComponentList", new Vector2(0, ComponentListHeight), ImGuiChildFlags.Border, ImGuiWindowFlags.HorizontalScrollbar))
-            {
-                if (filteredTypes.Count == 0)
+                var targetNode = _nodePendingAddComponent;
+                if (targetNode is null)
                 {
-                    ImGui.TextDisabled("No components match the current search.");
+                    ImGui.CloseCurrentPopup();
+                    ImGui.EndPopup();
+                    return;
                 }
-                else
+
+                ImGui.TextUnformatted($"Add Component to '{targetNode.Name ?? SceneNode.DefaultName}'");
+                ImGui.Spacing();
+
+                if (!string.IsNullOrEmpty(_componentPickerError))
                 {
-                    const ImGuiTableFlags tableFlags = ImGuiTableFlags.SizingStretchProp | ImGuiTableFlags.RowBg | ImGuiTableFlags.ScrollY | ImGuiTableFlags.BordersOuter | ImGuiTableFlags.BordersInnerV | ImGuiTableFlags.NoSavedSettings;
-                    if (ImGui.BeginTable("ComponentTable", 3, tableFlags))
+                    ImGui.PushStyleColor(ImGuiCol.Text, new Vector4(1.0f, 0.4f, 0.4f, 1.0f));
+                    ImGui.TextWrapped(_componentPickerError);
+                    ImGui.PopStyleColor();
+                    ImGui.Spacing();
+                }
+
+                ImGui.InputText("Search", ref _componentPickerSearch, 256, ImGuiInputTextFlags.AutoSelectAll);
+                if (ImGui.IsItemHovered())
+                    ImGui.SetTooltip("Filter by component name, namespace, or assembly.");
+
+                var filteredTypes = GetFilteredComponentTypes(_componentPickerSearch);
+
+                ImGui.Separator();
+
+                const float ComponentListHeight = 360.0f;
+                Type? requestedComponent = null;
+
+                if (ImGui.BeginChild("ComponentList", new Vector2(0, ComponentListHeight), ImGuiChildFlags.Border, ImGuiWindowFlags.HorizontalScrollbar))
+                {
+                    if (filteredTypes.Count == 0)
                     {
-                        ImGui.TableSetupColumn("Component", ImGuiTableColumnFlags.NoHide, 0.4f);
-                        ImGui.TableSetupColumn("Namespace", ImGuiTableColumnFlags.NoHide, 0.35f);
-                        ImGui.TableSetupColumn("Assembly", ImGuiTableColumnFlags.NoHide, 0.25f);
-                        ImGui.TableHeadersRow();
-
-                        foreach (var descriptor in filteredTypes)
+                        ImGui.TextDisabled("No components match the current search.");
+                    }
+                    else
+                    {
+                        const ImGuiTableFlags tableFlags = ImGuiTableFlags.SizingStretchProp | ImGuiTableFlags.RowBg | ImGuiTableFlags.ScrollY | ImGuiTableFlags.BordersOuter | ImGuiTableFlags.BordersInnerV | ImGuiTableFlags.NoSavedSettings;
+                        if (ImGui.BeginTable("ComponentTable", 3, tableFlags))
                         {
-                            ImGui.TableNextRow();
-                            ImGui.TableSetColumnIndex(0);
-                            string selectableLabel = $"{descriptor.DisplayName}##{descriptor.FullName}";
-                            bool selected = ImGui.Selectable(selectableLabel, false, ImGuiSelectableFlags.SpanAllColumns);
-                            if (ImGui.IsItemHovered())
-                                ImGui.SetTooltip(descriptor.FullName);
-                            if (selected)
-                                requestedComponent = descriptor.Type;
+                            ImGui.TableSetupColumn("Component", ImGuiTableColumnFlags.NoHide, 0.4f);
+                            ImGui.TableSetupColumn("Namespace", ImGuiTableColumnFlags.NoHide, 0.35f);
+                            ImGui.TableSetupColumn("Assembly", ImGuiTableColumnFlags.NoHide, 0.25f);
+                            ImGui.TableHeadersRow();
 
-                            ImGui.TableSetColumnIndex(1);
-                            ImGui.TextUnformatted(string.IsNullOrEmpty(descriptor.Namespace) ? "<global>" : descriptor.Namespace);
+                            foreach (var descriptor in filteredTypes)
+                            {
+                                ImGui.TableNextRow();
+                                ImGui.TableSetColumnIndex(0);
+                                string selectableLabel = $"{descriptor.DisplayName}##{descriptor.FullName}";
+                                bool selected = ImGui.Selectable(selectableLabel, false, ImGuiSelectableFlags.SpanAllColumns);
+                                if (ImGui.IsItemHovered())
+                                    ImGui.SetTooltip(descriptor.FullName);
+                                if (selected)
+                                    requestedComponent = descriptor.Type;
 
-                            ImGui.TableSetColumnIndex(2);
-                            ImGui.TextUnformatted(descriptor.AssemblyName);
+                                ImGui.TableSetColumnIndex(1);
+                                ImGui.TextUnformatted(string.IsNullOrEmpty(descriptor.Namespace) ? "<global>" : descriptor.Namespace);
+
+                                ImGui.TableSetColumnIndex(2);
+                                ImGui.TextUnformatted(descriptor.AssemblyName);
+                            }
+
+                            ImGui.EndTable();
                         }
+                    }
 
-                        ImGui.EndTable();
+                    ImGui.EndChild();
+                }
+
+                bool closePopup = false;
+                if (requestedComponent is not null)
+                {
+                    if (targetNode.TryAddComponent(requestedComponent, out _))
+                    {
+                        _componentPickerError = null;
+                        closePopup = true;
+                    }
+                    else
+                    {
+                        _componentPickerError = $"Unable to add component '{requestedComponent.Name}'.";
                     }
                 }
 
-                ImGui.EndChild();
-            }
+                if (closePopup)
+                    CloseComponentPickerPopup();
 
-            bool closePopup = false;
-            if (requestedComponent is not null)
+                ImGui.Separator();
+
+                if (ImGui.Button("Close") || ImGui.IsKeyPressed(ImGuiKey.Escape))
+                    CloseComponentPickerPopup();
+
+                ImGui.EndPopup();
+            }
+            else
             {
-                if (targetNode.TryAddComponent(requestedComponent, out _))
+                if (_nodePendingAddComponent is not null)
                 {
-                    _componentPickerError = null;
-                    closePopup = true;
-                }
-                else
-                {
-                    _componentPickerError = $"Unable to add component '{requestedComponent.Name}'.";
+                    ResetComponentPickerState();
                 }
             }
-
-            if (closePopup)
-                CloseComponentPickerPopup();
-
-            ImGui.Separator();
-
-            if (ImGui.Button("Close") || ImGui.IsKeyPressed(ImGuiKey.Escape))
-                CloseComponentPickerPopup();
-
-            ImGui.EndPopup();
         }
 
         private static void DrawInspectorPanel()
@@ -632,6 +651,8 @@ public static partial class UnitTestingWorld
 
             if (_inspectorDockRightEnabled)
                 HandleInspectorDockResize(viewport);
+
+            DrawHierarchyAddComponentPopup();
 
             ImGui.End();
         }
@@ -1058,7 +1079,9 @@ public static partial class UnitTestingWorld
 
                     ImGui.TableSetColumnIndex(1);
                     if (entry.IsDirectory)
+                    {
                         ImGui.TextUnformatted("Directory");
+                    }
                     else
                     {
                         string extension = Path.GetExtension(entry.Name);
@@ -1276,8 +1299,6 @@ public static partial class UnitTestingWorld
             ImGui.Spacing();
             DrawComponentInspectors(node, visited);
 
-            DrawHierarchyAddComponentPopup();
-
             ImGui.PopID();
         }
 
@@ -1442,7 +1463,7 @@ public static partial class UnitTestingWorld
 
                 if (open)
                 {
-                    DrawInspectableObject(component, "ComponentProperties", visited);
+                    DrawComponentInspector(component, visited);
                 }
 
                 ImGui.PopID();
@@ -1489,6 +1510,91 @@ public static partial class UnitTestingWorld
             ImGui.PopID();
 
             visited.Remove(target);
+        }
+
+        private static void DrawComponentInspector(XRComponent component, HashSet<object> visited)
+        {
+            var editor = ResolveComponentEditor(component.GetType());
+            if (editor is null)
+            {
+                DrawDefaultComponentInspector(component, visited);
+                return;
+            }
+
+            try
+            {
+                editor.DrawInspector(component, visited);
+            }
+            catch (Exception ex)
+            {
+                Debug.LogException(ex, $"Custom component editor '{editor.GetType().FullName}' failed for '{component.GetType().FullName}'.");
+                DrawDefaultComponentInspector(component, visited);
+            }
+        }
+
+        internal static void DrawDefaultComponentInspector(XRComponent component, HashSet<object> visited)
+            => DrawInspectableObject(component, "ComponentProperties", visited);
+
+        private static IXRComponentEditor? ResolveComponentEditor(Type componentType)
+        {
+            if (_componentEditorCache.TryGetValue(componentType, out var cached))
+                return cached;
+
+            var attribute = componentType.GetCustomAttribute<XRComponentEditorAttribute>(true);
+            if (attribute is null)
+            {
+                _componentEditorCache[componentType] = null;
+                return null;
+            }
+
+            Type? editorType = null;
+            string typeName = attribute.EditorTypeName;
+
+            if (!string.IsNullOrWhiteSpace(typeName))
+            {
+                editorType = Type.GetType(typeName, false, false);
+                if (editorType is null)
+                {
+                    foreach (var assembly in AppDomain.CurrentDomain.GetAssemblies())
+                    {
+                        editorType = assembly.GetType(typeName, false, false);
+                        if (editorType is not null)
+                            break;
+                    }
+                }
+            }
+
+            if (editorType is null)
+            {
+                Debug.LogWarning($"Failed to locate component editor '{typeName}' for component '{componentType.FullName}'.");
+                _componentEditorCache[componentType] = null;
+                return null;
+            }
+
+            if (!typeof(IXRComponentEditor).IsAssignableFrom(editorType))
+            {
+                Debug.LogWarning($"Component editor type '{editorType.FullName}' does not implement {nameof(IXRComponentEditor)}.");
+                _componentEditorCache[componentType] = null;
+                return null;
+            }
+
+            try
+            {
+                if (Activator.CreateInstance(editorType) is IXRComponentEditor editorInstance)
+                {
+                    _componentEditorCache[componentType] = editorInstance;
+                    return editorInstance;
+                }
+
+                Debug.LogWarning($"Component editor '{editorType.FullName}' could not be instantiated.");
+            }
+            catch (Exception ex)
+            {
+                Debug.LogException(ex, $"Failed to instantiate component editor '{editorType.FullName}' for component '{componentType.FullName}'.");
+            }
+
+            _componentEditorCache[componentType] = null;
+            return null;
         }
 
         private static void HandleInspectorDockResize(ImGuiViewportPtr viewport)
@@ -1772,6 +1878,7 @@ public static partial class UnitTestingWorld
         private static void CloseComponentPickerPopup()
         {
             ResetComponentPickerState();
+            _addComponentPopupOpen = false;
             ImGui.CloseCurrentPopup();
         }
 
@@ -1780,6 +1887,7 @@ public static partial class UnitTestingWorld
             _nodePendingAddComponent = null;
             _componentPickerError = null;
             _componentPickerSearch = string.Empty;
+            _addComponentPopupRequested = false;
         }
 
         private static void DrawProfilerOverlay()
