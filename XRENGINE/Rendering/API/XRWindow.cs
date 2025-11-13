@@ -130,8 +130,7 @@ namespace XREngine.Rendering
 
         public void RenderViewports()
         {
-            using var sample = Engine.Profiler.Start("XRWindow.RenderViewportsLoop");
-
+            using var sample = Engine.Profiler.Start("XRWindow.RenderViewports");
             foreach (var viewport in Viewports)
             {
                 using var viewportSample = Engine.Profiler.Start($"XRViewport.Render[{viewport.Index}]");
@@ -231,20 +230,23 @@ namespace XREngine.Rendering
                 Renderer.Active = true;
                 AbstractRenderer.Current = Renderer;
 
-                using var preRenderSample = Engine.Profiler.Start("XRWindow.GlobalPreRender");
-                TargetWorldInstance?.GlobalPreRender();
-
-                using var renderCallbackSample = Engine.Profiler.Start("XRWindow.RenderViewportsCallback");
-                RenderViewportsCallback?.Invoke();
-
+                using (var preRenderSample = Engine.Profiler.Start("XRWindow.GlobalPreRender"))
+                {
+                    TargetWorldInstance?.GlobalPreRender();
+                }
+                using (var renderCallbackSample = Engine.Profiler.Start("XRWindow.RenderViewportsCallback"))
+                {
+                    RenderViewportsCallback?.Invoke();
+                }
                 if (!Engine.VRState.IsInVR || Engine.Rendering.Settings.RenderWindowsWhileInVR)
                 {
-                    using var renderViewportsSample = Engine.Profiler.Start("XRWindow.RenderViewports");
                     RenderViewports();
                 }
-
-                using var postRenderSample = Engine.Profiler.Start("XRWindow.GlobalPostRender");
-                TargetWorldInstance?.GlobalPostRender();
+                using (var postRenderSample = Engine.Profiler.Start("XRWindow.GlobalPostRender"))
+                {
+                    TargetWorldInstance?.GlobalPostRender();
+                }
+            
             }
             finally
             {
