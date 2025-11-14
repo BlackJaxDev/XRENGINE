@@ -2,18 +2,21 @@ using System;
 using System.Collections.Generic;
 using System.Globalization;
 using System.Linq;
-using System.Runtime.CompilerServices;
 using System.Numerics;
+using System.Runtime.CompilerServices;
 using ImGuiNET;
 using XREngine;
 using XREngine.Components;
 using XREngine.Components.Scene.Mesh;
+using XREngine.Editor;
+using XREngine.Rendering;
 using XREngine.Rendering.Commands;
 using XREngine.Rendering.Models;
 using XREngine.Rendering;
 using XREngine.Rendering.Models.Materials;
 using XREngine.Rendering.Models.Materials.Shaders.Parameters;
 using XREngine.Rendering.OpenGL;
+using AssetFieldOptions = XREngine.Editor.ImGuiAssetUtilities.AssetFieldOptions;
 
 namespace XREngine.Editor.ComponentEditors;
 
@@ -28,6 +31,8 @@ public sealed class ModelComponentEditor : IXRComponentEditor
     private static readonly Vector4 ActiveLodHighlight = new(0.20f, 0.50f, 0.90f, 0.18f);
     private const float TexturePreviewMaxEdge = 96.0f;
     private const float TexturePreviewFallbackEdge = 64.0f;
+    
+    private static readonly Vector4 ActiveLodTextColor = new(0.35f, 0.75f, 1.00f, 1.00f);
 
     public void DrawInspector(XRComponent component, HashSet<object> visited)
     {
@@ -50,7 +55,8 @@ public sealed class ModelComponentEditor : IXRComponentEditor
             return;
         }
 
-        DrawModelOverview(modelComponent);
+    DrawComponentProperties(modelComponent);
+    DrawModelOverview(modelComponent);
     }
 
     private static bool GetAdvancedPropertiesState(ModelComponent component)
@@ -62,6 +68,39 @@ public sealed class ModelComponentEditor : IXRComponentEditor
             _advancedPropertiesState.GetValue(component, _ => new AdvancedToggleState()).Enabled = true;
         else
             _advancedPropertiesState.Remove(component);
+    }
+
+    private static void DrawComponentProperties(ModelComponent modelComponent)
+    {
+        if (!ImGui.CollapsingHeader("Component", ImGuiTreeNodeFlags.DefaultOpen))
+            return;
+
+        const ImGuiTableFlags tableFlags = ImGuiTableFlags.SizingStretchProp | ImGuiTableFlags.RowBg;
+
+        if (ImGui.BeginTable("ComponentProperties", 2, tableFlags))
+        {
+            ImGui.TableNextRow();
+            ImGui.TableSetColumnIndex(0);
+            ImGui.TextUnformatted("Model");
+            ImGui.TableSetColumnIndex(1);
+            ImGuiAssetUtilities.DrawAssetField("ComponentModel", modelComponent.Model, asset =>
+            {
+                if (!ReferenceEquals(modelComponent.Model, asset))
+                    modelComponent.Model = asset;
+            });
+
+            ImGui.TableNextRow();
+            ImGui.TableSetColumnIndex(0);
+            ImGui.TextUnformatted("Render Bounds");
+            ImGui.TableSetColumnIndex(1);
+            bool renderBounds = modelComponent.RenderBounds;
+            if (ImGui.Checkbox("##RenderBounds", ref renderBounds))
+                modelComponent.RenderBounds = renderBounds;
+
+            ImGui.EndTable();
+        }
+
+        ImGui.Spacing();
     }
 
     private static void DrawModelOverview(ModelComponent modelComponent)
@@ -105,6 +144,9 @@ public sealed class ModelComponentEditor : IXRComponentEditor
         ImGui.TextUnformatted($"Bounds Min: ({bounds.Min.X:F2}, {bounds.Min.Y:F2}, {bounds.Min.Z:F2})");
         ImGui.TextUnformatted($"Bounds Max: ({bounds.Max.X:F2}, {bounds.Max.Y:F2}, {bounds.Max.Z:F2})");
 
+        string commandLabel = FormatRenderCommandLabel(runtimeMesh);
+        var lodEntries = BuildLodEntries(subMesh, runtimeMesh);
+
         const ImGuiTableFlags tableFlags = ImGuiTableFlags.SizingStretchProp
                                           | ImGuiTableFlags.RowBg
                                           | ImGuiTableFlags.BordersOuter
@@ -118,17 +160,16 @@ public sealed class ModelComponentEditor : IXRComponentEditor
             ImGui.TableSetupColumn("Data", ImGuiTableColumnFlags.WidthStretch, 1.0f);
             ImGui.TableHeadersRow();
 
-            var runtimeLodNode = runtimeMesh?.LODs.First;
-            int lodIndex = 0;
-
-            foreach (var lod in subMesh.LODs)
+            foreach (var entry in lodEntries)
             {
-                var runtimeLod = runtimeLodNode?.Value;
-                runtimeLodNode = runtimeLodNode?.Next;
+                var lod = entry.Lod;
+                var runtimeNode = entry.RuntimeNode;
+                var runtimeLod = runtimeNode?.Value;
 
                 ImGui.TableNextRow();
 
-                if (runtimeMesh is not null && runtimeMesh.CurrentLOD?.Value == runtimeLod)
+                bool isActive = runtimeMesh is not null && runtimeMesh.CurrentLOD == runtimeNode;
+                if (isActive)
                 {
                     uint highlight = ImGui.ColorConvertFloat4ToU32(ActiveLodHighlight);
                     ImGui.TableSetBgColor(ImGuiTableBgTarget.RowBg0, highlight);
@@ -137,7 +178,11 @@ public sealed class ModelComponentEditor : IXRComponentEditor
 
                 ImGui.TableSetColumnIndex(0);
                 ImGui.TextUnformatted($"#{lodIndex}");
-                
+            
+                ImGui.TextUnformatted($"#{entry.Index}");
+                if (ImGui.IsItemHovered())
+                    ImGui.SetTooltip($"Max visible distance: {lod.MaxVisibleDistance.ToString("F2", CultureInfo.InvariantCulture)}");
+
                 ImGui.TableSetColumnIndex(1);
                 float maxDistance = lod.MaxVisibleDistance;
                 ImGui.DragFloat($"##Distance", ref maxDistance, 0.1f, 0.0f, float.MaxValue, "%.2f");
@@ -151,10 +196,21 @@ public sealed class ModelComponentEditor : IXRComponentEditor
                 DrawMaterialControls(subMesh, runtimeLod);
 
                 lodIndex++;
+
+                ImGui.TableSetColumnIndex(4);
+                ImGui.TextUnformatted(FormatAssetLabel(runtimeLod?.Renderer?.Material?.Name, runtimeLod?.Renderer?.Material));
+
+                ImGui.TableSetColumnIndex(5);
+                if (entry.Index == 0)
+                    ImGui.TextUnformatted(commandLabel);
+                else
+                    ImGui.TextDisabled("--");
             }
 
             ImGui.EndTable();
         }
+
+        DrawLodPropertyEditors(index, subMesh, lodEntries, runtimeMesh);
 
         ImGui.TreePop();
     }
@@ -522,5 +578,175 @@ public sealed class ModelComponentEditor : IXRComponentEditor
 
         float scale = TexturePreviewMaxEdge / maxDimension;
         return new Vector2(width * scale, height * scale);
+    }
+
+    private static IReadOnlyList<(int Index, SubMeshLOD Lod, LinkedListNode<RenderableMesh.RenderableLOD>? RuntimeNode)> BuildLodEntries(SubMesh subMesh, RenderableMesh? runtimeMesh)
+    {
+        List<(int, SubMeshLOD, LinkedListNode<RenderableMesh.RenderableLOD>?)> entries = new();
+        var runtimeNode = runtimeMesh?.LODs.First;
+        int lodIndex = 0;
+        foreach (SubMeshLOD lod in subMesh.LODs)
+        {
+            var currentNode = runtimeNode;
+            runtimeNode = runtimeNode?.Next;
+            entries.Add((lodIndex, lod, currentNode));
+            lodIndex++;
+        }
+
+        return entries;
+    }
+
+    private static void DrawLodPropertyEditors(
+        int submeshIndex,
+        SubMesh subMesh,
+        IReadOnlyList<(int Index, SubMeshLOD Lod, LinkedListNode<RenderableMesh.RenderableLOD>? RuntimeNode)> lodEntries,
+        RenderableMesh? runtimeMesh)
+    {
+        if (lodEntries.Count == 0)
+            return;
+
+        ImGui.SeparatorText($"LOD Details (Submesh {submeshIndex})");
+
+        foreach (var entry in lodEntries)
+            DrawLodEditor(submeshIndex, subMesh, entry, runtimeMesh);
+    }
+
+    private static void DrawLodEditor(
+        int submeshIndex,
+        SubMesh subMesh,
+        (int Index, SubMeshLOD Lod, LinkedListNode<RenderableMesh.RenderableLOD>? RuntimeNode) entry,
+        RenderableMesh? runtimeMesh)
+    {
+        var lod = entry.Lod;
+        var runtimeNode = entry.RuntimeNode;
+        var runtimeLod = runtimeNode?.Value;
+        bool isActive = runtimeMesh is not null && runtimeMesh.CurrentLOD == runtimeNode;
+
+        ImGui.PushID($"Submesh{submeshIndex}_LOD{entry.Index}");
+
+        string displayLabel = $"LOD #{entry.Index} ({lod.MaxVisibleDistance.ToString("F2", CultureInfo.InvariantCulture)}m)";
+        if (isActive)
+            displayLabel += " [Active]";
+        string idLabel = $"{displayLabel}##Submesh{submeshIndex}_LOD{entry.Index}";
+
+        if (isActive)
+            ImGui.PushStyleColor(ImGuiCol.Text, ActiveLodTextColor);
+
+        bool open = ImGui.TreeNodeEx(idLabel, ImGuiTreeNodeFlags.FramePadding | ImGuiTreeNodeFlags.SpanFullWidth);
+
+        if (isActive)
+            ImGui.PopStyleColor();
+
+        if (open)
+        {
+            DrawLodEditorContent(subMesh, runtimeMesh, lod, runtimeNode, runtimeLod);
+            ImGui.TreePop();
+        }
+
+        ImGui.PopID();
+    }
+
+    private static void DrawLodEditorContent(
+        SubMesh subMesh,
+        RenderableMesh? runtimeMesh,
+        SubMeshLOD lod,
+        LinkedListNode<RenderableMesh.RenderableLOD>? runtimeNode,
+        RenderableMesh.RenderableLOD? runtimeLod)
+    {
+        const ImGuiTableFlags propertyTableFlags = ImGuiTableFlags.SizingStretchProp | ImGuiTableFlags.RowBg;
+
+        if (ImGui.BeginTable("AssetProperties", 2, propertyTableFlags))
+        {
+            ImGui.TableNextRow();
+            ImGui.TableSetColumnIndex(0);
+            ImGui.TextUnformatted("Max Visible Distance");
+            ImGui.TableSetColumnIndex(1);
+            float maxDistance = lod.MaxVisibleDistance;
+            if (ImGui.InputFloat("##MaxDistance", ref maxDistance, 0.0f, 0.0f, "%.2f"))
+            {
+                maxDistance = MathF.Max(0.0f, maxDistance);
+                if (!subMesh.LODs.Any(other => !ReferenceEquals(other, lod) && MathF.Abs(other.MaxVisibleDistance - maxDistance) < 0.0001f))
+                    UpdateLodDistance(subMesh, lod, maxDistance, runtimeNode);
+            }
+
+            ImGui.TableNextRow();
+            ImGui.TableSetColumnIndex(0);
+            ImGui.TextUnformatted("Asset Mesh");
+            ImGui.TableSetColumnIndex(1);
+            ImGuiAssetUtilities.DrawAssetField("AssetMesh", lod.Mesh, asset =>
+            {
+                lod.Mesh = asset;
+                subMesh.Bounds = subMesh.CalculateBoundingBox();
+            }, AssetFieldOptions.ForMeshes());
+
+            ImGui.TableNextRow();
+            ImGui.TableSetColumnIndex(0);
+            ImGui.TextUnformatted("Asset Material");
+            ImGui.TableSetColumnIndex(1);
+            ImGuiAssetUtilities.DrawAssetField("AssetMaterial", lod.Material, asset => lod.Material = asset, AssetFieldOptions.ForMaterials());
+
+            ImGui.EndTable();
+        }
+
+        ImGui.Spacing();
+        ImGui.SeparatorText("Runtime Renderer");
+
+        var renderer = runtimeLod?.Renderer;
+        if (renderer is null)
+        {
+            ImGui.TextDisabled("Runtime renderer not available.");
+            return;
+        }
+
+        if (ImGui.BeginTable("RuntimeProperties", 2, propertyTableFlags))
+        {
+            ImGui.TableNextRow();
+            ImGui.TableSetColumnIndex(0);
+            ImGui.TextUnformatted("Generate Async");
+            ImGui.TableSetColumnIndex(1);
+            bool generateAsync = renderer.GenerateAsync;
+            if (ImGui.Checkbox("##GenerateAsync", ref generateAsync))
+                renderer.GenerateAsync = generateAsync;
+
+            ImGui.TableNextRow();
+            ImGui.TableSetColumnIndex(0);
+            ImGui.TextUnformatted("Runtime Mesh");
+            ImGui.TableSetColumnIndex(1);
+            ImGuiAssetUtilities.DrawAssetField("RuntimeMesh", renderer.Mesh, asset => renderer.Mesh = asset, AssetFieldOptions.ForMeshes());
+
+            ImGui.TableNextRow();
+            ImGui.TableSetColumnIndex(0);
+            ImGui.TextUnformatted("Runtime Material");
+            ImGui.TableSetColumnIndex(1);
+            ImGuiAssetUtilities.DrawAssetField("RuntimeMaterial", renderer.Material, asset => renderer.Material = asset, AssetFieldOptions.ForMaterials());
+
+            ImGui.EndTable();
+        }
+
+        if (runtimeMesh is not null)
+            runtimeMesh.RenderInfo.LocalCullingVolume = subMesh.CullingBounds ?? subMesh.Bounds;
+    }
+
+    private static void UpdateLodDistance(
+        SubMesh subMesh,
+        SubMeshLOD lod,
+        float newDistance,
+        LinkedListNode<RenderableMesh.RenderableLOD>? runtimeNode)
+    {
+        if (MathF.Abs(lod.MaxVisibleDistance - newDistance) < 0.0001f)
+            return;
+
+        lod.MaxVisibleDistance = newDistance;
+
+        var resorted = subMesh.LODs.ToList();
+        subMesh.LODs.Clear();
+        foreach (var entry in resorted.OrderBy(x => x.MaxVisibleDistance))
+            subMesh.LODs.Add(entry);
+
+        if (runtimeNode is not null)
+        {
+            var current = runtimeNode.Value;
+            runtimeNode.Value = current with { MaxVisibleDistance = newDistance };
+        }
     }
 }

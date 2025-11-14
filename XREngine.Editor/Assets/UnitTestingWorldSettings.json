@@ -13,7 +13,7 @@
   "AnimationClipVMD": false,
   "AttachMicToAnimatedModel": true,
   "BackgroundShader": false,
-  "CreateUnitBox": true,
+  "CreateUnitBox": false,
   "EnableFrameLogging": true,
   "DeferredDecal": false,
   "DirLight": true,
