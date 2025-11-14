@@ -1,5 +1,6 @@
 ﻿using Extensions;
 using System.Diagnostics;
+using System.Threading;
 using XREngine.Data.Core;
 
 namespace XREngine.Timers
@@ -175,7 +176,8 @@ namespace XREngine.Timers
             {
                 //using (Engine.Profiler.Start("EngineTimer.JobManager.Process"))
                 //{
-                    Engine.Jobs.Process();
+                if (!Engine.Jobs.Process())
+                    Thread.Sleep(1);
                 //}
             }
         }
@@ -195,10 +197,7 @@ namespace XREngine.Timers
                 
                 FixedUpdateManager.Delta = elapsed;
                 FixedUpdateManager.LastTimestamp = timestamp;
-                using (Engine.Profiler.Start("EngineTimer.FixedUpdateThread.DispatchFixedUpdate"))
-                {
-                    await DispatchFixedUpdate();
-                }
+                await DispatchFixedUpdate();
                 timestamp = Time();
                 FixedUpdateManager.ElapsedTime = timestamp - FixedUpdateManager.LastTimestamp;
             }
@@ -314,7 +313,7 @@ namespace XREngine.Timers
             => SwapBuffers?.InvokeParallel();
 
         private Task DispatchFixedUpdate()
-            => (FixedUpdate?.InvokeAsync() ?? Task.CompletedTask);
+            => FixedUpdate?.InvokeAsync() ?? Task.CompletedTask;
 
         public void DispatchUpdate()
         {
