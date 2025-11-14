@@ -2,7 +2,11 @@
 
 namespace XREngine.Rendering.Models.Materials
 {
-    public class ShaderArray<T> : ShaderVar where T : ShaderVar
+    public abstract class ShaderArrayBase(string name, IShaderVarOwner? owner) : ShaderVar(name, owner)
+    {
+        public abstract int Length { get; }
+    }
+    public class ShaderArray<T> : ShaderArrayBase where T : ShaderVar
     {
         [Browsable(false)]
         public override EShaderVarType TypeName => TypeAssociations[typeof(T)];
@@ -15,7 +19,7 @@ namespace XREngine.Rendering.Models.Materials
                 OnValueChanged();
             }
         }
-        public int Length => _value.Length;
+        public override int Length => _value.Length;
         protected override void SetProgramUniform(XRRenderProgram program, string location)
         {
             //throw new NotImplementedException();
@@ -29,9 +33,9 @@ namespace XREngine.Rendering.Models.Materials
 
         public ShaderArray(string name)
             : this(name, null) { }
-        public ShaderArray(string name, IShaderVarOwner owner)
+        public ShaderArray(string name, IShaderVarOwner? owner)
             : base(name, owner) { _value = new ShaderArrayValueHandler<T>(); }
-        public ShaderArray(ShaderArrayValueHandler<T> defaultValue, string name, IShaderVarOwner owner)
+        public ShaderArray(ShaderArrayValueHandler<T> defaultValue, string name, IShaderVarOwner? owner)
             : base(name, owner) { _value = defaultValue; }
     }
     public class ShaderArrayValueHandler<T> : IUniformableArray<T> where T : ShaderVar

@@ -14,6 +14,7 @@ using ImGuiNET;
 using XREngine;
 using XREngine.Components;
 using XREngine.Animation;
+using XREngine.Data.Colors;
 using XREngine.Rendering;
 using XREngine.Scene;
 using XREngine.Scene.Components.UI;
@@ -1532,7 +1533,7 @@ public static partial class UnitTestingWorld
             }
         }
 
-        internal static void DrawDefaultComponentInspector(XRComponent component, HashSet<object> visited)
+        public static void DrawDefaultComponentInspector(XRComponent component, HashSet<object> visited)
             => DrawInspectableObject(component, "ComponentProperties", visited);
 
         private static IXRComponentEditor? ResolveComponentEditor(Type componentType)
@@ -2196,10 +2197,10 @@ public static partial class UnitTestingWorld
             }
 
             var visited = new HashSet<object>(ReferenceEqualityComparer.Instance);
-            DrawSettingsObject(settingsRoot, headerLabel, visited, true);
+            DrawSettingsObject(settingsRoot, headerLabel, null, visited, true);
         }
 
-        private static void DrawSettingsObject(object obj, string label, HashSet<object> visited, bool defaultOpen)
+        private static void DrawSettingsObject(object obj, string label, string? description, HashSet<object> visited, bool defaultOpen, string? idOverride = null)
         {
             using var profilerScope = Engine.Profiler.Start("UI.DrawSettingsObject");
             if (!visited.Add(obj))
@@ -2208,9 +2209,13 @@ public static partial class UnitTestingWorld
                 return;
             }
 
-            ImGui.PushID(label);
+            string id = idOverride ?? label;
+            ImGui.PushID(id);
             string treeLabel = $"{label} ({obj.GetType().Name})";
-            if (ImGui.TreeNodeEx(treeLabel, defaultOpen ? ImGuiTreeNodeFlags.DefaultOpen : ImGuiTreeNodeFlags.None))
+            bool open = ImGui.TreeNodeEx(treeLabel, defaultOpen ? ImGuiTreeNodeFlags.DefaultOpen : ImGuiTreeNodeFlags.None);
+            if (!string.IsNullOrEmpty(description) && ImGui.IsItemHovered())
+                ImGui.SetTooltip(description);
+            if (open)
             {
                 DrawSettingsProperties(obj, visited);
                 ImGui.TreePop();
@@ -2218,6 +2223,17 @@ public static partial class UnitTestingWorld
             ImGui.PopID();
 
             visited.Remove(obj);
+        }
+
+        private sealed class PropertyRenderInfo
+        {
+            public required PropertyInfo Property { get; init; }
+            public object? Value { get; init; }
+            public bool ValueRetrievalFailed { get; init; }
+            public bool IsSimple { get; init; }
+            public string Category { get; init; } = string.Empty;
+            public string DisplayName { get; init; } = string.Empty;
+            public string? Description { get; init; }
         }
 
         private static void DrawSettingsProperties(object obj, HashSet<object> visited)
@@ -2241,11 +2257,22 @@ public static partial class UnitTestingWorld
                 .OrderBy(p => p.Name)
                 .ToArray();
 
-            var simpleProps = new List<(PropertyInfo Property, object? Value)>();
-            var complexProps = new List<(PropertyInfo Property, object? Value)>();
+            var propertyInfos = new List<PropertyRenderInfo>(properties.Length);
 
             foreach (var prop in properties)
             {
+                string category = prop.GetCustomAttribute<CategoryAttribute>()?.Category ?? string.Empty;
+                if (string.IsNullOrWhiteSpace(category))
+                    category = string.Empty;
+
+                string displayName = prop.GetCustomAttribute<DisplayNameAttribute>()?.DisplayName ?? prop.Name;
+                if (string.IsNullOrWhiteSpace(displayName))
+                    displayName = prop.Name;
+
+                string? description = prop.GetCustomAttribute<DescriptionAttribute>()?.Description;
+                if (string.IsNullOrWhiteSpace(description))
+                    description = null;
+
                 object? value = null;
                 bool valueRetrieved = false;
                 try
@@ -2257,52 +2284,99 @@ public static partial class UnitTestingWorld
                 {
                 }
 
-                if (!valueRetrieved)
-                {
-                    simpleProps.Add((prop, null));
-                    continue;
-                }
+                bool isSimple = !valueRetrieved || value is null || IsSimpleSettingType(prop.PropertyType);
 
-                if (value is null || IsSimpleSettingType(prop.PropertyType))
-                    simpleProps.Add((prop, value));
-                else
-                    complexProps.Add((prop, value));
+                propertyInfos.Add(new PropertyRenderInfo
+                {
+                    Property = prop,
+                    Value = value,
+                    ValueRetrievalFailed = !valueRetrieved,
+                    IsSimple = isSimple,
+                    Category = category,
+                    DisplayName = displayName,
+                    Description = description
+                });
             }
 
-            if (simpleProps.Count > 0 && ImGui.BeginTable("Properties", 2, ImGuiTableFlags.SizingStretchProp | ImGuiTableFlags.RowBg))
-            {
-                foreach (var (property, value) in simpleProps)
-                    DrawSimplePropertyRow(obj, property, value);
-                ImGui.EndTable();
-            }
+            var orderedPropertyInfos = propertyInfos
+                .OrderBy(info => string.IsNullOrWhiteSpace(info.Category) ? 0 : 1)
+                .ThenBy(info => info.Category, StringComparer.OrdinalIgnoreCase)
+                .ThenBy(info => info.DisplayName, StringComparer.OrdinalIgnoreCase)
+                .ToList();
 
-            foreach (var (property, value) in complexProps)
+            var grouped = orderedPropertyInfos
+                .GroupBy(info => info.Category, StringComparer.OrdinalIgnoreCase)
+                .ToList();
+            bool multipleCategories = grouped.Count > 1;
+            bool renderedCategoryHeader = false;
+
+            foreach (var group in grouped)
             {
-                if (value is null)
+                string categoryLabel = string.IsNullOrWhiteSpace(group.Key) ? "General" : group.Key;
+
+                var simpleProps = group.Where(info => info.IsSimple).ToList();
+                var complexProps = group.Where(info => !info.IsSimple).ToList();
+
+                if (multipleCategories || !string.IsNullOrWhiteSpace(group.Key))
                 {
-                    ImGui.TextUnformatted($"{property.Name}: <null>");
-                    continue;
+                    if (renderedCategoryHeader)
+                        ImGui.Separator();
+                    ImGui.TextUnformatted(categoryLabel);
+                    renderedCategoryHeader = true;
                 }
 
-                if (TryDrawCollectionProperty(property, value, visited))
-                    continue;
+                if (simpleProps.Count > 0)
+                {
+                    string tableId = $"Properties_{obj.GetHashCode():X8}_{group.Key?.GetHashCode() ?? 0:X8}";
+                    if (ImGui.BeginTable(tableId, 2, ImGuiTableFlags.SizingStretchProp | ImGuiTableFlags.RowBg))
+                    {
+                        foreach (var info in simpleProps)
+                            DrawSimplePropertyRow(obj, info.Property, info.Value, info.DisplayName, info.Description, info.ValueRetrievalFailed);
+                        ImGui.EndTable();
+                    }
+                }
 
-                DrawSettingsObject(value, property.Name, visited, false);
+                foreach (var info in complexProps)
+                {
+                    if (info.ValueRetrievalFailed)
+                    {
+                        ImGui.TextUnformatted($"{info.DisplayName}: <error>");
+                        if (!string.IsNullOrEmpty(info.Description) && ImGui.IsItemHovered())
+                            ImGui.SetTooltip(info.Description);
+                        continue;
+                    }
+
+                    if (info.Value is null)
+                    {
+                        ImGui.TextUnformatted($"{info.DisplayName}: <null>");
+                        if (!string.IsNullOrEmpty(info.Description) && ImGui.IsItemHovered())
+                            ImGui.SetTooltip(info.Description);
+                        continue;
+                    }
+
+                    if (TryDrawCollectionProperty(info.Property, info.DisplayName, info.Description, info.Value, visited))
+                        continue;
+
+                    DrawSettingsObject(info.Value, info.DisplayName, info.Description, visited, false, info.Property.Name);
+                }
             }
         }
 
-        private static bool TryDrawCollectionProperty(PropertyInfo property, object value, HashSet<object> visited)
+        private static bool TryDrawCollectionProperty(PropertyInfo property, string label, string? description, object value, HashSet<object> visited)
         {
             using var profilerScope = Engine.Profiler.Start("UI.TryDrawCollectionProperty");
             if (value is not IList list)
                 return false;
 
-            string label = $"{property.Name} [{list.Count}]";
+            string headerLabel = $"{label} [{list.Count}]";
             bool canModifyElements = !list.IsReadOnly;
             Type? declaredElementType = GetCollectionElementType(property, value.GetType());
 
             ImGui.PushID(property.Name);
-            if (ImGui.TreeNodeEx(label, ImGuiTreeNodeFlags.DefaultOpen))
+            bool open = ImGui.TreeNodeEx(headerLabel, ImGuiTreeNodeFlags.DefaultOpen);
+            if (!string.IsNullOrEmpty(description) && ImGui.IsItemHovered())
+                ImGui.SetTooltip(description);
+            if (open)
             {
                 if (list.Count == 0)
                 {
@@ -2354,7 +2428,7 @@ public static partial class UnitTestingWorld
                         }
                         else
                         {
-                            DrawSettingsObject(item, $"{property.Name}[{i}]", visited, false);
+                            DrawSettingsObject(item, $"{label}[{i}]", description, visited, false, property.Name + i.ToString(CultureInfo.InvariantCulture));
                         }
 
                         ImGui.PopID();
@@ -2578,14 +2652,23 @@ public static partial class UnitTestingWorld
             }
         }
 
-        private static void DrawSimplePropertyRow(object owner, PropertyInfo property, object? value)
+        private static void DrawSimplePropertyRow(object owner, PropertyInfo property, object? value, string displayName, string? description, bool valueRetrievalFailed)
         {
             using var profilerScope = Engine.Profiler.Start("UI.DrawSimplePropertyRow");
             ImGui.TableNextRow();
             ImGui.TableSetColumnIndex(0);
-            ImGui.TextUnformatted(property.Name);
+            ImGui.TextUnformatted(displayName);
+            if (!string.IsNullOrEmpty(description) && ImGui.IsItemHovered())
+                ImGui.SetTooltip(description);
             ImGui.TableSetColumnIndex(1);
             ImGui.PushID(property.Name);
+
+            if (valueRetrievalFailed)
+            {
+                ImGui.TextDisabled("<error>");
+                ImGui.PopID();
+                return;
+            }
 
             Type propertyType = property.PropertyType;
             Type? underlyingType = Nullable.GetUnderlyingType(propertyType);
@@ -2689,6 +2772,10 @@ public static partial class UnitTestingWorld
                         isCurrentlyNull = false;
                     }
                 }
+                handled = true;
+            }
+            else if (TryDrawColorProperty(owner, property, effectiveType, canWrite, ref currentValue, ref isCurrentlyNull))
+            {
                 handled = true;
             }
             else if (TryDrawNumericProperty(owner, property, effectiveType, canWrite, ref currentValue, ref isCurrentlyNull))
@@ -2956,6 +3043,47 @@ public static partial class UnitTestingWorld
                 property.SetValue(owner, newValue);
                 return true;
             }, "##Value");
+
+        private static bool TryDrawColorProperty(object owner, PropertyInfo property, Type effectiveType, bool canWrite, ref object? currentValue, ref bool isCurrentlyNull)
+        {
+            const ImGuiColorEditFlags ColorPickerFlags = ImGuiColorEditFlags.Float | ImGuiColorEditFlags.HDR | ImGuiColorEditFlags.NoOptions;
+
+            if (effectiveType == typeof(ColorF3))
+            {
+                Vector3 colorVec = currentValue is ColorF3 color ? new(color.R, color.G, color.B) : Vector3.Zero;
+                using (new ImGuiDisabledScope(!canWrite))
+                {
+                    ImGui.SetNextItemWidth(-1f);
+                    if (ImGui.ColorEdit3("##ColorValue", ref colorVec, ColorPickerFlags) && canWrite)
+                    {
+                        var newColor = new ColorF3(colorVec.X, colorVec.Y, colorVec.Z);
+                        property.SetValue(owner, newColor);
+                        currentValue = newColor;
+                        isCurrentlyNull = false;
+                    }
+                }
+                return true;
+            }
+
+            if (effectiveType == typeof(ColorF4))
+            {
+                Vector4 colorVec = currentValue is ColorF4 color ? new(color.R, color.G, color.B, color.A) : new Vector4(0f, 0f, 0f, 1f);
+                using (new ImGuiDisabledScope(!canWrite))
+                {
+                    ImGui.SetNextItemWidth(-1f);
+                    if (ImGui.ColorEdit4("##ColorValue", ref colorVec, ColorPickerFlags) && canWrite)
+                    {
+                        var newColor = new ColorF4(colorVec.X, colorVec.Y, colorVec.Z, colorVec.W);
+                        property.SetValue(owner, newColor);
+                        currentValue = newColor;
+                        isCurrentlyNull = false;
+                    }
+                }
+                return true;
+            }
+
+            return false;
+        }
 
         private static unsafe bool InputScalar<T>(string label, ImGuiDataType dataType, ref T value)
             where T : unmanaged

@@ -30,6 +30,13 @@ namespace XREngine.Rendering.Pipelines.Commands
 
         private readonly uint _reservoirStride = (uint)Marshal.SizeOf<RestirGI.Reservoir>();
 
+        // Optional NV_ray_tracing path
+        // If these are set (non-zero), this pass will attempt to bind and dispatch the RT pipeline via RestirGI.
+        public uint RayTracingPipelineId { get; set; } = 0;
+        public uint RayTracingSbtBufferId { get; set; } = 0;
+        public uint RayTracingSbtOffset { get; set; } = 0;
+        public uint RayTracingSbtStride { get; set; } = 0;
+
         public string DepthTextureName { get; set; } = DefaultRenderPipeline.DepthViewTextureName;
         public string NormalTextureName { get; set; } = DefaultRenderPipeline.NormalTextureName;
         public string RestirOutputTextureName { get; set; } = DefaultRenderPipeline.RestirGITextureName;
@@ -81,13 +88,47 @@ namespace XREngine.Rendering.Pipelines.Commands
             Matrix4x4 cameraToWorld = camera.Transform.RenderMatrix;
             Vector3 cameraPosition = camera.Transform.RenderTranslation;
 
-            DispatchInitial(width, height, invProj, cameraToWorld, cameraPosition, depthTex, normalTex);
-            DispatchResample(width, height, invProj, cameraToWorld, depthTex, normalTex);
-            DispatchFinal(width, height, restirTex);
+            bool rtDispatched = TryRayTrace(width, height);
+
+            if (!rtDispatched)
+            {
+                // Fallback to compute-based path
+                DispatchInitial(width, height, invProj, cameraToWorld, cameraPosition, depthTex, normalTex);
+                DispatchResample(width, height, invProj, cameraToWorld, depthTex, normalTex);
+                DispatchFinal(width, height, restirTex);
+            }
 
             compositeFbo.Render(forwardFbo);
 
             _frameIndex++;
+        }
+
+        private bool TryRayTrace(uint width, uint height)
+        {
+            // Only try when fully configured
+            if (RayTracingPipelineId == 0 || RayTracingSbtBufferId == 0 || RayTracingSbtStride == 0)
+                return false;
+
+            if (!RestirGI.TryInit())
+                return false;
+
+            if (!RestirGI.TryBind(RayTracingPipelineId))
+                return false;
+
+            var parameters = RestirGI.TraceParameters.CreateSingleTable(
+                RayTracingSbtBufferId,
+                RayTracingSbtOffset,
+                RayTracingSbtStride,
+                width,
+                height,
+                1u);
+
+            if (!RestirGI.TryDispatch(parameters))
+                return false;
+
+            // Ensure writes are visible for subsequent operations
+            AbstractRenderer.Current?.MemoryBarrier(EMemoryBarrierMask.ShaderStorage | EMemoryBarrierMask.TextureFetch);
+            return true;
         }
 
         private bool EnsurePrograms()

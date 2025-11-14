@@ -24,6 +24,7 @@ namespace XREngine.Rendering.OpenGL
 {
     public partial class OpenGLRenderer : AbstractRenderer<GL>
     {
+        public GL RawGL => Api; // public accessor for underlying GL instance
         public OvrMultiview? OVRMultiView { get; }
         public Silk.NET.OpenGL.Extensions.NV.NVMeshShader? NVMeshShader { get; }
         public Silk.NET.OpenGL.Extensions.NV.NVGpuShader5? NVGpuShader5 { get; }
