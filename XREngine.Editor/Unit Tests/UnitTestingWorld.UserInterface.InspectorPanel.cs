@@ -1,0 +1,712 @@
+using System;
+using System.Collections.Generic;
+using System.Linq;
+using System.Numerics;
+using System.Reflection;
+using ImGuiNET;
+using XREngine;
+using XREngine.Animation;
+using XREngine.Components;
+using XREngine.Editor.ComponentEditors;
+using XREngine.Scene;
+using XREngine.Scene.Transforms;
+
+namespace XREngine.Editor;
+
+public static partial class UnitTestingWorld
+{
+    public static partial class UserInterface
+    {
+        private static partial void BeginAddComponentForHierarchyNode(SceneNode node)
+        {
+            _nodePendingAddComponent = node;
+            _componentPickerSearch = string.Empty;
+            _componentPickerError = null;
+            _addComponentPopupOpen = true;
+            _addComponentPopupRequested = true;
+        }
+
+        private static partial void DrawHierarchyAddComponentPopup()
+        {
+            if (_nodePendingAddComponent is null && !_addComponentPopupOpen)
+                return;
+
+            if (_addComponentPopupRequested)
+            {
+                ImGui.OpenPopup(HierarchyAddComponentPopupId);
+                _addComponentPopupRequested = false;
+            }
+
+            ImGui.SetNextWindowSize(new Vector2(640f, 520f), ImGuiCond.FirstUseEver);
+            if (ImGui.BeginPopupModal(HierarchyAddComponentPopupId, ref _addComponentPopupOpen, ImGuiWindowFlags.NoCollapse))
+            {
+                var targetNode = _nodePendingAddComponent;
+                if (targetNode is null)
+                {
+                    ImGui.CloseCurrentPopup();
+                    ImGui.EndPopup();
+                    return;
+                }
+
+                ImGui.TextUnformatted($"Add Component to '{targetNode.Name ?? SceneNode.DefaultName}'");
+                ImGui.Spacing();
+
+                if (!string.IsNullOrEmpty(_componentPickerError))
+                {
+                    ImGui.PushStyleColor(ImGuiCol.Text, new Vector4(1.0f, 0.4f, 0.4f, 1.0f));
+                    ImGui.TextWrapped(_componentPickerError);
+                    ImGui.PopStyleColor();
+                    ImGui.Spacing();
+                }
+
+                ImGui.InputText("Search", ref _componentPickerSearch, 256, ImGuiInputTextFlags.AutoSelectAll);
+                if (ImGui.IsItemHovered())
+                    ImGui.SetTooltip("Filter by component name, namespace, or assembly.");
+
+                var filteredTypes = GetFilteredComponentTypes(_componentPickerSearch);
+
+                ImGui.Separator();
+
+                const float componentListHeight = 360.0f;
+                Type? requestedComponent = null;
+
+                if (ImGui.BeginChild("ComponentList", new Vector2(0, componentListHeight), ImGuiChildFlags.Border, ImGuiWindowFlags.HorizontalScrollbar))
+                {
+                    if (filteredTypes.Count == 0)
+                    {
+                        ImGui.TextDisabled("No components match the current search.");
+                    }
+                    else
+                    {
+                        const ImGuiTableFlags tableFlags = ImGuiTableFlags.SizingStretchProp | ImGuiTableFlags.RowBg | ImGuiTableFlags.ScrollY | ImGuiTableFlags.BordersOuter | ImGuiTableFlags.BordersInnerV | ImGuiTableFlags.NoSavedSettings;
+                        if (ImGui.BeginTable("ComponentTable", 3, tableFlags))
+                        {
+                            ImGui.TableSetupColumn("Component", ImGuiTableColumnFlags.NoHide, 0.4f);
+                            ImGui.TableSetupColumn("Namespace", ImGuiTableColumnFlags.NoHide, 0.35f);
+                            ImGui.TableSetupColumn("Assembly", ImGuiTableColumnFlags.NoHide, 0.25f);
+                            ImGui.TableHeadersRow();
+
+                            foreach (var descriptor in filteredTypes)
+                            {
+                                ImGui.TableNextRow();
+                                ImGui.TableSetColumnIndex(0);
+                                string selectableLabel = $"{descriptor.DisplayName}##{descriptor.FullName}";
+                                bool selected = ImGui.Selectable(selectableLabel, false, ImGuiSelectableFlags.SpanAllColumns);
+                                if (ImGui.IsItemHovered())
+                                    ImGui.SetTooltip(descriptor.FullName);
+                                if (selected)
+                                    requestedComponent = descriptor.Type;
+
+                                ImGui.TableSetColumnIndex(1);
+                                ImGui.TextUnformatted(string.IsNullOrEmpty(descriptor.Namespace) ? "<global>" : descriptor.Namespace);
+
+                                ImGui.TableSetColumnIndex(2);
+                                ImGui.TextUnformatted(descriptor.AssemblyName);
+                            }
+
+                            ImGui.EndTable();
+                        }
+                    }
+
+                    ImGui.EndChild();
+                }
+
+                bool closePopup = false;
+                if (requestedComponent is not null)
+                {
+                    if (targetNode.TryAddComponent(requestedComponent, out _))
+                    {
+                        _componentPickerError = null;
+                        closePopup = true;
+                    }
+                    else
+                    {
+                        _componentPickerError = $"Unable to add component '{requestedComponent.Name}'.";
+                    }
+                }
+
+                if (closePopup)
+                    CloseComponentPickerPopup();
+
+                ImGui.Separator();
+
+                if (ImGui.Button("Close") || ImGui.IsKeyPressed(ImGuiKey.Escape))
+                    CloseComponentPickerPopup();
+
+                ImGui.EndPopup();
+            }
+            else if (_nodePendingAddComponent is not null)
+            {
+                ResetComponentPickerState();
+            }
+        }
+
+        private static partial void DrawInspectorPanel()
+        {
+            using var profilerScope = Engine.Profiler.Start("UI.DrawInspectorPanel");
+            var viewport = ImGui.GetMainViewport();
+            ImGuiWindowFlags windowFlags = ImGuiWindowFlags.None;
+
+            if (_inspectorDockRightEnabled)
+            {
+                float maxWidth = MathF.Max(280.0f, viewport.WorkSize.X - 50.0f);
+                float dockWidth = Math.Clamp(_inspectorDockWidth, 280.0f, maxWidth);
+                _inspectorDockWidth = dockWidth;
+                Vector2 pos = new(viewport.WorkPos.X + viewport.WorkSize.X - dockWidth, viewport.WorkPos.Y);
+                ImGui.SetNextWindowPos(pos, ImGuiCond.Always);
+                ImGui.SetNextWindowSize(new Vector2(dockWidth, viewport.WorkSize.Y), ImGuiCond.Always);
+                ImGui.SetNextWindowViewport(viewport.ID);
+                windowFlags |= ImGuiWindowFlags.NoMove | ImGuiWindowFlags.NoScrollWithMouse | ImGuiWindowFlags.NoScrollbar;
+            }
+            else if (_inspectorUndockNextFrame)
+            {
+                var defaultSize = new Vector2(420.0f, 680.0f);
+                var pos = viewport.WorkPos + (viewport.WorkSize - defaultSize) * 0.5f;
+                ImGui.SetNextWindowPos(pos, ImGuiCond.Always);
+                ImGui.SetNextWindowSize(defaultSize, ImGuiCond.Always);
+                _inspectorUndockNextFrame = false;
+            }
+
+            if (!ImGui.Begin("Inspector", windowFlags))
+            {
+                ImGui.End();
+                return;
+            }
+
+            if (ImGui.Button(_inspectorDockRightEnabled ? "Undock" : "Dock Right"))
+            {
+                if (_inspectorDockRightEnabled)
+                {
+                    _inspectorDockRightEnabled = false;
+                    _inspectorUndockNextFrame = true;
+                }
+                else
+                {
+                    float maxWidth = MathF.Max(280.0f, viewport.WorkSize.X - 50.0f);
+                    _inspectorDockWidth = Math.Clamp(_inspectorDockWidth, 280.0f, maxWidth);
+                    _inspectorDockRightEnabled = true;
+                }
+            }
+
+            ImGui.Separator();
+
+            var selectedNode = Selection.SceneNode ?? Selection.LastSceneNode;
+            if (selectedNode is null)
+            {
+                ImGui.TextUnformatted("Select a scene node in the hierarchy to inspect its properties.");
+            }
+            else
+            {
+                ImGui.BeginChild("InspectorContent", Vector2.Zero, ImGuiChildFlags.Border);
+                DrawSceneNodeInspector(selectedNode);
+                ImGui.EndChild();
+            }
+
+            if (_inspectorDockRightEnabled)
+                HandleInspectorDockResize(viewport);
+
+            DrawHierarchyAddComponentPopup();
+
+            ImGui.End();
+        }
+
+        private static partial void DrawSceneNodeInspector(SceneNode node)
+        {
+            using var profilerScope = Engine.Profiler.Start("UI.DrawSceneNodeInspector");
+            var visited = new HashSet<object>(ReferenceEqualityComparer.Instance)
+            {
+                node
+            };
+
+            ImGui.PushID(node.ID.ToString());
+
+            DrawSceneNodeBasics(node);
+
+            ImGui.Separator();
+
+            if (ImGui.CollapsingHeader("Transform", ImGuiTreeNodeFlags.DefaultOpen))
+            {
+                ImGui.PushID("TransformSection");
+                DrawTransformInspector(node.Transform, visited);
+                ImGui.PopID();
+            }
+
+            ImGui.Separator();
+            ImGui.TextUnformatted("Components");
+            ImGui.SameLine();
+            if (ImGui.Button("Add Component..."))
+                BeginAddComponentForHierarchyNode(node);
+
+            ImGui.Spacing();
+            DrawComponentInspectors(node, visited);
+
+            ImGui.PopID();
+        }
+
+        private static partial void DrawSceneNodeBasics(SceneNode node)
+        {
+            using var profilerScope = Engine.Profiler.Start("UI.DrawSceneNodeBasics");
+            const ImGuiTableFlags tableFlags = ImGuiTableFlags.SizingStretchProp | ImGuiTableFlags.RowBg | ImGuiTableFlags.BordersInnerV;
+            if (!ImGui.BeginTable("SceneNodeBasics", 2, tableFlags))
+                return;
+
+            DrawInspectorRow("Name", () =>
+            {
+                string name = node.Name ?? string.Empty;
+                ImGui.SetNextItemWidth(-1f);
+                if (ImGui.InputText("##SceneNodeName", ref name, 256))
+                {
+                    string trimmed = name.Trim();
+                    if (!string.Equals(trimmed, node.Name, StringComparison.Ordinal))
+                        node.Name = string.IsNullOrWhiteSpace(trimmed) ? SceneNode.DefaultName : trimmed;
+                }
+            });
+
+            DrawInspectorRow("Active Self", () =>
+            {
+                bool active = node.IsActiveSelf;
+                if (ImGui.Checkbox("##SceneNodeActiveSelf", ref active))
+                    node.IsActiveSelf = active;
+            });
+
+            DrawInspectorRow("Active In Hierarchy", () =>
+            {
+                bool active = node.IsActiveInHierarchy;
+                if (ImGui.Checkbox("##SceneNodeActiveInHierarchy", ref active))
+                    node.IsActiveInHierarchy = active;
+            });
+
+            DrawInspectorRow("ID", () => ImGui.TextUnformatted(node.ID.ToString()));
+
+            DrawInspectorRow("Path", () =>
+            {
+                ImGui.PushTextWrapPos();
+                ImGui.TextUnformatted(node.GetPath());
+                ImGui.PopTextWrapPos();
+            });
+
+            ImGui.EndTable();
+        }
+
+        private static partial void DrawInspectorRow(string label, Action drawValue)
+        {
+            ImGui.TableNextRow();
+            ImGui.TableSetColumnIndex(0);
+            ImGui.TextUnformatted(label);
+            ImGui.TableSetColumnIndex(1);
+            drawValue();
+        }
+
+        private static partial void DrawTransformInspector(TransformBase transform, HashSet<object> visited)
+        {
+            using var profilerScope = Engine.Profiler.Start("UI.DrawTransformInspector");
+            ImGui.PushID(transform.GetHashCode());
+
+            static string GetTransformDisplayName(TransformBase target)
+            {
+                string? name = target.SceneNode?.Name;
+                if (string.IsNullOrWhiteSpace(name))
+                    name = target.Name;
+                return string.IsNullOrWhiteSpace(name) ? target.GetType().Name : name;
+            }
+
+            if (transform is Transform standard)
+            {
+                string transformLabel = GetTransformDisplayName(standard);
+                Vector3 translation = standard.Translation;
+                ImGui.SetNextItemWidth(-1f);
+                bool translationEdited = ImGui.DragFloat3("Translation##TransformTranslation", ref translation, 0.05f);
+                ImGuiUndoHelper.UpdateScope($"Move {transformLabel}", standard);
+                if (translationEdited)
+                {
+                    standard.Translation = translation;
+                    var queuedTranslation = translation;
+                    EnqueueSceneEdit(() => standard.Translation = queuedTranslation);
+                }
+
+                var rotator = standard.Rotator;
+                Vector3 rotation = rotator.PitchYawRoll;
+                ImGui.SetNextItemWidth(-1f);
+                bool rotationEdited = ImGui.DragFloat3("Rotation (Pitch/Yaw/Roll)##TransformRotation", ref rotation, 0.5f);
+                ImGuiUndoHelper.UpdateScope($"Rotate {transformLabel}", standard);
+                if (rotationEdited)
+                {
+                    rotator.Pitch = rotation.X;
+                    rotator.Yaw = rotation.Y;
+                    rotator.Roll = rotation.Z;
+                    var queuedRotator = rotator;
+                    standard.Rotator = queuedRotator;
+                    EnqueueSceneEdit(() => standard.Rotator = queuedRotator);
+                }
+
+                Vector3 scale = standard.Scale;
+                ImGui.SetNextItemWidth(-1f);
+                bool scaleEdited = ImGui.DragFloat3("Scale##TransformScale", ref scale, 0.05f);
+                ImGuiUndoHelper.UpdateScope($"Scale {transformLabel}", standard);
+                if (scaleEdited)
+                {
+                    standard.Scale = scale;
+                    var queuedScale = scale;
+                    EnqueueSceneEdit(() => standard.Scale = queuedScale);
+                }
+
+                var order = standard.Order;
+                ETransformOrder[] orderValues = Enum.GetValues<ETransformOrder>();
+                string[] orderNames = Enum.GetNames<ETransformOrder>();
+                int selectedIndex = Array.IndexOf(orderValues, order);
+                if (selectedIndex < 0)
+                    selectedIndex = 0;
+                int orderIndex = selectedIndex;
+                bool orderChanged = ImGui.Combo("Order##TransformOrder", ref orderIndex, orderNames, orderNames.Length);
+                ImGuiUndoHelper.UpdateScope($"Change Transform Order {transformLabel}", standard);
+                if (orderChanged)
+                {
+                    if (orderIndex >= 0 && orderIndex < orderValues.Length)
+                    {
+                        var newOrder = orderValues[orderIndex];
+                        standard.Order = newOrder;
+                        EnqueueSceneEdit(() => standard.Order = newOrder);
+                    }
+                }
+            }
+            else
+            {
+                DrawInspectableObject(transform, "TransformProperties", visited);
+            }
+
+            ImGui.PopID();
+        }
+
+        private static partial void DrawComponentInspectors(SceneNode node, HashSet<object> visited)
+        {
+            using var profilerScope = Engine.Profiler.Start("UI.DrawComponentInspectors");
+            var componentsSnapshot = node.Components.ToArray();
+            bool anyComponentsDrawn = false;
+            List<XRComponent>? componentsToRemove = null;
+
+            foreach (var component in componentsSnapshot)
+            {
+                if (component is null)
+                    continue;
+
+                anyComponentsDrawn = true;
+                int componentHash = component.GetHashCode();
+                ImGui.PushID(componentHash);
+
+                float removeButtonWidth = ImGui.CalcTextSize("Remove").X + ImGui.GetStyle().FramePadding.X * 2f;
+                float availableWidth = ImGui.GetContentRegionAvail().X;
+                float firstColumnWidth = MathF.Max(0f, availableWidth - removeButtonWidth - ImGui.GetStyle().ItemSpacing.X);
+
+                ImGui.Columns(2, null, false);
+                ImGui.SetColumnWidth(0, firstColumnWidth);
+                ImGui.SetColumnWidth(1, removeButtonWidth);
+
+                string headerLabel = $"{component.GetType().Name}##Component{componentHash}";
+                ImGuiTreeNodeFlags headerFlags = ImGuiTreeNodeFlags.DefaultOpen | ImGuiTreeNodeFlags.SpanAvailWidth;
+                bool open = ImGui.CollapsingHeader(headerLabel, headerFlags);
+
+                ImGui.NextColumn();
+                using (new ImGuiDisabledScope(component.IsDestroyed))
+                {
+                    if (ImGui.SmallButton("Remove"))
+                    {
+                        componentsToRemove ??= new List<XRComponent>();
+                        componentsToRemove.Add(component);
+                    }
+                }
+
+                ImGui.NextColumn();
+                ImGui.Columns(1);
+
+                if (open)
+                {
+                    DrawComponentInspector(component, visited);
+                }
+
+                ImGui.PopID();
+            }
+
+            if (componentsToRemove is not null)
+            {
+                foreach (var component in componentsToRemove)
+                {
+                    if (component is null || component.IsDestroyed)
+                        continue;
+
+                    var componentCapture = component;
+                    EnqueueSceneEdit(() =>
+                    {
+                        try
+                        {
+                            if (componentCapture is not null && !componentCapture.IsDestroyed)
+                                componentCapture.Destroy();
+                        }
+                        catch (Exception ex)
+                        {
+                            Debug.LogException(ex, $"Failed to remove component '{componentCapture?.GetType().Name}'.");
+                        }
+                    });
+                }
+            }
+
+            if (!anyComponentsDrawn)
+                ImGui.TextDisabled("No components attached to this scene node.");
+        }
+
+        private static partial void DrawInspectableObject(object target, string id, HashSet<object> visited)
+        {
+            using var profilerScope = Engine.Profiler.Start("UI.DrawInspectableObject");
+            if (!visited.Add(target))
+            {
+                ImGui.TextUnformatted("<circular reference>");
+                return;
+            }
+
+            ImGui.PushID(id);
+            DrawSettingsProperties(target, visited);
+            ImGui.PopID();
+
+            visited.Remove(target);
+        }
+
+        private static partial void DrawComponentInspector(XRComponent component, HashSet<object> visited)
+        {
+            var editor = ResolveComponentEditor(component.GetType());
+            if (editor is null)
+            {
+                DrawDefaultComponentInspector(component, visited);
+                return;
+            }
+
+            try
+            {
+                editor.DrawInspector(component, visited);
+            }
+            catch (Exception ex)
+            {
+                Debug.LogException(ex, $"Custom component editor '{editor.GetType().FullName}' failed for '{component.GetType().FullName}'");
+                DrawDefaultComponentInspector(component, visited);
+            }
+        }
+
+        public static partial void DrawDefaultComponentInspector(XRComponent component, HashSet<object> visited)
+            => DrawInspectableObject(component, "ComponentProperties", visited);
+
+        private static partial IXRComponentEditor? ResolveComponentEditor(Type componentType)
+        {
+            if (_componentEditorCache.TryGetValue(componentType, out var cached))
+                return cached;
+
+            var attribute = componentType.GetCustomAttribute<XRComponentEditorAttribute>(true);
+            if (attribute is null)
+            {
+                _componentEditorCache[componentType] = null;
+                return null;
+            }
+
+            Type? editorType = null;
+            string typeName = attribute.EditorTypeName;
+
+            if (!string.IsNullOrWhiteSpace(typeName))
+            {
+                editorType = Type.GetType(typeName, false, false);
+                if (editorType is null)
+                {
+                    foreach (var assembly in AppDomain.CurrentDomain.GetAssemblies())
+                    {
+                        editorType = assembly.GetType(typeName, false, false);
+                        if (editorType is not null)
+                            break;
+                    }
+                }
+            }
+
+            if (editorType is null)
+            {
+                Debug.LogWarning($"Failed to locate component editor '{typeName}' for component '{componentType.FullName}'.");
+                _componentEditorCache[componentType] = null;
+                return null;
+            }
+
+            if (!typeof(IXRComponentEditor).IsAssignableFrom(editorType))
+            {
+                Debug.LogWarning($"Component editor type '{editorType.FullName}' does not implement {nameof(IXRComponentEditor)}.");
+                _componentEditorCache[componentType] = null;
+                return null;
+            }
+
+            try
+            {
+                if (Activator.CreateInstance(editorType) is IXRComponentEditor editorInstance)
+                {
+                    _componentEditorCache[componentType] = editorInstance;
+                    return editorInstance;
+                }
+
+                Debug.LogWarning($"Component editor '{editorType.FullName}' could not be instantiated.");
+            }
+            catch (Exception ex)
+            {
+                Debug.LogException(ex, $"Failed to instantiate component editor '{editorType.FullName}' for component '{componentType.FullName}'");
+            }
+
+            _componentEditorCache[componentType] = null;
+            return null;
+        }
+
+        private static partial void HandleInspectorDockResize(ImGuiViewportPtr viewport)
+        {
+            const float minWidth = 280.0f;
+            const float reservedMargin = 50.0f;
+            const float handleWidth = 12.0f;
+
+            Vector2 originalCursor = ImGui.GetCursorScreenPos();
+            Vector2 windowPos = ImGui.GetWindowPos();
+            Vector2 windowSize = ImGui.GetWindowSize();
+            Vector2 handlePos = new(windowPos.X, windowPos.Y);
+
+            ImGui.SetCursorScreenPos(handlePos);
+            ImGui.PushID("InspectorDockResize");
+            ImGui.InvisibleButton(string.Empty, new Vector2(handleWidth, windowSize.Y), ImGuiButtonFlags.MouseButtonLeft);
+            bool hovered = ImGui.IsItemHovered();
+            bool active = ImGui.IsItemActive();
+            bool activated = ImGui.IsItemActivated();
+            bool deactivated = ImGui.IsItemDeactivated();
+
+            if (hovered || active)
+                ImGui.SetMouseCursor(ImGuiMouseCursor.ResizeEW);
+
+            if (activated)
+            {
+                _inspectorDockDragging = true;
+                _inspectorDockDragStartWidth = _inspectorDockWidth;
+                _inspectorDockDragStartMouseX = ImGui.GetIO().MousePos.X;
+            }
+
+            if (active && _inspectorDockDragging)
+            {
+                float delta = ImGui.GetIO().MousePos.X - _inspectorDockDragStartMouseX;
+                float newWidth = _inspectorDockDragStartWidth - delta;
+                float maxWidth = MathF.Max(minWidth, viewport.WorkSize.X - reservedMargin);
+                newWidth = Math.Clamp(newWidth, minWidth, maxWidth);
+                if (MathF.Abs(newWidth - _inspectorDockWidth) > float.Epsilon)
+                {
+                    _inspectorDockWidth = newWidth;
+                    float newPosX = viewport.WorkPos.X + viewport.WorkSize.X - _inspectorDockWidth;
+                    ImGui.SetWindowPos(new Vector2(newPosX, windowPos.Y));
+                    ImGui.SetWindowSize(new Vector2(_inspectorDockWidth, windowSize.Y));
+                }
+            }
+
+            if (deactivated)
+                _inspectorDockDragging = false;
+
+            var drawList = ImGui.GetWindowDrawList();
+            uint color = ImGui.GetColorU32(active ? ImGuiCol.SeparatorActive : hovered ? ImGuiCol.SeparatorHovered : ImGuiCol.Separator);
+            Vector2 rectMin = new(windowPos.X, windowPos.Y);
+            Vector2 rectMax = new(windowPos.X + handleWidth, windowPos.Y + windowSize.Y);
+            drawList.AddRectFilled(rectMin, rectMax, color);
+
+            ImGui.PopID();
+            ImGui.SetCursorScreenPos(originalCursor);
+        }
+
+        private static partial void InvalidateComponentTypeCache()
+            => _componentTypeCacheDirty = true;
+
+        private static partial IReadOnlyList<ComponentTypeDescriptor> EnsureComponentTypeCache()
+        {
+            if (!_componentTypeCacheDirty && _componentTypeDescriptors.Count > 0)
+                return _componentTypeDescriptors;
+
+            _componentTypeDescriptors.Clear();
+
+            var baseType = typeof(XRComponent);
+            foreach (var assembly in AppDomain.CurrentDomain.GetAssemblies())
+            {
+                Type[] types;
+                try
+                {
+                    types = assembly.GetTypes();
+                }
+                catch (ReflectionTypeLoadException ex)
+                {
+                    types = ex.Types.Where(t => t is not null).Cast<Type>().ToArray();
+                }
+
+                foreach (var type in types)
+                {
+                    if (type is null)
+                        continue;
+                    if (!baseType.IsAssignableFrom(type))
+                        continue;
+                    if (type.IsAbstract || type.IsInterface)
+                        continue;
+                    if (type.ContainsGenericParameters)
+                        continue;
+
+                    string displayName = type.Name;
+                    string ns = type.Namespace ?? string.Empty;
+                    string assemblyName = assembly.GetName().Name ?? assembly.FullName ?? "Unknown";
+
+                    _componentTypeDescriptors.Add(new ComponentTypeDescriptor(type, displayName, ns, assemblyName));
+                }
+            }
+
+            _componentTypeDescriptors.Sort(static (a, b) =>
+            {
+                int nameCompare = string.Compare(a.DisplayName, b.DisplayName, StringComparison.OrdinalIgnoreCase);
+                if (nameCompare != 0)
+                    return nameCompare;
+                int nsCompare = string.Compare(a.Namespace, b.Namespace, StringComparison.Ordinal);
+                if (nsCompare != 0)
+                    return nsCompare;
+                return string.Compare(a.AssemblyName, b.AssemblyName, StringComparison.OrdinalIgnoreCase);
+            });
+
+            _componentTypeCacheDirty = false;
+            return _componentTypeDescriptors;
+        }
+
+        private static partial IReadOnlyList<ComponentTypeDescriptor> GetFilteredComponentTypes(string? search)
+        {
+            var all = EnsureComponentTypeCache();
+            _filteredComponentTypes.Clear();
+
+            if (string.IsNullOrWhiteSpace(search))
+            {
+                _filteredComponentTypes.AddRange(all);
+                return _filteredComponentTypes;
+            }
+
+            string term = search.Trim();
+            foreach (var descriptor in all)
+            {
+                if (descriptor.DisplayName.Contains(term, StringComparison.OrdinalIgnoreCase)
+                    || (!string.IsNullOrEmpty(descriptor.Namespace) && descriptor.Namespace.Contains(term, StringComparison.OrdinalIgnoreCase))
+                    || descriptor.AssemblyName.Contains(term, StringComparison.OrdinalIgnoreCase)
+                    || descriptor.FullName.Contains(term, StringComparison.OrdinalIgnoreCase))
+                {
+                    _filteredComponentTypes.Add(descriptor);
+                }
+            }
+
+            return _filteredComponentTypes;
+        }
+
+        private static partial void CloseComponentPickerPopup()
+        {
+            ResetComponentPickerState();
+            _addComponentPopupOpen = false;
+            ImGui.CloseCurrentPopup();
+        }
+
+        private static partial void ResetComponentPickerState()
+        {
+            _nodePendingAddComponent = null;
+            _componentPickerError = null;
+            _componentPickerSearch = string.Empty;
+            _addComponentPopupRequested = false;
+        }
+    }
+}

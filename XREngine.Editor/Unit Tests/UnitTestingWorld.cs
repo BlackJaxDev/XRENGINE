@@ -99,7 +99,9 @@ public static partial class UnitTestingWorld
 
         Models.ImportModels(desktopDir, rootNode, characterPawnModelParentNode ?? rootNode);
 
-        return new XRWorld("Default World", scene);
+        var world = new XRWorld("Default World", scene);
+        Undo.TrackWorld(world);
+        return world;
     }
 
     private static void AddMirror(SceneNode rootNode)

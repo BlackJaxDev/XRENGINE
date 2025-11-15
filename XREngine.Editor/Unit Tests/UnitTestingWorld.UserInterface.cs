@@ -184,13 +184,13 @@ public static partial class UnitTestingWorld
         public static void GameCSProjLoader_OnAssemblyUnloaded(string obj)
         {
             RemakeMenu();
-            InvalidateComponentTypeCache();
+            InvalidateTypeDescriptorCache();
         }
 
         public static void GameCSProjLoader_OnAssemblyLoaded(string arg1, GameCSProjLoader.AssemblyData arg2)
         {
             RemakeMenu();
-            InvalidateComponentTypeCache();
+            InvalidateTypeDescriptorCache();
         }
 
         public static void RemakeMenu()
@@ -213,7 +213,7 @@ public static partial class UnitTestingWorld
             //Debug.Out("Load Project clicked");
         }
         //Saves all modified assets in the project.
-        public static async void SaveAll(UIInteractableComponent comp)
+        public static async void SaveAll(UIInteractableComponent? comp)
         {
             await Engine.Assets.SaveAllAsync();
         }
@@ -222,6 +222,8 @@ public static partial class UnitTestingWorld
         //TODO: allow scripts to add menu options with attributes
         public static List<ToolbarItemBase> GenerateRootMenu()
         {
+            EnsureUndoMenuHooks();
+
             List<ToolbarItemBase> buttons = [
                 new ToolbarButton("File", [Key.ControlLeft, Key.F],
             [
@@ -230,7 +232,7 @@ public static partial class UnitTestingWorld
                     new ToolbarButton("Project", LoadProject),
                     ])
             ]),
-            new ToolbarButton("Edit"),
+            CreateEditMenu(),
             new ToolbarButton("Assets"),
             new ToolbarButton("Tools", [Key.ControlLeft, Key.T],
             [
@@ -264,14 +266,100 @@ public static partial class UnitTestingWorld
             //we have to wait for the scene node to be activated in the instance of the world before we can attach the transform tool
             void Edit(SceneNode x)
             {
-                TransformTool3D.GetInstance(x.Transform);
+                var tool = TransformTool3D.GetInstance(x.Transform);
+                TransformToolUndoAdapter.Attach(tool);
                 x.Activated -= Edit;
             }
 
             if (node.IsActiveInHierarchy && node.World is not null)
-                TransformTool3D.GetInstance(node.Transform);
+            {
+                var tool = TransformTool3D.GetInstance(node.Transform);
+                TransformToolUndoAdapter.Attach(tool);
+            }
             else
                 node.Activated += Edit;
+        }
+
+        private static ToolbarButton? _undoHistoryMenu;
+        private static bool _undoHooksInitialized;
+
+        private static void EnsureUndoMenuHooks()
+        {
+            if (_undoHooksInitialized)
+                return;
+
+            Undo.HistoryChanged += RefreshUndoHistoryMenu;
+            _undoHooksInitialized = true;
+            RefreshUndoHistoryMenu();
+        }
+
+        private static ToolbarButton CreateEditMenu()
+        {
+            var undoButton = new ToolbarButton("Undo", OnToolbarUndo, [Key.ControlLeft, Key.Z]);
+            var redoButton = new ToolbarButton("Redo", OnToolbarRedo, [Key.ControlLeft, Key.Y]);
+            _undoHistoryMenu ??= new ToolbarButton("Undo History");
+            RefreshUndoHistoryMenu();
+
+            return new ToolbarButton("Edit", undoButton, redoButton, _undoHistoryMenu);
+        }
+
+        private static void OnToolbarUndo(UIInteractableComponent _)
+        {
+            Undo.TryUndo();
+        }
+
+        private static void OnToolbarRedo(UIInteractableComponent _)
+        {
+            Undo.TryRedo();
+        }
+
+        private static void RefreshUndoHistoryMenu()
+        {
+            if (_undoHistoryMenu is null)
+                return;
+
+            _undoHistoryMenu.ChildOptions.Clear();
+
+            var history = Undo.PendingUndo;
+            if (history.Count == 0)
+            {
+                _undoHistoryMenu.ChildOptions.Add(new ToolbarButton("No undo steps available"));
+                return;
+            }
+
+            int index = 0;
+            foreach (var entry in history)
+            {
+                int targetIndex = index;
+                string label = $"{targetIndex + 1}. {entry.Description}";
+                _undoHistoryMenu.ChildOptions.Add(new ToolbarButton(label, _ => UndoMultiple(targetIndex)));
+                index++;
+                if (index >= 15)
+                    break;
+            }
+        }
+
+        private static void UndoMultiple(int targetIndex)
+        {
+            for (int i = 0; i <= targetIndex; i++)
+            {
+                if (!Undo.TryUndo())
+                    break;
+            }
+        }
+
+        private static void RedoMultiple(int targetIndex)
+        {
+            for (int i = 0; i <= targetIndex; i++)
+            {
+                if (!Undo.TryRedo())
+                    break;
+            }
+        }
+
+        private static void InvalidateTypeDescriptorCache()
+        {
+            // Placeholder until the editor exposes type-descriptor caching again.
         }
     }
 }

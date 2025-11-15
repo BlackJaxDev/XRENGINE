@@ -37,9 +37,15 @@ public partial class EditorFlyingCameraPawnComponent : FlyingCameraPawnComponent
     private void Selection_SelectionChanged(SceneNode[] selection)
     {
         if (selection.Length == 0)
+        {
+            TransformToolUndoAdapter.Attach(null);
             TransformTool3D.DestroyInstance();
+        }
         else
-            TransformTool3D.GetInstance(selection[0].Transform);
+        {
+            var tool = TransformTool3D.GetInstance(selection[0].Transform);
+            TransformToolUndoAdapter.Attach(tool);
+        }
     }
 
     private Vector3? _worldDragPoint = null;
