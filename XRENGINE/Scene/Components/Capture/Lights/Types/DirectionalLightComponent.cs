@@ -13,6 +13,11 @@ namespace XREngine.Components.Capture.Lights.Types
     {
         private const float NearZ = 0.01f;
 
+        public DirectionalLightComponent()
+        {
+            UpdateMeshCenterAdjustMatrix();
+        }
+
         private Vector3 _scale = Vector3.One;
         public Vector3 Scale
         {
@@ -124,7 +129,7 @@ namespace XREngine.Components.Capture.Lights.Types
                         _shadowCameraTransform.Parent = Transform;
                     break;
                 case nameof(Scale):
-                    MeshCenterAdjustMatrix = Matrix4x4.CreateScale(Scale);
+                    UpdateMeshCenterAdjustMatrix();
                     ShadowCameraTransform.Translation = Globals.Backward * Scale.Z * 0.5f;
                     if (ShadowCamera is not null)
                     {
@@ -150,6 +155,11 @@ namespace XREngine.Components.Capture.Lights.Types
                         World?.Lights.DynamicDirectionalLights.Remove(this);
                     break;
             }
+        }
+
+        private void UpdateMeshCenterAdjustMatrix()
+        {
+            MeshCenterAdjustMatrix = Matrix4x4.CreateScale(Scale) * Matrix4x4.CreateTranslation(Globals.Backward * Scale.Z * 0.5f);
         }
     }
 }

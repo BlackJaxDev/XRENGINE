@@ -18,7 +18,8 @@ internal class Program
     /// <param name="args"></param>
     private static void Main(string[] args)
     {
-        ConsoleHelper.EnsureConsoleAttached();
+        //ConsoleHelper.EnsureConsoleAttached();
+        Undo.Initialize();
         Debug.Out("XREngine Editor starting...");
         RenderInfo2D.ConstructorOverride = RenderInfo2DConstructor;
         RenderInfo3D.ConstructorOverride = RenderInfo3DConstructor;

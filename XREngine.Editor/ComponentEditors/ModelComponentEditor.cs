@@ -9,10 +9,10 @@ using XREngine;
 using XREngine.Components;
 using XREngine.Components.Scene.Mesh;
 using XREngine.Editor;
+using XREngine.Data.Rendering;
 using XREngine.Rendering;
 using XREngine.Rendering.Commands;
 using XREngine.Rendering.Models;
-using XREngine.Rendering;
 using XREngine.Rendering.Models.Materials;
 using XREngine.Rendering.Models.Materials.Shaders.Parameters;
 using XREngine.Rendering.OpenGL;
@@ -134,94 +134,52 @@ public sealed class ModelComponentEditor : IXRComponentEditor
 
     private static void DrawSubmeshSection(ModelComponent modelComponent, int index, SubMesh subMesh, RenderableMesh? runtimeMesh)
     {
-        string submeshName = string.IsNullOrEmpty(subMesh.Name) ? "<unnamed>" : subMesh.Name;
-        string headerLabel = $"Submesh {index}: {submeshName} ({subMesh.LODs.Count} LOD{(subMesh.LODs.Count == 1 ? string.Empty : "s")})";
+        ImGui.PushID($"Submesh{index}");
 
-        if (!ImGui.TreeNodeEx(headerLabel, ImGuiTreeNodeFlags.DefaultOpen))
+        string submeshName = string.IsNullOrWhiteSpace(subMesh.Name) ? "<unnamed>" : subMesh.Name;
+        string headerLabel = $"Submesh {index}: {submeshName} ({subMesh.LODs.Count} LOD{(subMesh.LODs.Count == 1 ? string.Empty : "s")})##Submesh{index}";
+
+        if (!ImGui.TreeNodeEx(headerLabel, ImGuiTreeNodeFlags.DefaultOpen | ImGuiTreeNodeFlags.SpanAvailWidth))
+        {
+            ImGui.PopID();
             return;
+        }
 
         var bounds = subMesh.Bounds;
         ImGui.TextUnformatted($"Bounds Min: ({bounds.Min.X:F2}, {bounds.Min.Y:F2}, {bounds.Min.Z:F2})");
         ImGui.TextUnformatted($"Bounds Max: ({bounds.Max.X:F2}, {bounds.Max.Y:F2}, {bounds.Max.Z:F2})");
 
-        string commandLabel = FormatRenderCommandLabel(runtimeMesh);
-        var lodEntries = BuildLodEntries(subMesh, runtimeMesh);
+        if (subMesh.CullingBounds is { } cullingBounds)
+            ImGui.TextDisabled($"Custom Culling Bounds Size: {cullingBounds.Size.X:F2} x {cullingBounds.Size.Y:F2} x {cullingBounds.Size.Z:F2}");
 
-        const ImGuiTableFlags tableFlags = ImGuiTableFlags.SizingStretchProp
-                                          | ImGuiTableFlags.RowBg
-                                          | ImGuiTableFlags.BordersOuter
-                                          | ImGuiTableFlags.BordersInnerV
-                                          | ImGuiTableFlags.NoSavedSettings;
-
-        if (ImGui.BeginTable($"Submesh{index}_LODs", 6, tableFlags))
+        if (runtimeMesh is not null)
         {
-            ImGui.TableSetupColumn("LOD", ImGuiTableColumnFlags.WidthFixed, 30.0f);
-            ImGui.TableSetupColumn("Distance", ImGuiTableColumnFlags.WidthFixed, 30.0f);
-            ImGui.TableSetupColumn("Data", ImGuiTableColumnFlags.WidthStretch, 1.0f);
-            ImGui.TableHeadersRow();
+            bool renderBounds = runtimeMesh.RenderBounds;
+            if (ImGui.Checkbox("Render Bounds##SubmeshRenderBounds", ref renderBounds))
+                runtimeMesh.RenderBounds = renderBounds;
 
-            foreach (var entry in lodEntries)
-            {
-                var lod = entry.Lod;
-                var runtimeNode = entry.RuntimeNode;
-                var runtimeLod = runtimeNode?.Value;
-
-                ImGui.TableNextRow();
-
-                bool isActive = runtimeMesh is not null && runtimeMesh.CurrentLOD == runtimeNode;
-                if (isActive)
-                {
-                    uint highlight = ImGui.ColorConvertFloat4ToU32(ActiveLodHighlight);
-                    ImGui.TableSetBgColor(ImGuiTableBgTarget.RowBg0, highlight);
-                    ImGui.TableSetBgColor(ImGuiTableBgTarget.RowBg1, highlight);
-                }
-
-                ImGui.TableSetColumnIndex(0);
-                ImGui.TextUnformatted($"#{lodIndex}");
-            
-                ImGui.TextUnformatted($"#{entry.Index}");
-                if (ImGui.IsItemHovered())
-                    ImGui.SetTooltip($"Max visible distance: {lod.MaxVisibleDistance.ToString("F2", CultureInfo.InvariantCulture)}");
-
-                ImGui.TableSetColumnIndex(1);
-                float maxDistance = lod.MaxVisibleDistance;
-                ImGui.DragFloat($"##Distance", ref maxDistance, 0.1f, 0.0f, float.MaxValue, "%.2f");
-                lod.MaxVisibleDistance = maxDistance;
-
-                ImGui.TableSetColumnIndex(2);
-
-                if (runtimeLod?.Renderer?.Mesh?.HasBlendshapes == true)
-                    DrawBlendshapeControls(modelComponent, subMesh, runtimeLod);
-
-                DrawMaterialControls(subMesh, runtimeLod);
-
-                lodIndex++;
-
-                ImGui.TableSetColumnIndex(4);
-                ImGui.TextUnformatted(FormatAssetLabel(runtimeLod?.Renderer?.Material?.Name, runtimeLod?.Renderer?.Material));
-
-                ImGui.TableSetColumnIndex(5);
-                if (entry.Index == 0)
-                    ImGui.TextUnformatted(commandLabel);
-                else
-                    ImGui.TextDisabled("--");
-            }
-
-            ImGui.EndTable();
+            ImGui.SameLine();
+            ImGui.TextDisabled(FormatRenderCommandLabel(runtimeMesh));
         }
 
-        DrawLodPropertyEditors(index, subMesh, lodEntries, runtimeMesh);
+        var lodEntries = BuildLodEntries(subMesh, runtimeMesh);
+
+        DrawLodSummaryTable(index, subMesh, lodEntries, runtimeMesh);
+
+        ImGui.Spacing();
+        DrawLodPropertyEditors(modelComponent, index, subMesh, lodEntries, runtimeMesh);
 
         ImGui.TreePop();
+        ImGui.PopID();
     }
 
-    private static void DrawBlendshapeControls(ModelComponent modelComponent, SubMesh subMesh, RenderableMesh.RenderableLOD? runtimeLOD)
+    private static void DrawBlendshapeControls(ModelComponent modelComponent, int submeshIndex, int lodIndex, RenderableMesh.RenderableLOD? runtimeLOD)
     {
         XRMeshRenderer? renderer = runtimeLOD?.Renderer;
         if (renderer?.Mesh is null || !renderer.Mesh.HasBlendshapes)
             return;
 
-        if (!ImGui.CollapsingHeader($"Blendshapes##Blend_{subMesh.GetHashCode()}", ImGuiTreeNodeFlags.DefaultOpen))
+        if (!ImGui.CollapsingHeader($"Blendshapes##Blend_{submeshIndex}_{lodIndex}", ImGuiTreeNodeFlags.DefaultOpen))
             return;
 
         var mesh = renderer.Mesh;
@@ -232,11 +190,11 @@ public sealed class ModelComponentEditor : IXRComponentEditor
             return;
         }
 
-        if (ImGui.BeginTable($"Blendshapes_{subMesh.GetHashCode()}", 3, ImGuiTableFlags.SizingStretchProp | ImGuiTableFlags.RowBg))
+        if (ImGui.BeginTable($"Blendshapes_{submeshIndex}_{lodIndex}", 3, ImGuiTableFlags.SizingStretchProp | ImGuiTableFlags.RowBg))
         {
             ImGui.TableSetupColumn("Blendshape", ImGuiTableColumnFlags.WidthStretch, 0.4f);
-            ImGui.TableSetupColumn("Weight", ImGuiTableColumnFlags.WidthStretch, 0.4f);
-            ImGui.TableSetupColumn("Normalized", ImGuiTableColumnFlags.WidthStretch, 0.2f);
+            ImGui.TableSetupColumn("Weight (%)", ImGuiTableColumnFlags.WidthStretch, 0.3f);
+            ImGui.TableSetupColumn("Normalized", ImGuiTableColumnFlags.WidthStretch, 0.3f);
             ImGui.TableHeadersRow();
 
             for (uint i = 0; i < blendshapeCount; i++)
@@ -252,7 +210,7 @@ public sealed class ModelComponentEditor : IXRComponentEditor
                 ImGui.TextUnformatted(name);
 
                 ImGui.TableSetColumnIndex(1);
-                ImGui.PushID($"BlendshapePct_{subMesh.GetHashCode()}_{i}");
+                ImGui.PushID($"BlendPct_{submeshIndex}_{lodIndex}_{i}");
                 float pctValue = percent;
                 ImGui.SetNextItemWidth(-1f);
                 if (ImGui.SliderFloat("##Pct", ref pctValue, 0.0f, 100.0f, "%.1f%%"))
@@ -263,7 +221,7 @@ public sealed class ModelComponentEditor : IXRComponentEditor
                 ImGui.PopID();
 
                 ImGui.TableSetColumnIndex(2);
-                ImGui.PushID($"BlendshapeNorm_{subMesh.GetHashCode()}_{i}");
+                ImGui.PushID($"BlendNorm_{submeshIndex}_{lodIndex}_{i}");
                 float normValue = normalized;
                 ImGui.SetNextItemWidth(-1f);
                 if (ImGui.SliderFloat("##Norm", ref normValue, 0.0f, 1.0f, "%.3f"))
@@ -278,74 +236,77 @@ public sealed class ModelComponentEditor : IXRComponentEditor
         }
     }
 
-    private static void DrawMaterialControls(SubMesh subMesh, RenderableMesh.RenderableLOD? runtimeLOD)
+    private static void DrawMaterialControls(int submeshIndex, int lodIndex, SubMeshLOD lod, RenderableMesh.RenderableLOD? runtimeLOD)
     {
         XRMeshRenderer? renderer = runtimeLOD?.Renderer;
-        XRMaterial? material = renderer?.Material ?? subMesh.LODs.FirstOrDefault()?.Material;
+        XRMaterialBase? assetMaterial = lod.Material;
+        XRMaterialBase? runtimeMaterial = renderer?.Material;
+        XRMaterialBase? effectiveMaterial = runtimeMaterial ?? assetMaterial;
 
-        if (material is null)
+        if (effectiveMaterial is null)
+        {
+            ImGui.TextDisabled("Material not assigned.");
+            return;
+        }
+
+        if (!ImGui.CollapsingHeader($"Material##Mat_{submeshIndex}_{lodIndex}", ImGuiTreeNodeFlags.DefaultOpen))
             return;
 
-        if (!ImGui.CollapsingHeader($"Material##Mat_{subMesh.GetHashCode()}", ImGuiTreeNodeFlags.DefaultOpen))
-            return;
+        if (assetMaterial is not null)
+            ImGui.TextUnformatted($"Asset: {FormatAssetLabel(assetMaterial.Name, assetMaterial)}");
+        if (runtimeMaterial is not null && !ReferenceEquals(runtimeMaterial, assetMaterial))
+            ImGui.TextDisabled($"Runtime: {FormatAssetLabel(runtimeMaterial.Name, runtimeMaterial)}");
 
-        ImGui.TextUnformatted(material.Name ?? "<unnamed material>");
+        ImGui.TextDisabled($"Render Pass: {DescribeRenderPass(effectiveMaterial.RenderPass)}");
 
-        var parameters = material.Parameters;
-        if (parameters is null || parameters.Length == 0)
+        var parameters = effectiveMaterial.Parameters;
+        if (parameters is not null && parameters.Length > 0)
+        {
+            if (ImGui.BeginTable($"MaterialParams_{submeshIndex}_{lodIndex}", 2, ImGuiTableFlags.SizingStretchProp | ImGuiTableFlags.RowBg))
+            {
+                ImGui.TableSetupColumn("Name", ImGuiTableColumnFlags.WidthStretch, 0.45f);
+                ImGui.TableSetupColumn("Value", ImGuiTableColumnFlags.WidthStretch, 0.55f);
+                ImGui.TableHeadersRow();
+
+                for (int i = 0; i < parameters.Length; i++)
+                {
+                    ShaderVar param = parameters[i];
+                    string name = param.Name ?? $"Param{i}";
+
+                    ImGui.TableNextRow();
+                    ImGui.TableSetColumnIndex(0);
+                    ImGui.TextUnformatted(name);
+
+                    ImGui.TableSetColumnIndex(1);
+                    ImGui.PushID($"MatParam_{submeshIndex}_{lodIndex}_{i}");
+                    DrawShaderParameterControl(renderer, param);
+                    ImGui.PopID();
+                }
+
+                ImGui.EndTable();
+            }
+        }
+        else
         {
             ImGui.TextDisabled("No uniform parameters.");
         }
-        else if (ImGui.BeginTable($"MaterialParams_{subMesh.GetHashCode()}", 2, ImGuiTableFlags.SizingStretchProp | ImGuiTableFlags.RowBg))
-        {
-            ImGui.TableSetupColumn("Name", ImGuiTableColumnFlags.WidthStretch, 0.4f);
-            ImGui.TableSetupColumn("Value", ImGuiTableColumnFlags.WidthStretch, 0.6f);
-            ImGui.TableHeadersRow();
 
-            for (int i = 0; i < parameters.Length; i++)
+        ImGui.SeparatorText("Textures");
+
+        if (runtimeMaterial is not null && !ReferenceEquals(runtimeMaterial, assetMaterial))
+        {
+            ImGui.TextDisabled("Runtime Overrides:");
+            DrawMaterialTextureTable($"MaterialTextures_{submeshIndex}_{lodIndex}_Runtime", runtimeMaterial);
+            if (assetMaterial is not null)
             {
-                ShaderVar param = parameters[i];
-                string name = param.Name ?? $"Param{i}";
-
-                ImGui.TableNextRow();
-                ImGui.TableSetColumnIndex(0);
-                ImGui.TextUnformatted(name);
-
-                ImGui.TableSetColumnIndex(1);
-                ImGui.PushID($"MatParam_{subMesh.GetHashCode()}_{i}");
-                DrawShaderParameterControl(renderer, param);
-                ImGui.PopID();
+                ImGui.Spacing();
+                ImGui.TextDisabled("Asset Textures:");
+                DrawMaterialTextureTable($"MaterialTextures_{submeshIndex}_{lodIndex}_Asset", assetMaterial);
             }
-
-            ImGui.EndTable();
         }
-
-        var textures = material.Textures;
-        if (textures is null || textures.Count == 0)
+        else
         {
-            ImGui.TextDisabled("No textures.");
-            return;
-        }
-        if (ImGui.BeginTable($"MaterialTextures_{subMesh.GetHashCode()}", 2, ImGuiTableFlags.SizingStretchProp | ImGuiTableFlags.RowBg))
-        {
-            ImGui.TableSetupColumn("Name", ImGuiTableColumnFlags.WidthStretch, 0.4f);
-            ImGui.TableSetupColumn("Texture", ImGuiTableColumnFlags.WidthStretch, 0.6f);
-            ImGui.TableHeadersRow();
-
-            for (int i = 0; i < textures.Count; i++)
-            {
-                XRTexture? tex = textures[i];
-                string name = tex?.Name ?? $"Texture{i}";
-                ImGui.TableNextRow();
-                ImGui.TableSetColumnIndex(0);
-                ImGui.TextUnformatted(name);
-                ImGui.TableSetColumnIndex(1);
-                ImGui.PushID($"MatTex_{subMesh.GetHashCode()}_{i}");
-                DrawTexturePreviewCell(tex);
-                ImGui.PopID();
-            }
-
-            ImGui.EndTable();
+            DrawMaterialTextureTable($"MaterialTextures_{submeshIndex}_{lodIndex}", effectiveMaterial);
         }
     }
 
@@ -596,7 +557,346 @@ public sealed class ModelComponentEditor : IXRComponentEditor
         return entries;
     }
 
+    private static void DrawLodSummaryTable(
+        int submeshIndex,
+        SubMesh subMesh,
+        IReadOnlyList<(int Index, SubMeshLOD Lod, LinkedListNode<RenderableMesh.RenderableLOD>? RuntimeNode)> lodEntries,
+        RenderableMesh? runtimeMesh)
+    {
+        if (lodEntries.Count == 0)
+        {
+            ImGui.TextDisabled("No LODs defined.");
+            return;
+        }
+
+        const ImGuiTableFlags tableFlags = ImGuiTableFlags.SizingStretchProp
+                                           | ImGuiTableFlags.RowBg
+                                           | ImGuiTableFlags.BordersOuter
+                                           | ImGuiTableFlags.BordersInnerV
+                                           | ImGuiTableFlags.Resizable
+                                           | ImGuiTableFlags.NoSavedSettings;
+
+        if (!ImGui.BeginTable($"Submesh{submeshIndex}_LODs", 6, tableFlags))
+            return;
+
+        ImGui.TableSetupColumn("LOD", ImGuiTableColumnFlags.WidthFixed, 80.0f);
+        ImGui.TableSetupColumn("Max Distance", ImGuiTableColumnFlags.WidthFixed, 140.0f);
+        ImGui.TableSetupColumn("Mesh", ImGuiTableColumnFlags.WidthStretch, 0.0f);
+        ImGui.TableSetupColumn("Material", ImGuiTableColumnFlags.WidthStretch, 0.0f);
+        ImGui.TableSetupColumn("Textures", ImGuiTableColumnFlags.WidthFixed, 170.0f);
+        ImGui.TableSetupColumn("Runtime", ImGuiTableColumnFlags.WidthStretch, 0.0f);
+        ImGui.TableHeadersRow();
+
+        foreach (var entry in lodEntries)
+        {
+            var lod = entry.Lod;
+            var runtimeNode = entry.RuntimeNode;
+            var runtimeLod = runtimeNode?.Value;
+
+            bool isActive = runtimeMesh is not null && runtimeMesh.CurrentLOD == runtimeNode;
+
+            ImGui.TableNextRow();
+
+            if (isActive)
+            {
+                uint highlight = ImGui.ColorConvertFloat4ToU32(ActiveLodHighlight);
+                ImGui.TableSetBgColor(ImGuiTableBgTarget.RowBg0, highlight);
+                ImGui.TableSetBgColor(ImGuiTableBgTarget.RowBg1, highlight);
+            }
+
+            ImGui.TableSetColumnIndex(0);
+            ImGui.TextUnformatted(isActive ? $"#{entry.Index} (Active)" : $"#{entry.Index}");
+
+            ImGui.TableSetColumnIndex(1);
+            float maxDistance = lod.MaxVisibleDistance;
+            ImGui.PushID($"LOD{submeshIndex}_{entry.Index}_Distance");
+            ImGui.SetNextItemWidth(-1f);
+            if (ImGui.DragFloat("##MaxDistance", ref maxDistance, 0.25f, 0.0f, float.MaxValue, "%.2f"))
+            {
+                maxDistance = MathF.Max(0.0f, maxDistance);
+                if (!subMesh.LODs.Any(other => !ReferenceEquals(other, lod) && MathF.Abs(other.MaxVisibleDistance - maxDistance) < 0.0001f))
+                    UpdateLodDistance(subMesh, lod, maxDistance, runtimeNode);
+            }
+            ImGui.PopID();
+            if (ImGui.IsItemHovered())
+                ImGui.SetTooltip("Camera distance threshold where this LOD becomes active.");
+
+            ImGui.TableSetColumnIndex(2);
+            DrawMeshSummaryCell(lod.Mesh, runtimeLod?.Renderer?.Mesh);
+
+            ImGui.TableSetColumnIndex(3);
+            DrawMaterialSummaryCell(lod.Material, runtimeLod?.Renderer?.Material);
+
+            ImGui.TableSetColumnIndex(4);
+            DrawTextureSummaryCell(submeshIndex, entry.Index, lod.Material, runtimeLod?.Renderer?.Material);
+
+            ImGui.TableSetColumnIndex(5);
+            DrawRuntimeSummaryCell(entry.Index, isActive, runtimeMesh, runtimeNode);
+        }
+
+        ImGui.EndTable();
+    }
+
+    private static void DrawMeshSummaryCell(XRMesh? assetMesh, XRMesh? runtimeMesh)
+    {
+        if (assetMesh is null && runtimeMesh is null)
+        {
+            ImGui.TextDisabled("--");
+            return;
+        }
+
+        if (assetMesh is not null)
+        {
+            ImGui.TextUnformatted($"Asset: {FormatAssetLabel(assetMesh.Name, assetMesh)}");
+            ImGui.TextDisabled(FormatMeshStats(assetMesh));
+        }
+
+        if (runtimeMesh is not null && !ReferenceEquals(runtimeMesh, assetMesh))
+        {
+            ImGui.TextDisabled($"Runtime: {FormatAssetLabel(runtimeMesh.Name, runtimeMesh)}");
+            ImGui.TextDisabled(FormatMeshStats(runtimeMesh));
+        }
+    }
+
+    private static void DrawMaterialSummaryCell(XRMaterialBase? assetMaterial, XRMaterialBase? runtimeMaterial)
+    {
+        if (assetMaterial is null && runtimeMaterial is null)
+        {
+            ImGui.TextDisabled("--");
+            return;
+        }
+
+        if (assetMaterial is not null)
+        {
+            int parameterCount = assetMaterial.Parameters?.Length ?? 0;
+            ImGui.TextUnformatted($"Asset: {FormatAssetLabel(assetMaterial.Name, assetMaterial)}");
+            ImGui.TextDisabled($"{parameterCount} parameter{(parameterCount == 1 ? string.Empty : "s")}");
+        }
+
+        if (runtimeMaterial is not null && !ReferenceEquals(runtimeMaterial, assetMaterial))
+        {
+            int runtimeParameterCount = runtimeMaterial.Parameters?.Length ?? 0;
+            ImGui.TextDisabled($"Runtime: {FormatAssetLabel(runtimeMaterial.Name, runtimeMaterial)}");
+            ImGui.TextDisabled($"{runtimeParameterCount} parameter{(runtimeParameterCount == 1 ? string.Empty : "s")}");
+        }
+    }
+
+    private static void DrawTextureSummaryCell(int submeshIndex, int lodIndex, XRMaterialBase? assetMaterial, XRMaterialBase? runtimeMaterial)
+    {
+        XRMaterialBase? effectiveMaterial = runtimeMaterial ?? assetMaterial;
+        if (effectiveMaterial is null)
+        {
+            ImGui.TextDisabled("--");
+            return;
+        }
+
+        int assetTextureCount = assetMaterial?.Textures?.Count ?? 0;
+        int runtimeTextureCount = runtimeMaterial?.Textures?.Count ?? assetTextureCount;
+
+        if (runtimeMaterial is not null && !ReferenceEquals(runtimeMaterial, assetMaterial))
+            ImGui.TextUnformatted($"Textures: {assetTextureCount} asset / {runtimeTextureCount} runtime");
+        else
+            ImGui.TextUnformatted($"Textures: {runtimeTextureCount}");
+
+        if (runtimeTextureCount == 0 && assetTextureCount == 0)
+            return;
+
+        ImGui.PushID($"TextureSummary_{submeshIndex}_{lodIndex}");
+        if (ImGui.SmallButton("Preview##Textures"))
+            ImGui.OpenPopup("TexturePreviewPopup");
+
+        if (ImGui.BeginPopup("TexturePreviewPopup"))
+        {
+            if (assetMaterial is not null)
+            {
+                ImGui.TextUnformatted("Asset");
+                ImGui.Separator();
+                DrawMaterialTextureTable($"AssetTextures_{submeshIndex}_{lodIndex}", assetMaterial);
+            }
+
+            if (runtimeMaterial is not null && !ReferenceEquals(runtimeMaterial, assetMaterial))
+            {
+                if (assetMaterial is not null)
+                    ImGui.Separator();
+                ImGui.TextUnformatted("Runtime");
+                ImGui.Separator();
+                DrawMaterialTextureTable($"RuntimeTextures_{submeshIndex}_{lodIndex}", runtimeMaterial);
+            }
+            else
+            {
+                DrawMaterialTextureTable($"Textures_{submeshIndex}_{lodIndex}", effectiveMaterial);
+            }
+
+            ImGui.EndPopup();
+        }
+        ImGui.PopID();
+    }
+
+    private static void DrawRuntimeSummaryCell(int entryIndex, bool isActive, RenderableMesh? runtimeMesh, LinkedListNode<RenderableMesh.RenderableLOD>? runtimeNode)
+    {
+        if (runtimeMesh is null)
+        {
+            ImGui.TextDisabled("Runtime mesh not generated.");
+            return;
+        }
+
+        if (runtimeNode is null)
+        {
+            ImGui.TextDisabled("LOD renderer not created.");
+            return;
+        }
+
+        if (entryIndex == 0)
+            ImGui.TextDisabled(FormatRenderCommandLabel(runtimeMesh));
+
+        var renderer = runtimeNode.Value.Renderer;
+        if (renderer is null)
+        {
+            ImGui.TextDisabled("Renderer unavailable.");
+            return;
+        }
+
+        ImGui.TextUnformatted($"Generate Async: {(renderer.GenerateAsync ? "Yes" : "No")}");
+
+        if (renderer.Material is not null)
+            ImGui.TextDisabled($"Render Pass: {DescribeRenderPass(renderer.Material.RenderPass)}");
+
+        if (isActive && renderer.Mesh is not null)
+            ImGui.TextDisabled($"Active Mesh: {FormatAssetLabel(renderer.Mesh.Name, renderer.Mesh)}");
+    }
+
+    private static void DrawMaterialTextureTable(string tableId, XRMaterialBase material)
+    {
+        var textures = material.Textures;
+        if (textures is null || textures.Count == 0)
+        {
+            ImGui.TextDisabled("No textures assigned.");
+            return;
+        }
+
+        if (ImGui.BeginTable(tableId, 2, ImGuiTableFlags.SizingStretchProp | ImGuiTableFlags.RowBg))
+        {
+            ImGui.TableSetupColumn("Slot", ImGuiTableColumnFlags.WidthStretch, 0.35f);
+            ImGui.TableSetupColumn("Preview", ImGuiTableColumnFlags.WidthStretch, 0.65f);
+            ImGui.TableHeadersRow();
+
+            for (int i = 0; i < textures.Count; i++)
+            {
+                XRTexture? tex = textures[i];
+
+                ImGui.TableNextRow();
+                ImGui.TableSetColumnIndex(0);
+                ImGui.TextUnformatted($"{i}: {FormatAssetLabel(tex?.Name, tex)}");
+
+                ImGui.TableSetColumnIndex(1);
+                ImGui.PushID($"{tableId}_Tex{i}");
+                DrawTexturePreviewCell(tex);
+                ImGui.PopID();
+            }
+
+            ImGui.EndTable();
+        }
+    }
+
+    private static void DrawMeshDiagnostics(int submeshIndex, int lodIndex, SubMeshLOD lod, RenderableMesh.RenderableLOD? runtimeLod)
+    {
+        XRMesh? assetMesh = lod.Mesh;
+        XRMesh? runtimeMesh = runtimeLod?.Renderer?.Mesh;
+        if (assetMesh is null && runtimeMesh is null)
+            return;
+
+        ImGui.SeparatorText("Mesh Diagnostics");
+
+        if (ImGui.BeginTable($"MeshDiagnostics_{submeshIndex}_{lodIndex}", 3, ImGuiTableFlags.SizingStretchProp | ImGuiTableFlags.RowBg))
+        {
+            ImGui.TableSetupColumn("Source", ImGuiTableColumnFlags.WidthFixed, 130.0f);
+            ImGui.TableSetupColumn("Geometry", ImGuiTableColumnFlags.WidthStretch, 0.4f);
+            ImGui.TableSetupColumn("Attributes", ImGuiTableColumnFlags.WidthStretch, 0.6f);
+            ImGui.TableHeadersRow();
+
+            if (assetMesh is not null)
+                DrawMeshDiagnosticsRow("Asset", assetMesh);
+
+            if (runtimeMesh is not null && !ReferenceEquals(runtimeMesh, assetMesh))
+                DrawMeshDiagnosticsRow("Runtime", runtimeMesh);
+
+            ImGui.EndTable();
+        }
+    }
+
+    private static void DrawMeshDiagnosticsRow(string sourceLabel, XRMesh mesh)
+    {
+        ImGui.TableNextRow();
+        ImGui.TableSetColumnIndex(0);
+        ImGui.TextUnformatted($"{sourceLabel}: {FormatAssetLabel(mesh.Name, mesh)}");
+
+        ImGui.TableSetColumnIndex(1);
+        ImGui.TextUnformatted(FormatMeshStats(mesh));
+
+        ImGui.TableSetColumnIndex(2);
+        ImGui.TextDisabled(FormatMeshAttributes(mesh));
+    }
+
+    private static string FormatMeshStats(XRMesh mesh)
+    {
+        return $"{mesh.VertexCount} verts, {FormatMeshTopology(mesh)}";
+    }
+
+    private static string FormatMeshTopology(XRMesh mesh)
+    {
+        return mesh.Type switch
+        {
+            EPrimitiveType.Triangles => $"{mesh.IndexCount / 3} tris ({mesh.IndexCount} idx)",
+            EPrimitiveType.Lines => $"{mesh.IndexCount / 2} lines ({mesh.IndexCount} idx)",
+            EPrimitiveType.Points => $"{mesh.IndexCount} points",
+            _ => $"{mesh.IndexCount} indices ({mesh.Type})",
+        };
+    }
+
+    private static string FormatMeshAttributes(XRMesh mesh)
+    {
+        var attributes = new List<string>();
+
+        if (mesh.HasNormals)
+            attributes.Add("Normals");
+        if (mesh.HasTangents)
+            attributes.Add("Tangents");
+        if (mesh.HasTexCoords)
+            attributes.Add($"UV Sets {mesh.TexCoordCount}");
+        if (mesh.HasColors)
+            attributes.Add($"Colors {mesh.ColorCount}");
+        if (mesh.HasSkinning)
+            attributes.Add($"Skinning ({mesh.UtilizedBones.Length} bones)");
+        if (mesh.HasBlendshapes)
+            attributes.Add($"Blendshapes ({mesh.BlendshapeCount})");
+        if (mesh.MaxBlendshapeAccumulation)
+            attributes.Add("Blendshape Accumulation");
+
+        return attributes.Count > 0 ? string.Join(", ", attributes) : "No additional attributes";
+    }
+
+    private static string DescribeRenderPass(int renderPass)
+    {
+        if (Enum.IsDefined(typeof(EDefaultRenderPass), renderPass))
+            return ((EDefaultRenderPass)renderPass).ToString();
+        return renderPass.ToString(CultureInfo.InvariantCulture);
+    }
+
+    private static string FormatRenderCommandLabel(RenderableMesh? runtimeMesh)
+    {
+        if (runtimeMesh is null)
+            return "Runtime mesh not initialised";
+
+        int commandCount = runtimeMesh.RenderInfo.RenderCommands.Count;
+        var renderer = runtimeMesh.CurrentLODRenderer;
+        string pass = renderer?.Material is not null ? DescribeRenderPass(renderer.Material.RenderPass) : "n/a";
+        return commandCount > 0
+            ? $"{commandCount} render cmd(s), pass {pass}"
+            : $"0 render cmd(s), pass {pass}";
+    }
+
     private static void DrawLodPropertyEditors(
+        ModelComponent modelComponent,
         int submeshIndex,
         SubMesh subMesh,
         IReadOnlyList<(int Index, SubMeshLOD Lod, LinkedListNode<RenderableMesh.RenderableLOD>? RuntimeNode)> lodEntries,
@@ -608,10 +908,11 @@ public sealed class ModelComponentEditor : IXRComponentEditor
         ImGui.SeparatorText($"LOD Details (Submesh {submeshIndex})");
 
         foreach (var entry in lodEntries)
-            DrawLodEditor(submeshIndex, subMesh, entry, runtimeMesh);
+            DrawLodEditor(modelComponent, submeshIndex, subMesh, entry, runtimeMesh);
     }
 
     private static void DrawLodEditor(
+        ModelComponent modelComponent,
         int submeshIndex,
         SubMesh subMesh,
         (int Index, SubMeshLOD Lod, LinkedListNode<RenderableMesh.RenderableLOD>? RuntimeNode) entry,
@@ -639,7 +940,7 @@ public sealed class ModelComponentEditor : IXRComponentEditor
 
         if (open)
         {
-            DrawLodEditorContent(subMesh, runtimeMesh, lod, runtimeNode, runtimeLod);
+            DrawLodEditorContent(modelComponent, submeshIndex, subMesh, runtimeMesh, lod, entry.Index, runtimeNode, runtimeLod);
             ImGui.TreePop();
         }
 
@@ -647,15 +948,18 @@ public sealed class ModelComponentEditor : IXRComponentEditor
     }
 
     private static void DrawLodEditorContent(
+        ModelComponent modelComponent,
+        int submeshIndex,
         SubMesh subMesh,
         RenderableMesh? runtimeMesh,
         SubMeshLOD lod,
+        int lodIndex,
         LinkedListNode<RenderableMesh.RenderableLOD>? runtimeNode,
         RenderableMesh.RenderableLOD? runtimeLod)
     {
         const ImGuiTableFlags propertyTableFlags = ImGuiTableFlags.SizingStretchProp | ImGuiTableFlags.RowBg;
 
-        if (ImGui.BeginTable("AssetProperties", 2, propertyTableFlags))
+        if (ImGui.BeginTable($"AssetProperties_{submeshIndex}_{lodIndex}", 2, propertyTableFlags))
         {
             ImGui.TableNextRow();
             ImGui.TableSetColumnIndex(0);
@@ -689,38 +993,51 @@ public sealed class ModelComponentEditor : IXRComponentEditor
         }
 
         ImGui.Spacing();
+
+        DrawMeshDiagnostics(submeshIndex, lodIndex, lod, runtimeLod);
+
+        DrawBlendshapeControls(modelComponent, submeshIndex, lodIndex, runtimeLod);
+
+        DrawMaterialControls(submeshIndex, lodIndex, lod, runtimeLod);
+
         ImGui.SeparatorText("Runtime Renderer");
 
         var renderer = runtimeLod?.Renderer;
         if (renderer is null)
         {
             ImGui.TextDisabled("Runtime renderer not available.");
-            return;
         }
-
-        if (ImGui.BeginTable("RuntimeProperties", 2, propertyTableFlags))
+        else
         {
-            ImGui.TableNextRow();
-            ImGui.TableSetColumnIndex(0);
-            ImGui.TextUnformatted("Generate Async");
-            ImGui.TableSetColumnIndex(1);
-            bool generateAsync = renderer.GenerateAsync;
-            if (ImGui.Checkbox("##GenerateAsync", ref generateAsync))
-                renderer.GenerateAsync = generateAsync;
+            if (ImGui.BeginTable($"RuntimeProperties_{submeshIndex}_{lodIndex}", 2, propertyTableFlags))
+            {
+                ImGui.TableNextRow();
+                ImGui.TableSetColumnIndex(0);
+                ImGui.TextUnformatted("Generate Async");
+                ImGui.TableSetColumnIndex(1);
+                bool generateAsync = renderer.GenerateAsync;
+                if (ImGui.Checkbox("##GenerateAsync", ref generateAsync))
+                    renderer.GenerateAsync = generateAsync;
 
-            ImGui.TableNextRow();
-            ImGui.TableSetColumnIndex(0);
-            ImGui.TextUnformatted("Runtime Mesh");
-            ImGui.TableSetColumnIndex(1);
-            ImGuiAssetUtilities.DrawAssetField("RuntimeMesh", renderer.Mesh, asset => renderer.Mesh = asset, AssetFieldOptions.ForMeshes());
+                ImGui.TableNextRow();
+                ImGui.TableSetColumnIndex(0);
+                ImGui.TextUnformatted("Runtime Mesh");
+                ImGui.TableSetColumnIndex(1);
+                ImGuiAssetUtilities.DrawAssetField("RuntimeMesh", renderer.Mesh, asset => renderer.Mesh = asset, AssetFieldOptions.ForMeshes());
 
-            ImGui.TableNextRow();
-            ImGui.TableSetColumnIndex(0);
-            ImGui.TextUnformatted("Runtime Material");
-            ImGui.TableSetColumnIndex(1);
-            ImGuiAssetUtilities.DrawAssetField("RuntimeMaterial", renderer.Material, asset => renderer.Material = asset, AssetFieldOptions.ForMaterials());
+                ImGui.TableNextRow();
+                ImGui.TableSetColumnIndex(0);
+                ImGui.TextUnformatted("Runtime Material");
+                ImGui.TableSetColumnIndex(1);
+                ImGuiAssetUtilities.DrawAssetField("RuntimeMaterial", renderer.Material, asset => renderer.Material = asset, AssetFieldOptions.ForMaterials());
 
-            ImGui.EndTable();
+                ImGui.EndTable();
+            }
+
+            if (renderer.Mesh is not null)
+                ImGui.TextDisabled($"Runtime Mesh: {FormatAssetLabel(renderer.Mesh.Name, renderer.Mesh)}");
+            if (renderer.Material is not null)
+                ImGui.TextDisabled($"Runtime Material Pass: {DescribeRenderPass(renderer.Material.RenderPass)}");
         }
 
         if (runtimeMesh is not null)
