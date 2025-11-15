@@ -737,7 +737,7 @@ public static class Undo
         private bool TrySetValue(object? value)
         {
             _cachedProperty ??= ResolveProperty(Target.GetType(), PropertyName);
-            if (_cachedProperty is not null)
+            if (_cachedProperty is not null && _cachedProperty.CanWrite)
             {
                 try
                 {
@@ -752,7 +752,7 @@ public static class Undo
             }
 
             _cachedField ??= ResolveField(Target.GetType(), PropertyName);
-            if (_cachedField is not null)
+            if (_cachedField is not null && !_cachedField.IsInitOnly)
             {
                 try
                 {

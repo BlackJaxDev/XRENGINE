@@ -1,4 +1,5 @@
-﻿using Newtonsoft.Json;
+﻿using System;
+using Newtonsoft.Json;
 using Newtonsoft.Json.Converters;
 using XREngine;
 using XREngine.Editor;
@@ -16,6 +17,7 @@ internal class Program
     /// This editor will autogenerate the client exe csproj to compile production games.
     /// </summary>
     /// <param name="args"></param>
+    [STAThread]
     private static void Main(string[] args)
     {
         //ConsoleHelper.EnsureConsoleAttached();

@@ -16,10 +16,12 @@ using XREngine.Components;
 using XREngine.Animation;
 using XREngine.Data.Colors;
 using XREngine.Rendering;
+using XREngine.Rendering.OpenGL;
 using XREngine.Scene;
 using XREngine.Scene.Components.UI;
 using XREngine.Scene.Transforms;
 using XREngine.Editor.ComponentEditors;
+using XREngine.Diagnostics;
 
 namespace XREngine.Editor;
 
@@ -153,7 +155,7 @@ public static partial class UnitTestingWorld
             bool showSettings = Toggles.DearImGuiUI;
             bool showProfiler = Toggles.DearImGuiProfiler;
 
-            Engine.Profiler.EnableFrameLogging = Toggles.EnableProfilerLogging || showProfiler;
+            //Engine.Profiler.EnableFrameLogging = Toggles.EnableProfilerLogging || showProfiler;
 
             if (!showSettings && !showProfiler)
                 return;
@@ -844,6 +846,9 @@ public static partial class UnitTestingWorld
                 }
             }
 
+            DrawMissingAssetSection();
+            DrawOpenGLDebugSection();
+
             if (_profilerDockLeftEnabled)
                 HandleProfilerDockResize(overlayViewport);
 
@@ -896,6 +901,159 @@ public static partial class UnitTestingWorld
             else
             {
                 ImGui.TreeNodeEx(label, ImGuiTreeNodeFlags.Leaf | ImGuiTreeNodeFlags.Bullet | ImGuiTreeNodeFlags.NoTreePushOnOpen);
+            }
+        }
+
+        private static void DrawMissingAssetSection()
+        {
+            var missingAssets = AssetDiagnostics.GetTrackedMissingAssets();
+            if (missingAssets.Count == 0)
+                return;
+
+            ImGui.Separator();
+
+            int totalHits = 0;
+            foreach (var info in missingAssets)
+                totalHits += info.Count;
+
+            string headerLabel = $"Missing Assets ({missingAssets.Count} entries / {totalHits} hits)";
+            if (!ImGui.CollapsingHeader($"{headerLabel}##ProfilerMissingAssets", ImGuiTreeNodeFlags.DefaultOpen))
+                return;
+
+            if (ImGui.Button("Clear Missing Asset Log"))
+            {
+                AssetDiagnostics.ClearTrackedMissingAssets();
+                return;
+            }
+
+            ImGui.SameLine();
+            ImGui.TextDisabled("Sorted by most recent");
+
+            const ImGuiTableFlags tableFlags = ImGuiTableFlags.Borders | ImGuiTableFlags.RowBg | ImGuiTableFlags.Resizable | ImGuiTableFlags.ScrollY;
+            float estimatedHeight = MathF.Min(44.0f + missingAssets.Count * ImGui.GetTextLineHeightWithSpacing(), 320.0f);
+
+            if (ImGui.BeginTable("ProfilerMissingAssetTable", 6, tableFlags, new Vector2(-1.0f, estimatedHeight)))
+            {
+                ImGui.TableSetupScrollFreeze(0, 1);
+                ImGui.TableSetupColumn("Category", ImGuiTableColumnFlags.WidthFixed, 110.0f);
+                ImGui.TableSetupColumn("Path", ImGuiTableColumnFlags.WidthStretch, 0.45f);
+                ImGui.TableSetupColumn("Count", ImGuiTableColumnFlags.WidthFixed, 60.0f);
+                ImGui.TableSetupColumn("Last Context", ImGuiTableColumnFlags.WidthStretch, 0.25f);
+                ImGui.TableSetupColumn("Last Seen", ImGuiTableColumnFlags.WidthFixed, 140.0f);
+                ImGui.TableSetupColumn("First Seen", ImGuiTableColumnFlags.WidthFixed, 140.0f);
+                ImGui.TableHeadersRow();
+
+                foreach (var info in missingAssets.OrderByDescending(static i => i.LastSeenUtc))
+                {
+                    ImGui.TableNextRow();
+
+                    ImGui.TableNextColumn();
+                    ImGui.TextUnformatted(info.Category);
+
+                    ImGui.TableNextColumn();
+                    ImGui.TextUnformatted(info.AssetPath);
+                    if (ImGui.IsItemHovered())
+                        ImGui.SetTooltip(info.AssetPath);
+
+                    ImGui.TableNextColumn();
+                    ImGui.TextUnformatted(info.Count.ToString(CultureInfo.InvariantCulture));
+
+                    ImGui.TableNextColumn();
+                    string contextLabel = string.IsNullOrWhiteSpace(info.LastContext) ? "<none>" : info.LastContext;
+                    ImGui.TextUnformatted(contextLabel);
+                    if (info.Contexts.Count > 1 && ImGui.IsItemHovered())
+                    {
+                        ImGui.BeginTooltip();
+                        ImGui.TextUnformatted("Contexts:");
+                        foreach (var ctx in info.Contexts.OrderBy(static c => c))
+                            ImGui.TextUnformatted(ctx);
+                        ImGui.EndTooltip();
+                    }
+
+                    ImGui.TableNextColumn();
+                    ImGui.TextUnformatted(info.LastSeenUtc.ToLocalTime().ToString("g", CultureInfo.CurrentCulture));
+
+                    ImGui.TableNextColumn();
+                    ImGui.TextUnformatted(info.FirstSeenUtc.ToLocalTime().ToString("g", CultureInfo.CurrentCulture));
+                }
+
+                ImGui.EndTable();
+            }
+        }
+
+        private static void DrawOpenGLDebugSection()
+        {
+            var errors = OpenGLRenderer.GetTrackedOpenGLErrors();
+            if (errors.Count == 0)
+                return;
+
+            ImGui.Separator();
+
+            int totalHits = 0;
+            foreach (var info in errors)
+                totalHits += info.Count;
+
+            string headerLabel = $"OpenGL Errors ({errors.Count} ids / {totalHits} hits)";
+            if (!ImGui.CollapsingHeader($"{headerLabel}##ProfilerOpenGLErrors", ImGuiTreeNodeFlags.DefaultOpen))
+                return;
+
+            if (ImGui.Button("Clear Tracked Errors"))
+            {
+                OpenGLRenderer.ClearTrackedOpenGLErrors();
+                return;
+            }
+
+            ImGui.SameLine();
+            ImGui.TextDisabled("Sorted by most recent");
+
+            const ImGuiTableFlags tableFlags = ImGuiTableFlags.Borders | ImGuiTableFlags.RowBg | ImGuiTableFlags.Resizable | ImGuiTableFlags.ScrollY;
+            float estimatedHeight = MathF.Min(44.0f + errors.Count * ImGui.GetTextLineHeightWithSpacing(), 320.0f);
+
+            if (ImGui.BeginTable("ProfilerOpenGLErrorTable", 7, tableFlags, new Vector2(-1.0f, estimatedHeight)))
+            {
+                ImGui.TableSetupScrollFreeze(0, 1);
+                ImGui.TableSetupColumn("ID", ImGuiTableColumnFlags.WidthFixed, 70.0f);
+                ImGui.TableSetupColumn("Count", ImGuiTableColumnFlags.WidthFixed, 60.0f);
+                ImGui.TableSetupColumn("Severity", ImGuiTableColumnFlags.WidthFixed, 90.0f);
+                ImGui.TableSetupColumn("Type", ImGuiTableColumnFlags.WidthFixed, 120.0f);
+                ImGui.TableSetupColumn("Source", ImGuiTableColumnFlags.WidthFixed, 120.0f);
+                ImGui.TableSetupColumn("Last Seen", ImGuiTableColumnFlags.WidthFixed, 140.0f);
+                ImGui.TableSetupColumn("Latest Message", ImGuiTableColumnFlags.None);
+                ImGui.TableHeadersRow();
+
+                foreach (var error in errors.OrderByDescending(static e => e.LastSeenUtc))
+                {
+                    ImGui.TableNextRow();
+
+                    ImGui.TableNextColumn();
+                    ImGui.TextUnformatted(error.Id.ToString(CultureInfo.InvariantCulture));
+
+                    ImGui.TableNextColumn();
+                    ImGui.TextUnformatted(error.Count.ToString(CultureInfo.InvariantCulture));
+
+                    ImGui.TableNextColumn();
+                    bool highlightSeverity = string.Equals(error.Severity, "High", StringComparison.OrdinalIgnoreCase);
+                    if (highlightSeverity)
+                        ImGui.PushStyleColor(ImGuiCol.Text, new Vector4(1.0f, 0.45f, 0.45f, 1.0f));
+                    ImGui.TextUnformatted(error.Severity);
+                    if (highlightSeverity)
+                        ImGui.PopStyleColor();
+
+                    ImGui.TableNextColumn();
+                    ImGui.TextUnformatted(error.Type);
+
+                    ImGui.TableNextColumn();
+                    ImGui.TextUnformatted(error.Source);
+
+                    ImGui.TableNextColumn();
+                    string lastSeenLocal = error.LastSeenUtc.ToLocalTime().ToString("HH:mm:ss.fff", CultureInfo.InvariantCulture);
+                    ImGui.TextUnformatted(lastSeenLocal);
+
+                    ImGui.TableNextColumn();
+                    ImGui.TextWrapped(error.Message);
+                }
+
+                ImGui.EndTable();
             }
         }
 

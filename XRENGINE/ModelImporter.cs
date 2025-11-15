@@ -3,8 +3,13 @@ using Assimp.Configs;
 using Assimp.Unmanaged;
 using Extensions;
 using ImageMagick;
+using System;
 using System.Collections.Concurrent;
+using System.Collections;
+using System.Collections.Generic;
 using System.Numerics;
+using System.Threading;
+using System.Threading.Tasks;
 using XREngine.Components.Scene.Mesh;
 using XREngine.Data.Colors;
 using XREngine.Data.Rendering;
@@ -25,6 +30,11 @@ namespace XREngine
     /// </summary>
     public class ModelImporter : IDisposable
     {
+        public readonly record struct ModelImporterResult(
+            SceneNode? RootNode,
+            IReadOnlyCollection<XRMaterial> Materials,
+            IReadOnlyCollection<XRMesh> Meshes);
+
         public delegate void DelMakeMaterialAction(XRMaterial mat, XRTexture[] textureList, List<TextureSlot> textures, string name);
 
         public DelMakeMaterialAction MakeMaterialAction { get; set; } = MakeMaterial;
@@ -35,6 +45,41 @@ namespace XREngine
             _path = path;
             _onCompleted = onCompleted;
             _materialFactory = materialFactory ?? MaterialFactory;
+        }
+
+        public static EnumeratorJob ScheduleImportJob(
+            string path,
+            PostProcessSteps options,
+            Action<ModelImporterResult>? onFinished = null,
+            Action<Exception>? onError = null,
+            Action? onCanceled = null,
+            Action<float>? onProgress = null,
+            CancellationToken cancellationToken = default,
+            SceneNode? parent = null,
+            float scaleConversion = 1.0f,
+            bool zUp = false,
+            DelMaterialFactory? materialFactory = null)
+        {
+            IEnumerable ImportRoutine()
+            {
+                var importTask = ImportAsync(path, options, onCompleted: null, materialFactory, parent, scaleConversion, zUp);
+                yield return importTask;
+
+                if (cancellationToken.IsCancellationRequested || !importTask.IsCompletedSuccessfully)
+                    yield break;
+
+                var (rootNode, materials, meshes) = importTask.Result;
+                onFinished?.Invoke(new ModelImporterResult(rootNode, materials, meshes));
+            }
+
+            return Engine.Jobs.Schedule(
+                ImportRoutine,
+                progress: onProgress,
+                completed: null,
+                error: onError,
+                canceled: onCanceled,
+                progressWithPayload: null,
+                cancellationToken: cancellationToken);
         }
 
         private readonly ConcurrentDictionary<string, XRTexture2D> _texturePathCache = new();
@@ -151,35 +196,48 @@ namespace XREngine
 
         private static XRTexture2D TextureFactoryInternal(string path)
         {
-            var tex = Engine.Assets.Load<XRTexture2D>(path);
-            if (tex is null)
+            string textureName = Path.GetFileNameWithoutExtension(path);
+            XRTexture2D placeholder = new()
             {
-                Debug.Out($"Failed to load texture: {path}");
-                tex = new XRTexture2D()
+                Name = textureName,
+                MagFilter = ETexMagFilter.Linear,
+                MinFilter = ETexMinFilter.Linear,
+                UWrap = ETexWrapMode.Repeat,
+                VWrap = ETexWrapMode.Repeat,
+                AlphaAsTransparency = true,
+                AutoGenerateMipmaps = true,
+                Resizable = true,
+            };
+
+            placeholder.FilePath = path;
+
+            try
+            {
+                placeholder.Mipmaps = [new Mipmap2D(new MagickImage(XRTexture2D.FillerImage))];
+            }
+            catch (Exception ex)
+            {
+                Debug.LogWarning($"Failed to assign filler texture for '{path}'. {ex.Message}");
+            }
+
+            XRTexture2D.ScheduleLoadJob(
+                path,
+                placeholder,
+                onFinished: tex =>
                 {
-                    Name = Path.GetFileNameWithoutExtension(path),
-                    MagFilter = ETexMagFilter.Linear,
-                    MinFilter = ETexMinFilter.Linear,
-                    UWrap = ETexWrapMode.Repeat,
-                    VWrap = ETexWrapMode.Repeat,
-                    AlphaAsTransparency = true,
-                    AutoGenerateMipmaps = true,
-                    Resizable = true,
-                };
-            }
-            else
-            {
-                Debug.Out($"Loaded texture: {path}");
-                tex.MagFilter = ETexMagFilter.Linear;
-                tex.MinFilter = ETexMinFilter.Linear;
-                tex.UWrap = ETexWrapMode.Repeat;
-                tex.VWrap = ETexWrapMode.Repeat;
-                tex.AlphaAsTransparency = true;
-                tex.AutoGenerateMipmaps = true;
-                tex.Resizable = false;
-                tex.SizedInternalFormat = ESizedInternalFormat.Rgba8;
-            }
-            return tex;
+                    tex.MagFilter = ETexMagFilter.Linear;
+                    tex.MinFilter = ETexMinFilter.Linear;
+                    tex.UWrap = ETexWrapMode.Repeat;
+                    tex.VWrap = ETexWrapMode.Repeat;
+                    tex.AlphaAsTransparency = true;
+                    tex.AutoGenerateMipmaps = true;
+                    tex.Resizable = false;
+                    tex.SizedInternalFormat = ESizedInternalFormat.Rgba8;
+                    Debug.Out($"Loaded texture: {path}");
+                },
+                onError: ex => Debug.LogException(ex, $"Texture import job failed for '{path}'."));
+
+            return placeholder;
         }
 
         public string SourceFilePath => _path;
@@ -511,7 +569,9 @@ namespace XREngine
 
             ModelComponent modelComponent = sceneNode.AddComponent<ModelComponent>()!;
             Model model = new();
+            model.Meshes.ThreadSafe = true;
             modelComponent.Name = node.Name;
+            modelComponent.Model = model;
             for (var i = 0; i < node.MeshCount; i++)
             {
                 int meshIndex = node.MeshIndices[i];
@@ -522,10 +582,15 @@ namespace XREngine
                 _meshes.Add(xrMesh);
                 _materials.Add(xrMaterial);
 
-                model.Meshes.Add(new SubMesh(xrMesh, xrMaterial) { Name = mesh.Name, RootTransform = rootTransform });
+                SubMesh subMesh = new(xrMesh, xrMaterial)
+                {
+                    Name = mesh.Name,
+                    RootTransform = rootTransform
+                };
+
+                model.Meshes.Add(subMesh);
             }
 
-            modelComponent!.Model = model;
         }
 
         private unsafe (XRMesh mesh, XRMaterial material) ProcessSubMesh(

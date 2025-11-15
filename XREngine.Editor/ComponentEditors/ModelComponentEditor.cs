@@ -1,9 +1,11 @@
 using System;
 using System.Collections.Generic;
 using System.Globalization;
+using System.IO;
 using System.Linq;
 using System.Numerics;
 using System.Runtime.CompilerServices;
+using System.Windows.Forms;
 using ImGuiNET;
 using XREngine;
 using XREngine.Components;
@@ -16,6 +18,7 @@ using XREngine.Rendering.Models;
 using XREngine.Rendering.Models.Materials;
 using XREngine.Rendering.Models.Materials.Shaders.Parameters;
 using XREngine.Rendering.OpenGL;
+using XREngine.Diagnostics;
 using AssetFieldOptions = XREngine.Editor.ImGuiAssetUtilities.AssetFieldOptions;
 
 namespace XREngine.Editor.ComponentEditors;
@@ -33,6 +36,23 @@ public sealed class ModelComponentEditor : IXRComponentEditor
     private const float TexturePreviewFallbackEdge = 64.0f;
     
     private static readonly Vector4 ActiveLodTextColor = new(0.35f, 0.75f, 1.00f, 1.00f);
+    private static readonly string[] TextureAssetPickerExtensions =
+    [
+        ".asset",
+        ".png",
+        ".jpg",
+        ".jpeg",
+        ".tga",
+        ".tif",
+        ".tiff",
+        ".exr",
+        ".hdr"
+    ];
+    private static readonly HashSet<string> TextureImportExtensionSet = new(TextureAssetPickerExtensions.Skip(1), StringComparer.OrdinalIgnoreCase);
+    private static readonly AssetFieldOptions TextureAssetFieldOptions = AssetFieldOptions.WithExtensions(TextureAssetPickerExtensions);
+    private const string TextureImportDialogFilter = "Image Files (*.png;*.jpg;*.jpeg;*.tga;*.tif;*.tiff;*.exr;*.hdr)|*.png;*.jpg;*.jpeg;*.tga;*.tif;*.tiff;*.exr;*.hdr|XRTexture2D Asset (*.asset)|*.asset";
+    private const string ImportedTextureFolderName = "Textures";
+    private const string MissingAssetCategoryTexture = "Texture2D";
 
     public void DrawInspector(XRComponent component, HashSet<object> visited)
     {
@@ -774,28 +794,228 @@ public sealed class ModelComponentEditor : IXRComponentEditor
             return;
         }
 
-        if (ImGui.BeginTable(tableId, 2, ImGuiTableFlags.SizingStretchProp | ImGuiTableFlags.RowBg))
+        const ImGuiTableFlags tableFlags = ImGuiTableFlags.SizingStretchProp | ImGuiTableFlags.RowBg | ImGuiTableFlags.BordersInnerV;
+        if (!ImGui.BeginTable(tableId, 3, tableFlags))
+            return;
+
+        ImGui.TableSetupColumn("Slot", ImGuiTableColumnFlags.WidthStretch, 0.35f);
+        ImGui.TableSetupColumn("Preview", ImGuiTableColumnFlags.WidthStretch, 0.35f);
+        ImGui.TableSetupColumn("Actions", ImGuiTableColumnFlags.WidthStretch, 0.30f);
+        ImGui.TableHeadersRow();
+
+        for (int i = 0; i < textures.Count; i++)
         {
-            ImGui.TableSetupColumn("Slot", ImGuiTableColumnFlags.WidthStretch, 0.35f);
-            ImGui.TableSetupColumn("Preview", ImGuiTableColumnFlags.WidthStretch, 0.65f);
-            ImGui.TableHeadersRow();
+            XRTexture? tex = textures[i];
 
-            for (int i = 0; i < textures.Count; i++)
+            ImGui.TableNextRow();
+
+            ImGui.TableSetColumnIndex(0);
+            string label = $"{i}: {FormatAssetLabel(tex?.Name, tex)}";
+            ImGui.TextUnformatted(label);
+            if (tex is not null)
             {
-                XRTexture? tex = textures[i];
-
-                ImGui.TableNextRow();
-                ImGui.TableSetColumnIndex(0);
-                ImGui.TextUnformatted($"{i}: {FormatAssetLabel(tex?.Name, tex)}");
-
-                ImGui.TableSetColumnIndex(1);
-                ImGui.PushID($"{tableId}_Tex{i}");
-                DrawTexturePreviewCell(tex);
-                ImGui.PopID();
+                string? location = tex.FilePath ?? tex.OriginalPath;
+                if (!string.IsNullOrWhiteSpace(location) && ImGui.IsItemHovered())
+                    ImGui.SetTooltip(location);
             }
 
-            ImGui.EndTable();
+            ImGui.TableSetColumnIndex(1);
+            ImGui.PushID($"{tableId}_Preview{i}");
+            DrawTexturePreviewCell(tex);
+            ImGui.PopID();
+
+            ImGui.TableSetColumnIndex(2);
+            ImGui.PushID($"{tableId}_Actions{i}");
+            DrawTextureSlotControls(material, i, tex);
+            ImGui.PopID();
         }
+
+        ImGui.EndTable();
+    }
+
+    private static void DrawTextureSlotControls(XRMaterialBase material, int slotIndex, XRTexture? currentTexture)
+    {
+        XRTexture2D? current2D = currentTexture as XRTexture2D;
+
+        ImGuiAssetUtilities.DrawAssetField("TextureAsset", current2D, asset => ApplyTextureSelection(material, slotIndex, asset), TextureAssetFieldOptions);
+
+        float available = ImGui.GetContentRegionAvail().X;
+        if (available > 0.0f)
+            ImGui.SameLine();
+
+        bool canUseDialog = OperatingSystem.IsWindows();
+        ImGui.BeginDisabled(!canUseDialog);
+        if (ImGui.SmallButton("Import"))
+        {
+            XRTexture2D? imported = TryImportTextureFromFileDialog();
+            if (imported is not null)
+                ApplyTextureSelection(material, slotIndex, imported);
+        }
+        ImGui.EndDisabled();
+
+        if (!canUseDialog && ImGui.IsItemHovered(ImGuiHoveredFlags.AllowWhenDisabled))
+            ImGui.SetTooltip("File dialog import is only available on Windows.");
+    }
+
+    private static void ApplyTextureSelection(XRMaterialBase material, int slotIndex, XRTexture2D? newTexture)
+    {
+        var textures = material.Textures;
+        if (textures is null || slotIndex < 0 || slotIndex >= textures.Count)
+            return;
+
+        XRTexture? current = textures[slotIndex];
+
+        if (newTexture is not null)
+        {
+            if (!EnsureTextureImported(newTexture))
+                return;
+        }
+
+        if (ReferenceEquals(current, newTexture))
+            return;
+
+        textures[slotIndex] = newTexture;
+        material.MarkDirty();
+    }
+
+    private static bool EnsureTextureImported(XRTexture2D texture)
+    {
+        string? filePath = texture.FilePath;
+        if (!string.IsNullOrWhiteSpace(filePath) && filePath.EndsWith($".{AssetManager.AssetExtension}", StringComparison.OrdinalIgnoreCase))
+            return true;
+
+        return PromoteTextureToGameAsset(texture);
+    }
+
+    private static bool PromoteTextureToGameAsset(XRTexture2D texture)
+    {
+        var assets = Engine.Assets;
+        if (assets is null)
+        {
+            Debug.LogWarning("Cannot import textures because the asset manager is unavailable.");
+            return false;
+        }
+
+        string? sourcePath = texture.OriginalPath ?? texture.FilePath;
+        string assetName = string.IsNullOrWhiteSpace(texture.Name)
+            ? GenerateTextureAssetName(sourcePath)
+            : SanitizeAssetName(texture.Name!);
+        texture.Name = assetName;
+        ConfigureImportedTextureDefaults(texture);
+
+        try
+        {
+            assets.SaveGameAssetTo(texture, ImportedTextureFolderName);
+            texture.ClearDirty();
+            return true;
+        }
+        catch (Exception ex)
+        {
+            Debug.LogException(ex, $"Failed to import texture '{assetName}'.");
+            return false;
+        }
+    }
+
+    private static string GenerateTextureAssetName(string? sourcePath)
+    {
+        string baseName = string.IsNullOrWhiteSpace(sourcePath)
+            ? string.Empty
+            : Path.GetFileNameWithoutExtension(sourcePath) ?? string.Empty;
+
+        if (string.IsNullOrWhiteSpace(baseName))
+            baseName = $"ImportedTexture_{Guid.NewGuid():N}";
+
+        return SanitizeAssetName(baseName);
+    }
+
+    private static string SanitizeAssetName(string name)
+    {
+        string sanitized = name;
+        foreach (char c in Path.GetInvalidFileNameChars())
+            sanitized = sanitized.Replace(c, '_');
+
+        return string.IsNullOrWhiteSpace(sanitized)
+            ? $"ImportedTexture_{Guid.NewGuid():N}"
+            : sanitized;
+    }
+
+    private static void ConfigureImportedTextureDefaults(XRTexture2D texture)
+    {
+        texture.MagFilter = ETexMagFilter.Linear;
+        texture.MinFilter = ETexMinFilter.Linear;
+        texture.UWrap = ETexWrapMode.Repeat;
+        texture.VWrap = ETexWrapMode.Repeat;
+        texture.AutoGenerateMipmaps = true;
+        texture.AlphaAsTransparency = true;
+    }
+
+    private static XRTexture2D? TryImportTextureFromFileDialog()
+    {
+        if (!OperatingSystem.IsWindows())
+            return null;
+
+        using OpenFileDialog dialog = new()
+        {
+            Filter = TextureImportDialogFilter,
+            Multiselect = false,
+            Title = "Select Texture"
+        };
+
+        return dialog.ShowDialog() == DialogResult.OK ? LoadTextureFromAnyPath(dialog.FileName) : null;
+    }
+
+    private static XRTexture2D? LoadTextureFromAnyPath(string? path)
+    {
+        if (string.IsNullOrWhiteSpace(path))
+            return null;
+
+        if (!File.Exists(path))
+        {
+            Debug.LogWarning($"Texture file '{path}' does not exist.");
+            AssetDiagnostics.RecordMissingAsset(path, MissingAssetCategoryTexture, $"{nameof(ModelComponentEditor)}.{nameof(LoadTextureFromAnyPath)}");
+            return null;
+        }
+
+        string extension = Path.GetExtension(path);
+        if (extension.Equals($".{AssetManager.AssetExtension}", StringComparison.OrdinalIgnoreCase))
+        {
+            var assets = Engine.Assets;
+            if (assets is null)
+            {
+                Debug.LogWarning("Cannot load texture assets because the asset manager is unavailable.");
+                return null;
+            }
+
+            return assets.Load<XRTexture2D>(path);
+        }
+
+        if (!TextureImportExtensionSet.Contains(extension))
+        {
+            Debug.LogWarning($"Unsupported texture extension '{extension}'.");
+            return null;
+        }
+
+        return ImportTextureFromPath(path);
+    }
+
+    private static XRTexture2D? ImportTextureFromPath(string path)
+    {
+        var assets = Engine.Assets;
+        if (assets is null)
+        {
+            Debug.LogWarning("Cannot import textures because the asset manager is unavailable.");
+            return null;
+        }
+
+        XRTexture2D? texture = assets.Load<XRTexture2D>(path);
+        if (texture is null)
+        {
+            Debug.LogWarning($"Failed to load texture from '{path}'.");
+            AssetDiagnostics.RecordMissingAsset(path, MissingAssetCategoryTexture, $"{nameof(ModelComponentEditor)}.{nameof(ImportTextureFromPath)}");
+            return null;
+        }
+
+        return EnsureTextureImported(texture) ? texture : null;
     }
 
     private static void DrawMeshDiagnostics(int submeshIndex, int lodIndex, SubMeshLOD lod, RenderableMesh.RenderableLOD? runtimeLod)

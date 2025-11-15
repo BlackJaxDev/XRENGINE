@@ -251,6 +251,8 @@ namespace XREngine.Rendering.OpenGL
 
             string messageStr = new((sbyte*)message);
             Debug.LogWarning($"OPENGL {FormatSeverity(severity)} #{id} | {FormatSource(source)} {FormatType(type)} | {messageStr}", 1, 5);
+            bool shouldTrack = type == GLEnum.DebugTypeError;
+            RecordOpenGLError(id, FormatSource(source), FormatType(type), FormatSeverity(severity), messageStr, shouldTrack);
         }
 
         private static string FormatSeverity(GLEnum severity)
