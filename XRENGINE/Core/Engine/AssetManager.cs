@@ -14,6 +14,7 @@ using YamlDotNet.Core;
 using YamlDotNet.Core.Events;
 using YamlDotNet.Serialization;
 using YamlDotNet.Serialization.NodeDeserializers;
+using XREngine.Diagnostics;
 
 namespace XREngine
 {
@@ -448,9 +449,13 @@ namespace XREngine
             if (TryGetAssetByPath(filePath, out XRAsset? existingAsset))
                 return existingAsset is T tAsset ? tAsset : null;
 
-            file = !File.Exists(filePath)
-                ? null
-                : await DeserializeAsync<T>(filePath);
+            if (!File.Exists(filePath))
+            {
+                AssetDiagnostics.RecordMissingAsset(filePath, typeof(T).Name, $"{nameof(AssetManager)}.{nameof(LoadAsync)}");
+                return null;
+            }
+
+            file = await DeserializeAsync<T>(filePath);
             PostLoaded(filePath, file);
 #if !DEBUG
             }
@@ -473,9 +478,13 @@ namespace XREngine
             if (TryGetAssetByPath(filePath, out XRAsset? existingAsset))
                 return existingAsset is T tAsset ? tAsset : null;
 
-            file = !File.Exists(filePath)
-                ? null
-                : Deserialize<T>(filePath);
+            if (!File.Exists(filePath))
+            {
+                AssetDiagnostics.RecordMissingAsset(filePath, typeof(T).Name, $"{nameof(AssetManager)}.{nameof(Load)}");
+                return null;
+            }
+
+            file = Deserialize<T>(filePath);
             PostLoaded(filePath, file);
 #if !DEBUG
             }

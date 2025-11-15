@@ -2,10 +2,11 @@
 
   <PropertyGroup>
     <OutputType>WinExe</OutputType>
-    <TargetFramework>net9.0</TargetFramework>
+    <TargetFramework>net9.0-windows</TargetFramework>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
     <AllowUnsafeBlocks>True</AllowUnsafeBlocks>
+    <UseWindowsForms>true</UseWindowsForms>
     <RootNamespace>XREngine.Editor</RootNamespace>
     <Platforms>AnyCPU;x64</Platforms>
     <BaseOutputPath Condition="'$(SolutionDir)' != ''">$(SolutionDir)Build\Editor\$(Configuration)\$(Platform)</BaseOutputPath>

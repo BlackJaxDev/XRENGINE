@@ -9,6 +9,7 @@ using System.Text;
 using ImGuiNET;
 using XREngine;
 using XREngine.Core.Files;
+using XREngine.Diagnostics;
 using XREngine.Rendering;
 using XREngine.Rendering.Models;
 
@@ -18,6 +19,7 @@ internal static class ImGuiAssetUtilities
 {
     public const string AssetPayloadType = "XR_ASSET_PATH";
     private const string AssetPickerPopupId = "AssetPicker";
+    private const uint AssetPickerPreviewSize = 128;
     private static readonly Dictionary<AssetPickerKey, object> _assetPickerStates = new();
 
     public static void SetPathPayload(string path)
@@ -65,7 +67,7 @@ internal static class ImGuiAssetUtilities
         where TAsset : XRAsset, new()
     {
         options ??= AssetFieldOptions.ForType<TAsset>();
-    var state = GetPickerState<TAsset>(options);
+        var state = GetPickerState<TAsset>(options);
 
         ImGui.PushID(id);
 
@@ -163,30 +165,49 @@ internal static class ImGuiAssetUtilities
         Vector2 listSize = new(0.0f, 260.0f);
         if (ImGui.BeginChild("AssetPickerList", listSize, ImGuiChildFlags.Border))
         {
-            bool any = false;
-            foreach (var candidate in EnumerateFilteredCandidates(state))
+            var filteredCandidates = EnumerateFilteredCandidates(state).ToList();
+            int candidateCount = filteredCandidates.Count;
+
+            if (candidateCount == 0)
             {
-                any = true;
-                bool selected = ReferenceEquals(candidate.Asset, current);
-                string label = candidate.DisplayName;
-                if (candidate.IsEngine)
-                    label += "  [Engine]";
-
-                if (ImGui.Selectable(label, selected))
-                {
-                    assign(candidate.Asset);
-                    ImGui.CloseCurrentPopup();
-                }
-
-                if (ImGui.IsItemHovered())
-                    ImGui.SetTooltip(candidate.Path);
-
-                if (selected)
-                    ImGui.SetItemDefaultFocus();
-            }
-
-            if (!any)
                 ImGui.TextDisabled("No assets found. Adjust filters or refresh.");
+            }
+            else
+            {
+                unsafe
+                {
+                    var clipper = new ImGuiListClipper();
+                    ImGuiNative.ImGuiListClipper_Begin(&clipper, candidateCount, ImGui.GetTextLineHeightWithSpacing());
+                    while (ImGuiNative.ImGuiListClipper_Step(&clipper) != 0)
+                    {
+                        for (int i = clipper.DisplayStart; i < clipper.DisplayEnd; i++)
+                        {
+                            var candidate = filteredCandidates[i];
+
+                            if (typeof(XRTexture2D).IsAssignableFrom(typeof(TAsset)))
+                                candidate.RequestPreview(AssetPickerPreviewSize);
+
+                            bool selected = candidate.Matches(current);
+                            string label = candidate.DisplayName;
+                            if (candidate.IsEngine)
+                                label += "  [Engine]";
+
+                            if (ImGui.Selectable(label, selected))
+                            {
+                                candidate.RequestAsset(asset => assign(asset));
+                                ImGui.CloseCurrentPopup();
+                            }
+
+                            if (ImGui.IsItemHovered())
+                                ImGui.SetTooltip(candidate.Path);
+
+                            if (selected)
+                                ImGui.SetItemDefaultFocus();
+                        }
+                    }
+                    ImGuiNative.ImGuiListClipper_End(&clipper);
+                }
+            }
 
             ImGui.EndChild();
         }
@@ -241,15 +262,15 @@ internal static class ImGuiAssetUtilities
                 if (!seenPaths.Add(file))
                     continue;
 
-                var asset = LoadAssetFromPath<TAsset>(file);
-                if (asset is null)
-                    continue;
+                TAsset? existing = null;
+                if (assetManager.TryGetAssetByPath(file, out XRAsset? cached) && cached is TAsset typed)
+                    existing = typed;
 
-                string displayName = string.IsNullOrWhiteSpace(asset.Name)
-                    ? Path.GetFileNameWithoutExtension(file)
-                    : asset.Name;
+                string displayName = existing is not null && !string.IsNullOrWhiteSpace(existing.Name)
+                    ? existing.Name
+                    : Path.GetFileNameWithoutExtension(file);
 
-                state.Candidates.Add(new AssetCandidate<TAsset>(asset, file, isEngine, displayName));
+                state.Candidates.Add(new AssetCandidate<TAsset>(file, isEngine, displayName, existing));
             }
         }
 
@@ -257,7 +278,7 @@ internal static class ImGuiAssetUtilities
     }
 
     private static IEnumerable<AssetCandidate<TAsset>> EnumerateFilteredCandidates<TAsset>(AssetPickerState<TAsset> state)
-        where TAsset : XRAsset
+        where TAsset : XRAsset, new()
     {
         string search = state.Search;
         if (string.IsNullOrWhiteSpace(search))
@@ -404,7 +425,7 @@ internal static class ImGuiAssetUtilities
         }
     }
 
-    private sealed class AssetPickerState<TAsset> where TAsset : XRAsset
+    private sealed class AssetPickerState<TAsset> where TAsset : XRAsset, new()
     {
         public AssetPickerState(string[] extensions)
             => Extensions = extensions;
@@ -417,7 +438,134 @@ internal static class ImGuiAssetUtilities
         public List<AssetCandidate<TAsset>> Candidates { get; } = new();
     }
 
-    private sealed record AssetCandidate<TAsset>(TAsset Asset, string Path, bool IsEngine, string DisplayName) where TAsset : XRAsset;
+    private sealed class AssetCandidate<TAsset> where TAsset : XRAsset, new()
+    {
+        private readonly List<Action<TAsset?>> _pendingAssignments = new();
+        private TAsset? _asset;
+        private XRTexture2D? _previewTexture;
+        private bool _previewRequested;
+        private bool _loadingAsset;
+
+        public AssetCandidate(string path, bool isEngine, string displayName, TAsset? preloaded)
+        {
+            Path = path;
+            IsEngine = isEngine;
+            DisplayName = displayName;
+            _asset = preloaded;
+            UpdateDisplayNameFromAsset();
+        }
+
+        public string Path { get; }
+        public bool IsEngine { get; }
+        public string DisplayName { get; private set; }
+
+        private static bool IsTextureCandidate => typeof(XRTexture2D).IsAssignableFrom(typeof(TAsset));
+
+        public bool Matches(TAsset? asset)
+        {
+            if (asset is null)
+                return false;
+
+            if (_asset is not null && ReferenceEquals(_asset, asset))
+                return true;
+
+            string? assetPath = asset.FilePath ?? asset.OriginalPath;
+            return !string.IsNullOrEmpty(assetPath)
+                && string.Equals(Path, assetPath, StringComparison.OrdinalIgnoreCase);
+        }
+
+        public void RequestPreview(uint maxPreviewSize)
+        {
+            if (_previewRequested || !IsTextureCandidate)
+                return;
+
+            _previewRequested = true;
+
+            XRTexture2D seedTexture = (_asset as XRTexture2D) ?? _previewTexture ?? new XRTexture2D();
+            seedTexture.FilePath ??= Path;
+            if (string.IsNullOrWhiteSpace(seedTexture.Name))
+                seedTexture.Name = System.IO.Path.GetFileNameWithoutExtension(Path);
+
+            XRTexture2D.SchedulePreviewJob(
+                Path,
+                seedTexture,
+                maxPreviewSize,
+                onFinished: tex => Engine.InvokeOnMainThread(() => _previewTexture = tex),
+                onError: ex => Debug.LogException(ex, $"Texture preview job failed for '{Path}'."));
+        }
+
+        public void RequestAsset(Action<TAsset?> assign)
+        {
+            if (assign is null)
+                return;
+
+            if (_asset is not null)
+            {
+                assign(_asset);
+                return;
+            }
+
+            if (IsTextureCandidate)
+            {
+                _pendingAssignments.Add(assign);
+                if (_loadingAsset)
+                    return;
+
+                _loadingAsset = true;
+
+                XRTexture2D placeholder = _previewTexture ?? new XRTexture2D();
+                placeholder.FilePath ??= Path;
+                if (string.IsNullOrWhiteSpace(placeholder.Name))
+                    placeholder.Name = System.IO.Path.GetFileNameWithoutExtension(Path);
+
+                XRTexture2D.ScheduleLoadJob(
+                    Path,
+                    placeholder,
+                    onFinished: tex => Engine.InvokeOnMainThread(() =>
+                    {
+                        _asset = (TAsset)(object)tex;
+                        UpdateDisplayNameFromAsset();
+                        FlushAssignments(_asset);
+                        _loadingAsset = false;
+                    }),
+                    onError: ex => Engine.InvokeOnMainThread(() =>
+                    {
+                        Debug.LogException(ex, $"Texture import job failed for '{Path}'.");
+                        FlushAssignments(null);
+                        _loadingAsset = false;
+                    }),
+                    onCanceled: () => Engine.InvokeOnMainThread(() =>
+                    {
+                        FlushAssignments(null);
+                        _loadingAsset = false;
+                    }));
+            }
+            else
+            {
+                var loaded = LoadAssetFromPath<TAsset>(Path);
+                _asset = loaded;
+                UpdateDisplayNameFromAsset();
+                assign(loaded);
+            }
+        }
+
+        private void UpdateDisplayNameFromAsset()
+        {
+            if (_asset is not null && !string.IsNullOrWhiteSpace(_asset.Name))
+                DisplayName = _asset.Name;
+        }
+
+        private void FlushAssignments(TAsset? asset)
+        {
+            if (_pendingAssignments.Count == 0)
+                return;
+
+            foreach (var cb in _pendingAssignments)
+                cb(asset);
+
+            _pendingAssignments.Clear();
+        }
+    }
 
     private readonly record struct AssetPickerKey(Type AssetType, string ExtensionsKey);
 }

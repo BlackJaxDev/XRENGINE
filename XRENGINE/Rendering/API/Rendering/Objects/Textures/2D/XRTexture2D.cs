@@ -2,11 +2,17 @@
 using ImageMagick.Drawing;
 using SixLabors.ImageSharp;
 using SixLabors.ImageSharp.PixelFormats;
+using System;
+using System.Collections;
+using System.IO;
 using System.Numerics;
+using System.Threading;
+using System.Threading.Tasks;
 using XREngine.Data;
 using XREngine.Data.Colors;
 using XREngine.Data.Rendering;
 using XREngine.Data.Vectors;
+using XREngine.Diagnostics;
 
 namespace XREngine.Rendering
 {
@@ -19,15 +25,195 @@ namespace XREngine.Rendering
         }
         public override bool Load3rdParty(string filePath)
         {
-            Mipmap2D[] mips = [new Mipmap2D(1, 1, EPixelInternalFormat.Red, EPixelFormat.Red, EPixelType.UnsignedByte, true)];
-            //mips = GetMipmapsFromImage(image);
-            Mipmaps = mips;
-            AutoGenerateMipmaps = true;
-            Resizable = true;
+            try
+            {
+                var sourceImage = new MagickImage(filePath);
+                Mipmaps = GetMipmapsFromImage(sourceImage);
+                AutoGenerateMipmaps = false;
+                Resizable = false;
+                return true;
+            }
+            catch (Exception ex)
+            {
+                Debug.LogWarning($"Failed to load texture from '{filePath}'. Falling back to filler texture. {ex.Message}");
+                AssetDiagnostics.RecordMissingAsset(filePath, nameof(XRTexture2D), $"{nameof(XRTexture2D)}.{nameof(Load3rdParty)}");
 
-            //TODO: load async and ensure the texture is pushed after the black default texture
-            Task.Run(() => mips[0].SetFromImage(new MagickImage(filePath)));
-            return true;
+                Mipmaps = [new Mipmap2D(new MagickImage(FillerImage))];
+                AutoGenerateMipmaps = true;
+                Resizable = true;
+                return false;
+            }
+        }
+
+        public static EnumeratorJob ScheduleLoadJob(
+            string filePath,
+            XRTexture2D? texture = null,
+            Action<XRTexture2D>? onFinished = null,
+            Action<Exception>? onError = null,
+            Action? onCanceled = null,
+            Action<float>? onProgress = null,
+            CancellationToken cancellationToken = default)
+        {
+            if (string.IsNullOrWhiteSpace(filePath))
+                throw new ArgumentException("File path must be provided.", nameof(filePath));
+
+            XRTexture2D target = texture ?? new XRTexture2D();
+            target.FilePath ??= filePath;
+            if (string.IsNullOrWhiteSpace(target.Name))
+                target.Name = Path.GetFileNameWithoutExtension(filePath);
+
+            IEnumerable Routine()
+            {
+                if (cancellationToken.IsCancellationRequested)
+                    yield break;
+
+                cancellationToken.ThrowIfCancellationRequested();
+                bool _ = target.Load3rdParty(filePath);
+                yield return new JobProgress(0.5f);
+
+                cancellationToken.ThrowIfCancellationRequested();
+                yield return UploadMipmapsViaPboAsync(target, cancellationToken);
+
+                if (!cancellationToken.IsCancellationRequested)
+                    onFinished?.Invoke(target);
+            }
+
+            return Engine.Jobs.Schedule(
+                Routine(),
+                progress: onProgress,
+                completed: null,
+                error: onError,
+                canceled: onCanceled,
+                progressWithPayload: null,
+                cancellationToken: cancellationToken);
+        }
+
+        public static EnumeratorJob SchedulePreviewJob(
+            string filePath,
+            XRTexture2D? texture = null,
+            uint maxPreviewSize = 128,
+            Action<XRTexture2D>? onFinished = null,
+            Action<Exception>? onError = null,
+            Action? onCanceled = null,
+            Action<float>? onProgress = null,
+            CancellationToken cancellationToken = default)
+        {
+            if (string.IsNullOrWhiteSpace(filePath))
+                throw new ArgumentException("File path must be provided.", nameof(filePath));
+
+            XRTexture2D target = texture ?? new XRTexture2D();
+            target.FilePath ??= filePath;
+            if (string.IsNullOrWhiteSpace(target.Name))
+                target.Name = Path.GetFileNameWithoutExtension(filePath);
+
+            IEnumerable Routine()
+            {
+                if (cancellationToken.IsCancellationRequested)
+                    yield break;
+
+                Task previewTask = Task.Run(() =>
+                {
+                    var previewImage = new MagickImage(filePath);
+                    if (maxPreviewSize > 0)
+                    {
+                        uint width = previewImage.Width;
+                        uint height = previewImage.Height;
+                        uint largest = Math.Max(width, height);
+
+                        if (largest > maxPreviewSize)
+                        {
+                            double scale = maxPreviewSize / (double)largest;
+                            uint scaledWidth = Math.Max(1u, (uint)Math.Round(width * scale));
+                            uint scaledHeight = Math.Max(1u, (uint)Math.Round(height * scale));
+                            previewImage.Resize(scaledWidth, scaledHeight);
+                        }
+                    }
+
+                    target.Mipmaps = [new Mipmap2D(previewImage)];
+                    target.AutoGenerateMipmaps = false;
+                    target.Resizable = true;
+                    target.SizedInternalFormat = ESizedInternalFormat.Rgba8;
+                }, cancellationToken);
+
+                yield return previewTask;
+
+                if (previewTask.IsCanceled || cancellationToken.IsCancellationRequested)
+                {
+                    onCanceled?.Invoke();
+                    yield break;
+                }
+
+                if (previewTask.IsFaulted)
+                {
+                    Exception? exception = previewTask.Exception?.InnerException;
+                    exception ??= previewTask.Exception;
+                    exception ??= new InvalidOperationException($"Failed to load preview for '{filePath}'.");
+                    throw exception;
+                }
+
+                yield return new JobProgress(0.5f);
+
+                yield return UploadMipmapsViaPboAsync(target, cancellationToken);
+
+                if (!cancellationToken.IsCancellationRequested)
+                    onFinished?.Invoke(target);
+            }
+
+            return Engine.Jobs.Schedule(
+                Routine(),
+                progress: onProgress,
+                completed: null,
+                error: onError,
+                canceled: onCanceled,
+                progressWithPayload: null,
+                cancellationToken: cancellationToken);
+        }
+
+        private static Task UploadMipmapsViaPboAsync(XRTexture2D texture, CancellationToken cancellationToken)
+        {
+            TaskCompletionSource<bool> tcs = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+            void UploadAction()
+            {
+                if (cancellationToken.IsCancellationRequested)
+                {
+                    tcs.TrySetCanceled(cancellationToken);
+                    return;
+                }
+
+                try
+                {
+                    texture.ShouldLoadDataFromInternalPBO = true;
+
+                    var mipmaps = texture.Mipmaps;
+                    if (mipmaps is not null && mipmaps.Length > 0)
+                    {
+                        for (int i = 0; i < mipmaps.Length; ++i)
+                        {
+                            if (cancellationToken.IsCancellationRequested)
+                            {
+                                tcs.TrySetCanceled(cancellationToken);
+                                return;
+                            }
+                            texture.LoadFromPBO(i);
+                        }
+                    }
+
+                    texture.Generate();
+                    texture.PushData();
+
+                    tcs.TrySetResult(true);
+                }
+                catch (Exception ex)
+                {
+                    tcs.TrySetException(ex);
+                }
+            }
+
+            if (!Engine.InvokeOnMainThread(UploadAction))
+                UploadAction();
+
+            return tcs.Task;
         }
 
         public static Mipmap2D[] GetMipmapsFromImage(MagickImage image)
@@ -406,13 +592,19 @@ namespace XREngine.Rendering
             if (_pbo is null)
                 return;
 
-            var mipmap = Mipmaps[mipIndex].Data;
-            if (mipmap is null)
+            if (Mipmaps is null || mipIndex < 0 || mipIndex >= Mipmaps.Length)
+                return;
+
+            var mip = Mipmaps[mipIndex];
+            var data = mip.Data;
+            if (data is null)
                 return;
 
             _pbo.MapBufferData();
-            _pbo.SetDataPointer(mipmap.Address);
+            _pbo.SetDataPointer(data.Address);
             _pbo.UnmapBufferData();
+
+            mip.StreamingPBO = _pbo;
         }
 
         /// <summary>
