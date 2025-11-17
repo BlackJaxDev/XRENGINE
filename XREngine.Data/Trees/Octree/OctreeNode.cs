@@ -522,7 +522,7 @@ namespace XREngine.Data.Trees
             if (!_bounds.IntersectsSegment(segment))
                 return;
 
-            IEnumerable<Task> tasks = _items.Select(item => Task.Run(() =>
+            foreach (var item in _items)
             {
                 var worldCullingVolume = item.WorldCullingVolume;
                 if (worldCullingVolume is null || !worldCullingVolume.Value.IntersectsSegment(segment))
@@ -535,7 +535,7 @@ namespace XREngine.Data.Trees
                         items.Add(dist.Value, list = []);
                     list.Add((item, data));
                 }
-            }));
+            }
 
             //for (int i = 0; i < _items.Count; ++i)
             //{
@@ -556,8 +556,6 @@ namespace XREngine.Data.Trees
 
             for (int i = 0; i < _subNodes.Length; ++i)
                 _subNodes[i]?.Raycast(segment, items, directTest);
-
-            Task.WaitAll(tasks);
         }
 
         /// <summary>

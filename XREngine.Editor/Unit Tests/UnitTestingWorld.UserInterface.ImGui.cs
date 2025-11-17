@@ -14,9 +14,11 @@ using ImGuiNET;
 using XREngine;
 using XREngine.Components;
 using XREngine.Animation;
+using XREngine.Data;
 using XREngine.Data.Colors;
 using XREngine.Rendering;
 using XREngine.Rendering.OpenGL;
+using XREngine.Core.Files;
 using XREngine.Scene;
 using XREngine.Scene.Components.UI;
 using XREngine.Scene.Transforms;
@@ -75,9 +77,111 @@ public static partial class UnitTestingWorld
         private static float _assetExplorerDockDragStartMouseY;
         private static bool _assetExplorerCollapsed;
         private static string _assetExplorerSearchTerm = string.Empty;
+        private static AssetExplorerSearchScope _assetExplorerSearchScope = AssetExplorerSearchScope.Name;
+        private static bool _assetExplorerSearchCaseSensitive;
         private static readonly AssetExplorerTabState _assetExplorerGameState = new("GameProject", "Game Assets");
         private static readonly AssetExplorerTabState _assetExplorerEngineState = new("EngineCommon", "Engine Assets");
         private static readonly List<AssetExplorerEntry> _assetExplorerScratchEntries = new();
+        private static readonly byte[] _assetExplorerRenameBuffer = new byte[256];
+        private static bool _assetExplorerRenameFocusRequested;
+        private static bool _assetExplorerContextPopupRequested;
+        private static AssetExplorerTabState? _assetExplorerContextState;
+        private static string? _assetExplorerContextPath;
+        private static bool _assetExplorerContextIsDirectory;
+        private static bool _assetExplorerContextAllowCreate;
+        private static readonly Dictionary<string, bool> _assetExplorerCategoryFilterSelections = new(StringComparer.OrdinalIgnoreCase);
+        private static readonly List<string> _assetExplorerCategoryFilterOrder = new();
+        private static string _assetExplorerCategoryFilterLabel = "Categories: All";
+        private static bool _assetExplorerCategoryFilterActive;
+        private static bool _assetExplorerCategoryFiltersDirty = true;
+        private static readonly Dictionary<string, string> _assetExplorerExtensionCategoryMap = new(StringComparer.OrdinalIgnoreCase)
+        {
+            [".png"] = "Textures",
+            [".jpg"] = "Textures",
+            [".jpeg"] = "Textures",
+            [".bmp"] = "Textures",
+            [".tga"] = "Textures",
+            [".dds"] = "Textures",
+            [".hdr"] = "Textures",
+            [".exr"] = "Textures",
+            [".ktx"] = "Textures",
+            [".ktx2"] = "Textures",
+            [".tif"] = "Textures",
+            [".tiff"] = "Textures",
+            [".psd"] = "Textures",
+            [".gif"] = "Textures",
+            [".fbx"] = "Models",
+            [".obj"] = "Models",
+            [".gltf"] = "Models",
+            [".glb"] = "Models",
+            [".dae"] = "Models",
+            [".stl"] = "Models",
+            [".ply"] = "Models",
+            [".wav"] = "Audio",
+            [".mp3"] = "Audio",
+            [".ogg"] = "Audio",
+            [".flac"] = "Audio",
+            [".aiff"] = "Audio",
+            [".cs"] = "Scripts",
+            [".lua"] = "Scripts",
+            [".js"] = "Scripts",
+            [".shader"] = "Shaders",
+            [".hlsl"] = "Shaders",
+            [".glsl"] = "Shaders",
+            [".compute"] = "Shaders",
+            [".fx"] = "Shaders",
+            [".json"] = "Data",
+            [".yaml"] = "Data",
+            [".yml"] = "Data",
+            [".csv"] = "Data",
+            [".ini"] = "Data",
+            [".txt"] = "Data",
+            [".bin"] = "Data",
+            [".zip"] = "Archives",
+            [".pak"] = "Archives",
+            [".rar"] = "Archives"
+        };
+        private static AssetExplorerTabState? _assetExplorerPendingDeleteState;
+        private static string? _assetExplorerPendingDeletePath;
+        private static bool _assetExplorerPendingDeleteIsDirectory;
+        private static readonly Dictionary<string, List<AssetExplorerContextAction>> _assetExplorerContextActionsByExtension = new(StringComparer.OrdinalIgnoreCase);
+        private static readonly List<AssetExplorerContextAction> _assetExplorerGlobalContextActions = new();
+        private static readonly HashSet<string> _assetExplorerTextureExtensions = new(StringComparer.OrdinalIgnoreCase)
+        {
+            ".png",
+            ".jpg",
+            ".jpeg",
+            ".bmp",
+            ".tga",
+            ".tif",
+            ".tiff",
+            ".dds",
+            ".exr",
+            ".hdr",
+            ".ktx",
+            ".ktx2"
+        };
+        private static readonly List<AssetTypeDescriptor> _assetTypeDescriptors = [];
+        private static bool _assetTypeCacheDirty = true;
+        private static readonly Dictionary<Type, List<CollectionTypeDescriptor>> _collectionTypeDescriptorCache = new();
+        private static readonly Dictionary<string, string> _collectionTypePickerSearch = new(StringComparer.OrdinalIgnoreCase);
+        private static readonly MethodInfo _drawAssetCollectionElementMethod = typeof(UserInterface).GetMethod(nameof(DrawAssetCollectionElementGeneric), BindingFlags.NonPublic | BindingFlags.Static)!;
+        private static readonly List<OpenGLApiObjectRow> _openGlApiObjectScratch = new();
+        private static GenericRenderObject? _selectedOpenGlRenderObject;
+        private static AbstractRenderAPIObject? _selectedOpenGlApiObject;
+        private static string _openGlApiSearch = string.Empty;
+        private static string? _openGlWindowFilter;
+        private static string? _openGlApiTypeFilter;
+        private static string? _openGlXrTypeFilter;
+        private static OpenGlApiGroupMode _openGlGroupMode = OpenGlApiGroupMode.ApiType;
+        private static object? _inspectorStandaloneTarget;
+        private static string? _inspectorStandaloneTitle;
+        private static Action? _inspectorStandaloneClearAction;
+        private static XRAsset? _inspectorAssetContext; // Root asset currently rendered in the inspector.
+        private static string? _selectedMissingAssetKey;
+        private static string _missingAssetReplacementPath = string.Empty;
+        private const float MissingAssetEditorMinHeight = 140.0f;
+        private const float MissingAssetListMinHeight = 110.0f;
 
         private static readonly ConcurrentQueue<Action> _queuedSceneEdits = new();
 
@@ -88,10 +192,65 @@ public static partial class UnitTestingWorld
         private static DateTime _worstFrameWindowStart = DateTime.MinValue;
         private static readonly TimeSpan WorstFrameWindowDuration = TimeSpan.FromSeconds(0.5);
 
+        private readonly struct OpenGLApiObjectRow
+        {
+            public OpenGLApiObjectRow(
+                string windowTitle,
+                string apiType,
+                string apiName,
+                string xrType,
+                string xrName,
+                nint handle,
+                GenericRenderObject renderObject,
+                AbstractRenderAPIObject apiObject)
+            {
+                WindowTitle = windowTitle;
+                ApiType = apiType;
+                ApiName = apiName;
+                XrType = xrType;
+                XrName = xrName;
+                Handle = handle;
+                RenderObject = renderObject;
+                ApiObject = apiObject;
+            }
+
+            public string WindowTitle { get; }
+            public string ApiType { get; }
+            public string ApiName { get; }
+            public string XrType { get; }
+            public string XrName { get; }
+            public nint Handle { get; }
+            public GenericRenderObject RenderObject { get; }
+            public AbstractRenderAPIObject ApiObject { get; }
+        }
+
+        private enum OpenGlApiGroupMode
+        {
+            None,
+            ApiType,
+            Window,
+        }
+
+        [Flags]
+        private enum AssetExplorerSearchScope
+        {
+            Name = 1 << 0,
+            Path = 1 << 1,
+            Metadata = 1 << 2,
+        }
+
         static UserInterface()
         {
-            AppDomain.CurrentDomain.AssemblyLoad += (_, _) => _componentTypeCacheDirty = true;
+            AppDomain.CurrentDomain.AssemblyLoad += (_, _) =>
+            {
+                _componentTypeCacheDirty = true;
+                _assetTypeCacheDirty = true;
+                ClearAssetExplorerTypeCaches();
+                _collectionTypeDescriptorCache.Clear();
+                _collectionTypePickerSearch.Clear();
+            };
             Engine.Time.Timer.UpdateFrame += ProcessQueuedSceneEdits;
+            Selection.SelectionChanged += HandleSceneSelectionChanged;
         }
 
         private static partial void BeginAddComponentForHierarchyNode(SceneNode node);
@@ -148,9 +307,109 @@ public static partial class UnitTestingWorld
             }
         }
 
+        private static void HandleSceneSelectionChanged(SceneNode[] nodes)
+        {
+            if (nodes.Length == 0)
+                return;
+
+            ClearInspectorStandaloneTarget();
+        }
+
+        public static void RegisterAssetExplorerContextAction(string label, Action<string> handler, IEnumerable<string>? extensions = null, Func<string, bool>? predicate = null)
+        {
+            if (string.IsNullOrWhiteSpace(label))
+                throw new ArgumentException("Label must be provided.", nameof(label));
+            if (handler is null)
+                throw new ArgumentNullException(nameof(handler));
+
+            var action = new AssetExplorerContextAction(label, handler, predicate);
+
+            if (extensions is null)
+            {
+                RegisterGlobalAssetExplorerAction(action);
+                return;
+            }
+
+            bool anyExtensionRegistered = false;
+            foreach (var extension in extensions)
+            {
+                string normalized = NormalizeAssetExplorerExtension(extension);
+                if (string.IsNullOrEmpty(normalized))
+                    continue;
+
+                anyExtensionRegistered = true;
+                RegisterAssetExplorerActionForExtension(normalized, action);
+            }
+
+            if (!anyExtensionRegistered)
+                RegisterGlobalAssetExplorerAction(action);
+        }
+
+        public static bool UnregisterAssetExplorerContextAction(string label, IEnumerable<string>? extensions = null)
+        {
+            if (string.IsNullOrWhiteSpace(label))
+                return false;
+
+            bool removed = false;
+
+            if (extensions is null)
+            {
+                removed |= RemoveAssetExplorerAction(_assetExplorerGlobalContextActions, label);
+                foreach (var kvp in _assetExplorerContextActionsByExtension)
+                    removed |= RemoveAssetExplorerAction(kvp.Value, label);
+                return removed;
+            }
+
+            foreach (var extension in extensions)
+            {
+                string normalized = NormalizeAssetExplorerExtension(extension);
+                if (string.IsNullOrEmpty(normalized))
+                    continue;
+
+                if (_assetExplorerContextActionsByExtension.TryGetValue(normalized, out var actions))
+                    removed |= RemoveAssetExplorerAction(actions, label);
+            }
+
+            return removed;
+        }
+
+        private static void RegisterGlobalAssetExplorerAction(AssetExplorerContextAction action)
+        {
+            RemoveAssetExplorerAction(_assetExplorerGlobalContextActions, action.Label);
+            _assetExplorerGlobalContextActions.Add(action);
+        }
+
+        private static void RegisterAssetExplorerActionForExtension(string extension, AssetExplorerContextAction action)
+        {
+            if (!_assetExplorerContextActionsByExtension.TryGetValue(extension, out var actions))
+            {
+                actions = new List<AssetExplorerContextAction>();
+                _assetExplorerContextActionsByExtension[extension] = actions;
+            }
+
+            RemoveAssetExplorerAction(actions, action.Label);
+            actions.Add(action);
+        }
+
+        private static bool RemoveAssetExplorerAction(List<AssetExplorerContextAction> actions, string label)
+            => actions.RemoveAll(a => string.Equals(a.Label, label, StringComparison.Ordinal)) > 0;
+
+        private static string NormalizeAssetExplorerExtension(string extension)
+        {
+            if (string.IsNullOrWhiteSpace(extension))
+                return string.Empty;
+
+            extension = extension.Trim();
+            if (!extension.StartsWith(".", StringComparison.Ordinal))
+                extension = "." + extension;
+            return extension.ToLowerInvariant();
+        }
+
         private static void DrawDearImGuiTest()
         {
             using var profilerScope = Engine.Profiler.Start("UI.DrawDearImGuiTest");
+            var io = ImGui.GetIO();
+            Engine.Input.SetUIInputCaptured(io.WantCaptureMouse || io.WantCaptureKeyboard || io.WantTextInput);
             ImGuiUndoHelper.BeginFrame();
             bool showSettings = Toggles.DearImGuiUI;
             bool showProfiler = Toggles.DearImGuiProfiler;
@@ -286,6 +545,24 @@ public static partial class UnitTestingWorld
                 if (includeProfiler && ImGui.BeginTabItem("Profiler"))
                 {
                     DrawProfilerTabContent();
+                    ImGui.EndTabItem();
+                }
+
+                if (includeProfiler && ImGui.BeginTabItem("OpenGL API Objects"))
+                {
+                    DrawOpenGLApiObjectsTabContent();
+                    ImGui.EndTabItem();
+                }
+
+                if (includeProfiler && ImGui.BeginTabItem("OpenGL Errors"))
+                {
+                    DrawOpenGLDebugTabContent();
+                    ImGui.EndTabItem();
+                }
+
+                if (includeProfiler && ImGui.BeginTabItem("Missing Assets"))
+                {
+                    DrawMissingAssetsTabContent();
                     ImGui.EndTabItem();
                 }
 
@@ -601,6 +878,29 @@ public static partial class UnitTestingWorld
             return Encoding.UTF8.GetString(_renameBuffer, 0, length).Trim();
         }
 
+        private static void PopulateAssetExplorerRenameBuffer(string source)
+        {
+            Array.Clear(_assetExplorerRenameBuffer, 0, _assetExplorerRenameBuffer.Length);
+            if (string.IsNullOrEmpty(source))
+                return;
+
+            int written = Encoding.UTF8.GetBytes(source, 0, source.Length, _assetExplorerRenameBuffer, 0);
+            if (written < _assetExplorerRenameBuffer.Length)
+                _assetExplorerRenameBuffer[written] = 0;
+        }
+
+        private static string ExtractAssetExplorerRenameBuffer()
+        {
+            int length = Array.IndexOf(_assetExplorerRenameBuffer, (byte)0);
+            if (length < 0)
+                length = _assetExplorerRenameBuffer.Length;
+
+            return Encoding.UTF8.GetString(_assetExplorerRenameBuffer, 0, length).Trim();
+        }
+
+        private static void ClearAssetExplorerRenameBuffer()
+            => Array.Clear(_assetExplorerRenameBuffer, 0, _assetExplorerRenameBuffer.Length);
+
         private static void EnsureProfessionalImGuiStyling()
         {
             if (_imguiStyleInitialized)
@@ -846,9 +1146,6 @@ public static partial class UnitTestingWorld
                 }
             }
 
-            DrawMissingAssetSection();
-            DrawOpenGLDebugSection();
-
             if (_profilerDockLeftEnabled)
                 HandleProfilerDockResize(overlayViewport);
 
@@ -904,98 +1201,801 @@ public static partial class UnitTestingWorld
             }
         }
 
-        private static void DrawMissingAssetSection()
+        private static void DrawMissingAssetsTabContent()
         {
+            using var profilerScope = Engine.Profiler.Start("UI.DrawMissingAssetsTabContent");
+
             var missingAssets = AssetDiagnostics.GetTrackedMissingAssets();
             if (missingAssets.Count == 0)
+            {
+                ImGui.TextDisabled("No missing assets have been tracked.");
+                if (ImGui.Button("Clear Missing Asset Log"))
+                    AssetDiagnostics.ClearTrackedMissingAssets();
+                ClearMissingAssetSelection();
                 return;
-
-            ImGui.Separator();
+            }
 
             int totalHits = 0;
             foreach (var info in missingAssets)
                 totalHits += info.Count;
 
-            string headerLabel = $"Missing Assets ({missingAssets.Count} entries / {totalHits} hits)";
-            if (!ImGui.CollapsingHeader($"{headerLabel}##ProfilerMissingAssets", ImGuiTreeNodeFlags.DefaultOpen))
-                return;
+            ImGui.TextUnformatted($"Entries: {missingAssets.Count} | Hits: {totalHits}");
 
             if (ImGui.Button("Clear Missing Asset Log"))
             {
                 AssetDiagnostics.ClearTrackedMissingAssets();
+                ClearMissingAssetSelection();
                 return;
             }
 
             ImGui.SameLine();
             ImGui.TextDisabled("Sorted by most recent");
 
-            const ImGuiTableFlags tableFlags = ImGuiTableFlags.Borders | ImGuiTableFlags.RowBg | ImGuiTableFlags.Resizable | ImGuiTableFlags.ScrollY;
-            float estimatedHeight = MathF.Min(44.0f + missingAssets.Count * ImGui.GetTextLineHeightWithSpacing(), 320.0f);
+            var ordered = missingAssets.OrderByDescending(static i => i.LastSeenUtc).ToList();
 
-            if (ImGui.BeginTable("ProfilerMissingAssetTable", 6, tableFlags, new Vector2(-1.0f, estimatedHeight)))
+            AssetDiagnostics.MissingAssetInfo selectedInfo = default;
+            bool hasSelectedInfo = false;
+            if (!string.IsNullOrEmpty(_selectedMissingAssetKey))
             {
-                ImGui.TableSetupScrollFreeze(0, 1);
-                ImGui.TableSetupColumn("Category", ImGuiTableColumnFlags.WidthFixed, 110.0f);
-                ImGui.TableSetupColumn("Path", ImGuiTableColumnFlags.WidthStretch, 0.45f);
-                ImGui.TableSetupColumn("Count", ImGuiTableColumnFlags.WidthFixed, 60.0f);
-                ImGui.TableSetupColumn("Last Context", ImGuiTableColumnFlags.WidthStretch, 0.25f);
-                ImGui.TableSetupColumn("Last Seen", ImGuiTableColumnFlags.WidthFixed, 140.0f);
-                ImGui.TableSetupColumn("First Seen", ImGuiTableColumnFlags.WidthFixed, 140.0f);
-                ImGui.TableHeadersRow();
-
-                foreach (var info in missingAssets.OrderByDescending(static i => i.LastSeenUtc))
+                foreach (var info in ordered)
                 {
-                    ImGui.TableNextRow();
+                    if (!string.Equals(_selectedMissingAssetKey, BuildMissingAssetSelectionKey(info.AssetPath, info.Category), StringComparison.Ordinal))
+                        continue;
 
-                    ImGui.TableNextColumn();
-                    ImGui.TextUnformatted(info.Category);
-
-                    ImGui.TableNextColumn();
-                    ImGui.TextUnformatted(info.AssetPath);
-                    if (ImGui.IsItemHovered())
-                        ImGui.SetTooltip(info.AssetPath);
-
-                    ImGui.TableNextColumn();
-                    ImGui.TextUnformatted(info.Count.ToString(CultureInfo.InvariantCulture));
-
-                    ImGui.TableNextColumn();
-                    string contextLabel = string.IsNullOrWhiteSpace(info.LastContext) ? "<none>" : info.LastContext;
-                    ImGui.TextUnformatted(contextLabel);
-                    if (info.Contexts.Count > 1 && ImGui.IsItemHovered())
-                    {
-                        ImGui.BeginTooltip();
-                        ImGui.TextUnformatted("Contexts:");
-                        foreach (var ctx in info.Contexts.OrderBy(static c => c))
-                            ImGui.TextUnformatted(ctx);
-                        ImGui.EndTooltip();
-                    }
-
-                    ImGui.TableNextColumn();
-                    ImGui.TextUnformatted(info.LastSeenUtc.ToLocalTime().ToString("g", CultureInfo.CurrentCulture));
-
-                    ImGui.TableNextColumn();
-                    ImGui.TextUnformatted(info.FirstSeenUtc.ToLocalTime().ToString("g", CultureInfo.CurrentCulture));
+                    selectedInfo = info;
+                    hasSelectedInfo = true;
+                    break;
                 }
 
-                ImGui.EndTable();
+                if (!hasSelectedInfo)
+                    ClearMissingAssetSelection();
+            }
+
+            float availableHeight = MathF.Max(ImGui.GetContentRegionAvail().Y, MissingAssetListMinHeight + MissingAssetEditorMinHeight);
+            float spacing = ImGui.GetStyle().ItemSpacing.Y;
+            float editorHeight = hasSelectedInfo ? MathF.Max(MissingAssetEditorMinHeight, availableHeight * 0.35f) : 0.0f;
+            float listHeight = hasSelectedInfo
+                ? MathF.Max(MissingAssetListMinHeight, availableHeight - editorHeight - spacing)
+                : availableHeight;
+
+            const ImGuiTableFlags tableFlags = ImGuiTableFlags.Borders | ImGuiTableFlags.RowBg | ImGuiTableFlags.Resizable | ImGuiTableFlags.ScrollY;
+
+            bool selectionFoundThisFrame = false;
+
+            if (ImGui.BeginChild("MissingAssetList", new Vector2(-1.0f, listHeight), ImGuiChildFlags.Border))
+            {
+                if (ImGui.BeginTable("ProfilerMissingAssetTable", 6, tableFlags, new Vector2(-1.0f, -1.0f)))
+                {
+                    ImGui.TableSetupScrollFreeze(0, 1);
+                    ImGui.TableSetupColumn("Category", ImGuiTableColumnFlags.WidthFixed, 110.0f);
+                    ImGui.TableSetupColumn("Path", ImGuiTableColumnFlags.WidthStretch, 0.45f);
+                    ImGui.TableSetupColumn("Count", ImGuiTableColumnFlags.WidthFixed, 60.0f);
+                    ImGui.TableSetupColumn("Last Context", ImGuiTableColumnFlags.WidthStretch, 0.25f);
+                    ImGui.TableSetupColumn("Last Seen", ImGuiTableColumnFlags.WidthFixed, 140.0f);
+                    ImGui.TableSetupColumn("First Seen", ImGuiTableColumnFlags.WidthFixed, 140.0f);
+                    ImGui.TableHeadersRow();
+
+                    int rowIndex = 0;
+                    foreach (var info in ordered)
+                    {
+                        string rowKey = BuildMissingAssetSelectionKey(info.AssetPath, info.Category);
+                        bool isSelected = !string.IsNullOrEmpty(_selectedMissingAssetKey)
+                            && string.Equals(_selectedMissingAssetKey, rowKey, StringComparison.Ordinal);
+
+                        if (isSelected)
+                        {
+                            selectedInfo = info;
+                            selectionFoundThisFrame = true;
+                        }
+
+                        ImGui.TableNextRow();
+
+                        ImGui.TableSetColumnIndex(0);
+                        ImGui.PushID(rowIndex);
+                        string label = $"{info.Category}##MissingAssetRow";
+                        if (ImGui.Selectable(label, isSelected, ImGuiSelectableFlags.SpanAllColumns | ImGuiSelectableFlags.AllowDoubleClick))
+                        {
+                            if (!string.Equals(_selectedMissingAssetKey, rowKey, StringComparison.Ordinal))
+                            {
+                                _missingAssetReplacementPath = File.Exists(info.AssetPath)
+                                    ? info.AssetPath
+                                    : string.Empty;
+                            }
+
+                            _selectedMissingAssetKey = rowKey;
+                            selectedInfo = info;
+                            selectionFoundThisFrame = true;
+                            isSelected = true;
+                        }
+                        ImGui.PopID();
+
+                        if (ImGui.IsItemHovered() && ImGui.IsMouseDoubleClicked(ImGuiMouseButton.Left))
+                            RevealMissingAssetLocation(info.AssetPath);
+
+                        ImGui.TableSetColumnIndex(1);
+                        ImGui.TextUnformatted(info.AssetPath);
+                        if (ImGui.IsItemHovered())
+                            ImGui.SetTooltip(info.AssetPath);
+
+                        ImGui.TableSetColumnIndex(2);
+                        ImGui.TextUnformatted(info.Count.ToString(CultureInfo.InvariantCulture));
+
+                        ImGui.TableSetColumnIndex(3);
+                        string contextLabel = string.IsNullOrWhiteSpace(info.LastContext) ? "<none>" : info.LastContext;
+                        ImGui.TextUnformatted(contextLabel);
+                        if (info.Contexts.Count > 1 && ImGui.IsItemHovered())
+                        {
+                            ImGui.BeginTooltip();
+                            ImGui.TextUnformatted("Contexts:");
+                            foreach (var ctx in info.Contexts.OrderBy(static c => c))
+                                ImGui.TextUnformatted(ctx);
+                            ImGui.EndTooltip();
+                        }
+
+                        ImGui.TableSetColumnIndex(4);
+                        ImGui.TextUnformatted(info.LastSeenUtc.ToLocalTime().ToString("g", CultureInfo.CurrentCulture));
+
+                        ImGui.TableSetColumnIndex(5);
+                        ImGui.TextUnformatted(info.FirstSeenUtc.ToLocalTime().ToString("g", CultureInfo.CurrentCulture));
+
+                        rowIndex++;
+                    }
+
+                    ImGui.EndTable();
+                }
+                ImGui.EndChild();
+            }
+
+            if (!selectionFoundThisFrame && !string.IsNullOrEmpty(_selectedMissingAssetKey))
+            {
+                ClearMissingAssetSelection();
+                hasSelectedInfo = false;
+            }
+            else
+            {
+                hasSelectedInfo = selectionFoundThisFrame;
+            }
+
+            if (hasSelectedInfo && editorHeight > 0.0f)
+            {
+                ImGui.Dummy(new Vector2(0.0f, spacing));
+                if (ImGui.BeginChild("MissingAssetEditor", new Vector2(-1.0f, editorHeight), ImGuiChildFlags.Border))
+                {
+                    DrawMissingAssetReplacementEditor(selectedInfo);
+                    ImGui.EndChild();
+                }
             }
         }
 
-        private static void DrawOpenGLDebugSection()
+        private static void DrawOpenGLApiObjectsTabContent()
+        {
+            var rows = _openGlApiObjectScratch;
+            rows.Clear();
+
+            foreach (var window in Engine.Windows)
+            {
+                if (window?.Renderer is not OpenGLRenderer glRenderer)
+                    continue;
+
+                string windowTitle;
+                try
+                {
+                    windowTitle = window.Window?.Title ?? string.Empty;
+                }
+                catch
+                {
+                    windowTitle = string.Empty;
+                }
+
+                if (string.IsNullOrWhiteSpace(windowTitle))
+                    windowTitle = $"Window 0x{window.GetHashCode():X}";
+
+                foreach (var pair in glRenderer.RenderObjectCache)
+                {
+                    var renderObject = pair.Key;
+                    var apiObject = pair.Value;
+
+                    if (renderObject is null || apiObject is null)
+                        continue;
+
+                    if (!IsXrRenderObject(renderObject))
+                        continue;
+
+                    bool isGenerated;
+                    try
+                    {
+                        isGenerated = apiObject.IsGenerated;
+                    }
+                    catch
+                    {
+                        continue;
+                    }
+
+                    if (!isGenerated)
+                        continue;
+
+                    string apiName;
+                    try
+                    {
+                        apiName = apiObject.GetDescribingName();
+                    }
+                    catch
+                    {
+                        apiName = apiObject.GetType().Name;
+                    }
+
+                    string xrName;
+                    try
+                    {
+                        xrName = renderObject.GetDescribingName();
+                    }
+                    catch
+                    {
+                        xrName = renderObject.GetType().Name;
+                    }
+
+                    rows.Add(new OpenGLApiObjectRow(
+                        windowTitle,
+                        apiObject.GetType().Name,
+                        apiName,
+                        renderObject.GetType().Name,
+                        xrName,
+                        apiObject.GetHandle(),
+                        renderObject,
+                        apiObject));
+                }
+            }
+
+            rows.Sort(static (a, b) =>
+            {
+                int cmp = string.Compare(a.WindowTitle, b.WindowTitle, StringComparison.OrdinalIgnoreCase);
+                if (cmp != 0)
+                    return cmp;
+
+                cmp = string.Compare(a.ApiType, b.ApiType, StringComparison.OrdinalIgnoreCase);
+                if (cmp != 0)
+                    return cmp;
+
+                return string.Compare(a.XrName, b.XrName, StringComparison.OrdinalIgnoreCase);
+            });
+
+            string[] windowOptions = rows.Count > 0
+                ? rows.Select(static r => r.WindowTitle).Distinct(StringComparer.OrdinalIgnoreCase).OrderBy(static r => r, StringComparer.OrdinalIgnoreCase).ToArray()
+                : Array.Empty<string>();
+            string[] apiTypeOptions = rows.Count > 0
+                ? rows.Select(static r => r.ApiType).Distinct(StringComparer.OrdinalIgnoreCase).OrderBy(static r => r, StringComparer.OrdinalIgnoreCase).ToArray()
+                : Array.Empty<string>();
+            string[] xrTypeOptions = rows.Count > 0
+                ? rows.Select(static r => r.XrType).Distinct(StringComparer.OrdinalIgnoreCase).OrderBy(static r => r, StringComparer.OrdinalIgnoreCase).ToArray()
+                : Array.Empty<string>();
+
+            ImGui.TextUnformatted("Search:");
+            ImGui.SameLine();
+            ImGui.SetNextItemWidth(220.0f);
+            ImGui.InputTextWithHint("##OpenGlApiSearch", "Name, type, window, handle", ref _openGlApiSearch, 256);
+
+            ImGui.SameLine();
+            ImGui.TextUnformatted("Group:");
+            ImGui.SameLine();
+            ImGui.SetNextItemWidth(140.0f);
+            DrawOpenGlApiGroupCombo("##OpenGlApiGroupMode");
+
+            ImGui.SameLine();
+            if (ImGui.Button("Reset Filters"))
+            {
+                _openGlApiSearch = string.Empty;
+                _openGlWindowFilter = null;
+                _openGlApiTypeFilter = null;
+                _openGlXrTypeFilter = null;
+            }
+
+            if (windowOptions.Length > 0 || apiTypeOptions.Length > 0 || xrTypeOptions.Length > 0)
+            {
+                ImGui.Spacing();
+                bool anyFilterDrawn = false;
+
+                if (windowOptions.Length > 0)
+                {
+                    if (anyFilterDrawn)
+                        ImGui.SameLine();
+                    ImGui.SetNextItemWidth(180.0f);
+                    DrawOpenGlFilterCombo("Window##OpenGlWindowFilter", windowOptions, ref _openGlWindowFilter);
+                    anyFilterDrawn = true;
+                }
+
+                if (apiTypeOptions.Length > 0)
+                {
+                    if (anyFilterDrawn)
+                        ImGui.SameLine();
+                    ImGui.SetNextItemWidth(180.0f);
+                    DrawOpenGlFilterCombo("API Type##OpenGlApiTypeFilter", apiTypeOptions, ref _openGlApiTypeFilter);
+                    anyFilterDrawn = true;
+                }
+
+                if (xrTypeOptions.Length > 0)
+                {
+                    if (anyFilterDrawn)
+                        ImGui.SameLine();
+                    ImGui.SetNextItemWidth(180.0f);
+                    DrawOpenGlFilterCombo("XR Type##OpenGlXrTypeFilter", xrTypeOptions, ref _openGlXrTypeFilter);
+                }
+            }
+
+            IEnumerable<OpenGLApiObjectRow> query = rows;
+
+            if (!string.IsNullOrWhiteSpace(_openGlApiSearch))
+            {
+                string[] tokens = _openGlApiSearch.Split(' ', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+                if (tokens.Length > 0)
+                    query = query.Where(row => OpenGlApiRowMatchesSearch(row, tokens));
+            }
+
+            if (!string.IsNullOrEmpty(_openGlWindowFilter))
+            {
+                string filter = _openGlWindowFilter!;
+                query = query.Where(row => string.Equals(row.WindowTitle, filter, StringComparison.OrdinalIgnoreCase));
+            }
+
+            if (!string.IsNullOrEmpty(_openGlApiTypeFilter))
+            {
+                string filter = _openGlApiTypeFilter!;
+                query = query.Where(row => string.Equals(row.ApiType, filter, StringComparison.OrdinalIgnoreCase));
+            }
+
+            if (!string.IsNullOrEmpty(_openGlXrTypeFilter))
+            {
+                string filter = _openGlXrTypeFilter!;
+                query = query.Where(row => string.Equals(row.XrType, filter, StringComparison.OrdinalIgnoreCase));
+            }
+
+            List<OpenGLApiObjectRow> filteredRows = query as List<OpenGLApiObjectRow> ?? query.ToList();
+
+            if (filteredRows.Count == rows.Count)
+                ImGui.TextUnformatted($"Tracked Objects: {rows.Count}");
+            else
+                ImGui.TextUnformatted($"Matching Objects: {filteredRows.Count} / {rows.Count}");
+
+            Vector2 contentHeight = ImGui.GetContentRegionAvail();
+            if (contentHeight.Y <= 0.0f)
+                contentHeight.Y = 200.0f;
+
+            const ImGuiTableFlags tableFlags = ImGuiTableFlags.Borders | ImGuiTableFlags.RowBg | ImGuiTableFlags.Resizable | ImGuiTableFlags.ScrollY;
+            bool selectionVisible = false;
+
+            if (ImGui.BeginChild("OpenGLApiObjectsList", new Vector2(-1.0f, contentHeight.Y), ImGuiChildFlags.Border))
+            {
+                if (filteredRows.Count == 0)
+                {
+                    string message = rows.Count == 0
+                        ? "No OpenGL API objects are currently generated."
+                        : "No OpenGL API objects match the current filters.";
+                    ImGui.TextDisabled(message);
+                }
+                else if (ImGui.BeginTable("ProfilerOpenGLApiObjectsTable", 4, tableFlags, new Vector2(-1.0f, -1.0f)))
+                {
+                    ImGui.TableSetupScrollFreeze(0, 1);
+                    ImGui.TableSetupColumn("Window", ImGuiTableColumnFlags.WidthStretch, 0.25f);
+                    ImGui.TableSetupColumn("API Object", ImGuiTableColumnFlags.WidthStretch, 0.3f);
+                    ImGui.TableSetupColumn("XR Object", ImGuiTableColumnFlags.WidthStretch, 0.35f);
+                    ImGui.TableSetupColumn("Handle", ImGuiTableColumnFlags.WidthFixed, 120.0f);
+                    ImGui.TableHeadersRow();
+
+                    int rowIndex = 0;
+
+                    foreach (var group in EnumerateOpenGlGroups(filteredRows))
+                    {
+                        if (group.Header is not null)
+                        {
+                            ImGui.TableNextRow(ImGuiTableRowFlags.Headers);
+                            ImGui.TableSetColumnIndex(0);
+                            ImGui.TextUnformatted($"{group.Header} ({group.Rows.Count})");
+                            ImGui.TableSetColumnIndex(1);
+                            ImGui.TableSetColumnIndex(2);
+                            ImGui.TableSetColumnIndex(3);
+                        }
+
+                        foreach (var row in group.Rows)
+                        {
+                            bool isSelected = ReferenceEquals(_selectedOpenGlRenderObject, row.RenderObject);
+                            if (isSelected)
+                                selectionVisible = true;
+
+                            ImGui.TableNextRow();
+
+                            ImGui.TableSetColumnIndex(0);
+                            ImGui.PushID(rowIndex);
+                            string label = $"{row.WindowTitle}##OpenGLApiRow";
+                            if (ImGui.Selectable(label, isSelected, ImGuiSelectableFlags.SpanAllColumns | ImGuiSelectableFlags.AllowDoubleClick))
+                            {
+                                var capturedRow = row;
+                                SetInspectorStandaloneTarget(capturedRow.RenderObject, $"{capturedRow.XrName} ({capturedRow.XrType})", () =>
+                                {
+                                    if (ReferenceEquals(_selectedOpenGlRenderObject, capturedRow.RenderObject))
+                                    {
+                                        _selectedOpenGlRenderObject = null;
+                                        _selectedOpenGlApiObject = null;
+                                    }
+                                });
+                                _selectedOpenGlRenderObject = capturedRow.RenderObject;
+                                _selectedOpenGlApiObject = capturedRow.ApiObject;
+                                selectionVisible = true;
+                                isSelected = true;
+                            }
+                            ImGui.PopID();
+
+                            if (ImGui.IsItemHovered())
+                                ImGui.SetTooltip(row.WindowTitle);
+
+                            ImGui.TableSetColumnIndex(1);
+                            ImGui.TextUnformatted(row.ApiName);
+                            if (ImGui.IsItemHovered())
+                                ImGui.SetTooltip(row.ApiType);
+
+                            ImGui.TableSetColumnIndex(2);
+                            ImGui.TextUnformatted(row.XrName);
+                            if (ImGui.IsItemHovered())
+                                ImGui.SetTooltip(row.XrType);
+
+                            ImGui.TableSetColumnIndex(3);
+                            ulong handleValue = unchecked((ulong)row.Handle);
+                            string handleLabel = handleValue == 0 ? "0x0" : $"0x{handleValue:X}";
+                            ImGui.TextUnformatted(handleLabel);
+
+                            rowIndex++;
+                        }
+                    }
+
+                    ImGui.EndTable();
+                }
+                ImGui.EndChild();
+            }
+
+            if (!selectionVisible && _selectedOpenGlRenderObject is not null)
+            {
+                if (ReferenceEquals(_inspectorStandaloneTarget, _selectedOpenGlRenderObject))
+                    ClearInspectorStandaloneTarget();
+                _selectedOpenGlRenderObject = null;
+                _selectedOpenGlApiObject = null;
+            }
+
+            rows.Clear();
+        }
+
+        private static IEnumerable<(string? Header, List<OpenGLApiObjectRow> Rows)> EnumerateOpenGlGroups(List<OpenGLApiObjectRow> rows)
+        {
+            if (_openGlGroupMode == OpenGlApiGroupMode.None)
+            {
+                yield return (null, rows);
+                yield break;
+            }
+
+            var comparer = StringComparer.OrdinalIgnoreCase;
+            var lookup = new Dictionary<string, List<OpenGLApiObjectRow>>(comparer);
+
+            foreach (var row in rows)
+            {
+                string key = _openGlGroupMode == OpenGlApiGroupMode.ApiType ? row.ApiType : row.WindowTitle;
+                if (!lookup.TryGetValue(key, out var list))
+                {
+                    list = new List<OpenGLApiObjectRow>();
+                    lookup.Add(key, list);
+                }
+
+                list.Add(row);
+            }
+
+            foreach (var key in lookup.Keys.OrderBy(k => k, comparer))
+                yield return (key, lookup[key]);
+        }
+
+        private static void DrawOpenGlFilterCombo(string label, IReadOnlyList<string> options, ref string? current)
+        {
+            string preview = current ?? "All";
+            if (!ImGui.BeginCombo(label, preview))
+                return;
+
+            bool isAllSelected = current is null;
+            if (ImGui.Selectable("All", isAllSelected))
+                current = null;
+            if (isAllSelected)
+                ImGui.SetItemDefaultFocus();
+
+            for (int i = 0; i < options.Count; i++)
+            {
+                string option = options[i];
+                bool selected = current is not null && string.Equals(option, current, StringComparison.OrdinalIgnoreCase);
+                if (ImGui.Selectable(option, selected))
+                    current = option;
+                if (selected)
+                    ImGui.SetItemDefaultFocus();
+            }
+
+            ImGui.EndCombo();
+        }
+
+        private static void DrawOpenGlApiGroupCombo(string label)
+        {
+            string preview = GetGroupModeLabel(_openGlGroupMode);
+            if (!ImGui.BeginCombo(label, preview))
+                return;
+
+            foreach (OpenGlApiGroupMode mode in Enum.GetValues<OpenGlApiGroupMode>())
+            {
+                string optionLabel = GetGroupModeLabel(mode);
+                bool selected = mode == _openGlGroupMode;
+                if (ImGui.Selectable(optionLabel, selected) && !selected)
+                    _openGlGroupMode = mode;
+                if (selected)
+                    ImGui.SetItemDefaultFocus();
+            }
+
+            ImGui.EndCombo();
+        }
+
+        private static string GetGroupModeLabel(OpenGlApiGroupMode mode)
+            => mode switch
+            {
+                OpenGlApiGroupMode.ApiType => "API Type",
+                OpenGlApiGroupMode.Window => "Window",
+                _ => "None",
+            };
+
+        private static bool OpenGlApiRowMatchesSearch(OpenGLApiObjectRow row, IReadOnlyList<string> tokens)
+        {
+            if (tokens.Count == 0)
+                return true;
+
+            foreach (var token in tokens)
+            {
+                if (!OpenGlApiRowContainsToken(row, token))
+                    return false;
+            }
+
+            return true;
+        }
+
+        private static bool OpenGlApiRowContainsToken(OpenGLApiObjectRow row, string token)
+        {
+            if (string.IsNullOrEmpty(token))
+                return true;
+
+            if (row.WindowTitle.Contains(token, StringComparison.OrdinalIgnoreCase) ||
+                row.ApiName.Contains(token, StringComparison.OrdinalIgnoreCase) ||
+                row.ApiType.Contains(token, StringComparison.OrdinalIgnoreCase) ||
+                row.XrName.Contains(token, StringComparison.OrdinalIgnoreCase) ||
+                row.XrType.Contains(token, StringComparison.OrdinalIgnoreCase))
+            {
+                return true;
+            }
+
+            ulong handleValue = unchecked((ulong)row.Handle);
+            string handleHex = handleValue == 0 ? "0x0" : $"0x{handleValue:X}";
+            if (handleHex.Contains(token, StringComparison.OrdinalIgnoreCase))
+                return true;
+
+            string handleDecimal = handleValue.ToString(CultureInfo.InvariantCulture);
+            return handleDecimal.Contains(token, StringComparison.OrdinalIgnoreCase);
+        }
+
+        private static void SetInspectorStandaloneTarget(object target, string? title, Action? onClear = null)
+        {
+            if (target is null)
+                throw new ArgumentNullException(nameof(target));
+
+            if (!ReferenceEquals(_inspectorStandaloneTarget, target))
+                ClearInspectorStandaloneTarget();
+
+            _inspectorStandaloneTarget = target;
+            _inspectorStandaloneTitle = string.IsNullOrWhiteSpace(title) ? null : title;
+            _inspectorStandaloneClearAction = onClear;
+
+            if (Selection.SceneNodes.Length > 0)
+                Selection.SceneNodes = [];
+        }
+
+        private static void ClearInspectorStandaloneTarget()
+        {
+            if (_inspectorStandaloneTarget is null)
+                return;
+
+            try
+            {
+                _inspectorStandaloneClearAction?.Invoke();
+            }
+            finally
+            {
+                _inspectorStandaloneTarget = null;
+                _inspectorStandaloneTitle = null;
+                _inspectorStandaloneClearAction = null;
+            }
+        }
+
+        private static string BuildMissingAssetSelectionKey(string assetPath, string category)
+        {
+            string normalizedCategory = string.IsNullOrWhiteSpace(category) ? "Unknown" : category.Trim();
+            string normalizedPath = string.IsNullOrWhiteSpace(assetPath) ? string.Empty : assetPath;
+            return string.Concat(normalizedCategory, "::", normalizedPath);
+        }
+
+        private static void ClearMissingAssetSelection()
+        {
+            _selectedMissingAssetKey = null;
+            _missingAssetReplacementPath = string.Empty;
+        }
+
+        private static void DrawMissingAssetReplacementEditor(in AssetDiagnostics.MissingAssetInfo info)
+        {
+            ImGui.TextUnformatted("Selected Missing Asset");
+            ImGui.SameLine();
+            if (ImGui.SmallButton("Reveal"))
+                RevealMissingAssetLocation(info.AssetPath);
+            ImGui.SameLine();
+            if (ImGui.SmallButton("Copy Path"))
+                ImGui.SetClipboardText(info.AssetPath);
+
+            ImGui.Separator();
+
+            ImGui.TextUnformatted($"Category: {info.Category}");
+            ImGui.TextUnformatted($"Hits: {info.Count}");
+            ImGui.TextUnformatted($"Last Seen: {info.LastSeenUtc.ToLocalTime():g}");
+            ImGui.TextUnformatted($"First Seen: {info.FirstSeenUtc.ToLocalTime():g}");
+
+            ImGui.Spacing();
+
+            ImGui.TextUnformatted("Contexts:");
+            if (info.Contexts.Count == 0)
+            {
+                ImGui.TextDisabled("<none>");
+            }
+            else
+            {
+                foreach (var ctx in info.Contexts.OrderBy(static c => c))
+                    ImGui.BulletText(ctx);
+            }
+
+            ImGui.Spacing();
+
+            string replacement = _missingAssetReplacementPath;
+            if (ImGui.InputTextWithHint("##MissingAssetReplacement", "Replacement path...", ref replacement, 512u))
+                _missingAssetReplacementPath = replacement.Trim();
+
+            if (ImGui.BeginDragDropTarget())
+            {
+                var payload = ImGui.AcceptDragDropPayload(ImGuiAssetUtilities.AssetPayloadType);
+                if (payload.Data != IntPtr.Zero && payload.DataSize > 0)
+                {
+                    string? path = ImGuiAssetUtilities.GetPathFromPayload(payload);
+                    if (!string.IsNullOrEmpty(path))
+                        _missingAssetReplacementPath = path;
+                }
+                ImGui.EndDragDropTarget();
+            }
+
+            ImGui.SameLine();
+            if (ImGui.SmallButton("Use Missing Path"))
+                _missingAssetReplacementPath = info.AssetPath;
+
+            ImGui.Spacing();
+
+            bool hasReplacement = !string.IsNullOrWhiteSpace(_missingAssetReplacementPath);
+            using (new ImGuiDisabledScope(!hasReplacement))
+            {
+                if (ImGui.Button("Copy Replacement File"))
+                {
+                    if (hasReplacement && TryCopyMissingAssetReplacement(_missingAssetReplacementPath, info.AssetPath))
+                    {
+                        if (AssetDiagnostics.RemoveTrackedMissingAsset(info.AssetPath, info.Category))
+                            Debug.Out($"Replaced missing asset '{info.AssetPath}'.");
+                        ClearMissingAssetSelection();
+                    }
+                }
+            }
+
+            ImGui.SameLine();
+            if (ImGui.Button("Mark Resolved"))
+            {
+                if (AssetDiagnostics.RemoveTrackedMissingAsset(info.AssetPath, info.Category))
+                {
+                    Debug.Out($"Removed missing asset '{info.AssetPath}' from diagnostics.");
+                    ClearMissingAssetSelection();
+                }
+                else
+                {
+                    Debug.LogWarning($"Failed to remove missing asset '{info.AssetPath}'.");
+                }
+            }
+        }
+
+        private static bool TryCopyMissingAssetReplacement(string sourcePath, string destinationPath)
+        {
+            if (string.IsNullOrWhiteSpace(sourcePath))
+            {
+                Debug.LogWarning("No replacement file selected.");
+                return false;
+            }
+
+            if (!File.Exists(sourcePath))
+            {
+                Debug.LogWarning($"Replacement file '{sourcePath}' does not exist.");
+                return false;
+            }
+
+            try
+            {
+                string? directory = Path.GetDirectoryName(destinationPath);
+                if (!string.IsNullOrWhiteSpace(directory))
+                    Directory.CreateDirectory(directory);
+
+                File.Copy(sourcePath, destinationPath, true);
+                Debug.Out($"Copied replacement file '{sourcePath}' to '{destinationPath}'.");
+                return true;
+            }
+            catch (Exception ex)
+            {
+                Debug.LogException(ex, $"Failed to copy replacement file to '{destinationPath}'.");
+                return false;
+            }
+        }
+
+        private static void RevealMissingAssetLocation(string assetPath)
+        {
+            if (string.IsNullOrWhiteSpace(assetPath))
+                return;
+
+            try
+            {
+                if (File.Exists(assetPath))
+                {
+                    OpenPathInExplorer(assetPath, false);
+                    return;
+                }
+
+                string? directory = Path.GetDirectoryName(assetPath);
+                if (!string.IsNullOrWhiteSpace(directory) && Directory.Exists(directory))
+                {
+                    OpenPathInExplorer(directory, true);
+                }
+                else
+                {
+                    Debug.LogWarning($"Directory for missing asset '{assetPath}' could not be located.");
+                }
+            }
+            catch (Exception ex)
+            {
+                Debug.LogException(ex, $"Failed to reveal location for '{assetPath}'.");
+            }
+        }
+
+        private static bool IsXrRenderObject(GenericRenderObject renderObject)
+        {
+            Type? type = renderObject.GetType();
+            while (type is not null)
+            {
+                if (type.Name.StartsWith("XR", StringComparison.OrdinalIgnoreCase))
+                    return true;
+
+                type = type.DeclaringType;
+            }
+
+            return false;
+        }
+
+        private static void DrawOpenGLDebugTabContent()
         {
             var errors = OpenGLRenderer.GetTrackedOpenGLErrors();
             if (errors.Count == 0)
+            {
+                ImGui.TextDisabled("No OpenGL debug errors are currently tracked.");
+                if (ImGui.Button("Clear Tracked Errors"))
+                    OpenGLRenderer.ClearTrackedOpenGLErrors();
                 return;
-
-            ImGui.Separator();
+            }
 
             int totalHits = 0;
             foreach (var info in errors)
                 totalHits += info.Count;
 
-            string headerLabel = $"OpenGL Errors ({errors.Count} ids / {totalHits} hits)";
-            if (!ImGui.CollapsingHeader($"{headerLabel}##ProfilerOpenGLErrors", ImGuiTreeNodeFlags.DefaultOpen))
-                return;
+            ImGui.TextUnformatted($"IDs: {errors.Count} | Hits: {totalHits}");
 
             if (ImGui.Button("Clear Tracked Errors"))
             {
@@ -1160,8 +2160,20 @@ public static partial class UnitTestingWorld
                 return;
             }
 
-            var visited = new HashSet<object>(ReferenceEqualityComparer.Instance);
-            DrawSettingsObject(settingsRoot, headerLabel, null, visited, true);
+            Vector2 childSize = ImGui.GetContentRegionAvail();
+            if (childSize.Y < 0.0f)
+                childSize.Y = 0.0f;
+
+            ImGui.BeginChild($"SettingsScroll##{headerLabel}", childSize, ImGuiChildFlags.None, ImGuiWindowFlags.HorizontalScrollbar);
+            try
+            {
+                var visited = new HashSet<object>(ReferenceEqualityComparer.Instance);
+                DrawSettingsObject(settingsRoot, headerLabel, null, visited, true);
+            }
+            finally
+            {
+                ImGui.EndChild();
+            }
         }
 
         private static void DrawSettingsObject(object obj, string label, string? description, HashSet<object> visited, bool defaultOpen, string? idOverride = null)
@@ -1318,7 +2330,7 @@ public static partial class UnitTestingWorld
                         continue;
                     }
 
-                    if (TryDrawCollectionProperty(info.Property, info.DisplayName, info.Description, info.Value, visited))
+                    if (TryDrawCollectionProperty(obj, info.Property, info.DisplayName, info.Description, info.Value, visited))
                         continue;
 
                     DrawSettingsObject(info.Value, info.DisplayName, info.Description, visited, false, info.Property.Name);
@@ -1326,34 +2338,72 @@ public static partial class UnitTestingWorld
             }
         }
 
-        private static bool TryDrawCollectionProperty(PropertyInfo property, string label, string? description, object value, HashSet<object> visited)
+        private static bool TryDrawCollectionProperty(object? owner, PropertyInfo property, string label, string? description, object value, HashSet<object> visited)
         {
             using var profilerScope = Engine.Profiler.Start("UI.TryDrawCollectionProperty");
             if (value is not IList list)
                 return false;
 
-            string headerLabel = $"{label} [{list.Count}]";
-            bool canModifyElements = !list.IsReadOnly;
-            Type? declaredElementType = GetCollectionElementType(property, value.GetType());
+            Type declaredElementType = GetCollectionElementType(property, value.GetType()) ?? typeof(object);
+            Type effectiveDeclaredType = Nullable.GetUnderlyingType(declaredElementType) ?? declaredElementType;
+
+            ImGuiEditorUtilities.CollectionEditorAdapter adapter;
+
+            if (value is Array arrayValue)
+            {
+                Func<Array, bool>? applyReplacement = null;
+                if (property.CanWrite && property.SetMethod?.IsPublic == true)
+                {
+                    applyReplacement = replacement =>
+                    {
+                        try
+                        {
+                            property.SetValue(owner, replacement);
+                            NotifyInspectorValueEdited(owner);
+                            return true;
+                        }
+                        catch
+                        {
+                            return false;
+                        }
+                    };
+                }
+
+                adapter = ImGuiEditorUtilities.CollectionEditorAdapter.ForArray(arrayValue, declaredElementType, applyReplacement);
+            }
+            else
+            {
+                adapter = ImGuiEditorUtilities.CollectionEditorAdapter.ForList(list, declaredElementType);
+            }
+
+            bool elementIsAsset = typeof(XRAsset).IsAssignableFrom(effectiveDeclaredType);
+            bool elementUsesTypeSelector = ShouldUseCollectionTypeSelector(declaredElementType);
+            IReadOnlyList<CollectionTypeDescriptor> availableTypeOptions = elementIsAsset || elementUsesTypeSelector
+                ? GetCollectionTypeDescriptors(declaredElementType)
+                : Array.Empty<CollectionTypeDescriptor>();
+            string headerLabel = $"{label} [{adapter.Count}]";
 
             ImGui.PushID(property.Name);
             bool open = ImGui.TreeNodeEx(headerLabel, ImGuiTreeNodeFlags.DefaultOpen);
             if (!string.IsNullOrEmpty(description) && ImGui.IsItemHovered())
                 ImGui.SetTooltip(description);
+
             if (open)
             {
-                if (list.Count == 0)
+                if (adapter.Count == 0)
                 {
                     ImGui.TextDisabled("<empty>");
                 }
                 else if (ImGui.BeginTable("CollectionItems", 2, ImGuiTableFlags.SizingStretchProp | ImGuiTableFlags.RowBg))
                 {
-                    for (int i = 0; i < list.Count; i++)
+                    for (int i = 0; i < adapter.Count; i++)
                     {
+                        IList currentList = adapter.Items;
+
                         object? item;
                         try
                         {
-                            item = list[i];
+                            item = currentList[i];
                         }
                         catch (Exception ex)
                         {
@@ -1365,34 +2415,118 @@ public static partial class UnitTestingWorld
                             continue;
                         }
 
-                        Type? itemType = item?.GetType() ?? declaredElementType;
+                        Type? runtimeType = item?.GetType();
+                        bool itemIsAsset = runtimeType is not null
+                            ? typeof(XRAsset).IsAssignableFrom(runtimeType)
+                            : elementIsAsset;
+                        bool itemUsesTypeSelector = runtimeType is not null
+                            ? ShouldUseCollectionTypeSelector(runtimeType)
+                            : elementUsesTypeSelector;
 
                         ImGui.TableNextRow();
-                        ImGui.TableSetColumnIndex(0);
-                        ImGui.TextUnformatted($"[{i}]");
-                        ImGui.TableSetColumnIndex(1);
                         ImGui.PushID(i);
 
-                        if (item is null)
+                        ImGui.TableSetColumnIndex(0);
+                        ImGui.TextUnformatted($"[{i}]");
+
+                        if (adapter.CanAddRemove)
                         {
-                            if (itemType is not null && IsSimpleSettingType(itemType))
+                            ImGui.SameLine(0f, 6f);
+                            if (ImGui.SmallButton("Remove"))
+                            {
+                                if (adapter.TryRemoveAt(i))
+                                {
+                                    NotifyInspectorValueEdited(owner);
+                                    ImGui.PopID();
+                                    i--;
+                                    continue;
+                                }
+                            }
+                        }
+
+                        int availableTypeCount = availableTypeOptions.Count;
+
+                        if (adapter.CanAddRemove && itemUsesTypeSelector && availableTypeCount > 0)
+                        {
+                            ImGui.SameLine(0f, 6f);
+                            if (ImGui.SmallButton("Replace"))
+                            {
+                                if (availableTypeCount == 1)
+                                {
+                                    TryReplaceCollectionInstance(adapter, i, availableTypeOptions[0].Type, owner);
+                                }
+                                else
+                                {
+                                    ImGui.OpenPopup("ReplaceElement");
+                                }
+                            }
+
+                            if (availableTypeCount > 1)
+                            {
+                                DrawCollectionTypePickerPopup("ReplaceElement", declaredElementType, runtimeType, selectedType =>
+                                {
+                                    TryReplaceCollectionInstance(adapter, i, selectedType, owner);
+                                });
+                            }
+                        }
+
+                        ImGui.TableSetColumnIndex(1);
+
+                        bool elementCanModify = currentList is Array || !currentList.IsReadOnly;
+
+                        if (itemIsAsset)
+                        {
+                            DrawCollectionAssetElement(declaredElementType, runtimeType, item as XRAsset, adapter, i, owner);
+                        }
+                        else if (item is null)
+                        {
+                            if (runtimeType is not null && IsSimpleSettingType(runtimeType))
                             {
                                 object? currentValue = item;
-                                DrawCollectionSimpleElement(list, itemType, i, ref currentValue, canModifyElements);
+                                DrawCollectionSimpleElement(currentList, runtimeType, i, ref currentValue, elementCanModify);
+                            }
+                            else if (IsSimpleSettingType(effectiveDeclaredType))
+                            {
+                                object? currentValue = item;
+                                DrawCollectionSimpleElement(currentList, effectiveDeclaredType, i, ref currentValue, elementCanModify);
                             }
                             else
                             {
                                 ImGui.TextDisabled("<null>");
                             }
                         }
-                        else if (itemType is not null && IsSimpleSettingType(itemType))
+                        else if (runtimeType is not null && IsSimpleSettingType(runtimeType))
                         {
                             object? currentValue = item;
-                            DrawCollectionSimpleElement(list, itemType, i, ref currentValue, canModifyElements);
+                            DrawCollectionSimpleElement(currentList, runtimeType, i, ref currentValue, elementCanModify);
                         }
                         else
                         {
                             DrawSettingsObject(item, $"{label}[{i}]", description, visited, false, property.Name + i.ToString(CultureInfo.InvariantCulture));
+                        }
+
+                        if (item is null && adapter.CanAddRemove && itemUsesTypeSelector && availableTypeCount > 0)
+                        {
+                            ImGui.SameLine(0f, 6f);
+                            if (ImGui.SmallButton("Create"))
+                            {
+                                if (availableTypeCount == 1)
+                                {
+                                    TryReplaceCollectionInstance(adapter, i, availableTypeOptions[0].Type, owner);
+                                }
+                                else
+                                {
+                                    ImGui.OpenPopup("CreateElement");
+                                }
+                            }
+
+                            if (availableTypeCount > 1)
+                            {
+                                DrawCollectionTypePickerPopup("CreateElement", declaredElementType, null, selectedType =>
+                                {
+                                    TryReplaceCollectionInstance(adapter, i, selectedType, owner);
+                                });
+                            }
                         }
 
                         ImGui.PopID();
@@ -1401,8 +2535,97 @@ public static partial class UnitTestingWorld
                     ImGui.EndTable();
                 }
 
+                if (adapter.CanAddRemove)
+                {
+                    if (elementIsAsset)
+                    {
+                        int assetTypeCount = availableTypeOptions.Count;
+
+                        if (assetTypeCount == 0)
+                        {
+                            using (new ImGuiDisabledScope(true))
+                                ImGui.Button($"Create Asset##{property.Name}");
+                        }
+                        else
+                        {
+                            string createLabel = assetTypeCount == 1
+                                ? $"Create {availableTypeOptions[0].DisplayName}##{property.Name}"
+                                : $"Create Asset##{property.Name}";
+
+                            if (ImGui.Button(createLabel))
+                            {
+                                if (assetTypeCount == 1)
+                                {
+                                    TryAddCollectionInstance(adapter, availableTypeOptions[0].Type, owner);
+                                }
+                                else
+                                {
+                                    ImGui.OpenPopup("CreateAssetElement");
+                                }
+                            }
+
+                            if (assetTypeCount > 1)
+                            {
+                                DrawCollectionTypePickerPopup("CreateAssetElement", declaredElementType, null, selectedType =>
+                                {
+                                    TryAddCollectionInstance(adapter, selectedType, owner);
+                                });
+                            }
+
+                            ImGui.SameLine(0f, 6f);
+                            if (ImGui.Button($"Pick Asset##{property.Name}"))
+                                ImGui.OpenPopup("AddAssetElement");
+
+                            DrawCollectionAssetAddPopup("AddAssetElement", adapter, owner, availableTypeOptions);
+                        }
+                    }
+                    else if (elementUsesTypeSelector)
+                    {
+                        int typeCount = availableTypeOptions.Count;
+
+                        if (typeCount == 0)
+                        {
+                            using (new ImGuiDisabledScope(true))
+                                ImGui.Button($"Add Element##{property.Name}");
+                        }
+                        else if (typeCount == 1)
+                        {
+                            string typeLabel = $"Add {availableTypeOptions[0].DisplayName}##{property.Name}";
+                            if (ImGui.Button(typeLabel))
+                                TryAddCollectionInstance(adapter, availableTypeOptions[0].Type, owner);
+                        }
+                        else
+                        {
+                            if (ImGui.Button($"Add {GetFriendlyCollectionTypeName(effectiveDeclaredType)}##{property.Name}"))
+                                ImGui.OpenPopup("AddCollectionElement");
+
+                            DrawCollectionTypePickerPopup("AddCollectionElement", declaredElementType, null, selectedType =>
+                            {
+                                TryAddCollectionInstance(adapter, selectedType, owner);
+                            });
+                        }
+                    }
+                    else
+                    {
+                        if (ImGui.Button($"Add Element##{property.Name}"))
+                        {
+                            object? newElement = adapter.CreateDefaultElement();
+                            if (adapter.TryAdd(newElement))
+                                NotifyInspectorValueEdited(owner);
+                        }
+                    }
+                }
+                else
+                {
+                    using (new ImGuiDisabledScope(true))
+                    {
+                        ImGui.Button($"Add Element##{property.Name}");
+                    }
+                }
+
                 ImGui.TreePop();
             }
+
             ImGui.PopID();
             return true;
         }
@@ -1435,6 +2658,290 @@ public static partial class UnitTestingWorld
             }
 
             return Resolve(property.PropertyType) ?? Resolve(runtimeType);
+        }
+
+        private static bool ShouldUseCollectionTypeSelector(Type type)
+        {
+            Type effective = Nullable.GetUnderlyingType(type) ?? type;
+            if (typeof(XRAsset).IsAssignableFrom(effective))
+                return false;
+            if (IsSimpleSettingType(effective))
+                return false;
+            return !effective.IsValueType;
+        }
+
+        private static string GetFriendlyCollectionTypeName(Type type)
+        {
+            Type effective = Nullable.GetUnderlyingType(type) ?? type;
+            string name = effective.Name;
+            int backtick = name.IndexOf('`');
+            if (backtick >= 0)
+                name = name[..backtick];
+            return string.IsNullOrWhiteSpace(name) ? effective.FullName ?? effective.Name : name;
+        }
+
+        private static void DrawCollectionTypePickerPopup(string popupId, Type baseType, Type? currentType, Action<Type> onSelected)
+        {
+            if (!ImGui.BeginPopup(popupId))
+                return;
+
+            string searchKey = popupId;
+            string search = _collectionTypePickerSearch.TryGetValue(searchKey, out var existing) ? existing : string.Empty;
+            if (ImGui.InputTextWithHint("##CollectionTypeSearch", "Search...", ref search, 256u))
+                _collectionTypePickerSearch[searchKey] = search.Trim();
+
+            ImGui.Separator();
+
+            var descriptors = GetCollectionTypeDescriptors(baseType);
+            IEnumerable<CollectionTypeDescriptor> filtered = descriptors;
+            if (!string.IsNullOrWhiteSpace(search))
+            {
+                filtered = descriptors.Where(d =>
+                    d.DisplayName.Contains(search, StringComparison.OrdinalIgnoreCase)
+                    || (!string.IsNullOrEmpty(d.Namespace) && d.Namespace.Contains(search, StringComparison.OrdinalIgnoreCase))
+                    || d.FullName.Contains(search, StringComparison.OrdinalIgnoreCase));
+            }
+
+            var filteredList = filtered.ToList();
+
+            if (ImGui.BeginChild("##CollectionTypeList", new Vector2(0f, 240f), ImGuiChildFlags.Border))
+            {
+                if (filteredList.Count == 0)
+                {
+                    ImGui.TextDisabled("No matching types.");
+                }
+                else
+                {
+                    foreach (var descriptor in filteredList)
+                    {
+                        bool selected = currentType == descriptor.Type;
+                        string label = $"{descriptor.DisplayName}##{descriptor.FullName}";
+                        if (ImGui.Selectable(label, selected))
+                        {
+                            onSelected(descriptor.Type);
+                            ImGui.CloseCurrentPopup();
+                            ImGui.EndChild();
+                            ImGui.EndPopup();
+                            return;
+                        }
+
+                        if (ImGui.IsItemHovered())
+                        {
+                            string tooltip = descriptor.FullName;
+                            if (!string.IsNullOrEmpty(descriptor.AssemblyName))
+                                tooltip += $" ({descriptor.AssemblyName})";
+                            ImGui.SetTooltip(tooltip);
+                        }
+
+                        if (selected)
+                            ImGui.SetItemDefaultFocus();
+                    }
+                }
+
+                ImGui.EndChild();
+            }
+
+            if (ImGui.Button("Close"))
+                ImGui.CloseCurrentPopup();
+
+            ImGui.EndPopup();
+        }
+
+        private static IReadOnlyList<CollectionTypeDescriptor> GetCollectionTypeDescriptors(Type baseType)
+        {
+            baseType = Nullable.GetUnderlyingType(baseType) ?? baseType;
+
+            if (_collectionTypeDescriptorCache.TryGetValue(baseType, out var cached))
+                return cached;
+
+            var descriptors = new List<CollectionTypeDescriptor>();
+            foreach (var assembly in AppDomain.CurrentDomain.GetAssemblies())
+            {
+                Type[] types;
+                try
+                {
+                    types = assembly.GetTypes();
+                }
+                catch (ReflectionTypeLoadException ex)
+                {
+                    types = ex.Types.Where(t => t is not null).Cast<Type>().ToArray();
+                }
+
+                foreach (var type in types)
+                {
+                    if (type is null)
+                        continue;
+                    if (!baseType.IsAssignableFrom(type))
+                        continue;
+                    if (type.IsAbstract || type.IsInterface)
+                        continue;
+                    if (type.ContainsGenericParameters)
+                        continue;
+                    if (type.GetConstructor(Type.EmptyTypes) is null)
+                        continue;
+
+                    descriptors.Add(new CollectionTypeDescriptor(
+                        type,
+                        type.Name,
+                        type.Namespace ?? string.Empty,
+                        assembly.GetName().Name ?? assembly.FullName ?? "Unknown"));
+                }
+            }
+
+            descriptors.Sort(static (a, b) =>
+            {
+                int nameCompare = string.Compare(a.DisplayName, b.DisplayName, StringComparison.OrdinalIgnoreCase);
+                if (nameCompare != 0)
+                    return nameCompare;
+                int nsCompare = string.Compare(a.Namespace, b.Namespace, StringComparison.OrdinalIgnoreCase);
+                if (nsCompare != 0)
+                    return nsCompare;
+                return string.Compare(a.AssemblyName, b.AssemblyName, StringComparison.OrdinalIgnoreCase);
+            });
+
+            _collectionTypeDescriptorCache[baseType] = descriptors;
+            return descriptors;
+        }
+
+        private static object? CreateInstanceForCollectionType(Type type)
+        {
+            try
+            {
+                return Activator.CreateInstance(type);
+            }
+            catch (Exception ex)
+            {
+                Debug.LogWarning($"Failed to create instance of '{type.FullName}': {ex.Message}");
+                return null;
+            }
+        }
+
+        private static void DrawCollectionAssetElement(Type declaredElementType, Type? runtimeType, XRAsset? currentValue, ImGuiEditorUtilities.CollectionEditorAdapter adapter, int index, object? owner)
+        {
+            Type? assetType = ResolveAssetEditorType(declaredElementType, runtimeType);
+            if (assetType is null)
+            {
+                ImGui.TextDisabled("Asset editor unavailable for this type.");
+                return;
+            }
+
+            if (!DrawAssetFieldForCollection("AssetValue", assetType, currentValue, selected =>
+            {
+                if (adapter.TryReplace(index, selected))
+                    NotifyInspectorValueEdited(owner);
+            }))
+            {
+                ImGui.TextDisabled("Asset editor unavailable for this type.");
+            }
+        }
+
+        private static void DrawCollectionAssetAddPopup(string popupId, ImGuiEditorUtilities.CollectionEditorAdapter adapter, object? owner, IReadOnlyList<CollectionTypeDescriptor> assetTypeOptions)
+        {
+            if (!ImGui.BeginPopup(popupId))
+                return;
+
+            if (assetTypeOptions.Count == 0)
+            {
+                ImGui.TextDisabled("No concrete asset types available.");
+                if (ImGui.Button("Close"))
+                    ImGui.CloseCurrentPopup();
+                ImGui.EndPopup();
+                return;
+            }
+
+            bool closeRequested = false;
+            for (int i = 0; i < assetTypeOptions.Count; i++)
+            {
+                var descriptor = assetTypeOptions[i];
+                ImGui.PushID(descriptor.FullName);
+                ImGui.TextUnformatted(descriptor.DisplayName);
+
+                if (!DrawAssetFieldForCollection("NewAssetValue", descriptor.Type, null, selected =>
+                {
+                    if (selected is null)
+                        return;
+                    if (adapter.TryAdd(selected))
+                    {
+                        NotifyInspectorValueEdited(owner);
+                        closeRequested = true;
+                    }
+                }))
+                {
+                    ImGui.TextDisabled("Unable to draw asset selector for this type.");
+                }
+
+                ImGui.PopID();
+
+                if (i < assetTypeOptions.Count - 1)
+                    ImGui.Separator();
+            }
+
+            if (closeRequested)
+            {
+                ImGui.CloseCurrentPopup();
+            }
+            else if (ImGui.Button("Close"))
+            {
+                ImGui.CloseCurrentPopup();
+            }
+
+            ImGui.EndPopup();
+        }
+
+        private static bool TryAddCollectionInstance(ImGuiEditorUtilities.CollectionEditorAdapter adapter, Type type, object? owner)
+        {
+            object? instance = CreateInstanceForCollectionType(type);
+            if (instance is null)
+                return false;
+            if (!adapter.TryAdd(instance))
+                return false;
+
+            NotifyInspectorValueEdited(owner);
+            return true;
+        }
+
+        private static bool TryReplaceCollectionInstance(ImGuiEditorUtilities.CollectionEditorAdapter adapter, int index, Type type, object? owner)
+        {
+            object? instance = CreateInstanceForCollectionType(type);
+            if (instance is null)
+                return false;
+            if (!adapter.TryReplace(index, instance))
+                return false;
+
+            NotifyInspectorValueEdited(owner);
+            return true;
+        }
+
+        private static bool DrawAssetFieldForCollection(string id, Type assetType, XRAsset? current, Action<XRAsset?> assign)
+        {
+            if (!typeof(XRAsset).IsAssignableFrom(assetType))
+                return false;
+            if (assetType.IsAbstract || assetType.ContainsGenericParameters)
+                return false;
+            if (assetType.GetConstructor(Type.EmptyTypes) is null)
+                return false;
+
+            _drawAssetCollectionElementMethod.MakeGenericMethod(assetType).Invoke(null, new object?[] { id, current, assign });
+            return true;
+        }
+
+        private static Type? ResolveAssetEditorType(Type declaredElementType, Type? runtimeType)
+        {
+            Type? candidate = runtimeType ?? (Nullable.GetUnderlyingType(declaredElementType) ?? declaredElementType);
+            if (candidate is null || !typeof(XRAsset).IsAssignableFrom(candidate))
+                return null;
+
+            if (!candidate.IsAbstract && !candidate.ContainsGenericParameters && candidate.GetConstructor(Type.EmptyTypes) is not null)
+                return candidate;
+
+            return null;
+        }
+
+        private static void DrawAssetCollectionElementGeneric<TAsset>(string id, XRAsset? currentBase, Action<XRAsset?> assign)
+            where TAsset : XRAsset, new()
+        {
+            TAsset? typedCurrent = currentBase as TAsset;
+            ImGuiAssetUtilities.DrawAssetField<TAsset>(id, typedCurrent, asset => assign(asset));
         }
 
         private static void DrawCollectionSimpleElement(IList list, Type elementType, int index, ref object? currentValue, bool canModifyElements)
@@ -1607,13 +3114,41 @@ public static partial class UnitTestingWorld
         {
             try
             {
+                object? existing = list[index];
+                if (Equals(existing, newValue))
+                    return false;
+
                 list[index] = newValue!;
+                NotifyInspectorValueEdited(null);
                 return true;
             }
             catch
             {
                 return false;
             }
+        }
+
+        private static bool TryApplyInspectorValue(object owner, PropertyInfo property, object? previousValue, object? newValue)
+        {
+            if (Equals(previousValue, newValue))
+                return false;
+
+            property.SetValue(owner, newValue);
+            NotifyInspectorValueEdited(owner);
+            return true;
+        }
+
+        private static void NotifyInspectorValueEdited(object? valueOwner)
+        {
+            XRAsset? asset = null;
+
+            if (valueOwner is XRAsset assetOwner)
+                asset = assetOwner.SourceAsset;
+            else if (_inspectorAssetContext is not null)
+                asset = _inspectorAssetContext;
+
+            if (asset is not null && !asset.IsDirty)
+                asset.MarkDirty();
         }
 
         private static void DrawSimplePropertyRow(object owner, PropertyInfo property, object? value, string displayName, string? description, bool valueRetrievalFailed)
@@ -1651,9 +3186,11 @@ public static partial class UnitTestingWorld
                 {
                     if (ImGui.Checkbox("##Value", ref boolValue) && canWrite)
                     {
-                        property.SetValue(owner, boolValue);
-                        currentValue = boolValue;
-                        isCurrentlyNull = false;
+                        if (TryApplyInspectorValue(owner, property, currentValue, boolValue))
+                        {
+                            currentValue = boolValue;
+                            isCurrentlyNull = false;
+                        }
                     }
                 }
                 handled = true;
@@ -1671,9 +3208,11 @@ public static partial class UnitTestingWorld
                     if (enumNames.Length > 0 && ImGui.Combo("##Value", ref selectedIndex, enumNames, enumNames.Length) && canWrite && selectedIndex >= 0 && selectedIndex < enumNames.Length)
                     {
                         object newValue = Enum.Parse(effectiveType, enumNames[selectedIndex]);
-                        property.SetValue(owner, newValue);
-                        currentValue = newValue;
-                        isCurrentlyNull = false;
+                        if (TryApplyInspectorValue(owner, property, currentValue, newValue))
+                        {
+                            currentValue = newValue;
+                            isCurrentlyNull = false;
+                        }
                     }
                 }
                 handled = true;
@@ -1686,9 +3225,11 @@ public static partial class UnitTestingWorld
                     ImGui.SetNextItemWidth(-1f);
                     if (ImGui.InputText("##Value", ref textValue, 512u, ImGuiInputTextFlags.None) && canWrite)
                     {
-                        property.SetValue(owner, textValue);
-                        currentValue = textValue;
-                        isCurrentlyNull = false;
+                        if (TryApplyInspectorValue(owner, property, currentValue, textValue))
+                        {
+                            currentValue = textValue;
+                            isCurrentlyNull = false;
+                        }
                     }
                 }
                 handled = true;
@@ -1701,9 +3242,11 @@ public static partial class UnitTestingWorld
                     ImGui.SetNextItemWidth(-1f);
                     if (ImGui.DragFloat2("##Value", ref vector, 0.05f) && canWrite)
                     {
-                        property.SetValue(owner, vector);
-                        currentValue = vector;
-                        isCurrentlyNull = false;
+                        if (TryApplyInspectorValue(owner, property, currentValue, vector))
+                        {
+                            currentValue = vector;
+                            isCurrentlyNull = false;
+                        }
                     }
                 }
                 handled = true;
@@ -1716,9 +3259,11 @@ public static partial class UnitTestingWorld
                     ImGui.SetNextItemWidth(-1f);
                     if (ImGui.DragFloat3("##Value", ref vector, 0.05f) && canWrite)
                     {
-                        property.SetValue(owner, vector);
-                        currentValue = vector;
-                        isCurrentlyNull = false;
+                        if (TryApplyInspectorValue(owner, property, currentValue, vector))
+                        {
+                            currentValue = vector;
+                            isCurrentlyNull = false;
+                        }
                     }
                 }
                 handled = true;
@@ -1731,9 +3276,11 @@ public static partial class UnitTestingWorld
                     ImGui.SetNextItemWidth(-1f);
                     if (ImGui.DragFloat4("##Value", ref vector, 0.05f) && canWrite)
                     {
-                        property.SetValue(owner, vector);
-                        currentValue = vector;
-                        isCurrentlyNull = false;
+                        if (TryApplyInspectorValue(owner, property, currentValue, vector))
+                        {
+                            currentValue = vector;
+                            isCurrentlyNull = false;
+                        }
                     }
                 }
                 handled = true;
@@ -1764,9 +3311,11 @@ public static partial class UnitTestingWorld
                         ImGui.SameLine();
                         if (ImGui.SmallButton("Set"))
                         {
-                            property.SetValue(owner, defaultValue);
-                            currentValue = defaultValue;
-                            isCurrentlyNull = false;
+                            if (TryApplyInspectorValue(owner, property, currentValue, defaultValue))
+                            {
+                                currentValue = defaultValue;
+                                isCurrentlyNull = false;
+                            }
                         }
                     }
                 }
@@ -1775,9 +3324,11 @@ public static partial class UnitTestingWorld
                     ImGui.SameLine();
                     if (ImGui.SmallButton("Clear"))
                     {
-                        property.SetValue(owner, null);
-                        currentValue = null;
-                        isCurrentlyNull = true;
+                        if (TryApplyInspectorValue(owner, property, currentValue, null))
+                        {
+                            currentValue = null;
+                            isCurrentlyNull = true;
+                        }
                     }
                 }
             }
@@ -2002,11 +3553,20 @@ public static partial class UnitTestingWorld
         }
 
         private static unsafe bool TryDrawNumericProperty(object owner, PropertyInfo property, Type effectiveType, bool canWrite, ref object? currentValue, ref bool isCurrentlyNull)
-            => TryDrawNumericEditor(effectiveType, canWrite, ref currentValue, ref isCurrentlyNull, newValue =>
+        {
+            var previousValue = currentValue;
+
+            bool Apply(object? newValue)
             {
-                property.SetValue(owner, newValue);
+                if (!TryApplyInspectorValue(owner, property, previousValue, newValue))
+                    return false;
+
+                previousValue = newValue;
                 return true;
-            }, "##Value");
+            }
+
+            return TryDrawNumericEditor(effectiveType, canWrite, ref currentValue, ref isCurrentlyNull, Apply, "##Value");
+        }
 
         private static bool TryDrawColorProperty(object owner, PropertyInfo property, Type effectiveType, bool canWrite, ref object? currentValue, ref bool isCurrentlyNull)
         {
@@ -2021,9 +3581,11 @@ public static partial class UnitTestingWorld
                     if (ImGui.ColorEdit3("##ColorValue", ref colorVec, ColorPickerFlags) && canWrite)
                     {
                         var newColor = new ColorF3(colorVec.X, colorVec.Y, colorVec.Z);
-                        property.SetValue(owner, newColor);
-                        currentValue = newColor;
-                        isCurrentlyNull = false;
+                        if (TryApplyInspectorValue(owner, property, currentValue, newColor))
+                        {
+                            currentValue = newColor;
+                            isCurrentlyNull = false;
+                        }
                     }
                 }
                 return true;
@@ -2038,9 +3600,11 @@ public static partial class UnitTestingWorld
                     if (ImGui.ColorEdit4("##ColorValue", ref colorVec, ColorPickerFlags) && canWrite)
                     {
                         var newColor = new ColorF4(colorVec.X, colorVec.Y, colorVec.Z, colorVec.W);
-                        property.SetValue(owner, newColor);
-                        currentValue = newColor;
-                        isCurrentlyNull = false;
+                        if (TryApplyInspectorValue(owner, property, currentValue, newColor))
+                        {
+                            currentValue = newColor;
+                            isCurrentlyNull = false;
+                        }
                     }
                 }
                 return true;
@@ -2077,6 +3641,22 @@ public static partial class UnitTestingWorld
             {
                 if (_disabled)
                     ImGui.EndDisabled();
+            }
+        }
+
+        private readonly struct InspectorAssetContextScope : IDisposable
+        {
+            private readonly XRAsset? _previous;
+
+            public InspectorAssetContextScope(XRAsset? asset)
+            {
+                _previous = _inspectorAssetContext;
+                _inspectorAssetContext = asset;
+            }
+
+            public void Dispose()
+            {
+                _inspectorAssetContext = _previous;
             }
         }
 
@@ -2223,6 +3803,50 @@ public static partial class UnitTestingWorld
             public string RootPath { get; set; } = string.Empty;
             public string CurrentDirectory { get; set; } = string.Empty;
             public string? SelectedPath { get; set; }
+            public bool UseTileView { get; set; }
+            public float TileViewScale { get; set; } = 1.0f;
+            public string? RenamingPath { get; set; }
+            public bool RenamingIsDirectory { get; set; }
+            public bool RenameFocusRequested { get; set; }
+            public Dictionary<string, AssetExplorerPreviewCacheEntry> PreviewCache { get; } = new(StringComparer.OrdinalIgnoreCase);
+        }
+
+        private sealed record CollectionTypeDescriptor(Type Type, string DisplayName, string Namespace, string AssemblyName)
+        {
+            public string FullName => Type.FullName ?? Type.Name;
+        }
+
+        private sealed class AssetExplorerContextAction
+        {
+            public AssetExplorerContextAction(string label, Action<string> handler, Func<string, bool>? predicate)
+            {
+                Label = label;
+                Handler = handler;
+                Predicate = predicate;
+            }
+
+            public string Label { get; }
+            public Action<string> Handler { get; }
+            public Func<string, bool>? Predicate { get; }
+
+            public bool ShouldDisplay(string path)
+                => Predicate?.Invoke(path) ?? true;
+        }
+
+        private sealed class AssetExplorerPreviewCacheEntry
+        {
+            public AssetExplorerPreviewCacheEntry(string path)
+            {
+                Path = path;
+            }
+
+            public string Path { get; private set; }
+            public XRTexture2D? Texture { get; set; }
+            public bool RequestInFlight { get; set; }
+            public uint RequestedSize { get; set; }
+
+            public void UpdatePath(string path)
+                => Path = path;
         }
 
         private readonly record struct AssetExplorerEntry(string Name, string Path, bool IsDirectory, long Size, DateTime ModifiedUtc);

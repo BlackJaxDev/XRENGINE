@@ -10,8 +10,10 @@ using XREngine.Components;
 using XREngine.Components.Scene.Mesh;
 using XREngine.Data.Core;
 using XREngine.Data.Geometry;
+using XREngine.Data.Rendering;
 using XREngine.Data.Trees;
 using XREngine.Rendering.Info;
+using XREngine.Rendering.Picking;
 using XREngine.Scene;
 using XREngine.Components.Animation;
 using XREngine.Scene.Transforms;
@@ -544,42 +546,180 @@ namespace XREngine.Rendering
         {
             if (item is not RenderInfo renderable)
                 return (null, null);
-            
-            switch (renderable.Owner)
-            {
-                //case ModelComponent model:
-                //    {
-                //        float? dist = model.Intersect(segment, out Triangle? tri);
-                //        return (dist, tri);
-                //    }
-                case TransformBase transform:
-                    {
-                        //Debug.Out($"DirectItemTest: {transform.Name}");
 
-                        var viewNode = Engine.State.MainPlayer.ControlledPawn?.GetCamera()?.Transform;
-                        if ((viewNode != null && transform == viewNode) || transform.Capsule is null)
-                            return (null, null);
-
-                        Capsule c = transform.Capsule.Value;
-                        if (!c.IntersectsSegment(segment, out Vector3[] points))
-                            break;
-                        
-                        //Get closest point distance
-                        float min = float.MaxValue;
-                        Vector3 bestPoint = Vector3.Zero;
-                        for (int i = 0; i < points.Length; i++)
-                        {
-                            float dist = (points[i] - segment.Start).LengthSquared();
-                            if (dist < min)
-                            {
-                                min = dist;
-                                bestPoint = points[i];
-                            }
-                        }
-                        return ((float)Math.Sqrt(min), bestPoint);
-                    }
-            }
+            if (renderable.Owner is RenderableComponent renderableComponent &&
+                TryIntersectRenderableComponent(renderableComponent, item, segment, out float meshDistance, out MeshPickResult meshHit))
+                return (meshDistance, meshHit);
             return (null, null);
+        }
+
+        private static bool TryIntersectRenderableComponent(
+            RenderableComponent component,
+            RenderInfo3D info,
+            Segment worldSegment,
+            out float distance,
+            out MeshPickResult result)
+        {
+            distance = 0.0f;
+            result = default;
+
+            if (!TryFindRenderableMesh(component, info, out RenderableMesh? mesh))
+                return false;
+
+            if (mesh is null || ShouldIgnoreRenderableMesh(mesh))
+                return false;
+
+            if (!TryIntersectRenderableMesh(mesh, worldSegment, out distance, out Triangle worldTriangle, out Vector3 hitPoint))
+                return false;
+
+            result = new MeshPickResult(component, mesh, worldTriangle, hitPoint);
+            return true;
+        }
+
+        private static bool ShouldIgnoreRenderableMesh(RenderableMesh mesh)
+        {
+            foreach (var command in mesh.RenderInfo.RenderCommands)
+            {
+                if (command.RenderPass == (int)EDefaultRenderPass.Background)
+                    return true;
+            }
+
+            foreach (var lod in mesh.LODs)
+            {
+                var material = lod.Renderer.Material;
+                if (material is not null && material.RenderPass == (int)EDefaultRenderPass.Background)
+                    return true;
+            }
+
+            return false;
+        }
+
+        private static bool TryFindRenderableMesh(RenderableComponent component, RenderInfo3D info, out RenderableMesh? mesh)
+        {
+            foreach (var candidate in component.Meshes)
+            {
+                if (ReferenceEquals(candidate.RenderInfo, info))
+                {
+                    mesh = candidate;
+                    return true;
+                }
+            }
+
+            mesh = null;
+            return false;
+        }
+
+        private static bool TryIntersectRenderableMesh(
+            RenderableMesh mesh,
+            Segment worldSegment,
+            out float distance,
+            out Triangle worldTriangle,
+            out Vector3 hitPoint)
+        {
+            distance = 0.0f;
+            worldTriangle = default;
+            hitPoint = default;
+
+            var lodNode = mesh.CurrentLOD ?? mesh.LODs.First;
+            var renderer = lodNode?.Value.Renderer;
+            if (renderer is null)
+                return false;
+
+            var material = renderer.Material;
+            if (material is not null && material.RenderPass == (int)EDefaultRenderPass.Background)
+                return false;
+
+            var xrMesh = renderer.Mesh;
+            if (xrMesh is null)
+                return false;
+
+            if (xrMesh.BVHTree is null)
+            {
+                xrMesh.GenerateBVH();
+                if (xrMesh.BVHTree is null)
+                    return false;
+            }
+
+            bool skinned = xrMesh.HasSkinning && Engine.Rendering.Settings.AllowSkinning;
+
+            Matrix4x4 toLocal;
+            Matrix4x4 toWorld;
+            if (skinned)
+            {
+                var bone = mesh.RootBone;
+                if (bone is null)
+                    return false;
+                toLocal = bone.InverseWorldMatrix;
+                toWorld = bone.WorldMatrix;
+            }
+            else
+            {
+                var transform = mesh.Component.Transform;
+                if (transform is null)
+                    return false;
+                toLocal = transform.InverseWorldMatrix;
+                toWorld = transform.WorldMatrix;
+            }
+
+            Vector3 localStart = Vector3.Transform(worldSegment.Start, toLocal);
+            Vector3 localEnd = Vector3.Transform(worldSegment.End, toLocal);
+            Vector3 localDiff = localEnd - localStart;
+            float localLength = localDiff.Length();
+            if (localLength <= 1e-5f)
+                return false;
+
+            Vector3 localDir = localDiff / localLength;
+
+            var bvh = xrMesh.BVHTree;
+            if (bvh is null)
+                return false;
+
+            var matches = bvh.Traverse(node => GeoUtil.SegmentIntersectsAABB(localStart, localEnd, node.Min, node.Max, out _, out _));
+            if (matches is null)
+                return false;
+
+            float bestLocalDistance = float.MaxValue;
+            Triangle? bestLocalTriangle = null;
+
+            foreach (var node in matches)
+            {
+                if (node.gobjects is null)
+                    continue;
+
+                foreach (var tri in node.gobjects)
+                {
+                    if (!GeoUtil.RayIntersectsTriangle(localStart, localDir, tri.A, tri.B, tri.C, out float localHitDistance))
+                        continue;
+
+                    if (localHitDistance < 0.0f || localHitDistance > localLength)
+                        continue;
+
+                    if (localHitDistance < bestLocalDistance)
+                    {
+                        bestLocalDistance = localHitDistance;
+                        bestLocalTriangle = tri;
+                    }
+                }
+            }
+
+            if (bestLocalTriangle is null)
+                return false;
+
+            Vector3 localHitPoint = localStart + localDir * bestLocalDistance;
+            hitPoint = Vector3.Transform(localHitPoint, toWorld);
+
+            Triangle localTriangle = bestLocalTriangle.Value;
+            worldTriangle = new Triangle(
+                Vector3.Transform(localTriangle.A, toWorld),
+                Vector3.Transform(localTriangle.B, toWorld),
+                Vector3.Transform(localTriangle.C, toWorld));
+
+            distance = (hitPoint - worldSegment.Start).Length();
+            float worldLength = (worldSegment.End - worldSegment.Start).Length();
+            if (distance < 0.0f || distance > worldLength)
+                return false;
+
+            return true;
         }
 
         public static XRWorldInstance GetOrInitWorld(XRWorld targetWorld)

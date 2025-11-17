@@ -119,6 +119,7 @@ public static class Undo
         }
 
         ApplyUndo(action);
+        ProcessPendingTransformRefresh();
         RaiseHistoryChanged();
         return true;
     }
@@ -138,6 +139,7 @@ public static class Undo
         }
 
         ApplyRedo(action);
+        ProcessPendingTransformRefresh();
         RaiseHistoryChanged();
         return true;
     }

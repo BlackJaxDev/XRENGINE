@@ -1,4 +1,5 @@
-﻿using XREngine.Components;
+﻿using System.ComponentModel;
+using XREngine.Components;
 using XREngine.Core.Attributes;
 using XREngine.Data.Core;
 
@@ -7,7 +8,10 @@ namespace XREngine.Rendering.UI
     [RequiresTransform(typeof(UITransform))]
     public class UIComponent : XRComponent
     {
+        [Browsable(false)]
         public UITransform UITransform => TransformAs<UITransform>(true)!;
+
+        [Browsable(false)]
         public UICanvasComponent? UserInterfaceCanvas => UITransform.GetCanvasComponent();
 
         internal override void VerifyInterfacesOnStart()

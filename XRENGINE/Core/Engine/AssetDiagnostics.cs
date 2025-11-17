@@ -94,6 +94,18 @@ public static class AssetDiagnostics
         }
     }
 
+    public static bool RemoveTrackedMissingAsset(string assetPath, string category)
+    {
+        string normalizedCategory = string.IsNullOrWhiteSpace(category) ? "Unknown" : category.Trim();
+        string normalizedPath = NormalizePath(assetPath);
+        string key = BuildKey(normalizedCategory, normalizedPath);
+
+        lock (_missingAssetLock)
+        {
+            return _missingAssets.Remove(key);
+        }
+    }
+
     public static void ClearTrackedMissingAssets()
     {
         lock (_missingAssetLock)
