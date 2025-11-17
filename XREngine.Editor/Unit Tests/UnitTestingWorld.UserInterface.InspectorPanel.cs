@@ -7,6 +7,7 @@ using ImGuiNET;
 using XREngine;
 using XREngine.Animation;
 using XREngine.Components;
+using XREngine.Core.Files;
 using XREngine.Editor.ComponentEditors;
 using XREngine.Scene;
 using XREngine.Scene.Transforms;
@@ -190,15 +191,34 @@ public static partial class UnitTestingWorld
 
             ImGui.Separator();
 
+            object? standaloneTarget = _inspectorStandaloneTarget;
             var selectedNode = Selection.SceneNode ?? Selection.LastSceneNode;
-            if (selectedNode is null)
+
+            if (standaloneTarget is null && selectedNode is null)
             {
                 ImGui.TextUnformatted("Select a scene node in the hierarchy to inspect its properties.");
             }
             else
             {
                 ImGui.BeginChild("InspectorContent", Vector2.Zero, ImGuiChildFlags.Border);
-                DrawSceneNodeInspector(selectedNode);
+
+                bool allowSceneInspector = false;
+
+                if (standaloneTarget is not null)
+                {
+                    DrawStandaloneInspectorTarget(standaloneTarget);
+
+                    if (_inspectorStandaloneTarget is null && selectedNode is not null)
+                        allowSceneInspector = true;
+                }
+                else if (selectedNode is not null)
+                {
+                    allowSceneInspector = true;
+                }
+
+                if (allowSceneInspector && selectedNode is not null)
+                    DrawSceneNodeInspector(selectedNode);
+
                 ImGui.EndChild();
             }
 
@@ -240,6 +260,34 @@ public static partial class UnitTestingWorld
             ImGui.Spacing();
             DrawComponentInspectors(node, visited);
 
+            ImGui.PopID();
+        }
+
+        private static void DrawStandaloneInspectorTarget(object target)
+        {
+            if (target is null)
+                return;
+
+            XRAsset? assetContext = target as XRAsset;
+            using var inspectorContext = new InspectorAssetContextScope(assetContext?.SourceAsset);
+
+            string title = _inspectorStandaloneTitle ?? target.GetType().Name;
+            ImGui.TextUnformatted(title);
+            ImGui.SameLine();
+            if (ImGui.SmallButton("Clear##StandaloneInspectorClear"))
+            {
+                ClearInspectorStandaloneTarget();
+                return;
+            }
+
+            string typeLabel = target.GetType().FullName ?? target.GetType().Name;
+            ImGui.TextDisabled(typeLabel);
+
+            ImGui.Separator();
+
+            var visited = new HashSet<object>(ReferenceEqualityComparer.Instance);
+            ImGui.PushID("StandaloneInspector");
+            DrawInspectableObject(target, "StandaloneInspectorProperties", visited);
             ImGui.PopID();
         }
 

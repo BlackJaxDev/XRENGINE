@@ -1,4 +1,5 @@
 using System;
+using System.Collections;
 using System.Collections.Generic;
 using System.Globalization;
 using System.IO;
@@ -903,15 +904,30 @@ public sealed class ModelComponentEditor : IXRComponentEditor
         texture.Name = assetName;
         ConfigureImportedTextureDefaults(texture);
 
-        try
+        IEnumerable SaveRoutine()
         {
             assets.SaveGameAssetTo(texture, ImportedTextureFolderName);
-            texture.ClearDirty();
+            yield break;
+        }
+
+        void OnCompleted()
+            => Engine.EnqueueMainThreadTask(texture.ClearDirty);
+
+        void OnError(Exception ex)
+            => Debug.LogException(ex, $"Failed to import texture '{assetName}'.");
+
+        try
+        {
+            Engine.Jobs.Schedule(
+                SaveRoutine(),
+                progress: null,
+                completed: OnCompleted,
+                error: OnError);
             return true;
         }
         catch (Exception ex)
         {
-            Debug.LogException(ex, $"Failed to import texture '{assetName}'.");
+            Debug.LogException(ex, $"Failed to schedule texture import for '{assetName}'.");
             return false;
         }
     }

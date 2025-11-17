@@ -1,4 +1,5 @@
-﻿using System.Diagnostics.CodeAnalysis;
+﻿using System.ComponentModel;
+using System.Diagnostics.CodeAnalysis;
 using System.Numerics;
 using System.Reflection;
 using System.Runtime.Serialization;
@@ -28,6 +29,7 @@ namespace XREngine.Components
             set => SetField(ref _isActive, value);
         }
 
+        [Browsable(false)]
         public bool IsActiveInHierarchy => IsActive && SceneNode.IsActiveInHierarchy;
 
         //TODO: figure out how to disallow users from constructing xrcomponents
@@ -116,6 +118,7 @@ namespace XREngine.Components
         /// It will be set automatically when the component is added to a scene node, and never change.
         /// If you set any events on the scene node from a component, make sure to unregister them by overriding OnDestroying().
         /// </summary>
+        [Browsable(false)]
         public SceneNode SceneNode
         {
             get => _sceneNode;
@@ -126,6 +129,7 @@ namespace XREngine.Components
         /// The transform of the scene node this component is attached to.
         /// Will never be null, because components always have to exist attached to a scene node.
         /// </summary>
+        [Browsable(false)]
         public TransformBase Transform => SceneNode.Transform;
 
         public T? TransformAs<[DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicConstructors)] T>(bool forceConvert = false) where T : TransformBase, new()
@@ -134,11 +138,14 @@ namespace XREngine.Components
         /// <summary>
         /// Returns the transform of the scene node this component is attached to, or null if the scene node doesn't have a default transform.
         /// </summary>
+        [Browsable(false)]
         public Transform? DefaultTransform => SceneNode.GetTransformAs<Transform>(false);
+
         /// <summary>
         /// Returns the transform of the scene node this component is attached to as a default transform.
         /// </summary>
-        public Transform ForcedDefaultTransform => SceneNode.GetTransformAs<Transform>(true)!;
+        public Transform GetForcedDefaultTransform()
+            => SceneNode.GetTransformAs<Transform>(true)!;
 
         public bool TransformIs<T>(out T? transform) where T : TransformBase
         {
@@ -256,6 +263,7 @@ namespace XREngine.Components
         /// If false, ticks will remain registered when the component is stopped and must be manually unregistered.
         /// True by default.
         /// </summary>
+        [Browsable(false)]
         public bool UnregisterTicksOnStop
         {
             get => _clearTicksOnStop;

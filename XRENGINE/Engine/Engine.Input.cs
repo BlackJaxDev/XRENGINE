@@ -1,4 +1,5 @@
-﻿using XREngine.Input.Devices;
+﻿using System.Threading;
+using XREngine.Input.Devices;
 
 namespace XREngine
 {
@@ -9,6 +10,20 @@ namespace XREngine
         /// </summary>
         public static class Input
         {
+            private static int _uiInputCaptured;
+
+            /// <summary>
+            /// Indicates whether a UI layer is currently consuming input that should bypass gameplay systems.
+            /// </summary>
+            public static bool IsUIInputCaptured => Volatile.Read(ref _uiInputCaptured) == 1;
+
+            /// <summary>
+            /// Sets whether a UI layer is actively consuming input for the current frame.
+            /// </summary>
+            /// <param name="captured">True when UI input should take precedence over gameplay input.</param>
+            public static void SetUIInputCaptured(bool captured)
+                => Volatile.Write(ref _uiInputCaptured, captured ? 1 : 0);
+
             public static InputInterface? Get(ELocalPlayerIndex index)
                 => State.LocalPlayers[(int)index]?.Input;
 

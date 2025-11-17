@@ -1,5 +1,6 @@
 ﻿using Extensions;
 using ImageMagick;
+using System.Linq;
 using System.Numerics;
 using XREngine.Actors.Types;
 using XREngine.Components;
@@ -14,6 +15,7 @@ using XREngine.Input.Devices;
 using XREngine.Rendering;
 using XREngine.Rendering.Commands;
 using XREngine.Rendering.Info;
+using XREngine.Rendering.Picking;
 using XREngine.Rendering.Physics.Physx;
 using XREngine.Scene;
 using XREngine.Scene.Transforms;
@@ -150,6 +152,7 @@ public partial class EditorFlyingCameraPawnComponent : FlyingCameraPawnComponent
     private List<SceneNode>? _lastHits = null;
     private int _lastHitIndex = 0;
     private Triangle? _hitTriangle = null;
+    private Vector3? _meshHitPoint = null;
     private Segment _lastRaycastSegment = new(Vector3.Zero, Vector3.Zero);
     private Vector3? _depthHitNormalizedViewportPoint = null;
     private Vector3? _lastDepthHitNormalizedViewportPoint = null;
@@ -184,6 +187,8 @@ public partial class EditorFlyingCameraPawnComponent : FlyingCameraPawnComponent
 
         if (_hitTriangle is not null)
             Engine.Rendering.Debug.RenderTriangle(_hitTriangle.Value, ColorF4.Yellow, true);
+        if (_meshHitPoint is Vector3 meshHit)
+            Engine.Rendering.Debug.RenderPoint(meshHit, ColorF4.Yellow);
         
         if (RenderWorldDragPoint && (WorldDragPoint.HasValue || DepthHitNormalizedViewportPoint.HasValue) && Viewport is not null)
         {
@@ -304,11 +309,39 @@ public partial class EditorFlyingCameraPawnComponent : FlyingCameraPawnComponent
 
     private void OctreeRaycastCallback(SortedDictionary<float, List<(RenderInfo3D item, object? data)>> dictionary)
     {
+        UpdateMeshHitVisualization();
+
         if (!RenderRaycast)
             return;
 
         if (_lastOctreePickResults.Count > 0)
-            RenderRaycastResult(_lastOctreePickResults.FirstOrDefault());
+            RenderRaycastResult(_lastOctreePickResults.First());
+    }
+
+    private void UpdateMeshHitVisualization()
+    {
+        _hitTriangle = null;
+        _meshHitPoint = null;
+
+        if (_lastOctreePickResults.Count == 0)
+            return;
+
+        foreach ((RenderInfo3D _, object? data) in _lastOctreePickResults.First().Value)
+        {
+            switch (data)
+            {
+                case MeshPickResult meshHit:
+                    _hitTriangle = meshHit.WorldTriangle;
+                    _meshHitPoint = meshHit.HitPoint;
+                    return;
+                case Vector3 point:
+                    _meshHitPoint = point;
+                    return;
+                case Triangle triangle:
+                    _hitTriangle = triangle;
+                    return;
+            }
+        }
     }
 
     private static void RenderRaycastResult(KeyValuePair<float, List<(RenderInfo3D item, object? data)>> result)
@@ -316,15 +349,28 @@ public partial class EditorFlyingCameraPawnComponent : FlyingCameraPawnComponent
         if (result.Value is null || result.Value.Count == 0)
             return;
 
-        foreach ((RenderInfo3D info, object? o) in result.Value)
+        foreach ((RenderInfo3D info, object? data) in result.Value)
         {
-            if (info.Owner is not TransformBase tfm || o is not Vector3 bestPoint)
+            Vector3? point = data switch
+            {
+                Vector3 p => p,
+                MeshPickResult meshHit => meshHit.HitPoint,
+                _ => null
+            };
+
+            if (point is null)
                 continue;
-            
-            string? name = tfm.Name;
+
+            string? name = info.Owner switch
+            {
+                XRComponent component when component.SceneNode?.Name is string nodeName => nodeName,
+                TransformBase transform when transform.Name is not null => transform.Name,
+                _ => null
+            };
+
             if (name is not null)
-                Engine.Rendering.Debug.RenderText(bestPoint, name, ColorF4.Black);
-            Engine.Rendering.Debug.RenderPoint(bestPoint, ColorF4.Red);
+                Engine.Rendering.Debug.RenderText(point.Value, name, ColorF4.Black);
+            Engine.Rendering.Debug.RenderPoint(point.Value, ColorF4.Red);
         }
     }
 

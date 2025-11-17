@@ -119,6 +119,9 @@ namespace XREngine.Components
             if (Controller is not LocalPlayerController localPlayerController ||
                 localPlayerController.Input is not LocalInputInterface localInput)
                 return;
+
+            if (Engine.Input.IsUIInputCaptured)
+                return;
             
             localInput.TickStates(Engine.Delta);
         }

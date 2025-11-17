@@ -8,14 +8,22 @@ namespace XREngine.Data
     {
         public static byte[] DecompressFromString(uint? length, string byteStr)
         {
-            byte[] bytes = [];
-            if (!string.IsNullOrEmpty(byteStr))
+            if (string.IsNullOrEmpty(byteStr))
+                return [];
+
+            if ((byteStr.Length & 1) != 0)
+                throw new FormatException("Compressed byte string must contain an even number of characters.");
+
+            byte[] compressed;
+            try
             {
-                bytes = new byte[length ?? byteStr.Length / 2u];
-                for (int i = 0; i < length; i++)
-                    bytes[i] = byte.Parse(byteStr.Substring(i << 1, 2), System.Globalization.NumberStyles.HexNumber);
+                compressed = Convert.FromHexString(byteStr);
             }
-            return Decompress(bytes, false);
+            catch (FormatException ex)
+            {
+                throw new FormatException("Compressed byte string contains invalid hexadecimal characters.", ex);
+            }
+            return Decompress(compressed, false);
         }
 
         public static unsafe byte[] Compress(byte[] arr, bool longSize = false)
