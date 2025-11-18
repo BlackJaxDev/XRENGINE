@@ -39,6 +39,121 @@ XRENGINE composes behaviour through components that attach to `SceneNode`s. Each
 - Keep tick handlers lightweight and avoid per-frame allocations. If work is sporadic, unregister the tick until needed.
 - Treat `OnTransformRenderWorldMatrixChanged` (documented in [Transform Architecture](transforms.md)) as the preferred hook for responding to transform motion; it provides the final render matrix after interpolation.
 - Use `GetOrAddComponent` or `TryAddComponent` when building prefab graphs so that repeated initialisation remains idempotent.
+
+## Networking Helpers
+### `RestApiComponent`
+- Lives in `XRENGINE/Scene/Components/Networking/RestApiComponent.cs` and exposes an `HttpClient`-backed bridge for REST APIs.
+- Handles default headers, request queueing, and cancellation when a component or node is deactivated.
+- Emits `RequestStarted`, `ResponseReceived`, `RequestFailed`, and `DataUpdated` events on the main thread so UI or gameplay systems can react immediately.
+- Maintains a keyed JSON data store; set `RestApiRequest.ResponseDataKey` to cache structured responses for later queries via `TryGetData`.
+
+```csharp
+// Attach to a scene node.
+var rest = node.AddComponent<RestApiComponent>();
+rest.BaseUrl = "https://api.example.com/";
+rest.SetDefaultHeader("Authorization", $"Bearer {token}");
+rest.ResponseReceived += (_, response) => Debug.Out($"Fetched {response.Request.Resource}: {response.StatusCode}");
+
+var request = new RestApiRequest
+{
+	Resource = "v1/world-state",
+	Query = new Dictionary<string, string> { ["region"] = "us-east" },
+	ResponseDataKey = "world-state"
+};
+
+await rest.SendAsync(request, cancellationToken);
+if (rest.TryGetData("world-state", out JsonNode? json))
+{
+	string? status = json?["status"]?.GetValue<string>();
+	Debug.Out($"Current status: {status}");
+}
+```
+
+### `WebSocketClientComponent`
+- Located at `XRENGINE/Scene/Components/Networking/WebSocketClientComponent.cs`; maintains a resilient `ClientWebSocket` connection.
+- Supports handshake headers, auto-reconnect with configurable delay, and main-thread events for connection state, errors, and incoming messages.
+- Provide UTF-8 text or binary payloads using `SendTextAsync` / `SendBinaryAsync`.
+
+```csharp
+var socket = node.AddComponent<WebSocketClientComponent>();
+socket.Endpoint = "wss://example.com/realtime";
+socket.MessageReceived += (_, msg) => Debug.Out($"WS text: {msg.Text}");
+socket.ConnectionError += (_, err) => Debug.LogWarning($"WS error: {err.Message}");
+
+// Initiate the connection manually (auto-connect can also be enabled via property)
+await socket.ConnectAsync();
+await socket.SendTextAsync("{\"op\":\"subscribe\"}");
+```
+
+### `WebhookListenerComponent`
+- Located at `XRENGINE/Scene/Components/Networking/WebhookListenerComponent.cs`; wraps an `HttpListener` to ingest inbound webhook callbacks.
+- Emits events on the main thread, queues pending payloads for polling, and responds with configurable status/headers.
+- Remember that HTTP prefixes must be registered with `netsh http add urlacl ...` when binding to non-admin ports on Windows.
+
+```csharp
+var listener = node.AddComponent<WebhookListenerComponent>();
+listener.Prefix = "http://localhost:5055/webhooks/payments/";
+listener.WebhookReceived += (_, evt) =>
+{
+	var payload = evt.DeserializeJson<JsonNode>();
+	Debug.Out($"Webhook {evt.Method} {evt.Url}: {payload}");
+};
+
+listener.StartListening();
+```
+
+### `TcpClientComponent`
+- Located at `XRENGINE/Scene/Components/Networking/TcpClientComponent.cs`; keeps a resilient TCP connection alive with optional TLS negotiation.
+- Supports auto-reconnect, configurable timeouts, optional text dispatch, and main-thread events for connection, data, and errors.
+- Call `SendAsync` for arbitrary bytes or `SendStringAsync` for UTF-8 payloads; enable TLS by toggling `UseTls` and providing `TlsHostName` when required.
+
+```csharp
+var client = node.AddComponent<TcpClientComponent>();
+client.Host = "telemetry.internal";
+client.Port = 9000;
+client.UseTls = true;
+client.ConnectionTimeout = TimeSpan.FromSeconds(5);
+client.DataReceived += (_, data) => Debug.Out($"RX bytes: {data.Length}");
+client.TextReceived += (_, text) => Debug.Out($"RX text: {text}");
+
+await client.ConnectAsync();
+await client.SendStringAsync("ping\n");
+```
+
+### `UdpSocketComponent`
+- Located at `XRENGINE/Scene/Components/Networking/UdpSocketComponent.cs`; binds to a local port, listens for datagrams, and can broadcast to peers.
+- Offers optional multicast join, auto-rebind on failure, and helper events for raw payloads plus decoded text.
+- Use `SendAsync`/`SendStringAsync` for unicast traffic or override the host/port per call when broadcasting.
+
+```csharp
+var udp = node.AddComponent<UdpSocketComponent>();
+udp.LocalPort = 5005;
+udp.RemoteHost = "239.10.0.5";
+udp.RemotePort = 5005;
+udp.MulticastAddress = "239.10.0.5";
+udp.DatagramReceived += (_, packet) => Debug.Out($"RX from {packet.RemoteEndPoint}: {packet.Payload.Length} bytes");
+
+await udp.BindAsync();
+await udp.SendStringAsync("discover");
+```
+
+### `TcpServerComponent`
+- Located at `XRENGINE/Scene/Components/Networking/TcpServerComponent.cs`; accepts multiple clients and dispatches events per connection.
+- Exposes `ClientConnected`, `ClientDisconnected`, and data events on the main thread while providing `SendAsync`/`BroadcastAsync` helpers.
+- Configure `ListenAddress`, `ListenPort`, and `AutoStartOnActivate` for quick local test servers or in-game debugging consoles.
+
+```csharp
+var server = node.AddComponent<TcpServerComponent>();
+server.ListenPort = 7777;
+server.ClientTextReceived += (_, client, text) => Debug.Out($"[{client.Id}] {text.Trim()}");
+server.ClientConnected += (_, client) =>
+{
+	Debug.Out($"Client {client.RemoteEndPoint} connected");
+	_ = server.SendAsync(client.Id, Encoding.UTF8.GetBytes("hello\n"));
+};
+
+await server.StartAsync();
+```
 - When authoring editor tools, rely on the global `XRComponent.ComponentCreated` / `ComponentDestroyed` events instead of scanning the scene graph.
 
 ## Related Documentation

@@ -1,4 +1,5 @@
-﻿using System.Numerics;
+﻿using System.ComponentModel;
+using System.Numerics;
 using XREngine.Data.Colors;
 using XREngine.Data.Rendering;
 using XREngine.Rendering;
@@ -25,11 +26,14 @@ namespace XREngine.Components.Capture.Lights.Types
         /// <summary>
         /// This matrix is the location of the center of the light source. Used for rendering the light mesh.
         /// </summary>
+        [Browsable(false)]
         public Matrix4x4 MeshCenterAdjustMatrix
         {
             get => _meshCenterAdjustMatrix;
             protected set => SetField(ref _meshCenterAdjustMatrix, value);
         }
+
+        [Browsable(false)]
         public Matrix4x4 LightMeshMatrix => _lightMatrix;
 
         protected override void OnPropertyChanged<T>(string? propName, T prev, T field)

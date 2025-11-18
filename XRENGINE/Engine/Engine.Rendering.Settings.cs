@@ -89,6 +89,7 @@ namespace XREngine
                 private bool _allowBinaryProgramCaching = true;
                 private bool _calculateBlendshapesInComputeShader = false;
                 private bool _calculateSkinningInComputeShader = false;
+                private bool _calculateSkinnedBoundsInComputeShader = true;
                 private string _defaultFontFolder = "Roboto";
                 private string _defaultFontFileName = "Roboto-Medium.ttf";
                 private bool _renderTransformDebugInfo = false;
@@ -307,6 +308,15 @@ namespace XREngine
                 {
                     get => _calculateSkinningInComputeShader;
                     set => SetField(ref _calculateSkinningInComputeShader, value);
+                }
+                /// <summary>
+                /// If true, the engine will use a compute shader to evaluate skinned mesh bounds and BVH inputs.
+                /// Falls back to CPU calculations if the mesh layout is unsupported on the GPU.
+                /// </summary>
+                public bool CalculateSkinnedBoundsInComputeShader
+                {
+                    get => _calculateSkinnedBoundsInComputeShader;
+                    set => SetField(ref _calculateSkinnedBoundsInComputeShader, value);
                 }
                 /// <summary>
                 /// The name of the default font's folder within the engine's font directory.
