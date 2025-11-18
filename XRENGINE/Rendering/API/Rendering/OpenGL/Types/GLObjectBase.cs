@@ -90,6 +90,14 @@ namespace XREngine.Rendering.OpenGL
                     }
                     return;
                 }
+
+                if (!Engine.IsRenderThread)
+                {
+                    Debug.LogWarning("Attempted to generate OpenGL object from non-render thread. Enqueuing task to main thread, but this may break subsequent generation-dependent calls on the current thread.");
+                    Engine.EnqueueMainThreadTask(Generate);
+                    return;
+                }
+
                 //Debug.Out($"Generating OpenGL object {Type}");
                 PreGenerated();
                 _bindingId = CreateObject();

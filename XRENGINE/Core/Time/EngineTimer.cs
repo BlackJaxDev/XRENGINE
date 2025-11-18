@@ -207,14 +207,22 @@ namespace XREngine.Timers
         /// </summary>
         public void WaitToRender()
         {
-            //Wait for swapping to finish
-            _swapDone.Wait(-1);
+            // Wait for the collect-visible thread to finish swapping buffers.
+            while (!_swapDone.Wait(0))
+            {
+                Engine.ProcessMainThreadTasks();
+                Thread.Yield();
+            }
             _swapDone.Reset();
 
-            //Suspend this thread until a render is dispatched
-            while (!DispatchRender()) ;
+            // Suspend this thread until a render is dispatched, draining queued work between polls.
+            while (!DispatchRender())
+            {
+                Engine.ProcessMainThreadTasks();
+                Thread.Yield();
+            }
 
-            //Inform the update thread that the render is done
+            // Inform the update thread that the render is done
             _renderDone.Set();
         }
 

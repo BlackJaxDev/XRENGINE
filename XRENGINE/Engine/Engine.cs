@@ -404,6 +404,12 @@ namespace XREngine
         }
 
         private static void DequeueMainThreadTasks()
+            => ProcessPendingMainThreadWork();
+
+        internal static void ProcessMainThreadTasks()
+            => ProcessPendingMainThreadWork();
+
+        private static void ProcessPendingMainThreadWork()
         {
             while (_mainThreadTaskQueue.TryDequeue(out var task))
                 task.Invoke();
