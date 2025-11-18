@@ -140,18 +140,18 @@ float ReadShadowMap2D(in vec3 fragPosWS, in vec3 N, in float NoL, in mat4 lightM
     if (EnablePCSS)
     {
         // PCSSShadow returns fraction lit
-        shadowFactor = 1.0f - PCSSShadow(fragCoord, bias);
+        shadowFactor = PCSSShadow(fragCoord, bias);
     }
-    //else if (ShadowSamples > 1)
-    //{
-    //    // PCFShadow returns fraction lit
-    //    shadowFactor = PCFShadow(fragCoord, bias, ShadowSamples);
-    //}
-    //else
-    //{
-    //    float depthSample = texture(ShadowMap, fragCoord.xy).r;
-    //    shadowFactor = (fragCoord.z - bias > depthSample) ? 0.0f : 1.0f;
-    //}
+    else if (ShadowSamples > 1)
+    {
+        // PCFShadow returns fraction lit
+        shadowFactor = PCFShadow(fragCoord, bias, ShadowSamples);
+    }
+    else
+    {
+        float depthSample = texture(ShadowMap, fragCoord.xy).r;
+        shadowFactor = (fragCoord.z - bias > depthSample) ? 0.0f : 1.0f;
+    }
     return shadowFactor;
 }
 

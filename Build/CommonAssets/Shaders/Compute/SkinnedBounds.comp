@@ -1,0 +1,76 @@
+#version 450
+
+layout(local_size_x = 256) in;
+
+layout(std430, binding = 0) buffer BoneMatricesBuffer
+{
+    mat4 BoneMatrices[];
+};
+
+layout(std430, binding = 1) buffer BoneInvBindMatricesBuffer
+{
+    mat4 BoneInvBindMatrices[];
+};
+
+layout(std430, binding = 2) buffer BoneIndicesBuffer
+{
+    ivec4 BoneIndices[];
+};
+
+layout(std430, binding = 3) buffer BoneWeightsBuffer
+{
+    vec4 BoneWeights[];
+};
+
+layout(std430, binding = 4) buffer PositionBuffer
+{
+    vec4 Positions[];
+};
+
+layout(std430, binding = 5) buffer OutputPositionBuffer
+{
+    vec4 OutputPositions[];
+};
+
+uniform uint vertexCount;
+uniform int hasSkinning;
+uniform mat4 fallbackMatrix;
+
+void main()
+{
+    uint index = gl_GlobalInvocationID.x;
+    if (index >= vertexCount)
+        return;
+
+    vec4 basePosition = Positions[index];
+    vec4 skinnedPosition = vec4(0.0);
+
+    if (hasSkinning != 0)
+    {
+        ivec4 indices = BoneIndices[index];
+        vec4 weights = BoneWeights[index];
+        float accumulatedWeight = 0.0;
+
+        for (int i = 0; i < 4; ++i)
+        {
+            int boneIndex = indices[i];
+            float weight = weights[i];
+            accumulatedWeight += weight;
+
+            if (boneIndex <= 0 || weight <= 0.0)
+                continue;
+
+            mat4 boneMatrix = BoneInvBindMatrices[boneIndex] * BoneMatrices[boneIndex];
+            skinnedPosition += (boneMatrix * basePosition) * weight;
+        }
+
+        if (accumulatedWeight <= 0.00001)
+            skinnedPosition = fallbackMatrix * basePosition;
+    }
+    else
+    {
+        skinnedPosition = fallbackMatrix * basePosition;
+    }
+
+    OutputPositions[index] = skinnedPosition;
+}
