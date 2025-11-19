@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Numerics;
 using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
+using System.Threading;
 using XREngine.Components.Scene.Mesh;
 using XREngine.Data.Geometry;
 using XREngine.Data.Rendering;
@@ -30,6 +31,41 @@ internal sealed class SkinnedMeshBoundsCalculator : IDisposable
     }
 
     public bool TryCompute(RenderableMesh mesh, out Result result)
+    {
+        if (Engine.IsRenderThread)
+            return TryComputeOnRenderThread(mesh, out result);
+
+        using ManualResetEventSlim waitHandle = new(false);
+        bool success = false;
+        Result localResult = default;
+        Exception? captured = null;
+
+        Engine.EnqueueMainThreadTask(() =>
+        {
+            try
+            {
+                success = TryComputeOnRenderThread(mesh, out localResult);
+            }
+            catch (Exception ex)
+            {
+                captured = ex;
+            }
+            finally
+            {
+                waitHandle.Set();
+            }
+        });
+
+        waitHandle.Wait();
+
+        if (captured is not null)
+            throw captured;
+
+        result = localResult;
+        return success;
+    }
+
+    private bool TryComputeOnRenderThread(RenderableMesh mesh, out Result result)
     {
         result = default;
 
