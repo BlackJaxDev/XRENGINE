@@ -358,18 +358,18 @@ MigrationBackup/
 # Fody - auto-generated XML schema
 FodyWeavers.xsd
 Build/CommonAssets/Fonts/*/*.png
-Build/Editor/Debug/
-Build/Engine/Debug/
-Build/Editor/Release/
-Build/Engine/Release/
-Build/Submodules/
-!Build/Submodules/
-!Build/Submodules/**
+Build/Editor/*
+Build/Engine/*
 XREngine.Editor/Build/Editor/Debug/
 XRENGINE/Build/Engine/Debug/
 XREngine.Editor/ShaderCache/
 XRENGINE/Rendering/GI/build/
-Build/Submodules/OpenVR.NET/
 Build/Tools/
+Build/Dependencies/CoACD/
 ShaderCache/
 XREngine.Editor/imgui.ini
+
+!Build/Submodules/
+!Build/Submodules/**
+XRENGINE/Build/Engine/
+MagicPhysXPkg/

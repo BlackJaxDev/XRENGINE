@@ -111,9 +111,49 @@ namespace XREngine.Rendering.Vulkan
             throw new NotImplementedException();
         }
         protected override AbstractRenderAPIObject CreateAPIRenderObject(GenericRenderObject renderObject)
-        {
-            throw new NotImplementedException();
-        }
+            => renderObject switch
+            {
+                //Meshes
+                XRMaterial data => new VkMaterial(this, data),
+                XRMeshRenderer.BaseVersion data => new VkMeshRenderer(this, data),
+                XRRenderProgramPipeline data => new VkRenderProgramPipeline(this, data),
+                XRRenderProgram data => new VkRenderProgram(this, data),
+                XRDataBuffer data => new VkDataBuffer(this, data),
+                XRSampler s => new VkSampler(this, s),
+                XRShader s => new VkShader(this, s),
+
+                //FBOs
+                XRRenderBuffer data => new VkRenderBuffer(this, data),
+                XRFrameBuffer data => new VkFrameBuffer(this, data),
+
+                //Texture 1D
+                //XRTexture1D data => new VkTexture1D(this, data),
+                //XRTexture1DArray data => new VkTexture1DArray(this, data),
+                XRTextureViewBase data => new VkTextureView(this, data),
+                //XRTexture1DArrayView data => new VkTextureView(this, data),
+
+                //Texture 2D
+                XRTexture2D data => new VkTexture2D(this, data),
+                XRTexture2DArray data => new VkTexture2DArray(this, data),
+                //XRTexture2DView data => new VkTextureView(this, data),
+                //XRTexture2DArrayView data => new VkTextureView(this, data),
+
+                //Texture 3D
+                XRTexture3D data => new VkTexture3D(this, data),
+                //XRTexture3DArray data => new VkTexture3DArray(this, data),
+                //XRTexture3DView data => new VkTextureView(this, data),
+
+                //Texture Cube
+                XRTextureCube data => new VkTextureCube(this, data),
+                //XRTextureCubeArray data => new VkTextureCubeArray(this, data),
+                //XRTextureCubeView data => new VkTextureView(this, data),
+
+                //Feedback
+                XRRenderQuery data => new VkRenderQuery(this, data),
+                XRTransformFeedback data => new VkTransformFeedback(this, data),
+
+                _ => throw new InvalidOperationException($"Render object type {renderObject.GetType()} is not supported.")
+            };
         public override void CropRenderArea(BoundingRectangle region)
         {
             _state.SetScissor(region);
@@ -131,8 +171,10 @@ namespace XREngine.Rendering.Vulkan
 
         protected override void WindowRenderCallback(double delta)
         {
+            // 1. Wait for the previous frame to finish
             Api!.WaitForFences(device, 1, ref inFlightFences![currentFrame], true, ulong.MaxValue);
 
+            // 2. Acquire the next image from the swap chain
             uint imageIndex = 0;
             var result = khrSwapChain!.AcquireNextImage(device, swapChain, ulong.MaxValue, imageAvailableSemaphores![currentFrame], default, ref imageIndex);
 
@@ -144,14 +186,19 @@ namespace XREngine.Rendering.Vulkan
             else if (result != Result.Success && result != Result.SuboptimalKhr)
                 throw new Exception("Failed to acquire swap chain image.");
 
-            //SubmitUniformBuffers(imageIndex);
-            //TODO: submit all engine-queued render commands
-
+            // 3. Check if a previous frame is using this image (i.e. there is its fence to wait on)
             if (imagesInFlight![imageIndex].Handle != default)
                 Api!.WaitForFences(device, 1, ref imagesInFlight[imageIndex], true, ulong.MaxValue);
-
+            
+            // Mark the image as now being in use by this frame
             imagesInFlight[imageIndex] = inFlightFences[currentFrame];
 
+            // 4. Record the command buffer
+            // TODO: This currently records a default pass (Clear + ImGui). 
+            // We need to integrate the engine's render queue here or ensure commands were recorded during the frame.
+            EnsureCommandBufferRecorded(imageIndex);
+
+            // 5. Submit the command buffer
             SubmitInfo submitInfo = new()
             {
                 SType = StructureType.SubmitInfo,
@@ -159,9 +206,6 @@ namespace XREngine.Rendering.Vulkan
 
             var waitSemaphores = stackalloc[] { imageAvailableSemaphores[currentFrame] };
             var waitStages = stackalloc[] { PipelineStageFlags.ColorAttachmentOutputBit };
-
-            EnsureCommandBufferRecorded(imageIndex);
-
             var buffer = _commandBuffers![imageIndex];
 
             submitInfo = submitInfo with
@@ -169,7 +213,6 @@ namespace XREngine.Rendering.Vulkan
                 WaitSemaphoreCount = 1,
                 PWaitSemaphores = waitSemaphores,
                 PWaitDstStageMask = waitStages,
-
                 CommandBufferCount = 1,
                 PCommandBuffers = &buffer
             };
@@ -186,6 +229,7 @@ namespace XREngine.Rendering.Vulkan
             if (Api!.QueueSubmit(graphicsQueue, 1, ref submitInfo, inFlightFences[currentFrame]) != Result.Success)
                 throw new Exception("Failed to submit draw command buffer.");
 
+            // 6. Present the image
             var swapChains = stackalloc[] { swapChain };
             PresentInfoKHR presentInfo = new()
             {

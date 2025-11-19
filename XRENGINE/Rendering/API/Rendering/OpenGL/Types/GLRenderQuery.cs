@@ -57,10 +57,7 @@ namespace XREngine.Rendering.OpenGL
         Always,
         Never,
     }
-    public class XRSampler : GenericRenderObject
-    {
 
-    }
     public class GLSampler(OpenGLRenderer renderer, XRSampler sampler) : GLObject<XRSampler>(renderer, sampler)
     {
         protected override void LinkData()

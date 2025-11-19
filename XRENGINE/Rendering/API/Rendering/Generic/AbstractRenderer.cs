@@ -563,6 +563,11 @@ namespace XREngine.Rendering
         /// Returns whether the current API supports the Count variant for MultiDrawElementsIndirect.
         /// </summary>
         public abstract bool SupportsIndirectCountDraw();
+
+        /// <summary>
+        /// Blocks the CPU until all GPU commands have completed.
+        /// </summary>
+        public abstract void WaitForGpu();
     }
     [Flags]
     public enum EMemoryBarrierMask : int

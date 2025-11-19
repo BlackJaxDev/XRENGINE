@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Numerics;
 using System.Runtime.CompilerServices;
+using System.Runtime.InteropServices;
 using XREngine.Components.Scene.Mesh;
 using XREngine.Data.Geometry;
 using XREngine.Data.Rendering;
@@ -18,8 +19,8 @@ internal sealed class SkinnedMeshBoundsCalculator : IDisposable
     public static SkinnedMeshBoundsCalculator Instance => _instance.Value;
 
     private readonly object _syncRoot = new();
-    private readonly ConditionalWeakTable<XRMesh, MeshResources> _resourceCache = new();
-    private readonly List<MeshResources> _resourceList = new();
+    private readonly ConditionalWeakTable<XRMesh, MeshResources> _resourceCache = [];
+    private readonly List<MeshResources> _resourceList = [];
 
     private XRShader? _shader;
     private XRRenderProgram? _program;
@@ -61,6 +62,7 @@ internal sealed class SkinnedMeshBoundsCalculator : IDisposable
 
             uint vertexCount = (uint)xrMesh.VertexCount;
             resources.EnsureCapacity(vertexCount);
+            resources.ResetBoundsBuffer();
             renderer.BoneMatricesBuffer.SetBlockIndex(0);
             renderer.BoneInvBindMatricesBuffer.SetBlockIndex(1);
 
@@ -72,10 +74,14 @@ internal sealed class SkinnedMeshBoundsCalculator : IDisposable
             uint groupsX = Math.Max(1u, (vertexCount + groupSize - 1u) / groupSize);
             _program.DispatchCompute(groupsX, 1u, 1u, EMemoryBarrierMask.ShaderStorage);
 
+            AbstractRenderer.Current?.MemoryBarrier(EMemoryBarrierMask.ClientMappedBuffer);
+            AbstractRenderer.Current?.WaitForGpu();
+
             if (!resources.TryReadPositions(xrMesh.VertexCount, out Vector3[] worldPositions))
                 return false;
 
-            var bounds = CalculateBounds(worldPositions);
+            if (!resources.TryReadBounds(out var bounds))
+                bounds = CalculateBounds(worldPositions);
             result = new Result(worldPositions, bounds);
             return true;
         }
@@ -159,6 +165,10 @@ internal sealed class SkinnedMeshBoundsCalculator : IDisposable
         private readonly XRDataBuffer? _boneIndices;
         private readonly XRDataBuffer? _boneWeights;
         private readonly XRDataBuffer? _outputPositions;
+        private readonly XRDataBuffer? _bounds;
+
+        private static readonly UInt4 PositiveInfinityPacked = UInt4.FromVector(new Vector4(float.PositiveInfinity, float.PositiveInfinity, float.PositiveInfinity, 1f));
+        private static readonly UInt4 NegativeInfinityPacked = UInt4.FromVector(new Vector4(float.NegativeInfinity, float.NegativeInfinity, float.NegativeInfinity, -1f));
 
         public bool IsValid { get; }
 
@@ -177,8 +187,14 @@ internal sealed class SkinnedMeshBoundsCalculator : IDisposable
                 AttributeName = $"{meshName}_SkinnedBoundsOutput",
                 ShouldMap = true
             };
+            _bounds = new XRDataBuffer($"{meshName}_SkinnedBoundsReduction", EBufferTarget.ShaderStorageBuffer, 2, EComponentType.UInt, 4, false, false)
+            {
+                AttributeName = $"{meshName}_SkinnedBoundsReduction",
+                ShouldMap = true,
+                Resizable = false
+            };
 
-            if (_positions is null || _boneIndices is null || _boneWeights is null || _outputPositions is null)
+            if (_positions is null || _boneIndices is null || _boneWeights is null || _outputPositions is null || _bounds is null)
                 return;
 
             _boneIndices.AttributeName = $"{meshName}_SkinnedBoundsIndices";
@@ -188,6 +204,7 @@ internal sealed class SkinnedMeshBoundsCalculator : IDisposable
             _boneWeights.SetBlockIndex(3);
 
             _outputPositions.SetBlockIndex(5);
+            _bounds.SetBlockIndex(6);
 
             IsValid = true;
         }
@@ -203,21 +220,54 @@ internal sealed class SkinnedMeshBoundsCalculator : IDisposable
 
         public bool TryReadPositions(int vertexCount, out Vector3[] positions)
         {
-            positions = Array.Empty<Vector3>();
+            positions = new Vector3[vertexCount];
             if (_outputPositions is null)
                 return false;
 
-            _outputPositions.GetDataRaw<Vector4>(out var raw, remap: false);
-            if (raw.Length < vertexCount)
+            if (_outputPositions.ClientSideSource is null)
                 return false;
 
-            positions = new Vector3[vertexCount];
-            for (int i = 0; i < vertexCount; i++)
+            unsafe
             {
-                Vector4 v = raw[i];
-                positions[i] = new Vector3(v.X, v.Y, v.Z);
+                Vector4* ptr = (Vector4*)_outputPositions.Address.Pointer;
+                for (int i = 0; i < vertexCount; i++)
+                {
+                    Vector4 v = ptr[i];
+                    positions[i] = new Vector3(v.X, v.Y, v.Z);
+                }
             }
 
+            return true;
+        }
+
+        public void ResetBoundsBuffer()
+        {
+            if (_bounds is null)
+                return;
+
+            _bounds.SetDataRawAtIndex(0u, PositiveInfinityPacked);
+            _bounds.SetDataRawAtIndex(1u, NegativeInfinityPacked);
+            _bounds.PushSubData();
+        }
+
+        public bool TryReadBounds(out AABB bounds)
+        {
+            bounds = default;
+            if (_bounds is null)
+                return false;
+
+            UInt4 minBits = _bounds.GetDataRawAtIndex<UInt4>(0);
+            UInt4 maxBits = _bounds.GetDataRawAtIndex<UInt4>(1);
+
+            Vector3 min = minBits.ToVector3();
+            if (float.IsInfinity(min.X) || float.IsInfinity(min.Y) || float.IsInfinity(min.Z))
+                return false;
+
+            Vector3 max = maxBits.ToVector3();
+            if (float.IsInfinity(max.X) || float.IsInfinity(max.Y) || float.IsInfinity(max.Z))
+                return false;
+
+            bounds = new AABB(min, max);
             return true;
         }
 
@@ -227,6 +277,7 @@ internal sealed class SkinnedMeshBoundsCalculator : IDisposable
             _boneIndices?.Destroy();
             _boneWeights?.Destroy();
             _outputPositions?.Destroy();
+            _bounds?.Destroy();
         }
 
         private static XRDataBuffer? CloneSourceBuffer(XRMesh mesh, string key, string meshName, uint bindingIndex)
@@ -238,6 +289,30 @@ internal sealed class SkinnedMeshBoundsCalculator : IDisposable
             clone.AttributeName = $"{meshName}_{key}_SkinnedBounds";
             clone.SetBlockIndex(bindingIndex);
             return clone;
+        }
+
+        [StructLayout(LayoutKind.Sequential)]
+        private struct UInt4
+        {
+            public uint X;
+            public uint Y;
+            public uint Z;
+            public uint W;
+
+            public static UInt4 FromVector(Vector4 value)
+                => new()
+                {
+                    X = BitConverter.SingleToUInt32Bits(value.X),
+                    Y = BitConverter.SingleToUInt32Bits(value.Y),
+                    Z = BitConverter.SingleToUInt32Bits(value.Z),
+                    W = BitConverter.SingleToUInt32Bits(value.W)
+                };
+
+            public Vector3 ToVector3()
+                => new(
+                    BitConverter.UInt32BitsToSingle(X),
+                    BitConverter.UInt32BitsToSingle(Y),
+                    BitConverter.UInt32BitsToSingle(Z));
         }
     }
 }

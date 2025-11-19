@@ -642,6 +642,7 @@ namespace XREngine
 
         private static T? Deserialize<[DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicMethods)] T>(string filePath) where T : XRAsset, new()
         {
+            T? file = default;
 #if !DEBUG
             try
             {
@@ -649,7 +650,6 @@ namespace XREngine
             //Debug.Out($"Loading asset from '{filePath}'...");
             using var t = Engine.Profiler.Start($"AssetManager.Deserialize {filePath}");
             string ext = Path.GetExtension(filePath)[1..].ToLowerInvariant();
-            T? file;
             if (ext == AssetExtension)
                 file = Deserializer.Deserialize<T>(File.ReadAllText(filePath));
             else
@@ -667,6 +667,7 @@ namespace XREngine
 
         private static async Task<T?> DeserializeAsync<[DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicMethods)] T>(string filePath) where T : XRAsset, new()
         {
+            T? file = default;
 #if !DEBUG
             try
             {
@@ -674,7 +675,6 @@ namespace XREngine
             //Debug.Out($"Loading asset from '{filePath}'...");
             using var t = Engine.Profiler.Start($"AssetManager.DeserializeAsync {filePath}");
             string ext = Path.GetExtension(filePath)[1..].ToLowerInvariant();
-            T? file;
             if (ext == AssetExtension)
                 file = await Task.Run(async () => Deserializer.Deserialize<T>(await File.ReadAllTextAsync(filePath)));
             else

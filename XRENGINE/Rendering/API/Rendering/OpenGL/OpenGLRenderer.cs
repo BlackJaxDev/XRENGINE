@@ -165,6 +165,11 @@ namespace XREngine.Rendering.OpenGL
             Api.MemoryBarrier(ToGLMask(mask));
         }
 
+        public override void WaitForGpu()
+        {
+            Api.Finish();
+        }
+
         public override void ColorMask(bool red, bool green, bool blue, bool alpha)
         {
             Api.ColorMask(red, green, blue, alpha);
