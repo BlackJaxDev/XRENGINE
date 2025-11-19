@@ -3,6 +3,8 @@ using System.Collections.Generic;
 using System.Diagnostics.CodeAnalysis;
 using System.Linq;
 using System.Numerics;
+using System.Threading;
+using System.Threading.Tasks;
 using XREngine.Data;
 using XREngine.Data.Colors;
 using XREngine.Data.Core;
@@ -34,6 +36,8 @@ namespace XREngine.Components.Scene.Mesh
         private Vector3[]? _skinnedVertexPositions;
         private int _skinnedVertexCount;
         private BVH<Triangle>? _skinnedBvh;
+        private Task<SkinnedMeshBvhScheduler.Result>? _skinnedBvhTask;
+        private int _skinnedBvhVersion;
         private AABB _bindPoseBounds;
 
         public XRMeshRenderer? CurrentLODRenderer => CurrentLOD?.Value?.Renderer;
@@ -243,6 +247,7 @@ namespace XREngine.Components.Scene.Mesh
             _skinnedBoundsDirty = true;
             _skinnedBvhDirty = true;
             _hasSkinnedBounds = false;
+            Interlocked.Increment(ref _skinnedBvhVersion);
         }
 
         private bool EnsureSkinnedBounds()
@@ -250,86 +255,119 @@ namespace XREngine.Components.Scene.Mesh
             if (!IsSkinned)
                 return false;
 
+            SkinnedMeshBoundsCalculator.Result gpuResult = default;
+            bool useGpu;
+
             lock (_skinnedDataLock)
             {
                 if (!_skinnedBoundsDirty && _hasSkinnedBounds)
                     return true;
 
-                if (Engine.Rendering.Settings.CalculateSkinnedBoundsInComputeShader &&
-                    TryComputeSkinnedBoundsOnGpu())
-                    return true;
+                useGpu = Engine.Rendering.Settings.CalculateSkinnedBoundsInComputeShader;
 
-                var mesh = CurrentLODRenderer?.Mesh;
-                var vertices = mesh?.Vertices;
-                if (mesh is null || vertices is null || vertices.Length == 0)
+                if (!useGpu)
+                    return TryComputeSkinnedBoundsOnCpuLocked();
+            }
+
+            if (useGpu && TryComputeSkinnedBoundsOnGpu(out gpuResult))
+            {
+                lock (_skinnedDataLock)
                 {
-                    _hasSkinnedBounds = false;
-                    return false;
+                    if (!_skinnedBoundsDirty && _hasSkinnedBounds)
+                        return true;
+
+                    return ApplySkinnedBoundsResult(gpuResult, markBvhDirty: true);
                 }
+            }
 
-                _currentSkinMatrices.Clear();
-                foreach (var (bone, invBind) in mesh.UtilizedBones)
-                {
-                    if (bone is null)
-                        continue;
-                    _currentSkinMatrices[bone] = invBind * bone.RenderMatrix;
-                }
-
-                _skinnedVertexPositions ??= new Vector3[vertices.Length];
-                if (_skinnedVertexPositions.Length < vertices.Length)
-                    Array.Resize(ref _skinnedVertexPositions, vertices.Length);
-                _skinnedVertexCount = vertices.Length;
-
-                bool initialized = false;
-                Vector3 min = Vector3.Zero;
-                Vector3 max = Vector3.Zero;
-                Matrix4x4 fallbackMatrix = Component.Transform.RenderMatrix;
-
-                for (int i = 0; i < vertices.Length; i++)
-                {
-                    Vector3 worldPos = ComputeSkinnedPosition(vertices[i], fallbackMatrix);
-                    _skinnedVertexPositions[i] = worldPos;
-
-                    if (!initialized)
-                    {
-                        min = max = worldPos;
-                        initialized = true;
-                    }
-                    else
-                    {
-                        min = Vector3.Min(min, worldPos);
-                        max = Vector3.Max(max, worldPos);
-                    }
-                }
-
-                if (!initialized)
-                {
-                    _hasSkinnedBounds = false;
-                    return false;
-                }
-
-                _skinnedWorldBounds = new AABB(min, max);
-                _skinnedBoundsDirty = false;
-                _hasSkinnedBounds = true;
-                _skinnedBvhDirty = true;
-
-                RenderInfo.LocalCullingVolume = _skinnedWorldBounds;
-                RenderInfo.CullingOffsetMatrix = Matrix4x4.Identity;
-                return true;
+            lock (_skinnedDataLock)
+            {
+                return TryComputeSkinnedBoundsOnCpuLocked();
             }
         }
 
-        private bool TryComputeSkinnedBoundsOnGpu()
+        private bool TryComputeSkinnedBoundsOnGpu(out SkinnedMeshBoundsCalculator.Result result)
         {
-            if (!SkinnedMeshBoundsCalculator.Instance.TryCompute(this, out var result))
+            if (!SkinnedMeshBoundsCalculator.Instance.TryCompute(this, out result))
                 return false;
 
-            _skinnedVertexPositions = result.Positions;
-            _skinnedVertexCount = _skinnedVertexPositions.Length;
+            return true;
+        }
+
+        private bool ApplySkinnedBoundsResult(SkinnedMeshBoundsCalculator.Result result, bool markBvhDirty)
+        {
+            var positions = result.Positions ?? Array.Empty<Vector3>();
+            _skinnedVertexPositions = positions;
+            _skinnedVertexCount = positions.Length;
             if (_skinnedVertexCount == 0)
+            {
+                _hasSkinnedBounds = false;
                 return false;
+            }
 
             _skinnedWorldBounds = result.Bounds;
+            _skinnedBoundsDirty = false;
+            _hasSkinnedBounds = true;
+            if (markBvhDirty)
+                _skinnedBvhDirty = true;
+
+            RenderInfo.LocalCullingVolume = _skinnedWorldBounds;
+            RenderInfo.CullingOffsetMatrix = Matrix4x4.Identity;
+            return true;
+        }
+
+        private bool TryComputeSkinnedBoundsOnCpuLocked()
+        {
+            var mesh = CurrentLODRenderer?.Mesh;
+            var vertices = mesh?.Vertices;
+            if (mesh is null || vertices is null || vertices.Length == 0)
+            {
+                _hasSkinnedBounds = false;
+                return false;
+            }
+
+            _currentSkinMatrices.Clear();
+            foreach (var (bone, invBind) in mesh.UtilizedBones)
+            {
+                if (bone is null)
+                    continue;
+                _currentSkinMatrices[bone] = invBind * bone.RenderMatrix;
+            }
+
+            _skinnedVertexPositions ??= new Vector3[vertices.Length];
+            if (_skinnedVertexPositions.Length < vertices.Length)
+                Array.Resize(ref _skinnedVertexPositions, vertices.Length);
+            _skinnedVertexCount = vertices.Length;
+
+            bool initialized = false;
+            Vector3 min = Vector3.Zero;
+            Vector3 max = Vector3.Zero;
+            Matrix4x4 fallbackMatrix = Component.Transform.RenderMatrix;
+
+            for (int i = 0; i < vertices.Length; i++)
+            {
+                Vector3 worldPos = ComputeSkinnedPosition(vertices[i], fallbackMatrix);
+                _skinnedVertexPositions[i] = worldPos;
+
+                if (!initialized)
+                {
+                    min = max = worldPos;
+                    initialized = true;
+                }
+                else
+                {
+                    min = Vector3.Min(min, worldPos);
+                    max = Vector3.Max(max, worldPos);
+                }
+            }
+
+            if (!initialized)
+            {
+                _hasSkinnedBounds = false;
+                return false;
+            }
+
+            _skinnedWorldBounds = new AABB(min, max);
             _skinnedBoundsDirty = false;
             _hasSkinnedBounds = true;
             _skinnedBvhDirty = true;
@@ -367,33 +405,84 @@ namespace XREngine.Components.Scene.Mesh
                 if (!_skinnedBvhDirty && _skinnedBvh is not null)
                     return _skinnedBvh;
 
-                var mesh = CurrentLODRenderer?.Mesh;
-                if (mesh?.Triangles is null || _skinnedVertexPositions is null)
-                {
-                    _skinnedBvh = null;
-                    _skinnedBvhDirty = false;
-                    return null;
-                }
+                if (!Engine.Rendering.Settings.CalculateSkinnedBoundsInComputeShader)
+                    return BuildSkinnedBvhImmediate();
 
-                var worldTriangles = new List<Triangle>(mesh.Triangles.Count);
-                foreach (var tri in mesh.Triangles)
-                {
-                    if (tri.Point0 >= _skinnedVertexCount ||
-                        tri.Point1 >= _skinnedVertexCount ||
-                        tri.Point2 >= _skinnedVertexCount)
-                        continue;
+                if (TryFinalizeSkinnedBvhJob(out var readyTree))
+                    return readyTree;
 
-                    worldTriangles.Add(new Triangle(
-                        _skinnedVertexPositions[tri.Point0],
-                        _skinnedVertexPositions[tri.Point1],
-                        _skinnedVertexPositions[tri.Point2]));
-                }
+                ScheduleSkinnedBvhJobIfNeeded();
+                return null;
+            }
+        }
 
-                _skinnedBvh = worldTriangles.Count > 0
-                    ? new BVH<Triangle>(new TriangleAdapter(), worldTriangles)
-                    : null;
+        private BVH<Triangle>? BuildSkinnedBvhImmediate()
+        {
+            var mesh = CurrentLODRenderer?.Mesh;
+            if (mesh?.Triangles is null || _skinnedVertexPositions is null)
+            {
+                _skinnedBvh = null;
                 _skinnedBvhDirty = false;
-                return _skinnedBvh;
+                return null;
+            }
+
+            var worldTriangles = new List<Triangle>(mesh.Triangles.Count);
+            foreach (var tri in mesh.Triangles)
+            {
+                if (tri.Point0 >= _skinnedVertexCount ||
+                    tri.Point1 >= _skinnedVertexCount ||
+                    tri.Point2 >= _skinnedVertexCount)
+                    continue;
+
+                worldTriangles.Add(new Triangle(
+                    _skinnedVertexPositions[tri.Point0],
+                    _skinnedVertexPositions[tri.Point1],
+                    _skinnedVertexPositions[tri.Point2]));
+            }
+
+            _skinnedBvh = worldTriangles.Count > 0
+                ? new BVH<Triangle>(new TriangleAdapter(), worldTriangles)
+                : null;
+            _skinnedBvhDirty = false;
+            return _skinnedBvh;
+        }
+
+        private void ScheduleSkinnedBvhJobIfNeeded()
+        {
+            if (_skinnedBvhTask is not null)
+                return;
+
+            _skinnedBvhTask = SkinnedMeshBvhScheduler.Instance.Schedule(this, _skinnedBvhVersion);
+        }
+
+        private bool TryFinalizeSkinnedBvhJob(out BVH<Triangle>? tree)
+        {
+            tree = null;
+            if (_skinnedBvhTask is null || !_skinnedBvhTask.IsCompleted)
+                return false;
+
+            try
+            {
+                var result = _skinnedBvhTask.GetAwaiter().GetResult();
+                if (result.Version != _skinnedBvhVersion)
+                    return false;
+
+                ApplySkinnedBoundsResult(result.Bounds, markBvhDirty: false);
+                _skinnedBvh = result.Tree;
+                _skinnedBvhDirty = false;
+                tree = _skinnedBvh;
+                return true;
+            }
+            catch (Exception ex)
+            {
+                Debug.LogException(ex, "Skinned BVH compute path failed.");
+                _skinnedBvh = null;
+                _skinnedBvhDirty = false;
+                return true;
+            }
+            finally
+            {
+                _skinnedBvhTask = null;
             }
         }
 
