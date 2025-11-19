@@ -1,4 +1,5 @@
-﻿using System.Collections.Concurrent;
+﻿using System;
+using System.Collections.Concurrent;
 using XREngine.Data.Geometry;
 using XREngine.Data.Rendering;
 
@@ -199,8 +200,16 @@ namespace XREngine.Data.Trees
             Action<SortedDictionary<float, List<(T item, object? data)>>> finishedCallback)
             => RaycastCommands.Enqueue((segment, items, directTest, finishedCallback));
 
-        //public void Raycast(Segment segment, SortedDictionary<float, List<(ITreeItem item, object? data)>> items, Func<ITreeItem, Segment, (float? distance, object? data)> directTest)
-        //    => _head.Raycast(segment, items, directTest);
+        public void Raycast(
+            Segment segment,
+            SortedDictionary<float, List<(T item, object? data)>> items,
+            Func<T, Segment, (float? distance, object? data)> directTest)
+        {
+            if (items is null)
+                throw new ArgumentNullException(nameof(items));
+
+            _head.Raycast(segment, items, directTest);
+        }
 
         public void DebugRender(IVolume? cullingVolume, DelRenderAABB render, bool onlyContainingItems = false)
             => _head.DebugRender(true, onlyContainingItems, cullingVolume, render);

@@ -526,7 +526,7 @@ namespace XREngine.Data.Trees
             {
                 var worldCullingVolume = item.WorldCullingVolume;
                 if (worldCullingVolume is null || !worldCullingVolume.Value.IntersectsSegment(segment))
-                    return;
+                    continue;
 
                 (float? dist, object? data) = directTest(item, segment);
                 if (dist is not null)

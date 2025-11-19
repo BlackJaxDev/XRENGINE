@@ -16,6 +16,7 @@ namespace XREngine.Scene.Transforms
     /// T-R-S is default (translation, rotated at that point, and then scaled in that coordinate system).
     /// </summary>
     [Serializable]
+    [XRTransformEditor("XREngine.Editor.TransformEditors.StandardTransformEditor")]
     public class Transform : TransformBase
     {
         public override string ToString()

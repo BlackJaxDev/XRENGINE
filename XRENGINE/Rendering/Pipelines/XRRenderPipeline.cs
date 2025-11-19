@@ -1,4 +1,6 @@
 ﻿using System;
+using System.ComponentModel;
+using XREngine.Core.Files;
 using XREngine.Data.Core;
 using XREngine.Data.Geometry;
 using XREngine.Data.Rendering;
@@ -11,11 +13,14 @@ using static XREngine.Rendering.XRRenderPipelineInstance;
 
 namespace XREngine.Rendering;
 
-public abstract class RenderPipeline : XRBase
+public abstract class RenderPipeline : XRAsset
 {
+    [Browsable(false)]
     public List<XRRenderPipelineInstance> Instances { get; } = [];
 
     protected abstract Lazy<XRMaterial> InvalidMaterialFactory { get; }
+
+    [Browsable(false)]
     public XRMaterial InvalidMaterial
         => InvalidMaterialFactory.Value;
 
@@ -23,6 +28,7 @@ public abstract class RenderPipeline : XRBase
     /// Human readable identifier for debug output.
     /// Derived pipelines can override this to expose a friendlier label.
     /// </summary>
+    [Browsable(false)]
     public virtual string DebugName => GetType().Name;
 
     private bool _isShadowPass;

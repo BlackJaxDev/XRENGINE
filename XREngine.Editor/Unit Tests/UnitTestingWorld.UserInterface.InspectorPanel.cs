@@ -9,6 +9,7 @@ using XREngine.Animation;
 using XREngine.Components;
 using XREngine.Core.Files;
 using XREngine.Editor.ComponentEditors;
+using XREngine.Editor.TransformEditors;
 using XREngine.Scene;
 using XREngine.Scene.Transforms;
 
@@ -350,76 +351,22 @@ public static partial class UnitTestingWorld
             using var profilerScope = Engine.Profiler.Start("UI.DrawTransformInspector");
             ImGui.PushID(transform.GetHashCode());
 
-            static string GetTransformDisplayName(TransformBase target)
+            var editor = ResolveTransformEditor(transform.GetType());
+            if (editor is null)
             {
-                string? name = target.SceneNode?.Name;
-                if (string.IsNullOrWhiteSpace(name))
-                    name = target.Name;
-                return string.IsNullOrWhiteSpace(name) ? target.GetType().Name : name;
+                DrawDefaultTransformInspector(transform, visited);
+                ImGui.PopID();
+                return;
             }
 
-            if (transform is Transform standard)
+            try
             {
-                string transformLabel = GetTransformDisplayName(standard);
-                Vector3 translation = standard.Translation;
-                ImGui.SetNextItemWidth(-1f);
-                bool translationEdited = ImGui.DragFloat3("Translation##TransformTranslation", ref translation, 0.05f);
-                ImGuiUndoHelper.UpdateScope($"Move {transformLabel}", standard);
-                if (translationEdited)
-                {
-                    standard.Translation = translation;
-                    var queuedTranslation = translation;
-                    EnqueueSceneEdit(() => standard.Translation = queuedTranslation);
-                }
-
-                var rotator = standard.Rotator;
-                Vector3 rotation = rotator.PitchYawRoll;
-                ImGui.SetNextItemWidth(-1f);
-                bool rotationEdited = ImGui.DragFloat3("Rotation (Pitch/Yaw/Roll)##TransformRotation", ref rotation, 0.5f);
-                ImGuiUndoHelper.UpdateScope($"Rotate {transformLabel}", standard);
-                if (rotationEdited)
-                {
-                    rotator.Pitch = rotation.X;
-                    rotator.Yaw = rotation.Y;
-                    rotator.Roll = rotation.Z;
-                    var queuedRotator = rotator;
-                    standard.Rotator = queuedRotator;
-                    EnqueueSceneEdit(() => standard.Rotator = queuedRotator);
-                }
-
-                Vector3 scale = standard.Scale;
-                ImGui.SetNextItemWidth(-1f);
-                bool scaleEdited = ImGui.DragFloat3("Scale##TransformScale", ref scale, 0.05f);
-                ImGuiUndoHelper.UpdateScope($"Scale {transformLabel}", standard);
-                if (scaleEdited)
-                {
-                    standard.Scale = scale;
-                    var queuedScale = scale;
-                    EnqueueSceneEdit(() => standard.Scale = queuedScale);
-                }
-
-                var order = standard.Order;
-                ETransformOrder[] orderValues = Enum.GetValues<ETransformOrder>();
-                string[] orderNames = Enum.GetNames<ETransformOrder>();
-                int selectedIndex = Array.IndexOf(orderValues, order);
-                if (selectedIndex < 0)
-                    selectedIndex = 0;
-                int orderIndex = selectedIndex;
-                bool orderChanged = ImGui.Combo("Order##TransformOrder", ref orderIndex, orderNames, orderNames.Length);
-                ImGuiUndoHelper.UpdateScope($"Change Transform Order {transformLabel}", standard);
-                if (orderChanged)
-                {
-                    if (orderIndex >= 0 && orderIndex < orderValues.Length)
-                    {
-                        var newOrder = orderValues[orderIndex];
-                        standard.Order = newOrder;
-                        EnqueueSceneEdit(() => standard.Order = newOrder);
-                    }
-                }
+                editor.DrawInspector(transform, visited);
             }
-            else
+            catch (Exception ex)
             {
-                DrawInspectableObject(transform, "TransformProperties", visited);
+                Debug.LogException(ex, $"Custom transform editor '{editor.GetType().FullName}' failed for '{transform.GetType().FullName}'");
+                DrawDefaultTransformInspector(transform, visited);
             }
 
             ImGui.PopID();
@@ -540,6 +487,9 @@ public static partial class UnitTestingWorld
         public static partial void DrawDefaultComponentInspector(XRComponent component, HashSet<object> visited)
             => DrawInspectableObject(component, "ComponentProperties", visited);
 
+        public static partial void DrawDefaultTransformInspector(TransformBase transform, HashSet<object> visited)
+            => DrawInspectableObject(transform, "TransformProperties", visited);
+
         private static partial IXRComponentEditor? ResolveComponentEditor(Type componentType)
         {
             if (_componentEditorCache.TryGetValue(componentType, out var cached))
@@ -599,6 +549,68 @@ public static partial class UnitTestingWorld
             }
 
             _componentEditorCache[componentType] = null;
+            return null;
+        }
+
+        private static partial IXRTransformEditor? ResolveTransformEditor(Type transformType)
+        {
+            if (_transformEditorCache.TryGetValue(transformType, out var cached))
+                return cached;
+
+            var attribute = transformType.GetCustomAttribute<XRTransformEditorAttribute>(true);
+            if (attribute is null)
+            {
+                _transformEditorCache[transformType] = null;
+                return null;
+            }
+
+            Type? editorType = null;
+            string typeName = attribute.EditorTypeName;
+
+            if (!string.IsNullOrWhiteSpace(typeName))
+            {
+                editorType = Type.GetType(typeName, false, false);
+                if (editorType is null)
+                {
+                    foreach (var assembly in AppDomain.CurrentDomain.GetAssemblies())
+                    {
+                        editorType = assembly.GetType(typeName, false, false);
+                        if (editorType is not null)
+                            break;
+                    }
+                }
+            }
+
+            if (editorType is null)
+            {
+                Debug.LogWarning($"Failed to locate transform editor '{typeName}' for transform '{transformType.FullName}'.");
+                _transformEditorCache[transformType] = null;
+                return null;
+            }
+
+            if (!typeof(IXRTransformEditor).IsAssignableFrom(editorType))
+            {
+                Debug.LogWarning($"Transform editor type '{editorType.FullName}' does not implement {nameof(IXRTransformEditor)}.");
+                _transformEditorCache[transformType] = null;
+                return null;
+            }
+
+            try
+            {
+                if (Activator.CreateInstance(editorType) is IXRTransformEditor editorInstance)
+                {
+                    _transformEditorCache[transformType] = editorInstance;
+                    return editorInstance;
+                }
+
+                Debug.LogWarning($"Transform editor '{editorType.FullName}' could not be instantiated.");
+            }
+            catch (Exception ex)
+            {
+                Debug.LogException(ex, $"Failed to instantiate transform editor '{editorType.FullName}' for transform '{transformType.FullName}'");
+            }
+
+            _transformEditorCache[transformType] = null;
             return null;
         }
 

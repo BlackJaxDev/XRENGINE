@@ -542,6 +542,18 @@ namespace XREngine.Rendering
             VisualScene.RaycastAsync(worldSegment, orderedResults, DirectItemTest, finishedCallback);
         }
 
+        public bool RaycastOctree(
+            Segment worldSegment,
+            SortedDictionary<float, List<(RenderInfo3D item, object? data)>> orderedResults)
+        {
+            orderedResults.Clear();
+            if (VisualScene is null)
+                return false;
+
+            VisualScene.Raycast(worldSegment, orderedResults, DirectItemTest);
+            return orderedResults.Count > 0;
+        }
+
         private static (float? distance, object? data) DirectItemTest(RenderInfo3D item, Segment segment)
         {
             if (item is not RenderInfo renderable)

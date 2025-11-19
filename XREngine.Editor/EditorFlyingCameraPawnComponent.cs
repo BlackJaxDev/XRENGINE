@@ -4,6 +4,7 @@ using System.Linq;
 using System.Numerics;
 using XREngine.Actors.Types;
 using XREngine.Components;
+using XREngine.Components.Scene.Mesh;
 using XREngine.Components.Scene.Transforms;
 using XREngine.Core;
 using XREngine.Data.Colors;
@@ -24,6 +25,24 @@ namespace XREngine.Editor;
 
 public partial class EditorFlyingCameraPawnComponent : FlyingCameraPawnComponent, IRenderable
 {
+    private const float DefaultFocusDurationSeconds = 0.35f;
+    private const float DefaultFocusRadius = 1.0f;
+    private const float FocusRadiusPadding = 0.75f;
+    private const float MinimumFocusDistance = 0.5f;
+    private const float FocusCompletionThreshold = 0.999f;
+
+    private CameraFocusLerpState? _cameraFocusLerp = null;
+
+    private struct CameraFocusLerpState
+    {
+        public Vector3 StartPosition;
+        public Vector3 TargetPosition;
+        public Quaternion StartRotation;
+        public Quaternion TargetRotation;
+        public float StartTime;
+        public float Duration;
+    }
+
     public EditorFlyingCameraPawnComponent()
     {
         _postRenderRC = new((int)EDefaultRenderPass.PostRender, PostRender);
@@ -142,6 +161,7 @@ public partial class EditorFlyingCameraPawnComponent : FlyingCameraPawnComponent
         => _lastOctreePickResults;
 
     private readonly SortedDictionary<float, List<(RenderInfo3D item, object? data)>> _lastOctreePickResults = [];
+    private readonly SortedDictionary<float, List<(RenderInfo3D item, object? data)>> _selectionPickResults = [];
     /// <summary>
     /// The last octree pick results from the raycast, sorted by distance.
     /// Use RaycastLock to access this safely.
@@ -309,7 +329,7 @@ public partial class EditorFlyingCameraPawnComponent : FlyingCameraPawnComponent
 
     private void OctreeRaycastCallback(SortedDictionary<float, List<(RenderInfo3D item, object? data)>> dictionary)
     {
-        UpdateMeshHitVisualization();
+        UpdateMeshHitVisualization(dictionary);
 
         if (!RenderRaycast)
             return;
@@ -318,15 +338,17 @@ public partial class EditorFlyingCameraPawnComponent : FlyingCameraPawnComponent
             RenderRaycastResult(_lastOctreePickResults.First());
     }
 
-    private void UpdateMeshHitVisualization()
+    private void UpdateMeshHitVisualization(SortedDictionary<float, List<(RenderInfo3D item, object? data)>>? source = null)
     {
         _hitTriangle = null;
         _meshHitPoint = null;
 
-        if (_lastOctreePickResults.Count == 0)
+        var results = source ?? _lastOctreePickResults;
+
+        if (results.Count == 0)
             return;
 
-        foreach ((RenderInfo3D _, object? data) in _lastOctreePickResults.First().Value)
+        foreach ((RenderInfo3D _, object? data) in results.First().Value)
         {
             switch (data)
             {
@@ -460,6 +482,15 @@ public partial class EditorFlyingCameraPawnComponent : FlyingCameraPawnComponent
         var rot = _lastRotateDelta;
         _lastRotateDelta = null;
 
+        bool hasInput = scroll.HasValue || trans.HasValue || rot.HasValue;
+        if (_cameraFocusLerp.HasValue)
+        {
+            if (hasInput)
+                CancelCameraFocusLerp();
+            else
+                return;
+        }
+
         if (scroll.HasValue)
         {
             //Zoom towards the hit point
@@ -588,6 +619,168 @@ public partial class EditorFlyingCameraPawnComponent : FlyingCameraPawnComponent
     public void TakeScreenshot()
         => _wantsScreenshot = true;
 
+    public void FocusOnNode(SceneNode node, float durationSeconds = DefaultFocusDurationSeconds)
+    {
+        if (node?.Transform is null)
+            return;
+
+        var tfm = TransformAs<Transform>();
+        if (tfm is null)
+            return;
+
+        CancelCameraFocusLerp();
+
+        Vector3 focusPoint = node.Transform.WorldTranslation;
+        Vector3 cameraPosition = tfm.WorldTranslation;
+        Vector3 direction = focusPoint - cameraPosition;
+        if (direction.LengthSquared() < XRMath.Epsilon)
+            direction = tfm.WorldForward;
+        else
+            direction = Vector3.Normalize(direction);
+
+        float focusDistance = ComputeFocusDistance(node.Transform);
+        Vector3 targetPosition = focusPoint - direction * focusDistance;
+
+        Vector3 up = Globals.Up;
+        if (MathF.Abs(Vector3.Dot(direction, up)) > 0.999f)
+            up = Globals.Right;
+
+        Quaternion targetRotation = Quaternion.CreateFromRotationMatrix(Matrix4x4.CreateWorld(targetPosition, direction, up));
+        BeginCameraFocusLerp(targetPosition, targetRotation, durationSeconds);
+    }
+
+    private void BeginCameraFocusLerp(Vector3 targetPosition, Quaternion targetRotation, float durationSeconds)
+    {
+        var tfm = TransformAs<Transform>();
+        if (tfm is null)
+            return;
+
+        float clampedDuration = MathF.Max(0.01f, durationSeconds);
+        _cameraFocusLerp = new CameraFocusLerpState
+        {
+            StartPosition = tfm.WorldTranslation,
+            TargetPosition = targetPosition,
+            StartRotation = tfm.WorldRotation,
+            TargetRotation = Quaternion.Normalize(targetRotation),
+            StartTime = Engine.Time.Timer.Time(),
+            Duration = clampedDuration
+        };
+    }
+
+    private void UpdateCameraFocusLerp()
+    {
+        if (!_cameraFocusLerp.HasValue)
+            return;
+
+        if (HasContinuousMovementInput())
+        {
+            CancelCameraFocusLerp();
+            return;
+        }
+
+        var tfm = TransformAs<Transform>();
+        if (tfm is null)
+        {
+            _cameraFocusLerp = null;
+            return;
+        }
+
+        var lerp = _cameraFocusLerp.Value;
+        float elapsed = Engine.Time.Timer.Time() - lerp.StartTime;
+        float t = float.Clamp(elapsed / lerp.Duration, 0.0f, 1.0f);
+        float eased = EaseInOut(t);
+
+        Vector3 position = Vector3.Lerp(lerp.StartPosition, lerp.TargetPosition, eased);
+        Quaternion rotation = Quaternion.Normalize(Quaternion.Slerp(lerp.StartRotation, lerp.TargetRotation, eased));
+
+        tfm.SetWorldTranslationRotation(position, rotation);
+
+        if (t >= FocusCompletionThreshold)
+        {
+            _cameraFocusLerp = null;
+            SyncYawPitchWithRotation(rotation);
+        }
+    }
+
+    private void CancelCameraFocusLerp()
+    {
+        if (!_cameraFocusLerp.HasValue)
+            return;
+
+        _cameraFocusLerp = null;
+
+        var tfm = TransformAs<Transform>();
+        if (tfm is not null)
+            SyncYawPitchWithRotation(tfm.WorldRotation);
+    }
+
+    private float ComputeFocusDistance(TransformBase focusTransform)
+    {
+        float radius = EstimateHierarchyRadius(focusTransform);
+        if (!float.IsFinite(radius) || radius < XRMath.Epsilon)
+            radius = DefaultFocusRadius;
+
+        float distance = radius + FocusRadiusPadding;
+
+        var cameraComponent = GetCamera();
+        if (cameraComponent?.Camera.Parameters is XRPerspectiveCameraParameters perspective)
+        {
+            float fovRadians = XRMath.DegToRad(perspective.VerticalFieldOfView);
+            float halfFov = float.Clamp(fovRadians * 0.5f, 0.1f, XRMath.PIf * 0.45f);
+            float perspectiveDistance = (radius + FocusRadiusPadding) / MathF.Tan(halfFov);
+            distance = Math.Max(distance, perspectiveDistance);
+        }
+
+        return Math.Max(distance, MinimumFocusDistance);
+    }
+
+    private static float EstimateHierarchyRadius(TransformBase focusTransform)
+    {
+        Vector3 center = focusTransform.WorldTranslation;
+        float radius = 0.0f;
+        Stack<TransformBase> stack = new();
+        stack.Push(focusTransform);
+
+        while (stack.Count > 0)
+        {
+            var current = stack.Pop();
+            if (current is null)
+                continue;
+
+            float distance = Vector3.Distance(center, current.WorldTranslation);
+            if (distance > radius)
+                radius = distance;
+
+            foreach (var child in current.Children)
+                if (child is not null)
+                    stack.Push(child);
+        }
+
+        return radius;
+    }
+
+    private static float EaseInOut(float t)
+    {
+        t = float.Clamp(t, 0.0f, 1.0f);
+        return t * t * (3.0f - 2.0f * t);
+    }
+
+    private void SyncYawPitchWithRotation(Quaternion worldRotation)
+    {
+        var euler = XRMath.QuaternionToEuler(worldRotation);
+        SetYawPitch(XRMath.RadToDeg(euler.Y), XRMath.RadToDeg(euler.X));
+    }
+
+    private bool HasContinuousMovementInput()
+    {
+        const float threshold = 0.0001f;
+        return MathF.Abs(_incRight) > threshold ||
+               MathF.Abs(_incForward) > threshold ||
+               MathF.Abs(_incUp) > threshold ||
+               MathF.Abs(_incPitch) > threshold ||
+               MathF.Abs(_incYaw) > threshold;
+    }
+
     public override void RegisterInput(InputInterface input)
     {
         base.RegisterInput(input);
@@ -624,7 +817,8 @@ public partial class EditorFlyingCameraPawnComponent : FlyingCameraPawnComponent
 
         //Collect new hits from the last raycast results
         List<SceneNode> currentHits = [];
-        CollectHits(currentHits);
+        if (!TryCollectModelComponentHits(currentHits))
+            CollectHits(currentHits);
 
         if (_lastHits is null)
             SetSelection(currentHits); //if we have no last hits, just set the selection to the current hits
@@ -693,6 +887,39 @@ public partial class EditorFlyingCameraPawnComponent : FlyingCameraPawnComponent
                     currentHits.Add(comp.SceneNode);
                 else if (info.Owner is TransformBase tfm && tfm.SceneNode is not null)
                     currentHits.Add(tfm.SceneNode);
+    }
+
+    private bool TryCollectModelComponentHits(List<SceneNode> currentHits)
+    {
+        var vp = Viewport;
+        var world = vp?.World;
+        if (vp is null || world is null)
+            return false;
+
+        Segment segment = GetWorldSegment(vp);
+        if (!world.RaycastOctree(segment, _selectionPickResults))
+            return false;
+
+        bool found = false;
+        foreach (var kvp in _selectionPickResults)
+        {
+            foreach ((RenderInfo3D _, object? data) in kvp.Value)
+            {
+                if (data is not MeshPickResult meshHit)
+                    continue;
+
+                if (meshHit.Component is ModelComponent modelComponent && modelComponent.SceneNode is SceneNode node)
+                {
+                    currentHits.Add(node);
+                    found = true;
+                }
+            }
+        }
+
+        if (found)
+            UpdateMeshHitVisualization(_selectionPickResults);
+
+        return found;
     }
 
     /// <summary>
