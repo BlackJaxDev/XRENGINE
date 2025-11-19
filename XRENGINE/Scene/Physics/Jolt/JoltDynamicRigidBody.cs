@@ -41,6 +41,13 @@ namespace XREngine.Scene.Physics.Jolt
             }
         }
 
+        public void SetLinearVelocity(Vector3 value)
+        {
+            if (Scene?.PhysicsSystem is null)
+                return;
+            Scene.PhysicsSystem.BodyInterface.SetLinearVelocity(BodyID, value);
+        }
+
         public override Vector3 AngularVelocity
         {
             get
@@ -50,6 +57,13 @@ namespace XREngine.Scene.Physics.Jolt
                 
                 return Scene.PhysicsSystem.BodyInterface.GetAngularVelocity(BodyID);
             }
+        }
+
+        public void SetAngularVelocity(Vector3 value)
+        {
+            if (Scene?.PhysicsSystem is null)
+                return;
+            Scene.PhysicsSystem.BodyInterface.SetAngularVelocity(BodyID, value);
         }
 
         public override bool IsSleeping

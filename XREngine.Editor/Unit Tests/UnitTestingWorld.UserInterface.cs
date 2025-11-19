@@ -7,6 +7,7 @@ using XREngine.Actors.Types;
 using XREngine.Components;
 using XREngine.Components.Scene;
 using XREngine.Components.Scripting;
+using XREngine.Editor.UI;
 using XREngine.Editor.UI.Components;
 using XREngine.Editor.UI.Toolbar;
 using XREngine.Rendering;
@@ -89,7 +90,14 @@ public static partial class UnitTestingWorld
             canvasTfm.Padding = new Vector4(0.0f);
 
             if (Toggles.RiveUI || Toggles.DearImGuiUI || Toggles.DearImGuiProfiler || Toggles.AddEditorUI)
-                rootCanvasNode.AddComponent<UICanvasInputComponent>()!.OwningPawn = pawnForInput;
+            {
+                var inputComponent = rootCanvasNode.AddComponent<UICanvasInputComponent>();
+                if (inputComponent is not null)
+                {
+                    inputComponent.OwningPawn = pawnForInput;
+                    EditorDragDropUtility.Initialize(inputComponent);
+                }
+            }
 
             if (Toggles.VisualizeQuadtree)
                 rootCanvasNode.AddComponent<DebugVisualizeQuadtreeComponent>();

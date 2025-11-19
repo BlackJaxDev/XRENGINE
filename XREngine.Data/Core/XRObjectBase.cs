@@ -1,4 +1,5 @@
 ﻿using System.Collections.Concurrent;
+using System.ComponentModel;
 using XREngine.Core;
 using YamlDotNet.Serialization;
 
@@ -10,6 +11,7 @@ namespace XREngine.Data.Core
     [Serializable]
     public abstract class XRObjectBase : XRBase, IDisposable, IPoolable
     {
+        [Browsable(false)]
         public Guid ID { get; internal set; } = Guid.NewGuid();
         
         private static ConcurrentDictionary<Guid, XRObjectBase> ObjectsCacheInternal { get; } = [];
@@ -77,6 +79,7 @@ namespace XREngine.Data.Core
         /// True if the object has been destroyed and no longer exists in a valid state.
         /// </summary>
         [YamlIgnore]
+        [Browsable(false)]
         public bool IsDestroyed { get; private set; } = false;
 
         private static readonly ConcurrentQueue<XRObjectBase> _objectsToDestroy = new();

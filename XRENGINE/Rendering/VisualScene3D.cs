@@ -49,6 +49,12 @@ namespace XREngine.Scene
             Action<SortedDictionary<float, List<(RenderInfo3D item, object? data)>>> finishedCallback)
             => RenderTree.RaycastAsync(worldSegment, items, directTest, finishedCallback);
 
+        public void Raycast(
+            Segment worldSegment,
+            SortedDictionary<float, List<(RenderInfo3D item, object? data)>> items,
+            Func<RenderInfo3D, Segment, (float? distance, object? data)> directTest)
+            => RenderTree.Raycast(worldSegment, items, directTest);
+
         public override void CollectRenderedItems(
             RenderCommandCollection meshRenderCommands,
             XRCamera? camera,

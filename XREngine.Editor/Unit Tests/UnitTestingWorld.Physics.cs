@@ -19,6 +19,9 @@ public static partial class UnitTestingWorld
 {
     public static class Physics
     {
+        private const ushort CollisionGroup = 1;
+        private static readonly PhysicsGroupsMask CollisionMask = new(0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF);
+
         //Creates a floor and a bunch of balls that fall onto it.
         public static void AddPhysics(SceneNode rootNode, int ballCount)
         {
@@ -45,12 +48,13 @@ public static partial class UnitTestingWorld
 
             PhysxMaterial floorPhysMat = new(0.5f, 0.5f, 0.7f);
 
-            var floorBody = PhysxStaticRigidBody.CreatePlane(Globals.Up, 0.0f, floorPhysMat);
-            //new PhysxStaticRigidBody(floorMat, new PhysxGeometry.Box(new Vector3(100.0f, 2.0f, 100.0f)));
-            floorBody.SetTransform(new Vector3(0.0f, 0.0f, 0.0f), Quaternion.CreateFromAxisAngle(Globals.Backward, XRMath.DegToRad(90.0f)), true);
-            //floorBody.CollisionGroup = 1;
-            //floorBody.GroupsMask = new MagicPhysX.PxGroupsMask() { bits0 = 0, bits1 = 0, bits2 = 0, bits3 = 1 };
-            floorComp.RigidBody = floorBody;
+            Vector3 floorHalfExtents = new(5000.0f, 0.5f, 5000.0f);
+            floorComp.Material = floorPhysMat;
+            floorComp.Geometry = new IPhysicsGeometry.Box(floorHalfExtents);
+            floorComp.InitialPosition = new Vector3(0.0f, -floorHalfExtents.Y, 0.0f);
+            floorComp.InitialRotation = Quaternion.Identity;
+            floorComp.CollisionGroup = CollisionGroup;
+            floorComp.GroupsMask = CollisionMask;
             //floorBody.AddedToScene += x =>
             //{
             //    var shapes = floorBody.GetShapes();
@@ -87,31 +91,48 @@ public static partial class UnitTestingWorld
         //Spawns a ball with a random position, velocity and angular velocity.
         public static void AddBall(SceneNode rootNode, PhysxMaterial ballPhysMat, float ballRadius, Random random)
         {
-            var ballBody = new PhysxDynamicRigidBody(ballPhysMat, new IPhysicsGeometry.Sphere(ballRadius), 1.0f)
-            {
-                Transform = (new Vector3(
-                    random.NextSingle() * 100.0f,
-                    random.NextSingle() * 100.0f,
-                    random.NextSingle() * 100.0f), Quaternion.Identity),
-                AngularDamping = 0.2f,
-                LinearDamping = 0.2f,
-            };
+            const float spawnRange = 40.0f;
+            float minSpawnHeight = MathF.Max(ballRadius * 2.0f, 5.0f);
+            Vector3 spawnPosition = new(
+                (random.NextSingle() - 0.5f) * spawnRange,
+                minSpawnHeight + random.NextSingle() * spawnRange,
+                (random.NextSingle() - 0.5f) * spawnRange);
 
-            ballBody.SetAngularVelocity(new Vector3(
+            Vector3 angularVelocity = new(
                 random.NextSingle() * 100.0f,
                 random.NextSingle() * 100.0f,
-                random.NextSingle() * 100.0f));
+                random.NextSingle() * 100.0f);
 
-            ballBody.SetLinearVelocity(new Vector3(
+            Vector3 linearVelocity = new(
                 random.NextSingle() * 10.0f,
                 random.NextSingle() * 10.0f,
-                random.NextSingle() * 10.0f));
+                random.NextSingle() * 10.0f);
 
             var ball = new SceneNode(rootNode) { Name = "Ball" };
             var ballTfm = ball.SetTransform<RigidBodyTransform>();
             ballTfm.InterpolationMode = EInterpolationMode.Interpolate;
             var ballComp = ball.AddComponent<DynamicRigidBodyComponent>()!;
-            ballComp.RigidBody = ballBody;
+            ballComp.Material = ballPhysMat;
+            ballComp.Geometry = new IPhysicsGeometry.Sphere(ballRadius);
+            ballComp.InitialPosition = spawnPosition;
+            ballComp.InitialRotation = Quaternion.Identity;
+            ballComp.Density = 1.0f;
+            ballComp.LinearDamping = 0.2f;
+            ballComp.AngularDamping = 0.2f;
+            ballComp.BodyFlags |= PhysicsRigidBodyFlags.EnableCcd | PhysicsRigidBodyFlags.EnableSpeculativeCcd | PhysicsRigidBodyFlags.EnableCcdFriction;
+            ballComp.CollisionGroup = CollisionGroup;
+            ballComp.GroupsMask = CollisionMask;
+
+            void ApplyInitialVelocities(SceneNode node)
+            {
+                if (ballComp.RigidBody is PhysxDynamicRigidBody physxBody)
+                {
+                    physxBody.SetAngularVelocity(angularVelocity);
+                    physxBody.SetLinearVelocity(linearVelocity);
+                }
+                node.Activated -= ApplyInitialVelocities;
+            }
+            ball.Activated += ApplyInitialVelocities;
             var ballModel = ball.AddComponent<ModelComponent>()!;
 
             ColorF4 color = new(

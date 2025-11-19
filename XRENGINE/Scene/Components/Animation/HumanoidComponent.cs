@@ -1,4 +1,5 @@
 ﻿using System.Numerics;
+using XREngine.Components;
 using XREngine.Components.Scene.Mesh;
 using XREngine.Data;
 using XREngine.Data.Colors;
@@ -19,6 +20,7 @@ namespace XREngine.Components.Animation
         RightEyeDownUp,
         RightEyeInOut,
     }
+    [XRComponentEditor("XREngine.Editor.ComponentEditors.HumanoidComponentEditor")]
     public class HumanoidComponent : XRComponent, IRenderable
     {
         protected internal override void OnComponentActivated()
@@ -343,6 +345,18 @@ namespace XREngine.Components.Animation
 
         public BodySide Left { get; } = new();
         public BodySide Right { get; } = new();
+
+        public void ResetAllTransformsToBindPose()
+        {
+            Hips.ResetPose();
+            Spine.ResetPose();
+            Chest.ResetPose();
+            Neck.ResetPose();
+            Head.ResetPose();
+            EyesTarget.ResetPose();
+            Left.ResetPose();
+            Right.ResetPose();
+        }
 
         public BoneChainItem[]? _hipToHeadChain = null;
         public BoneChainItem[]? _leftLegToAnkleChain = null;

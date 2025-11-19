@@ -24,6 +24,7 @@ using XREngine.Scene.Components.UI;
 using XREngine.Scene.Transforms;
 using XREngine.Editor.ComponentEditors;
 using XREngine.Diagnostics;
+using XREngine.Editor.TransformEditors;
 
 namespace XREngine.Editor;
 
@@ -36,6 +37,7 @@ public static partial class UnitTestingWorld
         private static readonly byte[] _renameBuffer = new byte[256];
         private static readonly List<ComponentTypeDescriptor> _filteredComponentTypes = [];
         private static readonly Dictionary<Type, IXRComponentEditor?> _componentEditorCache = new();
+        private static readonly Dictionary<Type, IXRTransformEditor?> _transformEditorCache = new();
         private static readonly Dictionary<int, ProfilerThreadCacheEntry> _profilerThreadCache = new();
         private static readonly Dictionary<string, bool> _profilerNodeOpenCache = new();
         private static readonly TimeSpan ProfilerThreadCacheTimeout = TimeSpan.FromSeconds(15.0);
@@ -248,6 +250,7 @@ public static partial class UnitTestingWorld
                 ClearAssetExplorerTypeCaches();
                 _collectionTypeDescriptorCache.Clear();
                 _collectionTypePickerSearch.Clear();
+                _transformEditorCache.Clear();
             };
             Engine.Time.Timer.UpdateFrame += ProcessQueuedSceneEdits;
             Selection.SelectionChanged += HandleSceneSelectionChanged;
@@ -264,7 +267,9 @@ public static partial class UnitTestingWorld
         private static partial void DrawInspectableObject(object target, string id, HashSet<object> visited);
         private static partial void DrawComponentInspector(XRComponent component, HashSet<object> visited);
         public static partial void DrawDefaultComponentInspector(XRComponent component, HashSet<object> visited);
+        public static partial void DrawDefaultTransformInspector(TransformBase transform, HashSet<object> visited);
         private static partial IXRComponentEditor? ResolveComponentEditor(Type componentType);
+        private static partial IXRTransformEditor? ResolveTransformEditor(Type transformType);
         private static partial void HandleInspectorDockResize(ImGuiViewportPtr viewport);
         private static partial void InvalidateComponentTypeCache();
         private static partial IReadOnlyList<ComponentTypeDescriptor> EnsureComponentTypeCache();
@@ -284,7 +289,7 @@ public static partial class UnitTestingWorld
         private static partial bool DirectoryHasChildren(string path);
         private static partial string FormatFileSize(long size);
 
-        private static void EnqueueSceneEdit(Action edit)
+        internal static void EnqueueSceneEdit(Action edit)
         {
             if (edit is null)
                 return;
@@ -739,6 +744,13 @@ public static partial class UnitTestingWorld
             if (!isRenaming && ImGui.IsItemClicked(ImGuiMouseButton.Left))
                 Selection.SceneNode = node;
             ImGui.OpenPopupOnItemClick("Context", ImGuiPopupFlags.MouseButtonRight);
+
+            if (ImGui.BeginDragDropSource(ImGuiDragDropFlags.SourceAllowNullID))
+            {
+                ImGuiSceneNodeDragDrop.SetPayload(node);
+                ImGui.TextUnformatted(displayLabel);
+                ImGui.EndDragDropSource();
+            }
 
             ImGui.SameLine();
 

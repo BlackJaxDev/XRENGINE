@@ -1,4 +1,5 @@
 ﻿using System.Collections.Concurrent;
+using System.ComponentModel;
 using System.Reflection;
 using XREngine.Components;
 using XREngine.Data.Core;
@@ -66,6 +67,7 @@ namespace XREngine
 
         private int _owningServerPlayerIndex = -1;
         [YamlIgnore]
+        [Browsable(false)]
         public int OwningPlayerServerIndex
         {
             get => _owningServerPlayerIndex;
@@ -137,6 +139,7 @@ namespace XREngine
 
         internal XRWorldInstance? _world = null;
         [YamlIgnore]
+        [Browsable(false)]
         public XRWorldInstance? World
         {
             get => _world;
@@ -168,6 +171,7 @@ namespace XREngine
                 EnqueuePropertyReplication(propName, field, repl.CompressedPropertyNames.Contains(propName), true);
         }
 
+        [Browsable(false)]
         public float LastTickReplicationTime { get; private set; } = 0;
         public float TimeBetweenReplications { get; set; } = 0.1f;
 

@@ -6,6 +6,7 @@ using YamlDotNet.Serialization;
 
 namespace XREngine.Scene.Transforms
 {
+    [XRTransformEditor("XREngine.Editor.TransformEditors.RigidBodyTransformEditor")]
     public class RigidBodyTransform : TransformBase
     {
         private IAbstractRigidPhysicsActor? _rigidBody;

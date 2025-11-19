@@ -8,14 +8,10 @@ namespace XREngine.Rendering.Physics.Physx.Joints
 
         public override unsafe PxJoint* JointBase => (PxJoint*)_joint;
 
-        public float GetAngle()
-        {
-            return _joint->GetAngle();
-        }
-        public float GetVelocity()
-        {
-            return _joint->GetVelocity();
-        }
+        public float GetAngleRad() => _joint->GetAngle();
+        public float GetAngleDeg() => float.RadiansToDegrees(GetAngleRad());
+        public float GetVelocity() => _joint->GetVelocity();
+
         public (float lower, float upper, float restitution, float bounceThreshold, float stiffness, float damping) Limit
         {
             get

@@ -1,9 +1,4 @@
-﻿using System;
-using System.Collections.Generic;
-using System.Linq;
-using System.Numerics;
-using System.Threading.Tasks;
-using MagicPhysX;
+﻿using MagicPhysX;
 using XREngine.Components.Scene.Mesh;
 using XREngine.Data.Tools;
 using XREngine.Rendering.Physics.Physx;
@@ -21,15 +16,14 @@ namespace XREngine.Components.Physics
         protected internal override void OnComponentActivated()
         {
             base.OnComponentActivated();
+
             if (World is not null && PhysicsActor is not null)
                 World.PhysicsScene.AddActor(PhysicsActor);
-
-            if (World is not null)
-                _ = EnsureConvexAssetsReadyAsync();
         }
         protected internal override void OnComponentDeactivated()
         {
             base.OnComponentDeactivated();
+
             if (World is not null && PhysicsActor is not null)
                 World.PhysicsScene.RemoveActor(PhysicsActor);
         }
@@ -39,7 +33,7 @@ namespace XREngine.Components.Physics
             var config = parameters ?? CoACD.CoACDParameters.Default;
 
             if (_cachedConvexHulls.TryGetValue(config, out var cached) && cached.Count > 0)
-                return new List<CoACD.ConvexHullMesh>(cached);
+                return [.. cached];
 
             var modelComponent = GetSiblingComponent<ModelComponent>();
             if (modelComponent is null)
@@ -69,7 +63,7 @@ namespace XREngine.Components.Physics
 
             if (results.Count > 0)
             {
-                _cachedConvexHulls[config] = new List<CoACD.ConvexHullMesh>(results);
+                _cachedConvexHulls[config] = [.. results];
                 InvalidatePhysxMeshCache(config);
             }
 
@@ -96,7 +90,7 @@ namespace XREngine.Components.Physics
                 return [];
 
             var cooked = PhysxConvexHullCooker.CookHulls(hulls, extraFlags, requestGpuData);
-            var meshList = cooked is List<PhysxConvexMesh> list ? list : new List<PhysxConvexMesh>(cooked);
+            var meshList = cooked is List<PhysxConvexMesh> list ? list : [.. cooked];
             _physxMeshCache[cacheKey] = meshList;
             return meshList;
         }
@@ -107,7 +101,11 @@ namespace XREngine.Components.Physics
             base.OnDestroying();
         }
 
-        private async Task EnsureConvexAssetsReadyAsync()
+        public void GenerateConvexHullsFromModel()
+        {
+            GenerateConvexHullsFromModelAsync().GetAwaiter().GetResult();
+        }
+        public async Task GenerateConvexHullsFromModelAsync()
         {
             try
             {
