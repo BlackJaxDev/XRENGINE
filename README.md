@@ -31,6 +31,9 @@ dotnet run --project XREngine.Editor
 
 Running the editor launches the Unit Testing World, a collection of scenes that exercise rendering, animation, physics, audio, and XR workflows. Use this environment to verify changes and explore current functionality.
 
+## Native Dependencies
+- `CoACD` – `dotnet build` automatically invokes `Tools/Dependencies/Build-CoACD.ps1` to pull the upstream source and produce `lib_coacd.*` under `XRENGINE/runtimes/<rid>/native`. Use `/p:ForceCoACDBuild=true` or run the script manually when you need to rebuild or retarget a new release. The legacy wheel extractor (`Tools/Dependencies/Get-CoACD.ps1`) remains available if you prefer the vendor-provided binaries.
+
 ## Development Notes
 - The engine employs a multi-threaded update loop (update, fixed update, job worker, collect visible, render) to separate gameplay, physics, and rendering work.
 - Asset importers handle common model formats (FBX, OBJ) and feed into the editor-driven content pipeline.
@@ -40,6 +43,7 @@ Running the editor launches the Unit Testing World, a collection of scenes that 
 Design notes and API references live under `docs/`:
 - `docs/architecture/README.md`
 - `docs/rendering.md`
+- `docs/rendering/CoACD.md`
 - `docs/physics.md`
 - `docs/animation.md`
 - `docs/vr-development.md`

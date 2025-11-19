@@ -29,5 +29,13 @@ public unsafe partial class VulkanRenderer
         RenderPass, //Internally handled
         SamplerYcbcrConversion, //Internally handled
         Semaphore, //Internally handled
+        Program,
+        ProgramPipeline,
+        Renderbuffer,
+        Query,
+        Texture,
+        TransformFeedback,
+        Material,
+        MeshRenderer,
     }
 }

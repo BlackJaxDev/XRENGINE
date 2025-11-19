@@ -124,6 +124,10 @@ namespace XREngine.Rendering.Vulkan
         {
             throw new NotImplementedException();
         }
+        public override void WaitForGpu()
+        {
+            DeviceWaitIdle();
+        }
         public override void SetReadBuffer(EReadBufferMode mode)
         {
             throw new NotImplementedException();

@@ -10,6 +10,14 @@
     <BaseOutputPath>$(SolutionDir)Build\Engine\$(Configuration)\$(Platform)</BaseOutputPath>
   </PropertyGroup>
 
+  <PropertyGroup>
+    <CoACDBuildScript Condition="'$(CoACDBuildScript)' == ''">$(SolutionDir)Tools\Dependencies\Build-CoACD.ps1</CoACDBuildScript>
+    <CoACDRef Condition="'$(CoACDRef)' == ''">1.0.7</CoACDRef>
+    <CoACDRid Condition="'$(CoACDRid)' == '' and '$(RuntimeIdentifier)' != ''">$(RuntimeIdentifier)</CoACDRid>
+    <CoACDRid Condition="'$(CoACDRid)' == ''">win-x64</CoACDRid>
+    <ForceCoACDBuildSwitch Condition="'$(ForceCoACDBuild)' == 'true'">-ForceBuild</ForceCoACDBuildSwitch>
+  </PropertyGroup>
+
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|AnyCPU'">
     <DebugType>embedded</DebugType>
     <IsAotCompatible>True</IsAotCompatible>
@@ -230,6 +238,9 @@
     <None Update="runtimes\win-x64\native\avutil.dll">
       <CopyToOutputDirectory>Always</CopyToOutputDirectory>
     </None>
+    <None Update="runtimes\win-x64\native\lib_coacd.dll">
+      <CopyToOutputDirectory>Always</CopyToOutputDirectory>
+    </None>
     <None Update="runtimes\win-x64\native\libmagicphysx.dll">
       <CopyToOutputDirectory>Always</CopyToOutputDirectory>
     </None>
@@ -264,5 +275,11 @@
   <ItemGroup>
     <None Remove="C:\Users\dnedd\.nuget\packages\naudio.lame\2.1.0\build\libmp3lame.64.dll" />
   </ItemGroup>
+
+  <Target Name="EnsureCoACD" BeforeTargets="PrepareForBuild"
+          Condition="'$(OS)' == 'Windows_NT' and Exists('$(CoACDBuildScript)') and ('$(CoACDRid)' != '') and ('$(ForceCoACDBuild)' == 'true' or !Exists('$(MSBuildProjectDirectory)\\runtimes\\$(CoACDRid)\\native\\lib_coacd.dll'))">
+    <Message Text="Ensuring CoACD native library ($(CoACDRid))" Importance="High" />
+    <Exec Command="powershell -NoProfile -ExecutionPolicy Bypass -File &quot;$(CoACDBuildScript)&quot; -Rid $(CoACDRid) -Ref $(CoACDRef) -Configuration $(Configuration) $(ForceCoACDBuildSwitch)" />
+  </Target>
 
 </Project>

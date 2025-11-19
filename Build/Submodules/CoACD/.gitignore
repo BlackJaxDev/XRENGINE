@@ -1,0 +1,9 @@
+outputs/*
+build/*
+dist/*
+wheelhouse/*
+coacd.egg-info/*
+*obj
+*wrl
+*ply
+*DS_Store

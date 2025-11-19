@@ -32,45 +32,126 @@ layout(std430, binding = 5) buffer OutputPositionBuffer
     vec4 OutputPositions[];
 };
 
+layout(std430, binding = 6) buffer BoundsBuffer
+{
+    uvec4 MinBoundsBits;
+    uvec4 MaxBoundsBits;
+};
+
 uniform uint vertexCount;
 uniform int hasSkinning;
 uniform mat4 fallbackMatrix;
 
+const float FLT_MAX = 3.402823466e+38;
+
+shared vec4 sharedMin[gl_WorkGroupSize.x];
+shared vec4 sharedMax[gl_WorkGroupSize.x];
+
+void atomicMinFloat(inout uint target, float value)
+{
+    uint oldValue = target;
+    uint assumed;
+    uint encoded = floatBitsToUint(value);
+    do
+    {
+        assumed = oldValue;
+        if (value >= uintBitsToFloat(assumed))
+            break;
+        oldValue = atomicCompSwap(target, assumed, encoded);
+    } while (assumed != oldValue);
+}
+
+void atomicMaxFloat(inout uint target, float value)
+{
+    uint oldValue = target;
+    uint assumed;
+    uint encoded = floatBitsToUint(value);
+    do
+    {
+        assumed = oldValue;
+        if (value <= uintBitsToFloat(assumed))
+            break;
+        oldValue = atomicCompSwap(target, assumed, encoded);
+    } while (assumed != oldValue);
+}
+
+void atomicMinVec(inout uvec4 target, vec4 value)
+{
+    atomicMinFloat(target.x, value.x);
+    atomicMinFloat(target.y, value.y);
+    atomicMinFloat(target.z, value.z);
+}
+
+void atomicMaxVec(inout uvec4 target, vec4 value)
+{
+    atomicMaxFloat(target.x, value.x);
+    atomicMaxFloat(target.y, value.y);
+    atomicMaxFloat(target.z, value.z);
+}
+
 void main()
 {
     uint index = gl_GlobalInvocationID.x;
-    if (index >= vertexCount)
-        return;
+    uint localIndex = gl_LocalInvocationIndex;
 
-    vec4 basePosition = Positions[index];
-    vec4 skinnedPosition = vec4(0.0);
+    vec4 minValue = vec4(FLT_MAX);
+    vec4 maxValue = vec4(-FLT_MAX);
 
-    if (hasSkinning != 0)
+    bool isValid = index < vertexCount;
+    if (isValid)
     {
-        ivec4 indices = BoneIndices[index];
-        vec4 weights = BoneWeights[index];
-        float accumulatedWeight = 0.0;
+        vec4 basePosition = Positions[index];
+        vec4 skinnedPosition = vec4(0.0);
 
-        for (int i = 0; i < 4; ++i)
+        if (hasSkinning != 0)
         {
-            int boneIndex = indices[i];
-            float weight = weights[i];
-            accumulatedWeight += weight;
+            ivec4 indices = BoneIndices[index];
+            vec4 weights = BoneWeights[index];
+            float accumulatedWeight = 0.0;
 
-            if (boneIndex <= 0 || weight <= 0.0)
-                continue;
+            for (int i = 0; i < 4; ++i)
+            {
+                int boneIndex = indices[i];
+                float weight = weights[i];
+                accumulatedWeight += weight;
 
-            mat4 boneMatrix = BoneInvBindMatrices[boneIndex] * BoneMatrices[boneIndex];
-            skinnedPosition += (boneMatrix * basePosition) * weight;
+                if (boneIndex <= 0 || weight <= 0.0)
+                    continue;
+
+                mat4 boneMatrix = BoneInvBindMatrices[boneIndex] * BoneMatrices[boneIndex];
+                skinnedPosition += (boneMatrix * basePosition) * weight;
+            }
+
+            if (accumulatedWeight <= 0.00001)
+                skinnedPosition = fallbackMatrix * basePosition;
+        }
+        else
+        {
+            skinnedPosition = fallbackMatrix * basePosition;
         }
 
-        if (accumulatedWeight <= 0.00001)
-            skinnedPosition = fallbackMatrix * basePosition;
-    }
-    else
-    {
-        skinnedPosition = fallbackMatrix * basePosition;
+        OutputPositions[index] = skinnedPosition;
+        minValue = skinnedPosition;
+        maxValue = skinnedPosition;
     }
 
-    OutputPositions[index] = skinnedPosition;
+    sharedMin[localIndex] = minValue;
+    sharedMax[localIndex] = maxValue;
+    barrier();
+
+    for (uint stride = gl_WorkGroupSize.x >> 1u; stride > 0u; stride >>= 1u)
+    {
+        if (localIndex < stride)
+        {
+            sharedMin[localIndex] = min(sharedMin[localIndex], sharedMin[localIndex + stride]);
+            sharedMax[localIndex] = max(sharedMax[localIndex], sharedMax[localIndex + stride]);
+        }
+        barrier();
+    }
+
+    if (localIndex == 0u && sharedMin[0].x < FLT_MAX)
+    {
+        atomicMinVec(MinBoundsBits, sharedMin[0]);
+        atomicMaxVec(MaxBoundsBits, sharedMax[0]);
+    }
 }

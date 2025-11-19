@@ -38,6 +38,7 @@ namespace XREngine.Rendering.Physics.Physx
         {
             _foundationPtr = physx_create_foundation();
             _physicsPtr = physx_create_physics(_foundationPtr);
+            PhysxConvexHullCooker.Initialize(_physicsPtr);
         }
         public static void Release()
         {

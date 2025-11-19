@@ -1,0 +1,52 @@
+name: CI Builds
+
+on: [push]
+
+jobs:
+  builds:
+    name: ${{ matrix.config.name }}
+    runs-on: ${{ matrix.config.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        config:
+        - name: "Windows 2025 (x64)"
+          os: windows-2025
+        - name: "Ubuntu 24.04 (x64)"
+          os: ubuntu-24.04
+        - name: "Ubuntu 24.04 (arm64)"
+          os: ubuntu-24.04-arm
+        - name: "macOS 13 (x64)"
+          os: macos-13
+        - name: "macOS 15 (arm64)"
+          os: macos-15
+
+    steps:
+    - uses: actions/checkout@v4
+      with:
+        submodules: true
+
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.x'
+
+    - name: Install Conan
+      run: |
+        python -m pip install --upgrade pip
+        pip install conan
+        conan --version
+        conan profile detect
+
+    - name: "Build: compiled, shared, boost"
+      run: conan create CDT/ -o as_compiled_library=True -o shared=True -o use_boost=True -o enable_testing=True --build missing
+    - name: "Build: compiled, shared, without boost"
+      run: conan create CDT/ -o as_compiled_library=True -o shared=True -o use_boost=False -o enable_testing=True
+    - name: "Build: compiled, static, boost"
+      run: conan create CDT/ -o as_compiled_library=True -o use_boost=True -o enable_testing=True --build missing
+    - name: "Build: compiled, static, without boost"
+      run: conan create CDT/ -o as_compiled_library=True -o use_boost=False -o enable_testing=True
+    - name: "Build: header-only, boost"
+      run: conan create CDT/ -o use_boost=True -o enable_testing=True --build missing
+    - name: "Build: header-only, without boost"
+      run: conan create CDT/ -o use_boost=False -o enable_testing=True
