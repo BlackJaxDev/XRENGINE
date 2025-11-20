@@ -1,11 +1,14 @@
 ﻿using Extensions;
 using ImageMagick;
+using System.Collections.Concurrent;
+using System.Collections.Generic;
 using System.Linq;
 using System.Numerics;
 using XREngine.Actors.Types;
 using XREngine.Components;
 using XREngine.Components.Scene.Mesh;
 using XREngine.Components.Scene.Transforms;
+using XREngine.Components.Scene.Volumes;
 using XREngine.Core;
 using XREngine.Data.Colors;
 using XREngine.Data.Core;
@@ -152,7 +155,7 @@ public partial class EditorFlyingCameraPawnComponent : FlyingCameraPawnComponent
         set => SetField(ref _layerMask, value);
     }
 
-    private readonly SortedDictionary<float, List<(XRComponent? item, object? data)>> _lastPhysicsPickResults = [];
+    private SortedDictionary<float, List<(XRComponent? item, object? data)>> _lastPhysicsPickResults = [];
     /// <summary>
     /// The last physics pick results from the raycast, sorted by distance.
     /// Use RaycastLock to access this safely.
@@ -160,7 +163,7 @@ public partial class EditorFlyingCameraPawnComponent : FlyingCameraPawnComponent
     public SortedDictionary<float, List<(RenderInfo3D item, object? data)>> LastOctreePickResults
         => _lastOctreePickResults;
 
-    private readonly SortedDictionary<float, List<(RenderInfo3D item, object? data)>> _lastOctreePickResults = [];
+    private SortedDictionary<float, List<(RenderInfo3D item, object? data)>> _lastOctreePickResults = [];
     private readonly SortedDictionary<float, List<(RenderInfo3D item, object? data)>> _selectionPickResults = [];
     /// <summary>
     /// The last octree pick results from the raycast, sorted by distance.
@@ -168,6 +171,41 @@ public partial class EditorFlyingCameraPawnComponent : FlyingCameraPawnComponent
     /// </summary>
     public SortedDictionary<float, List<(XRComponent? item, object? data)>> LastPhysicsPickResults
         => _lastPhysicsPickResults;
+
+    private readonly ConcurrentQueue<SortedDictionary<float, List<(RenderInfo3D item, object? data)>>> _octreePickResultPool = new();
+    private readonly ConcurrentQueue<SortedDictionary<float, List<(XRComponent? item, object? data)>>> _physicsPickResultPool = new();
+
+    private SortedDictionary<float, List<(RenderInfo3D item, object? data)>> GetOctreePickResultDict()
+    {
+        if (_octreePickResultPool.TryDequeue(out var dict))
+        {
+            dict.Clear();
+            return dict;
+        }
+        return [];
+    }
+
+    private void ReturnOctreePickResultDict(SortedDictionary<float, List<(RenderInfo3D item, object? data)>> dict)
+    {
+        dict.Clear();
+        _octreePickResultPool.Enqueue(dict);
+    }
+
+    private SortedDictionary<float, List<(XRComponent? item, object? data)>> GetPhysicsPickResultDict()
+    {
+        if (_physicsPickResultPool.TryDequeue(out var dict))
+        {
+            dict.Clear();
+            return dict;
+        }
+        return [];
+    }
+
+    private void ReturnPhysicsPickResultDict(SortedDictionary<float, List<(XRComponent? item, object? data)>> dict)
+    {
+        dict.Clear();
+        _physicsPickResultPool.Enqueue(dict);
+    }
 
     private List<SceneNode>? _lastHits = null;
     private int _lastHitIndex = 0;
@@ -305,12 +343,9 @@ public partial class EditorFlyingCameraPawnComponent : FlyingCameraPawnComponent
 
         if (AllowWorldPicking && !IsHoveringUI())
         {
-            using (_raycastLock.EnterScope())
-            {
-                _lastOctreePickResults.Clear();
-                _lastPhysicsPickResults.Clear();
-                vp.PickSceneAsync(p, false, true, true, _layerMask, _physxQueryFilter, _lastOctreePickResults, _lastPhysicsPickResults, OctreeRaycastCallback, PhysicsRaycastCallback);
-            }
+            var octreeResults = GetOctreePickResultDict();
+            var physicsResults = GetPhysicsPickResultDict();
+            vp.PickSceneAsync(p, false, true, true, _layerMask, _physxQueryFilter, octreeResults, physicsResults, OctreeRaycastCallback, PhysicsRaycastCallback);
         }
 
         ApplyTransformations(vp);
@@ -318,6 +353,16 @@ public partial class EditorFlyingCameraPawnComponent : FlyingCameraPawnComponent
 
     private void PhysicsRaycastCallback(SortedDictionary<float, List<(XRComponent? item, object? data)>>? dictionary)
     {
+        if (dictionary is not null)
+        {
+            using (_raycastLock.EnterScope())
+            {
+                var old = _lastPhysicsPickResults;
+                _lastPhysicsPickResults = dictionary;
+                ReturnPhysicsPickResultDict(old);
+            }
+        }
+
         if (!RenderRaycast)
             return;
 
@@ -331,12 +376,37 @@ public partial class EditorFlyingCameraPawnComponent : FlyingCameraPawnComponent
     {
         UpdateMeshHitVisualization(dictionary);
 
-        if (!RenderRaycast)
-            return;
+        if (RenderRaycast)
+            TryRenderFirstRaycastResult(dictionary);
 
-        if (_lastOctreePickResults.Count > 0)
-            RenderRaycastResult(_lastOctreePickResults.First());
+        using (_raycastLock.EnterScope())
+        {
+            var old = _lastOctreePickResults;
+            _lastOctreePickResults = dictionary;
+            ReturnOctreePickResultDict(old);
+        }
     }
+
+    private void TryRenderFirstRaycastResult(SortedDictionary<float, List<(RenderInfo3D item, object? data)>> dict)
+    {
+        if (dict.Count ==0)
+            return;
+        try
+        {
+            //Enumerator may throw if modified concurrently; catch and skip frame.
+            var e = dict.GetEnumerator();
+            if (!e.MoveNext())
+                return;
+            RenderRaycastResult(e.Current);
+        }
+        catch (InvalidOperationException)
+        {
+            //Concurrent modification; skip this frame.
+        }
+    }
+
+    // Reusable buffer to avoid per-call allocations when copying first hit list safely.
+    private readonly List<(RenderInfo3D item, object? data)> _firstHitBuffer = new();
 
     private void UpdateMeshHitVisualization(SortedDictionary<float, List<(RenderInfo3D item, object? data)>>? source = null)
     {
@@ -344,12 +414,46 @@ public partial class EditorFlyingCameraPawnComponent : FlyingCameraPawnComponent
         _meshHitPoint = null;
 
         var results = source ?? _lastOctreePickResults;
-
-        if (results.Count == 0)
+        if (results.Count ==0)
             return;
 
-        foreach ((RenderInfo3D _, object? data) in results.First().Value)
+        //We can be racing the async population of the dictionary. Acquire lock and copy the first list into a reusable buffer.
+        //If modification sneaks in between enumerator creation and MoveNext, catch and bail (will be correct next frame).
+        try
         {
+            using (_raycastLock.EnterScope())
+            {
+                if (results.Count ==0)
+                    return;
+
+                foreach (var kvp in results)
+                {
+                    var list = kvp.Value;
+                    _firstHitBuffer.Clear();
+                    //Copy to stable buffer (list itself may be mutated by writer). Reuses allocated list.
+                    for (int i =0; i < list.Count; i++)
+                    {
+                        var (item, _) = list[i];
+                        if (item.Owner is TriggerVolumeComponent or BlockingVolumeComponent)
+                            continue;
+
+                        _firstHitBuffer.Add(list[i]);
+                    }
+
+                    if (_firstHitBuffer.Count > 0)
+                        break;
+                }
+            }
+        }
+        catch (InvalidOperationException)
+        {
+            //Dictionary modified during enumeration; skip this frame.
+            return;
+        }
+
+        for (int i =0; i < _firstHitBuffer.Count; i++)
+        {
+            var (_, data) = _firstHitBuffer[i];
             switch (data)
             {
                 case MeshPickResult meshHit:
@@ -368,11 +472,14 @@ public partial class EditorFlyingCameraPawnComponent : FlyingCameraPawnComponent
 
     private static void RenderRaycastResult(KeyValuePair<float, List<(RenderInfo3D item, object? data)>> result)
     {
-        if (result.Value is null || result.Value.Count == 0)
+        var list = result.Value;
+        if (list is null || list.Count ==0)
             return;
 
-        foreach ((RenderInfo3D info, object? data) in result.Value)
+        //Capture stable snapshot to avoid modifications mid-iteration.
+        for (int i =0; i < list.Count; i++)
         {
+            var (info, data) = list[i];
             Vector3? point = data switch
             {
                 Vector3 p => p,
@@ -396,6 +503,42 @@ public partial class EditorFlyingCameraPawnComponent : FlyingCameraPawnComponent
         }
     }
 
+    private bool TryCollectModelComponentHits(List<SceneNode> currentHits)
+    {
+        var vp = Viewport;
+        var world = vp?.World;
+        if (vp is null || world is null)
+            return false;
+
+        Segment segment = GetWorldSegment(vp);
+        if (!world.RaycastOctree(segment, _selectionPickResults))
+            return false;
+
+        bool found = false;
+        //Iterate without copying the dictionary; use its enumerator once then index into lists.
+        foreach (var kvp in _selectionPickResults)
+        {
+            var list = kvp.Value;
+            for (int i =0; i < list.Count; i++)
+            {
+                var (_, data) = list[i];
+                if (data is not MeshPickResult meshHit)
+                    continue;
+
+                if (meshHit.Component is ModelComponent modelComponent && modelComponent.SceneNode is SceneNode node)
+                {
+                    currentHits.Add(node);
+                    found = true;
+                }
+            }
+        }
+
+        if (found)
+            UpdateMeshHitVisualization(_selectionPickResults);
+
+        return found;
+    }
+
     private Segment GetWorldSegment(XRViewport vp)
         => vp.GetWorldSegment(GetNormalizedCursorPosition(vp));
 
@@ -405,20 +548,16 @@ public partial class EditorFlyingCameraPawnComponent : FlyingCameraPawnComponent
     private Vector2 GetCursorInternalCoordinatePosition(XRViewport vp)
     {
         Vector2 p = Vector2.Zero;
-
         var input = LocalInput;
         if (input is null)
             return p;
-
         var pos = input?.Mouse?.CursorPosition;
         if (pos is null)
             return p;
-
         p = pos.Value;
         p.Y = vp.Height - p.Y;
         p = vp.ScreenToViewportCoordinate(p);
         p = vp.ViewportToInternalCoordinate(p);
-
         return p;
     }
 
@@ -426,7 +565,7 @@ public partial class EditorFlyingCameraPawnComponent : FlyingCameraPawnComponent
     {
         float? depth = GetDepth(vp, p);
         p = vp.NormalizeInternalCoordinate(p);
-        bool validDepth = depth is not null && depth.Value > 0.0f && depth.Value < 1.0f;
+        bool validDepth = depth is not null && depth.Value >0.0f && depth.Value <1.0f;
         if (validDepth)
         {
             DepthHitNormalizedViewportPoint = new Vector3(p.X, p.Y, depth!.Value);
@@ -442,18 +581,14 @@ public partial class EditorFlyingCameraPawnComponent : FlyingCameraPawnComponent
 
     private static float? GetDepth(XRViewport vp, Vector2 internalSizeCoordinate)
     {
-        //TODO: severe framerate drop using synchronous depth read - async pbo is better but needs to be optimized
         var fbo = vp.RenderPipelineInstance?.GetFBO<XRFrameBuffer>(DefaultRenderPipeline.ForwardPassFBOName);
         if (fbo is null)
             return null;
-
         float? depth = vp.GetDepth(fbo, (IVector2)internalSizeCoordinate);
-        //Debug.Out($"Depth: {depth}");
         return depth;
     }
 
-    private bool NeedsDepthHit()
-        => _depthQueryRequested;
+    private bool NeedsDepthHit() => _depthQueryRequested;
 
     protected override void OnPropertyChanged<T>(string? propName, T prev, T field)
     {
@@ -467,20 +602,21 @@ public partial class EditorFlyingCameraPawnComponent : FlyingCameraPawnComponent
         }
     }
 
+    private Vector2? _lastRotateDelta = null;
+    private Vector3? _arcballRotationPosition = null;
+    private Vector2? _lastMouseTranslationDelta = null;
+    private float? _lastScrollDelta = null;
+    private bool _wantsScreenshot = false;
+
     private void ApplyTransformations(XRViewport vp)
     {
         var tfm = TransformAs<Transform>();
         if (tfm is null)
             return;
 
-        var scroll = _lastScrollDelta;
-        _lastScrollDelta = null;
-
-        var trans = _lastMouseTranslationDelta;
-        _lastMouseTranslationDelta = null;
-
-        var rot = _lastRotateDelta;
-        _lastRotateDelta = null;
+        var scroll = _lastScrollDelta; _lastScrollDelta = null;
+        var trans = _lastMouseTranslationDelta; _lastMouseTranslationDelta = null;
+        var rot = _lastRotateDelta; _lastRotateDelta = null;
 
         bool hasInput = scroll.HasValue || trans.HasValue || rot.HasValue;
         if (_cameraFocusLerp.HasValue)
@@ -493,7 +629,6 @@ public partial class EditorFlyingCameraPawnComponent : FlyingCameraPawnComponent
 
         if (scroll.HasValue)
         {
-            //Zoom towards the hit point
             float scrollSpeed = scroll.Value;
             if (DepthHitNormalizedViewportPoint.HasValue)
             {
@@ -501,7 +636,7 @@ public partial class EditorFlyingCameraPawnComponent : FlyingCameraPawnComponent
                     scrollSpeed *= ShiftSpeedModifier;
                 Vector3 worldCoord = vp.NormalizedViewportToWorldCoordinate(DepthHitNormalizedViewportPoint.Value);
                 float dist = Transform.WorldTranslation.Distance(worldCoord);
-                tfm.Translation = Segment.PointAtLineDistance(Transform.WorldTranslation, worldCoord, scrollSpeed * dist * 0.1f * ScrollSpeed);
+                tfm.Translation = Segment.PointAtLineDistance(Transform.WorldTranslation, worldCoord, scrollSpeed * dist *0.1f * ScrollSpeed);
             }
             else
                 base.OnScrolled(scrollSpeed);
@@ -521,8 +656,7 @@ public partial class EditorFlyingCameraPawnComponent : FlyingCameraPawnComponent
             var pos = _arcballRotationPosition;
             if (pos.HasValue)
             {
-                float x = rot.Value.X;
-                float y = rot.Value.Y;
+                float x = rot.Value.X; float y = rot.Value.Y;
                 ArcBallRotate(y, x, pos.Value);
             }
         }
@@ -531,7 +665,6 @@ public partial class EditorFlyingCameraPawnComponent : FlyingCameraPawnComponent
     protected override void OnRightClick(bool pressed)
     {
         base.OnRightClick(pressed);
-
         if (pressed && !IsHoveringUI())
         {
             if (GetAverageSelectionPoint(out Vector3 avgPoint))
@@ -545,8 +678,6 @@ public partial class EditorFlyingCameraPawnComponent : FlyingCameraPawnComponent
             _arcballRotationPosition = null;
     }
 
-    private Vector2? _lastRotateDelta = null;
-    private Vector3? _arcballRotationPosition = null;
     protected override void MouseRotate(float x, float y)
     {
         if (_arcballRotationPosition is not null)
@@ -557,23 +688,18 @@ public partial class EditorFlyingCameraPawnComponent : FlyingCameraPawnComponent
 
     private bool GetAverageSelectionPoint(out Vector3 avgPoint)
     {
-        if (Selection.SceneNodes.Length == 0)
+        if (Selection.SceneNodes.Length ==0)
         {
-            avgPoint = Vector3.Zero;
-            return false;
+            avgPoint = Vector3.Zero; return false;
         }
-
         avgPoint = GetAverageSelectionPoint();
-
-        //Determine if the point is on screen
         if (!(GetCamera()?.Camera?.WorldFrustum().ContainsPoint(avgPoint) ?? false))
         {
-            avgPoint = Vector3.Zero;
-            return false;
+            avgPoint = Vector3.Zero; return false;
         }
-
         return true;
     }
+
     private static Vector3 GetAverageSelectionPoint()
     {
         Vector3 avgPoint = Vector3.Zero;
@@ -583,53 +709,33 @@ public partial class EditorFlyingCameraPawnComponent : FlyingCameraPawnComponent
         return avgPoint;
     }
 
-    private Vector2? _lastMouseTranslationDelta = null;
     protected override void MouseTranslate(float x, float y)
     {
         if (WorldDragPoint.HasValue)
         {
-            //This fixes stationary jitter caused by float imprecision
-            //when recalculating the same hit point every update
-            if (Math.Abs(x) < 0.00001f &&
-                Math.Abs(y) < 0.00001f)
+            if (Math.Abs(x) <0.00001f && Math.Abs(y) <0.00001f)
                 return;
-
             _lastMouseTranslationDelta = new Vector2(-x, -y);
-            //_queryDepth = true;
         }
         else
             base.MouseTranslate(x, y);
     }
 
-    private float? _lastScrollDelta = null;
     protected override void OnScrolled(float diff)
     {
         if (IsHoveringUI())
             return;
-
         _lastScrollDelta = diff;
         _depthQueryRequested = true;
     }
 
-    private bool _wantsScreenshot = false;
-
-    /// <summary>
-    /// Takes a screenshot of the current viewport and saves it to the desktop.
-    /// </summary>
-    public void TakeScreenshot()
-        => _wantsScreenshot = true;
+    public void TakeScreenshot() => _wantsScreenshot = true;
 
     public void FocusOnNode(SceneNode node, float durationSeconds = DefaultFocusDurationSeconds)
     {
-        if (node?.Transform is null)
-            return;
-
-        var tfm = TransformAs<Transform>();
-        if (tfm is null)
-            return;
-
+        if (node?.Transform is null) return;
+        var tfm = TransformAs<Transform>(); if (tfm is null) return;
         CancelCameraFocusLerp();
-
         Vector3 focusPoint = node.Transform.WorldTranslation;
         Vector3 cameraPosition = tfm.WorldTranslation;
         Vector3 direction = focusPoint - cameraPosition;
@@ -637,24 +743,18 @@ public partial class EditorFlyingCameraPawnComponent : FlyingCameraPawnComponent
             direction = tfm.WorldForward;
         else
             direction = Vector3.Normalize(direction);
-
         float focusDistance = ComputeFocusDistance(node.Transform);
         Vector3 targetPosition = focusPoint - direction * focusDistance;
-
         Vector3 up = Globals.Up;
-        if (MathF.Abs(Vector3.Dot(direction, up)) > 0.999f)
+        if (MathF.Abs(Vector3.Dot(direction, up)) >0.999f)
             up = Globals.Right;
-
         Quaternion targetRotation = Quaternion.CreateFromRotationMatrix(Matrix4x4.CreateWorld(targetPosition, direction, up));
         BeginCameraFocusLerp(targetPosition, targetRotation, durationSeconds);
     }
 
     private void BeginCameraFocusLerp(Vector3 targetPosition, Quaternion targetRotation, float durationSeconds)
     {
-        var tfm = TransformAs<Transform>();
-        if (tfm is null)
-            return;
-
+        var tfm = TransformAs<Transform>(); if (tfm is null) return;
         float clampedDuration = MathF.Max(0.01f, durationSeconds);
         _cameraFocusLerp = new CameraFocusLerpState
         {
@@ -669,100 +769,64 @@ public partial class EditorFlyingCameraPawnComponent : FlyingCameraPawnComponent
 
     private void UpdateCameraFocusLerp()
     {
-        if (!_cameraFocusLerp.HasValue)
-            return;
-
-        if (HasContinuousMovementInput())
-        {
-            CancelCameraFocusLerp();
-            return;
-        }
-
-        var tfm = TransformAs<Transform>();
-        if (tfm is null)
-        {
-            _cameraFocusLerp = null;
-            return;
-        }
-
+        if (!_cameraFocusLerp.HasValue) return;
+        if (HasContinuousMovementInput()) { CancelCameraFocusLerp(); return; }
+        var tfm = TransformAs<Transform>(); if (tfm is null) { _cameraFocusLerp = null; return; }
         var lerp = _cameraFocusLerp.Value;
         float elapsed = Engine.Time.Timer.Time() - lerp.StartTime;
-        float t = float.Clamp(elapsed / lerp.Duration, 0.0f, 1.0f);
+        float t = float.Clamp(elapsed / lerp.Duration,0.0f,1.0f);
         float eased = EaseInOut(t);
-
         Vector3 position = Vector3.Lerp(lerp.StartPosition, lerp.TargetPosition, eased);
         Quaternion rotation = Quaternion.Normalize(Quaternion.Slerp(lerp.StartRotation, lerp.TargetRotation, eased));
-
         tfm.SetWorldTranslationRotation(position, rotation);
-
         if (t >= FocusCompletionThreshold)
         {
-            _cameraFocusLerp = null;
-            SyncYawPitchWithRotation(rotation);
+            _cameraFocusLerp = null; SyncYawPitchWithRotation(rotation);
         }
     }
 
     private void CancelCameraFocusLerp()
     {
-        if (!_cameraFocusLerp.HasValue)
-            return;
-
+        if (!_cameraFocusLerp.HasValue) return;
         _cameraFocusLerp = null;
-
-        var tfm = TransformAs<Transform>();
-        if (tfm is not null)
-            SyncYawPitchWithRotation(tfm.WorldRotation);
+        var tfm = TransformAs<Transform>(); if (tfm is not null) SyncYawPitchWithRotation(tfm.WorldRotation);
     }
 
     private float ComputeFocusDistance(TransformBase focusTransform)
     {
         float radius = EstimateHierarchyRadius(focusTransform);
-        if (!float.IsFinite(radius) || radius < XRMath.Epsilon)
-            radius = DefaultFocusRadius;
-
+        if (!float.IsFinite(radius) || radius < XRMath.Epsilon) radius = DefaultFocusRadius;
         float distance = radius + FocusRadiusPadding;
-
         var cameraComponent = GetCamera();
         if (cameraComponent?.Camera.Parameters is XRPerspectiveCameraParameters perspective)
         {
             float fovRadians = XRMath.DegToRad(perspective.VerticalFieldOfView);
-            float halfFov = float.Clamp(fovRadians * 0.5f, 0.1f, XRMath.PIf * 0.45f);
+            float halfFov = float.Clamp(fovRadians *0.5f,0.1f, XRMath.PIf *0.45f);
             float perspectiveDistance = (radius + FocusRadiusPadding) / MathF.Tan(halfFov);
             distance = Math.Max(distance, perspectiveDistance);
         }
-
         return Math.Max(distance, MinimumFocusDistance);
     }
 
     private static float EstimateHierarchyRadius(TransformBase focusTransform)
     {
         Vector3 center = focusTransform.WorldTranslation;
-        float radius = 0.0f;
-        Stack<TransformBase> stack = new();
-        stack.Push(focusTransform);
-
-        while (stack.Count > 0)
+        float radius =0.0f;
+        Stack<TransformBase> stack = new(); stack.Push(focusTransform);
+        while (stack.Count >0)
         {
-            var current = stack.Pop();
-            if (current is null)
-                continue;
-
+            var current = stack.Pop(); if (current is null) continue;
             float distance = Vector3.Distance(center, current.WorldTranslation);
-            if (distance > radius)
-                radius = distance;
-
+            if (distance > radius) radius = distance;
             foreach (var child in current.Children)
-                if (child is not null)
-                    stack.Push(child);
+                if (child is not null) stack.Push(child);
         }
-
         return radius;
     }
 
     private static float EaseInOut(float t)
     {
-        t = float.Clamp(t, 0.0f, 1.0f);
-        return t * t * (3.0f - 2.0f * t);
+        t = float.Clamp(t,0.0f,1.0f); return t * t * (3.0f -2.0f * t);
     }
 
     private void SyncYawPitchWithRotation(Quaternion worldRotation)
@@ -773,25 +837,18 @@ public partial class EditorFlyingCameraPawnComponent : FlyingCameraPawnComponent
 
     private bool HasContinuousMovementInput()
     {
-        const float threshold = 0.0001f;
-        return MathF.Abs(_incRight) > threshold ||
-               MathF.Abs(_incForward) > threshold ||
-               MathF.Abs(_incUp) > threshold ||
-               MathF.Abs(_incPitch) > threshold ||
-               MathF.Abs(_incYaw) > threshold;
+        const float threshold =0.0001f;
+        return MathF.Abs(_incRight) > threshold || MathF.Abs(_incForward) > threshold || MathF.Abs(_incUp) > threshold || MathF.Abs(_incPitch) > threshold || MathF.Abs(_incYaw) > threshold;
     }
 
     public override void RegisterInput(InputInterface input)
     {
         base.RegisterInput(input);
-
         input.RegisterMouseButtonEvent(EMouseButton.LeftClick, EButtonInputType.Pressed, Select);
         input.RegisterKeyEvent(EKey.F12, EButtonInputType.Pressed, TakeScreenshot);
-
         input.RegisterKeyEvent(EKey.Number1, EButtonInputType.Pressed, SetTransformTranslation);
         input.RegisterKeyEvent(EKey.Number2, EButtonInputType.Pressed, SetTransformRotation);
         input.RegisterKeyEvent(EKey.Number3, EButtonInputType.Pressed, SetTransformScale);
-
         input.RegisterKeyEvent(EKey.F1, EButtonInputType.Pressed, SetTransformModeWorld);
         input.RegisterKeyEvent(EKey.F2, EButtonInputType.Pressed, SetTransformModeLocal);
         input.RegisterKeyEvent(EKey.F3, EButtonInputType.Pressed, SetTransformModeParent);
@@ -806,181 +863,98 @@ public partial class EditorFlyingCameraPawnComponent : FlyingCameraPawnComponent
     private void SetTransformRotation() => TransformTool3D.TransformMode = ETransformMode.Rotate;
     private void SetTransformTranslation() => TransformTool3D.TransformMode = ETransformMode.Translate;
 
-    /// <summary>
-    /// Selects a node to transform based on the last raycast results.
-    /// </summary>
     private void Select()
     {
-        //Don't select new nodes while the transform tool is active and highlighted
         if (TransformTool3D.GetActiveInstance(out var tfmComp) && tfmComp is not null && tfmComp.Highlighted || IsHoveringUI())
             return;
-
-        //Collect new hits from the last raycast results
         List<SceneNode> currentHits = [];
         if (!TryCollectModelComponentHits(currentHits))
             CollectHits(currentHits);
-
         if (_lastHits is null)
-            SetSelection(currentHits); //if we have no last hits, just set the selection to the current hits
-        else //otherwise, compare the current hits against the last hits and use modifier keys to update the selection
+            SetSelection(currentHits);
+        else
             UpdateSelection(LocalInput, CompareAgainstLastHits(currentHits, ref _lastHits, ref _lastHitIndex));
     }
 
-    /// <summary>
-    /// Sets the selection to the first node in the current hits list and updates the last hits and index.
-    /// </summary>
-    /// <param name="currentHits"></param>
     private void SetSelection(List<SceneNode> currentHits)
     {
-        _lastHits = currentHits;
-        _lastHitIndex = 0;
-        Selection.SceneNodes = currentHits.Count >= 1 ? [currentHits[0]] : [];
+        _lastHits = currentHits; _lastHitIndex =0;
+        Selection.SceneNodes = currentHits.Count >=1 ? [currentHits[0]] : [];
     }
 
-    /// <summary>
-    /// Determines which node to select based on the current hits and the last hits.
-    /// If the nodes are the same as the last hits, it cycles through them.
-    /// Otherwise, it updates the last hits to the current hits and selects the first node.
-    /// </summary>
-    /// <param name="currentHits"></param>
-    /// <param name="lastHits"></param>
-    /// <param name="lastHitIndex"></param>
-    /// <returns></returns>
     private static SceneNode? CompareAgainstLastHits(List<SceneNode> currentHits, ref List<SceneNode> lastHits, ref int lastHitIndex)
     {
-        //intersect with the last hit values to see if we are still hitting the same thing
-        bool sameNodes = currentHits.Count > 0 && currentHits.Intersect(lastHits).Count() == currentHits.Count;
-
+        bool sameNodes = currentHits.Count >0 && currentHits.Intersect(lastHits).Count() == currentHits.Count;
         SceneNode? node;
         if (sameNodes)
         {
-            //cycle the selection
-            lastHitIndex = (lastHitIndex + 1) % currentHits.Count;
+            lastHitIndex = (lastHitIndex +1) % currentHits.Count;
             node = currentHits[lastHitIndex];
         }
         else
         {
-            lastHits = currentHits;
-            lastHitIndex = 0;
-            node = currentHits.Count > 0 ? currentHits[lastHitIndex] : null;
+            lastHits = currentHits; lastHitIndex =0;
+            node = currentHits.Count >0 ? currentHits[lastHitIndex] : null;
         }
-
         return node;
     }
 
-    /// <summary>
-    /// Collects the hits from the last raycast results into the current hits list.
-    /// </summary>
-    /// <param name="currentHits"></param>
     private void CollectHits(List<SceneNode> currentHits)
     {
         using var scope = _raycastLock.EnterScope();
-        
         foreach (var x in _lastPhysicsPickResults.Values)
-            foreach (var (comp, _) in x)
+            for (int i =0; i < x.Count; i++)
+            {
+                var (comp, _) = x[i];
                 if (comp?.SceneNode is not null)
                     currentHits.Add(comp.SceneNode);
-
+            }
         foreach (var x in _lastOctreePickResults.Values)
-            foreach (var (info, _) in x)
+            for (int i =0; i < x.Count; i++)
+            {
+                var (info, _) = x[i];
                 if (info.Owner is XRComponent comp && comp.SceneNode is not null)
                     currentHits.Add(comp.SceneNode);
                 else if (info.Owner is TransformBase tfm && tfm.SceneNode is not null)
                     currentHits.Add(tfm.SceneNode);
-    }
-
-    private bool TryCollectModelComponentHits(List<SceneNode> currentHits)
-    {
-        var vp = Viewport;
-        var world = vp?.World;
-        if (vp is null || world is null)
-            return false;
-
-        Segment segment = GetWorldSegment(vp);
-        if (!world.RaycastOctree(segment, _selectionPickResults))
-            return false;
-
-        bool found = false;
-        foreach (var kvp in _selectionPickResults)
-        {
-            foreach ((RenderInfo3D _, object? data) in kvp.Value)
-            {
-                if (data is not MeshPickResult meshHit)
-                    continue;
-
-                if (meshHit.Component is ModelComponent modelComponent && modelComponent.SceneNode is SceneNode node)
-                {
-                    currentHits.Add(node);
-                    found = true;
-                }
             }
-        }
-
-        if (found)
-            UpdateMeshHitVisualization(_selectionPickResults);
-
-        return found;
     }
 
-    /// <summary>
-    /// Uses modifier keys to set, add, remove, or toggle selection of a node.
-    /// </summary>
-    /// <param name="input"></param>
-    /// <param name="node"></param>
-    /// <returns></returns>
     private static void UpdateSelection(LocalInputInterface? input, SceneNode? node)
     {
-        if (node is null)
-        {
-            Selection.SceneNodes = [];
-            return;
-        }
-
+        if (node is null) { Selection.SceneNodes = []; return; }
         var kbd = input?.Keyboard;
         if (kbd is not null)
         {
-            //control is toggle, alt is remove, shift is add
-
-            if (kbd.GetKeyState(EKey.ControlLeft, EButtonInputType.Pressed) ||
-                kbd.GetKeyState(EKey.ControlRight, EButtonInputType.Pressed))
+            if (kbd.GetKeyState(EKey.ControlLeft, EButtonInputType.Pressed) || kbd.GetKeyState(EKey.ControlRight, EButtonInputType.Pressed))
             {
                 if (Selection.SceneNodes.Contains(node))
                     RemoveNode(node);
                 else
                     AddNode(node);
-
                 return;
             }
-            else if (kbd.GetKeyState(EKey.AltLeft, EButtonInputType.Pressed) ||
-                     kbd.GetKeyState(EKey.AltRight, EButtonInputType.Pressed))
+            else if (kbd.GetKeyState(EKey.AltLeft, EButtonInputType.Pressed) || kbd.GetKeyState(EKey.AltRight, EButtonInputType.Pressed))
             {
-                RemoveNode(node);
-                return;
+                RemoveNode(node); return;
             }
-            else if (kbd.GetKeyState(EKey.ShiftLeft, EButtonInputType.Pressed) ||
-                     kbd.GetKeyState(EKey.ShiftRight, EButtonInputType.Pressed))
+            else if (kbd.GetKeyState(EKey.ShiftLeft, EButtonInputType.Pressed) || kbd.GetKeyState(EKey.ShiftRight, EButtonInputType.Pressed))
             {
-                AddNode(node);
-                return;
+                AddNode(node); return;
             }
         }
-
         Selection.SceneNodes = [node];
     }
 
     private static void AddNode(SceneNode node)
     {
-        if (Selection.SceneNodes.Contains(node))
-            return;
-
+        if (Selection.SceneNodes.Contains(node)) return;
         Selection.SceneNodes = [.. Selection.SceneNodes, node];
     }
 
     private static void RemoveNode(SceneNode node)
     {
-        if (!Selection.SceneNodes.Contains(node))
-            return;
-
+        if (!Selection.SceneNodes.Contains(node)) return;
         Selection.SceneNodes = [.. Selection.SceneNodes.Where(n => n != node)];
     }
 }
