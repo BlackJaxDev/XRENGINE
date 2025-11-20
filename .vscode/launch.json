@@ -1,0 +1,16 @@
+{
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": ".NET Core Launch (Editor)",
+            "type": "coreclr",
+            "request": "launch",
+            "preLaunchTask": "build",
+            "program": "${workspaceFolder}/Build/Editor/Debug/AnyCPU/Debug/net9.0-windows/XREngine.Editor.exe",
+            "args": [],
+            "cwd": "${workspaceFolder}/XREngine.Editor",
+            "console": "internalConsole",
+            "stopAtEntry": false
+        }
+    ]
+}

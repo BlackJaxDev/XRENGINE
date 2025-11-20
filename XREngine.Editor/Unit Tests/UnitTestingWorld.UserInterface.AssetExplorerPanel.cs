@@ -40,96 +40,36 @@ public static partial class UnitTestingWorld
         private static partial void DrawAssetExplorerPanel()
         {
             using var profilerScope = Engine.Profiler.Start("UI.DrawAssetExplorerPanel");
-            var viewport = ImGui.GetMainViewport();
-            float reservedLeft = _profilerDockLeftEnabled ? _profilerDockWidth : 0.0f;
-            float reservedRight = _inspectorDockRightEnabled ? _inspectorDockWidth : 0.0f;
-            bool dockedTop = _assetExplorerDockTopEnabled;
-            bool dockedBottom = _assetExplorerDockBottomEnabled;
-            bool isDocked = dockedTop || dockedBottom;
+            if (!_showAssetExplorer) return;
 
-            ImGuiWindowFlags windowFlags = ImGuiWindowFlags.None;
-            const float minHeight = 220.0f;
-            const float reservedVerticalMargin = 110.0f;
-
-            if (dockedTop)
-            {
-                float maxHeight = MathF.Max(minHeight, viewport.WorkSize.Y - reservedVerticalMargin);
-                float dockHeight = Math.Clamp(_assetExplorerDockHeight, minHeight, maxHeight);
-                float dockWidth = Math.Max(320.0f, viewport.WorkSize.X - reservedLeft - reservedRight);
-
-                _assetExplorerDockHeight = dockHeight;
-
-                Vector2 pos = new(viewport.WorkPos.X + reservedLeft, viewport.WorkPos.Y);
-                Vector2 size = new(dockWidth, dockHeight);
-
-                ImGui.SetNextWindowPos(pos, ImGuiCond.Always);
-                ImGui.SetNextWindowSize(size, ImGuiCond.Always);
-                ImGui.SetNextWindowViewport(viewport.ID);
-
-                windowFlags |= ImGuiWindowFlags.NoMove | ImGuiWindowFlags.NoScrollWithMouse | ImGuiWindowFlags.NoScrollbar | ImGuiWindowFlags.NoTitleBar | ImGuiWindowFlags.NoCollapse;
-            }
-            else if (dockedBottom)
-            {
-                float maxHeight = MathF.Max(minHeight, viewport.WorkSize.Y - reservedVerticalMargin);
-                float dockHeight = Math.Clamp(_assetExplorerDockHeight, minHeight, maxHeight);
-                float dockWidth = Math.Max(320.0f, viewport.WorkSize.X - reservedLeft - reservedRight);
-
-                _assetExplorerDockHeight = dockHeight;
-
-                Vector2 pos = new(viewport.WorkPos.X + reservedLeft, viewport.WorkPos.Y + viewport.WorkSize.Y - dockHeight);
-                Vector2 size = new(dockWidth, dockHeight);
-
-                ImGui.SetNextWindowPos(pos, ImGuiCond.Always);
-                ImGui.SetNextWindowSize(size, ImGuiCond.Always);
-                ImGui.SetNextWindowViewport(viewport.ID);
-
-                windowFlags |= ImGuiWindowFlags.NoMove | ImGuiWindowFlags.NoScrollWithMouse | ImGuiWindowFlags.NoScrollbar | ImGuiWindowFlags.NoTitleBar | ImGuiWindowFlags.NoCollapse;
-            }
-            else if (_assetExplorerUndockNextFrame)
-            {
-                var defaultSize = new Vector2(920.0f, 420.0f);
-                var pos = viewport.WorkPos + (viewport.WorkSize - defaultSize) * 0.5f;
-                ImGui.SetNextWindowPos(pos, ImGuiCond.Always);
-                ImGui.SetNextWindowSize(defaultSize, ImGuiCond.Always);
-                _assetExplorerUndockNextFrame = false;
-            }
-
-            if (!ImGui.Begin("Assets", windowFlags))
+            if (!ImGui.Begin("Assets", ref _showAssetExplorer))
             {
                 ImGui.End();
                 return;
             }
 
-            bool headerDockedBottom = dockedBottom && !dockedTop;
+            var viewport = ImGui.GetMainViewport();
+            const float minHeight = 220.0f;
+            const float reservedVerticalMargin = 110.0f;
 
-            DrawAssetExplorerHeader(viewport, false, dockedTop, dockedBottom, isDocked, minHeight, reservedVerticalMargin);
+            DrawAssetExplorerHeader(viewport, false, false, false, false, minHeight, reservedVerticalMargin);
 
-            bool showContent = !_assetExplorerCollapsed;
-            if (showContent)
+            if (ImGui.BeginTabBar("AssetExplorerTabs"))
             {
-                if (ImGui.BeginTabBar("AssetExplorerTabs"))
+                if (ImGui.BeginTabItem("Game Project"))
                 {
-                    if (ImGui.BeginTabItem("Game Project"))
-                    {
-                        DrawAssetExplorerTab(_assetExplorerGameState, Engine.Assets.GameAssetsPath);
-                        ImGui.EndTabItem();
-                    }
-
-                    if (ImGui.BeginTabItem("Engine Common"))
-                    {
-                        DrawAssetExplorerTab(_assetExplorerEngineState, Engine.Assets.EngineAssetsPath);
-                        ImGui.EndTabItem();
-                    }
-
-                    ImGui.EndTabBar();
+                    DrawAssetExplorerTab(_assetExplorerGameState, Engine.Assets.GameAssetsPath);
+                    ImGui.EndTabItem();
                 }
+
+                if (ImGui.BeginTabItem("Engine Common"))
+                {
+                    DrawAssetExplorerTab(_assetExplorerEngineState, Engine.Assets.EngineAssetsPath);
+                    ImGui.EndTabItem();
+                }
+
+                ImGui.EndTabBar();
             }
-
-            if (headerDockedBottom)
-                DrawAssetExplorerHeader(viewport, true, dockedTop, dockedBottom, isDocked, minHeight, reservedVerticalMargin);
-
-            if (_assetExplorerDockTopEnabled || _assetExplorerDockBottomEnabled)
-                HandleAssetExplorerDockResize(viewport, reservedLeft, reservedRight, _assetExplorerDockTopEnabled);
 
             ImGui.End();
         }
@@ -143,52 +83,7 @@ public static partial class UnitTestingWorld
             if (headerAtBottom)
                 ImGui.Separator();
 
-            ImGuiDir arrowDir = _assetExplorerCollapsed ? ImGuiDir.Right : ImGuiDir.Down;
-            if (ImGui.ArrowButton("##AssetExplorerCollapse", arrowDir))
-                _assetExplorerCollapsed = !_assetExplorerCollapsed;
-
-            ImGui.SameLine(0f, 6f);
             ImGui.TextUnformatted("Assets");
-
-            ImGui.SameLine();
-            if (ImGui.Button(isDocked ? "Undock" : "Dock Bottom"))
-            {
-                if (isDocked)
-                {
-                    _assetExplorerDockBottomEnabled = false;
-                    _assetExplorerDockTopEnabled = false;
-                    _assetExplorerUndockNextFrame = true;
-                }
-                else
-                {
-                    float maxHeight = MathF.Max(minHeight, viewport.WorkSize.Y - reservedVerticalMargin);
-                    _assetExplorerDockHeight = Math.Clamp(_assetExplorerDockHeight, minHeight, maxHeight);
-                    _assetExplorerDockBottomEnabled = true;
-                    _assetExplorerDockTopEnabled = false;
-                    _assetExplorerUndockNextFrame = false;
-                }
-            }
-
-            ImGui.SameLine();
-            string dockOrientationLabel = _assetExplorerDockTopEnabled ? "Dock Bottom" : "Dock Top";
-            if (ImGui.Button(dockOrientationLabel))
-            {
-                float maxHeight = MathF.Max(minHeight, viewport.WorkSize.Y - reservedVerticalMargin);
-                _assetExplorerDockHeight = Math.Clamp(_assetExplorerDockHeight, minHeight, maxHeight);
-
-                if (_assetExplorerDockTopEnabled)
-                {
-                    _assetExplorerDockTopEnabled = false;
-                    _assetExplorerDockBottomEnabled = true;
-                }
-                else
-                {
-                    _assetExplorerDockTopEnabled = true;
-                    _assetExplorerDockBottomEnabled = false;
-                }
-
-                _assetExplorerUndockNextFrame = false;
-            }
 
             ImGui.SameLine(0f, 6f);
             ImGui.SetNextItemWidth(240.0f);
@@ -2138,83 +2033,6 @@ public static partial class UnitTestingWorld
             }
         }
 
-        private static partial void HandleAssetExplorerDockResize(ImGuiViewportPtr viewport, float reservedLeft, float reservedRight, bool dockedTop)
-        {
-            const float minHeight = 220.0f;
-            const float reservedVerticalMargin = 110.0f;
-            const float handleHeight = 12.0f;
-
-            Vector2 originalCursor = ImGui.GetCursorScreenPos();
-            Vector2 windowPos = ImGui.GetWindowPos();
-            Vector2 windowSize = ImGui.GetWindowSize();
-            Vector2 handlePos = dockedTop
-                ? new Vector2(windowPos.X, windowPos.Y + windowSize.Y - handleHeight)
-                : windowPos;
-
-            ImGui.SetCursorScreenPos(handlePos);
-            ImGui.PushID("AssetExplorerDockResize");
-            ImGui.InvisibleButton(string.Empty, new Vector2(windowSize.X, handleHeight), ImGuiButtonFlags.MouseButtonLeft);
-
-            bool hovered = ImGui.IsItemHovered();
-            bool active = ImGui.IsItemActive();
-            bool activated = ImGui.IsItemActivated();
-            bool deactivated = ImGui.IsItemDeactivated();
-
-            if (hovered || active)
-                ImGui.SetMouseCursor(ImGuiMouseCursor.ResizeNS);
-
-            if (activated)
-            {
-                _assetExplorerDockDragging = true;
-                _assetExplorerDockDragStartHeight = _assetExplorerDockHeight;
-                _assetExplorerDockDragStartMouseY = ImGui.GetIO().MousePos.Y;
-            }
-
-            if (active && _assetExplorerDockDragging)
-            {
-                float delta = ImGui.GetIO().MousePos.Y - _assetExplorerDockDragStartMouseY;
-                float newHeight = dockedTop
-                    ? _assetExplorerDockDragStartHeight + delta
-                    : _assetExplorerDockDragStartHeight - delta;
-                float maxHeight = MathF.Max(minHeight, viewport.WorkSize.Y - reservedVerticalMargin);
-                newHeight = Math.Clamp(newHeight, minHeight, maxHeight);
-
-                if (MathF.Abs(newHeight - _assetExplorerDockHeight) > float.Epsilon)
-                {
-                    _assetExplorerDockHeight = newHeight;
-                    float dockWidth = Math.Max(320.0f, viewport.WorkSize.X - reservedLeft - reservedRight);
-                    Vector2 size = new(dockWidth, _assetExplorerDockHeight);
-                    if (dockedTop)
-                    {
-                        Vector2 pos = new(viewport.WorkPos.X + reservedLeft, viewport.WorkPos.Y);
-                        ImGui.SetWindowPos(pos);
-                        ImGui.SetWindowSize(size);
-                    }
-                    else
-                    {
-                        Vector2 pos = new(viewport.WorkPos.X + reservedLeft, viewport.WorkPos.Y + viewport.WorkSize.Y - _assetExplorerDockHeight);
-                        ImGui.SetWindowPos(pos);
-                        ImGui.SetWindowSize(size);
-                    }
-                }
-            }
-
-            if (deactivated)
-                _assetExplorerDockDragging = false;
-
-            var drawList = ImGui.GetWindowDrawList();
-            uint color = ImGui.GetColorU32(active ? ImGuiCol.SeparatorActive : hovered ? ImGuiCol.SeparatorHovered : ImGuiCol.Separator);
-            Vector2 rectMin = dockedTop
-                ? new Vector2(windowPos.X, windowPos.Y + windowSize.Y - handleHeight)
-                : new Vector2(windowPos.X, windowPos.Y);
-            Vector2 rectMax = dockedTop
-                ? new Vector2(windowPos.X + windowSize.X, windowPos.Y + windowSize.Y)
-                : new Vector2(windowPos.X + windowSize.X, windowPos.Y + handleHeight);
-            drawList.AddRectFilled(rectMin, rectMax, color);
-
-            ImGui.PopID();
-            ImGui.SetCursorScreenPos(originalCursor);
-        }
 
         private static partial void EnsureAssetExplorerState(AssetExplorerTabState state, string rootPath)
         {

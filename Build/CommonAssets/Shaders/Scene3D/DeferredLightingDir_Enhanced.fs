@@ -87,7 +87,7 @@ float PCFShadow(in vec3 fragCoord, in float bias, in int samples, in int cascade
     {
         vec2 offset = poissonDisk[i] * radius;
         float pcfDepth = texture(ShadowMapArray, vec3(fragCoord.xy + offset, float(cascadeIndex))).r;
-        shadow += (fragCoord.z - bias > pcfDepth) ? 0.0f : 1.0f;
+        shadow += (fragCoord.z + bias < pcfDepth) ? 0.0f : 1.0f;
     }
     
     return shadow / float(samples);
@@ -111,7 +111,7 @@ float PCSSShadow(in vec3 fragCoord, in float bias, in int cascadeIndex)
             float(i / 4 - 2) * texelSize.y
         ) * radius;
         float depth = texture(ShadowMapArray, vec3(fragCoord.xy + offset, float(cascadeIndex))).r;
-        if (fragCoord.z - bias > depth)
+        if (fragCoord.z + bias < depth)
         {
             blockerDepth += depth;
             blockerCount++;
@@ -125,7 +125,7 @@ float PCSSShadow(in vec3 fragCoord, in float bias, in int cascadeIndex)
     
     // Step 2: Penumbra estimation
     float avgBlockerDepth = blockerDepth / float(blockerCount);
-    float penumbraRadius = (fragCoord.z - avgBlockerDepth) / avgBlockerDepth * radius;
+    float penumbraRadius = (avgBlockerDepth - fragCoord.z) / max(avgBlockerDepth, EPSILON) * radius;
     
     // Step 3: PCF with estimated penumbra
     return PCFShadow(fragCoord, bias, ShadowSamples, cascadeIndex);
@@ -195,8 +195,11 @@ float ReadShadowMap2D(in vec3 fragPosWS, in vec3 N, in float NoL)
     // Get the appropriate light matrix
     mat4 lightMatrix = LightData.CascadeMatrices[cascadeIndex];
     
+    // Offset receiver along normal to reduce acne/light leaks
+    vec3 offsetPosWS = fragPosWS + N * ShadowBiasMax * 1.0f;
+
     // Move the fragment position into light space
-    vec4 fragPosLightSpace = lightMatrix * vec4(fragPosWS, 1.0f);
+    vec4 fragPosLightSpace = lightMatrix * vec4(offsetPosWS, 1.0f);
     vec3 fragCoord = fragPosLightSpace.xyz / fragPosLightSpace.w;
     fragCoord = fragCoord * 0.5f + 0.5f;
     
@@ -223,7 +226,7 @@ float ReadShadowMap2D(in vec3 fragPosWS, in vec3 N, in float NoL)
     {
         // Hard shadows
         float depth = texture(ShadowMapArray, vec3(fragCoord.xy, float(cascadeIndex))).r;
-        shadow = (fragCoord.z - bias > depth) ? 0.0f : 1.0f;
+        shadow = (fragCoord.z + bias < depth) ? 0.0f : 1.0f;
     }
     
     // Apply contact shadows
