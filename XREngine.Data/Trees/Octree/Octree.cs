@@ -205,9 +205,7 @@ namespace XREngine.Data.Trees
             SortedDictionary<float, List<(T item, object? data)>> items,
             Func<T, Segment, (float? distance, object? data)> directTest)
         {
-            if (items is null)
-                throw new ArgumentNullException(nameof(items));
-
+            ArgumentNullException.ThrowIfNull(items);
             _head.Raycast(segment, items, directTest);
         }
 

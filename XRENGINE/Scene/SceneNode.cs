@@ -1260,5 +1260,7 @@ namespace XREngine.Scene
             World = null;
             base.OnDestroying();
         }
+
+        public int Layer { get; set; } = 0;
     }
 }

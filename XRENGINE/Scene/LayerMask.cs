@@ -54,5 +54,12 @@ namespace XREngine.Scene
 
         public readonly ObjectLayer AsJoltObjectLayer()
             => new((uint)_mask);
+
+        public static readonly LayerMask Everything = new LayerMask(-1);
+
+        public readonly bool Contains(int layerIndex)
+        {
+            return (_mask & (1 << layerIndex)) != 0;
+        }
     }
 }

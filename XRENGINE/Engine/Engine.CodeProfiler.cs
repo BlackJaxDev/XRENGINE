@@ -12,7 +12,11 @@ namespace XREngine
     {
         public class CodeProfiler : XRBase
         {
+#if DEBUG
+            private bool _enableFrameLogging = true;
+#else
             private bool _enableFrameLogging = false;
+#endif
             public bool EnableFrameLogging
             {
                 get => _enableFrameLogging;
