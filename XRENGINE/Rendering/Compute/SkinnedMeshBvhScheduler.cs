@@ -1,4 +1,5 @@
 using System;
+using System.Collections;
 using System.Collections.Generic;
 using System.Numerics;
 using System.Threading.Tasks;
@@ -37,6 +38,30 @@ internal sealed class SkinnedMeshBvhScheduler
         return tcs.Task;
     }
 
+    public Task<Result> Schedule(RenderableMesh mesh, int version, Vector3[] positions, AABB bounds)
+    {
+        var tcs = new TaskCompletionSource<Result>(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        var xrMesh = mesh.CurrentLODRenderer?.Mesh;
+        var triangles = xrMesh?.Triangles;
+
+        if (xrMesh is null || triangles is null || triangles.Count == 0)
+        {
+            tcs.TrySetResult(Result.Empty(version));
+            return tcs.Task;
+        }
+
+        var boundsResult = new SkinnedMeshBoundsCalculator.Result(positions, bounds);
+
+        Engine.Jobs.Schedule(
+            GenerateBvhJob(triangles, positions, version, boundsResult, tcs),
+            error: ex => tcs.TrySetException(ex),
+            canceled: () => tcs.TrySetCanceled()
+        );
+
+        return tcs.Task;
+    }
+
     private static void ExecuteOnRenderThread(RenderableMesh mesh, int version, TaskCompletionSource<Result> tcs)
     {
         try
@@ -56,23 +81,28 @@ internal sealed class SkinnedMeshBvhScheduler
             }
 
             var positions = boundsResult.Positions;
-            Task.Run(() =>
-            {
-                try
-                {
-                    var tree = BuildBvh(triangles, positions);
-                    tcs.TrySetResult(new Result(version, tree, boundsResult));
-                }
-                catch (Exception buildEx)
-                {
-                    tcs.TrySetException(buildEx);
-                }
-            });
+            Engine.Jobs.Schedule(
+                GenerateBvhJob(triangles, positions, version, boundsResult, tcs),
+                error: ex => tcs.TrySetException(ex),
+                canceled: () => tcs.TrySetCanceled()
+            );
         }
         catch (Exception ex)
         {
             tcs.TrySetException(ex);
         }
+    }
+
+    private static IEnumerable GenerateBvhJob(
+        IReadOnlyList<IndexTriangle> triangles,
+        IReadOnlyList<Vector3> positions,
+        int version,
+        SkinnedMeshBoundsCalculator.Result boundsResult,
+        TaskCompletionSource<Result> tcs)
+    {
+        var task = Task.Run(() => BuildBvh(triangles, positions));
+        yield return task;
+        tcs.TrySetResult(new Result(version, task.Result, boundsResult));
     }
 
     private static BVH<Triangle>? BuildBvh(IReadOnlyList<IndexTriangle> triangles, IReadOnlyList<Vector3> positions)

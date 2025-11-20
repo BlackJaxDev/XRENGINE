@@ -405,9 +405,6 @@ namespace XREngine.Components.Scene.Mesh
                 if (!_skinnedBvhDirty && _skinnedBvh is not null)
                     return _skinnedBvh;
 
-                if (!Engine.Rendering.Settings.CalculateSkinnedBoundsInComputeShader)
-                    return BuildSkinnedBvhImmediate();
-
                 if (TryFinalizeSkinnedBvhJob(out var readyTree))
                     return readyTree;
 
@@ -416,43 +413,20 @@ namespace XREngine.Components.Scene.Mesh
             }
         }
 
-        private BVH<Triangle>? BuildSkinnedBvhImmediate()
-        {
-            var mesh = CurrentLODRenderer?.Mesh;
-            if (mesh?.Triangles is null || _skinnedVertexPositions is null)
-            {
-                _skinnedBvh = null;
-                _skinnedBvhDirty = false;
-                return null;
-            }
-
-            var worldTriangles = new List<Triangle>(mesh.Triangles.Count);
-            foreach (var tri in mesh.Triangles)
-            {
-                if (tri.Point0 >= _skinnedVertexCount ||
-                    tri.Point1 >= _skinnedVertexCount ||
-                    tri.Point2 >= _skinnedVertexCount)
-                    continue;
-
-                worldTriangles.Add(new Triangle(
-                    _skinnedVertexPositions[tri.Point0],
-                    _skinnedVertexPositions[tri.Point1],
-                    _skinnedVertexPositions[tri.Point2]));
-            }
-
-            _skinnedBvh = worldTriangles.Count > 0
-                ? new BVH<Triangle>(new TriangleAdapter(), worldTriangles)
-                : null;
-            _skinnedBvhDirty = false;
-            return _skinnedBvh;
-        }
 
         private void ScheduleSkinnedBvhJobIfNeeded()
         {
             if (_skinnedBvhTask is not null)
                 return;
 
-            _skinnedBvhTask = SkinnedMeshBvhScheduler.Instance.Schedule(this, _skinnedBvhVersion);
+            if (Engine.Rendering.Settings.CalculateSkinnedBoundsInComputeShader)
+            {
+                _skinnedBvhTask = SkinnedMeshBvhScheduler.Instance.Schedule(this, _skinnedBvhVersion);
+            }
+            else if (_skinnedVertexPositions != null)
+            {
+                _skinnedBvhTask = SkinnedMeshBvhScheduler.Instance.Schedule(this, _skinnedBvhVersion, _skinnedVertexPositions, _skinnedWorldBounds);
+            }
         }
 
         private bool TryFinalizeSkinnedBvhJob(out BVH<Triangle>? tree)

@@ -146,51 +146,13 @@ public static partial class UnitTestingWorld
         private static partial void DrawInspectorPanel()
         {
             using var profilerScope = Engine.Profiler.Start("UI.DrawInspectorPanel");
-            var viewport = ImGui.GetMainViewport();
-            ImGuiWindowFlags windowFlags = ImGuiWindowFlags.None;
+            if (!_showInspector) return;
 
-            if (_inspectorDockRightEnabled)
-            {
-                float maxWidth = MathF.Max(280.0f, viewport.WorkSize.X - 50.0f);
-                float dockWidth = Math.Clamp(_inspectorDockWidth, 280.0f, maxWidth);
-                _inspectorDockWidth = dockWidth;
-                Vector2 pos = new(viewport.WorkPos.X + viewport.WorkSize.X - dockWidth, viewport.WorkPos.Y);
-                ImGui.SetNextWindowPos(pos, ImGuiCond.Always);
-                ImGui.SetNextWindowSize(new Vector2(dockWidth, viewport.WorkSize.Y), ImGuiCond.Always);
-                ImGui.SetNextWindowViewport(viewport.ID);
-                windowFlags |= ImGuiWindowFlags.NoMove | ImGuiWindowFlags.NoScrollWithMouse | ImGuiWindowFlags.NoScrollbar;
-            }
-            else if (_inspectorUndockNextFrame)
-            {
-                var defaultSize = new Vector2(420.0f, 680.0f);
-                var pos = viewport.WorkPos + (viewport.WorkSize - defaultSize) * 0.5f;
-                ImGui.SetNextWindowPos(pos, ImGuiCond.Always);
-                ImGui.SetNextWindowSize(defaultSize, ImGuiCond.Always);
-                _inspectorUndockNextFrame = false;
-            }
-
-            if (!ImGui.Begin("Inspector", windowFlags))
+            if (!ImGui.Begin("Inspector", ref _showInspector))
             {
                 ImGui.End();
                 return;
             }
-
-            if (ImGui.Button(_inspectorDockRightEnabled ? "Undock" : "Dock Right"))
-            {
-                if (_inspectorDockRightEnabled)
-                {
-                    _inspectorDockRightEnabled = false;
-                    _inspectorUndockNextFrame = true;
-                }
-                else
-                {
-                    float maxWidth = MathF.Max(280.0f, viewport.WorkSize.X - 50.0f);
-                    _inspectorDockWidth = Math.Clamp(_inspectorDockWidth, 280.0f, maxWidth);
-                    _inspectorDockRightEnabled = true;
-                }
-            }
-
-            ImGui.Separator();
 
             object? standaloneTarget = _inspectorStandaloneTarget;
             var selectedNode = Selection.SceneNode ?? Selection.LastSceneNode;
@@ -222,9 +184,6 @@ public static partial class UnitTestingWorld
 
                 ImGui.EndChild();
             }
-
-            if (_inspectorDockRightEnabled)
-                HandleInspectorDockResize(viewport);
 
             DrawHierarchyAddComponentPopup();
 
@@ -614,62 +573,6 @@ public static partial class UnitTestingWorld
             return null;
         }
 
-        private static partial void HandleInspectorDockResize(ImGuiViewportPtr viewport)
-        {
-            const float minWidth = 280.0f;
-            const float reservedMargin = 50.0f;
-            const float handleWidth = 12.0f;
-
-            Vector2 originalCursor = ImGui.GetCursorScreenPos();
-            Vector2 windowPos = ImGui.GetWindowPos();
-            Vector2 windowSize = ImGui.GetWindowSize();
-            Vector2 handlePos = new(windowPos.X, windowPos.Y);
-
-            ImGui.SetCursorScreenPos(handlePos);
-            ImGui.PushID("InspectorDockResize");
-            ImGui.InvisibleButton(string.Empty, new Vector2(handleWidth, windowSize.Y), ImGuiButtonFlags.MouseButtonLeft);
-            bool hovered = ImGui.IsItemHovered();
-            bool active = ImGui.IsItemActive();
-            bool activated = ImGui.IsItemActivated();
-            bool deactivated = ImGui.IsItemDeactivated();
-
-            if (hovered || active)
-                ImGui.SetMouseCursor(ImGuiMouseCursor.ResizeEW);
-
-            if (activated)
-            {
-                _inspectorDockDragging = true;
-                _inspectorDockDragStartWidth = _inspectorDockWidth;
-                _inspectorDockDragStartMouseX = ImGui.GetIO().MousePos.X;
-            }
-
-            if (active && _inspectorDockDragging)
-            {
-                float delta = ImGui.GetIO().MousePos.X - _inspectorDockDragStartMouseX;
-                float newWidth = _inspectorDockDragStartWidth - delta;
-                float maxWidth = MathF.Max(minWidth, viewport.WorkSize.X - reservedMargin);
-                newWidth = Math.Clamp(newWidth, minWidth, maxWidth);
-                if (MathF.Abs(newWidth - _inspectorDockWidth) > float.Epsilon)
-                {
-                    _inspectorDockWidth = newWidth;
-                    float newPosX = viewport.WorkPos.X + viewport.WorkSize.X - _inspectorDockWidth;
-                    ImGui.SetWindowPos(new Vector2(newPosX, windowPos.Y));
-                    ImGui.SetWindowSize(new Vector2(_inspectorDockWidth, windowSize.Y));
-                }
-            }
-
-            if (deactivated)
-                _inspectorDockDragging = false;
-
-            var drawList = ImGui.GetWindowDrawList();
-            uint color = ImGui.GetColorU32(active ? ImGuiCol.SeparatorActive : hovered ? ImGuiCol.SeparatorHovered : ImGuiCol.Separator);
-            Vector2 rectMin = new(windowPos.X, windowPos.Y);
-            Vector2 rectMax = new(windowPos.X + handleWidth, windowPos.Y + windowSize.Y);
-            drawList.AddRectFilled(rectMin, rectMax, color);
-
-            ImGui.PopID();
-            ImGui.SetCursorScreenPos(originalCursor);
-        }
 
         private static partial void InvalidateComponentTypeCache()
             => _componentTypeCacheDirty = true;

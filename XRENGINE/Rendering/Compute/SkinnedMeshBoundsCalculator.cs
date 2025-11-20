@@ -154,7 +154,7 @@ internal sealed class SkinnedMeshBoundsCalculator : IDisposable
         return Engine.Rendering.Settings.OptimizeSkinningTo4Weights;
     }
 
-    private static AABB CalculateBounds(IReadOnlyList<Vector3> positions)
+    internal static AABB CalculateBounds(IReadOnlyList<Vector3> positions)
     {
         Vector3 min = new(float.PositiveInfinity);
         Vector3 max = new(float.NegativeInfinity);

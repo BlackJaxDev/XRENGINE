@@ -53,7 +53,7 @@ void main()
 	vec4 rmse = texture(Texture2, uv);
 	float ao = texture(Texture3, uv).r;
 	float depth = texture(Texture4, uv).r;
-	vec3 InLo = texture(Texture5, uv).rgb;
+	vec3 InLo = max(texture(Texture5, uv).rgb, vec3(0.0f));
 	vec3 irradianceColor = texture(Irradiance, normal).rgb;
 	vec3 fragPosWS = WorldPosFromDepth(depth, uv);
 	//float fogDensity = noise3(fragPosWS);

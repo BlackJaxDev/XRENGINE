@@ -23,7 +23,7 @@ uniform float MaxFade = 1000.0f;
 uniform float ShadowBase = 1.0f;
 uniform float ShadowMult = 1.0f;
 uniform float ShadowBiasMin = 0.00001f;
-uniform float ShadowBiasMax = 0.004f;
+uniform float ShadowBiasMax = 0.001f;
 
 // New shadow quality settings
 uniform int ShadowSamples = 16; // 16 for PCSS, 9 for PCF, 1 for hard shadows
@@ -74,7 +74,7 @@ float PCFShadow(in vec3 fragCoord, in float bias, in int samples)
     {
         vec2 offset = poissonDisk[i] * radius;
         float pcfDepth = texture(ShadowMap, fragCoord.xy + offset).r;
-        shadow += (fragCoord.z - bias > pcfDepth) ? 1.0f : 0.0f;
+        shadow += (fragCoord.z + bias < pcfDepth) ? 1.0f : 0.0f;
     }
     
     return 1.0f - (shadow / float(samples));
@@ -98,7 +98,7 @@ float PCSSShadow(in vec3 fragCoord, in float bias)
             float(i / 4 - 2) * texelSize.y
         ) * radius;
         float depth = texture(ShadowMap, fragCoord.xy + offset).r;
-        if (fragCoord.z - bias > depth)
+        if (fragCoord.z + bias < depth)
         {
             blockerDepth += depth;
             blockerCount++;
@@ -110,7 +110,7 @@ float PCSSShadow(in vec3 fragCoord, in float bias)
     
     // Step 2: Penumbra estimation
     float avgBlockerDepth = blockerDepth / float(blockerCount);
-    float penumbraRadius = (fragCoord.z - avgBlockerDepth) / avgBlockerDepth * radius;
+    float penumbraRadius = (avgBlockerDepth - fragCoord.z) / max(avgBlockerDepth, EPSILON) * radius;
     
     // Step 3: PCF with estimated penumbra
     return PCFShadow(fragCoord, bias, ShadowSamples);
@@ -123,8 +123,11 @@ float ReadShadowMap2D(in vec3 fragPosWS, in vec3 N, in float NoL, in mat4 lightM
     if (NoL <= 0.0f)
         return 0.0f;
 
+    // Slightly offset the receiver along its normal to avoid self-shadowing
+    vec3 offsetPosWS = fragPosWS + N * ShadowBiasMax * 1.0f;
+
     // Move the fragment position into light space
-    vec4 fragPosLightSpace = lightMatrix * vec4(fragPosWS, 1.0f);
+    vec4 fragPosLightSpace = lightMatrix * vec4(offsetPosWS, 1.0f);
     vec3 fragCoord = fragPosLightSpace.xyz / fragPosLightSpace.w;
     fragCoord = fragCoord * 0.5f + 0.5f;
 
@@ -150,7 +153,7 @@ float ReadShadowMap2D(in vec3 fragPosWS, in vec3 N, in float NoL, in mat4 lightM
     else
     {
         float depthSample = texture(ShadowMap, fragCoord.xy).r;
-        shadowFactor = (fragCoord.z - bias > depthSample) ? 0.0f : 1.0f;
+        shadowFactor = (fragCoord.z + bias < depthSample) ? 0.0f : 1.0f;
     }
     return shadowFactor;
 }

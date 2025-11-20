@@ -42,18 +42,18 @@ void main()
     vec3 cameraPos = InverseViewMatrix[3].xyz;
     
     // Compute the centroid of the triangle
-    vec3 centroid = (tri.p0.xyz + tri.p1.xyz + tri.p2.xyz) / 3.0;
+    vec3 triCentroid = (tri.p0.xyz + tri.p1.xyz + tri.p2.xyz) / 3.0;
     
     // Compute distance from the camera to the centroid
-    float distanceToCamera = length(centroid - cameraPos);
+    float distanceToCamera = length(triCentroid - cameraPos);
     
     // Define a scale factor based on the distance (adjust the multiplier as needed)
     float scaleFactor = distanceToCamera;
     
     // Scale each vertex relative to the centroid
-    vec3 scaledP0 = centroid + (tri.p0.xyz - centroid) * scaleFactor;
-    vec3 scaledP1 = centroid + (tri.p1.xyz - centroid) * scaleFactor;
-    vec3 scaledP2 = centroid + (tri.p2.xyz - centroid) * scaleFactor;
+    vec3 scaledP0 = triCentroid + (tri.p0.xyz - triCentroid) * scaleFactor;
+    vec3 scaledP1 = triCentroid + (tri.p1.xyz - triCentroid) * scaleFactor;
+    vec3 scaledP2 = triCentroid + (tri.p2.xyz - triCentroid) * scaleFactor;
     
     // Update triangle vertex positions with scaled values
     tri.p0 = vec4(scaledP0, tri.p0.w);

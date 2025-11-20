@@ -19,16 +19,16 @@ namespace XREngine.Components.Capture.Lights.Types
         {
             ViewportRenderCommandContainer c = new(this);
 
-            c.Add<VPRC_SetClears>().Set(ColorF4.Transparent, 1.0f, 0);
+            c.Add<VPRC_SetClears>().Set(ColorF4.White, 1.0f, 0);
             c.Add<VPRC_RenderMeshesPass>().RenderPass = (int)EDefaultRenderPass.PreRender;
 
             using (c.AddUsing<VPRC_PushOutputFBORenderArea>())
             {
                 using (c.AddUsing<VPRC_BindOutputFBO>())
                 {
+                    c.Add<VPRC_ColorMask>().Set(true, true, true, true);
                     c.Add<VPRC_StencilMask>().Set(~0u);
                     c.Add<VPRC_ClearByBoundFBO>();
-                    c.Add<VPRC_ColorMask>().Set(false, false, false, false);
                     c.Add<VPRC_DepthTest>().Enable = true;
                     c.Add<VPRC_DepthWrite>().Allow = true;
                     c.Add<VPRC_RenderMeshesPass>().RenderPass = (int)EDefaultRenderPass.OpaqueDeferred;

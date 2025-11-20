@@ -55,7 +55,8 @@ float Attenuate(in float dist, in float radius)
 float ReadShadowMap2D(in vec3 fragPosWS, in vec3 N, in float NoL, in mat4 lightMatrix)
 {
   //Move the fragment position into light space
-	vec4 fragPosLightSpace = lightMatrix * vec4(fragPosWS, 1.0f);
+		vec3 offsetPosWS = fragPosWS + N * ShadowBiasMax * 1.0f;
+		vec4 fragPosLightSpace = lightMatrix * vec4(offsetPosWS, 1.0f);
 	vec3 fragCoord = fragPosLightSpace.xyz / fragPosLightSpace.w;
 	fragCoord = fragCoord * 0.5f + 0.5f;
 
@@ -64,7 +65,7 @@ float ReadShadowMap2D(in vec3 fragPosWS, in vec3 N, in float NoL, in mat4 lightM
 
 	//Hard shadow
 	float depth = texture(ShadowMap, fragCoord.xy).r;
-	float shadow1 = (fragCoord.z - bias) > depth ? 0.0f : 1.0f;
+	float shadow1 = (fragCoord.z + bias) < depth ? 0.0f : 1.0f;
 
 	//PCF shadow
 	float shadow = 0.0f;
@@ -74,7 +75,7 @@ float ReadShadowMap2D(in vec3 fragPosWS, in vec3 N, in float NoL, in mat4 lightM
 	    for (int y = -1; y <= 1; ++y)
 	    {
 	        float pcfDepth = texture(ShadowMap, fragCoord.xy + vec2(x, y) * texelSize).r;
-	        shadow += (fragCoord.z - bias > pcfDepth) ? 0.0f : 1.0f;
+	        shadow += (fragCoord.z + bias < pcfDepth) ? 0.0f : 1.0f;
 	    }
 	}
 	shadow *= 0.111111111f; //divided by 9
