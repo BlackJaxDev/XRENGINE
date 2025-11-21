@@ -389,7 +389,7 @@ public partial class EditorFlyingCameraPawnComponent : FlyingCameraPawnComponent
 
     private void TryRenderFirstRaycastResult(SortedDictionary<float, List<(RenderInfo3D item, object? data)>> dict)
     {
-        if (dict.Count ==0)
+        if (dict.Count == 0)
             return;
         try
         {
@@ -423,7 +423,7 @@ public partial class EditorFlyingCameraPawnComponent : FlyingCameraPawnComponent
         {
             using (_raycastLock.EnterScope())
             {
-                if (results.Count ==0)
+                if (results.Count == 0)
                     return;
 
                 foreach (var kvp in results)
@@ -431,7 +431,7 @@ public partial class EditorFlyingCameraPawnComponent : FlyingCameraPawnComponent
                     var list = kvp.Value;
                     _firstHitBuffer.Clear();
                     //Copy to stable buffer (list itself may be mutated by writer). Reuses allocated list.
-                    for (int i =0; i < list.Count; i++)
+                    for (int i = 0; i < list.Count; i++)
                     {
                         var (item, _) = list[i];
                         if (item.Owner is TriggerVolumeComponent or BlockingVolumeComponent)
@@ -451,7 +451,7 @@ public partial class EditorFlyingCameraPawnComponent : FlyingCameraPawnComponent
             return;
         }
 
-        for (int i =0; i < _firstHitBuffer.Count; i++)
+        for (int i = 0; i < _firstHitBuffer.Count; i++)
         {
             var (_, data) = _firstHitBuffer[i];
             switch (data)
@@ -473,11 +473,11 @@ public partial class EditorFlyingCameraPawnComponent : FlyingCameraPawnComponent
     private static void RenderRaycastResult(KeyValuePair<float, List<(RenderInfo3D item, object? data)>> result)
     {
         var list = result.Value;
-        if (list is null || list.Count ==0)
+        if (list is null || list.Count == 0)
             return;
 
         //Capture stable snapshot to avoid modifications mid-iteration.
-        for (int i =0; i < list.Count; i++)
+        for (int i = 0; i < list.Count; i++)
         {
             var (info, data) = list[i];
             Vector3? point = data switch
@@ -499,7 +499,7 @@ public partial class EditorFlyingCameraPawnComponent : FlyingCameraPawnComponent
 
             if (name is not null)
                 Engine.Rendering.Debug.RenderText(point.Value, name, ColorF4.Black);
-            Engine.Rendering.Debug.RenderPoint(point.Value, ColorF4.Red);
+            //Engine.Rendering.Debug.RenderPoint(point.Value, ColorF4.Red);
         }
     }
 
@@ -551,9 +551,11 @@ public partial class EditorFlyingCameraPawnComponent : FlyingCameraPawnComponent
         var input = LocalInput;
         if (input is null)
             return p;
+
         var pos = input?.Mouse?.CursorPosition;
         if (pos is null)
             return p;
+
         p = pos.Value;
         p.Y = vp.Height - p.Y;
         p = vp.ScreenToViewportCoordinate(p);
@@ -584,6 +586,7 @@ public partial class EditorFlyingCameraPawnComponent : FlyingCameraPawnComponent
         var fbo = vp.RenderPipelineInstance?.GetFBO<XRFrameBuffer>(DefaultRenderPipeline.ForwardPassFBOName);
         if (fbo is null)
             return null;
+        
         float? depth = vp.GetDepth(fbo, (IVector2)internalSizeCoordinate);
         return depth;
     }

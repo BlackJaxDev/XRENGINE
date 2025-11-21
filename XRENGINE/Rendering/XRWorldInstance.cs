@@ -645,53 +645,53 @@ namespace XREngine.Rendering
             if (xrMesh is null)
                 return false;
 
-            if (xrMesh.BVHTree is null)
+            bool skinned = xrMesh.HasSkinning && Engine.Rendering.Settings.AllowSkinning;
+
+            var bvh = skinned ? mesh.GetSkinnedBvh() : xrMesh.BVHTree;
+            if (bvh is null)
             {
+                if (skinned)
+                    return false; // Skinned BVH build is asynchronous; try again next frame.
+
                 xrMesh.GenerateBVH();
-                if (xrMesh.BVHTree is null)
+                bvh = xrMesh.BVHTree;
+                if (bvh is null)
                     return false;
             }
 
-            bool skinned = xrMesh.HasSkinning && Engine.Rendering.Settings.AllowSkinning;
+            Vector3 segmentSpaceStart;
+            Vector3 segmentSpaceEnd;
+            Matrix4x4? spaceToWorld = null;
 
-            Matrix4x4 toLocal;
-            Matrix4x4 toWorld;
             if (skinned)
             {
-                var bone = mesh.RootBone;
-                if (bone is null)
-                    return false;
-                toLocal = bone.InverseWorldMatrix;
-                toWorld = bone.WorldMatrix;
+                segmentSpaceStart = worldSegment.Start;
+                segmentSpaceEnd = worldSegment.End;
             }
             else
             {
                 var transform = mesh.Component.Transform;
                 if (transform is null)
                     return false;
-                toLocal = transform.InverseWorldMatrix;
-                toWorld = transform.WorldMatrix;
+                spaceToWorld = transform.WorldMatrix;
+
+                segmentSpaceStart = Vector3.Transform(worldSegment.Start, transform.InverseWorldMatrix);
+                segmentSpaceEnd = Vector3.Transform(worldSegment.End, transform.InverseWorldMatrix);
             }
 
-            Vector3 localStart = Vector3.Transform(worldSegment.Start, toLocal);
-            Vector3 localEnd = Vector3.Transform(worldSegment.End, toLocal);
-            Vector3 localDiff = localEnd - localStart;
-            float localLength = localDiff.Length();
-            if (localLength <= 1e-5f)
+            Vector3 segmentSpaceDiff = segmentSpaceEnd - segmentSpaceStart;
+            float segmentSpaceLength = segmentSpaceDiff.Length();
+            if (segmentSpaceLength <= 1e-5f)
                 return false;
 
-            Vector3 localDir = localDiff / localLength;
+            Vector3 segmentSpaceDir = segmentSpaceDiff / segmentSpaceLength;
 
-            var bvh = xrMesh.BVHTree;
-            if (bvh is null)
-                return false;
-
-            var matches = bvh.Traverse(node => GeoUtil.SegmentIntersectsAABB(localStart, localEnd, node.Min, node.Max, out _, out _));
+            var matches = bvh.Traverse(node => GeoUtil.SegmentIntersectsAABB(segmentSpaceStart, segmentSpaceEnd, node.Min, node.Max, out _, out _));
             if (matches is null)
                 return false;
 
-            float bestLocalDistance = float.MaxValue;
-            Triangle? bestLocalTriangle = null;
+            float bestDistance = float.MaxValue;
+            Triangle? bestTriangle = null;
 
             foreach (var node in matches)
             {
@@ -700,31 +700,41 @@ namespace XREngine.Rendering
 
                 foreach (var tri in node.gobjects)
                 {
-                    if (!GeoUtil.RayIntersectsTriangle(localStart, localDir, tri.A, tri.B, tri.C, out float localHitDistance))
+                    if (!GeoUtil.RayIntersectsTriangle(segmentSpaceStart, segmentSpaceDir, tri.A, tri.B, tri.C, out float hitDistance))
                         continue;
 
-                    if (localHitDistance < 0.0f || localHitDistance > localLength)
+                    if (hitDistance < 0.0f || hitDistance > segmentSpaceLength)
                         continue;
 
-                    if (localHitDistance < bestLocalDistance)
+                    if (hitDistance < bestDistance)
                     {
-                        bestLocalDistance = localHitDistance;
-                        bestLocalTriangle = tri;
+                        bestDistance = hitDistance;
+                        bestTriangle = tri;
                     }
                 }
             }
 
-            if (bestLocalTriangle is null)
+            if (bestTriangle is null)
                 return false;
 
-            Vector3 localHitPoint = localStart + localDir * bestLocalDistance;
-            hitPoint = Vector3.Transform(localHitPoint, toWorld);
+            Vector3 spaceHitPoint = segmentSpaceStart + segmentSpaceDir * bestDistance;
+            if (skinned)
+            {
+                hitPoint = spaceHitPoint;
+                worldTriangle = bestTriangle.Value;
+            }
+            else
+            {
+                if (spaceToWorld is null)
+                    return false;
 
-            Triangle localTriangle = bestLocalTriangle.Value;
-            worldTriangle = new Triangle(
-                Vector3.Transform(localTriangle.A, toWorld),
-                Vector3.Transform(localTriangle.B, toWorld),
-                Vector3.Transform(localTriangle.C, toWorld));
+                hitPoint = Vector3.Transform(spaceHitPoint, spaceToWorld.Value);
+                Triangle localTriangle = bestTriangle.Value;
+                worldTriangle = new Triangle(
+                    Vector3.Transform(localTriangle.A, spaceToWorld.Value),
+                    Vector3.Transform(localTriangle.B, spaceToWorld.Value),
+                    Vector3.Transform(localTriangle.C, spaceToWorld.Value));
+            }
 
             distance = (hitPoint - worldSegment.Start).Length();
             float worldLength = (worldSegment.End - worldSegment.Start).Length();
