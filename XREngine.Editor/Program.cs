@@ -20,7 +20,7 @@ internal class Program
     [STAThread]
     private static void Main(string[] args)
     {
-        //ConsoleHelper.EnsureConsoleAttached();
+        ConsoleHelper.EnsureConsoleAttached();
         Undo.Initialize();
         Debug.Out("XREngine Editor starting...");
         RenderInfo2D.ConstructorOverride = RenderInfo2DConstructor;
@@ -87,6 +87,7 @@ internal class Program
 
         int primaryX = NativeMethods.GetSystemMetrics(0);
         int primaryY = NativeMethods.GetSystemMetrics(1);
+        Debug.Out("Primary monitor size: {0}x{1}", primaryX, primaryY);
 
         var settings = new VRGameStartupSettings<EVRActionCategory, EVRGameAction>()
         {

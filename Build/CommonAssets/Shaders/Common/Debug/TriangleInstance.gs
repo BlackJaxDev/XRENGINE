@@ -38,28 +38,6 @@ void main()
     
     MatColor = tri.color;
 
-    // Compute camera position from the inverse view matrix (translation component)
-    vec3 cameraPos = InverseViewMatrix[3].xyz;
-    
-    // Compute the centroid of the triangle
-    vec3 triCentroid = (tri.p0.xyz + tri.p1.xyz + tri.p2.xyz) / 3.0;
-    
-    // Compute distance from the camera to the centroid
-    float distanceToCamera = length(triCentroid - cameraPos);
-    
-    // Define a scale factor based on the distance (adjust the multiplier as needed)
-    float scaleFactor = distanceToCamera;
-    
-    // Scale each vertex relative to the centroid
-    vec3 scaledP0 = triCentroid + (tri.p0.xyz - triCentroid) * scaleFactor;
-    vec3 scaledP1 = triCentroid + (tri.p1.xyz - triCentroid) * scaleFactor;
-    vec3 scaledP2 = triCentroid + (tri.p2.xyz - triCentroid) * scaleFactor;
-    
-    // Update triangle vertex positions with scaled values
-    tri.p0 = vec4(scaledP0, tri.p0.w);
-    tri.p1 = vec4(scaledP1, tri.p1.w);
-    tri.p2 = vec4(scaledP2, tri.p2.w);
-
     gl_Position = viewProj * vec4(tri.p0.xyz, 1.0);
     EmitVertex();
     

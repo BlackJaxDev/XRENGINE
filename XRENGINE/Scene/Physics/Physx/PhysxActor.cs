@@ -9,6 +9,9 @@ namespace XREngine.Rendering.Physics.Physx
         public abstract PxActor* ActorPtr { get; }
         public override unsafe PxBase* BasePtr => (PxBase*)ActorPtr;
 
+        private ushort _collisionGroup;
+        private PxGroupsMask _groupsMask;
+
         public static Dictionary<nint, PhysxActor> AllActors { get; } = [];
         public static PhysxActor? Get(PxActor* ptr)
             => AllActors.TryGetValue((nint)ptr, out var actor) ? actor : null;
@@ -61,19 +64,35 @@ namespace XREngine.Rendering.Physics.Physx
 
         public ushort CollisionGroup
         {
-            get => ActorPtr->PhysPxGetGroup();
-            set => ActorPtr->PhysPxSetGroup(value);
+            get => _collisionGroup;
+            set
+            {
+                if (_collisionGroup == value)
+                    return;
+                _collisionGroup = value;
+                ActorPtr->PhysPxSetGroup(value);
+                OnCollisionFilteringChanged();
+            }
         }
 
         public PxGroupsMask GroupsMask
         {
-            get => ActorPtr->PhysPxGetGroupsMask();
+            get => _groupsMask;
             set
             {
-                PxGroupsMask mask = value;
+                if (MasksEqual(_groupsMask, value))
+                    return;
+                _groupsMask = value;
+                var mask = value;
                 ActorPtr->PhysPxSetGroupsMask(&mask);
+                OnCollisionFilteringChanged();
             }
         }
+
+        private static bool MasksEqual(in PxGroupsMask a, in PxGroupsMask b)
+            => a.bits0 == b.bits0 && a.bits1 == b.bits1 && a.bits2 == b.bits2 && a.bits3 == b.bits3;
+
+        protected virtual void OnCollisionFilteringChanged() { }
 
         public AABB GetWorldBounds(float inflation)
         {
@@ -125,7 +144,11 @@ namespace XREngine.Rendering.Physics.Physx
         public event Action<PhysxScene>? RemovedFromScene;
 
         public void OnAddedToScene(PhysxScene physxScene)
-            => AddedToScene?.Invoke(physxScene);
+        {
+            AddedToScene?.Invoke(physxScene);
+            if (this is PhysxRigidActor rigid)
+                rigid.RefreshShapeFilterData();
+        }
         public void OnRemovedFromScene(PhysxScene physxScene)
             => RemovedFromScene?.Invoke(physxScene);
     }

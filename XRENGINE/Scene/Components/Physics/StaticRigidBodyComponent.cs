@@ -4,6 +4,7 @@ using XREngine.Core.Attributes;
 using XREngine.Rendering.Physics.Physx;
 using XREngine.Scene;
 using XREngine.Scene.Transforms;
+using XREngine;
 
 namespace XREngine.Components.Physics
 {
@@ -223,16 +224,20 @@ namespace XREngine.Components.Physics
                 var mat = ResolvePhysxMaterial();
                 if (mat is null)
                     return null;
-                return new PhysxStaticRigidBody(
+                var created = new PhysxStaticRigidBody(
                     mat,
                     geometry,
                     position,
                     rotation,
                     ShapeOffsetTranslation,
                     ShapeOffsetRotation);
+                ApplyCachedProperties(created);
+                return created;
             }
 
-            return new PhysxStaticRigidBody(position, rotation);
+            var body = new PhysxStaticRigidBody(position, rotation);
+            ApplyCachedProperties(body);
+            return body;
         }
 
         private PhysxMaterial? ResolvePhysxMaterial()
@@ -288,6 +293,11 @@ namespace XREngine.Components.Physics
             if (RigidBody is not PhysxActor actor)
                 return;
 
+            ApplyCachedProperties(actor);
+        }
+
+        private void ApplyCachedProperties(PhysxActor actor)
+        {
             actor.GravityEnabled = _gravityEnabled;
             actor.SimulationEnabled = _simulationEnabled;
             actor.DebugVisualize = _debugVisualization;
@@ -298,6 +308,13 @@ namespace XREngine.Components.Physics
             actor.OwnerClient = _ownerClient;
             if (_actorName is not null)
                 actor.Name = _actorName;
+
+            Debug.Physics(
+                "[StaticRigidBodyComponent] Applied cached props to {0} actorType={1} group={2} mask={3}",
+                SceneNode?.Name ?? "<unnamed>",
+                actor.GetType().Name,
+                actor.CollisionGroup,
+                FormatGroupsMask(actor.GroupsMask));
         }
 
         private static PhysicsGroupsMask FromPhysxGroupsMask(PxGroupsMask mask)
@@ -330,6 +347,15 @@ namespace XREngine.Components.Physics
 
             scene.AddActor(RigidBody);
             _registeredPhysicsScene = scene;
+            if (RigidBody is PhysxActor actor)
+            {
+                Debug.Physics(
+                    "[StaticRigidBodyComponent] Registered actorType={0} with scene {1} (group={2}, mask={3})",
+                    actor.GetType().Name,
+                    scene.GetType().Name,
+                    actor.CollisionGroup,
+                    FormatGroupsMask(actor.GroupsMask));
+            }
         }
 
         private void RemoveRigidBodyFromScene()
@@ -343,8 +369,18 @@ namespace XREngine.Components.Physics
             if (_registeredPhysicsScene is not null)
             {
                 _registeredPhysicsScene.RemoveActor(RigidBody);
+                if (RigidBody is PhysxActor actor)
+                {
+                    Debug.Physics(
+                        "[StaticRigidBodyComponent] Removed actorType={0} from scene {1}",
+                        actor.GetType().Name,
+                        _registeredPhysicsScene.GetType().Name);
+                }
                 _registeredPhysicsScene = null;
             }
         }
+
+        private static string FormatGroupsMask(PxGroupsMask mask)
+            => $"{mask.bits0:X4}:{mask.bits1:X4}:{mask.bits2:X4}:{mask.bits3:X4}";
     }
 }

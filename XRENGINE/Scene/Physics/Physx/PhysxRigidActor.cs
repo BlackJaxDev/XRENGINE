@@ -4,6 +4,7 @@ using XREngine.Components;
 using XREngine.Scene;
 using XREngine.Scene.Transforms;
 using static MagicPhysX.NativeMethods;
+using XREngine;
 
 namespace XREngine.Rendering.Physics.Physx
 {
@@ -105,10 +106,86 @@ namespace XREngine.Rendering.Physics.Physx
         }
 
         public void AttachShape(PhysxShape shape)
-            => RigidActorPtr->AttachShapeMut(shape.ShapePtr);
+        {
+            RigidActorPtr->AttachShapeMut(shape.ShapePtr);
+            RefreshShapeFilterData();
+        }
 
         public void DetachShape(PhysxShape shape, bool wakeOnLostTouch)
             => RigidActorPtr->DetachShapeMut(shape.ShapePtr, wakeOnLostTouch);
+
+        protected override void OnCollisionFilteringChanged()
+        {
+            base.OnCollisionFilteringChanged();
+            RefreshShapeFilterData();
+        }
+
+        public void RefreshShapeFilterData(bool includeQueryData = true)
+        {
+            int shapeCount = (int)ShapeCount;
+            if (shapeCount == 0)
+            {
+                Debug.Physics("[PhysxRigidActor] No shapes to refresh for actorType={0} group={1}", GetType().Name, CollisionGroup);
+                return;
+            }
+
+            PxFilterData filterData = BuildFilterData();
+            PxShape** shapes = stackalloc PxShape*[shapeCount];
+            RigidActorPtr->GetShapes(shapes, (uint)shapeCount, 0);
+            for (int i = 0; i < shapeCount; i++)
+            {
+                var shapePtr = shapes[i];
+                if (shapePtr is null)
+                    continue;
+                Scene?.GetShape(shapePtr);
+                shapePtr->SetSimulationFilterDataMut(&filterData);
+                if (includeQueryData)
+                    shapePtr->SetQueryFilterDataMut(&filterData);
+
+                var flags = shapePtr->GetFlags();
+                Debug.Physics(
+                    "[PhysxRigidActor] Shape flags actorType={0} shapeIndex={1} sim={2} query={3} trigger={4} visualization={5}",
+                    GetType().Name,
+                    i,
+                    flags.HasFlag(PxShapeFlags.SimulationShape),
+                    flags.HasFlag(PxShapeFlags.SceneQueryShape),
+                    flags.HasFlag(PxShapeFlags.TriggerShape),
+                    flags.HasFlag(PxShapeFlags.Visualization));
+            }
+
+            Scene?.ResetFiltering(this);
+            Debug.Physics(
+                "[PhysxRigidActor] Refreshed filter data actorType={0} shapes={1} word0=0x{2:X8} word1=0x{3:X8} word2=0x{4:X8} group={5} mask={6}",
+                GetType().Name,
+                shapeCount,
+                filterData.word0,
+                filterData.word1,
+                filterData.word2,
+                CollisionGroup,
+                FormatGroupsMask(GroupsMask));
+        }
+
+        private PxFilterData BuildFilterData()
+        {
+            PxFilterData data = default;
+            data.word0 = BuildGroupBits(CollisionGroup);
+            var mask = GroupsMask;
+            data.word1 = CombineMaskBits(mask.bits0, mask.bits1);
+            data.word2 = CombineMaskBits(mask.bits2, mask.bits3);
+            if (data.word1 == 0 && data.word2 == 0)
+                data.word1 = uint.MaxValue;
+            data.word3 = 0;
+            return data;
+        }
+
+        private static uint BuildGroupBits(ushort group)
+            => group < 32 ? 1u << group : group;
+
+        private static uint CombineMaskBits(ushort low, ushort high)
+            => (uint)low | ((uint)high << 16);
+
+        private static string FormatGroupsMask(PxGroupsMask mask)
+            => $"{mask.bits0:X4}:{mask.bits1:X4}:{mask.bits2:X4}:{mask.bits3:X4}";
 
         public override void Release()
         {

@@ -2,7 +2,9 @@ using System;
 using System.Collections.Generic;
 using System.Numerics;
 using ImGuiNET;
+using MagicPhysX;
 using XREngine.Data.Transforms.Rotations;
+using XREngine.Rendering.Physics.Physx;
 using XREngine.Scene;
 using XREngine.Scene.Transforms;
 using XREngine.Editor;
@@ -30,6 +32,8 @@ public sealed class RigidBodyTransformEditor : IXRTransformEditor
         DrawRotationOffset(rigidBody, transformLabel, true);
         DrawRotationOffset(rigidBody, transformLabel, false);
 
+        ImGui.Separator();
+        DrawRigidBodyControls(rigidBody, transformLabel);
         ImGui.Separator();
         DrawPhysicsSummary(rigidBody);
     }
@@ -59,7 +63,7 @@ public sealed class RigidBodyTransformEditor : IXRTransformEditor
     {
         Vector3 offset = rigidBody.PositionOffset;
         ImGui.SetNextItemWidth(-1f);
-        bool edited = ImGui.DragFloat3("Position Offset##RigidBodyPositionOffset", ref offset, 0.05f);
+        bool edited = ImGui.DragFloat3("Position Offset (World X/Y/Z)##RigidBodyPositionOffset", ref offset, 0.05f);
         ImGuiUndoHelper.UpdateScope($"Adjust Position Offset {transformLabel}", rigidBody);
         if (!edited)
             return;
@@ -75,8 +79,8 @@ public sealed class RigidBodyTransformEditor : IXRTransformEditor
         Vector3 euler = Rotator.FromQuaternion(current).PitchYawRoll;
         ImGui.SetNextItemWidth(-1f);
         string label = preRotation
-            ? "Pre-Rotation Offset (Pitch/Yaw/Roll)##RigidBodyPreRot"
-            : "Post-Rotation Offset (Pitch/Yaw/Roll)##RigidBodyPostRot";
+            ? "Pre-Rotation Offset (Pitch/Yaw/Roll Degrees)##RigidBodyPreRot"
+            : "Post-Rotation Offset (Pitch/Yaw/Roll Degrees)##RigidBodyPostRot";
         bool edited = ImGui.DragFloat3(label, ref euler, 0.5f);
         string action = preRotation ? "Pre-Rotation Offset" : "Post-Rotation Offset";
         ImGuiUndoHelper.UpdateScope($"Adjust {action} {transformLabel}", rigidBody);
@@ -94,6 +98,77 @@ public sealed class RigidBodyTransformEditor : IXRTransformEditor
             EnqueueSceneEdit(() => rigidBody.PreRotationOffset = queued);
         else
             EnqueueSceneEdit(() => rigidBody.PostRotationOffset = queued);
+    }
+
+    private static void DrawRigidBodyControls(RigidBodyTransform rigidBody, string transformLabel)
+    {
+        var actor = rigidBody.RigidBody;
+        if (actor is null)
+        {
+            ImGui.TextDisabled("Rigid body not initialized.");
+            return;
+        }
+
+        if (actor is not PhysxRigidActor physxActor)
+        {
+            ImGui.TextDisabled("Rigid body editing requires a PhysX actor.");
+            return;
+        }
+
+        var (currentPosition, currentRotation) = physxActor.Transform;
+        Vector3 editedPosition = currentPosition;
+        Vector3 rotationEuler = Rotator.FromQuaternion(currentRotation).PitchYawRoll;
+        Quaternion editedRotation = currentRotation;
+
+        float fieldWidth = MathF.Max(140f, ImGui.GetContentRegionAvail().X * 0.55f);
+        bool changed = false;
+        ImGui.PushItemWidth(fieldWidth);
+        if (ImGui.DragFloat3("Body Position##RigidBodyWorldPosition", ref editedPosition, 0.01f))
+            changed = true;
+        ImGui.PopItemWidth();
+
+        if (ImGui.IsItemHovered())
+            ImGui.SetTooltip("World-space XYZ position");
+
+        ImGui.PushItemWidth(fieldWidth);
+        if (ImGui.DragFloat3("Body Rotation (deg)##RigidBodyWorldRotation", ref rotationEuler, 0.1f))
+        {
+            editedRotation = Rotator.ToQuaternion(rotationEuler);
+            changed = true;
+        }
+        ImGui.PopItemWidth();
+
+        if (ImGui.IsItemHovered())
+            ImGui.SetTooltip("World-space pitch/yaw/roll (degrees)");
+
+        ImGuiUndoHelper.UpdateScope($"Adjust Rigid Body Transform {transformLabel}", rigidBody);
+        if (!changed)
+            return;
+
+        var queuedPosition = editedPosition;
+        var queuedRotation = editedRotation;
+        ApplyRigidBodyTransform(rigidBody, physxActor, queuedPosition, queuedRotation);
+        EnqueueSceneEdit(() => ApplyRigidBodyTransform(rigidBody, physxActor, queuedPosition, queuedRotation));
+    }
+
+    private static void ApplyRigidBodyTransform(RigidBodyTransform transform, PhysxRigidActor actor, Vector3 position, Quaternion rotation)
+    {
+        if (actor.IsReleased)
+            return;
+
+        transform.SetPositionAndRotation(position, rotation);
+
+        if (actor is PhysxDynamicRigidBody dynamicBody)
+        {
+            bool isKinematic = dynamicBody.Flags.HasFlag(PxRigidBodyFlags.Kinematic);
+            if (isKinematic)
+                dynamicBody.KinematicTarget = (position, rotation);
+            else
+                actor.Transform = (position, rotation);
+            return;
+        }
+
+        actor.Transform = (position, rotation);
     }
 
     private static void DrawPhysicsSummary(RigidBodyTransform rigidBody)
