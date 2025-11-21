@@ -15,6 +15,7 @@ namespace XREngine
             General,
             Rendering,
             OpenGL,
+            Physics,
         }
 
         private static readonly ConcurrentDictionary<string, DateTime> RecentMessageCache = new();
@@ -27,6 +28,7 @@ namespace XREngine
             [LogCategory.General] = null,
             [LogCategory.Rendering] = null,
             [LogCategory.OpenGL] = null,
+            [LogCategory.Physics] = null,
         };
         private static string? _logSessionId;
         private static readonly List<(string Token, bool RequireBoundary)> OpenGlTokens = new()
@@ -74,6 +76,17 @@ namespace XREngine
             ("mesh=", false),
         };
 
+        private static readonly List<(string Token, bool RequireBoundary)> PhysicsTokens = new()
+        {
+            ("[physics]", false),
+            ("physics", true),
+            ("physx", false),
+            ("rigidbody", false),
+            ("collision", false),
+        };
+
+        private const string PhysicsPrefix = "[Physics]";
+
         /// <summary>
         /// Prints a message for debugging purposes.
         /// </summary>
@@ -89,6 +102,12 @@ namespace XREngine
         /// </summary>
         public static void Out(EOutputVerbosity verbosity, bool debugOnly, string message, params object[] args)
             => Out(verbosity, debugOnly, false, false, false, 0, 0, message, args);
+
+        /// <summary>
+        /// Convenience helper that routes output through the physics log.
+        /// </summary>
+        public static void Physics(string message, params object[] args)
+            => Out(EOutputVerbosity.Normal, false, $"{PhysicsPrefix} {message}", args);
         /// <summary>
         /// Prints a message for debugging purposes.
         /// </summary>
@@ -255,6 +274,7 @@ namespace XREngine
                 {
                     LogCategory.OpenGL => "opengl",
                     LogCategory.Rendering => "rendering",
+                    LogCategory.Physics => "physics",
                     _ => "general",
                 };
                 string fileName = $"log_{fileSuffix}_{_logSessionId}.txt";
@@ -290,6 +310,12 @@ namespace XREngine
             {
                 if (ContainsToken(normalized, entry.Token, entry.RequireBoundary))
                     return LogCategory.Rendering;
+            }
+
+            foreach (var entry in PhysicsTokens)
+            {
+                if (ContainsToken(normalized, entry.Token, entry.RequireBoundary))
+                    return LogCategory.Physics;
             }
 
             return LogCategory.General;

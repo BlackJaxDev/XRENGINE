@@ -5,6 +5,7 @@ using XREngine.Rendering.Physics.Physx;
 using XREngine.Scene;
 using XREngine.Scene.Physics.Jolt;
 using XREngine.Scene.Transforms;
+using XREngine;
 
 namespace XREngine.Components.Physics
 {
@@ -511,6 +512,7 @@ namespace XREngine.Components.Physics
         protected internal override void OnComponentActivated()
         {
             base.OnComponentActivated();
+            Debug.Physics("[DynamicRigidBodyComponent] Activating component on {0}", SceneNode?.Name ?? "<unnamed>");
             EnsureRigidBodyConstructed();
             ApplyAllCachedProperties();
             TryRegisterRigidBodyWithScene();
@@ -519,6 +521,7 @@ namespace XREngine.Components.Physics
         protected internal override void OnComponentDeactivated()
         {
             base.OnComponentDeactivated();
+            Debug.Physics("[DynamicRigidBodyComponent] Deactivating component on {0}", SceneNode?.Name ?? "<unnamed>");
             RemoveRigidBodyFromScene();
         }
 
@@ -543,7 +546,7 @@ namespace XREngine.Components.Physics
                 var mat = ResolvePhysxMaterial();
                 if (mat is null)
                     return null;
-                return new PhysxDynamicRigidBody(
+                var created = new PhysxDynamicRigidBody(
                     mat,
                     geometry,
                     Density,
@@ -551,9 +554,13 @@ namespace XREngine.Components.Physics
                     rotation,
                     ShapeOffsetTranslation,
                     ShapeOffsetRotation);
+                ApplyAllCachedProperties(created);
+                return created;
             }
 
-            return new PhysxDynamicRigidBody(position, rotation);
+            var body = new PhysxDynamicRigidBody(position, rotation);
+            ApplyAllCachedProperties(body);
+            return body;
         }
 
         private PhysxMaterial? ResolvePhysxMaterial()
@@ -601,7 +608,11 @@ namespace XREngine.Components.Physics
                 RigidBodyTransform.RigidBody = RigidBody;
                 ApplyAllCachedProperties();
                 TryRegisterRigidBodyWithScene();
+                return;
             }
+
+            if ((propName == nameof(ShapeOffsetTranslation) || propName == nameof(ShapeOffsetRotation)) && RigidBody is not null)
+                ApplyShapeOffsets(RigidBody);
         }
 
         private void ApplyAllCachedProperties()
@@ -609,51 +620,84 @@ namespace XREngine.Components.Physics
             if (RigidBody is null)
                 return;
 
-            ApplyActorProperties(RigidBody);
-            ApplyDynamicBodyProperties(RigidBody);
+            ApplyAllCachedProperties(RigidBody);
+        }
+
+        private void ApplyAllCachedProperties(IAbstractDynamicRigidBody body)
+        {
+            ApplyActorProperties(body);
+            ApplyDynamicBodyProperties(body);
+            ApplyShapeOffsets(body);
+            if (body is PhysxActor actor)
+            {
+                Debug.Physics(
+                    "[DynamicRigidBodyComponent] Applied cached props to {0} actorType={1} group={2} mask={3}",
+                    SceneNode?.Name ?? "<unnamed>",
+                    actor.GetType().Name,
+                    actor.CollisionGroup,
+                    FormatGroupsMask(actor.GroupsMask));
+            }
         }
 
         private void ApplyActorProperties(IAbstractDynamicRigidBody body)
         {
-            if (body is PhysxActor actor)
-            {
-                actor.GravityEnabled = _gravityEnabled;
-                actor.SimulationEnabled = _simulationEnabled;
-                actor.DebugVisualize = _debugVisualization;
-                actor.SendSleepNotifies = _sendSleepNotifies;
-                actor.CollisionGroup = _collisionGroup;
-                actor.GroupsMask = ToPhysxGroupsMask(_groupsMask);
-                actor.DominanceGroup = _dominanceGroup;
-                actor.OwnerClient = _ownerClient;
-                if (_actorName is not null)
-                    actor.Name = _actorName;
-            }
+            if (body is not PhysxActor actor)
+                return;
+            
+            actor.GravityEnabled = _gravityEnabled;
+            actor.SimulationEnabled = _simulationEnabled;
+            actor.DebugVisualize = _debugVisualization;
+            actor.SendSleepNotifies = _sendSleepNotifies;
+            actor.CollisionGroup = _collisionGroup;
+            actor.GroupsMask = ToPhysxGroupsMask(_groupsMask);
+            actor.DominanceGroup = _dominanceGroup;
+            actor.OwnerClient = _ownerClient;
+            if (_actorName is not null)
+                actor.Name = _actorName;
         }
 
         private void ApplyDynamicBodyProperties(IAbstractDynamicRigidBody body)
         {
-            if (body is PhysxDynamicRigidBody physx)
+            if (body is not PhysxDynamicRigidBody physx)
+                return;
+            
+            physx.Flags = ToPhysxRigidBodyFlags(_bodyFlags);
+            physx.LockFlags = ToPhysxLockFlags(_lockFlags);
+            physx.LinearDamping = _linearDamping;
+            physx.AngularDamping = _angularDamping;
+            physx.MaxLinearVelocity = _maxLinearVelocity;
+            physx.MaxAngularVelocity = _maxAngularVelocity;
+            physx.Mass = _mass;
+            physx.MassSpaceInertiaTensor = _massSpaceInertiaTensor;
+            physx.CMassLocalPose = (_centerOfMassPose.Rotation, _centerOfMassPose.Translation);
+            physx.MinCCDAdvanceCoefficient = _minCcdAdvanceCoefficient;
+            physx.MaxDepenetrationVelocity = _maxDepenetrationVelocity;
+            physx.MaxContactImpulse = _maxContactImpulse;
+            physx.ContactSlopCoefficient = _contactSlopCoefficient;
+            physx.StabilizationThreshold = _stabilizationThreshold;
+            physx.SleepThreshold = _sleepThreshold;
+            physx.ContactReportThreshold = _contactReportThreshold;
+            physx.WakeCounter = _wakeCounter;
+            physx.SolverIterationCounts = (_solverIterations.MinPositionIterations, _solverIterations.MinVelocityIterations);
+            if (_kinematicTarget.HasValue)
+                physx.KinematicTarget = _kinematicTarget;
+        }
+
+        private void ApplyShapeOffsets(IAbstractDynamicRigidBody body)
+        {
+            if (body is not PhysxRigidActor physxActor)
+                return;
+
+            var shapes = physxActor.GetShapes();
+            if (shapes.Length == 0)
+                return;
+
+            var pose = (ShapeOffsetTranslation, ShapeOffsetRotation);
+            foreach (var shape in shapes)
             {
-                physx.Flags = ToPhysxRigidBodyFlags(_bodyFlags);
-                physx.LockFlags = ToPhysxLockFlags(_lockFlags);
-                physx.LinearDamping = _linearDamping;
-                physx.AngularDamping = _angularDamping;
-                physx.MaxLinearVelocity = _maxLinearVelocity;
-                physx.MaxAngularVelocity = _maxAngularVelocity;
-                physx.Mass = _mass;
-                physx.MassSpaceInertiaTensor = _massSpaceInertiaTensor;
-                physx.CMassLocalPose = (_centerOfMassPose.Rotation, _centerOfMassPose.Translation);
-                physx.MinCCDAdvanceCoefficient = _minCcdAdvanceCoefficient;
-                physx.MaxDepenetrationVelocity = _maxDepenetrationVelocity;
-                physx.MaxContactImpulse = _maxContactImpulse;
-                physx.ContactSlopCoefficient = _contactSlopCoefficient;
-                physx.StabilizationThreshold = _stabilizationThreshold;
-                physx.SleepThreshold = _sleepThreshold;
-                physx.ContactReportThreshold = _contactReportThreshold;
-                physx.WakeCounter = _wakeCounter;
-                physx.SolverIterationCounts = (_solverIterations.MinPositionIterations, _solverIterations.MinVelocityIterations);
-                if (_kinematicTarget.HasValue)
-                    physx.KinematicTarget = _kinematicTarget;
+                if (shape is null)
+                    continue;
+                shape.LocalPose = pose;
             }
         }
 
@@ -757,8 +801,23 @@ namespace XREngine.Components.Physics
             if (_registeredPhysicsScene is not null && _registeredPhysicsScene != scene)
                 _registeredPhysicsScene.RemoveActor(RigidBody);
 
-            scene.AddActor(RigidBody);
-            _registeredPhysicsScene = scene;
+                if (_registeredPhysicsScene is not null)
+                {
+                    Debug.Physics("[DynamicRigidBodyComponent] Attempted to double-register actorType={0} in scene {1}", RigidBody.GetType().Name, scene.GetType().Name);
+                    return;
+                }
+
+                scene.AddActor(RigidBody);
+                _registeredPhysicsScene = scene;
+            if (RigidBody is PhysxActor actor)
+            {
+                Debug.Physics(
+                    "[DynamicRigidBodyComponent] Registered actorType={0} with scene {1} (group={2}, mask={3})",
+                    actor.GetType().Name,
+                    scene.GetType().Name,
+                    actor.CollisionGroup,
+                    FormatGroupsMask(actor.GroupsMask));
+            }
         }
 
         private void RemoveRigidBodyFromScene()
@@ -772,8 +831,18 @@ namespace XREngine.Components.Physics
             if (_registeredPhysicsScene is not null)
             {
                 _registeredPhysicsScene.RemoveActor(RigidBody);
+                if (RigidBody is PhysxActor actor)
+                {
+                    Debug.Physics(
+                        "[DynamicRigidBodyComponent] Removed actorType={0} from scene {1}",
+                        actor.GetType().Name,
+                        _registeredPhysicsScene.GetType().Name);
+                }
                 _registeredPhysicsScene = null;
             }
         }
+
+        private static string FormatGroupsMask(PxGroupsMask mask)
+            => $"{mask.bits0:X4}:{mask.bits1:X4}:{mask.bits2:X4}:{mask.bits3:X4}";
     }
 }

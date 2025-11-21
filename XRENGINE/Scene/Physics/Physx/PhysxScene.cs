@@ -3,6 +3,7 @@ using MagicPhysX;
 using System.Numerics;
 using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
+using XREngine;
 using XREngine.Components;
 using XREngine.Data;
 using XREngine.Data.Colors;
@@ -52,6 +53,10 @@ namespace XREngine.Rendering.Physics.Physx
 
         private readonly InstancedDebugVisualizer _visualizer;
 
+        private PxSimulationEventCallback* _simulationEventCallbackPtr;
+        private GCHandle _simulationEventCallbackHandle;
+        private bool _simulationEventCallbackHandleAllocated;
+
         //public PxPhysics* PhysicsPtr => _scene->GetPhysicsMut();
 
         public PxScene* ScenePtr => _scene;
@@ -70,6 +75,7 @@ namespace XREngine.Rendering.Physics.Physx
         public override void Destroy()
         {
             UnlinkVisualizationSettings();
+            ReleaseSimulationEventCallbacks();
 
             if (_scene is not null)
             {
@@ -81,27 +87,115 @@ namespace XREngine.Rendering.Physics.Physx
                 ((PxDefaultCpuDispatcher*)_dispatcher)->ReleaseMut();
         }
 
+        private unsafe void ConfigureSimulationEventCallbacks(ref PxSceneDesc sceneDesc)
+        {
+            ReleaseSimulationEventCallbacks();
+
+            _simulationEventCallbackHandle = GCHandle.Alloc(this);
+            _simulationEventCallbackHandleAllocated = true;
+
+            SimulationEventCallbackInfo callbackInfo = default;
+            var onContactPtr = Marshal.GetFunctionPointerForDelegate(OnContactDelegateInstance);
+            callbackInfo.collision_callback = (delegate* unmanaged[Cdecl]<void*, PxContactPairHeader*, PxContactPair*, uint, void>)onContactPtr.ToPointer();
+            callbackInfo.collision_user_data = (void*)GCHandle.ToIntPtr(_simulationEventCallbackHandle);
+
+            _simulationEventCallbackPtr = create_simulation_event_callbacks(&callbackInfo);
+            if (_simulationEventCallbackPtr is null)
+            {
+                Debug.Physics("[PhysxScene] Failed to create simulation event callbacks");
+                ReleaseSimulationEventCallbacks();
+                return;
+            }
+
+            sceneDesc.simulationEventCallback = _simulationEventCallbackPtr;
+            Debug.Physics("[PhysxScene] Simulation event callbacks configured");
+        }
+
+        private void ReleaseSimulationEventCallbacks()
+        {
+            if (_simulationEventCallbackPtr is not null)
+            {
+                destroy_simulation_event_callbacks(_simulationEventCallbackPtr);
+                _simulationEventCallbackPtr = null;
+            }
+
+            if (_simulationEventCallbackHandleAllocated)
+            {
+                _simulationEventCallbackHandle.Free();
+                _simulationEventCallbackHandleAllocated = false;
+            }
+        }
+
         [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
-        public delegate void CustomFilterShaderDelegate(FilterShaderCallbackInfo* callbackInfo, PxFilterFlags filterFlags);
+        public delegate PxFilterFlags CustomFilterShaderDelegate(FilterShaderCallbackInfo* callbackInfo, PxFilterFlags filterFlags);
 
         public CustomFilterShaderDelegate CustomFilterShaderInstance = CustomFilterShader;
-        static void CustomFilterShader(FilterShaderCallbackInfo* callbackInfo, PxFilterFlags filterFlags)
+        static PxFilterFlags CustomFilterShader(FilterShaderCallbackInfo* callbackInfo, PxFilterFlags filterFlags)
         {
+            // Console.WriteLine("[PhysxScene] CustomFilterShader called");
             callbackInfo->pairFlags[0] = 
                 PxPairFlags.ContactDefault |
                 PxPairFlags.NotifyTouchFound |
                 PxPairFlags.SolveContact |
                 PxPairFlags.DetectCcdContact |
                 PxPairFlags.DetectDiscreteContact;
+            return default;
         }
 
         [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
-        public delegate void CollisionCallback(IntPtr userData, PxContactPairHeader pairHeader, PxContactPair contacts, uint flags);
+        public delegate void CollisionCallback(void* userData, PxContactPairHeader* pairHeader, PxContactPair* pairs, uint nbPairs);
 
         public CollisionCallback OnContactDelegateInstance = OnContact;
-        static void OnContact(IntPtr userData, PxContactPairHeader pairHeader, PxContactPair contacts, uint flags)
+        static unsafe void OnContact(void* userData, PxContactPairHeader* pairHeader, PxContactPair* pairs, uint nbPairs)
         {
-            //Debug.Out($"Contact: {pairHeader.nbPairs}");
+            //System.IO.File.AppendAllText("physx_debug.log", $"[PhysxScene] OnContact called with {nbPairs} pairs. userData={(nint)userData:X}\n");
+            if (userData is null || pairHeader is null || pairs is null || nbPairs == 0)
+                return;
+
+            PhysxScene? scene = null;
+
+            try
+            {
+                var handle = GCHandle.FromIntPtr((nint)userData);
+                if (handle.IsAllocated)
+                    scene = handle.Target as PhysxScene;
+            }
+            catch
+            {
+                return;
+            }
+
+            if (scene is null)
+            {
+                //System.IO.File.AppendAllText("physx_debug.log", "[PhysxScene] OnContact scene is null\n");
+                return;
+            }
+
+            var (actor0Label, actor1Label) = scene.DescribeContactActors(pairHeader);
+            //System.IO.File.AppendAllText("physx_debug.log", $"[PhysxScene] OnContact actors={actor0Label} <-> {actor1Label}\n");
+            Debug.Physics(
+                "[PhysxScene] OnContact actors={0} <-> {1} nbPairs={2} headerFlags={3}",
+                actor0Label,
+                actor1Label,
+                nbPairs,
+                pairHeader->flags);
+
+            for (uint pairIndex = 0; pairIndex < nbPairs; pairIndex++)
+            {
+                var pairPtr = pairs + pairIndex;
+                var (shape0Label, shape1Label) = scene.DescribePairShapes(pairPtr);
+                var pair = pairPtr[0];
+                Debug.Physics(
+                    "  [PhysxScene] Pair {0} events={1} flags={2} contacts={3} patches={4} bufferSize={5} shapes={6} vs {7}",
+                    pairIndex,
+                    pair.events,
+                    pair.flags,
+                    pair.contactCount,
+                    pair.patchCount,
+                    pair.requiredBufferSize,
+                    shape0Label,
+                    shape1Label);
+            }
         }
 
         public override void Initialize()
@@ -118,23 +212,19 @@ namespace XREngine.Rendering.Physics.Physx
             sceneDesc.gravity = DefaultGravity;
             sceneDesc.cpuDispatcher = _dispatcher = (PxCpuDispatcher*)phys_PxDefaultCpuDispatcherCreate(4, null, PxDefaultCpuDispatcherWaitForWorkMode.WaitForWork, 0);
 
-            var simEventCallback = new SimulationEventCallbackInfo
-            {
-                collision_callback = (delegate* unmanaged[Cdecl]<void*, PxContactPairHeader*, PxContactPair*, uint, void>)Marshal.GetFunctionPointerForDelegate(OnContactDelegateInstance).ToPointer()
-            };
-            sceneDesc.simulationEventCallback = create_simulation_event_callbacks(&simEventCallback);
+            ConfigureSimulationEventCallbacks(ref sceneDesc);
 
-            //sceneDesc.filterShader = get_default_simulation_filter_shader();
+            sceneDesc.filterShader = get_default_simulation_filter_shader();
             var filterShaderCallback = (delegate* unmanaged[Cdecl]<FilterShaderCallbackInfo*, PxFilterFlags>)Marshal.GetFunctionPointerForDelegate(CustomFilterShaderInstance).ToPointer();
             enable_custom_filter_shader(&sceneDesc, filterShaderCallback, 1u);
 
             sceneDesc.flags =
-                //PxSceneFlags.EnableCcd |
-                PxSceneFlags.EnableGpuDynamics |
+                PxSceneFlags.EnableCcd |
                 PxSceneFlags.EnableActiveActors;
-                //PxSceneFlags.EnableStabilization |
-                //PxSceneFlags.EnableEnhancedDeterminism;
+            //PxSceneFlags.EnableStabilization |
+            //PxSceneFlags.EnableEnhancedDeterminism;
             sceneDesc.broadPhaseType = PxBroadPhaseType.Gpu;
+            //Debug.Physics("[PhysxScene] Broadphase set to CPU ABP; GPU dynamics disabled for debugging");
             //sceneDesc.gpuDynamicsConfig = new PxgDynamicsMemoryConfig()
             //{
             //    maxRigidContactCount = 64,
@@ -152,6 +242,8 @@ namespace XREngine.Rendering.Physics.Physx
             //using var t = Engine.Profiler.Start();
 
             float dt = Engine.Time.Timer.FixedUpdateDelta;
+            //Debug.Physics($"[PhysxScene] StepSimulation dt={dt}");
+            //System.IO.File.AppendAllText("physx_debug.log", $"[PhysxScene] StepSimulation dt={dt}\n");
 
             var controllers = _controllerManager?.Controllers?.Values;
             if (controllers is not null)
@@ -283,6 +375,7 @@ namespace XREngine.Rendering.Physics.Physx
         {
             _scene->AddActorMut(actor.ActorPtr, null);
             actor.OnAddedToScene(this);
+            Debug.Physics("[PhysxScene] Added actorType={0} group={1} mask={2}", actor.GetType().Name, actor is PhysxActor pa ? pa.CollisionGroup : (ushort)0, actor is PhysxActor pa2 ? FormatGroupsMask(pa2.GroupsMask) : "----");
         }
         public void AddActors(PhysxActor[] actors)
         {
@@ -291,12 +384,16 @@ namespace XREngine.Rendering.Physics.Physx
                 ptrs[i] = actors[i].ActorPtr;
             _scene->AddActorsMut(ptrs, (uint)actors.Length);
             foreach (var actor in actors)
+            {
                 actor.OnAddedToScene(this);
+                Debug.Physics("[PhysxScene] Added actorType={0} group={1} mask={2}", actor.GetType().Name, actor is PhysxActor pa ? pa.CollisionGroup : (ushort)0, actor is PhysxActor pa2 ? FormatGroupsMask(pa2.GroupsMask) : "----");
+            }
         }
         public void RemoveActor(PhysxActor actor, bool wakeOnLostTouch = false)
         {
             _scene->RemoveActorMut(actor.ActorPtr, wakeOnLostTouch);
             actor.OnRemovedFromScene(this);
+            Debug.Physics("[PhysxScene] Removed actorType={0}", actor.GetType().Name);
         }
         public void RemoveActors(PhysxActor[] actors, bool wakeOnLostTouch = false)
         {
@@ -305,12 +402,104 @@ namespace XREngine.Rendering.Physics.Physx
                 ptrs[i] = actors[i].ActorPtr;
             _scene->RemoveActorsMut(ptrs, (uint)actors.Length, wakeOnLostTouch);
             foreach (var actor in actors)
+            {
                 actor.OnRemovedFromScene(this);
+                Debug.Physics("[PhysxScene] Removed actorType={0}", actor.GetType().Name);
+            }
         }
+
+        private static string FormatGroupsMask(PxGroupsMask mask)
+            => $"{mask.bits0:X4}:{mask.bits1:X4}:{mask.bits2:X4}:{mask.bits3:X4}";
+
+        private unsafe (string actor0, string actor1) DescribeContactActors(PxContactPairHeader* header)
+        {
+            PxRigidActor* actor0Ptr = null;
+            PxRigidActor* actor1Ptr = null;
+
+            if (header is not null)
+            {
+                ref var headerRef = ref *header;
+                fixed (byte* actorBytes = headerRef.actors)
+                {
+                    var actors = (PxRigidActor**)actorBytes;
+                    actor0Ptr = actors[0];
+                    actor1Ptr = actors[1];
+                }
+            }
+
+            return (DescribeActor(actor0Ptr), DescribeActor(actor1Ptr));
+        }
+
+        private unsafe (string shape0, string shape1) DescribePairShapes(PxContactPair* pair)
+        {
+            PxShape* shape0Ptr = null;
+            PxShape* shape1Ptr = null;
+
+            if (pair is not null)
+            {
+                ref var pairRef = ref *pair;
+                fixed (byte* shapeBytes = pairRef.shapes)
+                {
+                    var shapes = (PxShape**)shapeBytes;
+                    shape0Ptr = shapes[0];
+                    shape1Ptr = shapes[1];
+                }
+            }
+
+            return (DescribeShape(shape0Ptr), DescribeShape(shape1Ptr));
+        }
+
+        private unsafe string DescribeActor(PxRigidActor* actorPtr)
+        {
+            if (actorPtr is null)
+                return "null-actor";
+
+            var actor = PhysxRigidActor.Get(actorPtr);
+            if (actor is null)
+                return $"PxRigidActor* 0x{(nint)actorPtr:X}";
+
+            var ownerName = actor.GetOwningComponent()?.Name ?? actor.GetType().Name;
+            return $"{ownerName} [group={actor.CollisionGroup} mask={FormatGroupsMask(actor.GroupsMask)}]";
+        }
+
+        private unsafe string DescribeShape(PxShape* shapePtr)
+        {
+            if (shapePtr is null)
+                return "null-shape";
+
+            var shape = PhysxShape.Get(shapePtr);
+            if (shape is null)
+                return $"PxShape* 0x{(nint)shapePtr:X}";
+
+            var actor = shape.GetActor();
+            var ownerName = actor?.GetOwningComponent()?.Name ?? actor?.GetType().Name ?? "no-owner";
+            var mask = actor is null ? "----" : FormatGroupsMask(actor.GroupsMask);
+            var group = actor?.CollisionGroup ?? 0;
+            return $"{shape.GetType().Name}:{shape.Name} owner={ownerName} group={group} mask={mask}";
+        }
+
 
         public Dictionary<nint, PhysxShape> Shapes { get; } = [];
         public PhysxShape? GetShape(PxShape* ptr)
-            => Shapes.TryGetValue((nint)ptr, out var shape) ? shape : null;
+        {
+            if (ptr is null)
+                return null;
+
+            if (!Shapes.TryGetValue((nint)ptr, out var shape) || shape is null)
+            {
+                shape = PhysxShape.Get(ptr) ?? new PhysxShape(ptr);
+                Shapes[(nint)ptr] = shape;
+                var flags = ptr->GetFlags();
+                Debug.Physics(
+                    "[PhysxScene] Registered shape ptr=0x{0:X} sim={1} query={2} trigger={3}",
+                    (nint)ptr,
+                    flags.HasFlag(PxShapeFlags.SimulationShape),
+                    flags.HasFlag(PxShapeFlags.SceneQueryShape),
+                    flags.HasFlag(PxShapeFlags.TriggerShape));
+            }
+
+            return shape;
+        }
 
         #region Joints
 
