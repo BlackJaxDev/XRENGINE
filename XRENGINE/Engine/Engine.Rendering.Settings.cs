@@ -89,7 +89,7 @@ namespace XREngine
                 private bool _allowBinaryProgramCaching = true;
                 private bool _calculateBlendshapesInComputeShader = false;
                 private bool _calculateSkinningInComputeShader = false;
-                private bool _calculateSkinnedBoundsInComputeShader = true;
+                private bool _calculateSkinnedBoundsInComputeShader = false;
                 private string _defaultFontFolder = "Roboto";
                 private string _defaultFontFileName = "Roboto-Medium.ttf";
                 private bool _renderTransformDebugInfo = false;

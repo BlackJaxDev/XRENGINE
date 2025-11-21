@@ -47,46 +47,89 @@ const float FLT_MAX = 3.402823466e+38;
 shared vec4 sharedMin[gl_WorkGroupSize.x];
 shared vec4 sharedMax[gl_WorkGroupSize.x];
 
-void atomicMinFloat(inout uint target, float value)
-{
-    uint oldValue = target;
-    uint assumed;
-    uint encoded = floatBitsToUint(value);
-    do
-    {
-        assumed = oldValue;
-        if (value >= uintBitsToFloat(assumed))
-            break;
-        oldValue = atomicCompSwap(target, assumed, encoded);
-    } while (assumed != oldValue);
-}
-
-void atomicMaxFloat(inout uint target, float value)
-{
-    uint oldValue = target;
-    uint assumed;
-    uint encoded = floatBitsToUint(value);
-    do
-    {
-        assumed = oldValue;
-        if (value <= uintBitsToFloat(assumed))
-            break;
-        oldValue = atomicCompSwap(target, assumed, encoded);
-    } while (assumed != oldValue);
-}
-
+// Keep the atomic compare-swap inline so drivers retain the original storage qualifiers.
 void atomicMinVec(inout uvec4 target, vec4 value)
 {
-    atomicMinFloat(target.x, value.x);
-    atomicMinFloat(target.y, value.y);
-    atomicMinFloat(target.z, value.z);
+    {
+        uint oldValue = target.x;
+        uint assumed;
+        uint encoded = floatBitsToUint(value.x);
+        do
+        {
+            assumed = oldValue;
+            if (value.x >= uintBitsToFloat(assumed))
+                break;
+            oldValue = atomicCompSwap(target.x, assumed, encoded);
+        } while (assumed != oldValue);
+    }
+
+    {
+        uint oldValue = target.y;
+        uint assumed;
+        uint encoded = floatBitsToUint(value.y);
+        do
+        {
+            assumed = oldValue;
+            if (value.y >= uintBitsToFloat(assumed))
+                break;
+            oldValue = atomicCompSwap(target.y, assumed, encoded);
+        } while (assumed != oldValue);
+    }
+
+    {
+        uint oldValue = target.z;
+        uint assumed;
+        uint encoded = floatBitsToUint(value.z);
+        do
+        {
+            assumed = oldValue;
+            if (value.z >= uintBitsToFloat(assumed))
+                break;
+            oldValue = atomicCompSwap(target.z, assumed, encoded);
+        } while (assumed != oldValue);
+    }
 }
 
 void atomicMaxVec(inout uvec4 target, vec4 value)
 {
-    atomicMaxFloat(target.x, value.x);
-    atomicMaxFloat(target.y, value.y);
-    atomicMaxFloat(target.z, value.z);
+    {
+        uint oldValue = target.x;
+        uint assumed;
+        uint encoded = floatBitsToUint(value.x);
+        do
+        {
+            assumed = oldValue;
+            if (value.x <= uintBitsToFloat(assumed))
+                break;
+            oldValue = atomicCompSwap(target.x, assumed, encoded);
+        } while (assumed != oldValue);
+    }
+
+    {
+        uint oldValue = target.y;
+        uint assumed;
+        uint encoded = floatBitsToUint(value.y);
+        do
+        {
+            assumed = oldValue;
+            if (value.y <= uintBitsToFloat(assumed))
+                break;
+            oldValue = atomicCompSwap(target.y, assumed, encoded);
+        } while (assumed != oldValue);
+    }
+
+    {
+        uint oldValue = target.z;
+        uint assumed;
+        uint encoded = floatBitsToUint(value.z);
+        do
+        {
+            assumed = oldValue;
+            if (value.z <= uintBitsToFloat(assumed))
+                break;
+            oldValue = atomicCompSwap(target.z, assumed, encoded);
+        } while (assumed != oldValue);
+    }
 }
 
 void main()
