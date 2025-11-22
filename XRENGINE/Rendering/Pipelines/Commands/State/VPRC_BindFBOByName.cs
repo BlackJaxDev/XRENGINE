@@ -1,4 +1,6 @@
-﻿namespace XREngine.Rendering.Pipelines.Commands
+﻿using XREngine.Rendering.RenderGraph;
+
+namespace XREngine.Rendering.Pipelines.Commands
 {
     public class VPRC_BindFBOByName : ViewportStateRenderCommand<VPRC_UnbindFBO>
     {
@@ -36,6 +38,13 @@
 
             if (ClearColor || ClearDepth || ClearStencil)
                 Engine.Rendering.State.ClearByBoundFBO(ClearColor, ClearDepth, ClearStencil);
+        }
+
+        internal override void DescribeRenderPass(RenderGraphDescribeContext context)
+        {
+            base.DescribeRenderPass(context);
+            if (FrameBufferName is not null)
+                context.PushRenderTarget(FrameBufferName, Write, ClearColor, ClearDepth, ClearStencil);
         }
     }
 }

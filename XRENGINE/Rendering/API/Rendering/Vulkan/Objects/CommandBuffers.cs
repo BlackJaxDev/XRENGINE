@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using Silk.NET.Vulkan;
 
 namespace XREngine.Rendering.Vulkan
@@ -57,6 +58,7 @@ namespace XREngine.Rendering.Vulkan
             if (!_commandBufferDirtyFlags[imageIndex])
                 return;
 
+            UpdateResourcePlannerFromPipeline();
             RecordCommandBuffer(imageIndex);
             _commandBufferDirtyFlags[imageIndex] = false;
         }
@@ -74,6 +76,14 @@ namespace XREngine.Rendering.Vulkan
 
             if (Api!.BeginCommandBuffer(commandBuffer, ref beginInfo) != Result.Success)
                 throw new Exception("Failed to begin recording command buffer.");
+
+            EmitPendingMemoryBarriers(commandBuffer);
+
+            var swapchainBarriers = _barrierPlanner.GetBarriersForPass(VulkanBarrierPlanner.SwapchainPassIndex);
+            if (swapchainBarriers.Count > 0)
+                EmitPlannedImageBarriers(commandBuffer, swapchainBarriers);
+            else
+                EmitPlannedImageBarriers(commandBuffer, _barrierPlanner.ImageBarriers);
 
             RenderPassBeginInfo renderPassInfo = new()
             {
@@ -112,6 +122,180 @@ namespace XREngine.Rendering.Vulkan
 
             Rect2D scissor = _state.GetScissor();
             Api!.CmdSetScissor(commandBuffer, 0, 1, &scissor);
+        }
+
+        private void EmitPendingMemoryBarriers(CommandBuffer commandBuffer)
+        {
+            var pendingMask = _state.PendingMemoryBarrierMask;
+            if (pendingMask == EMemoryBarrierMask.None)
+                return;
+
+            ResolveBarrierScopes(pendingMask, out PipelineStageFlags srcStages, out PipelineStageFlags dstStages, out AccessFlags srcAccess, out AccessFlags dstAccess);
+
+            MemoryBarrier memoryBarrier = new()
+            {
+                SType = StructureType.MemoryBarrier,
+                SrcAccessMask = srcAccess,
+                DstAccessMask = dstAccess,
+            };
+
+            Api!.CmdPipelineBarrier(
+                commandBuffer,
+                srcStages,
+                dstStages,
+                DependencyFlags.None,
+                1,
+                &memoryBarrier,
+                0,
+                null,
+                0,
+                null);
+
+            _state.ClearPendingMemoryBarrierMask();
+        }
+
+        private static void ResolveBarrierScopes(
+            EMemoryBarrierMask mask,
+            out PipelineStageFlags srcStages,
+            out PipelineStageFlags dstStages,
+            out AccessFlags srcAccess,
+            out AccessFlags dstAccess)
+        {
+            srcStages = 0;
+            dstStages = 0;
+            srcAccess = 0;
+            dstAccess = 0;
+
+            void Merge(bool condition, PipelineStageFlags srcStage, PipelineStageFlags dstStage, AccessFlags srcAcc, AccessFlags dstAcc)
+            {
+                if (!condition)
+                    return;
+
+                srcStages |= srcStage;
+                dstStages |= dstStage;
+                srcAccess |= srcAcc;
+                dstAccess |= dstAcc;
+            }
+
+            Merge(mask.HasFlag(EMemoryBarrierMask.VertexAttribArray),
+                PipelineStageFlags.TransferBit | PipelineStageFlags.VertexInputBit,
+                PipelineStageFlags.VertexInputBit,
+                AccessFlags.TransferWriteBit | AccessFlags.VertexAttributeReadBit,
+                AccessFlags.VertexAttributeReadBit);
+
+            Merge(mask.HasFlag(EMemoryBarrierMask.ElementArray),
+                PipelineStageFlags.TransferBit | PipelineStageFlags.VertexInputBit,
+                PipelineStageFlags.VertexInputBit,
+                AccessFlags.TransferWriteBit | AccessFlags.IndexReadBit,
+                AccessFlags.IndexReadBit);
+
+            Merge(mask.HasFlag(EMemoryBarrierMask.Uniform),
+                PipelineStageFlags.VertexShaderBit | PipelineStageFlags.FragmentShaderBit | PipelineStageFlags.ComputeShaderBit,
+                PipelineStageFlags.VertexShaderBit | PipelineStageFlags.FragmentShaderBit | PipelineStageFlags.ComputeShaderBit,
+                AccessFlags.ShaderReadBit,
+                AccessFlags.UniformReadBit);
+
+            Merge(mask.HasFlag(EMemoryBarrierMask.TextureFetch) || mask.HasFlag(EMemoryBarrierMask.TextureUpdate),
+                PipelineStageFlags.TransferBit | PipelineStageFlags.FragmentShaderBit | PipelineStageFlags.ComputeShaderBit,
+                PipelineStageFlags.FragmentShaderBit | PipelineStageFlags.ComputeShaderBit,
+                AccessFlags.TransferWriteBit | AccessFlags.ShaderReadBit,
+                AccessFlags.ShaderReadBit);
+
+            Merge(mask.HasFlag(EMemoryBarrierMask.ShaderGlobalAccess) || mask.HasFlag(EMemoryBarrierMask.ShaderImageAccess) || mask.HasFlag(EMemoryBarrierMask.ShaderStorage),
+                PipelineStageFlags.ComputeShaderBit | PipelineStageFlags.FragmentShaderBit,
+                PipelineStageFlags.ComputeShaderBit | PipelineStageFlags.FragmentShaderBit,
+                AccessFlags.ShaderReadBit | AccessFlags.ShaderWriteBit,
+                AccessFlags.ShaderReadBit | AccessFlags.ShaderWriteBit);
+
+            Merge(mask.HasFlag(EMemoryBarrierMask.Command),
+                PipelineStageFlags.ComputeShaderBit | PipelineStageFlags.TransferBit,
+                PipelineStageFlags.DrawIndirectBit,
+                AccessFlags.TransferWriteBit | AccessFlags.ShaderWriteBit,
+                AccessFlags.IndirectCommandReadBit);
+
+            Merge(mask.HasFlag(EMemoryBarrierMask.PixelBuffer) || mask.HasFlag(EMemoryBarrierMask.BufferUpdate),
+                PipelineStageFlags.TransferBit,
+                PipelineStageFlags.TransferBit | PipelineStageFlags.VertexInputBit,
+                AccessFlags.TransferReadBit | AccessFlags.TransferWriteBit,
+                AccessFlags.TransferReadBit | AccessFlags.TransferWriteBit | AccessFlags.VertexAttributeReadBit);
+
+            Merge(mask.HasFlag(EMemoryBarrierMask.Framebuffer),
+                PipelineStageFlags.ColorAttachmentOutputBit | PipelineStageFlags.EarlyFragmentTestsBit | PipelineStageFlags.LateFragmentTestsBit,
+                PipelineStageFlags.ColorAttachmentOutputBit | PipelineStageFlags.EarlyFragmentTestsBit | PipelineStageFlags.LateFragmentTestsBit,
+                AccessFlags.ColorAttachmentWriteBit | AccessFlags.DepthStencilAttachmentWriteBit,
+                AccessFlags.ColorAttachmentReadBit | AccessFlags.ColorAttachmentWriteBit | AccessFlags.DepthStencilAttachmentReadBit | AccessFlags.DepthStencilAttachmentWriteBit);
+
+            Merge(mask.HasFlag(EMemoryBarrierMask.AtomicCounter),
+                PipelineStageFlags.VertexShaderBit | PipelineStageFlags.FragmentShaderBit | PipelineStageFlags.ComputeShaderBit,
+                PipelineStageFlags.VertexShaderBit | PipelineStageFlags.FragmentShaderBit | PipelineStageFlags.ComputeShaderBit,
+                AccessFlags.AtomicCounterReadBit | AccessFlags.AtomicCounterWriteBit,
+                AccessFlags.AtomicCounterReadBit | AccessFlags.AtomicCounterWriteBit);
+
+            Merge(mask.HasFlag(EMemoryBarrierMask.ClientMappedBuffer),
+                PipelineStageFlags.HostBit,
+                PipelineStageFlags.TransferBit | PipelineStageFlags.VertexInputBit | PipelineStageFlags.FragmentShaderBit | PipelineStageFlags.ComputeShaderBit,
+                AccessFlags.HostWriteBit,
+                AccessFlags.TransferReadBit | AccessFlags.VertexAttributeReadBit | AccessFlags.UniformReadBit | AccessFlags.ShaderReadBit);
+
+            Merge(mask.HasFlag(EMemoryBarrierMask.QueryBuffer),
+                PipelineStageFlags.AllCommandsBit,
+                PipelineStageFlags.AllCommandsBit,
+                AccessFlags.MemoryWriteBit,
+                AccessFlags.MemoryReadBit | AccessFlags.MemoryWriteBit);
+
+            if (srcStages == 0)
+                srcStages = PipelineStageFlags.AllCommandsBit;
+            if (dstStages == 0)
+                dstStages = PipelineStageFlags.AllCommandsBit;
+            if (srcAccess == 0)
+                srcAccess = AccessFlags.MemoryReadBit | AccessFlags.MemoryWriteBit;
+            if (dstAccess == 0)
+                dstAccess = AccessFlags.MemoryReadBit | AccessFlags.MemoryWriteBit;
+        }
+
+        private void EmitPlannedImageBarriers(CommandBuffer commandBuffer, IReadOnlyList<VulkanBarrierPlanner.PlannedImageBarrier>? plannedBarriers)
+        {
+            if (plannedBarriers is null || plannedBarriers.Count == 0)
+                return;
+
+            foreach (var planned in plannedBarriers)
+            {
+                planned.Group.EnsureAllocated(this);
+
+                ImageSubresourceRange range = new()
+                {
+                    AspectMask = planned.Next.AspectMask,
+                    BaseMipLevel = 0,
+                    LevelCount = 1,
+                    BaseArrayLayer = 0,
+                    LayerCount = Math.Max(planned.Group.Template.Layers, 1u)
+                };
+
+                ImageMemoryBarrier barrier = new()
+                {
+                    SType = StructureType.ImageMemoryBarrier,
+                    SrcAccessMask = planned.Previous.AccessMask,
+                    DstAccessMask = planned.Next.AccessMask,
+                    OldLayout = planned.Previous.Layout,
+                    NewLayout = planned.Next.Layout,
+                    SrcQueueFamilyIndex = Vk.QueueFamilyIgnored,
+                    DstQueueFamilyIndex = Vk.QueueFamilyIgnored,
+                    Image = planned.Group.Image,
+                    SubresourceRange = range
+                };
+
+                Api!.CmdPipelineBarrier(
+                    commandBuffer,
+                    planned.Previous.StageMask,
+                    planned.Next.StageMask,
+                    DependencyFlags.None,
+                    0,
+                    null,
+                    0,
+                    null,
+                    1,
+                    &barrier);
+            }
         }
 
         public class CommandScope : IDisposable

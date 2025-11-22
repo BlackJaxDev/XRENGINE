@@ -1,6 +1,7 @@
 ﻿using Extensions;
 using XREngine.Data.Core;
 using XREngine.Rendering;
+using XREngine.Rendering.RenderGraph;
 
 namespace XREngine.Rendering.Commands
 {
@@ -23,18 +24,22 @@ namespace XREngine.Rendering.Commands
     public sealed class RenderCommandCollection : XRBase
     {
         public bool IsShadowPass { get; private set; } = false;
-        public void SetRenderPasses(Dictionary<int, IComparer<RenderCommand>?> passIndicesAndSorters)
+        public void SetRenderPasses(Dictionary<int, IComparer<RenderCommand>?> passIndicesAndSorters, IEnumerable<RenderPassMetadata>? passMetadata = null)
         {
             _updatingPasses = passIndicesAndSorters.ToDictionary(x => x.Key, x => x.Value is null ? [] : (ICollection<RenderCommand>)new SortedSet<RenderCommand>(x.Value));
 
             _renderingPasses = [];
             _gpuPasses = [];
+            _passMetadata = passMetadata?.ToDictionary(m => m.PassIndex) ?? new Dictionary<int, RenderPassMetadata>();
             foreach (KeyValuePair<int, ICollection<RenderCommand>> pass in _updatingPasses)
             {
                 _renderingPasses.Add(pass.Key, []);
                 var gpuPass = new GPURenderPassCollection(pass.Key);
                 gpuPass.SetDebugContext(_ownerPipeline, pass.Key);
                 _gpuPasses.Add(pass.Key, gpuPass);
+
+                if (!_passMetadata.ContainsKey(pass.Key))
+                    _passMetadata[pass.Key] = new RenderPassMetadata(pass.Key, $"Pass{pass.Key}", RenderGraphPassStage.Graphics);
             }
         }
 
@@ -43,6 +48,7 @@ namespace XREngine.Rendering.Commands
         private Dictionary<int, ICollection<RenderCommand>> _updatingPasses = [];
         private Dictionary<int, ICollection<RenderCommand>> _renderingPasses = [];
         private Dictionary<int, GPURenderPassCollection> _gpuPasses = [];
+        private Dictionary<int, RenderPassMetadata> _passMetadata = [];
         private XRRenderPipelineInstance? _ownerPipeline;
 
         public RenderCommandCollection() { }
@@ -125,6 +131,41 @@ namespace XREngine.Rendering.Commands
             _updatingPasses.Values.ForEach(Clear);
 
             _numCommandsRecentlyAddedToUpdate = 0;
+        }
+
+        public bool TryGetPassMetadata(int passIndex, out RenderPassMetadata metadata)
+            => _passMetadata.TryGetValue(passIndex, out metadata!);
+
+        public IReadOnlyDictionary<int, RenderPassMetadata> PassMetadata => _passMetadata;
+
+        public bool ValidatePassMetadata()
+        {
+            bool valid = true;
+
+            foreach (var (passIndex, passMetadata) in _passMetadata)
+            {
+                if (!_gpuPasses.ContainsKey(passIndex))
+                {
+                    Debug.LogWarning($"Render pass metadata references index {passIndex} but no GPU pass exists. Metadata={passMetadata.Name}");
+                    valid = false;
+                }
+
+                foreach (var usage in passMetadata.ResourceUsages)
+                {
+                    if (usage.ResourceType is RenderPassResourceType.ColorAttachment or RenderPassResourceType.DepthAttachment)
+                    {
+                        string resourceName = usage.ResourceName;
+                        if (!resourceName.StartsWith("fbo::", StringComparison.OrdinalIgnoreCase) &&
+                            !resourceName.Equals(RenderGraphResourceNames.OutputRenderTarget, StringComparison.OrdinalIgnoreCase))
+                        {
+                            Debug.LogWarning($"Pass {passMetadata.Name} references attachment '{resourceName}' that doesn't use fbo:: naming.");
+                            valid = false;
+                        }
+                    }
+                }
+            }
+
+            return valid;
         }
     }
 }

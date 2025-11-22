@@ -1,4 +1,6 @@
-﻿namespace XREngine.Rendering.Pipelines.Commands
+﻿using XREngine.Rendering.RenderGraph;
+
+namespace XREngine.Rendering.Pipelines.Commands
 {
     /// <summary>
     /// Binds the FBO that is set as the output FBO in the pipeline.
@@ -36,6 +38,12 @@
 
             if (ClearColor || ClearDepth || ClearStencil)
                 Engine.Rendering.State.ClearByBoundFBO(ClearColor, ClearDepth, ClearStencil);
+        }
+
+        internal override void DescribeRenderPass(RenderGraphDescribeContext context)
+        {
+            base.DescribeRenderPass(context);
+            context.PushRenderTarget(RenderGraphResourceNames.OutputRenderTarget, Write, ClearColor, ClearDepth, ClearStencil);
         }
     }
 }

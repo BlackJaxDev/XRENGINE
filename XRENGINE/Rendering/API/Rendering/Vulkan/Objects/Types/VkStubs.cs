@@ -38,16 +38,6 @@ namespace XREngine.Rendering.Vulkan
             protected override void UnlinkData() { }
         }
 
-        public class VkRenderBuffer(VulkanRenderer api, XRRenderBuffer data) : VkObject<XRRenderBuffer>(api, data)
-        {
-            public override VkObjectType Type => VkObjectType.Renderbuffer;
-            public override bool IsGenerated => true;
-            protected override uint CreateObjectInternal() => CacheObject(this);
-            protected override void DeleteObjectInternal() { }
-            protected override void LinkData() { }
-            protected override void UnlinkData() { }
-        }
-
         public class VkRenderQuery(VulkanRenderer api, XRRenderQuery data) : VkObject<XRRenderQuery>(api, data)
         {
             public override VkObjectType Type => VkObjectType.Query;
@@ -59,36 +49,6 @@ namespace XREngine.Rendering.Vulkan
         }
 
         public class VkTextureView(VulkanRenderer api, XRTextureViewBase data) : VkObject<XRTextureViewBase>(api, data)
-        {
-            public override VkObjectType Type => VkObjectType.Texture;
-            public override bool IsGenerated => true;
-            protected override uint CreateObjectInternal() => CacheObject(this);
-            protected override void DeleteObjectInternal() { }
-            protected override void LinkData() { }
-            protected override void UnlinkData() { }
-        }
-
-        public class VkTexture2DArray(VulkanRenderer api, XRTexture2DArray data) : VkObject<XRTexture2DArray>(api, data)
-        {
-            public override VkObjectType Type => VkObjectType.Texture;
-            public override bool IsGenerated => true;
-            protected override uint CreateObjectInternal() => CacheObject(this);
-            protected override void DeleteObjectInternal() { }
-            protected override void LinkData() { }
-            protected override void UnlinkData() { }
-        }
-
-        public class VkTexture3D(VulkanRenderer api, XRTexture3D data) : VkObject<XRTexture3D>(api, data)
-        {
-            public override VkObjectType Type => VkObjectType.Texture;
-            public override bool IsGenerated => true;
-            protected override uint CreateObjectInternal() => CacheObject(this);
-            protected override void DeleteObjectInternal() { }
-            protected override void LinkData() { }
-            protected override void UnlinkData() { }
-        }
-
-        public class VkTextureCube(VulkanRenderer api, XRTextureCube data) : VkObject<XRTextureCube>(api, data)
         {
             public override VkObjectType Type => VkObjectType.Texture;
             public override bool IsGenerated => true;

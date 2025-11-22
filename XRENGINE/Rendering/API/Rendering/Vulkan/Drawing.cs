@@ -1,6 +1,8 @@
-﻿using ImageMagick;
+﻿using System;
+using ImageMagick;
 using Silk.NET.Vulkan;
 using System.Numerics;
+using XREngine;
 using XREngine.Data.Colors;
 using XREngine.Data.Geometry;
 using XREngine.Data.Rendering;
@@ -45,53 +47,72 @@ namespace XREngine.Rendering.Vulkan
         }
 
         public override void Blit(
-            XRFrameBuffer inFBO,
-            XRFrameBuffer outFBO,
+            XRFrameBuffer? inFBO,
+            XRFrameBuffer? outFBO,
             int inX, int inY, uint inW, uint inH,
             int outX, int outY, uint outW, uint outH,
             EReadBufferMode readBufferMode,
             bool colorBit, bool depthBit, bool stencilBit,
             bool linearFilter)
         {
-            if (inFBO is null || outFBO is null)
+            if (!colorBit && !depthBit && !stencilBit)
                 return;
-            //var commandBuffer = BeginSingleTimeCommands();
-            ImageBlit region = new()
+
+            if (depthBit || stencilBit)
             {
-                SrcSubresource = new ImageSubresourceLayers
-                {
-                    AspectMask = ImageAspectFlags.ColorBit,
-                    MipLevel = 0,
-                    BaseArrayLayer = 0,
-                    LayerCount = 1
-                },
-                SrcOffsets = new ImageBlit.SrcOffsetsBuffer()
-                {
-                    Element0 = new Offset3D { X = inX, Y = inY, Z = 0 },
-                    Element1 = new Offset3D { X = (int)inW, Y = (int)inH, Z = 1 }
-                },
-                DstSubresource = new ImageSubresourceLayers
-                {
-                    AspectMask = ImageAspectFlags.ColorBit,
-                    MipLevel = 0,
-                    BaseArrayLayer = 0,
-                    LayerCount = 1
-                },
-                DstOffsets = new ImageBlit.DstOffsetsBuffer()
-                {
-                    Element0 = new Offset3D { X = outX, Y = outY, Z = 0 },
-                    Element1 = new Offset3D { X = (int)outW, Y = (int)outH, Z = 1 }
-                }
-            };
-            //commandBuffer.CmdBlitImage(
-            //    inFBO.ColorImage,
-            //    ImageLayout.TransferSrcOptimal,
-            //    outFBO.ColorImage,
-            //    ImageLayout.TransferDstOptimal,
-            //    1,
-            //    &region,
-            //    Filter.Linear);
-            //EndSingleTimeCommands(commandBuffer);
+                Debug.LogWarning("Vulkan Blit currently supports color attachments only.");
+                return;
+            }
+
+            if (inFBO is null || outFBO is null)
+            {
+                Debug.LogWarning("Vulkan Blit currently requires both source and destination framebuffers.");
+                return;
+            }
+
+            if (inW == 0 || inH == 0 || outW == 0 || outH == 0)
+                return;
+
+            _ = readBufferMode;
+
+            EnsureFrameBufferRegistered(inFBO);
+            EnsureFrameBufferAttachmentsRegistered(inFBO);
+            EnsureFrameBufferRegistered(outFBO);
+            EnsureFrameBufferAttachmentsRegistered(outFBO);
+
+            if (!TryResolveBlitImage(inFBO, out BlitImageInfo source))
+            {
+                Debug.LogWarning($"Vulkan Blit: Unable to resolve source attachment for '{inFBO.Name ?? "<unnamed>"}'.");
+                return;
+            }
+
+            if (!TryResolveBlitImage(outFBO, out BlitImageInfo destination))
+            {
+                Debug.LogWarning($"Vulkan Blit: Unable to resolve destination attachment for '{outFBO.Name ?? "<unnamed>"}'.");
+                return;
+            }
+
+            Filter filter = linearFilter ? Filter.Linear : Filter.Nearest;
+
+            using var scope = NewCommandScope();
+
+            TransitionForBlit(scope.CommandBuffer, source, source.PreferredLayout, ImageLayout.TransferSrcOptimal, source.AccessMask, AccessFlags.TransferReadBit, source.StageMask, PipelineStageFlags.TransferBit);
+            TransitionForBlit(scope.CommandBuffer, destination, destination.PreferredLayout, ImageLayout.TransferDstOptimal, destination.AccessMask, AccessFlags.TransferWriteBit, destination.StageMask, PipelineStageFlags.TransferBit);
+
+            ImageBlit region = BuildImageBlit(source, destination, inX, inY, inW, inH, outX, outY, outW, outH);
+
+            Api!.CmdBlitImage(
+                scope.CommandBuffer,
+                source.Image,
+                ImageLayout.TransferSrcOptimal,
+                destination.Image,
+                ImageLayout.TransferDstOptimal,
+                1,
+                &region,
+                filter);
+
+            TransitionForBlit(scope.CommandBuffer, source, ImageLayout.TransferSrcOptimal, source.PreferredLayout, AccessFlags.TransferReadBit, source.AccessMask, PipelineStageFlags.TransferBit, source.StageMask);
+            TransitionForBlit(scope.CommandBuffer, destination, ImageLayout.TransferDstOptimal, destination.PreferredLayout, AccessFlags.TransferWriteBit, destination.AccessMask, PipelineStageFlags.TransferBit, destination.StageMask);
         }
         public override void GetScreenshotAsync(BoundingRectangle region, bool withTransparency, Action<MagickImage, int> imageCallback)
         {
@@ -334,6 +355,189 @@ namespace XREngine.Rendering.Vulkan
         public override void SetMaterialUniforms(XRMaterial material, XRRenderProgram program)
         {
             // Not implemented: Vulkan path will set material parameters via descriptor sets
+        }
+
+        private readonly struct BlitImageInfo
+        {
+            public BlitImageInfo(
+                Image image,
+                ImageAspectFlags aspectMask,
+                uint baseArrayLayer,
+                uint layerCount,
+                uint mipLevel,
+                ImageLayout preferredLayout,
+                PipelineStageFlags stageMask,
+                AccessFlags accessMask)
+            {
+                Image = image;
+                AspectMask = aspectMask;
+                BaseArrayLayer = baseArrayLayer;
+                LayerCount = layerCount;
+                MipLevel = mipLevel;
+                PreferredLayout = preferredLayout;
+                StageMask = stageMask;
+                AccessMask = accessMask;
+            }
+
+            public Image Image { get; }
+            public ImageAspectFlags AspectMask { get; }
+            public uint BaseArrayLayer { get; }
+            public uint LayerCount { get; }
+            public uint MipLevel { get; }
+            public ImageLayout PreferredLayout { get; }
+            public PipelineStageFlags StageMask { get; }
+            public AccessFlags AccessMask { get; }
+            public bool IsValid => Image.Handle != 0;
+        }
+
+        private bool TryResolveBlitImage(XRFrameBuffer frameBuffer, out BlitImageInfo info)
+        {
+            var targets = frameBuffer.Targets;
+            if (targets is null)
+            {
+                info = default;
+                return false;
+            }
+
+            foreach (var (target, attachment, mipLevel, layerIndex) in targets)
+            {
+                if (!IsColorAttachment(attachment))
+                    continue;
+
+                if (TryResolveAttachmentImage(target, mipLevel, layerIndex, ImageAspectFlags.ColorBit, out info))
+                    return true;
+            }
+
+            info = default;
+            return false;
+        }
+
+        private bool TryResolveAttachmentImage(IFrameBufferAttachement attachment, int mipLevel, int layerIndex, ImageAspectFlags aspectMask, out BlitImageInfo info)
+        {
+            info = default;
+
+            switch (attachment)
+            {
+                case XRTexture2D tex2D when GetOrCreateAPIRenderObject(tex2D, true) is VkTexture2D vkTex2D:
+                    info = new BlitImageInfo(
+                        vkTex2D.Image,
+                        aspectMask,
+                        0,
+                        1,
+                        (uint)Math.Max(mipLevel, 0),
+                        ImageLayout.ColorAttachmentOptimal,
+                        PipelineStageFlags.ColorAttachmentOutputBit,
+                        AccessFlags.ColorAttachmentReadBit | AccessFlags.ColorAttachmentWriteBit);
+                    return info.IsValid;
+                case XRTexture2DArray texArray when GetOrCreateAPIRenderObject(texArray, true) is VkTexture2DArray vkArray:
+                    info = new BlitImageInfo(
+                        vkArray.Image,
+                        aspectMask,
+                        ResolveLayerIndex(layerIndex),
+                        1,
+                        (uint)Math.Max(mipLevel, 0),
+                        ImageLayout.ColorAttachmentOptimal,
+                        PipelineStageFlags.ColorAttachmentOutputBit,
+                        AccessFlags.ColorAttachmentReadBit | AccessFlags.ColorAttachmentWriteBit);
+                    return info.IsValid;
+                case XRTextureCube texCube when GetOrCreateAPIRenderObject(texCube, true) is VkTextureCube vkCube:
+                    info = new BlitImageInfo(
+                        vkCube.Image,
+                        aspectMask,
+                        ResolveLayerIndex(layerIndex),
+                        1,
+                        (uint)Math.Max(mipLevel, 0),
+                        ImageLayout.ColorAttachmentOptimal,
+                        PipelineStageFlags.ColorAttachmentOutputBit,
+                        AccessFlags.ColorAttachmentReadBit | AccessFlags.ColorAttachmentWriteBit);
+                    return info.IsValid;
+                default:
+                    return false;
+            }
+        }
+
+        private static bool IsColorAttachment(EFrameBufferAttachment attachment)
+            => attachment >= EFrameBufferAttachment.ColorAttachment0 && attachment <= EFrameBufferAttachment.ColorAttachment31;
+
+        private static uint ResolveLayerIndex(int layerIndex)
+            => layerIndex >= 0 ? (uint)layerIndex : 0u;
+
+        private static ImageBlit BuildImageBlit(
+            BlitImageInfo source,
+            BlitImageInfo destination,
+            int inX, int inY, uint inW, uint inH,
+            int outX, int outY, uint outW, uint outH)
+        {
+            ImageBlit region = new()
+            {
+                SrcSubresource = new ImageSubresourceLayers
+                {
+                    AspectMask = source.AspectMask,
+                    MipLevel = source.MipLevel,
+                    BaseArrayLayer = source.BaseArrayLayer,
+                    LayerCount = source.LayerCount
+                },
+                DstSubresource = new ImageSubresourceLayers
+                {
+                    AspectMask = destination.AspectMask,
+                    MipLevel = destination.MipLevel,
+                    BaseArrayLayer = destination.BaseArrayLayer,
+                    LayerCount = destination.LayerCount
+                }
+            };
+
+            region.SrcOffsets.Element0 = new Offset3D { X = inX, Y = inY, Z = 0 };
+            region.SrcOffsets.Element1 = new Offset3D { X = inX + (int)inW, Y = inY + (int)inH, Z = 1 };
+            region.DstOffsets.Element0 = new Offset3D { X = outX, Y = outY, Z = 0 };
+            region.DstOffsets.Element1 = new Offset3D { X = outX + (int)outW, Y = outY + (int)outH, Z = 1 };
+
+            return region;
+        }
+
+        private void TransitionForBlit(
+            CommandBuffer commandBuffer,
+            BlitImageInfo info,
+            ImageLayout oldLayout,
+            ImageLayout newLayout,
+            AccessFlags srcAccess,
+            AccessFlags dstAccess,
+            PipelineStageFlags srcStage,
+            PipelineStageFlags dstStage)
+        {
+            ImageMemoryBarrier barrier = new()
+            {
+                SType = StructureType.ImageMemoryBarrier,
+                SrcAccessMask = srcAccess,
+                DstAccessMask = dstAccess,
+                OldLayout = oldLayout,
+                NewLayout = newLayout,
+                SrcQueueFamilyIndex = Vk.QueueFamilyIgnored,
+                DstQueueFamilyIndex = Vk.QueueFamilyIgnored,
+                Image = info.Image,
+                SubresourceRange = new ImageSubresourceRange
+                {
+                    AspectMask = info.AspectMask,
+                    BaseMipLevel = info.MipLevel,
+                    LevelCount = 1,
+                    BaseArrayLayer = info.BaseArrayLayer,
+                    LayerCount = info.LayerCount
+                }
+            };
+
+            ImageMemoryBarrier* barrierPtr = stackalloc ImageMemoryBarrier[1];
+            barrierPtr[0] = barrier;
+
+            Api!.CmdPipelineBarrier(
+                commandBuffer,
+                srcStage,
+                dstStage,
+                DependencyFlags.None,
+                0,
+                null,
+                0,
+                null,
+                1,
+                barrierPtr);
         }
     }
 }

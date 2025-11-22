@@ -1,15 +1,26 @@
 using System;
+using System.Linq;
 using Silk.NET.Vulkan;
 using XREngine.Data.Colors;
 using XREngine.Data.Geometry;
 using XREngine.Data.Rendering;
+using XREngine.Rendering.RenderGraph;
+using XREngine.Rendering.Resources;
 
 namespace XREngine.Rendering.Vulkan;
 
 public unsafe partial class VulkanRenderer
 {
     private readonly VulkanStateTracker _state = new();
+    private readonly VulkanResourcePlanner _resourcePlanner = new();
+    private readonly VulkanResourceAllocator _resourceAllocator = new();
+    private readonly VulkanBarrierPlanner _barrierPlanner = new();
+    internal VulkanResourcePlanner ResourcePlanner => _resourcePlanner;
+    internal VulkanResourcePlan ResourcePlan => _resourcePlanner.CurrentPlan;
+    internal VulkanResourceAllocator ResourceAllocator => _resourceAllocator;
     private bool[]? _commandBufferDirtyFlags;
+    private XRFrameBuffer? _boundDrawFrameBuffer;
+    private XRFrameBuffer? _boundReadFrameBuffer;
 
     private sealed class VulkanStateTracker
     {
@@ -196,6 +207,82 @@ public unsafe partial class VulkanRenderer
         MarkCommandBuffersDirty();
     }
 
+    private void UpdateResourcePlannerFromPipeline()
+    {
+        _resourcePlanner.Sync(Engine.Rendering.State.CurrentResourceRegistry);
+        _resourceAllocator.UpdatePlan(_resourcePlanner.CurrentPlan);
+        _resourceAllocator.RebuildPhysicalPlan(this);
+        _resourceAllocator.AllocatePhysicalImages(this);
+
+        IReadOnlyCollection<RenderPassMetadata>? passMetadata = Engine.Rendering.State.CurrentRenderingPipeline?.MeshRenderCommands.PassMetadata?.Values?.ToList();
+        _barrierPlanner.Rebuild(passMetadata, _resourcePlanner, _resourceAllocator);
+    }
+
+    internal void AllocatePhysicalImage(VulkanPhysicalImageGroup group, ref Image image, ref DeviceMemory memory)
+    {
+        if (image.Handle != 0)
+            return;
+
+        ImageCreateInfo imageInfo = new()
+        {
+            SType = StructureType.ImageCreateInfo,
+            Flags = 0, // TODO: add alias bit when Silk.NET exposes VK_IMAGE_CREATE_ALIAS_BIT
+            ImageType = ImageType.Type2D,
+            Extent = group.ResolvedExtent,
+            MipLevels = 1,
+            ArrayLayers = Math.Max(group.Template.Layers, 1u),
+            Format = group.Format,
+            Tiling = ImageTiling.Optimal,
+            InitialLayout = ImageLayout.Undefined,
+            Usage = group.Usage,
+            Samples = SampleCountFlags.Count1Bit,
+            SharingMode = SharingMode.Exclusive,
+        };
+
+        fixed (Image* imagePtr = &image)
+        {
+            Result result = Api!.CreateImage(device, ref imageInfo, null, imagePtr);
+            if (result != Result.Success)
+                throw new Exception($"Failed to create Vulkan image for resource group '{group.Key}'. Result={result}.");
+        }
+
+        Api!.GetImageMemoryRequirements(device, image, out MemoryRequirements memRequirements);
+
+        MemoryAllocateInfo allocInfo = new()
+        {
+            SType = StructureType.MemoryAllocateInfo,
+            AllocationSize = memRequirements.Size,
+            MemoryTypeIndex = FindMemoryType(memRequirements.MemoryTypeBits, MemoryPropertyFlags.DeviceLocalBit)
+        };
+
+        fixed (DeviceMemory* memPtr = &memory)
+        {
+            AllocateMemory(allocInfo, memPtr);
+        }
+
+        Result bindResult = Api!.BindImageMemory(device, image, memory, 0);
+        if (bindResult != Result.Success)
+            throw new Exception($"Failed to bind device memory for Vulkan image group '{group.Key}'. Result={bindResult}.");
+    }
+
+    internal void DestroyPhysicalImage(ref Image image, ref DeviceMemory memory)
+    {
+        if (image.Handle != 0)
+        {
+            Api!.DestroyImage(device, image, null);
+            image = default;
+        }
+
+        if (memory.Handle != 0)
+        {
+            Api!.FreeMemory(device, memory, null);
+            memory = default;
+        }
+    }
+
+    public bool TryGetPhysicalImage(string resourceName, out Image image)
+        => _resourceAllocator.TryGetImage(resourceName, out image);
+
     private void MarkCommandBuffersDirty()
     {
         if (_commandBufferDirtyFlags is null)
@@ -203,5 +290,39 @@ public unsafe partial class VulkanRenderer
 
         for (int i = 0; i < _commandBufferDirtyFlags.Length; i++)
             _commandBufferDirtyFlags[i] = true;
+    }
+
+    private void EnsureFrameBufferRegistered(XRFrameBuffer frameBuffer)
+    {
+        var registry = Engine.Rendering.State.CurrentResourceRegistry;
+        if (registry is null)
+            return;
+
+        string? name = frameBuffer.Name;
+        if (string.IsNullOrWhiteSpace(name))
+            return;
+
+        registry.BindFrameBuffer(frameBuffer);
+    }
+
+    private void EnsureFrameBufferAttachmentsRegistered(XRFrameBuffer frameBuffer)
+    {
+        var registry = Engine.Rendering.State.CurrentResourceRegistry;
+        if (registry is null)
+            return;
+
+        var targets = frameBuffer.Targets;
+        if (targets is null)
+            return;
+
+        foreach (var (target, _, _, _) in targets)
+        {
+            if (target is XRTexture texture)
+            {
+                string? textureName = texture.Name;
+                if (!string.IsNullOrWhiteSpace(textureName))
+                    registry.BindTexture(texture);
+            }
+        }
     }
 }

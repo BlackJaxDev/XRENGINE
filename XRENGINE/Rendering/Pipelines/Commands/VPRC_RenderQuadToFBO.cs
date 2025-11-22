@@ -1,4 +1,7 @@
-﻿namespace XREngine.Rendering.Pipelines.Commands
+﻿using System;
+using XREngine.Rendering.RenderGraph;
+
+namespace XREngine.Rendering.Pipelines.Commands
 {
     /// <summary>
     /// Renders an FBO quad to another FBO.
@@ -27,6 +30,36 @@
                 return;
 
             sourceFBO.Render(DestinationFBOName is null ? null : ActivePipelineInstance.GetFBO<XRFrameBuffer>(DestinationFBOName));
+        }
+
+        internal override void DescribeRenderPass(RenderGraphDescribeContext context)
+        {
+            base.DescribeRenderPass(context);
+
+            if (SourceQuadFBOName is null)
+                return;
+
+            string destination = DestinationFBOName
+                ?? context.CurrentRenderTarget?.Name
+                ?? RenderGraphResourceNames.OutputRenderTarget;
+
+            var builder = context.GetOrCreateSyntheticPass($"QuadBlit_{SourceQuadFBOName}_to_{destination}");
+            builder.WithStage(RenderGraphPassStage.Graphics);
+            builder.SampleTexture(MakeFboColorResource(SourceQuadFBOName));
+
+            RenderPassLoadOp colorLoad = RenderPassLoadOp.Load;
+            RenderPassStoreOp colorStore = RenderPassStoreOp.Store;
+            RenderGraphAccess access = RenderGraphAccess.ReadWrite;
+
+            if (context.CurrentRenderTarget is { } bound &&
+                string.Equals(bound.Name, destination, StringComparison.OrdinalIgnoreCase))
+            {
+                colorLoad = bound.ConsumeColorLoadOp();
+                colorStore = bound.GetColorStoreOp();
+                access = bound.ColorAccess;
+            }
+
+            builder.UseColorAttachment(MakeFboColorResource(destination), access, colorLoad, colorStore);
         }
     }
 }

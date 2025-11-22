@@ -8,6 +8,8 @@ using XREngine.Data.Vectors;
 using XREngine.Rendering.Commands;
 using XREngine.Rendering.Models.Materials;
 using XREngine.Rendering.Pipelines.Commands;
+using XREngine.Rendering.RenderGraph;
+using XREngine.Rendering.Resources;
 using static XREngine.Engine.Rendering.State;
 using static XREngine.Rendering.XRRenderPipelineInstance;
 
@@ -56,15 +58,34 @@ public abstract class RenderPipeline : XRAsset
     }
     public Dictionary<int, IComparer<RenderCommand>?> PassIndicesAndSorters { get; protected set; }
 
+    [Browsable(false)]
+    public IReadOnlyCollection<RenderPassMetadata> PassMetadata { get; private set; } = Array.Empty<RenderPassMetadata>();
+
     protected RenderPipeline(bool deferCommandChainGeneration = false)
     {
         if (!deferCommandChainGeneration)
             CommandChain = GenerateCommandChain();
         PassIndicesAndSorters = GetPassIndicesAndSorters();
+        PassMetadata = GeneratePassMetadata();
     }
 
     protected abstract ViewportRenderCommandContainer GenerateCommandChain();
     protected abstract Dictionary<int, IComparer<RenderCommand>?> GetPassIndicesAndSorters();
+
+    protected virtual void DescribeRenderPasses(RenderPassMetadataCollection metadata)
+    {
+    }
+
+    protected virtual IReadOnlyCollection<RenderPassMetadata> GeneratePassMetadata()
+    {
+        if (CommandChain is null)
+            return Array.Empty<RenderPassMetadata>();
+
+        RenderPassMetadataCollection collection = new();
+        CommandChain.BuildRenderPassMetadata(collection);
+        DescribeRenderPasses(collection);
+        return collection.Build();
+    }
 
     public static RenderingState State 
         => CurrentRenderingPipeline!.RenderState;
@@ -75,8 +96,8 @@ public abstract class RenderPipeline : XRAsset
     public static bool TryGetTexture(string name, out XRTexture? texture)
         => CurrentRenderingPipeline!.TryGetTexture(name, out texture);
 
-    public static void SetTexture(XRTexture texture)
-        => CurrentRenderingPipeline!.SetTexture(texture);
+    public static void SetTexture(XRTexture texture, TextureResourceDescriptor? descriptor = null)
+        => CurrentRenderingPipeline!.SetTexture(texture, descriptor);
 
     public static T? GetFBO<T>(string name) where T : XRFrameBuffer
         => CurrentRenderingPipeline!.GetFBO<T>(name);
@@ -84,8 +105,8 @@ public abstract class RenderPipeline : XRAsset
     public static bool TryGetFBO(string name, out XRFrameBuffer? fbo)
         => CurrentRenderingPipeline!.TryGetFBO(name, out fbo);
 
-    public static void SetFBO(XRFrameBuffer fbo)
-        => CurrentRenderingPipeline!.SetFBO(fbo);
+    public static void SetFBO(XRFrameBuffer fbo, FrameBufferResourceDescriptor? descriptor = null)
+        => CurrentRenderingPipeline!.SetFBO(fbo, descriptor);
 
     protected static uint InternalWidth
         => (uint)State.WindowViewport!.InternalWidth;

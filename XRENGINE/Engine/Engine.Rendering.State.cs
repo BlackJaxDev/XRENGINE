@@ -3,6 +3,7 @@ using XREngine.Data.Geometry;
 using XREngine.Data.Rendering;
 using XREngine.Rendering;
 using XREngine.Rendering.Models.Materials;
+using XREngine.Rendering.Resources;
 using XREngine.Scene;
 
 namespace XREngine
@@ -61,6 +62,12 @@ namespace XREngine
                 /// Use this to retrieve FBOs and textures from the render pipeline.
                 /// </summary>
                 public static XRRenderPipelineInstance? CurrentRenderingPipeline => RenderingPipelineStack.TryPeek(out var result) ? result : null;
+
+                /// <summary>
+                /// Logical resource registry describing textures/FBOs for the active pipeline.
+                /// Returns null if no pipeline is currently rendering.
+                /// </summary>
+                public static RenderResourceRegistry? CurrentResourceRegistry => CurrentRenderingPipeline?.Resources;
 
                 /// <summary>
                 /// This is the state of the render pipeline that's currently rendering a scene.

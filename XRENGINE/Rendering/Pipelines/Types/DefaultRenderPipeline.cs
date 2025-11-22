@@ -10,6 +10,7 @@ using XREngine.Rendering.Commands;
 using XREngine.Rendering.Models.Materials;
 using XREngine.Rendering.Physics.Physx;
 using XREngine.Rendering.Pipelines.Commands;
+using XREngine.Rendering.RenderGraph;
 using XREngine.Components.Capture.Lights;
 using static XREngine.Engine.Rendering.State;
 
@@ -129,6 +130,27 @@ public class DefaultRenderPipeline : RenderPipeline
         ifElse.TrueCommands = CreateViewportTargetCommands();
         ifElse.FalseCommands = CreateFBOTargetCommands();
         return c;
+    }
+
+    protected override void DescribeRenderPasses(RenderPassMetadataCollection metadata)
+    {
+        base.DescribeRenderPasses(metadata);
+
+        static void Chain(RenderPassMetadataCollection collection, EDefaultRenderPass pass, params EDefaultRenderPass[] dependencies)
+        {
+            var builder = collection.ForPass((int)pass, pass.ToString(), RenderGraphPassStage.Graphics);
+            foreach (var dep in dependencies)
+                builder.DependsOn((int)dep);
+        }
+
+        Chain(metadata, EDefaultRenderPass.PreRender);
+        Chain(metadata, EDefaultRenderPass.Background, EDefaultRenderPass.PreRender, EDefaultRenderPass.DeferredDecals);
+        Chain(metadata, EDefaultRenderPass.OpaqueDeferred, EDefaultRenderPass.PreRender);
+        Chain(metadata, EDefaultRenderPass.DeferredDecals, EDefaultRenderPass.OpaqueDeferred);
+        Chain(metadata, EDefaultRenderPass.OpaqueForward, EDefaultRenderPass.Background);
+        Chain(metadata, EDefaultRenderPass.TransparentForward, EDefaultRenderPass.OpaqueForward);
+        Chain(metadata, EDefaultRenderPass.OnTopForward, EDefaultRenderPass.TransparentForward);
+        Chain(metadata, EDefaultRenderPass.PostRender, EDefaultRenderPass.OnTopForward);
     }
 
     public ViewportRenderCommandContainer CreateFBOTargetCommands()
