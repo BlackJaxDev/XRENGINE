@@ -1,4 +1,6 @@
-﻿namespace XREngine.Rendering.Pipelines.Commands
+﻿using XREngine.Rendering.RenderGraph;
+
+namespace XREngine.Rendering.Pipelines.Commands
 {
     public class VPRC_UnbindFBO : ViewportPopStateRenderCommand
     {
@@ -25,6 +27,12 @@
                 FrameBuffer.UnbindFromReading();
 
             FrameBuffer = null;
+        }
+
+        internal override void DescribeRenderPass(RenderGraphDescribeContext context)
+        {
+            base.DescribeRenderPass(context);
+            context.PopRenderTarget();
         }
     }
 }

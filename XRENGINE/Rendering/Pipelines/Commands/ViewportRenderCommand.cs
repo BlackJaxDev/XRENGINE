@@ -1,4 +1,5 @@
 ﻿using XREngine.Data.Core;
+using XREngine.Rendering.RenderGraph;
 
 namespace XREngine.Rendering.Pipelines.Commands
 {
@@ -47,6 +48,20 @@ namespace XREngine.Rendering.Pipelines.Commands
         {
 
         }
+
+        internal virtual void DescribeRenderPass(RenderGraphDescribeContext context)
+        {
+            // Default commands do not contribute metadata; derived commands can override.
+        }
+
+        protected static string MakeFboColorResource(string fboName)
+            => RenderGraphResourceNames.MakeFboColor(fboName);
+
+        protected static string MakeFboDepthResource(string fboName)
+            => RenderGraphResourceNames.MakeFboDepth(fboName);
+
+        protected static string MakeTextureResource(string textureName)
+            => RenderGraphResourceNames.MakeTexture(textureName);
 
     internal virtual void OnAttachedToContainer()
     {

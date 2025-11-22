@@ -3,6 +3,7 @@ using XREngine.Data.Colors;
 using XREngine.Data.Geometry;
 using XREngine.Data.Rendering;
 using XREngine.Rendering.Models.Materials;
+using XREngine.Rendering.Resources;
 
 namespace XREngine.Rendering.Vulkan
 {
@@ -37,6 +38,7 @@ namespace XREngine.Rendering.Vulkan
             DisposeImGuiResources();
             DestroyAllSwapChainObjects();
             DestroyDescriptorSetLayout();
+            _resourceAllocator.DestroyPhysicalImages(this);
 
             DestroySyncObjects();
             DestroyCommandPool();
@@ -138,7 +140,32 @@ namespace XREngine.Rendering.Vulkan
         }
         public override void BindFrameBuffer(EFramebufferTarget fboTarget, XRFrameBuffer? fbo)
         {
-            throw new NotImplementedException();
+            switch (fboTarget)
+            {
+                case EFramebufferTarget.Framebuffer:
+                    _boundReadFrameBuffer = fbo;
+                    _boundDrawFrameBuffer = fbo;
+                    break;
+                case EFramebufferTarget.ReadFramebuffer:
+                    _boundReadFrameBuffer = fbo;
+                    break;
+                case EFramebufferTarget.DrawFramebuffer:
+                    _boundDrawFrameBuffer = fbo;
+                    break;
+                default:
+                    return;
+            }
+
+            if (fbo is not null)
+            {
+                EnsureFrameBufferRegistered(fbo);
+                EnsureFrameBufferAttachmentsRegistered(fbo);
+
+                if (GetOrCreateAPIRenderObject(fbo, generateNow: true) is VkFrameBuffer vkFrameBuffer)
+                    vkFrameBuffer.Generate();
+            }
+
+            MarkCommandBuffersDirty();
         }
         public override void Clear(bool color, bool depth, bool stencil)
         {

@@ -7,6 +7,7 @@ using XREngine.Data.Core;
 using XREngine.Data.Geometry;
 using XREngine.Rendering.Commands;
 using XREngine.Rendering.OpenGL;
+using XREngine.Rendering.Resources;
 using XREngine.Scene;
 using static XREngine.Engine.Rendering.State;
 
@@ -33,8 +34,7 @@ public sealed partial class XRRenderPipelineInstance : XRBase
     /// </summary>
     public RenderCommandCollection MeshRenderCommands { get; } = new();
 
-    private readonly Dictionary<string, XRTexture> _textures = [];
-    private readonly Dictionary<string, XRFrameBuffer> _frameBuffers = [];
+    public RenderResourceRegistry Resources { get; } = new();
 
     private RenderPipeline? _pipeline;
     public RenderPipeline? Pipeline
@@ -107,7 +107,7 @@ public sealed partial class XRRenderPipelineInstance : XRBase
         if (AbstractRenderer.Current is not OpenGLRenderer rend)
             return;
 
-        foreach (XRTexture tex in _textures.Values)
+        foreach (XRTexture tex in Resources.EnumerateTextureInstances())
         {
             if (tex.APIWrappers.FirstOrDefault(x => x is IGLTexture) is not IGLTexture apiWrapper)
                 continue;
@@ -145,7 +145,7 @@ public sealed partial class XRRenderPipelineInstance : XRBase
         if (AbstractRenderer.Current is not OpenGLRenderer rend)
             return;
 
-        foreach (XRFrameBuffer fbo in _frameBuffers.Values)
+        foreach (XRFrameBuffer fbo in Resources.EnumerateFrameBufferInstances())
         {
             if (fbo.Targets is null || 
                 fbo.Targets.Length == 0 || 
@@ -213,7 +213,7 @@ public sealed partial class XRRenderPipelineInstance : XRBase
             case nameof(Pipeline):
                 if (_pipeline is not null)
                 {
-                    MeshRenderCommands.SetRenderPasses(_pipeline.PassIndicesAndSorters);
+                    MeshRenderCommands.SetRenderPasses(_pipeline.PassIndicesAndSorters, _pipeline.PassMetadata);
                     InvalidMaterial = _pipeline.InvalidMaterial;
                     _pipeline.Instances.Add(this);
                 }
@@ -280,13 +280,7 @@ public sealed partial class XRRenderPipelineInstance : XRBase
 
     public void DestroyCache()
     {
-        foreach (var fbo in _frameBuffers)
-            fbo.Value.Destroy();
-        _frameBuffers.Clear();
-
-        foreach (var tex in _textures)
-            tex.Value.Destroy();
-        _textures.Clear();
+        Resources.DestroyAllPhysicalResources();
     }
 
     public void ViewportResized(Vector2 size)
@@ -305,23 +299,17 @@ public sealed partial class XRRenderPipelineInstance : XRBase
 
     public T? GetTexture<T>(string name) where T : XRTexture
     {
-        T? texture = null;
-        if (_textures.TryGetValue(name, out XRTexture? value))
-            texture = value as T;
-        //if (texture is null)
-        //    Debug.LogWarning($"Render pipeline texture {name} of type {typeof(T).GetFriendlyName()} was not found.");
-        return texture;
+        if (Resources.TryGetTexture(name, out XRTexture? value))
+            return value as T;
+        return null;
     }
 
     public bool TryGetTexture(string name, out XRTexture? texture)
     {
-        bool found = _textures.TryGetValue(name, out texture);
-        //if (!found || texture is null)
-        //    Debug.Out($"Render pipeline texture {name} was not found.");
-        return found;
+        return Resources.TryGetTexture(name, out texture);
     }
 
-    public void SetTexture(XRTexture texture)
+    public void SetTexture(XRTexture texture, TextureResourceDescriptor? descriptor = null)
     {
         string? name = texture.Name;
         if (name is null)
@@ -329,33 +317,22 @@ public sealed partial class XRRenderPipelineInstance : XRBase
             Debug.LogWarning("Texture name must be set before adding to the pipeline.");
             return;
         }
-        if (!_textures.TryAdd(name, texture))
-        {
-            Debug.Out($"Render pipeline texture {name} already exists. Overwriting.");
-            _textures[name]?.Destroy();
-            _textures[name] = texture;
-        }
+        Resources.BindTexture(texture, descriptor);
     }
 
     public T? GetFBO<T>(string name) where T : XRFrameBuffer
     {
-        T? fbo = null;
-        if (_frameBuffers.TryGetValue(name, out XRFrameBuffer? value))
-            fbo = value as T;
-        //if (fbo is null)
-        //    Debug.LogWarning($"Render pipeline FBO {name} of type {typeof(T).GetFriendlyName()} was not found.");
-        return fbo;
+        if (Resources.TryGetFrameBuffer(name, out XRFrameBuffer? value))
+            return value as T;
+        return null;
     }
 
     public bool TryGetFBO(string name, out XRFrameBuffer? fbo)
     {
-        bool found = _frameBuffers.TryGetValue(name, out fbo);
-        //if (!found || fbo is null)
-        //    Debug.Out($"Render pipeline FBO {name} was not found.");
-        return found;
+        return Resources.TryGetFrameBuffer(name, out fbo);
     }
 
-    public void SetFBO(XRFrameBuffer fbo)
+    public void SetFBO(XRFrameBuffer fbo, FrameBufferResourceDescriptor? descriptor = null)
     {
         string? name = fbo.Name;
         if (name is null)
@@ -363,11 +340,6 @@ public sealed partial class XRRenderPipelineInstance : XRBase
             Debug.LogWarning("FBO name must be set before adding to the pipeline.");
             return;
         }
-        if (!_frameBuffers.TryAdd(name, fbo))
-        {
-            Debug.Out($"Render pipeline FBO {name} already exists. Overwriting.");
-            _frameBuffers[name]?.Destroy();
-            _frameBuffers[name] = fbo;
-        }
+        Resources.BindFrameBuffer(fbo, descriptor);
     }
 }

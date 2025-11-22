@@ -2,6 +2,7 @@
 using System.Diagnostics.CodeAnalysis;
 using XREngine.Data.Core;
 using XREngine.Rendering;
+using XREngine.Rendering.RenderGraph;
 
 namespace XREngine.Rendering.Pipelines.Commands
 {
@@ -155,6 +156,13 @@ namespace XREngine.Rendering.Pipelines.Commands
         {
             for (int i = 0; i < _collecVisibleCommands.Count; i++)
                 _collecVisibleCommands[i].SwapBuffers();
+        }
+
+        public void BuildRenderPassMetadata(RenderPassMetadataCollection collection)
+        {
+            RenderGraphDescribeContext context = new(collection);
+            for (int i = 0; i < _commands.Count; i++)
+                _commands[i].DescribeRenderPass(context);
         }
         //public void GenerateFBOs()
         //{

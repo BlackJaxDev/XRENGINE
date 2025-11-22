@@ -1,3 +1,5 @@
+using XREngine.Rendering.RenderGraph;
+
 namespace XREngine.Rendering.Pipelines.Commands
 {
     public class VPRC_RenderMeshesPass : ViewportPopStateRenderCommand
@@ -55,6 +57,35 @@ namespace XREngine.Rendering.Pipelines.Commands
         private void RenderCPU()
         {
             ActivePipelineInstance.MeshRenderCommands.RenderCPU(_renderPass);
+        }
+
+        internal override void DescribeRenderPass(RenderGraphDescribeContext context)
+        {
+            base.DescribeRenderPass(context);
+            if (RenderPass < 0)
+                return;
+
+            string passName = $"RenderMeshes_{RenderPass}";
+            var builder = context.Metadata.ForPass(RenderPass, passName, RenderGraphPassStage.Graphics);
+
+            if (context.CurrentRenderTarget is { } target)
+            {
+                builder.WithName($"{passName}_{target.Name}");
+                var colorLoad = target.ConsumeColorLoadOp();
+                var depthLoad = target.ConsumeDepthLoadOp();
+
+                builder.UseColorAttachment(
+                    MakeFboColorResource(target.Name),
+                    target.ColorAccess,
+                    colorLoad,
+                    target.GetColorStoreOp());
+
+                builder.UseDepthAttachment(
+                    MakeFboDepthResource(target.Name),
+                    target.DepthAccess,
+                    depthLoad,
+                    target.GetDepthStoreOp());
+            }
         }
     }
 } 
