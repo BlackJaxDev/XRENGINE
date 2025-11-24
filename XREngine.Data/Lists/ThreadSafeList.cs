@@ -171,7 +171,7 @@ namespace System.Collections.Generic
             using (_lock.Read())
                 return base.Exists(match);
         }
-        public new T Find(Predicate<T> match)
+        public new T? Find(Predicate<T> match)
         {
             using (_lock.Read())
                 return base.Find(match);
@@ -196,7 +196,7 @@ namespace System.Collections.Generic
             using (_lock.Read())
                 return base.FindIndex(startIndex, count, match);
         }
-        public new T FindLast(Predicate<T> match)
+        public new T? FindLast(Predicate<T> match)
         {
             using (_lock.Read())
                 return base.FindLast(match);

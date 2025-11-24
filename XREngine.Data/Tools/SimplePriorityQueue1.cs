@@ -1,45 +1,42 @@
-﻿namespace XREngine.Data.Tools
+﻿using System.Collections.Generic;
+
+namespace XREngine.Data.Tools
 {
-    public class SimplePriorityQueue<T, TKey> where TKey : IComparable<TKey>
+    public class SimplePriorityQueue<T, TKey> where TKey : notnull, IComparable<TKey>
     {
-        private SortedDictionary<TKey, List<T>> sortedDictionary;
+        private readonly SortedDictionary<TKey, List<T>> _queue = new();
 
         public SimplePriorityQueue()
         {
-            sortedDictionary = new SortedDictionary<TKey, List<T>>();
         }
 
         public void Enqueue(T item, TKey priority)
         {
-            if (!sortedDictionary.ContainsKey(priority))
+            if (!_queue.TryGetValue(priority, out List<T>? bucket))
             {
-                sortedDictionary[priority] = new List<T>();
+                bucket = new List<T>();
+                _queue[priority] = bucket;
             }
-            sortedDictionary[priority].Add(item);
+
+            bucket.Add(item);
         }
 
         public T Dequeue()
         {
-            if (sortedDictionary.Count == 0)
-            {
+            if (_queue.Count == 0)
                 throw new InvalidOperationException("The queue is empty.");
-            }
 
-            TKey minKey = default;
-            foreach (var key in sortedDictionary.Keys)
-            {
-                minKey = key;
-                break;
-            }
+            using SortedDictionary<TKey, List<T>>.Enumerator enumerator = _queue.GetEnumerator();
+            if (!enumerator.MoveNext())
+                throw new InvalidOperationException("The queue is empty.");
 
-            List<T> itemList = sortedDictionary[minKey];
-            T item = itemList[0];
-            itemList.RemoveAt(0);
+            KeyValuePair<TKey, List<T>> first = enumerator.Current;
+            List<T> bucket = first.Value;
+            T item = bucket[0];
+            bucket.RemoveAt(0);
 
-            if (itemList.Count == 0)
-            {
-                sortedDictionary.Remove(minKey);
-            }
+            if (bucket.Count == 0)
+                _queue.Remove(first.Key);
 
             return item;
         }
@@ -47,7 +44,7 @@
         public int Count()
         {
             int count = 0;
-            foreach (var itemList in sortedDictionary.Values)
+            foreach (List<T> itemList in _queue.Values)
             {
                 count += itemList.Count;
             }
@@ -55,7 +52,7 @@
         }
         public bool Contains(T item)
         {
-            foreach (var itemList in sortedDictionary.Values)
+            foreach (List<T> itemList in _queue.Values)
             {
                 if (itemList.Contains(item))
                 {
@@ -67,22 +64,21 @@
 
         public void Remove(T item)
         {
-            TKey? keyToRemove = default;
             bool found = false;
-            foreach (var keyValuePair in sortedDictionary)
+            TKey keyToRemove = default!;
+
+            foreach (KeyValuePair<TKey, List<T>> entry in _queue)
             {
-                if (keyValuePair.Value.Remove(item))
-                {
-                    keyToRemove = keyValuePair.Key;
-                    found = true;
-                    break;
-                }
+                if (!entry.Value.Remove(item))
+                    continue;
+
+                keyToRemove = entry.Key;
+                found = true;
+                break;
             }
 
-            if (keyToRemove != null && found && sortedDictionary[keyToRemove].Count == 0)
-            {
-                sortedDictionary.Remove(keyToRemove);
-            }
+            if (found && _queue[keyToRemove].Count == 0)
+                _queue.Remove(keyToRemove);
         }
 
         public void UpdatePriority(T item, TKey newPriority)

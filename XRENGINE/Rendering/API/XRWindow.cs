@@ -27,6 +27,11 @@ namespace XREngine.Rendering
             set => SetField(ref _targetWorldInstance, value);
         }
 
+        /// <summary>
+        /// Indicates whether this window prefers HDR output; renderers can override swap-chain/context setup accordingly.
+        /// </summary>
+        public bool PreferHDROutput { get; internal set; }
+
         private readonly EventList<XRViewport> _viewports = [];
         public EventList<XRViewport> Viewports => _viewports;
 

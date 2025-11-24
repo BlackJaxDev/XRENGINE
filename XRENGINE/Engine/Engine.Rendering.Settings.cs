@@ -77,6 +77,7 @@ namespace XREngine
             public class EngineSettings : XRAsset
             {
                 private Vector3 _defaultLuminance = new(0.299f, 0.587f, 0.114f);
+                private bool _outputHDR = true;
                 private bool _allowShaderPipelines = true;
                 private bool _useIntegerUniformsInShaders = true;
                 private bool _optimizeTo4Weights = false;
@@ -161,6 +162,15 @@ namespace XREngine
                 {
                     get => _defaultLuminance;
                     set => SetField(ref _defaultLuminance, value);
+                }
+
+                /// <summary>
+                /// When true, skip LDR tonemapping and keep the swap chain in HDR space.
+                /// </summary>
+                public bool OutputHDR
+                {
+                    get => _outputHDR;
+                    set => SetField(ref _outputHDR, value);
                 }
 
                 /// <summary>

@@ -9,6 +9,7 @@ uniform sampler2D Texture2; //Depth
 uniform usampler2D Texture3; //Stencil
 
 uniform vec3 HighlightColor = vec3(0.92f, 1.0f, 0.086f);
+uniform bool OutputHDR = false;
 
 struct VignetteStruct
 {
@@ -211,20 +212,27 @@ void main()
   for (float lod = 1.0f; lod < 5.0f; lod += 1.0f)
     hdrSceneColor += SampleBloom(uv, lod);
 
-  //Tone mapping
-  vec3 ldrSceneColor;
-  switch (TonemapType)
+  //Tone mapping / HDR selection
+  vec3 sceneColor;
+  if (OutputHDR)
   {
-      case 0:  ldrSceneColor = LinearTM(hdrSceneColor);   break;
-      case 1:  ldrSceneColor = GammaTM(hdrSceneColor);    break;
-      case 2:  ldrSceneColor = ClipTM(hdrSceneColor);     break;
-      case 3:  ldrSceneColor = ReinhardTM(hdrSceneColor); break;
-      case 4:  ldrSceneColor = HableTM(hdrSceneColor);    break;
-      case 5:  ldrSceneColor = MobiusTM(hdrSceneColor);   break;
-      case 6:  ldrSceneColor = ACESTM(hdrSceneColor);     break;
-      case 7:  ldrSceneColor = FilmicTM(hdrSceneColor);   break;
-      case 8:  ldrSceneColor = NeutralTM(hdrSceneColor);  break;
-      default: ldrSceneColor = ReinhardTM(hdrSceneColor); break;
+      sceneColor = hdrSceneColor * ColorGrade.Exposure;
+  }
+  else
+  {
+      switch (TonemapType)
+      {
+          case 0:  sceneColor = LinearTM(hdrSceneColor);   break;
+          case 1:  sceneColor = GammaTM(hdrSceneColor);    break;
+          case 2:  sceneColor = ClipTM(hdrSceneColor);     break;
+          case 3:  sceneColor = ReinhardTM(hdrSceneColor); break;
+          case 4:  sceneColor = HableTM(hdrSceneColor);    break;
+          case 5:  sceneColor = MobiusTM(hdrSceneColor);   break;
+          case 6:  sceneColor = ACESTM(hdrSceneColor);     break;
+          case 7:  sceneColor = FilmicTM(hdrSceneColor);   break;
+          case 8:  sceneColor = NeutralTM(hdrSceneColor);  break;
+          default: sceneColor = ReinhardTM(hdrSceneColor); break;
+      }
   }
 
   //Apply depth-based fog
@@ -232,11 +240,11 @@ void main()
   {
       float depth = texture(Texture2, uv).r;
       float fogFactor = clamp((depth - DepthFog.Start) / (DepthFog.End - DepthFog.Start), 0.0f, 1.0f);
-      ldrSceneColor = mix(ldrSceneColor, DepthFog.Color, fogFactor * DepthFog.Intensity);
+      sceneColor = mix(sceneColor, DepthFog.Color, fogFactor * DepthFog.Intensity);
   }
 
 	//Color grading
-	ldrSceneColor *= ColorGrade.Tint;
+	sceneColor *= ColorGrade.Tint;
   //if (ColorGrade.Hue != 1.0f || ColorGrade.Saturation != 1.0f || ColorGrade.Brightness != 1.0f)
   //{
   //    vec3 hsv = RGBtoHSV(ldrSceneColor);
@@ -245,22 +253,25 @@ void main()
   //    hsv.z *= ColorGrade.Brightness;
   //    ldrSceneColor = HSVtoRGB(hsv);
   //}
-	ldrSceneColor = (ldrSceneColor - 0.5f) * ColorGrade.Contrast + 0.5f;
+	sceneColor = (sceneColor - 0.5f) * ColorGrade.Contrast + 0.5f;
 
   //Apply highlight color to selected objects
   float highlight = GetStencilHighlightIntensity(uv);
-	ldrSceneColor = mix(ldrSceneColor, HighlightColor, highlight);
+	sceneColor = mix(sceneColor, HighlightColor, highlight);
 
 	//Vignette
   //vec2 center = vec2(0.5f);
   //float vignetteFactor = pow(clamp(length(uv - center) / (0.5f * Vignette.Intensity), 0.0f, 1.0f), Vignette.Power);
   //ldrSceneColor = mix(ldrSceneColor, Vignette.Color, vignetteFactor);
 
-	//Gamma-correct
-	ldrSceneColor = pow(ldrSceneColor, vec3(1.0f / ColorGrade.Gamma));
-  
-  //Fix subtle banding by applying fine noise
-  ldrSceneColor += mix(-0.5f / 255.0f, 0.5f / 255.0f, rand(uv));
+  if (!OutputHDR)
+  {
+	  //Gamma-correct
+	  sceneColor = pow(sceneColor, vec3(1.0f / ColorGrade.Gamma));
 
-	OutColor = vec4(ldrSceneColor, 1.0f);
+    //Fix subtle banding by applying fine noise
+    sceneColor += mix(-0.5f / 255.0f, 0.5f / 255.0f, rand(uv));
+  }
+
+	OutColor = vec4(sceneColor, 1.0f);
 }

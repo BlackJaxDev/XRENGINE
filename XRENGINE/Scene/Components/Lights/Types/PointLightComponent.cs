@@ -1,5 +1,6 @@
 ﻿using Extensions;
 using System.Numerics;
+using XREngine.Components.Lights;
 using XREngine.Data.Geometry;
 using XREngine.Data.Rendering;
 using XREngine.Rendering;

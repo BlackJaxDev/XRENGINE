@@ -65,11 +65,11 @@ namespace XREngine
         /// </summary>
         /// <param name="task"></param>
         /// <returns></returns>
-        public static bool InvokeOnMainThread(Action task, bool executeNowIfFalse = false)
+        public static bool InvokeOnMainThread(Action task, bool executeNowIfAlreadyMainThread = false)
         {
             if (IsRenderThread)
             {
-                if (executeNowIfFalse)
+                if (executeNowIfAlreadyMainThread)
                     task();
                 return false;
             }
@@ -428,7 +428,9 @@ namespace XREngine
 
         public static void CreateWindow(GameWindowStartupSettings windowSettings)
         {
-            XRWindow window = new(GetWindowOptions(windowSettings));
+            bool preferHdrOutput = windowSettings.OutputHDR ?? Rendering.Settings.OutputHDR;
+            XRWindow window = new(GetWindowOptions(windowSettings, preferHdrOutput));
+            window.PreferHDROutput = preferHdrOutput;
             CreateViewports(windowSettings.LocalPlayers, window);
             window.UpdateViewportSizes();
             _windows.Add(window);
@@ -449,7 +451,7 @@ namespace XREngine
             window.ResizeAllViewportsAccordingToPlayers();
         }
 
-        private static WindowOptions GetWindowOptions(GameWindowStartupSettings windowSettings)
+        private static WindowOptions GetWindowOptions(GameWindowStartupSettings windowSettings, bool preferHdrOutput)
         {
             WindowState windowState;
             WindowBorder windowBorder;
@@ -476,6 +478,9 @@ namespace XREngine
                     break;
             }
 
+            bool requestHdrSurface = preferHdrOutput && UserSettings.RenderLibrary != ERenderLibrary.Vulkan;
+            int preferredBitDepth = requestHdrSurface ? 64 : 24;
+
             return new(
                 true,
                 position,
@@ -491,7 +496,7 @@ namespace XREngine
                 windowSettings.VSync,
                 true,
                 VideoMode.Default,
-                24,
+                preferredBitDepth,
                 8,
                 null,
                 windowSettings.TransparentFramebuffer,

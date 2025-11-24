@@ -4,7 +4,7 @@ using XREngine.Rendering;
 using XREngine.Rendering.Commands;
 using XREngine.Rendering.Pipelines.Commands;
 
-namespace XREngine.Components.Capture.Lights.Types
+namespace XREngine.Components.Lights
 {
     public class ShadowRenderPipeline : RenderPipeline
     {
@@ -17,7 +17,7 @@ namespace XREngine.Components.Capture.Lights.Types
 
         protected override ViewportRenderCommandContainer GenerateCommandChain()
         {
-            ViewportRenderCommandContainer c = new(this);
+            ViewportRenderCommandContainer c = [];
 
             c.Add<VPRC_SetClears>().Set(ColorF4.White, 1.0f, 0);
             c.Add<VPRC_RenderMeshesPass>().RenderPass = (int)EDefaultRenderPass.PreRender;
@@ -26,7 +26,6 @@ namespace XREngine.Components.Capture.Lights.Types
             {
                 using (c.AddUsing<VPRC_BindOutputFBO>())
                 {
-                    c.Add<VPRC_ColorMask>().Set(true, true, true, true);
                     c.Add<VPRC_StencilMask>().Set(~0u);
                     c.Add<VPRC_ClearByBoundFBO>();
                     c.Add<VPRC_DepthTest>().Enable = true;

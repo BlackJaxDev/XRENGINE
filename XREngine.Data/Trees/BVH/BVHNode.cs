@@ -289,6 +289,9 @@ namespace SimpleScene.Util.ssBVH
         [DebuggerBrowsable(DebuggerBrowsableState.Never)]
         private static List<Rot> EachRot => new((Rot[])Enum.GetValues(typeof(Rot)));
 
+        private static BVH<GO> RequireBVH(ISSBVHNodeAdaptor<GO> adaptor)
+            => adaptor.BVH ?? throw new InvalidOperationException("Adaptor must be bound to a BVH instance.");
+
         /// <summary>
         /// tryRotate looks at all candidate rotations, and executes the rotation with the best resulting SAH (if any)
         /// </summary>
@@ -297,62 +300,64 @@ namespace SimpleScene.Util.ssBVH
         {
             ISSBVHNodeAdaptor<GO> nAda = bvh._nAda;
 
+            BVHNode<GO>? leftChild = left;
+            BVHNode<GO>? rightChild = right;
+
+            if (leftChild is null || rightChild is null)
+            {
+                if (parent != null)
+                    bvh._refitNodes.Add(parent);
+                return;
+            }
+
             // if we are not a grandparent, then we can't rotate, so queue our parent and bail out
-            if (left.IsLeaf && right.IsLeaf)
+            if (leftChild.IsLeaf && rightChild.IsLeaf)
             {
                 if (parent != null)
                 {
                     bvh._refitNodes.Add(parent);
-                    return;
                 }
+                return;
             }
 
             // for each rotation, check that there are grandchildren as necessary (aka not a leaf)
             // then compute total SAH cost of our branches after the rotation.
 
-            float mySA = SA(left) + SA(right);
+            float mySA = SA(leftChild) + SA(rightChild);
 
-            RotOpt? bestRot = EachRot.Min((rot) =>
+            RotOpt bestRot = EachRot.Min((rot) =>
             {
-                switch (rot)
+                return rot switch
                 {
-                    case Rot.NONE: return new RotOpt(mySA, Rot.NONE);
-                    // child to grandchild rotations
-                    case Rot.L_RL:
-                        if (right.IsLeaf) return new RotOpt(float.MaxValue, Rot.NONE);
-                        else return new RotOpt(SA(right.left) + SA(AABBofPair(left, right.right)), rot);
-                    case Rot.L_RR:
-                        if (right.IsLeaf) return new RotOpt(float.MaxValue, Rot.NONE);
-                        else return new RotOpt(SA(right.right) + SA(AABBofPair(left, right.left)), rot);
-                    case Rot.R_LL:
-                        if (left.IsLeaf) return new RotOpt(float.MaxValue, Rot.NONE);
-                        else return new RotOpt(SA(AABBofPair(right, left.right)) + SA(left.left), rot);
-                    case Rot.R_LR:
-                        if (left.IsLeaf) return new RotOpt(float.MaxValue, Rot.NONE);
-                        else return new RotOpt(SA(AABBofPair(right, left.left)) + SA(left.right), rot);
-                    // grandchild to grandchild rotations
-                    case Rot.LL_RR:
-                        if (left.IsLeaf || right.IsLeaf) return new RotOpt(float.MaxValue, Rot.NONE);
-                        else return new RotOpt(SA(AABBofPair(right.right, left.right)) + SA(AABBofPair(right.left, left.left)), rot);
-                    case Rot.LL_RL:
-                        if (left.IsLeaf || right.IsLeaf) return new RotOpt(float.MaxValue, Rot.NONE);
-                        else return new RotOpt(SA(AABBofPair(right.left, left.right)) + SA(AABBofPair(left.left, right.right)), rot);
-                    // unknown...
-                    default: throw new NotImplementedException("missing implementation for BVH Rotation SAH Computation .. " + rot.ToString());
-                }
-            });
+                    Rot.NONE => new RotOpt(mySA, Rot.NONE),
+                    Rot.L_RL => (rightChild.IsLeaf || rightChild.left is null || rightChild.right is null)
+                        ? new RotOpt(float.MaxValue, Rot.NONE)
+                        : new RotOpt(SA(rightChild.left) + SA(AABBofPair(leftChild, rightChild.right)), rot),
+                    Rot.L_RR => (rightChild.IsLeaf || rightChild.left is null || rightChild.right is null)
+                        ? new RotOpt(float.MaxValue, Rot.NONE)
+                        : new RotOpt(SA(rightChild.right) + SA(AABBofPair(leftChild, rightChild.left)), rot),
+                    Rot.R_LL => (leftChild.IsLeaf || leftChild.left is null || leftChild.right is null)
+                        ? new RotOpt(float.MaxValue, Rot.NONE)
+                        : new RotOpt(SA(AABBofPair(rightChild, leftChild.right)) + SA(leftChild.left), rot),
+                    Rot.R_LR => (leftChild.IsLeaf || leftChild.left is null || leftChild.right is null)
+                        ? new RotOpt(float.MaxValue, Rot.NONE)
+                        : new RotOpt(SA(AABBofPair(rightChild, leftChild.left)) + SA(leftChild.right), rot),
+                    Rot.LL_RR => (leftChild.IsLeaf || rightChild.IsLeaf || leftChild.left is null || leftChild.right is null || rightChild.left is null || rightChild.right is null)
+                        ? new RotOpt(float.MaxValue, Rot.NONE)
+                        : new RotOpt(SA(AABBofPair(rightChild.right, leftChild.right)) + SA(AABBofPair(rightChild.left, leftChild.left)), rot),
+                    Rot.LL_RL => (leftChild.IsLeaf || rightChild.IsLeaf || leftChild.left is null || leftChild.right is null || rightChild.left is null || rightChild.right is null)
+                        ? new RotOpt(float.MaxValue, Rot.NONE)
+                        : new RotOpt(SA(AABBofPair(rightChild.left, leftChild.right)) + SA(AABBofPair(leftChild.left, rightChild.right)), rot),
+                    _ => throw new NotImplementedException($"missing implementation for BVH Rotation SAH Computation .. {rot}"),
+                };
+            }) ?? new RotOpt(mySA, Rot.NONE);
 
-            // perform the best rotation...            
-            if (bestRot?.rot != Rot.NONE)
+            // perform the best rotation...
+            if (bestRot.rot != Rot.NONE)
             {
-                // if the best rotation is no-rotation... we check our parents anyhow..                
-                if (parent != null)
+                if (parent != null && (DateTime.Now.Ticks % 100) < 2)
                 {
-                    // but only do it some random percentage of the time.
-                    if ((DateTime.Now.Ticks % 100) < 2)
-                    {
-                        bvh._refitNodes.Add(parent);
-                    }
+                    bvh._refitNodes.Add(parent);
                 }
             }
             else
@@ -362,7 +367,7 @@ namespace SimpleScene.Util.ssBVH
 
                 if (((mySA - bestRot.SAH) / mySA) < 0.3f)
                     return; // the benefit is not worth the cost
-                
+
                 Console.WriteLine("BVH swap {0} from {1} to {2}", bestRot.rot.ToString(), mySA, bestRot.SAH);
 
                 // in order to swap we need to:
@@ -378,8 +383,8 @@ namespace SimpleScene.Util.ssBVH
 
                     // child to grandchild rotations
                     case Rot.L_RL:
-                        swap = left;
-                        left = right.left;
+                        swap = left!;
+                        left = right!.left;
                         if (left != null)
                             left.parent = this;
                         right.left = swap;
@@ -388,8 +393,8 @@ namespace SimpleScene.Util.ssBVH
                         break;
 
                     case Rot.L_RR:
-                        swap = left; 
-                        left = right.right;
+                        swap = left!;
+                        left = right!.right;
                         if (left != null)
                             left.parent = this;
                         right.right = swap;
@@ -398,8 +403,8 @@ namespace SimpleScene.Util.ssBVH
                         break;
 
                     case Rot.R_LL:
-                        swap = right;
-                        right = left.left;
+                        swap = right!;
+                        right = left!.left;
                         if (right != null)
                             right.parent = this;
                         left.left = swap;
@@ -408,8 +413,8 @@ namespace SimpleScene.Util.ssBVH
                         break;
 
                     case Rot.R_LR:
-                        swap = right;
-                        right = left.right;
+                        swap = right!;
+                        right = left!.right;
                         if (right != null)
                             right.parent = this;
                         left.right = swap;
@@ -419,8 +424,8 @@ namespace SimpleScene.Util.ssBVH
 
                     // grandchild to grandchild rotations
                     case Rot.LL_RR:
-                        swap = left.left;
-                        left.left = right.right;
+                        swap = left!.left;
+                        left.left = right!.right;
                         right.right = swap;
                         if (left.left != null)
                             left.left.parent = left;
@@ -431,8 +436,8 @@ namespace SimpleScene.Util.ssBVH
                         break;
 
                     case Rot.LL_RL:
-                        swap = left.left;
-                        left.left = right.left;
+                        swap = left!.left;
+                        left.left = right!.left;
                         right.left = swap;
                         if (left.left != null)
                             left.left.parent = left;
@@ -442,7 +447,6 @@ namespace SimpleScene.Util.ssBVH
                         right.ChildRefit(nAda, propagate: false);
                         break;
 
-                    // unknown...
                     default:
                         throw new NotImplementedException($"missing implementation for BVH Rotation .. {bestRot.rot}");
                 }
@@ -486,13 +490,17 @@ namespace SimpleScene.Util.ssBVH
         internal void SplitNode(ISSBVHNodeAdaptor<GO> nAda)
         {
             // second, decide which axis to split on, and sort..
-            List<GO>? splitlist = gobjects;
-            splitlist?.ForEach(o => nAda.UnmapObject(o));
-            int center = (splitlist?.Count ?? 0) / 2; // find the center object
+            List<GO>? splitlistNullable = gobjects;
+            if (splitlistNullable is null)
+                throw new InvalidOperationException("Cannot split a BVH node without objects.");
 
-            SplitAxisOpt? bestSplit = EachAxis.Min((axis) =>
+            List<GO> splitlist = splitlistNullable;
+            splitlist.ForEach(o => nAda.UnmapObject(o));
+            int center = splitlist.Count / 2; // find the center object
+
+            SplitAxisOpt? bestSplitOpt = EachAxis.Min((axis) =>
             {
-                var orderedlist = new List<GO>(splitlist ?? []);
+                var orderedlist = new List<GO>(splitlist);
                 switch (axis)
                 {
                     case Axis.X:
@@ -515,15 +523,21 @@ namespace SimpleScene.Util.ssBVH
                 return new SplitAxisOpt(SAH, axis, left_s, right_s);
             });
 
+            SplitAxisOpt bestSplit = bestSplitOpt ?? throw new InvalidOperationException("Unable to determine BVH split axis.");
+
             // perform the split
             gobjects = null;
-            left = new BVHNode<GO>(nAda.BVH, this, bestSplit.left, bestSplit.axis, this.depth + 1); // Split the Hierarchy to the left
-            right = new BVHNode<GO>(nAda.BVH, this, bestSplit.right, bestSplit.axis, this.depth + 1); // Split the Hierarchy to the right                                
+            BVH<GO> bvh = RequireBVH(nAda);
+            left = new BVHNode<GO>(bvh, this, bestSplit.left, bestSplit.axis, this.depth + 1); // Split the Hierarchy to the left
+            right = new BVHNode<GO>(bvh, this, bestSplit.right, bestSplit.axis, this.depth + 1); // Split the Hierarchy to the right                                
         }
 
         internal void SplitIfNecessary(ISSBVHNodeAdaptor<GO> nAda)
         {
-            if (gobjects.Count > nAda.BVH.LEAF_OBJ_MAX)
+            if (gobjects is null)
+                return;
+
+            if (gobjects.Count > RequireBVH(nAda).LEAF_OBJ_MAX)
                 SplitNode(nAda);
         }
 
@@ -534,11 +548,12 @@ namespace SimpleScene.Util.ssBVH
 
         internal static void AddObject_Pushdown(ISSBVHNodeAdaptor<GO> nAda, BVHNode<GO> curNode, GO newOb)
         {
-            var left = curNode.left;
-            var right = curNode.right;
+            var left = curNode.left ?? throw new InvalidOperationException("Left child missing during pushdown.");
+            var right = curNode.right ?? throw new InvalidOperationException("Right child missing during pushdown.");
+            BVH<GO> bvh = RequireBVH(nAda);
 
             // merge and pushdown left and right as a new node..
-            var mergedSubnode = new BVHNode<GO>(nAda.BVH)
+            var mergedSubnode = new BVHNode<GO>(bvh)
             {
                 left = left,
                 right = right,
@@ -550,7 +565,7 @@ namespace SimpleScene.Util.ssBVH
             mergedSubnode.ChildRefit(nAda, propagate: false);
 
             // make new subnode for obj
-            var newSubnode = new BVHNode<GO>(nAda.BVH)
+            var newSubnode = new BVHNode<GO>(bvh)
             {
                 parent = curNode,
                 gobjects = [newOb]
@@ -576,6 +591,8 @@ namespace SimpleScene.Util.ssBVH
 
                 var left = curNode.left;
                 var right = curNode.right;
+                if (left is null || right is null)
+                    throw new InvalidOperationException("Interior BVH nodes must have both children.");
 
                 float leftSAH = SA(left);
                 float rightSAH = SA(right);
@@ -639,8 +656,9 @@ namespace SimpleScene.Util.ssBVH
         {
             depth = newdepth;
 
-            if (newdepth > nAda.BVH._maxDepth)
-                nAda.BVH._maxDepth = newdepth;
+            BVH<GO> bvh = RequireBVH(nAda);
+            if (newdepth > bvh._maxDepth)
+                bvh._maxDepth = newdepth;
             
             if (gobjects == null)
             {
@@ -787,15 +805,15 @@ namespace SimpleScene.Util.ssBVH
 
         internal static void ChildRefit(ISSBVHNodeAdaptor<GO> nAda, BVHNode<GO>? curNode, bool propagate = true)
         {
-            do
+            while (curNode != null)
             {
-                //AABB oldbox = curNode.box;
-                BVHNode<GO>? left = curNode!.left;
+                BVHNode<GO>? left = curNode.left;
                 BVHNode<GO>? right = curNode.right;
+                if (left is null || right is null)
+                    break;
 
                 // start with the left box
-                AABB newBox = left!.box;
-                AABB rightBox = right!.box;
+                AABB newBox = left.box;
 
                 float newMinX = newBox.Min.X;
                 float newMinY = newBox.Min.Y;
@@ -807,28 +825,29 @@ namespace SimpleScene.Util.ssBVH
                 // expand any dimension bigger in the right node
                 if (right.box.Min.X < newBox.Min.X)
                     newMinX = right.box.Min.X;
-                if (right.box.Min.Y < newBox.Min.Y) 
+                if (right.box.Min.Y < newBox.Min.Y)
                     newMinY = right.box.Min.Y;
                 if (right.box.Min.Z < newBox.Min.Z)
                     newMinZ = right.box.Min.Z;
 
-                if (right.box.Max.X > newBox.Max.X) 
+                if (right.box.Max.X > newBox.Max.X)
                     newMaxX = right.box.Max.X;
-                if (right.box.Max.Y > newBox.Max.Y) 
+                if (right.box.Max.Y > newBox.Max.Y)
                     newMaxY = right.box.Max.Y;
-                if (right.box.Max.Z > newBox.Max.Z) 
+                if (right.box.Max.Z > newBox.Max.Z)
                     newMaxZ = right.box.Max.Z;
 
                 newBox = new AABB(
                     new Vector3(newMinX, newMinY, newMinZ),
                     new Vector3(newMaxX, newMaxY, newMaxZ));
 
-                // now set our box to the newly created box
                 curNode.box = newBox;
 
-                // and walk up the tree
+                if (!propagate)
+                    break;
+
                 curNode = curNode.parent;
-            } while (propagate && curNode != null);
+            }
         }
 
         internal BVHNode(BVH<GO> bvh)

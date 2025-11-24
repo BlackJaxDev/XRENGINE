@@ -151,7 +151,9 @@ namespace XREngine.Data
             inStream.Read(lengthBytes, 0, sizeByteCount);
 
             decoder.SetDecoderProperties(properties);
-            long len = BitConverter.ToInt64(lengthBytes, 0);
+            long len = longLength
+                ? BitConverter.ToInt64(lengthBytes, 0)
+                : BitConverter.ToInt32(lengthBytes, 0);
 
             decoder.Code(inStream, outStream, inStream.Length - 5 - sizeByteCount, len, null);
 

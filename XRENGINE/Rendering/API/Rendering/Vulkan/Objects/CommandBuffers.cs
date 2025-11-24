@@ -161,20 +161,20 @@ namespace XREngine.Rendering.Vulkan
             out AccessFlags srcAccess,
             out AccessFlags dstAccess)
         {
-            srcStages = 0;
-            dstStages = 0;
-            srcAccess = 0;
-            dstAccess = 0;
+            PipelineStageFlags srcStagesLocal = 0;
+            PipelineStageFlags dstStagesLocal = 0;
+            AccessFlags srcAccessLocal = 0;
+            AccessFlags dstAccessLocal = 0;
 
             void Merge(bool condition, PipelineStageFlags srcStage, PipelineStageFlags dstStage, AccessFlags srcAcc, AccessFlags dstAcc)
             {
                 if (!condition)
                     return;
 
-                srcStages |= srcStage;
-                dstStages |= dstStage;
-                srcAccess |= srcAcc;
-                dstAccess |= dstAcc;
+                srcStagesLocal |= srcStage;
+                dstStagesLocal |= dstStage;
+                srcAccessLocal |= srcAcc;
+                dstAccessLocal |= dstAcc;
             }
 
             Merge(mask.HasFlag(EMemoryBarrierMask.VertexAttribArray),
@@ -228,8 +228,8 @@ namespace XREngine.Rendering.Vulkan
             Merge(mask.HasFlag(EMemoryBarrierMask.AtomicCounter),
                 PipelineStageFlags.VertexShaderBit | PipelineStageFlags.FragmentShaderBit | PipelineStageFlags.ComputeShaderBit,
                 PipelineStageFlags.VertexShaderBit | PipelineStageFlags.FragmentShaderBit | PipelineStageFlags.ComputeShaderBit,
-                AccessFlags.AtomicCounterReadBit | AccessFlags.AtomicCounterWriteBit,
-                AccessFlags.AtomicCounterReadBit | AccessFlags.AtomicCounterWriteBit);
+                AccessFlags.ShaderReadBit | AccessFlags.ShaderWriteBit,
+                AccessFlags.ShaderReadBit | AccessFlags.ShaderWriteBit);
 
             Merge(mask.HasFlag(EMemoryBarrierMask.ClientMappedBuffer),
                 PipelineStageFlags.HostBit,
@@ -243,14 +243,19 @@ namespace XREngine.Rendering.Vulkan
                 AccessFlags.MemoryWriteBit,
                 AccessFlags.MemoryReadBit | AccessFlags.MemoryWriteBit);
 
-            if (srcStages == 0)
-                srcStages = PipelineStageFlags.AllCommandsBit;
-            if (dstStages == 0)
-                dstStages = PipelineStageFlags.AllCommandsBit;
-            if (srcAccess == 0)
-                srcAccess = AccessFlags.MemoryReadBit | AccessFlags.MemoryWriteBit;
-            if (dstAccess == 0)
-                dstAccess = AccessFlags.MemoryReadBit | AccessFlags.MemoryWriteBit;
+            if (srcStagesLocal == 0)
+                srcStagesLocal = PipelineStageFlags.AllCommandsBit;
+            if (dstStagesLocal == 0)
+                dstStagesLocal = PipelineStageFlags.AllCommandsBit;
+            if (srcAccessLocal == 0)
+                srcAccessLocal = AccessFlags.MemoryReadBit | AccessFlags.MemoryWriteBit;
+            if (dstAccessLocal == 0)
+                dstAccessLocal = AccessFlags.MemoryReadBit | AccessFlags.MemoryWriteBit;
+
+            srcStages = srcStagesLocal;
+            dstStages = dstStagesLocal;
+            srcAccess = srcAccessLocal;
+            dstAccess = dstAccessLocal;
         }
 
         private void EmitPlannedImageBarriers(CommandBuffer commandBuffer, IReadOnlyList<VulkanBarrierPlanner.PlannedImageBarrier>? plannedBarriers)

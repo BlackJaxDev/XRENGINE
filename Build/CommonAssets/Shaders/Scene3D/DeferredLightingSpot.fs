@@ -23,6 +23,7 @@ uniform float ShadowBase = 2.0f;
 uniform float ShadowMult = 3.0f;
 uniform float ShadowBiasMin = 0.00001f;
 uniform float ShadowBiasMax = 0.004f;
+uniform bool LightHasShadowMap = true; // Added
 
 struct SpotLight
 {
@@ -51,41 +52,41 @@ float Attenuate(in float dist, in float radius)
 {
     return pow(clamp(1.0f - pow(dist / radius, 4.0f), 0.0f, 1.0f), 2.0f) / (dist * dist + 1.0f);
 }
-//0 is fully in shadow, 1 is fully lit
+// returns1 lit,0 shadow
 float ReadShadowMap2D(in vec3 fragPosWS, in vec3 N, in float NoL, in mat4 lightMatrix)
 {
-  //Move the fragment position into light space
-		vec3 offsetPosWS = fragPosWS + N * ShadowBiasMax * 1.0f;
+  if (!LightHasShadowMap) return 1.0f;
+  if (NoL <= 0.0f) return 0.0f;
+		vec3 offsetPosWS = fragPosWS + N * ShadowBiasMax;
 		vec4 fragPosLightSpace = lightMatrix * vec4(offsetPosWS, 1.0f);
 	vec3 fragCoord = fragPosLightSpace.xyz / fragPosLightSpace.w;
 	fragCoord = fragCoord * 0.5f + 0.5f;
-
+	if (fragCoord.x < 0.0f || fragCoord.x > 1.0f || fragCoord.y < 0.0f || fragCoord.y > 1.0f)
+ return 1.0f;
 	//Create bias depending on angle of normal to the light
 	float bias = GetShadowBias(NoL);
 
 	//Hard shadow
 	float depth = texture(ShadowMap, fragCoord.xy).r;
-	float shadow1 = (fragCoord.z + bias) < depth ? 0.0f : 1.0f;
+	float litHard = (fragCoord.z + bias) <= depth ? 1.0f : 0.0f;
 
 	//PCF shadow
-	float shadow = 0.0f;
+	float lit = 0.0f;
 	vec2 texelSize = 1.0f / textureSize(ShadowMap, 0);
 	for (int x = -1; x <= 1; ++x)
 	{
 	    for (int y = -1; y <= 1; ++y)
 	    {
 	        float pcfDepth = texture(ShadowMap, fragCoord.xy + vec2(x, y) * texelSize).r;
-	        shadow += (fragCoord.z + bias < pcfDepth) ? 0.0f : 1.0f;
+	        lit += (fragCoord.z + bias) <= pcfDepth ? 1.0f : 0.0f;
 	    }
 	}
-	shadow *= 0.111111111f; //divided by 9
+	lit *= 0.111111111f; //divided by 9
 
 	float dist = fragCoord.z - depth;
 	float maxBlurDist = 0.1f;
 	float normDist = clamp(dist, 0.0f, maxBlurDist) / maxBlurDist;
-	shadow = mix(shadow1, shadow, normDist);
-
-	return shadow;
+	return mix(litHard, lit, normDist);
 }
 //Trowbridge-Reitz GGX
 float SpecD_TRGGX(in float NoH2, in float a2)
@@ -157,9 +158,8 @@ in vec3 F0)
 	float denom = 4.0f * NoV * NoL + 0.0001f;
 	vec3 spec =  specular * D * G * F / denom;
 
-	vec3 kD = 1.0f - F;
-	kD *= 1.0f - metallic;
-
+	vec3 kS = F;
+	vec3 kD = (1.0f - kS) * (1.0f - metallic);
 	vec3 radiance = lightAttenuation * LightData.Color * LightData.DiffuseIntensity;
 	return (kD * albedo / PI + spec) * radiance * NoL;
 }
@@ -196,6 +196,7 @@ in vec3 F0)
 
 	vec3 H = normalize(V + L);
 	float NoL = max(dot(N, L), 0.0f);
+	if (NoL <= 0.0f) return vec3(0.0f); 
 	float NoH = max(dot(N, H), 0.0f);
 	float NoV = max(dot(N, V), 0.0f);
 	float HoV = max(dot(H, V), 0.0f);
@@ -204,11 +205,11 @@ in vec3 F0)
 		NoL, NoH, NoV, HoV,
 		attn, albedo, rms, F0);
 
-	float shadow = ReadShadowMap2D(
+	float lit = ReadShadowMap2D(
 		fragPosWS, N, NoL,
 		LightData.WorldToLightProjMatrix * inverse(LightData.WorldToLightInvViewMatrix));
 
-	return color * shadow;
+	return color * lit;
 }
 vec3 CalcTotalLight(
 in vec3 CameraPosition,

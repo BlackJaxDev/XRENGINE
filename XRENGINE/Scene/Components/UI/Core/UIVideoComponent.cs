@@ -1,12 +1,22 @@
 ﻿using FFmpeg.AutoGen;
+using FlyleafLib.MediaFramework.MediaPlaylist;
+using FlyleafLib.MediaPlayer;
 using System.Collections.Concurrent;
 using System.ComponentModel;
+using System.Linq;
 using System.Reflection.Metadata;
 using System.Runtime.InteropServices;
 using System.Text.Json;
+using System.Threading.Tasks;
+using System;
+using System.IO;
 using XREngine.Components;
 using XREngine.Data.Rendering;
 using XREngine.Data.Vectors;
+using XREngine.Rendering;
+using XREngine.Rendering.OpenGL;
+
+using FlyleafConfig = FlyleafLib.Config;
 
 namespace XREngine.Rendering.UI
 {
@@ -507,7 +517,53 @@ namespace XREngine.Rendering.UI
         public string? StreamUrl
         {
             get => _streamUrl;
-            set => SetField(ref _streamUrl, value);
+            set
+            {
+                if (SetField(ref _streamUrl, value))
+                    HandleStreamUrlChanged();
+            }
+        }
+
+        private bool _useFlyleafPlayer = true;
+        public bool UseFlyleafPlayer
+        {
+            get => _useFlyleafPlayer;
+            set
+            {
+                if (SetField(ref _useFlyleafPlayer, value))
+                    RestartVideoPipeline();
+            }
+        }
+
+        private PlayerGL? _flyleafPlayer;
+        private FlyleafConfig? _flyleafConfig;
+        private Task<int>? _flyleafOpenTask;
+        private string? _flyleafCurrentUrl;
+
+        private void HandleStreamUrlChanged()
+        {
+            if (!UseFlyleafPlayer || !IsActiveInHierarchy)
+                return;
+
+            StopFlyleafPipeline();
+            StartFlyleafPipeline();
+        }
+
+        private void RestartVideoPipeline()
+        {
+            if (!IsActiveInHierarchy)
+                return;
+
+            if (UseFlyleafPlayer)
+            {
+                StopFlyleafPipeline();
+                StartFlyleafPipeline();
+            }
+            else
+            {
+                StopFlyleafPipeline();
+                StartLegacyPipeline();
+            }
         }
 
         private unsafe AVFormatContext* _formatContext;
@@ -553,23 +609,238 @@ namespace XREngine.Rendering.UI
             return new XRMaterial([texture], XRShader.EngineShader(Path.Combine("Common", "UnlitTexturedForward.fs"), EShaderType.Fragment));
         }
 
-        //protected internal override void OnComponentActivated()
-        //{
-        //    base.OnComponentActivated();
-        //    OpenTwitchStream("sodapoppin").ContinueWith(t =>
-        //    {
-        //        if (t.Exception != null)
-        //            Debug.LogWarning($"Failed to load Twitch stream for sodapoppin: {t.Exception.Message}");
+        protected override void OnMaterialSettingUniforms(XRMaterialBase material, XRRenderProgram program)
+        {
+            base.OnMaterialSettingUniforms(material, program);
 
-        //        AllocateDecode();
-        //        RegisterTick(Components.ETickGroup.Normal, Components.ETickOrder.Logic, DecodeFrame);
-        //        Engine.Time.Timer.RenderFrame += ConsumeFrameQueue;
-        //    });
-        //}
+            if (UseFlyleafPlayer)
+                PresentFlyleafFrame();
+        }
+
+        private void StartFlyleafPipeline()
+            => Engine.InvokeOnMainThread(StartFlyleafPipelineOnMainThread, true);
+
+        private void StartFlyleafPipelineOnMainThread()
+        {
+            if (!UseFlyleafPlayer)
+                return;
+
+            if (string.IsNullOrWhiteSpace(StreamUrl))
+            {
+                Debug.LogWarning("Flyleaf video playback requires a valid StreamUrl.");
+                return;
+            }
+
+            if (_flyleafPlayer != null && string.Equals(_flyleafCurrentUrl, StreamUrl, StringComparison.OrdinalIgnoreCase))
+                return;
+
+            if (_flyleafPlayer != null)
+                StopFlyleafPipelineOnMainThread();
+
+            var renderer = GetActiveOpenGLRenderer();
+            if (renderer is null)
+            {
+                Debug.LogWarning("Flyleaf video playback requires an active OpenGL renderer.");
+                return;
+            }
+
+            if (!TryPrepareFlyleafFramebuffer(out uint framebufferId))
+                return;
+
+            if (!EnsureFlyleafEngineStarted())
+            {
+                Debug.LogError("Flyleaf engine failed to start; falling back to legacy decoder.");
+                return;
+            }
+
+            _flyleafConfig = CreateFlyleafConfig();
+            _flyleafPlayer = new PlayerGL(_flyleafConfig, renderer.RawGL);
+            _flyleafPlayer.SetTargetFramebuffer(framebufferId);
+            _flyleafPlayer.Video.PropertyChanged += HandleFlyleafVideoPropertyChanged;
+
+            BeginFlyleafOpen(StreamUrl!);
+        }
+
+        private static OpenGLRenderer? GetActiveOpenGLRenderer()
+        {
+            if (AbstractRenderer.Current is OpenGLRenderer current)
+                return current;
+
+            return Engine.Windows
+                .Select(window => window.Renderer)
+                .OfType<OpenGLRenderer>()
+                .FirstOrDefault();
+        }
+
+        private bool TryPrepareFlyleafFramebuffer(out uint framebufferId)
+        {
+            framebufferId = 0;
+            _fbo.Material = Material;
+            _fbo.Generate();
+
+            if (_fbo.APIWrappers.OfType<GLFrameBuffer>().FirstOrDefault() is not GLFrameBuffer glFbo)
+            {
+                Debug.LogWarning("Unable to locate GL framebuffer wrapper for Flyleaf video output.");
+                return false;
+            }
+
+            glFbo.Generate();
+            framebufferId = glFbo.BindingId;
+            return framebufferId != 0;
+        }
+
+        private void BeginFlyleafOpen(string url)
+        {
+            var player = _flyleafPlayer;
+            if (player is null)
+                return;
+
+            _flyleafCurrentUrl = url;
+            _flyleafOpenTask = player.OpenAsync(url);
+            _ = _flyleafOpenTask.ContinueWith(OnFlyleafOpenCompleted, TaskScheduler.Default);
+        }
+
+        private void OnFlyleafOpenCompleted(Task<int> task)
+        {
+            if (task.IsFaulted)
+            {
+                Debug.LogWarning($"Flyleaf failed to open stream: {task.Exception?.GetBaseException().Message}");
+                return;
+            }
+
+            if (task.Result != 0)
+                Debug.LogWarning($"Flyleaf returned error code {task.Result} while opening '{_flyleafCurrentUrl}'. OpenGL decoder context still lacks full session support.");
+        }
+
+        private void StopFlyleafPipeline()
+            => Engine.InvokeOnMainThread(StopFlyleafPipelineOnMainThread, true);
+
+        private void StopFlyleafPipelineOnMainThread()
+        {
+            var player = _flyleafPlayer;
+            if (player is null)
+                return;
+
+            player.Video.PropertyChanged -= HandleFlyleafVideoPropertyChanged;
+            player.Dispose();
+            _flyleafPlayer = null;
+            _flyleafConfig = null;
+            _flyleafOpenTask = null;
+            _flyleafCurrentUrl = null;
+        }
+
+        private void HandleFlyleafVideoPropertyChanged(object? sender, PropertyChangedEventArgs e)
+        {
+            if (sender is not VideoGL video)
+                return;
+
+            if (e.PropertyName != nameof(VideoGL.Width) && e.PropertyName != nameof(VideoGL.Height))
+                return;
+
+            if (video.Width <= 0 || video.Height <= 0)
+                return;
+
+            Engine.InvokeOnMainThread(() => WidthHeight = new IVector2(video.Width, video.Height), true);
+        }
+
+        private void PresentFlyleafFrame()
+            => Engine.InvokeOnMainThread(PresentFlyleafFrameOnMainThread, true);
+
+        private void PresentFlyleafFrameOnMainThread()
+        {
+            if (_flyleafPlayer is null)
+                return;
+
+            if (!TryPrepareFlyleafFramebuffer(out uint framebufferId))
+                return;
+
+            _flyleafPlayer.SetTargetFramebuffer(framebufferId);
+            _flyleafPlayer.GLPresent();
+        }
+
+        private static FlyleafConfig CreateFlyleafConfig()
+        {
+            var config = new FlyleafConfig
+            {
+                Player =
+                {
+                    Usage = Usage.AVS,
+                    AutoPlay = true
+                }
+            };
+
+            return config;
+        }
+
+        private static readonly object FlyleafEngineInitLock = new();
+        private static bool _flyleafEngineInitialized;
+
+        private static bool EnsureFlyleafEngineStarted()
+        {
+            if (_flyleafEngineInitialized && FlyleafLib.Engine.IsLoaded)
+                return true;
+
+            lock (FlyleafEngineInitLock)
+            {
+                if (_flyleafEngineInitialized && FlyleafLib.Engine.IsLoaded)
+                    return true;
+
+                try
+                {
+                    var engineConfig = CreateFlyleafEngineConfig();
+                    FlyleafLib.Engine.Start(engineConfig);
+                    _flyleafEngineInitialized = true;
+                    return true;
+                }
+                catch (Exception ex)
+                {
+                    Debug.LogError($"Failed to initialize Flyleaf engine: {ex.Message}");
+                    return false;
+                }
+            }
+        }
+
+        private static FlyleafLib.EngineConfig CreateFlyleafEngineConfig()
+        {
+            var pluginsPath = TryLocateFlyleafAsset(Path.Combine("Build", "Submodules", "Flyleaf", "FlyleafLib", "Plugins"))
+                ?? TryLocateFlyleafAsset("Plugins");
+            var ffmpegPath = TryLocateFlyleafAsset(Path.Combine("Build", "Submodules", "Flyleaf", "FFmpeg"))
+                ?? TryLocateFlyleafAsset("FFmpeg");
+
+            return new FlyleafLib.EngineConfig
+            {
+                PluginsPath = pluginsPath ?? ":Plugins",
+                FFmpegPath = ffmpegPath ?? ":FFmpeg"
+            };
+        }
+
+        private static string? TryLocateFlyleafAsset(string relativePath)
+        {
+            string? current = AppDomain.CurrentDomain.BaseDirectory;
+            while (!string.IsNullOrEmpty(current))
+            {
+                string candidate = Path.Combine(current, relativePath);
+                if (Directory.Exists(candidate))
+                    return candidate;
+
+                var parent = Directory.GetParent(current);
+                if (parent is null)
+                    break;
+
+                current = parent.FullName;
+            }
+
+            return null;
+        }
+
         protected internal override void OnComponentDeactivated()
         {
             base.OnComponentDeactivated();
-            StopDecoding();
+
+            if (UseFlyleafPlayer)
+                StopFlyleafPipeline();
+            else
+                StopDecoding();
         }
 
         private void StopDecoding()
@@ -930,22 +1201,28 @@ namespace XREngine.Rendering.UI
         {
             base.OnComponentActivated();
 
-            //Task.Run(async () =>
-            //{
-            //try
-            //{
-            GetTwitchStreamURL("saintsakura").ContinueWith(t => StartDecode());
-                    //StartDecode();
-                //}
-                //catch (Exception ex)
-                //{
-                //    Debug.LogWarning($"Failed to initialize video stream: {ex.Message}");
-                //}
-            //});
+            if (UseFlyleafPlayer)
+                StartFlyleafPipeline();
+            else
+                StartLegacyPipeline();
+        }
+
+        private void StartLegacyPipeline()
+        {
+            if (!string.IsNullOrEmpty(StreamUrl))
+            {
+                StartDecode();
+                return;
+            }
+
+            GetTwitchStreamURL("saintsakura").ContinueWith(_ => StartDecode(), TaskScheduler.Default);
         }
 
         private void StartDecode()
         {
+            if (UseFlyleafPlayer)
+                return;
+
             if (!AllocateDecode())
                 return;
             

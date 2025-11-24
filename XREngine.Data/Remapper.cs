@@ -1,4 +1,5 @@
 ﻿using System.Collections;
+using System.Collections.Generic;
 
 namespace XREngine
 {
@@ -31,10 +32,12 @@ namespace XREngine
         }
 
         public void Remap<T>(IList<T> source) => Remap(source, null);
+        private static readonly object NullKey = new();
+
         public void Remap<T>(IList<T> source, Comparison<T>? comp)
         {
             int count = source.Count;
-            Hashtable cache = [];
+            Dictionary<object, int> cache = new();
 
             _source = source;
             _remapTable = new int[count];
@@ -46,13 +49,19 @@ namespace XREngine
             {
                 T t = source[i];
 
-                if (cache.ContainsKey(t))
-                    _remapTable[i] = (int)cache[t];
-                else
+                object key = t is null ? NullKey : t;
+
+                if (cache.TryGetValue(key, out int cachedIndex))
                 {
-                    _impTable[impIndex] = i;
-                    cache[t] = _remapTable[i] = impIndex++;
+                    _remapTable[i] = cachedIndex;
+                    continue;
                 }
+
+                // New unique entry path
+                _impTable[impIndex] = i;
+                _remapTable[i] = impIndex;
+                cache[key] = impIndex;
+                impIndex++;
             }
 
             int impCount = impIndex;

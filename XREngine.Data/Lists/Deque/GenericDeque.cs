@@ -317,7 +317,7 @@ namespace System.Collections.Generic
             #endregion
 
             // Get the object at the front of the deque.
-            T item = front!.Value;
+            T item = front!.Value!;
 
             // Move the front back one node.
             front = front.Next;
@@ -370,7 +370,7 @@ namespace System.Collections.Generic
             #endregion
 
             // Get the object at the back of the deque.
-            T item = back!.Value;
+            T item = back!.Value!;
 
             // Move back node forward one node.
             back = back.Previous;
@@ -422,7 +422,7 @@ namespace System.Collections.Generic
 
             #endregion
 
-            return front!.Value;
+            return front!.Value!;
         }
 
         /// <summary>
@@ -445,7 +445,7 @@ namespace System.Collections.Generic
 
             #endregion
 
-            return back!.Value;
+            return back!.Value!;
         }
 
         /// <summary>
@@ -494,7 +494,7 @@ namespace System.Collections.Generic
             int n = 0;
             Node? current = front;
 
-            while (current != null)
+            while (current is not null)
             {
                 n++;
                 current = current.Next;
@@ -506,16 +506,16 @@ namespace System.Collections.Generic
             {
                 Debug.Assert(front != null && back != null, "Front/Back Null Test - Count > 0");
 
-                Node f = front;
-                Node b = back;
+                Node? f = front;
+                Node? b = back;
 
-                while (f.Next != null && b.Previous != null)
+                while (f?.Next != null && b?.Previous != null)
                 {
-                    f = f.Next;
-                    b = b.Previous;
+                    f = f!.Next;
+                    b = b!.Previous;
                 }
 
-                Debug.Assert(f.Next is null && b.Previous is null, "Front/Back Termination Test");
+                Debug.Assert(f?.Next is null && b?.Previous is null, "Front/Back Termination Test");
                 Debug.Assert(f == back && b == front, "Front/Back Equality Test");
             }
             else
@@ -598,9 +598,9 @@ namespace System.Collections.Generic
 
             int i = index;
 
-            foreach(object? obj in this)
+            foreach(T item in this)
             {
-                array.SetValue(obj, i);
+                array.SetValue(item, i);
                 i++;
             }
         }
@@ -677,7 +677,7 @@ namespace System.Collections.Generic
                     continue;
                 }
 
-                int v = comp(prev!.Value, next.Value);
+                int v = comp(prev!.Value!, next.Value!);
                 if (v > 0)
                 {
                     next.Previous = prev.Previous;

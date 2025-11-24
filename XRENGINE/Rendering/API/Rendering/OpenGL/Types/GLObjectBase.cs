@@ -85,7 +85,7 @@ namespace XREngine.Rendering.OpenGL
                 {
                     if (!_hasSentInvalidationWarning)
                     {
-                        Debug.Out($"Attempted to generate an OpenGL object with no changes since last generation attempt. Canceling to avoid infinite recursion on generation fail.");
+                        //Debug.Out($"Attempted to generate an OpenGL object with no changes since last generation attempt. Canceling to avoid infinite recursion on generation fail.");
                         _hasSentInvalidationWarning = true;
                     }
                     return;

@@ -1,41 +1,42 @@
-﻿namespace XREngine.Data.Tools
+﻿using System.Collections.Generic;
+
+namespace XREngine.Data.Tools
 {
     public class SimplePriorityQueue<T>
     {
-        private List<KeyValuePair<T, float>> heap;
+        private readonly List<KeyValuePair<T, float>> _heap = new();
 
         public SimplePriorityQueue()
         {
-            heap = new List<KeyValuePair<T, float>>();
         }
 
         public void Enqueue(T item, float priority)
         {
-            heap.Add(new KeyValuePair<T, float>(item, priority));
-            int index = heap.Count - 1;
+            _heap.Add(new KeyValuePair<T, float>(item, priority));
+            int index = _heap.Count - 1;
             while (index > 0)
             {
                 int parentIndex = (index - 1) / 2;
 
-                if (heap[parentIndex].Value <= heap[index].Value)
+                if (_heap[parentIndex].Value <= _heap[index].Value)
                     break;
 
-                (heap[parentIndex], heap[index]) = (heap[index], heap[parentIndex]);
+                (_heap[parentIndex], _heap[index]) = (_heap[index], _heap[parentIndex]);
                 index = parentIndex;
             }
         }
 
         public T Dequeue()
         {
-            if (heap.Count == 0)
+            if (_heap.Count == 0)
             {
                 throw new InvalidOperationException("The queue is empty.");
             }
 
-            T result = heap[0].Key;
-            int lastIndex = heap.Count - 1;
-            heap[0] = heap[lastIndex];
-            heap.RemoveAt(lastIndex);
+            T result = _heap[0].Key;
+            int lastIndex = _heap.Count - 1;
+            _heap[0] = _heap[lastIndex];
+            _heap.RemoveAt(lastIndex);
 
             int index = 0;
             while (true)
@@ -44,20 +45,20 @@
                 int rightChildIndex = 2 * index + 2;
                 int minChildIndex;
 
-                if (leftChildIndex >= heap.Count)
+                if (leftChildIndex >= _heap.Count)
                     break;
 
-                if (rightChildIndex >= heap.Count)
+                if (rightChildIndex >= _heap.Count)
                     minChildIndex = leftChildIndex;
                 else
-                    minChildIndex = heap[leftChildIndex].Value < heap[rightChildIndex].Value
+                    minChildIndex = _heap[leftChildIndex].Value < _heap[rightChildIndex].Value
                         ? leftChildIndex
                         : rightChildIndex;
 
-                if (heap[index].Value <= heap[minChildIndex].Value)
+                if (_heap[index].Value <= _heap[minChildIndex].Value)
                     break;
 
-                (heap[minChildIndex], heap[index]) = (heap[index], heap[minChildIndex]);
+                (_heap[minChildIndex], _heap[index]) = (_heap[index], _heap[minChildIndex]);
                 index = minChildIndex;
             }
 
@@ -69,9 +70,9 @@
             while (index > 0)
             {
                 int parentIndex = (index - 1) / 2;
-                if (heap[parentIndex].Value <= heap[index].Value) break;
+                if (_heap[parentIndex].Value <= _heap[index].Value) break;
 
-                (heap[parentIndex], heap[index]) = (heap[index], heap[parentIndex]);
+                (_heap[parentIndex], _heap[index]) = (_heap[index], _heap[parentIndex]);
                 index = parentIndex;
             }
         }
@@ -84,27 +85,27 @@
                 int rightChildIndex = 2 * index + 2;
                 int minChildIndex;
 
-                if (leftChildIndex >= heap.Count) break;
-                if (rightChildIndex >= heap.Count) minChildIndex = leftChildIndex;
-                else minChildIndex = heap[leftChildIndex].Value < heap[rightChildIndex].Value ? leftChildIndex : rightChildIndex;
+                if (leftChildIndex >= _heap.Count) break;
+                if (rightChildIndex >= _heap.Count) minChildIndex = leftChildIndex;
+                else minChildIndex = _heap[leftChildIndex].Value < _heap[rightChildIndex].Value ? leftChildIndex : rightChildIndex;
 
-                if (heap[index].Value <= heap[minChildIndex].Value) break;
+                if (_heap[index].Value <= _heap[minChildIndex].Value) break;
 
-                KeyValuePair<T, float> temp = heap[index];
-                heap[index] = heap[minChildIndex];
-                heap[minChildIndex] = temp;
+                KeyValuePair<T, float> temp = _heap[index];
+                _heap[index] = _heap[minChildIndex];
+                _heap[minChildIndex] = temp;
                 index = minChildIndex;
             }
         }
 
         public void Remove(T item)
         {
-            int index = heap.FindIndex(pair => pair.Key.Equals(item));
+            int index = _heap.FindIndex(pair => EqualityComparer<T>.Default.Equals(pair.Key, item));
             if (index == -1) return;
 
-            int lastIndex = heap.Count - 1;
-            heap[index] = heap[lastIndex];
-            heap.RemoveAt(lastIndex);
+            int lastIndex = _heap.Count - 1;
+            _heap[index] = _heap[lastIndex];
+            _heap.RemoveAt(lastIndex);
 
             if (index < lastIndex)
             {
@@ -115,11 +116,11 @@
 
         public void UpdatePriority(T item, float newPriority)
         {
-            int index = heap.FindIndex(pair => pair.Key.Equals(item));
+            int index = _heap.FindIndex(pair => EqualityComparer<T>.Default.Equals(pair.Key, item));
             if (index == -1) return;
 
-            float oldPriority = heap[index].Value;
-            heap[index] = new KeyValuePair<T, float>(item, newPriority);
+            float oldPriority = _heap[index].Value;
+            _heap[index] = new KeyValuePair<T, float>(item, newPriority);
 
             if (newPriority < oldPriority)
             {
@@ -133,7 +134,7 @@
 
         public int Count()
         {
-            return heap.Count;
+            return _heap.Count;
         }
     }
 }

@@ -16,7 +16,7 @@ namespace XREngine.Components.Capture.Lights.Types
         private ELightType _type = ELightType.Dynamic;
         private bool _castsShadows = true;
         private float _shadowMaxBias = 0.01f;
-        private float _shadowMinBias = 0.0005f;
+        private float _shadowMinBias = 0.005f;
         private float _shadowExponent = 1.0f;
         private float _shadowExponentBase = 0.04f;
         private Matrix4x4 _lightMatrix = Matrix4x4.Identity;

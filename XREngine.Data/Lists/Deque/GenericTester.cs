@@ -68,11 +68,9 @@ namespace DequeTest
 
             PopulateDequePushBack(deque);
 
-            int j;
-
             for(int i = 0; i < ElementCount; i++)
             {
-                j = (int)deque.PopFront();
+                int j = deque.PopFront();
 
                 Debug.Assert(j == i);
             }
@@ -86,11 +84,9 @@ namespace DequeTest
 
             PopulateDequePushBack(deque);
 
-            int j;
-
             for(int i = 0; i < ElementCount; i++)
             {
-                j = (int)deque.PopBack();
+                int j = deque.PopBack();
 
                 Debug.Assert(j == ElementCount - 1 - i);
             }
@@ -140,7 +136,7 @@ namespace DequeTest
 
             try
             {
-                deque.CopyTo(null, deque.Count);
+                deque.CopyTo(null!, deque.Count);
 
                 Debug.Fail("Exception failed");
             }

@@ -55,7 +55,12 @@ namespace XREngine.Rendering.OpenGL
 
         protected virtual void DataPropertyChanged(object? sender, IXRPropertyChangedEventArgs e)
         {
-            switch (e.PropertyName)
+            Engine.InvokeOnMainThread(() => UpdateProperty(e.PropertyName), true);
+        }
+
+        private void UpdateProperty(string? propertyName)
+        {
+            switch (propertyName)
             {
                 case nameof(XRTexture.MinLOD):
                     {
@@ -94,9 +99,11 @@ namespace XREngine.Rendering.OpenGL
             => Data.WidthHeightDepth;
 
         protected virtual void SetParameters()
+            => Engine.InvokeOnMainThread(SetParametersInternal, true);
+
+        private void SetParametersInternal()
         {
             int param;
-
             if (!IsMultisampleTarget)
             {
                 param = Data.MinLOD;

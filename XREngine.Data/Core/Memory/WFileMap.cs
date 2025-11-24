@@ -22,7 +22,7 @@ namespace XREngine.Data
                 mAccess = Win32.FileMapAccess.Read;
             }
 
-            using (Win32.SafeHandle h = Win32.CreateFileMapping(hFile, null, mProtect, maxHigh, maxLow, null))
+            using (Win32.SafeHandle h = Win32.CreateFileMapping(hFile, null, mProtect, maxHigh, maxLow, string.Empty))
             {
                 h.ErrorCheck();
                 _addr = Win32.MapViewOfFile(h.Handle, mAccess, (uint)(offset >> 32), (uint)offset, length);

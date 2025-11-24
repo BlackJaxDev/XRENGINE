@@ -477,9 +477,13 @@ namespace XREngine.Data.Trees
             //try
             //{
                 foreach (T? item in _items)
-                    if (item is not null && item.Contains(point) &&
-                        item.DeeperThan(currentDeepest))
+                {
+                    if (item is null || !item.Contains(point))
+                        continue;
+
+                    if (currentDeepest is null || item.DeeperThan(currentDeepest))
                         currentDeepest = item;
+                }
             //}
             //catch (Exception ex)
             //{

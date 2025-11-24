@@ -82,11 +82,12 @@ namespace DequeTest
 
             PopulateDequePushBack(deque);
 
-            int j;
-
             for(int i = 0; i < ElementCount; i++)
             {
-                j = (int)deque.PopFront();
+                if (deque.PopFront() is not int j)
+                {
+                    throw new InvalidOperationException("Expected integer value in deque test");
+                }
 
                 Debug.Assert(j == i);
             }
@@ -100,11 +101,12 @@ namespace DequeTest
 
             PopulateDequePushBack(deque);
 
-            int j;
-
             for(int i = 0; i < ElementCount; i++)
             {
-                j = (int)deque.PopBack();
+                if (deque.PopBack() is not int j)
+                {
+                    throw new InvalidOperationException("Expected integer value in deque test");
+                }
 
                 Debug.Assert(j == ElementCount - 1 - i);
             }
@@ -154,7 +156,7 @@ namespace DequeTest
 
             try
             {
-                deque.CopyTo(null, deque.Count);
+                deque.CopyTo(null!, deque.Count);
 
                 Debug.Fail("Exception failed");
             }

@@ -41,25 +41,25 @@ These classes implement the `AbstractAPIRenderObject` interface and bridge the e
 - [ ] **`VkTexture2D` (allocator-aware)**
     - [x] Image creation (dedicated path + allocator-provided handles, usage flags inferred from descriptors).
     - [x] Memory allocation & binding (device-local or allocator-managed).
-    - [ ] Staging buffer upload for initial data (buffer helpers exist but not called).
+    - [x] Staging buffer upload for initial data (buffer helpers now wired through `PushTextureData`).
     - [x] ImageView creation & sampler creation toggles.
-    - [ ] Mipmap generation / blit-based mip chain.
-    - [ ] Fix accessibility + `LinkData` overrides so Vulkan texture wrappers compile (current build blockers reported in net9.0 target).
+    - [x] Mipmap generation / blit-based mip chain.
+    - [x] Fix accessibility + `LinkData` overrides so Vulkan texture wrappers compile (current build blockers reported in net9.0 target).
 - [ ] **`VkTexture2DArray` / `VkTextureCube` / `VkTexture3D`**
-    - [x] Replace placeholder wrappers with allocator-backed implementations (views, samplers, staging uploads still TODO).
-    - [ ] Same accessibility/override cleanup as `VkTexture2D` (see compiler errors).
-- [ ] **`VkSampler`**
-    - [ ] Wire up address modes, filtering, anisotropy (currently stub returns cached object only).
+    - [x] Replace placeholder wrappers with allocator-backed implementations (samplers, staging uploads, and mipmap hooks included).
+    - [x] Same accessibility/override cleanup as `VkTexture2D` (see compiler errors).
+- [x] **`VkSampler`**
+    - [x] Wire up address modes, filtering, anisotropy (sampler creation now consumes XR sampler descriptors).
 
 ### Shaders & Pipelines
-- [ ] **`VkShader`**
+- [x] **`VkShader`**
     - [x] `VkShaderModule` creation (loads `XRShader.Source` into modules).
-    - [ ] Reflection (layout info / descriptor bindings).
-- [ ] **`VkRenderProgram`**
-    - [ ] `VkPipelineLayout` creation.
-    - [ ] `VkDescriptorSetLayout` management.
-    - [ ] `VkPipeline` creation (graphics + dynamic state wiring).
-- [ ] **`VkRenderProgramPipeline`** (Compute/Compute pipelines).
+    - [x] Reflection (layout info / descriptor bindings).
+- [x] **`VkRenderProgram`**
+    - [x] `VkPipelineLayout` creation.
+    - [x] `VkDescriptorSetLayout` management.
+    - [x] `VkPipeline` creation (graphics + dynamic state wiring).
+- [x] **`VkRenderProgramPipeline`** (Compute/Compute pipelines).
 
 ### Geometry & Buffers
 - [ ] **`VkMeshRenderer`**
@@ -73,9 +73,10 @@ These classes implement the `AbstractAPIRenderObject` interface and bridge the e
 ### Framebuffers & Render Targets
 - [ ] **`VkFrameBuffer`**
     - [x] Basic `VkFramebuffer` creation for color attachments resolved via allocator-backed `VkTexture2D`.
-    - [ ] RenderPass compatibility checks / depth-stencil attachment wiring.
+    - [x] RenderPass compatibility checks / depth-stencil attachment wiring.
     - [x] Attachment view management for arrays, cube maps, render buffers.
 - [x] **`VkRenderBuffer`** (depth/stencil attachments) – now allocator-aware and view-ready.
+- [x] HDR scene/bloom textures promote to half-float targets and Vulkan swap chain now requests HDR formats when enabled.
 
 ### Materials
 - [ ] **`VkMaterial`**
@@ -144,8 +145,8 @@ The current OpenGL-oriented pipeline executes commands immediately, which blocks
 
 ## 5. Immediate Next Steps
 
-1. **Fix Vulkan texture wrapper build blockers**: expose the nested types (`VkImageBackedTexture`, `TextureLayout`, `AttachmentViewKey`, etc.) and implement the pending `LinkData`/`UnlinkData` overrides so the net9 build succeeds.
-2. **Refine pipeline barrier planner + FBO binding**: wire per-pass barrier plans into render-pass execution, add buffer hazards/queue ownership, and have `BindFrameBuffer` transitions actually influence recorded passes instead of just invalidating command buffers.
-3. **Descriptor schemas & materials**: define the engine/global descriptor layouts, update `VkRenderProgram`/`VkMaterial` to allocate descriptor sets, and hook them into draw submission.
-4. **Render-pass compatibility validation** inside `VkFrameBuffer`/`VkRenderPass`: ensure depth/stencil formats, load/store ops, and sample counts match planned render graph attachments before encoding.
-5. **Expand blit/readback coverage**: add depth/stencil and viewport blits plus staging-backed readback paths to unblock screenshot/picking features.
+1. **Refine pipeline barrier planner + FBO binding**: wire per-pass barrier plans into render-pass execution, add buffer hazards/queue ownership, and have `BindFrameBuffer` transitions actually influence recorded passes instead of just invalidating command buffers.
+2. **Descriptor schemas & materials**: define the engine/global descriptor layouts, update `VkRenderProgram`/`VkMaterial` to allocate descriptor sets, and hook them into draw submission.
+3. **Render-pass compatibility validation** inside `VkFrameBuffer`/`VkRenderPass`: ensure depth/stencil formats, load/store ops, and sample counts match planned render graph attachments before encoding.
+4. **Expand blit/readback coverage**: add depth/stencil and viewport blits plus staging-backed readback paths to unblock screenshot/picking features.
+5. **Staging/allocator consolidation**: migrate the per-texture staging buffers into a shared staging manager so large uploads can be batched and reused across texture/buffer transfers.

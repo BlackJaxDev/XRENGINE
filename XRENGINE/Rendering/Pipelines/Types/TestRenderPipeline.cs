@@ -140,15 +140,16 @@ void main()
 
     private static XRTexture CreateHDRSceneTexture()
     {
+        bool useHdr = Engine.Rendering.Settings.OutputHDR;
         var tex = XRTexture2D.CreateFrameBufferTexture(InternalWidth, InternalHeight,
-            EPixelInternalFormat.Rgba8,
-            EPixelFormat.Bgra,
-            EPixelType.UnsignedByte,
+            useHdr ? EPixelInternalFormat.Rgba16f : EPixelInternalFormat.Rgba8,
+            useHdr ? EPixelFormat.Rgba : EPixelFormat.Bgra,
+            useHdr ? EPixelType.HalfFloat : EPixelType.UnsignedByte,
             EFrameBufferAttachment.ColorAttachment0);
         tex.Name = HDRSceneTextureName;
         tex.SamplerName = HDRSceneTextureName;
         tex.Resizable = true;
-        tex.SizedInternalFormat = ESizedInternalFormat.Rgba8;
+        tex.SizedInternalFormat = useHdr ? ESizedInternalFormat.Rgba16f : ESizedInternalFormat.Rgba8;
         return tex;
     }
 

@@ -5,6 +5,7 @@ using XREngine.Components.Capture.Lights;
 using XREngine.Components.Capture.Lights.Types;
 using XREngine.Scene.Transforms;
 using Quaternion = System.Numerics.Quaternion;
+using XREngine.Components.Lights;
 
 namespace XREngine.Editor;
 

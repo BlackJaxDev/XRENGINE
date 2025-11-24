@@ -13,11 +13,17 @@ public unsafe partial class VulkanRenderer
         private ImageView _view;
         private bool _ownsImage;
         private VulkanPhysicalImageGroup? _physicalGroup;
+        private Format? _formatOverride;
+        private ImageAspectFlags? _aspectOverride;
+        private SampleCountFlags? _samplesOverride;
 
         public override VkObjectType Type => VkObjectType.Renderbuffer;
         public override bool IsGenerated => true;
 
         internal ImageView View => _view;
+        internal Format Format => _formatOverride ?? ResolveFormat(Data.Type);
+        internal ImageAspectFlags Aspect => _aspectOverride ?? ResolveAspect(Data.Type);
+        internal SampleCountFlags Samples => _samplesOverride ?? ResolveSamples(Data.MultisampleCount);
 
         protected override uint CreateObjectInternal()
         {
@@ -45,25 +51,37 @@ public unsafe partial class VulkanRenderer
             _image = default;
             _memory = default;
             _physicalGroup = null;
+            _formatOverride = null;
+            _aspectOverride = null;
+            _samplesOverride = null;
         }
 
         private void AcquireImage()
         {
             if (!string.IsNullOrWhiteSpace(Data.Name) && Renderer.ResourceAllocator.TryGetPhysicalGroupForResource(Data.Name, out VulkanPhysicalImageGroup group))
             {
+                group.EnsureAllocated(Renderer);
                 _physicalGroup = group;
                 _image = group.Image;
                 _memory = group.Memory;
                 _ownsImage = false;
+                _formatOverride = group.Format;
+                _aspectOverride = ResolveAspect(Data.Type);
+                _samplesOverride = SampleCountFlags.Count1Bit;
                 return;
             }
 
             CreateDedicatedImage();
             _ownsImage = true;
+            _formatOverride = null;
+            _aspectOverride = null;
+            _samplesOverride = null;
         }
 
         private void CreateDedicatedImage()
         {
+            Format format = ResolveFormat(Data.Type);
+            SampleCountFlags samples = ResolveSamples(Data.MultisampleCount);
             ImageCreateInfo info = new()
             {
                 SType = StructureType.ImageCreateInfo,
@@ -71,11 +89,11 @@ public unsafe partial class VulkanRenderer
                 Extent = new Extent3D(Math.Max(Data.Width, 1u), Math.Max(Data.Height, 1u), 1),
                 MipLevels = 1,
                 ArrayLayers = 1,
-                Format = ResolveFormat(Data.Type),
+                Format = format,
                 Tiling = ImageTiling.Optimal,
                 InitialLayout = ImageLayout.Undefined,
                 Usage = ResolveUsage(Data.Type),
-                Samples = ResolveSamples(Data.MultisampleCount),
+                Samples = samples,
                 SharingMode = SharingMode.Exclusive,
             };
 

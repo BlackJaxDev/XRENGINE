@@ -8,13 +8,13 @@ namespace XREngine
     {
         protected VoidPtr _addr;
         protected int _length;
-        protected string _path;
-        protected FileStream _baseStream;
+        protected string? _path;
+        protected FileStream? _baseStream;
 
         public VoidPtr Address => _addr;
         public int Length { get => _length; set => _length = value; }
-        public string FilePath => _path;
-        public FileStream BaseStream => _baseStream;
+        public string? FilePath => _path;
+        public FileStream? BaseStream => _baseStream;
 
         ~FileMap() { Dispose(); }
         public virtual void Dispose()
@@ -56,17 +56,17 @@ namespace XREngine
             {
                 map = FromStreamInternal(stream, prot, offset, length);
             }
-            catch (Exception x)
+            catch (Exception)
             {
                 stream.Dispose();
-                throw x;
+                throw;
             }
             map._path = path; //In case we're using a temp file
             return map;
         }
-        public static FileMap FromTempFile(int length)
-            => FromTempFile(length, out string path);
-        public static FileMap FromTempFile(int length, out string path)
+        public static FileMap? FromTempFile(int length)
+            => FromTempFile(length, out _);
+        public static FileMap? FromTempFile(int length, out string path)
         {
             FileStream stream = new FileStream(path = Path.GetTempFileName(), FileMode.Open, FileAccess.ReadWrite, FileShare.Read, 8, FileOptions.RandomAccess | FileOptions.DeleteOnClose);
             try
@@ -76,7 +76,7 @@ namespace XREngine
             catch (Exception ex)
             {
                 stream.Dispose();
-                //Engine.LogException(ex);
+                Trace.WriteLine(ex);
             }
             return null;
         }

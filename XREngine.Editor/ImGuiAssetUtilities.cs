@@ -12,6 +12,7 @@ using XREngine.Core.Files;
 using XREngine.Diagnostics;
 using XREngine.Rendering;
 using XREngine.Rendering.Models;
+using XREngine.Rendering.OpenGL;
 
 namespace XREngine.Editor;
 
@@ -19,7 +20,8 @@ internal static class ImGuiAssetUtilities
 {
     public const string AssetPayloadType = "XR_ASSET_PATH";
     private const string AssetPickerPopupId = "AssetPicker";
-    private const uint AssetPickerPreviewSize = 128;
+    private const uint AssetPickerPreviewSize = 256;
+    private const float AssetPickerPreviewFallbackEdge = 96.0f;
     private static readonly Dictionary<AssetPickerKey, object> _assetPickerStates = new();
 
     public static void SetPathPayload(string path)
@@ -131,6 +133,8 @@ internal static class ImGuiAssetUtilities
         if (state.NeedsRefresh)
             RefreshAssetPickerState(state, force: true);
 
+        bool isTexturePicker = typeof(XRTexture2D).IsAssignableFrom(typeof(TAsset));
+
         bool includeGame = state.IncludeGame;
         if (ImGui.Checkbox("Game Assets", ref includeGame))
         {
@@ -162,11 +166,14 @@ internal static class ImGuiAssetUtilities
 
         ImGui.Separator();
 
+        var filteredCandidates = EnumerateFilteredCandidates(state).ToList();
+        int candidateCount = filteredCandidates.Count;
+
         Vector2 listSize = new(0.0f, 260.0f);
+        AssetCandidate<TAsset>? hoveredCandidate = null;
+        AssetCandidate<TAsset>? selectedCandidate = null;
         if (ImGui.BeginChild("AssetPickerList", listSize, ImGuiChildFlags.Border))
         {
-            var filteredCandidates = EnumerateFilteredCandidates(state).ToList();
-            int candidateCount = filteredCandidates.Count;
 
             if (candidateCount == 0)
             {
@@ -184,7 +191,7 @@ internal static class ImGuiAssetUtilities
                         {
                             var candidate = filteredCandidates[i];
 
-                            if (typeof(XRTexture2D).IsAssignableFrom(typeof(TAsset)))
+                            if (isTexturePicker)
                                 candidate.RequestPreview(AssetPickerPreviewSize);
 
                             bool selected = candidate.Matches(current);
@@ -199,10 +206,16 @@ internal static class ImGuiAssetUtilities
                             }
 
                             if (ImGui.IsItemHovered())
+                            {
                                 ImGui.SetTooltip(candidate.Path);
+                                hoveredCandidate = candidate;
+                            }
 
                             if (selected)
+                            {
                                 ImGui.SetItemDefaultFocus();
+                                selectedCandidate = candidate;
+                            }
                         }
                     }
                     ImGuiNative.ImGuiListClipper_End(&clipper);
@@ -210,6 +223,26 @@ internal static class ImGuiAssetUtilities
             }
 
             ImGui.EndChild();
+        }
+
+        if (isTexturePicker)
+        {
+            AssetCandidate<TAsset>? previewCandidate = hoveredCandidate
+                                                       ?? selectedCandidate
+                                                       ?? (current is not null ? filteredCandidates.FirstOrDefault(c => c.Matches(current)) : null)
+                                                       ?? state.LastPreviewCandidate;
+
+            if (previewCandidate is null && filteredCandidates.Count > 0)
+                previewCandidate = filteredCandidates[0];
+
+            state.LastPreviewCandidate = previewCandidate;
+
+            ImGui.Separator();
+            DrawTexturePreviewPane(previewCandidate, MathF.Max(0.0f, ImGui.GetContentRegionAvail().X));
+        }
+        else
+        {
+            state.LastPreviewCandidate = null;
         }
 
         if (ImGui.Button("Clear Selection"))
@@ -239,6 +272,7 @@ internal static class ImGuiAssetUtilities
 
         state.NeedsRefresh = false;
         state.Candidates.Clear();
+        state.LastPreviewCandidate = null;
 
         var assetManager = Engine.Assets;
         if (assetManager is null)
@@ -436,6 +470,7 @@ internal static class ImGuiAssetUtilities
         public bool NeedsRefresh { get; set; } = true;
         public IReadOnlyList<string> Extensions { get; }
         public List<AssetCandidate<TAsset>> Candidates { get; } = new();
+        public AssetCandidate<TAsset>? LastPreviewCandidate { get; set; }
     }
 
     private sealed class AssetCandidate<TAsset> where TAsset : XRAsset, new()
@@ -460,6 +495,8 @@ internal static class ImGuiAssetUtilities
         public string DisplayName { get; private set; }
 
         private static bool IsTextureCandidate => typeof(XRTexture2D).IsAssignableFrom(typeof(TAsset));
+
+        public XRTexture2D? PreviewTexture => _previewTexture;
 
         public bool Matches(TAsset? asset)
         {
@@ -565,6 +602,113 @@ internal static class ImGuiAssetUtilities
 
             _pendingAssignments.Clear();
         }
+    }
+
+    private static void DrawTexturePreviewPane<TAsset>(AssetCandidate<TAsset>? candidate, float paneWidth) where TAsset : XRAsset, new()
+    {
+        ImGui.TextDisabled("Preview");
+        ImGui.Separator();
+
+        if (candidate is null)
+        {
+            ImGui.TextDisabled("Select a texture to preview.");
+            return;
+        }
+
+        candidate.RequestPreview(AssetPickerPreviewSize);
+        XRTexture2D? texture = candidate.PreviewTexture;
+        if (texture is null)
+        {
+            ImGui.TextDisabled("Loading preview...");
+            return;
+        }
+
+        float usableWidth = paneWidth <= 0f ? AssetPickerPreviewSize : paneWidth;
+        float maxEdge = MathF.Max(32f, MathF.Min(AssetPickerPreviewSize, usableWidth - ImGui.GetStyle().WindowPadding.X * 2f));
+        if (TryGetTexturePreviewHandle(texture, maxEdge, out nint handle, out Vector2 displaySize, out Vector2 pixelSize, out string? failureReason))
+        {
+            Vector2 cursor = ImGui.GetCursorPos();
+            float offsetX = MathF.Max(0f, (usableWidth - displaySize.X) * 0.5f);
+            ImGui.SetCursorPos(new Vector2(cursor.X + offsetX, cursor.Y));
+            ImGui.Image(handle, displaySize);
+            ImGui.SetCursorPosY(ImGui.GetCursorPosY() + ImGui.GetStyle().ItemSpacing.Y);
+            ImGui.TextDisabled($"{(int)pixelSize.X} x {(int)pixelSize.Y}");
+        }
+        else
+        {
+            ImGui.TextDisabled(failureReason ?? "Preview unavailable");
+        }
+
+        ImGui.Separator();
+        ImGui.TextWrapped(candidate.DisplayName);
+        ImGui.TextDisabled(Path.GetFileName(candidate.Path));
+    }
+
+    private static bool TryGetTexturePreviewHandle(XRTexture2D texture, float maxEdge, out nint handle, out Vector2 displaySize, out Vector2 pixelSize, out string? failureReason)
+    {
+        handle = nint.Zero;
+        pixelSize = new Vector2(texture.Width, texture.Height);
+        displaySize = new Vector2(AssetPickerPreviewFallbackEdge, AssetPickerPreviewFallbackEdge);
+        failureReason = null;
+
+        if (!Engine.IsRenderThread)
+        {
+            failureReason = "Preview unavailable off render thread";
+            return false;
+        }
+
+        OpenGLRenderer? renderer = TryGetOpenGLRenderer();
+        if (renderer is null)
+        {
+            failureReason = "Preview requires OpenGL renderer";
+            return false;
+        }
+
+        var apiTexture = renderer.GenericToAPI<GLTexture2D>(texture);
+        if (apiTexture is null)
+        {
+            failureReason = "Texture not uploaded";
+            return false;
+        }
+
+        uint binding = apiTexture.BindingId;
+        if (binding == OpenGLRenderer.GLObjectBase.InvalidBindingId || binding == 0)
+        {
+            failureReason = "Texture not ready";
+            return false;
+        }
+
+        handle = (nint)binding;
+        displaySize = GetPreviewSizeForEdge(pixelSize, maxEdge);
+        return true;
+    }
+
+    private static Vector2 GetPreviewSizeForEdge(Vector2 pixelSize, float maxEdge)
+    {
+        float width = MathF.Max(pixelSize.X, 1f);
+        float height = MathF.Max(pixelSize.Y, 1f);
+
+        if (maxEdge <= 0f)
+            return new Vector2(AssetPickerPreviewFallbackEdge, AssetPickerPreviewFallbackEdge);
+
+        float largest = MathF.Max(width, height);
+        if (largest <= maxEdge)
+            return new Vector2(width, height);
+
+        float scale = maxEdge / largest;
+        return new Vector2(width * scale, height * scale);
+    }
+
+    private static OpenGLRenderer? TryGetOpenGLRenderer()
+    {
+        if (AbstractRenderer.Current is OpenGLRenderer current)
+            return current;
+
+        foreach (var window in Engine.Windows)
+            if (window.Renderer is OpenGLRenderer renderer)
+                return renderer;
+
+        return null;
     }
 
     private readonly record struct AssetPickerKey(Type AssetType, string ExtensionsKey);
