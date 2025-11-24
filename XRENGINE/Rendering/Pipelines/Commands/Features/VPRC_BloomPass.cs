@@ -68,6 +68,12 @@ namespace XREngine.Rendering.Pipelines.Commands
             //BloomRect1.Width = width;
             //BloomRect1.Height = height;
 
+            bool useHdr = Engine.Rendering.Settings.OutputHDR;
+            var internalFormat = useHdr ? EPixelInternalFormat.Rgba16f : EPixelInternalFormat.Rgba8;
+            var sizedInternalFormat = useHdr ? ESizedInternalFormat.Rgba16f : ESizedInternalFormat.Rgba8;
+            var pixelFormat = EPixelFormat.Rgba;
+            var pixelType = useHdr ? EPixelType.HalfFloat : EPixelType.UnsignedByte;
+
             XRTexture outputTexture;
             if (Stereo)
             {
@@ -75,11 +81,11 @@ namespace XREngine.Rendering.Pipelines.Commands
                     2,
                     width,
                     height,
-                    EPixelInternalFormat.Rgb8,
-                    EPixelFormat.Rgb,
-                    EPixelType.UnsignedByte);
+                    internalFormat,
+                    pixelFormat,
+                    pixelType);
                 t.Resizable = false;
-                t.SizedInternalFormat = ESizedInternalFormat.Rgb8;
+                t.SizedInternalFormat = sizedInternalFormat;
                 t.OVRMultiViewParameters = new(0, 2u);
                 t.Name = BloomOutputTextureName;
                 t.MagFilter = ETexMagFilter.Linear;
@@ -93,11 +99,11 @@ namespace XREngine.Rendering.Pipelines.Commands
                 var t = XRTexture2D.CreateFrameBufferTexture(
                     width,
                     height,
-                    EPixelInternalFormat.Rgb8,
-                    EPixelFormat.Rgb,
-                    EPixelType.UnsignedByte);
+                    internalFormat,
+                    pixelFormat,
+                    pixelType);
                 //t.Resizable = false;
-                //t.SizedInternalFormat = ESizedInternalFormat.Rgb8;
+                t.SizedInternalFormat = sizedInternalFormat;
                 t.Name = BloomOutputTextureName;
                 t.MagFilter = ETexMagFilter.Linear;
                 t.MinFilter = ETexMinFilter.LinearMipmapLinear;

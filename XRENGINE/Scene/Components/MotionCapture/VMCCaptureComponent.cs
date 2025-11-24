@@ -7,6 +7,7 @@ using XREngine.Rendering;
 using XREngine.Components.Animation;
 using XREngine.Components.Capture.Lights.Types;
 using XREngine.Scene.Transforms;
+using XREngine.Components.Lights;
 
 namespace XREngine.Components;
 

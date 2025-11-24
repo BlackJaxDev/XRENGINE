@@ -1,4 +1,5 @@
-﻿using Silk.NET.Maths;
+﻿using System;
+using Silk.NET.Maths;
 using Silk.NET.Vulkan;
 using Silk.NET.Vulkan.Extensions.KHR;
 using Image = Silk.NET.Vulkan.Image;
@@ -7,6 +8,29 @@ using Format = Silk.NET.Vulkan.Format;
 namespace XREngine.Rendering.Vulkan;
 public unsafe partial class VulkanRenderer
 {
+    private readonly struct SurfaceFormatPreference(Format format, ColorSpaceKHR colorSpace)
+    {
+        public Format Format { get; } = format;
+        public ColorSpaceKHR ColorSpace { get; } = colorSpace;
+    }
+
+    private static readonly SurfaceFormatPreference[] HDRSurfacePreferences =
+    [
+        new(Format.R16G16B16A16Sfloat, ColorSpaceKHR.SpaceExtendedSrgbLinearExt),
+        new(Format.R16G16B16A16Sfloat, ColorSpaceKHR.SpaceDisplayP3NonlinearExt),
+        new(Format.R16G16B16A16Sfloat, ColorSpaceKHR.SpaceHdr10ST2084Ext),
+        new(Format.A2B10G10R10UnormPack32, ColorSpaceKHR.SpaceHdr10ST2084Ext),
+        new(Format.A2R10G10B10UnormPack32, ColorSpaceKHR.SpaceHdr10ST2084Ext),
+    ];
+
+    private static readonly SurfaceFormatPreference[] SDRSurfacePreferences =
+    [
+        new(Format.B8G8R8A8Srgb, ColorSpaceKHR.SpaceSrgbNonlinearKhr),
+        new(Format.R8G8B8A8Srgb, ColorSpaceKHR.SpaceSrgbNonlinearKhr),
+        new(Format.B8G8R8A8Unorm, ColorSpaceKHR.SpaceSrgbNonlinearKhr),
+        new(Format.R8G8B8A8Unorm, ColorSpaceKHR.SpaceSrgbNonlinearKhr),
+    ];
+
     public Format PreferredFormat { get; set; } = Format.B8G8R8A8Srgb;
     public ColorSpaceKHR PreferredColorSpace { get; set; } = ColorSpaceKHR.SpaceSrgbNonlinearKhr;
     public PresentModeKHR PreferredPresentMode { get; set; } = PresentModeKHR.MailboxKhr;
@@ -47,6 +71,7 @@ public unsafe partial class VulkanRenderer
         DestroyDepth();
         DestroyCommandBuffers();
         DestroyFrameBuffers();
+        DestroyFrameBufferRenderPasses();
         //_testModel?.Destroy();
         DestroyRenderPasses();
         DestroyImageViews();
@@ -175,12 +200,41 @@ public unsafe partial class VulkanRenderer
 
     private SurfaceFormatKHR ChooseSwapSurfaceFormat(IReadOnlyList<SurfaceFormatKHR> availableFormats)
     {
-        foreach (var availableFormat in availableFormats)
-            if (availableFormat.Format == PreferredFormat && 
-                availableFormat.ColorSpace == PreferredColorSpace)
-                return availableFormat;
+        bool requestHdr = XRWindow.PreferHDROutput;
+
+        if (requestHdr && TrySelectSurfaceFormat(availableFormats, HDRSurfacePreferences, out SurfaceFormatKHR hdrFormat))
+        {
+            PreferredFormat = hdrFormat.Format;
+            PreferredColorSpace = hdrFormat.ColorSpace;
+            return hdrFormat;
+        }
+
+        if (TrySelectSurfaceFormat(availableFormats, SDRSurfacePreferences, out SurfaceFormatKHR sdrFormat))
+        {
+            PreferredFormat = sdrFormat.Format;
+            PreferredColorSpace = sdrFormat.ColorSpace;
+            return sdrFormat;
+        }
 
         return availableFormats[0];
+    }
+
+    private static bool TrySelectSurfaceFormat(IReadOnlyList<SurfaceFormatKHR> availableFormats, SurfaceFormatPreference[] preferences, out SurfaceFormatKHR chosen)
+    {
+        foreach (SurfaceFormatPreference preference in preferences)
+        {
+            foreach (SurfaceFormatKHR availableFormat in availableFormats)
+            {
+                if (availableFormat.Format == preference.Format && availableFormat.ColorSpace == preference.ColorSpace)
+                {
+                    chosen = availableFormat;
+                    return true;
+                }
+            }
+        }
+
+        chosen = default;
+        return false;
     }
 
     private PresentModeKHR ChoosePresentMode(IReadOnlyList<PresentModeKHR> availablePresentModes)

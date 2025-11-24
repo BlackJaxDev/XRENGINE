@@ -1,45 +1,72 @@
-﻿using Silk.NET.Core.Native;
+﻿using System.Collections.Generic;
+using Silk.NET.Core.Native;
 using Silk.NET.Vulkan;
-using System.Text;
+using XREngine;
+using XREngine.Core.Files;
+using XREngine.Data.Core;
+using XREngine.Diagnostics;
 
 namespace XREngine.Rendering.Vulkan;
 public unsafe partial class VulkanRenderer
 {
     public class VkShader(VulkanRenderer api, XRShader data) : VkObject<XRShader>(api, data)
     {
-        public override VkObjectType Type => VkObjectType.ShaderModule;
-        
-        public PipelineShaderStageCreateInfo ShaderStageCreateInfo { get; set; }
+        private ShaderModule _shaderModule;
+        private TextFile? _attachedSource;
+        private readonly List<DescriptorBindingInfo> _descriptorBindings = new();
+        private string _entryPoint = "main";
+        private PipelineShaderStageCreateInfo _shaderStageCreateInfo;
 
-        public override bool IsGenerated { get; }
+        public override VkObjectType Type => VkObjectType.ShaderModule;
+        public override bool IsGenerated => _shaderModule.Handle != 0;
+
+        public PipelineShaderStageCreateInfo ShaderStageCreateInfo => _shaderStageCreateInfo;
+        public IReadOnlyList<DescriptorBindingInfo> DescriptorBindings => _descriptorBindings;
+        public ShaderStageFlags StageFlags { get; private set; }
 
         protected override uint CreateObjectInternal()
         {
-            byte[] code = Encoding.UTF8.GetBytes(Data.Source);
-            ShaderModuleCreateInfo createInfo = new()
-            {
-                SType = StructureType.ShaderModuleCreateInfo,
-                CodeSize = (nuint)code.Length,
-            };
-
-            ShaderModule shaderModule;
-            fixed (byte* codePtr = code)
-            {
-                createInfo.PCode = (uint*)codePtr;
-
-                if (Api!.CreateShaderModule(Device, ref createInfo, null, out shaderModule) != Result.Success)
-                    throw new Exception("Problem creating shader module");
-            }
-
-            ShaderStageCreateInfo = new()
-            {
-                SType = StructureType.PipelineShaderStageCreateInfo,
-                Stage = ToVulkan(Data.Type),
-                Module = shaderModule,
-                PName = (byte*)SilkMarshal.StringToPtr(Data.Name ?? string.Empty)
-            };
-
+            CompileAndCreateModule();
             return CacheObject(this);
+        }
+
+        private void CompileAndCreateModule()
+        {
+            DestroyShaderResources();
+
+            try
+            {
+                byte[] spirv = VulkanShaderCompiler.Compile(Data, out _entryPoint);
+                StageFlags = ToVulkan(Data.Type);
+                _descriptorBindings.Clear();
+                _descriptorBindings.AddRange(VulkanShaderReflection.ExtractBindings(spirv, StageFlags, Data.Source?.Text));
+
+                ShaderModuleCreateInfo createInfo = new()
+                {
+                    SType = StructureType.ShaderModuleCreateInfo,
+                    CodeSize = (nuint)spirv.Length,
+                };
+
+                fixed (byte* codePtr = spirv)
+                {
+                    createInfo.PCode = (uint*)codePtr;
+                    if (Api!.CreateShaderModule(Device, ref createInfo, null, out _shaderModule) != Result.Success)
+                        throw new InvalidOperationException($"Failed to create shader module for '{Data.Name ?? "UnnamedShader"}'.");
+                }
+
+                _shaderStageCreateInfo = new()
+                {
+                    SType = StructureType.PipelineShaderStageCreateInfo,
+                    Stage = StageFlags,
+                    Module = _shaderModule,
+                    PName = (byte*)SilkMarshal.StringToPtr(_entryPoint)
+                };
+            }
+            catch (Exception ex)
+            {
+                Debug.LogException(ex, $"Vulkan shader '{Data.Name ?? "UnnamedShader"}' failed to compile.");
+                throw;
+            }
         }
 
         private static ShaderStageFlags ToVulkan(EShaderType type)
@@ -51,23 +78,80 @@ public unsafe partial class VulkanRenderer
                 EShaderType.TessControl => ShaderStageFlags.TessellationControlBit,
                 EShaderType.TessEvaluation => ShaderStageFlags.TessellationEvaluationBit,
                 EShaderType.Compute => ShaderStageFlags.ComputeBit,
+                EShaderType.Task => ShaderStageFlags.TaskBitNV,
+                EShaderType.Mesh => ShaderStageFlags.MeshBitNV,
                 _ => throw new ArgumentOutOfRangeException(nameof(type), type, null)
             };
 
         protected override void DeleteObjectInternal()
         {
-            Api.DestroyShaderModule(Renderer.device, ShaderStageCreateInfo.Module, null);
-            SilkMarshal.Free((nint)ShaderStageCreateInfo.PName);
+            DestroyShaderResources();
+            RemoveCachedObject(BindingId);
         }
 
-        protected override void UnlinkData()
+        private void DestroyShaderResources()
         {
-            throw new NotImplementedException();
+            if (_shaderModule.Handle != 0)
+            {
+                Api!.DestroyShaderModule(Device, _shaderModule, null);
+                _shaderModule = default;
+            }
+
+            if (_shaderStageCreateInfo.PName is not null)
+            {
+                SilkMarshal.Free((nint)_shaderStageCreateInfo.PName);
+                _shaderStageCreateInfo.PName = null;
+            }
+
+            _shaderStageCreateInfo = default;
+            StageFlags = 0;
         }
 
         protected override void LinkData()
         {
-            throw new NotImplementedException();
+            Data.PropertyChanged += OnShaderPropertyChanged;
+            AttachToSource(Data.Source);
+        }
+
+        protected override void UnlinkData()
+        {
+            Data.PropertyChanged -= OnShaderPropertyChanged;
+            AttachToSource(null);
+            DestroyShaderResources();
+        }
+
+        private void OnShaderPropertyChanged(object? sender, IXRPropertyChangedEventArgs e)
+        {
+            if (e.PropertyName != nameof(XRShader.Source))
+                return;
+
+            AttachToSource(Data.Source);
+            Invalidate();
+        }
+
+        private void AttachToSource(TextFile? source)
+        {
+            if (_attachedSource == source)
+                return;
+
+            if (_attachedSource is not null)
+                _attachedSource.TextChanged -= OnSourceTextChanged;
+
+            _attachedSource = source;
+
+            if (_attachedSource is not null)
+                _attachedSource.TextChanged += OnSourceTextChanged;
+        }
+
+        private void OnSourceTextChanged()
+            => Invalidate();
+
+        private void Invalidate()
+        {
+            DestroyShaderResources();
+            _descriptorBindings.Clear();
+            _entryPoint = "main";
+            _bindingId = null;
         }
     }
 }

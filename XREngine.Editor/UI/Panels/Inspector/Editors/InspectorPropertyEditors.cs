@@ -2,10 +2,12 @@
 using System.Numerics;
 using System.Reflection;
 using XREngine.Animation;
+using XREngine.Core.Files;
 using XREngine.Data.Colors;
 using XREngine.Editor.UI;
 using XREngine.Rendering;
 using XREngine.Rendering.Models.Materials;
+using XREngine.Rendering.OpenGL;
 using XREngine.Rendering.UI;
 using XREngine.Scene;
 
@@ -168,9 +170,18 @@ public static partial class InspectorPropertyEditors
     /// <param name="propType"></param>
     /// <returns></returns>
     private static Action<SceneNode, PropertyInfo, object?[]?>? CreateClassEditor(Type propType)
-        => propType.GetCustomAttribute<EditorComponentAttribute>() is EditorComponentAttribute attr
-            ? attr.CreateEditor
-            : CreateObjectSelector(propType);
+    {
+        if (propType.GetCustomAttribute<EditorComponentAttribute>() is EditorComponentAttribute attr)
+            return attr.CreateEditor;
+
+        if (typeof(OpenGLRenderer.GLObjectBase).IsAssignableFrom(propType))
+            return CreateGlObjectEditor(propType);
+
+        if (typeof(XRAsset).IsAssignableFrom(propType))
+            return CreateXRAssetEditor(propType);
+
+        return CreateObjectSelector(propType);
+    }
 
     private static Action<SceneNode, PropertyInfo, object?[]?>? CreateGenericEditor(Type propType)
     {

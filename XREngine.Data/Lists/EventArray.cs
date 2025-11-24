@@ -13,29 +13,29 @@ namespace System.Collections.Generic
         /// <summary>
         /// Event called after items in this list are changed.
         /// </summary>
-        public event ItemMultiSetHandler MultipleItemsChanged;
+        public event ItemMultiSetHandler? MultipleItemsChanged;
         /// <summary>
         /// Event called after an item in this list is changed.
         /// </summary>
-        public event ItemSetHandler ItemChanged;
+        public event ItemSetHandler? ItemChanged;
         /// <summary>
         /// Event called before an item in this list is changed.
         /// </summary>
-        public event Action PreSet;
+        public event Action? PreSet;
         /// <summary>
         /// Event called after an item in this list is changed.
         /// </summary>
-        public event Action PostSet;
+        public event Action? PostSet;
         /// <summary>
         /// Event called before this list is modified in any way at all.
         /// </summary>
-        public event Action PreMultiSet;
+        public event Action? PreMultiSet;
         /// <summary>
         /// Event called after this list is modified in any way at all.
         /// </summary>
-        public event Action PostMultiSet;
+        public event Action? PostMultiSet;
 
-        public event NotifyCollectionChangedEventHandler CollectionChanged;
+        public event NotifyCollectionChangedEventHandler? CollectionChanged;
         
         public EventArray(IEnumerable<T> list)
         {
@@ -60,7 +60,11 @@ namespace System.Collections.Generic
 
         public bool IsFixedSize => true;
 
-        object IList.this[int index] { get => _array[index]; set => _array[index] = (T)value; }
+        object? IList.this[int index]
+        {
+            get => _array[index];
+            set => _array[index] = (T)(value ?? throw new ArgumentNullException(nameof(value)));
+        }
 
         public void StartMultiChange()
         {
@@ -71,7 +75,7 @@ namespace System.Collections.Generic
         {
             _multiChange = false;
             PostMultiSet?.Invoke();
-            MultipleItemsChanged(_changedIndices.ToArray());
+            MultipleItemsChanged?.Invoke(_changedIndices.ToArray());
             _changedIndices.Clear();
         }
 
@@ -90,12 +94,12 @@ namespace System.Collections.Generic
             return new EventArray<T>(_array);
         }
 
-        public int Add(object value)
+        public int Add(object? value)
         {
             return ((IList)_array).Add(value);
         }
 
-        public bool Contains(object value)
+        public bool Contains(object? value)
         {
             return ((IList)_array).Contains(value);
         }
@@ -105,17 +109,17 @@ namespace System.Collections.Generic
             ((IList)_array).Clear();
         }
 
-        public int IndexOf(object value)
+        public int IndexOf(object? value)
         {
             return ((IList)_array).IndexOf(value);
         }
 
-        public void Insert(int index, object value)
+        public void Insert(int index, object? value)
         {
             ((IList)_array).Insert(index, value);
         }
 
-        public void Remove(object value)
+        public void Remove(object? value)
         {
             ((IList)_array).Remove(value);
         }
@@ -125,12 +129,12 @@ namespace System.Collections.Generic
             ((IList)_array).RemoveAt(index);
         }
 
-        public int CompareTo(object other, IComparer comparer)
+        public int CompareTo(object? other, IComparer comparer)
         {
             return ((IStructuralComparable)_array).CompareTo(other, comparer);
         }
 
-        public bool Equals(object other, IEqualityComparer comparer)
+        public bool Equals(object? other, IEqualityComparer comparer)
         {
             return ((IStructuralEquatable)_array).Equals(other, comparer);
         }
@@ -142,7 +146,7 @@ namespace System.Collections.Generic
 
         public T this[int index]
         {
-            get => _array.IndexInRangeArrayT(index) ? _array[index] : default;
+            get => _array.IndexInRangeArrayT(index) ? _array[index] : default!;
             set
             {
                 if (_array.IndexInRangeArrayT(index))

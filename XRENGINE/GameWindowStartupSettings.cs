@@ -15,6 +15,7 @@ namespace XREngine
         private int _y = 0;
         private bool _vsync = false;
         private bool _transparentFramebuffer = false;
+        private bool? _outputHDR;
 
         public ELocalPlayerIndexMask LocalPlayers
         {
@@ -65,6 +66,15 @@ namespace XREngine
         {
             get => _transparentFramebuffer;
             set => SetField(ref _transparentFramebuffer, value);
+        }
+
+        /// <summary>
+        /// Overrides the global HDR output toggle for this window when set. Null inherits the engine default.
+        /// </summary>
+        public bool? OutputHDR
+        {
+            get => _outputHDR;
+            set => SetField(ref _outputHDR, value);
         }
     }
 }

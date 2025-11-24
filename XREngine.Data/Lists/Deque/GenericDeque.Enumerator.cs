@@ -9,9 +9,9 @@ namespace System.Collections.Generic
         {
             private Deque<T> owner;
 
-            private Node currentNode;
+            private Node? currentNode;
 
-            private T current = default(T);
+            private T? current = default;
 
             private bool moveResult = false;
 
@@ -24,6 +24,7 @@ namespace System.Collections.Generic
             {
                 this.owner = owner;
                 currentNode = owner.front;
+                current = default;
                 this.version = owner.version;
             }
 
@@ -46,6 +47,7 @@ namespace System.Collections.Generic
                 #endregion
 
                 currentNode = owner.front;
+                current = default;
                 moveResult = false;
             }
 
@@ -68,7 +70,7 @@ namespace System.Collections.Generic
 
                     #endregion
 
-                    return current;
+                    return current!;
                 }
             }
 
@@ -98,6 +100,7 @@ namespace System.Collections.Generic
                 else
                 {
                     moveResult = false;
+                    current = default;
                 }
 
                 return moveResult;
@@ -126,7 +129,7 @@ namespace System.Collections.Generic
 
                     #endregion
 
-                    return current;
+                    return current!;
                 }
             }
 
@@ -136,6 +139,8 @@ namespace System.Collections.Generic
 
             public void Dispose()
             {
+                currentNode = null;
+                current = default;
                 disposed = true;
             }
 

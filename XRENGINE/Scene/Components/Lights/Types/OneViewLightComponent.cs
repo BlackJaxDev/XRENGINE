@@ -1,4 +1,5 @@
-﻿using XREngine.Rendering;
+﻿using XREngine.Components.Lights;
+using XREngine.Rendering;
 using XREngine.Scene.Transforms;
 
 namespace XREngine.Components.Capture.Lights.Types

@@ -8,11 +8,14 @@ using System.IO;
 using System.Numerics;
 using System.Threading;
 using System.Threading.Tasks;
+using XREngine;
 using XREngine.Data;
 using XREngine.Data.Colors;
 using XREngine.Data.Rendering;
 using XREngine.Data.Vectors;
 using XREngine.Diagnostics;
+using YamlDotNet.Core;
+using YamlDotNet.RepresentationModel;
 
 namespace XREngine.Rendering
 {
@@ -25,6 +28,15 @@ namespace XREngine.Rendering
         }
         public override bool Load3rdParty(string filePath)
         {
+            if (HasAssetExtension(filePath))
+            {
+                if (TryLoadTextureAsset(filePath, this, deepCopy: true))
+                    return true;
+
+                Debug.LogWarning($"Failed to load texture asset '{filePath}'. Falling back to filler texture.");
+                return AssignFillerTexture(filePath);
+            }
+
             try
             {
                 var sourceImage = new MagickImage(filePath);
@@ -36,12 +48,7 @@ namespace XREngine.Rendering
             catch (Exception ex)
             {
                 Debug.LogWarning($"Failed to load texture from '{filePath}'. Falling back to filler texture. {ex.Message}");
-                AssetDiagnostics.RecordMissingAsset(filePath, nameof(XRTexture2D), $"{nameof(XRTexture2D)}.{nameof(Load3rdParty)}");
-
-                Mipmaps = [new Mipmap2D(new MagickImage(FillerImage))];
-                AutoGenerateMipmaps = true;
-                Resizable = true;
-                return false;
+                return AssignFillerTexture(filePath);
             }
         }
 
@@ -113,26 +120,25 @@ namespace XREngine.Rendering
 
                 Task previewTask = Task.Run(() =>
                 {
-                    var previewImage = new MagickImage(filePath);
-                    if (maxPreviewSize > 0)
-                    {
-                        uint width = previewImage.Width;
-                        uint height = previewImage.Height;
-                        uint largest = Math.Max(width, height);
+                    bool hasPreview = false;
+                    bool isAssetFile = HasAssetExtension(filePath);
+                    bool looksLikeTextureAsset = isAssetFile && LooksLikeTextureAssetFile(filePath);
 
-                        if (largest > maxPreviewSize)
+                    if (looksLikeTextureAsset)
+                        hasPreview = TryLoadPreviewFromTextureAsset(filePath, target, maxPreviewSize);
+
+                    if (!hasPreview)
+                    {
+                        if (!isAssetFile)
                         {
-                            double scale = maxPreviewSize / (double)largest;
-                            uint scaledWidth = Math.Max(1u, (uint)Math.Round(width * scale));
-                            uint scaledHeight = Math.Max(1u, (uint)Math.Round(height * scale));
-                            previewImage.Resize(scaledWidth, scaledHeight);
+                            LoadPreviewFrom3rdParty(filePath, target, maxPreviewSize);
+                            hasPreview = true;
+                        }
+                        else
+                        {
+                            AssignPlaceholderPreview(target);
                         }
                     }
-
-                    target.Mipmaps = [new Mipmap2D(previewImage)];
-                    target.AutoGenerateMipmaps = false;
-                    target.Resizable = true;
-                    target.SizedInternalFormat = ESizedInternalFormat.Rgba8;
                 }, cancellationToken);
 
                 yield return previewTask;
@@ -214,6 +220,260 @@ namespace XREngine.Rendering
                 UploadAction();
 
             return tcs.Task;
+        }
+
+        private static bool HasAssetExtension(string filePath)
+        {
+            string extension = Path.GetExtension(filePath);
+            return !string.IsNullOrWhiteSpace(extension)
+                && extension.Equals($".{AssetManager.AssetExtension}", StringComparison.OrdinalIgnoreCase);
+        }
+
+        private bool AssignFillerTexture(string filePath)
+        {
+            AssetDiagnostics.RecordMissingAsset(filePath, nameof(XRTexture2D), $"{nameof(XRTexture2D)}.{nameof(Load3rdParty)}");
+
+            Mipmaps = [new Mipmap2D(new MagickImage(FillerImage))];
+            AutoGenerateMipmaps = true;
+            Resizable = true;
+            return false;
+        }
+
+        private const string AssetTypeYamlKey = "__assetType";
+
+        private static bool LooksLikeTextureAssetFile(string filePath)
+        {
+            try
+            {
+                using StreamReader reader = new(filePath);
+                var yaml = new YamlStream();
+                yaml.Load(reader);
+
+                if (yaml.Documents.Count == 0)
+                    return false;
+
+                if (yaml.Documents[0].RootNode is not YamlMappingNode mapping)
+                    return false;
+
+                string tagText = mapping.Tag.ToString();
+                if (!string.IsNullOrWhiteSpace(tagText)
+                    && tagText.Contains(nameof(XRTexture2D), StringComparison.OrdinalIgnoreCase))
+                {
+                    return true;
+                }
+
+                if (TryReadAssetTypeHint(mapping, out string? typeHint)
+                    && MatchesTextureTypeIdentifier(typeHint))
+                {
+                    return true;
+                }
+
+                int inspectedKeys = 0;
+                const int MaxKeysToInspect = 128;
+
+                foreach (var kvp in mapping.Children)
+                {
+                    if (inspectedKeys++ >= MaxKeysToInspect)
+                        break;
+
+                    if (kvp.Key is not YamlScalarNode keyNode)
+                        continue;
+
+                    string? key = keyNode.Value;
+                    if (string.IsNullOrWhiteSpace(key))
+                        continue;
+
+                    if (string.Equals(key, "SourceAsset", StringComparison.OrdinalIgnoreCase))
+                        break;
+
+                    if (IsTextureFieldName(key))
+                        return true;
+                }
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or YamlException)
+            {
+                Debug.Out($"Failed to inspect asset file '{filePath}' while determining preview type. {ex.Message}");
+            }
+
+            return false;
+        }
+
+        private static bool TryReadAssetTypeHint(YamlMappingNode mapping, out string? typeHint)
+        {
+            typeHint = null;
+            foreach (var kvp in mapping.Children)
+            {
+                if (kvp.Key is not YamlScalarNode keyNode)
+                    continue;
+
+                if (!string.Equals(keyNode.Value, AssetTypeYamlKey, StringComparison.OrdinalIgnoreCase))
+                    continue;
+
+                if (kvp.Value is not YamlScalarNode scalar || string.IsNullOrWhiteSpace(scalar.Value))
+                    continue;
+
+                typeHint = scalar.Value;
+                return true;
+            }
+
+            typeHint = null;
+            return false;
+        }
+
+        private static bool MatchesTextureTypeIdentifier(string? identifier)
+        {
+            if (string.IsNullOrWhiteSpace(identifier))
+                return false;
+
+            Type textureType = typeof(XRTexture2D);
+            string? fullName = textureType.FullName;
+            if (!string.IsNullOrWhiteSpace(fullName)
+                && identifier.Contains(fullName, StringComparison.OrdinalIgnoreCase))
+            {
+                return true;
+            }
+
+            return identifier.Contains(textureType.Name, StringComparison.OrdinalIgnoreCase);
+        }
+
+        private static bool IsTextureFieldName(string key)
+            => string.Equals(key, "_mipmaps", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(key, "Mipmaps", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(key, "AutoGenerateMipmaps", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(key, "SizedInternalFormat", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(key, "MagFilter", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(key, "MinFilter", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(key, "UWrap", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(key, "VWrap", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(key, "FrameBufferAttachment", StringComparison.OrdinalIgnoreCase);
+
+        private static void LoadPreviewFrom3rdParty(string filePath, XRTexture2D target, uint maxPreviewSize)
+        {
+            try
+            {
+                using MagickImage previewImage = new(filePath);
+                ResizePreviewIfNeeded(previewImage, maxPreviewSize);
+                target.Mipmaps = [new Mipmap2D(previewImage)];
+                target.AutoGenerateMipmaps = false;
+                target.Resizable = true;
+                target.SizedInternalFormat = ESizedInternalFormat.Rgba8;
+            }
+            catch (MagickException ex)
+            {
+                Debug.LogWarning($"Failed to load preview image '{filePath}': {ex.Message}. Using placeholder preview instead.");
+                AssignPlaceholderPreview(target);
+            }
+        }
+
+        private static bool TryLoadPreviewFromTextureAsset(string filePath, XRTexture2D target, uint maxPreviewSize)
+            => TryLoadTextureAsset(filePath, target, deepCopy: false)
+                && TryPreparePreviewFromLoadedTexture(target, maxPreviewSize);
+
+        private static bool TryLoadTextureAsset(string filePath, XRTexture2D target, bool deepCopy)
+        {
+            var assetManager = Engine.Assets;
+            if (assetManager is null)
+                return false;
+
+            try
+            {
+                XRTexture2D? loadedTexture = assetManager.Load<XRTexture2D>(filePath);
+                if (loadedTexture is null)
+                    return false;
+
+                CopyTextureData(loadedTexture, target, deepCopy);
+                return true;
+            }
+            catch (Exception ex) when (IsTextureAssetLoadFailure(ex))
+            {
+                Debug.Out($"Failed to load texture asset '{filePath}' while preparing texture data: {ex.Message}");
+                return false;
+            }
+        }
+
+        private static bool TryPreparePreviewFromLoadedTexture(XRTexture2D target, uint maxPreviewSize)
+        {
+            var sourceMipmaps = target.Mipmaps;
+            if (sourceMipmaps is null || sourceMipmaps.Length == 0)
+                return false;
+
+            var baseMipmap = sourceMipmaps[0];
+            if (baseMipmap is null || !baseMipmap.HasData())
+                return false;
+
+            try
+            {
+                using MagickImage baseImage = baseMipmap.GetImage();
+                ResizePreviewIfNeeded(baseImage, maxPreviewSize);
+                target.Mipmaps = [new Mipmap2D(baseImage)];
+                return true;
+            }
+            catch (MagickException)
+            {
+                return false;
+            }
+        }
+
+        private static void CopyTextureData(XRTexture2D source, XRTexture2D target, bool deepCopy)
+        {
+            var sourceMipmaps = source.Mipmaps;
+            if (sourceMipmaps is null || sourceMipmaps.Length == 0)
+            {
+                target.Mipmaps = [];
+            }
+            else
+            {
+                Mipmap2D[] copies = new Mipmap2D[sourceMipmaps.Length];
+                for (int i = 0; i < sourceMipmaps.Length; i++)
+                {
+                    var mip = sourceMipmaps[i];
+                    copies[i] = mip is null ? new Mipmap2D() : mip.Clone(cloneImage: deepCopy);
+                }
+                target.Mipmaps = copies;
+            }
+
+            CopyTextureSettings(source, target);
+        }
+
+        private static void AssignPlaceholderPreview(XRTexture2D target)
+        {
+            using MagickImage filler = (MagickImage)FillerImage.Clone();
+            target.Mipmaps = [new Mipmap2D(filler)];
+            target.AutoGenerateMipmaps = false;
+            target.Resizable = true;
+            target.SizedInternalFormat = ESizedInternalFormat.Rgba8;
+        }
+
+        private static void CopyTextureSettings(XRTexture2D source, XRTexture2D target)
+        {
+            target.AutoGenerateMipmaps = source.AutoGenerateMipmaps;
+            target.Resizable = source.Resizable;
+            target.SizedInternalFormat = source.SizedInternalFormat;
+            target.MagFilter = source.MagFilter;
+            target.MinFilter = source.MinFilter;
+            target.UWrap = source.UWrap;
+            target.VWrap = source.VWrap;
+            target.LodBias = source.LodBias;
+        }
+
+        private static bool IsTextureAssetLoadFailure(Exception ex)
+            => ex is YamlException or MagickException or InvalidOperationException;
+
+        private static void ResizePreviewIfNeeded(MagickImage previewImage, uint maxPreviewSize)
+        {
+            if (previewImage is null || maxPreviewSize == 0)
+                return;
+
+            uint width = previewImage.Width;
+            uint height = previewImage.Height;
+            uint largest = Math.Max(width, height);
+            if (largest == 0 || largest <= maxPreviewSize)
+                return;
+
+            double scale = maxPreviewSize / (double)largest;
+            uint scaledWidth = Math.Max(1u, (uint)Math.Round(width * scale));
+            uint scaledHeight = Math.Max(1u, (uint)Math.Round(height * scale));
+            previewImage.Resize(scaledWidth, scaledHeight);
         }
 
         public static Mipmap2D[] GetMipmapsFromImage(MagickImage image)

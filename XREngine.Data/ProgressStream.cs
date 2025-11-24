@@ -1,9 +1,9 @@
 ﻿namespace XREngine.Core
 {
-    public class BasicProgress<T> : IProgress<T>
+    public class BasicProgress<T>(Action<T> handler) : IProgress<T>
     {
-        private readonly Action<T> _handler;
-        public BasicProgress(Action<T> handler) => _handler = handler;
+        private readonly Action<T> _handler = handler;
+
         void IProgress<T>.Report(T value) => _handler(value);
     }
     public class ProgressStream : Stream
@@ -85,7 +85,7 @@
             _writeProgress?.Report(1);
         }
 
-        public override IAsyncResult BeginRead(byte[] buffer, int offset, int count, AsyncCallback callback, object state)
+        public override IAsyncResult BeginRead(byte[] buffer, int offset, int count, AsyncCallback? callback, object? state)
         {
             IAsyncResult result = _stream.BeginRead(buffer, offset, count, callback, state);
             return result;
@@ -96,7 +96,7 @@
             _readProgress?.Report(bytesRead);
             return bytesRead;
         }
-        public override IAsyncResult BeginWrite(byte[] buffer, int offset, int count, AsyncCallback callback, object state)
+        public override IAsyncResult BeginWrite(byte[] buffer, int offset, int count, AsyncCallback? callback, object? state)
         {
             IAsyncResult result = _stream.BeginWrite(buffer, offset, count, callback, state);
             _writeProgress?.Report(count);

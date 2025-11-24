@@ -40,10 +40,10 @@ public abstract class RenderPipeline : XRAsset
         set => SetField(ref _isShadowPass, value);
     }
 
-    private ViewportRenderCommandContainer? _commandChain;
+    private ViewportRenderCommandContainer _commandChain = [];
     public ViewportRenderCommandContainer CommandChain
     {
-        get => _commandChain ?? throw new InvalidOperationException("Command chain has not been initialized.");
+        get => _commandChain;
         protected set
         {
             ArgumentNullException.ThrowIfNull(value);

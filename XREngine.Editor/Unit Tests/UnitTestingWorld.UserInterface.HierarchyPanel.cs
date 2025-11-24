@@ -4,6 +4,7 @@ using System.Linq;
 using System.Numerics;
 using System.Text;
 using XREngine;
+using XREngine.Data.Core;
 using XREngine.Scene;
 using XREngine.Rendering;
 
@@ -13,6 +14,8 @@ public static partial class UnitTestingWorld
 {
     public static partial class UserInterface
     {
+        private const float HierarchyFocusCameraDurationSeconds = 0.35f;
+
         private static void DrawHierarchyPanel()
         {
             if (!_showHierarchy) return;
@@ -178,6 +181,9 @@ public static partial class UnitTestingWorld
                 if (ImGui.MenuItem("Add Child Scene Node"))
                     CreateChildSceneNode(node);
 
+                if (ImGui.MenuItem("Focus Camera"))
+                    FocusCameraOnHierarchyNode(node);
+
                 ImGui.EndPopup();
             }
 
@@ -264,6 +270,13 @@ public static partial class UnitTestingWorld
                 length = _renameBuffer.Length;
 
             return Encoding.UTF8.GetString(_renameBuffer, 0, length).Trim();
+        }
+
+        private static void FocusCameraOnHierarchyNode(SceneNode node)
+        {
+            var player = Engine.State.MainPlayer ?? Engine.State.GetOrCreateLocalPlayer(ELocalPlayerIndex.One);
+            if (player?.ControlledPawn is EditorFlyingCameraPawnComponent pawn)
+                pawn.FocusOnNode(node, HierarchyFocusCameraDurationSeconds);
         }
     }
 }

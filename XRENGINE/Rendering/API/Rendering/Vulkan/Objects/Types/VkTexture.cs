@@ -17,13 +17,13 @@ public unsafe partial class VulkanRenderer
             return string.IsNullOrWhiteSpace(describing) ? null : describing;
         }
 
-        protected VulkanPhysicalImageGroup? TryResolvePhysicalGroup(bool ensureAllocated = true)
+        private protected VulkanPhysicalImageGroup? TryResolvePhysicalGroup(bool ensureAllocated = true)
         {
             string? resourceName = ResolveLogicalResourceName();
             if (string.IsNullOrWhiteSpace(resourceName))
                 return null;
 
-            if (!ResourceAllocator.TryGetPhysicalGroupForResource(resourceName, out VulkanPhysicalImageGroup group))
+            if (!Renderer.ResourceAllocator.TryGetPhysicalGroupForResource(resourceName, out VulkanPhysicalImageGroup group))
                 return null;
 
             if (ensureAllocated)
@@ -44,7 +44,7 @@ public unsafe partial class VulkanRenderer
             return false;
         }
 
-        protected bool TryResolvePhysicalGroup(out VulkanPhysicalImageGroup? group)
+        private protected bool TryResolvePhysicalGroup(out VulkanPhysicalImageGroup? group)
         {
             group = TryResolvePhysicalGroup(true);
             return group is not null;

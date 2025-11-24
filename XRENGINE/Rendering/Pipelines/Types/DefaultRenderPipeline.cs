@@ -1042,6 +1042,7 @@ public class DefaultRenderPipeline : RenderPipeline
     private void PostProcessFBO_SettingUniforms(XRRenderProgram materialProgram)
     {
         var sceneCam = RenderingPipelineState?.SceneCamera;
+        materialProgram.Uniform("OutputHDR", Engine.Rendering.Settings.OutputHDR);
         if (sceneCam is null)
             return;
 

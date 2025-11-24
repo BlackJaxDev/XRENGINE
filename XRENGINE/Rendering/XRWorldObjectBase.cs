@@ -68,6 +68,7 @@ namespace XREngine
         private int _owningServerPlayerIndex = -1;
         [YamlIgnore]
         [Browsable(false)]
+        [Category("Networking")]
         public int OwningPlayerServerIndex
         {
             get => _owningServerPlayerIndex;
@@ -79,6 +80,7 @@ namespace XREngine
         /// If false, this object will not replicate its properties to the network and will only receive updates from the server.
         /// </summary>
         [YamlIgnore]
+        [Category("Networking")]
         public bool HasNetworkAuthority
             => IsNotAClient() || ALocalClientPlayerOwnsThis();
 
@@ -172,7 +174,9 @@ namespace XREngine
         }
 
         [Browsable(false)]
+        [Category("Networking")]
         public float LastTickReplicationTime { get; private set; } = 0;
+        [Category("Networking")]
         public float TimeBetweenReplications { get; set; } = 0.1f;
 
         private void BroadcastTickedProperties()

@@ -24,6 +24,18 @@ namespace XREngine.Core.Files
             internal set => SetField(ref _embeddedAssets, value);
         }
 
+        private string? _serializedAssetType;
+
+        /// <summary>
+        /// Serialized type hint injected into YAML files so tools can determine the asset's concrete type without full deserialization.
+        /// </summary>
+        [YamlMember(Alias = "__assetType", Order = -100)]
+        public string SerializedAssetType
+        {
+            get => GetType().FullName ?? GetType().Name;
+            private set => _serializedAssetType = value;
+        }
+
         private string? _originalPath;
         /// <summary>
         /// The original path of this asset before it was imported and converted for engine use.

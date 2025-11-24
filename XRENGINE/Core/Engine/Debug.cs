@@ -5,6 +5,7 @@ using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
 using System.Linq;
+using System.Runtime.InteropServices;
 
 namespace XREngine
 {
@@ -21,7 +22,7 @@ namespace XREngine
         private static readonly ConcurrentDictionary<string, DateTime> RecentMessageCache = new();
         public static Queue<(string, DateTime)> Output { get; } = new Queue<(string, DateTime)>();
         public static bool AllowOutput { get; set; } = true;
-        private const int MaxLogFileCount = 10;
+        private const int MaxRunDirectoryCount = 3;
         private static readonly object LogWriterLock = new();
         private static readonly Dictionary<LogCategory, StreamWriter?> LogWriters = new()
         {
@@ -31,6 +32,8 @@ namespace XREngine
             [LogCategory.Physics] = null,
         };
         private static string? _logSessionId;
+        private static string? _logsRootDirectory;
+        private static string? _logRunDirectory;
         private static readonly List<(string Token, bool RequireBoundary)> OpenGlTokens = new()
         {
             ("opengl", false),
@@ -202,6 +205,13 @@ namespace XREngine
             Out(EOutputVerbosity.Normal, true, false, false, true, 4 + lineIgnoreCount, includedLineCount, message);
 #endif
         }
+
+        public static void LogError(string message, int lineIgnoreCount = 0, int includedLineCount = 10)
+        {
+    #if DEBUG || EDITOR
+            Out(EOutputVerbosity.Minimal, false, false, false, true, 4 + lineIgnoreCount, includedLineCount, message);
+    #endif
+        }
         public static string GetStackTrace(int lineIgnoreCount = 3, int includedLineCount = -1, bool ignoreBeforeWndProc = true)
         {
             //Format and print stack trace
@@ -266,10 +276,7 @@ namespace XREngine
 
             if (LogWriters[category] is null)
             {
-                string baseDirectory = AppContext.BaseDirectory;
-                string logsDirectory = Path.Combine(baseDirectory, "Logs");
-                Directory.CreateDirectory(logsDirectory);
-                EnforceLogFileLimit(logsDirectory);
+                string logsDirectory = GetLogRunDirectory();
                 string fileSuffix = category switch
                 {
                     LogCategory.OpenGL => "opengl",
@@ -344,49 +351,174 @@ namespace XREngine
             }
 
             _logSessionId = null;
+            _logRunDirectory = null;
         }
 
-        private static void EnforceLogFileLimit(string logsDirectory)
+        private static string GetLogsRootDirectory()
         {
-            string[] files;
+            if (_logsRootDirectory is not null)
+                return _logsRootDirectory;
+
+            string baseDirectory = FindRepositoryRoot() ?? AppContext.BaseDirectory;
+            string preferred = Path.Combine(baseDirectory, "Build", "Logs");
+
+            if (!TryCreateDirectory(preferred))
+            {
+                string fallback = Path.Combine(AppContext.BaseDirectory, "Logs");
+                TryCreateDirectory(fallback);
+                preferred = fallback;
+            }
+
+            _logsRootDirectory = preferred;
+            return preferred;
+        }
+
+        private static string GetLogRunDirectory()
+        {
+            if (_logRunDirectory is not null)
+                return _logRunDirectory;
+
+            string rootDirectory = GetLogsRootDirectory();
+            string buildFolder = SanitizePathSegment(GetBuildIdentifier());
+            string platformFolder = SanitizePathSegment(GetPlatformIdentifier());
+
+            string runsRoot = Path.Combine(rootDirectory, buildFolder, platformFolder);
+            if (!TryCreateDirectory(runsRoot))
+                runsRoot = rootDirectory;
+
+            if (_logSessionId is null)
+                _logSessionId = DateTime.Now.ToString("yyyyMMdd_HHmmss");
+
+            string runDirectory = Path.Combine(runsRoot, _logSessionId);
+            if (!TryCreateDirectory(runDirectory))
+            {
+                string fallback = Path.Combine(rootDirectory, $"run_{_logSessionId}");
+                TryCreateDirectory(fallback);
+                runDirectory = fallback;
+            }
+
+            EnforceRunDirectoryLimit(runsRoot);
+
+            _logRunDirectory = runDirectory;
+            return runDirectory;
+        }
+
+        private static string GetBuildIdentifier()
+        {
             try
             {
-                files = Directory.GetFiles(logsDirectory, "log_*.txt", SearchOption.TopDirectoryOnly);
+                DirectoryInfo baseDir = new(AppContext.BaseDirectory);
+                string? tfm = baseDir.Name;
+                string? configuration = baseDir.Parent?.Name;
+
+                if (!string.IsNullOrWhiteSpace(configuration) && !string.IsNullOrWhiteSpace(tfm))
+                    return $"{configuration}_{tfm}";
+
+                if (!string.IsNullOrWhiteSpace(tfm))
+                    return tfm;
+
+                return configuration ?? AppDomain.CurrentDomain.FriendlyName ?? "UnknownBuild";
             }
             catch
             {
-                return;
+                return AppDomain.CurrentDomain.FriendlyName ?? "UnknownBuild";
+            }
+        }
+
+        private static string GetPlatformIdentifier()
+        {
+            try
+            {
+                string arch = RuntimeInformation.ProcessArchitecture.ToString();
+                string os = RuntimeInformation.IsOSPlatform(OSPlatform.Windows) ? "windows" :
+                            RuntimeInformation.IsOSPlatform(OSPlatform.OSX) ? "osx" :
+                            RuntimeInformation.IsOSPlatform(OSPlatform.Linux) ? "linux" :
+                            RuntimeInformation.OSDescription;
+
+                return $"{os}_{arch}".ToLowerInvariant();
+            }
+            catch
+            {
+                return "unknown_platform";
+            }
+        }
+
+        private static string SanitizePathSegment(string segment)
+        {
+            if (string.IsNullOrWhiteSpace(segment))
+                return "unknown";
+
+            char[] invalidChars = Path.GetInvalidFileNameChars();
+            var sanitized = new string(segment
+                .Select(ch => invalidChars.Contains(ch) ? '_' : ch)
+                .ToArray());
+
+            return string.IsNullOrWhiteSpace(sanitized) ? "unknown" : sanitized;
+        }
+
+        private static string? FindRepositoryRoot()
+        {
+            try
+            {
+                DirectoryInfo? current = new(AppContext.BaseDirectory);
+                while (current is not null)
+                {
+                    string currentPath = current.FullName;
+                    if (File.Exists(Path.Combine(currentPath, "XRENGINE.sln")) || Directory.Exists(Path.Combine(currentPath, ".git")))
+                        return currentPath;
+
+                    current = current.Parent;
+                }
+            }
+            catch
+            {
+                // Ignore; we'll fall back to the executable directory later.
             }
 
-            if (files.Length < MaxLogFileCount)
-                return;
+            return null;
+        }
 
-            FileInfo? oldest = files
-                .Select(path =>
+        private static bool TryCreateDirectory(string path)
+        {
+            try
+            {
+                Directory.CreateDirectory(path);
+                return true;
+            }
+            catch
+            {
+                return false;
+            }
+        }
+
+        private static void EnforceRunDirectoryLimit(string runsRoot)
+        {
+            try
+            {
+                Directory.CreateDirectory(runsRoot);
+                DirectoryInfo rootInfo = new(runsRoot);
+                DirectoryInfo[] runDirectories = rootInfo.GetDirectories();
+
+                if (runDirectories.Length <= MaxRunDirectoryCount)
+                    return;
+
+                foreach (DirectoryInfo dir in runDirectories
+                    .OrderByDescending(d => d.CreationTimeUtc)
+                    .Skip(MaxRunDirectoryCount))
                 {
                     try
                     {
-                        return new FileInfo(path);
+                        dir.Delete(true);
                     }
                     catch
                     {
-                        return null;
+                        // Ignore cleanup failures, permissions may block deletion.
                     }
-                })
-                .Where(info => info is not null)
-                .OrderBy(info => info!.CreationTimeUtc)
-                .FirstOrDefault();
-
-            if (oldest is null)
-                return;
-
-            try
-            {
-                oldest.Delete();
+                }
             }
             catch
             {
-                // Ignore failures; directory permissions might block deletion.
+                // If we cannot enumerate directories, skip retention to avoid crashing logging.
             }
         }
     }

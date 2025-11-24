@@ -1,12 +1,13 @@
-﻿using Extensions;
-using System.Buffers;
+﻿using System.Buffers;
 using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Diagnostics.CodeAnalysis;
 using System.Numerics;
 using System.Runtime.CompilerServices;
+using Extensions;
 using XREngine.Audio;
 using XREngine.Components;
+using XREngine.Components.Animation;
 using XREngine.Components.Scene.Mesh;
 using XREngine.Data.Core;
 using XREngine.Data.Geometry;
@@ -15,7 +16,6 @@ using XREngine.Data.Trees;
 using XREngine.Rendering.Info;
 using XREngine.Rendering.Picking;
 using XREngine.Scene;
-using XREngine.Components.Animation;
 using XREngine.Scene.Transforms;
 using static XREngine.Engine;
 
@@ -540,18 +540,6 @@ namespace XREngine.Rendering
         {
             //orderedResults.Clear();
             VisualScene.RaycastAsync(worldSegment, orderedResults, DirectItemTest, finishedCallback);
-        }
-
-        public bool RaycastOctree(
-            Segment worldSegment,
-            SortedDictionary<float, List<(RenderInfo3D item, object? data)>> orderedResults)
-        {
-            orderedResults.Clear();
-            if (VisualScene is null)
-                return false;
-
-            VisualScene.Raycast(worldSegment, orderedResults, DirectItemTest);
-            return orderedResults.Count > 0;
         }
 
         private static (float? distance, object? data) DirectItemTest(RenderInfo3D item, Segment segment)

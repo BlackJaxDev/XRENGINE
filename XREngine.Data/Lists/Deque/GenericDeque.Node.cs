@@ -6,9 +6,9 @@ namespace System.Collections.Generic
 
         // Represents a node in the deque.
         [Serializable()]
-        public class Node(T value)
+        public class Node(T? value)
         {
-            private T value = value;
+            private T? value = value;
 
             private Node? previous = null;
 

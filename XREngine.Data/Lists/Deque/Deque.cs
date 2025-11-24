@@ -47,10 +47,10 @@ namespace System.Collections
         #region Fields
 
         // The node at the front of the deque.
-        private Node front = null;
+        private Node? front;
 
         // The node at the back of the deque.
-        private Node back = null;
+        private Node? back;
 
         // The number of elements in the deque.
         private int count = 0;
@@ -125,15 +125,15 @@ namespace System.Collections
         /// <b>true</b> if <i>obj</i> if found in the Deque; otherwise, 
         /// <b>false</b>.
         /// </returns>
-        public virtual bool Contains(object obj)
+        public virtual bool Contains(object? obj)
         {
-            foreach(object o in this)
+            foreach(object? o in this)
             {
                 if(o is null && obj is null)
                 {
                     return true;
                 }
-                else if(o.Equals(obj))
+                else if(o?.Equals(obj) == true)
                 {
                     return true;
                 }
@@ -148,7 +148,7 @@ namespace System.Collections
         /// <param name="obj">
         /// The object to push onto the deque;
         /// </param>
-        public virtual void PushFront(object obj)
+        public virtual void PushFront(object? obj)
         {
             // The new node to add to the front of the deque.
             Node newNode = new Node(obj);
@@ -158,7 +158,7 @@ namespace System.Collections
             newNode.Next = front;
 
             // If the deque isn't empty.
-            if(Count > 0)
+            if(Count > 0 && front is not null)
             {
                 // Link the current front to the new node.
                 front.Previous = newNode;
@@ -192,7 +192,7 @@ namespace System.Collections
         /// <param name="obj">
         /// The object to push onto the deque;
         /// </param>
-        public virtual void PushBack(object obj)
+        public virtual void PushBack(object? obj)
         {
             // The new node to add to the back of the deque.
             Node newNode = new Node(obj);
@@ -203,7 +203,7 @@ namespace System.Collections
             newNode.Previous = back;
 
             // If the deque is not empty.
-            if(Count > 0)
+            if(Count > 0 && back is not null)
             {
                 // Link the current back node to the new node.
                 back.Next = newNode;
@@ -240,11 +240,11 @@ namespace System.Collections
         /// <exception cref="InvalidOperationException">
         /// The Deque is empty.
         /// </exception>
-        public virtual object PopFront()
+        public virtual object? PopFront()
         {
             #region Require
 
-            if(Count == 0)
+            if(front is null)
             {
                 throw new InvalidOperationException("Deque is empty.");
             }
@@ -252,7 +252,7 @@ namespace System.Collections
             #endregion
 
             // Get the object at the front of the deque.
-            object obj = front.Value;
+            object? obj = front.Value;
 
             // Move the front back one node.
             front = front.Next;
@@ -261,7 +261,7 @@ namespace System.Collections
             count--;
 
             // If the deque is not empty.
-            if(Count > 0)
+            if(front is not null)
             {
                 // Tie off the previous link in the front node.
                 front.Previous = null;
@@ -293,11 +293,11 @@ namespace System.Collections
         /// <exception cref="InvalidOperationException">
         /// The Deque is empty.
         /// </exception>
-        public virtual object PopBack()
+        public virtual object? PopBack()
         {
             #region Require
 
-            if(Count == 0)
+            if(back is null)
             {
                 throw new InvalidOperationException("Deque is empty.");
             }
@@ -305,7 +305,7 @@ namespace System.Collections
             #endregion
 
             // Get the object at the back of the deque.
-            object obj = back.Value;
+            object? obj = back.Value;
 
             // Move back node forward one node.
             back = back.Previous;
@@ -314,7 +314,7 @@ namespace System.Collections
             count--;
 
             // If the deque is not empty.
-            if(Count > 0)
+            if(back is not null)
             {
                 // Tie off the next link in the back node.
                 back.Next = null;
@@ -346,11 +346,11 @@ namespace System.Collections
         /// <exception cref="InvalidOperationException">
         /// The Deque is empty.
         /// </exception>
-        public virtual object PeekFront()
+        public virtual object? PeekFront()
         {
             #region Require
 
-            if(Count == 0)
+            if(front is null)
             {
                 throw new InvalidOperationException("Deque is empty.");
             }
@@ -369,11 +369,11 @@ namespace System.Collections
         /// <exception cref="InvalidOperationException">
         /// The Deque is empty.
         /// </exception>
-        public virtual object PeekBack()
+        public virtual object? PeekBack()
         {
             #region Require
 
-            if(Count == 0)
+            if(back is null)
             {
                 throw new InvalidOperationException("Deque is empty.");
             }
@@ -389,12 +389,12 @@ namespace System.Collections
         /// <returns>
         /// A new array containing copies of the elements of the Deque.
         /// </returns>
-        public virtual object[] ToArray()
+        public virtual object?[] ToArray()
         {
-            object[] array = new object[Count];
+            object?[] array = new object[Count];
             int index = 0;
 
-            foreach(object obj in this)
+            foreach(object? obj in this)
             {
                 array[index] = obj;
                 index++;
@@ -430,9 +430,9 @@ namespace System.Collections
         private void AssertValid()
         {
             int n = 0;
-            Node current = front;
+            Node? current = front;
 
-            while(current != null)
+            while(current is not null)
             {
                 n++;
                 current = current.Next;
@@ -444,16 +444,16 @@ namespace System.Collections
             {
                 Debug.Assert(front != null && back != null, "Front/Back Null Test - Count > 0");
 
-                Node f = front;
-                Node b = back;
+                Node? f = front;
+                Node? b = back;
 
-                while(f.Next != null && b.Previous != null)
+                while(f?.Next != null && b?.Previous != null)
                 {
-                    f = f.Next;
-                    b = b.Previous;
+                    f = f!.Next;
+                    b = b!.Previous;
                 }
 
-                Debug.Assert(f.Next is null && b.Previous is null, "Front/Back Termination Test");
+                Debug.Assert(f?.Next is null && b?.Previous is null, "Front/Back Termination Test");
                 Debug.Assert(f == back && b == front, "Front/Back Equality Test");
             }
             else
@@ -470,18 +470,18 @@ namespace System.Collections
         [Serializable()]
         private class Node
         {
-            private object value;
+            private readonly object? value;
 
-            private Node previous = null;
+            private Node? previous;
 
-            private Node next = null;
+            private Node? next;
 
-            public Node(object value)
+            public Node(object? value)
             {
                 this.value = value;
             }
 
-            public object Value
+            public object? Value
             {
                 get
                 {
@@ -489,7 +489,7 @@ namespace System.Collections
                 }
             }
 
-            public Node Previous
+            public Node? Previous
             {
                 get
                 {
@@ -501,7 +501,7 @@ namespace System.Collections
                 }
             }
 
-            public Node Next
+            public Node? Next
             {
                 get
                 {
@@ -523,9 +523,9 @@ namespace System.Collections
         {
             private Deque owner;
 
-            private Node currentNode;
+            private Node? currentNode;
 
-            private object current = null;
+            private object? current;
 
             private bool moveResult = false;
 
@@ -554,9 +554,10 @@ namespace System.Collections
 
                 currentNode = owner.front;
                 moveResult = false;
+                current = null;
             }
 
-            public object Current
+            public object? Current
             {
                 get
                 {
@@ -597,6 +598,7 @@ namespace System.Collections
                 else
                 {
                     moveResult = false;
+                    current = null;
                 }
 
                 return moveResult;
@@ -654,7 +656,7 @@ namespace System.Collections
                 }
             }
 
-            public override bool Contains(object obj)
+            public override bool Contains(object? obj)
             {
                 bool result;
 
@@ -666,7 +668,7 @@ namespace System.Collections
                 return result;
             }
 
-            public override void PushFront(object obj)
+            public override void PushFront(object? obj)
             {
                 lock(root)
                 {
@@ -674,7 +676,7 @@ namespace System.Collections
                 }
             }
 
-            public override void PushBack(object obj)
+            public override void PushBack(object? obj)
             {
                 lock(root)
                 {
@@ -682,9 +684,9 @@ namespace System.Collections
                 }
             }
 
-            public override object PopFront()
+            public override object? PopFront()
             {
-                object obj;
+                object? obj;
 
                 lock(root)
                 {
@@ -694,9 +696,9 @@ namespace System.Collections
                 return obj;
             }
 
-            public override object PopBack()
+            public override object? PopBack()
             {
-                object obj;
+                object? obj;
 
                 lock(root)
                 {
@@ -706,9 +708,9 @@ namespace System.Collections
                 return obj;
             }
 
-            public override object PeekFront()
+            public override object? PeekFront()
             {
-                object obj;
+                object? obj;
 
                 lock(root)
                 {
@@ -718,9 +720,9 @@ namespace System.Collections
                 return obj;
             }
 
-            public override object PeekBack()
+            public override object? PeekBack()
             {
-                object obj;
+                object? obj;
 
                 lock(root)
                 {
@@ -730,9 +732,9 @@ namespace System.Collections
                 return obj;
             }
 
-            public override object[] ToArray()
+            public override object?[] ToArray()
             {
-                object[] array;
+                object?[] array;
 
                 lock(root)
                 {

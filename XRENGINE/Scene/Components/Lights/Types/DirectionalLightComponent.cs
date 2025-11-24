@@ -1,22 +1,18 @@
 ﻿using System.Numerics;
-using XREngine.Animation;
+using XREngine.Components.Capture.Lights;
+using XREngine.Components.Capture.Lights.Types;
 using XREngine.Core.Attributes;
 using XREngine.Data.Rendering;
 using XREngine.Rendering;
 using XREngine.Rendering.Models.Materials;
 using XREngine.Scene.Transforms;
 
-namespace XREngine.Components.Capture.Lights.Types
+namespace XREngine.Components.Lights
 {
     [RequiresTransform(typeof(Transform))]
     public class DirectionalLightComponent : OneViewLightComponent
     {
         private const float NearZ = 0.01f;
-
-        public DirectionalLightComponent()
-        {
-            UpdateMeshCenterAdjustMatrix();
-        }
 
         private Vector3 _scale = Vector3.One;
         public Vector3 Scale
@@ -41,10 +37,10 @@ namespace XREngine.Components.Capture.Lights.Types
             => ShadowCameraTransform;
 
         private Transform? _shadowCameraTransform;
-        private Transform ShadowCameraTransform => _shadowCameraTransform ??= new Transform() 
+        private Transform ShadowCameraTransform => _shadowCameraTransform ??= new Transform()
         {
             Parent = Transform,
-            Order = ETransformOrder.TRS,
+            Order = XREngine.Animation.ETransformOrder.TRS,
             Translation = Globals.Backward * Scale.Z * 0.5f,
         };
 
@@ -73,16 +69,16 @@ namespace XREngine.Components.Capture.Lights.Types
 
             targetStructName = $"{targetStructName ?? Engine.Rendering.Constants.LightsStructName}.";
 
-            program.Uniform($"{targetStructName}Direction", Transform.RenderForward);
+            program.Uniform($"{targetStructName}Direction", Transform.WorldForward);
             program.Uniform($"{targetStructName}Color", _color);
             program.Uniform($"{targetStructName}DiffuseIntensity", _diffuseIntensity);
             program.Uniform($"{targetStructName}WorldToLightProjMatrix", ShadowCamera?.ProjectionMatrix ?? Matrix4x4.Identity);
-            program.Uniform($"{targetStructName}WorldToLightInvViewMatrix", ShadowCamera?.Transform.RenderMatrix ?? Matrix4x4.Identity);
+            program.Uniform($"{targetStructName}WorldToLightInvViewMatrix", ShadowCamera?.Transform.WorldMatrix ?? Matrix4x4.Identity);
 
             if (ShadowMap?.Material is null)
                 return;
 
-            var shadowMap = ShadowMap.Material.Textures[1];
+            var shadowMap = ShadowMap.Material.Textures[0];
             if (shadowMap != null)
                 program.Sampler("ShadowMap", shadowMap, 4);
         }
@@ -98,20 +94,12 @@ namespace XREngine.Components.Capture.Lights.Types
                      UWrap = ETexWrapMode.ClampToEdge,
                      VWrap = ETexWrapMode.ClampToEdge,
                      FrameBufferAttachment = EFrameBufferAttachment.DepthAttachment,
-                 },
-                 new XRTexture2D(width, height, EPixelInternalFormat.R16f, EPixelFormat.Red, EPixelType.HalfFloat)
-                 {
-                     MinFilter = ETexMinFilter.Nearest,
-                     MagFilter = ETexMagFilter.Nearest,
-                     UWrap = ETexWrapMode.ClampToEdge,
-                     VWrap = ETexWrapMode.ClampToEdge,
-                     FrameBufferAttachment = EFrameBufferAttachment.ColorAttachment0,
                      SamplerName = "ShadowMap"
-                 },
+                 }
             ];
 
             //This material is used for rendering to the framebuffer.
-            XRMaterial mat = new(refs, new XRShader(EShaderType.Fragment, ShaderHelper.Frag_DepthOutput));
+            XRMaterial mat = new(refs, new XRShader(EShaderType.Fragment, ShaderHelper.Frag_Nothing));
 
             //No culling so if a light exists inside of a mesh it will shadow everything.
             mat.RenderOptions.CullMode = ECullMode.None;
@@ -129,7 +117,7 @@ namespace XREngine.Components.Capture.Lights.Types
                         _shadowCameraTransform.Parent = Transform;
                     break;
                 case nameof(Scale):
-                    UpdateMeshCenterAdjustMatrix();
+                    MeshCenterAdjustMatrix = Matrix4x4.CreateScale(Scale);
                     ShadowCameraTransform.Translation = Globals.Backward * Scale.Z * 0.5f;
                     if (ShadowCamera is not null)
                     {
@@ -155,11 +143,6 @@ namespace XREngine.Components.Capture.Lights.Types
                         World?.Lights.DynamicDirectionalLights.Remove(this);
                     break;
             }
-        }
-
-        private void UpdateMeshCenterAdjustMatrix()
-        {
-            MeshCenterAdjustMatrix = Matrix4x4.CreateScale(Scale) * Matrix4x4.CreateTranslation(Globals.Backward * Scale.Z * 0.5f);
         }
     }
 }

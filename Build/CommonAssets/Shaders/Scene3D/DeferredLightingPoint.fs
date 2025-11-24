@@ -23,6 +23,7 @@ uniform float ShadowBase = 1.0f;
 uniform float ShadowMult = 2.5f;
 uniform float ShadowBiasMin = 0.05f;
 uniform float ShadowBiasMax = 10.0f;
+uniform bool LightHasShadowMap = true; // Added
 
 struct PointLight
 {
@@ -39,32 +40,14 @@ float GetShadowBias(in float NoL)
     float mapped = pow(ShadowBase * (1.0f - NoL), ShadowMult);
     return mix(ShadowBiasMin, ShadowBiasMax, mapped);
 }
-//0 is fully in shadow, 1 is fully lit
+
+// returns1 lit,0 shadow
 float ReadPointShadowMap(in float farPlaneDist, in vec3 fragToLightWS, in float lightDist, in float NoL)
 {
+    if (!LightHasShadowMap) return 1.0f;
     float bias = GetShadowBias(NoL);
-
-    //Hard shadow
     float closestDepth = texture(ShadowMap, fragToLightWS).r * farPlaneDist;
-    float shadow = lightDist - bias > closestDepth ? 0.0f : 1.0f;
-
-    //PCF shadow
-    //float shadow = 0.0;
-    //vec2 texelSize = 1.0f / textureSize(map, 0);
-    //for (int x = -1; x <= 1; ++x)
-    //{
-    //    for (int y = -1; y <= 1; ++y)
-    //    {
-    //           for (int z = -1; z <= 1; ++z)
-    //        {
-    //            float pcfDepth = texture(map, fragToLightWS + vec3(x, y, z) * texelSize).r * farPlaneDist;
-    //            shadow += fragCoord.z - bias > pcfDepth ? 0.0f : 1.0f;
-    //        }
-    //    }
-    //}
-    //shadow *= 0.111111111f; //divided by 9
-
-    return shadow;
+    return (lightDist - bias) <= closestDepth ? 1.0f : 0.0f;
 }
 float Attenuate(in float dist, in float radius)
 {
@@ -163,6 +146,7 @@ in vec3 F0)
 	vec3 H = normalize(V + L);
 
 	float NoL = max(dot(N, L), 0.0f);
+	if (NoL <= 0.0f) return vec3(0.0f);
 	float NoH = max(dot(N, H), 0.0f);
 	float NoV = max(dot(N, V), 0.0f);
 	float HoV = max(dot(H, V), 0.0f);
@@ -171,9 +155,9 @@ in vec3 F0)
 		NoL, NoH, NoV, HoV,
 		attn, albedo, rms, F0);
 
-	float shadow = ReadPointShadowMap(radius, -L, lightDist, NoL);
+	float lit = ReadPointShadowMap(radius, -L, lightDist, NoL);
 
-	return color * shadow;
+	return color * lit;
 }
 vec3 CalcTotalLight(
 in vec3 fragPosWS,
@@ -181,11 +165,12 @@ in vec3 normal,
 in vec3 albedo,
 in vec3 rms)
 {
+	normal = normalize(normal);
 	float metallic = rms.y;
 	vec3 CameraPosition = vec3(InverseViewMatrix[3]);
 	vec3 V = normalize(CameraPosition - fragPosWS);
 	vec3 F0 = mix(vec3(0.04f), albedo, metallic);
-  	return CalcPointLight(normal, V, fragPosWS, albedo, rms, F0);
+	return CalcPointLight(normal, V, fragPosWS, albedo, rms, F0);
 }
 vec3 WorldPosFromDepth(in float depth, in vec2 uv)
 {
