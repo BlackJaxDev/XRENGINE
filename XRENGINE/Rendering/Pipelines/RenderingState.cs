@@ -1,4 +1,5 @@
-﻿using XREngine.Components;
+﻿using System.Numerics;
+using XREngine.Components;
 using XREngine.Data.Geometry;
 using XREngine.Rendering.Commands;
 using XREngine.Rendering.UI;
@@ -55,6 +56,45 @@ public sealed partial class XRRenderPipelineInstance
         /// All collected render commands for the current frame.
         /// </summary>
         public RenderCommandCollection? MeshRenderCommands { get; set; }
+
+        /// <summary>
+        /// Current model matrix for the draw being submitted.
+        /// </summary>
+        public Matrix4x4 CurrentModelMatrix { get; private set; } = Matrix4x4.Identity;
+        /// <summary>
+        /// Previous model matrix for the draw being submitted, if history exists.
+        /// </summary>
+        public Matrix4x4 PreviousModelMatrix { get; private set; } = Matrix4x4.Identity;
+        /// <summary>
+        /// Indicates whether <see cref="PreviousModelMatrix"/> contains valid data.
+        /// </summary>
+        public bool PreviousModelMatrixValid { get; private set; }
+
+        private readonly Stack<(Matrix4x4 current, Matrix4x4 previous, bool hasPrevious)> _modelMatrixStack = new();
+        public StateObject PushModelMatrices(Matrix4x4 current, Matrix4x4 previous, bool hasPrevious)
+        {
+            _modelMatrixStack.Push((CurrentModelMatrix, PreviousModelMatrix, PreviousModelMatrixValid));
+            CurrentModelMatrix = current;
+            PreviousModelMatrix = previous;
+            PreviousModelMatrixValid = hasPrevious;
+            return StateObject.New(PopModelMatrices);
+        }
+
+        public void PopModelMatrices()
+        {
+            if (_modelMatrixStack.Count == 0)
+            {
+                CurrentModelMatrix = Matrix4x4.Identity;
+                PreviousModelMatrix = Matrix4x4.Identity;
+                PreviousModelMatrixValid = false;
+                return;
+            }
+
+            var state = _modelMatrixStack.Pop();
+            CurrentModelMatrix = state.current;
+            PreviousModelMatrix = state.previous;
+            PreviousModelMatrixValid = state.hasPrevious;
+        }
 
         //TODO: instead of bools for shadow and stereo passes, use an int for the pass type.
 
@@ -114,6 +154,10 @@ public sealed partial class XRRenderPipelineInstance
             GlobalMaterialOverride = null;
             ScreenSpaceUserInterface = null;
             MeshRenderCommands = null;
+            _modelMatrixStack.Clear();
+            CurrentModelMatrix = Matrix4x4.Identity;
+            PreviousModelMatrix = Matrix4x4.Identity;
+            PreviousModelMatrixValid = false;
         }
 
         public XRCamera? RenderingCamera
@@ -216,5 +260,45 @@ public sealed partial class XRRenderPipelineInstance
         }
         public void PopRenderingScene()
             => _renderingScenes.Pop();
+
+        public StateObject RequestCameraProjectionJitter(Vector2 jitterInTexels)
+            => RequestCameraProjectionJitter(jitterInTexels, null);
+
+        public StateObject RequestCameraProjectionJitter(Vector2 jitterInTexels, Vector2? renderResolutionOverride)
+        {
+            var camera = RenderingCamera;
+            if (camera is null)
+                return StateObject.New();
+
+            Vector2 resolution = renderResolutionOverride ?? GetActiveRenderResolution();
+            return camera.PushProjectionJitter(ProjectionJitterRequest.TexelSpace(jitterInTexels, resolution));
+        }
+
+        public StateObject RequestCameraProjectionJitterClipSpace(Vector2 clipSpaceOffset)
+        {
+            var camera = RenderingCamera;
+            if (camera is null)
+                return StateObject.New();
+
+            return camera.PushProjectionJitter(ProjectionJitterRequest.ClipSpace(clipSpaceOffset));
+        }
+
+        private Vector2 GetActiveRenderResolution()
+        {
+            BoundingRectangle region = CurrentRenderRegion;
+            if (region.Width > 0 && region.Height > 0)
+                return new Vector2(region.Width, region.Height);
+
+            var viewport = WindowViewport;
+            if (viewport is not null)
+            {
+                int width = viewport.InternalWidth > 0 ? viewport.InternalWidth : viewport.Width;
+                int height = viewport.InternalHeight > 0 ? viewport.InternalHeight : viewport.Height;
+                if (width > 0 && height > 0)
+                    return new Vector2(width, height);
+            }
+
+            return Vector2.One;
+        }
     }
 }

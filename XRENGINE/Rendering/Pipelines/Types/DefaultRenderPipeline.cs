@@ -1,5 +1,6 @@
-﻿using System.Diagnostics.CodeAnalysis;
+﻿using System;
 using System.IO;
+using System.Numerics;
 using System.Threading;
 using Extensions;
 using XREngine;
@@ -27,6 +28,18 @@ public class DefaultRenderPipeline : RenderPipeline
     // but rather in branches in the command chain.
 
     private readonly Lazy<XRMaterial> _voxelConeTracingVoxelizationMaterial;
+    private readonly Lazy<XRMaterial> _motionVectorsMaterial;
+
+    private const float TemporalFeedbackMin = 0.05f;
+    private const float TemporalFeedbackMax = 0.95f;
+    private const float TemporalVarianceGamma = 1.25f;
+    private const float TemporalCatmullRadius = 1.0f;
+    private const float TemporalDepthRejectThreshold = 0.0025f;
+    private static readonly Vector2 TemporalReactiveTransparencyRange = new(0.05f, 0.35f);
+    private const float TemporalReactiveVelocityScale = 0.35f;
+    private const float TemporalReactiveLumaThreshold = 0.2f;
+    private const float TemporalDepthDiscontinuityScale = 900.0f;
+    private const float TemporalConfidencePower = 1.0f;
 
     private EGlobalIlluminationMode _globalIlluminationMode;
     public EGlobalIlluminationMode GlobalIlluminationMode
@@ -40,6 +53,12 @@ public class DefaultRenderPipeline : RenderPipeline
     public bool UsesLightProbeGI => _globalIlluminationMode == EGlobalIlluminationMode.LightProbesAndIbl;
 
     protected static bool GPURenderDispatch => Engine.UserSettings.GPURenderDispatch;
+
+    private bool EnableMsaa
+        => Engine.Rendering.Settings.AntiAliasingMode == Engine.Rendering.EAntiAliasingMode.Msaa
+        && Engine.Rendering.Settings.MsaaSampleCount > 1u;
+    private bool EnableFxaa => Engine.Rendering.Settings.AntiAliasingMode == Engine.Rendering.EAntiAliasingMode.Fxaa;
+    private uint MsaaSampleCount => Math.Max(1u, Engine.Rendering.Settings.MsaaSampleCount);
 
     private string BrightPassShaderName() => 
         //Stereo ? "BrightPassStereo.fs" : 
@@ -87,9 +106,21 @@ public class DefaultRenderPipeline : RenderPipeline
     public const string GBufferFBOName = "GBufferFBO";
     public const string LightCombineFBOName = "LightCombineFBO";
     public const string ForwardPassFBOName = "ForwardPassFBO";
+    public const string ForwardPassMsaaFBOName = "ForwardPassMSAAFBO";
     public const string PostProcessFBOName = "PostProcessFBO";
+    public const string PostProcessOutputTextureName = "PostProcessOutputTexture";
+    public const string PostProcessOutputFBOName = "PostProcessOutputFBO";
+    public const string FxaaFBOName = "FxaaFBO";
     public const string UserInterfaceFBOName = "UserInterfaceFBO";
     public const string RestirCompositeFBOName = "RestirCompositeFBO";
+    public const string VelocityFBOName = "VelocityFBO";
+    public const string HistoryCaptureFBOName = "HistoryCaptureFBO";
+    public const string TemporalInputFBOName = "TemporalInputFBO";
+    public const string TemporalAccumulationFBOName = "TemporalAccumulationFBO";
+    public const string HistoryExposureFBOName = "HistoryExposureFBO";
+        public const string MotionBlurCopyFBOName = "MotionBlurCopyFBO";
+        public const string MotionBlurFBOName = "MotionBlurFBO";
+        public const string DepthPreloadFBOName = "DepthPreloadFBO";
 
     //Textures
     public const string SSAONoiseTextureName = "SSAONoiseTexture";
@@ -108,17 +139,40 @@ public class DefaultRenderPipeline : RenderPipeline
     public const string BRDFTextureName = "BRDF";
     public const string RestirGITextureName = "RestirGITexture";
     public const string VoxelConeTracingVolumeTextureName = "VoxelConeTracingVolume";
+    public const string VelocityTextureName = "Velocity";
+    public const string HistoryColorTextureName = "HistoryColor";
+    public const string HistoryDepthStencilTextureName = "HistoryDepthStencil";
+    public const string HistoryDepthViewTextureName = "HistoryDepth";
+    public const string TemporalColorInputTextureName = "TemporalColorInput";
+    public const string TemporalExposureVarianceTextureName = "TemporalExposureVariance";
+    public const string HistoryExposureVarianceTextureName = "HistoryExposureVariance";
+    public const string MotionBlurTextureName = "MotionBlur";
 
     public DefaultRenderPipeline(bool stereo = false) : base(true)
     {
         Stereo = stereo;
         GlobalIlluminationMode = Engine.UserSettings.GlobalIlluminationMode;
         _voxelConeTracingVoxelizationMaterial = new Lazy<XRMaterial>(CreateVoxelConeTracingVoxelizationMaterial, LazyThreadSafetyMode.PublicationOnly);
+        _motionVectorsMaterial = new Lazy<XRMaterial>(CreateMotionVectorsMaterial, LazyThreadSafetyMode.PublicationOnly);
+        Engine.Rendering.SettingsChanged += HandleRenderingSettingsChanged;
         CommandChain = GenerateCommandChain();
+    }
+
+    private void HandleRenderingSettingsChanged()
+    {
+        Engine.InvokeOnMainThread(() =>
+        {
+            CommandChain = GenerateCommandChain();
+            foreach (var instance in Instances)
+                instance.DestroyCache();
+        }, true);
     }
 
     internal XRMaterial GetVoxelConeTracingVoxelizationMaterial()
         => _voxelConeTracingVoxelizationMaterial.Value;
+
+    internal XRMaterial GetMotionVectorsMaterial()
+        => _motionVectorsMaterial.Value;
 
     #region Command Chain Generation
 
@@ -185,6 +239,8 @@ public class DefaultRenderPipeline : RenderPipeline
     {
         ViewportRenderCommandContainer c = new(this);
 
+        c.Add<VPRC_TemporalAccumulationPass>().Phase = VPRC_TemporalAccumulationPass.EPhase.Begin;
+
         CacheTextures(c);
 
         c.Add<VPRC_VoxelConeTracingPass>().SetOptions(VoxelConeTracingVolumeTextureName,
@@ -237,6 +293,18 @@ public class DefaultRenderPipeline : RenderPipeline
                     DepthViewTextureName);
             }
 
+            if (EnableMsaa)
+            {
+                c.Add<VPRC_CacheOrCreateFBO>().SetOptions(
+                    ForwardPassMsaaFBOName,
+                    CreateForwardPassMsaaFBO,
+                    GetDesiredFBOSizeInternal);
+                c.Add<VPRC_CacheOrCreateFBO>().SetOptions(
+                    DepthPreloadFBOName,
+                    CreateDepthPreloadFBO,
+                    GetDesiredFBOSizeInternal);
+            }
+
             //ForwardPass FBO
             c.Add<VPRC_CacheOrCreateFBO>().SetOptions(
                 ForwardPassFBOName,
@@ -248,18 +316,48 @@ public class DefaultRenderPipeline : RenderPipeline
                 CreateRestirCompositeFBO,
                 GetDesiredFBOSizeInternal);
 
+            c.Add<VPRC_CacheOrCreateFBO>().SetOptions(
+                HistoryCaptureFBOName,
+                CreateHistoryCaptureFBO,
+                GetDesiredFBOSizeInternal);
+
+            c.Add<VPRC_CacheOrCreateFBO>().SetOptions(
+                TemporalInputFBOName,
+                CreateTemporalInputFBO,
+                GetDesiredFBOSizeInternal);
+
+            c.Add<VPRC_CacheOrCreateFBO>().SetOptions(
+                TemporalAccumulationFBOName,
+                CreateTemporalAccumulationFBO,
+                GetDesiredFBOSizeInternal);
+
+            c.Add<VPRC_CacheOrCreateFBO>().SetOptions(
+                HistoryExposureFBOName,
+                CreateHistoryExposureFBO,
+                GetDesiredFBOSizeInternal);
+
             //Render forward pass - GBuffer results + forward lit meshes + debug data
-            using (c.AddUsing<VPRC_BindFBOByName>(x => x.SetOptions(ForwardPassFBOName, true, false, false,false)))
+            var forwardTargetName = EnableMsaa ? ForwardPassMsaaFBOName : ForwardPassFBOName;
+            // When MSAA is enabled, we need to clear the MSAA renderbuffers first since they contain garbage.
+            // Clear color to transparent and depth to 1.0 (far plane).
+            // Note: Forward meshes won't be occluded by deferred meshes with MSAA, but they'll render correctly otherwise.
+            using (c.AddUsing<VPRC_BindFBOByName>(x => x.SetOptions(forwardTargetName, true, EnableMsaa, EnableMsaa, EnableMsaa)))
             {
+                if (EnableMsaa)
+                    c.Add<VPRC_RenderQuadToFBO>().SetTargets(DepthPreloadFBOName, ForwardPassMsaaFBOName);
+
                 //Render the deferred pass lighting result, no depth testing
                 c.Add<VPRC_DepthTest>().Enable = false;
                 c.Add<VPRC_RenderQuadToFBO>().SourceQuadFBOName = LightCombineFBOName;
 
-                //No depth writing for backgrounds (skybox)
-                c.Add<VPRC_DepthTest>().Enable = false;
+                //Backgrounds (skybox) should honor the depth buffer but avoid modifying it
+                c.Add<VPRC_DepthTest>().Enable = true;
+                c.Add<VPRC_DepthWrite>().Allow = false;
                 c.Add<VPRC_RenderMeshesPass>().SetOptions((int)EDefaultRenderPass.Background, GPURenderDispatch);
 
+                //Enable depth testing and writing for forward passes
                 c.Add<VPRC_DepthTest>().Enable = true;
+                c.Add<VPRC_DepthWrite>().Allow = true;
                 c.Add<VPRC_RenderMeshesPass>().SetOptions((int)EDefaultRenderPass.OpaqueForward, GPURenderDispatch);
 
                 //c.Add<VPRC_DepthTest>().Enable = true;
@@ -271,6 +369,33 @@ public class DefaultRenderPipeline : RenderPipeline
                 c.Add<VPRC_RenderDebugPhysics>();
             }
 
+            if (EnableMsaa)
+            {
+                c.Add<VPRC_BlitFrameBuffer>().SetOptions(
+                    ForwardPassMsaaFBOName,
+                    ForwardPassFBOName,
+                    EReadBufferMode.ColorAttachment0,
+                    blitColor: true,
+                    blitDepth: false,
+                    blitStencil: false,
+                    linearFilter: false);
+            }
+
+            c.Add<VPRC_DepthTest>().Enable = false;
+
+            c.Add<VPRC_CacheOrCreateFBO>().SetOptions(
+                VelocityFBOName,
+                CreateVelocityFBO,
+                GetDesiredFBOSizeInternal);
+
+            using (c.AddUsing<VPRC_BindFBOByName>(x => x.SetOptions(VelocityFBOName, true, true, false, false)))
+            {
+                c.Add<VPRC_DepthTest>().Enable = true;
+                c.Add<VPRC_DepthWrite>().Allow = false;
+                c.Add<VPRC_RenderMotionVectorsPass>().SetOptions(GPURenderDispatch);
+                c.Add<VPRC_DepthWrite>().Allow = true;
+            }
+
             c.Add<VPRC_DepthTest>().Enable = false;
 
             c.Add<VPRC_BloomPass>().SetTargetFBONames(
@@ -278,12 +403,38 @@ public class DefaultRenderPipeline : RenderPipeline
                 BloomBlurTextureName,
                 Stereo);
 
+            var motionBlurChoice = c.Add<VPRC_IfElse>();
+            motionBlurChoice.ConditionEvaluator = ShouldUseMotionBlur;
+            motionBlurChoice.TrueCommands = CreateMotionBlurPassCommands();
+
+            var temporalAccumulate = c.Add<VPRC_TemporalAccumulationPass>();
+            temporalAccumulate.Phase = VPRC_TemporalAccumulationPass.EPhase.Accumulate;
+            temporalAccumulate.ConfigureAccumulationTargets(
+                ForwardPassFBOName,
+                TemporalInputFBOName,
+                TemporalAccumulationFBOName,
+                HistoryCaptureFBOName,
+                HistoryExposureFBOName);
+
             //PostProcess FBO
             //This FBO is created here because it relies on BloomBlurTextureName, which is created in the BloomPass.
             c.Add<VPRC_CacheOrCreateFBO>().SetOptions(
                 PostProcessFBOName,
                 CreatePostProcessFBO,
                 GetDesiredFBOSizeInternal);
+
+            if (EnableFxaa)
+            {
+                c.Add<VPRC_CacheOrCreateFBO>().SetOptions(
+                    PostProcessOutputFBOName,
+                    CreatePostProcessOutputFBO,
+                    GetDesiredFBOSizeFull);
+
+                c.Add<VPRC_CacheOrCreateFBO>().SetOptions(
+                    FxaaFBOName,
+                    CreateFxaaFBO,
+                    GetDesiredFBOSizeFull);
+            }
 
             //c.Add<VPRC_CacheOrCreateFBO>().SetOptions(
             //    UserInterfaceFBOName,
@@ -294,16 +445,22 @@ public class DefaultRenderPipeline : RenderPipeline
         }
         using (c.AddUsing<VPRC_PushViewportRenderArea>(t => t.UseInternalResolution = false))
         {
+            if (EnableFxaa)
+            {
+                c.Add<VPRC_RenderQuadToFBO>().SetTargets(PostProcessFBOName, PostProcessOutputFBOName);
+            }
+
             using (c.AddUsing<VPRC_BindOutputFBO>())
             {
                 //c.Add<VPRC_ClearByBoundFBO>();
-                c.Add<VPRC_RenderQuadFBO>().FrameBufferName = PostProcessFBOName;
+                c.Add<VPRC_RenderQuadFBO>().FrameBufferName = EnableFxaa ? FxaaFBOName : PostProcessFBOName;
 
                 //We're not rendering to an FBO, we're rendering direct to the screen on top of the scene
                 c.Add<VPRC_RenderScreenSpaceUI>()/*.OutputTargetFBOName = UserInterfaceFBOName*/;
             }
         }
         c.Add<VPRC_RenderMeshesPass>().SetOptions((int)EDefaultRenderPass.PostRender, false);
+        c.Add<VPRC_TemporalAccumulationPass>().Phase = VPRC_TemporalAccumulationPass.EPhase.Commit;
         return c;
     }
 
@@ -336,6 +493,19 @@ public class DefaultRenderPipeline : RenderPipeline
         c.Add<VPRC_CacheOrCreateTexture>().SetOptions(
             StencilViewTextureName,
             CreateStencilViewTexture,
+            NeedsRecreateTextureInternalSize,
+            ResizeTextureInternalSize);
+
+        //History depth + view textures
+        c.Add<VPRC_CacheOrCreateTexture>().SetOptions(
+            HistoryDepthStencilTextureName,
+            CreateHistoryDepthStencilTexture,
+            NeedsRecreateTextureInternalSize,
+            ResizeTextureInternalSize);
+
+        c.Add<VPRC_CacheOrCreateTexture>().SetOptions(
+            HistoryDepthViewTextureName,
+            CreateHistoryDepthViewTexture,
             NeedsRecreateTextureInternalSize,
             ResizeTextureInternalSize);
 
@@ -375,6 +545,51 @@ public class DefaultRenderPipeline : RenderPipeline
             CreateLightingTexture,
             NeedsRecreateTextureInternalSize,
             ResizeTextureInternalSize);
+
+        c.Add<VPRC_CacheOrCreateTexture>().SetOptions(
+            VelocityTextureName,
+            CreateVelocityTexture,
+            NeedsRecreateTextureInternalSize,
+            ResizeTextureInternalSize);
+
+        c.Add<VPRC_CacheOrCreateTexture>().SetOptions(
+            HistoryColorTextureName,
+            CreateHistoryColorTexture,
+            NeedsRecreateTextureInternalSize,
+            ResizeTextureInternalSize);
+
+        c.Add<VPRC_CacheOrCreateTexture>().SetOptions(
+            TemporalColorInputTextureName,
+            CreateTemporalColorInputTexture,
+            NeedsRecreateTextureInternalSize,
+            ResizeTextureInternalSize);
+
+        c.Add<VPRC_CacheOrCreateTexture>().SetOptions(
+            TemporalExposureVarianceTextureName,
+            CreateTemporalExposureVarianceTexture,
+            NeedsRecreateTextureInternalSize,
+            ResizeTextureInternalSize);
+
+        c.Add<VPRC_CacheOrCreateTexture>().SetOptions(
+            HistoryExposureVarianceTextureName,
+            CreateHistoryExposureVarianceTexture,
+            NeedsRecreateTextureInternalSize,
+            ResizeTextureInternalSize);
+
+        c.Add<VPRC_CacheOrCreateTexture>().SetOptions(
+            MotionBlurTextureName,
+            CreateMotionBlurTexture,
+            NeedsRecreateTextureInternalSize,
+            ResizeTextureInternalSize);
+
+        if (EnableFxaa)
+        {
+            c.Add<VPRC_CacheOrCreateTexture>().SetOptions(
+                PostProcessOutputTextureName,
+                CreatePostProcessOutputTexture,
+                NeedsRecreateTextureFullSize,
+                ResizeTextureFullSize);
+        }
 
         //HDR Scene texture
         c.Add<VPRC_CacheOrCreateTexture>().SetOptions(
@@ -421,6 +636,35 @@ public class DefaultRenderPipeline : RenderPipeline
     {
         var container = new ViewportRenderCommandContainer(this);
         ConfigureMVAOPass(container.Add<VPRC_MVAOPass>());
+        return container;
+    }
+
+    private ViewportRenderCommandContainer CreateMotionBlurPassCommands()
+    {
+        var container = new ViewportRenderCommandContainer(this);
+
+        container.Add<VPRC_CacheOrCreateFBO>().SetOptions(
+            MotionBlurCopyFBOName,
+            CreateMotionBlurCopyFBO,
+            GetDesiredFBOSizeInternal);
+
+        container.Add<VPRC_CacheOrCreateFBO>().SetOptions(
+            MotionBlurFBOName,
+            CreateMotionBlurFBO,
+            GetDesiredFBOSizeInternal);
+
+        container.Add<VPRC_BlitFrameBuffer>().SetOptions(
+            ForwardPassFBOName,
+            MotionBlurCopyFBOName,
+            EReadBufferMode.ColorAttachment0,
+            blitColor: true,
+            blitDepth: false,
+            blitStencil: false,
+            linearFilter: false);
+
+        // Render the motion blur result back into the forward pass FBO
+        container.Add<VPRC_RenderQuadToFBO>().SetTargets(MotionBlurFBOName, ForwardPassFBOName);
+
         return container;
     }
 
@@ -486,6 +730,15 @@ public class DefaultRenderPipeline : RenderPipeline
 
         return Engine.UserSettings.AmbientOcclusionMode == EAmbientOcclusionMode.MultiView;
     }
+
+    private static MotionBlurSettings? GetMotionBlurSettings()
+    {
+        var renderState = Engine.Rendering.State.RenderingPipelineState;
+        return renderState?.SceneCamera?.PostProcessing?.MotionBlur;
+    }
+
+    private static bool ShouldUseMotionBlur()
+        => GetMotionBlurSettings() is { Enabled: true };
 
     #endregion
 
@@ -583,6 +836,71 @@ public class DefaultRenderPipeline : RenderPipeline
             {
                 DepthStencilViewFormat = EDepthStencilFmt.Stencil,
                 Name = StencilViewTextureName,
+            };
+        }
+    }
+
+    private XRTexture CreateHistoryDepthStencilTexture()
+    {
+        if (Stereo)
+        {
+            var t = XRTexture2DArray.CreateFrameBufferTexture(
+                2,
+                InternalWidth, InternalHeight,
+                EPixelInternalFormat.Depth24Stencil8,
+                EPixelFormat.DepthStencil,
+                EPixelType.UnsignedInt248,
+                EFrameBufferAttachment.DepthStencilAttachment);
+            t.Resizable = false;
+            t.SizedInternalFormat = ESizedInternalFormat.Depth24Stencil8;
+            t.OVRMultiViewParameters = new(0, 2u);
+            t.MinFilter = ETexMinFilter.Nearest;
+            t.MagFilter = ETexMagFilter.Nearest;
+            t.Name = HistoryDepthStencilTextureName;
+            return t;
+        }
+        else
+        {
+            var t = XRTexture2D.CreateFrameBufferTexture(
+                InternalWidth, InternalHeight,
+                EPixelInternalFormat.Depth24Stencil8,
+                EPixelFormat.DepthStencil,
+                EPixelType.UnsignedInt248,
+                EFrameBufferAttachment.DepthStencilAttachment);
+            t.Resizable = false;
+            t.SizedInternalFormat = ESizedInternalFormat.Depth24Stencil8;
+            t.MinFilter = ETexMinFilter.Nearest;
+            t.MagFilter = ETexMagFilter.Nearest;
+            t.Name = HistoryDepthStencilTextureName;
+            return t;
+        }
+    }
+
+    private XRTexture CreateHistoryDepthViewTexture()
+    {
+        if (Stereo)
+        {
+            return new XRTexture2DArrayView(
+                GetTexture<XRTexture2DArray>(HistoryDepthStencilTextureName)!,
+                0u, 1u,
+                0u, 2u,
+                EPixelInternalFormat.Depth24Stencil8,
+                false, false)
+            {
+                DepthStencilViewFormat = EDepthStencilFmt.Depth,
+                Name = HistoryDepthViewTextureName,
+            };
+        }
+        else
+        {
+            return new XRTexture2DView(
+                GetTexture<XRTexture2D>(HistoryDepthStencilTextureName)!,
+                0u, 1u,
+                EPixelInternalFormat.Depth24Stencil8,
+                false, false)
+            {
+                DepthStencilViewFormat = EDepthStencilFmt.Depth,
+                Name = HistoryDepthViewTextureName,
             };
         }
     }
@@ -703,6 +1021,208 @@ public class DefaultRenderPipeline : RenderPipeline
                 EPixelType.HalfFloat);
             //t.Resizable = false;
             //t.SizedInternalFormat = ESizedInternalFormat.Rgba16f;
+            return t;
+        }
+    }
+
+    private XRTexture CreateVelocityTexture()
+    {
+        if (Stereo)
+        {
+            var t = XRTexture2DArray.CreateFrameBufferTexture(
+                2,
+                InternalWidth, InternalHeight,
+                EPixelInternalFormat.RG16f,
+                EPixelFormat.Rg,
+                EPixelType.HalfFloat);
+            t.Resizable = false;
+            t.SizedInternalFormat = ESizedInternalFormat.Rg16f;
+            t.OVRMultiViewParameters = new(0, 2u);
+            t.MinFilter = ETexMinFilter.Nearest;
+            t.MagFilter = ETexMagFilter.Nearest;
+            t.Name = VelocityTextureName;
+            return t;
+        }
+        else
+        {
+            var t = XRTexture2D.CreateFrameBufferTexture(
+                InternalWidth, InternalHeight,
+                EPixelInternalFormat.RG16f,
+                EPixelFormat.Rg,
+                EPixelType.HalfFloat);
+            t.MinFilter = ETexMinFilter.Nearest;
+            t.MagFilter = ETexMagFilter.Nearest;
+            t.Name = VelocityTextureName;
+            return t;
+        }
+    }
+
+    private XRTexture CreateHistoryColorTexture()
+    {
+        if (Stereo)
+        {
+            var t = XRTexture2DArray.CreateFrameBufferTexture(
+                2,
+                InternalWidth, InternalHeight,
+                EPixelInternalFormat.Rgba16f,
+                EPixelFormat.Rgba,
+                EPixelType.HalfFloat);
+            t.Resizable = false;
+            t.SizedInternalFormat = ESizedInternalFormat.Rgba16f;
+            t.OVRMultiViewParameters = new(0, 2u);
+            t.MinFilter = ETexMinFilter.Nearest;
+            t.MagFilter = ETexMagFilter.Nearest;
+            t.Name = HistoryColorTextureName;
+            t.SamplerName = HistoryColorTextureName;
+            return t;
+        }
+        else
+        {
+            var t = XRTexture2D.CreateFrameBufferTexture(
+                InternalWidth, InternalHeight,
+                EPixelInternalFormat.Rgba16f,
+                EPixelFormat.Rgba,
+                EPixelType.HalfFloat);
+            t.MinFilter = ETexMinFilter.Nearest;
+            t.MagFilter = ETexMagFilter.Nearest;
+            t.Name = HistoryColorTextureName;
+            t.SamplerName = HistoryColorTextureName;
+            return t;
+        }
+    }
+
+    private XRTexture CreateTemporalColorInputTexture()
+    {
+        if (Stereo)
+        {
+            var t = XRTexture2DArray.CreateFrameBufferTexture(
+                2,
+                InternalWidth, InternalHeight,
+                EPixelInternalFormat.Rgba16f,
+                EPixelFormat.Rgba,
+                EPixelType.HalfFloat);
+            t.Resizable = false;
+            t.SizedInternalFormat = ESizedInternalFormat.Rgba16f;
+            t.OVRMultiViewParameters = new(0, 2u);
+            t.MinFilter = ETexMinFilter.Nearest;
+            t.MagFilter = ETexMagFilter.Nearest;
+            t.Name = TemporalColorInputTextureName;
+            t.SamplerName = TemporalColorInputTextureName;
+            return t;
+        }
+        else
+        {
+            var t = XRTexture2D.CreateFrameBufferTexture(
+                InternalWidth, InternalHeight,
+                EPixelInternalFormat.Rgba16f,
+                EPixelFormat.Rgba,
+                EPixelType.HalfFloat);
+            t.MinFilter = ETexMinFilter.Nearest;
+            t.MagFilter = ETexMagFilter.Nearest;
+            t.Name = TemporalColorInputTextureName;
+            t.SamplerName = TemporalColorInputTextureName;
+            return t;
+        }
+    }
+
+    private XRTexture CreateTemporalExposureVarianceTexture()
+    {
+        if (Stereo)
+        {
+            var t = XRTexture2DArray.CreateFrameBufferTexture(
+                2,
+                InternalWidth, InternalHeight,
+                EPixelInternalFormat.RG16f,
+                EPixelFormat.Rg,
+                EPixelType.HalfFloat);
+            t.Resizable = false;
+            t.SizedInternalFormat = ESizedInternalFormat.Rg16f;
+            t.OVRMultiViewParameters = new(0, 2u);
+            t.MinFilter = ETexMinFilter.Nearest;
+            t.MagFilter = ETexMagFilter.Nearest;
+            t.Name = TemporalExposureVarianceTextureName;
+            t.SamplerName = TemporalExposureVarianceTextureName;
+            return t;
+        }
+        else
+        {
+            var t = XRTexture2D.CreateFrameBufferTexture(
+                InternalWidth, InternalHeight,
+                EPixelInternalFormat.RG16f,
+                EPixelFormat.Rg,
+                EPixelType.HalfFloat);
+            t.MinFilter = ETexMinFilter.Nearest;
+            t.MagFilter = ETexMagFilter.Nearest;
+            t.Name = TemporalExposureVarianceTextureName;
+            t.SamplerName = TemporalExposureVarianceTextureName;
+            return t;
+        }
+    }
+
+    private XRTexture CreateHistoryExposureVarianceTexture()
+    {
+        if (Stereo)
+        {
+            var t = XRTexture2DArray.CreateFrameBufferTexture(
+                2,
+                InternalWidth, InternalHeight,
+                EPixelInternalFormat.RG16f,
+                EPixelFormat.Rg,
+                EPixelType.HalfFloat);
+            t.Resizable = false;
+            t.SizedInternalFormat = ESizedInternalFormat.Rg16f;
+            t.OVRMultiViewParameters = new(0, 2u);
+            t.MinFilter = ETexMinFilter.Nearest;
+            t.MagFilter = ETexMagFilter.Nearest;
+            t.Name = HistoryExposureVarianceTextureName;
+            t.SamplerName = HistoryExposureVarianceTextureName;
+            return t;
+        }
+        else
+        {
+            var t = XRTexture2D.CreateFrameBufferTexture(
+                InternalWidth, InternalHeight,
+                EPixelInternalFormat.RG16f,
+                EPixelFormat.Rg,
+                EPixelType.HalfFloat);
+            t.MinFilter = ETexMinFilter.Nearest;
+            t.MagFilter = ETexMagFilter.Nearest;
+            t.Name = HistoryExposureVarianceTextureName;
+            t.SamplerName = HistoryExposureVarianceTextureName;
+            return t;
+        }
+    }
+
+    private XRTexture CreateMotionBlurTexture()
+    {
+        if (Stereo)
+        {
+            var t = XRTexture2DArray.CreateFrameBufferTexture(
+                2,
+                InternalWidth, InternalHeight,
+                EPixelInternalFormat.Rgba16f,
+                EPixelFormat.Rgba,
+                EPixelType.HalfFloat);
+            t.Resizable = false;
+            t.SizedInternalFormat = ESizedInternalFormat.Rgba16f;
+            t.OVRMultiViewParameters = new(0, 2u);
+            t.MinFilter = ETexMinFilter.Nearest;
+            t.MagFilter = ETexMagFilter.Nearest;
+            t.Name = MotionBlurTextureName;
+            t.SamplerName = MotionBlurTextureName;
+            return t;
+        }
+        else
+        {
+            var t = XRTexture2D.CreateFrameBufferTexture(
+                InternalWidth, InternalHeight,
+                EPixelInternalFormat.Rgba16f,
+                EPixelFormat.Rgba,
+                EPixelType.HalfFloat);
+            t.MinFilter = ETexMinFilter.Nearest;
+            t.MagFilter = ETexMagFilter.Nearest;
+            t.Name = MotionBlurTextureName;
+            t.SamplerName = MotionBlurTextureName;
             return t;
         }
     }
@@ -828,6 +1348,33 @@ public class DefaultRenderPipeline : RenderPipeline
             return t;
         }
     }
+
+    private XRTexture CreatePostProcessOutputTexture()
+    {
+        var (width, height) = GetDesiredFBOSizeFull();
+        bool outputHdr = Engine.Rendering.Settings.OutputHDR;
+
+        EPixelInternalFormat internalFormat = outputHdr ? EPixelInternalFormat.Rgba16f : EPixelInternalFormat.Rgba8;
+        EPixelType pixelType = outputHdr ? EPixelType.HalfFloat : EPixelType.UnsignedByte;
+        ESizedInternalFormat sized = outputHdr ? ESizedInternalFormat.Rgba16f : ESizedInternalFormat.Rgba8;
+
+        XRTexture2D texture = XRTexture2D.CreateFrameBufferTexture(
+            width,
+            height,
+            internalFormat,
+            EPixelFormat.Rgba,
+            pixelType,
+            EFrameBufferAttachment.ColorAttachment0);
+        texture.Resizable = true;
+        texture.SizedInternalFormat = sized;
+        texture.MinFilter = ETexMinFilter.Linear;
+        texture.MagFilter = ETexMagFilter.Linear;
+        texture.UWrap = ETexWrapMode.ClampToEdge;
+        texture.VWrap = ETexWrapMode.ClampToEdge;
+        texture.SamplerName = PostProcessOutputTextureName;
+        texture.Name = PostProcessOutputTextureName;
+        return texture;
+    }
     //private XRTexture CreateHUDTexture()
     //{
     //    uint w = (uint)State.WindowViewport!.Width;
@@ -922,6 +1469,42 @@ public class DefaultRenderPipeline : RenderPipeline
         PostProcessFBO.SettingUniforms += PostProcessFBO_SettingUniforms;
         return PostProcessFBO;
     }
+
+    private XRFrameBuffer CreatePostProcessOutputFBO()
+    {
+        XRTexture outputTexture = GetTexture<XRTexture>(PostProcessOutputTextureName)!;
+        if (outputTexture is not IFrameBufferAttachement attach)
+            throw new InvalidOperationException("Post-process output texture must be FBO attachable.");
+
+        return new XRFrameBuffer((attach, EFrameBufferAttachment.ColorAttachment0, 0, -1))
+        {
+            Name = PostProcessOutputFBOName
+        };
+    }
+
+    private XRFrameBuffer CreateFxaaFBO()
+    {
+        XRTexture fxaaSource = GetTexture<XRTexture>(PostProcessOutputTextureName)!;
+        XRShader fxaaShader = XRShader.EngineShader(Path.Combine(SceneShaderPath, "FXAA.fs"), EShaderType.Fragment);
+        XRMaterial fxaaMaterial = new([fxaaSource], fxaaShader)
+        {
+            RenderOptions = new RenderingParameters()
+            {
+                DepthTest = new DepthTest()
+                {
+                    Enabled = ERenderParamUsage.Enabled,
+                    Function = EComparison.Always,
+                    UpdateDepth = false,
+                }
+            }
+        };
+        XRQuadFrameBuffer fxaaFbo = new(fxaaMaterial)
+        {
+            Name = FxaaFBOName
+        };
+        fxaaFbo.SettingUniforms += FxaaFBO_SettingUniforms;
+        return fxaaFbo;
+    }
     private XRFrameBuffer CreateForwardPassFBO()
     {
         XRTexture hdrSceneTex = GetTexture<XRTexture>(HDRSceneTextureName)!;
@@ -962,6 +1545,231 @@ public class DefaultRenderPipeline : RenderPipeline
             (dsAttach, EFrameBufferAttachment.DepthStencilAttachment, 0, -1));
 
         return fbo;
+    }
+
+    private XRFrameBuffer CreateForwardPassMsaaFBO()
+    {
+        XRRenderBuffer colorBuffer = new(InternalWidth, InternalHeight, GetForwardMsaaColorFormat(), MsaaSampleCount)
+        {
+            FrameBufferAttachment = EFrameBufferAttachment.ColorAttachment0,
+            Name = $"{ForwardPassMsaaFBOName}_Color"
+        };
+        colorBuffer.Allocate();
+
+        XRRenderBuffer depthBuffer = new(InternalWidth, InternalHeight, ERenderBufferStorage.Depth24Stencil8, MsaaSampleCount)
+        {
+            FrameBufferAttachment = EFrameBufferAttachment.DepthStencilAttachment,
+            Name = $"{ForwardPassMsaaFBOName}_DepthStencil"
+        };
+        depthBuffer.Allocate();
+
+        XRFrameBuffer fbo = new(
+            (colorBuffer, EFrameBufferAttachment.ColorAttachment0, 0, -1),
+            (depthBuffer, EFrameBufferAttachment.DepthStencilAttachment, 0, -1))
+        {
+            Name = ForwardPassMsaaFBOName
+        };
+
+        return fbo;
+    }
+
+    private XRMaterial CreateMotionVectorsMaterial()
+    {
+        XRShader shader = XRShader.EngineShader(Path.Combine(SceneShaderPath, "MotionVectors.fs"), EShaderType.Fragment);
+        XRMaterial material = new(Array.Empty<XRTexture?>(), shader)
+        {
+            RenderOptions = new RenderingParameters()
+            {
+                DepthTest = new DepthTest()
+                {
+                    Enabled = ERenderParamUsage.Enabled,
+                    Function = EComparison.Lequal,
+                    UpdateDepth = false,
+                },
+                RequiredEngineUniforms = EUniformRequirements.None
+            }
+        };
+
+        material.SettingUniforms += MotionVectorsMaterial_SettingUniforms;
+        return material;
+    }
+
+    private void MotionVectorsMaterial_SettingUniforms(XRMaterialBase material, XRRenderProgram program)
+    {
+        if (VPRC_TemporalAccumulationPass.TryGetTemporalUniformData(out var temporal))
+        {
+            program.Uniform("HistoryReady", temporal.HistoryReady);
+            program.Uniform("CurrViewProjection", temporal.CurrViewProjectionUnjittered);
+            program.Uniform("PrevViewProjection", temporal.PrevViewProjectionUnjittered);
+        }
+        else
+        {
+            program.Uniform("HistoryReady", false);
+            program.Uniform("CurrViewProjection", Matrix4x4.Identity);
+            program.Uniform("PrevViewProjection", Matrix4x4.Identity);
+        }
+    }
+
+    private XRFrameBuffer CreateVelocityFBO()
+    {
+        if (GetTexture<XRTexture>(VelocityTextureName) is not IFrameBufferAttachement velocityAttachment)
+            throw new InvalidOperationException("Velocity texture is not an FBO-attachable texture.");
+
+        if (GetTexture<XRTexture>(DepthStencilTextureName) is not IFrameBufferAttachement depthAttachment)
+            throw new InvalidOperationException("Depth/Stencil texture is not an FBO-attachable texture.");
+
+        return new XRFrameBuffer(
+            (velocityAttachment, EFrameBufferAttachment.ColorAttachment0, 0, -1),
+            (depthAttachment, EFrameBufferAttachment.DepthStencilAttachment, 0, -1))
+        {
+            Name = VelocityFBOName
+        };
+    }
+
+    private XRFrameBuffer CreateHistoryCaptureFBO()
+    {
+        if (GetTexture<XRTexture>(HistoryColorTextureName) is not IFrameBufferAttachement colorAttachment)
+            throw new InvalidOperationException("History color texture is not an FBO-attachable texture.");
+
+        if (GetTexture<XRTexture>(HistoryDepthStencilTextureName) is not IFrameBufferAttachement depthAttachment)
+            throw new InvalidOperationException("History depth texture is not an FBO-attachable texture.");
+
+        return new XRFrameBuffer(
+            (colorAttachment, EFrameBufferAttachment.ColorAttachment0, 0, -1),
+            (depthAttachment, EFrameBufferAttachment.DepthStencilAttachment, 0, -1))
+        {
+            Name = HistoryCaptureFBOName
+        };
+    }
+
+    private XRFrameBuffer CreateTemporalInputFBO()
+    {
+        if (GetTexture<XRTexture>(TemporalColorInputTextureName) is not IFrameBufferAttachement colorAttachment)
+            throw new InvalidOperationException("Temporal color input texture is not FBO attachable.");
+
+        return new XRFrameBuffer((colorAttachment, EFrameBufferAttachment.ColorAttachment0, 0, -1))
+        {
+            Name = TemporalInputFBOName
+        };
+    }
+
+    private XRFrameBuffer CreateTemporalAccumulationFBO()
+    {
+        XRTexture[] references =
+        [
+            GetTexture<XRTexture>(TemporalColorInputTextureName)!,
+            GetTexture<XRTexture>(HistoryColorTextureName)!,
+            GetTexture<XRTexture>(VelocityTextureName)!,
+            GetTexture<XRTexture>(DepthViewTextureName)!,
+            GetTexture<XRTexture>(HistoryDepthViewTextureName)!,
+            GetTexture<XRTexture>(HistoryExposureVarianceTextureName)!,
+        ];
+
+        XRMaterial material = new(references,
+            XRShader.EngineShader(Path.Combine(SceneShaderPath, "TemporalAccumulation.fs"), EShaderType.Fragment))
+        {
+            RenderOptions = new RenderingParameters()
+            {
+                DepthTest = new()
+                {
+                    Enabled = ERenderParamUsage.Disabled,
+                    Function = EComparison.Always,
+                    UpdateDepth = false,
+                }
+            }
+        };
+
+        var fbo = new XRQuadFrameBuffer(material) { Name = TemporalAccumulationFBOName };
+
+        if (GetTexture<XRTexture>(HDRSceneTextureName) is not IFrameBufferAttachement filteredAttachment)
+            throw new InvalidOperationException("HDR scene texture is not FBO attachable.");
+
+        if (GetTexture<XRTexture>(TemporalExposureVarianceTextureName) is not IFrameBufferAttachement exposureAttachment)
+            throw new InvalidOperationException("Temporal exposure texture is not FBO attachable.");
+
+        fbo.SetRenderTargets(
+            (filteredAttachment, EFrameBufferAttachment.ColorAttachment0, 0, -1),
+            (exposureAttachment, EFrameBufferAttachment.ColorAttachment1, 0, -1));
+
+        fbo.SettingUniforms += TemporalAccumulationFBO_SettingUniforms;
+        return fbo;
+    }
+
+    private XRFrameBuffer CreateMotionBlurCopyFBO()
+    {
+        if (GetTexture<XRTexture>(MotionBlurTextureName) is not IFrameBufferAttachement attachment)
+            throw new InvalidOperationException("Motion blur texture is not FBO attachable.");
+
+        return new XRFrameBuffer((attachment, EFrameBufferAttachment.ColorAttachment0, 0, -1))
+        {
+            Name = MotionBlurCopyFBOName
+        };
+    }
+
+    private XRFrameBuffer CreateMotionBlurFBO()
+    {
+        XRTexture motionBlurCopy = GetTexture<XRTexture>(MotionBlurTextureName)!;
+        XRTexture velocityTex = GetTexture<XRTexture>(VelocityTextureName)!;
+        XRTexture depthTex = GetTexture<XRTexture>(DepthViewTextureName)!;
+
+        XRMaterial material = new(
+            [motionBlurCopy, velocityTex, depthTex],
+            XRShader.EngineShader(Path.Combine(SceneShaderPath, "MotionBlur.fs"), EShaderType.Fragment))
+        {
+            RenderOptions = new RenderingParameters()
+            {
+                DepthTest = new()
+                {
+                    Enabled = ERenderParamUsage.Disabled,
+                    Function = EComparison.Always,
+                    UpdateDepth = false,
+                }
+            }
+        };
+
+        var fbo = new XRQuadFrameBuffer(material) { Name = MotionBlurFBOName };
+        fbo.SettingUniforms += MotionBlurFBO_SettingUniforms;
+        return fbo;
+    }
+
+    private XRFrameBuffer CreateHistoryExposureFBO()
+    {
+        if (GetTexture<XRTexture>(HistoryExposureVarianceTextureName) is not IFrameBufferAttachement attachment)
+            throw new InvalidOperationException("History exposure texture is not FBO attachable.");
+
+        return new XRFrameBuffer((attachment, EFrameBufferAttachment.ColorAttachment0, 0, -1))
+        {
+            Name = HistoryExposureFBOName
+        };
+    }
+
+    private ERenderBufferStorage GetForwardMsaaColorFormat()
+        => Engine.Rendering.Settings.OutputHDR ? ERenderBufferStorage.Rgba16f : ERenderBufferStorage.Rgba8;
+
+    private XRFrameBuffer CreateDepthPreloadFBO()
+    {
+        XRTexture depthViewTexture = GetTexture<XRTexture>(DepthViewTextureName)!;
+
+        XRMaterial material = new(
+            [depthViewTexture],
+            XRShader.EngineShader(Path.Combine(SceneShaderPath, "CopyDepthFromTexture.fs"), EShaderType.Fragment))
+        {
+            RenderOptions = new RenderingParameters()
+            {
+                DepthTest = new()
+                {
+                    Enabled = ERenderParamUsage.Disabled,
+                    Function = EComparison.Always,
+                    UpdateDepth = true,
+                },
+                WriteRed = false,
+                WriteGreen = false,
+                WriteBlue = false,
+                WriteAlpha = false,
+            }
+        };
+
+        return new XRQuadFrameBuffer(material, false) { Name = DepthPreloadFBOName };
     }
     private XRFrameBuffer CreateLightCombineFBO()
     {
@@ -1053,6 +1861,14 @@ public class DefaultRenderPipeline : RenderPipeline
 
         sceneCam.SetPostProcessUniforms(materialProgram);
     }
+
+    private void FxaaFBO_SettingUniforms(XRRenderProgram materialProgram)
+    {
+        float width = Math.Max(1u, FullWidth);
+        float height = Math.Max(1u, FullHeight);
+        var texelStep = new Vector2(1.0f / width, 1.0f / height);
+        materialProgram.Uniform("FxaaTexelStep", texelStep);
+    }
     private void BrightPassFBO_SettingUniforms(XRRenderProgram program)
     {
         var sceneCam = RenderingPipelineState?.SceneCamera;
@@ -1097,6 +1913,55 @@ public class DefaultRenderPipeline : RenderPipeline
         float height = region?.Height > 0 ? region.Value.Height : InternalHeight;
         program.Uniform("ScreenWidth", width);
         program.Uniform("ScreenHeight", height);
+    }
+
+    private void MotionBlurFBO_SettingUniforms(XRRenderProgram program)
+    {
+        float width = Math.Max(1u, InternalWidth);
+        float height = Math.Max(1u, InternalHeight);
+        var texelSize = new Vector2(1.0f / width, 1.0f / height);
+
+        var settings = GetMotionBlurSettings();
+        if (settings is null || !settings.Enabled)
+        {
+            program.Uniform("TexelSize", texelSize);
+            program.Uniform("ShutterScale", 0.0f);
+            program.Uniform("VelocityThreshold", 1.0f);
+            program.Uniform("DepthRejectThreshold", 0.0f);
+            program.Uniform("MaxBlurPixels", 0.0f);
+            program.Uniform("SampleFalloff", 1.0f);
+            program.Uniform("MaxSamples", 1);
+            return;
+        }
+
+        settings.SetUniforms(program, texelSize);
+    }
+
+    private void TemporalAccumulationFBO_SettingUniforms(XRRenderProgram program)
+    {
+        if (VPRC_TemporalAccumulationPass.TryGetTemporalUniformData(out var temporalData))
+        {
+            float width = Math.Max(1u, temporalData.Width);
+            float height = Math.Max(1u, temporalData.Height);
+            program.Uniform("HistoryReady", temporalData.HistoryReady);
+            program.Uniform("TexelSize", new Vector2(1.0f / width, 1.0f / height));
+        }
+        else
+        {
+            program.Uniform("HistoryReady", false);
+            program.Uniform("TexelSize", Vector2.Zero);
+        }
+
+        program.Uniform("FeedbackMin", TemporalFeedbackMin);
+        program.Uniform("FeedbackMax", TemporalFeedbackMax);
+        program.Uniform("VarianceGamma", TemporalVarianceGamma);
+        program.Uniform("CatmullRadius", TemporalCatmullRadius);
+        program.Uniform("DepthRejectThreshold", TemporalDepthRejectThreshold);
+        program.Uniform("ReactiveTransparencyRange", TemporalReactiveTransparencyRange);
+        program.Uniform("ReactiveVelocityScale", TemporalReactiveVelocityScale);
+        program.Uniform("ReactiveLumaThreshold", TemporalReactiveLumaThreshold);
+        program.Uniform("DepthDiscontinuityScale", TemporalDepthDiscontinuityScale);
+        program.Uniform("ConfidencePower", TemporalConfidencePower);
     }
 
     #endregion

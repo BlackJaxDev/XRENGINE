@@ -657,9 +657,9 @@ public unsafe partial class VulkanRenderer
 
         protected abstract TextureLayout DescribeTexture();
 
-        protected readonly record struct TextureLayout(Extent3D Extent, uint ArrayLayers, uint MipLevels);
+        protected internal readonly record struct TextureLayout(Extent3D Extent, uint ArrayLayers, uint MipLevels);
 
-        protected readonly record struct AttachmentViewKey(uint BaseMipLevel, uint LevelCount, uint BaseArrayLayer, uint LayerCount, ImageViewType ViewType, ImageAspectFlags AspectMask);
+        protected internal readonly record struct AttachmentViewKey(uint BaseMipLevel, uint LevelCount, uint BaseArrayLayer, uint LayerCount, ImageViewType ViewType, ImageAspectFlags AspectMask);
 
         protected virtual void PushTextureData()
         {

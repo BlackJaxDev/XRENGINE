@@ -1,4 +1,5 @@
 ﻿using MagicPhysX;
+using System;
 using System.Linq;
 using System.Numerics;
 using XREngine.Components.Scene.Mesh;
@@ -71,13 +72,24 @@ namespace XREngine
                 Asynchronous,
                 Parallel
             }
+
+            public enum EAntiAliasingMode
+            {
+                None,
+                Msaa,
+                Fxaa,
+                Taa,
+                Tsr
+            }
             /// <summary>
             /// Contains global rendering settings.
             /// </summary>
             public class EngineSettings : XRAsset
             {
                 private Vector3 _defaultLuminance = new(0.299f, 0.587f, 0.114f);
-                private bool _outputHDR = true;
+                private bool _outputHDR = false;
+                private EAntiAliasingMode _antiAliasingMode = EAntiAliasingMode.Msaa;
+                private uint _msaaSampleCount = 4u;
                 private bool _allowShaderPipelines = true;
                 private bool _useIntegerUniformsInShaders = true;
                 private bool _optimizeTo4Weights = false;
@@ -171,6 +183,28 @@ namespace XREngine
                 {
                     get => _outputHDR;
                     set => SetField(ref _outputHDR, value);
+                }
+
+                /// <summary>
+                /// Number of samples to use when MSAA is enabled (set to 1 to disable).
+                /// </summary>
+                public uint MsaaSampleCount
+                {
+                    get => _msaaSampleCount;
+                    set => SetField(ref _msaaSampleCount, Math.Clamp(value, 1u, 8u));
+                }
+
+                /// <summary>
+                /// Selects which anti-aliasing technique to use. Future modes (TAA/TSR) fall back to None until implemented.
+                /// </summary>
+                public EAntiAliasingMode AntiAliasingMode
+                {
+                    get => _antiAliasingMode;
+                    set
+                    {
+                        if (!SetField(ref _antiAliasingMode, value))
+                            return;
+                    }
                 }
 
                 /// <summary>

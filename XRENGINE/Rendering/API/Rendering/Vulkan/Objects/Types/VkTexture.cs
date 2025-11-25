@@ -17,7 +17,7 @@ public unsafe partial class VulkanRenderer
             return string.IsNullOrWhiteSpace(describing) ? null : describing;
         }
 
-        private protected VulkanPhysicalImageGroup? TryResolvePhysicalGroup(bool ensureAllocated = true)
+        internal VulkanPhysicalImageGroup? TryResolvePhysicalGroup(bool ensureAllocated = true)
         {
             string? resourceName = ResolveLogicalResourceName();
             if (string.IsNullOrWhiteSpace(resourceName))
@@ -44,7 +44,7 @@ public unsafe partial class VulkanRenderer
             return false;
         }
 
-        private protected bool TryResolvePhysicalGroup(out VulkanPhysicalImageGroup? group)
+        internal bool TryResolvePhysicalGroup(out VulkanPhysicalImageGroup? group)
         {
             group = TryResolvePhysicalGroup(true);
             return group is not null;

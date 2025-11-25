@@ -56,9 +56,23 @@ namespace XREngine.Rendering
             if (Targets is null)
                 return;
 
-            foreach (var (texture, _, _, _) in Targets)
-                if (texture is XRTexture2D texture2D)
-                    texture2D.Resize(width, height);
+            foreach (var (attachment, _, _, _) in Targets)
+            {
+                switch (attachment)
+                {
+                    case XRTexture2D texture2D:
+                        texture2D.Resize(width, height);
+                        break;
+                    case XRRenderBuffer renderBuffer:
+                        if (renderBuffer.Width != width || renderBuffer.Height != height)
+                        {
+                            renderBuffer.Width = width;
+                            renderBuffer.Height = height;
+                            renderBuffer.Allocate();
+                        }
+                        break;
+                }
+            }
 
             Resized?.Invoke();
         }

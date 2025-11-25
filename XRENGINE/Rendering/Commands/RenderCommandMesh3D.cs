@@ -1,6 +1,8 @@
 ﻿using System.Numerics;
+using XREngine;
 using XREngine.Rendering;
 using XREngine.Rendering.Commands;
+using XREngine.Rendering.Models.Materials;
 using YamlDotNet.Serialization;
 
 namespace XREngine.Data.Rendering
@@ -34,6 +36,11 @@ namespace XREngine.Data.Rendering
         private XRMaterial? _renderMaterialOverride;
         private uint _renderInstances;
         private bool _renderWorldMatrixIsModelMatrix;
+        private Matrix4x4 _renderPrevWorldMatrix = Matrix4x4.Identity;
+        private bool _renderHasPrevWorldMatrix;
+
+        private Matrix4x4 _lastSubmittedModelMatrix = Matrix4x4.Identity;
+        private bool _lastSubmittedModelMatrixValid;
 
         [YamlIgnore]
         public XRMeshRenderer? Mesh
@@ -83,11 +90,37 @@ namespace XREngine.Data.Rendering
                 return;
 
             OnPreRender();
-            mesh.Render(
-                _renderWorldMatrixIsModelMatrix ? _renderWorldMatrix : Matrix4x4.Identity,
-                _renderMaterialOverride,
-                _renderInstances);
-            OnPostRender();
+
+            StateObject? matrixTicket = null;
+            Matrix4x4 prevModelForUniforms = GetPreviousModelMatrix();
+            void ApplyPrevModelUniforms(XRRenderProgram vertexProgram, XRRenderProgram materialProgram)
+            {
+                vertexProgram.Uniform(EEngineUniform.PrevModelMatrix.ToString(), prevModelForUniforms);
+                materialProgram.Uniform(EEngineUniform.PrevModelMatrix.ToString(), prevModelForUniforms);
+            }
+
+            mesh.SettingUniforms += ApplyPrevModelUniforms;
+            try
+            {
+                var pipelineState = Engine.Rendering.State.RenderingPipelineState;
+                if (pipelineState is not null)
+                {
+                    Matrix4x4 currentModel = _renderWorldMatrixIsModelMatrix ? _renderWorldMatrix : Matrix4x4.Identity;
+                    Matrix4x4 prevModel = _renderHasPrevWorldMatrix ? _renderPrevWorldMatrix : currentModel;
+                    matrixTicket = pipelineState.PushModelMatrices(currentModel, prevModel, _renderHasPrevWorldMatrix && _renderWorldMatrixIsModelMatrix);
+                }
+
+                mesh.Render(
+                    _renderWorldMatrixIsModelMatrix ? _renderWorldMatrix : Matrix4x4.Identity,
+                    _renderMaterialOverride,
+                    _renderInstances);
+            }
+            finally
+            {
+                mesh.SettingUniforms -= ApplyPrevModelUniforms;
+                matrixTicket?.Dispose();
+                OnPostRender();
+            }
         }
 
         public override void CollectedForRender(XRCamera? camera)
@@ -107,6 +140,30 @@ namespace XREngine.Data.Rendering
             _renderMaterialOverride = MaterialOverride;
             _renderInstances = Instances;
             _renderWorldMatrixIsModelMatrix = WorldMatrixIsModelMatrix;
+            _renderPrevWorldMatrix = _lastSubmittedModelMatrix;
+            _renderHasPrevWorldMatrix = _lastSubmittedModelMatrixValid && _renderWorldMatrixIsModelMatrix;
+
+            if (WorldMatrixIsModelMatrix)
+            {
+                _lastSubmittedModelMatrix = WorldMatrix;
+                _lastSubmittedModelMatrixValid = true;
+            }
+            else
+            {
+                _lastSubmittedModelMatrix = Matrix4x4.Identity;
+                _lastSubmittedModelMatrixValid = false;
+            }
+        }
+
+        private Matrix4x4 GetPreviousModelMatrix()
+        {
+            if (!_renderWorldMatrixIsModelMatrix)
+                return Matrix4x4.Identity;
+
+            if (_renderHasPrevWorldMatrix)
+                return _renderPrevWorldMatrix;
+
+            return _renderWorldMatrix;
         }
     }
 }

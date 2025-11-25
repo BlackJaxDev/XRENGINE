@@ -306,7 +306,7 @@ namespace XREngine.Rendering.OpenGL
                     MeshRenderer.PushBoneMatricesToGPU();
                     MeshRenderer.PushBlendshapeWeightsToGPU();
 
-                    SetMeshUniforms(modelMatrix, vtx!, materialOverride?.BillboardMode ?? billboardMode);
+                    SetMeshUniforms(modelMatrix, vtx!, mat, materialOverride?.BillboardMode ?? billboardMode);
                     material.SetUniforms(mat);
                     OnSettingUniforms(vtx!, mat!);
                     Renderer.RenderMesh(this, false, instances);
@@ -429,7 +429,7 @@ namespace XREngine.Rendering.OpenGL
                 return true;
             }
 
-            private static void SetMeshUniforms(Matrix4x4 modelMatrix, GLRenderProgram vertexProgram, EMeshBillboardMode billboardMode)
+            private static void SetMeshUniforms(Matrix4x4 modelMatrix, GLRenderProgram vertexProgram, GLRenderProgram? materialProgram, EMeshBillboardMode billboardMode)
             {
                 bool stereoPass = Engine.Rendering.State.IsStereoPass;
                 var cam = Engine.Rendering.State.RenderingCamera;
@@ -442,7 +442,21 @@ namespace XREngine.Rendering.OpenGL
                 else
                     PassCameraUniforms(vertexProgram, cam, EEngineUniform.InverseViewMatrix, EEngineUniform.ProjMatrix);
                 
-                vertexProgram.Uniform(EEngineUniform.ModelMatrix, modelMatrix);
+                void SetUniformBoth(EEngineUniform uniform, Matrix4x4 value)
+                {
+                    vertexProgram.Uniform(uniform, value);
+                    materialProgram?.Uniform(uniform, value);
+                }
+
+                SetUniformBoth(EEngineUniform.ModelMatrix, modelMatrix);
+
+                var renderState = Engine.Rendering.State.RenderingPipelineState;
+                Matrix4x4 prevModel = renderState?.PreviousModelMatrix ?? modelMatrix;
+                bool prevValid = renderState?.PreviousModelMatrixValid ?? false;
+                if (!prevValid)
+                    prevModel = modelMatrix;
+                SetUniformBoth(EEngineUniform.PrevModelMatrix, prevModel);
+
                 vertexProgram.Uniform(EEngineUniform.VRMode, stereoPass);
                 vertexProgram.Uniform(EEngineUniform.BillboardMode, (int)billboardMode);
             }
