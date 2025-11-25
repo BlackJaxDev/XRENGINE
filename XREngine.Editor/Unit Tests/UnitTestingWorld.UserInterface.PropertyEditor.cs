@@ -13,6 +13,7 @@ using XREngine.Components;
 using XREngine.Core.Files;
 using XREngine.Data.Colors;
 using XREngine.Editor.ComponentEditors;
+using XREngine.Rendering.OpenGL;
 
 namespace XREngine.Editor;
 
@@ -158,9 +159,43 @@ public static partial class UnitTestingWorld
                     if (TryDrawCollectionProperty(obj, info.Property, info.DisplayName, info.Description, info.Value, visited))
                         continue;
 
+                    // Handle GL objects with their custom ImGui editors
+                    if (TryDrawGLObjectProperty(info.Property, info.DisplayName, info.Description, info.Value))
+                        continue;
+
                     DrawSettingsObject(info.Value, info.DisplayName, info.Description, visited, false, info.Property.Name);
                 }
             }
+        }
+
+        /// <summary>
+        /// Attempts to draw a GL object property using the attribute-based editor registry.
+        /// </summary>
+        /// <param name="property">The property info.</param>
+        /// <param name="label">The display label.</param>
+        /// <param name="description">Optional description for tooltip.</param>
+        /// <param name="value">The GL object instance.</param>
+        /// <returns>True if the property was handled as a GL object.</returns>
+        private static bool TryDrawGLObjectProperty(PropertyInfo property, string label, string? description, object value)
+        {
+            if (value is not OpenGLRenderer.GLObjectBase glObject)
+                return false;
+
+            ImGui.PushID(property.Name);
+
+            bool open = ImGui.TreeNodeEx(label, ImGuiTreeNodeFlags.DefaultOpen);
+            if (!string.IsNullOrEmpty(description) && ImGui.IsItemHovered())
+                ImGui.SetTooltip(description);
+
+            if (open)
+            {
+                // Use the attribute-based registry to draw the appropriate editor
+                GLObjectEditorRegistry.DrawInspector(glObject);
+                ImGui.TreePop();
+            }
+
+            ImGui.PopID();
+            return true;
         }
 
         private static bool TryDrawCollectionProperty(object? owner, PropertyInfo property, string label, string? description, object value, HashSet<object> visited)

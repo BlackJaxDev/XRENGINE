@@ -34,7 +34,8 @@ public static partial class UnitTestingWorld
                 string xrName,
                 nint handle,
                 GenericRenderObject renderObject,
-                AbstractRenderAPIObject apiObject)
+                AbstractRenderAPIObject apiObject,
+                string? pipelineName)
             {
                 WindowTitle = windowTitle;
                 ApiType = apiType;
@@ -44,6 +45,7 @@ public static partial class UnitTestingWorld
                 Handle = handle;
                 RenderObject = renderObject;
                 ApiObject = apiObject;
+                PipelineName = pipelineName;
             }
 
             public string WindowTitle { get; }
@@ -54,6 +56,7 @@ public static partial class UnitTestingWorld
             public nint Handle { get; }
             public GenericRenderObject RenderObject { get; }
             public AbstractRenderAPIObject ApiObject { get; }
+            public string? PipelineName { get; }
         }
 
         private enum OpenGlApiGroupMode
@@ -61,6 +64,7 @@ public static partial class UnitTestingWorld
             None,
             ApiType,
             Window,
+            RenderPipeline,
         }
 
         private static void DrawOpenGLApiObjectsPanel()
@@ -92,6 +96,9 @@ public static partial class UnitTestingWorld
             var rows = _openGlApiObjectScratch;
             rows.Clear();
 
+            // Collect all pipeline instances for ownership lookup
+            var pipelineOwnership = new Dictionary<GenericRenderObject, string>(ReferenceEqualityComparer.Instance);
+
             foreach (var window in Engine.Windows)
             {
                 if (window?.Renderer is not OpenGLRenderer glRenderer)
@@ -109,6 +116,41 @@ public static partial class UnitTestingWorld
 
                 if (string.IsNullOrWhiteSpace(windowTitle))
                     windowTitle = $"Window 0x{window.GetHashCode():X}";
+
+                // Iterate viewports to find pipeline ownership
+                foreach (var viewport in window.Viewports)
+                {
+                    var pipelineInstance = viewport?.RenderPipelineInstance;
+                    var pipeline = pipelineInstance?.Pipeline;
+                    if (pipelineInstance is null || pipeline is null)
+                        continue;
+
+                    string pipelineName = pipeline.DebugName;
+
+                    // Check FBOs owned by this pipeline
+                    foreach (var fbo in pipelineInstance.Resources.EnumerateFrameBufferInstances())
+                    {
+                        if (!pipelineOwnership.ContainsKey(fbo))
+                            pipelineOwnership[fbo] = pipelineName;
+
+                        // Also tag the textures within this FBO
+                        if (fbo.Targets is not null)
+                        {
+                            foreach (var (target, _, _, _) in fbo.Targets)
+                            {
+                                if (target is GenericRenderObject targetRenderObject && !pipelineOwnership.ContainsKey(targetRenderObject))
+                                    pipelineOwnership[targetRenderObject] = pipelineName;
+                            }
+                        }
+                    }
+
+                    // Check textures owned by this pipeline
+                    foreach (var tex in pipelineInstance.Resources.EnumerateTextureInstances())
+                    {
+                        if (!pipelineOwnership.ContainsKey(tex))
+                            pipelineOwnership[tex] = pipelineName;
+                    }
+                }
 
                 foreach (var pair in glRenderer.RenderObjectCache)
                 {
@@ -154,6 +196,9 @@ public static partial class UnitTestingWorld
                         xrName = renderObject.GetType().Name;
                     }
 
+                    // Look up pipeline ownership
+                    pipelineOwnership.TryGetValue(renderObject, out string? pipelineName);
+
                     rows.Add(new OpenGLApiObjectRow(
                         windowTitle,
                         apiObject.GetType().Name,
@@ -162,7 +207,8 @@ public static partial class UnitTestingWorld
                         xrName,
                         apiObject.GetHandle(),
                         renderObject,
-                        apiObject));
+                        apiObject,
+                        pipelineName));
                 }
             }
 
@@ -468,10 +514,25 @@ public static partial class UnitTestingWorld
 
             var comparer = StringComparer.OrdinalIgnoreCase;
             var lookup = new Dictionary<string, List<OpenGLApiObjectRow>>(comparer);
+            List<OpenGLApiObjectRow>? unownedList = null;
 
             foreach (var row in rows)
             {
-                string key = _openGlGroupMode == OpenGlApiGroupMode.ApiType ? row.ApiType : row.WindowTitle;
+                string key = _openGlGroupMode switch
+                {
+                    OpenGlApiGroupMode.ApiType => row.ApiType,
+                    OpenGlApiGroupMode.RenderPipeline => row.PipelineName ?? string.Empty,
+                    _ => row.WindowTitle
+                };
+
+                // For RenderPipeline mode, group unowned items separately
+                if (_openGlGroupMode == OpenGlApiGroupMode.RenderPipeline && string.IsNullOrEmpty(key))
+                {
+                    unownedList ??= new List<OpenGLApiObjectRow>();
+                    unownedList.Add(row);
+                    continue;
+                }
+
                 if (!lookup.TryGetValue(key, out var list))
                 {
                     list = new List<OpenGLApiObjectRow>();
@@ -483,6 +544,10 @@ public static partial class UnitTestingWorld
 
             foreach (var key in lookup.Keys.OrderBy(k => k, comparer))
                 yield return (key, lookup[key]);
+
+            // Yield unowned items last in RenderPipeline mode
+            if (unownedList is not null && unownedList.Count > 0)
+                yield return ("<Unowned>", unownedList);
         }
 
         private static void DrawOpenGlFilterCombo(string label, IReadOnlyList<string> options, ref string? current)
@@ -534,6 +599,7 @@ public static partial class UnitTestingWorld
             {
                 OpenGlApiGroupMode.ApiType => "API Type",
                 OpenGlApiGroupMode.Window => "Window",
+                OpenGlApiGroupMode.RenderPipeline => "Render Pipeline",
                 _ => "None",
             };
 
@@ -560,7 +626,8 @@ public static partial class UnitTestingWorld
                 row.ApiName.Contains(token, StringComparison.OrdinalIgnoreCase) ||
                 row.ApiType.Contains(token, StringComparison.OrdinalIgnoreCase) ||
                 row.XrName.Contains(token, StringComparison.OrdinalIgnoreCase) ||
-                row.XrType.Contains(token, StringComparison.OrdinalIgnoreCase))
+                row.XrType.Contains(token, StringComparison.OrdinalIgnoreCase) ||
+                (row.PipelineName is not null && row.PipelineName.Contains(token, StringComparison.OrdinalIgnoreCase)))
             {
                 return true;
             }

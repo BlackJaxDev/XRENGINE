@@ -10,6 +10,7 @@ using XREngine.Core.Files;
 using XREngine.Data.Colors;
 using XREngine.Data.Rendering;
 using XREngine.Diagnostics;
+using XREngine.Editor.ComponentEditors;
 using XREngine.Editor.UI;
 using XREngine.Rendering;
 using XREngine.Rendering.Models.Materials;
