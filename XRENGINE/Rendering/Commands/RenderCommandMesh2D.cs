@@ -50,7 +50,7 @@ namespace XREngine.Data.Rendering
                 return;
 
             OnPreRender();
-            m.Render(WorldMatrix, MaterialOverride);
+            m.Render(WorldMatrix, WorldMatrix, MaterialOverride);
             OnPostRender();
         }
     }

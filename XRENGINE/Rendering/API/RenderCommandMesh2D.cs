@@ -89,7 +89,7 @@ namespace XREngine.Rendering
 
             OnPreRender();
             BeginCrop(WorldCropRegion);
-            Mesh.Render(WorldMatrix, MaterialOverride, Instances);
+            Mesh.Render(WorldMatrix, WorldMatrix, MaterialOverride, Instances);
             EndCrop();
             OnPostRender();
         }

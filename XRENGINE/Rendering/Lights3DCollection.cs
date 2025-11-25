@@ -215,7 +215,7 @@ namespace XREngine.Scene
                 return;
 
             //_instancedCellRenderer!.Mesh.GetBuffer(0, probes.SelectMany(x => x.Vertices.Select(y => y.Transform.WorldTranslation)).ToArray());
-            _instancedCellRenderer!.Render(Matrix4x4.Identity, null, (uint)count);
+            _instancedCellRenderer!.Render(Matrix4x4.Identity, Matrix4x4.Identity, null, (uint)count);
         }
 
         //public static XRMesh GenerateInstancedCellMesh()

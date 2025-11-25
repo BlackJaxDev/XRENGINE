@@ -1,4 +1,5 @@
-﻿using System.Numerics;
+﻿using System.Drawing.Drawing2D;
+using System.Numerics;
 using XREngine.Data.Rendering;
 using XREngine.Data.Transforms.Rotations;
 using XREngine.Scene.Transforms;
@@ -38,12 +39,12 @@ namespace XREngine.Rendering
             if (state is not null)
             {
                 using (state.PushRenderingCamera(cam))
-                    FullScreenCubeMesh.Render(Matrix4x4.Identity, null, 1, true);
+                    FullScreenCubeMesh.Render(Matrix4x4.Identity, Matrix4x4.Identity, null, 1, true);
             }
             else
             {
                 Engine.Rendering.State.RenderingCameraOverride = cam;
-                FullScreenCubeMesh.Render(Matrix4x4.Identity, null, 1, true);
+                FullScreenCubeMesh.Render(Matrix4x4.Identity, Matrix4x4.Identity, null, 1, true);
                 Engine.Rendering.State.RenderingCameraOverride = null;
             }
         }

@@ -57,45 +57,6 @@ public sealed partial class XRRenderPipelineInstance
         /// </summary>
         public RenderCommandCollection? MeshRenderCommands { get; set; }
 
-        /// <summary>
-        /// Current model matrix for the draw being submitted.
-        /// </summary>
-        public Matrix4x4 CurrentModelMatrix { get; private set; } = Matrix4x4.Identity;
-        /// <summary>
-        /// Previous model matrix for the draw being submitted, if history exists.
-        /// </summary>
-        public Matrix4x4 PreviousModelMatrix { get; private set; } = Matrix4x4.Identity;
-        /// <summary>
-        /// Indicates whether <see cref="PreviousModelMatrix"/> contains valid data.
-        /// </summary>
-        public bool PreviousModelMatrixValid { get; private set; }
-
-        private readonly Stack<(Matrix4x4 current, Matrix4x4 previous, bool hasPrevious)> _modelMatrixStack = new();
-        public StateObject PushModelMatrices(Matrix4x4 current, Matrix4x4 previous, bool hasPrevious)
-        {
-            _modelMatrixStack.Push((CurrentModelMatrix, PreviousModelMatrix, PreviousModelMatrixValid));
-            CurrentModelMatrix = current;
-            PreviousModelMatrix = previous;
-            PreviousModelMatrixValid = hasPrevious;
-            return StateObject.New(PopModelMatrices);
-        }
-
-        public void PopModelMatrices()
-        {
-            if (_modelMatrixStack.Count == 0)
-            {
-                CurrentModelMatrix = Matrix4x4.Identity;
-                PreviousModelMatrix = Matrix4x4.Identity;
-                PreviousModelMatrixValid = false;
-                return;
-            }
-
-            var state = _modelMatrixStack.Pop();
-            CurrentModelMatrix = state.current;
-            PreviousModelMatrix = state.previous;
-            PreviousModelMatrixValid = state.hasPrevious;
-        }
-
         //TODO: instead of bools for shadow and stereo passes, use an int for the pass type.
 
         public StateObject PushMainAttributes(
@@ -154,10 +115,6 @@ public sealed partial class XRRenderPipelineInstance
             GlobalMaterialOverride = null;
             ScreenSpaceUserInterface = null;
             MeshRenderCommands = null;
-            _modelMatrixStack.Clear();
-            CurrentModelMatrix = Matrix4x4.Identity;
-            PreviousModelMatrix = Matrix4x4.Identity;
-            PreviousModelMatrixValid = false;
         }
 
         public XRCamera? RenderingCamera

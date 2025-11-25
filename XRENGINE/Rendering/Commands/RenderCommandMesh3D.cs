@@ -1,4 +1,5 @@
-﻿using System.Numerics;
+﻿using System.Drawing.Drawing2D;
+using System.Numerics;
 using XREngine;
 using XREngine.Rendering;
 using XREngine.Rendering.Commands;
@@ -90,35 +91,16 @@ namespace XREngine.Data.Rendering
                 return;
 
             OnPreRender();
-
-            StateObject? matrixTicket = null;
-            Matrix4x4 prevModelForUniforms = GetPreviousModelMatrix();
-            void ApplyPrevModelUniforms(XRRenderProgram vertexProgram, XRRenderProgram materialProgram)
-            {
-                vertexProgram.Uniform(EEngineUniform.PrevModelMatrix.ToString(), prevModelForUniforms);
-                materialProgram.Uniform(EEngineUniform.PrevModelMatrix.ToString(), prevModelForUniforms);
-            }
-
-            mesh.SettingUniforms += ApplyPrevModelUniforms;
             try
             {
-                var pipelineState = Engine.Rendering.State.RenderingPipelineState;
-                if (pipelineState is not null)
-                {
-                    Matrix4x4 currentModel = _renderWorldMatrixIsModelMatrix ? _renderWorldMatrix : Matrix4x4.Identity;
-                    Matrix4x4 prevModel = _renderHasPrevWorldMatrix ? _renderPrevWorldMatrix : currentModel;
-                    matrixTicket = pipelineState.PushModelMatrices(currentModel, prevModel, _renderHasPrevWorldMatrix && _renderWorldMatrixIsModelMatrix);
-                }
-
                 mesh.Render(
-                    _renderWorldMatrixIsModelMatrix ? _renderWorldMatrix : Matrix4x4.Identity,
+                    GetModelMatrix(),
+                    GetPreviousModelMatrix(),
                     _renderMaterialOverride,
                     _renderInstances);
             }
             finally
             {
-                mesh.SettingUniforms -= ApplyPrevModelUniforms;
-                matrixTicket?.Dispose();
                 OnPostRender();
             }
         }
@@ -135,6 +117,7 @@ namespace XREngine.Data.Rendering
         public override void SwapBuffers()
         {
             base.SwapBuffers();
+            
             _renderMesh = Mesh;
             _renderWorldMatrix = WorldMatrix;
             _renderMaterialOverride = MaterialOverride;
@@ -154,6 +137,9 @@ namespace XREngine.Data.Rendering
                 _lastSubmittedModelMatrixValid = false;
             }
         }
+
+        private Matrix4x4 GetModelMatrix()
+            => _renderWorldMatrixIsModelMatrix ? _renderWorldMatrix : Matrix4x4.Identity;
 
         private Matrix4x4 GetPreviousModelMatrix()
         {

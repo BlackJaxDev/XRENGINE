@@ -55,7 +55,7 @@ namespace XREngine.Rendering
 
             protected abstract string? GenerateVertexShaderSource();
 
-            public delegate void DelRenderRequested(Matrix4x4 worldMatrix, XRMaterial? materialOverride, uint instances, EMeshBillboardMode billboardMode);
+            public delegate void DelRenderRequested(Matrix4x4 worldMatrix, Matrix4x4 prevWorldMatrix, XRMaterial? materialOverride, uint instances, EMeshBillboardMode billboardMode);
             /// <summary>
             /// Tells all renderers to render this mesh.
             /// </summary>
@@ -65,9 +65,10 @@ namespace XREngine.Rendering
             /// Use this to render the mesh.
             /// </summary>
             /// <param name="modelMatrix"></param>
+            /// <param name="prevModelMatrix"></param>
             /// <param name="materialOverride"></param>
-            public void Render(Matrix4x4 modelMatrix, XRMaterial? materialOverride, uint instances, EMeshBillboardMode billboardMode)
-                => RenderRequested?.Invoke(modelMatrix, materialOverride, instances, billboardMode);
+            public void Render(Matrix4x4 modelMatrix, Matrix4x4 prevModelMatrix, XRMaterial? materialOverride, uint instances, EMeshBillboardMode billboardMode)
+                => RenderRequested?.Invoke(modelMatrix, prevModelMatrix, materialOverride, instances, billboardMode);
         }
 
         public class Version<[DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicConstructors)] T>(XRMeshRenderer renderer, Func<XRShader, bool> vertexShaderSelector, bool allowShaderPipelines) 
@@ -400,15 +401,15 @@ namespace XREngine.Rendering
         /// Use this to render the mesh with an identity transform matrix.
         /// </summary>
         public void Render(XRMaterial? materialOverride = null, uint instances = 1u)
-            => Render(Matrix4x4.Identity, materialOverride, instances);
+            => Render(Matrix4x4.Identity, Matrix4x4.Identity, materialOverride, instances);
 
         /// <summary>
         /// Use this to render the mesh.
         /// </summary>
         /// <param name="modelMatrix"></param>
         /// <param name="materialOverride"></param>
-        public void Render(Matrix4x4 modelMatrix, XRMaterial? materialOverride = null, uint instances = 1u, bool forceNoStereo = false)
-            => GetVersion(forceNoStereo).Render(modelMatrix, materialOverride, instances, Material?.BillboardMode ?? EMeshBillboardMode.None);
+        public void Render(Matrix4x4 modelMatrix, Matrix4x4 prevModelMatrix, XRMaterial? materialOverride = null, uint instances = 1u, bool forceNoStereo = false)
+            => GetVersion(forceNoStereo).Render(modelMatrix, prevModelMatrix, materialOverride, instances, Material?.BillboardMode ?? EMeshBillboardMode.None);
 
         /// <summary>
         /// Get the weight of a blendshape by name, with the weight returned being a percentage from 0 to 100.
