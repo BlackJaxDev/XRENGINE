@@ -1,5 +1,6 @@
 ﻿using Extensions;
 using System.Numerics;
+using System.Runtime.CompilerServices;
 using XREngine.Data.Colors;
 using XREngine.Data.Core;
 using XREngine.Data.Geometry;
@@ -158,7 +159,11 @@ namespace XREngine.Rendering.UI
                 case nameof(MaxHeight):
                 case nameof(MaxWidth):
                 case nameof(NormalizedPivot):
-                    //InvalidateLayout();
+                    InvalidateMeasure();
+                    break;
+                case nameof(MinAnchor):
+                case nameof(MaxAnchor):
+                    InvalidateArrange();
                     break;
             }
         }
@@ -192,6 +197,8 @@ namespace XREngine.Rendering.UI
         /// <returns></returns>
         protected override Matrix4x4 CreateLocalMatrix()
         {
+            using var profiler = Engine.Profiler.Start($"{nameof(UIBoundableTransform)}.{nameof(CreateLocalMatrix)}");
+
             Matrix4x4 mtx = Matrix4x4.CreateTranslation(new Vector3(ActualLocalBottomLeftTranslation, DepthTranslation));
             var p = PlacementInfo;
             if (p is not null)
@@ -237,8 +244,8 @@ namespace XREngine.Rendering.UI
         internal void ChildSizeChanged()
         {
             //Invalidate this component's layout if the size of a child changes and width or height uses auto sizing.
-            if (!Width.HasValue || !Height.HasValue)
-                InvalidateLayout();
+            if (UsesAutoSizing)
+                InvalidateMeasure();
         }
 
         /// <summary>
@@ -247,6 +254,8 @@ namespace XREngine.Rendering.UI
         /// <param name="parentBounds"></param>
         protected override void OnResizeActual(BoundingRectangleF parentBounds)
         {
+            using var profiler = Engine.Profiler.Start($"{nameof(UIBoundableTransform)}.{nameof(OnResizeActual)}");
+
             GetActualBounds(parentBounds, out Vector2 bottomLeftTranslation, out Vector2 size);
             RemakeAxisAlignedRegion(size, WorldMatrix);
             ActualSize = size;
@@ -261,6 +270,8 @@ namespace XREngine.Rendering.UI
         /// <param name="size"></param>
         protected virtual void GetActualBounds(BoundingRectangleF parentBounds, out Vector2 bottomLeftTranslation, out Vector2 size)
         {
+            using var profiler = Engine.Profiler.Start($"{nameof(UIBoundableTransform)}.{nameof(GetActualBounds)}");
+
             GetAnchors(
                 parentBounds.Width,
                 parentBounds.Height,
@@ -345,6 +356,136 @@ namespace XREngine.Rendering.UI
         public bool UsesAutoHeight => !Height.HasValue;
         public bool UsesAutoSizing => UsesAutoWidth || UsesAutoHeight;
 
+        #region Measure/Arrange Overrides
+
+        /// <summary>
+        /// Measure phase: calculates the desired size based on explicit dimensions,
+        /// auto callbacks, or child sizes.
+        /// </summary>
+        public override Vector2 Measure(Vector2 availableSize)
+        {
+            if (IsCollapsed)
+            {
+                _desiredSize = Vector2.Zero;
+                _lastMeasuredVersion = _layoutVersion;
+                return _desiredSize;
+            }
+
+            // Skip if already measured with same constraints and not dirty
+            if (!NeedsMeasure && XRMath.VectorsEqual(_lastMeasureConstraint, availableSize))
+                return _desiredSize;
+
+            using var profiler = Engine.Profiler.Start($"{nameof(UIBoundableTransform)}.{nameof(Measure)}");
+
+            _lastMeasureConstraint = availableSize;
+
+            // Calculate desired size based on explicit dimensions or auto-sizing
+            float desiredWidth;
+            float desiredHeight;
+
+            if (Width.HasValue)
+            {
+                desiredWidth = Width.Value;
+            }
+            else
+            {
+                // Auto width: use callback or measure children
+                if (CalcAutoWidthCallback != null)
+                    desiredWidth = CalcAutoWidthCallback(this);
+                else
+                    desiredWidth = MeasureChildrenWidth(availableSize);
+            }
+
+            if (Height.HasValue)
+            {
+                desiredHeight = Height.Value;
+            }
+            else
+            {
+                // Auto height: use callback or measure children
+                if (CalcAutoHeightCallback != null)
+                    desiredHeight = CalcAutoHeightCallback(this);
+                else
+                    desiredHeight = MeasureChildrenHeight(availableSize);
+            }
+
+            _desiredSize = new Vector2(desiredWidth, desiredHeight);
+
+            // Apply size constraints
+            ClampSize(ref _desiredSize);
+
+            // Add margins to desired size for parent layout calculations
+            _desiredSize = new Vector2(
+                ApplyHorizontalMargins(_desiredSize.X),
+                ApplyVerticalMargins(_desiredSize.Y)
+            );
+
+            _lastMeasuredVersion = _layoutVersion;
+            return _desiredSize;
+        }
+
+        /// <summary>
+        /// Measures children to determine required width.
+        /// </summary>
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        protected virtual float MeasureChildrenWidth(Vector2 availableSize)
+        {
+            return GetMaxChildWidth();
+        }
+
+        /// <summary>
+        /// Measures children to determine required height.
+        /// </summary>
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        protected virtual float MeasureChildrenHeight(Vector2 availableSize)
+        {
+            return GetMaxChildHeight();
+        }
+
+        /// <summary>
+        /// Arrange phase: assigns final position and size.
+        /// </summary>
+        public override void Arrange(BoundingRectangleF finalBounds)
+        {
+            // Skip if already arranged with same bounds and not dirty
+            if (!NeedsArrange && _lastArrangeBounds.Equals(finalBounds))
+                return;
+
+            using var profiler = Engine.Profiler.Start($"{nameof(UIBoundableTransform)}.{nameof(Arrange)}");
+
+            _lastArrangeBounds = finalBounds;
+            OnResizeActual(ApplyMargins(finalBounds));
+            
+            if (ShouldMarkLocalMatrixChanged())
+                MarkLocalModified();
+
+            _lastArrangedVersion = _layoutVersion;
+        }
+
+        /// <summary>
+        /// Arrange children within the padded region.
+        /// </summary>
+        protected override void ArrangeChildren(BoundingRectangleF childRegion)
+        {
+            var paddedRegion = ApplyPadding(childRegion);
+            try
+            {
+                foreach (var child in Children)
+                {
+                    if (child is UIBoundableTransform uiChild)
+                        uiChild.Arrange(paddedRegion);
+                    else if (child is UITransform uiTfm)
+                        uiTfm.Arrange(paddedRegion);
+                }
+            }
+            catch (Exception ex)
+            {
+                Debug.LogException(ex);
+            }
+        }
+
+        #endregion
+
         //TODO: cache the max child width and height?
         //private float _maxChildWidthCache = 0.0f;
         //private float _maxChildHeightCache = 0.0f;
@@ -358,6 +499,8 @@ namespace XREngine.Rendering.UI
         {
             if (IsCollapsed)
                 return 0.0f;
+
+            using var profiler = Engine.Profiler.Start($"{nameof(UIBoundableTransform)}.{nameof(GetWidth)}");
 
             return Width ?? CalcAutoWidthCallback?.Invoke(this) ?? GetMaxChildWidth();
         }
@@ -377,6 +520,8 @@ namespace XREngine.Rendering.UI
             if (IsCollapsed)
                 return 0.0f;
 
+            using var profiler = Engine.Profiler.Start($"{nameof(UIBoundableTransform)}.{nameof(GetHeight)}");
+
             return Height ?? CalcAutoHeightCallback?.Invoke(this) ?? GetMaxChildHeight();
         }
 
@@ -391,6 +536,8 @@ namespace XREngine.Rendering.UI
         /// <returns></returns>
         public override float GetMaxChildWidth()
         {
+            using var profiler = Engine.Profiler.Start($"{nameof(UIBoundableTransform)}.{nameof(GetMaxChildWidth)}");
+
             //lock (Children)
             //{
                 var children = Children.
@@ -412,6 +559,8 @@ namespace XREngine.Rendering.UI
         /// <returns></returns>
         public override float GetMaxChildHeight()
         {
+            using var profiler = Engine.Profiler.Start($"{nameof(UIBoundableTransform)}.{nameof(GetMaxChildHeight)}");
+
             //lock (Children)
             //{
                 var children = Children.
@@ -452,28 +601,38 @@ namespace XREngine.Rendering.UI
 
         /// <summary>
         /// This method is called to fit the contents of this transform into the provided bounds.
+        /// Now uses the two-phase measure/arrange approach for incremental updates.
         /// </summary>
         /// <param name="parentBounds"></param>
         public override void FitLayout(BoundingRectangleF parentBounds)
         {
-            OnResizeActual(ApplyMargins(parentBounds));
-            if (ShouldMarkLocalMatrixChanged())
-                MarkLocalModified();
+            using var profiler = Engine.Profiler.Start($"{nameof(UIBoundableTransform)}.{nameof(FitLayout)}");
+
+            // Use the two-phase approach for better dirty tracking
+            Measure(parentBounds.Extents);
+            Arrange(parentBounds);
         }
 
         protected override void OnLocalMatrixChanged(Matrix4x4 localMatrix)
         {
+            using var profiler = Engine.Profiler.Start($"{nameof(UIBoundableTransform)}.{nameof(OnLocalMatrixChanged)}");
+
             base.OnLocalMatrixChanged(localMatrix);
             OnResizeChildComponents(ApplyPadding(GetActualBounds()));
         }
 
         protected override void OnWorldMatrixChanged(Matrix4x4 worldMatrix)
         {
+            using var profiler = Engine.Profiler.Start($"{nameof(UIBoundableTransform)}.{nameof(OnWorldMatrixChanged)}");
+
             RemakeAxisAlignedRegion(ActualSize, worldMatrix);
             base.OnWorldMatrixChanged(worldMatrix);
         }
 
-        private BoundingRectangleF ApplyPadding(BoundingRectangleF bounds)
+        /// <summary>
+        /// Applies padding to the bounds, reducing the available area for children.
+        /// </summary>
+        public BoundingRectangleF ApplyPadding(BoundingRectangleF bounds)
         {
             var padding = Padding;
             float left = padding.X;
@@ -490,7 +649,10 @@ namespace XREngine.Rendering.UI
             return bounds;
         }
 
-        private BoundingRectangleF ApplyMargins(BoundingRectangleF bounds)
+        /// <summary>
+        /// Applies margins to the bounds, reducing the available area.
+        /// </summary>
+        public BoundingRectangleF ApplyMargins(BoundingRectangleF bounds)
         {
             var margins = Margins;
             float left = margins.X;
@@ -568,6 +730,8 @@ namespace XREngine.Rendering.UI
 
         protected virtual void RemakeAxisAlignedRegion(Vector2 actualSize, Matrix4x4 worldMatrix)
         {
+            using var profiler = Engine.Profiler.Start($"{nameof(UIBoundableTransform)}.{nameof(RemakeAxisAlignedRegion)}");
+
             Matrix4x4 mtx = Matrix4x4.CreateScale(actualSize.X, actualSize.Y, 1.0f) * worldMatrix;
 
             RegionWorldTransform = mtx;
@@ -585,6 +749,8 @@ namespace XREngine.Rendering.UI
         }
         public UITransform? FindDeepestComponent(Vector2 worldPoint, bool includeThis)
         {
+            using var profiler = Engine.Profiler.Start($"{nameof(UIBoundableTransform)}.{nameof(FindDeepestComponent)}");
+
             try
             {
                 //lock (Children)
@@ -616,6 +782,8 @@ namespace XREngine.Rendering.UI
         }
         public List<UIBoundableTransform> FindAllIntersecting(Vector2 worldPoint, bool includeThis)
         {
+            using var profiler = Engine.Profiler.Start($"{nameof(UIBoundableTransform)}.{nameof(FindAllIntersecting)}");
+
             List<UIBoundableTransform> list = [];
             FindAllIntersecting(worldPoint, includeThis, list);
             return list;

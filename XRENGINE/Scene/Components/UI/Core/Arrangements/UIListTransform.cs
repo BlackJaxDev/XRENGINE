@@ -1,4 +1,6 @@
-﻿using XREngine.Data.Geometry;
+﻿using System.Numerics;
+using System.Runtime.CompilerServices;
+using XREngine.Data.Geometry;
 using XREngine.Scene.Transforms;
 
 namespace XREngine.Rendering.UI
@@ -84,6 +86,279 @@ namespace XREngine.Rendering.UI
         {
             UpperVirtualBound = LowerVirtualBound + size;
         }
+
+        protected override void OnPropertyChanged<T>(string? propName, T prev, T field)
+        {
+            base.OnPropertyChanged(propName, prev, field);
+            switch (propName)
+            {
+                case nameof(ItemSize):
+                case nameof(DisplayHorizontal):
+                case nameof(ItemSpacing):
+                case nameof(ItemAlignment):
+                    InvalidateMeasure();
+                    break;
+                case nameof(Virtual):
+                case nameof(UpperVirtualBound):
+                case nameof(LowerVirtualBound):
+                    InvalidateArrange();
+                    break;
+            }
+        }
+
+        #region Measure/Arrange Overrides for List Layout
+
+        /// <summary>
+        /// Measures children in list configuration and calculates total required size.
+        /// </summary>
+        protected override float MeasureChildrenWidth(Vector2 availableSize)
+        {
+            if (!_horizontal)
+                return base.MeasureChildrenWidth(availableSize);
+
+            // For horizontal lists, sum up all child widths
+            float totalWidth = 0.0f;
+            int visibleCount = 0;
+
+            foreach (var child in Children)
+            {
+                if (child is not UIBoundableTransform bc || bc.IsCollapsed || bc.ExcludeFromParentAutoCalcWidth)
+                    continue;
+
+                // Measure the child first if needed
+                if (bc.NeedsMeasure)
+                    bc.Measure(availableSize);
+
+                float childWidth = ItemSize ?? bc.DesiredSize.X;
+                totalWidth += childWidth;
+                visibleCount++;
+            }
+
+            // Add spacing between items
+            if (visibleCount > 1)
+                totalWidth += ItemSpacing * (visibleCount - 1);
+
+            return totalWidth;
+        }
+
+        /// <summary>
+        /// Measures children in list configuration and calculates total required size.
+        /// </summary>
+        protected override float MeasureChildrenHeight(Vector2 availableSize)
+        {
+            if (_horizontal)
+                return base.MeasureChildrenHeight(availableSize);
+
+            // For vertical lists, sum up all child heights
+            float totalHeight = 0.0f;
+            int visibleCount = 0;
+
+            foreach (var child in Children)
+            {
+                if (child is not UIBoundableTransform bc || bc.IsCollapsed || bc.ExcludeFromParentAutoCalcHeight)
+                    continue;
+
+                // Measure the child first if needed
+                if (bc.NeedsMeasure)
+                    bc.Measure(availableSize);
+
+                float childHeight = ItemSize ?? bc.DesiredSize.Y;
+                totalHeight += childHeight;
+                visibleCount++;
+            }
+
+            // Add spacing between items
+            if (visibleCount > 1)
+                totalHeight += ItemSpacing * (visibleCount - 1);
+
+            return totalHeight;
+        }
+
+        /// <summary>
+        /// Arranges children in list configuration with proper positioning.
+        /// </summary>
+        protected override void ArrangeChildren(BoundingRectangleF childRegion)
+        {
+            switch (ItemAlignment)
+            {
+                case EListAlignment.TopOrLeft:
+                    ArrangeChildrenLeftTop(childRegion);
+                    break;
+                case EListAlignment.Centered:
+                    ArrangeChildrenCentered(childRegion);
+                    break;
+                case EListAlignment.BottomOrRight:
+                    ArrangeChildrenRightBottom(childRegion);
+                    break;
+            }
+        }
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        private void ArrangeChildrenLeftTop(BoundingRectangleF parentRegion)
+        {
+            float x = 0;
+            float y = _horizontal ? 0 : parentRegion.Height;
+
+            for (int i = 0; i < Children.Count; i++)
+            {
+                if (Children[i] is not UIBoundableTransform bc || bc.PlacementInfo is not UIListChildPlacementInfo placementInfo)
+                    continue;
+
+                if (_horizontal)
+                {
+                    float size = ItemSize ?? bc.DesiredSize.X;
+                    placementInfo.BottomOrLeftOffset = x;
+                    ArrangeChildHorizontal(bc, x, y, size, parentRegion.Height);
+                    x += size;
+                    if (i < Children.Count - 1)
+                        x += ItemSpacing;
+                }
+                else
+                {
+                    float size = ItemSize ?? bc.DesiredSize.Y;
+                    y -= size;
+                    placementInfo.BottomOrLeftOffset = y;
+                    ArrangeChildVertical(bc, x, y, size, parentRegion.Width);
+                    if (i < Children.Count - 1)
+                        y -= ItemSpacing;
+                }
+            }
+        }
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        private void ArrangeChildrenCentered(BoundingRectangleF parentRegion)
+        {
+            float x = 0;
+            float y = 0;
+            float totalSize = CalculateTotalChildSize();
+
+            if (_horizontal)
+                x = (parentRegion.Width - totalSize) / 2.0f;
+            else
+                y = -(parentRegion.Height - totalSize) / 2.0f;
+
+            for (int i = 0; i < Children.Count; i++)
+            {
+                if (Children[i] is not UIBoundableTransform bc || bc.PlacementInfo is not UIListChildPlacementInfo placementInfo)
+                    continue;
+
+                if (_horizontal)
+                {
+                    float size = ItemSize ?? bc.DesiredSize.X;
+                    placementInfo.BottomOrLeftOffset = x;
+                    ArrangeChildHorizontal(bc, x, y, size, parentRegion.Height);
+                    x += size;
+                    if (i < Children.Count - 1)
+                        x += ItemSpacing;
+                }
+                else
+                {
+                    float size = ItemSize ?? bc.DesiredSize.Y;
+                    y -= size;
+                    placementInfo.BottomOrLeftOffset = y;
+                    ArrangeChildVertical(bc, x, y, size, parentRegion.Width);
+                    if (i < Children.Count - 1)
+                        y -= ItemSpacing;
+                }
+            }
+        }
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        private void ArrangeChildrenRightBottom(BoundingRectangleF parentRegion)
+        {
+            float x = 0;
+            float y = 0;
+
+            for (int i = Children.Count - 1; i >= 0; i--)
+            {
+                if (Children[i] is not UIBoundableTransform bc || bc.PlacementInfo is not UIListChildPlacementInfo placementInfo)
+                    continue;
+
+                if (_horizontal)
+                {
+                    float size = ItemSize ?? bc.DesiredSize.X;
+                    x -= size;
+                    placementInfo.BottomOrLeftOffset = x;
+                    ArrangeChildHorizontal(bc, x, y, size, parentRegion.Height);
+                    if (i > 0)
+                        x -= ItemSpacing;
+                }
+                else
+                {
+                    float size = ItemSize ?? bc.DesiredSize.Y;
+                    placementInfo.BottomOrLeftOffset = y;
+                    ArrangeChildVertical(bc, x, y, size, parentRegion.Width);
+                    y += size;
+                    if (i > 0)
+                        y += ItemSpacing;
+                }
+            }
+        }
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        private float CalculateTotalChildSize()
+        {
+            float totalSize = 0.0f;
+            int count = 0;
+
+            foreach (var child in Children)
+            {
+                if (child is not UIBoundableTransform bc || bc.IsCollapsed)
+                    continue;
+
+                totalSize += ItemSize ?? (_horizontal ? bc.DesiredSize.X : bc.DesiredSize.Y);
+                count++;
+            }
+
+            if (count > 1)
+                totalSize += ItemSpacing * (count - 1);
+
+            return totalSize;
+        }
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        private void ArrangeChildHorizontal(UIBoundableTransform bc, float x, float y, float size, float parentHeight)
+        {
+            if (Virtual && (x + size < LowerVirtualBound || x > UpperVirtualBound))
+            {
+                bc.Visibility = EVisibility.Hidden;
+                if (bc.SceneNode is not null)
+                    bc.SceneNode.IsActiveSelf = false;
+            }
+            else
+            {
+                if (Virtual)
+                {
+                    bc.Visibility = EVisibility.Visible;
+                    if (bc.SceneNode is not null)
+                        bc.SceneNode.IsActiveSelf = true;
+                }
+                bc.Arrange(new BoundingRectangleF(x, y, size, parentHeight));
+            }
+        }
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        private void ArrangeChildVertical(UIBoundableTransform bc, float x, float y, float size, float parentWidth)
+        {
+            if (Virtual && (y + size < LowerVirtualBound || y > UpperVirtualBound))
+            {
+                bc.Visibility = EVisibility.Hidden;
+                if (bc.SceneNode is not null)
+                    bc.SceneNode.IsActiveSelf = false;
+            }
+            else
+            {
+                if (Virtual)
+                {
+                    bc.Visibility = EVisibility.Visible;
+                    if (bc.SceneNode is not null)
+                        bc.SceneNode.IsActiveSelf = true;
+                }
+                bc.Arrange(new BoundingRectangleF(x, y, parentWidth, size));
+            }
+        }
+
+        #endregion
 
         protected override void OnResizeChildComponents(BoundingRectangleF parentRegion)
         {
