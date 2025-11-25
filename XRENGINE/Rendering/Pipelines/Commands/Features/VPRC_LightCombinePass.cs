@@ -80,7 +80,7 @@ namespace XREngine.Rendering.Pipelines.Commands
         private void RenderLight(XRMeshRenderer renderer, LightComponent comp)
         {
             _currentLightComponent = comp;
-            renderer.Render(comp.LightMeshMatrix);
+            renderer.Render(comp.LightMeshMatrix, comp.LightMeshMatrix, null);
             _currentLightComponent = null;
         }
         private void LightManager_SettingUniforms(XRRenderProgram vertexProgram, XRRenderProgram materialProgram)

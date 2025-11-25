@@ -23,7 +23,7 @@ public unsafe partial class VulkanRenderer
 		protected override void UnlinkData()
 			=> Data.RenderRequested -= OnRenderRequested;
 
-		private void OnRenderRequested(Matrix4x4 worldMatrix, XRMaterial? materialOverride, uint instances, EMeshBillboardMode billboardMode)
+		private void OnRenderRequested(Matrix4x4 modelMatrix, Matrix4x4 prevModelMatrix, XRMaterial? materialOverride, uint instances, EMeshBillboardMode billboardMode)
 			=> Debug.LogWarning("Vulkan mesh rendering is not implemented yet; ignoring render request.");
 	}
 }

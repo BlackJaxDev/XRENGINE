@@ -81,10 +81,10 @@ namespace XREngine.Rendering
             if (state != null)
             {
                 using (state.PushRenderingCamera(null))
-                    FullScreenMesh.Render(Matrix4x4.Identity, null, 1, forceNoStereo);
+                    FullScreenMesh.Render(Matrix4x4.Identity, Matrix4x4.Identity, null, 1, forceNoStereo);
             }
             else
-                FullScreenMesh.Render(Matrix4x4.Identity, null, 1, forceNoStereo);
+                FullScreenMesh.Render(Matrix4x4.Identity, Matrix4x4.Identity, null, 1, forceNoStereo);
             target?.UnbindFromWriting();
         }
     }

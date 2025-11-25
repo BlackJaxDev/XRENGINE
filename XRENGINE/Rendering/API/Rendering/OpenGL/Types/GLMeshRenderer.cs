@@ -169,7 +169,8 @@ namespace XREngine.Rendering.OpenGL
 
             protected override void LinkData()
             {
-                Dbg($"LinkData start (MeshRenderer={MeshRenderer?.Name ?? "null"}, Mesh={Mesh?.Name ?? "null"})","Lifecycle");
+                Dbg($"LinkData start (MeshRenderer={MeshRenderer.Name ?? "null"}, Mesh={Mesh?.Name ?? "null"})","Lifecycle");
+                
                 Data.RenderRequested += Render;
                 MeshRenderer.PropertyChanged += OnMeshRendererPropertyChanged;
                 MeshRenderer.PropertyChanging += OnMeshRendererPropertyChanging;
@@ -177,18 +178,21 @@ namespace XREngine.Rendering.OpenGL
                 if (Mesh != null)
                     Mesh.DataChanged += OnMeshChanged;
                 OnMeshChanged(Mesh);
+
                 Dbg("LinkData complete","Lifecycle");
             }
 
             protected override void UnlinkData()
             {
                 Dbg("UnlinkData start","Lifecycle");
+                
                 Data.RenderRequested -= Render;
                 MeshRenderer.PropertyChanged -= OnMeshRendererPropertyChanged;
                 MeshRenderer.PropertyChanging -= OnMeshRendererPropertyChanging;
 
                 if (Mesh != null)
                     Mesh.DataChanged -= OnMeshChanged;
+                
                 Dbg("UnlinkData complete","Lifecycle");
             }
 
@@ -270,6 +274,7 @@ namespace XREngine.Rendering.OpenGL
 
             public void Render(
                 Matrix4x4 modelMatrix,
+                Matrix4x4 prevModelMatrix,
                 XRMaterial? materialOverride,
                 uint instances,
                 EMeshBillboardMode billboardMode)
@@ -306,7 +311,7 @@ namespace XREngine.Rendering.OpenGL
                     MeshRenderer.PushBoneMatricesToGPU();
                     MeshRenderer.PushBlendshapeWeightsToGPU();
 
-                    SetMeshUniforms(modelMatrix, vtx!, mat, materialOverride?.BillboardMode ?? billboardMode);
+                    SetMeshUniforms(modelMatrix, prevModelMatrix, vtx!, mat, materialOverride?.BillboardMode ?? billboardMode);
                     material.SetUniforms(mat);
                     OnSettingUniforms(vtx!, mat!);
                     Renderer.RenderMesh(this, false, instances);
@@ -429,7 +434,7 @@ namespace XREngine.Rendering.OpenGL
                 return true;
             }
 
-            private static void SetMeshUniforms(Matrix4x4 modelMatrix, GLRenderProgram vertexProgram, GLRenderProgram? materialProgram, EMeshBillboardMode billboardMode)
+            private static void SetMeshUniforms(Matrix4x4 modelMatrix, Matrix4x4 prevModelMatrix, GLRenderProgram vertexProgram, GLRenderProgram? materialProgram, EMeshBillboardMode billboardMode)
             {
                 bool stereoPass = Engine.Rendering.State.IsStereoPass;
                 var cam = Engine.Rendering.State.RenderingCamera;
@@ -449,13 +454,7 @@ namespace XREngine.Rendering.OpenGL
                 }
 
                 SetUniformBoth(EEngineUniform.ModelMatrix, modelMatrix);
-
-                var renderState = Engine.Rendering.State.RenderingPipelineState;
-                Matrix4x4 prevModel = renderState?.PreviousModelMatrix ?? modelMatrix;
-                bool prevValid = renderState?.PreviousModelMatrixValid ?? false;
-                if (!prevValid)
-                    prevModel = modelMatrix;
-                SetUniformBoth(EEngineUniform.PrevModelMatrix, prevModel);
+                SetUniformBoth(EEngineUniform.PrevModelMatrix, prevModelMatrix);
 
                 vertexProgram.Uniform(EEngineUniform.VRMode, stereoPass);
                 vertexProgram.Uniform(EEngineUniform.BillboardMode, (int)billboardMode);
