@@ -274,7 +274,11 @@ namespace XREngine.Scene.Transforms
             if (InterpolationMode == EInterpolationMode.Discrete || updateDelta > fixedDelta)
             {
                 if (!RigidBody.IsSleeping)
+                {
                     SetPositionAndRotation(LastPhysicsTransform.position, LastPhysicsTransform.rotation);
+                    // Ensure matrices are recalculated for discrete mode since OnUpdate skips discrete
+                    RecalculateMatrices(true, false);
+                }
             }
             else
             {

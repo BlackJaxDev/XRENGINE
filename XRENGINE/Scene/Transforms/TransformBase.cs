@@ -303,7 +303,7 @@ namespace XREngine.Scene.Transforms
 
         protected virtual void OnRenderMatrixChanged()
         {
-            _inverseRenderMatrix = null;
+            _inverseRenderMatrixDirty = true;
             RenderMatrixChanged?.Invoke(this, RenderMatrix);
         }
 
@@ -322,12 +322,12 @@ namespace XREngine.Scene.Transforms
         /// </summary>
         public bool RecalculateMatrices(bool forceWorldRecalc = false, bool setRenderMatrixNow = false)
         {
-            bool worldChanged = _worldChanged;
+            bool worldChanged = Volatile.Read(ref _worldChanged);
 
-            if (_localChanged)
+            if (Volatile.Read(ref _localChanged))
                 RecalcLocal();
             
-            if (_worldChanged || forceWorldRecalc)
+            if (Volatile.Read(ref _worldChanged) || forceWorldRecalc)
                 RecalcWorld();
             
             if (setRenderMatrixNow || World is null)
@@ -355,29 +355,49 @@ namespace XREngine.Scene.Transforms
 
         private void ChildrenRecalcParallel(bool setRenderMatrixNow)
         {
-            var c = _children.Count;
-            Parallel.For(0, c, async i =>
+            var childrenCopy = RentChildrenCopy(out int count);
+            try
             {
-                TransformBase child = _children[i];
-                await child.RecalculateMatrixHeirarchy(true, setRenderMatrixNow, ELoopType.Parallel);
-            });
+                Parallel.For(0, count, async i =>
+                {
+                    TransformBase child = childrenCopy[i];
+                    await child.RecalculateMatrixHeirarchy(true, setRenderMatrixNow, ELoopType.Parallel);
+                });
+            }
+            finally
+            {
+                ReturnChildrenCopy(childrenCopy);
+            }
         }
 
         private async Task ChildrenRecalcSequential(bool setRenderMatrixNow)
         {
-            //var childrenCopy = RentChildrenCopy(out int c);
-            var c = _children.Count;
-            for (int i = 0; i < c; i++)
-                await _children[i].RecalculateMatrixHeirarchy(true, setRenderMatrixNow, ELoopType.Sequential);
-            //ReturnChildrenCopy(childrenCopy);
+            var childrenCopy = RentChildrenCopy(out int count);
+            try
+            {
+                for (int i = 0; i < count; i++)
+                    await childrenCopy[i].RecalculateMatrixHeirarchy(true, setRenderMatrixNow, ELoopType.Sequential);
+            }
+            finally
+            {
+                ReturnChildrenCopy(childrenCopy);
+            }
         }
 
         private async Task ChildrenRecalcAsync(bool setRenderMatrixNow)
         {
-            //var childrenCopy = RentChildrenCopy(out int c);
-            var c = _children.Count;
-            await Task.WhenAll(_children.Take(c).Select(child => child.RecalculateMatrixHeirarchy(true, setRenderMatrixNow, ELoopType.Asynchronous)));
-            //ReturnChildrenCopy(childrenCopy);
+            var childrenCopy = RentChildrenCopy(out int count);
+            try
+            {
+                var tasks = new Task[count];
+                for (int i = 0; i < count; i++)
+                    tasks[i] = childrenCopy[i].RecalculateMatrixHeirarchy(true, setRenderMatrixNow, ELoopType.Asynchronous);
+                await Task.WhenAll(tasks);
+            }
+            finally
+            {
+                ReturnChildrenCopy(childrenCopy);
+            }
         }
 
         public Task SetRenderMatrix(Matrix4x4 matrix, bool recalcAllChildRenderMatrices = true)
@@ -401,24 +421,40 @@ namespace XREngine.Scene.Transforms
 
         private void ParallelChildrenRenderMatrixRecalc()
         {
-            var c = _children.Count;
-            Parallel.For(0, c, async i =>
+            var childrenCopy = RentChildrenCopy(out int count);
+            // Snapshot render matrix once for all children
+            Matrix4x4 parentRenderMatrix = RenderMatrix;
+            try
             {
-                TransformBase child = _children[i];
-                await child.SetRenderMatrix(child.LocalMatrix * RenderMatrix, false);
-            });
+                Parallel.For(0, count, async i =>
+                {
+                    TransformBase child = childrenCopy[i];
+                    await child.SetRenderMatrix(child.LocalMatrix * parentRenderMatrix, false);
+                });
+            }
+            finally
+            {
+                ReturnChildrenCopy(childrenCopy);
+            }
         }
 
         private async Task SequentialChildrenRenderMatrixRecalc()
         {
-            //var childrenCopy = RentChildrenCopy(out int c);
-            var c = _children.Count;
-            for (int i = 0; i < c; i++)
+            var childrenCopy = RentChildrenCopy(out int count);
+            // Snapshot render matrix once for all children
+            Matrix4x4 parentRenderMatrix = RenderMatrix;
+            try
             {
-                TransformBase child = _children[i];
-                await child.SetRenderMatrix(child.LocalMatrix * RenderMatrix, false);
+                for (int i = 0; i < count; i++)
+                {
+                    TransformBase child = childrenCopy[i];
+                    await child.SetRenderMatrix(child.LocalMatrix * parentRenderMatrix, false);
+                }
             }
-            //ReturnChildrenCopy(childrenCopy);
+            finally
+            {
+                ReturnChildrenCopy(childrenCopy);
+            }
         }
 
         private TransformBase[] RentChildrenCopy(out int count)
@@ -437,10 +473,23 @@ namespace XREngine.Scene.Transforms
 
         private async Task AsyncChildrenRenderMatrixRecalc()
         {
-            //var childrenCopy = RentChildrenCopy(out int c);
-            var c = _children.Count;
-            await Task.WhenAll(_children.Take(c).Select(child => child.SetRenderMatrix(child.LocalMatrix * RenderMatrix, true)));
-            //ReturnChildrenCopy(childrenCopy);
+            var childrenCopy = RentChildrenCopy(out int count);
+            // Snapshot render matrix once for all children
+            Matrix4x4 parentRenderMatrix = RenderMatrix;
+            try
+            {
+                var tasks = new Task[count];
+                for (int i = 0; i < count; i++)
+                {
+                    TransformBase child = childrenCopy[i];
+                    tasks[i] = child.SetRenderMatrix(child.LocalMatrix * parentRenderMatrix, true);
+                }
+                await Task.WhenAll(tasks);
+            }
+            finally
+            {
+                ReturnChildrenCopy(childrenCopy);
+            }
         }
 
         public TransformBase? FindChild(string name, StringComparison comp = StringComparison.Ordinal)
@@ -731,39 +780,72 @@ namespace XREngine.Scene.Transforms
 
         #region Render Matrix
         private Matrix4x4 _renderMatrix = Matrix4x4.Identity;
+        private readonly object _renderMatrixLock = new();
+        
         /// <summary>
         /// This transform's render matrix.
+        /// Thread-safe via locking for atomic access.
         /// </summary>
         [Browsable(false)]
         public Matrix4x4 RenderMatrix
         {
-            get => _renderMatrix;
-            internal set => SetFieldUnchecked(ref _renderMatrix, value);
+            get { lock (_renderMatrixLock) return _renderMatrix; }
+            internal set { lock (_renderMatrixLock) _renderMatrix = value; }
         }
 
-        private Matrix4x4? _inverseRenderMatrix = Matrix4x4.Identity;
+        private Matrix4x4 _inverseRenderMatrix = Matrix4x4.Identity;
+        private volatile bool _inverseRenderMatrixDirty = true;
+        private readonly object _inverseRenderMatrixLock = new();
+        
         /// <summary>
         /// This transform's inverse render matrix.
+        /// Thread-safe with lazy calculation and locking.
         /// </summary>
         [Browsable(false)]
-        public Matrix4x4 InverseRenderMatrix => _inverseRenderMatrix ??= Matrix4x4.Invert(RenderMatrix, out var inverted) ? inverted : Matrix4x4.Identity;
+        public Matrix4x4 InverseRenderMatrix
+        {
+            get
+            {
+                if (!_inverseRenderMatrixDirty)
+                {
+                    lock (_inverseRenderMatrixLock)
+                        return _inverseRenderMatrix;
+                }
+                    
+                lock (_inverseRenderMatrixLock)
+                {
+                    if (!_inverseRenderMatrixDirty)
+                        return _inverseRenderMatrix;
+                        
+                    var inverted = Matrix4x4.Invert(RenderMatrix, out var inv) ? inv : Matrix4x4.Identity;
+                    _inverseRenderMatrix = inverted;
+                    _inverseRenderMatrixDirty = false;
+                    return inverted;
+                }
+            }
+        }
         #endregion
 
         #region Local Matrix
         private bool _localChanged = false;
         private Matrix4x4 _localMatrix;
+        private readonly object _localMatrixLock = new();
+        
         /// <summary>
         /// This transform's local matrix relative to its parent.
+        /// Thread-safe via locking for atomic access.
         /// </summary>
         [Browsable(false)]
-        public Matrix4x4 LocalMatrix => _localMatrix;
+        public Matrix4x4 LocalMatrix { get { lock (_localMatrixLock) return _localMatrix; } }
 
         public void RecalcLocal()
         {
             Matrix4x4 localMatrix = CreateLocalMatrix();
-            _localMatrix = localMatrix;
+            // Use lock for atomic matrix update - ensures other threads see complete matrix
+            lock (_localMatrixLock)
+                _localMatrix = localMatrix;
             RecalcLocalInv();
-            _localChanged = false;
+            Volatile.Write(ref _localChanged, false);
             OnLocalMatrixChanged(localMatrix);
         }
 
@@ -774,18 +856,23 @@ namespace XREngine.Scene.Transforms
         #region World Matrix
         private bool _worldChanged = false;
         private Matrix4x4 _worldMatrix;
+        private readonly object _worldMatrixLock = new();
+        
         /// <summary>
         /// This transform's world matrix relative to the root of the scene (all ancestor transforms accounted for).
+        /// Thread-safe via locking for atomic access.
         /// </summary>
         [Browsable(false)]
-        public Matrix4x4 WorldMatrix => _worldMatrix;
+        public Matrix4x4 WorldMatrix { get { lock (_worldMatrixLock) return _worldMatrix; } }
 
         public void RecalcWorld()
         {
             Matrix4x4 worldMatrix = CreateWorldMatrix();
-            _worldMatrix = worldMatrix;
+            // Use lock for atomic matrix update - ensures other threads see complete matrix
+            lock (_worldMatrixLock)
+                _worldMatrix = worldMatrix;
             RecalcWorldInv();
-            _worldChanged = false;
+            Volatile.Write(ref _worldChanged, false);
             OnWorldMatrixChanged(worldMatrix);
         }
 
@@ -824,18 +911,23 @@ namespace XREngine.Scene.Transforms
 
         #region Inverse Local Matrix
         private Matrix4x4 _inverseLocalMatrix;
+        private readonly object _inverseLocalMatrixLock = new();
+        
         /// <summary>
         /// The inverse of this transform's local matrix.
+        /// Thread-safe via locking for atomic access.
         /// </summary>
         [Browsable(false)]
-        public Matrix4x4 InverseLocalMatrix => _inverseLocalMatrix;
+        public Matrix4x4 InverseLocalMatrix { get { lock (_inverseLocalMatrixLock) return _inverseLocalMatrix; } }
 
         internal void RecalcLocalInv()
         {
             if (!TryCreateInverseLocalMatrix(out Matrix4x4 inverted))
                 return;
 
-            _inverseLocalMatrix = inverted;
+            // Use lock for atomic matrix update
+            lock (_inverseLocalMatrixLock)
+                _inverseLocalMatrix = inverted;
             OnInverseLocalMatrixChanged(inverted);
         }
 
@@ -846,18 +938,23 @@ namespace XREngine.Scene.Transforms
 
         #region Inverse World Matrix
         private Matrix4x4 _inverseWorldMatrix;
+        private readonly object _inverseWorldMatrixLock = new();
+        
         /// <summary>
         /// The inverse of this transform's world matrix.
+        /// Thread-safe via locking for atomic access.
         /// </summary>
         [Browsable(false)]
-        public Matrix4x4 InverseWorldMatrix => _inverseWorldMatrix;
+        public Matrix4x4 InverseWorldMatrix { get { lock (_inverseWorldMatrixLock) return _inverseWorldMatrix; } }
 
         internal void RecalcWorldInv()
         {
             if (!TryCreateInverseWorldMatrix(out Matrix4x4 inverted))
                 return;
 
-            _inverseWorldMatrix = inverted;
+            // Use lock for atomic matrix update
+            lock (_inverseWorldMatrixLock)
+                _inverseWorldMatrix = inverted;
             OnInverseWorldMatrixChanged(inverted);
         }
 
@@ -871,8 +968,23 @@ namespace XREngine.Scene.Transforms
         #endregion
 
         #region Overridable Methods
+        /// <summary>
+        /// Creates the world matrix by multiplying local matrix with parent's world matrix.
+        /// Snapshots parent matrix atomically to avoid reading partially-written data during recalculation.
+        /// </summary>
         protected virtual Matrix4x4 CreateWorldMatrix()
-            => Parent is null ? LocalMatrix : LocalMatrix * Parent.WorldMatrix;
+        {
+            // Snapshot parent reference and matrix atomically to avoid race conditions
+            var parent = Parent;
+            if (parent is null)
+                return LocalMatrix;
+            
+            // Capture parent's world matrix once - this uses Volatile.Read internally
+            // to ensure we get a complete, consistent matrix value
+            Matrix4x4 parentWorldMatrix = parent.WorldMatrix;
+            return LocalMatrix * parentWorldMatrix;
+        }
+        
         protected virtual bool TryCreateInverseLocalMatrix(out Matrix4x4 inverted)
             => Matrix4x4.Invert(LocalMatrix, out inverted);
         protected virtual bool TryCreateInverseWorldMatrix(out Matrix4x4 inverted)
@@ -893,16 +1005,17 @@ namespace XREngine.Scene.Transforms
         }
         /// <summary>
         /// Marks the local matrix as modified, which will cause it to be recalculated on the next access.
+        /// This method is thread-safe and can be called from any thread.
         /// </summary>
         protected void MarkLocalModified(bool forceDefer)
         {
             if (ImmediateLocalMatrixRecalculation && !forceDefer)
             {
                 RecalcLocal();
-                _localChanged = false;
+                Volatile.Write(ref _localChanged, false);
             }
             else
-                _localChanged = true;
+                Volatile.Write(ref _localChanged, true);
             
             MarkWorldModified();
             HasChanged = true;
@@ -910,18 +1023,14 @@ namespace XREngine.Scene.Transforms
 
         /// <summary>
         /// Marks the world matrix as modified, which will cause it to be recalculated on the next access.
+        /// This method is thread-safe and can be called from any thread.
+        /// Children will have their world matrices updated relative to their parent when matrices are processed by the world instance.
         /// </summary>
         protected void MarkWorldModified()
         {
-            //if (_worldChanged)
-            //    return; // Already marked as dirty
-
-            _worldChanged = true;
+            Volatile.Write(ref _worldChanged, true);
             World?.AddDirtyTransform(this);
             HasChanged = true;
-
-            foreach (TransformBase child in Children)
-                child.MarkWorldModified();
         }
 
         ///// <summary>
