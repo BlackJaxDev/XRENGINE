@@ -338,7 +338,7 @@ namespace XREngine.Rendering.UI
                     _textMatrixInvalidated = false;
                 }
             }
-            Mesh.Render(TextMatrix, null, _glyphCount);
+            Mesh.Render(TextMatrix, TextMatrix, null, _glyphCount);
         }
 
         /// <summary>
