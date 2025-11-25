@@ -10,6 +10,7 @@ using XREngine.Components;
 using XREngine.Core.Files;
 using XREngine.Editor.ComponentEditors;
 using XREngine.Editor.TransformEditors;
+using XREngine.Rendering.OpenGL;
 using XREngine.Scene;
 using XREngine.Scene.Transforms;
 
@@ -245,10 +246,33 @@ public static partial class UnitTestingWorld
 
             ImGui.Separator();
 
-            var visited = new HashSet<object>(ReferenceEqualityComparer.Instance);
-            ImGui.PushID("StandaloneInspector");
-            DrawInspectableObject(target, "StandaloneInspectorProperties", visited);
-            ImGui.PopID();
+            // If we have an associated GL API object selected, show its custom editor first
+            if (_selectedOpenGlApiObject is OpenGLRenderer.GLObjectBase glObject)
+            {
+                if (ImGui.CollapsingHeader("OpenGL API Object", ImGuiTreeNodeFlags.DefaultOpen))
+                {
+                    ImGui.PushID("GLObjectInspector");
+                    GLObjectEditorRegistry.DrawInspector(glObject);
+                    ImGui.PopID();
+                }
+
+                ImGui.Separator();
+
+                if (ImGui.CollapsingHeader("XR Data Properties", ImGuiTreeNodeFlags.DefaultOpen))
+                {
+                    var visited = new HashSet<object>(ReferenceEqualityComparer.Instance);
+                    ImGui.PushID("StandaloneInspector");
+                    DrawInspectableObject(target, "StandaloneInspectorProperties", visited);
+                    ImGui.PopID();
+                }
+            }
+            else
+            {
+                var visited = new HashSet<object>(ReferenceEqualityComparer.Instance);
+                ImGui.PushID("StandaloneInspector");
+                DrawInspectableObject(target, "StandaloneInspectorProperties", visited);
+                ImGui.PopID();
+            }
         }
 
         private static partial void DrawSceneNodeBasics(SceneNode node)

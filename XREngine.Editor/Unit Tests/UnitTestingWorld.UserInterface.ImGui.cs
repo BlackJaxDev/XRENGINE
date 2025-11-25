@@ -329,7 +329,7 @@ public static partial class UnitTestingWorld
         {
             if (!_assetExplorerContextActionsByExtension.TryGetValue(extension, out var actions))
             {
-                actions = new List<AssetExplorerContextAction>();
+                actions = [];
                 _assetExplorerContextActionsByExtension[extension] = actions;
             }
 
