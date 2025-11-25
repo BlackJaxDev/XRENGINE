@@ -39,8 +39,14 @@ namespace XREngine.Core.Attributes
                 }
             }
 
-            node.SetTransform((TransformBase)Activator.CreateInstance(Type, null));
-            return true;
+            if (Activator.CreateInstance(Type, null) is TransformBase transform)
+            {
+                node.SetTransform(transform);
+                return true;
+            }
+
+            Debug.LogWarning($"Could not create transform of type {Type.Name} required by component {comp.GetType().Name}; likely missing public parameterless constructor.");
+            return false;
         }
     }
 }

@@ -68,7 +68,7 @@ namespace XREngine.Input
 
         /// <summary>
         /// Updates the viewport with the HUD and/or camera from the controlled pawn.
-        /// Called when the viewport, controlled pawn, or the  changes.
+        /// Called when the viewport, controlled pawn, input interface, or VR action set changes.
         /// </summary>
         private void UpdateViewportCamera()
         {

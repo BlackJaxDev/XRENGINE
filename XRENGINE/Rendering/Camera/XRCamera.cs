@@ -1,4 +1,6 @@
 ﻿using Extensions;
+using System;
+using System.Collections.Generic;
 using System.Numerics;
 using XREngine.Data.Core;
 using XREngine.Data.Geometry;
@@ -6,6 +8,49 @@ using XREngine.Scene.Transforms;
 
 namespace XREngine.Rendering
 {
+    public enum ProjectionJitterSpace
+    {
+        ClipSpace,
+        TexelSpace
+    }
+
+    public readonly struct ProjectionJitterRequest
+    {
+        public ProjectionJitterRequest(Vector2 offset, ProjectionJitterSpace space, Vector2 referenceResolution)
+        {
+            Offset = offset;
+            Space = space;
+            ReferenceResolution = referenceResolution;
+        }
+
+        public Vector2 Offset { get; }
+        public ProjectionJitterSpace Space { get; }
+        public Vector2 ReferenceResolution { get; }
+
+        public static ProjectionJitterRequest ClipSpace(Vector2 offset)
+            => new(offset, ProjectionJitterSpace.ClipSpace, Vector2.One);
+
+        public static ProjectionJitterRequest TexelSpace(Vector2 offset, Vector2 referenceResolution)
+            => new(offset, ProjectionJitterSpace.TexelSpace, referenceResolution);
+
+        public Vector2 ToClipSpace()
+        {
+            if (Space == ProjectionJitterSpace.ClipSpace)
+                return Offset;
+
+            // Convert a texel sized offset into clip space so it can be baked into the projection matrix.
+            Vector2 resolution = ReferenceResolution;
+            float width = MathF.Abs(resolution.X);
+            float height = MathF.Abs(resolution.Y);
+            return new Vector2(
+                width <= float.Epsilon ? 0.0f : Offset.X * 2.0f / width,
+                height <= float.Epsilon ? 0.0f : Offset.Y * 2.0f / height);
+        }
+
+        public bool IsZero
+            => MathF.Abs(Offset.X) <= float.Epsilon && MathF.Abs(Offset.Y) <= float.Epsilon;
+    }
+
     public class XRCameraBase : XRBase
     {
         
@@ -104,6 +149,12 @@ namespace XREngine.Rendering
             set => SetField(ref _parameters, value);
         }
 
+        private readonly Stack<Vector2> _projectionJitterStack = new();
+        public bool HasProjectionJitter
+            => _projectionJitterStack.Count > 0 && !IsZeroVector(_projectionJitterStack.Peek());
+        public Vector2 ProjectionJitter
+            => _projectionJitterStack.TryPeek(out var jitter) ? jitter : Vector2.Zero;
+
         protected override bool OnPropertyChanging<T>(string? propName, T field, T @new)
         {
             bool change = base.OnPropertyChanging(propName, field, @new);
@@ -133,9 +184,56 @@ namespace XREngine.Rendering
             => CalculateObliqueProjectionMatrix();
 
         public Matrix4x4 ProjectionMatrix
-            => _obliqueNearClippingPlane != null 
+            => ApplyProjectionJitter(GetBaseProjectionMatrix());
+
+        public StateObject PushProjectionJitter(in ProjectionJitterRequest request)
+        {
+            Vector2 clipSpaceOffset = request.ToClipSpace();
+            _projectionJitterStack.Push(clipSpaceOffset);
+            return StateObject.New(PopProjectionJitter);
+        }
+
+        public void PopProjectionJitter()
+        {
+            if (_projectionJitterStack.Count <= 0)
+                return;
+
+            _projectionJitterStack.Pop();
+        }
+
+        public void ClearProjectionJitter()
+            => _projectionJitterStack.Clear();
+
+        private Matrix4x4 GetBaseProjectionMatrix()
+            => _obliqueNearClippingPlane != null
                 ? _obliqueProjectionMatrix
                 : Parameters.GetProjectionMatrix();
+
+        private Matrix4x4 ApplyProjectionJitter(Matrix4x4 projection)
+        {
+            if (_projectionJitterStack.Count <= 0)
+                return projection;
+
+            Vector2 jitter = _projectionJitterStack.Peek();
+            if (IsZeroVector(jitter))
+                return projection;
+
+            if (Parameters is XROrthographicCameraParameters)
+            {
+                projection.M14 += jitter.X;
+                projection.M24 += jitter.Y;
+            }
+            else
+            {
+                projection.M13 += jitter.X;
+                projection.M23 += jitter.Y;
+            }
+
+            return projection;
+        }
+
+        private static bool IsZeroVector(Vector2 value)
+            => MathF.Abs(value.X) <= float.Epsilon && MathF.Abs(value.Y) <= float.Epsilon;
 
         private void CalculateObliqueProjectionMatrix()
         {

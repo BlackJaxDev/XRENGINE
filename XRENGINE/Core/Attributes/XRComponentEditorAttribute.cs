@@ -7,9 +7,7 @@ public sealed class XRComponentEditorAttribute : Attribute
 {
     public XRComponentEditorAttribute(Type editorType)
     {
-        if (editorType is null)
-            throw new ArgumentNullException(nameof(editorType));
-
+        ArgumentNullException.ThrowIfNull(editorType);
         EditorTypeName = editorType.AssemblyQualifiedName ?? editorType.FullName ?? editorType.Name;
     }
 
