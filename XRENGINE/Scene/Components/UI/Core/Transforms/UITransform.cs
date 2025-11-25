@@ -1,5 +1,7 @@
-﻿using System.Drawing;
+﻿using System.Collections;
+using System.Drawing;
 using System.Numerics;
+using System.Runtime.CompilerServices;
 using XREngine.Components;
 using XREngine.Data.Core;
 using XREngine.Data.Geometry;
@@ -10,6 +12,26 @@ using XREngine.Scene.Transforms;
 
 namespace XREngine.Rendering.UI
 {
+    /// <summary>
+    /// Represents the current phase of UI layout processing.
+    /// </summary>
+    public enum ELayoutPhase
+    {
+        /// <summary>
+        /// No layout operation is in progress.
+        /// </summary>
+        None,
+        /// <summary>
+        /// Measure phase: calculates desired sizes bottom-up.
+        /// This phase can be parallelized for independent subtrees.
+        /// </summary>
+        Measure,
+        /// <summary>
+        /// Arrange phase: assigns final positions and sizes top-down.
+        /// </summary>
+        Arrange
+    }
+
     /// <summary>
     /// Represents a UI transform in 2D space.
     /// </summary>
@@ -90,6 +112,78 @@ namespace XREngine.Rendering.UI
             set => RotationRadians = XRMath.DegToRad(value);
         }
 
+        #region Layout State Tracking
+
+        /// <summary>
+        /// Version number that increments each time layout properties change.
+        /// Used for dirty checking to avoid redundant layout passes.
+        /// </summary>
+        protected volatile uint _layoutVersion = 0;
+
+        /// <summary>
+        /// The layout version when this transform was last measured.
+        /// </summary>
+        protected uint _lastMeasuredVersion = 0;
+
+        /// <summary>
+        /// The layout version when this transform was last arranged.
+        /// </summary>
+        protected uint _lastArrangedVersion = 0;
+
+        /// <summary>
+        /// Indicates if this transform needs to be re-measured.
+        /// Thread-safe check using version comparison.
+        /// </summary>
+        public bool NeedsMeasure
+        {
+            [MethodImpl(MethodImplOptions.AggressiveInlining)]
+            get => _lastMeasuredVersion != _layoutVersion;
+        }
+
+        /// <summary>
+        /// Indicates if this transform needs to be re-arranged.
+        /// </summary>
+        public bool NeedsArrange
+        {
+            [MethodImpl(MethodImplOptions.AggressiveInlining)]
+            get => _lastArrangedVersion != _layoutVersion;
+        }
+
+        /// <summary>
+        /// Marks the layout as dirty, requiring both measure and arrange passes.
+        /// This is thread-safe via interlocked increment.
+        /// </summary>
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        protected void IncrementLayoutVersion()
+        {
+            Interlocked.Increment(ref _layoutVersion);
+        }
+
+        /// <summary>
+        /// The desired size calculated during the measure phase.
+        /// This is the size the transform wants to be before constraints are applied.
+        /// </summary>
+        protected Vector2 _desiredSize = Vector2.Zero;
+        public Vector2 DesiredSize
+        {
+            get => _desiredSize;
+            protected set => _desiredSize = value;
+        }
+
+        /// <summary>
+        /// The available size passed to this transform during measure.
+        /// Cached to detect if re-measure is needed due to constraint changes.
+        /// </summary>
+        protected Vector2 _lastMeasureConstraint = new(float.PositiveInfinity, float.PositiveInfinity);
+
+        /// <summary>
+        /// The final bounds assigned during the arrange phase.
+        /// Cached to detect if re-arrange is needed.
+        /// </summary>
+        protected BoundingRectangleF _lastArrangeBounds = default;
+
+        #endregion
+
         public RenderInfo2D DebugRenderInfo2D { get; private set; }
 
         public UITransform() : this(null) { }
@@ -160,18 +254,139 @@ namespace XREngine.Rendering.UI
         public event Action<UITransform>? LayoutInvalidated;
         protected void OnLayoutInvalidated()
             => LayoutInvalidated?.Invoke(this);
+
+        /// <summary>
+        /// Marks this transform's layout as needing recalculation.
+        /// Propagates to the parent canvas for batched processing.
+        /// </summary>
         public virtual void InvalidateLayout()
         {
+            IncrementLayoutVersion();
             if (ParentCanvas != null && ParentCanvas != this)
                 ParentCanvas.InvalidateLayout();
             MarkLocalModified(true);
-            //if (Parent is UIBoundableTransform parent && parent.UsesAutoSizing)
-            //    parent.InvalidateLayout();
             OnLayoutInvalidated();
         }
 
         /// <summary>
+        /// Invalidates only the measure phase, not the full layout.
+        /// Use when only size calculations need to be redone.
+        /// </summary>
+        public virtual void InvalidateMeasure()
+        {
+            IncrementLayoutVersion();
+            // Propagate measure invalidation up for auto-sizing parents
+            if (Parent is UIBoundableTransform parentBoundable && parentBoundable.UsesAutoSizing)
+                parentBoundable.InvalidateMeasure();
+            if (ParentCanvas != null && ParentCanvas != this)
+                ParentCanvas.InvalidateLayout();
+        }
+
+        /// <summary>
+        /// Invalidates only the arrange phase.
+        /// Use when position needs updating but size is unchanged.
+        /// </summary>
+        public virtual void InvalidateArrange()
+        {
+            // Only increment if we haven't already invalidated measure
+            if (!NeedsMeasure)
+                IncrementLayoutVersion();
+            if (ParentCanvas != null && ParentCanvas != this)
+                ParentCanvas.InvalidateLayout();
+        }
+
+        #region Measure/Arrange Phase Methods
+
+        /// <summary>
+        /// Measure phase: calculates the desired size of this transform.
+        /// Override in derived classes to provide custom measurement logic.
+        /// </summary>
+        /// <param name="availableSize">The available space from the parent.</param>
+        /// <returns>The desired size of this transform.</returns>
+        public virtual Vector2 Measure(Vector2 availableSize)
+        {
+            // Skip if already measured with same constraints
+            if (!NeedsMeasure && XRMath.VectorsEqual(_lastMeasureConstraint, availableSize))
+                return _desiredSize;
+
+            using var profiler = Engine.Profiler.Start($"{nameof(UITransform)}.{nameof(Measure)}");
+
+            _lastMeasureConstraint = availableSize;
+
+            // Measure children and aggregate their sizes
+            Vector2 childrenSize = MeasureChildren(availableSize);
+            _desiredSize = childrenSize;
+
+            _lastMeasuredVersion = _layoutVersion;
+            return _desiredSize;
+        }
+
+        /// <summary>
+        /// Measures all child transforms and returns the aggregate size.
+        /// </summary>
+        protected virtual Vector2 MeasureChildren(Vector2 availableSize)
+        {
+            Vector2 maxSize = Vector2.Zero;
+            try
+            {
+                foreach (var child in Children)
+                {
+                    if (child is UITransform uiChild && !uiChild.IsCollapsed)
+                    {
+                        var childSize = uiChild.Measure(availableSize);
+                        maxSize = Vector2.Max(maxSize, childSize);
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                Debug.LogException(ex);
+            }
+            return maxSize;
+        }
+
+        /// <summary>
+        /// Arrange phase: assigns final position and size to this transform.
+        /// </summary>
+        /// <param name="finalBounds">The final bounds assigned by the parent.</param>
+        public virtual void Arrange(BoundingRectangleF finalBounds)
+        {
+            // Skip if already arranged with same bounds
+            if (!NeedsArrange && _lastArrangeBounds.Equals(finalBounds))
+                return;
+
+            using var profiler = Engine.Profiler.Start($"{nameof(UITransform)}.{nameof(Arrange)}");
+
+            _lastArrangeBounds = finalBounds;
+            OnResizeActual(finalBounds);
+
+            _lastArrangedVersion = _layoutVersion;
+        }
+
+        /// <summary>
+        /// Arrange children within the given region.
+        /// </summary>
+        protected virtual void ArrangeChildren(BoundingRectangleF childRegion)
+        {
+            try
+            {
+                foreach (var child in Children)
+                {
+                    if (child is UITransform uiChild)
+                        uiChild.Arrange(childRegion);
+                }
+            }
+            catch (Exception ex)
+            {
+                Debug.LogException(ex);
+            }
+        }
+
+        #endregion
+
+        /// <summary>
         /// Fits the layout of this UI transform to the parent region.
+        /// This is the legacy single-pass layout method.
         /// </summary>
         /// <param name="parentRegion"></param>
         public virtual void FitLayout(BoundingRectangleF parentRegion)
