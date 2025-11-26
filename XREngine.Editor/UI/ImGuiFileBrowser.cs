@@ -1,4 +1,5 @@
 using ImGuiNET;
+using Silk.NET.Maths;
 using System;
 using System.Collections.Generic;
 using System.IO;
@@ -73,7 +74,13 @@ public static class ImGuiFileBrowser
         public XRViewport? Viewport { get; set; }
         public Action? RenderHandler { get; set; }
         public Action? WindowClosingHandler { get; set; }
+        public Action<Silk.NET.Maths.Vector2D<int>>? FramebufferResizeHandler { get; set; }
         public bool IsCompleting { get; set; }
+        public bool NeedsFocusOnFirstFrame { get; set; } = true;
+        public bool PendingCloseRequested { get; set; }
+        public bool PendingCloseSuccess { get; set; }
+        public string? PendingClosePrimaryPath { get; set; }
+        public string[]? PendingClosePaths { get; set; }
     }
 
     private class FileSystemEntry
@@ -87,6 +94,9 @@ public static class ImGuiFileBrowser
 
     private static readonly Dictionary<string, DialogState> _activeDialogs = new();
     private static readonly object _stateLock = new();
+    private static readonly bool _allowStandaloneDialogs =
+        !string.Equals(Environment.GetEnvironmentVariable("XR_DISABLE_IMGUI_FILE_DIALOGS"), "1", StringComparison.OrdinalIgnoreCase);
+    private static bool _standaloneDisabledNotified;
 
     /// <summary>
     /// Opens a file browser dialog.
@@ -126,6 +136,13 @@ public static class ImGuiFileBrowser
 
         if (existing != null)
             CloseDialog(existing, false, (string?)null);
+
+        if (!ShouldUseStandaloneDialogs())
+        {
+            state.RenderMode = DialogRenderMode.ModalFallback;
+            state.IsOpen = true;
+            return;
+        }
 
         Engine.EnqueueMainThreadTask(() => InitializeStandaloneWindow(state));
     }
@@ -209,8 +226,10 @@ public static class ImGuiFileBrowser
 
             state.RenderHandler = () => RenderStandaloneDialog(state);
             state.WindowClosingHandler = () => OnWindowClosing(state);
+            state.FramebufferResizeHandler = (size) => OnFramebufferResize(state, size);
             window.RenderViewportsCallback += state.RenderHandler;
             window.Window.Closing += state.WindowClosingHandler;
+            window.Window.FramebufferResize += state.FramebufferResizeHandler;
         }
         catch (Exception ex)
         {
@@ -218,6 +237,20 @@ public static class ImGuiFileBrowser
             state.ErrorMessage = $"Failed to open file dialog window: {ex.Message}";
             state.RenderMode = DialogRenderMode.ModalFallback;
         }
+    }
+
+    private static bool ShouldUseStandaloneDialogs()
+    {
+        if (_allowStandaloneDialogs)
+            return true;
+
+        if (!_standaloneDisabledNotified)
+        {
+            _standaloneDisabledNotified = true;
+            Debug.LogWarning("Standalone ImGui file dialogs are disabled (ImGui multi-context instability). Set XR_ENABLE_IMGUI_FILE_DIALOGS=1 to opt in at your own risk.");
+        }
+
+        return false;
     }
 
     private static XRWorld CreateDialogWorld(DialogState state)
@@ -235,6 +268,13 @@ public static class ImGuiFileBrowser
         viewport.AllowUIRender = false;
         if (window.TargetWorldInstance is not null)
             viewport.WorldInstanceOverride = window.TargetWorldInstance;
+        
+        // Initialize the viewport's region to the current window size
+        // This is necessary because ForTotalViewportCount only sets percentages,
+        // and Resize is needed to compute actual dimensions
+        var size = window.Window.FramebufferSize;
+        viewport.Resize((uint)size.X, (uint)size.Y, true);
+        
         window.Viewports.Add(viewport);
         state.Viewport = viewport;
         return viewport;
@@ -258,7 +298,8 @@ public static class ImGuiFileBrowser
 
     private static void RenderStandaloneDialog(DialogState state)
     {
-        if (!state.IsOpen || state.Window is null)
+        // Don't render if dialog is closed or closing
+        if (!state.IsOpen || state.IsCompleting || state.Window is null)
             return;
 
         state.Viewport ??= state.Window.Viewports.FirstOrDefault();
@@ -272,32 +313,75 @@ public static class ImGuiFileBrowser
 
     private static void DrawStandaloneFrame(DialogState state)
     {
+        // Double-check we should still be rendering
+        if (!state.IsOpen || state.IsCompleting)
+            return;
+            
+        // Handle Escape key to cancel the dialog
+        if (ImGui.IsKeyPressed(ImGuiKey.Escape))
+        {
+            CloseDialog(state, false, (string?)null);
+            return;
+        }
+
         RefreshDirectoryIfNeeded(state);
 
         var viewport = ImGui.GetMainViewport();
         ImGui.SetNextWindowPos(viewport.Pos);
         ImGui.SetNextWindowSize(viewport.Size);
         ImGui.SetNextWindowViewport(viewport.ID);
+        
+        // Force focus on first frame to ensure interactivity
+        if (state.NeedsFocusOnFirstFrame)
+        {
+            ImGui.SetNextWindowFocus();
+            state.NeedsFocusOnFirstFrame = false;
+        }
 
         ImGui.PushStyleVar(ImGuiStyleVar.WindowRounding, 0f);
         ImGui.PushStyleVar(ImGuiStyleVar.WindowBorderSize, 0f);
         ImGui.PushStyleVar(ImGuiStyleVar.WindowPadding, new Vector2(10f, 10f));
 
+        // Window flags for a fullscreen dialog - removed NoBringToFrontOnFocus to allow proper input handling
         var flags = ImGuiWindowFlags.NoTitleBar |
                     ImGuiWindowFlags.NoCollapse |
                     ImGuiWindowFlags.NoResize |
                     ImGuiWindowFlags.NoMove |
                     ImGuiWindowFlags.NoSavedSettings |
-                    ImGuiWindowFlags.NoScrollbar |
-                    ImGuiWindowFlags.NoBringToFrontOnFocus;
+                    ImGuiWindowFlags.NoScrollbar;
 
         bool visible = ImGui.Begin($"##XRFileBrowser_{state.Id}", flags);
         if (visible)
         {
+            DrawTitleBar(state);
+            ImGui.Separator();
             DrawDialogContent(state);
         }
         ImGui.End();
         ImGui.PopStyleVar(3);
+    }
+
+    private static void DrawTitleBar(DialogState state)
+    {
+        // Draw a custom title bar with title and close button
+        float closeButtonWidth = 24f;
+        float availableWidth = ImGui.GetContentRegionAvail().X;
+
+        // Title text
+        ImGui.TextUnformatted(state.Title);
+
+        // Close button aligned to the right
+        ImGui.SameLine(availableWidth - closeButtonWidth + ImGui.GetStyle().WindowPadding.X);
+        ImGui.PushStyleColor(ImGuiCol.Button, new Vector4(0.6f, 0.2f, 0.2f, 1f));
+        ImGui.PushStyleColor(ImGuiCol.ButtonHovered, new Vector4(0.8f, 0.3f, 0.3f, 1f));
+        ImGui.PushStyleColor(ImGuiCol.ButtonActive, new Vector4(0.9f, 0.1f, 0.1f, 1f));
+        if (ImGui.Button("X", new Vector2(closeButtonWidth, 0)))
+        {
+            CloseDialog(state, false, (string?)null);
+        }
+        ImGui.PopStyleColor(3);
+        if (ImGui.IsItemHovered())
+            ImGui.SetTooltip("Close (Esc)");
     }
 
     private static bool DrawModalDialog(DialogState state)
@@ -655,13 +739,51 @@ public static class ImGuiFileBrowser
 
     private static void CloseDialog(DialogState state, bool success, string? path, bool windowInitiatedClose = false)
     {
-        string[]? paths = path != null ? new[] { path } : null;
+        var paths = path is not null ? new[] { path } : null;
+
+        if (!windowInitiatedClose && TryRequestStandaloneClose(state, success, path, paths))
+            return;
+
         CompleteDialog(state, success, path, paths, windowInitiatedClose);
     }
 
     private static void CloseDialog(DialogState state, bool success, string[] paths, bool windowInitiatedClose = false)
     {
-        CompleteDialog(state, success, paths.FirstOrDefault(), paths, windowInitiatedClose);
+        var primaryPath = paths.FirstOrDefault();
+
+        if (!windowInitiatedClose && TryRequestStandaloneClose(state, success, primaryPath, paths))
+            return;
+
+        CompleteDialog(state, success, primaryPath, paths, windowInitiatedClose);
+    }
+
+    private static bool TryRequestStandaloneClose(DialogState state, bool success, string? primaryPath, string[]? paths)
+    {
+        if (state.RenderMode != DialogRenderMode.StandaloneWindow || state.Window is null)
+            return false;
+
+        state.PendingCloseRequested = true;
+        state.PendingCloseSuccess = success;
+        state.PendingClosePrimaryPath = primaryPath;
+        state.PendingClosePaths = paths;
+
+        Engine.EnqueueMainThreadTask(() =>
+        {
+            var xrWindow = state.Window;
+            if (xrWindow?.Window is { } silkWindow && !silkWindow.IsClosing)
+            {
+                try
+                {
+                    silkWindow.Close();
+                }
+                catch
+                {
+                    // ignored
+                }
+            }
+        });
+
+        return true;
     }
 
     private static void CompleteDialog(DialogState state, bool success, string? primaryPath, string[]? paths, bool windowInitiatedClose)
@@ -686,7 +808,15 @@ public static class ImGuiFileBrowser
             SelectedPaths = paths
         };
 
-        state.Callback?.Invoke(result);
+        // Invoke callback safely - don't let exceptions propagate
+        try
+        {
+            state.Callback?.Invoke(result);
+        }
+        catch (Exception ex)
+        {
+            Debug.LogException(ex, "File browser callback threw an exception");
+        }
 
         lock (_stateLock)
         {
@@ -699,44 +829,45 @@ public static class ImGuiFileBrowser
         if (state.Window is null)
             return;
 
+        var window = state.Window;
+        
+        // Unsubscribe event handlers first
         if (state.RenderHandler is not null)
-            state.Window.RenderViewportsCallback -= state.RenderHandler;
+            window.RenderViewportsCallback -= state.RenderHandler;
         if (state.WindowClosingHandler is not null)
-            state.Window.Window.Closing -= state.WindowClosingHandler;
+            window.Window.Closing -= state.WindowClosingHandler;
+        if (state.FramebufferResizeHandler is not null)
+            window.Window.FramebufferResize -= state.FramebufferResizeHandler;
 
-        if (state.Viewport is not null && state.Window.Viewports.Contains(state.Viewport))
+        if (state.Viewport is not null && window.Viewports.Contains(state.Viewport))
         {
-            state.Window.Viewports.Remove(state.Viewport);
+            window.Viewports.Remove(state.Viewport);
             state.Viewport = null;
         }
 
-        var window = state.Window;
+        // Clear state references
         state.RenderHandler = null;
         state.WindowClosingHandler = null;
+        state.FramebufferResizeHandler = null;
         state.Window = null;
 
+        // Clean up world instance
         if (state.World is not null && XRWorldInstance.WorldInstances.TryGetValue(state.World, out var instance))
         {
             if (instance.IsPlaying)
-                instance.EndPlay();
-            XRWorldInstance.WorldInstances.Remove(state.World);
-        }
-        state.World = null;
-
-        if (!windowInitiatedClose)
-        {
-            Engine.InvokeOnMainThread(() =>
             {
                 try
                 {
-                    window.Window.Close();
+                    instance.EndPlay();
                 }
                 catch
                 {
-                    // ignored
+                    // Ignore cleanup errors
                 }
-            });
+            }
+            XRWorldInstance.WorldInstances.Remove(state.World);
         }
+        state.World = null;
     }
 
     private static void OnWindowClosing(DialogState state)
@@ -744,7 +875,28 @@ public static class ImGuiFileBrowser
         if (state.IsCompleting)
             return;
 
-        CloseDialog(state, false, (string?)null, true);
+        bool success = state.PendingCloseRequested ? state.PendingCloseSuccess : false;
+        string? primaryPath = state.PendingCloseRequested ? state.PendingClosePrimaryPath : null;
+        string[]? paths = state.PendingCloseRequested ? state.PendingClosePaths : null;
+
+        state.PendingCloseRequested = false;
+        state.PendingCloseSuccess = false;
+        state.PendingClosePrimaryPath = null;
+        state.PendingClosePaths = null;
+
+        CompleteDialog(state, success, primaryPath, paths, true);
+    }
+
+    private static void OnFramebufferResize(DialogState state, Vector2D<int> newSize)
+    {
+        // The viewport is automatically resized by XRWindow.FramebufferResizeCallback
+        // which calls vp.Resize() on all viewports. We just need to invalidate
+        // any cached sizing info if necessary.
+        if (state.Viewport is not null && state.Window is not null)
+        {
+            // Ensure the viewport matches the new framebuffer size
+            state.Viewport.Resize((uint)newSize.X, (uint)newSize.Y, true);
+        }
     }
 
     private static void CreateNewFolder(DialogState state)

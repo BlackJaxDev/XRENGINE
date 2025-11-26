@@ -915,16 +915,20 @@ namespace XREngine.Rendering.OpenGL
             if (triangles > 0)
             {
                 Api.DrawElementsInstanced(GLEnum.Triangles, triangles, ToGLEnum(ActiveMeshRenderer.TrianglesElementType), null, instances);
+                Engine.Rendering.Stats.IncrementDrawCalls();
+                Engine.Rendering.Stats.AddTrianglesRendered((int)(triangles / 3 * instances));
             }
             uint lines = ActiveMeshRenderer.LineIndicesBuffer?.Data?.ElementCount ?? 0u;
             if (lines > 0)
             {
                 Api.DrawElementsInstanced(GLEnum.Lines, lines, ToGLEnum(ActiveMeshRenderer.LineIndicesElementType), null, instances);
+                Engine.Rendering.Stats.IncrementDrawCalls();
             }
             uint points = ActiveMeshRenderer.PointIndicesBuffer?.Data?.ElementCount ?? 0u;
             if (points > 0)
             {
                 Api.DrawElementsInstanced(GLEnum.Points, points, ToGLEnum(ActiveMeshRenderer.PointIndicesElementType), null, instances);
+                Engine.Rendering.Stats.IncrementDrawCalls();
             }
         }
 

@@ -16,7 +16,6 @@ using XREngine.Components;
 using XREngine.Animation;
 using XREngine.Data;
 using XREngine.Data.Colors;
-using XREngine.Rendering;
 using XREngine.Rendering.OpenGL;
 using XREngine.Core.Files;
 using XREngine.Scene;
@@ -514,40 +513,21 @@ public static partial class UnitTestingWorld
             var io = ImGui.GetIO();
             io.ConfigFlags |= ImGuiConfigFlags.DockingEnable;
 
-            // Load Roboto font for a professional look
-            string[] possibleFontPaths =
-            {
-                Path.Combine(Environment.CurrentDirectory, "Build", "CommonAssets", "Fonts", "Roboto", "Roboto-Regular.ttf"),
-                Path.Combine(Environment.CurrentDirectory, "..", "Build", "CommonAssets", "Fonts", "Roboto", "Roboto-Regular.ttf"),
-                Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "Build", "CommonAssets", "Fonts", "Roboto", "Roboto-Regular.ttf"),
-                Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "..", "..", "..", "..", "Build", "CommonAssets", "Fonts", "Roboto", "Roboto-Regular.ttf")
-            };
-
-            foreach (var path in possibleFontPaths)
-            {
-                if (File.Exists(path))
-                {
-                    io.Fonts.Clear();
-                    io.Fonts.AddFontFromFileTTF(path, 16.0f);
-                    break;
-                }
-            }
-
             var style = ImGui.GetStyle();
-            style.WindowRounding = 4.0f;
-            style.FrameRounding = 4.0f;
-            style.GrabRounding = 4.0f;
-            style.TabRounding = 4.0f;
-            style.ScrollbarRounding = 9.0f;
+            style.WindowRounding = 8.0f;
+            style.FrameRounding = 6.0f;
+            style.GrabRounding = 6.0f;
+            style.TabRounding = 6.0f;
+            style.ScrollbarRounding = 8.0f;
             style.WindowBorderSize = 1.0f;
-            style.FrameBorderSize = 0.0f;
-            style.TabBorderSize = 0.0f;
-            style.WindowPadding = new Vector2(10.0f, 10.0f);
-            style.FramePadding = new Vector2(6.0f, 4.0f);
-            style.ItemSpacing = new Vector2(8.0f, 4.0f);
-            style.ItemInnerSpacing = new Vector2(4.0f, 4.0f);
-            style.ScrollbarSize = 14.0f;
-            style.GrabMinSize = 10.0f;
+            style.FrameBorderSize = 1.0f;
+            style.TabBorderSize = 1.0f;
+            style.WindowPadding = new Vector2(14.0f, 10.0f);
+            style.FramePadding = new Vector2(10.0f, 6.0f);
+            style.ItemSpacing = new Vector2(10.0f, 8.0f);
+            style.ItemInnerSpacing = new Vector2(6.0f, 4.0f);
+            style.ScrollbarSize = 16.0f;
+            style.GrabMinSize = 12.0f;
 
             var colors = style.Colors;
             Vector4 darkBg = new(0.12f, 0.13f, 0.15f, 1.00f);
@@ -656,86 +636,12 @@ public static partial class UnitTestingWorld
             }
         }
 
-        private sealed class AssetExplorerTabState(string id, string displayName)
-        {
-            public string Id { get; } = id;
-            public string DisplayName { get; } = displayName;
-            public string RootPath { get; set; } = string.Empty;
-            public string CurrentDirectory { get; set; } = string.Empty;
-            public string? SelectedPath { get; set; }
-            public bool UseTileView { get; set; }
-            public float TileViewScale { get; set; } = 1.0f;
-            public string? RenamingPath { get; set; }
-            public bool RenamingIsDirectory { get; set; }
-            public bool RenameFocusRequested { get; set; }
-            public Dictionary<string, AssetExplorerPreviewCacheEntry> PreviewCache { get; } = new(StringComparer.OrdinalIgnoreCase);
-        }
-
-
-
-        private sealed class AssetExplorerContextAction(string label, Action<string> handler, Func<string, bool>? predicate)
-        {
-            public string Label { get; } = label;
-            public Action<string> Handler { get; } = handler;
-            public Func<string, bool>? Predicate { get; } = predicate;
-
-            public bool ShouldDisplay(string path)
-                => Predicate?.Invoke(path) ?? true;
-        }
-
-        private sealed class AssetExplorerPreviewCacheEntry(string path)
-        {
-            public string Path { get; private set; } = path;
-            public XRTexture2D? Texture { get; set; }
-            public bool RequestInFlight { get; set; }
-            public uint RequestedSize { get; set; }
-
-            public void UpdatePath(string path)
-                => Path = path;
-        }
-
-        private readonly record struct AssetExplorerEntry(string Name, string Path, bool IsDirectory, long Size, DateTime ModifiedUtc);
-
-        private sealed class AssetExplorerEntryComparer : IComparer<AssetExplorerEntry>
-        {
-            public static readonly AssetExplorerEntryComparer Instance = new();
-
-            public int Compare(AssetExplorerEntry x, AssetExplorerEntry y)
-            {
-                if (x.IsDirectory != y.IsDirectory)
-                    return x.IsDirectory ? -1 : 1;
-
-                return string.Compare(x.Name, y.Name, StringComparison.OrdinalIgnoreCase);
-            }
-        }
-
-        private sealed class ProfilerThreadCacheEntry
-        {
-            public int ThreadId;
-            public string Name = string.Empty;
-            public DateTime LastSeen;
-            public bool IsStale;
-            public Engine.CodeProfiler.ProfilerThreadSnapshot? Snapshot;
-            public float[] Samples = Array.Empty<float>();
-        }
-
-
-
         private static partial void HandleInspectorDockResize(ImGuiViewportPtr viewport)
         {
         }
 
         private static partial void HandleAssetExplorerDockResize(ImGuiViewportPtr viewport, float reservedLeft, float reservedRight, bool dockedTop)
         {
-        }
-
-        private sealed class ComponentTypeDescriptor(Type type, string displayName, string ns, string assemblyName)
-        {
-            public Type Type { get; } = type;
-            public string DisplayName { get; } = displayName;
-            public string Namespace { get; } = ns;
-            public string AssemblyName { get; } = assemblyName;
-            public string FullName { get; } = type.FullName ?? type.Name;
         }
     }
 }

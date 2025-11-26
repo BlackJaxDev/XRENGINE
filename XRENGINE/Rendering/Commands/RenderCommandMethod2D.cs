@@ -1,7 +1,6 @@
 ﻿using XREngine.Data.Rendering;
-using XREngine.Rendering.Commands;
 
-namespace XREngine.Rendering
+namespace XREngine.Rendering.Commands
 {
     public class RenderCommandMethod2D : RenderCommand2D
     {

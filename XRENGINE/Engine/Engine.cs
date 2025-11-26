@@ -2,6 +2,7 @@
 using Silk.NET.Windowing;
 using System.Collections.Concurrent;
 using System.Net;
+using System.Threading;
 using XREngine.Audio;
 using XREngine.Data.Core;
 using XREngine.Rendering;
@@ -19,6 +20,7 @@ namespace XREngine
     public static partial class Engine
     {
         private static readonly EventList<XRWindow> _windows = [];
+        private static int _suppressedCleanupRequests;
         private static UserSettings _userSettings = null!;
 
         public static XREvent<UserSettings>? UserSettingsChanged;
@@ -551,11 +553,25 @@ namespace XREngine
             //ShuttingDown = false;
         }
 
+        /// <summary>
+        /// Prevents the engine from shutting down the next time the final window is closed.
+        /// Useful for temporary utility windows (e.g., file dialogs) that should not tear down the host application.
+        /// </summary>
+        public static void SuppressNextCleanup()
+            => Interlocked.Increment(ref _suppressedCleanupRequests);
+
         public static void RemoveWindow(XRWindow window)
         {
             _windows.Remove(window);
             if (_windows.Count == 0)
+            {
+                if (Interlocked.CompareExchange(ref _suppressedCleanupRequests, 0, 0) > 0)
+                {
+                    Interlocked.Decrement(ref _suppressedCleanupRequests);
+                    return;
+                }
                 Cleanup();
+            }
         }
 
         public delegate int DelBeginOperation(

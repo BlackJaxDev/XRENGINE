@@ -204,7 +204,7 @@ public static partial class UnitTestingWorld
 
         public static void RemakeMenu()
         {
-            if (_editorComponent is not null)
+            if (_editorComponent != null)
                 _editorComponent.RootMenuOptions = GenerateRootMenu();
         }
 
