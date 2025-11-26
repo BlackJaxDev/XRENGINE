@@ -77,6 +77,19 @@ public static partial class UnitTestingWorld
                 ImGui.Text($"Worst frame (0.5s window): {_worstFrameDisplayMs:F3} ms");
             }
 
+            // Display rendering statistics
+            ImGui.Separator();
+            if (ImGui.CollapsingHeader("Rendering Statistics", ImGuiTreeNodeFlags.DefaultOpen))
+            {
+                int drawCalls = Engine.Rendering.Stats.DrawCalls;
+                int multiDrawCalls = Engine.Rendering.Stats.MultiDrawCalls;
+                int triangles = Engine.Rendering.Stats.TrianglesRendered;
+
+                ImGui.Text($"Draw Calls: {drawCalls:N0}");
+                ImGui.Text($"Multi-Draw Calls: {multiDrawCalls:N0}");
+                ImGui.Text($"Triangles Rendered: {triangles:N0}");
+            }
+
             ImGui.Checkbox("Sort by Time", ref _profilerSortByTime);
             ImGui.SameLine();
             ImGui.SetNextItemWidth(100);

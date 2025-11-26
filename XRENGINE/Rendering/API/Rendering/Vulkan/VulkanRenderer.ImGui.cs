@@ -3,6 +3,7 @@ using Silk.NET.Vulkan;
 using System;
 using System.Numerics;
 using XREngine.Rendering;
+using XREngine.Rendering.UI;
 
 namespace XREngine.Rendering.Vulkan;
 
@@ -22,6 +23,7 @@ public unsafe partial class VulkanRenderer
         {
             _renderer = renderer;
             _context = ImGui.CreateContext();
+            ImGuiContextTracker.Register(_context);
             MakeCurrent();
         }
 
@@ -53,6 +55,7 @@ public unsafe partial class VulkanRenderer
         public void Dispose()
         {
             ImGui.SetCurrentContext(_context);
+            ImGuiContextTracker.Unregister(_context);
             ImGui.DestroyContext(_context);
         }
     }

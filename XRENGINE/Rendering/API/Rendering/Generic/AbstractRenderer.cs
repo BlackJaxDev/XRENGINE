@@ -116,6 +116,28 @@ namespace XREngine.Rendering
             {
                 var region = viewport.Region;
                 displaySize = new Vector2(region.Width, region.Height);
+
+                var hostWindow = viewport.Window?.Window;
+                if (hostWindow is not null)
+                {
+                    var logicalSize = hostWindow.Size;
+                    var framebufferSize = hostWindow.FramebufferSize;
+
+                    float scaleX = logicalSize.X > 0
+                        ? (float)framebufferSize.X / logicalSize.X
+                        : 1f;
+                    float scaleY = logicalSize.Y > 0
+                        ? (float)framebufferSize.Y / logicalSize.Y
+                        : 1f;
+
+                    framebufferScale = new Vector2(
+                        MathF.Max(scaleX, float.Epsilon),
+                        MathF.Max(scaleY, float.Epsilon));
+
+                    displaySize = new Vector2(
+                        region.Width / framebufferScale.X,
+                        region.Height / framebufferScale.Y);
+                }
             }
             else if (camera?.Parameters is XROrthographicCameraParameters ortho)
             {
@@ -168,7 +190,14 @@ namespace XREngine.Rendering
             }
             finally
             {
-                ImGui.SetCurrentContext(previousContext);
+                if (previousContext == IntPtr.Zero)
+                {
+                    ImGui.SetCurrentContext(IntPtr.Zero);
+                }
+                else if (ImGuiContextTracker.IsAlive(previousContext))
+                {
+                    ImGui.SetCurrentContext(previousContext);
+                }
             }
 
             return true;

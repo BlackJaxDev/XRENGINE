@@ -230,6 +230,9 @@ namespace XREngine.Rendering
         {
             using var frameSample = Engine.Profiler.Start("XRWindow.RenderFrame");
 
+            // Reset per-frame rendering statistics at the start of each frame
+            Engine.Rendering.Stats.BeginFrame();
+
             try
             {
                 Renderer.Active = true;

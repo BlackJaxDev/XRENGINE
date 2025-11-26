@@ -138,7 +138,11 @@ internal class CodeManager : XRSingleton<CodeManager>
         string[] builds = [Config_Debug, Config_Release];
         string[] platforms = [Platform_AnyCPU, Platform_x64];
 
-        CreateCSProj(sourceRootFolder, dllProjPath, projectName, false, true, true, true, true, true, true, builds, platforms);
+        // Get the engine assembly references so the game code can access engine types
+        string[] engineAssemblies = GetEngineAssemblyPaths();
+
+        CreateCSProj(sourceRootFolder, dllProjPath, projectName, false, true, true, true, false, true, true, builds, platforms,
+            assemblyReferencePaths: engineAssemblies);
 
         CreateSolutionFile(builds, platforms, (dllProjPath, Guid.NewGuid()));
 
@@ -163,8 +167,13 @@ internal class CodeManager : XRSingleton<CodeManager>
         string[] builds = [Config_Release];
         string[] platforms = [Platform_x64];
 
-        CreateCSProj(sourceRootFolder, dllProjPath, projectName, false, true, true, true, true, true, true, builds, platforms);
-        CreateCSProj(sourceRootFolder, exeProjPath, projectName, true, true, true, true, true, true, true, builds, platforms, includedProjectPaths: [dllProjPath]);
+        // Get the engine assembly references so the game code can access engine types
+        string[] engineAssemblies = GetEngineAssemblyPaths();
+
+        CreateCSProj(sourceRootFolder, dllProjPath, projectName, false, true, true, true, true, true, true, builds, platforms,
+            assemblyReferencePaths: engineAssemblies);
+        CreateCSProj(sourceRootFolder, exeProjPath, projectName, true, true, true, true, true, true, true, builds, platforms, 
+            includedProjectPaths: [dllProjPath]);
 
         CreateSolutionFile(builds, platforms, (dllProjPath, Guid.NewGuid()), (exeProjPath, Guid.NewGuid()));
 
@@ -185,16 +194,17 @@ internal class CodeManager : XRSingleton<CodeManager>
         bool selfContained,
         string[] builds,
         string[] platforms,
-        string? languageVersion = "13.0",
+        string? languageVersion = "14.0",
         (string name, string version)[]? packageReferences = null,
-        string[]? includedProjectPaths = null)
+        string[]? includedProjectPaths = null,
+        string[]? assemblyReferencePaths = null)
     {
         List<object> content =
         [
             new XAttribute("Sdk", "Microsoft.NET.Sdk"),
             new XElement("PropertyGroup",
                 new XElement("OutputType", executable ? "Exe" : "Library"),
-                new XElement("TargetFramework", "net9.0"),
+                new XElement("TargetFramework", "net10.0-windows7.0"),
                 new XElement("RootNamespace", rootNamespace),
                 new XElement("AssemblyName", Path.GetFileNameWithoutExtension(projectFilePath)),
                 new XElement("ImplicitUsings", implicitUsings ? "enable" : "disable"),
@@ -206,7 +216,7 @@ internal class CodeManager : XRSingleton<CodeManager>
                 new XElement("PublishSingleFile", publishSingleFile ? "true" : "false"), //https://learn.microsoft.com/en-us/dotnet/core/deploying/single-file/overview?tabs=cli
                 new XElement("SelfContained", selfContained ? "true" : "false"),
                 new XElement("RuntimeIdentifier", "win-x64"),
-                new XElement("BaseOutputPath", "$(SolutionDir)Build\\$(Configuration)\\$(Platform)")
+                new XElement("BaseOutputPath", "Build")
             ),
         ];
 
@@ -239,6 +249,14 @@ internal class CodeManager : XRSingleton<CodeManager>
             content.Add(new XElement("ItemGroup",
                 includedProjectPaths.Select(x => new XElement("ProjectReference",
                     new XAttribute("Include", x)
+                ))
+            ));
+
+        if (assemblyReferencePaths is not null)
+            content.Add(new XElement("ItemGroup",
+                assemblyReferencePaths.Select(x => new XElement("Reference",
+                    new XAttribute("Include", Path.GetFileNameWithoutExtension(x)),
+                    new XElement("HintPath", x)
                 ))
             ));
 
@@ -326,7 +344,7 @@ internal class CodeManager : XRSingleton<CodeManager>
         {
             Debug.Out("Build succeeded.");
             GameCSProjLoader.Unload("GAME");
-            GameCSProjLoader.LoadFromPath("GAME", GetBinaryPath(Config_Debug, Platform_AnyCPU));
+            GameCSProjLoader.LoadFromPath("GAME", GetBinaryPath(config, platform));
         }
         else
         {
@@ -398,7 +416,41 @@ internal class CodeManager : XRSingleton<CodeManager>
     public string GetBinaryPath(string config = Config_Debug, string platform = Platform_AnyCPU)
     {
         string projectName = GetProjectName();
-        string outputPath = Path.Combine(Engine.Assets.LibrariesPath, projectName, "Build", config, platform);
+        // Output path matches: <ProjectFolder>/Build/<Config>/<Platform>/net10.0-windows7.0/<ProjectName>.dll
+        string outputPath = Path.Combine(Engine.Assets.LibrariesPath, projectName, "Build", config, platform, "net10.0-windows7.0");
         return Path.Combine(outputPath, $"{projectName}.dll");
+    }
+
+    /// <summary>
+    /// Gets the paths to all engine assemblies that should be referenced by game projects.
+    /// This allows game code to use engine types like XRComponent, XRMenuItem, etc.
+    /// </summary>
+    /// <returns>Array of absolute paths to engine assembly DLLs</returns>
+    private static string[] GetEngineAssemblyPaths()
+    {
+        // Get the directory where the editor is running from - this contains all engine assemblies
+        string editorDir = AppContext.BaseDirectory;
+        
+        // Core engine assemblies that game code typically needs
+        string[] assemblyNames =
+        [
+            "XREngine.dll",
+            "XREngine.Data.dll",
+            "XREngine.Extensions.dll",
+            "XREngine.Animation.dll",
+            "XREngine.Audio.dll",
+            "XREngine.Input.dll",
+            "XREngine.Modeling.dll"
+        ];
+
+        List<string> validPaths = [];
+        foreach (string assemblyName in assemblyNames)
+        {
+            string path = Path.Combine(editorDir, assemblyName);
+            if (File.Exists(path))
+                validPaths.Add(path);
+        }
+
+        return [.. validPaths];
     }
 }

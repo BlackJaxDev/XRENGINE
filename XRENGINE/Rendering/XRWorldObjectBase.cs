@@ -102,7 +102,22 @@ namespace XREngine
 
             //Get all types deriving from XRWorldObjectBase
             var baseType = typeof(XRWorldObjectBase);
-            var allTypes = AppDomain.CurrentDomain.GetAssemblies().SelectMany(a => a.GetTypes());
+            var allTypes = AppDomain.CurrentDomain.GetAssemblies().SelectMany(a =>
+            {
+                try
+                {
+                    return a.GetTypes();
+                }
+                catch (ReflectionTypeLoadException ex)
+                {
+                    // Return only the types that were successfully loaded
+                    return ex.Types.Where(t => t != null).Cast<Type>();
+                }
+                catch
+                {
+                    return Enumerable.Empty<Type>();
+                }
+            });
             //var derivedTypes = allTypes.Where(t => t.IsAssignableTo(baseType));
             //var allProperties = derivedTypes.SelectMany(t => t.GetProperties(replicableFlags));
             void TestType(Type t)

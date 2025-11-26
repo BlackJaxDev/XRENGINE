@@ -105,6 +105,7 @@ namespace XREngine.Rendering.OpenGL
                 return null;
 
             controller = new ImGuiController(Api, XRWindow.Window, input);
+            ImGuiContextTracker.Register(controller.Context);
             _imguiController = controller;
             _imguiBackend = null;
             return controller;
@@ -386,7 +387,12 @@ namespace XREngine.Rendering.OpenGL
 
         public override void CleanUp()
         {
-            _imguiController?.Dispose();
+            if (_imguiController is { } controller)
+            {
+                ImGuiControllerUtilities.DetachInputHandlers(controller);
+                ImGuiContextTracker.Unregister(controller.Context);
+                controller.Dispose();
+            }
             _imguiController = null;
             _imguiBackend = null;
             ResetImGuiFrameMarker();
@@ -1920,18 +1926,25 @@ namespace XREngine.Rendering.OpenGL
         {
             var (prim, elem) = GetActivePrimitiveAndElementType();
             Api.MultiDrawElementsIndirect(prim, elem, null, drawCount, stride);
+            Engine.Rendering.Stats.IncrementMultiDrawCalls();
+            Engine.Rendering.Stats.IncrementDrawCalls((int)drawCount);
         }
 
         public override unsafe void MultiDrawElementsIndirectWithOffset(uint drawCount, uint stride, nuint byteOffset)
         {
             var (prim, elem) = GetActivePrimitiveAndElementType();
             Api.MultiDrawElementsIndirect(prim, elem, (void*)byteOffset, drawCount, stride);
+            Engine.Rendering.Stats.IncrementMultiDrawCalls();
+            Engine.Rendering.Stats.IncrementDrawCalls((int)drawCount);
         }
 
         public override unsafe void MultiDrawElementsIndirectCount(uint maxDrawCount, uint stride, nuint byteOffset)
         {
             var (prim, elem) = GetActivePrimitiveAndElementType();
             Api.MultiDrawElementsIndirectCount(prim, elem, (void*)byteOffset, IntPtr.Zero, maxDrawCount, stride);
+            Engine.Rendering.Stats.IncrementMultiDrawCalls();
+            // Note: actual draw count is determined by GPU, we track max as approximation
+            Engine.Rendering.Stats.IncrementDrawCalls((int)maxDrawCount);
         }
 
         public unsafe void MultiDrawElementsIndirectCountNVBindless(uint drawCountOffset, uint maxDrawCount, uint stride)
@@ -1945,6 +1958,8 @@ namespace XREngine.Rendering.OpenGL
                 maxDrawCount,
                 stride,
                 1);
+            Engine.Rendering.Stats.IncrementMultiDrawCalls();
+            Engine.Rendering.Stats.IncrementDrawCalls((int)maxDrawCount);
         }
 
         public unsafe void MultiDrawElementsIndirectCount(uint drawCountOffset, uint maxDrawCount, uint stride)
@@ -1958,6 +1973,8 @@ namespace XREngine.Rendering.OpenGL
                 (nint)drawCountOffset,
                 maxDrawCount,
                 stride);
+            Engine.Rendering.Stats.IncrementMultiDrawCalls();
+            Engine.Rendering.Stats.IncrementDrawCalls((int)maxDrawCount);
         }
 
         //public unsafe void MultiDrawElementsIndirectCount(uint maxCommands, uint stride)

@@ -1,12 +1,11 @@
 ﻿using System.Numerics;
-using XREngine.Rendering;
 
-namespace XREngine.Data.Rendering
+namespace XREngine.Rendering.Commands
 {
     public class RenderCommandViewport : RenderCommandMesh2D
     {
-        public XRViewport Viewport { get; set; }
-        public XRMaterialFrameBuffer Framebuffer { get; set; }
+        public XRViewport? Viewport { get; set; }
+        public XRMaterialFrameBuffer? Framebuffer { get; set; }
 
         //public RenderCommandViewport() : base() { }
         public RenderCommandViewport(int renderPass) : base(renderPass) { }

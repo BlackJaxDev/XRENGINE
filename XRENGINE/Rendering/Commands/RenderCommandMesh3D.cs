@@ -1,22 +1,14 @@
 ﻿using System.Drawing.Drawing2D;
 using System.Numerics;
 using XREngine;
+using XREngine.Data.Rendering;
 using XREngine.Rendering;
 using XREngine.Rendering.Commands;
 using XREngine.Rendering.Models.Materials;
 using YamlDotNet.Serialization;
 
-namespace XREngine.Data.Rendering
+namespace XREngine.Rendering.Commands
 {
-    public interface IRenderCommandMesh : IRenderCommand
-    {
-        uint GPUCommandIndex { get; set; }
-        uint Instances { get; set; }
-        XRMeshRenderer? Mesh { get; set; }
-        Matrix4x4 WorldMatrix { get; set; }
-        bool WorldMatrixIsModelMatrix { get; set; }
-        XRMaterial? MaterialOverride { get; set; }
-    }
     public class RenderCommandMesh3D : RenderCommand3D, IRenderCommandMesh
     {
         private uint _gpuCommandIndex = uint.MaxValue;
