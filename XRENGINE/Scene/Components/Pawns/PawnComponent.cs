@@ -121,7 +121,12 @@ namespace XREngine.Components
                 return;
 
             if (Engine.Input.IsUIInputCaptured)
+            {
+                // Clear buffered scroll input to prevent it from being applied
+                // when the mouse moves back to the scene
+                localInput.ClearMouseScrollBuffer();
                 return;
+            }
             
             localInput.TickStates(Engine.Delta);
         }

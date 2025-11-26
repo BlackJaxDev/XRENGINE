@@ -9,8 +9,11 @@ namespace XREngine.Editor;
 /// <summary>
 /// Derived class of RenderInfo3D that adds editor-specific properties.
 /// </summary>
-public class EditorRenderInfo3D(IRenderable owner, params RenderCommand[] renderCommands) : RenderInfo3D(owner, renderCommands)
+public class EditorRenderInfo3D : RenderInfo3D
 {
+    public EditorRenderInfo3D() : base() { }
+    public EditorRenderInfo3D(IRenderable owner, params RenderCommand[] renderCommands) : base(owner, renderCommands) { }
+
     private bool _visibleInEditorOnly = false;
     private EEditorVisibility _editorVisibilityMode = EEditorVisibility.Unchanged;
 

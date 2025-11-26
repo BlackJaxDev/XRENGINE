@@ -285,7 +285,10 @@ namespace XREngine
                 case nameof(XRAsset.IsDirty):
                     {
                         if (s is XRAsset asset && asset.IsDirty)
+                        {
                             DirtyAssets.Add(asset);
+                            AssetMarkedDirty?.Invoke(asset);
+                        }
                     }
                     break;
             }
@@ -418,6 +421,7 @@ namespace XREngine
 
         public event Action<XRAsset>? AssetLoaded;
         public event Action<XRAsset>? AssetSaved;
+        public event Action<XRAsset>? AssetMarkedDirty;
 
         private void PostSaved(XRAsset asset, bool newAsset)
         {

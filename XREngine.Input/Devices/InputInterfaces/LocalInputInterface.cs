@@ -259,6 +259,13 @@ namespace XREngine.Input.Devices
                 a.TickStates(delta);
         }
 
+        /// <summary>
+        /// Clears any buffered mouse scroll input without dispatching it.
+        /// Call this when UI has captured input to prevent scroll accumulation.
+        /// </summary>
+        public void ClearMouseScrollBuffer()
+            => Mouse?.ClearScrollBuffer();
+
         private readonly Dictionary<string, OpenVRActionSetInputs> _registeredOpenVRActions = [];
 
         public class OpenVRActionSetInputs : XRBase

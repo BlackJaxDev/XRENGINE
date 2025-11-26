@@ -24,6 +24,62 @@ namespace XREngine.Timers
 
         private const float MaxFrequency = 1000.0f; // Frequency cap for Update/RenderFrame events
 
+        #region Pause Support
+
+        private bool _paused = false;
+        private bool _stepOneFrame = false;
+
+        /// <summary>
+        /// When true, gameplay updates (Update, FixedUpdate) are paused.
+        /// Rendering continues to allow UI interaction.
+        /// </summary>
+        public bool Paused
+        {
+            get => _paused;
+            set
+            {
+                if (_paused == value)
+                    return;
+                _paused = value;
+                PausedChanged?.Invoke(value);
+            }
+        }
+
+        /// <summary>
+        /// Fired when the pause state changes.
+        /// </summary>
+        public event Action<bool>? PausedChanged;
+
+        /// <summary>
+        /// Steps one frame while paused. Has no effect if not paused.
+        /// </summary>
+        public void StepOneFrame()
+        {
+            if (!_paused)
+                return;
+            _stepOneFrame = true;
+        }
+
+        /// <summary>
+        /// Returns true if updates should be dispatched this frame.
+        /// Handles pause state and single-step mode.
+        /// </summary>
+        private bool ShouldDispatchUpdate()
+        {
+            if (!_paused)
+                return true;
+
+            if (_stepOneFrame)
+            {
+                _stepOneFrame = false;
+                return true;
+            }
+
+            return false;
+        }
+
+        #endregion
+
         //Events to subscribe to
         public XREvent? PreUpdateFrame;
         /// <summary>
@@ -190,6 +246,13 @@ namespace XREngine.Timers
         {
             while (IsRunning)
             {
+                // Skip fixed updates when paused (unless stepping)
+                if (!ShouldDispatchUpdate())
+                {
+                    await Task.Delay(1);
+                    continue;
+                }
+
                 float timestamp = Time();
                 float elapsed = (timestamp - FixedUpdateManager.LastTimestamp).Clamp(0.0f, 1.0f);
                 if (elapsed < FixedUpdateDelta)
@@ -325,6 +388,13 @@ namespace XREngine.Timers
 
         public void DispatchUpdate()
         {
+            // Check if we should dispatch updates (handles pause/step)
+            if (!ShouldDispatchUpdate())
+            {
+                Thread.Sleep(1); // Don't spin while paused
+                return;
+            }
+
             try
             {
                 //using var sample = Engine.Profiler.Start("EngineTimer.DispatchUpdate");

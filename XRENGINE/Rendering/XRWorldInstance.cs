@@ -75,11 +75,40 @@ namespace XREngine.Rendering
 
         private void TickDuring() 
             => TickGroup(ETickGroup.DuringPhysics);
+
+        private bool _physicsEnabled = false;
+        /// <summary>
+        /// Whether physics simulation is currently active for this world.
+        /// Physics is automatically enabled/disabled when entering/exiting play mode.
+        /// </summary>
+        public bool PhysicsEnabled
+        {
+            get => _physicsEnabled;
+            set
+            {
+                if (_physicsEnabled == value)
+                    return;
+                _physicsEnabled = value;
+                PhysicsEnabledChanged?.Invoke(value);
+            }
+        }
+
+        /// <summary>
+        /// Fired when physics simulation is enabled or disabled.
+        /// </summary>
+        public event Action<bool>? PhysicsEnabledChanged;
+
         public void FixedUpdate()
         {
             TickGroup(ETickGroup.PrePhysics);
-            PhysicsScene.StepSimulation();
-            //Task.WaitAll(Task.Run(PhysicsScene.StepSimulation), Task.Run(TickDuring));
+            
+            // Only step physics if enabled (typically only during play mode)
+            if (PhysicsEnabled)
+            {
+                PhysicsScene.StepSimulation();
+            }
+            
+            TickGroup(ETickGroup.DuringPhysics);
             TickGroup(ETickGroup.PostPhysics);
         }
 

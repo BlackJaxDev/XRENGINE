@@ -6,12 +6,12 @@ using System.IO;
 using System.Linq;
 using System.Numerics;
 using System.Runtime.CompilerServices;
-using System.Windows.Forms;
 using ImGuiNET;
 using XREngine;
 using XREngine.Components;
 using XREngine.Components.Scene.Mesh;
 using XREngine.Editor;
+using XREngine.Editor.UI;
 using XREngine.Data.Rendering;
 using XREngine.Rendering;
 using XREngine.Rendering.Commands;
@@ -844,18 +844,29 @@ public sealed class ModelComponentEditor : IXRComponentEditor
         if (available > 0.0f)
             ImGui.SameLine();
 
-        bool canUseDialog = OperatingSystem.IsWindows();
-        ImGui.BeginDisabled(!canUseDialog);
         if (ImGui.SmallButton("Import"))
         {
-            XRTexture2D? imported = TryImportTextureFromFileDialog();
-            if (imported is not null)
-                ApplyTextureSelection(material, slotIndex, imported);
+            OpenTextureImportDialog(material, slotIndex);
         }
-        ImGui.EndDisabled();
+    }
 
-        if (!canUseDialog && ImGui.IsItemHovered(ImGuiHoveredFlags.AllowWhenDisabled))
-            ImGui.SetTooltip("File dialog import is only available on Windows.");
+    private static void OpenTextureImportDialog(XRMaterialBase material, int slotIndex)
+    {
+        string dialogId = $"TextureImport_{material.GetHashCode()}_{slotIndex}";
+        ImGuiFileBrowser.OpenFile(
+            dialogId,
+            "Select Texture",
+            result =>
+            {
+                if (result.Success && !string.IsNullOrEmpty(result.SelectedPath))
+                {
+                    XRTexture2D? imported = LoadTextureFromAnyPath(result.SelectedPath);
+                    if (imported is not null)
+                        ApplyTextureSelection(material, slotIndex, imported);
+                }
+            },
+            TextureImportDialogFilter
+        );
     }
 
     private static void ApplyTextureSelection(XRMaterialBase material, int slotIndex, XRTexture2D? newTexture)
@@ -963,21 +974,6 @@ public sealed class ModelComponentEditor : IXRComponentEditor
         texture.VWrap = ETexWrapMode.Repeat;
         texture.AutoGenerateMipmaps = true;
         texture.AlphaAsTransparency = true;
-    }
-
-    private static XRTexture2D? TryImportTextureFromFileDialog()
-    {
-        if (!OperatingSystem.IsWindows())
-            return null;
-
-        using OpenFileDialog dialog = new()
-        {
-            Filter = TextureImportDialogFilter,
-            Multiselect = false,
-            Title = "Select Texture"
-        };
-
-        return dialog.ShowDialog() == DialogResult.OK ? LoadTextureFromAnyPath(dialog.FileName) : null;
     }
 
     private static XRTexture2D? LoadTextureFromAnyPath(string? path)

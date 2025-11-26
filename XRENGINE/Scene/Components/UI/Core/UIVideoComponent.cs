@@ -1433,7 +1433,7 @@ namespace XREngine.Rendering.UI
                         decodedFrame->width,
                         decodedFrame->height,
                         _videoTextureFormat,
-                        ffmpeg.SWS_BILINEAR,
+                        0,
                         null,
                         null,
                         null);

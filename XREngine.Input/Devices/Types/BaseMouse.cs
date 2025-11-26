@@ -42,6 +42,12 @@ namespace XREngine.Input.Devices
         public void RegisterMouseMove(DelCursorUpdate func, EMouseMoveType type, bool unregister)
             => _cursor.Register(func, type, unregister);
 
+        /// <summary>
+        /// Clears any buffered scroll input without dispatching it.
+        /// Call this when UI has captured input to prevent scroll accumulation.
+        /// </summary>
+        public virtual void ClearScrollBuffer() { }
+
         public ButtonManager? LeftClick => _buttonStates[(int)EMouseButton.LeftClick];
         public ButtonManager? RightClick => _buttonStates[(int)EMouseButton.RightClick];
         public ButtonManager? MiddleClick => _buttonStates[(int)EMouseButton.MiddleClick];

@@ -57,6 +57,11 @@ namespace XREngine.Input.Devices.Glfw
             _lastScroll += wheel.Y;
         }
 
+        public override void ClearScrollBuffer()
+        {
+            _lastScroll = 0.0f;
+        }
+
         private void MouseDown(IMouse mouse, MouseButton button)
         {
 

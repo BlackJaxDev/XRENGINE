@@ -7,6 +7,7 @@ using XREngine.Actors.Types;
 using XREngine.Components;
 using XREngine.Components.Scene;
 using XREngine.Components.Scripting;
+using XREngine.Core.Files;
 using XREngine.Editor.UI;
 using XREngine.Editor.UI.Components;
 using XREngine.Editor.UI.Toolbar;
@@ -215,15 +216,202 @@ public static partial class UnitTestingWorld
             var camera = Engine.State.GetOrCreateLocalPlayer(ELocalPlayerIndex.One).ControlledPawn as EditorFlyingCameraPawnComponent;
             camera?.TakeScreenshot();
         }
-        //Loads a project from the file system.
-        public static void LoadProject(UIInteractableComponent comp)
+
+        //Opens a dialog to select and load a project file.
+        public static void OpenProjectDialog(UIInteractableComponent comp)
         {
-            //Debug.Out("Load Project clicked");
+            XREngine.Editor.UI.ImGuiFileBrowser.OpenFile(
+                "OpenProjectDialog",
+                "Open Project",
+                result =>
+                {
+                    if (result.Success && !string.IsNullOrEmpty(result.SelectedPath))
+                    {
+                        Engine.LoadProject(result.SelectedPath);
+                    }
+                },
+                $"XREngine Projects (*.{XRProject.ProjectExtension})|*.{XRProject.ProjectExtension}|All Files (*.*)|*.*"
+            );
         }
+
+        private static bool _showNewProjectDialog = false;
+        private static byte[] _newProjectNameBuffer = new byte[256];
+        private static byte[] _newProjectPathBuffer = new byte[512];
+
+        //Shows the new project dialog.
+        public static void ShowNewProjectDialog()
+        {
+            _showNewProjectDialog = true;
+            Array.Clear(_newProjectNameBuffer);
+            Array.Clear(_newProjectPathBuffer);
+            
+            // Set default path to user's Documents folder
+            string defaultPath = Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments);
+            System.Text.Encoding.UTF8.GetBytes(defaultPath, 0, Math.Min(defaultPath.Length, _newProjectPathBuffer.Length - 1), _newProjectPathBuffer, 0);
+        }
+
+        //Opens a folder browser to select project location
+        private static void BrowseForProjectLocation()
+        {
+            XREngine.Editor.UI.ImGuiFileBrowser.SelectFolder(
+                "SelectProjectLocation",
+                "Select Project Location",
+                result =>
+                {
+                    if (result.Success && !string.IsNullOrEmpty(result.SelectedPath))
+                    {
+                        Array.Clear(_newProjectPathBuffer);
+                        System.Text.Encoding.UTF8.GetBytes(result.SelectedPath, 0, Math.Min(result.SelectedPath.Length, _newProjectPathBuffer.Length - 1), _newProjectPathBuffer, 0);
+                    }
+                }
+            );
+        }
+
+        //Draws the new project dialog if visible.
+        private static void DrawNewProjectDialog()
+        {
+            // Draw any active file browser dialogs
+            XREngine.Editor.UI.ImGuiFileBrowser.DrawDialogs();
+
+            if (!_showNewProjectDialog)
+                return;
+
+            ImGuiNET.ImGui.OpenPopup("New Project");
+
+            var viewport = ImGuiNET.ImGui.GetMainViewport();
+            ImGuiNET.ImGui.SetNextWindowPos(viewport.GetCenter(), ImGuiNET.ImGuiCond.Appearing, new System.Numerics.Vector2(0.5f, 0.5f));
+            ImGuiNET.ImGui.SetNextWindowSize(new System.Numerics.Vector2(500, 180));
+
+            if (ImGuiNET.ImGui.BeginPopupModal("New Project", ref _showNewProjectDialog, ImGuiNET.ImGuiWindowFlags.NoResize))
+            {
+                ImGuiNET.ImGui.Text("Project Name:");
+                ImGuiNET.ImGui.InputText("##ProjectName", _newProjectNameBuffer, (uint)_newProjectNameBuffer.Length);
+
+                ImGuiNET.ImGui.Text("Project Location:");
+                ImGuiNET.ImGui.InputText("##ProjectPath", _newProjectPathBuffer, (uint)_newProjectPathBuffer.Length);
+                ImGuiNET.ImGui.SameLine();
+                if (ImGuiNET.ImGui.Button("Browse..."))
+                {
+                    BrowseForProjectLocation();
+                }
+
+                ImGuiNET.ImGui.Separator();
+
+                if (ImGuiNET.ImGui.Button("Create", new System.Numerics.Vector2(120, 0)))
+                {
+                    string projectName = ExtractString(_newProjectNameBuffer);
+                    string projectPath = ExtractString(_newProjectPathBuffer);
+
+                    if (!string.IsNullOrWhiteSpace(projectName) && !string.IsNullOrWhiteSpace(projectPath))
+                    {
+                        string fullPath = System.IO.Path.Combine(projectPath, projectName);
+                        if (Engine.CreateAndLoadProject(fullPath, projectName))
+                        {
+                            _showNewProjectDialog = false;
+                        }
+                        else
+                        {
+                        Debug.LogWarning($"Failed to create project: {fullPath}");
+                        }
+                    }
+                }
+                ImGuiNET.ImGui.SameLine();
+                if (ImGuiNET.ImGui.Button("Cancel", new System.Numerics.Vector2(120, 0)))
+                {
+                    _showNewProjectDialog = false;
+                }
+
+                ImGuiNET.ImGui.EndPopup();
+            }
+        }
+
+        private static string ExtractString(byte[] buffer)
+        {
+            int nullIndex = Array.IndexOf(buffer, (byte)0);
+            int length = nullIndex >= 0 ? nullIndex : buffer.Length;
+            return System.Text.Encoding.UTF8.GetString(buffer, 0, length);
+        }
+
         //Saves all modified assets in the project.
         public static async void SaveAll(UIInteractableComponent? comp)
         {
             await Engine.Assets.SaveAllAsync();
+            RefreshSaveMenu();
+        }
+
+        private static ToolbarButton? _saveMenu;
+        private static bool _saveMenuHooksInitialized;
+
+        private static void EnsureSaveMenuHooks()
+        {
+            if (_saveMenuHooksInitialized)
+                return;
+
+            if (Engine.Assets is not null)
+            {
+                Engine.Assets.AssetMarkedDirty += OnAssetMarkedDirty;
+                Engine.Assets.AssetSaved += OnAssetSaved;
+            }
+            _saveMenuHooksInitialized = true;
+            RefreshSaveMenu();
+        }
+
+        private static void OnAssetMarkedDirty(XRAsset asset)
+        {
+            RefreshSaveMenu();
+        }
+
+        private static void OnAssetSaved(XRAsset asset)
+        {
+            RefreshSaveMenu();
+        }
+
+        private static void RefreshSaveMenu()
+        {
+            if (_saveMenu is null)
+                return;
+
+            _saveMenu.ChildOptions.Clear();
+
+            var assets = Engine.Assets;
+            if (assets is null)
+            {
+                _saveMenu.ChildOptions.Add(new ToolbarButton("No asset manager available"));
+                return;
+            }
+
+            var dirtyAssets = assets.DirtyAssets.ToArray();
+            if (dirtyAssets.Length == 0)
+            {
+                _saveMenu.ChildOptions.Add(new ToolbarButton("No modified assets"));
+                return;
+            }
+
+            foreach (var asset in dirtyAssets)
+            {
+                string displayName = GetAssetDisplayName(asset);
+                var capturedAsset = asset;
+                _saveMenu.ChildOptions.Add(new ToolbarButton(displayName, _ => SaveSingleAsset(capturedAsset)));
+            }
+        }
+
+        private static string GetAssetDisplayName(XRAsset asset)
+        {
+            if (!string.IsNullOrWhiteSpace(asset.Name))
+                return asset.Name;
+            if (!string.IsNullOrWhiteSpace(asset.FilePath))
+                return System.IO.Path.GetFileNameWithoutExtension(asset.FilePath);
+            return $"{asset.GetType().Name} ({asset.ID.ToString()[..8]})";
+        }
+
+        private static async void SaveSingleAsset(XRAsset asset)
+        {
+            var assets = Engine.Assets;
+            if (assets is null)
+                return;
+
+            await assets.SaveAsync(asset);
+            RefreshSaveMenu();
         }
 
         //Generates the root menu for the editor UI.
@@ -231,14 +419,24 @@ public static partial class UnitTestingWorld
         public static List<ToolbarItemBase> GenerateRootMenu()
         {
             EnsureUndoMenuHooks();
+            EnsureSaveMenuHooks();
+            _saveMenu ??= new ToolbarButton("Save");
+            RefreshSaveMenu();
 
             List<ToolbarItemBase> buttons = [
                 new ToolbarButton("File", [Key.ControlLeft, Key.F],
             [
-                new ToolbarButton("Save All", SaveAll),
+                _saveMenu,
+                new ToolbarButton("Save All", SaveAll, [Key.ControlLeft, Key.ShiftLeft, Key.S]),
+                new ToolbarButton("Save Settings", [
+                    new ToolbarButton("Save Engine Settings", _ => Engine.SaveProjectEngineSettings()),
+                    new ToolbarButton("Save User Settings", _ => Engine.SaveProjectUserSettings()),
+                    new ToolbarButton("Save All Settings", _ => Engine.SaveProjectSettings()),
+                ]),
                 new ToolbarButton("Open", [
-                    new ToolbarButton("Project", LoadProject),
-                    ])
+                    new ToolbarButton("Project", OpenProjectDialog),
+                ]),
+                new ToolbarButton("New Project", _ => ShowNewProjectDialog()),
             ]),
             CreateEditMenu(),
             new ToolbarButton("Assets"),

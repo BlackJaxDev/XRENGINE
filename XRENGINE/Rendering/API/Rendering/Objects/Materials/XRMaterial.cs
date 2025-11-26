@@ -163,9 +163,18 @@ namespace XREngine.Rendering
         }
 
         private void ShaderRemoved(XRShader item)
-            => item.Reloaded -= ShaderReloaded;
+        {
+            if (item is null)
+                return;
+            item.Reloaded -= ShaderReloaded;
+        }
+
         private void ShaderAdded(XRShader item)
-            => item.Reloaded += ShaderReloaded;
+        {
+            if (item is null)
+                return;
+            item.Reloaded += ShaderReloaded;
+        }
 
         private void ShaderReloaded(XRAsset asset)
             => ShadersChanged();

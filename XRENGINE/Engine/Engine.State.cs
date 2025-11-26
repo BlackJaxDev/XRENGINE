@@ -615,8 +615,18 @@ namespace XREngine
     }
     public static partial class Engine
     {
-        public static bool IsEditor { get; private set; } = true;
-        public static bool IsPlaying { get; private set; } = true;
+        /// <summary>
+        /// Whether the engine is running in editor mode (as opposed to standalone game).
+        /// This is set at startup and does not change during runtime.
+        /// </summary>
+        public static bool IsEditor { get; internal set; } = true;
+        
+        /// <summary>
+        /// Whether the game is currently playing (simulation running).
+        /// Delegates to PlayMode.IsPlaying for consistency.
+        /// </summary>
+        public static bool IsPlaying => PlayMode.IsPlaying;
+        
         public static JobManager Jobs { get; } = new JobManager();
 
         public static GameState LoadOrGenerateGameState(
