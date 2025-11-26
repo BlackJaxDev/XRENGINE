@@ -54,4 +54,9 @@ public static class Selection
         get => SceneNodes.Length > 0 ? SceneNodes[0] : null;
         set => SceneNodes = value is not null ? [value] : [];
     }
+
+    /// <summary>
+    /// Clears the current selection.
+    /// </summary>
+    public static void Clear() => SceneNodes = [];
 }

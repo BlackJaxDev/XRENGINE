@@ -637,8 +637,16 @@ public static partial class UnitTestingWorld
                     break;
 
                 default:
-                    // Default material setup
-                    mat.Shaders.Add(color);
+                    // Default material setup - use textured deferred if we have valid albedo textures
+                    if (textureList.Length > 0 && textureList[0] is not null)
+                    {
+                        mat.Shaders.Add(albedo);
+                        mat.Textures = [textureList[0]];
+                    }
+                    else
+                    {
+                        mat.Shaders.Add(color);
+                    }
                     MakeDefaultParameters(mat);
                     break;
             }

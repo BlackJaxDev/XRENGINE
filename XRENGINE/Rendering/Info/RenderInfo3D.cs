@@ -16,7 +16,7 @@ namespace XREngine.Rendering.Info
         public static Func<IRenderable, RenderCommand[], RenderInfo3D>? ConstructorOverride { get; set; } = null;
 
         private RenderInfo3D(IRenderable owner) : base(owner) { }
-        private RenderInfo3D() : base(null) { }
+        protected RenderInfo3D() : base(null) { }
 
         public static RenderInfo3D New(IRenderable owner)
             => ConstructorOverride?.Invoke(owner, []) ?? new RenderInfo3D(owner);

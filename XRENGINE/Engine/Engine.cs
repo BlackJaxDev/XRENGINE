@@ -426,7 +426,7 @@ namespace XREngine
                 CreateWindow(windowSettings);
         }
 
-        public static void CreateWindow(GameWindowStartupSettings windowSettings)
+        public static XRWindow CreateWindow(GameWindowStartupSettings windowSettings)
         {
             bool preferHdrOutput = windowSettings.OutputHDR ?? Rendering.Settings.OutputHDR;
             XRWindow window = new(GetWindowOptions(windowSettings, preferHdrOutput));
@@ -437,6 +437,7 @@ namespace XREngine
             Rendering.ApplyRenderPipelinePreference();
 
             /*Task.Run(() => */window.SetWorld(windowSettings.TargetWorld);
+            return window;
         }
 
         private static void CreateViewports(ELocalPlayerIndexMask localPlayerMask, XRWindow window)

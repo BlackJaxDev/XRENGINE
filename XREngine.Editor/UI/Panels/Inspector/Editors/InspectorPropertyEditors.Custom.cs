@@ -4,7 +4,6 @@ using System.IO;
 using System.Linq;
 using System.Numerics;
 using System.Reflection;
-using System.Windows.Forms;
 using XREngine;
 using XREngine.Core.Files;
 using XREngine.Data.Colors;
@@ -265,44 +264,49 @@ public static partial class InspectorPropertyEditors
 
         if (string.IsNullOrWhiteSpace(asset.FilePath))
         {
-            var path = PromptSaveAssetPath(asset);
-            if (string.IsNullOrWhiteSpace(path))
-                return;
+            // Open a save file dialog
+            PromptSaveAssetPathAsync(asset, path =>
+            {
+                if (string.IsNullOrWhiteSpace(path))
+                    return;
 
-            var directory = Path.GetDirectoryName(path);
-            if (!string.IsNullOrWhiteSpace(directory))
-                Directory.CreateDirectory(directory);
+                var directory = Path.GetDirectoryName(path);
+                if (!string.IsNullOrWhiteSpace(directory))
+                    Directory.CreateDirectory(directory);
 
-            asset.FilePath = path;
+                asset.FilePath = path;
+                Engine.InvokeOnMainThread(() => manager.Save(asset), executeNowIfAlreadyMainThread: true);
+            });
+            return;
         }
 
         Engine.InvokeOnMainThread(() => manager.Save(asset), executeNowIfAlreadyMainThread: true);
     }
 
-    private static string? PromptSaveAssetPath(XRAsset asset)
+    private static void PromptSaveAssetPathAsync(XRAsset asset, Action<string?> callback)
     {
-        if (!OperatingSystem.IsWindows())
-        {
-            Debug.LogWarning("Save dialogs are only supported on Windows.");
-            return null;
-        }
-
-        using SaveFileDialog dialog = new()
-        {
-            Filter = $"XR Assets (*.{AssetManager.AssetExtension})|*.{AssetManager.AssetExtension}|All Files (*.*)|*.*",
-            AddExtension = true,
-            DefaultExt = AssetManager.AssetExtension,
-            FileName = BuildSuggestedFileName(asset),
-            Title = $"Save {asset.GetType().Name}"
-        };
-
-        var initialDirectory = DetermineInitialAssetDirectory(asset);
-        if (!string.IsNullOrWhiteSpace(initialDirectory) && Directory.Exists(initialDirectory))
-            dialog.InitialDirectory = initialDirectory;
-
-        return dialog.ShowDialog() == DialogResult.OK
-            ? EnsureAssetExtension(dialog.FileName)
-            : null;
+        string suggestedName = BuildSuggestedFileName(asset);
+        string? initialDir = DetermineInitialAssetDirectory(asset);
+        
+        string dialogId = $"SaveAsset_{asset.GetHashCode()}";
+        ImGuiFileBrowser.SaveFile(
+            dialogId,
+            $"Save {asset.GetType().Name}",
+            result =>
+            {
+                if (result.Success && !string.IsNullOrEmpty(result.SelectedPath))
+                {
+                    callback(EnsureAssetExtension(result.SelectedPath));
+                }
+                else
+                {
+                    callback(null);
+                }
+            },
+            $"XR Assets (*.{AssetManager.AssetExtension})|*.{AssetManager.AssetExtension}|All Files (*.*)|*.*",
+            initialDir,
+            suggestedName
+        );
     }
 
     private static string BuildSuggestedFileName(XRAsset asset)

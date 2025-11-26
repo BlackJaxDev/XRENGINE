@@ -1,30 +1,175 @@
 ﻿using XREngine.Components;
+using XREngine.Rendering;
+using XREngine.Scene.Transforms;
+
 namespace XREngine
 {
+    /// <summary>
+    /// GameMode defines the rules and behavior of a game session.
+    /// Override this class to implement custom game logic, spawning, and player management.
+    /// </summary>
     public class GameMode
     {
+        /// <summary>
+        /// The world instance this GameMode is managing.
+        /// Set when entering play mode.
+        /// </summary>
+        public XRWorldInstance? WorldInstance { get; internal set; }
+
+        /// <summary>
+        /// Queue of pending possessions per pawn.
+        /// </summary>
         public Dictionary<PawnComponent, Queue<ELocalPlayerIndex>> PossessionQueue { get; } = [];
+
+        /// <summary>
+        /// Whether this GameMode is currently active (in play mode).
+        /// </summary>
+        public bool IsActive { get; private set; }
+
+        #region Lifecycle Methods
+
+        /// <summary>
+        /// Called when play mode begins for this GameMode's world.
+        /// Override to spawn initial pawns, set up game rules, initialize state, etc.
+        /// </summary>
+        public virtual void OnBeginPlay()
+        {
+            IsActive = true;
+
+            // Default behavior: spawn a pawn for the default player if auto-spawn is enabled
+            if (Engine.PlayMode.Configuration.AutoSpawnPlayer)
+            {
+                SpawnDefaultPlayerPawn(Engine.PlayMode.Configuration.DefaultPlayerIndex);
+            }
+
+            Debug.Out($"GameMode.OnBeginPlay - World: {WorldInstance?.TargetWorld?.Name ?? "null"}");
+        }
+
+        /// <summary>
+        /// Called when play mode ends.
+        /// Override to clean up game state, save progress, etc.
+        /// </summary>
+        public virtual void OnEndPlay()
+        {
+            // Clear all possession queues
+            foreach (var kvp in PossessionQueue)
+            {
+                kvp.Key.PreUnpossessed -= OnPawnUnPossessing;
+            }
+            PossessionQueue.Clear();
+
+            // Unpossess all pawns
+            foreach (var player in Engine.State.LocalPlayers)
+            {
+                if (player?.ControlledPawn is not null)
+                {
+                    player.ControlledPawn.Controller = null;
+                }
+            }
+
+            IsActive = false;
+
+            Debug.Out($"GameMode.OnEndPlay - World: {WorldInstance?.TargetWorld?.Name ?? "null"}");
+        }
+
+        /// <summary>
+        /// Called each frame during play mode.
+        /// Override to implement per-frame game logic.
+        /// </summary>
+        /// <param name="deltaTime">Time since last frame in seconds.</param>
+        public virtual void Tick(float deltaTime)
+        {
+            // Override in derived classes for custom tick behavior
+        }
+
+        /// <summary>
+        /// Called each fixed update during play mode (physics rate).
+        /// Override to implement physics-rate game logic.
+        /// </summary>
+        /// <param name="fixedDeltaTime">Fixed time step in seconds.</param>
+        public virtual void FixedTick(float fixedDeltaTime)
+        {
+            // Override in derived classes for custom fixed tick behavior
+        }
+
+        #endregion
+
+        #region Pawn Spawning
+
+        /// <summary>
+        /// Factory method for creating the default pawn for a player.
+        /// Override to customize pawn creation for your game.
+        /// </summary>
+        /// <param name="playerIndex">The player index to create a pawn for.</param>
+        /// <returns>The created pawn component, or null if no pawn should be spawned.</returns>
+        public virtual PawnComponent? CreateDefaultPawn(ELocalPlayerIndex playerIndex)
+        {
+            // Default implementation returns null - override in game-specific GameMode
+            return null;
+        }
+
+        /// <summary>
+        /// Gets the spawn location for a player.
+        /// Override to customize spawn point selection.
+        /// </summary>
+        /// <param name="playerIndex">The player index to get a spawn point for.</param>
+        /// <returns>Spawn position and rotation.</returns>
+        public virtual (System.Numerics.Vector3 Position, System.Numerics.Quaternion Rotation) GetSpawnPoint(ELocalPlayerIndex playerIndex)
+        {
+            // Default: spawn at origin
+            return (System.Numerics.Vector3.Zero, System.Numerics.Quaternion.Identity);
+        }
+
+        /// <summary>
+        /// Spawns and possesses the default pawn for a player.
+        /// </summary>
+        /// <param name="playerIndex">The player index to spawn for.</param>
+        /// <returns>The spawned pawn, or null if spawning failed.</returns>
+        protected virtual PawnComponent? SpawnDefaultPlayerPawn(ELocalPlayerIndex playerIndex)
+        {
+            var pawn = CreateDefaultPawn(playerIndex);
+            if (pawn is not null)
+            {
+                // Apply spawn transform
+                var (position, rotation) = GetSpawnPoint(playerIndex);
+                if (pawn.SceneNode?.GetTransformAs<Transform>(false) is Transform transform)
+                {
+                    transform.SetWorldTranslation(position);
+                    transform.SetWorldRotation(rotation);
+                }
+
+                // Possess the pawn
+                ForcePossession(pawn, playerIndex);
+                
+                Debug.Out($"Spawned default pawn for player {playerIndex}");
+            }
+            return pawn;
+        }
+
+        #endregion
+
+        #region Possession
 
         /// <summary>
         /// Immediately possesses the given pawn with the provided player.
         /// </summary>
-        /// <param name="pawnComponent"></param>
-        /// <param name="possessor"></param>
+        /// <param name="pawnComponent">The pawn to possess.</param>
+        /// <param name="possessor">The player index that will possess the pawn.</param>
         public void ForcePossession(PawnComponent pawnComponent, ELocalPlayerIndex possessor)
         {
-            var localPLayer = Engine.State.GetLocalPlayer(possessor);
-            if (localPLayer != null)
-                pawnComponent.Controller = localPLayer;
+            var localPlayer = Engine.State.GetLocalPlayer(possessor);
+            if (localPlayer != null)
+                pawnComponent.Controller = localPlayer;
             else
                 Debug.Out($"Local player {possessor} does not exist.");
         }
 
         /// <summary>
         /// Queues the given pawn for possession by the provided player.
-        /// The player won't posses the pawn until all other players in the queue have gained and released possession of the pawn first.
+        /// The player won't possess the pawn until all other players in the queue have gained and released possession of the pawn first.
         /// </summary>
-        /// <param name="pawnComponent"></param>
-        /// <param name="possessor"></param>
+        /// <param name="pawnComponent">The pawn to queue for possession.</param>
+        /// <param name="possessor">The player index to queue.</param>
         public void EnqueuePossession(PawnComponent pawnComponent, ELocalPlayerIndex possessor)
         {
             if (pawnComponent.Controller is null)
@@ -48,8 +193,11 @@ namespace XREngine
             if (value.Count == 0)
             {
                 PossessionQueue.Remove(pawnComponent);
-                ForcePossession(pawnComponent, possessor);
+                pawnComponent.PreUnpossessed -= OnPawnUnPossessing;
             }
+            ForcePossession(pawnComponent, possessor);
         }
+
+        #endregion
     }
 }

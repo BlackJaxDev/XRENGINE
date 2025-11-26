@@ -165,12 +165,15 @@ namespace XREngine
         {
             XRTexture[] textureList = new XRTexture[textures.Count];
             XRMaterial mat = new(textureList);
-            ParallelLoopResult MakeTextures()
-            {
-                void MakeTexture(int i) => LoadTexture(modelFilePath, textures, textureList, i);
-                return Parallel.For(0, textures.Count, MakeTexture);
-            }
-            Task.Run(MakeTextures).ContinueWith(t => MakeMaterialInternal(mat, textureList, textures, name));
+            
+            // Load textures in parallel and wait for completion
+            void MakeTexture(int i) => LoadTexture(modelFilePath, textures, textureList, i);
+            Parallel.For(0, textures.Count, MakeTexture);
+            
+            // Set up the material with the loaded textures - must complete before returning
+            // to avoid race conditions where the mesh renders before the shader is set
+            MakeMaterialInternal(mat, textureList, textures, name);
+            
             return mat;
         }
 

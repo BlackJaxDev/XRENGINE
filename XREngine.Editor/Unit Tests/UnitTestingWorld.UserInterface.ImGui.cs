@@ -45,6 +45,7 @@ public static partial class UnitTestingWorld
         private static bool _showMissingAssets;
         private static bool _showEngineSettings;
         private static bool _showUserSettings;
+        private static bool _showStatePanel;
         private static bool _showHierarchy = true;
         private static bool _showInspector = true;
         private static bool _showAssetExplorer = true;
@@ -368,8 +369,10 @@ public static partial class UnitTestingWorld
             ImGui.DockSpaceOverViewport(ImGui.GetID("MainDockSpace"), ImGui.GetMainViewport(), ImGuiDockNodeFlags.PassthruCentralNode);
 
             DrawMainMenuBar();
+            DrawNewProjectDialog();
 
             DrawProfilerPanel();
+            DrawStatePanel();
             DrawOpenGLApiObjectsPanel();
             DrawOpenGLErrorsPanel();
             DrawMissingAssetsPanel();
@@ -387,8 +390,28 @@ public static partial class UnitTestingWorld
 
             if (ImGui.BeginMenu("File"))
             {
+                if (ImGui.MenuItem("New Project..."))
+                    ShowNewProjectDialog();
+                
+                if (ImGui.MenuItem("Open Project..."))
+                    OpenProjectDialog(null!);
+
+                ImGui.Separator();
+
                 if (ImGui.MenuItem("Save All", "Ctrl+Shift+S"))
                     SaveAll(null);
+
+                if (ImGui.BeginMenu("Save Settings"))
+                {
+                    if (ImGui.MenuItem("Save Engine Settings"))
+                        Engine.SaveProjectEngineSettings();
+                    if (ImGui.MenuItem("Save User Settings"))
+                        Engine.SaveProjectUserSettings();
+                    if (ImGui.MenuItem("Save All Settings"))
+                        Engine.SaveProjectSettings();
+                    ImGui.EndMenu();
+                }
+
                 ImGui.EndMenu();
             }
 
@@ -446,6 +469,7 @@ public static partial class UnitTestingWorld
                 ImGui.MenuItem("Inspector", null, ref _showInspector);
                 ImGui.MenuItem("Asset Explorer", null, ref _showAssetExplorer);
                 ImGui.Separator();
+                ImGui.MenuItem("Engine State", null, ref _showStatePanel);
                 ImGui.MenuItem("Profiler", null, ref _showProfiler);
                 ImGui.MenuItem("OpenGL API Objects", null, ref _showOpenGLApiObjects);
                 ImGui.MenuItem("OpenGL Errors", null, ref _showOpenGLErrors);
@@ -490,21 +514,40 @@ public static partial class UnitTestingWorld
             var io = ImGui.GetIO();
             io.ConfigFlags |= ImGuiConfigFlags.DockingEnable;
 
+            // Load Roboto font for a professional look
+            string[] possibleFontPaths =
+            {
+                Path.Combine(Environment.CurrentDirectory, "Build", "CommonAssets", "Fonts", "Roboto", "Roboto-Regular.ttf"),
+                Path.Combine(Environment.CurrentDirectory, "..", "Build", "CommonAssets", "Fonts", "Roboto", "Roboto-Regular.ttf"),
+                Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "Build", "CommonAssets", "Fonts", "Roboto", "Roboto-Regular.ttf"),
+                Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "..", "..", "..", "..", "Build", "CommonAssets", "Fonts", "Roboto", "Roboto-Regular.ttf")
+            };
+
+            foreach (var path in possibleFontPaths)
+            {
+                if (File.Exists(path))
+                {
+                    io.Fonts.Clear();
+                    io.Fonts.AddFontFromFileTTF(path, 16.0f);
+                    break;
+                }
+            }
+
             var style = ImGui.GetStyle();
-            style.WindowRounding = 8.0f;
-            style.FrameRounding = 6.0f;
-            style.GrabRounding = 6.0f;
-            style.TabRounding = 6.0f;
-            style.ScrollbarRounding = 8.0f;
+            style.WindowRounding = 4.0f;
+            style.FrameRounding = 4.0f;
+            style.GrabRounding = 4.0f;
+            style.TabRounding = 4.0f;
+            style.ScrollbarRounding = 9.0f;
             style.WindowBorderSize = 1.0f;
-            style.FrameBorderSize = 1.0f;
-            style.TabBorderSize = 1.0f;
-            style.WindowPadding = new Vector2(14.0f, 10.0f);
-            style.FramePadding = new Vector2(10.0f, 6.0f);
-            style.ItemSpacing = new Vector2(10.0f, 8.0f);
-            style.ItemInnerSpacing = new Vector2(6.0f, 4.0f);
-            style.ScrollbarSize = 16.0f;
-            style.GrabMinSize = 12.0f;
+            style.FrameBorderSize = 0.0f;
+            style.TabBorderSize = 0.0f;
+            style.WindowPadding = new Vector2(10.0f, 10.0f);
+            style.FramePadding = new Vector2(6.0f, 4.0f);
+            style.ItemSpacing = new Vector2(8.0f, 4.0f);
+            style.ItemInnerSpacing = new Vector2(4.0f, 4.0f);
+            style.ScrollbarSize = 14.0f;
+            style.GrabMinSize = 10.0f;
 
             var colors = style.Colors;
             Vector4 darkBg = new(0.12f, 0.13f, 0.15f, 1.00f);
@@ -580,14 +623,6 @@ public static partial class UnitTestingWorld
             _imguiStyleInitialized = true;
         }
 
-
-
-
-
-
-
-
-
         private static void SetInspectorStandaloneTarget(object target, string? title, Action? onClear = null)
         {
             if (target is null)
@@ -621,44 +656,10 @@ public static partial class UnitTestingWorld
             }
         }
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-        private sealed class AssetExplorerTabState
+        private sealed class AssetExplorerTabState(string id, string displayName)
         {
-            public AssetExplorerTabState(string id, string displayName)
-            {
-                Id = id;
-                DisplayName = displayName;
-            }
-
-            public string Id { get; }
-            public string DisplayName { get; }
+            public string Id { get; } = id;
+            public string DisplayName { get; } = displayName;
             public string RootPath { get; set; } = string.Empty;
             public string CurrentDirectory { get; set; } = string.Empty;
             public string? SelectedPath { get; set; }
@@ -672,31 +673,19 @@ public static partial class UnitTestingWorld
 
 
 
-        private sealed class AssetExplorerContextAction
+        private sealed class AssetExplorerContextAction(string label, Action<string> handler, Func<string, bool>? predicate)
         {
-            public AssetExplorerContextAction(string label, Action<string> handler, Func<string, bool>? predicate)
-            {
-                Label = label;
-                Handler = handler;
-                Predicate = predicate;
-            }
-
-            public string Label { get; }
-            public Action<string> Handler { get; }
-            public Func<string, bool>? Predicate { get; }
+            public string Label { get; } = label;
+            public Action<string> Handler { get; } = handler;
+            public Func<string, bool>? Predicate { get; } = predicate;
 
             public bool ShouldDisplay(string path)
                 => Predicate?.Invoke(path) ?? true;
         }
 
-        private sealed class AssetExplorerPreviewCacheEntry
+        private sealed class AssetExplorerPreviewCacheEntry(string path)
         {
-            public AssetExplorerPreviewCacheEntry(string path)
-            {
-                Path = path;
-            }
-
-            public string Path { get; private set; }
+            public string Path { get; private set; } = path;
             public XRTexture2D? Texture { get; set; }
             public bool RequestInFlight { get; set; }
             public uint RequestedSize { get; set; }
@@ -740,30 +729,13 @@ public static partial class UnitTestingWorld
         {
         }
 
-        private sealed class ComponentTypeDescriptor
+        private sealed class ComponentTypeDescriptor(Type type, string displayName, string ns, string assemblyName)
         {
-            public ComponentTypeDescriptor(Type type, string displayName, string ns, string assemblyName)
-            {
-                Type = type;
-                DisplayName = displayName;
-                Namespace = ns;
-                AssemblyName = assemblyName;
-                FullName = type.FullName ?? type.Name;
-            }
-
-            public Type Type { get; }
-            public string DisplayName { get; }
-            public string Namespace { get; }
-            public string AssemblyName { get; }
-            public string FullName { get; }
-        }
-
-        private class ProfilerRootNodeAggregate
-        {
-            public string Name { get; set; } = string.Empty;
-            public double TotalTimeMs { get; set; }
-            public int Calls { get; set; }
-            public List<Engine.CodeProfiler.ProfilerNodeSnapshot> Nodes { get; } = new();
+            public Type Type { get; } = type;
+            public string DisplayName { get; } = displayName;
+            public string Namespace { get; } = ns;
+            public string AssemblyName { get; } = assemblyName;
+            public string FullName { get; } = type.FullName ?? type.Name;
         }
     }
 }

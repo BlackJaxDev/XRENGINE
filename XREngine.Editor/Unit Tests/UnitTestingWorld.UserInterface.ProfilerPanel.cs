@@ -11,6 +11,12 @@ public static partial class UnitTestingWorld
 {
     public static partial class UserInterface
     {
+        // Cache for root method aggregation across threads
+        private static readonly Dictionary<string, ProfilerRootMethodAggregate> _profilerRootMethodCache = new();
+        private static float _profilerPersistenceSeconds = 5.0f;
+        private static DateTime _lastProfilerUIUpdate = DateTime.MinValue;
+        private static float _profilerUpdateIntervalSeconds = 0.5f;
+
         private static void DrawProfilerPanel()
         {
             if (!_showProfiler) return;
@@ -37,11 +43,19 @@ public static partial class UnitTestingWorld
                 UpdateWorstFrameStatistics(frameSnapshot);
                 snapshotForDisplay = GetSnapshotForHierarchy(frameSnapshot, out hierarchyFrameMs, out showingWorstWindowSample);
                 UpdateProfilerThreadCache(frameSnapshot.Threads);
+                UpdateRootMethodCache(frameSnapshot, history);
                 _lastProfilerCaptureTime = frameSnapshot.FrameTime;
             }
             else
             {
                 UpdateProfilerThreadCache(Array.Empty<Engine.CodeProfiler.ProfilerThreadSnapshot>());
+            }
+
+            var nowUtc = DateTime.UtcNow;
+            if (nowUtc - _lastProfilerUIUpdate > TimeSpan.FromSeconds(_profilerUpdateIntervalSeconds))
+            {
+                UpdateDisplayValues();
+                _lastProfilerUIUpdate = nowUtc;
             }
 
             if (_profilerThreadCache.Count == 0)
@@ -64,19 +78,28 @@ public static partial class UnitTestingWorld
             }
 
             ImGui.Checkbox("Sort by Time", ref _profilerSortByTime);
+            ImGui.SameLine();
+            ImGui.SetNextItemWidth(100);
+            ImGui.DragFloat("Update Interval (s)", ref _profilerUpdateIntervalSeconds, 0.05f, 0.1f, 2.0f);
+            ImGui.SameLine();
+            ImGui.SetNextItemWidth(100);
+            ImGui.DragFloat("Persistence (s)", ref _profilerPersistenceSeconds, 0.1f, 0.5f, 10.0f);
 
             ImGui.Separator();
 
-            var nowUtc = DateTime.UtcNow;
-
-            if (ImGui.CollapsingHeader("Thread Graphs", ImGuiTreeNodeFlags.DefaultOpen))
+            // Group graphs by root method name
+            if (ImGui.CollapsingHeader("Root Method Graphs", ImGuiTreeNodeFlags.DefaultOpen))
             {
-                foreach (var (threadId, entry) in _profilerThreadCache.OrderBy(static kvp => kvp.Key))
+                var rootMethodAggregates = _profilerRootMethodCache.Values
+                    .Where(rm => rm.DisplayTotalTimeMs >= 0.1f || (nowUtc - rm.LastSeen).TotalSeconds < _profilerPersistenceSeconds)
+                    .OrderBy(static rm => rm.Name)
+                    .ToList();
+
+                foreach (var rootMethod in rootMethodAggregates)
                 {
-                    var threadSnapshot = entry.Snapshot;
-                    bool isStale = nowUtc - entry.LastSeen > ProfilerThreadStaleThreshold;
-                    float totalTimeMs = threadSnapshot?.TotalTimeMs ?? 0f;
-                    string headerLabel = $"Thread {threadId} ({totalTimeMs:F3} ms)";
+                    bool isStale = nowUtc - rootMethod.LastSeen > TimeSpan.FromSeconds(_profilerUpdateIntervalSeconds);
+                    float fps = rootMethod.DisplayTotalTimeMs > 0.001f ? 1000.0f / rootMethod.DisplayTotalTimeMs : 0.0f;
+                    string headerLabel = $"{rootMethod.Name} ({rootMethod.DisplayTotalTimeMs:F3} ms, {fps:F1} FPS, {rootMethod.ThreadIds.Count} thread(s))";
                     if (isStale)
                         headerLabel += " (inactive)";
 
@@ -88,23 +111,11 @@ public static partial class UnitTestingWorld
                     if (isStale)
                         ImGui.PopStyleColor();
 
-                    float[] samplesToPlot = Array.Empty<float>();
-                    if (history.TryGetValue(threadId, out var samples) && samples.Length > 0)
+                    // Plot aggregated samples for this root method
+                    if (rootMethod.Samples.Length > 0)
                     {
-                        if (entry.Samples.Length != samples.Length)
-                            entry.Samples = new float[samples.Length];
-                        Array.Copy(samples, entry.Samples, samples.Length);
-                        samplesToPlot = entry.Samples;
-                    }
-                    else if (entry.Samples.Length > 0)
-                    {
-                        samplesToPlot = entry.Samples;
-                    }
-
-                    if (samplesToPlot.Length > 0)
-                    {
-                        float min = samplesToPlot.Min();
-                        float max = samplesToPlot.Max();
+                        float min = rootMethod.Samples.Min();
+                        float max = rootMethod.Samples.Max();
                         if (!float.IsFinite(min) || !float.IsFinite(max))
                         {
                             min = 0.0f;
@@ -113,45 +124,351 @@ public static partial class UnitTestingWorld
                         if (MathF.Abs(max - min) < 0.001f)
                             max = min + 0.001f;
 
-                        ImGui.PlotLines($"##ProfilerThreadPlot{threadId}", ref samplesToPlot[0], samplesToPlot.Length, 0, null, min, max, new Vector2(-1.0f, 40.0f));
+                        ImGui.PlotLines($"##ProfilerRootMethodPlot_{rootMethod.Name}", ref rootMethod.Samples[0], rootMethod.Samples.Length, 0, null, min, max, new Vector2(-1.0f, 40.0f));
                     }
                 }
             }
 
             ImGui.Separator();
-            ImGui.Text("Hierarchy");
+            ImGui.Text("Hierarchy by Root Method");
 
-            if (ImGui.BeginTable("ProfilerHierarchies", Math.Max(1, _profilerThreadCache.Count), ImGuiTableFlags.Borders | ImGuiTableFlags.Resizable | ImGuiTableFlags.RowBg | ImGuiTableFlags.ScrollX))
+            // Create single hierarchy table
+            var rootMethods = _profilerRootMethodCache.Values
+                .Where(rm => rm.DisplayTotalTimeMs >= 0.1f || (DateTime.UtcNow - rm.LastSeen).TotalSeconds < _profilerPersistenceSeconds)
+                .AsEnumerable();
+                
+            if (_profilerSortByTime)
+                rootMethods = rootMethods.OrderByDescending(rm => rm.DisplayTotalTimeMs);
+            else
+                rootMethods = rootMethods.OrderBy(rm => rm.Name);
+
+            var sortedRootMethods = rootMethods.ToList();
+
+            if (sortedRootMethods.Count > 0)
             {
-                foreach (var (threadId, entry) in _profilerThreadCache.OrderBy(static kvp => kvp.Key))
+                if (ImGui.BeginTable("ProfilerHierarchy", 3, ImGuiTableFlags.Borders | ImGuiTableFlags.Resizable | ImGuiTableFlags.RowBg | ImGuiTableFlags.ScrollY))
                 {
-                    ImGui.TableSetupColumn($"Thread {threadId}");
-                }
-                ImGui.TableHeadersRow();
+                    ImGui.TableSetupColumn("Name", ImGuiTableColumnFlags.WidthStretch);
+                    ImGui.TableSetupColumn("Time", ImGuiTableColumnFlags.WidthFixed, 60f);
+                    ImGui.TableSetupColumn("Calls", ImGuiTableColumnFlags.WidthFixed, 40f);
+                    ImGui.TableHeadersRow();
 
-                ImGui.TableNextRow();
-                foreach (var (threadId, entry) in _profilerThreadCache.OrderBy(static kvp => kvp.Key))
-                {
-                    ImGui.TableNextColumn();
-                    var threadSnapshot = entry.Snapshot;
-                    if (threadSnapshot is not null)
+                    foreach (var rootMethod in sortedRootMethods)
                     {
-                        if (ImGui.BeginTable($"HierarchyTable_{threadId}", 3, ImGuiTableFlags.BordersInner | ImGuiTableFlags.Resizable | ImGuiTableFlags.RowBg))
+                        if (rootMethod.RootNodes.Count > 0)
                         {
-                            ImGui.TableSetupColumn("Name", ImGuiTableColumnFlags.WidthStretch);
-                            ImGui.TableSetupColumn("Time", ImGuiTableColumnFlags.WidthFixed, 60f);
-                            ImGui.TableSetupColumn("Calls", ImGuiTableColumnFlags.WidthFixed, 40f);
-                            ImGui.TableHeadersRow();
+                            DrawAggregatedRootMethodHierarchy(rootMethod);
+                        }
+                    }
+                    ImGui.EndTable();
+                }
+            }
+            else
+            {
+                ImGui.Text("No root methods captured.");
+            }
+        }
 
-                            foreach (var root in threadSnapshot.RootNodes)
-                                DrawProfilerNode(root, $"T{threadId}");
+        private static void UpdateRootMethodCache(Engine.CodeProfiler.ProfilerFrameSnapshot frameSnapshot, Dictionary<int, float[]> history)
+        {
+            var now = DateTime.UtcNow;
+            
+            // Reset current frame data but keep structure
+            foreach (var entry in _profilerRootMethodCache.Values)
+            {
+                entry.RootNodes.Clear();
+                entry.ThreadIds.Clear();
+                entry.TotalTimeMs = 0;
+                ResetAggregatedChildrenStats(entry.Children);
+            }
 
-                            ImGui.EndTable();
+            // Aggregate root nodes by method name across all threads
+            foreach (var thread in frameSnapshot.Threads)
+            {
+                foreach (var rootNode in thread.RootNodes)
+                {
+                    if (!_profilerRootMethodCache.TryGetValue(rootNode.Name, out var aggregate))
+                    {
+                        aggregate = new ProfilerRootMethodAggregate { Name = rootNode.Name };
+                        _profilerRootMethodCache[rootNode.Name] = aggregate;
+                    }
+
+                    aggregate.RootNodes.Add(rootNode);
+                    aggregate.ThreadIds.Add(thread.ThreadId);
+                    aggregate.TotalTimeMs += rootNode.ElapsedMs;
+                    aggregate.LastSeen = now;
+                    
+                    UpdateAggregatedChildrenRecursive(rootNode.Children, aggregate.Children, now);
+                }
+            }
+
+            // Update accumulated max values for the current window
+            foreach (var entry in _profilerRootMethodCache.Values)
+            {
+                entry.AccumulatedMaxTotalTimeMs = Math.Max(entry.AccumulatedMaxTotalTimeMs, entry.TotalTimeMs);
+                UpdateAggregatedChildrenMaxRecursive(entry.Children);
+            }
+
+            // Prune stale children
+            foreach (var entry in _profilerRootMethodCache.Values)
+            {
+                PruneAggregatedChildren(entry.Children, now);
+            }
+
+            // Build aggregated samples for each root method from thread history
+            // We sum up the samples from all threads that have this root method
+            foreach (var aggregate in _profilerRootMethodCache.Values)
+            {
+                if (aggregate.ThreadIds.Count == 0)
+                    continue;
+
+                // Get the max sample length from participating threads
+                int maxLength = 0;
+                foreach (var threadId in aggregate.ThreadIds)
+                {
+                    if (history.TryGetValue(threadId, out var samples))
+                        maxLength = Math.Max(maxLength, samples.Length);
+                }
+
+                if (maxLength > 0)
+                {
+                    if (aggregate.Samples.Length != maxLength)
+                        aggregate.Samples = new float[maxLength];
+                    else
+                        Array.Clear(aggregate.Samples, 0, aggregate.Samples.Length);
+
+                    // Sum samples from all threads (simple aggregation)
+                    foreach (var threadId in aggregate.ThreadIds)
+                    {
+                        if (history.TryGetValue(threadId, out var samples))
+                        {
+                            for (int i = 0; i < samples.Length && i < maxLength; i++)
+                                aggregate.Samples[i] += samples[i];
                         }
                     }
                 }
-                ImGui.EndTable();
             }
+
+            // Remove stale entries that haven't been seen recently
+            var toRemove = _profilerRootMethodCache
+                .Where(kvp => now - kvp.Value.LastSeen > TimeSpan.FromSeconds(_profilerPersistenceSeconds))
+                .Select(kvp => kvp.Key)
+                .ToList();
+            foreach (var key in toRemove)
+                _profilerRootMethodCache.Remove(key);
+        }
+
+        private static void UpdateDisplayValues()
+        {
+            foreach (var entry in _profilerRootMethodCache.Values)
+            {
+                entry.DisplayTotalTimeMs = entry.AccumulatedMaxTotalTimeMs;
+                entry.AccumulatedMaxTotalTimeMs = 0;
+                UpdateAggregatedChildrenDisplayRecursive(entry.Children);
+            }
+        }
+
+        private static void UpdateAggregatedChildrenDisplayRecursive(Dictionary<string, AggregatedChildNode> children)
+        {
+            foreach (var child in children.Values)
+            {
+                child.DisplayTotalElapsedMs = child.AccumulatedMaxTotalElapsedMs;
+                child.DisplayCallCount = child.AccumulatedMaxCallCount;
+                child.AccumulatedMaxTotalElapsedMs = 0;
+                child.AccumulatedMaxCallCount = 0;
+                UpdateAggregatedChildrenDisplayRecursive(child.Children);
+            }
+        }
+
+        private static void UpdateAggregatedChildrenMaxRecursive(Dictionary<string, AggregatedChildNode> children)
+        {
+            foreach (var child in children.Values)
+            {
+                child.AccumulatedMaxTotalElapsedMs = Math.Max(child.AccumulatedMaxTotalElapsedMs, child.TotalElapsedMs);
+                child.AccumulatedMaxCallCount = Math.Max(child.AccumulatedMaxCallCount, child.CallCount);
+                UpdateAggregatedChildrenMaxRecursive(child.Children);
+            }
+        }
+
+        private static void ResetAggregatedChildrenStats(Dictionary<string, AggregatedChildNode> children)
+        {
+            foreach (var child in children.Values)
+            {
+                child.TotalElapsedMs = 0;
+                child.CallCount = 0;
+                ResetAggregatedChildrenStats(child.Children);
+            }
+        }
+
+        private static void UpdateAggregatedChildrenRecursive(IReadOnlyList<Engine.CodeProfiler.ProfilerNodeSnapshot> sourceChildren, Dictionary<string, AggregatedChildNode> targetChildren, DateTime now)
+        {
+            foreach (var child in sourceChildren)
+            {
+                if (!targetChildren.TryGetValue(child.Name, out var aggChild))
+                {
+                    aggChild = new AggregatedChildNode { Name = child.Name };
+                    targetChildren[child.Name] = aggChild;
+                }
+                
+                aggChild.TotalElapsedMs += child.ElapsedMs;
+                aggChild.CallCount++;
+                aggChild.LastSeen = now;
+                
+                UpdateAggregatedChildrenRecursive(child.Children, aggChild.Children, now);
+            }
+        }
+
+        private static void PruneAggregatedChildren(Dictionary<string, AggregatedChildNode> children, DateTime now)
+        {
+            var toRemove = children.Where(kvp => now - kvp.Value.LastSeen > TimeSpan.FromSeconds(_profilerPersistenceSeconds)).Select(kvp => kvp.Key).ToList();
+            foreach (var key in toRemove)
+                children.Remove(key);
+                
+            foreach (var child in children.Values)
+                PruneAggregatedChildren(child.Children, now);
+        }
+
+        private static void DrawAggregatedRootMethodHierarchy(ProfilerRootMethodAggregate rootMethod)
+        {
+            // Use persistent children
+            var allChildren = rootMethod.Children.Values;
+            float childrenTotalTime = allChildren.Sum(c => c.DisplayTotalElapsedMs);
+            float untrackedTime = rootMethod.DisplayTotalTimeMs - childrenTotalTime;
+
+            var children = allChildren
+                .Where(c => c.DisplayTotalElapsedMs >= 0.1f || (DateTime.UtcNow - c.LastSeen).TotalSeconds < _profilerPersistenceSeconds)
+                .ToList();
+
+            // Draw the root method summary row
+            ImGui.TableNextRow();
+            ImGui.TableSetColumnIndex(0);
+            
+            ImGuiTreeNodeFlags rootFlags = ImGuiTreeNodeFlags.OpenOnArrow | ImGuiTreeNodeFlags.OpenOnDoubleClick | ImGuiTreeNodeFlags.SpanFullWidth;
+            if (children.Count == 0 && (untrackedTime < 0.1f || allChildren.Count == 0))
+                rootFlags |= ImGuiTreeNodeFlags.Leaf;
+
+            string rootKey = $"Root_{rootMethod.Name}";
+            if (_profilerNodeOpenCache.TryGetValue(rootKey, out bool isRootOpen) && isRootOpen)
+                rootFlags |= ImGuiTreeNodeFlags.DefaultOpen;
+
+            bool rootNodeOpen = ImGui.TreeNodeEx($"{rootMethod.Name} (aggregated)##{rootKey}", rootFlags);
+            if (ImGui.IsItemToggledOpen())
+                _profilerNodeOpenCache[rootKey] = rootNodeOpen;
+
+            ImGui.TableSetColumnIndex(1);
+            ImGui.Text($"{rootMethod.DisplayTotalTimeMs:F3}");
+
+            ImGui.TableSetColumnIndex(2);
+            ImGui.Text($"{rootMethod.RootNodes.Count}");
+
+            if (rootNodeOpen)
+            {
+                if (_profilerSortByTime)
+                    children = children.OrderByDescending(c => c.DisplayTotalElapsedMs).ToList();
+
+                foreach (var child in children)
+                    DrawAggregatedChildNode(child, rootKey);
+                
+                if (untrackedTime >= 0.1f && allChildren.Count > 0)
+                {
+                    ImGui.TableNextRow();
+                    ImGui.TableSetColumnIndex(0);
+                    ImGui.TreeNodeEx($"(untracked time)##Untracked_{rootKey}", ImGuiTreeNodeFlags.Leaf | ImGuiTreeNodeFlags.NoTreePushOnOpen | ImGuiTreeNodeFlags.SpanFullWidth);
+                    ImGui.TableSetColumnIndex(1);
+                    ImGui.Text($"{untrackedTime:F3}");
+                    ImGui.TableSetColumnIndex(2);
+                    ImGui.Text("-");
+                }
+
+                ImGui.TreePop();
+            }
+        }
+
+        private static void DrawAggregatedChildNode(AggregatedChildNode node, string idSuffix)
+        {
+            var allChildren = node.Children.Values;
+            float childrenTotalTime = allChildren.Sum(c => c.DisplayTotalElapsedMs);
+            float untrackedTime = node.DisplayTotalElapsedMs - childrenTotalTime;
+
+            var children = allChildren
+                .Where(c => c.DisplayTotalElapsedMs >= 0.1f || (DateTime.UtcNow - c.LastSeen).TotalSeconds < _profilerPersistenceSeconds)
+                .ToList();
+
+            ImGuiTreeNodeFlags flags = ImGuiTreeNodeFlags.OpenOnArrow | ImGuiTreeNodeFlags.OpenOnDoubleClick | ImGuiTreeNodeFlags.SpanFullWidth;
+            if (children.Count == 0 && (untrackedTime < 0.1f || allChildren.Count == 0))
+                flags |= ImGuiTreeNodeFlags.Leaf;
+
+            string nodeKey = $"{node.Name}_{idSuffix}";
+            if (_profilerNodeOpenCache.TryGetValue(nodeKey, out bool isOpen) && isOpen)
+                flags |= ImGuiTreeNodeFlags.DefaultOpen;
+
+            ImGui.TableNextRow();
+            ImGui.TableSetColumnIndex(0);
+
+            bool nodeOpen = ImGui.TreeNodeEx($"{node.Name}##{nodeKey}", flags);
+            if (ImGui.IsItemToggledOpen())
+                _profilerNodeOpenCache[nodeKey] = nodeOpen;
+
+            ImGui.TableSetColumnIndex(1);
+            ImGui.Text($"{node.DisplayTotalElapsedMs:F3}");
+
+            ImGui.TableSetColumnIndex(2);
+            ImGui.Text($"{node.DisplayCallCount}");
+
+            if (nodeOpen)
+            {
+                if (_profilerSortByTime)
+                    children = children.OrderByDescending(c => c.DisplayTotalElapsedMs).ToList();
+
+                foreach (var child in children)
+                    DrawAggregatedChildNode(child, nodeKey);
+                
+                if (untrackedTime >= 0.1f && allChildren.Count > 0)
+                {
+                    ImGui.TableNextRow();
+                    ImGui.TableSetColumnIndex(0);
+                    ImGui.TreeNodeEx($"(untracked time)##Untracked_{nodeKey}", ImGuiTreeNodeFlags.Leaf | ImGuiTreeNodeFlags.NoTreePushOnOpen | ImGuiTreeNodeFlags.SpanFullWidth);
+                    ImGui.TableSetColumnIndex(1);
+                    ImGui.Text($"{untrackedTime:F3}");
+                    ImGui.TableSetColumnIndex(2);
+                    ImGui.Text("-");
+                }
+
+                ImGui.TreePop();
+            }
+        }
+
+        // Helper class to aggregate child nodes across multiple root nodes
+        private sealed class AggregatedChildNode
+        {
+            public string Name { get; set; } = string.Empty;
+            public float TotalElapsedMs { get; set; }
+            public int CallCount { get; set; }
+            
+            public float AccumulatedMaxTotalElapsedMs { get; set; }
+            public int AccumulatedMaxCallCount { get; set; }
+            
+            public float DisplayTotalElapsedMs { get; set; }
+            public int DisplayCallCount { get; set; }
+
+            public Dictionary<string, AggregatedChildNode> Children { get; } = new();
+            public DateTime LastSeen { get; set; }
+        }
+
+        // Cache entry for root method aggregation
+        private sealed class ProfilerRootMethodAggregate
+        {
+            public string Name { get; set; } = string.Empty;
+            public float TotalTimeMs { get; set; }
+            
+            public float AccumulatedMaxTotalTimeMs { get; set; }
+            public float DisplayTotalTimeMs { get; set; }
+
+            public HashSet<int> ThreadIds { get; } = new();
+            public List<Engine.CodeProfiler.ProfilerNodeSnapshot> RootNodes { get; } = new();
+            public float[] Samples { get; set; } = Array.Empty<float>();
+            public DateTime LastSeen { get; set; }
+            public Dictionary<string, AggregatedChildNode> Children { get; } = new();
         }
 
         private static void UpdateProfilerThreadCache(IReadOnlyList<Engine.CodeProfiler.ProfilerThreadSnapshot> threads)
@@ -181,42 +498,6 @@ public static partial class UnitTestingWorld
             var toRemove = _profilerThreadCache.Where(kvp => now - kvp.Value.LastSeen > ProfilerThreadCacheTimeout).Select(kvp => kvp.Key).ToList();
             foreach (var key in toRemove)
                 _profilerThreadCache.Remove(key);
-        }
-
-        private static void DrawProfilerNode(Engine.CodeProfiler.ProfilerNodeSnapshot node, string idSuffix)
-        {
-            ImGuiTreeNodeFlags flags = ImGuiTreeNodeFlags.OpenOnArrow | ImGuiTreeNodeFlags.OpenOnDoubleClick | ImGuiTreeNodeFlags.SpanFullWidth;
-            if (node.Children.Count == 0)
-                flags |= ImGuiTreeNodeFlags.Leaf;
-
-            // Check cache for open state
-            string nodeKey = $"{node.Name}_{idSuffix}";
-            if (_profilerNodeOpenCache.TryGetValue(nodeKey, out bool isOpen) && isOpen)
-                flags |= ImGuiTreeNodeFlags.DefaultOpen;
-
-            ImGui.TableNextRow();
-            ImGui.TableSetColumnIndex(0);
-
-            bool nodeOpen = ImGui.TreeNodeEx($"{node.Name}##{idSuffix}", flags);
-            if (ImGui.IsItemToggledOpen())
-                _profilerNodeOpenCache[nodeKey] = nodeOpen;
-
-            ImGui.TableSetColumnIndex(1);
-            ImGui.Text($"{node.ElapsedMs:F3}");
-
-            ImGui.TableSetColumnIndex(2);
-            ImGui.Text("1"); // Calls not available in snapshot
-
-            if (nodeOpen)
-            {
-                var children = node.Children;
-                if (_profilerSortByTime)
-                    children = children.OrderByDescending(c => c.ElapsedMs).ToList();
-
-                foreach (var child in children)
-                    DrawProfilerNode(child, idSuffix + "_" + node.Name);
-                ImGui.TreePop();
-            }
         }
 
         private static Engine.CodeProfiler.ProfilerFrameSnapshot GetSnapshotForHierarchy(Engine.CodeProfiler.ProfilerFrameSnapshot currentSnapshot, out float frameMs, out bool usingWorstSnapshot)

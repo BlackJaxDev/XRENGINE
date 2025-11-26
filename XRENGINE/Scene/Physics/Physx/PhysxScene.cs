@@ -224,11 +224,22 @@ namespace XREngine.Rendering.Physics.Physx
             //PxSceneFlags.EnableStabilization |
             //PxSceneFlags.EnableEnhancedDeterminism;
             sceneDesc.broadPhaseType = PxBroadPhaseType.Gpu;
-            //Debug.Physics("[PhysxScene] Broadphase set to CPU ABP; GPU dynamics disabled for debugging");
-            //sceneDesc.gpuDynamicsConfig = new PxgDynamicsMemoryConfig()
-            //{
-            //    maxRigidContactCount = 64,
-            //};
+            var gpuMemorySettings = Engine.Rendering.Settings.PhysicsGpuMemorySettings;
+            sceneDesc.gpuDynamicsConfig = new PxgDynamicsMemoryConfig
+            {
+                maxRigidContactCount = gpuMemorySettings.MaxRigidContactCount,
+                maxRigidPatchCount = gpuMemorySettings.MaxRigidPatchCount,
+                tempBufferCapacity = gpuMemorySettings.TempBufferCapacity,
+                heapCapacity = gpuMemorySettings.HeapCapacity,
+                foundLostPairsCapacity = gpuMemorySettings.FoundLostPairsCapacity,
+                foundLostAggregatePairsCapacity = gpuMemorySettings.FoundLostAggregatePairsCapacity,
+                totalAggregatePairsCapacity = gpuMemorySettings.TotalAggregatePairsCapacity,
+                maxSoftBodyContacts = gpuMemorySettings.MaxSoftBodyContacts,
+                maxFemClothContacts = gpuMemorySettings.MaxFemClothContacts,
+                maxParticleContacts = gpuMemorySettings.MaxParticleContacts,
+                collisionStackSize = gpuMemorySettings.CollisionStackSize,
+                maxHairContacts = gpuMemorySettings.MaxHairContacts
+            };
             _scene = _physicsPtr->CreateSceneMut(&sceneDesc);
             Scenes.Add((nint)_scene, this);
 

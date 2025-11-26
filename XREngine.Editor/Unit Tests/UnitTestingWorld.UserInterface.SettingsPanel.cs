@@ -18,6 +18,22 @@ public static partial class UnitTestingWorld
                 ImGui.End();
                 return;
             }
+
+            // Save button at the top
+            if (Engine.CurrentProject is not null)
+            {
+                if (ImGui.Button("Save Engine Settings"))
+                    Engine.SaveProjectEngineSettings();
+                ImGui.SameLine();
+                ImGui.TextDisabled($"(Project: {Engine.CurrentProject.ProjectName})");
+                ImGui.Separator();
+            }
+            else
+            {
+                ImGui.TextDisabled("No project loaded - settings will not persist.");
+                ImGui.Separator();
+            }
+
             DrawSettingsTabContent(Engine.Rendering.Settings, "Engine Settings");
             ImGui.End();
         }
@@ -30,6 +46,22 @@ public static partial class UnitTestingWorld
                 ImGui.End();
                 return;
             }
+
+            // Save button at the top
+            if (Engine.CurrentProject is not null)
+            {
+                if (ImGui.Button("Save User Settings"))
+                    Engine.SaveProjectUserSettings();
+                ImGui.SameLine();
+                ImGui.TextDisabled($"(Project: {Engine.CurrentProject.ProjectName})");
+                ImGui.Separator();
+            }
+            else
+            {
+                ImGui.TextDisabled("No project loaded - settings will not persist.");
+                ImGui.Separator();
+            }
+
             DrawSettingsTabContent(Engine.UserSettings, "User Settings");
             ImGui.End();
         }
