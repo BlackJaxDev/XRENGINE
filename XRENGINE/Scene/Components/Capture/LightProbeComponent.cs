@@ -86,22 +86,25 @@ namespace XREngine.Components.Capture.Lights
             set => SetField(ref _realTimeUpdateInterval, value);
         }
 
-        private XRCubeFrameBuffer? _irradianceFBO;
-        private XRCubeFrameBuffer? _prefilterFBO;
-        private XRTextureCube? _irradianceTexture;
-        private XRTextureCube? _prefilterTexture;
+        private XRQuadFrameBuffer? _irradianceFBO;
+        private XRQuadFrameBuffer? _prefilterFBO;
+        private int _prefilterSourceDimension = 1;
+        private static XRShader? s_fullscreenTriVertexShader;
+        private XRTexture2D? _irradianceTexture;
+        private XRTexture2D? _prefilterTexture;
         private XRMeshRenderer? _previewSphere;
 
-        public XRTextureCube? IrradianceTexture
+        public XRTexture2D? IrradianceTexture
         {
             get => _irradianceTexture;
             private set => SetField(ref _irradianceTexture, value);
         }
-        public XRTextureCube? PrefilterTexture
+        public XRTexture2D? PrefilterTexture
         {
             get => _prefilterTexture;
             private set => SetField(ref _prefilterTexture, value);
         }
+
         [YamlIgnore]
         public XRMeshRenderer? PreviewSphere
         {
@@ -128,14 +131,16 @@ namespace XREngine.Components.Capture.Lights
             {
                 ERenderPreview.Irradiance => IrradianceTexture,
                 ERenderPreview.Prefilter => PrefilterTexture,
-                _ => _environmentTextureCubemap as XRTexture ?? _environmentTextureEquirect,
+                _ => EnvironmentTextureOctahedral ?? _environmentTextureEquirect,
             };
 
         public string GetPreviewShaderPath()
             => PreviewDisplay switch
             {
-                ERenderPreview.Irradiance or ERenderPreview.Prefilter => "Scene3D\\Cubemap.fs",
-                _ => _environmentTextureCubemap is not null ? "Scene3D\\Cubemap.fs" : "Scene3D\\Equirect.fs",
+                ERenderPreview.Irradiance or ERenderPreview.Prefilter => "Scene3D\\OctahedralEnv.fs",
+                _ => EnvironmentTextureOctahedral is not null
+                    ? "Scene3D\\OctahedralEnv.fs"
+                    : "Scene3D\\Equirect.fs",
             };
 
         private bool OnPreCollectRenderInfo(RenderInfo info, RenderCommandCollection passes, XRCamera? camera)
@@ -159,102 +164,131 @@ namespace XREngine.Components.Capture.Lights
             set => SetField(ref _irradianceResolution, value);
         }
 
+        private const uint OctahedralResolutionMultiplier = 2u;
+
         protected override void InitializeForCapture()
         {
             base.InitializeForCapture();
 
-            //Irradiance texture doesn't need to be very high quality, 
-            //linear filtering on low resolution will do fine
-            IrradianceTexture = new XRTextureCube(IrradianceResolution, EPixelInternalFormat.Rgb8, EPixelFormat.Rgb, EPixelType.UnsignedByte, false)
-            {
-                MinFilter = ETexMinFilter.Linear,
-                MagFilter = ETexMagFilter.Linear,
-                UWrap = ETexWrapMode.ClampToEdge,
-                VWrap = ETexWrapMode.ClampToEdge,
-                WWrap = ETexWrapMode.ClampToEdge,
-                Resizable = false,
-                SizedInternalFormat = ESizedInternalFormat.Rgb8,
-                AutoGenerateMipmaps = false,
-            };
+            if (EnvironmentTextureOctahedral is null)
+                return;
 
-            PrefilterTexture = new XRTextureCube(Resolution, EPixelInternalFormat.Rgb16f, EPixelFormat.Rgb, EPixelType.HalfFloat, false)
-            {
-                MinFilter = ETexMinFilter.LinearMipmapLinear,
-                MagFilter = ETexMagFilter.Linear,
-                UWrap = ETexWrapMode.ClampToEdge,
-                VWrap = ETexWrapMode.ClampToEdge,
-                WWrap = ETexWrapMode.ClampToEdge,
-                Resizable = false,
-                SizedInternalFormat = ESizedInternalFormat.Rgb16f,
-                AutoGenerateMipmaps = false,
-            };
-
-            ShaderVar[] prefilterVars =
-            [
-                new ShaderFloat(0.0f, "Roughness"),
-                new ShaderInt((int)Resolution, "CubemapDim"),
-            ];
-
-            XRShader irrShader = ShaderHelper.LoadEngineShader("Scene3D\\IrradianceConvolution.fs", EShaderType.Fragment);
-            XRShader prefShader = ShaderHelper.LoadEngineShader("Scene3D\\Prefilter.fs", EShaderType.Fragment);
-
-            RenderingParameters r = new();
-            r.DepthTest.Enabled = ERenderParamUsage.Disabled;
-            XRTexture[] texArray = [_environmentTextureCubemap!];
-            XRMaterial irrMat = new([], texArray, irrShader) { RenderOptions = r };
-            XRMaterial prefMat = new(prefilterVars, texArray, prefShader) { RenderOptions = r };
-
-            _irradianceFBO = new XRCubeFrameBuffer(irrMat);
-            _prefilterFBO = new XRCubeFrameBuffer(prefMat);
-
-            CachePreviewSphere();
+            InitializeIblResources(
+                EnvironmentTextureOctahedral,
+                "Scene3D\\IrradianceConvolutionOcta.fs",
+                "Scene3D\\PrefilterOcta.fs",
+                (int)Math.Max(1u, Resolution),
+                GetOctaExtent(IrradianceResolution),
+                GetOctaExtent(Resolution));
         }
 
         public void InitializeStatic()
         {
-            //Irradiance texture doesn't need to be very high quality, 
-            //linear filtering on low resolution will do fine
-            IrradianceTexture = new XRTextureCube(IrradianceResolution, EPixelInternalFormat.Rgb8, EPixelFormat.Rgb, EPixelType.UnsignedByte, false)
+            if (EnvironmentTextureEquirect is null)
+                return;
+
+            InitializeIblResources(
+                EnvironmentTextureEquirect,
+                "Scene3D\\IrradianceConvolutionEquirectOcta.fs",
+                "Scene3D\\PrefilterEquirectOcta.fs",
+                (int)Math.Max(EnvironmentTextureEquirect.Width, EnvironmentTextureEquirect.Height),
+                GetOctaExtent(IrradianceResolution),
+                GetOctaExtent(Resolution));
+        }
+
+        private void InitializeIblResources(
+            XRTexture sourceTexture,
+            string irradianceShaderPath,
+            string prefilterShaderPath,
+            int sourceDimension,
+            uint irradianceExtent,
+            uint prefilterExtent)
+        {
+            DestroyIblResources();
+
+            IrradianceTexture = CreateIrradianceTexture(irradianceExtent);
+            PrefilterTexture = CreatePrefilterTexture(prefilterExtent);
+
+            ShaderVar[] prefilterVars = CreatePrefilterShaderVars(sourceDimension);
+            _prefilterSourceDimension = Math.Max(1, sourceDimension);
+
+            RenderingParameters renderParams = new();
+            renderParams.DepthTest.Enabled = ERenderParamUsage.Disabled;
+
+            XRShader fullscreenVertex = GetFullscreenTriVertexShader();
+            XRShader irradianceFragment = ShaderHelper.LoadEngineShader(irradianceShaderPath, EShaderType.Fragment);
+            XRShader prefilterFragment = ShaderHelper.LoadEngineShader(prefilterShaderPath, EShaderType.Fragment);
+
+            XRMaterial irradianceMaterial = new([], [sourceTexture], fullscreenVertex, irradianceFragment)
+            {
+                RenderOptions = renderParams,
+            };
+
+            XRMaterial prefilterMaterial = new(prefilterVars, [sourceTexture], fullscreenVertex, prefilterFragment)
+            {
+                RenderOptions = renderParams,
+            };
+
+            _irradianceFBO = new XRQuadFrameBuffer(irradianceMaterial);
+            _irradianceFBO.SetRenderTargets((IrradianceTexture!, EFrameBufferAttachment.ColorAttachment0, 0, -1));
+
+            _prefilterFBO = new XRQuadFrameBuffer(prefilterMaterial);
+            _prefilterFBO.SetRenderTargets((PrefilterTexture!, EFrameBufferAttachment.ColorAttachment0, 0, -1));
+
+            CachePreviewSphere();
+        }
+
+        private static ShaderVar[] CreatePrefilterShaderVars(int sourceDimension)
+            =>
+            [
+                new ShaderFloat(0.0f, "Roughness"),
+                new ShaderInt(Math.Max(1, sourceDimension), "SourceDim"),
+            ];
+
+        private static uint GetOctaExtent(uint baseResolution)
+            => Math.Max(1u, baseResolution * OctahedralResolutionMultiplier);
+
+        private XRTexture2D CreateIrradianceTexture(uint extent)
+            => new(extent, extent, EPixelInternalFormat.Rgb8, EPixelFormat.Rgb, EPixelType.UnsignedByte, false)
             {
                 MinFilter = ETexMinFilter.Linear,
                 MagFilter = ETexMagFilter.Linear,
                 UWrap = ETexWrapMode.ClampToEdge,
                 VWrap = ETexWrapMode.ClampToEdge,
-                WWrap = ETexWrapMode.ClampToEdge,
                 Resizable = false,
                 SizedInternalFormat = ESizedInternalFormat.Rgb8,
                 AutoGenerateMipmaps = false,
+                Name = "LightProbeIrradianceOcta",
             };
 
-            PrefilterTexture = new XRTextureCube(Resolution, EPixelInternalFormat.Rgb16f, EPixelFormat.Rgb, EPixelType.HalfFloat, false)
+        private XRTexture2D CreatePrefilterTexture(uint extent)
+            => new(extent, extent, EPixelInternalFormat.Rgb16f, EPixelFormat.Rgb, EPixelType.HalfFloat, false)
             {
                 MinFilter = ETexMinFilter.LinearMipmapLinear,
                 MagFilter = ETexMagFilter.Linear,
                 UWrap = ETexWrapMode.ClampToEdge,
                 VWrap = ETexWrapMode.ClampToEdge,
-                WWrap = ETexWrapMode.ClampToEdge,
                 Resizable = false,
                 SizedInternalFormat = ESizedInternalFormat.Rgb16f,
                 AutoGenerateMipmaps = false,
+                Name = "LightProbePrefilterOcta",
             };
 
-            ShaderVar[] prefilterVars =
-            [
-                new ShaderFloat(0.0f, "Roughness"),
-                new ShaderInt((int)Resolution, "CubemapDim"),
-            ];
+        private void DestroyIblResources()
+        {
+            _irradianceFBO?.Destroy();
+            _irradianceFBO = null;
+            _prefilterFBO?.Destroy();
+            _prefilterFBO = null;
 
-            XRShader irrShader = ShaderHelper.LoadEngineShader("Scene3D\\IrradianceConvolutionEquirect.fs");
-            XRShader prefShader = ShaderHelper.LoadEngineShader("Scene3D\\PrefilterEquirect.fs");
-
-            RenderingParameters r = new();
-            r.DepthTest.Enabled = ERenderParamUsage.Disabled;
-            XRTexture[] texArray = [_environmentTextureEquirect!];
-            _irradianceFBO = new XRCubeFrameBuffer(new([], texArray, irrShader) { RenderOptions = r });
-            _prefilterFBO = new XRCubeFrameBuffer(new(prefilterVars, texArray, prefShader) { RenderOptions = r });
-
-            CachePreviewSphere();
+            IrradianceTexture?.Destroy();
+            IrradianceTexture = null;
+            PrefilterTexture?.Destroy();
+            PrefilterTexture = null;
         }
+
+        private static XRShader GetFullscreenTriVertexShader()
+            => s_fullscreenTriVertexShader ??= ShaderHelper.LoadEngineShader("Scene3D\\FullscreenTri.vs", EShaderType.Vertex);
 
         private XRTexture2D? _environmentTextureEquirect;
         public XRTexture2D? EnvironmentTextureEquirect
@@ -289,50 +323,45 @@ namespace XREngine.Components.Capture.Lights
 
         private void GenerateIrradianceInternal()
         {
-            if (IrradianceTexture is null)
+            if (_irradianceFBO is null || IrradianceTexture is null)
                 return;
 
-            uint res = IrradianceTexture.Extent;
-            AbstractRenderer.Current?.SetRenderArea(new BoundingRectangle(IVector2.Zero, new IVector2((int)res, (int)res)));
-            for (int i = 0; i < 6; ++i)
+            int width = (int)Math.Max(1u, IrradianceTexture.Width);
+            int height = (int)Math.Max(1u, IrradianceTexture.Height);
+            AbstractRenderer.Current?.SetRenderArea(new BoundingRectangle(IVector2.Zero, new IVector2(width, height)));
+
+            using (_irradianceFBO.BindForWritingState())
             {
-                _irradianceFBO!.SetRenderTargets((IrradianceTexture, EFrameBufferAttachment.ColorAttachment0, 0, i));
-                using (_irradianceFBO!.BindForWritingState())
-                {
-                    Engine.Rendering.State.ClearByBoundFBO();
-                    _irradianceFBO.RenderFullscreen(ECubemapFace.PosX + i);
-                }
+                Engine.Rendering.State.ClearByBoundFBO();
+                _irradianceFBO.Render(null, true);
             }
 
-            //Generate mipmaps from the first mip level we just generated
             IrradianceTexture.GenerateMipmapsGPU();
         }
 
         private void GeneratePrefilterInternal()
         {
-            if (PrefilterTexture is null)
+            if (_prefilterFBO is null || PrefilterTexture is null)
                 return;
 
+            int baseExtent = (int)Math.Max(PrefilterTexture.Width, PrefilterTexture.Height);
             int maxMipLevels = PrefilterTexture.SmallestMipmapLevel;
-            int res = _prefilterFBO!.Material!.Parameter<ShaderInt>(1)!.Value;
             for (int mip = 0; mip < maxMipLevels; ++mip)
             {
-                int mipWidth = (int)Math.Ceiling(res * Math.Pow(0.5, mip));
-                int mipHeight = (int)Math.Ceiling(res * Math.Pow(0.5, mip));
-                float roughness = (float)mip / (maxMipLevels - 1);
+                int mipWidth = Math.Max(1, baseExtent >> mip);
+                int mipHeight = Math.Max(1, baseExtent >> mip);
+                float roughness = maxMipLevels <= 1 ? 0.0f : (float)mip / (maxMipLevels - 1);
 
-                _prefilterFBO.Material.SetFloat(0, roughness);
-                _prefilterFBO.Material.SetInt(1, (int)Resolution);
+                _prefilterFBO.Material?.SetFloat(0, roughness);
+                _prefilterFBO.Material?.SetInt(1, _prefilterSourceDimension);
 
+                _prefilterFBO.SetRenderTargets((PrefilterTexture, EFrameBufferAttachment.ColorAttachment0, mip, -1));
                 AbstractRenderer.Current?.SetRenderArea(new BoundingRectangle(IVector2.Zero, new IVector2(mipWidth, mipHeight)));
-                for (int i = 0; i < 6; ++i)
+
+                using (_prefilterFBO.BindForWritingState())
                 {
-                    _prefilterFBO.SetRenderTargets((PrefilterTexture, EFrameBufferAttachment.ColorAttachment0, mip, i));
-                    using (_prefilterFBO.BindForWritingState())
-                    {
-                        Engine.Rendering.State.ClearByBoundFBO();
-                        _prefilterFBO.RenderFullscreen(ECubemapFace.PosX + i);
-                    }
+                    Engine.Rendering.State.ClearByBoundFBO();
+                    _prefilterFBO.Render(null, true);
                 }
             }
         }
