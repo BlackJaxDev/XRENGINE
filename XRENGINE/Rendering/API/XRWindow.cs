@@ -32,6 +32,11 @@ namespace XREngine.Rendering
         /// </summary>
         public bool PreferHDROutput { get; internal set; }
 
+        /// <summary>
+        /// True when the platform's native chrome should remain visible. False means the engine is expected to render its own title bar.
+        /// </summary>
+        public bool UseNativeTitleBar { get; }
+
         private readonly EventList<XRViewport> _viewports = [];
         public EventList<XRViewport> Viewports => _viewports;
 
@@ -346,11 +351,12 @@ namespace XREngine.Rendering
 
         public IInputContext? Input { get; private set; }
 
-        public XRWindow(WindowOptions options)
+        public XRWindow(WindowOptions options, bool useNativeTitleBar)
         {
             _viewports.CollectionChanged += ViewportsChanged;
             Silk.NET.Windowing.Window.PrioritizeGlfw();
             Window = Silk.NET.Windowing.Window.Create(options);
+            UseNativeTitleBar = useNativeTitleBar;
             LinkWindow();
             Window.Initialize();
             //Window.IsEventDriven = true;

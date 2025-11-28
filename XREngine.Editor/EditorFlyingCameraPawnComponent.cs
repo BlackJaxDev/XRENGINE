@@ -131,7 +131,7 @@ public partial class EditorFlyingCameraPawnComponent : FlyingCameraPawnComponent
         set => SetField(ref _renderFrustum, value);
     }
 
-    private bool _renderRaycast = true;
+    private bool _renderRaycast = false;
     /// <summary>
     /// If true, renders debug information for raycast hits.
     /// </summary>
@@ -208,8 +208,10 @@ public partial class EditorFlyingCameraPawnComponent : FlyingCameraPawnComponent
 
     private List<SceneNode>? _lastHits = null;
     private int _lastHitIndex = 0;
-    private Triangle? _hitTriangle = null;
+    private Triangle? _facePickResult = null;
     private Vector3? _meshHitPoint = null;
+    private MeshEdgePickResult? _edgePickResult = null;
+    private MeshVertexPickResult? _vertexPickResult = null;
     private Segment _lastRaycastSegment = new(Vector3.Zero, Vector3.Zero);
     private Vector3? _depthHitNormalizedViewportPoint = null;
     private Vector3? _lastDepthHitNormalizedViewportPoint = null;
@@ -232,6 +234,16 @@ public partial class EditorFlyingCameraPawnComponent : FlyingCameraPawnComponent
         set => SetField(ref _allowWorldPicking, value);
     }
 
+    private ERaycastHitMode _raycastMode = ERaycastHitMode.Faces;
+    /// <summary>
+    /// Determines whether the editor should raycast faces, edges, or vertices.
+    /// </summary>
+    public ERaycastHitMode RaycastMode
+    {
+        get => _raycastMode;
+        set => SetField(ref _raycastMode, value);
+    }
+
     private readonly RenderCommandMethod3D _postRenderRC;
     private readonly RenderCommandMethod3D _renderHighlightRC;
 
@@ -242,10 +254,8 @@ public partial class EditorFlyingCameraPawnComponent : FlyingCameraPawnComponent
         if (Engine.Rendering.State.IsShadowPass)
             return;
 
-        //if (_hitTriangle is not null)
-        //    Engine.Rendering.Debug.RenderTriangle(_hitTriangle.Value, ColorF4.Yellow, true);
-        //if (_meshHitPoint is Vector3 meshHit)
-        //    Engine.Rendering.Debug.RenderPoint(meshHit, ColorF4.Yellow);
+        if (RenderRaycast)
+            RenderPickModeOverlay();
         
         if (RenderWorldDragPoint && (WorldDragPoint.HasValue || DepthHitNormalizedViewportPoint.HasValue) && Viewport is not null)
         {
@@ -262,6 +272,25 @@ public partial class EditorFlyingCameraPawnComponent : FlyingCameraPawnComponent
             var cam = GetCamera();
             if (cam is not null)
                 Engine.Rendering.Debug.RenderFrustum(cam.Camera.WorldFrustum(), ColorF4.Red);
+        }
+    }
+
+    private void RenderPickModeOverlay()
+    {
+        if (_meshHitPoint is Vector3 meshHit)
+            Engine.Rendering.Debug.RenderPoint(meshHit, ColorF4.Yellow);
+        switch (RaycastMode)
+        {
+            case ERaycastHitMode.Faces when _facePickResult is Triangle hit:
+                Engine.Rendering.Debug.RenderTriangle(hit, ColorF4.Yellow, true);
+                break;
+            case ERaycastHitMode.Lines when _edgePickResult is MeshEdgePickResult edgeHit:
+                Engine.Rendering.Debug.RenderLine(edgeHit.EdgeStart, edgeHit.EdgeEnd, ColorF4.Cyan);
+                Engine.Rendering.Debug.RenderPoint(edgeHit.ClosestPoint, ColorF4.Yellow);
+                break;
+            case ERaycastHitMode.Points when _vertexPickResult is MeshVertexPickResult vertexHit:
+                Engine.Rendering.Debug.RenderPoint(vertexHit.Position, ColorF4.Yellow);
+                break;
         }
     }
 
@@ -344,7 +373,7 @@ public partial class EditorFlyingCameraPawnComponent : FlyingCameraPawnComponent
         {
             var octreeResults = GetOctreePickResultDict();
             var physicsResults = GetPhysicsPickResultDict();
-            vp.PickSceneAsync(p, false, true, true, _layerMask, _physxQueryFilter, octreeResults, physicsResults, OctreeRaycastCallback, PhysicsRaycastCallback);
+            vp.PickSceneAsync(p, false, true, true, _layerMask, _physxQueryFilter, octreeResults, physicsResults, OctreeRaycastCallback, PhysicsRaycastCallback, RaycastMode);
         }
 
         ApplyTransformations(vp);
@@ -409,8 +438,10 @@ public partial class EditorFlyingCameraPawnComponent : FlyingCameraPawnComponent
 
     private void UpdateMeshHitVisualization(SortedDictionary<float, List<(RenderInfo3D item, object? data)>>? source = null)
     {
-        _hitTriangle = null;
+        _facePickResult = null;
         _meshHitPoint = null;
+        _edgePickResult = null;
+        _vertexPickResult = null;
 
         var results = source ?? _lastOctreePickResults;
         if (results.Count ==0)
@@ -456,14 +487,24 @@ public partial class EditorFlyingCameraPawnComponent : FlyingCameraPawnComponent
             switch (data)
             {
                 case MeshPickResult meshHit:
-                    _hitTriangle = meshHit.WorldTriangle;
+                    _facePickResult = meshHit.WorldTriangle;
                     _meshHitPoint = meshHit.HitPoint;
+                    return;
+                case MeshEdgePickResult edgeHit:
+                    _facePickResult = edgeHit.WorldTriangle;
+                    _meshHitPoint = edgeHit.ClosestPoint;
+                    _edgePickResult = edgeHit;
+                    return;
+                case MeshVertexPickResult vertexHit:
+                    _facePickResult = vertexHit.WorldTriangle;
+                    _meshHitPoint = vertexHit.Position;
+                    _vertexPickResult = vertexHit;
                     return;
                 case Vector3 point:
                     _meshHitPoint = point;
                     return;
                 case Triangle triangle:
-                    _hitTriangle = triangle;
+                    _facePickResult = triangle;
                     return;
             }
         }
@@ -483,6 +524,8 @@ public partial class EditorFlyingCameraPawnComponent : FlyingCameraPawnComponent
             {
                 Vector3 p => p,
                 MeshPickResult meshHit => meshHit.HitPoint,
+                MeshEdgePickResult edgeHit => edgeHit.ClosestPoint,
+                MeshVertexPickResult vertexHit => vertexHit.Position,
                 _ => null
             };
 
@@ -516,7 +559,7 @@ public partial class EditorFlyingCameraPawnComponent : FlyingCameraPawnComponent
             for (int i = 0; i < list.Count; i++)
             {
                 var (_, data) = list[i];
-                if (data is not MeshPickResult meshHit)
+                if (!TryExtractMeshPickResult(data, out MeshPickResult meshHit))
                     continue;
 
                 if (meshHit.Component is ModelComponent modelComponent && modelComponent.SceneNode is SceneNode node)
@@ -883,6 +926,9 @@ public partial class EditorFlyingCameraPawnComponent : FlyingCameraPawnComponent
         input.RegisterKeyEvent(EKey.F2, EButtonInputType.Pressed, SetTransformModeLocal);
         input.RegisterKeyEvent(EKey.F3, EButtonInputType.Pressed, SetTransformModeParent);
         input.RegisterKeyEvent(EKey.F4, EButtonInputType.Pressed, SetTransformModeScreen);
+        input.RegisterKeyEvent(EKey.F5, EButtonInputType.Pressed, SetPickModeFaces);
+        input.RegisterKeyEvent(EKey.F6, EButtonInputType.Pressed, SetPickModeLines);
+        input.RegisterKeyEvent(EKey.F7, EButtonInputType.Pressed, SetPickModePoints);
     }
 
     private void SetTransformModeParent() => TransformTool3D.TransformSpace = ETransformSpace.Parent;
@@ -892,6 +938,9 @@ public partial class EditorFlyingCameraPawnComponent : FlyingCameraPawnComponent
     private void SetTransformScale() => TransformTool3D.TransformMode = ETransformMode.Scale;
     private void SetTransformRotation() => TransformTool3D.TransformMode = ETransformMode.Rotate;
     private void SetTransformTranslation() => TransformTool3D.TransformMode = ETransformMode.Translate;
+    private void SetPickModeFaces() => RaycastMode = ERaycastHitMode.Faces;
+    private void SetPickModeLines() => RaycastMode = ERaycastHitMode.Lines;
+    private void SetPickModePoints() => RaycastMode = ERaycastHitMode.Points;
 
     private void Select()
     {
@@ -986,5 +1035,24 @@ public partial class EditorFlyingCameraPawnComponent : FlyingCameraPawnComponent
     {
         if (!Selection.SceneNodes.Contains(node)) return;
         Selection.SceneNodes = [.. Selection.SceneNodes.Where(n => n != node)];
+    }
+
+    private static bool TryExtractMeshPickResult(object? data, out MeshPickResult meshHit)
+    {
+        switch (data)
+        {
+            case MeshPickResult faceHit:
+                meshHit = faceHit;
+                return true;
+            case MeshEdgePickResult edgeHit:
+                meshHit = edgeHit.FaceHit;
+                return true;
+            case MeshVertexPickResult vertexHit:
+                meshHit = vertexHit.FaceHit;
+                return true;
+            default:
+                meshHit = default;
+                return false;
+        }
     }
 }

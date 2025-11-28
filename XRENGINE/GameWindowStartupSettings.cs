@@ -16,6 +16,7 @@ namespace XREngine
         private bool _vsync = false;
         private bool _transparentFramebuffer = false;
         private bool? _outputHDR;
+        private bool _useNativeTitleBar = true;
 
         public ELocalPlayerIndexMask LocalPlayers
         {
@@ -66,6 +67,15 @@ namespace XREngine
         {
             get => _transparentFramebuffer;
             set => SetField(ref _transparentFramebuffer, value);
+        }
+
+        /// <summary>
+        /// When false, the engine will suppress the platform's default window chrome so a custom title bar can be rendered.
+        /// </summary>
+        public bool UseNativeTitleBar
+        {
+            get => _useNativeTitleBar;
+            set => SetField(ref _useNativeTitleBar, value);
         }
 
         /// <summary>

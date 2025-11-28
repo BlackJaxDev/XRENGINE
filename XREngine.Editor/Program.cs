@@ -99,6 +99,7 @@ internal class Program
                     WindowTitle = "XRE Editor",
                     TargetWorld = targetWorld,
                     WindowState = EWindowState.Windowed,
+                    UseNativeTitleBar = true,
                     X = primaryX / 2 - w / 2,
                     Y = primaryY / 2 - h / 2,
                     Width = w,

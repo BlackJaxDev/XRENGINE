@@ -68,7 +68,7 @@ public static class ImGuiFileBrowser
         public byte[] NewFolderBuffer { get; } = new byte[256];
         public Stack<string> BackHistory { get; } = new();
         public Stack<string> ForwardHistory { get; } = new();
-        public DialogRenderMode RenderMode { get; set; } = DialogRenderMode.StandaloneWindow;
+        public DialogRenderMode RenderMode { get; set; } = DialogRenderMode.ModalFallback;
         public XRWindow? Window { get; set; }
         public XRWorld? World { get; set; }
         public XRViewport? Viewport { get; set; }
@@ -94,8 +94,8 @@ public static class ImGuiFileBrowser
 
     private static readonly Dictionary<string, DialogState> _activeDialogs = new();
     private static readonly object _stateLock = new();
-    private static readonly bool _allowStandaloneDialogs =
-        !string.Equals(Environment.GetEnvironmentVariable("XR_DISABLE_IMGUI_FILE_DIALOGS"), "1", StringComparison.OrdinalIgnoreCase);
+    private static readonly bool _allowStandaloneDialogs = false;
+        //!string.Equals(Environment.GetEnvironmentVariable("XR_DISABLE_IMGUI_FILE_DIALOGS"), "1", StringComparison.OrdinalIgnoreCase);
     private static bool _standaloneDisabledNotified;
 
     /// <summary>

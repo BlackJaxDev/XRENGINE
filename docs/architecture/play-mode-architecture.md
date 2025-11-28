@@ -393,6 +393,9 @@ public partial class XRWorldInstance : XRObjectBase
 
 GameMode should have lifecycle hooks for play mode:
 
+* **DefaultPlayerControllerClass** – type of `LocalPlayerController` to instantiate per local player (defaults to the stock controller).
+* **DefaultPlayerPawnClass** – pawn component type that gets auto-spawned for the default player (defaults to `FlyingCameraPawnComponent`).
+
 ```csharp
 // Enhanced XRENGINE/GameMode.cs
 public class GameMode
