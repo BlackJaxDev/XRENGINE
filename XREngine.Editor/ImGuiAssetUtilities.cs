@@ -174,7 +174,6 @@ internal static class ImGuiAssetUtilities
         AssetCandidate<TAsset>? selectedCandidate = null;
         if (ImGui.BeginChild("AssetPickerList", listSize, ImGuiChildFlags.Border))
         {
-
             if (candidateCount == 0)
             {
                 ImGui.TextDisabled("No assets found. Adjust filters or refresh.");
@@ -227,10 +226,11 @@ internal static class ImGuiAssetUtilities
 
         if (isTexturePicker)
         {
-            AssetCandidate<TAsset>? previewCandidate = hoveredCandidate
-                                                       ?? selectedCandidate
-                                                       ?? (current is not null ? filteredCandidates.FirstOrDefault(c => c.Matches(current)) : null)
-                                                       ?? state.LastPreviewCandidate;
+            AssetCandidate<TAsset>? previewCandidate = 
+                hoveredCandidate
+                ?? selectedCandidate
+                ?? (current is not null ? filteredCandidates.FirstOrDefault(c => c.Matches(current)) : null)
+                ?? state.LastPreviewCandidate;
 
             if (previewCandidate is null && filteredCandidates.Count > 0)
                 previewCandidate = filteredCandidates[0];

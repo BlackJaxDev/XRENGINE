@@ -1,4 +1,5 @@
-﻿using Extensions;
+﻿using System;
+using Extensions;
 using System.Diagnostics.CodeAnalysis;
 using System.Numerics;
 
@@ -85,5 +86,34 @@ namespace XREngine.Data.Geometry
             => left.Equals(right);
         public static bool operator !=(Triangle left, Triangle right)
             => !(left == right);
+
+        /// <summary>
+        /// Attempts to compute barycentric coordinates for the provided point relative to this triangle.
+        /// </summary>
+        public readonly bool TryGetBarycentricCoordinates(Vector3 point, out Vector3 barycentric)
+        {
+            Vector3 v0 = B - A;
+            Vector3 v1 = C - A;
+            Vector3 v2 = point - A;
+
+            float d00 = Vector3.Dot(v0, v0);
+            float d01 = Vector3.Dot(v0, v1);
+            float d11 = Vector3.Dot(v1, v1);
+            float d20 = Vector3.Dot(v2, v0);
+            float d21 = Vector3.Dot(v2, v1);
+            float denom = d00 * d11 - d01 * d01;
+            if (MathF.Abs(denom) <= 1e-8f)
+            {
+                barycentric = Vector3.Zero;
+                return false;
+            }
+
+            float v = (d11 * d20 - d01 * d21) / denom;
+            float w = (d00 * d21 - d01 * d20) / denom;
+            float u = 1.0f - v - w;
+
+            barycentric = new Vector3(u, v, w);
+            return true;
+        }
     }
 }

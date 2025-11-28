@@ -8,6 +8,7 @@ using XREngine.Data.Vectors;
 using XREngine.Input;
 using XREngine.Rendering.Commands;
 using XREngine.Rendering.Info;
+using XREngine.Rendering.Picking;
 using XREngine.Rendering.UI;
 using XREngine.Scene;
 using YamlDotNet.Serialization;
@@ -661,6 +662,7 @@ namespace XREngine.Rendering
             SortedDictionary<float, List<(XRComponent? item, object? data)>> orderedPhysicsResults,
             Action<SortedDictionary<float, List<(RenderInfo3D item, object? data)>>> octreeFinishedCallback,
             Action<SortedDictionary<float, List<(XRComponent? item, object? data)>>?> physicsFinishedCallback,
+            ERaycastHitMode octreeHitMode = ERaycastHitMode.Faces,
             params XRComponent[] ignored)
         {
             if (CameraComponent is null)
@@ -693,7 +695,8 @@ namespace XREngine.Rendering
                     CameraComponent,
                     normalizedViewportPosition,
                     orderedOctreeResults,
-                    octreeFinishedCallback);
+                    octreeFinishedCallback,
+                    octreeHitMode);
             }
 
             if (testScenePhysics)

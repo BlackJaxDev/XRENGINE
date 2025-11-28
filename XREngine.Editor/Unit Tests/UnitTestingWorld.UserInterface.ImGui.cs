@@ -16,6 +16,7 @@ using XREngine.Components;
 using XREngine.Animation;
 using XREngine.Data;
 using XREngine.Data.Colors;
+using XREngine.Rendering;
 using XREngine.Rendering.OpenGL;
 using XREngine.Core.Files;
 using XREngine.Scene;
@@ -369,6 +370,7 @@ public static partial class UnitTestingWorld
 
             DrawMainMenuBar();
             DrawNewProjectDialog();
+            DrawArchiveImportDialog();
 
             DrawProfilerPanel();
             DrawStatePanel();
@@ -479,8 +481,78 @@ public static partial class UnitTestingWorld
                 ImGui.EndMenu();
             }
 
+            if (ImGui.BeginMenu("Tools"))
+            {
+                if (ImGui.MenuItem("Import Archive..."))
+                    OpenArchiveImportDialog();
+
+                ImGui.EndMenu();
+            }
+
+            DrawJobProgressIndicator();
             ImGui.EndMainMenuBar();
         }
+
+
+        private static void DrawJobProgressIndicator()
+        {
+            var snapshots = EditorJobTracker.GetSnapshots();
+            if (snapshots.Count == 0)
+                return;
+
+            var snapshot = snapshots[0];
+            var style = ImGui.GetStyle();
+            float windowWidth = ImGui.GetWindowWidth();
+            float indicatorWidth = Math.Max(160f, Math.Min(320f, windowWidth * 0.35f));
+            float cursorY = ImGui.GetCursorPosY();
+
+            float desiredX = windowWidth - indicatorWidth - style.WindowPadding.X - style.ItemInnerSpacing.X;
+            float cursorX = ImGui.GetCursorPosX();
+            if (desiredX < cursorX)
+                desiredX = cursorX;
+
+            ImGui.SameLine(0f, 0f);
+            ImGui.SetCursorPos(new Vector2(desiredX, cursorY));
+
+            string overlay = BuildJobOverlay(snapshot, snapshots.Count);
+            float barHeight = ImGui.GetFrameHeight() - style.FramePadding.Y * 2f;
+            if (barHeight < 0f)
+                barHeight = ImGui.GetFrameHeight();
+
+            var barSize = new Vector2(indicatorWidth, barHeight);
+            var colorOverride = ResolveJobProgressColor(snapshot.State);
+            if (colorOverride.HasValue)
+            {
+                var color = colorOverride.Value;
+                ImGui.PushStyleColor(ImGuiCol.PlotHistogram, color);
+                ImGui.PushStyleColor(ImGuiCol.PlotHistogramHovered, color);
+            }
+
+            ImGui.ProgressBar(snapshot.Progress, barSize, overlay);
+
+            if (colorOverride.HasValue)
+                ImGui.PopStyleColor(2);
+        }
+
+        private static string BuildJobOverlay(EditorJobTracker.TrackedJobSnapshot snapshot, int jobCount)
+        {
+            string status = snapshot.Status ?? snapshot.Label;
+            if (string.IsNullOrWhiteSpace(status))
+                status = snapshot.Label;
+
+            if (jobCount > 1)
+                status = $"{status} (+{jobCount - 1})";
+
+            return status;
+        }
+
+        private static Vector4? ResolveJobProgressColor(EditorJobTracker.TrackedJobState state)
+            => state switch
+            {
+                EditorJobTracker.TrackedJobState.Faulted => new Vector4(0.9f, 0.25f, 0.25f, 1f),
+                EditorJobTracker.TrackedJobState.Canceled => new Vector4(0.6f, 0.6f, 0.6f, 1f),
+                _ => null
+            };
 
         private static void PopulateAssetExplorerRenameBuffer(string source)
         {
@@ -601,6 +673,24 @@ public static partial class UnitTestingWorld
             }
 
             _imguiStyleInitialized = true;
+        }
+
+        private static XRWorldInstance? TryGetActiveWorldInstance()
+        {
+            foreach (var window in Engine.Windows)
+            {
+                var instance = window?.TargetWorldInstance;
+                if (instance is not null)
+                    return instance;
+            }
+
+            foreach (var instance in XRWorldInstance.WorldInstances.Values)
+            {
+                if (instance is not null)
+                    return instance;
+            }
+
+            return null;
         }
 
         private static void SetInspectorStandaloneTarget(object target, string? title, Action? onClear = null)

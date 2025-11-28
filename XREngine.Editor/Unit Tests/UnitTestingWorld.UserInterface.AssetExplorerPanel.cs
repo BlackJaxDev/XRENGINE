@@ -14,6 +14,7 @@ using XREngine.Data;
 using XREngine.Diagnostics;
 using XREngine.Rendering;
 using XREngine.Rendering.OpenGL;
+using XREngine.Scene;
 using YamlDotNet.RepresentationModel;
 
 namespace XREngine.Editor;
@@ -571,6 +572,11 @@ public static partial class UnitTestingWorld
                 SetAssetExplorerSelection(state, entry.Path);
             }
 
+            if (!entry.IsDirectory && hovered && ImGui.IsMouseDoubleClicked(ImGuiMouseButton.Left))
+            {
+                HandleAssetExplorerFileActivation(state, entry);
+            }
+
             if (!entry.IsDirectory && ImGui.BeginDragDropSource(ImGuiDragDropFlags.SourceAllowNullID))
             {
                 ImGuiAssetUtilities.SetPathPayload(entry.Path);
@@ -692,6 +698,10 @@ public static partial class UnitTestingWorld
             else if (leftClicked)
             {
                 SetAssetExplorerSelection(state, entry.Path);
+            }
+            else if (!entry.IsDirectory && doubleClicked)
+            {
+                HandleAssetExplorerFileActivation(state, entry);
             }
 
             if (!entry.IsDirectory && hovered && ImGui.BeginDragDropSource(ImGuiDragDropFlags.SourceAllowNullID))
@@ -1012,6 +1022,61 @@ public static partial class UnitTestingWorld
 
             if (!TryShowAssetInInspector(normalized))
                 ClearInspectorStandaloneTarget();
+        }
+
+        private static void HandleAssetExplorerFileActivation(AssetExplorerTabState state, AssetExplorerEntry entry)
+        {
+            if (entry.IsDirectory)
+                return;
+
+            if (TryOpenSceneAsset(entry.Path))
+                UpdateAssetExplorerSelection(state, entry.Path, true);
+        }
+
+        private static bool TryOpenSceneAsset(string path)
+        {
+            var descriptor = ResolveAssetTypeForPath(path);
+            if (descriptor?.Type is null || !typeof(XRScene).IsAssignableFrom(descriptor.Type))
+                return false;
+
+            var assets = Engine.Assets;
+            if (assets is null)
+                return false;
+
+            XRScene? scene = assets.Load<XRScene>(path);
+            if (scene is null)
+                return false;
+
+            return TryAddSceneToActiveWorld(scene);
+        }
+
+        private static bool TryAddSceneToActiveWorld(XRScene scene)
+        {
+            var world = TryGetActiveWorldInstance();
+            if (world is null)
+            {
+                Debug.LogWarning($"Unable to open scene '{scene.Name ?? scene.FilePath}'. No active world instance.");
+                return false;
+            }
+
+            var targetWorld = world.TargetWorld;
+            if (targetWorld is null)
+            {
+                Debug.LogWarning("Unable to open scene because the active world instance has no target world asset.");
+                return false;
+            }
+
+            bool newlyAdded = !targetWorld.Scenes.Contains(scene);
+            if (newlyAdded)
+            {
+                targetWorld.Scenes.Add(scene);
+                Undo.TrackScene(scene);
+                world.LoadScene(scene);
+            }
+
+            scene.IsVisible = true;
+            targetWorld.MarkDirty();
+            return true;
         }
 
         private static void SetAssetExplorerSelection(AssetExplorerTabState state, string path, bool force = false)

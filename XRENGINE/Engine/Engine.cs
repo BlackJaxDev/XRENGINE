@@ -431,7 +431,8 @@ namespace XREngine
         public static XRWindow CreateWindow(GameWindowStartupSettings windowSettings)
         {
             bool preferHdrOutput = windowSettings.OutputHDR ?? Rendering.Settings.OutputHDR;
-            XRWindow window = new(GetWindowOptions(windowSettings, preferHdrOutput));
+            var options = GetWindowOptions(windowSettings, preferHdrOutput);
+            XRWindow window = new(options, windowSettings.UseNativeTitleBar);
             window.PreferHDROutput = preferHdrOutput;
             CreateViewports(windowSettings.LocalPlayers, window);
             window.UpdateViewportSizes();
@@ -480,6 +481,9 @@ namespace XREngine
                     size = new Vector2D<int>(primaryX, primaryY);
                     break;
             }
+
+            if (!windowSettings.UseNativeTitleBar && windowState == WindowState.Normal)
+                windowBorder = WindowBorder.Hidden;
 
             bool requestHdrSurface = preferHdrOutput && UserSettings.RenderLibrary != ERenderLibrary.Vulkan;
             int preferredBitDepth = requestHdrSurface ? 64 : 24;

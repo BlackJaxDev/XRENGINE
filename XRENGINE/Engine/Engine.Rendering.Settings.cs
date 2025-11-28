@@ -105,7 +105,7 @@ namespace XREngine
             {
                 private Vector3 _defaultLuminance = new(0.299f, 0.587f, 0.114f);
                 private bool _outputHDR = false;
-                private EAntiAliasingMode _antiAliasingMode = EAntiAliasingMode.Msaa;
+                private EAntiAliasingMode _antiAliasingMode = EAntiAliasingMode.None;
                 private uint _msaaSampleCount = 4u;
                 private bool _allowShaderPipelines = true;
                 private bool _useIntegerUniformsInShaders = true;

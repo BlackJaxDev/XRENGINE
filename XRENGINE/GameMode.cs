@@ -1,5 +1,9 @@
-﻿using XREngine.Components;
+﻿using System;
+using System.Diagnostics.CodeAnalysis;
+using XREngine.Components;
+using XREngine.Input;
 using XREngine.Rendering;
+using XREngine.Scene;
 using XREngine.Scene.Transforms;
 
 namespace XREngine
@@ -10,6 +14,42 @@ namespace XREngine
     /// </summary>
     public class GameMode
     {
+        private Type? _defaultPlayerControllerClass = typeof(LocalPlayerController);
+        private Type? _defaultPlayerPawnClass = typeof(FlyingCameraPawnComponent);
+
+        /// <summary>
+        /// Controller type instantiated for local players when this GameMode ensures controller availability.
+        /// Defaults to <see cref="LocalPlayerController"/>.
+        /// </summary>
+        [DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicConstructors)]
+        public Type? DefaultPlayerControllerClass
+        {
+            get => _defaultPlayerControllerClass;
+            set
+            {
+                if (value is not null && !typeof(LocalPlayerController).IsAssignableFrom(value))
+                    throw new ArgumentException("Default player controller must inherit from LocalPlayerController", nameof(value));
+
+                _defaultPlayerControllerClass = value;
+            }
+        }
+
+        /// <summary>
+        /// Pawn component type spawned for local players when entering play. Defaults to <see cref="FlyingCameraPawnComponent"/>.
+        /// </summary>
+        [DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicConstructors)]
+        public Type? DefaultPlayerPawnClass
+        {
+            get => _defaultPlayerPawnClass;
+            set
+            {
+                if (value is not null && !typeof(PawnComponent).IsAssignableFrom(value))
+                    throw new ArgumentException("Default player pawn must inherit from PawnComponent", nameof(value));
+
+                _defaultPlayerPawnClass = value;
+            }
+        }
+
         /// <summary>
         /// The world instance this GameMode is managing.
         /// Set when entering play mode.
@@ -104,8 +144,28 @@ namespace XREngine
         /// <returns>The created pawn component, or null if no pawn should be spawned.</returns>
         public virtual PawnComponent? CreateDefaultPawn(ELocalPlayerIndex playerIndex)
         {
-            // Default implementation returns null - override in game-specific GameMode
-            return null;
+            if (DefaultPlayerPawnClass is null)
+                return null;
+
+            if (WorldInstance is null)
+            {
+                Debug.LogWarning("Cannot spawn default pawn without an active world instance.");
+                return null;
+            }
+
+            var pawnNodeName = $"Player{(int)playerIndex + 1}_Pawn";
+            var pawnNode = new SceneNode(WorldInstance, pawnNodeName);
+
+            if (pawnNode.AddComponent(DefaultPlayerPawnClass) is not PawnComponent pawnComponent)
+            {
+                var pawnClassName = DefaultPlayerPawnClass.FullName ?? DefaultPlayerPawnClass.Name ?? DefaultPlayerPawnClass.ToString();
+                Debug.LogWarning($"Failed to create pawn of type {pawnClassName} for player {playerIndex}.");
+                pawnNode.Destroy();
+                return null;
+            }
+
+            WorldInstance.RootNodes.Add(pawnNode);
+            return pawnComponent;
         }
 
         /// <summary>
@@ -127,6 +187,8 @@ namespace XREngine
         /// <returns>The spawned pawn, or null if spawning failed.</returns>
         protected virtual PawnComponent? SpawnDefaultPlayerPawn(ELocalPlayerIndex playerIndex)
         {
+            EnsureLocalPlayerController(playerIndex);
+
             var pawn = CreateDefaultPawn(playerIndex);
             if (pawn is not null)
             {
@@ -158,6 +220,8 @@ namespace XREngine
         public void ForcePossession(PawnComponent pawnComponent, ELocalPlayerIndex possessor)
         {
             var localPlayer = Engine.State.GetLocalPlayer(possessor);
+            localPlayer ??= EnsureLocalPlayerController(possessor);
+
             if (localPlayer != null)
                 pawnComponent.Controller = localPlayer;
             else
@@ -197,6 +261,14 @@ namespace XREngine
             }
             ForcePossession(pawnComponent, possessor);
         }
+
+        /// <summary>
+        /// Ensures a controller exists for the given player index using the configured controller type.
+        /// </summary>
+        /// <param name="playerIndex">The target player index.</param>
+        /// <returns>The resolved controller, or null if creation failed.</returns>
+        protected virtual LocalPlayerController? EnsureLocalPlayerController(ELocalPlayerIndex playerIndex)
+            => Engine.State.GetOrCreateLocalPlayer(playerIndex, DefaultPlayerControllerClass);
 
         #endregion
     }

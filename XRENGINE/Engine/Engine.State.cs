@@ -490,8 +490,7 @@ namespace XREngine
 
         public void Schedule(Job job, CancellationToken cancellationToken)
         {
-            if (job is null)
-                throw new ArgumentNullException(nameof(job));
+            ArgumentNullException.ThrowIfNull(job);
 
             if (!job.TryStart())
                 throw new InvalidOperationException("Job has already been scheduled or completed.");
@@ -738,21 +737,65 @@ namespace XREngine
             /// <summary>
             /// Retrieves or creates a local player controller for the given index.
             /// </summary>
-            /// <param name="index"></param>
-            /// <returns></returns>
-            public static LocalPlayerController GetOrCreateLocalPlayer(ELocalPlayerIndex index)
-                => LocalPlayers[(int)index] ?? AddLocalPLayer(index);
+            /// <param name="index">Player slot to fetch.</param>
+            /// <param name="controllerTypeOverride">Optional controller type to force for this request.</param>
+            /// <returns>The resolved local player controller.</returns>
+            public static LocalPlayerController GetOrCreateLocalPlayer(ELocalPlayerIndex index, Type? controllerTypeOverride = null)
+            {
+                var existing = LocalPlayers[(int)index];
+                var desiredType = ResolveLocalPlayerControllerType(controllerTypeOverride);
+
+                if (existing is not null)
+                {
+                    if (desiredType.IsInstanceOfType(existing))
+                        return existing;
+
+                    RemoveLocalPlayer(index);
+                }
+
+                return AddLocalPlayer(index, desiredType);
+            }
 
             /// <summary>
             /// This property returns the main player, which is the first player and should always exist.
             /// </summary>
             public static LocalPlayerController MainPlayer => GetOrCreateLocalPlayer(ELocalPlayerIndex.One);
 
-            private static LocalPlayerController AddLocalPLayer(ELocalPlayerIndex index)
+            private static LocalPlayerController AddLocalPlayer(ELocalPlayerIndex index, Type controllerType)
             {
-                var player = new LocalPlayerController(index);
+                var player = InstantiateLocalPlayerController(controllerType, index);
                 LocalPlayers[(int)index] = player;
                 LocalPlayerAdded?.Invoke(player);
+                return player;
+            }
+
+            private static Type ResolveLocalPlayerControllerType(Type? controllerTypeOverride)
+            {
+                if (controllerTypeOverride is not null)
+                    return controllerTypeOverride;
+
+                if (Engine.PlayMode.ActiveGameMode?.DefaultPlayerControllerClass is Type gameModePreferred)
+                    return gameModePreferred;
+
+                return typeof(LocalPlayerController);
+            }
+
+            private static LocalPlayerController InstantiateLocalPlayerController(Type controllerType, ELocalPlayerIndex index)
+            {
+                if (!typeof(LocalPlayerController).IsAssignableFrom(controllerType))
+                    throw new ArgumentException($"Controller type {controllerType.FullName} must inherit from LocalPlayerController", nameof(controllerType));
+
+                LocalPlayerController? player;
+                var ctorWithIndex = controllerType.GetConstructor(new[] { typeof(ELocalPlayerIndex) });
+                if (ctorWithIndex is not null)
+                    player = ctorWithIndex.Invoke(new object[] { index }) as LocalPlayerController;
+                else
+                    player = Activator.CreateInstance(controllerType) as LocalPlayerController;
+
+                if (player is null)
+                    throw new InvalidOperationException($"Failed to instantiate controller of type {controllerType.FullName}");
+
+                player.LocalPlayerIndex = index;
                 return player;
             }
 

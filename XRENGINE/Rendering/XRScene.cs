@@ -20,7 +20,7 @@ namespace XREngine.Scene
         public bool IsVisible
         {
             get => _isVisible;
-            internal set => SetField(ref _isVisible, value);
+            set => SetField(ref _isVisible, value);
         }
 
         private List<SceneNode> _rootObjects = [];

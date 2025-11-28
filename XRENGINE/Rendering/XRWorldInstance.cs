@@ -1,4 +1,5 @@
-﻿using System.Buffers;
+﻿using System;
+using System.Buffers;
 using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Diagnostics.CodeAnalysis;
@@ -27,6 +28,9 @@ namespace XREngine.Rendering
     /// </summary>
     public partial class XRWorldInstance : XRObjectBase
     {
+        private const float EdgeBarycentricThreshold = 0.12f;
+        private const float VertexBarycentricThreshold = 0.08f;
+
         public static Dictionary<XRWorld, XRWorldInstance> WorldInstances { get; } = [];
 
         public EventList<ListenerContext> Listeners { get; private set; } = [];
@@ -550,11 +554,13 @@ namespace XREngine.Rendering
             CameraComponent cameraComponent,
             Vector2 normalizedScreenPoint,
             SortedDictionary<float, List<(RenderInfo3D item, object? data)>> orderedResults,
-            Action<SortedDictionary<float, List<(RenderInfo3D item, object? data)>>> finishedCallback)
+            Action<SortedDictionary<float, List<(RenderInfo3D item, object? data)>>> finishedCallback,
+            ERaycastHitMode hitMode = ERaycastHitMode.Faces)
             => RaycastOctreeAsync(
                 cameraComponent.Camera.GetWorldSegment(normalizedScreenPoint),
                 orderedResults,
-                finishedCallback);
+                finishedCallback,
+                hitMode);
 
         /// <summary>
         /// Raycasts the octree and updates a sorted list of items that were hit.
@@ -565,20 +571,21 @@ namespace XREngine.Rendering
         public void RaycastOctreeAsync(
             Segment worldSegment,
             SortedDictionary<float, List<(RenderInfo3D item, object? data)>> orderedResults,
-            Action<SortedDictionary<float, List<(RenderInfo3D item, object? data)>>> finishedCallback)
+            Action<SortedDictionary<float, List<(RenderInfo3D item, object? data)>>> finishedCallback,
+            ERaycastHitMode hitMode = ERaycastHitMode.Faces)
         {
             //orderedResults.Clear();
-            VisualScene.RaycastAsync(worldSegment, orderedResults, DirectItemTest, finishedCallback);
+            VisualScene.RaycastAsync(worldSegment, orderedResults, (item, segment) => DirectItemTest(item, segment, hitMode), finishedCallback);
         }
 
-        private static (float? distance, object? data) DirectItemTest(RenderInfo3D item, Segment segment)
+        private static (float? distance, object? data) DirectItemTest(RenderInfo3D item, Segment segment, ERaycastHitMode hitMode)
         {
             if (item is not RenderInfo renderable)
                 return (null, null);
 
             if (renderable.Owner is RenderableComponent renderableComponent &&
-                TryIntersectRenderableComponent(renderableComponent, item, segment, out float meshDistance, out MeshPickResult meshHit))
-                return (meshDistance, meshHit);
+                TryIntersectRenderableComponent(renderableComponent, item, segment, hitMode, out float meshDistance, out object? pickResult))
+                return (meshDistance, pickResult);
             return (null, null);
         }
 
@@ -586,8 +593,9 @@ namespace XREngine.Rendering
             RenderableComponent component,
             RenderInfo3D info,
             Segment worldSegment,
+            ERaycastHitMode hitMode,
             out float distance,
-            out MeshPickResult result)
+            out object? result)
         {
             distance = 0.0f;
             result = default;
@@ -601,8 +609,108 @@ namespace XREngine.Rendering
             if (!TryIntersectRenderableMesh(mesh, worldSegment, out distance, out Triangle worldTriangle, out Vector3 hitPoint))
                 return false;
 
-            result = new MeshPickResult(component, mesh, worldTriangle, hitPoint);
+            MeshPickResult faceHit = new(component, mesh, worldTriangle, hitPoint);
+            return TryBuildPickResult(hitMode, faceHit, out result);
+        }
+
+        private static bool TryBuildPickResult(ERaycastHitMode hitMode, MeshPickResult faceHit, out object? result)
+        {
+            switch (hitMode)
+            {
+                case ERaycastHitMode.Faces:
+                    result = faceHit;
+                    return true;
+                case ERaycastHitMode.Lines:
+                    if (TryBuildEdgePickResult(faceHit, out MeshEdgePickResult edgeHit))
+                    {
+                        result = edgeHit;
+                        return true;
+                    }
+                    break;
+                case ERaycastHitMode.Points:
+                    if (TryBuildVertexPickResult(faceHit, out MeshVertexPickResult vertexHit))
+                    {
+                        result = vertexHit;
+                        return true;
+                    }
+                    break;
+            }
+
+            result = null;
+            return false;
+        }
+
+        private static bool TryBuildEdgePickResult(MeshPickResult faceHit, out MeshEdgePickResult result)
+        {
+            result = default;
+            Triangle tri = faceHit.WorldTriangle;
+            if (!tri.TryGetBarycentricCoordinates(faceHit.HitPoint, out Vector3 bary))
+                return false;
+
+            float bestWeight = float.MaxValue;
+            Vector3 bestStart = default;
+            Vector3 bestEnd = default;
+
+            EvaluateEdge(bary.Z, tri.A, tri.B);
+            EvaluateEdge(bary.X, tri.B, tri.C);
+            EvaluateEdge(bary.Y, tri.C, tri.A);
+
+            if (bestWeight == float.MaxValue)
+                return false;
+
+            Vector3 closest = ProjectPointOntoSegment(faceHit.HitPoint, bestStart, bestEnd);
+            result = new MeshEdgePickResult(faceHit, bestStart, bestEnd, closest);
             return true;
+
+            void EvaluateEdge(float coord, Vector3 start, Vector3 end)
+            {
+                if (coord > EdgeBarycentricThreshold || coord >= bestWeight)
+                    return;
+                bestWeight = coord;
+                bestStart = start;
+                bestEnd = end;
+            }
+        }
+
+        private static bool TryBuildVertexPickResult(MeshPickResult faceHit, out MeshVertexPickResult result)
+        {
+            result = default;
+            Triangle tri = faceHit.WorldTriangle;
+            if (!tri.TryGetBarycentricCoordinates(faceHit.HitPoint, out Vector3 bary))
+                return false;
+
+            float bestDelta = float.MaxValue;
+            Vector3 bestVertex = default;
+
+            EvaluateVertex(MathF.Abs(1.0f - bary.X), tri.A);
+            EvaluateVertex(MathF.Abs(1.0f - bary.Y), tri.B);
+            EvaluateVertex(MathF.Abs(1.0f - bary.Z), tri.C);
+
+            if (bestDelta > VertexBarycentricThreshold)
+                return false;
+
+            result = new MeshVertexPickResult(faceHit, bestVertex);
+            return true;
+
+            void EvaluateVertex(float delta, Vector3 vertex)
+            {
+                if (delta >= bestDelta)
+                    return;
+                bestDelta = delta;
+                bestVertex = vertex;
+            }
+        }
+
+        private static Vector3 ProjectPointOntoSegment(Vector3 point, Vector3 start, Vector3 end)
+        {
+            Vector3 edge = end - start;
+            float lengthSq = edge.LengthSquared();
+            if (lengthSq <= XRMath.Epsilon)
+                return start;
+
+            float t = Vector3.Dot(point - start, edge) / lengthSq;
+            t = float.Clamp(t, 0.0f, 1.0f);
+            return start + edge * t;
         }
 
         private static bool ShouldIgnoreRenderableMesh(RenderableMesh mesh)

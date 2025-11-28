@@ -20,7 +20,7 @@ namespace XREngine
         private float? _targetFramesPerSecond = 90.0f;
         private IVector2 _windowedResolution = new(1920, 1080);
         private double _debugOutputRecencySeconds = 0.0;
-        private bool _enableFrameLogging = false;
+        private bool _enableFrameLogging = true;
         private float _debugOutputMinElapsedMs = 1.0f;
         private bool _enableGpuIndirectDebugLogging = true;
         private bool _enableGpuIndirectCpuFallback = false;
