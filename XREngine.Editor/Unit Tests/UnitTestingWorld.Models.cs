@@ -47,6 +47,11 @@ public static partial class UnitTestingWorld
                 SceneNode? ImportAnimated()
                 {
                     string fbxPathDesktop = Path.Combine(desktopDir, Toggles.AnimatedModelDesktopPath);
+                    if (!File.Exists(fbxPathDesktop))
+                    {
+                        Debug.LogWarning($"Animated model file not found at {fbxPathDesktop}");
+                        return null;
+                    }
                     using var importer = new ModelImporter(fbxPathDesktop, null, null);
                     importer.MakeMaterialAction = CreateHardcodedMaterial;
                     importer.MakeTextureAction = CreateHardcodedTexture;

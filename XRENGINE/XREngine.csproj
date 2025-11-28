@@ -18,6 +18,10 @@
     <ForceCoACDBuildSwitch Condition="'$(ForceCoACDBuild)' == 'true'">-ForceBuild</ForceCoACDBuildSwitch>
   </PropertyGroup>
 
+  <PropertyGroup>
+    <Freetype64Source Condition="'$(Freetype64Source)' == ''">$(NuGetPackageRoot)sharpfont.dependencies\2.6.0\bin\msvc12\x64\freetype6.dll</Freetype64Source>
+  </PropertyGroup>
+
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|AnyCPU'">
     <DebugType>embedded</DebugType>
     <IsAotCompatible>True</IsAotCompatible>
@@ -73,9 +77,10 @@
     <Content Include="openvr_api.dll">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </Content>
-    <Content Include="$(NuGetPackageRoot)sharpfont.dependencies\2.5.5\bin\msvc12\x64\freetype6.dll">
+    <Content Include="$(Freetype64Source)" Condition="Exists('$(Freetype64Source)')">
       <Link>freetype6.dll</Link>
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
     </Content>
   </ItemGroup>
 
@@ -278,6 +283,15 @@
   <Target Name="EnsureCoACD" BeforeTargets="PrepareForBuild" Condition="'$(OS)' == 'Windows_NT' and Exists('$(CoACDBuildScript)') and ('$(CoACDRid)' != '') and ('$(ForceCoACDBuild)' == 'true' or !Exists('$(MSBuildProjectDirectory)\\runtimes\\$(CoACDRid)\\native\\lib_coacd.dll'))">
     <Message Text="Ensuring CoACD native library ($(CoACDRid))" Importance="High" />
     <Exec Command="powershell -NoProfile -ExecutionPolicy Bypass -File &quot;$(CoACDBuildScript)&quot; -Rid $(CoACDRid) -Ref $(CoACDRef) -Configuration $(Configuration) $(ForceCoACDBuildSwitch)" />
+  </Target>
+
+  <Target Name="ForceFreetype64" AfterTargets="Build" Condition="Exists('$(Freetype64Source)')">
+    <Message Text="[ForceFreetype64] Copying freetype6.dll from $(Freetype64Source) to $(OutDir)" Importance="High" />
+    <Copy SourceFiles="$(Freetype64Source)" DestinationFiles="$(OutDir)freetype6.dll" SkipUnchangedFiles="false" />
+  </Target>
+
+  <Target Name="ForceFreetype64Publish" AfterTargets="Publish" Condition="Exists('$(Freetype64Source)') and '$(PublishDir)' != ''">
+    <Copy SourceFiles="$(Freetype64Source)" DestinationFiles="$(PublishDir)freetype6.dll" SkipUnchangedFiles="false" />
   </Target>
 
 </Project>

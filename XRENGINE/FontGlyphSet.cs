@@ -11,6 +11,9 @@ namespace XREngine.Rendering
     [XR3rdPartyExtensions("otf", "ttf")]
     public class FontGlyphSet : XRAsset
     {
+        static FontGlyphSet()
+            => EnsureNativeFreetypeAvailable();
+
         private const float FontDrawSize = 100.0f;
 
         private List<string> _characters = [];
@@ -60,6 +63,25 @@ namespace XREngine.Rendering
             SKTypeface typeface = SKTypeface.FromFile(filePath);
             GenerateFontAtlas(typeface, characters, Path.Combine(folder, $"{name}.png"), FontDrawSize);
             return true;
+        }
+
+        private static void EnsureNativeFreetypeAvailable()
+        {
+            try
+            {
+                string baseDir = AppContext.BaseDirectory;
+                string archFolder = Environment.Is64BitProcess ? "x64" : "x86";
+                string sourcePath = Path.Combine(baseDir, "lib", archFolder, "freetype6.dll");
+                if (!File.Exists(sourcePath))
+                    return;
+
+                string destPath = Path.Combine(baseDir, "freetype6.dll");
+                File.Copy(sourcePath, destPath, overwrite: true);
+            }
+            catch (Exception ex)
+            {
+                Debug.LogWarning($"Failed to ensure SharpFont native dependency: {ex.Message}");
+            }
         }
 
         /// <summary>
