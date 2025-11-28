@@ -3,6 +3,7 @@ using System.Numerics;
 using XREngine.Data.Colors;
 using XREngine.Data.Rendering;
 using XREngine.Rendering;
+using XREngine.Rendering.Commands;
 using XREngine.Rendering.Info;
 using XREngine.Scene.Transforms;
 

@@ -13,6 +13,7 @@ using XREngine.Rendering.Info;
 using XREngine.Components.Capture.Lights;
 using XREngine.Components.Capture.Lights.Types;
 using XREngine.Scene.Transforms;
+using XREngine.Rendering.Commands;
 
 namespace XREngine.Scene
 {

@@ -3,6 +3,7 @@ using System.Numerics;
 using XREngine.Data.Geometry;
 using XREngine.Data.Rendering;
 using XREngine.Rendering;
+using XREngine.Rendering.Commands;
 using XREngine.Rendering.Models;
 using XREngine.Rendering.Models.Gaussian;
 using XREngine.Rendering.Models.Materials;
