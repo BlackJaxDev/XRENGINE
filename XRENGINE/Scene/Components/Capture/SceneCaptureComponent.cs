@@ -1,5 +1,9 @@
-﻿using XREngine.Data.Rendering;
+﻿using System;
+using XREngine.Data.Geometry;
+using XREngine.Data.Rendering;
+using XREngine.Data.Vectors;
 using XREngine.Rendering;
+using XREngine.Rendering.Models.Materials;
 
 namespace XREngine.Components.Lights
 {
@@ -29,9 +33,16 @@ namespace XREngine.Components.Lights
         public XRViewport?[] Viewports { get; } = new XRViewport?[6];
 
         protected XRTextureCube? _environmentTextureCubemap;
+        protected XRTexture2D? _environmentTextureOctahedral;
         protected XRTextureCube? _environmentDepthTextureCubemap;
         protected XRRenderBuffer? _tempDepth;
         private XRCubeFrameBuffer? _renderFBO;
+        private XRQuadFrameBuffer? _octahedralFBO;
+        private XRMaterial? _octahedralMaterial;
+
+        private const uint OctahedralResolutionMultiplier = 2u;
+        private static XRShader? s_cubemapToOctaShader;
+        private static XRShader? s_fullscreenTriVertexShader;
 
         public XRTextureCube? EnvironmentTextureCubemap
         {
@@ -39,6 +50,11 @@ namespace XREngine.Components.Lights
             set => SetField(ref _environmentTextureCubemap, value);
         }
 
+        public XRTexture2D? EnvironmentTextureOctahedral
+        {
+            get => _environmentTextureOctahedral;
+            private set => SetField(ref _environmentTextureOctahedral, value);
+        }
         public XRTextureCube? EnvironmentDepthTextureCubemap => _environmentDepthTextureCubemap;
         protected XRCubeFrameBuffer? RenderFBO => _renderFBO;
 
@@ -100,6 +116,8 @@ namespace XREngine.Components.Lights
 
             _renderFBO = new XRCubeFrameBuffer(null);
             //_renderFBO.Generate();
+
+            InitializeOctahedralEncodingResources();
 
             var cameras = XRCubeFrameBuffer.GetCamerasPerFace(0.1f, 10000.0f, true, Transform);
             for (int i = 0; i < cameras.Length; i++)
@@ -176,16 +194,97 @@ namespace XREngine.Components.Lights
                 _currentFace = (_currentFace + 1) % 6;
             }
             else
+            {
                 for (int i = 0; i < 6; ++i)
                     RenderFace(depthAttachment, depthLayers, i);
-            
-            if (_environmentTextureCubemap is not null)
+            }
+
+            bool completedCycle = !_progressiveRenderEnabled || _currentFace == 0;
+
+            if (!completedCycle)
+                World?.Lights?.QueueForCapture(this);
+
+            if (completedCycle && _environmentTextureCubemap is not null)
             {
                 _environmentTextureCubemap.Bind();
                 _environmentTextureCubemap.GenerateMipmapsGPU();
             }
 
+            if (completedCycle)
+                EncodeEnvironmentToOctahedralMap();
+
             Engine.Rendering.State.IsSceneCapturePass = false;
+        }
+
+        private void InitializeOctahedralEncodingResources()
+        {
+            if (_environmentTextureCubemap is null)
+                return;
+
+            uint extent = GetOctahedralExtent();
+            if (extent == 0u)
+                return;
+
+            _environmentTextureOctahedral?.Destroy();
+            EnvironmentTextureOctahedral = CreateOctahedralTexture(extent);
+
+            if (_octahedralMaterial is null)
+            {
+                RenderingParameters renderParams = new();
+                renderParams.DepthTest.Enabled = ERenderParamUsage.Disabled;
+
+                _octahedralMaterial = new XRMaterial([_environmentTextureCubemap], GetFullscreenTriVertexShader(), GetCubemapToOctaShader())
+                {
+                    RenderOptions = renderParams,
+                };
+                _octahedralFBO = new XRQuadFrameBuffer(_octahedralMaterial);
+            }
+            else
+            {
+                _octahedralMaterial.Textures[0] = _environmentTextureCubemap;
+            }
+
+            _octahedralFBO!.SetRenderTargets((_environmentTextureOctahedral!, EFrameBufferAttachment.ColorAttachment0, 0, -1));
+        }
+
+        private uint GetOctahedralExtent()
+            => Math.Max(1u, Resolution * OctahedralResolutionMultiplier);
+
+        private static XRTexture2D CreateOctahedralTexture(uint extent)
+            => new(extent, extent, EPixelInternalFormat.Rgba16f, EPixelFormat.Rgba, EPixelType.HalfFloat, false)
+            {
+                MinFilter = ETexMinFilter.Linear,
+                MagFilter = ETexMagFilter.Linear,
+                UWrap = ETexWrapMode.ClampToEdge,
+                VWrap = ETexWrapMode.ClampToEdge,
+                Resizable = false,
+                SizedInternalFormat = ESizedInternalFormat.Rgba16f,
+                Name = "SceneCaptureEnvOcta",
+                AutoGenerateMipmaps = false,
+            };
+
+        private static XRShader GetCubemapToOctaShader()
+            => s_cubemapToOctaShader ??= ShaderHelper.LoadEngineShader("Scene3D\\CubemapToOctahedron.fs", EShaderType.Fragment);
+
+        private static XRShader GetFullscreenTriVertexShader()
+            => s_fullscreenTriVertexShader ??= ShaderHelper.LoadEngineShader("Scene3D\\FullscreenTri.vs", EShaderType.Vertex);
+
+        private void EncodeEnvironmentToOctahedralMap()
+        {
+            if (_octahedralFBO is null || _environmentTextureOctahedral is null)
+                return;
+
+            int width = (int)Math.Max(1u, _environmentTextureOctahedral.Width);
+            int height = (int)Math.Max(1u, _environmentTextureOctahedral.Height);
+            AbstractRenderer.Current?.SetRenderArea(new BoundingRectangle(IVector2.Zero, new IVector2(width, height)));
+
+            using (_octahedralFBO.BindForWritingState())
+            {
+                Engine.Rendering.State.ClearByBoundFBO();
+                _octahedralFBO.Render(null, true);
+            }
+
+            _environmentTextureOctahedral.GenerateMipmapsGPU();
         }
 
         private void GetDepthParams(out IFrameBufferAttachement depthAttachment, out int[] depthLayers)

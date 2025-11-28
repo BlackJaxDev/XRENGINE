@@ -18,8 +18,35 @@ layout(binding = 5) uniform sampler2DArray Texture5; //Diffuse Light Color
 
 layout(binding = 6) uniform sampler2D BRDF;
 
-layout(binding = 7) uniform samplerCube Irradiance;
-layout(binding = 8) uniform samplerCube Prefilter;
+layout(binding = 7) uniform sampler2D Irradiance;
+layout(binding = 8) uniform sampler2D Prefilter;
+vec2 EncodeOcta(vec3 dir)
+{
+	dir = normalize(dir);
+	dir /= max(abs(dir.x) + abs(dir.y) + abs(dir.z), 1e-5f);
+
+	vec2 uv = dir.xy;
+	if (dir.z < 0.0f)
+	{
+		vec2 signDir = vec2(dir.x >= 0.0f ? 1.0f : -1.0f, dir.y >= 0.0f ? 1.0f : -1.0f);
+		uv = (1.0f - abs(uv.yx)) * signDir;
+	}
+
+	return uv * 0.5f + 0.5f;
+}
+
+vec3 SampleOcta(sampler2D tex, vec3 dir)
+{
+	vec2 uv = EncodeOcta(dir);
+	return texture(tex, uv).rgb;
+}
+
+vec3 SampleOctaLod(sampler2D tex, vec3 dir, float lod)
+{
+	vec2 uv = EncodeOcta(dir);
+	return textureLod(tex, uv, lod).rgb;
+}
+
 
 uniform mat4 LeftEyeInverseViewMatrix;
 uniform mat4 RightEyeInverseViewMatrix;
@@ -63,7 +90,7 @@ void main()
 	float ao = texture(Texture3, uvi).r;
 	float depth = texture(Texture4, uvi).r;
 	vec3 InLo = texture(Texture5, uvi).rgb;
-	vec3 irradianceColor = texture(Irradiance, normal).rgb;
+	vec3 irradianceColor = SampleOcta(Irradiance, normal);
 	vec3 fragPosWS = WorldPosFromDepth(depth, uv, InverseViewMatrix, ProjMatrix);
 	//float fogDensity = noise3(fragPosWS);
 
@@ -86,7 +113,7 @@ void main()
 	//TODO: fix reflection vector, blend environment cubemaps via influence radius
 
 	vec3 diffuse = irradianceColor * albedoColor;
-	vec3 prefilteredColor = textureLod(Prefilter, R, roughness * MAX_REFLECTION_LOD).rgb;
+	vec3 prefilteredColor = SampleOctaLod(Prefilter, R, roughness * MAX_REFLECTION_LOD);
 	vec3 specular = prefilteredColor * (kS * brdfValue.x + brdfValue.y);
 	vec3 ambient = (kD * diffuse + specular) * ao;
 
