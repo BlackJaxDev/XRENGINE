@@ -1,10 +1,12 @@
 ﻿using System.Numerics;
+using XREngine.Serialization;
 using YamlDotNet.Core;
 using YamlDotNet.Core.Events;
 using YamlDotNet.Serialization;
 
 namespace XREngine.Data
 {
+    [YamlTypeConverter]
     public sealed class Matrix4x4YamlTypeConverter : IYamlTypeConverter
     {
         public bool Accepts(Type type) => type == typeof(Matrix4x4);

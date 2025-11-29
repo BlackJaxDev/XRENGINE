@@ -140,6 +140,7 @@ namespace XREngine.Scene.Transforms
         /// This is the scene node that this transform is attached to and affects.
         /// Scene nodes are used to house components in relation to the scene hierarchy.
         /// </summary>
+        [YamlIgnore]
         public virtual SceneNode? SceneNode
         {
             get => _sceneNode;
@@ -159,6 +160,7 @@ namespace XREngine.Scene.Transforms
         /// The parent of this transform.
         /// Will affect this transform's world matrix.
         /// </summary>
+        [YamlIgnore]
         public virtual TransformBase? Parent
         {
             get => _parent;
@@ -178,12 +180,6 @@ namespace XREngine.Scene.Transforms
                     return;
                 SetField(ref _children, value);
             }
-        }
-
-        public TransformBase[] ChildrenSerialized
-        {
-            get => [.. Children];
-            set => Children = [.. value];
         }
 
         public void AddChild(TransformBase child, bool childPreservesWorldTransform, bool now)

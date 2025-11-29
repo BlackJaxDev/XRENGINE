@@ -253,7 +253,7 @@ public static partial class UnitTestingWorld
         //Opens a folder browser to select project location
         private static void BrowseForProjectLocation()
         {
-            XREngine.Editor.UI.ImGuiFileBrowser.SelectFolder(
+            ImGuiFileBrowser.SelectFolder(
                 "SelectProjectLocation",
                 "Select Project Location",
                 result =>
@@ -271,7 +271,7 @@ public static partial class UnitTestingWorld
         private static void DrawNewProjectDialog()
         {
             // Draw any active file browser dialogs
-            XREngine.Editor.UI.ImGuiFileBrowser.DrawDialogs();
+            ImGuiFileBrowser.DrawDialogs();
 
             if (!_showNewProjectDialog)
                 return;
@@ -400,7 +400,7 @@ public static partial class UnitTestingWorld
             if (!string.IsNullOrWhiteSpace(asset.Name))
                 return asset.Name;
             if (!string.IsNullOrWhiteSpace(asset.FilePath))
-                return System.IO.Path.GetFileNameWithoutExtension(asset.FilePath);
+                return Path.GetFileNameWithoutExtension(asset.FilePath);
             return $"{asset.GetType().Name} ({asset.ID.ToString()[..8]})";
         }
 

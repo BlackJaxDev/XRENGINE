@@ -1,9 +1,11 @@
-﻿using YamlDotNet.Core;
+﻿using XREngine.Serialization;
+using YamlDotNet.Core;
 using YamlDotNet.Core.Events;
 using YamlDotNet.Serialization;
 
 namespace XREngine.Data
 {
+    [YamlTypeConverter]
     public sealed class DataSourceYamlTypeConverter : IYamlTypeConverter
     {
         public bool Accepts(Type type)
