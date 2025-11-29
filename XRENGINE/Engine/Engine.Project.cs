@@ -1,4 +1,6 @@
+using System;
 using System.IO;
+using System.Linq;
 using XREngine.Core.Files;
 using XREngine.Diagnostics;
 using static XREngine.Engine.Rendering;
@@ -56,19 +58,15 @@ namespace XREngine
             if (project is null)
                 return false;
 
+            project.EnsureStructure();
+            LogUnexpectedProjectEntries(project);
+
             // Unload any existing project
             UnloadProject();
 
             CurrentProject = project;
 
-            // Set the game assets path to the project's Assets directory
-            if (Assets is not null && project.AssetsDirectory is not null)
-            {
-                if (!Directory.Exists(project.AssetsDirectory))
-                    Directory.CreateDirectory(project.AssetsDirectory);
-                
-                Assets.GameAssetsPath = project.AssetsDirectory;
-            }
+            ConfigureProjectDirectories(project);
 
             // Load project-specific engine settings
             LoadProjectEngineSettings();
@@ -144,7 +142,15 @@ namespace XREngine
             if (settings is null)
                 return;
 
-            settings.FilePath = CurrentProject.EngineSettingsPath;
+            if (CurrentProject.EngineSettingsPath is null)
+                return;
+
+            string settingsPath = CurrentProject.EngineSettingsPath;
+            string? settingsDirectory = Path.GetDirectoryName(settingsPath);
+            if (!string.IsNullOrWhiteSpace(settingsDirectory))
+                Directory.CreateDirectory(settingsDirectory);
+
+            settings.FilePath = settingsPath;
             Assets.Save(settings);
             Debug.Out("Saved project engine settings.");
         }
@@ -157,11 +163,19 @@ namespace XREngine
             if (CurrentProject?.ProjectDirectory is null || Assets is null)
                 return;
 
+            if (CurrentProject.UserSettingsPath is null)
+                return;
+
+            string userSettingsPath = CurrentProject.UserSettingsPath;
             var projectSettings = new ProjectUserSettings(UserSettings)
             {
-                FilePath = CurrentProject.UserSettingsPath,
+                FilePath = userSettingsPath,
                 Name = "User Settings"
             };
+
+            string? settingsDirectory = Path.GetDirectoryName(userSettingsPath);
+            if (!string.IsNullOrWhiteSpace(settingsDirectory))
+                Directory.CreateDirectory(settingsDirectory);
             
             Assets.Save(projectSettings);
             Debug.Out("Saved project user settings.");
@@ -219,6 +233,43 @@ namespace XREngine
                 return false;
 
             return LoadProject(project);
+        }
+
+        private static void ConfigureProjectDirectories(XRProject project)
+        {
+            if (Assets is null)
+                return;
+
+            static void EnsureDirectory(string? path)
+            {
+                if (string.IsNullOrWhiteSpace(path))
+                    return;
+
+                Directory.CreateDirectory(path);
+            }
+
+            EnsureDirectory(project.AssetsDirectory);
+            EnsureDirectory(project.PackagesDirectory);
+            EnsureDirectory(project.IntermediateDirectory);
+            EnsureDirectory(project.BuildDirectory);
+            EnsureDirectory(project.ConfigDirectory);
+
+            if (project.AssetsDirectory is not null)
+                Assets.GameAssetsPath = project.AssetsDirectory;
+            if (project.PackagesDirectory is not null)
+                Assets.PackagesPath = project.PackagesDirectory;
+            if (project.IntermediateDirectory is not null)
+                Assets.LibrariesPath = project.IntermediateDirectory;
+        }
+
+        private static void LogUnexpectedProjectEntries(XRProject project)
+        {
+            var unexpectedEntries = project.GetUnexpectedRootEntries();
+            if (unexpectedEntries.Count == 0)
+                return;
+
+            string message = string.Join(Environment.NewLine, unexpectedEntries.Select(entry => $" - {entry}"));
+            Debug.LogWarning($"Unexpected items found in project root '{project.ProjectDirectory}':{Environment.NewLine}{message}");
         }
     }
 }

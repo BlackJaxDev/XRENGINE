@@ -9,13 +9,14 @@ using XREngine.Components.Scripting;
 using XREngine.Core;
 using XREngine.Rendering;
 
-internal class CodeManager : XRSingleton<CodeManager>
+internal partial class CodeManager : XRSingleton<CodeManager>
 {
     public const string SolutionFormatVersion = "12.00";
     public const string VisualStudioVersion = "17.4.33213.308";
     public const string MinimumVisualStudioVersion = "10.0.40219.1";
     public const string LegacyProjectGuid = "FAE04EC0-301F-11D3-BF4B-00C04F79EFBC";
     public const string ModernProjectGuid = "9A19103F-16F7-4668-BE54-9A1E7A4F7556";
+    public const string TargetFramework = "net10.0-windows7.0";
 
     private bool _isGameClientInvalid = true;
     private bool _gameFilesChanged = true;
@@ -204,7 +205,7 @@ internal class CodeManager : XRSingleton<CodeManager>
             new XAttribute("Sdk", "Microsoft.NET.Sdk"),
             new XElement("PropertyGroup",
                 new XElement("OutputType", executable ? "Exe" : "Library"),
-                new XElement("TargetFramework", "net10.0-windows7.0"),
+                new XElement("TargetFramework", TargetFramework),
                 new XElement("RootNamespace", rootNamespace),
                 new XElement("AssemblyName", Path.GetFileNameWithoutExtension(projectFilePath)),
                 new XElement("ImplicitUsings", implicitUsings ? "enable" : "disable"),
@@ -378,46 +379,11 @@ internal class CodeManager : XRSingleton<CodeManager>
         }
     }
 
-    // Custom logger that captures all output to a string
-    private class StringLogger(LoggerVerbosity verbosity) : ILogger
-    {
-        private readonly StringBuilder _log = new();
-
-        public void Initialize(IEventSource eventSource)
-        {
-            eventSource.ErrorRaised += (sender, e) =>
-                _log.AppendLine($"ERROR {e.Code}: {e.Message} ({e.File}:{e.LineNumber},{e.ColumnNumber})");
-
-            eventSource.WarningRaised += (sender, e) =>
-                _log.AppendLine($"WARNING {e.Code}: {e.Message} ({e.File}:{e.LineNumber},{e.ColumnNumber})");
-
-            eventSource.MessageRaised += (sender, e) =>
-                _log.AppendLine($"{e.Message}");
-        }
-
-        public string GetFullLog() => _log.ToString();
-
-        public void Shutdown() { }
-
-        public LoggerVerbosity Verbosity
-        {
-            get => verbosity;
-            set => verbosity = value;
-        }
-
-        private string? _parameters = null;
-        public string? Parameters
-        {
-            get => _parameters;
-            set => _parameters = value;
-        }
-    }
-
     public string GetBinaryPath(string config = Config_Debug, string platform = Platform_AnyCPU)
     {
         string projectName = GetProjectName();
         // Output path matches: <ProjectFolder>/Build/<Config>/<Platform>/net10.0-windows7.0/<ProjectName>.dll
-        string outputPath = Path.Combine(Engine.Assets.LibrariesPath, projectName, "Build", config, platform, "net10.0-windows7.0");
+        string outputPath = Path.Combine(Engine.Assets.LibrariesPath, projectName, "Build", config, platform, TargetFramework);
         return Path.Combine(outputPath, $"{projectName}.dll");
     }
 

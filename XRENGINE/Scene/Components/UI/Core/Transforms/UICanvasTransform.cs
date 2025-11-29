@@ -1,7 +1,9 @@
 ﻿using System.Collections;
 using System.Numerics;
+using System.Threading;
 using XREngine.Data.Core;
 using XREngine.Data.Geometry;
+using XREngine.Scene.Transforms;
 
 namespace XREngine.Rendering.UI
 {
@@ -16,6 +18,8 @@ namespace XREngine.Rendering.UI
             get => _cameraSpaceCamera;
             set => SetField(ref _cameraSpaceCamera, value);
         }
+
+        private TransformBase? _cameraSpaceCameraTransformListener;
 
         private ECanvasDrawSpace _drawSpace = ECanvasDrawSpace.Screen;
         /// <summary>
@@ -41,14 +45,14 @@ namespace XREngine.Rendering.UI
             set => SetField(ref _cameraDrawSpaceDistance, value);
         }
 
-        private volatile int _isLayoutInvalidated = 1; // Start invalidated
+        private int _isLayoutInvalidated = 1; // Start invalidated
         public bool IsLayoutInvalidated
         {
             get => Volatile.Read(ref _isLayoutInvalidated) == 1;
             private set => Volatile.Write(ref _isLayoutInvalidated, value ? 1 : 0);
         }
 
-        private volatile int _isUpdatingLayout = 0;
+        private int _isUpdatingLayout = 0;
         public bool IsUpdatingLayout
         {
             get => Volatile.Read(ref _isUpdatingLayout) == 1;
@@ -334,11 +338,30 @@ namespace XREngine.Rendering.UI
         public BoundingRectangleF GetRootCanvasBounds()
             => new(Vector2.Zero, new Vector2(GetWidth(), GetHeight()));
 
+        protected override bool OnPropertyChanging<T>(string? propName, T field, T @new)
+        {
+            if (!base.OnPropertyChanging(propName, field, @new))
+                return false;
+
+            switch (propName)
+            {
+                case nameof(CameraSpaceCamera):
+                    DetachCameraSpaceCameraListener();
+                    break;
+            }
+
+            return true;
+        }
+
         protected override void OnPropertyChanged<T>(string? propName, T prev, T field)
         {
             base.OnPropertyChanged(propName, prev, field);
             switch (propName)
             {
+                case nameof(CameraSpaceCamera):
+                    AttachCameraSpaceCameraListener();
+                    MarkWorldModified();
+                    break;
                 case nameof(DrawSpace):
                     MarkWorldModified();
                     break;
@@ -349,6 +372,32 @@ namespace XREngine.Rendering.UI
                     ActualLocalBottomLeftTranslation = Translation;
                     break;
             }
+        }
+
+        private void AttachCameraSpaceCameraListener()
+        {
+            var camera = _cameraSpaceCamera;
+            if (camera is null)
+                return;
+
+            var transform = camera.Transform;
+            _cameraSpaceCameraTransformListener = transform;
+            transform.RenderMatrixChanged += CameraSpaceCameraMatrixChanged;
+        }
+
+        private void DetachCameraSpaceCameraListener()
+        {
+            if (_cameraSpaceCameraTransformListener is null)
+                return;
+
+            _cameraSpaceCameraTransformListener.RenderMatrixChanged -= CameraSpaceCameraMatrixChanged;
+            _cameraSpaceCameraTransformListener = null;
+        }
+
+        private void CameraSpaceCameraMatrixChanged(TransformBase transform, Matrix4x4 matrix)
+        {
+            if (DrawSpace == ECanvasDrawSpace.Camera)
+                MarkWorldModified();
         }
 
         protected override Matrix4x4 CreateWorldMatrix()
