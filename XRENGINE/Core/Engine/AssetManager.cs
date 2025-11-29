@@ -1,20 +1,26 @@
 ﻿using Microsoft.DotNet.PlatformAbstractions;
 using Newtonsoft.Json;
 using System.Collections.Concurrent;
+using System.Collections.Generic;
 using System.Diagnostics;
 using System.Diagnostics.CodeAnalysis;
 using System.IO;
 using System.Numerics;
 using System.Reflection;
+using XREngine.Core.Engine;
 using XREngine.Core.Files;
 using XREngine.Data;
+using XREngine.Diagnostics;
+using XREngine.Rendering;
 using XREngine.Rendering.UI;
+using XREngine.Scene;
+using XREngine.Scene.Prefabs;
 using XREngine.Scene.Transforms;
+using XREngine.Serialization;
 using YamlDotNet.Core;
 using YamlDotNet.Core.Events;
 using YamlDotNet.Serialization;
 using YamlDotNet.Serialization.NodeDeserializers;
-using XREngine.Diagnostics;
 
 namespace XREngine
 {
@@ -607,42 +613,198 @@ namespace XREngine
         public void SaveGameAssetTo(XRAsset asset, params string[] folderNames)
             => SaveTo(asset, Path.Combine(GameAssetsPath, Path.Combine(folderNames)));
 
-        public static readonly ISerializer Serializer = new SerializerBuilder()
-            //.IgnoreFields()
-            .EnablePrivateConstructors() //TODO: probably avoid using this
-            .EnsureRoundtrip()
-            .WithEventEmitter(nextEmitter => new DepthTrackingEventEmitter(nextEmitter))
-            //.WithTypeConverter(new XRAssetYamlConverter())
-            .WithTypeConverter(new DataSourceYamlTypeConverter())
-            .WithTypeConverter(new Vector2YamlTypeConverter())
-            .WithTypeConverter(new Vector3YamlTypeConverter())
-            .WithTypeConverter(new Vector4YamlTypeConverter())
-            .WithTypeConverter(new QuaternionYamlTypeConverter())
-            .WithTypeConverter(new Matrix4x4YamlTypeConverter())
-            .IncludeNonPublicProperties()
-            //.WithTagMapping("!Transform", typeof(Transform))
-            //.WithTagMapping("!UIBoundableTransform", typeof(UIBoundableTransform))
-            //.WithTagMapping("!UITransform", typeof(UITransform))
-            .ConfigureDefaultValuesHandling(DefaultValuesHandling.OmitNull | DefaultValuesHandling.OmitDefaults | DefaultValuesHandling.OmitEmptyCollections)
-            .Build();
+        #region Prefab helpers
 
-        public static readonly IDeserializer Deserializer = new DeserializerBuilder()
-            .IgnoreUnmatchedProperties()
-            .EnablePrivateConstructors()
-            .WithEnforceNullability()
-            .WithEnforceRequiredMembers()
-            .WithDuplicateKeyChecking()
-            .WithTypeConverter(new DataSourceYamlTypeConverter())
-            .WithTypeConverter(new Vector2YamlTypeConverter())
-            .WithTypeConverter(new Vector3YamlTypeConverter())
-            .WithTypeConverter(new Vector4YamlTypeConverter())
-            .WithTypeConverter(new QuaternionYamlTypeConverter())
-            .WithTypeConverter(new Matrix4x4YamlTypeConverter())
-            .WithNodeDeserializer(
-                inner => new DepthTrackingNodeDeserializer(inner),
-                s => s.InsteadOf<ObjectNodeDeserializer>())
-            //.WithNodeDeserializer(new XRAssetDeserializer(), w => w.OnTop())
-            .Build();
+        public SceneNode? InstantiatePrefab(XRPrefabSource prefab,
+                                            XRWorldInstance? world = null,
+                                            SceneNode? parent = null,
+                                            bool maintainWorldTransform = false)
+        {
+            ArgumentNullException.ThrowIfNull(prefab);
+            return SceneNodePrefabService.Instantiate(prefab, world, parent, maintainWorldTransform);
+        }
+
+        public SceneNode? InstantiatePrefab(Guid prefabAssetId,
+                                            XRWorldInstance? world = null,
+                                            SceneNode? parent = null,
+                                            bool maintainWorldTransform = false)
+        {
+            if (prefabAssetId == Guid.Empty)
+                return null;
+
+            return GetAssetByID(prefabAssetId) is XRPrefabSource prefab
+                ? InstantiatePrefab(prefab, world, parent, maintainWorldTransform)
+                : null;
+        }
+
+        public SceneNode? InstantiatePrefab(string assetPath,
+                                            XRWorldInstance? world = null,
+                                            SceneNode? parent = null,
+                                            bool maintainWorldTransform = false)
+        {
+            if (string.IsNullOrWhiteSpace(assetPath))
+                return null;
+
+            var prefab = Load<XRPrefabSource>(assetPath);
+            return prefab is null
+                ? null
+                : InstantiatePrefab(prefab, world, parent, maintainWorldTransform);
+        }
+
+        public async Task<SceneNode?> InstantiatePrefabAsync(string assetPath,
+                                                             XRWorldInstance? world = null,
+                                                             SceneNode? parent = null,
+                                                             bool maintainWorldTransform = false)
+        {
+            if (string.IsNullOrWhiteSpace(assetPath))
+                return null;
+
+            var prefab = await LoadAsync<XRPrefabSource>(assetPath).ConfigureAwait(false);
+            return prefab is null
+                ? null
+                : InstantiatePrefab(prefab, world, parent, maintainWorldTransform);
+        }
+
+        [RequiresUnreferencedCode("Prefab override reflection requires runtime metadata.")]
+        public SceneNode? InstantiateVariant(XRPrefabVariant variant,
+                                             XRWorldInstance? world = null,
+                                             SceneNode? parent = null,
+                                             bool maintainWorldTransform = false)
+        {
+            ArgumentNullException.ThrowIfNull(variant);
+            return SceneNodePrefabService.InstantiateVariant(variant, world, parent, maintainWorldTransform);
+        }
+
+        [RequiresUnreferencedCode("Prefab override reflection requires runtime metadata.")]
+        public SceneNode? InstantiateVariant(Guid variantAssetId,
+                                             XRWorldInstance? world = null,
+                                             SceneNode? parent = null,
+                                             bool maintainWorldTransform = false)
+        {
+            if (variantAssetId == Guid.Empty)
+                return null;
+
+            return GetAssetByID(variantAssetId) is XRPrefabVariant variant
+                ? InstantiateVariant(variant, world, parent, maintainWorldTransform)
+                : null;
+        }
+
+        [RequiresUnreferencedCode("Prefab override reflection requires runtime metadata.")]
+        public SceneNode? InstantiateVariant(string assetPath,
+                                             XRWorldInstance? world = null,
+                                             SceneNode? parent = null,
+                                             bool maintainWorldTransform = false)
+        {
+            if (string.IsNullOrWhiteSpace(assetPath))
+                return null;
+
+            var variant = Load<XRPrefabVariant>(assetPath);
+            return variant is null
+                ? null
+                : InstantiateVariant(variant, world, parent, maintainWorldTransform);
+        }
+
+        [RequiresUnreferencedCode("Prefab override reflection requires runtime metadata.")]
+        public async Task<SceneNode?> InstantiateVariantAsync(string assetPath,
+                                                              XRWorldInstance? world = null,
+                                                              SceneNode? parent = null,
+                                                              bool maintainWorldTransform = false)
+        {
+            if (string.IsNullOrWhiteSpace(assetPath))
+                return null;
+
+            var variant = await LoadAsync<XRPrefabVariant>(assetPath).ConfigureAwait(false);
+            return variant is null
+                ? null
+                : InstantiateVariant(variant, world, parent, maintainWorldTransform);
+        }
+
+        #endregion
+
+        private static readonly IReadOnlyList<IYamlTypeConverter> RegisteredYamlTypeConverters = DiscoverYamlTypeConverters();
+
+        public static readonly ISerializer Serializer = CreateSerializer();
+
+        public static readonly IDeserializer Deserializer = CreateDeserializer();
+
+        private static ISerializer CreateSerializer()
+        {
+            var builder = new SerializerBuilder()
+                //.IgnoreFields()
+                .EnablePrivateConstructors() //TODO: probably avoid using this
+                .EnsureRoundtrip()
+                .WithEventEmitter(nextEmitter => new DepthTrackingEventEmitter(nextEmitter))
+                //.WithTypeConverter(new XRAssetYamlConverter())
+                .IncludeNonPublicProperties()
+                //.WithTagMapping("!Transform", typeof(Transform))
+                //.WithTagMapping("!UIBoundableTransform", typeof(UIBoundableTransform))
+                //.WithTagMapping("!UITransform", typeof(UITransform))
+                .ConfigureDefaultValuesHandling(DefaultValuesHandling.OmitNull | DefaultValuesHandling.OmitDefaults | DefaultValuesHandling.OmitEmptyCollections);
+
+            foreach (var converter in RegisteredYamlTypeConverters)
+                builder.WithTypeConverter(converter);
+
+            return builder.Build();
+        }
+
+        private static IDeserializer CreateDeserializer()
+        {
+            var builder = new DeserializerBuilder()
+                .IgnoreUnmatchedProperties()
+                .EnablePrivateConstructors()
+                .WithEnforceNullability()
+                .WithEnforceRequiredMembers()
+                .WithDuplicateKeyChecking()
+                .WithNodeDeserializer(
+                    inner => new DepthTrackingNodeDeserializer(inner),
+                    s => s.InsteadOf<ObjectNodeDeserializer>())
+                //.WithNodeDeserializer(new XRAssetDeserializer(), w => w.OnTop())
+                ;
+
+            foreach (var converter in RegisteredYamlTypeConverters)
+                builder.WithTypeConverter(converter);
+
+            return builder.Build();
+        }
+
+        private static IReadOnlyList<IYamlTypeConverter> DiscoverYamlTypeConverters()
+        {
+            List<IYamlTypeConverter> converters = [];
+            HashSet<Type> registeredTypes = [];
+
+            foreach (var assembly in AppDomain.CurrentDomain.GetAssemblies())
+            {
+                Type[] types;
+                try
+                {
+                    types = assembly.GetTypes();
+                }
+                catch (ReflectionTypeLoadException ex)
+                {
+                    types = ex.Types ?? Array.Empty<Type>();
+                }
+
+                foreach (var type in types)
+                {
+                    if (type is null || type.IsAbstract || type.IsInterface)
+                        continue;
+
+                    if (!typeof(IYamlTypeConverter).IsAssignableFrom(type))
+                        continue;
+
+                    if (type.GetCustomAttribute<YamlTypeConverterAttribute>() is null)
+                        continue;
+
+                    if (!registeredTypes.Add(type))
+                        continue;
+
+                    if (Activator.CreateInstance(type) is IYamlTypeConverter instance)
+                        converters.Add(instance);
+                }
+            }
+
+            return converters;
+        }
 
         private static T? Deserialize<[DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicMethods)] T>(string filePath) where T : XRAsset, new()
         {

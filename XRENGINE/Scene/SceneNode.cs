@@ -1,8 +1,10 @@
-﻿using System.Diagnostics.CodeAnalysis;
+﻿using System.Collections.Generic;
+using System.Diagnostics.CodeAnalysis;
 using XREngine.Components;
 using XREngine.Core.Attributes;
 using XREngine.Data.Core;
 using XREngine.Rendering;
+using XREngine.Scene.Prefabs;
 using XREngine.Scene.Transforms;
 using YamlDotNet.Serialization;
 
@@ -386,6 +388,45 @@ namespace XREngine.Scene
                     _transform.Parent = value?.Transform;
             }
         }
+
+        private SceneNodePrefabLink? _prefab;
+        /// <summary>
+        /// Optional metadata that ties this node back to a prefab asset definition.
+        /// </summary>
+        public SceneNodePrefabLink? Prefab
+        {
+            get => _prefab;
+            set => SetField(ref _prefab, value);
+        }
+
+        [YamlMember(Alias = "ChildNodes", Order = 1)]
+        public SceneNode[] ChildNodesSerialized
+        {
+            get
+            {
+                var nodes = new List<SceneNode>();
+                foreach (var child in Transform.Children)
+                    if (child?.SceneNode is SceneNode node)
+                        nodes.Add(node);
+                return [.. nodes];
+            }
+            set
+            {
+                Transform.Clear();
+                if (value is null)
+                    return;
+
+                foreach (var child in value)
+                    if (child is not null)
+                        child.Parent = this;
+            }
+        }
+
+        /// <summary>
+        /// True when the node is part of a prefab instance.
+        /// </summary>
+        [YamlIgnore]
+        public bool IsPrefabInstance => Prefab?.HasValidPrefab ?? false;
 
         /// <summary>
         /// Returns the full path of the scene node in the scene hierarchy.

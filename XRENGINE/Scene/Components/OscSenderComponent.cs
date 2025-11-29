@@ -30,33 +30,6 @@ namespace XREngine.Data.Components
             set => SetField(ref _parameterPrefix, value);
         }
 
-        /// <summary>
-        /// Called when a variable changes in a state machine.
-        /// </summary>
-        /// <param name="variable"></param>
-        public void StateMachineVariableChanged(AnimVar variable)
-        {
-            if (Client == null)
-                return;
-
-            string address = variable.ParameterName;
-            if (!address.StartsWith('/'))
-                address = $"{_parameterPrefix}{address}";
-
-            switch (variable)
-            {
-                case AnimFloat f:
-                    Client.Send(address, f.Value);
-                    break;
-                case AnimInt i:
-                    Client.Send(address, i.Value);
-                    break;
-                case AnimBool b:
-                    Client.Send(address, b.Value);
-                    break;
-            }
-        }
-
         public void StartClient(int port)
         {
             Client = new OscClient("127.0.0.1", port);
@@ -66,6 +39,25 @@ namespace XREngine.Data.Components
             base.OnComponentActivated();
             if (Client is null)
                 StartClient(Port);
+        }
+
+        public void Send(string address, float value)
+        {
+            if (!address.StartsWith('/'))
+                address = $"{ParameterPrefix}{address}";
+            Client?.Send(address, value);
+        }
+        public void Send(string address, int value)
+        {
+            if (!address.StartsWith('/'))
+                address = $"{ParameterPrefix}{address}";
+            Client?.Send(address, value);
+        }
+        public void Send(string address, bool value)
+        {
+            if (!address.StartsWith('/'))
+                address = $"{ParameterPrefix}{address}";
+            Client?.Send(address, value);
         }
     }
 }

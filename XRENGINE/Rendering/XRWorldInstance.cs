@@ -17,6 +17,7 @@ using XREngine.Data.Trees;
 using XREngine.Rendering.Info;
 using XREngine.Rendering.Picking;
 using XREngine.Scene;
+using XREngine.Scene.Prefabs;
 using XREngine.Scene.Transforms;
 using static XREngine.Engine;
 
@@ -50,6 +51,112 @@ namespace XREngine.Rendering
         protected RootNodeCollection _rootNodes = [];
         public RootNodeCollection RootNodes => _rootNodes;
         public Lights3DCollection Lights { get; }
+
+        #region Prefab instancing
+
+        public SceneNode InstantiatePrefab(XRPrefabSource prefab,
+                                           SceneNode? parent = null,
+                                           bool maintainWorldTransform = false,
+                                           bool addToWorldRootWhenNoParent = true)
+        {
+            ArgumentNullException.ThrowIfNull(prefab);
+            var instance = SceneNodePrefabService.Instantiate(prefab, this, parent, maintainWorldTransform);
+            FinalizePrefabSpawn(instance, parent, addToWorldRootWhenNoParent);
+            return instance;
+        }
+
+        public SceneNode? InstantiatePrefab(Guid prefabAssetId,
+                                             SceneNode? parent = null,
+                                             bool maintainWorldTransform = false,
+                                             bool addToWorldRootWhenNoParent = true)
+        {
+            if (prefabAssetId == Guid.Empty)
+                return null;
+
+            var assets = Engine.Assets;
+            if (assets is null)
+                return null;
+
+            SceneNode? instance = assets.InstantiatePrefab(prefabAssetId, this, parent, maintainWorldTransform);
+            FinalizePrefabSpawn(instance, parent, addToWorldRootWhenNoParent);
+            return instance;
+        }
+
+        public SceneNode? InstantiatePrefab(string assetPath,
+                                             SceneNode? parent = null,
+                                             bool maintainWorldTransform = false,
+                                             bool addToWorldRootWhenNoParent = true)
+        {
+            if (string.IsNullOrWhiteSpace(assetPath))
+                return null;
+
+            var assets = Engine.Assets;
+            if (assets is null)
+                return null;
+
+            SceneNode? instance = assets.InstantiatePrefab(assetPath, this, parent, maintainWorldTransform);
+            FinalizePrefabSpawn(instance, parent, addToWorldRootWhenNoParent);
+            return instance;
+        }
+
+        [RequiresUnreferencedCode("Prefab override reflection requires runtime metadata.")]
+        public SceneNode InstantiateVariant(XRPrefabVariant variant,
+                                            SceneNode? parent = null,
+                                            bool maintainWorldTransform = false,
+                                            bool addToWorldRootWhenNoParent = true)
+        {
+            ArgumentNullException.ThrowIfNull(variant);
+            var instance = SceneNodePrefabService.InstantiateVariant(variant, this, parent, maintainWorldTransform);
+            FinalizePrefabSpawn(instance, parent, addToWorldRootWhenNoParent);
+            return instance;
+        }
+
+        [RequiresUnreferencedCode("Prefab override reflection requires runtime metadata.")]
+        public SceneNode? InstantiateVariant(Guid variantAssetId,
+                                             SceneNode? parent = null,
+                                             bool maintainWorldTransform = false,
+                                             bool addToWorldRootWhenNoParent = true)
+        {
+            if (variantAssetId == Guid.Empty)
+                return null;
+
+            var assets = Engine.Assets;
+            if (assets is null)
+                return null;
+
+            SceneNode? instance = assets.InstantiateVariant(variantAssetId, this, parent, maintainWorldTransform);
+            FinalizePrefabSpawn(instance, parent, addToWorldRootWhenNoParent);
+            return instance;
+        }
+
+        [RequiresUnreferencedCode("Prefab override reflection requires runtime metadata.")]
+        public SceneNode? InstantiateVariant(string assetPath,
+                                             SceneNode? parent = null,
+                                             bool maintainWorldTransform = false,
+                                             bool addToWorldRootWhenNoParent = true)
+        {
+            if (string.IsNullOrWhiteSpace(assetPath))
+                return null;
+
+            var assets = Engine.Assets;
+            if (assets is null)
+                return null;
+
+            SceneNode? instance = assets.InstantiateVariant(assetPath, this, parent, maintainWorldTransform);
+            FinalizePrefabSpawn(instance, parent, addToWorldRootWhenNoParent);
+            return instance;
+        }
+
+        private void FinalizePrefabSpawn(SceneNode? instance, SceneNode? parent, bool addToWorldRootWhenNoParent)
+        {
+            if (instance is null)
+                return;
+
+            if (parent is null && addToWorldRootWhenNoParent)
+                RootNodes.Add(instance);
+        }
+
+        #endregion
 
         /// <summary>
         /// Sequences are used to track the order of operations for debugging purposes.

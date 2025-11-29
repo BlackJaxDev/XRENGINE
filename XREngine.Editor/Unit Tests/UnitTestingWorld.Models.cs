@@ -153,7 +153,28 @@ public static partial class UnitTestingWorld
                 var ftOscSender = rootNode.AddComponent<OscSenderComponent>()!;
                 ftOscSender.ParameterPrefix = vrcftPrefix;
 
-                animator!.StateMachine.VariableChanged += ftOscSender.StateMachineVariableChanged;
+                /// <summary>
+                /// Called when a variable changes in a state machine.
+                /// </summary>
+                /// <param name="variable"></param>
+                void StateMachineVariableChanged(AnimVar variable)
+                {
+                    string address = variable.ParameterName;
+                    switch (variable)
+                    {
+                        case AnimFloat f:
+                            ftOscSender.Send(address, f.Value);
+                            break;
+                        case AnimInt i:
+                            ftOscSender.Send(address, i.Value);
+                            break;
+                        case AnimBool b:
+                            ftOscSender.Send(address, b.Value);
+                            break;
+                    }
+                }
+
+                animator!.StateMachine.VariableChanged += StateMachineVariableChanged;
             }
 
             VRIKSolverComponent? vrIKSolver = null;

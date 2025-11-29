@@ -1,10 +1,12 @@
 ﻿using System.Numerics;
+using XREngine.Serialization;
 using YamlDotNet.Core;
 using YamlDotNet.Core.Events;
 using YamlDotNet.Serialization;
 
 namespace XREngine.Data
 {
+    [YamlTypeConverter]
     public sealed class QuaternionYamlTypeConverter : IYamlTypeConverter
     {
         public bool Accepts(Type type) => type == typeof(Quaternion);
