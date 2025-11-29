@@ -264,7 +264,14 @@ namespace XREngine.Components
             var canvasTransform = canvas.CanvasTransform;
             var space = canvasTransform.DrawSpace;
 
-            Vector2? uiCoord = GetUICoordinate(vp, canvas.Camera2D, normCoord, canvasTransform, space);
+            XRCamera? pointerCamera = space switch
+            {
+                ECanvasDrawSpace.Screen => canvas.Camera2D,
+                ECanvasDrawSpace.Camera => canvasTransform.CameraSpaceCamera ?? vp.ActiveCamera,
+                _ => null
+            };
+
+            Vector2? uiCoord = GetUICoordinate(vp, pointerCamera, normCoord, canvasTransform, space);
 
             if (uiCoord is not null)
                 CursorPositionWorld2D = uiCoord.Value;
@@ -283,7 +290,7 @@ namespace XREngine.Components
             LastCursorPositionWorld2D = CursorPositionWorld2D;
         }
 
-        private static Vector2? GetUICoordinate(XRViewport worldVP, XRCamera uiCam, Vector2 normCoord, UICanvasTransform canvasTransform, ECanvasDrawSpace space)
+        private static Vector2? GetUICoordinate(XRViewport worldVP, XRCamera? inputCamera, Vector2 normCoord, UICanvasTransform canvasTransform, ECanvasDrawSpace space)
         {
             Vector2? uiCoord;
             //Convert to ui coord depending on the draw space
@@ -292,18 +299,23 @@ namespace XREngine.Components
                 case ECanvasDrawSpace.Screen:
                     {
                         //depth = 0 because we're in 2D, z coord is checked later
-                        uiCoord = uiCam.NormalizedViewportToWorldCoordinate(normCoord, 0.0f).XY();
+                        if (inputCamera is null)
+                            return null;
+                        uiCoord = inputCamera.NormalizedViewportToWorldCoordinate(normCoord, 0.0f).XY();
                         break;
                     }
                 case ECanvasDrawSpace.Camera:
                     {
+                        var camera = inputCamera ?? canvasTransform.CameraSpaceCamera ?? worldVP.ActiveCamera;
+                        if (camera is null)
+                            return null;
                         //Convert the normalized coord to world space using the draw distance
-                        Vector3 worldCoord = uiCam.NormalizedViewportToWorldCoordinate(
+                        Vector3 worldCoord = camera.NormalizedViewportToWorldCoordinate(
                             normCoord,
                             XRMath.DistanceToDepth(
                                 canvasTransform.CameraDrawSpaceDistance,
-                                uiCam.NearZ,
-                                uiCam.FarZ));
+                                camera.NearZ,
+                                camera.FarZ));
 
                         //Transform the world coord to the canvas' local space
                         Matrix4x4 worldToLocal = canvasTransform.InverseWorldMatrix;

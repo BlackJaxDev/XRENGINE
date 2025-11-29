@@ -30,3 +30,11 @@ High-level notes on how the engine stages work, render, and synchronize data acr
 ## Background Jobs
 - `JobManager` runs continuously on the job worker thread, progressing queued jobs while other phases execute.
 - Main-thread work can be scheduled and is executed during `RenderFrame` just before GPU submission.
+
+## Project Layout
+- Each game lives inside a project root that contains only `*.xrproj` plus the standard folders listed below; tooling emits warnings when extra files sit beside the descriptor.
+- `Assets/`: gameplay code, content, and any authorable data the editor should watch.
+- `Intermediate/`: generated artifacts (solutions, project files, build outputs) managed by the C# project builder; editors dynamically load DLLs from here.
+- `Build/`: the latest cooked builds, organized per configuration and platform for distribution.
+- `Packages/`: third-party or externally sourced content mirrored into the project.
+- `Config/`: persistent project + engine settings, including `engine_settings.asset` and per-user overrides.

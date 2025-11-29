@@ -1,5 +1,6 @@
 ﻿using Microsoft.DotNet.PlatformAbstractions;
 using Newtonsoft.Json;
+using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Diagnostics;
@@ -120,6 +121,26 @@ namespace XREngine
                 Directory.CreateDirectory(directoryPath);
 
             return true;
+        }
+
+        private static string NormalizeDirectoryPath(string path, string argumentName)
+        {
+            if (string.IsNullOrWhiteSpace(path))
+                throw new ArgumentException($"{argumentName} cannot be null or empty.", argumentName);
+
+            string fullPath = Path.GetFullPath(path);
+            VerifyDirectoryExists(fullPath);
+            return fullPath;
+        }
+
+        private void UpdateGameAssetsPath(string path)
+        {
+            string normalized = NormalizeDirectoryPath(path, nameof(GameAssetsPath));
+            if (string.Equals(_gameAssetsPath, normalized, StringComparison.OrdinalIgnoreCase))
+                return;
+
+            _gameAssetsPath = normalized;
+            GameWatcher.Path = _gameAssetsPath;
         }
 
         public event Action<FileSystemEventArgs>? EngineFileCreated;
@@ -306,9 +327,27 @@ namespace XREngine
         /// This is the path to /Build/CommonAssets/ in the root folder of the engine.
         /// </summary>
         public string EngineAssetsPath { get; }
-        public string GameAssetsPath { get; set; } = Path.Combine(ApplicationEnvironment.ApplicationBasePath, "Assets");
-        public string PackagesPath { get; set; } = Path.Combine(ApplicationEnvironment.ApplicationBasePath, "Packages");
-        public string LibrariesPath { get; set; } = Path.Combine(ApplicationEnvironment.ApplicationBasePath, "Libraries");
+
+        private string _gameAssetsPath = Path.Combine(ApplicationEnvironment.ApplicationBasePath, "Assets");
+        public string GameAssetsPath
+        {
+            get => _gameAssetsPath;
+            set => UpdateGameAssetsPath(value);
+        }
+
+        private string _packagesPath = Path.Combine(ApplicationEnvironment.ApplicationBasePath, "Packages");
+        public string PackagesPath
+        {
+            get => _packagesPath;
+            set => _packagesPath = NormalizeDirectoryPath(value, nameof(PackagesPath));
+        }
+
+        private string _librariesPath = Path.Combine(ApplicationEnvironment.ApplicationBasePath, "Libraries");
+        public string LibrariesPath
+        {
+            get => _librariesPath;
+            set => _librariesPath = NormalizeDirectoryPath(value, nameof(LibrariesPath));
+        }
 
         public ConcurrentDictionary<string, XRAsset> LoadedAssetsByOriginalPathInternal { get; } = [];
         public ConcurrentDictionary<string, XRAsset> LoadedAssetsByPathInternal { get; } = [];
