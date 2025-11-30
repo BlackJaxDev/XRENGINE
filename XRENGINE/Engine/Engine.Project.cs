@@ -74,6 +74,9 @@ namespace XREngine
             // Load project-specific user settings
             LoadProjectUserSettings();
 
+            // Load project-specific build settings
+            LoadProjectBuildSettings();
+
             Debug.Out($"Project loaded: {project.ProjectName}");
             ProjectLoaded?.Invoke(project);
             return true;
@@ -126,6 +129,25 @@ namespace XREngine
                 {
                     UserSettings = projectSettings.Settings;
                     Debug.Out("Loaded project user settings.");
+                }
+            }
+        }
+
+        /// <summary>
+        /// Loads the build settings from the current project directory.
+        /// </summary>
+        private static void LoadProjectBuildSettings()
+        {
+            if (CurrentProject?.BuildSettingsPath is null || Assets is null)
+                return;
+
+            if (File.Exists(CurrentProject.BuildSettingsPath))
+            {
+                var settings = Assets.Load<BuildSettings>(CurrentProject.BuildSettingsPath);
+                if (settings is not null)
+                {
+                    BuildSettings = settings;
+                    Debug.Out("Loaded project build settings.");
                 }
             }
         }
@@ -188,6 +210,31 @@ namespace XREngine
         {
             SaveProjectEngineSettings();
             SaveProjectUserSettings();
+            SaveProjectBuildSettings();
+        }
+
+        /// <summary>
+        /// Saves the build settings to the current project directory.
+        /// </summary>
+        public static void SaveProjectBuildSettings()
+        {
+            if (CurrentProject?.ProjectDirectory is null || Assets is null)
+                return;
+
+            if (CurrentProject.BuildSettingsPath is null)
+                return;
+
+            string settingsPath = CurrentProject.BuildSettingsPath;
+            string? directory = Path.GetDirectoryName(settingsPath);
+            if (!string.IsNullOrWhiteSpace(directory))
+                Directory.CreateDirectory(directory);
+
+            var settings = BuildSettings ?? new BuildSettings();
+            settings.FilePath = settingsPath;
+            settings.Name = "Build Settings";
+
+            Assets.Save(settings);
+            Debug.Out("Saved project build settings.");
         }
 
         /// <summary>

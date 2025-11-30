@@ -17,6 +17,7 @@ namespace XREngine
         public const string ProjectExtension = "xrproj";
         public const string EngineSettingsFileName = "engine_settings.asset";
         public const string UserSettingsFileName = "user_settings.asset";
+        public const string BuildSettingsFileName = "build_settings.asset";
         public const string AssetsDirectoryName = "Assets";
         public const string IntermediateDirectoryName = "Intermediate";
         public const string BuildDirectoryName = "Build";
@@ -156,6 +157,13 @@ namespace XREngine
         public string? UserSettingsPath => ConfigDirectory is null
             ? null
             : Path.Combine(ConfigDirectory, UserSettingsFileName);
+
+        /// <summary>
+        /// Gets the path to the build settings file for this project.
+        /// </summary>
+        public string? BuildSettingsPath => ConfigDirectory is null
+            ? null
+            : Path.Combine(ConfigDirectory, BuildSettingsFileName);
 
         /// <summary>
         /// Creates a new project directory structure at the specified path.

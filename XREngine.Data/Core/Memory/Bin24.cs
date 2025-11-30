@@ -15,7 +15,7 @@ namespace XREngine.Core.Memory
         public static implicit operator UInt24(Bin24 val) { return val._data; }
         public static implicit operator Bin24(UInt24 val) { return new Bin24(val); }
 
-        public override string ToString()
+        public override readonly string ToString()
         {
             int i = 0;
             string val = "";
@@ -31,7 +31,7 @@ namespace XREngine.Core.Memory
 
         public bool this[int index]
         {
-            get { return ((uint)_data >> index & 1) != 0; }
+            readonly get => ((uint)_data >> index & 1) != 0;
             set
             {
                 if (value)
@@ -49,7 +49,7 @@ namespace XREngine.Core.Memory
 
         public int this[int shift, int bitCount]
         {
-            get
+            readonly get
             {
                 int mask = 0;
                 for (int i = 0; i < bitCount; i++)
@@ -67,7 +67,7 @@ namespace XREngine.Core.Memory
 
         public static Bin24 FromString(string s)
         {
-            char[] delims = new char[] { ',', '(', ')', ' ' };
+            char[] delims = [',', '(', ')', ' '];
 
             uint b = 0;
             string[] arr = s.Split(delims, StringSplitOptions.RemoveEmptyEntries);

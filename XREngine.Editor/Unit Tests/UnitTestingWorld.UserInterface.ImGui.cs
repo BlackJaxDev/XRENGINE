@@ -45,6 +45,7 @@ public static partial class UnitTestingWorld
         private static bool _showMissingAssets;
         private static bool _showEngineSettings;
         private static bool _showUserSettings;
+        private static bool _showBuildSettings;
         private static bool _showStatePanel;
         private static bool _showHierarchy = true;
         private static bool _showInspector = true;
@@ -379,6 +380,7 @@ public static partial class UnitTestingWorld
             DrawMissingAssetsPanel();
             DrawEngineSettingsPanel();
             DrawUserSettingsPanel();
+            DrawBuildSettingsPanel();
             DrawHierarchyPanel();
             DrawInspectorPanel();
             DrawAssetExplorerPanel();
@@ -412,6 +414,12 @@ public static partial class UnitTestingWorld
                         Engine.SaveProjectSettings();
                     ImGui.EndMenu();
                 }
+
+                ImGui.Separator();
+
+                bool canBuildProject = Engine.CurrentProject is not null;
+                if (ImGui.MenuItem("Build Project", null, false, canBuildProject))
+                    ProjectBuilder.RequestBuild();
 
                 ImGui.EndMenu();
             }
@@ -478,6 +486,7 @@ public static partial class UnitTestingWorld
                 ImGui.Separator();
                 ImGui.MenuItem("Engine Settings", null, ref _showEngineSettings);
                 ImGui.MenuItem("User Settings", null, ref _showUserSettings);
+                ImGui.MenuItem("Build Settings", null, ref _showBuildSettings);
                 ImGui.EndMenu();
             }
 

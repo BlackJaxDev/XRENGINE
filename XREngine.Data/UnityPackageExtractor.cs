@@ -4,21 +4,8 @@ using ICSharpCode.SharpZipLib.Tar;
 
 namespace XREngine
 {
-    public enum UnityPackageExtractionPhase
-    {
-        Preparing,
-        ExtractingArchive,
-        CopyingAssets,
-        Completed
-    }
 
-    public readonly record struct UnityPackageExtractionProgress(
-        float Progress,
-        UnityPackageExtractionPhase Phase,
-        string? Message = null,
-        string? CurrentItem = null);
-
-    public static class UnityPackageExtractor
+    public static class ArchiveExtractor
     {
         private const float ArchivePhaseStart = 0.05f;
         private const float ArchivePhaseEnd = 0.5f;
@@ -29,7 +16,7 @@ namespace XREngine
             string packagePath,
             string destinationFolderPath,
             bool overwrite,
-            IProgress<UnityPackageExtractionProgress>? progress = null,
+            IProgress<ArchiveExtractionProgress>? progress = null,
             CancellationToken cancellationToken = default)
         {
             foreach (var update in ExtractWithProgress(packagePath, destinationFolderPath, overwrite, cancellationToken))
@@ -39,14 +26,14 @@ namespace XREngine
             }
         }
 
-        public static IEnumerable<UnityPackageExtractionProgress> ExtractWithProgress(
+        public static IEnumerable<ArchiveExtractionProgress> ExtractWithProgress(
             string packagePath,
             string destinationFolderPath,
             bool overwrite,
             CancellationToken cancellationToken = default)
         {
-            var tempFolder = Path.Combine(Path.GetTempPath(), $"{Path.GetFileName(packagePath)}.unitypackage.extract");
-            yield return new UnityPackageExtractionProgress(0f, UnityPackageExtractionPhase.Preparing, "Preparing extraction...");
+            var tempFolder = Path.Combine(Path.GetTempPath(), $"{Path.GetFileName(packagePath)}.archive.extract");
+            yield return new ArchiveExtractionProgress(0f, EArchiveExtractionPhase.Preparing, "Preparing extraction...");
             try
             {
                 foreach (var update in ExtractArchiveWithProgress(packagePath, tempFolder, cancellationToken))
@@ -55,7 +42,7 @@ namespace XREngine
                 foreach (var update in CopyExtractedAssetsWithProgress(tempFolder, destinationFolderPath, overwrite, cancellationToken))
                     yield return update;
 
-                yield return new UnityPackageExtractionProgress(1f, UnityPackageExtractionPhase.Completed, "Import complete.");
+                yield return new ArchiveExtractionProgress(1f, EArchiveExtractionPhase.Completed, "Import complete.");
             }
             finally
             {
@@ -67,11 +54,11 @@ namespace XREngine
             string packagePath,
             string destinationFolderPath,
             bool overwrite,
-            IProgress<UnityPackageExtractionProgress>? progress = null,
+            IProgress<ArchiveExtractionProgress>? progress = null,
             CancellationToken cancellationToken = default)
             => Task.Run(() => Extract(packagePath, destinationFolderPath, overwrite, progress, cancellationToken), cancellationToken);
 
-        private static IEnumerable<UnityPackageExtractionProgress> ExtractArchiveWithProgress(
+        private static IEnumerable<ArchiveExtractionProgress> ExtractArchiveWithProgress(
             string packagePath,
             string tempFolder,
             CancellationToken cancellationToken)
@@ -105,15 +92,15 @@ namespace XREngine
                     ? (float)fileStream.Position / fileStream.Length
                     : 0f;
                 float scaled = ArchivePhaseStart + (ArchivePhaseEnd - ArchivePhaseStart) * archiveProgress;
-                yield return new UnityPackageExtractionProgress(
+                yield return new ArchiveExtractionProgress(
                     scaled,
-                    UnityPackageExtractionPhase.ExtractingArchive,
+                    EArchiveExtractionPhase.ExtractingArchive,
                     $"Extracting {entry.Name}",
                     entry.Name);
             }
         }
 
-        private static IEnumerable<UnityPackageExtractionProgress> CopyExtractedAssetsWithProgress(
+        private static IEnumerable<ArchiveExtractionProgress> CopyExtractedAssetsWithProgress(
             string tempFolder,
             string destinationFolderPath,
             bool overwrite,
@@ -162,9 +149,9 @@ namespace XREngine
 
                 float copyProgress = (float)(index + 1) / total;
                 float scaled = CopyPhaseStart + (CopyPhaseEnd - CopyPhaseStart) * copyProgress;
-                yield return new UnityPackageExtractionProgress(
+                yield return new ArchiveExtractionProgress(
                     scaled,
-                    UnityPackageExtractionPhase.CopyingAssets,
+                    EArchiveExtractionPhase.CopyingAssets,
                     $"Copying {pathname}",
                     pathname);
             }
@@ -181,22 +168,6 @@ namespace XREngine
             }
             catch
             {
-            }
-        }
-    }
-    public static class UnityPackageImporter
-    {
-        public static void Import(string packagePath)
-        {
-            string destinationFolderPath = Path.Combine(Path.GetTempPath(), Path.GetRandomFileName());
-            try
-            {
-                UnityPackageExtractor.Extract(packagePath, destinationFolderPath, true);
-
-            }
-            finally
-            {
-                Directory.Delete(destinationFolderPath, true);
             }
         }
     }

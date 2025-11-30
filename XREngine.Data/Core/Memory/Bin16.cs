@@ -14,7 +14,7 @@ namespace XREngine.Core.Memory
         //public static implicit operator short(Bin16 val) { return (short)val._data; }
         //public static implicit operator Bin16(short val) { return new Bin16((ushort)val); }
 
-        public override string ToString()
+        public override readonly string ToString()
         {
             int i = 0;
             string val = "";
@@ -29,7 +29,7 @@ namespace XREngine.Core.Memory
 
         public bool this[int index]
         {
-            get { return (_data >> index & 1) != 0; }
+            readonly get { return (_data >> index & 1) != 0; }
             set
             {
                 if (value)
@@ -47,7 +47,7 @@ namespace XREngine.Core.Memory
 
         public ushort this[int shift, int bitCount]
         {
-            get
+            readonly get
             {
                 int mask = 0;
                 for (int i = 0; i < bitCount; i++)
@@ -65,7 +65,7 @@ namespace XREngine.Core.Memory
 
         public static Bin16 FromString(string s)
         {
-            char[] delims = new char[] { ',', '(', ')', ' ' };
+            char[] delims = [',', '(', ')', ' '];
 
             ushort b = 0;
             string[] arr = s.Split(delims, StringSplitOptions.RemoveEmptyEntries);

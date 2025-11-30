@@ -72,11 +72,11 @@ internal partial class CodeManager : XRSingleton<CodeManager>
     {
         if (!focused || !_isGameClientInvalid)
             return;
-        
+
         if (_gameFilesChanged)
             RemakeSolutionAsDLL();
         else
-            CompileSolution();
+            _ = CompileSolution();
     }
     /// <summary>
     /// Called when a code file is modified to mark the game client as invalid.
@@ -148,7 +148,7 @@ internal partial class CodeManager : XRSingleton<CodeManager>
         CreateSolutionFile(builds, platforms, (dllProjPath, Guid.NewGuid()));
 
         if (compileNow)
-            CompileSolution(Config_Debug, Platform_AnyCPU);
+            _ = CompileSolution(Config_Debug, Platform_AnyCPU);
     }
 
     /// <summary>
@@ -179,7 +179,7 @@ internal partial class CodeManager : XRSingleton<CodeManager>
         CreateSolutionFile(builds, platforms, (dllProjPath, Guid.NewGuid()), (exeProjPath, Guid.NewGuid()));
 
         if (compileNow)
-            CompileSolution(Config_Release, Platform_x64);
+            _ = CompileSolution(Config_Release, Platform_x64);
     }
 
     private static void CreateCSProj(
@@ -312,7 +312,7 @@ internal partial class CodeManager : XRSingleton<CodeManager>
         _gameFilesChanged = false;
     }
 
-    public void CompileSolution(string config = Config_Debug, string platform = Platform_AnyCPU)
+    public bool CompileSolution(string config = Config_Debug, string platform = Platform_AnyCPU)
     {
         // Create a custom string logger to capture all output
         var stringLogger = new StringLogger(LoggerVerbosity.Diagnostic);
@@ -333,7 +333,7 @@ internal partial class CodeManager : XRSingleton<CodeManager>
         if (!File.Exists(solutionPath))
         {
             Debug.Out($"Solution file not found: {solutionPath}");
-            return;
+            return false;
         }
 
         BuildRequestData buildRequest = new(GetSolutionPath(), props, null, ["Build"], null);
@@ -346,6 +346,7 @@ internal partial class CodeManager : XRSingleton<CodeManager>
             Debug.Out("Build succeeded.");
             GameCSProjLoader.Unload("GAME");
             GameCSProjLoader.LoadFromPath("GAME", GetBinaryPath(config, platform));
+            return true;
         }
         else
         {
@@ -376,6 +377,8 @@ internal partial class CodeManager : XRSingleton<CodeManager>
                     }
                 }
             }
+
+            return false;
         }
     }
 
@@ -385,6 +388,50 @@ internal partial class CodeManager : XRSingleton<CodeManager>
         // Output path matches: <ProjectFolder>/Build/<Config>/<Platform>/net10.0-windows7.0/<ProjectName>.dll
         string outputPath = Path.Combine(Engine.Assets.LibrariesPath, projectName, "Build", config, platform, TargetFramework);
         return Path.Combine(outputPath, $"{projectName}.dll");
+    }
+
+    public string BuildLauncherExecutable(
+        BuildSettings settings,
+        string configuration,
+        string platform,
+        string startupAssetName,
+        string engineSettingsAssetName,
+        string userSettingsAssetName)
+    {
+        string projectName = GetProjectName();
+        string launcherRoot = Path.Combine(Engine.Assets.LibrariesPath, projectName, "Launcher");
+        Directory.CreateDirectory(launcherRoot);
+
+        string programPath = Path.Combine(launcherRoot, "Program.cs");
+        string launcherAssemblyName = $"{projectName}.Launcher";
+        string launcherProjectPath = Path.Combine(launcherRoot, $"{launcherAssemblyName}.csproj");
+
+        string programSource = BuildLauncherProgramSource(
+            settings,
+            startupAssetName,
+            engineSettingsAssetName,
+            userSettingsAssetName);
+        File.WriteAllText(programPath, programSource, Encoding.UTF8);
+
+        CreateLauncherProject(
+            launcherProjectPath,
+            programPath,
+            launcherAssemblyName,
+            platform,
+            GetEngineAssemblyPaths());
+
+        if (!BuildProjectFile(launcherProjectPath, configuration, platform, out string? buildLog))
+        {
+            Debug.Out(buildLog ?? "Failed to build launcher project.");
+            throw new InvalidOperationException("Failed to build launcher executable. Check build output for details.");
+        }
+
+        string outputDirectory = Path.Combine(launcherRoot, "Build", configuration, platform, TargetFramework);
+        string launcherExePath = Path.Combine(outputDirectory, $"{launcherAssemblyName}.exe");
+        if (!File.Exists(launcherExePath))
+            throw new FileNotFoundException("Launcher executable was not produced by the build.", launcherExePath);
+
+        return launcherExePath;
     }
 
     /// <summary>
@@ -418,5 +465,155 @@ internal partial class CodeManager : XRSingleton<CodeManager>
         }
 
         return [.. validPaths];
+    }
+
+    private static void CreateLauncherProject(
+        string projectFilePath,
+        string programFilePath,
+        string assemblyName,
+        string platform,
+        IReadOnlyCollection<string> engineAssemblyPaths)
+    {
+        string projectDirectory = Path.GetDirectoryName(projectFilePath) ?? AppContext.BaseDirectory;
+        Directory.CreateDirectory(projectDirectory);
+
+        string relativeProgramPath = Path.GetRelativePath(projectDirectory, programFilePath);
+
+        var referenceElements = new List<XElement>();
+        foreach (string assemblyPath in engineAssemblyPaths)
+        {
+            referenceElements.Add(new XElement("Reference",
+                new XAttribute("Include", Path.GetFileNameWithoutExtension(assemblyPath)),
+                new XElement("HintPath", assemblyPath)));
+        }
+
+        var project = new XDocument(
+            new XElement("Project",
+                new XAttribute("Sdk", "Microsoft.NET.Sdk"),
+                new XElement("PropertyGroup",
+                    new XElement("OutputType", "WinExe"),
+                    new XElement("TargetFramework", TargetFramework),
+                    new XElement("ImplicitUsings", "enable"),
+                    new XElement("Nullable", "enable"),
+                    new XElement("AllowUnsafeBlocks", "true"),
+                    new XElement("PublishAot", "false"),
+                    new XElement("SelfContained", "false"),
+                    new XElement("Platforms", platform),
+                    new XElement("RuntimeIdentifier", "win-x64"),
+                    new XElement("AssemblyName", assemblyName),
+                    new XElement("RootNamespace", assemblyName.Replace('.', '_')),
+                    new XElement("BaseOutputPath", "Build")
+                ),
+                new XElement("ItemGroup",
+                    new XElement("Compile", new XAttribute("Include", relativeProgramPath)))
+            ));
+
+        if (referenceElements.Count > 0)
+            project.Root?.Add(new XElement("ItemGroup", referenceElements));
+
+        project.Save(projectFilePath);
+    }
+
+    private static bool BuildProjectFile(string projectFilePath, string configuration, string platform, out string? log)
+    {
+        var stringLogger = new StringLogger(LoggerVerbosity.Minimal);
+        var projectCollection = new ProjectCollection();
+        var buildParameters = new BuildParameters(projectCollection)
+        {
+            Loggers = [new ConsoleLogger(LoggerVerbosity.Minimal), stringLogger]
+        };
+
+        Dictionary<string, string?> props = new()
+        {
+            ["Configuration"] = configuration,
+            ["Platform"] = platform
+        };
+
+        var request = new BuildRequestData(projectFilePath, props, null, ["Build"], null);
+        BuildResult result = BuildManager.DefaultBuildManager.Build(buildParameters, request);
+        log = stringLogger.GetFullLog();
+        return result.OverallResult == BuildResultCode.Success;
+    }
+
+    private static string BuildLauncherProgramSource(
+        BuildSettings settings,
+        string startupAssetName,
+        string engineSettingsAssetName,
+        string userSettingsAssetName)
+    {
+        string configFolder = string.IsNullOrWhiteSpace(settings.ConfigOutputFolder)
+            ? string.Empty
+            : settings.ConfigOutputFolder;
+        string configArchive = string.IsNullOrWhiteSpace(settings.ConfigArchiveName)
+            ? "GameConfig.pak"
+            : settings.ConfigArchiveName;
+
+        static string EscapeForLiteral(string value)
+            => value.Replace("\\", "\\\\").Replace("\"", "\\\"");
+
+        string escapedConfigFolder = EscapeForLiteral(configFolder);
+        string escapedArchive = EscapeForLiteral(configArchive);
+        string escapedStartup = EscapeForLiteral(startupAssetName);
+        string escapedEngine = EscapeForLiteral(engineSettingsAssetName);
+        string escapedUser = EscapeForLiteral(userSettingsAssetName);
+
+        var sb = new StringBuilder();
+        sb.AppendLine("using System;");
+        sb.AppendLine("using System.IO;");
+        sb.AppendLine("using System.Text;");
+        sb.AppendLine("using XREngine;");
+        sb.AppendLine("using XREngine.Core.Files;");
+        sb.AppendLine();
+        sb.AppendLine("namespace GeneratedLauncher;");
+        sb.AppendLine();
+        sb.AppendLine("internal static class Program");
+        sb.AppendLine("{");
+        sb.AppendLine("    [STAThread]");
+        sb.AppendLine("    private static void Main(string[] args)");
+        sb.AppendLine("    {");
+        sb.AppendLine($"        string archivePath = string.IsNullOrWhiteSpace(\"{escapedConfigFolder}\") ?");
+        sb.AppendLine($"            Path.Combine(AppContext.BaseDirectory, \"{escapedArchive}\") :");
+        sb.AppendLine($"            Path.Combine(AppContext.BaseDirectory, \"{escapedConfigFolder}\", \"{escapedArchive}\");");
+        sb.AppendLine();
+        sb.AppendLine("        if (!File.Exists(archivePath))");
+        sb.AppendLine("        {");
+        sb.AppendLine("            Console.Error.WriteLine($\"Config archive '{archivePath}' not found.\");");
+        sb.AppendLine("            return;");
+        sb.AppendLine("        }");
+        sb.AppendLine();
+        sb.AppendLine($"        var startup = LoadAsset<GameStartupSettings>(archivePath, \"{escapedStartup}\");");
+        sb.AppendLine("        if (startup is null)");
+        sb.AppendLine("        {");
+        sb.AppendLine("            Console.Error.WriteLine(\"Failed to load startup settings from archive.\");");
+        sb.AppendLine("            return;");
+        sb.AppendLine("        }");
+        sb.AppendLine();
+        sb.AppendLine($"        var engineSettings = LoadAsset<Engine.Rendering.EngineSettings>(archivePath, \"{escapedEngine}\");");
+        sb.AppendLine("        if (engineSettings is not null)");
+        sb.AppendLine("            Engine.Rendering.Settings = engineSettings;");
+        sb.AppendLine();
+        sb.AppendLine($"        var userSettings = LoadAsset<UserSettings>(archivePath, \"{escapedUser}\");");
+        sb.AppendLine("        if (userSettings is not null)");
+        sb.AppendLine("            Engine.UserSettings = userSettings;");
+        sb.AppendLine();
+        sb.AppendLine("        Engine.Run(startup, Engine.LoadOrGenerateGameState());");
+        sb.AppendLine("    }");
+        sb.AppendLine();
+        sb.AppendLine("    private static T? LoadAsset<T>(string archivePath, string assetPath)");
+        sb.AppendLine("    {");
+        sb.AppendLine("        try");
+        sb.AppendLine("        {");
+        sb.AppendLine("            byte[] yamlBytes = AssetPacker.GetAsset(archivePath, assetPath);");
+        sb.AppendLine("            string yaml = Encoding.UTF8.GetString(yamlBytes);");
+        sb.AppendLine("            return AssetManager.Deserializer.Deserialize<T>(yaml);");
+        sb.AppendLine("        }");
+        sb.AppendLine("        catch (Exception ex)");
+        sb.AppendLine("        {");
+        sb.AppendLine("            Console.Error.WriteLine($\"Failed to load '{assetPath}': {ex.Message}\");");
+        sb.AppendLine("            return default;");
+        sb.AppendLine("        }");
+        sb.AppendLine("    }");
+        sb.AppendLine("}");
+        return sb.ToString();
     }
 }

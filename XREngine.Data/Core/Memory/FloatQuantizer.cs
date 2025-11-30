@@ -1,62 +1,10 @@
 ﻿using Extensions;
 using System.Numerics;
-using System.Runtime.InteropServices;
 using XREngine.Data;
 using XREngine.Data.Vectors;
 
 namespace XREngine.Core.Memory
 {
-    [StructLayout(LayoutKind.Sequential, Pack = 1)]
-    public struct FloatQuantizeHeader
-    {
-        public const int Size = 0x10;
-
-        private Bin32 _flags;
-        private bfloat _divisor;
-        private bint _elementCount;
-        private bint _dataLength;
-        
-        public int ElementCount
-        {
-            readonly get => _elementCount;
-            set => _elementCount = value;
-        }
-        public int DataLength
-        {
-            readonly get => _dataLength;
-            set => _dataLength = value;
-        }
-        public float Divisor
-        {
-            readonly get => _divisor;
-            set => _divisor = value;
-        }
-        public int BitCount
-        {
-            get => (int)_flags[7, 5];
-            set
-            {
-                if (value < 1 || value > 32)
-                    throw new InvalidOperationException("Bit count must be between 1 and 32.");
-                _flags[7, 5] = (uint)value;
-            }
-        }
-        public bool HasW { get { return _flags[6]; } set { _flags[6] = value; } }
-        public bool HasZ { get { return _flags[5]; } set { _flags[5] = value; } }
-        public bool HasY { get { return _flags[4]; } set { _flags[4] = value; } }
-        public bool HasX { get { return _flags[3]; } set { _flags[3] = value; } }
-        public bool Signed { get { return _flags[2]; } set { _flags[2] = value; } }
-        public int ComponentCount
-        {
-            get { return (int)(_flags[0, 2] + 1); }
-            set
-            {
-                if (value < 1 || value > 4)
-                    throw new InvalidOperationException("Component count must be 1, 2, 3 or 4.");
-                _flags[0, 2] = (byte)(value - 1);
-            }
-        }
-    }
     public unsafe class FloatQuantizer
     {
         private const float _maxError = 0.0005f;
@@ -145,21 +93,21 @@ namespace XREngine.Core.Memory
         {
             _srcCount = values.Length;
             _srcComponents = 4;
-            _pData = values.SelectMany(x => new float[] { x.X, x.Y, x.Z, x.W }).ToArray();
+            _pData = [.. values.SelectMany(x => new float[] { x.X, x.Y, x.Z, x.W })];
             Evaluate();
         }
         public FloatQuantizer(params Vector3[] values)
         {
             _srcCount = values.Length;
             _srcComponents = 3;
-            _pData = values.SelectMany(x => new float[] { x.X, x.Y, x.Z }).ToArray();
+            _pData = [.. values.SelectMany(x => new float[] { x.X, x.Y, x.Z })];
             Evaluate();
         }
         public FloatQuantizer(params Vector2[] values)
         {
             _srcCount = values.Length;
             _srcComponents = 2;
-            _pData = values.SelectMany(x => new float[] { x.X, x.Y }).ToArray();
+            _pData = [.. values.SelectMany(x => new float[] { x.X, x.Y })];
             Evaluate();
         }
         public FloatQuantizer(params float[] values)

@@ -1,4 +1,5 @@
-﻿using System.Collections.Concurrent;
+﻿using System;
+using System.Linq;
 using System.Text;
 using XREngine.Data;
 
@@ -8,14 +9,21 @@ namespace XREngine.Core.Files
     /// Asset packer for compressing and storing multiple files in a single archive.
     /// Each file is stored with a key set to its path relative to the root input directory and is compressed using LZMA compression.
     /// </summary>
-    public static class AssetPacker
+    public static partial class AssetPacker
     {
         private const int HashSize = 4; // Using 32-bit hash for path lookup
         private const int DataOffsetSize = 8; // 64-bit offset to data
         private const int CompressedSizeSize = 4; // Compressed data size
         private const int Magic = 0x4652454B; // "FREK"
         private static readonly Encoding StringEncoding = Encoding.UTF8;
-        private const int Version = 1;
+        private const int VersionV1 = 1;
+        private const int VersionV2 = 2;
+        private const int CurrentVersion = VersionV2;
+        private const int TocEntrySize = HashSize + 4 + DataOffsetSize + CompressedSizeSize;
+        private const int FooterSizeV1 = sizeof(long) * 3;
+        private const int FooterSizeV2 = sizeof(long) * 4;
+
+        public static TocLookupMode DefaultLookupMode { get; set; } = TocLookupMode.HashBuckets;
 
         private struct AssetFile
         {
@@ -28,6 +36,14 @@ namespace XREngine.Core.Files
             public string Path;
             public long DataOffset;
             public int CompressedSize;
+            public uint Hash;
+        }
+
+        private sealed class BucketLayout(int bucketCount, int[] starts, int[] counts)
+        {
+            public int BucketCount { get; } = bucketCount;
+            public int[] Starts { get; } = starts;
+            public int[] Counts { get; } = counts;
         }
         /// <summary>
         /// Repacks an existing archive with new files and optional removal of existing assets.
@@ -44,8 +60,11 @@ namespace XREngine.Core.Files
                 throw new Exception("Invalid file format");
             switch (reader.ReadInt32())
             {
-                case Version:
+                case VersionV1:
                     RepackV1(stream, reader, writer, inputDirToAddFiles, assetPathsToRemove);
+                    break;
+                case VersionV2:
+                    RepackV2(stream, reader, writer, inputDirToAddFiles, assetPathsToRemove);
                     break;
                 default:
                     throw new Exception("Unsupported archive version");
@@ -128,7 +147,87 @@ namespace XREngine.Core.Files
                 writer.Write(entry.CompressedSize);
             }
             // Write new footer
-            WriteFooter(writer, tocPosition, stringCompressor, stringTableOffsetNew);
+            WriteFooterV1(writer, tocPosition, stringCompressor, stringTableOffsetNew);
+        }
+
+        private static void RepackV2(FileStream stream, BinaryReader reader, BinaryWriter writer, string inputDirToAddFiles, string[] assetPathsToRemove)
+        {
+            var lookupMode = (TocLookupMode)reader.ReadInt32();
+            int originalFileCount = reader.ReadInt32();
+            var footer = ReadFooter(stream, reader, VersionV2);
+
+            stream.Seek(footer.DictionaryOffset, SeekOrigin.Begin);
+            var existingStrings = new StringCompressor(reader);
+
+            var removals = assetPathsToRemove is { Length: > 0 }
+                ? new HashSet<string>(assetPathsToRemove, StringComparer.Ordinal)
+                : null;
+
+            var entries = new Dictionary<string, TocEntry>(originalFileCount, StringComparer.Ordinal);
+
+            stream.Seek(footer.TocPosition, SeekOrigin.Begin);
+            for (int i = 0; i < originalFileCount; i++)
+            {
+                var entry = ReadSequentialTocEntry(reader);
+                string path = existingStrings.GetString(entry.StringOffset);
+                if (removals is not null && removals.Contains(path))
+                    continue;
+
+                entries[path] = new TocEntry
+                {
+                    Path = path,
+                    DataOffset = entry.DataOffset,
+                    CompressedSize = entry.CompressedSize,
+                    Hash = entry.Hash,
+                };
+            }
+
+            long metadataStart = footer.StringTableOffset;
+            stream.SetLength(metadataStart);
+            stream.Seek(metadataStart, SeekOrigin.Begin);
+
+            if (!string.IsNullOrWhiteSpace(inputDirToAddFiles) && Directory.Exists(inputDirToAddFiles))
+            {
+                foreach (string filePath in Directory.GetFiles(inputDirToAddFiles, "*", SearchOption.AllDirectories))
+                {
+                    string relativePath = Path.GetRelativePath(inputDirToAddFiles, filePath);
+                    byte[] fileData = File.ReadAllBytes(filePath);
+                    byte[] compressed = Compression.Compress(fileData, true);
+                    long dataOffset = stream.Position;
+                    writer.Write(compressed);
+
+                    entries[relativePath] = new TocEntry
+                    {
+                        Path = relativePath,
+                        DataOffset = dataOffset,
+                        CompressedSize = compressed.Length,
+                        Hash = FastHash(relativePath),
+                    };
+                }
+            }
+
+            if (entries.Count == 0)
+                throw new InvalidOperationException("Cannot repack archive without any assets.");
+
+            var finalEntries = entries.Values.ToList();
+            var stringCompressor = new StringCompressor(finalEntries.Select(static e => e.Path));
+            long stringTableOffset = WriteStringTable(stream, writer, stringCompressor);
+
+            var arranged = ArrangeTocEntries(finalEntries, lookupMode);
+            long tocPosition = stream.Position;
+            WriteTocEntries(stream, writer, tocPosition, arranged.Entries, stringCompressor);
+
+            long tocEnd = tocPosition + arranged.Entries.Count * (long)TocEntrySize;
+            stream.Seek(tocEnd, SeekOrigin.Begin);
+
+            long indexOffset = 0;
+            if (lookupMode == TocLookupMode.HashBuckets && arranged.Buckets is not null)
+                indexOffset = WriteBucketTable(writer, arranged.Buckets);
+
+            WriteFooterV2(writer, tocPosition, stringTableOffset, stringCompressor.DictionaryOffset, indexOffset);
+
+            stream.Seek(sizeof(int) * 3, SeekOrigin.Begin);
+            writer.Write(arranged.Entries.Count);
         }
 
         /// <summary>
@@ -136,7 +235,7 @@ namespace XREngine.Core.Files
         /// </summary>
         /// <param name="inputDir"></param>
         /// <param name="outputFile"></param>
-        public static void Pack(string inputDir, string outputFile)
+        public static void Pack(string inputDir, string outputFile, TocLookupMode? lookupMode = null)
         {
             var files = Directory.GetFiles(inputDir, "*", SearchOption.AllDirectories)
                 .Select(filePath => new AssetFile
@@ -149,15 +248,17 @@ namespace XREngine.Core.Files
             using var stream = new FileStream(outputFile, FileMode.Create);
             using var writer = new BinaryWriter(stream);
 
+            TocLookupMode mode = lookupMode ?? DefaultLookupMode;
+
             // Write header
             writer.Write(Magic);
-            writer.Write(Version);
+            writer.Write(CurrentVersion);
+            writer.Write((int)mode);
             writer.Write(files.Count);
 
             // Prepare space for TOC (will fill later)
             long tocPosition = stream.Position;
-            int tocEntrySize = HashSize + DataOffsetSize + CompressedSizeSize; // hash(4) + offset(8) + size(4)
-            int tocLen = files.Count * tocEntrySize;
+            int tocLen = files.Count * TocEntrySize;
             writer.Write(new byte[tocLen]);
 
             // Compress files and build TOC
@@ -177,6 +278,7 @@ namespace XREngine.Core.Files
                     Path = file.Path,
                     DataOffset = currentOffset,
                     CompressedSize = compressedData.Length,
+                    Hash = FastHash(file.Path)
                 });
                 currentOffset += compressedData.Length;
             }
@@ -185,18 +287,110 @@ namespace XREngine.Core.Files
             var stringCompressor = new StringCompressor(allStrings);
             long stringTableOffset = WriteStringTable(stream, writer, stringCompressor);
 
+            var arranged = ArrangeTocEntries(tocEntries, mode);
+
             // Write TOC with hashes and string references
-            stream.Seek(tocPosition, SeekOrigin.Begin);
-            foreach (var entry in tocEntries)
+            WriteTocEntries(stream, writer, tocPosition, arranged.Entries, stringCompressor);
+
+            // Write index structures, if any
+            long indexOffset = 0;
+            stream.Seek(0, SeekOrigin.End);
+            if (mode == TocLookupMode.HashBuckets && arranged.Buckets is not null)
+                indexOffset = WriteBucketTable(writer, arranged.Buckets);
+
+            // Write footer with metadata positions
+            WriteFooterV2(writer, tocPosition, stringTableOffset, stringCompressor.DictionaryOffset, indexOffset);
+        }
+
+        private static (List<TocEntry> Entries, BucketLayout? Buckets) ArrangeTocEntries(List<TocEntry> entries, TocLookupMode mode)
+        {
+            switch (mode)
             {
-                writer.Write(FastHash(entry.Path)); // Hash for quick lookup
+                case TocLookupMode.HashBuckets:
+                    return ArrangeWithBuckets(entries);
+                case TocLookupMode.SortedByHash:
+                    var sorted = entries
+                        .OrderBy(static e => e.Hash)
+                        .ThenBy(static e => e.Path, StringComparer.Ordinal)
+                        .ToList();
+                    return (sorted, null);
+                default:
+                    return (new List<TocEntry>(entries), null);
+            }
+        }
+
+        private static (List<TocEntry> Entries, BucketLayout Buckets) ArrangeWithBuckets(List<TocEntry> entries)
+        {
+            int bucketCount = CalculateBucketCount(Math.Max(1, entries.Count));
+            var buckets = new List<TocEntry>[bucketCount];
+
+            foreach (var entry in entries)
+            {
+                int bucketIndex = (int)(entry.Hash & (bucketCount - 1));
+                buckets[bucketIndex] ??= new List<TocEntry>();
+                buckets[bucketIndex]!.Add(entry);
+            }
+
+            List<TocEntry> ordered = new(entries.Count);
+            int[] starts = new int[bucketCount];
+            int[] counts = new int[bucketCount];
+
+            for (int i = 0; i < bucketCount; i++)
+            {
+                starts[i] = ordered.Count;
+                if (buckets[i] is { Count: > 0 } bucketEntries)
+                {
+                    ordered.AddRange(bucketEntries);
+                    counts[i] = bucketEntries.Count;
+                }
+                else
+                {
+                    counts[i] = 0;
+                }
+            }
+
+            return (ordered, new BucketLayout(bucketCount, starts, counts));
+        }
+
+        private static int CalculateBucketCount(int fileCount)
+        {
+            int bucketCount = 1;
+            while (bucketCount < fileCount)
+                bucketCount <<= 1;
+
+            return Math.Clamp(bucketCount, 1, 1 << 20);
+        }
+
+        private static void WriteTocEntries(FileStream stream, BinaryWriter writer, long tocPosition, List<TocEntry> entries, StringCompressor stringCompressor)
+        {
+            stream.Seek(tocPosition, SeekOrigin.Begin);
+            foreach (var entry in entries)
+            {
+                writer.Write(entry.Hash);
                 writer.Write(stringCompressor.GetStringOffset(entry.Path));
                 writer.Write(entry.DataOffset);
                 writer.Write(entry.CompressedSize);
             }
+        }
 
-            // Write footer with metadata positions
-            WriteFooter(writer, tocPosition, stringCompressor, stringTableOffset);
+        private static long WriteBucketTable(BinaryWriter writer, BucketLayout layout)
+        {
+            long offset = writer.BaseStream.Position;
+            writer.Write(layout.BucketCount);
+            for (int i = 0; i < layout.BucketCount; i++)
+            {
+                writer.Write(layout.Starts[i]);
+                writer.Write(layout.Counts[i]);
+            }
+            return offset;
+        }
+
+        private static void WriteFooterV2(BinaryWriter writer, long tocPosition, long stringTableOffset, long dictionaryOffset, long indexOffset)
+        {
+            writer.Write(tocPosition);
+            writer.Write(stringTableOffset);
+            writer.Write(dictionaryOffset);
+            writer.Write(indexOffset);
         }
 
         private static long WriteStringTable(FileStream stream, BinaryWriter writer, StringCompressor stringCompressor)
@@ -207,7 +401,7 @@ namespace XREngine.Core.Files
             return stringTableOffset;
         }
 
-        private static void WriteFooter(BinaryWriter writer, long tocPosition, StringCompressor stringCompressor, long stringTableOffset)
+        private static void WriteFooterV1(BinaryWriter writer, long tocPosition, StringCompressor stringCompressor, long stringTableOffset)
         {
             writer.Write(tocPosition);
             writer.Write(stringTableOffset);
@@ -229,9 +423,11 @@ namespace XREngine.Core.Files
             if (reader.ReadInt32() != Magic)
                 throw new Exception("Invalid file format");
 
-            return reader.ReadInt32() switch
+            int version = reader.ReadInt32();
+            return version switch
             {
-                Version => GetAssetV1(assetPath, stream, reader),
+                VersionV1 => GetAssetV1(assetPath, stream, reader),
+                VersionV2 => GetAssetV2(assetPath, stream, reader),
                 _ => throw new Exception("Unsupported archive version"),
             };
         }
@@ -239,47 +435,168 @@ namespace XREngine.Core.Files
         private static byte[] GetAssetV1(string assetPath, FileStream stream, BinaryReader reader)
         {
             int fileCount = reader.ReadInt32();
+            var footer = ReadFooter(stream, reader, VersionV1);
 
-            // Read footer to find metadata locations
-            stream.Seek(-24, SeekOrigin.End); // 3 * sizeof(long) = 24
+            stream.Seek(footer.DictionaryOffset, SeekOrigin.Begin);
+            var stringCompressor = new StringCompressor(reader);
+
+            return GetAssetLinear(assetPath, fileCount, stream, reader, stringCompressor, footer.TocPosition);
+        }
+
+        private static byte[] GetAssetV2(string assetPath, FileStream stream, BinaryReader reader)
+        {
+            var mode = (TocLookupMode)reader.ReadInt32();
+            int fileCount = reader.ReadInt32();
+            var footer = ReadFooter(stream, reader, VersionV2);
+
+            stream.Seek(footer.DictionaryOffset, SeekOrigin.Begin);
+            var stringCompressor = new StringCompressor(reader);
+
+            return mode switch
+            {
+                TocLookupMode.HashBuckets => GetAssetFromBuckets(assetPath, fileCount, stream, reader, stringCompressor, footer),
+                TocLookupMode.SortedByHash => GetAssetSorted(assetPath, fileCount, stream, reader, stringCompressor, footer),
+                _ => GetAssetLinear(assetPath, fileCount, stream, reader, stringCompressor, footer.TocPosition)
+            };
+        }
+
+        private static FooterInfo ReadFooter(FileStream stream, BinaryReader reader, int version)
+        {
+            int footerSize = version >= VersionV2 ? FooterSizeV2 : FooterSizeV1;
+            stream.Seek(-footerSize, SeekOrigin.End);
+
             long tocPosition = reader.ReadInt64();
             long stringTableOffset = reader.ReadInt64();
             long dictionaryOffset = reader.ReadInt64();
+            long indexOffset = version >= VersionV2 ? reader.ReadInt64() : 0;
 
-            // Load string compressor for decompression
-            stream.Seek(dictionaryOffset, SeekOrigin.Begin);
-            var stringCompressor = new StringCompressor(reader);
+            return new FooterInfo(tocPosition, stringTableOffset, dictionaryOffset, indexOffset);
+        }
 
-            // Find requested asset using hash first
+        private static byte[] GetAssetLinear(string assetPath, int fileCount, FileStream stream, BinaryReader reader, StringCompressor stringCompressor, long tocPosition)
+        {
             uint targetHash = FastHash(assetPath);
             stream.Seek(tocPosition, SeekOrigin.Begin);
 
             for (int i = 0; i < fileCount; i++)
             {
-                uint currentHash = reader.ReadUInt32();
-                if (currentHash == targetHash)
-                {
-                    // Hash matches, verify full string
-                    int stringOffset = reader.ReadInt32();
-                    long dataOffset = reader.ReadInt64();
-                    int compressedSize = reader.ReadInt32();
-
-                    string currentPath = stringCompressor.GetString(stringOffset);
-                    if (currentPath == assetPath)
-                    {
-                        stream.Seek(dataOffset, SeekOrigin.Begin);
-                        byte[] compressedData = reader.ReadBytes(compressedSize);
-                        return Compression.Decompress(compressedData, true);
-                    }
-                }
-                else
-                {
-                    // Skip non-matching entries
-                    stream.Seek(12, SeekOrigin.Current); // sizeof(int)+sizeof(long)+sizeof(int)
-                }
+                var entry = ReadSequentialTocEntry(reader);
+                if (TryLoadEntry(assetPath, targetHash, stream, reader, stringCompressor, entry, out byte[] data))
+                    return data;
             }
 
             throw new FileNotFoundException($"Asset {assetPath} not found");
+        }
+
+        private static byte[] GetAssetFromBuckets(string assetPath, int fileCount, FileStream stream, BinaryReader reader, StringCompressor stringCompressor, FooterInfo footer)
+        {
+            if (footer.IndexTableOffset == 0)
+                return GetAssetLinear(assetPath, fileCount, stream, reader, stringCompressor, footer.TocPosition);
+
+            stream.Seek(footer.IndexTableOffset, SeekOrigin.Begin);
+            int bucketCount = reader.ReadInt32();
+            if (bucketCount <= 0 || (bucketCount & (bucketCount - 1)) != 0)
+                return GetAssetLinear(assetPath, fileCount, stream, reader, stringCompressor, footer.TocPosition);
+
+            uint targetHash = FastHash(assetPath);
+            int bucketIndex = (int)(targetHash & (bucketCount - 1));
+            long bucketEntryOffset = footer.IndexTableOffset + sizeof(int) + bucketIndex * sizeof(int) * 2L;
+            stream.Seek(bucketEntryOffset, SeekOrigin.Begin);
+            int start = reader.ReadInt32();
+            int count = reader.ReadInt32();
+            if (count <= 0)
+                throw new FileNotFoundException($"Asset {assetPath} not found");
+
+            long tocOffset = footer.TocPosition + start * (long)TocEntrySize;
+            stream.Seek(tocOffset, SeekOrigin.Begin);
+            for (int i = 0; i < count; i++)
+            {
+                var entry = ReadSequentialTocEntry(reader);
+                if (TryLoadEntry(assetPath, targetHash, stream, reader, stringCompressor, entry, out byte[] data))
+                    return data;
+            }
+
+            throw new FileNotFoundException($"Asset {assetPath} not found");
+        }
+
+        private static byte[] GetAssetSorted(string assetPath, int fileCount, FileStream stream, BinaryReader reader, StringCompressor stringCompressor, FooterInfo footer)
+        {
+            uint targetHash = FastHash(assetPath);
+            int left = 0;
+            int right = fileCount - 1;
+
+            while (left <= right)
+            {
+                int mid = left + ((right - left) / 2);
+                var midEntry = ReadTocEntryAt(stream, reader, footer.TocPosition, mid);
+                if (midEntry.Hash == targetHash)
+                {
+                    int first = mid;
+                    while (first > 0)
+                    {
+                        var prev = ReadTocEntryAt(stream, reader, footer.TocPosition, first - 1);
+                        if (prev.Hash != targetHash)
+                            break;
+                        first--;
+                    }
+
+                    int last = mid;
+                    while (last < fileCount - 1)
+                    {
+                        var next = ReadTocEntryAt(stream, reader, footer.TocPosition, last + 1);
+                        if (next.Hash != targetHash)
+                            break;
+                        last++;
+                    }
+
+                    for (int i = first; i <= last; i++)
+                    {
+                        var entry = ReadTocEntryAt(stream, reader, footer.TocPosition, i);
+                        if (TryLoadEntry(assetPath, targetHash, stream, reader, stringCompressor, entry, out byte[] data))
+                            return data;
+                    }
+
+                    break;
+                }
+
+                if (midEntry.Hash < targetHash)
+                    left = mid + 1;
+                else
+                    right = mid - 1;
+            }
+
+            throw new FileNotFoundException($"Asset {assetPath} not found");
+        }
+
+        private static TocEntryData ReadSequentialTocEntry(BinaryReader reader)
+            => new(reader.ReadUInt32(), reader.ReadInt32(), reader.ReadInt64(), reader.ReadInt32());
+
+        private static TocEntryData ReadTocEntryAt(FileStream stream, BinaryReader reader, long tocPosition, int index)
+        {
+            long offset = tocPosition + index * (long)TocEntrySize;
+            stream.Seek(offset, SeekOrigin.Begin);
+            return ReadSequentialTocEntry(reader);
+        }
+
+        private static bool TryLoadEntry(string assetPath, uint targetHash, FileStream stream, BinaryReader reader, StringCompressor stringCompressor, TocEntryData entry, out byte[] data)
+        {
+            if (entry.Hash != targetHash)
+            {
+                data = [];
+                return false;
+            }
+
+            string currentPath = stringCompressor.GetString(entry.StringOffset);
+            if (!string.Equals(currentPath, assetPath, StringComparison.Ordinal))
+            {
+                data = [];
+                return false;
+            }
+
+            stream.Seek(entry.DataOffset, SeekOrigin.Begin);
+            byte[] compressedData = reader.ReadBytes(entry.CompressedSize);
+            data = Compression.Decompress(compressedData, true);
+            return true;
         }
 
         // Fast 32-bit hash function (xxHash inspired)
@@ -289,250 +606,6 @@ namespace XREngine.Core.Files
             foreach (char c in input)
                 hash = ((hash << 5) + hash) ^ c;
             return hash;
-        }
-
-        // Optimized string compression with prefix and dictionary compression
-        private class StringCompressor
-        {
-            private readonly List<string> _strings = [];
-            private readonly Dictionary<string, int> _stringOffsets = [];
-            private readonly Dictionary<string, int> _commonSubstrings = [];
-
-            public long DictionaryOffset { get; private set; }
-
-            public StringCompressor(IEnumerable<string> strings)
-            {
-                // Analyze strings for common patterns
-                var substringFrequency = new ConcurrentDictionary<string, int>();
-
-                Parallel.ForEach(strings, str =>
-                {
-                    // Split into path components
-                    var parts = str.Split(['/', '\\'], StringSplitOptions.RemoveEmptyEntries);
-
-                    foreach (var part in parts)
-                    {
-                        substringFrequency.AddOrUpdate(part, 1, (_, count) => count + 1);
-                    }
-                });
-
-                // Take top 64 most common substrings
-                _commonSubstrings = substringFrequency
-                    .OrderByDescending(kv => kv.Value)
-                    .Take(64)
-                    .Select((kv, i) => new { kv.Key, Index = i })
-                    .ToDictionary(x => x.Key, x => x.Index);
-
-                // Build string table with prefix compression
-                var sortedStrings = strings.OrderBy(s => s).ToList();
-                string prevString = "";
-
-                foreach (var str in sortedStrings)
-                {
-                    int commonPrefix = 0;
-                    while (commonPrefix < prevString.Length &&
-                           commonPrefix < str.Length &&
-                           prevString[commonPrefix] == str[commonPrefix])
-                    {
-                        commonPrefix++;
-                    }
-
-                    _strings.Add(str);
-                    prevString = str;
-                }
-            }
-
-            public StringCompressor(BinaryReader reader)
-            {
-                // Read from existing archive
-                int commonSubstringCount = reader.ReadInt32();
-                _commonSubstrings = new Dictionary<string, int>(commonSubstringCount);
-
-                for (int i = 0; i < commonSubstringCount; i++)
-                {
-                    int length = reader.ReadByte();
-                    byte[] bytes = reader.ReadBytes(length);
-                    string substring = StringEncoding.GetString(bytes);
-                    _commonSubstrings[substring] = i;
-                }
-
-                // Read string table
-                int stringCount = reader.ReadInt32();
-                _strings = new List<string>(stringCount);
-                _stringOffsets = new Dictionary<string, int>(stringCount);
-
-                for (int i = 0; i < stringCount; i++)
-                {
-                    int flags = reader.ReadByte();
-                    string str;
-
-                    if ((flags & 0x80) != 0)
-                    {
-                        // Compressed string
-                        int prefixLength = reader.ReadByte();
-                        string prefix = _strings[i - 1][..prefixLength];
-
-                        var parts = new List<string>();
-                        while (true)
-                        {
-                            byte partType = reader.ReadByte();
-                            if (partType == 0xFF) break;
-
-                            if ((partType & 0x80) != 0)
-                            {
-                                // Common substring reference
-                                int index = partType & 0x7F;
-                                string common = _commonSubstrings.First(kv => kv.Value == index).Key;
-                                parts.Add(common);
-                            }
-                            else
-                            {
-                                // Literal string
-                                int length = partType;
-                                byte[] bytes = reader.ReadBytes(length);
-                                parts.Add(StringEncoding.GetString(bytes));
-                            }
-                        }
-
-                        str = prefix + string.Join("", parts);
-                    }
-                    else
-                    {
-                        // Full string
-                        int length = reader.ReadUInt16();
-                        byte[] bytes = reader.ReadBytes(length);
-                        str = StringEncoding.GetString(bytes);
-                    }
-
-                    _strings.Add(str);
-                    _stringOffsets[str] = i;
-                }
-            }
-
-            public byte[] BuildStringTable()
-            {
-                using var ms = new MemoryStream();
-                using var writer = new BinaryWriter(ms);
-
-                // Write common substring dictionary
-                writer.Write(_commonSubstrings.Count);
-                foreach (var kv in _commonSubstrings.OrderBy(kv => kv.Value))
-                {
-                    byte[] bytes = StringEncoding.GetBytes(kv.Key);
-                    writer.Write((byte)bytes.Length);
-                    writer.Write(bytes);
-                }
-
-                // Write string table
-                writer.Write(_strings.Count);
-                string prevString = "";
-
-                foreach (string str in _strings)
-                {
-                    int commonPrefix = GetCommonPrefixLength(prevString, str);
-                    bool canCompress = commonPrefix > 3 && (str.Length - commonPrefix) > 0;
-
-                    if (canCompress)
-                    {
-                        // Compressed format: [1 bit flag + 7 bit prefix length][parts...][0xFF terminator]
-                        writer.Write((byte)(0x80 | (commonPrefix & 0x7F)));
-                        writer.Write((byte)commonPrefix);
-
-                        string remaining = str[commonPrefix..];
-                        foreach (var part in CompressStringParts(remaining))
-                        {
-                            if (_commonSubstrings.TryGetValue(part, out int index))
-                            {
-                                // Common substring reference
-                                writer.Write((byte)(0x80 | index));
-                            }
-                            else
-                            {
-                                // Literal string
-                                byte[] bytes = StringEncoding.GetBytes(part);
-                                writer.Write((byte)bytes.Length);
-                                writer.Write(bytes);
-                            }
-                        }
-
-                        writer.Write((byte)0xFF); // End marker
-                    }
-                    else
-                    {
-                        // Uncompressed format: [0 bit flag][16-bit length][string bytes]
-                        byte[] bytes = StringEncoding.GetBytes(str);
-                        writer.Write((byte)0);
-                        writer.Write((ushort)bytes.Length);
-                        writer.Write(bytes);
-                    }
-
-                    prevString = str;
-                }
-
-                DictionaryOffset = 4 + _commonSubstrings.Sum(kv => 1 + StringEncoding.GetByteCount(kv.Key));
-                return ms.ToArray();
-            }
-
-            public int GetStringOffset(string str)
-                => _stringOffsets[str];
-
-            public string GetString(int index)
-                => _strings[index];
-
-            private List<string> CompressStringParts(string input)
-            {
-                // Try to find the longest common substrings first
-                var result = new List<string>();
-                int pos = 0;
-
-                while (pos < input.Length)
-                {
-                    int bestLength = 0;
-                    string? bestMatch = null;
-
-                    foreach (var substr in _commonSubstrings.Keys)
-                    {
-                        if (input.Length - pos >= substr.Length &&
-                            string.CompareOrdinal(input, pos, substr, 0, substr.Length) == 0)
-                        {
-                            if (substr.Length > bestLength)
-                            {
-                                bestLength = substr.Length;
-                                bestMatch = substr;
-                            }
-                        }
-                    }
-
-                    if (bestMatch != null)
-                    {
-                        if (pos < input.Length - bestLength)
-                        {
-                            string literal = input[pos..^bestLength];
-                            if (!string.IsNullOrEmpty(literal))
-                            {
-                                result.Add(literal);
-                            }
-                        }
-                        result.Add(bestMatch);
-                        pos += bestLength;
-                    }
-                    else
-                    {
-                        result.Add(input[pos..]);
-                        break;
-                    }
-                }
-
-                return result;
-            }
-
-            private static int GetCommonPrefixLength(string a, string b)
-            {
-                int len = 0;
-                int max = Math.Min(a.Length, b.Length);
-                while (len < max && a[len] == b[len]) len++;
-                return len;
-            }
         }
     }
 }
