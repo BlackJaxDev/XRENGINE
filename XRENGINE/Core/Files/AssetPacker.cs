@@ -1,4 +1,6 @@
 ﻿using System;
+using System.Collections.Generic;
+using System.IO;
 using System.Linq;
 using System.Text;
 using XREngine.Data;
@@ -25,10 +27,29 @@ namespace XREngine.Core.Files
 
         public static TocLookupMode DefaultLookupMode { get; set; } = TocLookupMode.HashBuckets;
 
-        private struct AssetFile
+        private sealed class PackedAsset
         {
-            public string Path;
-            public byte[] Data;
+            public string Path { get; init; } = string.Empty;
+            public uint Hash { get; init; }
+            public int CompressedSize { get; init; }
+            public byte[]? CompressedData { get; init; }
+            public long ExistingDataOffset { get; init; }
+            public long DataOffset { get; set; }
+            public bool FromExisting => CompressedData is null;
+        }
+
+        private sealed class BucketLayout
+        {
+            public BucketLayout(int bucketCount, int[] starts, int[] counts)
+            {
+                BucketCount = bucketCount;
+                Starts = starts;
+                Counts = counts;
+            }
+
+            public int BucketCount { get; }
+            public int[] Starts { get; }
+            public int[] Counts { get; }
         }
 
         private struct TocEntry
@@ -39,267 +60,253 @@ namespace XREngine.Core.Files
             public uint Hash;
         }
 
-        private sealed class BucketLayout(int bucketCount, int[] starts, int[] counts)
-        {
-            public int BucketCount { get; } = bucketCount;
-            public int[] Starts { get; } = starts;
-            public int[] Counts { get; } = counts;
-        }
-        /// <summary>
-        /// Repacks an existing archive with new files and optional removal of existing assets.
-        /// </summary>
-        /// <param name="archiveFilePath"></param>
-        /// <param name="inputDirToAddFiles"></param>
-        /// <param name="assetPathsToRemove"></param>
         public static void Repack(string archiveFilePath, string inputDirToAddFiles, params string[] assetPathsToRemove)
         {
-            using var stream = new FileStream(archiveFilePath, FileMode.Open, FileAccess.ReadWrite, FileShare.None, 4096, FileOptions.RandomAccess);
-            using var reader = new BinaryReader(stream);
-            using var writer = new BinaryWriter(stream);
-            if (reader.ReadInt32() != Magic)
-                throw new Exception("Invalid file format");
-            switch (reader.ReadInt32())
+            if (!File.Exists(archiveFilePath))
+                throw new FileNotFoundException($"Archive '{archiveFilePath}' not found.", archiveFilePath);
+
+            string tempPath = Path.GetTempFileName();
+            try
             {
-                case VersionV1:
-                    RepackV1(stream, reader, writer, inputDirToAddFiles, assetPathsToRemove);
-                    break;
-                case VersionV2:
-                    RepackV2(stream, reader, writer, inputDirToAddFiles, assetPathsToRemove);
-                    break;
-                default:
-                    throw new Exception("Unsupported archive version");
+                using FileMap sourceMap = FileMap.FromFile(archiveFilePath, FileMapProtect.Read);
+                unsafe
+                {
+                    using var reader = new CookedBinaryReader((byte*)sourceMap.Address, sourceMap.Length);
+                    if (reader.ReadInt32() != Magic)
+                        throw new InvalidOperationException("Invalid asset archive format.");
+
+                    int version = reader.ReadInt32();
+                    switch (version)
+                    {
+                        case VersionV1:
+                            RepackV1(reader, sourceMap, tempPath, inputDirToAddFiles, assetPathsToRemove);
+                            break;
+                        case VersionV2:
+                            RepackV2(reader, sourceMap, tempPath, inputDirToAddFiles, assetPathsToRemove);
+                            break;
+                        default:
+                            throw new InvalidOperationException($"Unsupported archive version '{version}'.");
+                    }
+                }
+
+                File.Copy(tempPath, archiveFilePath, overwrite: true);
+            }
+            finally
+            {
+                try { File.Delete(tempPath); } catch { /* ignore cleanup failures */ }
             }
         }
 
-        /// <summary>
-        /// Repacks an archive in version 1 format.
-        /// </summary>
-        /// <param name="stream"></param>
-        /// <param name="reader"></param>
-        /// <param name="inputDirToAddFiles"></param>
-        /// <param name="assetPathsToRemove"></param>
-        /// <exception cref="NotImplementedException"></exception>
-        private static void RepackV1(FileStream stream, BinaryReader reader, BinaryWriter writer, string inputDirToAddFiles, string[] assetPathsToRemove)
+        private static unsafe void RepackV1(CookedBinaryReader reader, FileMap sourceMap, string destinationPath, string inputDirToAddFiles, string[] assetPathsToRemove)
         {
             int fileCount = reader.ReadInt32();
-
-            // Read footer to find metadata locations
-            stream.Seek(-24, SeekOrigin.End); // 3 * sizeof(long) = 24
-            long tocPosition = reader.ReadInt64();
-            long stringTableOffset = reader.ReadInt64();
-            long dictionaryOffset = reader.ReadInt64();
-
-            stream.Seek(dictionaryOffset, SeekOrigin.Begin);
-            var stringCompressor = new StringCompressor(reader);
-            stream.Seek(tocPosition, SeekOrigin.Begin);
-            var tocEntries = new List<TocEntry>();
-            for (int i = 0; i < fileCount; i++)
-            {
-                uint hash = reader.ReadUInt32();
-                int stringOffset = reader.ReadInt32();
-                long dataOffset = reader.ReadInt64();
-                int compressedSize = reader.ReadInt32();
-                string path = stringCompressor.GetString(stringOffset);
-                if (!assetPathsToRemove.Contains(path))
-                {
-                    tocEntries.Add(new TocEntry
-                    {
-                        Path = path,
-                        DataOffset = dataOffset,
-                        CompressedSize = compressedSize,
-                    });
-                }
-            }
-
-            // Add new files
-            var newFiles = Directory.GetFiles(inputDirToAddFiles, "*", SearchOption.AllDirectories)
-                .Select(filePath => new AssetFile
-                {
-                    Path = Path.GetRelativePath(inputDirToAddFiles, filePath),
-                    Data = File.ReadAllBytes(filePath)
-                })
-                .ToList();
-
-            long currentOffset = stream.Length;
-            foreach (var file in newFiles)
-            {
-                byte[] compressedData = Compression.Compress(file.Data, true);
-                stream.Seek(currentOffset, SeekOrigin.Begin);
-                stream.Write(compressedData, 0, compressedData.Length);
-                tocEntries.Add(new TocEntry
-                {
-                    Path = file.Path,
-                    DataOffset = currentOffset,
-                    CompressedSize = compressedData.Length,
-                });
-                currentOffset += compressedData.Length;
-            }
-            // Rebuild string table
-            long stringTableOffsetNew = WriteStringTable(stream, writer, stringCompressor);
-
-            // Write new TOC
-            stream.Seek(tocPosition, SeekOrigin.Begin);
-            foreach (var entry in tocEntries)
-            {
-                writer.Write(FastHash(entry.Path));
-                writer.Write(stringCompressor.GetStringOffset(entry.Path));
-                writer.Write(entry.DataOffset);
-                writer.Write(entry.CompressedSize);
-            }
-            // Write new footer
-            WriteFooterV1(writer, tocPosition, stringCompressor, stringTableOffsetNew);
-        }
-
-        private static void RepackV2(FileStream stream, BinaryReader reader, BinaryWriter writer, string inputDirToAddFiles, string[] assetPathsToRemove)
-        {
-            var lookupMode = (TocLookupMode)reader.ReadInt32();
-            int originalFileCount = reader.ReadInt32();
-            var footer = ReadFooter(stream, reader, VersionV2);
-
-            stream.Seek(footer.DictionaryOffset, SeekOrigin.Begin);
-            var existingStrings = new StringCompressor(reader);
-
-            var removals = assetPathsToRemove is { Length: > 0 }
-                ? new HashSet<string>(assetPathsToRemove, StringComparer.Ordinal)
-                : null;
-
-            var entries = new Dictionary<string, TocEntry>(originalFileCount, StringComparer.Ordinal);
-
-            stream.Seek(footer.TocPosition, SeekOrigin.Begin);
-            for (int i = 0; i < originalFileCount; i++)
-            {
-                var entry = ReadSequentialTocEntry(reader);
-                string path = existingStrings.GetString(entry.StringOffset);
-                if (removals is not null && removals.Contains(path))
-                    continue;
-
-                entries[path] = new TocEntry
-                {
-                    Path = path,
-                    DataOffset = entry.DataOffset,
-                    CompressedSize = entry.CompressedSize,
-                    Hash = entry.Hash,
-                };
-            }
-
-            long metadataStart = footer.StringTableOffset;
-            stream.SetLength(metadataStart);
-            stream.Seek(metadataStart, SeekOrigin.Begin);
-
-            if (!string.IsNullOrWhiteSpace(inputDirToAddFiles) && Directory.Exists(inputDirToAddFiles))
-            {
-                foreach (string filePath in Directory.GetFiles(inputDirToAddFiles, "*", SearchOption.AllDirectories))
-                {
-                    string relativePath = Path.GetRelativePath(inputDirToAddFiles, filePath);
-                    byte[] fileData = File.ReadAllBytes(filePath);
-                    byte[] compressed = Compression.Compress(fileData, true);
-                    long dataOffset = stream.Position;
-                    writer.Write(compressed);
-
-                    entries[relativePath] = new TocEntry
-                    {
-                        Path = relativePath,
-                        DataOffset = dataOffset,
-                        CompressedSize = compressed.Length,
-                        Hash = FastHash(relativePath),
-                    };
-                }
-            }
-
-            if (entries.Count == 0)
+            var footer = ReadFooter(reader, VersionV1);
+            HashSet<string>? removals = CreateRemovalSet(assetPathsToRemove);
+            List<PackedAsset> assets = LoadExistingAssets(reader, footer, fileCount, removals);
+            AppendNewFiles(assets, inputDirToAddFiles);
+            if (assets.Count == 0)
                 throw new InvalidOperationException("Cannot repack archive without any assets.");
 
-            var finalEntries = entries.Values.ToList();
-            var stringCompressor = new StringCompressor(finalEntries.Select(static e => e.Path));
-            long stringTableOffset = WriteStringTable(stream, writer, stringCompressor);
-
-            var arranged = ArrangeTocEntries(finalEntries, lookupMode);
-            long tocPosition = stream.Position;
-            WriteTocEntries(stream, writer, tocPosition, arranged.Entries, stringCompressor);
-
-            long tocEnd = tocPosition + arranged.Entries.Count * (long)TocEntrySize;
-            stream.Seek(tocEnd, SeekOrigin.Begin);
-
-            long indexOffset = 0;
-            if (lookupMode == TocLookupMode.HashBuckets && arranged.Buckets is not null)
-                indexOffset = WriteBucketTable(writer, arranged.Buckets);
-
-            WriteFooterV2(writer, tocPosition, stringTableOffset, stringCompressor.DictionaryOffset, indexOffset);
-
-            stream.Seek(sizeof(int) * 3, SeekOrigin.Begin);
-            writer.Write(arranged.Entries.Count);
+            WriteArchive(destinationPath, VersionV1, TocLookupMode.HashBuckets, assets, sourceMap);
         }
 
-        /// <summary>
-        /// Packs a directory of files into a single archive.
-        /// </summary>
-        /// <param name="inputDir"></param>
-        /// <param name="outputFile"></param>
+        private static unsafe void RepackV2(CookedBinaryReader reader, FileMap sourceMap, string destinationPath, string inputDirToAddFiles, string[] assetPathsToRemove)
+        {
+            var lookupMode = (TocLookupMode)reader.ReadInt32();
+            int fileCount = reader.ReadInt32();
+            var footer = ReadFooter(reader, VersionV2);
+            HashSet<string>? removals = CreateRemovalSet(assetPathsToRemove);
+            List<PackedAsset> assets = LoadExistingAssets(reader, footer, fileCount, removals);
+            AppendNewFiles(assets, inputDirToAddFiles);
+            if (assets.Count == 0)
+                throw new InvalidOperationException("Cannot repack archive without any assets.");
+
+            WriteArchive(destinationPath, VersionV2, lookupMode, assets, sourceMap);
+        }
+
         public static void Pack(string inputDir, string outputFile, TocLookupMode? lookupMode = null)
         {
-            var files = Directory.GetFiles(inputDir, "*", SearchOption.AllDirectories)
-                .Select(filePath => new AssetFile
-                {
-                    Path = Path.GetRelativePath(inputDir, filePath),
-                    Data = File.ReadAllBytes(filePath)
-                })
-                .ToList();
+            if (string.IsNullOrWhiteSpace(inputDir) || !Directory.Exists(inputDir))
+                throw new DirectoryNotFoundException($"Input directory '{inputDir}' does not exist.");
 
-            using var stream = new FileStream(outputFile, FileMode.Create);
-            using var writer = new BinaryWriter(stream);
+            var assets = Directory.GetFiles(inputDir, "*", SearchOption.AllDirectories)
+                                   .Select(filePath =>
+                                   {
+                                       string relativePath = NormalizePath(Path.GetRelativePath(inputDir, filePath));
+                                       byte[] data = File.ReadAllBytes(filePath);
+                                       byte[] compressed = Compression.Compress(data, true);
+                                       return new PackedAsset
+                                       {
+                                           Path = relativePath,
+                                           Hash = FastHash(relativePath),
+                                           CompressedSize = compressed.Length,
+                                           CompressedData = compressed,
+                                       };
+                                   })
+                                   .ToList();
 
-            TocLookupMode mode = lookupMode ?? DefaultLookupMode;
+            if (assets.Count == 0)
+                throw new InvalidOperationException("No files found to pack.");
 
-            // Write header
-            writer.Write(Magic);
-            writer.Write(CurrentVersion);
-            writer.Write((int)mode);
-            writer.Write(files.Count);
+            WriteArchive(outputFile, CurrentVersion, lookupMode ?? DefaultLookupMode, assets, sourceMap: null);
+        }
 
-            // Prepare space for TOC (will fill later)
-            long tocPosition = stream.Position;
-            int tocLen = files.Count * TocEntrySize;
-            writer.Write(new byte[tocLen]);
+        private static unsafe void WriteArchive(string destinationPath, int version, TocLookupMode mode, List<PackedAsset> assets, FileMap? sourceMap)
+        {
+            if (assets.Count == 0)
+                throw new InvalidOperationException("Archive must contain at least one asset.");
 
-            // Compress files and build TOC
-            var tocEntries = new List<TocEntry>();
-            long currentOffset = stream.Position;
-
-            // Gather all strings for dictionary, compress files and build TOC
-            string[] allStrings = new string[files.Count];
-            for (int i = 0; i < files.Count; i++)
+            long headerSize = version >= VersionV2 ? sizeof(int) * 4L : sizeof(int) * 3L;
+            long tocSize = assets.Count * (long)TocEntrySize;
+            long currentOffset = headerSize + tocSize;
+            foreach (var asset in assets)
             {
-                AssetFile file = files[i];
-                allStrings[i] = file.Path;
-                byte[] compressedData = Compression.Compress(file.Data, true);
-                writer.Write(compressedData);
-                tocEntries.Add(new TocEntry
-                {
-                    Path = file.Path,
-                    DataOffset = currentOffset,
-                    CompressedSize = compressedData.Length,
-                    Hash = FastHash(file.Path)
-                });
-                currentOffset += compressedData.Length;
+                asset.DataOffset = currentOffset;
+                currentOffset += asset.CompressedSize;
             }
 
-            // Build optimized string table
-            var stringCompressor = new StringCompressor(allStrings);
-            long stringTableOffset = WriteStringTable(stream, writer, stringCompressor);
+            long dataLength = currentOffset - (headerSize + tocSize);
+            var tocEntries = assets.Select(static a => new TocEntry
+            {
+                Path = a.Path,
+                DataOffset = a.DataOffset,
+                CompressedSize = a.CompressedSize,
+                Hash = a.Hash,
+            }).ToList();
 
-            var arranged = ArrangeTocEntries(tocEntries, mode);
+            var stringCompressor = new StringCompressor(tocEntries.Select(static e => e.Path));
+            byte[] stringTable = stringCompressor.BuildStringTable();
+            long stringTableLength = stringTable.Length;
+            long stringTableOffset = headerSize + tocSize + dataLength;
 
-            // Write TOC with hashes and string references
-            WriteTocEntries(stream, writer, tocPosition, arranged.Entries, stringCompressor);
+            var arranged = version >= VersionV2
+                ? ArrangeTocEntries(tocEntries, mode)
+                : (tocEntries, null);
 
-            // Write index structures, if any
+            long indexSize = version >= VersionV2 && mode == TocLookupMode.HashBuckets && arranged.Buckets is not null
+                ? sizeof(int) + arranged.Buckets.BucketCount * sizeof(int) * 2L
+                : 0;
+
+            long dictionaryOffset = stringTableOffset + stringCompressor.DictionaryOffset;
+            long footerOffset = stringTableOffset + stringTableLength + indexSize;
+            long footerSize = version >= VersionV2 ? FooterSizeV2 : FooterSizeV1;
+            long totalSize = footerOffset + footerSize;
+
+            string? directory = Path.GetDirectoryName(destinationPath);
+            if (!string.IsNullOrEmpty(directory))
+                Directory.CreateDirectory(directory);
+
+            using FileStream stream = new(destinationPath, FileMode.Create, FileAccess.ReadWrite, FileShare.None, 4096, FileOptions.RandomAccess);
+            stream.SetLength(totalSize);
+            using FileMap map = FileMap.FromStream(stream, FileMapProtect.ReadWrite, 0, (int)totalSize);
+            using var writer = new CookedBinaryWriter((byte*)map.Address, (int)totalSize, map);
+
+            writer.Write(Magic);
+            writer.Write(version);
+            if (version >= VersionV2)
+                writer.Write((int)mode);
+            writer.Write(assets.Count);
+
+            long tocPosition = writer.Position;
+            WriteTocEntries(writer, arranged.Entries, stringCompressor);
+
+            writer.Position = headerSize + tocSize;
+            foreach (var asset in assets)
+                WriteAssetData(writer, asset, sourceMap);
+
+            long stringTablePosition = writer.Position;
+            writer.Write(stringTable);
+
             long indexOffset = 0;
-            stream.Seek(0, SeekOrigin.End);
-            if (mode == TocLookupMode.HashBuckets && arranged.Buckets is not null)
-                indexOffset = WriteBucketTable(writer, arranged.Buckets);
+            if (indexSize > 0 && arranged.Buckets is not null)
+            {
+                indexOffset = writer.Position;
+                WriteBucketTable(writer, arranged.Buckets);
+            }
 
-            // Write footer with metadata positions
-            WriteFooterV2(writer, tocPosition, stringTableOffset, stringCompressor.DictionaryOffset, indexOffset);
+            if (version == VersionV1)
+                WriteFooterV1(writer, tocPosition, stringTablePosition, dictionaryOffset);
+            else
+                WriteFooterV2(writer, tocPosition, stringTablePosition, dictionaryOffset, indexOffset);
+        }
+
+        private static List<PackedAsset> LoadExistingAssets(CookedBinaryReader reader, FooterInfo footer, int fileCount, HashSet<string>? removals)
+        {
+            reader.Position = ResolveDictionaryOffset(footer);
+            var stringTable = new StringCompressor(reader);
+
+            reader.Position = footer.TocPosition;
+            List<PackedAsset> assets = new(fileCount);
+            for (int i = 0; i < fileCount; i++)
+            {
+                var entry = ReadSequentialTocEntry(reader);
+                string normalizedPath = NormalizePath(stringTable.GetString(entry.StringOffset));
+                if (removals?.Contains(normalizedPath) == true)
+                    continue;
+
+                assets.Add(new PackedAsset
+                {
+                    Path = normalizedPath,
+                    Hash = entry.Hash,
+                    CompressedSize = entry.CompressedSize,
+                    ExistingDataOffset = entry.DataOffset,
+                });
+            }
+
+            return assets;
+        }
+
+        private static string NormalizePath(string path)
+            => path.Replace('\\', '/');
+
+        private static HashSet<string>? CreateRemovalSet(string[] assetPaths)
+        {
+            if (assetPaths is not { Length: > 0 })
+                return null;
+
+            HashSet<string> set = new(StringComparer.Ordinal);
+            foreach (string assetPath in assetPaths)
+            {
+                if (!string.IsNullOrWhiteSpace(assetPath))
+                    set.Add(NormalizePath(assetPath));
+            }
+
+            return set;
+        }
+
+        private static void AppendNewFiles(List<PackedAsset> assets, string? inputDir)
+        {
+            if (string.IsNullOrWhiteSpace(inputDir) || !Directory.Exists(inputDir))
+                return;
+
+            Dictionary<string, int> lookup = new(StringComparer.Ordinal);
+            for (int i = 0; i < assets.Count; i++)
+                lookup[assets[i].Path] = i;
+
+            foreach (string filePath in Directory.GetFiles(inputDir, "*", SearchOption.AllDirectories))
+            {
+                string relativePath = NormalizePath(Path.GetRelativePath(inputDir, filePath));
+                byte[] rawData = File.ReadAllBytes(filePath);
+                byte[] compressed = Compression.Compress(rawData, true);
+
+                PackedAsset asset = new()
+                {
+                    Path = relativePath,
+                    Hash = FastHash(relativePath),
+                    CompressedSize = compressed.Length,
+                    CompressedData = compressed,
+                };
+
+                if (lookup.TryGetValue(relativePath, out int index))
+                {
+                    assets[index] = asset;
+                }
+                else
+                {
+                    lookup[relativePath] = assets.Count;
+                    assets.Add(asset);
+                }
+            }
         }
 
         private static (List<TocEntry> Entries, BucketLayout? Buckets) ArrangeTocEntries(List<TocEntry> entries, TocLookupMode mode)
@@ -361,9 +368,8 @@ namespace XREngine.Core.Files
             return Math.Clamp(bucketCount, 1, 1 << 20);
         }
 
-        private static void WriteTocEntries(FileStream stream, BinaryWriter writer, long tocPosition, List<TocEntry> entries, StringCompressor stringCompressor)
+        private static void WriteTocEntries(CookedBinaryWriter writer, List<TocEntry> entries, StringCompressor stringCompressor)
         {
-            stream.Seek(tocPosition, SeekOrigin.Begin);
             foreach (var entry in entries)
             {
                 writer.Write(entry.Hash);
@@ -373,9 +379,9 @@ namespace XREngine.Core.Files
             }
         }
 
-        private static long WriteBucketTable(BinaryWriter writer, BucketLayout layout)
+        private static long WriteBucketTable(CookedBinaryWriter writer, BucketLayout layout)
         {
-            long offset = writer.BaseStream.Position;
+            long offset = writer.Position;
             writer.Write(layout.BucketCount);
             for (int i = 0; i < layout.BucketCount; i++)
             {
@@ -385,7 +391,14 @@ namespace XREngine.Core.Files
             return offset;
         }
 
-        private static void WriteFooterV2(BinaryWriter writer, long tocPosition, long stringTableOffset, long dictionaryOffset, long indexOffset)
+        private static void WriteFooterV1(CookedBinaryWriter writer, long tocPosition, long stringTableOffset, long dictionaryOffset)
+        {
+            writer.Write(tocPosition);
+            writer.Write(stringTableOffset);
+            writer.Write(dictionaryOffset);
+        }
+
+        private static void WriteFooterV2(CookedBinaryWriter writer, long tocPosition, long stringTableOffset, long dictionaryOffset, long indexOffset)
         {
             writer.Write(tocPosition);
             writer.Write(stringTableOffset);
@@ -393,148 +406,152 @@ namespace XREngine.Core.Files
             writer.Write(indexOffset);
         }
 
-        private static long WriteStringTable(FileStream stream, BinaryWriter writer, StringCompressor stringCompressor)
+        private static unsafe void WriteAssetData(CookedBinaryWriter writer, PackedAsset asset, FileMap? sourceMap)
         {
-            byte[] stringTableData = stringCompressor.BuildStringTable();
-            long stringTableOffset = stream.Position;
-            writer.Write(stringTableData);
-            return stringTableOffset;
-        }
+            if (asset.FromExisting)
+            {
+                if (sourceMap is null)
+                    throw new InvalidOperationException("Existing asset data requires a source archive.");
 
-        private static void WriteFooterV1(BinaryWriter writer, long tocPosition, StringCompressor stringCompressor, long stringTableOffset)
-        {
-            writer.Write(tocPosition);
-            writer.Write(stringTableOffset);
-            writer.Write(stringCompressor.DictionaryOffset);
+                var span = new ReadOnlySpan<byte>((byte*)sourceMap.Address + asset.ExistingDataOffset, asset.CompressedSize);
+                writer.WriteBytes(span);
+            }
+            else
+            {
+                writer.Write(asset.CompressedData!);
+            }
         }
 
         public static byte[] GetAsset(string archiveFilePath, string assetPath)
         {
-            using var stream = new FileStream(archiveFilePath, FileMode.Open, FileAccess.Read, FileShare.Read, 4096, FileOptions.RandomAccess);
-            return GetAsset(stream, assetPath);
-        }
-
-        private static byte[] GetAsset(FileStream stream, string assetPath)
-        {
-            stream.Seek(0, SeekOrigin.Begin);
-
-            using var reader = new BinaryReader(stream);
-
-            if (reader.ReadInt32() != Magic)
-                throw new Exception("Invalid file format");
-
-            int version = reader.ReadInt32();
-            return version switch
+            using FileMap map = FileMap.FromFile(archiveFilePath, FileMapProtect.Read);
+            unsafe
             {
-                VersionV1 => GetAssetV1(assetPath, stream, reader),
-                VersionV2 => GetAssetV2(assetPath, stream, reader),
-                _ => throw new Exception("Unsupported archive version"),
-            };
+                using var reader = new CookedBinaryReader((byte*)map.Address, map.Length);
+                if (reader.ReadInt32() != Magic)
+                    throw new InvalidOperationException("Invalid asset archive format.");
+
+                int version = reader.ReadInt32();
+                return version switch
+                {
+                    VersionV1 => GetAssetV1(assetPath, reader),
+                    VersionV2 => GetAssetV2(assetPath, reader),
+                    _ => throw new InvalidOperationException($"Unsupported archive version '{version}'."),
+                };
+            }
         }
 
-        private static byte[] GetAssetV1(string assetPath, FileStream stream, BinaryReader reader)
+        private static byte[] GetAssetV1(string assetPath, CookedBinaryReader reader)
         {
             int fileCount = reader.ReadInt32();
-            var footer = ReadFooter(stream, reader, VersionV1);
-
-            stream.Seek(footer.DictionaryOffset, SeekOrigin.Begin);
+            var footer = ReadFooter(reader, VersionV1);
+            reader.Position = ResolveDictionaryOffset(footer);
             var stringCompressor = new StringCompressor(reader);
-
-            return GetAssetLinear(assetPath, fileCount, stream, reader, stringCompressor, footer.TocPosition);
+            return GetAssetLinear(assetPath, fileCount, reader, stringCompressor, footer.TocPosition);
         }
 
-        private static byte[] GetAssetV2(string assetPath, FileStream stream, BinaryReader reader)
+        private static byte[] GetAssetV2(string assetPath, CookedBinaryReader reader)
         {
             var mode = (TocLookupMode)reader.ReadInt32();
             int fileCount = reader.ReadInt32();
-            var footer = ReadFooter(stream, reader, VersionV2);
+            var footer = ReadFooter(reader, VersionV2);
 
-            stream.Seek(footer.DictionaryOffset, SeekOrigin.Begin);
+            reader.Position = ResolveDictionaryOffset(footer);
             var stringCompressor = new StringCompressor(reader);
 
             return mode switch
             {
-                TocLookupMode.HashBuckets => GetAssetFromBuckets(assetPath, fileCount, stream, reader, stringCompressor, footer),
-                TocLookupMode.SortedByHash => GetAssetSorted(assetPath, fileCount, stream, reader, stringCompressor, footer),
-                _ => GetAssetLinear(assetPath, fileCount, stream, reader, stringCompressor, footer.TocPosition)
+                TocLookupMode.HashBuckets => GetAssetFromBuckets(assetPath, fileCount, reader, stringCompressor, footer),
+                TocLookupMode.SortedByHash => GetAssetSorted(assetPath, fileCount, reader, stringCompressor, footer),
+                _ => GetAssetLinear(assetPath, fileCount, reader, stringCompressor, footer.TocPosition),
             };
         }
 
-        private static FooterInfo ReadFooter(FileStream stream, BinaryReader reader, int version)
+        private static FooterInfo ReadFooter(CookedBinaryReader reader, int version)
         {
-            int footerSize = version >= VersionV2 ? FooterSizeV2 : FooterSizeV1;
-            stream.Seek(-footerSize, SeekOrigin.End);
+            long footerSize = version >= VersionV2 ? FooterSizeV2 : FooterSizeV1;
+            long saved = reader.Position;
+            reader.Position = reader.Length - footerSize;
 
             long tocPosition = reader.ReadInt64();
             long stringTableOffset = reader.ReadInt64();
             long dictionaryOffset = reader.ReadInt64();
             long indexOffset = version >= VersionV2 ? reader.ReadInt64() : 0;
 
+            reader.Position = saved;
             return new FooterInfo(tocPosition, stringTableOffset, dictionaryOffset, indexOffset);
         }
 
-        private static byte[] GetAssetLinear(string assetPath, int fileCount, FileStream stream, BinaryReader reader, StringCompressor stringCompressor, long tocPosition)
+        private static long ResolveDictionaryOffset(FooterInfo footer)
+            => footer.DictionaryOffset < footer.StringTableOffset
+                ? footer.StringTableOffset + footer.DictionaryOffset
+                : footer.DictionaryOffset;
+
+        private static byte[] GetAssetLinear(string assetPath, int fileCount, CookedBinaryReader reader, StringCompressor stringCompressor, long tocPosition)
         {
-            uint targetHash = FastHash(assetPath);
-            stream.Seek(tocPosition, SeekOrigin.Begin);
+            string normalized = NormalizePath(assetPath);
+            uint targetHash = FastHash(normalized);
+            reader.Position = tocPosition;
 
             for (int i = 0; i < fileCount; i++)
             {
                 var entry = ReadSequentialTocEntry(reader);
-                if (TryLoadEntry(assetPath, targetHash, stream, reader, stringCompressor, entry, out byte[] data))
+                if (TryLoadEntry(normalized, targetHash, reader, stringCompressor, entry, out byte[] data))
                     return data;
             }
 
             throw new FileNotFoundException($"Asset {assetPath} not found");
         }
 
-        private static byte[] GetAssetFromBuckets(string assetPath, int fileCount, FileStream stream, BinaryReader reader, StringCompressor stringCompressor, FooterInfo footer)
+        private static byte[] GetAssetFromBuckets(string assetPath, int fileCount, CookedBinaryReader reader, StringCompressor stringCompressor, FooterInfo footer)
         {
             if (footer.IndexTableOffset == 0)
-                return GetAssetLinear(assetPath, fileCount, stream, reader, stringCompressor, footer.TocPosition);
+                return GetAssetLinear(assetPath, fileCount, reader, stringCompressor, footer.TocPosition);
 
-            stream.Seek(footer.IndexTableOffset, SeekOrigin.Begin);
+            reader.Position = footer.IndexTableOffset;
             int bucketCount = reader.ReadInt32();
             if (bucketCount <= 0 || (bucketCount & (bucketCount - 1)) != 0)
-                return GetAssetLinear(assetPath, fileCount, stream, reader, stringCompressor, footer.TocPosition);
+                return GetAssetLinear(assetPath, fileCount, reader, stringCompressor, footer.TocPosition);
 
-            uint targetHash = FastHash(assetPath);
+            string normalized = NormalizePath(assetPath);
+            uint targetHash = FastHash(normalized);
             int bucketIndex = (int)(targetHash & (bucketCount - 1));
             long bucketEntryOffset = footer.IndexTableOffset + sizeof(int) + bucketIndex * sizeof(int) * 2L;
-            stream.Seek(bucketEntryOffset, SeekOrigin.Begin);
+            reader.Position = bucketEntryOffset;
             int start = reader.ReadInt32();
             int count = reader.ReadInt32();
             if (count <= 0)
                 throw new FileNotFoundException($"Asset {assetPath} not found");
 
             long tocOffset = footer.TocPosition + start * (long)TocEntrySize;
-            stream.Seek(tocOffset, SeekOrigin.Begin);
+            reader.Position = tocOffset;
             for (int i = 0; i < count; i++)
             {
                 var entry = ReadSequentialTocEntry(reader);
-                if (TryLoadEntry(assetPath, targetHash, stream, reader, stringCompressor, entry, out byte[] data))
+                if (TryLoadEntry(normalized, targetHash, reader, stringCompressor, entry, out byte[] data))
                     return data;
             }
 
             throw new FileNotFoundException($"Asset {assetPath} not found");
         }
 
-        private static byte[] GetAssetSorted(string assetPath, int fileCount, FileStream stream, BinaryReader reader, StringCompressor stringCompressor, FooterInfo footer)
+        private static byte[] GetAssetSorted(string assetPath, int fileCount, CookedBinaryReader reader, StringCompressor stringCompressor, FooterInfo footer)
         {
-            uint targetHash = FastHash(assetPath);
+            string normalized = NormalizePath(assetPath);
+            uint targetHash = FastHash(normalized);
             int left = 0;
             int right = fileCount - 1;
 
             while (left <= right)
             {
                 int mid = left + ((right - left) / 2);
-                var midEntry = ReadTocEntryAt(stream, reader, footer.TocPosition, mid);
+                var midEntry = ReadTocEntryAt(reader, footer.TocPosition, mid);
                 if (midEntry.Hash == targetHash)
                 {
                     int first = mid;
                     while (first > 0)
                     {
-                        var prev = ReadTocEntryAt(stream, reader, footer.TocPosition, first - 1);
+                        var prev = ReadTocEntryAt(reader, footer.TocPosition, first - 1);
                         if (prev.Hash != targetHash)
                             break;
                         first--;
@@ -543,7 +560,7 @@ namespace XREngine.Core.Files
                     int last = mid;
                     while (last < fileCount - 1)
                     {
-                        var next = ReadTocEntryAt(stream, reader, footer.TocPosition, last + 1);
+                        var next = ReadTocEntryAt(reader, footer.TocPosition, last + 1);
                         if (next.Hash != targetHash)
                             break;
                         last++;
@@ -551,8 +568,8 @@ namespace XREngine.Core.Files
 
                     for (int i = first; i <= last; i++)
                     {
-                        var entry = ReadTocEntryAt(stream, reader, footer.TocPosition, i);
-                        if (TryLoadEntry(assetPath, targetHash, stream, reader, stringCompressor, entry, out byte[] data))
+                        var entry = ReadTocEntryAt(reader, footer.TocPosition, i);
+                        if (TryLoadEntry(normalized, targetHash, reader, stringCompressor, entry, out byte[] data))
                             return data;
                     }
 
@@ -568,38 +585,42 @@ namespace XREngine.Core.Files
             throw new FileNotFoundException($"Asset {assetPath} not found");
         }
 
-        private static TocEntryData ReadSequentialTocEntry(BinaryReader reader)
-            => new(reader.ReadUInt32(), reader.ReadInt32(), reader.ReadInt64(), reader.ReadInt32());
-
-        private static TocEntryData ReadTocEntryAt(FileStream stream, BinaryReader reader, long tocPosition, int index)
-        {
-            long offset = tocPosition + index * (long)TocEntrySize;
-            stream.Seek(offset, SeekOrigin.Begin);
-            return ReadSequentialTocEntry(reader);
-        }
-
-        private static bool TryLoadEntry(string assetPath, uint targetHash, FileStream stream, BinaryReader reader, StringCompressor stringCompressor, TocEntryData entry, out byte[] data)
+        private static bool TryLoadEntry(string normalizedPath, uint targetHash, CookedBinaryReader reader, StringCompressor stringCompressor, TocEntryData entry, out byte[] data)
         {
             if (entry.Hash != targetHash)
             {
-                data = [];
+                data = Array.Empty<byte>();
                 return false;
             }
 
-            string currentPath = stringCompressor.GetString(entry.StringOffset);
-            if (!string.Equals(currentPath, assetPath, StringComparison.Ordinal))
+            string currentPath = NormalizePath(stringCompressor.GetString(entry.StringOffset));
+            if (!string.Equals(currentPath, normalizedPath, StringComparison.Ordinal))
             {
-                data = [];
+                data = Array.Empty<byte>();
                 return false;
             }
 
-            stream.Seek(entry.DataOffset, SeekOrigin.Begin);
+            long saved = reader.Position;
+            reader.Position = entry.DataOffset;
             byte[] compressedData = reader.ReadBytes(entry.CompressedSize);
+            reader.Position = saved;
             data = Compression.Decompress(compressedData, true);
             return true;
         }
 
-        // Fast 32-bit hash function (xxHash inspired)
+        private static TocEntryData ReadSequentialTocEntry(CookedBinaryReader reader)
+            => new(reader.ReadUInt32(), reader.ReadInt32(), reader.ReadInt64(), reader.ReadInt32());
+
+        private static TocEntryData ReadTocEntryAt(CookedBinaryReader reader, long tocPosition, int index)
+        {
+            long offset = tocPosition + index * (long)TocEntrySize;
+            long saved = reader.Position;
+            reader.Position = offset;
+            var entry = ReadSequentialTocEntry(reader);
+            reader.Position = saved;
+            return entry;
+        }
+
         private static uint FastHash(string input)
         {
             uint hash = 5381;

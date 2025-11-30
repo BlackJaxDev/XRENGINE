@@ -1,12 +1,15 @@
+using System.Buffers.Binary;
 using System.Collections;
-using System.Collections.Generic;
 using System.Collections.Concurrent;
+using System.Collections.Generic;
 using System.Diagnostics.CodeAnalysis;
 using System.Globalization;
 using System.IO;
 using System.Linq;
 using System.Reflection;
+using System.Runtime.CompilerServices;
 using System.Text;
+using MemoryPack;
 using XREngine.Data;
 using YamlDotNet.Serialization;
 
@@ -14,84 +17,274 @@ namespace XREngine.Core.Files;
 
 public interface ICookedBinarySerializable
 {
+    [RequiresUnreferencedCode(CookedBinarySerializer.ReflectionWarningMessage)]
+    [RequiresDynamicCode(CookedBinarySerializer.ReflectionWarningMessage)]
     void WriteCookedBinary(CookedBinaryWriter writer);
+
+    [RequiresUnreferencedCode(CookedBinarySerializer.ReflectionWarningMessage)]
+    [RequiresDynamicCode(CookedBinarySerializer.ReflectionWarningMessage)]
     void ReadCookedBinary(CookedBinaryReader reader);
+
+    [RequiresUnreferencedCode(CookedBinarySerializer.ReflectionWarningMessage)]
+    [RequiresDynamicCode(CookedBinarySerializer.ReflectionWarningMessage)]
+    long CalculateCookedBinarySize();
 }
 
-public sealed class CookedBinaryWriter
+public sealed unsafe class CookedBinaryWriter : IDisposable
 {
-    private readonly BinaryWriter _writer;
+    private readonly FileMap? _map;
+    private readonly byte* _start;
+    private byte* _cursor;
+    private readonly byte* _end;
 
-    internal CookedBinaryWriter(BinaryWriter writer)
+    internal CookedBinaryWriter(byte* buffer, int length, FileMap? map = null)
     {
-        _writer = writer;
+        _map = map;
+        _start = buffer;
+        _cursor = buffer;
+        _end = buffer + length;
     }
+
+    public long BytesWritten => _cursor - _start;
+    public long Position
+    {
+        get => _cursor - _start;
+        set
+        {
+            byte* target = _start + value;
+            if (target < _start || target > _end)
+                throw new ArgumentOutOfRangeException(nameof(value));
+            _cursor = target;
+        }
+    }
+
+    public long Capacity => _end - _start;
+
+    public void Dispose()
+        => _map?.Dispose();
 
     [RequiresUnreferencedCode(CookedBinarySerializer.ReflectionWarningMessage)]
     [RequiresDynamicCode(CookedBinarySerializer.ReflectionWarningMessage)]
     public void WriteValue(object? value)
-        => CookedBinarySerializer.WriteValue(_writer, value, allowCustom: true);
+        => CookedBinarySerializer.WriteValue(this, value, allowCustom: true);
 
     [RequiresUnreferencedCode(CookedBinarySerializer.ReflectionWarningMessage)]
     [RequiresDynamicCode(CookedBinarySerializer.ReflectionWarningMessage)]
     public void WriteBaseObject<T>(T instance) where T : class
-        => CookedBinarySerializer.WriteObjectContent(_writer, instance!, typeof(T), allowCustom: true);
+        => CookedBinarySerializer.WriteObjectContent(this, instance!, typeof(T), allowCustom: true);
 
     public void WriteBytes(ReadOnlySpan<byte> data)
-        => _writer.Write(data);
+    {
+        EnsureCapacity(data.Length);
+        data.CopyTo(new Span<byte>(_cursor, data.Length));
+        _cursor += data.Length;
+    }
+
+    public void Write(byte value)
+    {
+        EnsureCapacity(1);
+        *_cursor++ = value;
+    }
+
+    public void Write(sbyte value) => WriteUnmanaged(value);
+    public void Write(bool value) => WriteUnmanaged(value);
+    public void Write(short value) => WriteUnmanaged(value);
+    public void Write(ushort value) => WriteUnmanaged(value);
+    public void Write(int value) => WriteUnmanaged(value);
+    public void Write(uint value) => WriteUnmanaged(value);
+    public void Write(long value) => WriteUnmanaged(value);
+    public void Write(ulong value) => WriteUnmanaged(value);
+    public void Write(float value) => WriteUnmanaged(value);
+    public void Write(double value) => WriteUnmanaged(value);
+    public void Write(decimal value) => WriteUnmanaged(value);
+    public void Write(char value) => WriteUnmanaged(value);
+
+    public void Write(byte[] data)
+    {
+        if (data is null)
+            throw new ArgumentNullException(nameof(data));
+        WriteBytes(data);
+    }
+
+    public void Write(string value)
+    {
+        ArgumentNullException.ThrowIfNull(value);
+        int byteCount = Encoding.UTF8.GetByteCount(value);
+        Write7BitEncodedInt(byteCount);
+        EnsureCapacity(byteCount);
+        Encoding.UTF8.GetBytes(value, new Span<byte>(_cursor, byteCount));
+        _cursor += byteCount;
+    }
+
+    public void Write(ReadOnlySpan<char> value)
+    {
+        int byteCount = Encoding.UTF8.GetByteCount(value);
+        Write7BitEncodedInt(byteCount);
+        EnsureCapacity(byteCount);
+        Encoding.UTF8.GetBytes(value, new Span<byte>(_cursor, byteCount));
+        _cursor += byteCount;
+    }
+
+    internal void Write7BitEncodedInt(int value)
+    {
+        uint v = (uint)value;
+        while (v >= 0x80)
+        {
+            Write((byte)(v | 0x80));
+            v >>= 7;
+        }
+        Write((byte)v);
+    }
+
+    private void EnsureCapacity(int count)
+    {
+        if (_cursor + count > _end)
+            throw new InvalidOperationException("Cooked binary writer exceeded allocated buffer.");
+    }
+
+    private void WriteUnmanaged<T>(T value) where T : unmanaged
+    {
+        int size = sizeof(T);
+        EnsureCapacity(size);
+        Unsafe.WriteUnaligned(_cursor, value);
+        _cursor += size;
+    }
 }
 
-public sealed class CookedBinaryReader
+public sealed unsafe class CookedBinaryReader : IDisposable
 {
-    private readonly BinaryReader _reader;
+    private readonly FileMap? _map;
+    private readonly byte* _start;
+    private byte* _cursor;
+    private readonly byte* _end;
 
-    internal CookedBinaryReader(BinaryReader reader)
+    internal CookedBinaryReader(byte* buffer, int length, FileMap? map = null)
     {
-        _reader = reader;
+        _map = map;
+        _start = buffer;
+        _cursor = buffer;
+        _end = buffer + length;
     }
+
+    public int Remaining => (int)(_end - _cursor);
+
+    public void Dispose()
+        => _map?.Dispose();
 
     [RequiresUnreferencedCode(CookedBinarySerializer.ReflectionWarningMessage)]
     [RequiresDynamicCode(CookedBinarySerializer.ReflectionWarningMessage)]
     public T? ReadValue<T>()
-        => (T?)CookedBinarySerializer.ReadValue(_reader, typeof(T));
+        => (T?)CookedBinarySerializer.ReadValue(this, typeof(T));
 
     [RequiresUnreferencedCode(CookedBinarySerializer.ReflectionWarningMessage)]
     [RequiresDynamicCode(CookedBinarySerializer.ReflectionWarningMessage)]
     public void ReadBaseObject<T>(T instance) where T : class
-        => CookedBinarySerializer.ReadObjectContent(_reader, instance!, typeof(T));
+        => CookedBinarySerializer.ReadObjectContent(this, instance!, typeof(T));
+
+    public byte ReadByte()
+    {
+        EnsureAvailable(1);
+        return *_cursor++;
+    }
+
+    public sbyte ReadSByte() => ReadUnmanaged<sbyte>();
+    public bool ReadBoolean() => ReadUnmanaged<bool>();
+    public short ReadInt16() => ReadUnmanaged<short>();
+    public ushort ReadUInt16() => ReadUnmanaged<ushort>();
+    public int ReadInt32() => ReadUnmanaged<int>();
+    public uint ReadUInt32() => ReadUnmanaged<uint>();
+    public long ReadInt64() => ReadUnmanaged<long>();
+    public ulong ReadUInt64() => ReadUnmanaged<ulong>();
+    public float ReadSingle() => ReadUnmanaged<float>();
+    public double ReadDouble() => ReadUnmanaged<double>();
+    public decimal ReadDecimal() => ReadUnmanaged<decimal>();
+    public char ReadChar() => ReadUnmanaged<char>();
+
+    public string ReadString()
+    {
+        int length = Read7BitEncodedInt();
+        if (length == 0)
+            return string.Empty;
+
+        EnsureAvailable(length);
+        string value = Encoding.UTF8.GetString(new ReadOnlySpan<byte>(_cursor, length));
+        _cursor += length;
+        return value;
+    }
+
+    public long Position
+    {
+        get => _cursor - _start;
+        set
+        {
+            byte* target = _start + value;
+            if (target < _start || target > _end)
+                throw new ArgumentOutOfRangeException(nameof(value));
+            _cursor = target;
+        }
+    }
+
+    public long Length => _end - _start;
 
     public byte[] ReadBytes(int length)
-        => _reader.ReadBytes(length);
-}
+    {
+        EnsureAvailable(length);
+        byte[] result = new byte[length];
+        new ReadOnlySpan<byte>(_cursor, length).CopyTo(result);
+        _cursor += length;
+        return result;
+    }
 
-internal enum CookedBinaryTypeMarker : byte
-{
-    Null = 0,
-    Boolean = 1,
-    Byte = 2,
-    SByte = 3,
-    Int16 = 4,
-    UInt16 = 5,
-    Int32 = 6,
-    UInt32 = 7,
-    Int64 = 8,
-    UInt64 = 9,
-    Single = 10,
-    Double = 11,
-    Decimal = 12,
-    Char = 13,
-    String = 14,
-    Guid = 15,
-    DateTime = 16,
-    TimeSpan = 17,
-    ByteArray = 18,
-    Enum = 19,
-    Array = 20,
-    List = 21,
-    Dictionary = 22,
-    Object = 23,
-    CustomObject = 24,
-    DataSource = 25
+    public void ReadBytes(void* destination, int length)
+    {
+        if (length <= 0)
+            return;
+        EnsureAvailable(length);
+        Unsafe.CopyBlockUnaligned(destination, _cursor, (uint)length);
+        _cursor += length;
+    }
+
+    public void SkipBytes(int length)
+    {
+        if (length <= 0)
+            return;
+        EnsureAvailable(length);
+        _cursor += length;
+    }
+
+    internal int Read7BitEncodedInt()
+    {
+        int count = 0;
+        int shift = 0;
+        byte b;
+        do
+        {
+            if (shift >= 35)
+                throw new FormatException("7-bit encoded int is too large.");
+
+            b = ReadByte();
+            count |= (b & 0x7F) << shift;
+            shift += 7;
+        }
+        while ((b & 0x80) != 0);
+
+        return count;
+    }
+
+    private void EnsureAvailable(int count)
+    {
+        if (_cursor + count > _end)
+            throw new EndOfStreamException("Attempted to read beyond the end of the cooked buffer.");
+    }
+
+    private T ReadUnmanaged<T>() where T : unmanaged
+    {
+        int size = sizeof(T);
+        EnsureAvailable(size);
+        T value = Unsafe.ReadUnaligned<T>(_cursor);
+        _cursor += size;
+        return value;
+    }
 }
 
 public static class CookedBinarySerializer
@@ -102,28 +295,59 @@ public static class CookedBinarySerializer
     [RequiresDynamicCode(ReflectionWarningMessage)]
     public static byte[] Serialize(object? value)
     {
-        using MemoryStream stream = new();
-        using (var writer = new BinaryWriter(stream, Encoding.UTF8, leaveOpen: true))
+        long length = CalculateSize(value);
+        if (length > int.MaxValue)
+            throw new InvalidOperationException($"Cooked payload exceeds maximum supported size ({length} bytes).");
+
+        byte[] buffer = new byte[(int)length];
+        unsafe
         {
-            WriteValue(writer, value, allowCustom: true);
+            fixed (byte* ptr = buffer)
+            {
+                using var writer = new CookedBinaryWriter(ptr, buffer.Length);
+                WriteValue(writer, value, allowCustom: true);
+            }
         }
 
-        return stream.ToArray();
+        return buffer;
     }
 
     [RequiresUnreferencedCode(ReflectionWarningMessage)]
     [RequiresDynamicCode(ReflectionWarningMessage)]
     public static object? Deserialize(Type expectedType, ReadOnlySpan<byte> data)
     {
-        using MemoryStream stream = new(data.ToArray(), writable: false);
-        using var reader = new BinaryReader(stream, Encoding.UTF8, leaveOpen: true);
-        object? value = ReadValue(reader, expectedType);
-        return ConvertValue(value, expectedType);
+        unsafe
+        {
+            fixed (byte* ptr = data)
+            {
+                using var reader = new CookedBinaryReader(ptr, data.Length);
+                object? value = ReadValue(reader, expectedType);
+                return ConvertValue(value, expectedType);
+            }
+        }
     }
 
     [RequiresUnreferencedCode(ReflectionWarningMessage)]
     [RequiresDynamicCode(ReflectionWarningMessage)]
-    internal static void WriteValue(BinaryWriter writer, object? value, bool allowCustom)
+    public static long CalculateSize(object? value)
+    {
+        CookedBinarySizeCalculator calculator = new();
+        calculator.AddValue(value, allowCustom: true);
+        return calculator.Length;
+    }
+
+    [RequiresUnreferencedCode(ReflectionWarningMessage)]
+    [RequiresDynamicCode(ReflectionWarningMessage)]
+    internal static long CalculateBaseObjectSize(object instance, Type metadataType)
+    {
+        CookedBinarySizeCalculator calculator = new();
+        calculator.AddObjectContent(instance, metadataType, allowCustom: true);
+        return calculator.Length;
+    }
+
+    [RequiresUnreferencedCode(ReflectionWarningMessage)]
+    [RequiresDynamicCode(ReflectionWarningMessage)]
+    internal static void WriteValue(CookedBinaryWriter writer, object? value, bool allowCustom)
     {
         if (value is null)
         {
@@ -319,18 +543,28 @@ public static class CookedBinarySerializer
         {
             writer.Write((byte)CookedBinaryTypeMarker.CustomObject);
             WriteTypeName(writer, runtimeType);
-            custom.WriteCookedBinary(new CookedBinaryWriter(writer));
+            custom.WriteCookedBinary(writer);
             return;
         }
 
         writer.Write((byte)CookedBinaryTypeMarker.Object);
         WriteTypeName(writer, runtimeType);
-        WriteObjectContent(writer, value, runtimeType, allowCustom);
+        if (TrySerializeWithMemoryPack(value, runtimeType, out byte[]? memPackBytes))
+        {
+            writer.Write((byte)CookedBinaryObjectEncoding.MemoryPack);
+            writer.Write(memPackBytes!.Length);
+            writer.Write(memPackBytes);
+        }
+        else
+        {
+            writer.Write((byte)CookedBinaryObjectEncoding.Reflection);
+            WriteObjectContent(writer, value, runtimeType, allowCustom);
+        }
     }
 
     [RequiresUnreferencedCode(ReflectionWarningMessage)]
     [RequiresDynamicCode(ReflectionWarningMessage)]
-    internal static object? ReadValue(BinaryReader reader, Type? expectedType)
+    internal static object? ReadValue(CookedBinaryReader reader, Type? expectedType)
     {
         var marker = (CookedBinaryTypeMarker)reader.ReadByte();
         return marker switch
@@ -367,7 +601,7 @@ public static class CookedBinarySerializer
 
     [RequiresUnreferencedCode(ReflectionWarningMessage)]
     [RequiresDynamicCode(ReflectionWarningMessage)]
-    internal static void WriteObjectContent(BinaryWriter writer, object instance, Type metadataType, bool allowCustom)
+    internal static void WriteObjectContent(CookedBinaryWriter writer, object instance, Type metadataType, bool allowCustom)
     {
         var metadata = TypeMetadataCache.Get(metadataType);
         writer.Write(metadata.Members.Length);
@@ -381,7 +615,7 @@ public static class CookedBinarySerializer
 
     [RequiresUnreferencedCode(ReflectionWarningMessage)]
     [RequiresDynamicCode(ReflectionWarningMessage)]
-    internal static void ReadObjectContent(BinaryReader reader, object instance, Type metadataType)
+    internal static void ReadObjectContent(CookedBinaryReader reader, object instance, Type metadataType)
     {
         int count = reader.ReadInt32();
         var metadata = TypeMetadataCache.Get(metadataType);
@@ -397,7 +631,7 @@ public static class CookedBinarySerializer
         }
     }
 
-    private static byte[] ReadByteArray(BinaryReader reader)
+    private static byte[] ReadByteArray(CookedBinaryReader reader)
     {
         int length = reader.ReadInt32();
         return reader.ReadBytes(length);
@@ -405,7 +639,7 @@ public static class CookedBinarySerializer
 
     [RequiresUnreferencedCode(ReflectionWarningMessage)]
     [RequiresDynamicCode(ReflectionWarningMessage)]
-    private static object ReadEnum(BinaryReader reader)
+    private static object ReadEnum(CookedBinaryReader reader)
     {
         string typeName = reader.ReadString();
         Type enumType = ResolveType(typeName) ?? throw new InvalidOperationException($"Failed to resolve enum type '{typeName}'.");
@@ -415,7 +649,7 @@ public static class CookedBinarySerializer
 
     [RequiresUnreferencedCode(ReflectionWarningMessage)]
     [RequiresDynamicCode(ReflectionWarningMessage)]
-    private static object ReadArray(BinaryReader reader)
+    private static object ReadArray(CookedBinaryReader reader)
     {
         string elementTypeName = reader.ReadString();
         Type elementType = ResolveType(elementTypeName) ?? typeof(object);
@@ -432,7 +666,7 @@ public static class CookedBinarySerializer
 
     [RequiresUnreferencedCode(ReflectionWarningMessage)]
     [RequiresDynamicCode(ReflectionWarningMessage)]
-    private static object ReadList(BinaryReader reader)
+    private static object ReadList(CookedBinaryReader reader)
     {
         string listTypeName = reader.ReadString();
         Type listType = ResolveType(listTypeName) ?? typeof(List<object?>);
@@ -449,7 +683,7 @@ public static class CookedBinarySerializer
 
     [RequiresUnreferencedCode(ReflectionWarningMessage)]
     [RequiresDynamicCode(ReflectionWarningMessage)]
-    private static object ReadDictionary(BinaryReader reader)
+    private static object ReadDictionary(CookedBinaryReader reader)
     {
         string dictTypeName = reader.ReadString();
         Type dictType = ResolveType(dictTypeName) ?? typeof(Dictionary<object, object?>);
@@ -467,29 +701,54 @@ public static class CookedBinarySerializer
 
     [RequiresUnreferencedCode(ReflectionWarningMessage)]
     [RequiresDynamicCode(ReflectionWarningMessage)]
-    private static object? ReadCustomObject(BinaryReader reader, Type? expectedType)
+    private static object? ReadCustomObject(CookedBinaryReader reader, Type? expectedType)
     {
         string typeName = reader.ReadString();
         Type targetType = ResolveType(typeName) ?? expectedType ?? throw new InvalidOperationException($"Failed to resolve cooked asset type '{typeName}'.");
         if (CreateInstance(targetType) is not ICookedBinarySerializable instance)
             throw new InvalidOperationException($"Type '{targetType}' does not implement {nameof(ICookedBinarySerializable)}.");
 
-        instance.ReadCookedBinary(new CookedBinaryReader(reader));
+        instance.ReadCookedBinary(reader);
         return instance;
     }
 
     [RequiresUnreferencedCode(ReflectionWarningMessage)]
     [RequiresDynamicCode(ReflectionWarningMessage)]
-    private static object? ReadObject(BinaryReader reader)
+    private static object? ReadObject(CookedBinaryReader reader)
     {
         string typeName = reader.ReadString();
         Type targetType = ResolveType(typeName) ?? throw new InvalidOperationException($"Failed to resolve cooked asset type '{typeName}'.");
+        CookedBinaryObjectEncoding encoding = (CookedBinaryObjectEncoding)reader.ReadByte();
+        return encoding switch
+        {
+            CookedBinaryObjectEncoding.MemoryPack => ReadMemoryPackObject(reader, targetType),
+            CookedBinaryObjectEncoding.Reflection => ReadReflectionObject(reader, targetType),
+            _ => throw new InvalidOperationException($"Unsupported cooked object encoding '{encoding}'.")
+        };
+    }
+
+    [RequiresUnreferencedCode(ReflectionWarningMessage)]
+    [RequiresDynamicCode(ReflectionWarningMessage)]
+    private static object? ReadReflectionObject(CookedBinaryReader reader, Type targetType)
+    {
         object instance = CreateInstance(targetType) ?? throw new InvalidOperationException($"Unable to create instance of '{targetType}'.");
         ReadObjectContent(reader, instance, targetType);
         return instance;
     }
 
-    private static object ReadDataSource(BinaryReader reader)
+    [RequiresUnreferencedCode(ReflectionWarningMessage)]
+    [RequiresDynamicCode(ReflectionWarningMessage)]
+    private static object? ReadMemoryPackObject(CookedBinaryReader reader, Type targetType)
+    {
+        int length = reader.ReadInt32();
+        byte[] payload = reader.ReadBytes(length);
+        object? instance = MemoryPackSerializer.Deserialize(targetType, payload);
+        if (instance is null)
+            throw new InvalidOperationException($"MemoryPack deserialization returned null for type '{targetType}'.");
+        return instance;
+    }
+
+    private static object ReadDataSource(CookedBinaryReader reader)
     {
         int length = reader.ReadInt32();
         byte[] data = reader.ReadBytes(length);
@@ -527,7 +786,7 @@ public static class CookedBinarySerializer
         return System.Convert.ChangeType(value, targetType, CultureInfo.InvariantCulture);
     }
 
-    private static void WriteTypeName(BinaryWriter writer, Type type)
+    private static void WriteTypeName(CookedBinaryWriter writer, Type type)
         => writer.Write(type.AssemblyQualifiedName ?? type.FullName ?? type.Name);
 
     [RequiresUnreferencedCode(ReflectionWarningMessage)]
@@ -577,6 +836,213 @@ public static class CookedBinarySerializer
 
     private static readonly ConcurrentDictionary<string, Type> TypeCache = new();
 
+    private static bool TrySerializeWithMemoryPack(object value, Type runtimeType, out byte[]? data)
+    {
+        try
+        {
+            data = MemoryPackSerializer.Serialize(runtimeType, value);
+            return data is not null;
+        }
+        catch (Exception ex) when (IsMemoryPackUnsupported(ex))
+        {
+            data = null;
+            return false;
+        }
+    }
+
+    private static bool TryGetMemoryPackLength(object value, Type runtimeType, out int length)
+    {
+        if (!TrySerializeWithMemoryPack(value, runtimeType, out byte[]? data))
+        {
+            length = 0;
+            return false;
+        }
+
+        length = data!.Length;
+        return true;
+    }
+
+    private static bool IsMemoryPackUnsupported(Exception ex)
+        => ex is MemoryPackSerializationException or NotSupportedException or InvalidOperationException;
+
+    private enum CookedBinaryObjectEncoding : byte
+    {
+        MemoryPack = 0,
+        Reflection = 1
+    }
+
+    [RequiresUnreferencedCode(ReflectionWarningMessage)]
+    [RequiresDynamicCode(ReflectionWarningMessage)]
+    private sealed class CookedBinarySizeCalculator
+    {
+        private long _length;
+
+        public long Length => _length;
+
+        public void AddValue(object? value, bool allowCustom)
+        {
+            AddBytes(1); // type marker
+            if (value is null)
+                return;
+
+            switch (value)
+            {
+                case bool:
+                    AddBytes(sizeof(bool));
+                    return;
+                case byte or sbyte:
+                    AddBytes(1);
+                    return;
+                case short or ushort:
+                    AddBytes(2);
+                    return;
+                case int or uint:
+                    AddBytes(4);
+                    return;
+                case long or ulong:
+                    AddBytes(8);
+                    return;
+                case float:
+                    AddBytes(4);
+                    return;
+                case double:
+                    AddBytes(8);
+                    return;
+                case decimal:
+                    AddBytes(16);
+                    return;
+                case char:
+                    AddBytes(sizeof(char));
+                    return;
+            }
+
+            if (value is string s)
+            {
+                AddBytes(SizeOfString(s));
+                return;
+            }
+
+            if (value is Guid)
+            {
+                AddBytes(16);
+                return;
+            }
+
+            if (value is DateTime or TimeSpan)
+            {
+                AddBytes(8);
+                return;
+            }
+
+            if (value is byte[] bytes)
+            {
+                AddBytes(sizeof(int) + bytes.Length);
+                return;
+            }
+
+            if (value is DataSource dataSource)
+            {
+                AddBytes(sizeof(int) + checked((int)dataSource.Length));
+                return;
+            }
+
+            Type runtimeType = value.GetType();
+
+            if (runtimeType.IsEnum)
+            {
+                AddBytes(SizeOfTypeName(runtimeType) + sizeof(long));
+                return;
+            }
+
+            if (runtimeType.IsArray && value is Array array)
+            {
+                Type elementType = runtimeType.GetElementType() ?? typeof(object);
+                AddBytes(SizeOfTypeName(elementType));
+                AddBytes(sizeof(int));
+                foreach (object? item in array)
+                    AddValue(item, allowCustom);
+                return;
+            }
+
+            if (value is IDictionary dictionary)
+            {
+                AddBytes(SizeOfTypeName(runtimeType));
+                AddBytes(sizeof(int));
+                foreach (DictionaryEntry entry in dictionary)
+                {
+                    AddValue(entry.Key, allowCustom);
+                    AddValue(entry.Value, allowCustom);
+                }
+                return;
+            }
+
+            if (value is IList list)
+            {
+                AddBytes(SizeOfTypeName(runtimeType));
+                AddBytes(sizeof(int));
+                foreach (object? item in list)
+                    AddValue(item, allowCustom);
+                return;
+            }
+
+            if (allowCustom && value is ICookedBinarySerializable custom)
+            {
+                AddBytes(SizeOfTypeName(runtimeType) + custom.CalculateCookedBinarySize());
+                return;
+            }
+
+            AddBytes(SizeOfTypeName(runtimeType));
+
+            if (TryGetMemoryPackLength(value, runtimeType, out int memoryPackLength))
+            {
+                AddBytes(1 + sizeof(int) + memoryPackLength);
+                return;
+            }
+
+            AddBytes(1); // encoding flag
+            AddObjectContent(value, runtimeType, allowCustom);
+        }
+
+        public void AddObjectContent(object instance, Type metadataType, bool allowCustom)
+        {
+            AddBytes(sizeof(int));
+            var metadata = TypeMetadataCache.Get(metadataType);
+            foreach (var member in metadata.Members)
+            {
+                AddBytes(SizeOfString(member.Name));
+                object? value = member.GetValue(instance);
+                AddValue(value, allowCustom);
+            }
+        }
+
+        private void AddBytes(long count)
+            => _length = checked(_length + count);
+    }
+
+    private static long SizeOfTypeName(Type type)
+    {
+        string name = type.AssemblyQualifiedName ?? type.FullName ?? type.Name;
+        return SizeOfString(name);
+    }
+
+    private static long SizeOfString(string value)
+    {
+        int byteCount = Encoding.UTF8.GetByteCount(value);
+        return SizeOf7BitEncodedInt(byteCount) + byteCount;
+    }
+
+    private static int SizeOf7BitEncodedInt(int value)
+    {
+        uint num = (uint)value;
+        int count = 0;
+        do
+        {
+            num >>= 7;
+            count++;
+        } while (num != 0);
+        return count;
+    }
+
     [RequiresUnreferencedCode(ReflectionWarningMessage)]
     [RequiresDynamicCode(ReflectionWarningMessage)]
     private sealed class TypeMetadata
@@ -603,6 +1069,8 @@ public static class CookedBinarySerializer
             => _membersByName.TryGetValue(name, out metadata!);
     }
 
+    [RequiresUnreferencedCode(ReflectionWarningMessage)]
+    [RequiresDynamicCode(ReflectionWarningMessage)]
     private sealed class MemberMetadata
     {
         public MemberMetadata(PropertyInfo property)
@@ -641,4 +1109,5 @@ public static class CookedBinarySerializer
         public static TypeMetadata Get(Type type)
             => Cache.GetOrAdd(type, static t => new TypeMetadata(t));
     }
+
 }

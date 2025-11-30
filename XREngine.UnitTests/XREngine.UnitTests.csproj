@@ -25,6 +25,7 @@
   <ItemGroup>
     <ProjectReference Include="..\XREngine.Data\XREngine.Data.csproj" />
     <ProjectReference Include="..\XRENGINE\XREngine.csproj" />
+    <ProjectReference Include="..\XREngine.Editor\XREngine.Editor.csproj" />
   </ItemGroup>
 
 </Project>
