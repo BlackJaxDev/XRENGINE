@@ -880,7 +880,9 @@ namespace XREngine.Rendering.UI
                         break;
                     case RenderInfo3D renderInfo3D when ParentCanvas?.DrawSpace != ECanvasDrawSpace.Screen:
                         renderInfo3D.CullingOffsetMatrix = RegionWorldTransform;
-                        renderInfo3D.LocalCullingVolume = AABB.FromSize(new Vector3(h, w, 0.1f));
+                        // AABB size should be (width, height, depth) to match the mesh coordinate system
+                        // where X is horizontal (width) and Y is vertical (height)
+                        renderInfo3D.LocalCullingVolume = AABB.FromSize(new Vector3(w, h, 0.1f));
                         break;
                 }
             }

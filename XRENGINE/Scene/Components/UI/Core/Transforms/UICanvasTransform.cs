@@ -360,13 +360,25 @@ namespace XREngine.Rendering.UI
             {
                 case nameof(CameraSpaceCamera):
                     AttachCameraSpaceCameraListener();
-                    MarkWorldModified();
+                    // Force immediate recalculation for Camera space so bounds are correct for octree
+                    if (DrawSpace == ECanvasDrawSpace.Camera)
+                        RecalculateMatrices(true, true);
+                    else
+                        MarkWorldModified();
                     break;
                 case nameof(DrawSpace):
-                    MarkWorldModified();
+                    // Force immediate recalculation when switching to Camera/World space
+                    if (DrawSpace != ECanvasDrawSpace.Screen)
+                        RecalculateMatrices(true, true);
+                    else
+                        MarkWorldModified();
                     break;
                 case nameof(CameraDrawSpaceDistance):
-                    MarkWorldModified();
+                    // Force immediate recalculation for Camera space
+                    if (DrawSpace == ECanvasDrawSpace.Camera)
+                        RecalculateMatrices(true, true);
+                    else
+                        MarkWorldModified();
                     break;
                 case nameof(Translation):
                     ActualLocalBottomLeftTranslation = Translation;
@@ -397,7 +409,12 @@ namespace XREngine.Rendering.UI
         private void CameraSpaceCameraMatrixChanged(TransformBase transform, Matrix4x4 matrix)
         {
             if (DrawSpace == ECanvasDrawSpace.Camera)
-                MarkWorldModified();
+            {
+                // For Camera space, we need immediate recalculation so the UI stays attached to the camera.
+                // Using MarkWorldModified() would defer the update until SwapBuffers, which is too late
+                // for proper octree positioning during CollectVisible.
+                RecalculateMatrices(true, true);
+            }
         }
 
         protected override Matrix4x4 CreateWorldMatrix()

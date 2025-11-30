@@ -141,9 +141,31 @@ namespace XREngine.Components
 
         private void UpdateLayoutWorldSpace()
         {
-            //If in world space, no camera will be calling this method so we have to do it here.
+            //If in world/camera space, no screen-space render path will be calling layout, so we do it here.
             if (CanvasTransform.DrawSpace != ECanvasDrawSpace.Screen && IsActive)
+            {
                 CanvasTransform.UpdateLayout();
+                
+                // For Camera/World space, we need to force immediate render matrix updates
+                // so the octree has correct bounds before collection happens.
+                // The deferred system won't apply changes until SwapBuffers, which is too late.
+                ForceRenderMatrixUpdatesRecursive(CanvasTransform);
+            }
+        }
+
+        /// <summary>
+        /// Recursively forces render matrix updates for all UI transforms.
+        /// This is needed for Camera/World space UI where render matrices must be up-to-date
+        /// before the world's visual scene collects items.
+        /// </summary>
+        private static void ForceRenderMatrixUpdatesRecursive(TransformBase transform)
+        {
+            // Force recalculate and set render matrix now
+            transform.RecalculateMatrices(false, true);
+            
+            // Process children
+            foreach (var child in transform.Children)
+                ForceRenderMatrixUpdatesRecursive(child);
         }
 
         public void CollectVisibleItemsScreenSpace()

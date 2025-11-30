@@ -22,13 +22,16 @@ namespace XREngine
         private static readonly EventList<XRWindow> _windows = [];
         private static int _suppressedCleanupRequests;
         private static UserSettings _userSettings = null!;
+        private static BuildSettings _buildSettings = null!;
 
         public static XREvent<UserSettings>? UserSettingsChanged;
+        public static event Action<BuildSettings>? BuildSettingsChanged;
 
         static Engine()
         {
             UserSettings = new UserSettings();
             GameSettings = new GameStartupSettings();
+            BuildSettings = new BuildSettings();
             Time.Timer.PostUpdateFrame += Timer_PostUpdateFrame;
         }
 
@@ -108,6 +111,26 @@ namespace XREngine
             }
         }
 
+        /// <summary>
+        /// Project-level build settings describing how packaged builds should be produced.
+        /// </summary>
+        public static BuildSettings BuildSettings
+        {
+            get => _buildSettings;
+            set
+            {
+                if (ReferenceEquals(_buildSettings, value) && value is not null)
+                    return;
+
+                if (_buildSettings is not null)
+                    _buildSettings.PropertyChanged -= HandleBuildSettingsChanged;
+
+                _buildSettings = value ?? new BuildSettings();
+                _buildSettings.PropertyChanged += HandleBuildSettingsChanged;
+                BuildSettingsChanged?.Invoke(_buildSettings);
+            }
+        }
+
         private static void OnUserSettingsChanged()
         {
             Profiler.EnableFrameLogging = _userSettings.EnableFrameLogging;
@@ -146,6 +169,11 @@ namespace XREngine
                     Rendering.ApplyGpuRenderDispatchPreference();
                     break;
             }
+        }
+
+        private static void HandleBuildSettingsChanged(object? sender, IXRPropertyChangedEventArgs e)
+        {
+            BuildSettingsChanged?.Invoke(_buildSettings);
         }
         /// <summary>
         /// Game-defined settings, such as initial world and libraries.

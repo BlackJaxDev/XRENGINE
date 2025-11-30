@@ -66,6 +66,33 @@ public static partial class UnitTestingWorld
             ImGui.End();
         }
 
+        private static void DrawBuildSettingsPanel()
+        {
+            if (!_showBuildSettings) return;
+            if (!ImGui.Begin("Build Settings", ref _showBuildSettings))
+            {
+                ImGui.End();
+                return;
+            }
+
+            if (Engine.CurrentProject is not null)
+            {
+                if (ImGui.Button("Save Build Settings"))
+                    Engine.SaveProjectBuildSettings();
+                ImGui.SameLine();
+                ImGui.TextDisabled($"(Project: {Engine.CurrentProject.ProjectName})");
+                ImGui.Separator();
+            }
+            else
+            {
+                ImGui.TextDisabled("No project loaded - settings will not persist.");
+                ImGui.Separator();
+            }
+
+            DrawSettingsTabContent(Engine.BuildSettings, "Build Settings");
+            ImGui.End();
+        }
+
         private static void DrawSettingsTabContent(object? settingsRoot, string headerLabel)
         {
             using var profilerScope = Engine.Profiler.Start("UI.DrawSettingsTabContent");

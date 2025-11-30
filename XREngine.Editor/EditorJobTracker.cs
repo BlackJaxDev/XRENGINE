@@ -45,8 +45,7 @@ public static class EditorJobTracker
 
     public static void Track(Job job, string label, Func<object?, string?>? payloadFormatter = null)
     {
-        if (job is null)
-            throw new ArgumentNullException(nameof(job));
+        ArgumentNullException.ThrowIfNull(job);
 
         if (string.IsNullOrWhiteSpace(label))
             label = "Background Job";
@@ -131,7 +130,7 @@ public static class EditorJobTracker
         => payload switch
         {
             string text => text,
-            UnityPackageExtractionProgress extraction when !string.IsNullOrWhiteSpace(extraction.Message) => extraction.Message,
+            XREngine.ArchiveExtractionProgress extraction when !string.IsNullOrWhiteSpace(extraction.Message) => extraction.Message,
             _ => payload.ToString()
         };
 

@@ -4,18 +4,16 @@ using System.Runtime.InteropServices;
 namespace XREngine.Core.Memory
 {
     [StructLayout(LayoutKind.Sequential, Pack = 1)]
-    public struct Bin32
+    public struct Bin32(uint val)
     {
-        public uint _data;
-
-        public Bin32(uint val) { _data = val; }
+        public uint _data = val;
 
         public static implicit operator uint(Bin32 val) { return val._data; }
         public static implicit operator Bin32(uint val) { return new Bin32(val); }
         //public static implicit operator int(Bin32 val) { return (int)val._data; }
         //public static implicit operator Bin32(int val) { return new Bin32((uint)val); }
 
-        public override string ToString()
+        public override readonly string ToString()
         {
             int i = 0;
             string val = "";
@@ -30,7 +28,7 @@ namespace XREngine.Core.Memory
 
         public bool this[int index]
         {
-            get => ((_data >> index) & 1) != 0;
+            readonly get => ((_data >> index) & 1) != 0;
             set
             {
                 if (value)
@@ -48,7 +46,7 @@ namespace XREngine.Core.Memory
 
         public uint this[int shift, int bitCount]
         {
-            get
+            readonly get
             {
                 int mask = 0;
                 for (int i = 0; i < bitCount; i++)
@@ -66,7 +64,7 @@ namespace XREngine.Core.Memory
 
         public static Bin32 FromString(string s)
         {
-            char[] delims = new char[] { ',', '(', ')', ' ' };
+            char[] delims = [',', '(', ')', ' '];
 
             uint b = 0;
             string[] arr = s.Split(delims, StringSplitOptions.RemoveEmptyEntries);
