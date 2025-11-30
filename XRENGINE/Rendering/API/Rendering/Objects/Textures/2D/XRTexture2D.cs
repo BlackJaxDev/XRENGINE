@@ -4,11 +4,13 @@ using SixLabors.ImageSharp;
 using SixLabors.ImageSharp.PixelFormats;
 using System;
 using System.Collections;
+using System.Diagnostics.CodeAnalysis;
 using System.IO;
 using System.Numerics;
 using System.Threading;
 using System.Threading.Tasks;
 using XREngine;
+using XREngine.Core.Files;
 using XREngine.Data;
 using XREngine.Data.Colors;
 using XREngine.Data.Rendering;
@@ -20,7 +22,7 @@ using YamlDotNet.RepresentationModel;
 namespace XREngine.Rendering
 {
     [XR3rdPartyExtensions("png", "jpg", "jpeg", "tif", "tiff", "tga", "exr", "hdr")]
-    public partial class XRTexture2D : XRTexture, IFrameBufferAttachement
+    public partial class XRTexture2D : XRTexture, IFrameBufferAttachement, ICookedBinarySerializable
     {
         public override void Reload(string path)
         {
@@ -923,6 +925,227 @@ namespace XREngine.Rendering
             t.VWrap = ETexWrapMode.ClampToEdge;
             t.GrabPass = new GrabPassInfo(t, readBuffer, colorBit, depthBit, stencilBit, linearFilter, false, 1.0f);
             return t;
+        }
+
+        [RequiresUnreferencedCode(CookedBinarySerializer.ReflectionWarningMessage)]
+        [RequiresDynamicCode(CookedBinarySerializer.ReflectionWarningMessage)]
+        void ICookedBinarySerializable.WriteCookedBinary(CookedBinaryWriter writer)
+        {
+            WriteTextureAssetBase(writer);
+
+            writer.WriteValue(SamplerName);
+            writer.WriteValue(FrameBufferAttachment);
+            writer.WriteValue(MinLOD);
+            writer.WriteValue(MaxLOD);
+            writer.WriteValue(LargestMipmapLevel);
+            writer.WriteValue(SmallestAllowedMipmapLevel);
+            writer.WriteValue(AutoGenerateMipmaps);
+            writer.WriteValue(AlphaAsTransparency);
+            writer.WriteValue(InternalCompression);
+
+            writer.WriteValue(MagFilter);
+            writer.WriteValue(MinFilter);
+            writer.WriteValue(UWrap);
+            writer.WriteValue(VWrap);
+            writer.WriteValue(Rectangle);
+            writer.WriteValue(Resizable);
+            writer.WriteValue(MultiSampleCount);
+            writer.WriteValue(FixedSampleLocations);
+            writer.WriteValue(ExclusiveSharing);
+            writer.WriteValue(LodBias);
+            writer.WriteValue(SizedInternalFormat);
+
+            WriteGrabPass(writer, GrabPass);
+            WriteMipmaps(writer, Mipmaps);
+        }
+
+        [RequiresUnreferencedCode(CookedBinarySerializer.ReflectionWarningMessage)]
+        [RequiresDynamicCode(CookedBinarySerializer.ReflectionWarningMessage)]
+        long ICookedBinarySerializable.CalculateCookedBinarySize()
+        {
+            long size = CalculateTextureAssetBaseSize();
+
+            size += CookedBinarySerializer.CalculateSize(SamplerName);
+            size += CookedBinarySerializer.CalculateSize(FrameBufferAttachment);
+            size += CookedBinarySerializer.CalculateSize(MinLOD);
+            size += CookedBinarySerializer.CalculateSize(MaxLOD);
+            size += CookedBinarySerializer.CalculateSize(LargestMipmapLevel);
+            size += CookedBinarySerializer.CalculateSize(SmallestAllowedMipmapLevel);
+            size += CookedBinarySerializer.CalculateSize(AutoGenerateMipmaps);
+            size += CookedBinarySerializer.CalculateSize(AlphaAsTransparency);
+            size += CookedBinarySerializer.CalculateSize(InternalCompression);
+
+            size += CookedBinarySerializer.CalculateSize(MagFilter);
+            size += CookedBinarySerializer.CalculateSize(MinFilter);
+            size += CookedBinarySerializer.CalculateSize(UWrap);
+            size += CookedBinarySerializer.CalculateSize(VWrap);
+            size += CookedBinarySerializer.CalculateSize(Rectangle);
+            size += CookedBinarySerializer.CalculateSize(Resizable);
+            size += CookedBinarySerializer.CalculateSize(MultiSampleCount);
+            size += CookedBinarySerializer.CalculateSize(FixedSampleLocations);
+            size += CookedBinarySerializer.CalculateSize(ExclusiveSharing);
+            size += CookedBinarySerializer.CalculateSize(LodBias);
+            size += CookedBinarySerializer.CalculateSize(SizedInternalFormat);
+
+            size += CalculateGrabPassSize(GrabPass);
+            size += CalculateMipmapSize(Mipmaps);
+
+            return size;
+        }
+
+        [RequiresUnreferencedCode(CookedBinarySerializer.ReflectionWarningMessage)]
+        [RequiresDynamicCode(CookedBinarySerializer.ReflectionWarningMessage)]
+        void ICookedBinarySerializable.ReadCookedBinary(CookedBinaryReader reader)
+        {
+            ReadTextureAssetBase(reader);
+
+            SamplerName = reader.ReadValue<string>();
+            FrameBufferAttachment = reader.ReadValue<EFrameBufferAttachment?>() ?? FrameBufferAttachment;
+            MinLOD = ReadStructOrDefault(reader, MinLOD);
+            MaxLOD = ReadStructOrDefault(reader, MaxLOD);
+            LargestMipmapLevel = ReadStructOrDefault(reader, LargestMipmapLevel);
+            SmallestAllowedMipmapLevel = ReadStructOrDefault(reader, SmallestAllowedMipmapLevel);
+            AutoGenerateMipmaps = ReadStructOrDefault(reader, AutoGenerateMipmaps);
+            AlphaAsTransparency = ReadStructOrDefault(reader, AlphaAsTransparency);
+            InternalCompression = ReadStructOrDefault(reader, InternalCompression);
+
+            MagFilter = ReadStructOrDefault(reader, MagFilter);
+            MinFilter = ReadStructOrDefault(reader, MinFilter);
+            UWrap = ReadStructOrDefault(reader, UWrap);
+            VWrap = ReadStructOrDefault(reader, VWrap);
+            Rectangle = ReadStructOrDefault(reader, Rectangle);
+            Resizable = ReadStructOrDefault(reader, Resizable);
+            MultiSampleCount = ReadStructOrDefault(reader, MultiSampleCount);
+            FixedSampleLocations = ReadStructOrDefault(reader, FixedSampleLocations);
+            ExclusiveSharing = ReadStructOrDefault(reader, ExclusiveSharing);
+            LodBias = ReadStructOrDefault(reader, LodBias);
+            SizedInternalFormat = ReadStructOrDefault(reader, SizedInternalFormat);
+
+            GrabPass = ReadGrabPass(reader, this);
+            Mipmaps = ReadMipmaps(reader);
+        }
+
+        private static void WriteMipmaps(CookedBinaryWriter writer, Mipmap2D[] mipmaps)
+        {
+            writer.WriteValue(mipmaps?.Length ?? 0);
+            if (mipmaps is null)
+                return;
+
+            foreach (var mip in mipmaps)
+            {
+                writer.WriteValue(mip.Width);
+                writer.WriteValue(mip.Height);
+                writer.WriteValue(mip.InternalFormat);
+                writer.WriteValue(mip.PixelFormat);
+                writer.WriteValue(mip.PixelType);
+                writer.WriteValue(mip.Data is null ? null : mip.Data.GetBytes());
+            }
+        }
+
+        private static Mipmap2D[] ReadMipmaps(CookedBinaryReader reader)
+        {
+            int mipCount = ReadStructOrDefault(reader, 0);
+            if (mipCount <= 0)
+                return Array.Empty<Mipmap2D>();
+
+            Mipmap2D[] mipmaps = new Mipmap2D[mipCount];
+            for (int i = 0; i < mipCount; i++)
+            {
+                uint width = ReadStructOrDefault(reader, 0u);
+                uint height = ReadStructOrDefault(reader, 0u);
+                var internalFormat = ReadStructOrDefault(reader, EPixelInternalFormat.Rgba8);
+                var pixelFormat = ReadStructOrDefault(reader, EPixelFormat.Rgba);
+                var pixelType = ReadStructOrDefault(reader, EPixelType.UnsignedByte);
+                byte[]? bytes = reader.ReadValue<byte[]>();
+
+                Mipmap2D mip = new()
+                {
+                    Width = width,
+                    Height = height,
+                    InternalFormat = internalFormat,
+                    PixelFormat = pixelFormat,
+                    PixelType = pixelType,
+                    Data = bytes is null ? null : new DataSource(bytes)
+                };
+                mipmaps[i] = mip;
+            }
+
+            return mipmaps;
+        }
+
+        private static void WriteGrabPass(CookedBinaryWriter writer, GrabPassInfo? grabPass)
+        {
+            writer.WriteValue(grabPass is not null);
+            if (grabPass is null)
+                return;
+
+            writer.WriteValue(grabPass.ReadBuffer);
+            writer.WriteValue(grabPass.ColorBit);
+            writer.WriteValue(grabPass.DepthBit);
+            writer.WriteValue(grabPass.StencilBit);
+            writer.WriteValue(grabPass.LinearFilter);
+            writer.WriteValue(grabPass.ResizeToFit);
+            writer.WriteValue(grabPass.ResizeScale);
+        }
+
+        private static GrabPassInfo? ReadGrabPass(CookedBinaryReader reader, XRTexture2D owner)
+        {
+            bool hasGrabPass = ReadStructOrDefault(reader, false);
+            if (!hasGrabPass)
+                return null;
+
+            var readBuffer = ReadStructOrDefault(reader, EReadBufferMode.ColorAttachment0);
+            bool colorBit = ReadStructOrDefault(reader, true);
+            bool depthBit = ReadStructOrDefault(reader, false);
+            bool stencilBit = ReadStructOrDefault(reader, false);
+            bool linearFilter = ReadStructOrDefault(reader, true);
+            bool resizeToFit = ReadStructOrDefault(reader, true);
+            float resizeScale = ReadStructOrDefault(reader, 1.0f);
+
+            return new GrabPassInfo(owner, readBuffer, colorBit, depthBit, stencilBit, linearFilter, resizeToFit, resizeScale);
+        }
+
+        private static T ReadStructOrDefault<T>(CookedBinaryReader reader, T fallback) where T : struct
+        {
+            T? value = reader.ReadValue<T?>();
+            return value ?? fallback;
+        }
+
+        private static long CalculateGrabPassSize(GrabPassInfo? grabPass)
+        {
+            long size = CookedBinarySerializer.CalculateSize(grabPass is not null);
+            if (grabPass is null)
+                return size;
+
+            size += CookedBinarySerializer.CalculateSize(grabPass.ReadBuffer);
+            size += CookedBinarySerializer.CalculateSize(grabPass.ColorBit);
+            size += CookedBinarySerializer.CalculateSize(grabPass.DepthBit);
+            size += CookedBinarySerializer.CalculateSize(grabPass.StencilBit);
+            size += CookedBinarySerializer.CalculateSize(grabPass.LinearFilter);
+            size += CookedBinarySerializer.CalculateSize(grabPass.ResizeToFit);
+            size += CookedBinarySerializer.CalculateSize(grabPass.ResizeScale);
+            return size;
+        }
+
+        private static long CalculateMipmapSize(Mipmap2D[] mipmaps)
+        {
+            long size = CookedBinarySerializer.CalculateSize(mipmaps?.Length ?? 0);
+            if (mipmaps is null)
+                return size;
+
+            foreach (var mip in mipmaps)
+            {
+                size += CookedBinarySerializer.CalculateSize(mip.Width);
+                size += CookedBinarySerializer.CalculateSize(mip.Height);
+                size += CookedBinarySerializer.CalculateSize(mip.InternalFormat);
+                size += CookedBinarySerializer.CalculateSize(mip.PixelFormat);
+                size += CookedBinarySerializer.CalculateSize(mip.PixelType);
+
+                byte[]? bytes = mip.Data is null ? null : mip.Data.GetBytes();
+                size += CookedBinarySerializer.CalculateSize(bytes);
+            }
+
+            return size;
         }
     }
 }

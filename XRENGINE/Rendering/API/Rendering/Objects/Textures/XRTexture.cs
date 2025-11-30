@@ -5,7 +5,7 @@ using XREngine.Data.Rendering;
 
 namespace XREngine.Rendering
 {
-    public abstract class XRTexture : GenericRenderObject
+    public abstract partial class XRTexture : GenericRenderObject
     {
         /// <summary>
         /// Allocates a new empty image with the specified dimensions, format and type.

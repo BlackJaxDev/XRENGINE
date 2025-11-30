@@ -5,14 +5,15 @@ namespace XREngine.Rendering;
 
 public partial class XRMesh
 {
-    private void InitMeshBuffers(bool hasNormals, bool hasTangents, int colorCount, int texCoordCount)
+    private void InitMeshBuffers(bool hasNormals, bool hasTangents, int colorCount, int texCoordCount, bool? forceInterleaved = null)
     {
         using var _ = Engine.Profiler.Start();
         ColorCount = (uint)colorCount;
         TexCoordCount = (uint)texCoordCount;
-        Interleaved = Engine.Rendering.Settings.UseInterleavedMeshBuffer;
+        bool targetInterleaved = forceInterleaved ?? Engine.Rendering.Settings.UseInterleavedMeshBuffer;
+        Interleaved = targetInterleaved;
 
-        if (Interleaved)
+        if (targetInterleaved)
         {
             InterleavedVertexBuffer = new XRDataBuffer(ECommonBufferType.InterleavedVertex.ToString(), EBufferTarget.ArrayBuffer, false)
             {

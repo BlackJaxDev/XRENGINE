@@ -373,6 +373,42 @@ internal static class ProjectBuilder
         return cookedRoot;
     }
 
+    internal static string PrepareCookedContentDirectoryForTests(string assetsDirectory, string intermediateDirectory)
+    {
+        if (string.IsNullOrWhiteSpace(assetsDirectory))
+            throw new ArgumentException("Assets directory must be provided.", nameof(assetsDirectory));
+        if (!Directory.Exists(assetsDirectory))
+            throw new DirectoryNotFoundException($"Assets directory not found at '{assetsDirectory}'.");
+
+        if (string.IsNullOrWhiteSpace(intermediateDirectory))
+            throw new ArgumentException("Intermediate directory must be provided.", nameof(intermediateDirectory));
+        Directory.CreateDirectory(intermediateDirectory);
+
+        string projectRoot = Path.Combine(intermediateDirectory, "UnitTestProjectRoot");
+        Directory.CreateDirectory(projectRoot);
+
+        var project = new XRProject("UnitTestProject")
+        {
+            FilePath = Path.Combine(projectRoot, $"UnitTestProject.{XRProject.ProjectExtension}")
+        };
+
+        string buildRoot = Path.Combine(intermediateDirectory, "TestBuild");
+        var context = new BuildContext(
+            project,
+            new BuildSettings(),
+            assetsDirectory,
+            intermediateDirectory,
+            buildRoot,
+            Path.Combine(buildRoot, "Content"),
+            Path.Combine(buildRoot, "Config"),
+            Path.Combine(buildRoot, "Binaries"),
+            Path.Combine(buildRoot, "ConfigStaging"),
+            Path.Combine(buildRoot, "Content.pak"),
+            Path.Combine(buildRoot, "Config.pak"));
+
+        return PrepareCookedContentDirectory(context);
+    }
+
     [RequiresUnreferencedCode("Cooking assets reflects over concrete asset types to build binary payloads.")]
     private static CookedAssetBlob CreateCookedBlobFromYaml(string yaml, string sourcePath)
     {
