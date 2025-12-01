@@ -75,7 +75,7 @@ public static partial class UnitTestingWorld
 
         if (Toggles.LightProbe || Toggles.Skybox)
         {
-            string[] names = ["warm_restaurant_4k", "overcast_soil_puresky_4k", "studio_small_09_4k", "klippad_sunrise_2_4k", "satara_night_4k"];
+            string[] names = ["warm_restaurant_4k"/*, "overcast_soil_puresky_4k", "studio_small_09_4k", "klippad_sunrise_2_4k", "satara_night_4k"*/];
             Random r = new();
             XRTexture2D skyEquirect = Engine.Assets.LoadEngineAsset<XRTexture2D>("Textures", $"{names[r.Next(0, names.Length - 1)]}.exr");
 

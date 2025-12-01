@@ -792,7 +792,7 @@ public class DefaultRenderPipeline : RenderPipeline
                 GetTexture<XRTexture2DArray>(DepthStencilTextureName)!,
                 0u, 1u,
                 0u, 2u, //Viewing both eyes, so 2 layers
-                EPixelInternalFormat.Depth24Stencil8,
+                ESizedInternalFormat.Depth24Stencil8,
                 false, false)
             {
                 //We're viewing depth values only
@@ -805,7 +805,7 @@ public class DefaultRenderPipeline : RenderPipeline
             return new XRTexture2DView(
                 GetTexture<XRTexture2D>(DepthStencilTextureName)!,
                 0u, 1u,
-                EPixelInternalFormat.Depth24Stencil8,
+                ESizedInternalFormat.Depth24Stencil8,
                 false, false)
             {
                 //We're viewing depth values only
@@ -822,7 +822,7 @@ public class DefaultRenderPipeline : RenderPipeline
                 GetTexture<XRTexture2DArray>(DepthStencilTextureName)!,
                 0u, 1u,
                 0u, 2u, //Viewing both eyes, so 2 layers
-                EPixelInternalFormat.Depth24Stencil8,
+                ESizedInternalFormat.Depth24Stencil8,
                 false, false)
             {
                 //We're viewing stencil values only
@@ -835,7 +835,7 @@ public class DefaultRenderPipeline : RenderPipeline
             return new XRTexture2DView(
                 GetTexture<XRTexture2D>(DepthStencilTextureName)!,
                 0u, 1u,
-                EPixelInternalFormat.Depth24Stencil8,
+                ESizedInternalFormat.Depth24Stencil8,
                 false, false)
             {
                 DepthStencilViewFormat = EDepthStencilFmt.Stencil,
@@ -888,7 +888,7 @@ public class DefaultRenderPipeline : RenderPipeline
                 GetTexture<XRTexture2DArray>(HistoryDepthStencilTextureName)!,
                 0u, 1u,
                 0u, 2u,
-                EPixelInternalFormat.Depth24Stencil8,
+                ESizedInternalFormat.Depth24Stencil8,
                 false, false)
             {
                 DepthStencilViewFormat = EDepthStencilFmt.Depth,
@@ -900,7 +900,7 @@ public class DefaultRenderPipeline : RenderPipeline
             return new XRTexture2DView(
                 GetTexture<XRTexture2D>(HistoryDepthStencilTextureName)!,
                 0u, 1u,
-                EPixelInternalFormat.Depth24Stencil8,
+                ESizedInternalFormat.Depth24Stencil8,
                 false, false)
             {
                 DepthStencilViewFormat = EDepthStencilFmt.Depth,

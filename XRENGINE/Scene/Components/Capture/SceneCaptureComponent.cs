@@ -1,9 +1,12 @@
 ﻿using System;
+using System.Numerics;
 using XREngine.Data.Geometry;
 using XREngine.Data.Rendering;
 using XREngine.Data.Vectors;
+using XREngine.Data.Transforms.Rotations;
 using XREngine.Rendering;
 using XREngine.Rendering.Models.Materials;
+using XREngine.Scene.Transforms;
 using YamlDotNet.Serialization;
 
 namespace XREngine.Components.Lights
@@ -33,6 +36,16 @@ namespace XREngine.Components.Lights
 
         [YamlIgnore]
         public XRViewport?[] Viewports { get; } = new XRViewport?[6];
+
+        private static readonly Quaternion[] FaceRotationOffsets =
+        [
+            new Rotator(0.0f, -90.0f, 180.0f).ToQuaternion(), // +X
+            new Rotator(0.0f, 90.0f, 180.0f).ToQuaternion(),  // -X
+            new Rotator(90.0f, 0.0f, 0.0f).ToQuaternion(),    // +Y
+            new Rotator(-90.0f, 0.0f, 0.0f).ToQuaternion(),   // -Y
+            new Rotator(0.0f, 180.0f, 180.0f).ToQuaternion(), // +Z
+            new Rotator(0.0f, 0.0f, 180.0f).ToQuaternion(),   // -Z
+        ];
 
         protected XRTextureCube? _environmentTextureCubemap;
         protected XRTexture2D? _environmentTextureOctahedral;
@@ -140,6 +153,8 @@ namespace XREngine.Components.Lights
                 cam.PostProcessing.ColorGrading.AutoExposure = false;
                 cam.PostProcessing.ColorGrading.Exposure = 1.0f;
             }
+
+            SyncCaptureCameraTransforms();
         }
 
         private bool _progressiveRenderEnabled = true;
@@ -188,6 +203,8 @@ namespace XREngine.Components.Lights
 
             Engine.Rendering.State.IsSceneCapturePass = true;
 
+            SyncCaptureCameraTransforms();
+
             GetDepthParams(out IFrameBufferAttachement depthAttachment, out int[] depthLayers);
 
             if (_progressiveRenderEnabled)
@@ -216,6 +233,38 @@ namespace XREngine.Components.Lights
                 EncodeEnvironmentToOctahedralMap();
 
             Engine.Rendering.State.IsSceneCapturePass = false;
+        }
+
+        protected override void OnTransformRenderWorldMatrixChanged(TransformBase transform, Matrix4x4 renderMatrix)
+        {
+            base.OnTransformRenderWorldMatrixChanged(transform, renderMatrix);
+            SyncCaptureCameraTransforms();
+        }
+
+        private void SyncCaptureCameraTransforms()
+        {
+            TransformBase? probeTransform = Transform;
+            if (probeTransform is null)
+                return;
+
+            if (Viewports is null || Viewports.Length == 0)
+                return;
+
+            for (int i = 0; i < Viewports.Length; ++i)
+            {
+                var viewport = Viewports[i];
+                var camera = viewport?.Camera;
+                if (camera?.Transform is not Transform faceTransform)
+                    continue;
+
+                if (!ReferenceEquals(faceTransform.Parent, probeTransform))
+                    faceTransform.SetParent(probeTransform, false, true);
+
+                faceTransform.Translation = Vector3.Zero;
+                faceTransform.Rotation = FaceRotationOffsets[i];
+                faceTransform.Scale = Vector3.One;
+                faceTransform.RecalculateMatrices(true, true);
+            }
         }
 
         private void InitializeOctahedralEncodingResources()
