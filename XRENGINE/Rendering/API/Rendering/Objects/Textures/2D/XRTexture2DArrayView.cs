@@ -20,7 +20,7 @@ namespace XREngine.Rendering
         uint numLevels,
         uint minLayer,
         uint numLayers,
-        EPixelInternalFormat internalFormat,
+        ESizedInternalFormat internalFormat,
         bool array,
         bool multisample) : XRTextureView<XRTexture2DArray>(viewedTexture, minLevel, numLevels, minLayer, numLayers, internalFormat), IFrameBufferAttachement
     {

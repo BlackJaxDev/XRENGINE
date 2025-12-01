@@ -8,7 +8,7 @@ namespace XREngine.Rendering
         uint numLevels,
         uint minLayer,
         uint numLayers,
-        EPixelInternalFormat internalFormat) 
+        ESizedInternalFormat internalFormat) 
         : XRTextureViewBase(minLevel, numLevels, minLayer, numLayers, internalFormat) where T : XRTexture
     {
         private T _viewedTexture = viewedTexture;

@@ -10,7 +10,7 @@ namespace XREngine.Rendering
         uint numLevels,
         uint minLayer,
         uint numLayers,
-        EPixelInternalFormat internalFormat) : XRTextureView<XRTexture3D>(viewedTexture, minLevel, numLevels, minLayer, numLayers, internalFormat)
+        ESizedInternalFormat internalFormat) : XRTextureView<XRTexture3D>(viewedTexture, minLevel, numLevels, minLayer, numLayers, internalFormat)
     {
         public override uint MaxDimension { get; } = 3u;
 

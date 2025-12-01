@@ -83,11 +83,14 @@ namespace XREngine.Rendering
             {
                 var tfm = new Transform()
                 {
-                    Parent = parent,
                     Rotation = rotations[i].ToQuaternion(),
                     Translation = Vector3.Zero,
                     Scale = Vector3.One
                 };
+
+                if (parent is not null)
+                    tfm.SetParent(parent, false, true);
+
                 tfm.RecalculateMatrices();
                 cameras[i] = new(tfm, p);
             }
