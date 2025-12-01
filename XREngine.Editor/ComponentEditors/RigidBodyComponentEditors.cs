@@ -1,12 +1,16 @@
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.Numerics;
 using System.Runtime.CompilerServices;
 using System.Threading.Tasks;
 using ImGuiNET;
+using XREngine;
 using XREngine.Components;
 using XREngine.Components.Physics;
 using XREngine.Components.Scene.Mesh;
+using XREngine.Data.Colors;
+using XREngine.Data.Tools;
 using XREngine.Diagnostics;
 
 namespace XREngine.Editor.ComponentEditors;
@@ -17,6 +21,9 @@ internal static class RigidBodyEditorShared
     {
         public bool InProgress;
         public string? LastMessage;
+        public string? ActiveMessage;
+        public PhysicsActorComponent.ConvexHullGenerationProgress? LastProgress;
+        public readonly Stopwatch Stopwatch = new();
     }
 
     private sealed class AdvancedState
@@ -24,8 +31,15 @@ internal static class RigidBodyEditorShared
         public bool Enabled;
     }
 
+    private sealed class HullPreviewState
+    {
+        public bool Enabled;
+    }
+
     private static readonly ConditionalWeakTable<PhysicsActorComponent, GenerationState> _generationStates = new();
     private static readonly ConditionalWeakTable<XRComponent, AdvancedState> _advancedStates = new();
+    private static readonly ConditionalWeakTable<PhysicsActorComponent, HullPreviewState> _previewStates = new();
+    private static readonly string[] s_spinnerFrames = ["-", "\\", "|", "/"];
 
     public static void DrawConvexHullSection(PhysicsActorComponent component)
     {
@@ -33,6 +47,7 @@ internal static class RigidBodyEditorShared
 
         var state = _generationStates.GetValue(component, _ => new GenerationState());
         bool hasModel = component.GetSiblingComponent<ModelComponent>() is not null;
+        var cachedHulls = component.GetCachedConvexHulls();
 
         using (new ImGuiDisabledScope(!hasModel || state.InProgress))
         {
@@ -44,14 +59,19 @@ internal static class RigidBodyEditorShared
         if (!hasModel)
             ImGui.TextDisabled("Requires a sibling ModelComponent.");
 
-        if (!string.IsNullOrEmpty(state.LastMessage))
-            ImGui.TextWrapped(state.LastMessage);
+        if (hasModel)
+            DrawWireframePreviewControls(component, cachedHulls);
+
+        DrawGenerationStatus(state);
     }
 
     private static void TriggerGeneration(PhysicsActorComponent component, GenerationState state)
     {
         state.InProgress = true;
-        state.LastMessage = "Preparing convex hull data...";
+        state.LastMessage = null;
+        state.ActiveMessage = "Preparing convex hull data...";
+        state.LastProgress = null;
+        state.Stopwatch.Restart();
         _ = RunGenerationAsync(component, state);
     }
 
@@ -59,7 +79,13 @@ internal static class RigidBodyEditorShared
     {
         try
         {
-            await component.GenerateConvexHullsFromModelAsync().ConfigureAwait(false);
+            var progress = new Progress<PhysicsActorComponent.ConvexHullGenerationProgress>(p =>
+            {
+                state.LastProgress = p;
+                state.ActiveMessage = FormatProgressMessage(p);
+            });
+
+            await component.GenerateConvexHullsFromModelAsync(progress).ConfigureAwait(false);
             state.LastMessage = "Convex hulls cached successfully.";
         }
         catch (Exception ex)
@@ -70,7 +96,159 @@ internal static class RigidBodyEditorShared
         finally
         {
             state.InProgress = false;
+            state.ActiveMessage = null;
+            state.LastProgress = null;
+            state.Stopwatch.Reset();
         }
+    }
+
+    private static string FormatProgressMessage(PhysicsActorComponent.ConvexHullGenerationProgress progress)
+    {
+        if (progress.UsedCache)
+            return progress.Message;
+
+        if (progress.TotalInputs > 0)
+        {
+            float percent = progress.Percentage * 100f;
+            return $"{progress.Message} ({progress.CompletedInputs}/{progress.TotalInputs}, {percent:0}%)";
+        }
+
+        return progress.Message;
+    }
+
+    private static void DrawWireframePreviewControls(PhysicsActorComponent component, IReadOnlyList<CoACD.ConvexHullMesh>? cachedHulls)
+    {
+        bool hasHulls = cachedHulls is { Count: > 0 };
+        var previewState = _previewStates.GetValue(component, _ => new HullPreviewState());
+
+        if (!hasHulls && previewState.Enabled)
+            previewState.Enabled = false;
+
+        using (new ImGuiDisabledScope(!hasHulls))
+        {
+            bool previewEnabled = previewState.Enabled;
+            if (ImGui.Checkbox("Preview hull wireframe", ref previewEnabled) && hasHulls)
+                previewState.Enabled = previewEnabled;
+        }
+
+        if (previewState.Enabled && cachedHulls is not null)
+        {
+            RenderHullWireframe(component, cachedHulls);
+            ImGui.TextColored(new Vector4(0.4f, 0.9f, 0.9f, 1f), "Wireframe preview queued for rendering.");
+        }
+        else if (!hasHulls)
+        {
+            ImGui.TextDisabled("Generate convex hulls to enable preview.");
+        }
+    }
+
+    private static void RenderHullWireframe(PhysicsActorComponent component, IReadOnlyList<CoACD.ConvexHullMesh> hulls)
+    {
+        var componentTransform = component.Transform;
+        Matrix4x4 transform = componentTransform.RenderMatrix;
+        var (offsetTranslation, offsetRotation) = GetShapeOffsetPose(component);
+        bool hasTranslation = offsetTranslation != Vector3.Zero;
+        bool hasRotation = !offsetRotation.Equals(Quaternion.Identity);
+        if (hasRotation)
+        {
+            float lengthSquared = offsetRotation.LengthSquared();
+            if (lengthSquared < 1e-6f)
+            {
+                hasRotation = false;
+                offsetRotation = Quaternion.Identity;
+            }
+            else if (MathF.Abs(lengthSquared - 1f) > 1e-4f)
+            {
+                offsetRotation = Quaternion.Normalize(offsetRotation);
+            }
+        }
+        bool hasOffset = hasTranslation || hasRotation;
+
+        foreach (var hull in hulls)
+        {
+            var vertices = hull.Vertices;
+            var indices = hull.Indices;
+            if (vertices is null || vertices.Length == 0 || indices is null || indices.Length < 3)
+                continue;
+
+            for (int i = 0; i <= indices.Length - 3; i += 3)
+            {
+                if (!TryGetVertex(vertices, indices[i], out var a) ||
+                    !TryGetVertex(vertices, indices[i + 1], out var b) ||
+                    !TryGetVertex(vertices, indices[i + 2], out var c))
+                {
+                    continue;
+                }
+
+                var worldA = Vector3.Transform(hasOffset ? ApplyShapeOffset(a, offsetTranslation, offsetRotation, hasTranslation, hasRotation) : a, transform);
+                var worldB = Vector3.Transform(hasOffset ? ApplyShapeOffset(b, offsetTranslation, offsetRotation, hasTranslation, hasRotation) : b, transform);
+                var worldC = Vector3.Transform(hasOffset ? ApplyShapeOffset(c, offsetTranslation, offsetRotation, hasTranslation, hasRotation) : c, transform);
+
+                Engine.Rendering.Debug.RenderTriangle(worldA, worldB, worldC, ColorF4.Cyan, solid: false);
+            }
+        }
+    }
+
+    private static Vector3 ApplyShapeOffset(
+        Vector3 vertex,
+        Vector3 translation,
+        Quaternion rotation,
+        bool hasTranslation,
+        bool hasRotation)
+    {
+        if (hasRotation)
+            vertex = Vector3.Transform(vertex, rotation);
+        if (hasTranslation)
+            vertex += translation;
+        return vertex;
+    }
+
+    private static void DrawGenerationStatus(GenerationState state)
+    {
+        if (state.InProgress)
+        {
+            string spinner = s_spinnerFrames[(int)(ImGui.GetTime() * 8) % s_spinnerFrames.Length];
+            string message = state.ActiveMessage ?? "Running convex decomposition...";
+            ImGui.TextColored(new Vector4(0.4f, 0.9f, 0.9f, 1f), $"{spinner} {message}");
+
+            var progress = state.LastProgress;
+            if (progress is { TotalInputs: > 0 })
+            {
+                float percent = progress.Value.Percentage;
+                ImGui.ProgressBar(percent, new Vector2(-1f, 0f), $"{percent * 100f:0}%");
+                ImGui.TextDisabled($"{progress.Value.CompletedInputs}/{progress.Value.TotalInputs} meshes • {state.Stopwatch.Elapsed:mm\\:ss}");
+            }
+            else if (state.Stopwatch.IsRunning)
+            {
+                ImGui.TextDisabled($"Elapsed {state.Stopwatch.Elapsed:mm\\:ss}");
+            }
+        }
+        else if (!string.IsNullOrEmpty(state.LastMessage))
+        {
+            ImGui.TextWrapped(state.LastMessage);
+        }
+    }
+
+    private static (Vector3 translation, Quaternion rotation) GetShapeOffsetPose(PhysicsActorComponent component)
+    {
+        return component switch
+        {
+            DynamicRigidBodyComponent dynamicComponent => (dynamicComponent.ShapeOffsetTranslation, dynamicComponent.ShapeOffsetRotation),
+            StaticRigidBodyComponent staticComponent => (staticComponent.ShapeOffsetTranslation, staticComponent.ShapeOffsetRotation),
+            _ => (Vector3.Zero, Quaternion.Identity)
+        };
+    }
+
+    private static bool TryGetVertex(Vector3[] vertices, int index, out Vector3 vertex)
+    {
+        if ((uint)index >= vertices.Length)
+        {
+            vertex = default;
+            return false;
+        }
+
+        vertex = vertices[index];
+        return true;
     }
 
     public static void DrawAdvancedInspectorToggle(XRComponent component, HashSet<object> visited)

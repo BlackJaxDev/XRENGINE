@@ -319,17 +319,18 @@ namespace XREngine.Scene.Transforms
         public bool RecalculateMatrices(bool forceWorldRecalc = false, bool setRenderMatrixNow = false)
         {
             bool worldChanged = Volatile.Read(ref _worldChanged);
+            bool recalcWorld = worldChanged || forceWorldRecalc;
 
             if (Volatile.Read(ref _localChanged))
                 RecalcLocal();
             
-            if (Volatile.Read(ref _worldChanged) || forceWorldRecalc)
+            if (recalcWorld)
                 RecalcWorld();
             
             if (setRenderMatrixNow || World is null)
                 SetRenderMatrix(WorldMatrix, false).Wait();
 
-            return worldChanged;
+            return recalcWorld;
         }
 
         /// <summary>

@@ -1653,26 +1653,60 @@ namespace XREngine.Data.Core
             => LookRotation(forward, Globals.Up);
         public static Quaternion LookRotation(Vector3 forward, Vector3 up)
         {
-            if (forward.LengthSquared() < float.Epsilon || float.IsNaN(forward.X) || float.IsNaN(forward.Y) || float.IsNaN(forward.Z))
+            static bool IsInvalid(Vector3 v)
+                => v.LengthSquared() < float.Epsilon || float.IsNaN(v.X) || float.IsNaN(v.Y) || float.IsNaN(v.Z);
+
+            if (IsInvalid(forward))
                 return Quaternion.Identity;
-            if (up.LengthSquared() < float.Epsilon || float.IsNaN(up.X) || float.IsNaN(up.Y) || float.IsNaN(up.Z))
-                up = Globals.Up; // Default to world up if up is invalid
+            if (IsInvalid(up))
+                up = Globals.Up;
 
-            forward = forward.Normalized();
-            up = up.Normalized();
+            Vector3 forwardNorm = forward.Normalized();
+            Vector3 upNorm = up.Normalized();
+            Vector3 desiredUp = upNorm;
 
-            // If up is invalid or nearly parallel to forward, pick a safe up vector
-            if (Abs(Vector3.Dot(up, forward)) > 0.999f)
+            static Vector3 ProjectOnPlane(Vector3 vector, Vector3 normal)
+                => vector - normal * Vector3.Dot(vector, normal);
+
+            Vector3 projectedUp = ProjectOnPlane(upNorm, forwardNorm);
+            if (projectedUp.LengthSquared() < float.Epsilon)
             {
-                // Prefer world-up unless it's almost colinear, then choose world-right
-                up = Abs(Vector3.Dot(Globals.Up, forward)) < 0.99f
+                Vector3 fallback = Abs(Vector3.Dot(forwardNorm, Globals.Up)) < 0.99f
                     ? Globals.Up
                     : Globals.Right;
+                projectedUp = ProjectOnPlane(fallback, forwardNorm);
             }
 
-            Vector3 right = Vector3.Cross(forward, up).Normalized();
-            Vector3 orthoUp = Vector3.Cross(right, forward).Normalized();
-            return Quaternion.CreateFromRotationMatrix(Matrix4x4.CreateWorld(Vector3.Zero, forward, orthoUp));
+            if (projectedUp.LengthSquared() < float.Epsilon)
+                projectedUp = Vector3.Cross(forwardNorm, Globals.Right);
+
+            Vector3 orthoUp = projectedUp.Normalized();
+
+            Vector3 right = Vector3.Cross(orthoUp, forwardNorm);
+            if (right.LengthSquared() < float.Epsilon)
+            {
+                Vector3 fallback = Abs(Vector3.Dot(forwardNorm, Globals.Right)) < 0.99f
+                    ? Globals.Right
+                    : Globals.Forward;
+                right = Vector3.Cross(fallback, forwardNorm);
+            }
+            right = right.Normalized();
+
+            Vector3 finalUp = Vector3.Cross(forwardNorm, right);
+
+            if (Vector3.Dot(finalUp, desiredUp) < 0f)
+            {
+                right = -right;
+                finalUp = -finalUp;
+            }
+
+            Matrix4x4 rotation = new(
+                right.X, right.Y, right.Z, 0f,
+                finalUp.X, finalUp.Y, finalUp.Z, 0f,
+                forwardNorm.X, forwardNorm.Y, forwardNorm.Z, 0f,
+                0f, 0f, 0f, 1f);
+
+            return Quaternion.CreateFromRotationMatrix(rotation);
         }
 
         /// <summary>

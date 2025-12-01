@@ -39,21 +39,86 @@ namespace XREngine.Data.Trees
         /// </summary>
         public void Swap()
         {
-            if (_remakeRequested.HasValue)
+            if (IRenderTree.ProfilingHook is not null)
             {
-                List<T> renderables = [];
-                _head.CollectAll(renderables);
-
-                _head = new QuadtreeNode<T>(_remakeRequested.Value, 0, 0, null, this);
-
-                foreach (T item in renderables)
-                    if (!_head.AddHereOrSmaller(item))
-                        _head.AddHere(item);
-
-                _remakeRequested = null;
+                using IDisposable profile = IRenderTree.ProfilingHook("Quadtree Swap");
+                SwapInternal();
             }
-            while (MovedItems.TryDequeue(out T? item))
-                item?.QuadtreeNode?.HandleMovedItem(item);
+            else
+                SwapInternal();
+        }
+
+        private void SwapInternal()
+        {
+            ConsumeMoveItemQueue();
+            ConsumeRemoveItemQueue();
+            ConsumeAddItemQueue();
+            RemakeTree();
+        }
+
+        private void RemakeTree()
+        {
+            if (!_remakeRequested.HasValue)
+                return;
+
+            if (IRenderTree.ProfilingHook is not null)
+            {
+                using IDisposable profile = IRenderTree.ProfilingHook("Quadtree Remake");
+                RemakeTreeInternal();
+            }
+            else
+                RemakeTreeInternal();
+        }
+
+        private void RemakeTreeInternal()
+        {
+            List<T> renderables = [];
+            _head.CollectAll(renderables);
+
+            _head = new QuadtreeNode<T>(_remakeRequested!.Value, 0, 0, null, this);
+
+            foreach (T item in renderables)
+                if (!_head.AddHereOrSmaller(item))
+                    _head.AddHere(item);
+
+            _remakeRequested = null;
+        }
+
+        private void ConsumeAddItemQueue()
+        {
+            if (IRenderTree.ProfilingHook is not null)
+            {
+                using IDisposable profile = IRenderTree.ProfilingHook("Quadtree Add Items");
+                ConsumeAddItemQueueInternal();
+            }
+            else
+                ConsumeAddItemQueueInternal();
+        }
+
+        private void ConsumeAddItemQueueInternal()
+        {
+            while (AddedItems.TryDequeue(out T? item))
+            {
+                if (item is null)
+                    continue;
+                if (!_head.AddHereOrSmaller(item))
+                    _head.AddHere(item);
+            }
+        }
+
+        private void ConsumeRemoveItemQueue()
+        {
+            if (IRenderTree.ProfilingHook is not null)
+            {
+                using IDisposable profile = IRenderTree.ProfilingHook("Quadtree Remove Items");
+                ConsumeRemoveItemQueueInternal();
+            }
+            else
+                ConsumeRemoveItemQueueInternal();
+        }
+
+        private void ConsumeRemoveItemQueueInternal()
+        {
             while (RemovedItems.TryDequeue(out T? item))
             {
                 if (item is null)
@@ -61,14 +126,26 @@ namespace XREngine.Data.Trees
 
                 _head.RemoveHereOrSmaller(item);
             }
-            while (AddedItems.TryDequeue(out T? item))
-            {
-                if (item is null)
-                    continue;
+        }
 
-                if (!_head.AddHereOrSmaller(item))
-                    _head.AddHere(item);
+        private void ConsumeMoveItemQueue()
+        {
+            if (MovedItems?.IsEmpty != false)
+                return;
+
+            if (IRenderTree.ProfilingHook is not null)
+            {
+                using IDisposable profile = IRenderTree.ProfilingHook("Quadtree Move Items");
+                ConsumeMoveItemQueueInternal();
             }
+            else
+                ConsumeMoveItemQueueInternal();
+        }
+
+        private void ConsumeMoveItemQueueInternal()
+        {
+            while (MovedItems.TryDequeue(out T? item))
+                item?.QuadtreeNode?.HandleMovedItem(item);
         }
 
         public void Add(T value)

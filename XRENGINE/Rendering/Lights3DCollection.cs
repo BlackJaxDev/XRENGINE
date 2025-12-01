@@ -14,6 +14,7 @@ using XREngine.Components.Capture.Lights;
 using XREngine.Components.Capture.Lights.Types;
 using XREngine.Scene.Transforms;
 using XREngine.Rendering.Commands;
+using YamlDotNet.Serialization;
 
 namespace XREngine.Scene
 {
@@ -25,6 +26,7 @@ namespace XREngine.Scene
 
         private ITriangulation<LightProbeComponent, LightProbeCell>? _cells;
 
+        [YamlIgnore]
         public Octree<LightProbeCell> LightProbeTree { get; } = new(new AABB());
         
         public XRWorldInstance World { get; } = world;
@@ -109,21 +111,39 @@ namespace XREngine.Scene
 
         public void SwapBuffers()
         {
-            //using var t = Engine.Profiler.Start();
+            using var sample = Engine.Profiler.Start("Lights3DCollection.SwapBuffers");
 
-            foreach (DirectionalLightComponent l in DynamicDirectionalLights)
-                l.SwapBuffers();
-            foreach (SpotLightComponent l in DynamicSpotLights)
-                l.SwapBuffers();
-            foreach (PointLightComponent l in DynamicPointLights)
-                l.SwapBuffers();
-            foreach (SceneCaptureComponentBase sc in CaptureComponents)
-                sc.SwapBuffers();
+            using (Engine.Profiler.Start("Lights3DCollection.SwapBuffers.DirectionalLights"))
+            {
+                foreach (DirectionalLightComponent l in DynamicDirectionalLights)
+                    l.SwapBuffers();
+            }
 
-            _captureBagRendering.Clear();
-            (_captureBagUpdating, _captureBagRendering) = (_captureBagRendering, _captureBagUpdating);
-            foreach (SceneCaptureComponentBase capture in _captureBagRendering)
-                capture.SwapBuffers();
+            using (Engine.Profiler.Start("Lights3DCollection.SwapBuffers.SpotLights"))
+            {
+                foreach (SpotLightComponent l in DynamicSpotLights)
+                    l.SwapBuffers();
+            }
+
+            using (Engine.Profiler.Start("Lights3DCollection.SwapBuffers.PointLights"))
+            {
+                foreach (PointLightComponent l in DynamicPointLights)
+                    l.SwapBuffers();
+            }
+
+            using (Engine.Profiler.Start("Lights3DCollection.SwapBuffers.SceneCaptures"))
+            {
+                foreach (SceneCaptureComponentBase sc in CaptureComponents)
+                    sc.SwapBuffers();
+            }
+
+            using (Engine.Profiler.Start("Lights3DCollection.SwapBuffers.CaptureBags"))
+            {
+                _captureBagRendering.Clear();
+                (_captureBagUpdating, _captureBagRendering) = (_captureBagRendering, _captureBagUpdating);
+                foreach (SceneCaptureComponentBase capture in _captureBagRendering)
+                    capture.SwapBuffers();
+            }
         }
 
         public void RenderShadowMaps(bool collectVisibleNow)
@@ -277,6 +297,7 @@ namespace XREngine.Scene
             public RenderInfo3D RenderInfo { get; }
             public RenderInfo[] RenderedObjects { get; }
             public IVolume? LocalCullingVolume => this;
+            [YamlIgnore]
             public OctreeNodeBase? OctreeNode { get; set; }
             public bool ShouldRender { get; } = true;
             AABB? IOctreeItem.LocalCullingVolume { get; }

@@ -19,12 +19,13 @@ vec3 DirectionFromFragPos(vec3 fragPos)
     vec3 n = vec3(f.x, f.y, 1.0f - abs(f.x) - abs(f.y));
     if (n.z < 0.0f)
     {
-        vec2 sign = vec2(f.x >= 0.0f ? 1.0f : -1.0f, f.y >= 0.0f ? 1.0f : -1.0f);
-        n.x = sign.x * (1.0f - abs(n.y));
-        n.y = sign.y * (1.0f - abs(n.x));
+        vec2 nXY = n.xy;
+        vec2 signDir = vec2(nXY.x >= 0.0f ? 1.0f : -1.0f, nXY.y >= 0.0f ? 1.0f : -1.0f);
+        n.xy = (1.0f - abs(nXY.yx)) * signDir;
     }
 
-    return normalize(n);
+    vec3 dir = vec3(n.x, n.z, n.y);
+    return normalize(dir);
 }
 
 void main()

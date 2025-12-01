@@ -2,6 +2,7 @@
 using XREngine.Input.Devices;
 using XREngine.Rendering;
 using XREngine.Rendering.UI;
+using YamlDotNet.Serialization;
 
 namespace XREngine.Input
 {
@@ -16,6 +17,7 @@ namespace XREngine.Input
         }
 
         private XRViewport? _viewport = null;
+        [YamlIgnore]
         public XRViewport? Viewport
         {
             get => _viewport;

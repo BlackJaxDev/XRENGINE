@@ -364,9 +364,9 @@ public class LightProbeOctaTests
             
                 if (n.z < 0.0f)
                 {
-                    vec2 sign = vec2(f.x >= 0.0f ? 1.0f : -1.0f, f.y >= 0.0f ? 1.0f : -1.0f);
-                    n.x = sign.x * (1.0f - abs(n.y));
-                    n.y = sign.y * (1.0f - abs(n.x));
+                    vec2 nXY = n.xy;
+                    vec2 signDir = vec2(nXY.x >= 0.0f ? 1.0f : -1.0f, nXY.y >= 0.0f ? 1.0f : -1.0f);
+                    n.xy = (1.0f - abs(nXY.yx)) * signDir;
                 }
             
                 return normalize(n);
@@ -439,9 +439,9 @@ public class LightProbeOctaTests
             
                 if (n.z < 0.0f)
                 {
-                    vec2 sign = vec2(f.x >= 0.0f ? 1.0f : -1.0f, f.y >= 0.0f ? 1.0f : -1.0f);
-                    n.x = sign.x * (1.0f - abs(n.y));
-                    n.y = sign.y * (1.0f - abs(n.x));
+                    vec2 nXY = n.xy;
+                    vec2 signDir = vec2(nXY.x >= 0.0f ? 1.0f : -1.0f, nXY.y >= 0.0f ? 1.0f : -1.0f);
+                    n.xy = (1.0f - abs(nXY.yx)) * signDir;
                 }
             
                 return normalize(n);

@@ -38,7 +38,7 @@ internal sealed class SkinnedMeshBvhScheduler
         return tcs.Task;
     }
 
-    public Task<Result> Schedule(RenderableMesh mesh, int version, Vector3[] positions, AABB bounds)
+    public Task<Result> Schedule(RenderableMesh mesh, int version, Vector3[] positions, AABB bounds, Matrix4x4 basis)
     {
         var tcs = new TaskCompletionSource<Result>(TaskCreationOptions.RunContinuationsAsynchronously);
 
@@ -47,14 +47,22 @@ internal sealed class SkinnedMeshBvhScheduler
 
         if (xrMesh is null || triangles is null || triangles.Count == 0)
         {
-            tcs.TrySetResult(Result.Empty(version));
+            var localized = mesh.EnsureLocalBounds(new SkinnedMeshBoundsCalculator.Result(positions, bounds, basis));
+            tcs.TrySetResult(new Result(version, null, localized));
             return tcs.Task;
         }
 
-        var boundsResult = new SkinnedMeshBoundsCalculator.Result(positions, bounds);
+        var boundsResult = mesh.EnsureLocalBounds(new SkinnedMeshBoundsCalculator.Result(positions, bounds, basis));
+        var localizedPositions = boundsResult.Positions;
+
+        if (localizedPositions is null || localizedPositions.Length == 0)
+        {
+            tcs.TrySetResult(new Result(version, null, boundsResult));
+            return tcs.Task;
+        }
 
         Engine.Jobs.Schedule(
-            GenerateBvhJob(triangles, positions, version, boundsResult, tcs),
+            GenerateBvhJob(triangles, localizedPositions, version, boundsResult, tcs),
             error: ex => tcs.TrySetException(ex),
             canceled: () => tcs.TrySetCanceled()
         );
@@ -72,6 +80,8 @@ internal sealed class SkinnedMeshBvhScheduler
                 return;
             }
 
+            boundsResult = mesh.EnsureLocalBounds(boundsResult);
+
             var xrMesh = mesh.CurrentLODRenderer?.Mesh;
             var triangles = xrMesh?.Triangles;
             if (xrMesh is null || triangles is null || triangles.Count == 0)
@@ -81,6 +91,12 @@ internal sealed class SkinnedMeshBvhScheduler
             }
 
             var positions = boundsResult.Positions;
+            if (positions is null || positions.Length == 0)
+            {
+                tcs.TrySetResult(new Result(version, null, boundsResult));
+                return;
+            }
+
             Engine.Jobs.Schedule(
                 GenerateBvhJob(triangles, positions, version, boundsResult, tcs),
                 error: ex => tcs.TrySetException(ex),
@@ -132,6 +148,6 @@ internal sealed class SkinnedMeshBvhScheduler
         public bool HasTree => Tree is not null;
 
         public static Result Empty(int version)
-            => new(version, null, default);
+            => new(version, null, new SkinnedMeshBoundsCalculator.Result(Array.Empty<Vector3>(), default, Matrix4x4.Identity));
     }
 }

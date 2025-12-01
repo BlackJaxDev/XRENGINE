@@ -6,6 +6,7 @@ using XREngine.Data.Geometry;
 using XREngine.Data.Rendering;
 using XREngine.Data.Trees;
 using XREngine.Rendering.Commands;
+using YamlDotNet.Serialization;
 
 namespace XREngine.Rendering.Info
 {
@@ -94,6 +95,7 @@ namespace XREngine.Rendering.Info
         /// <summary>
         /// The octree bounding box this object is currently located in.
         /// </summary>   
+        [YamlIgnore]
         public OctreeNodeBase? OctreeNode
         {
             get => _octreeNode;

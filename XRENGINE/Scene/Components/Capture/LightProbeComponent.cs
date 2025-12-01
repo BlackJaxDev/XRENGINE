@@ -1,6 +1,7 @@
 ﻿using MIConvexHull;
 using System.Numerics;
 using System.Reflection;
+using XREngine.Components;
 using XREngine.Components.Lights;
 using XREngine.Data.Colors;
 using XREngine.Data.Geometry;
@@ -17,6 +18,7 @@ using YamlDotNet.Serialization;
 
 namespace XREngine.Components.Capture.Lights
 {
+    [XRComponentEditor("XREngine.Editor.ComponentEditors.LightProbeComponentEditor")]
     public class LightProbeComponent : SceneCaptureComponent, IRenderable, IVertex
     {
         /// <summary>

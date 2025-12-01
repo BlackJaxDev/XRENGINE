@@ -59,6 +59,8 @@ namespace XREngine
 
                 public static void SwapBuffers()
                 {
+                    using var sample = Engine.Profiler.Start("Rendering.Debug.SwapBuffers");
+
                     if (!Engine.Rendering.State.DebugInstanceRenderingAvailable)
                     {
                         _debugPoints.Clear();

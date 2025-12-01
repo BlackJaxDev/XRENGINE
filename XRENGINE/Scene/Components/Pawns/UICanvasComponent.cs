@@ -7,6 +7,7 @@ using XREngine.Rendering.Info;
 using XREngine.Rendering.UI;
 using XREngine.Scene;
 using XREngine.Scene.Transforms;
+using YamlDotNet.Serialization;
 
 namespace XREngine.Components
 {
@@ -90,6 +91,7 @@ namespace XREngine.Components
         /// <summary>
         /// This is the scene that contains all the 2D renderables.
         /// </summary>
+        [YamlIgnore]
         public VisualScene2D VisualScene2D
         {
             get => _visualScene2D ??= new();
@@ -123,6 +125,7 @@ namespace XREngine.Components
             if (!IsActive)
                 return;
 
+            using var sample = Engine.Profiler.Start("UICanvasComponent.SwapBuffersScreenSpace");
             _renderPipeline.MeshRenderCommands.SwapBuffers();
             VisualScene2D.GlobalSwapBuffers();
         }
@@ -194,8 +197,10 @@ namespace XREngine.Components
             => results.Values.SelectMany(x => x).Select(x => x.Owner as UIComponent).Where(x => x is not null).OrderBy(x => x!.Transform.Depth);
 
         private readonly XRRenderPipelineInstance _renderPipeline = new() { Pipeline = new UserInterfaceRenderPipeline() };
+        [YamlIgnore]
         public XRRenderPipelineInstance RenderPipelineInstance => _renderPipeline;
 
+        [YamlIgnore]
         public RenderPipeline? RenderPipeline
         {
             get => _renderPipeline.Pipeline;

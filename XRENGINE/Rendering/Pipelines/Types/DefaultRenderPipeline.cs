@@ -148,6 +148,10 @@ public class DefaultRenderPipeline : RenderPipeline
     public const string HistoryExposureVarianceTextureName = "HistoryExposureVariance";
     public const string MotionBlurTextureName = "MotionBlur";
 
+    public DefaultRenderPipeline() : this(false)
+    {
+    }
+
     public DefaultRenderPipeline(bool stereo = false) : base(true)
     {
         Stereo = stereo;

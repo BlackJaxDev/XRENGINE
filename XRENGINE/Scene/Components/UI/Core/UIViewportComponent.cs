@@ -2,6 +2,7 @@
 using XREngine.Data.Core;
 using XREngine.Data.Geometry;
 using XREngine.Data.Rendering;
+using YamlDotNet.Serialization;
 
 namespace XREngine.Rendering.UI
 {
@@ -38,6 +39,7 @@ namespace XREngine.Rendering.UI
         private void SetUniforms(XRRenderProgram vertexProgram, XRRenderProgram materialProgram)
             => SettingUniforms?.Invoke(materialProgram);
 
+        [YamlIgnore]
         public XRViewport Viewport { get; private set; } = new XRViewport(null, 1, 1);
 
         protected override void UITransformPropertyChanged(object? sender, IXRPropertyChangedEventArgs e)
@@ -100,6 +102,7 @@ namespace XREngine.Rendering.UI
                 return;
 
             _swapping = true;
+            using var sample = Engine.Profiler.Start("UIViewportComponent.SwapBuffers");
             Viewport.SwapBuffers();
             _swapping = false;
         }

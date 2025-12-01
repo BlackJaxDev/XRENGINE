@@ -5,6 +5,7 @@ using XREngine.Data.Colors;
 using XREngine.Data.Geometry;
 using XREngine.Data.Trees;
 using XREngine.Rendering.Commands;
+using YamlDotNet.Serialization;
 
 namespace XREngine.Rendering.Info
 {
@@ -52,6 +53,7 @@ namespace XREngine.Rendering.Info
             set => SetField(ref _cullingVolume, value);
         }
 
+        [YamlIgnore]
         public QuadtreeNodeBase? QuadtreeNode
         {
             get => _quadtreeNode;

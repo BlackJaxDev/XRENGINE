@@ -282,6 +282,7 @@ namespace XREngine.Components
 
         private void SwapBuffers()
         {
+            using var sample = Engine.Profiler.Start("UICanvasInputComponent.SwapBuffers");
             TopMostElement = UIElementIntersections.FirstOrDefault(x => x.Owner is UIComponent)?.Owner as UIComponent;
             TopMostInteractable = UIElementIntersections.FirstOrDefault(x => x.Owner is UIInteractableComponent)?.Owner as UIInteractableComponent;
             //if (TopMostInteractable is not null)

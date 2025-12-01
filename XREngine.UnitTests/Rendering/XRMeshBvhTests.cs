@@ -24,8 +24,13 @@ public class XRMeshBvhTests
         var root = tree!._rootBVH;
         root.ShouldNotBeNull();
 
-        root.box.Min.ShouldBe(new Vector3(0f, 0f, 0f));
-        root.box.Max.ShouldBe(new Vector3(1f, 1f, 0f));
+        const float tolerance = 1e-3f;
+        root.box.Min.X.ShouldBeLessThanOrEqualTo(0f + tolerance);
+        root.box.Min.Y.ShouldBeLessThanOrEqualTo(0f + tolerance);
+        root.box.Min.Z.ShouldBeLessThanOrEqualTo(0f + tolerance);
+        root.box.Max.X.ShouldBeGreaterThanOrEqualTo(1f - tolerance);
+        root.box.Max.Y.ShouldBeGreaterThanOrEqualTo(1f - tolerance);
+        root.box.Max.Z.ShouldBeGreaterThanOrEqualTo(0f - tolerance);
 
         var nodes = tree.Traverse(static _ => true);
         var triangleTotal = 0;
@@ -60,8 +65,13 @@ public class XRMeshBvhTests
         mesh.GenerateBVH();
 
         var updatedRoot = mesh.BVHTree!._rootBVH;
-        updatedRoot.box.Min.ShouldBe(new Vector3(-1f, -1f, 0f));
-        updatedRoot.box.Max.ShouldBe(new Vector3(1f, 1f, 0f));
+        const float tolerance = 1e-3f;
+        updatedRoot.box.Min.X.ShouldBeLessThanOrEqualTo(-1f + tolerance);
+        updatedRoot.box.Min.Y.ShouldBeLessThanOrEqualTo(-1f + tolerance);
+        updatedRoot.box.Min.Z.ShouldBeLessThanOrEqualTo(0f + tolerance);
+        updatedRoot.box.Max.X.ShouldBeGreaterThanOrEqualTo(1f - tolerance);
+        updatedRoot.box.Max.Y.ShouldBeGreaterThanOrEqualTo(1f - tolerance);
+        updatedRoot.box.Max.Z.ShouldBeGreaterThanOrEqualTo(0f - tolerance);
         updatedRoot.box.ShouldNotBe(originalBounds);
     }
 

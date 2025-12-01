@@ -1,5 +1,6 @@
 ﻿using System;
 using System.Collections.Concurrent;
+using System.Collections.Generic;
 using XREngine.Data.Geometry;
 using XREngine.Data.Rendering;
 
@@ -50,56 +51,187 @@ namespace XREngine.Data.Trees
             Move,
             Add,
             Remove,
+            None,
         }
 
         internal ConcurrentQueue<(T item, ETreeCommand)> SwapCommands { get; } = new ConcurrentQueue<(T item, ETreeCommand command)>();
         internal ConcurrentQueue<(Segment segment, SortedDictionary<float, List<(T item, object? data)>> items, Func<T, Segment, (float? distance, object? data)> directTest, Action<SortedDictionary<float, List<(T item, object? data)>>> finishedCallback)> RaycastCommands { get; } = new ConcurrentQueue<(Segment segment, SortedDictionary<float, List<(T item, object? data)>> items, Func<T, Segment, (float? distance, object? data)> directTest, Action<SortedDictionary<float, List<(T item, object? data)>>> finishedCallback)>();
+
+        private readonly List<(T item, ETreeCommand command)> _swapCommandBuffer = new(256);
+        private readonly Dictionary<T, int> _swapCommandIndices = new();
 
         /// <summary>
         /// Updates all moved, added and removed items in the octree.
         /// </summary>
         public void Swap()
         {
-            while (SwapCommands.TryDequeue(out (T item, ETreeCommand command) command))
+            if (IRenderTree.ProfilingHook is not null)
             {
-                if (command.item is null)
-                    continue;
-                switch (command.command)
-                {
-                    case ETreeCommand.Move:
-                        command.item?.OctreeNode?.HandleMovedItem(command.item);
-                        break;
-
-                    case ETreeCommand.Add:
-                        {
-                            if (!_head.AddHereOrSmaller(command.item))
-                                _head.AddHere(command.item);
-                        }
-                        break;
-
-                    case ETreeCommand.Remove:
-                        {
-                            var node = command.item.OctreeNode;
-                            if (node != null)
-                            {
-                                node.Remove(command.item, out bool destroyNode);
-                                if (destroyNode)
-                                    node.Destroy();
-                            }
-                        }
-                        break;
-                }
+                using var sample = IRenderTree.ProfilingHook("Octree.Swap");
+                SwapInternal();
             }
+            else
+                SwapInternal();
+        }
+
+        private void SwapInternal()
+        {
+            ConsumeSwapCommands();
+            ConsumeRaycastCommands();
+        }
+
+        private void ConsumeRaycastCommands()
+        {
+            if (RaycastCommands.IsEmpty)
+                return;
+
+            if (IRenderTree.ProfilingHook is not null)
+            {
+                using var sample = IRenderTree.ProfilingHook("Octree.ConsumeRaycastCommands");
+                ConsumeRaycastCommandsInternal();
+            }
+            else
+                ConsumeRaycastCommandsInternal();
+        }
+
+        private void ConsumeRaycastCommandsInternal()
+        {
             while (RaycastCommands.TryDequeue(out (
-                    Segment segment,
-                    SortedDictionary<float, List<(T item, object? data)>> items,
-                    Func<T, Segment, (float? distance, object? data)> directTest,
-                    Action<SortedDictionary<float, List<(T item, object? data)>>> finishedCallback
-                ) command))
+                Segment segment,
+                SortedDictionary<float, List<(T item, object? data)>> items,
+                Func<T, Segment, (float? distance, object? data)> directTest,
+                Action<SortedDictionary<float, List<(T item, object? data)>>> finishedCallback
+            ) command))
             {
                 _head.Raycast(command.segment, command.items, command.directTest);
                 command.finishedCallback(command.items);
             }
+        }
+
+        private void ConsumeSwapCommands()
+        {
+            if (SwapCommands.IsEmpty)
+                return;
+
+            if (IRenderTree.ProfilingHook is not null)
+            {
+                using var sample = IRenderTree.ProfilingHook("Octree.ConsumeSwapCommands");
+                ConsumeSwapCommandsInternal();
+            }
+            else
+                ConsumeSwapCommandsInternal();
+        }
+
+        private void ConsumeSwapCommandsInternal()
+        {
+            if (SwapCommands.IsEmpty)
+                return;
+
+            DrainSwapCommands();
+            ExecuteSwapCommands();
+        }
+
+        private void DrainSwapCommands()
+        {
+            _swapCommandBuffer.Clear();
+            _swapCommandIndices.Clear();
+
+            while (SwapCommands.TryDequeue(out (T item, ETreeCommand command) command))
+            {
+                var item = command.item;
+                if (item is null)
+                    continue;
+
+                if (!_swapCommandIndices.TryGetValue(item, out int index))
+                {
+                    _swapCommandIndices[item] = _swapCommandBuffer.Count;
+                    _swapCommandBuffer.Add(command);
+                    continue;
+                }
+
+                var combined = CombineCommands(_swapCommandBuffer[index].command, command.command);
+                if (combined == ETreeCommand.None)
+                {
+                    RemoveBufferedCommand(index);
+                    continue;
+                }
+
+                _swapCommandBuffer[index] = (item, combined);
+            }
+        }
+
+        private void ExecuteSwapCommands()
+        {
+            if (_swapCommandBuffer.Count == 0)
+                return;
+
+            var head = _head;
+            for (int i = 0; i < _swapCommandBuffer.Count; i++)
+            {
+                var (item, command) = _swapCommandBuffer[i];
+                if (item is null || command == ETreeCommand.None)
+                    continue;
+
+                switch (command)
+                {
+                    case ETreeCommand.Move:
+                        item.OctreeNode?.HandleMovedItem(item);
+                        break;
+                    case ETreeCommand.Add:
+                        if (!head.AddHereOrSmaller(item))
+                            head.AddHere(item);
+                        break;
+                    case ETreeCommand.Remove:
+                        var node = item.OctreeNode;
+                        if (node is null)
+                            break;
+                        node.Remove(item, out bool destroyNode);
+                        if (destroyNode)
+                            node.Destroy();
+                        break;
+                }
+            }
+
+            _swapCommandBuffer.Clear();
+            _swapCommandIndices.Clear();
+        }
+
+        private static ETreeCommand CombineCommands(ETreeCommand current, ETreeCommand next)
+        {
+            if (next == ETreeCommand.None)
+                return current;
+
+            if (current == ETreeCommand.None)
+                return next;
+
+            return (current, next) switch
+            {
+                (ETreeCommand.Add, ETreeCommand.Remove) => ETreeCommand.None,
+                (ETreeCommand.Add, ETreeCommand.Move) => ETreeCommand.Add,
+                (ETreeCommand.Move, ETreeCommand.Move) => ETreeCommand.Move,
+                (ETreeCommand.Move, ETreeCommand.Remove) => ETreeCommand.Remove,
+                (ETreeCommand.Move, ETreeCommand.Add) => ETreeCommand.Add,
+                (ETreeCommand.Remove, ETreeCommand.Add) => ETreeCommand.Add,
+                (ETreeCommand.Remove, ETreeCommand.Move) => ETreeCommand.Remove,
+                (ETreeCommand.Remove, ETreeCommand.Remove) => ETreeCommand.Remove,
+                (ETreeCommand.Add, ETreeCommand.Add) => ETreeCommand.Add,
+                _ => next,
+            };
+        }
+
+        private void RemoveBufferedCommand(int index)
+        {
+            var item = _swapCommandBuffer[index].item;
+            _swapCommandIndices.Remove(item);
+
+            int lastIndex = _swapCommandBuffer.Count - 1;
+            if (index != lastIndex)
+            {
+                _swapCommandBuffer[index] = _swapCommandBuffer[lastIndex];
+                _swapCommandIndices[_swapCommandBuffer[index].item] = index;
+            }
+
+            _swapCommandBuffer.RemoveAt(lastIndex);
         }
 
         public void Add(T value)

@@ -191,9 +191,19 @@ namespace XREngine.Rendering
             RenderCommandCollection? renderCommandsOverride = null,
             bool allowScreenSpaceUISwap = true)
         {
-            (renderCommandsOverride ?? _renderPipeline.MeshRenderCommands).SwapBuffers();
+            using var sample = Engine.Profiler.Start($"XRViewport.SwapBuffers[{Index}]");
+
+            var commandCollection = renderCommandsOverride ?? _renderPipeline.MeshRenderCommands;
+            using (Engine.Profiler.Start("XRViewport.SwapBuffers.MeshCommands"))
+            {
+                commandCollection.SwapBuffers();
+            }
+
             if (allowScreenSpaceUISwap)
+            {
+                using var uiSample = Engine.Profiler.Start("XRViewport.SwapBuffers.ScreenSpaceUI");
                 SwapBuffers_ScreenSpaceUI();
+            }
         }
 
         /// <summary>
@@ -220,6 +230,8 @@ namespace XREngine.Rendering
         {
             if (!AllowUIRender)
                 return;
+
+            using var sample = Engine.Profiler.Start("XRViewport.SwapBuffers_ScreenSpaceUI");
 
             var ui = CameraComponent?.GetUserInterfaceOverlay();
             if (ui is null)
@@ -327,6 +339,7 @@ namespace XREngine.Rendering
         public XRCamera? ActiveCamera => _cameraComponent?.Camera ?? _camera;
 
         private readonly XRRenderPipelineInstance _renderPipeline = new();
+        [YamlIgnore]
         public XRRenderPipelineInstance RenderPipelineInstance => _renderPipeline;
 
         private void CollectVisibleAutomatic()
@@ -335,6 +348,7 @@ namespace XREngine.Rendering
         }
         private void SwapBuffersAutomatic()
         {
+            using var sample = Engine.Profiler.Start("XRViewport.SwapBuffersAutomatic");
             SwapBuffers();
         }
 
@@ -406,6 +420,7 @@ namespace XREngine.Rendering
             }
         }
 
+        [YamlIgnore]
         public RenderPipeline? RenderPipeline
         {
             get => _renderPipeline.Pipeline;

@@ -9,6 +9,7 @@ using XREngine.Data.Trees;
 using XREngine.Rendering;
 using XREngine.Rendering.Commands;
 using XREngine.Rendering.Info;
+using YamlDotNet.Serialization;
 using Vector3 = System.Numerics.Vector3;
 
 namespace XREngine.Scene
@@ -20,6 +21,7 @@ namespace XREngine.Scene
     {
         public VisualScene2D() { }
 
+        [YamlIgnore]
         public Quadtree<RenderInfo2D> RenderTree { get; } = new Quadtree<RenderInfo2D>(new BoundingRectangleF());
 
         public void SetBounds(BoundingRectangleF bounds)

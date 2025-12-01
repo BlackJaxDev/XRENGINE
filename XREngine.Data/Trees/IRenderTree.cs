@@ -4,6 +4,8 @@ namespace XREngine.Data.Trees
 {
     public interface IRenderTree
     {
+        public static Func<string, IDisposable>? ProfilingHook = null;
+
         void Remake();
         void Swap();
         void Add(ITreeItem item);

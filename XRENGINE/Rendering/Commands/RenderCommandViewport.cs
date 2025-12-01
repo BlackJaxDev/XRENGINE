@@ -1,9 +1,11 @@
 ﻿using System.Numerics;
+using YamlDotNet.Serialization;
 
 namespace XREngine.Rendering.Commands
 {
     public class RenderCommandViewport : RenderCommandMesh2D
     {
+        [YamlIgnore]
         public XRViewport? Viewport { get; set; }
         public XRMaterialFrameBuffer? Framebuffer { get; set; }
 

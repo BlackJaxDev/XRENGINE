@@ -10,12 +10,13 @@ const float PI = 3.14159265359f;
 vec2 EncodeOcta(vec3 dir)
 {
     dir = normalize(dir);
-    dir /= max(abs(dir.x) + abs(dir.y) + abs(dir.z), 1e-5f);
+    vec3 octDir = vec3(dir.x, dir.z, dir.y);
+    octDir /= max(abs(octDir.x) + abs(octDir.y) + abs(octDir.z), 1e-5f);
 
-    vec2 uv = dir.xy;
-    if (dir.z < 0.0f)
+    vec2 uv = octDir.xy;
+    if (octDir.z < 0.0f)
     {
-        vec2 signDir = vec2(dir.x >= 0.0f ? 1.0f : -1.0f, dir.y >= 0.0f ? 1.0f : -1.0f);
+        vec2 signDir = vec2(uv.x >= 0.0f ? 1.0f : -1.0f, uv.y >= 0.0f ? 1.0f : -1.0f);
         uv = (1.0f - abs(uv.yx)) * signDir;
     }
 
@@ -29,12 +30,13 @@ vec3 DecodeOcta(vec2 uv)
 
     if (n.z < 0.0f)
     {
-        vec2 sign = vec2(f.x >= 0.0f ? 1.0f : -1.0f, f.y >= 0.0f ? 1.0f : -1.0f);
-        n.x = sign.x * (1.0f - abs(n.y));
-        n.y = sign.y * (1.0f - abs(n.x));
+        vec2 nXY = n.xy;
+        vec2 signDir = vec2(nXY.x >= 0.0f ? 1.0f : -1.0f, nXY.y >= 0.0f ? 1.0f : -1.0f);
+        n.xy = (1.0f - abs(nXY.yx)) * signDir;
     }
 
-    return normalize(n);
+    vec3 dir = vec3(n.x, n.z, n.y);
+    return normalize(dir);
 }
 
 vec3 DirectionFromFragPos(vec3 fragPos)

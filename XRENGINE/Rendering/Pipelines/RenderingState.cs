@@ -173,6 +173,8 @@ public sealed partial class XRRenderPipelineInstance
             _cropRegionStack.Pop();
             if (_cropRegionStack.Count > 0)
                 AbstractRenderer.Current?.CropRenderArea(_cropRegionStack.Peek());
+            else
+                AbstractRenderer.Current?.SetCroppingEnabled(false);
         }
 
         /// <summary>

@@ -126,12 +126,10 @@ public sealed class ModelBvhPreviewComponent : DebugVisualize3DComponent
     {
         bool skinned = mesh.IsSkinned;
         BVH<Triangle>? tree;
-        bool worldSpace;
 
         if (skinned)
         {
             tree = mesh.GetSkinnedBvh();
-            worldSpace = true;
         }
         else
         {
@@ -143,7 +141,6 @@ public sealed class ModelBvhPreviewComponent : DebugVisualize3DComponent
                 xrMesh.GenerateBVH();
                 tree = xrMesh.BVHTree;
             }
-            worldSpace = false;
         }
 
         var root = tree?._rootBVH;
@@ -153,7 +150,7 @@ public sealed class ModelBvhPreviewComponent : DebugVisualize3DComponent
         _nodeStack.Clear();
         _nodeStack.Push(root);
 
-        Matrix4x4 meshMatrix = worldSpace ? Matrix4x4.Identity : GetMeshWorldMatrix(mesh);
+        Matrix4x4 meshMatrix = skinned ? mesh.SkinnedBvhLocalToWorldMatrix : GetMeshWorldMatrix(mesh);
         Matrix4x4 rotationScaleMatrix = meshMatrix;
         rotationScaleMatrix.Translation = Vector3.Zero;
 
@@ -164,7 +161,7 @@ public sealed class ModelBvhPreviewComponent : DebugVisualize3DComponent
                 continue;
 
             AABB nodeBounds = node.box;
-            AABB worldBounds = worldSpace ? nodeBounds : TransformAabb(nodeBounds, meshMatrix);
+            AABB worldBounds = TransformAabb(nodeBounds, meshMatrix);
             if (CullNodesAgainstCamera && frustum is not null)
             {
                 EContainment containment = frustum.ContainsAABB(worldBounds);
@@ -173,15 +170,8 @@ public sealed class ModelBvhPreviewComponent : DebugVisualize3DComponent
             }
 
             ColorF4 color = node.IsLeaf && HighlightLeafNodes ? LeafNodeColor : InternalNodeColor;
-            if (worldSpace)
-            {
-                Engine.Rendering.Debug.RenderBox(nodeBounds.HalfExtents, nodeBounds.Center, Matrix4x4.Identity, false, color);
-            }
-            else
-            {
-                Vector3 worldCenter = Vector3.Transform(nodeBounds.Center, meshMatrix);
-                Engine.Rendering.Debug.RenderBox(nodeBounds.HalfExtents, worldCenter, rotationScaleMatrix, false, color);
-            }
+            Vector3 worldCenter = Vector3.Transform(nodeBounds.Center, meshMatrix);
+            Engine.Rendering.Debug.RenderBox(nodeBounds.HalfExtents, worldCenter, rotationScaleMatrix, false, color);
 
             if (node.left is not null)
                 _nodeStack.Push(node.left);

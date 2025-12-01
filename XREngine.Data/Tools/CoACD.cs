@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Numerics;
 using System.Runtime.InteropServices;
+using System.Threading;
 using System.Threading.Tasks;
 
 namespace XREngine.Data.Tools
@@ -13,8 +14,9 @@ namespace XREngine.Data.Tools
         public static Task<IReadOnlyList<ConvexHullMesh>?> CalculateAsync(
             Vector3[] positions,
             int[] triangleIndices,
-            CoACDParameters? parameters = null)
-            => Task.Run(() => Calculate(positions, triangleIndices, parameters));
+            CoACDParameters? parameters = null,
+            CancellationToken cancellationToken = default)
+            => Task.Run(() => Calculate(positions, triangleIndices, parameters), cancellationToken);
 
         public static IReadOnlyList<ConvexHullMesh>? Calculate(
             Vector3[] positions,
@@ -25,7 +27,8 @@ namespace XREngine.Data.Tools
             ArgumentNullException.ThrowIfNull(triangleIndices);
 
             if (positions.Length == 0 || triangleIndices.Length == 0)
-                return Array.Empty<ConvexHullMesh>();
+                return [];
+
             if (triangleIndices.Length % 3 != 0)
                 throw new ArgumentException("Triangle index buffer length must be divisible by 3.", nameof(triangleIndices));
 
@@ -105,7 +108,7 @@ namespace XREngine.Data.Tools
         private static IReadOnlyList<ConvexHullMesh> ExtractMeshes(NativeMeshArray nativeArray)
         {
             if (nativeArray.MeshesPtr == IntPtr.Zero || nativeArray.MeshesCount == 0)
-                return Array.Empty<ConvexHullMesh>();
+                return [];
 
             int meshCount = checked((int)nativeArray.MeshesCount);
             var meshes = new List<ConvexHullMesh>(meshCount);
@@ -169,11 +172,11 @@ namespace XREngine.Data.Tools
             int mctsNodes,
             int mctsIterations,
             int mctsMaxDepth,
-            bool pca,
-            bool merge,
-            bool decimate,
+            [MarshalAs(UnmanagedType.I1)] bool pca,
+            [MarshalAs(UnmanagedType.I1)] bool merge,
+            [MarshalAs(UnmanagedType.I1)] bool decimate,
             int maxChVertex,
-            bool extrude,
+            [MarshalAs(UnmanagedType.I1)] bool extrude,
             double extrudeMargin,
             int approximationMode,
             uint seed);
@@ -209,7 +212,7 @@ namespace XREngine.Data.Tools
             Critical
         }
 
-        public sealed class CoACDParameters
+        public sealed record CoACDParameters
         {
             public static CoACDParameters Default => new();
 

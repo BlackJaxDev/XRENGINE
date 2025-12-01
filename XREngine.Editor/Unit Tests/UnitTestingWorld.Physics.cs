@@ -38,7 +38,7 @@ public static partial class UnitTestingWorld
 
             Random random = new();
             PhysxMaterial physMat = new(0.2f, 0.2f, 1.0f);
-            physMat.RestitutionCombineMode = XREngine.Rendering.Physics.Physx.ECombineMode.Max;
+            physMat.RestitutionCombineMode = ECombineMode.Max;
             for (int i = 0; i < count; i++)
                 AddBall(rootNode, physMat, radius, random);
         }
@@ -50,7 +50,7 @@ public static partial class UnitTestingWorld
             var floorComp = floor.AddComponent<StaticRigidBodyComponent>()!;
 
             PhysxMaterial floorPhysMat = new(0.5f, 0.5f, 0.7f);
-            floorPhysMat.RestitutionCombineMode = XREngine.Rendering.Physics.Physx.ECombineMode.Max;
+            floorPhysMat.RestitutionCombineMode = ECombineMode.Max;
 
             Vector3 floorHalfExtents = new(5000.0f, 0.5f, 5000.0f);
             floorComp.Material = floorPhysMat;
