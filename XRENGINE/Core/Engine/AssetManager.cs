@@ -762,6 +762,8 @@ namespace XREngine
 
         private static readonly IReadOnlyList<IYamlTypeConverter> RegisteredYamlTypeConverters = DiscoverYamlTypeConverters();
 
+        internal static IReadOnlyList<IYamlTypeConverter> YamlTypeConverters => RegisteredYamlTypeConverters;
+
         public static readonly ISerializer Serializer = CreateSerializer();
 
         public static readonly IDeserializer Deserializer = CreateDeserializer();

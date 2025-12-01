@@ -9,6 +9,8 @@ namespace XREngine.Data.Core
     /// </summary>
     public class XREvent : IEnumerable<Action>
     {
+        public static Func<string, IDisposable>? ProfilingHook = null;
+
         public XREvent() { }
 
         private List<Action>? _actions;
@@ -37,11 +39,33 @@ namespace XREngine.Data.Core
 
         public void Invoke()
         {
+            if (ProfilingHook is not null)
+            {
+                using var sample = ProfilingHook("XREvent.Invoke");
+                InvokeInternal();
+            }
+            else
+                InvokeInternal();
+        }
+
+        private void InvokeInternal()
+        {
             ConsumeQueues();
             Actions.ForEach(x => x.Invoke());
         }
 
         public async Task InvokeAsync()
+        {
+            if (ProfilingHook is not null)
+            {
+                using var sample = ProfilingHook("XREvent.InvokeAsync");
+                await InvokeAsyncInternal();
+            }
+            else
+                await InvokeAsyncInternal();
+        }
+
+        private async Task InvokeAsyncInternal()
         {
             ConsumeQueues();
             await Task.WhenAll([.. Actions.Select(Task.Run)]);
@@ -49,11 +73,33 @@ namespace XREngine.Data.Core
 
         public void InvokeParallel()
         {
+            if (ProfilingHook is not null)
+            {
+                using var sample = ProfilingHook("XREvent.InvokeParallel");
+                InvokeParallelInternal();
+            }
+            else
+                InvokeParallelInternal();
+        }
+
+        private void InvokeParallelInternal()
+        {
             ConsumeQueues();
             Parallel.ForEach(Actions, x => x.Invoke());
         }
 
         private void ConsumeQueues()
+        {
+            if (ProfilingHook is not null)
+            {
+                using var sample = ProfilingHook("XREvent.ConsumeQueues");
+                ConsumeQueuesInternal();
+            }
+            else
+                ConsumeQueuesInternal();
+        }
+
+        private void ConsumeQueuesInternal()
         {
             while (PendingAdds.TryDequeue(out Action? add))
                 Actions.Add(add);

@@ -59,7 +59,7 @@ namespace XREngine.Scene
         /// </summary>
         public virtual void GlobalSwapBuffers()
         {
-            //using var t = Engine.Profiler.Start();
+            using var sample = Engine.Profiler.Start("VisualScene.GlobalSwapBuffers");
             GenericRenderTree.Swap();
         }
 

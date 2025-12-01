@@ -29,6 +29,10 @@ namespace XREngine.Rendering
             Resized();
         }
 
+        public XROrthographicCameraParameters() : this(1.0f, 1.0f, 0.1f, 10000.0f)
+        {
+        }
+
         public float Width
         {
             get => _width;

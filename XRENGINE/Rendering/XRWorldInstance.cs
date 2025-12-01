@@ -318,10 +318,20 @@ namespace XREngine.Rendering
 
             //using var t = Engine.Profiler.Start();
 
-            ApplyRenderMatrixChanges();
-            VisualScene.GlobalSwapBuffers();
+            using (Engine.Profiler.Start("WorldInstance.GlobalSwapBuffers.ApplyRenderMatrices"))
+            {
+                ApplyRenderMatrixChanges();
+            }
+
+            using (Engine.Profiler.Start("WorldInstance.GlobalSwapBuffers.VisualScene"))
+            {
+                VisualScene.GlobalSwapBuffers();
+            }
             //PhysicsScene.SwapDebugBuffers();
-            Lights.SwapBuffers();
+            using (Engine.Profiler.Start("WorldInstance.GlobalSwapBuffers.Lights"))
+            {
+                Lights.SwapBuffers();
+            }
         }
 
         /// <summary>
@@ -396,20 +406,23 @@ namespace XREngine.Rendering
         /// </summary>
         /// <param name="bag"></param>
         /// <returns></returns>
-        private static async Task RecalcTransformDepthAsync(IEnumerable<TransformBase> bag)
-        {
-            await Task.WhenAll([.. bag.Select(x => Task.Run(() => x.RecalculateMatrices(false, false)))]);
-        }
+        private static Task RecalcTransformDepthAsync(IEnumerable<TransformBase> bag)
+            => Task.WhenAll(bag.Select(tfm => tfm.RecalculateMatrixHeirarchy(
+                forceWorldRecalc: true,
+                setRenderMatrixNow: false,
+                childRecalcType: Engine.Rendering.ELoopType.Asynchronous)));
 
-        private static async Task RecalcTransformDepthParallel(IEnumerable<TransformBase> bag)
+        private static Task RecalcTransformDepthParallel(IEnumerable<TransformBase> bag)
         {
             if (!bag.Any())
-                return;
+                return Task.CompletedTask;
 
-            await Task.Run(() => Parallel.ForEach(bag, async (TransformBase tfm) =>
-            {
-                await tfm.RecalculateMatrixHeirarchy(true, false, Engine.Rendering.ELoopType.Parallel);
-            }));
+            return Task.Run(() => Parallel.ForEach(bag, tfm =>
+                tfm.RecalculateMatrixHeirarchy(
+                    forceWorldRecalc: true,
+                    setRenderMatrixNow: false,
+                    childRecalcType: Engine.Rendering.ELoopType.Parallel)
+                .GetAwaiter().GetResult()));
         }
 
         private ConcurrentQueue<(TransformBase tfm, Matrix4x4 renderMatrix)> _pushToRenderWrite = new();
@@ -897,8 +910,10 @@ namespace XREngine.Rendering
 
             if (skinned)
             {
-                segmentSpaceStart = worldSegment.Start;
-                segmentSpaceEnd = worldSegment.End;
+                spaceToWorld = mesh.SkinnedBvhLocalToWorldMatrix;
+                var worldToLocal = mesh.SkinnedBvhWorldToLocalMatrix;
+                segmentSpaceStart = Vector3.Transform(worldSegment.Start, worldToLocal);
+                segmentSpaceEnd = Vector3.Transform(worldSegment.End, worldToLocal);
             }
             else
             {
@@ -950,23 +965,15 @@ namespace XREngine.Rendering
                 return false;
 
             Vector3 spaceHitPoint = segmentSpaceStart + segmentSpaceDir * bestDistance;
-            if (skinned)
-            {
-                hitPoint = spaceHitPoint;
-                worldTriangle = bestTriangle.Value;
-            }
-            else
-            {
-                if (spaceToWorld is null)
-                    return false;
+            if (spaceToWorld is null)
+                return false;
 
-                hitPoint = Vector3.Transform(spaceHitPoint, spaceToWorld.Value);
-                Triangle localTriangle = bestTriangle.Value;
-                worldTriangle = new Triangle(
-                    Vector3.Transform(localTriangle.A, spaceToWorld.Value),
-                    Vector3.Transform(localTriangle.B, spaceToWorld.Value),
-                    Vector3.Transform(localTriangle.C, spaceToWorld.Value));
-            }
+            hitPoint = Vector3.Transform(spaceHitPoint, spaceToWorld.Value);
+            Triangle localTriangle = bestTriangle.Value;
+            worldTriangle = new Triangle(
+                Vector3.Transform(localTriangle.A, spaceToWorld.Value),
+                Vector3.Transform(localTriangle.B, spaceToWorld.Value),
+                Vector3.Transform(localTriangle.C, spaceToWorld.Value));
 
             distance = (hitPoint - worldSegment.Start).Length();
             float worldLength = (worldSegment.End - worldSegment.Start).Length();

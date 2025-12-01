@@ -12,7 +12,7 @@ public class XRProjectTests
     [Test]
     public void CreateNew_CreatesStandardStructure()
     {
-        string tempRoot = Path.Combine(TestContext.CurrentContext.WorkDirectory, "ProjectCreation", Guid.NewGuid().ToString("N"));
+        string tempRoot = Path.Combine(NUnit.Framework.TestContext.CurrentContext.WorkDirectory, "ProjectCreation", Guid.NewGuid().ToString("N"));
         string projectFolder = Path.Combine(tempRoot, "SampleProjectRoot");
         Directory.CreateDirectory(projectFolder);
 

@@ -5,6 +5,7 @@ using System.Net;
 using System.Threading;
 using XREngine.Audio;
 using XREngine.Data.Core;
+using XREngine.Data.Trees;
 using XREngine.Rendering;
 using XREngine.Scene;
 using XREngine.Scene.Transforms;
@@ -27,12 +28,18 @@ namespace XREngine
         public static XREvent<UserSettings>? UserSettingsChanged;
         public static event Action<BuildSettings>? BuildSettingsChanged;
 
+        static IDisposable ExternalProfilingHook(string sampleName) => Profiler.Start(sampleName);
+
         static Engine()
         {
             UserSettings = new UserSettings();
             GameSettings = new GameStartupSettings();
             BuildSettings = new BuildSettings();
+
             Time.Timer.PostUpdateFrame += Timer_PostUpdateFrame;
+
+            XREvent.ProfilingHook = ExternalProfilingHook;
+            IRenderTree.ProfilingHook = ExternalProfilingHook;
         }
 
         private static void Timer_PostUpdateFrame()
@@ -429,6 +436,7 @@ namespace XREngine
 
         private static void SwapBuffers()
         {
+            using var sample = Engine.Profiler.Start("Engine.SwapBuffers");
             while (_asyncTaskQueue.TryDequeue(out var task))
                 task.Invoke();
         }

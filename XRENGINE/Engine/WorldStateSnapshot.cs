@@ -1,4 +1,5 @@
-using XREngine.Core.Files;
+using System.Collections.Generic;
+using System.Linq;
 using XREngine.Rendering;
 using XREngine.Scene;
 
@@ -6,7 +7,7 @@ namespace XREngine
 {
     /// <summary>
     /// Captures the state of a world for later restoration when exiting play mode.
-    /// Uses the engine's YAML serialization system which handles complex types.
+    /// Uses the cooked binary serializer, augmented with snapshot-specific filtering to keep payloads minimal.
     /// </summary>
     public class WorldStateSnapshot
     {
@@ -16,19 +17,19 @@ namespace XREngine
         public XRWorld SourceWorld { get; }
 
         /// <summary>
-        /// Serialized scene data for each scene in the world.
+        /// Serialized binary scene data keyed by a stable scene identifier.
         /// </summary>
-        public Dictionary<string, string> SerializedScenes { get; }
+        public Dictionary<string, byte[]> SerializedScenes { get; }
 
         /// <summary>
         /// World settings at time of snapshot.
         /// </summary>
-        public string? SerializedSettings { get; }
+        public byte[]? SerializedSettings { get; }
 
         /// <summary>
         /// Serialized GameMode state.
         /// </summary>
-        public string? SerializedGameMode { get; }
+        public byte[]? SerializedGameMode { get; }
 
         /// <summary>
         /// Timestamp when the snapshot was created.
@@ -42,9 +43,9 @@ namespace XREngine
 
         private WorldStateSnapshot(
             XRWorld sourceWorld,
-            Dictionary<string, string> serializedScenes,
-            string? serializedSettings,
-            string? serializedGameMode,
+            Dictionary<string, byte[]> serializedScenes,
+            byte[]? serializedSettings,
+            byte[]? serializedGameMode,
             bool isValid)
         {
             SourceWorld = sourceWorld;
@@ -63,9 +64,9 @@ namespace XREngine
             if (world is null)
                 return null;
 
-            var serializedScenes = new Dictionary<string, string>();
-            string? settingsData = null;
-            string? gameModeData = null;
+            var serializedScenes = new Dictionary<string, byte[]>(StringComparer.Ordinal);
+            byte[]? settingsData = null;
+            byte[]? gameModeData = null;
             bool isValid = true;
 
             try
@@ -78,7 +79,7 @@ namespace XREngine
                         var sceneData = SerializeObject(scene);
                         if (sceneData is not null)
                         {
-                            var key = scene.Name ?? scene.GetHashCode().ToString();
+                            var key = GetSceneKey(scene);
                             serializedScenes[key] = sceneData;
                         }
                     }
@@ -162,8 +163,10 @@ namespace XREngine
             try
             {
                 // End play on any active world instances first
+                XRWorldInstance? runtimeInstance = null;
                 if (XRWorldInstance.WorldInstances.TryGetValue(SourceWorld, out var instance))
                 {
+                    runtimeInstance = instance;
                     if (instance.IsPlaying)
                     {
                         instance.EndPlay();
@@ -171,7 +174,7 @@ namespace XREngine
                 }
 
                 // Restore settings
-                if (!string.IsNullOrEmpty(SerializedSettings))
+                if (SerializedSettings is { Length: > 0 })
                 {
                     try
                     {
@@ -188,7 +191,7 @@ namespace XREngine
                 }
 
                 // Restore game mode
-                if (!string.IsNullOrEmpty(SerializedGameMode))
+                if (SerializedGameMode is { Length: > 0 })
                 {
                     try
                     {
@@ -204,28 +207,49 @@ namespace XREngine
                     }
                 }
 
-                // Restore scenes
-                // Note: Full scene restoration is complex - this is a simplified version
-                // A complete implementation would need to handle:
-                // - Removing nodes added during play
-                // - Restoring nodes removed during play
-                // - Restoring all property values
+                // Restore scenes by rehydrating serialized data, recreating missing scenes,
+                // and removing anything that was spawned while the snapshot was active.
+                var processedSceneKeys = new HashSet<string>(StringComparer.Ordinal);
+
                 foreach (var kvp in SerializedScenes)
                 {
-                    var scene = SourceWorld.Scenes.FirstOrDefault(s => 
-                        (s.Name ?? s.GetHashCode().ToString()) == kvp.Key);
-                    
+                    processedSceneKeys.Add(kvp.Key);
+                    var scene = SourceWorld.Scenes.FirstOrDefault(s => GetSceneKey(s) == kvp.Key);
+
                     if (scene is not null)
                     {
                         try
                         {
-                            RestoreScene(scene, kvp.Value);
+                            RestoreScene(scene, kvp.Value, runtimeInstance);
                         }
                         catch (Exception ex)
                         {
                             Debug.LogWarning($"Failed to restore scene '{kvp.Key}': {ex.Message}");
                         }
+                        continue;
                     }
+
+                    // Scene existed during capture but no longer present; recreate it
+                    var recreatedScene = DeserializeObject<XRScene>(kvp.Value);
+                    if (recreatedScene is null)
+                    {
+                        Debug.LogWarning($"Failed to deserialize scene '{kvp.Key}' while recreating snapshot state");
+                        continue;
+                    }
+
+                    SourceWorld.Scenes.Add(recreatedScene);
+                    runtimeInstance?.LoadScene(recreatedScene);
+                }
+
+                // Remove any scenes that were introduced after the snapshot
+                var scenesToRemove = SourceWorld.Scenes
+                    .Where(scene => !processedSceneKeys.Contains(GetSceneKey(scene)))
+                    .ToList();
+
+                foreach (var removedScene in scenesToRemove)
+                {
+                    runtimeInstance?.UnloadScene(removedScene);
+                    SourceWorld.Scenes.Remove(removedScene);
                 }
 
                 Debug.Out($"World state restored from snapshot taken at {CaptureTime}");
@@ -238,46 +262,60 @@ namespace XREngine
             }
         }
 
-        private static string? SerializeObject<T>(T obj)
+        private static byte[]? SerializeObject<T>(T obj)
         {
             if (obj is null)
                 return null;
 
             try
             {
-                // Use the engine's YAML serializer which handles complex types
-                return AssetManager.Serializer.Serialize(obj);
+                return SnapshotBinarySerializer.Serialize(obj);
             }
             catch (Exception ex)
             {
-                Debug.LogWarning($"YAML serialization failed for {typeof(T).Name}: {ex.Message}");
+                Debug.LogWarning($"Snapshot serialization failed for {typeof(T).Name}: {ex.Message}");
                 return null;
             }
         }
 
-        private static T? DeserializeObject<T>(string? data) where T : class
+        private static T? DeserializeObject<T>(byte[]? data) where T : class
         {
-            if (string.IsNullOrEmpty(data))
+            if (data is null || data.Length == 0)
                 return null;
 
             try
             {
-                // Use the engine's YAML deserializer
-                return AssetManager.Deserializer.Deserialize<T>(data);
+                return SnapshotBinarySerializer.Deserialize<T>(data);
             }
             catch (Exception ex)
             {
-                Debug.LogWarning($"YAML deserialization failed for {typeof(T).Name}: {ex.Message}");
+                Debug.LogWarning($"Snapshot deserialization failed for {typeof(T).Name}: {ex.Message}");
                 return null;
             }
         }
 
-        private static void RestoreScene(XRScene scene, string data)
+        private static void RestoreScene(
+            XRScene scene,
+            byte[] data,
+            XRWorldInstance? runtimeInstance)
         {
-            // TODO: Implement proper scene restoration
-            // This would involve deserializing the scene data and applying it
-            // For now, just log that restoration was attempted
-            Debug.Out($"Scene restoration attempted for '{scene.Name}' (full implementation pending)");
+            var restoredScene = DeserializeObject<XRScene>(data);
+            if (restoredScene is null)
+            {
+                Debug.LogWarning($"Scene restoration skipped because scene data could not be deserialized.");
+                return;
+            }
+
+            runtimeInstance?.UnloadScene(scene);
+
+            scene.Name = restoredScene.Name;
+            scene.IsVisible = restoredScene.IsVisible;
+            scene.RootNodes = restoredScene.RootNodes ?? new List<SceneNode>();
+
+            runtimeInstance?.LoadScene(scene);
         }
+
+        private static string GetSceneKey(XRScene scene)
+            => scene.Name ?? scene.GetHashCode().ToString();
     }
 }

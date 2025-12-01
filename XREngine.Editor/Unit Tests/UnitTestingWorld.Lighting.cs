@@ -65,7 +65,7 @@ public static partial class UnitTestingWorld
             dirLightComp!.Name = "TestDirectionalLight";
             dirLightComp.Color = new Vector3(1, 1, 1);
             dirLightComp.DiffuseIntensity = 1.0f;
-            dirLightComp.Scale = new Vector3(100.0f, 100.0f, 100.0f);
+            dirLightComp.Scale = new Vector3(1000.0f, 1000.0f, 1000.0f);
             dirLightComp.CastsShadows = true;
             dirLightComp.SetShadowMapResolution(4096, 4096);
         }

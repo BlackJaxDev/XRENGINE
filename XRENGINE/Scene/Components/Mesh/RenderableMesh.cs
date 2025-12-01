@@ -28,17 +28,30 @@ namespace XREngine.Components.Scene.Mesh
 
         private readonly Dictionary<TransformBase, int> _trackedSkinnedBones = new();
         private readonly Dictionary<TransformBase, Matrix4x4> _currentSkinMatrices = new();
+        private readonly Dictionary<TransformBase, Matrix4x4> _relativeBoneMatrices = new(System.Collections.Generic.ReferenceEqualityComparer.Instance);
+        private readonly object _relativeCacheLock = new();
         private readonly object _skinnedDataLock = new();
         private bool _skinnedBoundsDirty = true;
         private bool _skinnedBvhDirty = true;
         private bool _hasSkinnedBounds;
-        private AABB _skinnedWorldBounds;
+        private AABB _skinnedLocalBounds;
         private Vector3[]? _skinnedVertexPositions;
         private int _skinnedVertexCount;
         private BVH<Triangle>? _skinnedBvh;
         private Task<SkinnedMeshBvhScheduler.Result>? _skinnedBvhTask;
         private int _skinnedBvhVersion;
         private AABB _bindPoseBounds;
+        private Matrix4x4 _skinnedRootRenderMatrix = Matrix4x4.Identity;
+        private Matrix4x4 _skinnedRootRenderMatrixInverse = Matrix4x4.Identity;
+
+        internal Matrix4x4 SkinnedBvhLocalToWorldMatrix => _skinnedRootRenderMatrix;
+        internal Matrix4x4 SkinnedBvhWorldToLocalMatrix => _skinnedRootRenderMatrixInverse;
+
+        private void SetSkinnedRootRenderMatrix(Matrix4x4 matrix)
+        {
+            _skinnedRootRenderMatrix = matrix;
+            _skinnedRootRenderMatrixInverse = Matrix4x4.Invert(matrix, out var inv) ? inv : Matrix4x4.Identity;
+        }
 
         public XRMeshRenderer? CurrentLODRenderer => CurrentLOD?.Value?.Renderer;
         public XRMesh? CurrentLODMesh => CurrentLOD?.Value?.Renderer?.Mesh;
@@ -217,6 +230,7 @@ namespace XREngine.Components.Scene.Mesh
                     {
                         _trackedSkinnedBones.Add(bone, 1);
                         bone.RenderMatrixChanged += Bone_RenderMatrixChanged;
+                        UpdateRelativeBoneMatrix(bone, initialize: true);
                     }
                 }
                 else if (_trackedSkinnedBones.TryGetValue(bone, out int count))
@@ -225,6 +239,8 @@ namespace XREngine.Components.Scene.Mesh
                     {
                         _trackedSkinnedBones.Remove(bone);
                         bone.RenderMatrixChanged -= Bone_RenderMatrixChanged;
+                        lock (_relativeCacheLock)
+                            _relativeBoneMatrices.Remove(bone);
                     }
                     else
                         _trackedSkinnedBones[bone] = count - 1;
@@ -232,15 +248,101 @@ namespace XREngine.Components.Scene.Mesh
             }
         }
 
+        private Matrix4x4 GetSkinnedBasisMatrix()
+        {
+            var ownerTransform = Component?.Transform;
+            return RootBone?.RenderMatrix ?? ownerTransform?.RenderMatrix ?? Matrix4x4.Identity;
+        }
+
+        internal SkinnedMeshBoundsCalculator.Result EnsureLocalBounds(SkinnedMeshBoundsCalculator.Result result)
+        {
+            if (!IsSkinned || !result.IsWorldSpace)
+                return result;
+
+            var basis = GetSkinnedBasisMatrix();
+            var invBasis = Matrix4x4.Invert(basis, out var inv) ? inv : Matrix4x4.Identity;
+            var worldPositions = result.Positions ?? Array.Empty<Vector3>();
+            if (worldPositions.Length == 0)
+                return new SkinnedMeshBoundsCalculator.Result(worldPositions, result.Bounds, basis);
+
+            var localPositions = new Vector3[worldPositions.Length];
+            for (int i = 0; i < worldPositions.Length; i++)
+                localPositions[i] = Vector3.Transform(worldPositions[i], invBasis);
+
+            var localBounds = SkinnedMeshBoundsCalculator.CalculateBounds(localPositions);
+            return new SkinnedMeshBoundsCalculator.Result(localPositions, localBounds, basis);
+        }
+
+        private bool UpdateRelativeBoneMatrix(TransformBase bone, bool initialize = false)
+        {
+            Matrix4x4 relative;
+            if (RootBone is not null && ReferenceEquals(bone, RootBone))
+                relative = bone.LocalMatrix;
+            else
+            {
+                var inverseBasis = Matrix4x4.Invert(GetSkinnedBasisMatrix(), out var inv)
+                    ? inv
+                    : Matrix4x4.Identity;
+                relative = bone.RenderMatrix * inverseBasis;
+            }
+
+            lock (_relativeCacheLock)
+            {
+                if (!_relativeBoneMatrices.TryGetValue(bone, out var previous) || initialize)
+                {
+                    _relativeBoneMatrices[bone] = relative;
+                    return !initialize;
+                }
+
+                if (!MatrixNearlyEqual(previous, relative))
+                {
+                    _relativeBoneMatrices[bone] = relative;
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+        private static bool MatrixNearlyEqual(in Matrix4x4 a, in Matrix4x4 b, float epsilon = 1e-4f)
+        {
+            return MathF.Abs(a.M11 - b.M11) <= epsilon &&
+                   MathF.Abs(a.M12 - b.M12) <= epsilon &&
+                   MathF.Abs(a.M13 - b.M13) <= epsilon &&
+                   MathF.Abs(a.M14 - b.M14) <= epsilon &&
+                   MathF.Abs(a.M21 - b.M21) <= epsilon &&
+                   MathF.Abs(a.M22 - b.M22) <= epsilon &&
+                   MathF.Abs(a.M23 - b.M23) <= epsilon &&
+                   MathF.Abs(a.M24 - b.M24) <= epsilon &&
+                   MathF.Abs(a.M31 - b.M31) <= epsilon &&
+                   MathF.Abs(a.M32 - b.M32) <= epsilon &&
+                   MathF.Abs(a.M33 - b.M33) <= epsilon &&
+                   MathF.Abs(a.M34 - b.M34) <= epsilon &&
+                   MathF.Abs(a.M41 - b.M41) <= epsilon &&
+                   MathF.Abs(a.M42 - b.M42) <= epsilon &&
+                   MathF.Abs(a.M43 - b.M43) <= epsilon &&
+                   MathF.Abs(a.M44 - b.M44) <= epsilon;
+        }
+
         private void UntrackAllBones()
         {
             foreach (var pair in _trackedSkinnedBones.ToArray())
                 pair.Key.RenderMatrixChanged -= Bone_RenderMatrixChanged;
             _trackedSkinnedBones.Clear();
+            lock (_relativeCacheLock)
+                _relativeBoneMatrices.Clear();
         }
 
         private void Bone_RenderMatrixChanged(TransformBase bone, Matrix4x4 renderMatrix)
-            => MarkSkinnedDataDirty();
+        {
+            if (!IsSkinned)
+                return;
+
+            if (!UpdateRelativeBoneMatrix(bone))
+                return;
+
+            MarkSkinnedDataDirty();
+        }
 
         private void MarkSkinnedDataDirty()
         {
@@ -305,14 +407,18 @@ namespace XREngine.Components.Scene.Mesh
                 return false;
             }
 
-            _skinnedWorldBounds = result.Bounds;
+            _skinnedLocalBounds = result.Bounds;
             _skinnedBoundsDirty = false;
             _hasSkinnedBounds = true;
             if (markBvhDirty)
                 _skinnedBvhDirty = true;
 
-            RenderInfo.LocalCullingVolume = _skinnedWorldBounds;
-            RenderInfo.CullingOffsetMatrix = Matrix4x4.Identity;
+            SetSkinnedRootRenderMatrix(result.Basis);
+            if (RenderInfo is not null)
+            {
+                RenderInfo.LocalCullingVolume = _skinnedLocalBounds;
+                RenderInfo.CullingOffsetMatrix = _skinnedRootRenderMatrix;
+            }
             return true;
         }
 
@@ -334,30 +440,32 @@ namespace XREngine.Components.Scene.Mesh
                 _currentSkinMatrices[bone] = invBind * bone.RenderMatrix;
             }
 
-            _skinnedVertexPositions ??= new Vector3[vertices.Length];
-            if (_skinnedVertexPositions.Length < vertices.Length)
-                Array.Resize(ref _skinnedVertexPositions, vertices.Length);
+            if (_skinnedVertexPositions is null || _skinnedVertexPositions.Length != vertices.Length)
+                _skinnedVertexPositions = new Vector3[vertices.Length];
             _skinnedVertexCount = vertices.Length;
 
             bool initialized = false;
             Vector3 min = Vector3.Zero;
             Vector3 max = Vector3.Zero;
             Matrix4x4 fallbackMatrix = Component.Transform.RenderMatrix;
+            Matrix4x4 basis = GetSkinnedBasisMatrix();
+            Matrix4x4 invBasis = Matrix4x4.Invert(basis, out var basisInv) ? basisInv : Matrix4x4.Identity;
 
             for (int i = 0; i < vertices.Length; i++)
             {
                 Vector3 worldPos = ComputeSkinnedPosition(vertices[i], fallbackMatrix);
-                _skinnedVertexPositions[i] = worldPos;
+                Vector3 localPos = Vector3.Transform(worldPos, invBasis);
+                _skinnedVertexPositions[i] = localPos;
 
                 if (!initialized)
                 {
-                    min = max = worldPos;
+                    min = max = localPos;
                     initialized = true;
                 }
                 else
                 {
-                    min = Vector3.Min(min, worldPos);
-                    max = Vector3.Max(max, worldPos);
+                    min = Vector3.Min(min, localPos);
+                    max = Vector3.Max(max, localPos);
                 }
             }
 
@@ -367,14 +475,9 @@ namespace XREngine.Components.Scene.Mesh
                 return false;
             }
 
-            _skinnedWorldBounds = new AABB(min, max);
-            _skinnedBoundsDirty = false;
-            _hasSkinnedBounds = true;
-            _skinnedBvhDirty = true;
-
-            RenderInfo.LocalCullingVolume = _skinnedWorldBounds;
-            RenderInfo.CullingOffsetMatrix = Matrix4x4.Identity;
-            return true;
+            var localBounds = new AABB(min, max);
+            var localizedResult = new SkinnedMeshBoundsCalculator.Result((Vector3[])_skinnedVertexPositions.Clone(), localBounds, basis);
+            return ApplySkinnedBoundsResult(localizedResult, markBvhDirty: true);
         }
 
         private Vector3 ComputeSkinnedPosition(Vertex vertex, Matrix4x4 fallbackMatrix)
@@ -423,9 +526,14 @@ namespace XREngine.Components.Scene.Mesh
             {
                 _skinnedBvhTask = SkinnedMeshBvhScheduler.Instance.Schedule(this, _skinnedBvhVersion);
             }
-            else if (_skinnedVertexPositions != null)
+            else if (_skinnedVertexPositions is { Length: > 0 })
             {
-                _skinnedBvhTask = SkinnedMeshBvhScheduler.Instance.Schedule(this, _skinnedBvhVersion, _skinnedVertexPositions, _skinnedWorldBounds);
+                _skinnedBvhTask = SkinnedMeshBvhScheduler.Instance.Schedule(
+                    this,
+                    _skinnedBvhVersion,
+                    _skinnedVertexPositions,
+                    _skinnedLocalBounds,
+                    _skinnedRootRenderMatrix);
             }
         }
 
@@ -501,10 +609,7 @@ namespace XREngine.Components.Scene.Mesh
             Segment localSegment;
             if (skinnedMesh)
             {
-                if (RootBone is not null)
-                    localSegment = worldSegment.TransformedBy(RootBone.InverseWorldMatrix);
-                else
-                    localSegment = worldSegment;
+                localSegment = worldSegment.TransformedBy(SkinnedBvhWorldToLocalMatrix);
             }
             else
             {
@@ -589,13 +694,10 @@ namespace XREngine.Components.Scene.Mesh
             if (RenderInfo is null)
                 return;
 
-            if (IsSkinned)
-            {
-                MarkSkinnedDataDirty();
-                return;
-            }
-
+            SetSkinnedRootRenderMatrix(renderMatrix);
             RenderInfo.CullingOffsetMatrix = renderMatrix;
+            if (!IsSkinned)
+                return;
         }
 
         /// <summary>
@@ -609,7 +711,11 @@ namespace XREngine.Components.Scene.Mesh
             bool hasSkinning = (CurrentLOD?.Value?.Renderer?.Mesh?.HasSkinning ?? false) && Engine.Rendering.Settings.AllowSkinning;
             if (hasSkinning)
             {
-                MarkSkinnedDataDirty();
+                if (RootBone is null && RenderInfo is not null)
+                {
+                    SetSkinnedRootRenderMatrix(renderMatrix);
+                    RenderInfo.CullingOffsetMatrix = renderMatrix;
+                }
                 return;
             }
 

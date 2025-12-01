@@ -110,6 +110,8 @@ public static class EditorDragDropUtility
 
     private static void OnSwapBuffers()
     {
+        using var sample = Engine.Profiler.Start("EditorDragDropUtility.OnSwapBuffers");
+        
         CleanupTargets();
 
         if (_activeSession is null)

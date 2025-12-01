@@ -30,6 +30,13 @@ public interface ICookedBinarySerializable
     long CalculateCookedBinarySize();
 }
 
+public sealed class CookedBinarySerializationCallbacks
+{
+    public Func<object?, object?>? OnSerializingValue { get; init; }
+
+    public Func<object?, object?>? OnDeserializedValue { get; init; }
+}
+
 public sealed unsafe class CookedBinaryWriter : IDisposable
 {
     private readonly FileMap? _map;
@@ -66,12 +73,12 @@ public sealed unsafe class CookedBinaryWriter : IDisposable
     [RequiresUnreferencedCode(CookedBinarySerializer.ReflectionWarningMessage)]
     [RequiresDynamicCode(CookedBinarySerializer.ReflectionWarningMessage)]
     public void WriteValue(object? value)
-        => CookedBinarySerializer.WriteValue(this, value, allowCustom: true);
+        => CookedBinarySerializer.WriteValue(this, value, allowCustom: true, callbacks: null);
 
     [RequiresUnreferencedCode(CookedBinarySerializer.ReflectionWarningMessage)]
     [RequiresDynamicCode(CookedBinarySerializer.ReflectionWarningMessage)]
     public void WriteBaseObject<T>(T instance) where T : class
-        => CookedBinarySerializer.WriteObjectContent(this, instance!, typeof(T), allowCustom: true);
+        => CookedBinarySerializer.WriteObjectContent(this, instance!, typeof(T), allowCustom: true, callbacks: null);
 
     public void WriteBytes(ReadOnlySpan<byte> data)
     {
@@ -174,12 +181,12 @@ public sealed unsafe class CookedBinaryReader : IDisposable
     [RequiresUnreferencedCode(CookedBinarySerializer.ReflectionWarningMessage)]
     [RequiresDynamicCode(CookedBinarySerializer.ReflectionWarningMessage)]
     public T? ReadValue<T>()
-        => (T?)CookedBinarySerializer.ReadValue(this, typeof(T));
+        => (T?)CookedBinarySerializer.ReadValue(this, typeof(T), callbacks: null);
 
     [RequiresUnreferencedCode(CookedBinarySerializer.ReflectionWarningMessage)]
     [RequiresDynamicCode(CookedBinarySerializer.ReflectionWarningMessage)]
     public void ReadBaseObject<T>(T instance) where T : class
-        => CookedBinarySerializer.ReadObjectContent(this, instance!, typeof(T));
+        => CookedBinarySerializer.ReadObjectContent(this, instance!, typeof(T), callbacks: null);
 
     public byte ReadByte()
     {
@@ -293,9 +300,9 @@ public static class CookedBinarySerializer
 
     [RequiresUnreferencedCode(ReflectionWarningMessage)]
     [RequiresDynamicCode(ReflectionWarningMessage)]
-    public static byte[] Serialize(object? value)
+    public static byte[] Serialize(object? value, CookedBinarySerializationCallbacks? callbacks = null)
     {
-        long length = CalculateSize(value);
+        long length = CalculateSize(value, callbacks);
         if (length > int.MaxValue)
             throw new InvalidOperationException($"Cooked payload exceeds maximum supported size ({length} bytes).");
 
@@ -305,7 +312,7 @@ public static class CookedBinarySerializer
             fixed (byte* ptr = buffer)
             {
                 using var writer = new CookedBinaryWriter(ptr, buffer.Length);
-                WriteValue(writer, value, allowCustom: true);
+                WriteValue(writer, value, allowCustom: true, callbacks);
             }
         }
 
@@ -314,14 +321,14 @@ public static class CookedBinarySerializer
 
     [RequiresUnreferencedCode(ReflectionWarningMessage)]
     [RequiresDynamicCode(ReflectionWarningMessage)]
-    public static object? Deserialize(Type expectedType, ReadOnlySpan<byte> data)
+    public static object? Deserialize(Type expectedType, ReadOnlySpan<byte> data, CookedBinarySerializationCallbacks? callbacks = null)
     {
         unsafe
         {
             fixed (byte* ptr = data)
             {
                 using var reader = new CookedBinaryReader(ptr, data.Length);
-                object? value = ReadValue(reader, expectedType);
+                object? value = ReadValue(reader, expectedType, callbacks);
                 return ConvertValue(value, expectedType);
             }
         }
@@ -329,9 +336,9 @@ public static class CookedBinarySerializer
 
     [RequiresUnreferencedCode(ReflectionWarningMessage)]
     [RequiresDynamicCode(ReflectionWarningMessage)]
-    public static long CalculateSize(object? value)
+    public static long CalculateSize(object? value, CookedBinarySerializationCallbacks? callbacks = null)
     {
-        CookedBinarySizeCalculator calculator = new();
+        CookedBinarySizeCalculator calculator = new(callbacks);
         calculator.AddValue(value, allowCustom: true);
         return calculator.Length;
     }
@@ -340,15 +347,17 @@ public static class CookedBinarySerializer
     [RequiresDynamicCode(ReflectionWarningMessage)]
     internal static long CalculateBaseObjectSize(object instance, Type metadataType)
     {
-        CookedBinarySizeCalculator calculator = new();
+        CookedBinarySizeCalculator calculator = new(callbacks: null);
         calculator.AddObjectContent(instance, metadataType, allowCustom: true);
         return calculator.Length;
     }
 
     [RequiresUnreferencedCode(ReflectionWarningMessage)]
     [RequiresDynamicCode(ReflectionWarningMessage)]
-    internal static void WriteValue(CookedBinaryWriter writer, object? value, bool allowCustom)
+    internal static void WriteValue(CookedBinaryWriter writer, object? value, bool allowCustom, CookedBinarySerializationCallbacks? callbacks)
     {
+        value = callbacks?.OnSerializingValue?.Invoke(value) ?? value;
+
         if (value is null)
         {
             writer.Write((byte)CookedBinaryTypeMarker.Null);
@@ -509,7 +518,7 @@ public static class CookedBinarySerializer
             writer.Write(array.Length);
             foreach (object? item in array)
             {
-                WriteValue(writer, item, allowCustom);
+                WriteValue(writer, item, allowCustom, callbacks);
             }
 
             return;
@@ -522,8 +531,8 @@ public static class CookedBinarySerializer
             writer.Write(dictionary.Count);
             foreach (DictionaryEntry entry in dictionary)
             {
-                WriteValue(writer, entry.Key, allowCustom);
-                WriteValue(writer, entry.Value, allowCustom);
+                WriteValue(writer, entry.Key, allowCustom, callbacks);
+                WriteValue(writer, entry.Value, allowCustom, callbacks);
             }
 
             return;
@@ -535,7 +544,7 @@ public static class CookedBinarySerializer
             WriteTypeName(writer, runtimeType);
             writer.Write(list.Count);
             foreach (object? item in list)
-                WriteValue(writer, item, allowCustom);
+                WriteValue(writer, item, allowCustom, callbacks);
             return;
         }
 
@@ -558,16 +567,16 @@ public static class CookedBinarySerializer
         else
         {
             writer.Write((byte)CookedBinaryObjectEncoding.Reflection);
-            WriteObjectContent(writer, value, runtimeType, allowCustom);
+            WriteObjectContent(writer, value, runtimeType, allowCustom, callbacks);
         }
     }
 
     [RequiresUnreferencedCode(ReflectionWarningMessage)]
     [RequiresDynamicCode(ReflectionWarningMessage)]
-    internal static object? ReadValue(CookedBinaryReader reader, Type? expectedType)
+    internal static object? ReadValue(CookedBinaryReader reader, Type? expectedType, CookedBinarySerializationCallbacks? callbacks)
     {
         var marker = (CookedBinaryTypeMarker)reader.ReadByte();
-        return marker switch
+        var value = marker switch
         {
             CookedBinaryTypeMarker.Null => null,
             CookedBinaryTypeMarker.Boolean => reader.ReadBoolean(),
@@ -589,19 +598,21 @@ public static class CookedBinarySerializer
             CookedBinaryTypeMarker.TimeSpan => new TimeSpan(reader.ReadInt64()),
             CookedBinaryTypeMarker.ByteArray => ReadByteArray(reader),
             CookedBinaryTypeMarker.Enum => ReadEnum(reader),
-            CookedBinaryTypeMarker.Array => ReadArray(reader),
-            CookedBinaryTypeMarker.List => ReadList(reader),
-            CookedBinaryTypeMarker.Dictionary => ReadDictionary(reader),
-            CookedBinaryTypeMarker.CustomObject => ReadCustomObject(reader, expectedType),
+            CookedBinaryTypeMarker.Array => ReadArray(reader, callbacks),
+            CookedBinaryTypeMarker.List => ReadList(reader, callbacks),
+            CookedBinaryTypeMarker.Dictionary => ReadDictionary(reader, callbacks),
+            CookedBinaryTypeMarker.CustomObject => ReadCustomObject(reader, expectedType, callbacks),
             CookedBinaryTypeMarker.DataSource => ReadDataSource(reader),
-            CookedBinaryTypeMarker.Object => ReadObject(reader),
+            CookedBinaryTypeMarker.Object => ReadObject(reader, callbacks),
             _ => throw new NotSupportedException($"Unknown cooked binary marker '{marker}'.")
         };
+
+        return callbacks?.OnDeserializedValue?.Invoke(value) ?? value;
     }
 
     [RequiresUnreferencedCode(ReflectionWarningMessage)]
     [RequiresDynamicCode(ReflectionWarningMessage)]
-    internal static void WriteObjectContent(CookedBinaryWriter writer, object instance, Type metadataType, bool allowCustom)
+    internal static void WriteObjectContent(CookedBinaryWriter writer, object instance, Type metadataType, bool allowCustom, CookedBinarySerializationCallbacks? callbacks)
     {
         var metadata = TypeMetadataCache.Get(metadataType);
         writer.Write(metadata.Members.Length);
@@ -609,20 +620,20 @@ public static class CookedBinarySerializer
         {
             writer.Write(member.Name);
             object? value = member.GetValue(instance);
-            WriteValue(writer, value, allowCustom);
+            WriteValue(writer, value, allowCustom, callbacks);
         }
     }
 
     [RequiresUnreferencedCode(ReflectionWarningMessage)]
     [RequiresDynamicCode(ReflectionWarningMessage)]
-    internal static void ReadObjectContent(CookedBinaryReader reader, object instance, Type metadataType)
+    internal static void ReadObjectContent(CookedBinaryReader reader, object instance, Type metadataType, CookedBinarySerializationCallbacks? callbacks)
     {
         int count = reader.ReadInt32();
         var metadata = TypeMetadataCache.Get(metadataType);
         for (int i = 0; i < count; i++)
         {
             string propertyName = reader.ReadString();
-            object? value = ReadValue(reader, null);
+            object? value = ReadValue(reader, null, callbacks);
             if (metadata.TryGetMember(propertyName, out var member))
             {
                 object? converted = ConvertValue(value, member.MemberType);
@@ -649,7 +660,7 @@ public static class CookedBinarySerializer
 
     [RequiresUnreferencedCode(ReflectionWarningMessage)]
     [RequiresDynamicCode(ReflectionWarningMessage)]
-    private static object ReadArray(CookedBinaryReader reader)
+    private static object ReadArray(CookedBinaryReader reader, CookedBinarySerializationCallbacks? callbacks)
     {
         string elementTypeName = reader.ReadString();
         Type elementType = ResolveType(elementTypeName) ?? typeof(object);
@@ -657,7 +668,7 @@ public static class CookedBinarySerializer
         Array array = Array.CreateInstance(elementType, length);
         for (int i = 0; i < length; i++)
         {
-            object? value = ReadValue(reader, elementType);
+            object? value = ReadValue(reader, elementType, callbacks);
             array.SetValue(ConvertValue(value, elementType), i);
         }
 
@@ -666,7 +677,7 @@ public static class CookedBinarySerializer
 
     [RequiresUnreferencedCode(ReflectionWarningMessage)]
     [RequiresDynamicCode(ReflectionWarningMessage)]
-    private static object ReadList(CookedBinaryReader reader)
+    private static object ReadList(CookedBinaryReader reader, CookedBinarySerializationCallbacks? callbacks)
     {
         string listTypeName = reader.ReadString();
         Type listType = ResolveType(listTypeName) ?? typeof(List<object?>);
@@ -674,7 +685,7 @@ public static class CookedBinarySerializer
         int count = reader.ReadInt32();
         for (int i = 0; i < count; i++)
         {
-            object? value = ReadValue(reader, null);
+            object? value = ReadValue(reader, null, callbacks);
             list.Add(value);
         }
 
@@ -683,7 +694,7 @@ public static class CookedBinarySerializer
 
     [RequiresUnreferencedCode(ReflectionWarningMessage)]
     [RequiresDynamicCode(ReflectionWarningMessage)]
-    private static object ReadDictionary(CookedBinaryReader reader)
+    private static object ReadDictionary(CookedBinaryReader reader, CookedBinarySerializationCallbacks? callbacks)
     {
         string dictTypeName = reader.ReadString();
         Type dictType = ResolveType(dictTypeName) ?? typeof(Dictionary<object, object?>);
@@ -691,8 +702,8 @@ public static class CookedBinarySerializer
         int count = reader.ReadInt32();
         for (int i = 0; i < count; i++)
         {
-            object? key = ReadValue(reader, null);
-            object? value = ReadValue(reader, null);
+            object? key = ReadValue(reader, null, callbacks);
+            object? value = ReadValue(reader, null, callbacks);
             dictionary[key!] = value;
         }
 
@@ -701,7 +712,7 @@ public static class CookedBinarySerializer
 
     [RequiresUnreferencedCode(ReflectionWarningMessage)]
     [RequiresDynamicCode(ReflectionWarningMessage)]
-    private static object? ReadCustomObject(CookedBinaryReader reader, Type? expectedType)
+    private static object? ReadCustomObject(CookedBinaryReader reader, Type? expectedType, CookedBinarySerializationCallbacks? callbacks)
     {
         string typeName = reader.ReadString();
         Type targetType = ResolveType(typeName) ?? expectedType ?? throw new InvalidOperationException($"Failed to resolve cooked asset type '{typeName}'.");
@@ -714,7 +725,7 @@ public static class CookedBinarySerializer
 
     [RequiresUnreferencedCode(ReflectionWarningMessage)]
     [RequiresDynamicCode(ReflectionWarningMessage)]
-    private static object? ReadObject(CookedBinaryReader reader)
+    private static object? ReadObject(CookedBinaryReader reader, CookedBinarySerializationCallbacks? callbacks)
     {
         string typeName = reader.ReadString();
         Type targetType = ResolveType(typeName) ?? throw new InvalidOperationException($"Failed to resolve cooked asset type '{typeName}'.");
@@ -722,17 +733,17 @@ public static class CookedBinarySerializer
         return encoding switch
         {
             CookedBinaryObjectEncoding.MemoryPack => ReadMemoryPackObject(reader, targetType),
-            CookedBinaryObjectEncoding.Reflection => ReadReflectionObject(reader, targetType),
+            CookedBinaryObjectEncoding.Reflection => ReadReflectionObject(reader, targetType, callbacks),
             _ => throw new InvalidOperationException($"Unsupported cooked object encoding '{encoding}'.")
         };
     }
 
     [RequiresUnreferencedCode(ReflectionWarningMessage)]
     [RequiresDynamicCode(ReflectionWarningMessage)]
-    private static object? ReadReflectionObject(CookedBinaryReader reader, Type targetType)
+    private static object? ReadReflectionObject(CookedBinaryReader reader, Type targetType, CookedBinarySerializationCallbacks? callbacks)
     {
         object instance = CreateInstance(targetType) ?? throw new InvalidOperationException($"Unable to create instance of '{targetType}'.");
-        ReadObjectContent(reader, instance, targetType);
+        ReadObjectContent(reader, instance, targetType, callbacks);
         return instance;
     }
 
@@ -875,13 +886,20 @@ public static class CookedBinarySerializer
     [RequiresDynamicCode(ReflectionWarningMessage)]
     private sealed class CookedBinarySizeCalculator
     {
+        private readonly CookedBinarySerializationCallbacks? _callbacks;
         private long _length;
 
         public long Length => _length;
 
+        public CookedBinarySizeCalculator(CookedBinarySerializationCallbacks? callbacks)
+        {
+            _callbacks = callbacks;
+        }
+
         public void AddValue(object? value, bool allowCustom)
         {
             AddBytes(1); // type marker
+            value = _callbacks?.OnSerializingValue?.Invoke(value) ?? value;
             if (value is null)
                 return;
 

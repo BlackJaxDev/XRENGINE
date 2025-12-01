@@ -120,6 +120,8 @@ namespace XREngine.Rendering.Commands
 
         public void SwapBuffers()
         {
+            using var sample = Engine.Profiler.Start("RenderCommandCollection.SwapBuffers");
+
             static void Clear(ICollection<RenderCommand> x)
                 => x.Clear();
             static void Swap(ICollection<RenderCommand> x)
@@ -127,8 +129,15 @@ namespace XREngine.Rendering.Commands
             
             (_updatingPasses, _renderingPasses) = (_renderingPasses, _updatingPasses);
 
-            _renderingPasses.Values.ForEach(Swap);
-            _updatingPasses.Values.ForEach(Clear);
+            using (Engine.Profiler.Start("RenderCommandCollection.SwapBuffers.RenderPasses"))
+            {
+                _renderingPasses.Values.ForEach(Swap);
+            }
+
+            using (Engine.Profiler.Start("RenderCommandCollection.SwapBuffers.ClearPasses"))
+            {
+                _updatingPasses.Values.ForEach(Clear);
+            }
 
             _numCommandsRecentlyAddedToUpdate = 0;
         }

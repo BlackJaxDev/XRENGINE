@@ -4,6 +4,7 @@ using XREngine.Data.Rendering;
 using XREngine.Data.Vectors;
 using XREngine.Rendering;
 using XREngine.Rendering.Models.Materials;
+using YamlDotNet.Serialization;
 
 namespace XREngine.Components.Lights
 {
@@ -30,6 +31,7 @@ namespace XREngine.Components.Lights
         protected XRViewport? ZPosVP => Viewports[4];
         protected XRViewport? ZNegVP => Viewports[5];
 
+        [YamlIgnore]
         public XRViewport?[] Viewports { get; } = new XRViewport?[6];
 
         protected XRTextureCube? _environmentTextureCubemap;

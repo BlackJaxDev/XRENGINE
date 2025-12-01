@@ -210,7 +210,7 @@ namespace XREngine.Rendering
 
         private void SwapBuffers()
         {
-
+            using var sample = Engine.Profiler.Start("XRWindow.SwapBuffers");
         }
 
         private void RenderFrame()

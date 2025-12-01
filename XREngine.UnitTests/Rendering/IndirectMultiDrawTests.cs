@@ -585,12 +585,16 @@ public class IndirectMultiDrawTests
             0, 1, 5, 5, 4, 0
         ];
 
-        // All cubes share the same index pattern (0-7)
-        // BaseVertex in the draw command will offset to the correct vertices
-        uint[] indices = new uint[8 * 36]; // 8 cubes, 36 indices each
-        for (int i = 0; i < 8; i++)
+        const int indicesPerCube = 36;
+        const int verticesPerCube = 8;
+        uint[] indices = new uint[8 * indicesPerCube];
+
+        for (int cubeIdx = 0; cubeIdx < 8; cubeIdx++)
         {
-            Array.Copy(cube, 0, indices, i * 36, 36);
+            uint vertexOffset = (uint)(cubeIdx * verticesPerCube);
+            int dest = cubeIdx * indicesPerCube;
+            for (int i = 0; i < cube.Length; i++)
+                indices[dest + i] = cube[i] + vertexOffset;
         }
 
         return indices;
@@ -774,12 +778,13 @@ public class IndirectMultiDrawTests
             0, 1, 5, 5, 4, 0
         ];
 
-        // All cubes share the same index pattern (0-7)
-        // BaseVertex in the draw command will offset to the correct vertices
+        // Build absolute indices so each cube references its own vertex block directly.
         uint[] indices = new uint[8 * 36]; // 8 cubes, 36 indices each
         for (int i = 0; i < 8; i++)
         {
-            Array.Copy(cube, 0, indices, i * 36, 36);
+            uint vertexOffset = (uint)(i * 8);
+            for (int j = 0; j < cube.Length; j++)
+                indices[i * 36 + j] = cube[j] + vertexOffset;
         }
 
         return indices;
@@ -794,13 +799,13 @@ public class IndirectMultiDrawTests
         {
             // Each batch draws cubes at indices: batch0=[0,1], batch1=[2,3], batch2=[4,5], batch3=[6,7]
             uint firstCubeInBatch = batchIdx * 2;
-            
+
             commands[batchIdx] = new DrawElementsIndirectCommand
             {
                 Count = 72,                                    // 36 indices per cube * 2 cubes
                 InstanceCount = 1,
                 FirstIndex = firstCubeInBatch * 36,            // Start at the first cube's indices
-                BaseVertex = (int)(firstCubeInBatch * 8),      // Offset to first cube's vertices (8 verts per cube)
+                BaseVertex = 0,
                 BaseInstance = 0
             };
         }

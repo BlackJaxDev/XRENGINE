@@ -417,12 +417,14 @@ namespace XREngine
 
             private static void SwapBuffersTwoPass()
             {
+                using var sample = Engine.Profiler.Start("VRState.SwapBuffersTwoPass");
                 _twoPassRenderPipeline?.MeshRenderCommands?.SwapBuffers();
                 //LeftEyeViewport?.SwapBuffers();
                 //RightEyeViewport?.SwapBuffers();
             }
             private static void SwapBuffersStereo()
             {
+                using var sample = Engine.Profiler.Start("VRState.SwapBuffersStereo");
                 StereoViewport?.SwapBuffers();
             }
 

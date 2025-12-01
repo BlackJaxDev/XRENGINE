@@ -5,6 +5,7 @@ using System.Numerics;
 using XREngine.Data.Core;
 using XREngine.Data.Geometry;
 using XREngine.Scene.Transforms;
+using YamlDotNet.Serialization;
 
 namespace XREngine.Rendering
 {
@@ -65,6 +66,7 @@ namespace XREngine.Rendering
     /// </summary>
     public class XRCamera : XRBase
     {
+        [YamlIgnore]
         public EventList<XRViewport> Viewports { get; set; } = [];
 
         public event Action<XRCamera, XRViewport>? ViewportAdded;
@@ -570,6 +572,7 @@ namespace XREngine.Rendering
         /// This is the rendering setup this viewport will use to render the scene the camera sees.
         /// A render pipeline is a collection of render passes that will be executed in order to render the scene and post-process the result, etc.
         /// </summary>
+        [YamlIgnore]
         public RenderPipeline RenderPipeline
         {
             get => _renderPipeline ?? SetFieldReturn(ref _renderPipeline, Engine.Rendering.NewRenderPipeline())!;

@@ -9,6 +9,7 @@ using XREngine.Rendering.Commands;
 using XREngine.Rendering.Info;
 using XREngine.Rendering.Models.Materials;
 using XREngine.Scene.Transforms;
+using YamlDotNet.Serialization;
 
 namespace XREngine.Components.Lights
 {
@@ -89,6 +90,7 @@ namespace XREngine.Components.Lights
             set => SetField(ref _captureDepthCubeMap, value);
         }
 
+        [YamlIgnore]
         public XRViewport? Viewport { get; private set; }
 
         protected XRRenderBuffer? _tempDepth;
@@ -298,6 +300,7 @@ namespace XREngine.Components.Lights
 
         public void SwapBuffers()
         {
+            using var sample = Engine.Profiler.Start("MirrorCaptureComponent.SwapBuffers");
             (_collectedCameras, _renderingCameras) = (_renderingCameras, _collectedCameras);
             _collectedCameras.Clear();
             Viewport?.SwapBuffers();

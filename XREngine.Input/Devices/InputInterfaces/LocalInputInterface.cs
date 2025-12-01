@@ -3,6 +3,7 @@ using Silk.NET.Input;
 using XREngine.Data.Core;
 using XREngine.Input.Devices.Glfw;
 using XREngine.Input.Devices.Types.OpenVR;
+using YamlDotNet.Serialization;
 
 namespace XREngine.Input.Devices
 {
@@ -14,9 +15,13 @@ namespace XREngine.Input.Devices
         /// </summary>
         public static List<DelWantsInputsRegistered> GlobalRegisters { get; } = [];
 
+        [YamlIgnore]
         public BaseGamePad? Gamepad { get; private set; }
+        [YamlIgnore]
         public BaseKeyboard? Keyboard { get; private set; }
+        [YamlIgnore]
         public BaseMouse? Mouse { get; private set; }
+        [YamlIgnore]
         public Dictionary<string, Dictionary<string, OpenVR.NET.Input.Action>>? OpenVRActions { get; private set; }
         public OpenVR.NET.Input.Action? TryGetOpenVRAction(string category, string name)
             => OpenVRActions is not null &&

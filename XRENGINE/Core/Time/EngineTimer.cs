@@ -208,10 +208,10 @@ namespace XREngine.Timers
                     }
 
                     //Wait for the render thread to swap update buffers with render buffers
-                    //using (Engine.Profiler.Start("EngineTimer.CollectVisibleThread.WaitForRender"))
-                    //{
+                    using (Engine.Profiler.Start("EngineTimer.CollectVisibleThread.WaitForRender"))
+                    {
                         _renderDone.Wait(-1);
-                    //}
+                    }
 
                     _renderDone.Reset();
 
@@ -381,7 +381,10 @@ namespace XREngine.Timers
         }
 
         public void DispatchSwapBuffers()
-            => SwapBuffers?.InvokeParallel();
+        {
+            using var sample = Engine.Profiler.Start("EngineTimer.DispatchSwapBuffers");
+            SwapBuffers?.Invoke();
+        }
 
         private Task DispatchFixedUpdate()
             => FixedUpdate?.InvokeAsync() ?? Task.CompletedTask;

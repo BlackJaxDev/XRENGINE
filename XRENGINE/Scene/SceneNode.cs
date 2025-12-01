@@ -74,7 +74,9 @@ namespace XREngine.Scene
             ComponentsInternal.PostAnythingRemoved += OnComponentRemoved;
         }
 
+        [YamlIgnore]
         public XREvent<(SceneNode node, XRComponent comp)>? ComponentAdded;
+        [YamlIgnore]
         public XREvent<(SceneNode node, XRComponent comp)>? ComponentRemoved;
 
         private void OnComponentRemoved(XRComponent item)

@@ -8,6 +8,7 @@ using XREngine.Data.Trees;
 using XREngine.Rendering;
 using XREngine.Rendering.Commands;
 using XREngine.Rendering.Info;
+using YamlDotNet.Serialization;
 
 namespace XREngine.Scene
 {
@@ -16,6 +17,7 @@ namespace XREngine.Scene
     /// </summary>
     public class VisualScene3D : VisualScene
     {
+        [YamlIgnore]
         public Octree<RenderInfo3D> RenderTree { get; } = new Octree<RenderInfo3D>(new AABB());
         private AABB _sceneBounds;
         private bool _hasSceneBounds = false;
