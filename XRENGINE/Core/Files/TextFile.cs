@@ -11,6 +11,7 @@ namespace XREngine.Core.Files
     /// Main class for raw text files.
     /// Overrides default serialization to save the raw text content instead of the object structure.
     /// </summary>
+    [XRAssetInspector("XREngine.Editor.AssetEditors.TextFileInspector")]
     [XR3rdPartyExtensions("txt")]
     public class TextFile : XRAsset
     {
