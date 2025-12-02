@@ -7,14 +7,14 @@ namespace XREngine.Rendering
         uint numLevels,
         uint minLayer,
         uint numLayers,
-        EPixelInternalFormat internalFormat) : XRTexture
+        ESizedInternalFormat internalFormat) : XRTexture
     {
         private ETexMagFilter _magFilter = ETexMagFilter.Linear;
         private ETexMinFilter _minFilter = ETexMinFilter.Linear;
         private ETexWrapMode _uWrap = ETexWrapMode.Repeat;
         private ETexWrapMode _vWrap = ETexWrapMode.Repeat;
         private float _lodBias = 0.0f;
-        private EPixelInternalFormat _internalFormat = internalFormat;
+        private ESizedInternalFormat _internalFormat = internalFormat;
         private uint _numLayers = numLayers;
         private uint _minLayer = minLayer;
         private uint _numLevels = numLevels;
@@ -40,7 +40,7 @@ namespace XREngine.Rendering
             get => _numLayers;
             set => SetField(ref _numLayers, value);
         }
-        public EPixelInternalFormat InternalFormat
+        public ESizedInternalFormat InternalFormat
         {
             get => _internalFormat;
             set => SetField(ref _internalFormat, value);

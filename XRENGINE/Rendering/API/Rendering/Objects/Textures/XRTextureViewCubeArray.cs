@@ -9,7 +9,7 @@ namespace XREngine.Rendering
         uint numLevels,
         uint minLayer,
         uint numLayers,
-        EPixelInternalFormat internalFormat,
+        ESizedInternalFormat internalFormat,
         bool array,
         bool view2D) : XRTextureView<XRTextureCubeArray>(viewedTexture, minLevel, numLevels, minLayer, numLayers, internalFormat)
     {

@@ -24,6 +24,7 @@ vec3 DirectionFromFragPos(vec3 fragPos)
         n.xy = (1.0f - abs(nXY.yx)) * signDir;
     }
 
+    // Swizzle back: octahedral (x,y,z) -> world (x,z,y)
     vec3 dir = vec3(n.x, n.z, n.y);
     return normalize(dir);
 }
