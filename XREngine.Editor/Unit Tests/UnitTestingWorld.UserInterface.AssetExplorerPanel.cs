@@ -697,10 +697,12 @@ public static partial class UnitTestingWorld
             }
             else if (leftClicked)
             {
+                Debug.Out($"[AssetExplorer] Left click on file: {entry.Path}");
                 SetAssetExplorerSelection(state, entry.Path);
             }
             else if (!entry.IsDirectory && doubleClicked)
             {
+                Debug.Out($"[AssetExplorer] Double click on file: {entry.Path}");
                 HandleAssetExplorerFileActivation(state, entry);
             }
 
@@ -1025,9 +1027,13 @@ public static partial class UnitTestingWorld
 
         private static void UpdateAssetExplorerSelection(AssetExplorerTabState state, string? path, bool force)
         {
+            Debug.Out($"[AssetExplorer] UpdateAssetExplorerSelection called: path='{path}', force={force}");
             string? normalized = string.IsNullOrWhiteSpace(path) ? null : NormalizeAssetExplorerPath(path);
             if (!force && string.Equals(state.SelectedPath, normalized, StringComparison.OrdinalIgnoreCase))
+            {
+                Debug.Out($"[AssetExplorer] UpdateAssetExplorerSelection: Same path, skipping");
                 return;
+            }
 
             state.SelectedPath = normalized;
 
@@ -1104,14 +1110,23 @@ public static partial class UnitTestingWorld
 
         private static bool TryShowAssetInInspector(string path)
         {
+            Debug.Out($"[AssetExplorer] TryShowAssetInInspector called with path='{path}'");
             var descriptor = ResolveAssetTypeForPath(path);
             if (descriptor is null)
+            {
+                Debug.Out($"[AssetExplorer] ResolveAssetTypeForPath returned null for path='{path}'");
                 return false;
+            }
 
+            Debug.Out($"[AssetExplorer] ResolveAssetTypeForPath returned descriptor: {descriptor.FullName}");
             XRAsset? asset = LoadAssetForInspector(descriptor, path);
             if (asset is null)
+            {
+                Debug.Out($"[AssetExplorer] LoadAssetForInspector returned null for path='{path}'");
                 return false;
+            }
 
+            Debug.Out($"[AssetExplorer] LoadAssetForInspector succeeded: {asset.GetType().Name}");
             string displayTitle = string.IsNullOrWhiteSpace(asset.Name)
                 ? descriptor.DisplayName
                 : asset.Name!;
@@ -1128,21 +1143,33 @@ public static partial class UnitTestingWorld
         {
             var assets = Engine.Assets;
             if (assets is null)
+            {
+                Debug.Out($"[AssetExplorer] LoadAssetForInspector: Engine.Assets is null");
                 return null;
+            }
 
             if (assets.TryGetAssetByPath(path, out XRAsset? cached))
+            {
+                Debug.Out($"[AssetExplorer] LoadAssetForInspector: Found cached asset for path='{path}'");
                 return cached;
+            }
 
+            Debug.Out($"[AssetExplorer] LoadAssetForInspector: Loading asset from disk, path='{path}', type={descriptor.FullName}");
             try
             {
                 MethodInfo loadMethod = GetAssetManagerLoadMethod();
                 MethodInfo generic = loadMethod.MakeGenericMethod(descriptor.Type);
                 if (generic.Invoke(assets, new object[] { path }) is XRAsset loaded)
+                {
+                    Debug.Out($"[AssetExplorer] LoadAssetForInspector: Successfully loaded asset");
                     return loaded;
+                }
+                Debug.Out($"[AssetExplorer] LoadAssetForInspector: Load returned null or wrong type");
             }
             catch (Exception ex)
             {
-                Debug.LogException(ex, $"Failed to load asset '{path}' as '{descriptor.FullName}'.");
+                Debug.Out($"[AssetExplorer] LoadAssetForInspector: Exception: {ex.Message}");
+                Debug.LogException(ex, $"Failed to load asset '{path}' as '{descriptor.FullName}'.");;
             }
 
             return null;
@@ -1167,11 +1194,16 @@ public static partial class UnitTestingWorld
 
         private static AssetTypeDescriptor? ResolveAssetTypeForPath(string path)
         {
+            Debug.Out($"[AssetExplorer] ResolveAssetTypeForPath: path='{path}'");
             string normalized = NormalizeAssetExplorerPath(path);
             if (_assetExplorerAssetTypeCache.TryGetValue(normalized, out var cached))
+            {
+                Debug.Out($"[AssetExplorer] ResolveAssetTypeForPath: Found cached descriptor={cached?.FullName ?? "null"}");
                 return cached;
+            }
 
             string extension = Path.GetExtension(normalized);
+            Debug.Out($"[AssetExplorer] ResolveAssetTypeForPath: extension='{extension}'");
             var descriptors = EnsureAssetTypeCache();
 
             if (string.IsNullOrEmpty(extension))
@@ -1198,10 +1230,45 @@ public static partial class UnitTestingWorld
 
             if (!TryGetYamlKeys(normalized, out var yamlKeys))
             {
+                // Try to read __assetType directly as fallback
+                var assetTypeFromFile = TryReadAssetTypeFromFile(normalized);
+                if (assetTypeFromFile is not null)
+                {
+                    var descriptor = descriptors.FirstOrDefault(d => 
+                        string.Equals(d.FullName, assetTypeFromFile, StringComparison.Ordinal) ||
+                        string.Equals(d.Type.Name, assetTypeFromFile, StringComparison.Ordinal));
+                    if (descriptor is not null)
+                    {
+                        Debug.Out($"[AssetExplorer] Found type via __assetType field: {descriptor.FullName}");
+                        _assetExplorerAssetTypeCache[normalized] = descriptor;
+                        return descriptor;
+                    }
+                }
+                Debug.Out($"[AssetExplorer] TryGetYamlKeys failed for path='{normalized}'");
                 _assetExplorerAssetTypeCache[normalized] = null;
                 return null;
             }
 
+            Debug.Out($"[AssetExplorer] TryGetYamlKeys succeeded, found {yamlKeys.Count} keys: {string.Join(", ", yamlKeys.Take(10))}");
+            
+            // First check if __assetType is in the keys - direct type match
+            if (yamlKeys.Contains("__assetType"))
+            {
+                var assetTypeFromFile = TryReadAssetTypeFromFile(normalized);
+                if (assetTypeFromFile is not null)
+                {
+                    var descriptor = descriptors.FirstOrDefault(d => 
+                        string.Equals(d.FullName, assetTypeFromFile, StringComparison.Ordinal) ||
+                        string.Equals(d.Type.Name, assetTypeFromFile, StringComparison.Ordinal));
+                    if (descriptor is not null)
+                    {
+                        Debug.Out($"[AssetExplorer] Found type via __assetType field: {descriptor.FullName}");
+                        _assetExplorerAssetTypeCache[normalized] = descriptor;
+                        return descriptor;
+                    }
+                }
+            }
+            
             AssetTypeDescriptor? best = null;
             int bestScore = 0;
 
@@ -1222,6 +1289,7 @@ public static partial class UnitTestingWorld
                 }
             }
 
+            Debug.Out($"[AssetExplorer] Best match: {best?.FullName ?? "null"}, score={bestScore}");
             if (best is null && descriptors.Count == 1)
                 best = descriptors[0];
 
@@ -1238,7 +1306,8 @@ public static partial class UnitTestingWorld
 
             try
             {
-                using var reader = new StreamReader(path);
+                using var fs = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
+                using var reader = new StreamReader(fs);
                 var yaml = new YamlStream();
                 yaml.Load(reader);
 
@@ -1250,9 +1319,11 @@ public static partial class UnitTestingWorld
                             keys.Add(keyNode.Value);
                     }
                 }
+                Debug.Out($"[AssetExplorer] TryGetYamlKeys: Parsed {yaml.Documents.Count} documents, {keys.Count} keys");
             }
-            catch
+            catch (Exception ex)
             {
+                Debug.Out($"[AssetExplorer] TryGetYamlKeys exception: {ex.Message}");
                 keys.Clear();
             }
 
@@ -1262,6 +1333,38 @@ public static partial class UnitTestingWorld
                 _assetExplorerYamlKeyCache.Remove(path);
 
             return keys.Count > 0;
+        }
+
+        private static string? TryReadAssetTypeFromFile(string path)
+        {
+            try
+            {
+                // Read first few lines looking for __assetType
+                using var fs = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
+                using var reader = new StreamReader(fs);
+                for (int i = 0; i < 10 && !reader.EndOfStream; i++)
+                {
+                    var line = reader.ReadLine();
+                    if (line is null)
+                        break;
+                    
+                    // Look for __assetType: TypeName pattern
+                    if (line.StartsWith("__assetType:", StringComparison.Ordinal))
+                    {
+                        var value = line.Substring("__assetType:".Length).Trim();
+                        if (!string.IsNullOrWhiteSpace(value))
+                        {
+                            Debug.Out($"[AssetExplorer] Found __assetType in file: '{value}'");
+                            return value;
+                        }
+                    }
+                }
+            }
+            catch
+            {
+                // Ignore errors
+            }
+            return null;
         }
 
         private static void UpdateAssetExplorerExtensionFilterSet()

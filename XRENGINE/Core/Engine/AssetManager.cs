@@ -188,6 +188,17 @@ namespace XREngine
         }
         private async Task OnFileChanged(FileSystemEventArgs args)
         {
+            // Skip reload if we just saved this file (within last 2 seconds)
+            if (_recentlySavedPaths.TryGetValue(args.FullPath, out var saveTime))
+            {
+                if ((DateTime.UtcNow - saveTime).TotalSeconds < 2)
+                {
+                    _recentlySavedPaths.TryRemove(args.FullPath, out _);
+                    return;
+                }
+                _recentlySavedPaths.TryRemove(args.FullPath, out _);
+            }
+            
             Debug.Out($"File '{args.FullPath}' was changed.");
             var asset = GetAssetByPath(args.FullPath);
             if (asset is not null)
@@ -321,7 +332,7 @@ namespace XREngine
                     {
                         if (s is XRAsset asset && asset.IsDirty)
                         {
-                            DirtyAssets.Add(asset);
+                            DirtyAssets.TryAdd(asset.ID, asset);
                             AssetMarkedDirty?.Invoke(asset);
                         }
                     }
@@ -367,7 +378,10 @@ namespace XREngine
         public ConcurrentDictionary<string, XRAsset> LoadedAssetsByOriginalPathInternal { get; } = [];
         public ConcurrentDictionary<string, XRAsset> LoadedAssetsByPathInternal { get; } = [];
         public ConcurrentDictionary<Guid, XRAsset> LoadedAssetsByIDInternal { get; } = [];
-        public ConcurrentBag<XRAsset> DirtyAssets { get; } = [];
+        public ConcurrentDictionary<Guid, XRAsset> DirtyAssets { get; } = [];
+        
+        // Track recently saved assets to prevent immediate reload from file watcher
+        private readonly ConcurrentDictionary<string, DateTime> _recentlySavedPaths = new(StringComparer.OrdinalIgnoreCase);
 
         public XRAsset? GetAssetByID(Guid id)
             => LoadedAssetsByIDInternal.TryGetValue(id, out XRAsset? asset) ? asset : null;
@@ -488,6 +502,12 @@ namespace XREngine
             if (newAsset)
                 CacheAsset(asset);
             asset.ClearDirty();
+            DirtyAssets.TryRemove(asset.ID, out _);
+            
+            // Track save time to prevent file watcher from reloading
+            if (!string.IsNullOrEmpty(asset.FilePath))
+                _recentlySavedPaths[asset.FilePath] = DateTime.UtcNow;
+            
             AssetSaved?.Invoke(asset);
         }
 
@@ -596,6 +616,8 @@ namespace XREngine
             {
 #endif
             using var t = Engine.Profiler.Start($"AssetManager.SaveAsync {asset.FilePath}");
+            // Ensure SourceAsset/EmbeddedAssets are up-to-date before serialization
+            XRAssetGraphUtility.RefreshAssetGraph(asset);
             await asset.SerializeToAsync(asset.FilePath, Serializer);
             PostSaved(asset, false);
 #if !DEBUG
@@ -620,6 +642,8 @@ namespace XREngine
 #endif
             //Debug.Out($"Saving asset to '{asset.FilePath}'...");
             using var t = Engine.Profiler.Start($"AssetManager.Save {asset.FilePath}");
+            // Ensure SourceAsset/EmbeddedAssets are up-to-date before serialization
+            XRAssetGraphUtility.RefreshAssetGraph(asset);
             asset.SerializeTo(asset.FilePath, Serializer);
             PostSaved(asset, false);
 #if !DEBUG
@@ -647,6 +671,8 @@ namespace XREngine
 
             asset.FilePath = path;
             //Debug.Out($"Saving asset to '{path}'...");
+            // Ensure SourceAsset/EmbeddedAssets are up-to-date before serialization
+            XRAssetGraphUtility.RefreshAssetGraph(asset);
             asset.SerializeTo(path, Serializer);
             PostSaved(asset, true);
 #if !DEBUG
@@ -674,6 +700,8 @@ namespace XREngine
 
             asset.FilePath = path;
             //Debug.Out($"Saving asset to '{path}'...");
+            // Ensure SourceAsset/EmbeddedAssets are up-to-date before serialization
+            XRAssetGraphUtility.RefreshAssetGraph(asset);
             await asset.SerializeToAsync(path, Serializer);
             PostSaved(asset, true);
 #if !DEBUG
@@ -1183,14 +1211,14 @@ namespace XREngine
         
         public void SaveAll()
         {
-            foreach (var asset in DirtyAssets)
-                Save(asset);
+            foreach (var kvp in DirtyAssets)
+                Save(kvp.Value);
             DirtyAssets.Clear();
         }
 
         public async Task SaveAllAsync()
         {
-            var tasks = DirtyAssets.Select(SaveAsync);
+            var tasks = DirtyAssets.Values.Select(SaveAsync);
             await Task.WhenAll(tasks);
             DirtyAssets.Clear();
         }

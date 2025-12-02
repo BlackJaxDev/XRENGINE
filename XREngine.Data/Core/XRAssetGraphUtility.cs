@@ -102,6 +102,7 @@ public static class XRAssetGraphUtility
         {
             if (!ReferenceEquals(asset, root))
             {
+                Trace.WriteLine($"[XRAssetGraphUtility] Found embedded asset: {asset.GetType().Name}, root='{root.FilePath ?? root.GetType().Name}', asset FilePath='{asset.FilePath}'");
                 if (!ReferenceEquals(asset.SourceAsset, root))
                     asset.SourceAsset = root;
 
