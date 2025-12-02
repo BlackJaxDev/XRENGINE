@@ -262,11 +262,15 @@ public class DefaultRenderPipeline : RenderPipeline
 
         using (c.AddUsing<VPRC_PushViewportRenderArea>(t => t.UseInternalResolution = true))
         {
-            //Render to the ambient occlusion FBO using SSAO or MVAO depending on the active settings
-            var ambientOcclusionChoice = c.Add<VPRC_IfElse>();
-            ambientOcclusionChoice.ConditionEvaluator = ShouldUseMVAO;
-            ambientOcclusionChoice.TrueCommands = CreateMVAOPassCommands();
-            ambientOcclusionChoice.FalseCommands = CreateSSAOPassCommands();
+            // Render to the ambient occlusion FBO using a switch to select SSAO, MVAO, or spatial hash AO
+            var aoSwitch = c.Add<VPRC_Switch>();
+            aoSwitch.SwitchEvaluator = EvaluateAmbientOcclusionMode;
+            aoSwitch.Cases = new()
+            {
+                [(int)AmbientOcclusionSettings.EType.MultiViewAmbientOcclusion] = CreateMVAOPassCommands(),
+                [(int)AmbientOcclusionSettings.EType.SpatialHashRaytraced] = CreateSpatialHashAOPassCommands(),
+            };
+            aoSwitch.DefaultCase = CreateSSAOPassCommands();
 
             using (c.AddUsing<VPRC_BindFBOByName>(x => x.SetOptions(AmbientOcclusionFBOName)))
             {
@@ -643,6 +647,13 @@ public class DefaultRenderPipeline : RenderPipeline
         return container;
     }
 
+    private ViewportRenderCommandContainer CreateSpatialHashAOPassCommands()
+    {
+        var container = new ViewportRenderCommandContainer(this);
+        ConfigureSpatialHashAOPass(container.Add<VPRC_SpatialHashAOPass>());
+        return container;
+    }
+
     private ViewportRenderCommandContainer CreateMotionBlurPassCommands()
     {
         var container = new ViewportRenderCommandContainer(this);
@@ -722,17 +733,47 @@ public class DefaultRenderPipeline : RenderPipeline
             GBufferFBOName);
     }
 
-    private static bool ShouldUseMVAO()
+    private void ConfigureSpatialHashAOPass(VPRC_SpatialHashAOPass pass)
+    {
+        pass.SetOptions(
+            VPRC_SpatialHashAOPass.DefaultSamples,
+            VPRC_SpatialHashAOPass.DefaultNoiseWidth,
+            VPRC_SpatialHashAOPass.DefaultNoiseHeight,
+            VPRC_SpatialHashAOPass.DefaultMinSampleDist,
+            VPRC_SpatialHashAOPass.DefaultMaxSampleDist,
+            Stereo);
+
+        pass.SetGBufferInputTextureNames(
+            NormalTextureName,
+            DepthViewTextureName,
+            AlbedoOpacityTextureName,
+            RMSETextureName,
+            DepthStencilTextureName);
+
+        pass.SetOutputNames(
+            SSAONoiseTextureName,
+            AmbientOcclusionIntensityTextureName,
+            AmbientOcclusionFBOName,
+            AmbientOcclusionBlurFBOName,
+            GBufferFBOName);
+    }
+
+    private static int EvaluateAmbientOcclusionMode()
     {
         var aoSettings = State.SceneCamera?.PostProcessing?.AmbientOcclusion;
 
         if (aoSettings is { Enabled: true })
-            return aoSettings.Type == AmbientOcclusionSettings.EType.MultiViewAmbientOcclusion;
+            return (int)aoSettings.Type;
 
         if (aoSettings is { Enabled: false })
-            return false;
+            return (int)AmbientOcclusionSettings.EType.ScreenSpace;
 
-        return Engine.UserSettings.AmbientOcclusionMode == EAmbientOcclusionMode.MultiView;
+        return Engine.UserSettings.AmbientOcclusionMode switch
+        {
+            EAmbientOcclusionMode.MultiView => (int)AmbientOcclusionSettings.EType.MultiViewAmbientOcclusion,
+            EAmbientOcclusionMode.SpatialHashRaytraced => (int)AmbientOcclusionSettings.EType.SpatialHashRaytraced,
+            _ => (int)AmbientOcclusionSettings.EType.ScreenSpace,
+        };
     }
 
     private static MotionBlurSettings? GetMotionBlurSettings()
