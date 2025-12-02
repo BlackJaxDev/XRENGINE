@@ -7,13 +7,13 @@ const uint GROUP_SIZE = 32u;
 
 struct Meshlet
 {
-    uint VertexOffset;
-    uint TriangleOffset;
-    uint VertexCount;
-    uint TriangleCount;
+    vec4 BoundingSphere;        // xyz center, w radius
+    uvec4 Indices;              // x = vertex offset, y = triangle offset, z = vertex count, w = triangle count
+    uvec4 Meta;                 // x = mesh ID, y = material ID
 };
 
 layout(std430, binding = 0) buffer MeshletBuffer { Meshlet meshlets[]; };
+layout(std430, binding = 5) buffer TransformBuffer { mat4 worldMatrices[]; };
 
 struct TaskPayload { uint meshletIndices[GROUP_SIZE]; uint count; };
 
@@ -21,6 +21,29 @@ taskNV out TaskPayload OUT;
 
 shared uint sVisibleCount;
 shared uint sIndices[GROUP_SIZE];
+
+uniform vec4 FrustumPlanes[6];
+
+vec4 TransformSphere(in Meshlet m)
+{
+    mat4 world = worldMatrices[m.Meta.x];
+    vec3 center = (world * vec4(m.BoundingSphere.xyz, 1.0)).xyz;
+    float scale = max(max(length(world[0].xyz), length(world[1].xyz)), length(world[2].xyz));
+    float radius = m.BoundingSphere.w * scale;
+    return vec4(center, radius);
+}
+
+bool FrustumCulled(vec4 sphere)
+{
+    for (int i = 0; i < 6; ++i)
+    {
+        vec4 p = FrustumPlanes[i];
+        float dist = dot(p.xyz, sphere.xyz) + p.w;
+        if (dist < -sphere.w)
+            return true;
+    }
+    return false;
+}
 
 void main()
 {
@@ -30,13 +53,17 @@ void main()
 
     uint idx = gl_WorkGroupID.x * GROUP_SIZE + gl_LocalInvocationID.x;
 
-    // Mark visible if within range
-    bool visible = (idx < meshlets.length());
-    if (visible)
+    // Mark visible if within range and passes frustum test
+    if (idx < meshlets.length())
     {
-        uint dst = atomicAdd(sVisibleCount, 1u);
-        if (dst < GROUP_SIZE)
-            sIndices[dst] = idx;
+        Meshlet m = meshlets[idx];
+        vec4 worldSphere = TransformSphere(m);
+        if (!FrustumCulled(worldSphere))
+        {
+            uint dst = atomicAdd(sVisibleCount, 1u);
+            if (dst < GROUP_SIZE)
+                sIndices[dst] = idx;
+        }
     }
 
     barrier();

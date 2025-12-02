@@ -83,6 +83,8 @@ namespace XREngine.Rendering.Meshlets
             for (int i = 0; i < meshletData.Length; i++)
             {
                 var m = meshletData[i];
+                m.MeshID = meshID;
+                m.MaterialID = materialID;
                 m.VertexOffset += baseVertOffset;
                 m.TriangleOffset += baseTriOffset;
                 _meshlets.Add(m);
@@ -94,6 +96,7 @@ namespace XREngine.Rendering.Meshlets
             _meshletOffsets[meshID] = (_meshlets.Count - meshletData.Length, meshletData.Length);
             _transforms[meshID] = transform;
             _buffersDirty = true;
+            _transformBufferDirty = true;
         }
 
         /// <summary>
