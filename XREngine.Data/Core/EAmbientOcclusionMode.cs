@@ -4,5 +4,6 @@ namespace XREngine
     {
         ScreenSpace,
         MultiView,
+        SpatialHashRaytraced,
     }
 }
