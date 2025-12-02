@@ -22,12 +22,42 @@ public sealed class LightProbeComponentEditor : IXRComponentEditor
         if (component is not LightProbeComponent lightProbe)
         {
             UnitTestingWorld.UserInterface.DrawDefaultComponentInspector(component, visited);
+            ComponentEditorLayout.DrawActivePreviewDialog();
             return;
         }
 
-        ImGui.SeparatorText("Component");
-        UnitTestingWorld.UserInterface.DrawDefaultComponentInspector(lightProbe, visited);
+        if (!ComponentEditorLayout.DrawInspectorModeToggle(lightProbe, visited, "Light Probe Editor"))
+        {
+            ComponentEditorLayout.DrawActivePreviewDialog();
+            return;
+        }
 
+        DrawProbeStatus(lightProbe);
+        DrawCapturePreviews(lightProbe);
+        ComponentEditorLayout.DrawActivePreviewDialog();
+    }
+
+    private static void DrawProbeStatus(LightProbeComponent lightProbe)
+    {
+        ImGui.SeparatorText("Probe Status");
+
+        bool realtime = lightProbe.RealtimeCapture;
+        if (ImGui.Checkbox("Realtime Capture", ref realtime))
+            lightProbe.RealtimeCapture = realtime;
+
+        bool gizmoVisible = lightProbe.PreviewEnabled;
+        if (ImGui.Checkbox("Show Probe Gizmo", ref gizmoVisible))
+            lightProbe.PreviewEnabled = gizmoVisible;
+
+        ImGui.TextDisabled($"Preview Mode: {lightProbe.PreviewDisplay}");
+
+        XRTexture? previewTexture = lightProbe.GetPreviewTexture();
+        string displayName = previewTexture?.Name ?? "<pending capture>";
+        ImGui.TextDisabled($"Active Texture: {displayName}");
+    }
+
+    private static void DrawCapturePreviews(LightProbeComponent lightProbe)
+    {
         ImGui.SeparatorText("Capture Previews");
         DrawCapturePreview(lightProbe, "Environment (Octa)", lightProbe.EnvironmentTextureOctahedral, LightProbeComponent.ERenderPreview.Environment);
         DrawCapturePreview(lightProbe, "Irradiance", lightProbe.IrradianceTexture, LightProbeComponent.ERenderPreview.Irradiance);
@@ -70,11 +100,22 @@ public sealed class LightProbeComponentEditor : IXRComponentEditor
 
         Vector2 uv0 = new(0.0f, 1.0f);
         Vector2 uv1 = new(1.0f, 0.0f);
+        bool openLargeView = false;
         ImGui.Image(handle, displaySize, uv0, uv1);
 
         string info = $"{(int)pixelSize.X} x {(int)pixelSize.Y} | {texture.SizedInternalFormat}";
         if (ImGui.IsItemHovered())
+        {
             ImGui.SetTooltip(info);
+            if (ImGui.IsMouseDoubleClicked(ImGuiMouseButton.Left))
+                openLargeView = true;
+        }
+
+        if (ImGui.SmallButton("View Larger"))
+            openLargeView = true;
+
+        if (openLargeView)
+            ComponentEditorLayout.RequestPreviewDialog($"{label} Preview", handle, pixelSize, flipVertically: true);
         ImGui.TextDisabled(info);
 
         ImGui.PopID();

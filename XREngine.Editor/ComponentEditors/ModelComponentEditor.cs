@@ -5,7 +5,6 @@ using System.Globalization;
 using System.IO;
 using System.Linq;
 using System.Numerics;
-using System.Runtime.CompilerServices;
 using ImGuiNET;
 using XREngine;
 using XREngine.Components;
@@ -26,12 +25,6 @@ namespace XREngine.Editor.ComponentEditors;
 
 public sealed class ModelComponentEditor : IXRComponentEditor
 {
-    private sealed class AdvancedToggleState
-    {
-        public bool Enabled;
-    }
-
-    private static readonly ConditionalWeakTable<XRComponent, AdvancedToggleState> _advancedPropertiesState = new();
     private static readonly Vector4 ActiveLodHighlight = new(0.20f, 0.50f, 0.90f, 0.18f);
     private const float TexturePreviewMaxEdge = 96.0f;
     private const float TexturePreviewFallbackEdge = 64.0f;
@@ -60,35 +53,19 @@ public sealed class ModelComponentEditor : IXRComponentEditor
         if (component is not ModelComponent modelComponent)
         {
             UnitTestingWorld.UserInterface.DrawDefaultComponentInspector(component, visited);
+            ComponentEditorLayout.DrawActivePreviewDialog();
             return;
         }
 
-        bool advanced = GetAdvancedPropertiesState(modelComponent);
-
-        ImGui.PushID(modelComponent.GetHashCode());
-        if (ImGui.Checkbox("Advanced Properties", ref advanced))
-            SetAdvancedPropertiesState(modelComponent, advanced);
-        ImGui.PopID();
-
-        if (advanced)
+        if (!ComponentEditorLayout.DrawInspectorModeToggle(modelComponent, visited, "Model Editor"))
         {
-            UnitTestingWorld.UserInterface.DrawDefaultComponentInspector(component, visited);
+            ComponentEditorLayout.DrawActivePreviewDialog();
             return;
         }
 
-    DrawComponentProperties(modelComponent);
-    DrawModelOverview(modelComponent);
-    }
-
-    private static bool GetAdvancedPropertiesState(ModelComponent component)
-        => _advancedPropertiesState.TryGetValue(component, out var state) && state.Enabled;
-
-    private static void SetAdvancedPropertiesState(ModelComponent component, bool enabled)
-    {
-        if (enabled)
-            _advancedPropertiesState.GetValue(component, _ => new AdvancedToggleState()).Enabled = true;
-        else
-            _advancedPropertiesState.Remove(component);
+        DrawComponentProperties(modelComponent);
+        DrawModelOverview(modelComponent);
+        ComponentEditorLayout.DrawActivePreviewDialog();
     }
 
     private static void DrawComponentProperties(ModelComponent modelComponent)
@@ -452,18 +429,28 @@ public sealed class ModelComponentEditor : IXRComponentEditor
         }
 
         bool hasPreview = TryGetTexturePreviewData(texture, out nint handle, out Vector2 displaySize, out Vector2 pixelSize, out string? failureReason);
+        string previewLabel = FormatAssetLabel(texture.Name, texture);
 
         if (hasPreview)
         {
+            bool openDialog = false;
             ImGui.Image(handle, displaySize);
             if (ImGui.IsItemHovered())
             {
                 ImGui.BeginTooltip();
-                ImGui.TextUnformatted(FormatAssetLabel(texture.Name, texture));
+                ImGui.TextUnformatted(previewLabel);
                 if (pixelSize.X > 0f && pixelSize.Y > 0f)
                     ImGui.TextUnformatted($"{(int)pixelSize.X} x {(int)pixelSize.Y}");
                 ImGui.EndTooltip();
+                if (ImGui.IsMouseDoubleClicked(ImGuiMouseButton.Left))
+                    openDialog = true;
             }
+
+            if (ImGui.SmallButton("View Larger"))
+                openDialog = true;
+
+            if (openDialog)
+                ComponentEditorLayout.RequestPreviewDialog($"{previewLabel} Texture", handle, pixelSize, flipVertically: false);
         }
         else
         {
