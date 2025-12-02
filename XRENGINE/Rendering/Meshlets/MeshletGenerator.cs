@@ -1,6 +1,11 @@
+using System;
+using System.Collections.Generic;
+using System.Linq;
+using System.Numerics;
 using XREngine.Data;
 using XREngine.Data.Rendering;
 using static Meshoptimizer.Meshopt;
+using MeshoptMeshlet = Meshoptimizer.Meshopt.Meshlet;
 
 namespace XREngine.Rendering.Meshlets
 {
@@ -113,7 +118,7 @@ namespace XREngine.Rendering.Meshlets
             if (maxMeshlets == 0)
                 return [];
 
-            Meshlet[] meshlets = new Meshlet[maxMeshlets];
+            MeshoptMeshlet[] meshlets = new MeshoptMeshlet[maxMeshlets];
             uint* meshletVertices = stackalloc uint[(int)(maxMeshlets * maxVerticesPerMeshlet)];
             byte* meshletTriangles = stackalloc byte[(int)(maxMeshlets * maxTrianglesPerMeshlet * 3)]; //3 indices per triangle
 
@@ -140,13 +145,63 @@ namespace XREngine.Rendering.Meshlets
                 maxTrianglesPerMeshlet,
                 coneWeight);
 
+            if (count == 0)
+                return [];
+
+            int meshletCount = (int)count;
+            meshletVertexIndices = new uint[meshletCount * maxVerticesPerMeshlet];
+            meshletTriangleIndices = new byte[meshletCount * maxTrianglesPerMeshlet * 3];
+
             fixed (uint* pMeshletVert = &meshletVertexIndices[0])
-                Buffer.MemoryCopy(meshletVertices, pMeshletVert, meshletVertexIndices.Length * sizeof(uint), (long)count * maxVerticesPerMeshlet * sizeof(uint));
+                Buffer.MemoryCopy(meshletVertices, pMeshletVert, meshletVertexIndices.Length * sizeof(uint), meshletVertexIndices.Length * sizeof(uint));
             fixed (byte* pMeshletTri = &meshletTriangleIndices[0])
-                Buffer.MemoryCopy(meshletTriangles, pMeshletTri, meshletTriangleIndices.Length * sizeof(byte), (long)count * maxTrianglesPerMeshlet * 3 * sizeof(byte));
-            
-            Array.Resize(ref meshlets, (int)count);
-            return meshlets;
+                Buffer.MemoryCopy(meshletTriangles, pMeshletTri, meshletTriangleIndices.Length * sizeof(byte), meshletTriangleIndices.Length * sizeof(byte));
+
+            Meshlet[] results = new Meshlet[meshletCount];
+            for (int i = 0; i < meshletCount; i++)
+            {
+                MeshoptMeshlet m = meshlets[i];
+
+                Vector4 bounds = ComputeBounds(mesh, meshletVertexIndices, m);
+
+                results[i] = new Meshlet
+                {
+                    BoundingSphere = bounds,
+                    VertexOffset = m.VertexOffset,
+                    TriangleOffset = m.TriangleOffset,
+                    VertexCount = m.VertexCount,
+                    TriangleCount = m.TriangleCount,
+                    MeshID = 0,
+                    MaterialID = 0,
+                };
+            }
+
+            return results;
+        }
+
+        private static Vector4 ComputeBounds(XRMesh mesh, IReadOnlyList<uint> vertexIndices, MeshoptMeshlet meshlet)
+        {
+            if (meshlet.VertexCount == 0)
+                return Vector4.Zero;
+
+            uint offset = meshlet.VertexOffset;
+            Vector3 center = Vector3.Zero;
+            for (int i = 0; i < meshlet.VertexCount; i++)
+            {
+                Vector3 pos = mesh.GetPosition(vertexIndices[(int)(offset + i)]);
+                center += pos;
+            }
+
+            center /= meshlet.VertexCount;
+
+            float radius = 0f;
+            for (int i = 0; i < meshlet.VertexCount; i++)
+            {
+                Vector3 pos = mesh.GetPosition(vertexIndices[(int)(offset + i)]);
+                radius = Math.Max(radius, Vector3.Distance(center, pos));
+            }
+
+            return new Vector4(center, radius);
         }
     }
 }

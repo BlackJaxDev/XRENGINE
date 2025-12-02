@@ -6,7 +6,12 @@ layout(triangles, max_vertices = 64, max_primitives = 126) out;
 
 const uint GROUP_SIZE = 32u;
 
-struct Meshlet { uint VertexOffset; uint TriangleOffset; uint VertexCount; uint TriangleCount; };
+struct Meshlet
+{
+    vec4 BoundingSphere;
+    uvec4 Indices;
+    uvec4 Meta;
+};
 struct Vertex { vec3 position; vec3 normal; vec2 texCoord; vec4 tangent; };
 struct VertexSkin { uvec4 indices; vec4 weights; };
 struct SkinningMeta { uint boneOffset; uint boneCount; };
@@ -68,16 +73,16 @@ void main()
     uint meshletIndex = IN.meshletIndices[meshletIndexInTask];
     Meshlet m = meshlets[meshletIndex];
 
-    mat4 worldMatrix = mat4(1.0);
+    mat4 worldMatrix = worldMatrices[m.Meta.x];
     mat4 mvp = ViewProjectionMatrix * worldMatrix;
-    mat3 worldNormalMatrix = mat3(1.0);
+    mat3 worldNormalMatrix = mat3(worldMatrix);
 
-    gl_PrimitiveCountNV = m.TriangleCount;
+    gl_PrimitiveCountNV = m.Indices.w;
 
     uint tid = gl_LocalInvocationID.x;
-    if (tid < m.VertexCount)
+    if (tid < m.Indices.z)
     {
-        uint globalVtxIndex = vertexIndices[m.VertexOffset + tid];
+        uint globalVtxIndex = vertexIndices[m.Indices.x + tid];
         Vertex v = vertices[globalVtxIndex];
         VertexSkin s = skinning[globalVtxIndex];
 
@@ -91,12 +96,12 @@ void main()
         out_normal[tid] = normalize(worldNormalMatrix * (objLinear * v.normal));
         out_texCoord[tid] = v.texCoord;
         out_tangent[tid] = vec4(normalize(worldNormalMatrix * (objLinear * v.tangent.xyz)), v.tangent.w);
-        out_materialID[tid] = 0u;
+        out_materialID[tid] = m.Meta.y;
     }
 
-    for (uint tri = tid; tri < m.TriangleCount; tri += GROUP_SIZE)
+    for (uint tri = tid; tri < m.Indices.w; tri += GROUP_SIZE)
     {
-        uint baseByte = (m.TriangleOffset + tri) * 3u;
+        uint baseByte = (m.Indices.y + tri) * 3u;
         gl_PrimitiveIndicesNV[tri * 3u + 0u] = ReadTriIndex(baseByte + 0u);
         gl_PrimitiveIndicesNV[tri * 3u + 1u] = ReadTriIndex(baseByte + 1u);
         gl_PrimitiveIndicesNV[tri * 3u + 2u] = ReadTriIndex(baseByte + 2u);
