@@ -10,7 +10,7 @@ namespace XREngine
     /// Represents an XREngine project file (.xrproj).
     /// Contains references to engine settings, user settings, and project configuration.
     /// The project root (directory containing the .xrproj) must only contain the descriptor file and
-    /// the standard project folders: Assets, Intermediate, Build, Packages, and Config.
+    /// the standard project folders: Assets, Intermediate, Build, Packages, Config, and Cache.
     /// </summary>
     public class XRProject : XRAsset
     {
@@ -23,6 +23,7 @@ namespace XREngine
         public const string BuildDirectoryName = "Build";
         public const string PackagesDirectoryName = "Packages";
         public const string ConfigDirectoryName = "Config";
+        public const string CacheDirectoryName = "Cache";
 
         private static readonly string[] RequiredDirectoryNames =
         [
@@ -30,7 +31,8 @@ namespace XREngine
             IntermediateDirectoryName,
             BuildDirectoryName,
             PackagesDirectoryName,
-            ConfigDirectoryName
+            ConfigDirectoryName,
+            CacheDirectoryName
         ];
 
         private string _projectName = "New Project";
@@ -143,6 +145,13 @@ namespace XREngine
         public string? ConfigDirectory => ProjectDirectory is null
             ? null
             : Path.Combine(ProjectDirectory, ConfigDirectoryName);
+
+        /// <summary>
+        /// Gets the Cache directory path which stores generated XRAssets for 3rd-party imports.
+        /// </summary>
+        public string? CacheDirectory => ProjectDirectory is null
+            ? null
+            : Path.Combine(ProjectDirectory, CacheDirectoryName);
 
         /// <summary>
         /// Gets the path to the engine settings file for this project.

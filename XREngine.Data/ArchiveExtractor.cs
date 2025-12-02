@@ -4,7 +4,6 @@ using ICSharpCode.SharpZipLib.Tar;
 
 namespace XREngine
 {
-
     public static class ArchiveExtractor
     {
         private const float ArchivePhaseStart = 0.05f;

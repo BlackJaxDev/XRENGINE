@@ -46,6 +46,17 @@ public static partial class UnitTestingWorld
             visited.Remove(obj);
         }
 
+        internal static void DrawRuntimeObjectInspector(string label, object? target, HashSet<object> visited, bool defaultOpen = true, string? description = null)
+        {
+            if (target is null)
+            {
+                ImGui.TextDisabled($"{label}: <null>");
+                return;
+            }
+
+            DrawSettingsObject(target, label, description, visited, defaultOpen);
+        }
+
         private static void DrawSettingsProperties(object obj, HashSet<object> visited)
         {
             using var profilerScope = Engine.Profiler.Start("UI.DrawSettingsProperties");

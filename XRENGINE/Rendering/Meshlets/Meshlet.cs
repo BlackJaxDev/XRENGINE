@@ -2,6 +2,7 @@ using System.Numerics;
 using System.Runtime.InteropServices;
 using XREngine.Data;
 using XREngine.Data.Rendering;
+using XREngine.Rendering.Objects;
 
 namespace XREngine.Rendering.Meshlets
 {

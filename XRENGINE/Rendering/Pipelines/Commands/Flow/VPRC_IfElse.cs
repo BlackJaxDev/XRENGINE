@@ -1,8 +1,18 @@
-﻿namespace XREngine.Rendering.Pipelines.Commands
+﻿using System.Runtime.CompilerServices;
+using XREngine.Rendering;
+
+namespace XREngine.Rendering.Pipelines.Commands
 {
     public class VPRC_IfElse : ViewportStateRenderCommand<VPRC_PopRenderArea>
     {
         public Func<bool>? ConditionEvaluator { get; set; }
+
+        private sealed class BranchState
+        {
+            public ViewportRenderCommandContainer? ActiveContainer;
+        }
+
+        private readonly ConditionalWeakTable<XRRenderPipelineInstance, BranchState> _branchStates = new();
 
         private ViewportRenderCommandContainer? _trueCommands;
         public ViewportRenderCommandContainer? TrueCommands
@@ -30,21 +40,29 @@
 
         protected override void Execute()
         {
-            bool cond = ConditionEvaluator?.Invoke() ?? false;
-            //if (NeedsCollecVisible)
-            //    cond = _lastCondition;
-            //else
-            //{
-            //    if (ConditionEvaluator is null)
-            //        return;
+            XRRenderPipelineInstance? instance = ActivePipelineInstance;
+            if (instance is null)
+                return;
 
-            //    cond = ConditionEvaluator();
-            //}
+            bool cond = ConditionEvaluator?.Invoke() ?? false;
 
             if (cond)
-                TrueCommands?.Execute();
+                ExecuteBranch(instance, TrueCommands);
             else
-                FalseCommands?.Execute();
+                ExecuteBranch(instance, FalseCommands);
+        }
+
+        private void ExecuteBranch(XRRenderPipelineInstance instance, ViewportRenderCommandContainer? next)
+        {
+            var state = _branchStates.GetValue(instance, _ => new BranchState());
+            if (!ReferenceEquals(state.ActiveContainer, next))
+            {
+                state.ActiveContainer?.OnBranchDeselected(instance);
+                state.ActiveContainer = next;
+                state.ActiveContainer?.OnBranchSelected(instance);
+            }
+
+            next?.Execute();
         }
 
         internal override void OnAttachedToContainer()

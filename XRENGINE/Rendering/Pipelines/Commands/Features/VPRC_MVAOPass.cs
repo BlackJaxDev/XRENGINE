@@ -1,10 +1,14 @@
 using Extensions;
 using System;
+using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Numerics;
+using System.Runtime.CompilerServices;
+using XREngine;
 using XREngine.Data;
 using XREngine.Data.Rendering;
+using XREngine.Rendering;
 using XREngine.Rendering.Models.Materials;
 
 namespace XREngine.Rendering.Pipelines.Commands
@@ -21,6 +25,9 @@ namespace XREngine.Rendering.Pipelines.Commands
         public const uint DefaultNoiseHeight = 4u;
         public const float DefaultMinSampleDist = 0.1f;
         public const float DefaultMaxSampleDist = 1.0f;
+
+        private static void Log(string message)
+            => Debug.Out(EOutputVerbosity.Normal, false, "[AO][MVAO] {0}", message);
 
         private string MVAOGenShaderName() =>
             "MVAOGen.fs";
@@ -39,6 +46,7 @@ namespace XREngine.Rendering.Pipelines.Commands
         public string AlbedoTextureName { get; set; } = "AlbedoOpacity";
         public string RMSETextureName { get; set; } = "RMSE";
         public string DepthStencilTextureName { get; set; } = "DepthStencil";
+        public IReadOnlyList<string> DependentFboNames { get; set; } = Array.Empty<string>();
 
         public int Samples { get; set; } = DefaultSamples;
         public uint NoiseWidth { get; set; } = DefaultNoiseWidth;
@@ -49,11 +57,21 @@ namespace XREngine.Rendering.Pipelines.Commands
 
         private Vector2[]? Noise { get; set; }
         private Vector3[]? Kernel { get; set; }
-        private XRTexture2D? NoiseTexture { get; set; }
-        private Vector2 NoiseScale { get; set; }
-        private int _lastWidth;
-        private int _lastHeight;
         private int _kernelSize;
+        // Per-instance state tracking
+        private sealed class InstanceState
+        {
+            public bool ResourcesDirty = true;
+            public int LastWidth;
+            public int LastHeight;
+            public XRTexture2D? NoiseTexture;
+            public Vector2 NoiseScale;
+        }
+
+        private static readonly ConditionalWeakTable<XRRenderPipelineInstance, InstanceState> _instanceStates = new();
+
+        private InstanceState GetInstanceState(XRRenderPipelineInstance instance)
+            => _instanceStates.GetValue(instance, _ => new InstanceState());
 
         public void SetOptions(int samples, uint noiseWidth, uint noiseHeight, float minSampleDist, float maxSampleDist, bool stereo)
         {
@@ -85,26 +103,63 @@ namespace XREngine.Rendering.Pipelines.Commands
 
         protected override void Execute()
         {
-            XRTexture? normalTex = ActivePipelineInstance.GetTexture<XRTexture>(NormalTextureName);
-            XRTexture? depthViewTex = ActivePipelineInstance.GetTexture<XRTexture>(DepthViewTextureName);
-            XRTexture? albedoTex = ActivePipelineInstance.GetTexture<XRTexture>(AlbedoTextureName);
-            XRTexture? rmseTex = ActivePipelineInstance.GetTexture<XRTexture>(RMSETextureName);
-            XRTexture? depthStencilTex = ActivePipelineInstance.GetTexture<XRTexture>(DepthStencilTextureName);
+            var instance = ActivePipelineInstance;
+            var state = GetInstanceState(instance);
 
-            if (normalTex is null ||
-                depthViewTex is null ||
-                albedoTex is null ||
-                rmseTex is null ||
-                depthStencilTex is null)
+            XRTexture? normalTex = instance.GetTexture<XRTexture>(NormalTextureName);
+            XRTexture? depthViewTex = instance.GetTexture<XRTexture>(DepthViewTextureName);
+            XRTexture? albedoTex = instance.GetTexture<XRTexture>(AlbedoTextureName);
+            XRTexture? rmseTex = instance.GetTexture<XRTexture>(RMSETextureName);
+            XRTexture? depthStencilTex = instance.GetTexture<XRTexture>(DepthStencilTextureName);
+
+            if (normalTex is null)
+            {
+                Log($"Missing normal texture '{NormalTextureName}', skipping");
                 return;
+            }
+
+            if (depthViewTex is null)
+            {
+                Log($"Missing depth view texture '{DepthViewTextureName}', skipping");
+                return;
+            }
+
+            if (albedoTex is null)
+            {
+                Log($"Missing albedo texture '{AlbedoTextureName}', skipping");
+                return;
+            }
+
+            if (rmseTex is null)
+            {
+                Log($"Missing RMSE texture '{RMSETextureName}', skipping");
+                return;
+            }
+
+            if (depthStencilTex is null)
+            {
+                Log($"Missing depth-stencil texture '{DepthStencilTextureName}', skipping");
+                return;
+            }
 
             var area = Engine.Rendering.State.RenderArea;
             int width = area.Width;
             int height = area.Height;
-            if (width == _lastWidth && height == _lastHeight)
+            bool forceRebuild = state.ResourcesDirty;
+            state.ResourcesDirty = false;
+            bool sizeChanged = width != state.LastWidth || height != state.LastHeight;
+
+            if (!forceRebuild && !sizeChanged)
+            {
+                Log($"Skipping MVAO regen; size unchanged at {width}x{height}");
                 return;
+            }
+
+            Log($"Executing MVAO regen force={forceRebuild} size={width}x{height} last={state.LastWidth}x{state.LastHeight}");
 
             RegenerateFBOs(
+                instance,
+                state,
                 normalTex,
                 depthViewTex,
                 albedoTex,
@@ -115,6 +170,8 @@ namespace XREngine.Rendering.Pipelines.Commands
         }
 
         private void RegenerateFBOs(
+            XRRenderPipelineInstance instance,
+            InstanceState state,
             XRTexture normalTex,
             XRTexture depthViewTex,
             XRTexture albedoTex,
@@ -123,12 +180,14 @@ namespace XREngine.Rendering.Pipelines.Commands
             int width,
             int height)
         {
-            _lastWidth = width;
-            _lastHeight = height;
+            state.LastWidth = width;
+            state.LastHeight = height;
+
+            Log($"Regenerating resources: size={width}x{height}, stereo={Stereo}");
 
             GenerateNoiseKernel();
 
-            NoiseScale = new Vector2(
+            state.NoiseScale = new Vector2(
                 width / (float)NoiseWidth,
                 height / (float)NoiseHeight);
 
@@ -170,7 +229,8 @@ namespace XREngine.Rendering.Pipelines.Commands
                 aoTexture = t;
             }
 
-            ActivePipelineInstance.SetTexture(aoTexture);
+            instance.SetTexture(aoTexture);
+            InvalidateDependentFbos(instance);
 
             RenderingParameters renderParams = new()
             {
@@ -188,7 +248,7 @@ namespace XREngine.Rendering.Pipelines.Commands
             XRTexture[] mvaoGenTextures =
             [
                 normalTex,
-                GetOrCreateNoiseTexture(),
+                GetOrCreateNoiseTexture(instance, state),
                 depthViewTex,
             ];
 
@@ -238,9 +298,10 @@ namespace XREngine.Rendering.Pipelines.Commands
                 Name = OutputFBOName
             };
 
-            ActivePipelineInstance.SetFBO(mvaoGenFbo);
-            ActivePipelineInstance.SetFBO(mvaoBlurFbo);
-            ActivePipelineInstance.SetFBO(outputFbo);
+            instance.SetFBO(mvaoGenFbo);
+            instance.SetFBO(mvaoBlurFbo);
+            instance.SetFBO(outputFbo);
+            Log("Registered AO FBOs (gen/blur/output)");
         }
 
         private void GenerateNoiseKernel()
@@ -273,9 +334,6 @@ namespace XREngine.Rendering.Pipelines.Commands
                     (float)random.NextDouble() * 2.0f - 1.0f);
                 Noise[i] = Vector2.Normalize(noise);
             }
-
-            NoiseTexture?.Destroy();
-            NoiseTexture = null;
         }
 
         private void MVAOGen_SetUniforms(XRRenderProgram program)
@@ -283,7 +341,8 @@ namespace XREngine.Rendering.Pipelines.Commands
             if (Kernel is null || Noise is null)
                 return;
 
-            program.Uniform("NoiseScale", NoiseScale);
+            var state = GetInstanceState(ActivePipelineInstance);
+            program.Uniform("NoiseScale", state.NoiseScale);
             program.Uniform("Samples", Kernel);
             program.Uniform("KernelSize", _kernelSize);
 
@@ -296,7 +355,7 @@ namespace XREngine.Rendering.Pipelines.Commands
             if (Engine.Rendering.State.IsStereoPass)
                 ActivePipelineInstance.RenderState.StereoRightEyeCamera?.SetUniforms(program, false);
 
-            camera.SetAmbientOcclusionUniforms(program);
+            camera.SetAmbientOcclusionUniforms(program, AmbientOcclusionSettings.EType.MultiViewAmbientOcclusion);
 
             var region = ActivePipelineInstance.RenderState.CurrentRenderRegion;
             program.Uniform(EEngineUniform.ScreenWidth.ToString(), region.Width);
@@ -313,10 +372,13 @@ namespace XREngine.Rendering.Pipelines.Commands
             program.Uniform("NormalPhi", normalPhi);
         }
 
-        private XRTexture2D GetOrCreateNoiseTexture()
+        private XRTexture2D GetOrCreateNoiseTexture(XRRenderPipelineInstance instance, InstanceState state)
         {
-            if (NoiseTexture != null)
-                return NoiseTexture;
+            if (state.NoiseTexture != null)
+            {
+                Log($"Reusing noise texture {state.NoiseTexture.Name} {NoiseWidth}x{NoiseHeight}");
+                return state.NoiseTexture;
+            }
 
             XRTexture2D noiseTexture = new()
             {
@@ -341,9 +403,42 @@ namespace XREngine.Rendering.Pipelines.Commands
                 ]
             };
 
-            ActivePipelineInstance.SetTexture(noiseTexture);
+            instance.SetTexture(noiseTexture);
             noiseTexture.PushData();
-            return NoiseTexture = noiseTexture;
+            Log($"Created noise texture {noiseTexture.Name} {NoiseWidth}x{NoiseHeight}");
+            return state.NoiseTexture = noiseTexture;
+        }
+
+        private void InvalidateDependentFbos(XRRenderPipelineInstance instance)
+        {
+            if (DependentFboNames.Count == 0)
+                return;
+
+            foreach (string name in DependentFboNames)
+            {
+                if (string.IsNullOrWhiteSpace(name))
+                    continue;
+
+                instance.Resources.RemoveFrameBuffer(name);
+                Log($"Invalidated dependent FBO '{name}'");
+            }
+        }
+
+        internal override void AllocateContainerResources(XRRenderPipelineInstance instance)
+        {
+            GetInstanceState(instance).ResourcesDirty = true;
+        }
+
+        internal override void ReleaseContainerResources(XRRenderPipelineInstance instance)
+        {
+            if (_instanceStates.TryGetValue(instance, out var state))
+            {
+                state.ResourcesDirty = true;
+                state.NoiseTexture?.Destroy();
+                state.NoiseTexture = null;
+                state.LastWidth = 0;
+                state.LastHeight = 0;
+            }
         }
     }
 }

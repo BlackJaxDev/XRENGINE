@@ -22,9 +22,11 @@ using XREngine.Core.Files;
 using XREngine.Scene;
 using XREngine.Scene.Components.UI;
 using XREngine.Scene.Transforms;
+using XREngine.Editor.AssetEditors;
 using XREngine.Editor.ComponentEditors;
 using XREngine.Diagnostics;
 using XREngine.Editor.TransformEditors;
+using XREngine.Editor.UI.Tools;
 
 namespace XREngine.Editor;
 
@@ -37,6 +39,8 @@ public static partial class UnitTestingWorld
         private static readonly byte[] _renameBuffer = new byte[256];
         private static readonly List<ComponentTypeDescriptor> _filteredComponentTypes = [];
         private static readonly Dictionary<Type, IXRComponentEditor?> _componentEditorCache = new();
+        private static readonly Dictionary<Type, IXRAssetInspector?> _assetInspectorCache = new();
+        private static readonly Dictionary<string, MethodInfo?> _assetContextMenuHandlerCache = new(StringComparer.Ordinal);
         private static readonly Dictionary<Type, IXRTransformEditor?> _transformEditorCache = new();
         private static readonly Dictionary<int, ProfilerThreadCacheEntry> _profilerThreadCache = new();
         private static bool _showProfiler;
@@ -374,6 +378,7 @@ public static partial class UnitTestingWorld
             DrawArchiveImportDialog();
 
             DrawProfilerPanel();
+            DrawConsolePanel();
             DrawStatePanel();
             DrawOpenGLApiObjectsPanel();
             DrawOpenGLErrorsPanel();
@@ -384,6 +389,11 @@ public static partial class UnitTestingWorld
             DrawHierarchyPanel();
             DrawInspectorPanel();
             DrawAssetExplorerPanel();
+
+            // Tool windows
+            UI.Tools.ShaderLockingWindow.Instance.Render();
+            UI.Tools.ShaderLockingWindow.Instance.RenderDialogs();
+            UI.Tools.ShaderAnalyzerWindow.Instance.Render();
         }
 
         private static void DrawMainMenuBar()
@@ -478,6 +488,7 @@ public static partial class UnitTestingWorld
                 ImGui.MenuItem("Inspector", null, ref _showInspector);
                 ImGui.MenuItem("Asset Explorer", null, ref _showAssetExplorer);
                 ImGui.Separator();
+                ImGui.MenuItem("Console", null, ref _showConsole);
                 ImGui.MenuItem("Engine State", null, ref _showStatePanel);
                 ImGui.MenuItem("Profiler", null, ref _showProfiler);
                 ImGui.MenuItem("OpenGL API Objects", null, ref _showOpenGLApiObjects);
@@ -494,6 +505,12 @@ public static partial class UnitTestingWorld
             {
                 if (ImGui.MenuItem("Import Archive..."))
                     OpenArchiveImportDialog();
+
+                if (ImGui.MenuItem("Shader Locking Tool"))
+                    ShaderLockingWindow.Instance.Open();
+
+                if (ImGui.MenuItem("Shader Analyzer Tool"))
+                    ShaderAnalyzerWindow.Instance.Open();
 
                 ImGui.EndMenu();
             }

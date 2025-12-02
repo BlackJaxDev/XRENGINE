@@ -169,9 +169,8 @@ namespace XREngine
                     _timerPool.Release(entry);
                 }
 
-                string logStr = sb.ToString();
-                if (!string.IsNullOrWhiteSpace(logStr))
-                    Debug.Out(logStr);
+                // Profiler output is now viewable via the Profiler panel in the editor
+                // No longer print to Debug.Out to avoid log spam
                 sb.Clear();
 
                 ProfilerFrameSnapshot? frameSnapshot = null;

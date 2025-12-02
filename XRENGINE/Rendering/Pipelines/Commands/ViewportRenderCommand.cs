@@ -1,4 +1,5 @@
 ﻿using XREngine.Data.Core;
+using XREngine.Rendering;
 using XREngine.Rendering.RenderGraph;
 
 namespace XREngine.Rendering.Pipelines.Commands
@@ -68,6 +69,14 @@ namespace XREngine.Rendering.Pipelines.Commands
     }
 
     internal virtual void OnParentPipelineAssigned()
+    {
+    }
+
+    internal virtual void AllocateContainerResources(XRRenderPipelineInstance instance)
+    {
+    }
+
+    internal virtual void ReleaseContainerResources(XRRenderPipelineInstance instance)
     {
     }
         public void ExecuteIfShould()

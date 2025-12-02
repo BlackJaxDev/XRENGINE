@@ -133,6 +133,14 @@ namespace XREngine
             return fullPath;
         }
 
+        private static string? NormalizeOptionalDirectoryPath(string? path, string argumentName)
+        {
+            if (string.IsNullOrWhiteSpace(path))
+                return null;
+
+            return NormalizeDirectoryPath(path, argumentName);
+        }
+
         private void UpdateGameAssetsPath(string path)
         {
             string normalized = NormalizeDirectoryPath(path, nameof(GameAssetsPath));
@@ -335,6 +343,13 @@ namespace XREngine
             set => UpdateGameAssetsPath(value);
         }
 
+        private string? _gameCachePath;
+        public string? GameCachePath
+        {
+            get => _gameCachePath;
+            set => _gameCachePath = NormalizeOptionalDirectoryPath(value, nameof(GameCachePath));
+        }
+
         private string _packagesPath = Path.Combine(ApplicationEnvironment.ApplicationBasePath, "Packages");
         public string PackagesPath
         {
@@ -504,7 +519,17 @@ namespace XREngine
                 return null;
             }
 
-            file = await DeserializeAsync<T>(filePath);
+            string extension = Path.GetExtension(filePath);
+            if (string.IsNullOrWhiteSpace(extension) || extension.Length <= 1)
+            {
+                Debug.LogWarning($"Unable to load asset at '{filePath}' because the file has no extension.");
+                return null;
+            }
+
+            string normalizedExtension = extension[1..].ToLowerInvariant();
+            file = normalizedExtension == AssetExtension
+                ? await DeserializeAssetFileAsync<T>(filePath).ConfigureAwait(false)
+                : await Load3rdPartyWithCacheAsync<T>(filePath, normalizedExtension).ConfigureAwait(false);
             PostLoaded(filePath, file);
 #if !DEBUG
             }
@@ -533,7 +558,17 @@ namespace XREngine
                 return null;
             }
 
-            file = Deserialize<T>(filePath);
+            string extension = Path.GetExtension(filePath);
+            if (string.IsNullOrWhiteSpace(extension) || extension.Length <= 1)
+            {
+                Debug.LogWarning($"Unable to load asset at '{filePath}' because the file has no extension.");
+                return null;
+            }
+
+            string normalizedExtension = extension[1..].ToLowerInvariant();
+            file = normalizedExtension == AssetExtension
+                ? DeserializeAssetFile<T>(filePath)
+                : Load3rdPartyWithCache<T>(filePath, normalizedExtension);
             PostLoaded(filePath, file);
 #if !DEBUG
             }
@@ -847,57 +882,188 @@ namespace XREngine
             return converters;
         }
 
-        private static T? Deserialize<[DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicMethods)] T>(string filePath) where T : XRAsset, new()
+        private static T? DeserializeAssetFile<[DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicMethods)] T>(string filePath) where T : XRAsset, new()
         {
-            T? file = default;
-#if !DEBUG
-            try
-            {
-#endif
-            //Debug.Out($"Loading asset from '{filePath}'...");
-            using var t = Engine.Profiler.Start($"AssetManager.Deserialize {filePath}");
-            string ext = Path.GetExtension(filePath)[1..].ToLowerInvariant();
-            if (ext == AssetExtension)
-                file = Deserializer.Deserialize<T>(File.ReadAllText(filePath));
-            else
-                file = Load3rdParty<T>(filePath, ext);
-#if !DEBUG
-            }
-            catch (Exception e)
-            {
-                Debug.LogException(e, $"An error occurred while loading the asset at '{filePath}'.");
-                return null;
-            }
-#endif
-            return file;
+            using var t = Engine.Profiler.Start($"AssetManager.DeserializeAsset {filePath}");
+            string contents = File.ReadAllText(filePath);
+            return Deserializer.Deserialize<T>(contents);
         }
 
-        private static async Task<T?> DeserializeAsync<[DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicMethods)] T>(string filePath) where T : XRAsset, new()
+        private static async Task<T?> DeserializeAssetFileAsync<[DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicMethods)] T>(string filePath) where T : XRAsset, new()
         {
-            T? file = default;
-#if !DEBUG
-            try
-            {
-#endif
-            //Debug.Out($"Loading asset from '{filePath}'...");
-            using var t = Engine.Profiler.Start($"AssetManager.DeserializeAsync {filePath}");
-            string ext = Path.GetExtension(filePath)[1..].ToLowerInvariant();
-            if (ext == AssetExtension)
-                file = await Task.Run(async () => Deserializer.Deserialize<T>(await File.ReadAllTextAsync(filePath)));
-            else
-                file = await Load3rdPartyAsync<T>(filePath, ext);
-#if !DEBUG
-            }
-            catch (Exception e)
-            {
-                Debug.LogException(e, $"An error occurred while loading the asset at '{filePath}'.");
-                return null;
-            }
-#endif
-            return file;
+            using var t = Engine.Profiler.Start($"AssetManager.DeserializeAssetAsync {filePath}");
+            string contents = await File.ReadAllTextAsync(filePath).ConfigureAwait(false);
+            return Deserializer.Deserialize<T>(contents);
         }
 
-        private static T? Load3rdParty<[DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicMethods)] T>(string filePath, string ext) where T : XRAsset, new()
+        private T? Load3rdPartyWithCache<[DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicMethods)] T>(string filePath, string ext) where T : XRAsset, new()
+        {
+            bool hasTimestamp = TryGetSourceTimestamp(filePath, out DateTime timestampUtc);
+            bool hasCachePath = TryResolveCachePath(filePath, typeof(T), out string cachePath);
+
+            if (hasTimestamp && hasCachePath && TryLoadCachedAsset(cachePath, filePath, timestampUtc, out T? cachedAsset))
+            {
+                cachedAsset!.OriginalLastWriteTimeUtc = timestampUtc;
+                return cachedAsset;
+            }
+
+            var asset = Load3rdPartyAsset<T>(filePath, ext);
+            if (asset is null)
+                return null;
+
+            if (hasTimestamp)
+                asset.OriginalLastWriteTimeUtc = timestampUtc;
+
+            if (hasTimestamp && hasCachePath)
+                TryWriteCacheAsset(cachePath, asset);
+
+            return asset;
+        }
+
+        private async Task<T?> Load3rdPartyWithCacheAsync<[DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicMethods)] T>(string filePath, string ext) where T : XRAsset, new()
+        {
+            bool hasTimestamp = TryGetSourceTimestamp(filePath, out DateTime timestampUtc);
+            bool hasCachePath = TryResolveCachePath(filePath, typeof(T), out string cachePath);
+
+            if (hasTimestamp && hasCachePath)
+            {
+                var cached = await TryLoadCachedAssetAsync<T>(cachePath, filePath, timestampUtc).ConfigureAwait(false);
+                if (cached is not null)
+                {
+                    cached.OriginalLastWriteTimeUtc = timestampUtc;
+                    return cached;
+                }
+            }
+
+            var asset = await Load3rdPartyAssetAsync<T>(filePath, ext).ConfigureAwait(false);
+            if (asset is null)
+                return null;
+
+            if (hasTimestamp)
+                asset.OriginalLastWriteTimeUtc = timestampUtc;
+
+            if (hasTimestamp && hasCachePath)
+                await TryWriteCacheAssetAsync(cachePath, asset).ConfigureAwait(false);
+
+            return asset;
+        }
+
+        private static bool TryGetSourceTimestamp(string filePath, out DateTime timestampUtc)
+        {
+            timestampUtc = File.GetLastWriteTimeUtc(filePath);
+            return timestampUtc != DateTime.MinValue;
+        }
+
+        private bool TryResolveCachePath(string filePath, Type assetType, out string cachePath)
+        {
+            cachePath = string.Empty;
+            if (string.IsNullOrWhiteSpace(GameCachePath) || string.IsNullOrWhiteSpace(GameAssetsPath))
+                return false;
+
+            string projectAssetsRoot = GameAssetsPath;
+            string normalizedAssets = Path.GetFullPath(projectAssetsRoot);
+            string normalizedSource = Path.GetFullPath(filePath);
+
+            if (!normalizedSource.StartsWith(normalizedAssets, StringComparison.OrdinalIgnoreCase))
+                return false;
+
+            string relativePath = Path.GetRelativePath(normalizedAssets, normalizedSource);
+            if (relativePath.StartsWith(".."))
+                return false;
+
+            string? relativeDirectory = Path.GetDirectoryName(relativePath);
+            string originalFileName = Path.GetFileName(relativePath);
+            string typeSuffix = assetType.FullName ?? assetType.Name;
+            string cacheFileName = $"{originalFileName}.{typeSuffix}.{AssetExtension}";
+            cachePath = string.IsNullOrWhiteSpace(relativeDirectory)
+                ? Path.Combine(GameCachePath!, cacheFileName)
+                : Path.Combine(GameCachePath!, relativeDirectory, cacheFileName);
+            return true;
+        }
+
+        private bool TryLoadCachedAsset<[DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicParameterlessConstructor)] T>(string cachePath, string originalPath, DateTime sourceTimestampUtc, out T? asset) where T : XRAsset, new()
+        {
+            asset = null;
+            if (!File.Exists(cachePath))
+                return false;
+
+            try
+            {
+                var cachedAsset = DeserializeAssetFile<T>(cachePath);
+                if (cachedAsset?.OriginalLastWriteTimeUtc is null)
+                    return false;
+
+                if (cachedAsset.OriginalLastWriteTimeUtc.Value < sourceTimestampUtc)
+                    return false;
+
+                cachedAsset.OriginalPath = originalPath;
+                asset = cachedAsset;
+                return true;
+            }
+            catch (Exception ex)
+            {
+                Debug.LogWarning($"Failed to read cached asset '{cachePath}'. {ex.Message}");
+                return false;
+            }
+        }
+
+        private async Task<T?> TryLoadCachedAssetAsync<[DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicParameterlessConstructor)] T>(string cachePath, string originalPath, DateTime sourceTimestampUtc) where T : XRAsset, new()
+        {
+            if (!File.Exists(cachePath))
+                return null;
+
+            try
+            {
+                var cachedAsset = await DeserializeAssetFileAsync<T>(cachePath).ConfigureAwait(false);
+                if (cachedAsset?.OriginalLastWriteTimeUtc is null)
+                    return null;
+
+                if (cachedAsset.OriginalLastWriteTimeUtc.Value < sourceTimestampUtc)
+                    return null;
+
+                cachedAsset.OriginalPath = originalPath;
+                return cachedAsset;
+            }
+            catch (Exception ex)
+            {
+                Debug.LogWarning($"Failed to read cached asset '{cachePath}'. {ex.Message}");
+                return null;
+            }
+        }
+
+        private void TryWriteCacheAsset(string cachePath, XRAsset asset)
+        {
+            try
+            {
+                string? directory = Path.GetDirectoryName(cachePath);
+                if (!string.IsNullOrWhiteSpace(directory))
+                    Directory.CreateDirectory(directory);
+
+                asset.SerializeTo(cachePath, Serializer);
+            }
+            catch (Exception ex)
+            {
+                Debug.LogWarning($"Failed to write cached asset '{cachePath}'. {ex.Message}");
+            }
+        }
+
+        private async Task TryWriteCacheAssetAsync(string cachePath, XRAsset asset)
+        {
+            try
+            {
+                string? directory = Path.GetDirectoryName(cachePath);
+                if (!string.IsNullOrWhiteSpace(directory))
+                    Directory.CreateDirectory(directory);
+
+                await asset.SerializeToAsync(cachePath, Serializer).ConfigureAwait(false);
+            }
+            catch (Exception ex)
+            {
+                Debug.LogWarning($"Failed to write cached asset '{cachePath}'. {ex.Message}");
+            }
+        }
+
+        private static T? Load3rdPartyAsset<[DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicMethods)] T>(string filePath, string ext) where T : XRAsset, new()
         {
             var exts = typeof(T).GetCustomAttribute<XR3rdPartyExtensionsAttribute>()?.Extensions;
             var match = exts?.FirstOrDefault(e => e.ext == ext);
@@ -947,7 +1113,8 @@ namespace XREngine
                 return null;
             }
         }
-        private static async Task<T?> Load3rdPartyAsync<[DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicMethods)] T>(string filePath, string ext) where T : XRAsset, new()
+
+        private static async Task<T?> Load3rdPartyAssetAsync<[DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicMethods)] T>(string filePath, string ext) where T : XRAsset, new()
         {
             var exts = typeof(T).GetCustomAttribute<XR3rdPartyExtensionsAttribute>()?.Extensions;
             var match = exts?.FirstOrDefault(e => e.ext == ext);
@@ -961,7 +1128,7 @@ namespace XREngine
                         var assetTask = method.Invoke(null, [filePath]) as Task<T?>;
                         if (assetTask is not null)
                         {
-                            var asset = await assetTask;
+                            var asset = await assetTask.ConfigureAwait(false);
                             if (asset is not null)
                             {
                                 asset.OriginalPath = filePath;
@@ -991,7 +1158,7 @@ namespace XREngine
                     {
                         OriginalPath = filePath
                     };
-                    if (await asset.Load3rdPartyAsync(filePath))
+                    if (await asset.Load3rdPartyAsync(filePath).ConfigureAwait(false))
                         return asset;
                     else
                     {

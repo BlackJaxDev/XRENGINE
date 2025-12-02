@@ -9,6 +9,7 @@ namespace XREngine.Components
     /// <summary>
     /// This component wraps a camera object.
     /// </summary>
+    [XRComponentEditor("XREngine.Editor.ComponentEditors.CameraComponentEditor")]
     public class CameraComponent : XRComponent
     {
         private readonly Lazy<XRCamera> _camera;

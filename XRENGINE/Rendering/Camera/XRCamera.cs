@@ -554,8 +554,8 @@ namespace XREngine.Rendering
                 ? DistanceFromNearPlane(point)
                 : DistanceFromWorldPosition(point);
 
-        public virtual void SetAmbientOcclusionUniforms(XRRenderProgram program)
-            => PostProcessing?.AmbientOcclusion?.SetUniforms(program);
+        public virtual void SetAmbientOcclusionUniforms(XRRenderProgram program, AmbientOcclusionSettings.EType? overrideType = null)
+            => PostProcessing?.AmbientOcclusion?.SetUniforms(program, overrideType);
         public virtual void SetBloomBrightPassUniforms(XRRenderProgram program)
             => PostProcessing?.Bloom?.SetBrightPassUniforms(program);
         public virtual void SetPostProcessUniforms(XRRenderProgram program)

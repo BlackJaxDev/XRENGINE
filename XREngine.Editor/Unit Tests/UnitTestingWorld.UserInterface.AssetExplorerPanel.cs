@@ -881,10 +881,27 @@ public static partial class UnitTestingWorld
 
             if (!isDirectory)
             {
+                var descriptor = ResolveAssetTypeForPath(path);
                 var extraActions = GetAssetExplorerActions(path).ToList();
-                if (extraActions.Count > 0)
+                bool hasTypeActions = descriptor?.ContextMenuAttributes.Count > 0;
+                bool hasGeneralActions = extraActions.Count > 0;
+
+                if (hasTypeActions || hasGeneralActions)
                 {
                     ImGui.Separator();
+
+                    if (hasTypeActions && descriptor is not null)
+                    {
+                        if (DrawAssetTypeContextMenuItems(descriptor, path))
+                        {
+                            ImGui.CloseCurrentPopup();
+                            ImGui.EndPopup();
+                            return;
+                        }
+
+                        if (hasGeneralActions)
+                            ImGui.Separator();
+                    }
 
                     foreach (var action in extraActions)
                     {
@@ -1895,7 +1912,10 @@ public static partial class UnitTestingWorld
                         }
                     }
 
-                    _assetTypeDescriptors.Add(new AssetTypeDescriptor(type, displayName, category, properties, extensions));
+                    string? inspectorTypeName = type.GetCustomAttribute<XRAssetInspectorAttribute>(true)?.InspectorTypeName;
+                    XRAssetContextMenuAttribute[] contextMenus = type.GetCustomAttributes<XRAssetContextMenuAttribute>(true).ToArray();
+
+                    _assetTypeDescriptors.Add(new AssetTypeDescriptor(type, displayName, category, properties, extensions, inspectorTypeName, contextMenus));
                 }
             }
 
@@ -1916,7 +1936,14 @@ public static partial class UnitTestingWorld
 
         private sealed class AssetTypeDescriptor
         {
-            public AssetTypeDescriptor(Type type, string displayName, string category, HashSet<string> propertyNames, HashSet<string> supportedExtensions)
+            public AssetTypeDescriptor(
+                Type type,
+                string displayName,
+                string category,
+                HashSet<string> propertyNames,
+                HashSet<string> supportedExtensions,
+                string? inspectorTypeName,
+                IReadOnlyList<XRAssetContextMenuAttribute> contextMenuAttributes)
             {
                 Type = type;
                 DisplayName = displayName;
@@ -1924,6 +1951,8 @@ public static partial class UnitTestingWorld
                 FullName = type.FullName ?? type.Name;
                 PropertyNames = propertyNames;
                 SupportedExtensions = supportedExtensions;
+                InspectorTypeName = inspectorTypeName;
+                ContextMenuAttributes = contextMenuAttributes;
             }
 
             public Type Type { get; }
@@ -1932,6 +1961,8 @@ public static partial class UnitTestingWorld
             public string FullName { get; }
             public HashSet<string> PropertyNames { get; }
             public HashSet<string> SupportedExtensions { get; }
+            public string? InspectorTypeName { get; }
+            public IReadOnlyList<XRAssetContextMenuAttribute> ContextMenuAttributes { get; }
             public int PropertyCount => PropertyNames.Count;
 
             public bool SupportsExtension(string extension)
@@ -1959,6 +1990,107 @@ public static partial class UnitTestingWorld
         {
             string extension = Path.GetExtension(path);
             return !string.IsNullOrEmpty(extension) && _assetExplorerTextureExtensions.Contains(extension.ToLowerInvariant());
+        }
+
+        private static bool DrawAssetTypeContextMenuItems(AssetTypeDescriptor descriptor, string path)
+        {
+            if (descriptor.ContextMenuAttributes.Count == 0)
+                return false;
+
+            XRAsset? assetInstance = null;
+            bool assetLoaded = false;
+            XRAssetContextMenuContext context = default;
+            bool contextReady = false;
+
+            foreach (var attribute in descriptor.ContextMenuAttributes)
+            {
+                MethodInfo? handler = ResolveAssetContextMenuHandler(attribute.HandlerTypeName, attribute.HandlerMethodName);
+                bool enabled = handler is not null;
+
+                if (!ImGui.MenuItem(attribute.Label, null, false, enabled))
+                    continue;
+
+                if (handler is null)
+                    continue;
+
+                EnsureContext();
+
+                try
+                {
+                    handler.Invoke(null, new object[] { context });
+                }
+                catch (Exception ex)
+                {
+                    Debug.LogException(ex, $"Asset context menu action '{attribute.Label}' failed for '{path}'.");
+                }
+
+                return true;
+            }
+
+            return false;
+
+            void EnsureContext()
+            {
+                if (contextReady)
+                    return;
+
+                if (!assetLoaded)
+                {
+                    assetInstance = LoadAssetForInspector(descriptor, path);
+                    assetLoaded = true;
+                }
+
+                context = new XRAssetContextMenuContext(path, assetInstance);
+                contextReady = true;
+            }
+        }
+
+        private static MethodInfo? ResolveAssetContextMenuHandler(string typeName, string methodName)
+        {
+            if (string.IsNullOrWhiteSpace(typeName) || string.IsNullOrWhiteSpace(methodName))
+                return null;
+
+            string cacheKey = string.Concat(typeName, "::", methodName);
+            if (_assetContextMenuHandlerCache.TryGetValue(cacheKey, out var cached))
+                return cached;
+
+            Type? handlerType = Type.GetType(typeName, false, false);
+            if (handlerType is null)
+            {
+                foreach (var assembly in AppDomain.CurrentDomain.GetAssemblies())
+                {
+                    handlerType = assembly.GetType(typeName, false, false);
+                    if (handlerType is not null)
+                        break;
+                }
+            }
+
+            if (handlerType is null)
+            {
+                Debug.LogWarning($"Asset context menu handler type '{typeName}' could not be resolved.");
+                _assetContextMenuHandlerCache[cacheKey] = null;
+                return null;
+            }
+
+            const BindingFlags flags = BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static;
+            MethodInfo? method = handlerType.GetMethod(methodName, flags);
+            if (method is null)
+            {
+                Debug.LogWarning($"Asset context menu handler method '{methodName}' was not found on '{handlerType.FullName}'.");
+                _assetContextMenuHandlerCache[cacheKey] = null;
+                return null;
+            }
+
+            var parameters = method.GetParameters();
+            if (parameters.Length != 1 || parameters[0].ParameterType != typeof(XRAssetContextMenuContext))
+            {
+                Debug.LogWarning($"Asset context menu handler '{handlerType.FullName}.{methodName}' must accept a single {nameof(XRAssetContextMenuContext)} parameter.");
+                _assetContextMenuHandlerCache[cacheKey] = null;
+                return null;
+            }
+
+            _assetContextMenuHandlerCache[cacheKey] = method;
+            return method;
         }
 
         private static AssetExplorerPreviewCacheEntry GetOrCreatePreviewEntry(AssetExplorerTabState state, string path)

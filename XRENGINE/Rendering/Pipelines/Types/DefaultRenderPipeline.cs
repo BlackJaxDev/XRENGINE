@@ -239,6 +239,7 @@ public class DefaultRenderPipeline : RenderPipeline
         return c;
     }
 
+
     private ViewportRenderCommandContainer CreateViewportTargetCommands()
     {
         ViewportRenderCommandContainer c = new(this);
@@ -635,21 +636,33 @@ public class DefaultRenderPipeline : RenderPipeline
 
     private ViewportRenderCommandContainer CreateSSAOPassCommands()
     {
-        var container = new ViewportRenderCommandContainer(this);
+        var container = new ViewportRenderCommandContainer(this)
+        {
+            BranchResources = ViewportRenderCommandContainer.BranchResourceBehavior.DisposeResourcesOnBranchExit
+        };
         ConfigureSSAOPass(container.Add<VPRC_SSAOPass>());
         return container;
     }
 
+    private static void LogAo(string message)
+        => Debug.Out(EOutputVerbosity.Normal, false, "[AO][Pipeline] {0}", message);
+
     private ViewportRenderCommandContainer CreateMVAOPassCommands()
     {
-        var container = new ViewportRenderCommandContainer(this);
+        var container = new ViewportRenderCommandContainer(this)
+        {
+            BranchResources = ViewportRenderCommandContainer.BranchResourceBehavior.DisposeResourcesOnBranchExit
+        };
         ConfigureMVAOPass(container.Add<VPRC_MVAOPass>());
         return container;
     }
 
     private ViewportRenderCommandContainer CreateSpatialHashAOPassCommands()
     {
-        var container = new ViewportRenderCommandContainer(this);
+        var container = new ViewportRenderCommandContainer(this)
+        {
+            BranchResources = ViewportRenderCommandContainer.BranchResourceBehavior.DisposeResourcesOnBranchExit
+        };
         ConfigureSpatialHashAOPass(container.Add<VPRC_SpatialHashAOPass>());
         return container;
     }
@@ -706,6 +719,7 @@ public class DefaultRenderPipeline : RenderPipeline
             AmbientOcclusionFBOName,
             AmbientOcclusionBlurFBOName,
             GBufferFBOName);
+        pass.DependentFboNames = new[] { LightCombineFBOName };
     }
 
     private void ConfigureMVAOPass(VPRC_MVAOPass pass)
@@ -731,6 +745,7 @@ public class DefaultRenderPipeline : RenderPipeline
             AmbientOcclusionFBOName,
             AmbientOcclusionBlurFBOName,
             GBufferFBOName);
+        pass.DependentFboNames = new[] { LightCombineFBOName };
     }
 
     private void ConfigureSpatialHashAOPass(VPRC_SpatialHashAOPass pass)
@@ -751,29 +766,27 @@ public class DefaultRenderPipeline : RenderPipeline
             DepthStencilTextureName);
 
         pass.SetOutputNames(
-            SSAONoiseTextureName,
             AmbientOcclusionIntensityTextureName,
             AmbientOcclusionFBOName,
             AmbientOcclusionBlurFBOName,
             GBufferFBOName);
+        pass.DependentFboNames = new[] { LightCombineFBOName };
     }
 
-    private static int EvaluateAmbientOcclusionMode()
+    private int EvaluateAmbientOcclusionMode()
     {
         var aoSettings = State.SceneCamera?.PostProcessing?.AmbientOcclusion;
 
-        if (aoSettings is { Enabled: true })
-            return (int)aoSettings.Type;
-
-        if (aoSettings is { Enabled: false })
-            return (int)AmbientOcclusionSettings.EType.ScreenSpace;
-
-        return Engine.UserSettings.AmbientOcclusionMode switch
+        if (aoSettings is null || !aoSettings.Enabled)
         {
-            EAmbientOcclusionMode.MultiView => (int)AmbientOcclusionSettings.EType.MultiViewAmbientOcclusion,
-            EAmbientOcclusionMode.SpatialHashRaytraced => (int)AmbientOcclusionSettings.EType.SpatialHashRaytraced,
-            _ => (int)AmbientOcclusionSettings.EType.ScreenSpace,
-        };
+            LogAo("EvaluateAmbientOcclusionMode -> disabled or missing; defaulting to ScreenSpace");
+            return (int)AmbientOcclusionSettings.EType.ScreenSpace;
+        }
+
+        int result = (int)aoSettings.Type;
+        string cameraLabel = State.SceneCamera is null ? "<none>" : State.SceneCamera.GetType().Name;
+        LogAo($"EvaluateAmbientOcclusionMode -> camera={cameraLabel}, type={aoSettings.Type}");
+        return result;
     }
 
     private static MotionBlurSettings? GetMotionBlurSettings()

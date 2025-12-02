@@ -2,6 +2,7 @@ using System;
 using System.Reflection;
 using XREngine.Rendering.OpenGL;
 using XREngine.Scene;
+using static XREngine.Rendering.OpenGL.OpenGLRenderer;
 
 namespace XREngine.Editor.ComponentEditors;
 
@@ -26,8 +27,8 @@ public class GLObjectEditorAttribute : Attribute
 
     public GLObjectEditorAttribute(Type targetType)
     {
-        if (!typeof(OpenGLRenderer.GLObjectBase).IsAssignableFrom(targetType))
-            throw new ArgumentException($"Target type must be assignable to {nameof(OpenGLRenderer.GLObjectBase)}", nameof(targetType));
+        if (!typeof(IGLObject).IsAssignableFrom(targetType))
+            throw new ArgumentException($"Target type must be assignable to {nameof(IGLObject)}", nameof(targetType));
 
         TargetType = targetType;
     }
