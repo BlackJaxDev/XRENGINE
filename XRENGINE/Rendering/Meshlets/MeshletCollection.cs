@@ -96,6 +96,7 @@ namespace XREngine.Rendering.Meshlets
             _meshletOffsets[meshID] = (_meshlets.Count - meshletData.Length, meshletData.Length);
             _transforms[meshID] = transform;
             _buffersDirty = true;
+            _transformBufferDirty = true;
         }
 
         /// <summary>
