@@ -30,7 +30,6 @@ namespace XREngine
         private bool _useDebugOpaquePipeline = false;
         private bool _gpuRenderDispatch = false;
         private EGlobalIlluminationMode _globalIlluminationMode = EGlobalIlluminationMode.LightProbesAndIbl;
-        private EAmbientOcclusionMode _ambientOcclusionMode = EAmbientOcclusionMode.ScreenSpace;
 
         public EVSyncMode VSync
         {
@@ -126,11 +125,6 @@ namespace XREngine
         {
             get => _globalIlluminationMode;
             set => SetField(ref _globalIlluminationMode, value);
-        }
-        public EAmbientOcclusionMode AmbientOcclusionMode
-        {
-            get => _ambientOcclusionMode;
-            set => SetField(ref _ambientOcclusionMode, value);
         }
     }
 }

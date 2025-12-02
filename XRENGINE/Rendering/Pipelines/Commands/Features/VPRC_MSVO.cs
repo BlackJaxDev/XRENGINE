@@ -1,5 +1,6 @@
 ﻿using System.Numerics;
 using XREngine.Data.Rendering;
+using XREngine.Rendering;
 using XREngine.Rendering.Models.Materials;
 
 namespace XREngine.Rendering.Pipelines.Commands
@@ -154,7 +155,7 @@ namespace XREngine.Rendering.Pipelines.Commands
                 return;
 
             rc.SetUniforms(program);
-            rc.SetAmbientOcclusionUniforms(program);
+            rc.SetAmbientOcclusionUniforms(program, AmbientOcclusionSettings.EType.MultiScaleVolumetricObscurance);
 
             program.Uniform(EEngineUniform.ScreenWidth.ToString(), (float)ActivePipelineInstance.RenderState.CurrentRenderRegion.Width);
             program.Uniform(EEngineUniform.ScreenHeight.ToString(), (float)ActivePipelineInstance.RenderState.CurrentRenderRegion.Height);

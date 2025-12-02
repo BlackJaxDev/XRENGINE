@@ -9,28 +9,108 @@ using System.Runtime.InteropServices;
 
 namespace XREngine
 {
+    /// <summary>
+    /// Categories for log messages, used for filtering and routing to different log files.
+    /// </summary>
+    public enum ELogCategory
+    {
+        General,
+        Rendering,
+        OpenGL,
+        Physics,
+    }
+
+    /// <summary>
+    /// Represents a single log entry with its message, category, timestamp, and repeat count.
+    /// </summary>
+    public class LogEntry
+    {
+        public string Message { get; }
+        public ELogCategory Category { get; }
+        public DateTime Timestamp { get; }
+        public int RepeatCount { get; internal set; }
+
+        public LogEntry(string message, ELogCategory category, DateTime timestamp)
+        {
+            Message = message;
+            Category = category;
+            Timestamp = timestamp;
+            RepeatCount = 1;
+        }
+    }
+
     public class Debug
     {
-        private enum LogCategory
-        {
-            General,
-            Rendering,
-            OpenGL,
-            Physics,
-        }
-
         private static readonly ConcurrentDictionary<string, DateTime> RecentMessageCache = new();
         public static Queue<(string, DateTime)> Output { get; } = new Queue<(string, DateTime)>();
         public static bool AllowOutput { get; set; } = true;
         private const int MaxRunDirectoryCount = 3;
+        private const int MaxConsoleEntries = 5000;
         private static readonly object LogWriterLock = new();
-        private static readonly Dictionary<LogCategory, StreamWriter?> LogWriters = new()
+        private static readonly object ConsoleEntriesLock = new();
+        private static readonly List<LogEntry> _consoleEntries = new();
+        private static readonly Dictionary<ELogCategory, StreamWriter?> LogWriters = new()
         {
-            [LogCategory.General] = null,
-            [LogCategory.Rendering] = null,
-            [LogCategory.OpenGL] = null,
-            [LogCategory.Physics] = null,
+            [ELogCategory.General] = null,
+            [ELogCategory.Rendering] = null,
+            [ELogCategory.OpenGL] = null,
+            [ELogCategory.Physics] = null,
         };
+
+        /// <summary>
+        /// Returns a snapshot of all console log entries.
+        /// </summary>
+        public static List<LogEntry> GetConsoleEntries()
+        {
+            lock (ConsoleEntriesLock)
+            {
+                return new List<LogEntry>(_consoleEntries);
+            }
+        }
+
+        /// <summary>
+        /// Clears all console log entries.
+        /// </summary>
+        public static void ClearConsoleEntries()
+        {
+            lock (ConsoleEntriesLock)
+            {
+                _consoleEntries.Clear();
+            }
+        }
+
+        /// <summary>
+        /// Clears console log entries for a specific category.
+        /// </summary>
+        public static void ClearConsoleEntries(ELogCategory category)
+        {
+            lock (ConsoleEntriesLock)
+            {
+                _consoleEntries.RemoveAll(e => e.Category == category);
+            }
+        }
+
+        private static void AddConsoleEntry(string message, ELogCategory category)
+        {
+            lock (ConsoleEntriesLock)
+            {
+                // Check if this message is the same as the last one (collapse repeats)
+                if (_consoleEntries.Count > 0)
+                {
+                    var lastEntry = _consoleEntries[^1];
+                    if (lastEntry.Message == message && lastEntry.Category == category)
+                    {
+                        lastEntry.RepeatCount++;
+                        return;
+                    }
+                }
+
+                if (_consoleEntries.Count >= MaxConsoleEntries)
+                    _consoleEntries.RemoveAt(0);
+                _consoleEntries.Add(new LogEntry(message, category, DateTime.Now));
+            }
+        }
+
         private static string? _logSessionId;
         private static string? _logsRootDirectory;
         private static string? _logRunDirectory;
@@ -247,14 +327,18 @@ namespace XREngine
         private static void WriteLogMessage(string message, bool logToFile)
         {
             StreamWriter? writer = null;
+            ELogCategory category;
 
             lock (LogWriterLock)
             {
-                LogCategory category = ClassifyMessage(message);
+                category = ClassifyMessage(message);
                 writer = EnsureLogWriterInternal(category, logToFile);
                 if (writer is not null)
                     writer.WriteLine($"{DateTime.Now:O} {message}");
             }
+
+            // Add to console entries for in-editor viewing
+            AddConsoleEntry(message, category);
 
             if (writer is null)
             {
@@ -263,7 +347,7 @@ namespace XREngine
             }
         }
 
-        private static StreamWriter? EnsureLogWriterInternal(LogCategory category, bool logToFile)
+        private static StreamWriter? EnsureLogWriterInternal(ELogCategory category, bool logToFile)
         {
             if (!logToFile)
             {
@@ -279,9 +363,9 @@ namespace XREngine
                 string logsDirectory = GetLogRunDirectory();
                 string fileSuffix = category switch
                 {
-                    LogCategory.OpenGL => "opengl",
-                    LogCategory.Rendering => "rendering",
-                    LogCategory.Physics => "physics",
+                    ELogCategory.OpenGL => "opengl",
+                    ELogCategory.Rendering => "rendering",
+                    ELogCategory.Physics => "physics",
                     _ => "general",
                 };
                 string fileName = $"log_{fileSuffix}_{_logSessionId}.txt";
@@ -297,35 +381,35 @@ namespace XREngine
             return LogWriters[category];
         }
 
-        private static LogCategory ClassifyMessage(string message)
+        private static ELogCategory ClassifyMessage(string message)
         {
             if (string.IsNullOrWhiteSpace(message))
-                return LogCategory.General;
+                return ELogCategory.General;
 
             string normalized = message.ToLowerInvariant();
 
             foreach (var entry in OpenGlTokens)
             {
                 if (ContainsToken(normalized, entry.Token, entry.RequireBoundary))
-                    return LogCategory.OpenGL;
+                    return ELogCategory.OpenGL;
             }
 
             if (normalized.StartsWith("render"))
-                return LogCategory.Rendering;
+                return ELogCategory.Rendering;
 
             foreach (var entry in RenderingTokens)
             {
                 if (ContainsToken(normalized, entry.Token, entry.RequireBoundary))
-                    return LogCategory.Rendering;
+                    return ELogCategory.Rendering;
             }
 
             foreach (var entry in PhysicsTokens)
             {
                 if (ContainsToken(normalized, entry.Token, entry.RequireBoundary))
-                    return LogCategory.Physics;
+                    return ELogCategory.Physics;
             }
 
-            return LogCategory.General;
+            return ELogCategory.General;
         }
 
         private static bool ContainsToken(string source, string token, bool requireWordBoundary)
@@ -344,7 +428,7 @@ namespace XREngine
 
         private static void ResetLogWriters()
         {
-            foreach (LogCategory category in LogWriters.Keys.ToArray())
+            foreach (ELogCategory category in LogWriters.Keys.ToArray())
             {
                 LogWriters[category]?.Dispose();
                 LogWriters[category] = null;

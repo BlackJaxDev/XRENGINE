@@ -8,7 +8,7 @@ namespace XREngine.Rendering
     public class AmbientOcclusionSettings : XRBase
     {
         private bool _enabled = true;
-        private EType _type = EType.MultiViewAmbientOcclusion;
+        private EType _type = EType.ScreenSpace;
         private float _resolutionScale;
         private float _samplesPerPixel;
         private float _distance;
@@ -46,12 +46,6 @@ namespace XREngine.Rendering
         public AmbientOcclusionSettings()
         {
             _enabled = true;
-            _type = Engine.UserSettings?.AmbientOcclusionMode switch
-            {
-                EAmbientOcclusionMode.MultiView => EType.MultiViewAmbientOcclusion,
-                EAmbientOcclusionMode.SpatialHashRaytraced => EType.SpatialHashRaytraced,
-                _ => EType.ScreenSpace,
-            };
             _resolutionScale = 1.0f;
             _samplesPerPixel = 1.0f;
             _distance = 1.0f;
@@ -274,9 +268,11 @@ namespace XREngine.Rendering
             Power = Interp.Lerp(from.Power, to.Power, time);
         }
 
-        public void SetUniforms(XRRenderProgram program)
+        public void SetUniforms(XRRenderProgram program, EType? overrideType = null)
         {
-            switch (Type)
+            var typeToApply = overrideType ?? Type;
+
+            switch (typeToApply)
             {
                 case EType.ScreenSpace:
                     program.Uniform("Radius", Radius);
@@ -325,6 +321,11 @@ namespace XREngine.Rendering
                     program.Uniform("MaxRayDistance", hashMaxDistance);
                     program.Uniform("Thickness", hashThickness);
                     program.Uniform("DistanceFade", hashFade);
+                    break;
+                default:
+                    // Fallback to screen-space parameters so unsupported modes keep SSAO usable.
+                    program.Uniform("Radius", Radius);
+                    program.Uniform("Power", Power);
                     break;
             }
         }

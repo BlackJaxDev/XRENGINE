@@ -1,4 +1,5 @@
 ﻿using Extensions;
+using System;
 using System.IO.MemoryMappedFiles;
 using System.Text.Json.Serialization;
 using XREngine.Data.Core;
@@ -44,6 +45,16 @@ namespace XREngine.Core.Files
         {
             get => _originalPath;
             set => SetField(ref _originalPath, value);
+        }
+
+        private DateTime? _originalLastWriteTimeUtc;
+        /// <summary>
+        /// Timestamp of the source 3rd-party asset when this asset was generated (UTC).
+        /// </summary>
+        public DateTime? OriginalLastWriteTimeUtc
+        {
+            get => _originalLastWriteTimeUtc;
+            set => SetField(ref _originalLastWriteTimeUtc, value);
         }
 
         private string? _filePath;

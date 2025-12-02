@@ -171,6 +171,9 @@ public static partial class InspectorPropertyEditors
     /// <returns></returns>
     private static Action<SceneNode, PropertyInfo, object?[]?>? CreateClassEditor(Type propType)
     {
+        if (propType == typeof(PostProcessingSettings))
+            return CreatePostProcessingSettingsEditor;
+
         if (propType.GetCustomAttribute<EditorComponentAttribute>() is EditorComponentAttribute attr)
             return attr.CreateEditor;
 

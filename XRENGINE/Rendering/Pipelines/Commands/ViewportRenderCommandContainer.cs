@@ -1,4 +1,5 @@
 ﻿using System.Collections;
+using System.Collections.Generic;
 using System.Diagnostics.CodeAnalysis;
 using XREngine.Data.Core;
 using XREngine.Rendering;
@@ -8,11 +9,26 @@ namespace XREngine.Rendering.Pipelines.Commands
 {
     public class ViewportRenderCommandContainer : XRBase, IReadOnlyList<ViewportRenderCommand>
     {
+        public enum BranchResourceBehavior
+        {
+            PreserveResources,
+            DisposeResourcesOnBranchExit
+        }
+
         private readonly List<ViewportRenderCommand> _commands = [];
         public IReadOnlyList<ViewportRenderCommand> Commands => _commands;
 
         private readonly List<ViewportRenderCommand> _collecVisibleCommands = [];
         public IReadOnlyList<ViewportRenderCommand> CollecVisibleCommands => _collecVisibleCommands;
+
+        private sealed class InstanceResourceState
+        {
+            public bool ResourcesAllocated;
+        }
+
+        private readonly Dictionary<XRRenderPipelineInstance, InstanceResourceState> _instanceStates = new(System.Collections.Generic.ReferenceEqualityComparer.Instance);
+
+        public BranchResourceBehavior BranchResources { get; set; } = BranchResourceBehavior.PreserveResources;
 
         private RenderPipeline? _parentPipeline;
         public RenderPipeline? ParentPipeline
@@ -144,6 +160,12 @@ namespace XREngine.Rendering.Pipelines.Commands
         /// </summary>
         public void Execute()
         {
+            var instance = ViewportRenderCommand.ActivePipelineInstance;
+            if (instance is null)
+                return;
+
+            EnsureResourcesAllocated(instance);
+
             for (int i = 0; i < _commands.Count; i++)
                 _commands[i].ExecuteIfShould();
         }
@@ -169,20 +191,47 @@ namespace XREngine.Rendering.Pipelines.Commands
             for (int i = 0; i < _commands.Count; i++)
                 _commands[i].DescribeRenderPass(context);
         }
-        //public void GenerateFBOs()
-        //{
-        //    foreach (var rc in _commands)
-        //        rc?.GenerateFBOs();
-        //    FBOsInitialized = true;
-        //}
-        //public void RegenerateFBOs()
-        //{
-        //    foreach (var rc in _commands)
-        //    {
-        //        rc?.DestroyFBOs();
-        //        rc?.GenerateFBOs();
-        //    }
-        //    FBOsInitialized = true;
-        //}
+        internal void OnBranchSelected(XRRenderPipelineInstance instance)
+            => EnsureResourcesAllocated(instance);
+
+        internal void OnBranchDeselected(XRRenderPipelineInstance instance)
+        {
+            if (BranchResources == BranchResourceBehavior.DisposeResourcesOnBranchExit)
+                ReleaseResources(instance);
+        }
+
+        private InstanceResourceState GetInstanceState(XRRenderPipelineInstance instance)
+        {
+            if (!_instanceStates.TryGetValue(instance, out var state))
+            {
+                state = new InstanceResourceState();
+                _instanceStates.Add(instance, state);
+            }
+
+            return state;
+        }
+
+        private void EnsureResourcesAllocated(XRRenderPipelineInstance instance)
+        {
+            var state = GetInstanceState(instance);
+            if (state.ResourcesAllocated)
+                return;
+
+            for (int i = 0; i < _commands.Count; i++)
+                _commands[i].AllocateContainerResources(instance);
+
+            state.ResourcesAllocated = true;
+        }
+
+        private void ReleaseResources(XRRenderPipelineInstance instance)
+        {
+            if (!_instanceStates.TryGetValue(instance, out var state) || !state.ResourcesAllocated)
+                return;
+
+            for (int i = _commands.Count - 1; i >= 0; i--)
+                _commands[i].ReleaseContainerResources(instance);
+
+            state.ResourcesAllocated = false;
+        }
     }
 }

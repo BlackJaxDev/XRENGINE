@@ -40,7 +40,7 @@ public static partial class UnitTestingWorld
                         var probeComp = probe.AddComponent<LightProbeComponent>();
 
                         probeComp!.Name = "TestLightProbe";
-                        probeComp.SetCaptureResolution(1024, false);
+                        probeComp.SetCaptureResolution(128, false);
                         probeComp.RealtimeCapture = true;
                         probeComp.PreviewDisplay = LightProbeComponent.ERenderPreview.Irradiance;
                         probeComp.RealTimeCaptureUpdateInterval = TimeSpan.FromMilliseconds(Toggles.LightProbeCaptureMs);

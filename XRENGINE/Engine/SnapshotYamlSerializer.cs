@@ -8,6 +8,7 @@ using YamlDotNet.Serialization.EventEmitters;
 
 namespace XREngine
 {
+    /*
     /// <summary>
     /// Provides a YAML serializer tuned for editor play-mode snapshots.
     /// Wraps XRComponent properties so individual getter failures are ignored
@@ -137,4 +138,5 @@ namespace XREngine
             }
         }
     }
+    */
 }

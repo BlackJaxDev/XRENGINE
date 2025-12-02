@@ -1,8 +1,18 @@
-﻿namespace XREngine.Rendering.Pipelines.Commands
+﻿using System.Runtime.CompilerServices;
+using XREngine.Rendering;
+
+namespace XREngine.Rendering.Pipelines.Commands
 {
     public class VPRC_Switch : ViewportStateRenderCommand<VPRC_PopRenderArea>
     {
         public Func<int>? SwitchEvaluator { get; set; }
+
+        private sealed class SwitchState
+        {
+            public ViewportRenderCommandContainer? ActiveContainer;
+        }
+
+        private readonly ConditionalWeakTable<XRRenderPipelineInstance, SwitchState> _switchStates = new();
 
         private Dictionary<int, ViewportRenderCommandContainer>? _cases;
         public Dictionary<int, ViewportRenderCommandContainer>? Cases
@@ -34,21 +44,27 @@
 
         protected override void Execute()
         {
-            int sw = SwitchEvaluator?.Invoke() ?? -1;
-            //if (NeedsCollecVisible)
-            //    sw = _lastSwitch;
-            //else
-            //{
-            //    if (SwitchEvaluator is null)
-            //        return;
+            XRRenderPipelineInstance? instance = ActivePipelineInstance;
+            if (instance is null)
+                return;
 
-            //    sw = SwitchEvaluator();
-            //}
+            int sw = SwitchEvaluator?.Invoke() ?? -1;
+            ViewportRenderCommandContainer? next;
 
             if (Cases?.TryGetValue(sw, out var commands) ?? false)
-                commands.Execute();
+                next = commands;
             else
-                DefaultCase?.Execute();
+                next = DefaultCase;
+
+            var state = _switchStates.GetValue(instance, _ => new SwitchState());
+            if (!ReferenceEquals(state.ActiveContainer, next))
+            {
+                state.ActiveContainer?.OnBranchDeselected(instance);
+                state.ActiveContainer = next;
+                state.ActiveContainer?.OnBranchSelected(instance);
+            }
+
+            next?.Execute();
         }
 
         internal override void OnAttachedToContainer()

@@ -27,6 +27,7 @@ public class XRProjectTests
             Directory.Exists(Path.Combine(projectFolder, XRProject.BuildDirectoryName)).ShouldBeTrue();
             Directory.Exists(Path.Combine(projectFolder, XRProject.PackagesDirectoryName)).ShouldBeTrue();
             Directory.Exists(Path.Combine(projectFolder, XRProject.ConfigDirectoryName)).ShouldBeTrue();
+            Directory.Exists(Path.Combine(projectFolder, XRProject.CacheDirectoryName)).ShouldBeTrue();
 
             project.GetUnexpectedRootEntries().ShouldBeEmpty();
         }

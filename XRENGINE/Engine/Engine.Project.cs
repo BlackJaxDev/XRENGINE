@@ -300,6 +300,7 @@ namespace XREngine
             EnsureDirectory(project.IntermediateDirectory);
             EnsureDirectory(project.BuildDirectory);
             EnsureDirectory(project.ConfigDirectory);
+            EnsureDirectory(project.CacheDirectory);
 
             if (project.AssetsDirectory is not null)
                 Assets.GameAssetsPath = project.AssetsDirectory;
@@ -307,6 +308,7 @@ namespace XREngine
                 Assets.PackagesPath = project.PackagesDirectory;
             if (project.IntermediateDirectory is not null)
                 Assets.LibrariesPath = project.IntermediateDirectory;
+            Assets.GameCachePath = project.CacheDirectory;
         }
 
         private static void LogUnexpectedProjectEntries(XRProject project)

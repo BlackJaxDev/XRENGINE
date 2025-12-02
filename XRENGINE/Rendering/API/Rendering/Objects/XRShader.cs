@@ -6,6 +6,8 @@ using XREngine.Rendering.Models.Materials;
 
 namespace XREngine.Rendering
 {
+    [XRAssetContextMenu("Optimize Shader...", "XREngine.Editor.UI.Tools.ShaderAssetMenuActions", "OpenInShaderLockingTool")]
+    [XRAssetContextMenu("Analyze Shader...", "XREngine.Editor.UI.Tools.ShaderAssetMenuActions", "OpenInShaderAnalyzer")]
     [XR3rdPartyExtensions(
         "glsl", "shader",
         "frag", "vert", "geom", "tesc", "tese", "comp", "task", "mesh",

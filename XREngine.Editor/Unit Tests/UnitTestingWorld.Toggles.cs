@@ -76,13 +76,13 @@ public static partial class UnitTestingWorld
 
         public PostProcessSteps AnimatedModelImportFlags =
             PostProcessSteps.Triangulate |
-            //PostProcessSteps.JoinIdenticalVertices |
-            //PostProcessSteps.GenerateNormals |
-            //PostProcessSteps.CalculateTangentSpace |
-            //PostProcessSteps.OptimizeGraph |
-            //PostProcessSteps.OptimizeMeshes |
-            //PostProcessSteps.SortByPrimitiveType |
-            //PostProcessSteps.ImproveCacheLocality |
+            PostProcessSteps.JoinIdenticalVertices |
+            PostProcessSteps.GenerateNormals |
+            PostProcessSteps.CalculateTangentSpace |
+            PostProcessSteps.OptimizeGraph |
+            PostProcessSteps.OptimizeMeshes |
+            PostProcessSteps.SortByPrimitiveType |
+            PostProcessSteps.ImproveCacheLocality |
             PostProcessSteps.GenerateBoundingBoxes |
             //PostProcessSteps.RemoveRedundantMaterials |
             PostProcessSteps.FlipUVs;

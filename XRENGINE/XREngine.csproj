@@ -110,7 +110,7 @@
     <PackageReference Include="Newtonsoft.Json" Version="13.0.4" />
     <PackageReference Include="NVorbis" Version="0.10.5" />
     <PackageReference Include="Raylib-cs" Version="7.0.2" />
-    <PackageReference Include="RestSharp" Version="112.1.0" />
+    <PackageReference Include="RestSharp" Version="113.0.0" />
     <PackageReference Include="SharpFont.NetStandard" Version="1.0.5" />
   <PackageReference Include="SharpFont.Dependencies" Version="2.6.0" />
     <PackageReference Include="Silk.NET" Version="2.22.0" />

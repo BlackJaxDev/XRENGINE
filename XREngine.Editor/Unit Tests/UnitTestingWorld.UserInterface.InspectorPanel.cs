@@ -8,6 +8,7 @@ using XREngine;
 using XREngine.Animation;
 using XREngine.Components;
 using XREngine.Core.Files;
+using XREngine.Editor.AssetEditors;
 using XREngine.Editor.ComponentEditors;
 using XREngine.Editor.TransformEditors;
 using XREngine.Rendering.OpenGL;
@@ -224,6 +225,14 @@ public static partial class UnitTestingWorld
             ImGui.PopID();
         }
 
+        private static void DrawStandaloneInspectorContent(object target, HashSet<object> visited)
+        {
+            if (target is XRAsset asset && TryDrawAssetInspector(asset, visited))
+                return;
+
+            DrawInspectableObject(target, "StandaloneInspectorProperties", visited);
+        }
+
         private static void DrawStandaloneInspectorTarget(object target)
         {
             if (target is null)
@@ -246,6 +255,8 @@ public static partial class UnitTestingWorld
 
             ImGui.Separator();
 
+            var visited = new HashSet<object>(ReferenceEqualityComparer.Instance);
+
             // If we have an associated GL API object selected, show its custom editor first
             if (_selectedOpenGlApiObject is OpenGLRenderer.GLObjectBase glObject)
             {
@@ -260,17 +271,15 @@ public static partial class UnitTestingWorld
 
                 if (ImGui.CollapsingHeader("XR Data Properties", ImGuiTreeNodeFlags.DefaultOpen))
                 {
-                    var visited = new HashSet<object>(ReferenceEqualityComparer.Instance);
                     ImGui.PushID("StandaloneInspector");
-                    DrawInspectableObject(target, "StandaloneInspectorProperties", visited);
+                    DrawStandaloneInspectorContent(target, visited);
                     ImGui.PopID();
                 }
             }
             else
             {
-                var visited = new HashSet<object>(ReferenceEqualityComparer.Instance);
                 ImGui.PushID("StandaloneInspector");
-                DrawInspectableObject(target, "StandaloneInspectorProperties", visited);
+                DrawStandaloneInspectorContent(target, visited);
                 ImGui.PopID();
             }
         }
@@ -472,6 +481,86 @@ public static partial class UnitTestingWorld
 
         public static partial void DrawDefaultTransformInspector(TransformBase transform, HashSet<object> visited)
             => DrawInspectableObject(transform, "TransformProperties", visited);
+
+        public static void DrawDefaultAssetInspector(XRAsset asset, HashSet<object> visited)
+            => DrawInspectableObject(asset, "AssetProperties", visited);
+
+        private static bool TryDrawAssetInspector(XRAsset asset, HashSet<object> visited)
+        {
+            var inspector = ResolveAssetInspector(asset.GetType());
+            if (inspector is null)
+                return false;
+
+            try
+            {
+                inspector.DrawInspector(asset, visited);
+                return true;
+            }
+            catch (Exception ex)
+            {
+                Debug.LogException(ex, $"Custom asset inspector '{inspector.GetType().FullName}' failed for '{asset.GetType().FullName}'");
+                return false;
+            }
+        }
+
+        private static IXRAssetInspector? ResolveAssetInspector(Type assetType)
+        {
+            if (_assetInspectorCache.TryGetValue(assetType, out var cached))
+                return cached;
+
+            var attribute = assetType.GetCustomAttribute<XRAssetInspectorAttribute>(true);
+            if (attribute is null || string.IsNullOrWhiteSpace(attribute.InspectorTypeName))
+            {
+                _assetInspectorCache[assetType] = null;
+                return null;
+            }
+
+            Type? inspectorType = null;
+            string typeName = attribute.InspectorTypeName;
+
+            inspectorType = Type.GetType(typeName, false, false);
+            if (inspectorType is null)
+            {
+                foreach (var assembly in AppDomain.CurrentDomain.GetAssemblies())
+                {
+                    inspectorType = assembly.GetType(typeName, false, false);
+                    if (inspectorType is not null)
+                        break;
+                }
+            }
+
+            if (inspectorType is null)
+            {
+                Debug.LogWarning($"Failed to locate asset inspector '{typeName}' for asset '{assetType.FullName}'.");
+                _assetInspectorCache[assetType] = null;
+                return null;
+            }
+
+            if (!typeof(IXRAssetInspector).IsAssignableFrom(inspectorType))
+            {
+                Debug.LogWarning($"Asset inspector type '{inspectorType.FullName}' does not implement {nameof(IXRAssetInspector)}.");
+                _assetInspectorCache[assetType] = null;
+                return null;
+            }
+
+            try
+            {
+                if (Activator.CreateInstance(inspectorType) is IXRAssetInspector inspectorInstance)
+                {
+                    _assetInspectorCache[assetType] = inspectorInstance;
+                    return inspectorInstance;
+                }
+
+                Debug.LogWarning($"Asset inspector '{inspectorType.FullName}' could not be instantiated.");
+            }
+            catch (Exception ex)
+            {
+                Debug.LogException(ex, $"Failed to instantiate asset inspector '{inspectorType.FullName}' for asset '{assetType.FullName}'");
+            }
+
+            _assetInspectorCache[assetType] = null;
+            return null;
+        }
 
         private static partial IXRComponentEditor? ResolveComponentEditor(Type componentType)
         {

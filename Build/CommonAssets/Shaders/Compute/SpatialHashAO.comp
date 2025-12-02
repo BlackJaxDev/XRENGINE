@@ -44,6 +44,14 @@ uint pcg(inout uint v)
     return (word >> 22u) ^ word;
 }
 
+// Pure hash function for building hash keys (does not modify input)
+uint pcgHash(uint v)
+{
+    v = v * 747796405u + 2891336453u;
+    uint word = ((v >> ((v >> 28u) + 4u)) ^ v) * 277803737u;
+    return (word >> 22u) ^ word;
+}
+
 // Lightweight 32-bit hash for building stable checksums per cell
 uint xxhash32(uint p)
 {
@@ -88,7 +96,7 @@ uint SpatialHash_FindOrInsert(vec3 position, vec3 normal, float cellSize)
 
     cellSize *= 10000.0; // widen distribution
 
-    uint hashKey = pcg(floatBitsToUint(cellSize) + pcg(uint(p.x) + pcg(uint(p.y) + pcg(uint(p.z) + pcg(uint(n.x) + pcg(uint(n.y) + pcg(uint(n.z))))))));
+    uint hashKey = pcgHash(floatBitsToUint(cellSize) + pcgHash(uint(p.x) + pcgHash(uint(p.y) + pcgHash(uint(p.z) + pcgHash(uint(n.x) + pcgHash(uint(n.y) + pcgHash(uint(n.z))))))));
     uint cellIndex = hashKey % HashMapSize;
 
     uint checksum = xxhash32(floatBitsToUint(cellSize) + xxhash32(uint(p.x) + xxhash32(uint(p.y) + xxhash32(uint(p.z) + xxhash32(uint(n.x) + xxhash32(uint(n.y) + xxhash32(uint(n.z))))))));
@@ -185,7 +193,8 @@ void main()
     vec3 viewPos = ViewPosFromDepth(depth, uv);
     vec3 worldPos = (InverseViewMatrix * vec4(viewPos, 1.0)).xyz;
     vec3 encodedNormal = texelFetch(NormalTex, pixel, 0).xyz;
-    vec3 worldNormal = normalize((InverseViewMatrix * vec4(encodedNormal, 0.0)).xyz);
+    // Normals in GBuffer are stored in world-space, so just normalize
+    vec3 worldNormal = normalize(encodedNormal);
 
     uint rngState = uint(pixel.x + pixel.y * 4099 + FrameIndex * 65537u);
     vec3 randomVec = normalize(vec3(rand01(rngState), rand01(rngState), rand01(rngState)) * 2.0 - 1.0);

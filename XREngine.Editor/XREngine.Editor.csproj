@@ -52,7 +52,7 @@
     <PackageReference Include="Microsoft.Build.Framework" Version="18.0.2" />
     <PackageReference Include="NDILibDotNetCoreBase" Version="2024.7.22.1" />
     <PackageReference Include="Newtonsoft.Json" Version="13.0.4" />
-    <PackageReference Include="SharpCompress" Version="0.36.2" />
+    <PackageReference Include="SharpCompress" Version="0.42.0" />
     <PackageReference Include="Silk.NET" Version="2.22.0" />
     <PackageReference Include="Silk.NET.Core" Version="2.22.0" />
     <PackageReference Include="Silk.NET.Core.Win32Extras" Version="2.22.0" />

@@ -11,6 +11,7 @@ using XREngine.Core.Files;
 using XREngine.Editor.UI;
 using XREngine.Editor.UI.Components;
 using XREngine.Editor.UI.Toolbar;
+using XREngine.Editor.UI.Tools;
 using XREngine.Rendering;
 using XREngine.Rendering.UI;
 using XREngine.Scene;
@@ -443,6 +444,8 @@ public static partial class UnitTestingWorld
             new ToolbarButton("Tools", [Key.ControlLeft, Key.T],
             [
                 new ToolbarButton("Take Screenshot", TakeScreenshot),
+                new ToolbarButton("Shader Locking Tool", _ => ShaderLockingWindow.Instance.Open()),
+                new ToolbarButton("Shader Analyzer Tool", _ => ShaderAnalyzerWindow.Instance.Open()),
             ]),
             new ToolbarButton("View"),
             new ToolbarButton("Window"),
