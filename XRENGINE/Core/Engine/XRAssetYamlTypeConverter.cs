@@ -331,9 +331,14 @@ namespace XREngine
 
         public void WriteYaml(IEmitter emitter, object? value, Type type, ObjectSerializer serializer)
         {
-            if (!_skipConverter && value is XRAsset asset && ShouldWriteReference(asset))
+            if (value is XRAsset asset)
             {
-                WriteReference(emitter, asset);
+                System.Diagnostics.Trace.WriteLine($"[XRAssetYamlConverter] WriteYaml type={type.Name}, depth={DepthTrackingEventEmitter.CurrentDepth}, skipConverter={_skipConverter}, SourceAsset==this:{ReferenceEquals(asset.SourceAsset, asset)}, FilePath={asset.FilePath ?? "null"}");
+            }
+
+            if (!_skipConverter && value is XRAsset asset2 && ShouldWriteReference(asset2))
+            {
+                WriteReference(emitter, asset2);
                 return;
             }
 

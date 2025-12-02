@@ -175,9 +175,21 @@ namespace XREngine.Core.Files
         }
 
         public override void Reload(string path)
-            => LoadText(path);
+        {
+            // Don't reload embedded TextFiles from disk - they live within their parent asset
+            if (!ReferenceEquals(SourceAsset, this))
+                return;
+            
+            LoadText(path);
+        }
         public override async Task ReloadAsync(string path)
-            => await LoadTextAsync(path);
+        {
+            // Don't reload embedded TextFiles from disk - they live within their parent asset
+            if (!ReferenceEquals(SourceAsset, this))
+                return;
+            
+            await LoadTextAsync(path);
+        }
 
         public override bool Load3rdParty(string filePath)
             => LoadText(filePath);
@@ -185,10 +197,24 @@ namespace XREngine.Core.Files
             => await LoadTextAsync(filePath);
 
         public override void SerializeTo(string filePath, ISerializer defaultSerializer)
-            => SaveTo(filePath);
+        {
+            // Embedded TextFiles should serialize as YAML within their parent
+            if (!ReferenceEquals(SourceAsset, this))
+            {
+                base.SerializeTo(filePath, defaultSerializer);
+                return;
+            }
+            SaveTo(filePath);
+        }
 
         public override Task SerializeToAsync(string filePath, ISerializer defaultSerializer)
-            => SaveToAsync(filePath);
+        {
+            // Embedded TextFiles should serialize as YAML within their parent
+            if (!ReferenceEquals(SourceAsset, this))
+                return base.SerializeToAsync(filePath, defaultSerializer);
+            
+            return SaveToAsync(filePath);
+        }
 
         public void SaveTo(string path)
             => File.WriteAllText(path, _text ?? string.Empty, Encoding);

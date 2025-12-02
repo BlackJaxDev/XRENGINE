@@ -779,13 +779,13 @@ public class DefaultRenderPipeline : RenderPipeline
 
         if (aoSettings is null || !aoSettings.Enabled)
         {
-            LogAo("EvaluateAmbientOcclusionMode -> disabled or missing; defaulting to ScreenSpace");
+            //LogAo("EvaluateAmbientOcclusionMode -> disabled or missing; defaulting to ScreenSpace");
             return (int)AmbientOcclusionSettings.EType.ScreenSpace;
         }
 
         int result = (int)aoSettings.Type;
         string cameraLabel = State.SceneCamera is null ? "<none>" : State.SceneCamera.GetType().Name;
-        LogAo($"EvaluateAmbientOcclusionMode -> camera={cameraLabel}, type={aoSettings.Type}");
+        //LogAo($"EvaluateAmbientOcclusionMode -> camera={cameraLabel}, type={aoSettings.Type}");
         return result;
     }
 
