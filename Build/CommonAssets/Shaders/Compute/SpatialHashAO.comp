@@ -1,0 +1,234 @@
+// Spatially hashed ray traced ambient occlusion inspired by
+// https://interplayoflight.wordpress.com/2025/11/23/spatial-hashing-for-raytraced-ambient-occlusion
+#version 450
+
+layout(local_size_x = 8, local_size_y = 8) in;
+
+layout(binding = 0) uniform sampler2D NormalTex;
+layout(binding = 1) uniform sampler2D DepthTex;
+layout(binding = 0, r16f) uniform image2D OutAO;
+
+layout(std430, binding = 1) buffer HashBuffer { uint hashData[]; };
+layout(std430, binding = 2) buffer HashTimeBuffer { uint hashTime[]; };
+layout(std430, binding = 3) buffer SpatialBuffer { uint spatialData[]; };
+
+uniform uint FrameIndex;
+uniform uint HashMapSize;
+uniform float CellSizeMin;
+uniform float Bias;
+uniform float Thickness;
+uniform float MaxRayDistance;
+uniform float DistanceFade;
+uniform float Power;
+uniform float SamplesPerPixel;
+uniform float JitterScale;
+uniform int RayStepCount;
+uniform float Radius;
+uniform float FieldOfViewY;
+uniform vec2 InvResolution;
+uniform mat4 InverseProjMatrix;
+uniform mat4 ProjMatrix;
+uniform mat4 InverseViewMatrix;
+uniform mat4 ViewMatrix;
+
+// Tunables that control hash probing and stability
+const uint SEARCH_COUNT = 16u;          // Linear probe count for collision resolution
+const uint MaxSamplesPerCell = 500u;    // Cap to limit contention in shared cells
+const uint EmptyCell = 0u;              // Sentinel used for empty slots
+
+// Small integer hash used to decorrelate per-pixel jitter
+uint pcg(inout uint v)
+{
+    v = v * 747796405u + 2891336453u;
+    uint word = ((v >> ((v >> 28u) + 4u)) ^ v) * 277803737u;
+    return (word >> 22u) ^ word;
+}
+
+// Lightweight 32-bit hash for building stable checksums per cell
+uint xxhash32(uint p)
+{
+    const uint PRIME32_2 = 2246822519U, PRIME32_3 = 3266489917U;
+    const uint PRIME32_4 = 668265263U, PRIME32_5 = 374761393U;
+    uint h32 = p + PRIME32_5;
+    h32 = PRIME32_4 * ((h32 << 17) | (h32 >> (32 - 17)));
+    h32 = PRIME32_2 * (h32 ^ (h32 >> 15));
+    h32 = PRIME32_3 * (h32 ^ (h32 >> 13));
+    return h32 ^ (h32 >> 16);
+}
+
+// Generate [0,1) float from the PCG sequence
+float rand01(inout uint state)
+{
+    return float(pcg(state)) / float(0xffffffffu);
+}
+
+// Compute the screen-space adaptive cell size described in the reference article
+float ComputeCellSize(float d, float f, float Ry, float sp, float smin)
+{
+    float h = d * tan(f * 0.5);
+    float sw = sp * (h * 2.0) / Ry;
+    float exponent = floor(log2(sw / smin));
+    float swd = pow(2.0, exponent) * smin;
+    return swd;
+}
+
+// Recover view-space position from depth
+vec3 ViewPosFromDepth(float depth, vec2 uv)
+{
+    vec4 clipSpacePosition = vec4(vec3(uv, depth) * 2.0f - 1.0f, 1.0f);
+    vec4 viewSpacePosition = InverseProjMatrix * clipSpacePosition;
+    return viewSpacePosition.xyz / viewSpacePosition.w;
+}
+
+// Find or insert a cell for the quantized position/normal pair, aging out stale entries
+uint SpatialHash_FindOrInsert(vec3 position, vec3 normal, float cellSize)
+{
+    ivec3 p = ivec3(floor(position / cellSize));
+    ivec3 n = ivec3(floor(normal * 3.0));
+
+    cellSize *= 10000.0; // widen distribution
+
+    uint hashKey = pcg(floatBitsToUint(cellSize) + pcg(uint(p.x) + pcg(uint(p.y) + pcg(uint(p.z) + pcg(uint(n.x) + pcg(uint(n.y) + pcg(uint(n.z))))))));
+    uint cellIndex = hashKey % HashMapSize;
+
+    uint checksum = xxhash32(floatBitsToUint(cellSize) + xxhash32(uint(p.x) + xxhash32(uint(p.y) + xxhash32(uint(p.z) + xxhash32(uint(n.x) + xxhash32(uint(n.y) + xxhash32(uint(n.z))))))));
+    checksum = max(checksum, 1u);
+
+    for (uint i = 0u; i < SEARCH_COUNT; ++i)
+    {
+        uint cmp = atomicCompSwap(hashData[cellIndex], EmptyCell, checksum);
+
+        if (cmp == EmptyCell || cmp == checksum)
+        {
+            uint originalTime = hashTime[cellIndex];
+            if (cmp == EmptyCell || FrameIndex - originalTime > 20u)
+            {
+                hashTime[cellIndex] = FrameIndex;
+                spatialData[cellIndex] = 0u;
+            }
+            else
+            {
+                hashTime[cellIndex] = FrameIndex;
+            }
+            return cellIndex;
+        }
+
+        if (++cellIndex >= HashMapSize)
+            break;
+    }
+
+    return 0xffffffffu;
+}
+
+// Uniformly sample a hemisphere around the surface normal
+vec3 SampleHemisphere(vec2 xi)
+{
+    float phi = 2.0 * 3.14159265 * xi.x;
+    float cosTheta = 1.0 - xi.y;
+    float sinTheta = sqrt(max(1.0 - cosTheta * cosTheta, 0.0));
+    return vec3(cos(phi) * sinTheta, sin(phi) * sinTheta, cosTheta);
+}
+
+// March a ray in view space and return the first hit contribution, mimicking the article's ray marcher
+float RayMarchOcclusion(vec3 viewOrigin, vec3 viewDir, float maxDistance, int steps, float bias, float thickness)
+{
+    float stepLength = maxDistance / float(max(steps, 1));
+    float traveled = 0.0;
+
+    for (int stepIdx = 0; stepIdx < steps; ++stepIdx)
+    {
+        float marchDist = min(traveled, maxDistance);
+        vec3 samplePos = viewOrigin + viewDir * (bias + marchDist);
+        vec4 clipPos = ProjMatrix * vec4(samplePos, 1.0f);
+        vec3 ndc = clipPos.xyz / clipPos.w;
+        vec2 sampleUV = ndc.xy * 0.5 + 0.5;
+
+        if (sampleUV.x < 0.0 || sampleUV.x > 1.0 || sampleUV.y < 0.0 || sampleUV.y > 1.0)
+            break;
+
+        float sceneDepth = texture(DepthTex, sampleUV).r;
+        float sceneDepthVS = ViewPosFromDepth(sceneDepth, sampleUV).z;
+        float expectedDepth = samplePos.z;
+
+        if (sceneDepthVS < expectedDepth + thickness)
+        {
+            float depthDiff = expectedDepth - sceneDepthVS;
+            float falloff = clamp(1.0 - depthDiff / (Radius + thickness), 0.0, 1.0);
+            float distWeight = 1.0 / (1.0 + marchDist * DistanceFade);
+            return falloff * distWeight;
+        }
+
+        traveled += stepLength;
+        if (traveled > maxDistance)
+            break;
+    }
+
+    return 0.0;
+}
+
+void main()
+{
+    ivec2 pixel = ivec2(gl_GlobalInvocationID.xy);
+    ivec2 resolution = ivec2(round(1.0 / InvResolution));
+    if (pixel.x >= resolution.x || pixel.y >= resolution.y)
+        return;
+
+    vec2 uv = (vec2(pixel) + 0.5) * InvResolution;
+
+    float depth = texelFetch(DepthTex, pixel, 0).r;
+    if (depth >= 1.0)
+    {
+        imageStore(OutAO, pixel, vec4(1.0));
+        return;
+    }
+
+    vec3 viewPos = ViewPosFromDepth(depth, uv);
+    vec3 worldPos = (InverseViewMatrix * vec4(viewPos, 1.0)).xyz;
+    vec3 encodedNormal = texelFetch(NormalTex, pixel, 0).xyz;
+    vec3 worldNormal = normalize((InverseViewMatrix * vec4(encodedNormal, 0.0)).xyz);
+
+    uint rngState = uint(pixel.x + pixel.y * 4099 + FrameIndex * 65537u);
+    vec3 randomVec = normalize(vec3(rand01(rngState), rand01(rngState), rand01(rngState)) * 2.0 - 1.0);
+    vec3 tangent = normalize(randomVec - worldNormal * dot(randomVec, worldNormal));
+    vec3 bitangent = normalize(cross(worldNormal, tangent));
+
+    float cellSize = ComputeCellSize(length(viewPos), FieldOfViewY, float(resolution.y), SamplesPerPixel, CellSizeMin);
+    cellSize = max(cellSize, CellSizeMin);
+
+    vec2 rand2 = 2.0 * (vec2(rand01(rngState), rand01(rngState)) - 0.5);
+    vec3 jitteredWorldPos = worldPos + JitterScale * cellSize * (rand2.x * tangent + rand2.y * bitangent);
+
+    uint cellIndex = SpatialHash_FindOrInsert(jitteredWorldPos, worldNormal, cellSize);
+    if (cellIndex == 0xffffffffu)
+    {
+        imageStore(OutAO, pixel, vec4(1.0));
+        return;
+    }
+
+    uint originalData = atomicAdd(spatialData[cellIndex], 0u);
+    uint originalOcclusion = originalData >> 16u;
+    uint originalSamples = originalData & 0xFFFFu;
+
+    float occlusionRatio;
+    if (originalSamples < MaxSamplesPerCell)
+    {
+        vec2 sampleXi = vec2(rand01(rngState), rand01(rngState));
+        vec3 hemi = SampleHemisphere(sampleXi);
+        vec3 worldDir = normalize(hemi.x * tangent + hemi.y * bitangent + hemi.z * worldNormal);
+        vec3 viewDir = (ViewMatrix * vec4(worldDir, 0.0)).xyz;
+
+        float occlusion = RayMarchOcclusion(viewPos, viewDir, MaxRayDistance, RayStepCount, Bias, Thickness);
+
+        uint packedIncrement = (uint(round(occlusion * 65535.0)) << 16u) + 1u;
+        atomicAdd(spatialData[cellIndex], packedIncrement);
+
+        occlusionRatio = float(originalOcclusion + uint(round(occlusion * 65535.0))) / float(originalSamples + 1u) / 65535.0;
+    }
+    else
+    {
+        occlusionRatio = float(originalOcclusion) / float(max(originalSamples, 1u)) / 65535.0;
+    }
+
+    float ao = pow(clamp(1.0 - occlusionRatio, 0.0, 1.0), Power);
+    imageStore(OutAO, pixel, vec4(ao));
+}
