@@ -1,4 +1,7 @@
-﻿using XREngine.Core.Files;
+﻿using System;
+using System.Collections.Generic;
+using System.IO;
+using XREngine.Core.Files;
 using YamlDotNet.Core;
 using YamlDotNet.Core.Events;
 using YamlDotNet.Serialization;
@@ -62,38 +65,207 @@ namespace XREngine
 
     public class XRAssetDeserializer : INodeDeserializer
     {
+        [ThreadStatic]
+        private static int _deserializeDepth;
+
+        [ThreadStatic] 
+        private static bool _isReplaying;
+
         public bool Deserialize(IParser reader, Type expectedType, Func<IParser, Type, object?> nestedObjectDeserializer, out object? value, ObjectDeserializer rootDeserializer)
         {
-            // Check if the expected type is the one we want to customize
-            if (expectedType != typeof(XRAsset))
+            if (!typeof(XRAsset).IsAssignableFrom(expectedType))
             {
                 value = null;
                 return false;
             }
 
-            if (DepthTrackingNodeDeserializer.CurrentDepth == 1)
+            // Don't intercept during replay - let normal deserializer handle it
+            if (_isReplaying)
             {
-                // At root, use default deserialization
-                value = nestedObjectDeserializer(reader, expectedType);
+                value = null;
+                return false;
             }
-            else
+
+            _deserializeDepth++;
+            try
             {
-                // Not at root, apply custom deserialization
-                value = GetAsset(reader);
+                // At root level (depth 1), just deserialize normally
+                if (_deserializeDepth <= 1)
+                {
+                    value = nestedObjectDeserializer(reader, expectedType);
+                    return true;
+                }
+
+                // XRAssets should always be represented as mappings. If not, fall back immediately.
+                if (!reader.Accept<MappingStart>(out _))
+                {
+                    value = nestedObjectDeserializer(reader, expectedType);
+                    return true;
+                }
+
+                // Nested XRAsset - capture the node to check if it's a GUID reference
+                var capturedEvents = CaptureNode(reader);
+                if (TryResolveExternalReference(capturedEvents, out var referencedAsset))
+                {
+                    value = referencedAsset;
+                    return true;
+                }
+
+                // Not a reference - replay events to deserialize inline asset
+                var replayParser = new ReplayParser(capturedEvents);
+                _isReplaying = true;
+                try
+                {
+                    value = nestedObjectDeserializer(replayParser, expectedType);
+                }
+                finally
+                {
+                    _isReplaying = false;
+                }
+                return true;
             }
+            finally
+            {
+                _deserializeDepth--;
+            }
+        }
+
+        private static IReadOnlyList<ParsingEvent> CaptureNode(IParser parser)
+        {
+            var events = new List<ParsingEvent>();
+            CaptureNodeRecursive(parser, events);
+            return events;
+        }
+
+        private static void CaptureNodeRecursive(IParser parser, ICollection<ParsingEvent> events)
+        {
+            if (parser.TryConsume<Scalar>(out var scalar))
+            {
+                events.Add(scalar);
+                return;
+            }
+
+            if (parser.TryConsume<DocumentStart>(out var documentStart))
+            {
+                events.Add(documentStart);
+                while (true)
+                {
+                    if (parser.TryConsume<DocumentEnd>(out var documentEnd))
+                    {
+                        events.Add(documentEnd);
+                        break;
+                    }
+
+                    CaptureNodeRecursive(parser, events);
+                }
+                return;
+            }
+
+            if (parser.TryConsume<StreamStart>(out var streamStart))
+            {
+                events.Add(streamStart);
+                while (true)
+                {
+                    if (parser.TryConsume<StreamEnd>(out var streamEnd))
+                    {
+                        events.Add(streamEnd);
+                        break;
+                    }
+
+                    CaptureNodeRecursive(parser, events);
+                }
+                return;
+            }
+
+            if (parser.TryConsume<AnchorAlias>(out var anchorAlias))
+            {
+                events.Add(anchorAlias);
+                return;
+            }
+
+            if (parser.TryConsume<SequenceStart>(out var sequenceStart))
+            {
+                events.Add(sequenceStart);
+                while (true)
+                {
+                    if (parser.TryConsume<SequenceEnd>(out var sequenceEnd))
+                    {
+                        events.Add(sequenceEnd);
+                        break;
+                    }
+
+                    CaptureNodeRecursive(parser, events);
+                }
+                return;
+            }
+
+            if (parser.TryConsume<MappingStart>(out var mappingStart))
+            {
+                events.Add(mappingStart);
+                while (true)
+                {
+                    if (parser.TryConsume<MappingEnd>(out var mappingEnd))
+                    {
+                        events.Add(mappingEnd);
+                        break;
+                    }
+
+                    CaptureNodeRecursive(parser, events); // Key
+                    CaptureNodeRecursive(parser, events); // Value
+                }
+                return;
+            }
+
+            throw new YamlException("Unsupported YAML node encountered while capturing XRAsset data.");
+        }
+
+        private static bool TryResolveExternalReference(IReadOnlyList<ParsingEvent> events, out XRAsset? asset)
+        {
+            asset = null;
+            if (events.Count != 4)
+                return false;
+
+            if (events[0] is not MappingStart || events[3] is not MappingEnd)
+                return false;
+
+            if (events[1] is not Scalar keyScalar || !string.Equals(keyScalar.Value, "ID", StringComparison.OrdinalIgnoreCase))
+                return false;
+
+            if (events[2] is not Scalar valueScalar)
+                return false;
+
+            if (!Guid.TryParse(valueScalar.Value, out var guid))
+                return false;
+
+            asset = Engine.Assets.GetAssetByID(guid);
             return true;
         }
 
-        private static XRAsset? GetAsset(IParser parser)
+        private sealed class ReplayParser : IParser
         {
-            parser.Consume<MappingStart>();
-            parser.Consume<Scalar>();
-            var id = parser.Consume<Scalar>();
-            parser.Consume<MappingEnd>();
+            private readonly Queue<ParsingEvent> _events;
+            private ParsingEvent? _current;
 
-            return Guid.TryParse(id.Value, out Guid guid) 
-                ? Engine.Assets.GetAssetByID(guid) 
-                : null;
+            public ReplayParser(IEnumerable<ParsingEvent> events)
+            {
+                _events = new Queue<ParsingEvent>(events);
+                // Position on first event immediately
+                MoveNext();
+            }
+
+            public ParsingEvent Current => _current ?? throw new InvalidOperationException("The parser is not positioned on an event.");
+
+            public bool MoveNext()
+            {
+                if (_events.Count == 0)
+                {
+                    _current = null;
+                    return false;
+                }
+
+                _current = _events.Dequeue();
+                return true;
+            }
         }
     }
 
@@ -143,34 +315,61 @@ namespace XREngine
 
     public class XRAssetYamlConverter : IYamlTypeConverter
     {
-        public bool Accepts(Type type) =>
-            type.IsSubclassOf(typeof(XRAsset)) && DepthTrackingEventEmitter.CurrentDepth > 1;
+        [ThreadStatic]
+        private static bool _skipConverter;
+
+        public bool Accepts(Type type)
+        {
+            if (_skipConverter)
+                return false;
+
+            return typeof(XRAsset).IsAssignableFrom(type);
+        }
 
         public object? ReadYaml(IParser parser, Type type, ObjectDeserializer rootDeserializer)
-            => throw new NotImplementedException("Deserialization is handled by the custom deserializer.");
+            => throw new NotSupportedException("XRAssetYamlConverter is write-only; reading is handled by XRAssetDeserializer.");
 
         public void WriteYaml(IEmitter emitter, object? value, Type type, ObjectSerializer serializer)
         {
-            //switch (DepthTrackingEventEmitter.CurrentDepth)
-            //{
-            //    case 0:
-            //        // At root, use default serialization
-            //        serializer(value);
-            //        break;
-            //    default:
-            //        // Nested, apply custom serialization
-                    WriteAsset(emitter, value as XRAsset);
-            //        break;
-            //}
+            if (!_skipConverter && value is XRAsset asset && ShouldWriteReference(asset))
+            {
+                WriteReference(emitter, asset);
+                return;
+            }
+
+            bool previous = _skipConverter;
+            _skipConverter = true;
+            try
+            {
+                serializer(value);
+            }
+            finally
+            {
+                _skipConverter = previous;
+            }
         }
 
-        private static void WriteAsset(IEmitter emitter, XRAsset? asset)
+        private static bool ShouldWriteReference(XRAsset asset)
+        {
+            // CurrentDepth is 0 before the first MappingStart, so depth 0 means root object
+            if (DepthTrackingEventEmitter.CurrentDepth < 1)
+                return false;
+
+            // Embedded assets should always serialize inline
+            if (!ReferenceEquals(asset.SourceAsset, asset))
+                return false;
+
+            if (string.IsNullOrWhiteSpace(asset.FilePath))
+                return false;
+
+            return File.Exists(asset.FilePath);
+        }
+
+        private static void WriteReference(IEmitter emitter, XRAsset asset)
         {
             emitter.Emit(new MappingStart(null, null, false, MappingStyle.Block));
-            {
-                emitter.Emit(new Scalar("ID"));
-                emitter.Emit(new Scalar(asset?.ID.ToString() ?? "null"));
-            }
+            emitter.Emit(new Scalar("ID"));
+            emitter.Emit(new Scalar(asset.ID.ToString()));
             emitter.Emit(new MappingEnd());
         }
     }

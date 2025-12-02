@@ -6,6 +6,7 @@ using XREngine.Rendering.Models.Materials;
 
 namespace XREngine.Rendering
 {
+    [XRAssetInspector("XREngine.Editor.AssetEditors.XRShaderInspector")]
     [XRAssetContextMenu("Optimize Shader...", "XREngine.Editor.UI.Tools.ShaderAssetMenuActions", "OpenInShaderLockingTool")]
     [XRAssetContextMenu("Analyze Shader...", "XREngine.Editor.UI.Tools.ShaderAssetMenuActions", "OpenInShaderAnalyzer")]
     [XR3rdPartyExtensions(
@@ -110,8 +111,8 @@ namespace XREngine.Rendering
                 switch (propName)
                 {
                     case nameof(Source):
-                        if (Source is not null)
-                            Source.TextChanged -= OnSourceTextChanged;
+                        if (field is TextFile previousSource)
+                            previousSource.TextChanged -= OnSourceTextChanged;
                         break;
                 }
             }
@@ -123,8 +124,8 @@ namespace XREngine.Rendering
             switch (propName)
             {
                 case nameof(Source):
-                    if (Source is not null)
-                        Source.TextChanged += OnSourceTextChanged;
+                    if (field is TextFile newSource)
+                        newSource.TextChanged += OnSourceTextChanged;
                     OnSourceTextChanged();
                     break;
             }

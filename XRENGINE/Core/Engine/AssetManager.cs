@@ -499,6 +499,9 @@ namespace XREngine
             file.Name = Path.GetFileNameWithoutExtension(filePath);
             file.FilePath = filePath;
 
+            // Refresh asset graph to populate SourceAsset/EmbeddedAssets relationships
+            XRAssetGraphUtility.RefreshAssetGraph(file);
+
             CacheAsset(file);
             AssetLoaded?.Invoke(file);
         }
@@ -820,6 +823,8 @@ namespace XREngine
             foreach (var converter in RegisteredYamlTypeConverters)
                 builder.WithTypeConverter(converter);
 
+            builder.WithTypeConverter(new XRAssetYamlConverter());
+
             return builder.Build();
         }
 
@@ -839,6 +844,8 @@ namespace XREngine
 
             foreach (var converter in RegisteredYamlTypeConverters)
                 builder.WithTypeConverter(converter);
+
+            builder.WithNodeDeserializer(new XRAssetDeserializer(), w => w.OnTop());
 
             return builder.Build();
         }

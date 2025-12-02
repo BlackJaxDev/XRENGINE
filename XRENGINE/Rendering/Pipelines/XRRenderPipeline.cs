@@ -79,7 +79,7 @@ public abstract class RenderPipeline : XRAsset
     protected virtual IReadOnlyCollection<RenderPassMetadata> GeneratePassMetadata()
     {
         if (CommandChain is null)
-            return Array.Empty<RenderPassMetadata>();
+            return [];
 
         RenderPassMetadataCollection collection = new();
         CommandChain.BuildRenderPassMetadata(collection);
