@@ -81,10 +81,14 @@ namespace XREngine.Rendering.Physics.Physx
             {
                 Scenes.Remove((nint)_scene);
                 _scene->ReleaseMut();
+                _scene = null;
             }
 
             if (_dispatcher is not null)
+            {
                 ((PxDefaultCpuDispatcher*)_dispatcher)->ReleaseMut();
+                _dispatcher = null;
+            }
         }
 
         private unsafe void ConfigureSimulationEventCallbacks(ref PxSceneDesc sceneDesc)
@@ -814,6 +818,16 @@ namespace XREngine.Rendering.Physics.Physx
         {
             get
             {
+                if (_scene is null)
+                {
+                    Debug.Physics("[PhysxScene] SimulationStatistics requested before scene initialization");
+                    return default;
+                }
+                if (!Scenes.TryGetValue((nint)_scene, out var owner) || !ReferenceEquals(owner, this))
+                {
+                    Debug.Physics("[PhysxScene] SimulationStatistics requested for stale scene pointer");
+                    return default;
+                }
                 PxSimulationStatistics stats;
                 _scene->GetSimulationStatistics(&stats);
                 return stats;

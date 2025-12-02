@@ -39,7 +39,26 @@ public static partial class UnitTestingWorld
                 ImGui.SetTooltip(description);
             if (open)
             {
-                DrawSettingsProperties(obj, visited);
+                bool handledByAssetInspector = false;
+                if (obj is XRAsset asset)
+                {
+                    using var assetScope = new InspectorAssetContextScope(asset.SourceAsset ?? asset);
+
+                    // Allow custom inspectors to draw even if this asset is already tracked in the visited set.
+                    visited.Remove(obj);
+                    try
+                    {
+                        handledByAssetInspector = TryDrawAssetInspector(asset, visited);
+                    }
+                    finally
+                    {
+                        visited.Add(obj);
+                    }
+                }
+
+                if (!handledByAssetInspector)
+                    DrawSettingsProperties(obj, visited);
+
                 ImGui.TreePop();
             }
             ImGui.PopID();

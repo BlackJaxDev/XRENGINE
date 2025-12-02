@@ -414,6 +414,12 @@ public static partial class UnitTestingWorld
                 if (ImGui.MenuItem("Save All", "Ctrl+Shift+S"))
                     SaveAll(null);
 
+                if (ImGui.BeginMenu("Save..."))
+                {
+                    DrawDirtyAssetSaveMenuItems();
+                    ImGui.EndMenu();
+                }
+
                 if (ImGui.BeginMenu("Save Settings"))
                 {
                     if (ImGui.MenuItem("Save Engine Settings"))
@@ -570,6 +576,39 @@ public static partial class UnitTestingWorld
                 status = $"{status} (+{jobCount - 1})";
 
             return status;
+        }
+
+        private static void DrawDirtyAssetSaveMenuItems()
+        {
+            var assets = Engine.Assets;
+            if (assets is null)
+            {
+                ImGui.MenuItem("Asset system unavailable", null, false, false);
+                return;
+            }
+
+            var dirtySnapshot = assets.DirtyAssets.ToArray();
+            if (dirtySnapshot.Length == 0)
+            {
+                ImGui.MenuItem("No modified assets", null, false, false);
+                return;
+            }
+
+            Span<XRAsset> scratch = dirtySnapshot;
+            var uniqueRoots = new Dictionary<Guid, XRAsset>(scratch.Length);
+            foreach (var asset in scratch)
+            {
+                XRAsset root = asset.SourceAsset;
+                uniqueRoots[root.ID] = root;
+            }
+
+            foreach (var entry in uniqueRoots.Values.OrderBy(static a => GetAssetDisplayName(a), StringComparer.OrdinalIgnoreCase))
+            {
+                string label = GetAssetDisplayName(entry);
+                string menuLabel = $"{label}##DirtyAsset{entry.ID}";
+                if (ImGui.MenuItem(menuLabel))
+                    SaveSingleAsset(entry);
+            }
         }
 
         private static Vector4? ResolveJobProgressColor(EditorJobTracker.TrackedJobState state)

@@ -18,7 +18,9 @@ namespace XREngine.Core.Files
         private EventList<XRAsset> _embeddedAssets = [];
         /// <summary>
         /// List of sub-assets contained in this file.
+        /// This metadata is automatically reconstructed from the asset graph after loading.
         /// </summary>
+        [YamlIgnore]
         public EventList<XRAsset> EmbeddedAssets
         {
             get => _embeddedAssets; 
@@ -75,6 +77,7 @@ namespace XREngine.Core.Files
         /// The root asset that this asset resides inside of.
         /// The root asset is the one actually written as a file instead of being included in another asset.
         /// </summary>
+        [YamlIgnore]
         public XRAsset SourceAsset
         {
             get => _sourceAsset ?? this;
@@ -205,5 +208,16 @@ namespace XREngine.Core.Files
         /// <returns></returns>
         public virtual async Task SerializeToAsync(string filePath, ISerializer defaultSerializer)
             => await File.WriteAllTextAsync(filePath, defaultSerializer.Serialize(this));
+
+        protected override void OnPropertyChanged<T>(string? propName, T prev, T field)
+        {
+            base.OnPropertyChanged(propName, prev, field);
+
+            if (propName is nameof(SourceAsset) or nameof(EmbeddedAssets))
+                return;
+
+            if (XRAssetGraphUtility.ShouldRefreshForPropertyChange(prev, field))
+                XRAssetGraphUtility.RefreshAssetGraph(SourceAsset);
+        }
     }
 }
