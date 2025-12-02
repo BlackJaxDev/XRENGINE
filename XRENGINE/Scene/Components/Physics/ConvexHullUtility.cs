@@ -9,16 +9,10 @@ using XREngine.Rendering.Models;
 
 namespace XREngine.Components.Physics;
 
-internal readonly struct ConvexHullInput
+internal readonly struct ConvexHullInput(Vector3[] positions, int[] indices)
 {
-    public ConvexHullInput(Vector3[] positions, int[] indices)
-    {
-        Positions = positions;
-        Indices = indices;
-    }
-
-    public Vector3[] Positions { get; }
-    public int[] Indices { get; }
+    public Vector3[] Positions { get; } = positions;
+    public int[] Indices { get; } = indices;
 }
 
 internal static class ConvexHullUtility
@@ -31,25 +25,21 @@ internal static class ConvexHullUtility
 
         return component.Model is Model model
             ? EnumerateModelMeshes(model).ToList()
-            : new List<ConvexHullInput>(capacity: 0);
+            : [];
     }
 
     public static IEnumerable<ConvexHullInput> EnumerateRuntimeMeshes(ModelComponent component)
     {
         foreach (var renderable in component.Meshes.ToArray())
-        {
             if (TryGetRenderableMesh(renderable, out var mesh) && TryExtractMesh(mesh, out var input))
                 yield return input;
-        }
     }
 
     public static IEnumerable<ConvexHullInput> EnumerateModelMeshes(Model model)
     {
         foreach (var subMesh in model.Meshes)
-        {
             if (TryGetAssetMesh(subMesh, out var mesh) && TryExtractMesh(mesh, out var input))
                 yield return input;
-        }
     }
 
     private static bool TryGetRenderableMesh(RenderableMesh renderable, out XRMesh? mesh)

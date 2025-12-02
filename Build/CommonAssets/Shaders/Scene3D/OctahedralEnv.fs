@@ -8,12 +8,14 @@ uniform sampler2D Texture0;
 vec2 EncodeOcta(vec3 dir)
 {
     dir = normalize(dir);
-    dir /= max(abs(dir.x) + abs(dir.y) + abs(dir.z), 1e-5f);
+    // Swizzle: world Y (up) -> octahedral Z (center/corners discriminator)
+    vec3 octDir = vec3(dir.x, dir.z, dir.y);
+    octDir /= max(abs(octDir.x) + abs(octDir.y) + abs(octDir.z), 1e-5f);
 
-    vec2 uv = dir.xy;
-    if (dir.z < 0.0f)
+    vec2 uv = octDir.xy;
+    if (octDir.z < 0.0f)
     {
-        vec2 signDir = vec2(dir.x >= 0.0f ? 1.0f : -1.0f, dir.y >= 0.0f ? 1.0f : -1.0f);
+        vec2 signDir = vec2(octDir.x >= 0.0f ? 1.0f : -1.0f, octDir.y >= 0.0f ? 1.0f : -1.0f);
         uv = (1.0f - abs(uv.yx)) * signDir;
     }
 

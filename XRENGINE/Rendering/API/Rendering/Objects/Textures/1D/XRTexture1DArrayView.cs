@@ -9,7 +9,7 @@ namespace XREngine.Rendering
         uint numLevels,
         uint minLayer,
         uint numLayers,
-        EPixelInternalFormat internalFormat,
+        ESizedInternalFormat internalFormat,
         bool view1D) : XRTextureView<XRTexture1DArray>(viewedTexture, minLevel, numLevels, minLayer, numLayers, internalFormat)
     {
         private bool _view1D = view1D;

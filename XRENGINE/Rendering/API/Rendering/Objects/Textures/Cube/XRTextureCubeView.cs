@@ -9,7 +9,7 @@ namespace XREngine.Rendering
         uint numLevels,
         uint minLayer,
         uint numLayers,
-        EPixelInternalFormat internalFormat,
+        ESizedInternalFormat internalFormat,
         bool array,
         bool view2D) : XRTextureView<XRTextureCube>(viewedTexture, minLevel, numLevels, minLayer, numLayers, internalFormat)
     {
@@ -27,6 +27,15 @@ namespace XREngine.Rendering
         }
         public override uint MaxDimension { get; } = 2u;
         public override Vector3 WidthHeightDepth => new(0, 0, 0);
-        public override ETextureTarget TextureTarget => ETextureTarget.TextureCubeMap;
+        public override ETextureTarget TextureTarget
+        {
+            get
+            {
+                if (View2D)
+                    return Array ? ETextureTarget.Texture2DArray : ETextureTarget.Texture2D;
+
+                return Array ? ETextureTarget.TextureCubeMapArray : ETextureTarget.TextureCubeMap;
+            }
+        }
     }
 }

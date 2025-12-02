@@ -8,7 +8,7 @@ namespace XREngine.Rendering.OpenGL
     {
         public override GLObjectType Type => GLObjectType.Texture;
 
-        public override ETextureTarget TextureTarget => GetViewedTexture()?.TextureTarget ?? ETextureTarget.Texture2D;
+        public override ETextureTarget TextureTarget => Data.TextureTarget;
 
         private IGLTexture? GetViewedTexture()
             => !Renderer.TryGetAPIRenderObject(Data.GetViewedTexture(), out var apiObject) || apiObject is not IGLTexture apiViewed ? null : apiViewed;

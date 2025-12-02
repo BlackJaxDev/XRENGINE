@@ -3,6 +3,7 @@ using Shouldly;
 using Silk.NET.Maths;
 using Silk.NET.OpenGL;
 using Silk.NET.Windowing;
+using System;
 using System.Numerics;
 using System.Runtime.InteropServices;
 
@@ -100,8 +101,22 @@ public class LightProbeOctaTests
             gl.BindVertexArray(vao);
             gl.DrawArrays(PrimitiveType.Triangles, 0, 3);
 
-            // Read back center pixel to verify non-black output
-            var (r, g, b) = ReadPixel(gl, Width / 2, Height / 2);
+            // Sample several points to verify each cubemap face maps correctly
+            var checks = new (Vector2D<int> Pixel, Vector3 ExpectedColor, string Label)[]
+            {
+                (new Vector2D<int>(Width / 2, Height / 2), new Vector3(0.0f, 0.0f, 1.0f), "+Y center"),
+                (new Vector2D<int>((int)(Width * 0.9f), Height / 2), new Vector3(1.0f, 0.0f, 0.0f), "+X right"),
+                (new Vector2D<int>((int)(Width * 0.1f), Height / 2), new Vector3(0.0f, 1.0f, 0.0f), "-X left"),
+                (new Vector2D<int>(Width / 2, (int)(Height * 0.9f)), new Vector3(1.0f, 0.0f, 1.0f), "+Z top"),
+                (new Vector2D<int>(Width / 2, (int)(Height * 0.1f)), new Vector3(0.0f, 1.0f, 1.0f), "-Z bottom"),
+                (new Vector2D<int>((int)(Width * 0.15f), (int)(Height * 0.15f)), new Vector3(1.0f, 1.0f, 0.0f), "-Y corner"),
+            };
+
+            foreach (var (pixel, expected, label) in checks)
+            {
+                var sample = ReadPixel(gl, pixel.X, pixel.Y);
+                AssertColorApproxEquals(sample, expected, label);
+            }
 
             // Cleanup
             gl.DeleteProgram(program);
@@ -109,10 +124,6 @@ public class LightProbeOctaTests
             gl.DeleteTexture(octaTex);
             gl.DeleteFramebuffer(fbo);
             gl.DeleteVertexArray(vao);
-
-            // Verify the output is non-black
-            bool isBlack = r == 0 && g == 0 && b == 0;
-            isBlack.ShouldBeFalse("CubemapToOctahedron shader produced black output - shader may not be receiving input correctly");
         }
         finally
         {
@@ -364,12 +375,13 @@ public class LightProbeOctaTests
             
                 if (n.z < 0.0f)
                 {
-                    vec2 nXY = n.xy;
-                    vec2 signDir = vec2(nXY.x >= 0.0f ? 1.0f : -1.0f, nXY.y >= 0.0f ? 1.0f : -1.0f);
-                    n.xy = (1.0f - abs(nXY.yx)) * signDir;
+                    vec2 signDir = vec2(n.x >= 0.0f ? 1.0f : -1.0f, n.y >= 0.0f ? 1.0f : -1.0f);
+                    n.xy = (1.0f - abs(n.yx)) * signDir;
                 }
-            
-                return normalize(n);
+
+                // Swizzle octahedral Z into world Y so the center of the map corresponds to +Y
+                vec3 dir = vec3(n.x, n.z, n.y);
+                return normalize(dir);
             }
             
             void main()
@@ -530,5 +542,15 @@ public class LightProbeOctaTests
         Span<byte> rgba = stackalloc byte[4];
         gl.ReadPixels(x, y, 1, 1, PixelFormat.Rgba, PixelType.UnsignedByte, rgba);
         return (rgba[0], rgba[1], rgba[2]);
+    }
+
+    private static void AssertColorApproxEquals((byte R, byte G, byte B) actual, Vector3 expected, string label)
+    {
+        var expectedBytes = new Vector3(expected.X, expected.Y, expected.Z) * 255.0f;
+        float tolerance = 30.0f; // allow some GPU variation
+
+        Math.Abs(actual.R - expectedBytes.X).ShouldBeLessThan(tolerance, $"Unexpected red channel for {label}");
+        Math.Abs(actual.G - expectedBytes.Y).ShouldBeLessThan(tolerance, $"Unexpected green channel for {label}");
+        Math.Abs(actual.B - expectedBytes.Z).ShouldBeLessThan(tolerance, $"Unexpected blue channel for {label}");
     }
 }

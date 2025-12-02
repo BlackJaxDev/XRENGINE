@@ -12,6 +12,8 @@ const float PI = 3.14159265359f;
 vec2 EncodeOcta(vec3 dir)
 {
     dir = normalize(dir);
+    // Swizzle: world (x,y,z) -> octahedral (x,z,y)
+    // So world Y (up) -> octahedral Z (center/corners discriminator)
     vec3 octDir = vec3(dir.x, dir.z, dir.y);
     octDir /= max(abs(octDir.x) + abs(octDir.y) + abs(octDir.z), 1e-5f);
 
@@ -37,6 +39,7 @@ vec3 DecodeOcta(vec2 uv)
         n.xy = (1.0f - abs(nXY.yx)) * signDir;
     }
 
+    // Swizzle back: octahedral (x,y,z) -> world (x,z,y)
     vec3 dir = vec3(n.x, n.z, n.y);
     return normalize(dir);
 }
