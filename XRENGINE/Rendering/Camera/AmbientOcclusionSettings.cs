@@ -28,6 +28,9 @@ namespace XREngine.Rendering
         private float _secondaryRadius = 1.6f;
         private float _multiViewBlend = 0.6f;
         private float _multiViewSpread = 0.5f;
+        private float _spatialHashCellSize = 0.75f;
+        private float _spatialHashMaxDistance = 1.5f;
+        private int _spatialHashSteps = 6;
 
         public enum EType
         {
@@ -37,6 +40,7 @@ namespace XREngine.Rendering
             MultiScaleVolumetricObscurance,
             HorizonBased,
             HorizonBasedPlus,
+            SpatialHashRaytraced,
         }
 
         public AmbientOcclusionSettings()
@@ -45,6 +49,7 @@ namespace XREngine.Rendering
             _type = Engine.UserSettings?.AmbientOcclusionMode switch
             {
                 EAmbientOcclusionMode.MultiView => EType.MultiViewAmbientOcclusion,
+                EAmbientOcclusionMode.SpatialHashRaytraced => EType.SpatialHashRaytraced,
                 _ => EType.ScreenSpace,
             };
             _resolutionScale = 1.0f;
@@ -66,6 +71,9 @@ namespace XREngine.Rendering
             _secondaryRadius = 1.6f;
             _multiViewBlend = 0.6f;
             _multiViewSpread = 0.5f;
+            _spatialHashCellSize = 0.75f;
+            _spatialHashMaxDistance = 1.5f;
+            _spatialHashSteps = 6;
         }
 
         public bool Enabled
@@ -207,6 +215,33 @@ namespace XREngine.Rendering
         }
 
         /// <summary>
+        /// Cell size used by the spatial hash for ray re-use.
+        /// </summary>
+        public float SpatialHashCellSize
+        {
+            get => _spatialHashCellSize;
+            set => SetField(ref _spatialHashCellSize, value);
+        }
+
+        /// <summary>
+        /// Maximum ray distance for the spatial hash AO rays in view space units.
+        /// </summary>
+        public float SpatialHashMaxDistance
+        {
+            get => _spatialHashMaxDistance;
+            set => SetField(ref _spatialHashMaxDistance, value);
+        }
+
+        /// <summary>
+        /// Number of ray-march steps per hashed ray.
+        /// </summary>
+        public int SpatialHashSteps
+        {
+            get => _spatialHashSteps;
+            set => SetField(ref _spatialHashSteps, value);
+        }
+
+        /// <summary>
         /// The radius used for the secondary multi-view sample set in world units.
         /// </summary>
         public float SecondaryRadius
@@ -269,6 +304,27 @@ namespace XREngine.Rendering
                 case EType.MultiScaleVolumetricObscurance:
                     program.Uniform("Bias", Bias);
                     program.Uniform("Intensity", Intensity);
+                    break;
+                case EType.SpatialHashRaytraced:
+                    float hashRadius = Radius > 0.0f ? Radius : 0.9f;
+                    float hashPower = Power > 0.0f ? Power : 1.2f;
+                    int hashSamples = Samples > 0 ? Samples : 64;
+                    int hashSteps = SpatialHashSteps > 0 ? SpatialHashSteps : 6;
+                    float hashBias = Bias > 0.0f ? Bias : 0.03f;
+                    float hashCell = SpatialHashCellSize > 0.0f ? SpatialHashCellSize : 0.75f;
+                    float hashMaxDistance = SpatialHashMaxDistance > 0.0f ? SpatialHashMaxDistance : 1.5f;
+                    float hashThickness = Thickness > 0.0f ? Thickness : 0.1f;
+                    float hashFade = DistanceIntensity > 0.0f ? DistanceIntensity : 1.0f;
+
+                    program.Uniform("Radius", hashRadius);
+                    program.Uniform("Power", hashPower);
+                    program.Uniform("KernelSize", hashSamples);
+                    program.Uniform("RayStepCount", hashSteps);
+                    program.Uniform("Bias", hashBias);
+                    program.Uniform("CellSize", hashCell);
+                    program.Uniform("MaxRayDistance", hashMaxDistance);
+                    program.Uniform("Thickness", hashThickness);
+                    program.Uniform("DistanceFade", hashFade);
                     break;
             }
         }
