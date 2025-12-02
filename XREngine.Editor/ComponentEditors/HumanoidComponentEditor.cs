@@ -21,6 +21,13 @@ public sealed class HumanoidComponentEditor : IXRComponentEditor
         if (component is not HumanoidComponent humanoid)
         {
             DrawDefaultComponentInspector(component, visited);
+            ComponentEditorLayout.DrawActivePreviewDialog();
+            return;
+        }
+
+        if (!ComponentEditorLayout.DrawInspectorModeToggle(humanoid, visited, "Humanoid Editor"))
+        {
+            ComponentEditorLayout.DrawActivePreviewDialog();
             return;
         }
 
@@ -33,6 +40,8 @@ public sealed class HumanoidComponentEditor : IXRComponentEditor
         DrawTargetSection(humanoid);
         ImGui.SeparatorText("Bone Mapping");
         DrawBoneMappingSection(humanoid);
+
+        ComponentEditorLayout.DrawActivePreviewDialog();
     }
 
     private static void DrawActionButtons(HumanoidComponent humanoid)

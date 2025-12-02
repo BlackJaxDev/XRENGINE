@@ -26,18 +26,12 @@ internal static class RigidBodyEditorShared
         public readonly Stopwatch Stopwatch = new();
     }
 
-    private sealed class AdvancedState
-    {
-        public bool Enabled;
-    }
-
     private sealed class HullPreviewState
     {
         public bool Enabled;
     }
 
     private static readonly ConditionalWeakTable<PhysicsActorComponent, GenerationState> _generationStates = new();
-    private static readonly ConditionalWeakTable<XRComponent, AdvancedState> _advancedStates = new();
     private static readonly ConditionalWeakTable<PhysicsActorComponent, HullPreviewState> _previewStates = new();
     private static readonly string[] s_spinnerFrames = ["-", "\\", "|", "/"];
 
@@ -251,21 +245,6 @@ internal static class RigidBodyEditorShared
         return true;
     }
 
-    public static void DrawAdvancedInspectorToggle(XRComponent component, HashSet<object> visited)
-    {
-        bool advanced = _advancedStates.TryGetValue(component, out var state) && state.Enabled;
-        if (ImGui.Checkbox("Show default inspector", ref advanced))
-        {
-            if (advanced)
-                _advancedStates.GetValue(component, _ => new AdvancedState()).Enabled = true;
-            else
-                _advancedStates.Remove(component);
-        }
-
-        if (advanced)
-            UnitTestingWorld.UserInterface.DrawDefaultComponentInspector(component, visited);
-    }
-
     public static PhysicsGroupsMask DrawGroupsMaskControls(PhysicsGroupsMask mask)
     {
         int word0 = unchecked((int)mask.Word0);
@@ -326,6 +305,13 @@ public sealed class DynamicRigidBodyComponentEditor : IXRComponentEditor
         if (component is not DynamicRigidBodyComponent rigidBodyComponent)
         {
             UnitTestingWorld.UserInterface.DrawDefaultComponentInspector(component, visited);
+            ComponentEditorLayout.DrawActivePreviewDialog();
+            return;
+        }
+
+        if (!ComponentEditorLayout.DrawInspectorModeToggle(rigidBodyComponent, visited, "Dynamic Rigid Body Editor"))
+        {
+            ComponentEditorLayout.DrawActivePreviewDialog();
             return;
         }
 
@@ -335,8 +321,8 @@ public sealed class DynamicRigidBodyComponentEditor : IXRComponentEditor
         DrawActorSettings(rigidBodyComponent);
         DrawDynamicsSettings(rigidBodyComponent);
         RigidBodyEditorShared.DrawConvexHullSection(rigidBodyComponent);
-        RigidBodyEditorShared.DrawAdvancedInspectorToggle(rigidBodyComponent, visited);
         ImGui.PopID();
+        ComponentEditorLayout.DrawActivePreviewDialog();
     }
 
     private static void DrawOverview(DynamicRigidBodyComponent component)
@@ -613,6 +599,13 @@ public sealed class StaticRigidBodyComponentEditor : IXRComponentEditor
         if (component is not StaticRigidBodyComponent rigidBodyComponent)
         {
             UnitTestingWorld.UserInterface.DrawDefaultComponentInspector(component, visited);
+            ComponentEditorLayout.DrawActivePreviewDialog();
+            return;
+        }
+
+        if (!ComponentEditorLayout.DrawInspectorModeToggle(rigidBodyComponent, visited, "Static Rigid Body Editor"))
+        {
+            ComponentEditorLayout.DrawActivePreviewDialog();
             return;
         }
 
@@ -621,8 +614,8 @@ public sealed class StaticRigidBodyComponentEditor : IXRComponentEditor
         DrawCreationSettings(rigidBodyComponent);
         DrawActorSettings(rigidBodyComponent);
         RigidBodyEditorShared.DrawConvexHullSection(rigidBodyComponent);
-        RigidBodyEditorShared.DrawAdvancedInspectorToggle(rigidBodyComponent, visited);
         ImGui.PopID();
+        ComponentEditorLayout.DrawActivePreviewDialog();
     }
 
     private static void DrawOverview(StaticRigidBodyComponent component)
