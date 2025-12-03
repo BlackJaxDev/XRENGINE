@@ -102,7 +102,10 @@ namespace XREngine.Rendering
         }
 
         public static byte[] AllocateBytes(uint width, uint height, EPixelFormat format, EPixelType type)
-            => new byte[width * height * ComponentSize(type) * GetComponentCount(format)];
+            => AllocateBytes(width, height, 1u, format, type);
+
+        public static byte[] AllocateBytes(uint width, uint height, uint depth, EPixelFormat format, EPixelType type)
+            => new byte[width * height * depth * ComponentSize(type) * GetComponentCount(format)];
 
         public static void GetFormat(
             MagickImage bmp,

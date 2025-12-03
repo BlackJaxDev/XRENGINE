@@ -3,7 +3,7 @@ using System.IO;
 using System.Numerics;
 using System.Runtime.InteropServices;
 using SkiaSharp;
-using SkiaSharp.Extended.Svg;
+using Svg.Skia;
 using SixLabors.ImageSharp;
 using SixLabors.ImageSharp.PixelFormats;
 using XREngine.Data.Rendering;
@@ -11,6 +11,7 @@ using XREngine.Diagnostics;
 using XREngine.Rendering;
 using XREngine.Rendering.Models.Materials;
 using XREngine.Rendering.UI;
+using XREngine.Data.Core;
 
 namespace XREngine.Scene.Components.UI;
 

@@ -441,9 +441,20 @@ namespace XREngine.Rendering
         }
 
         public void SetDataRawAtIndex<T>(uint index, T data) where T : struct
-            => Marshal.StructureToPtr(data, _clientSideSource!.Address[index, ElementSize], true);
+        {
+            if (_clientSideSource is null)
+                throw new InvalidOperationException($"Cannot set data at index {index}: client-side buffer has not been allocated.");
+            Marshal.StructureToPtr(data, _clientSideSource.Address[index, ElementSize], true);
+        }
+        
         public T GetDataRawAtIndex<T>(uint index) where T : struct
-            => Marshal.PtrToStructure<T>(_clientSideSource!.Address[index, ElementSize]);
+        {
+            if (_clientSideSource is null)
+                throw new InvalidOperationException($"Cannot get data at index {index}: client-side buffer has not been allocated.");
+            if (index >= _elementCount)
+                throw new ArgumentOutOfRangeException(nameof(index), $"Index {index} is out of range. Element count: {_elementCount}");
+            return Marshal.PtrToStructure<T>(_clientSideSource.Address[index, ElementSize]);
+        }
 
         public void SetDataArrayRawAtIndex<T>(uint index, T[] data) where T : struct
         {

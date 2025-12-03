@@ -340,8 +340,8 @@ namespace XREngine.Rendering.OpenGL
                 //TODO: Implement these
 
                 //Texture 1D
-                //XRTexture1D data => new GLTexture1D(this, data),
-                //XRTexture1DArray data => new GLTexture1DArray(this, data),
+                XRTexture1D data => new GLTexture1D(this, data),
+                XRTexture1DArray data => new GLTexture1DArray(this, data),
                 XRTextureViewBase data => new GLTextureView(this, data),
                 //XRTexture1DArrayView data => new GLTextureView(this, data),
 
@@ -358,7 +358,7 @@ namespace XREngine.Rendering.OpenGL
 
                 //Texture Cube
                 XRTextureCube data => new GLTextureCube(this, data),
-                //XRTextureCubeArray data => new GLTextureCubeArray(this, data),
+                XRTextureCubeArray data => new GLTextureCubeArray(this, data),
                 //XRTextureCubeView data => new GLTextureView(this, data),
 
                 //Texture Buffer
