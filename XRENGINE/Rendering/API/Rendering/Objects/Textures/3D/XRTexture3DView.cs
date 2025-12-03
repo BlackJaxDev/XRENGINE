@@ -1,5 +1,4 @@
-﻿using Assimp;
-using System.Numerics;
+﻿using System.Numerics;
 using XREngine.Data.Rendering;
 
 namespace XREngine.Rendering
@@ -12,9 +11,11 @@ namespace XREngine.Rendering
         uint numLayers,
         ESizedInternalFormat internalFormat) : XRTextureView<XRTexture3D>(viewedTexture, minLevel, numLevels, minLayer, numLayers, internalFormat)
     {
-        public override uint MaxDimension { get; } = 3u;
+        public override uint MaxDimension => ViewedTexture.MaxDimension;
 
-        public override Vector3 WidthHeightDepth => new(0, 0, 0);
+        public override Vector3 WidthHeightDepth => new(ViewedTexture.Width, ViewedTexture.Height, ViewedTexture.Depth);
+
+        public override bool HasAlphaChannel => ViewedTexture.HasAlphaChannel;
 
         public override ETextureTarget TextureTarget => ETextureTarget.Texture3D;
     }

@@ -18,8 +18,18 @@ namespace XREngine.Rendering
             get => _view1D;
             set => SetField(ref _view1D, value);
         }
-        public override uint MaxDimension { get; } = 1u;
-        public override Vector3 WidthHeightDepth => new(0, 0, 0);
-        public override ETextureTarget TextureTarget => ETextureTarget.Texture1D;
+        public uint Width => ViewedTexture.Width;
+        public override uint MaxDimension => ViewedTexture.MaxDimension;
+        public override Vector3 WidthHeightDepth
+            => View1D && NumLayers == 1
+                ? new(Width, 1, 1)
+                : new(Width, 1, NumLayers);
+
+        public override bool HasAlphaChannel => ViewedTexture.HasAlphaChannel;
+
+        public override ETextureTarget TextureTarget
+            => View1D && NumLayers == 1
+                ? ETextureTarget.Texture1D
+                : ETextureTarget.Texture1DArray;
     }
 }

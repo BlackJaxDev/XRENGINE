@@ -1,4 +1,7 @@
-﻿using System.Numerics;
+﻿using System;
+using System.Linq;
+using System.Numerics;
+using XREngine.Data;
 using XREngine.Data.Colors;
 using XREngine.Data.Rendering;
 
@@ -6,6 +9,7 @@ namespace XREngine.Rendering
 {
     public class XRTexture3D : XRTexture
     {
+        private Mipmap3D[] _mipmaps = [];
         private ESizedInternalFormat _sizedInternalFormat = ESizedInternalFormat.Rgba8;
         private ETexMagFilter _magFilter = ETexMagFilter.Nearest;
         private ETexMinFilter _minFilter = ETexMinFilter.Nearest;
@@ -18,11 +22,6 @@ namespace XREngine.Rendering
 
         public override bool IsResizeable => Resizable;
 
-        /// <summary>
-        /// If false, calling resize will do nothing.
-        /// Useful for repeating textures that must always be a certain size or textures that never need to be dynamically resized during the game.
-        /// False by default.
-        /// </summary>
         public bool Resizable
         {
             get => _resizable;
@@ -30,6 +29,8 @@ namespace XREngine.Rendering
         }
 
         public override Vector3 WidthHeightDepth => new(Width, Height, Depth);
+
+        public override bool HasAlphaChannel => Mipmaps.Any(HasAlphaFormat);
 
         public EDepthStencilFmt DepthStencilFormat { get; set; } = EDepthStencilFmt.None;
 
@@ -81,74 +82,65 @@ namespace XREngine.Rendering
             set => SetField(ref _exclusiveSharing, value);
         }
 
-        private uint _width;
-        private uint _height;
-        private uint _depth;
+        public Mipmap3D[] Mipmaps
+        {
+            get => _mipmaps;
+            set => SetField(ref _mipmaps, value ?? Array.Empty<Mipmap3D>());
+        }
 
-        public uint Width => _width;
-        public uint Height => _height;
-        public uint Depth => _depth;
+        public uint Width => Mipmaps.Length > 0 ? Mipmaps[0].Width : 0u;
+        public uint Height => Mipmaps.Length > 0 ? Mipmaps[0].Height : 0u;
+        public uint Depth => Mipmaps.Length > 0 ? Mipmaps[0].Depth : 0u;
 
         public event Action? Resized;
 
-        public XRTexture3D() : this(1, 1, 1, EPixelInternalFormat.Rgb8, EPixelFormat.Rgb, EPixelType.UnsignedByte, true) { }
+        public XRTexture3D()
+            : this(1, 1, 1, EPixelInternalFormat.Rgb8, EPixelFormat.Rgb, EPixelType.UnsignedByte, true)
+        {
+        }
 
-        public XRTexture3D(uint width, uint height, uint depth) 
-            : this(width, height, depth, EPixelInternalFormat.Rgb8, EPixelFormat.Rgb, EPixelType.UnsignedByte, true) { }
+        public XRTexture3D(uint width, uint height, uint depth)
+            : this(width, height, depth, EPixelInternalFormat.Rgb8, EPixelFormat.Rgb, EPixelType.UnsignedByte, true)
+        {
+        }
 
         public XRTexture3D(uint width, uint height, uint depth, ColorF4 color)
+            : this(width, height, depth, EPixelInternalFormat.Rgba8, EPixelFormat.Rgba, EPixelType.UnsignedByte, true)
         {
-            _width = width;
-            _height = height;
-            _depth = depth;
-            
-            // Create a simple 3D texture filled with the specified color
-            // For now, we'll just set the dimensions and let the renderer handle the data
-            // In a full implementation, you might want to create actual 3D data here
+            FillWithColor(color);
         }
 
         public XRTexture3D(uint width, uint height, uint depth, EPixelInternalFormat internalFormat, EPixelFormat format, EPixelType type, bool allocateData = false)
+            : this(width, height, depth, internalFormat, format, type, allocateData, 1)
         {
-            _width = width;
-            _height = height;
-            _depth = depth;
-            
-            // Set default properties
-            _sizedInternalFormat = internalFormat switch
-            {
-                EPixelInternalFormat.Rgb8 => ESizedInternalFormat.Rgb8,
-                EPixelInternalFormat.Rgba8 => ESizedInternalFormat.Rgba8,
-                //EPixelInternalFormat.Rgb16 => ESizedInternalFormat.Rgb16,
-                EPixelInternalFormat.Rgba16 => ESizedInternalFormat.Rgba16,
-                EPixelInternalFormat.Rgb32f => ESizedInternalFormat.Rgb32f,
-                EPixelInternalFormat.Rgba32f => ESizedInternalFormat.Rgba32f,
-                _ => ESizedInternalFormat.Rgba8
-            };
-            
-            // In a full implementation, you might want to create actual 3D mipmap data here
-            // similar to how XRTexture2D creates Mipmap2D arrays
         }
 
         public XRTexture3D(uint width, uint height, uint depth, EPixelInternalFormat internalFormat, EPixelFormat format, EPixelType type, int mipmapCount)
+            : this(width, height, depth, internalFormat, format, type, allocateData: true, mipmapCount)
         {
-            _width = width;
-            _height = height;
-            _depth = depth;
-            
-            // Set default properties
-            _sizedInternalFormat = internalFormat switch
+        }
+
+        private XRTexture3D(uint width, uint height, uint depth, EPixelInternalFormat internalFormat, EPixelFormat format, EPixelType type, bool allocateData, int mipmapCount)
+        {
+            _sizedInternalFormat = GuessSizedFormat(internalFormat);
+            Mipmaps = CreateMipChain(width, height, depth, internalFormat, format, type, allocateData, mipmapCount);
+        }
+
+        private static Mipmap3D[] CreateMipChain(uint width, uint height, uint depth, EPixelInternalFormat internalFormat, EPixelFormat format, EPixelType type, bool allocateData, int mipmapCount)
+        {
+            mipmapCount = Math.Max(1, mipmapCount);
+            Mipmap3D[] mips = new Mipmap3D[mipmapCount];
+            uint w = width;
+            uint h = height;
+            uint d = depth;
+            for (int i = 0; i < mipmapCount; ++i)
             {
-                EPixelInternalFormat.Rgb8 => ESizedInternalFormat.Rgb8,
-                EPixelInternalFormat.Rgba8 => ESizedInternalFormat.Rgba8,
-                //EPixelInternalFormat.Rgb16 => ESizedInternalFormat.Rgb16,
-                EPixelInternalFormat.Rgba16 => ESizedInternalFormat.Rgba16,
-                EPixelInternalFormat.Rgb32f => ESizedInternalFormat.Rgb32f,
-                EPixelInternalFormat.Rgba32f => ESizedInternalFormat.Rgba32f,
-                _ => ESizedInternalFormat.Rgba8
-            };
-            
-            // In a full implementation, you would create mipmapCount levels of 3D data
-            // with each level having dimensions divided by 2
+                mips[i] = new Mipmap3D(Math.Max(1u, w), Math.Max(1u, h), Math.Max(1u, d), internalFormat, format, type, allocateData);
+                if (w > 1u) w >>= 1;
+                if (h > 1u) h >>= 1;
+                if (d > 1u) d >>= 1;
+            }
+            return mips;
         }
 
         /// <summary>
@@ -160,11 +152,53 @@ namespace XREngine.Rendering
             if (!Resizable)
                 return;
 
-            _width = width;
-            _height = height;
-            _depth = depth;
+            if (Width == width && Height == height && Depth == depth)
+                return;
+
+            uint w = width;
+            uint h = height;
+            uint d = depth;
+            for (int i = 0; i < _mipmaps.Length && w > 0u && h > 0u && d > 0u; ++i)
+            {
+                _mipmaps[i]?.Resize(Math.Max(1u, w), Math.Max(1u, h), Math.Max(1u, d), true);
+                if (w > 1u) w >>= 1;
+                if (h > 1u) h >>= 1;
+                if (d > 1u) d >>= 1;
+            }
 
             Resized?.Invoke();
+        }
+
+        public void GenerateMipmapsCPU()
+        {
+            if (Mipmaps.Length == 0)
+                return;
+
+            var baseMip = Mipmaps[0];
+            int desiredLevels = Math.Max(1, (int)Math.Floor(Math.Log(Math.Max(1u, MaxDimension), 2)) + 1);
+            desiredLevels = Math.Min(desiredLevels, SmallestAllowedMipmapLevel);
+
+            if (desiredLevels <= Mipmaps.Length)
+                return;
+
+            Mipmap3D[] newMipmaps = new Mipmap3D[desiredLevels];
+            Array.Copy(Mipmaps, newMipmaps, Math.Min(Mipmaps.Length, newMipmaps.Length));
+
+            uint w = baseMip.Width;
+            uint h = baseMip.Height;
+            uint d = baseMip.Depth;
+            for (int i = 1; i < desiredLevels; ++i)
+            {
+                if (newMipmaps[i] != null)
+                    continue;
+
+                w = Math.Max(1u, w >> 1);
+                h = Math.Max(1u, h >> 1);
+                d = Math.Max(1u, d >> 1);
+                newMipmaps[i] = new Mipmap3D(w, h, d, baseMip.InternalFormat, baseMip.PixelFormat, baseMip.PixelType, false);
+            }
+
+            Mipmaps = newMipmaps;
         }
 
         public override uint MaxDimension => (uint)Math.Max(Math.Max(Width, Height), Depth);
@@ -253,5 +287,96 @@ namespace XREngine.Rendering
                 WWrap = ETexWrapMode.Repeat,
                 AutoGenerateMipmaps = true,
             };
+
+        private static ESizedInternalFormat GuessSizedFormat(EPixelInternalFormat internalFormat)
+            => internalFormat switch
+            {
+                EPixelInternalFormat.Rgb8 => ESizedInternalFormat.Rgb8,
+                EPixelInternalFormat.Rgba8 => ESizedInternalFormat.Rgba8,
+                EPixelInternalFormat.Rgb16 => ESizedInternalFormat.Rgb16i,
+                EPixelInternalFormat.Rgba16 => ESizedInternalFormat.Rgba16,
+                EPixelInternalFormat.Rgb32f => ESizedInternalFormat.Rgb32f,
+                EPixelInternalFormat.Rgba32f => ESizedInternalFormat.Rgba32f,
+                _ => ESizedInternalFormat.Rgba8,
+            };
+
+        private static bool HasAlphaFormat(Mipmap3D mip)
+            => mip.PixelFormat switch
+            {
+                EPixelFormat.Rgba or
+                EPixelFormat.Bgra or
+                EPixelFormat.LuminanceAlpha or
+                EPixelFormat.Alpha => true,
+                _ => false,
+            };
+
+        private void FillWithColor(ColorF4 color)
+        {
+            if (Mipmaps.Length == 0)
+                return;
+
+            var baseMip = Mipmaps[0];
+            byte[] data = CreateSolidColorData(baseMip.Width, baseMip.Height, baseMip.Depth, color, baseMip.PixelFormat, baseMip.PixelType);
+            baseMip.Data = new DataSource(data);
+        }
+
+        private static byte[] CreateSolidColorData(uint width, uint height, uint depth, ColorF4 color, EPixelFormat format, EPixelType type)
+        {
+            uint components = (uint)XRTexture.GetComponentCount(format);
+            uint componentSize = XRTexture.ComponentSize(type);
+            uint texels = Math.Max(1u, width * height * depth);
+            byte[] bytes = new byte[texels * components * componentSize];
+
+            if (type != EPixelType.UnsignedByte)
+                return bytes;
+
+            byte r = (byte)(color.R * 255f);
+            byte g = (byte)(color.G * 255f);
+            byte b = (byte)(color.B * 255f);
+            byte a = (byte)(color.A * 255f);
+
+            for (uint i = 0; i < texels; ++i)
+            {
+                uint offset = i * components;
+                switch (format)
+                {
+                    case EPixelFormat.Red:
+                    case EPixelFormat.Luminance:
+                        bytes[offset] = r;
+                        break;
+                    case EPixelFormat.Rg:
+                        bytes[offset] = r;
+                        bytes[offset + 1] = g;
+                        break;
+                    case EPixelFormat.Bgr:
+                        bytes[offset] = b;
+                        bytes[offset + 1] = g;
+                        bytes[offset + 2] = r;
+                        break;
+                    case EPixelFormat.Bgra:
+                        bytes[offset] = b;
+                        bytes[offset + 1] = g;
+                        bytes[offset + 2] = r;
+                        bytes[offset + 3] = a;
+                        break;
+                    case EPixelFormat.LuminanceAlpha:
+                        bytes[offset] = r;
+                        bytes[offset + 1] = a;
+                        break;
+                    case EPixelFormat.Rgba:
+                    default:
+                        bytes[offset] = r;
+                        if (components > 1)
+                            bytes[offset + 1] = g;
+                        if (components > 2)
+                            bytes[offset + 2] = b;
+                        if (components > 3)
+                            bytes[offset + 3] = a;
+                        break;
+                }
+            }
+
+            return bytes;
+        }
     }
 }

@@ -4,19 +4,15 @@ using System.Linq;
 using XREngine.Core;
 using XREngine.Data.Rendering;
 using XREngine.Rendering;
+using XREngine.Rendering.Models.Materials;
 
 namespace XREngine.Rendering.PostProcessing;
 
-public sealed class RenderPipelinePostProcessSchemaBuilder
+public sealed class RenderPipelinePostProcessSchemaBuilder(RenderPipeline pipeline)
 {
-    private readonly RenderPipeline _pipeline;
+    private readonly RenderPipeline _pipeline = pipeline;
     private readonly Dictionary<string, StageDefinition> _stages = new(StringComparer.Ordinal);
     private readonly Dictionary<string, CategoryDefinition> _categories = new(StringComparer.Ordinal);
-
-    public RenderPipelinePostProcessSchemaBuilder(RenderPipeline pipeline)
-    {
-        _pipeline = pipeline;
-    }
 
     public PostProcessStageBuilder Stage(string key, string? displayName = null)
     {
@@ -187,18 +183,12 @@ public sealed class RenderPipelinePostProcessSchemaBuilder
             _ => 0.0f
         };
 
-    private sealed class StageDefinition
+    public sealed class StageDefinition(string key, string displayName)
     {
         private Func<IEnumerable<XRShader>>? _shaderFactory;
 
-        public StageDefinition(string key, string displayName)
-        {
-            Key = key;
-            DisplayName = displayName;
-        }
-
-        public string Key { get; }
-        public string DisplayName { get; set; }
+        public string Key { get; } = key;
+        public string DisplayName { get; set; } = displayName;
         public HashSet<string> HiddenUniforms { get; } = new(StringComparer.Ordinal);
         public Dictionary<string, UniformCustomization> Customizations { get; } = new(StringComparer.Ordinal);
         public List<CustomParameterDefinition> CustomParameters { get; } = new();
@@ -207,31 +197,21 @@ public sealed class RenderPipelinePostProcessSchemaBuilder
             => _shaderFactory = factory ?? throw new ArgumentNullException(nameof(factory));
 
         public List<XRShader> BuildShaders()
-        {
-            if (_shaderFactory is null)
-                return new List<XRShader>();
-            return _shaderFactory().Where(shader => shader is not null).ToList();
-        }
+            => _shaderFactory is null ? [] : _shaderFactory().Where(shader => shader is not null).ToList();
 
         public UniformCustomization? GetCustomization(string uniformName)
             => Customizations.TryGetValue(uniformName, out var customization) ? customization : null;
     }
 
-    private sealed class CategoryDefinition
+    public sealed class CategoryDefinition(string key, string displayName)
     {
-        public CategoryDefinition(string key, string displayName)
-        {
-            Key = key;
-            DisplayName = displayName;
-        }
-
-        public string Key { get; }
-        public string DisplayName { get; set; }
+        public string Key { get; } = key;
+        public string DisplayName { get; set; } = displayName;
         public string? Description { get; set; }
         public List<string> StageKeys { get; } = new();
     }
 
-    private sealed class UniformCustomization
+    public sealed class UniformCustomization
     {
         public string? DisplayName { get; set; }
         public object? DefaultValue { get; set; }
@@ -242,7 +222,7 @@ public sealed class RenderPipelinePostProcessSchemaBuilder
         public IReadOnlyList<PostProcessEnumOption>? EnumOptions { get; set; }
     }
 
-    private sealed class CustomParameterDefinition
+    public sealed class CustomParameterDefinition
     {
         public string Name { get; init; } = string.Empty;
         public string DisplayName { get; init; } = string.Empty;

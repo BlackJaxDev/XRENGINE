@@ -174,7 +174,7 @@
     <PackageReference Include="Silk.NET.XInput" Version="2.22.0" />
     <PackageReference Include="SixLabors.ImageSharp" Version="3.1.12" />
     <PackageReference Include="SkiaSharp" Version="2.88.9" />
-    <PackageReference Include="SkiaSharp.Extended.Svg" Version="2.88.3" />
+    <PackageReference Include="Svg.Skia" Version="2.0.0.4" />
     <PackageReference Include="Steamworks.NET" Version="2024.8.0" />
     <PackageReference Include="System.IdentityModel.Tokens.Jwt" Version="8.15.0" />
     <PackageReference Include="System.Text.Json" Version="10.0.0" />
