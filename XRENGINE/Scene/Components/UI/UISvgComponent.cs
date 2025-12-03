@@ -19,20 +19,22 @@ namespace XREngine.Scene.Components.UI;
 /// </summary>
 public class UISvgComponent : UIMaterialComponent
 {
-    private record struct SvgCacheKey(string Path, int Width, int Height);
+    private record struct SvgCacheKey(string Path, int Width, int Height, bool MaintainAspectRatio);
 
     private sealed class SvgCacheKeyComparer : IEqualityComparer<SvgCacheKey>
     {
         public bool Equals(SvgCacheKey x, SvgCacheKey y)
             => x.Width == y.Width
                 && x.Height == y.Height
+                && x.MaintainAspectRatio == y.MaintainAspectRatio
                 && string.Equals(x.Path, y.Path, StringComparison.OrdinalIgnoreCase);
 
         public int GetHashCode(SvgCacheKey obj)
             => HashCode.Combine(
                 StringComparer.OrdinalIgnoreCase.GetHashCode(obj.Path ?? string.Empty),
                 obj.Width,
-                obj.Height);
+                obj.Height,
+                obj.MaintainAspectRatio);
     }
 
     private sealed class SvgCacheEntry
@@ -165,7 +167,7 @@ public class UISvgComponent : UIMaterialComponent
 
             SKSize pictureSize = picture.CullRect.Size;
             SKSizeI targetSize = ResolveTargetSize(pictureSize);
-            SvgCacheKey cacheKey = new(path, targetSize.Width, targetSize.Height);
+            SvgCacheKey cacheKey = new(path, targetSize.Width, targetSize.Height, MaintainAspectRatio);
 
             XRTexture2D texture = AcquireTexture(cacheKey, picture, targetSize);
             ApplyTexture(texture, targetSize);
