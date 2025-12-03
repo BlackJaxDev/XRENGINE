@@ -1,15 +1,10 @@
-using System;
+using ImGuiNET;
 using System.Collections;
-using System.Collections.Generic;
 using System.ComponentModel;
 using System.Globalization;
-using System.Linq;
 using System.Numerics;
 using System.Reflection;
 using System.Runtime.CompilerServices;
-using ImGuiNET;
-using XREngine;
-using XREngine.Components;
 using XREngine.Core.Files;
 using XREngine.Data.Colors;
 using XREngine.Editor.ComponentEditors;
@@ -231,8 +226,9 @@ public static partial class UnitTestingWorld
         private static bool TryDrawCollectionProperty(object? owner, PropertyInfo property, string label, string? description, object value, HashSet<object> visited)
         {
             using var profilerScope = Engine.Profiler.Start("UI.TryDrawCollectionProperty");
-            if (value is not IList list)
-                return false;
+
+            if (value is IDictionary dictionary)
+                return DrawDictionaryProperty(owner, property, label, description, dictionary, visited);
 
             Type declaredElementType = GetCollectionElementType(property, value.GetType()) ?? typeof(object);
             Type effectiveDeclaredType = Nullable.GetUnderlyingType(declaredElementType) ?? declaredElementType;
@@ -263,6 +259,17 @@ public static partial class UnitTestingWorld
             }
             else
             {
+                IList? list = value as IList;
+
+                if (list is null && TryCreateLinkedListAdapter(value, out var linkedListAdapter))
+                    list = linkedListAdapter;
+
+                if (list is null && TryCreateCollectionBufferAdapter(value, declaredElementType, out var bufferAdapter))
+                    list = bufferAdapter;
+
+                if (list is null)
+                    return false;
+
                 adapter = ImGuiEditorUtilities.CollectionEditorAdapter.ForList(list, declaredElementType);
             }
 
@@ -520,6 +527,140 @@ public static partial class UnitTestingWorld
             return true;
         }
 
+        private static bool DrawDictionaryProperty(object? owner, PropertyInfo property, string label, string? description, IDictionary dictionary, HashSet<object> visited)
+        {
+            var (keyType, valueType) = ResolveDictionaryTypes(property.PropertyType, dictionary.GetType());
+            Type effectiveValueType = Nullable.GetUnderlyingType(valueType) ?? valueType;
+
+            bool valueIsAsset = typeof(XRAsset).IsAssignableFrom(effectiveValueType);
+            bool valueUsesTypeSelector = ShouldUseCollectionTypeSelector(valueType);
+            IReadOnlyList<CollectionTypeDescriptor> availableTypeOptions = valueIsAsset || valueUsesTypeSelector
+                ? GetCollectionTypeDescriptors(valueType)
+                : Array.Empty<CollectionTypeDescriptor>();
+
+            string headerLabel = $"{label} [{dictionary.Count}]";
+            ImGui.PushID(property.Name);
+            bool open = ImGui.TreeNodeEx(headerLabel, ImGuiTreeNodeFlags.DefaultOpen);
+            if (!string.IsNullOrEmpty(description) && ImGui.IsItemHovered())
+                ImGui.SetTooltip(description);
+
+            if (open)
+            {
+                bool canMutate = !dictionary.IsReadOnly;
+                using (new ImGuiDisabledScope(!canMutate))
+                {
+                    if (ImGui.Button("Add Entry") && canMutate)
+                        TryAddDictionaryEntry(dictionary, keyType, valueType, owner);
+                }
+
+                var keys = dictionary.Keys.Cast<object?>().ToList();
+                if (keys.Count == 0)
+                {
+                    ImGui.TextDisabled("<empty>");
+                }
+                else if (ImGui.BeginTable("DictionaryItems", 2, ImGuiTableFlags.SizingStretchProp | ImGuiTableFlags.RowBg))
+                {
+                    for (int i = 0; i < keys.Count; i++)
+                    {
+                        object? key = keys[i];
+                        object? entryValue = DictionaryContainsKey(dictionary, key) ? dictionary[key] : null;
+                        Type? runtimeType = entryValue?.GetType();
+                        bool entryIsAsset = runtimeType is not null
+                            ? typeof(XRAsset).IsAssignableFrom(runtimeType)
+                            : valueIsAsset;
+                        bool entryUsesTypeSelector = runtimeType is not null
+                            ? ShouldUseCollectionTypeSelector(runtimeType)
+                            : valueUsesTypeSelector;
+
+                        ImGui.TableNextRow();
+                        ImGui.PushID(i);
+
+                        ImGui.TableSetColumnIndex(0);
+                        ImGui.TextUnformatted(FormatDictionaryKey(key));
+
+                        if (canMutate)
+                        {
+                            ImGui.SameLine(0f, 6f);
+                            if (ImGui.SmallButton("Remove"))
+                            {
+                                if (TryRemoveDictionaryEntry(dictionary, key))
+                                    NotifyInspectorValueEdited(owner);
+                                ImGui.PopID();
+                                continue;
+                            }
+                        }
+
+                        if (canMutate && entryUsesTypeSelector && availableTypeOptions.Count > 0)
+                        {
+                            ImGui.SameLine(0f, 6f);
+                            string replacePopupId = $"ReplaceDictEntry_{property.Name}_{i}";
+                            if (ImGui.SmallButton("Replace"))
+                                ImGui.OpenPopup(replacePopupId);
+
+                            DrawCollectionTypePickerPopup(replacePopupId, valueType, runtimeType, selectedType =>
+                            {
+                                if (TryReplaceDictionaryInstance(dictionary, key, selectedType, owner))
+                                    NotifyInspectorValueEdited(owner);
+                            });
+                        }
+
+                        ImGui.TableSetColumnIndex(1);
+
+                        if (entryIsAsset)
+                        {
+                            DrawDictionaryAssetElement(property, valueType, runtimeType, dictionary, key, entryValue as XRAsset, owner);
+                        }
+                        else if (entryValue is null && IsSimpleSettingType(valueType))
+                        {
+                            object? currentValue = null;
+                            DrawDictionarySimpleElement(dictionary, key, valueType, ref currentValue, canMutate, owner);
+                        }
+                        else if (entryValue is null)
+                        {
+                            ImGui.TextDisabled("<null>");
+
+                            if (canMutate && entryUsesTypeSelector && availableTypeOptions.Count > 0)
+                            {
+                                ImGui.SameLine(0f, 6f);
+                                string createPopupId = $"CreateDictEntry_{property.Name}_{i}";
+                                if (ImGui.SmallButton("Create"))
+                                    ImGui.OpenPopup(createPopupId);
+
+                                DrawCollectionTypePickerPopup(createPopupId, valueType, null, selectedType =>
+                                {
+                                    if (TryReplaceDictionaryInstance(dictionary, key, selectedType, owner))
+                                        NotifyInspectorValueEdited(owner);
+                                });
+                            }
+                        }
+                        else if (runtimeType is not null && IsSimpleSettingType(runtimeType))
+                        {
+                            object? currentValue = entryValue;
+                            DrawDictionarySimpleElement(dictionary, key, runtimeType, ref currentValue, canMutate, owner);
+                        }
+                        else if (entryValue is not null)
+                        {
+                            string childLabel = $"{label}[{FormatDictionaryKey(key)}]";
+                            DrawSettingsObject(entryValue, childLabel, description, visited, false, property.Name + "_" + i.ToString(CultureInfo.InvariantCulture));
+                        }
+                        else
+                        {
+                            ImGui.TextDisabled("<null>");
+                        }
+
+                        ImGui.PopID();
+                    }
+
+                    ImGui.EndTable();
+                }
+
+                ImGui.TreePop();
+            }
+
+            ImGui.PopID();
+            return true;
+        }
+
         private static Type? GetCollectionElementType(PropertyInfo property, Type runtimeType)
         {
             static Type? Resolve(Type type)
@@ -548,6 +689,748 @@ public static partial class UnitTestingWorld
             }
 
             return Resolve(property.PropertyType) ?? Resolve(runtimeType);
+        }
+
+        private static void DrawDictionarySimpleElement(IDictionary dictionary, object? key, Type elementType, ref object? currentValue, bool canModifyElements, object? owner)
+        {
+            Type effectiveType = Nullable.GetUnderlyingType(elementType) ?? elementType;
+            bool isNullable = !elementType.IsValueType || Nullable.GetUnderlyingType(elementType) is not null;
+            bool isCurrentlyNull = currentValue is null;
+            bool handled = false;
+
+            if (effectiveType == typeof(bool))
+            {
+                bool boolValue = currentValue is bool b && b;
+                using (new ImGuiDisabledScope(!canModifyElements))
+                {
+                    if (ImGui.Checkbox("##Value", ref boolValue) && canModifyElements)
+                    {
+                        if (TryAssignDictionaryValue(dictionary, key, boolValue, owner))
+                        {
+                            currentValue = boolValue;
+                            isCurrentlyNull = false;
+                        }
+                    }
+                }
+                handled = true;
+            }
+            else if (effectiveType.IsEnum)
+            {
+                string[] enumNames = Enum.GetNames(effectiveType);
+                int currentIndex = currentValue is null ? -1 : Array.IndexOf(enumNames, Enum.GetName(effectiveType, currentValue));
+                if (currentIndex < 0)
+                    currentIndex = 0;
+
+                int selectedIndex = currentIndex;
+                using (new ImGuiDisabledScope(!canModifyElements || enumNames.Length == 0))
+                {
+                    ImGui.SetNextItemWidth(-1f);
+                    if (enumNames.Length > 0 && ImGui.Combo("##Value", ref selectedIndex, enumNames, enumNames.Length) && canModifyElements && selectedIndex >= 0 && selectedIndex < enumNames.Length)
+                    {
+                        object newValue = Enum.Parse(effectiveType, enumNames[selectedIndex]);
+                        if (TryAssignDictionaryValue(dictionary, key, newValue, owner))
+                        {
+                            currentValue = newValue;
+                            isCurrentlyNull = false;
+                        }
+                    }
+                }
+                handled = true;
+            }
+            else if (effectiveType == typeof(string))
+            {
+                string textValue = currentValue as string ?? string.Empty;
+                using (new ImGuiDisabledScope(!canModifyElements))
+                {
+                    ImGui.SetNextItemWidth(-1f);
+                    if (ImGui.InputText("##Value", ref textValue, 512u) && canModifyElements)
+                    {
+                        if (TryAssignDictionaryValue(dictionary, key, textValue, owner))
+                        {
+                            currentValue = textValue;
+                            isCurrentlyNull = false;
+                        }
+                    }
+                }
+                handled = true;
+            }
+            else if (effectiveType == typeof(Vector2))
+            {
+                Vector2 vector = currentValue is Vector2 v ? v : Vector2.Zero;
+                using (new ImGuiDisabledScope(!canModifyElements))
+                {
+                    ImGui.SetNextItemWidth(-1f);
+                    if (ImGui.DragFloat2("##Value", ref vector, 0.05f) && canModifyElements)
+                    {
+                        if (TryAssignDictionaryValue(dictionary, key, vector, owner))
+                        {
+                            currentValue = vector;
+                            isCurrentlyNull = false;
+                        }
+                    }
+                }
+                handled = true;
+            }
+            else if (effectiveType == typeof(Vector3))
+            {
+                Vector3 vector = currentValue is Vector3 v ? v : Vector3.Zero;
+                using (new ImGuiDisabledScope(!canModifyElements))
+                {
+                    ImGui.SetNextItemWidth(-1f);
+                    if (ImGui.DragFloat3("##Value", ref vector, 0.05f) && canModifyElements)
+                    {
+                        if (TryAssignDictionaryValue(dictionary, key, vector, owner))
+                        {
+                            currentValue = vector;
+                            isCurrentlyNull = false;
+                        }
+                    }
+                }
+                handled = true;
+            }
+            else if (effectiveType == typeof(Vector4))
+            {
+                Vector4 vector = currentValue is Vector4 v ? v : Vector4.Zero;
+                using (new ImGuiDisabledScope(!canModifyElements))
+                {
+                    ImGui.SetNextItemWidth(-1f);
+                    if (ImGui.DragFloat4("##Value", ref vector, 0.05f) && canModifyElements)
+                    {
+                        if (TryAssignDictionaryValue(dictionary, key, vector, owner))
+                        {
+                            currentValue = vector;
+                            isCurrentlyNull = false;
+                        }
+                    }
+                }
+                handled = true;
+            }
+            else if (TryDrawNumericEditor(effectiveType, canModifyElements, ref currentValue, ref isCurrentlyNull, newValue => TryAssignDictionaryValue(dictionary, key, newValue, owner), "##Value"))
+            {
+                handled = true;
+            }
+
+            if (!handled)
+            {
+                if (currentValue is null)
+                    ImGui.TextDisabled("<null>");
+                else
+                    ImGui.TextUnformatted(FormatSettingValue(currentValue));
+            }
+
+            if (isNullable)
+            {
+                using (new ImGuiDisabledScope(!canModifyElements))
+                {
+                    if (isCurrentlyNull)
+                    {
+                        if (TryGetDefaultValue(effectiveType, out var defaultValue) && defaultValue is not null)
+                        {
+                            ImGui.SameLine();
+                            if (ImGui.SmallButton("Set") && TryAssignDictionaryValue(dictionary, key, defaultValue, owner))
+                            {
+                                currentValue = defaultValue;
+                                isCurrentlyNull = false;
+                            }
+                        }
+                    }
+                    else
+                    {
+                        ImGui.SameLine();
+                        if (ImGui.SmallButton("Clear") && TryAssignDictionaryValue(dictionary, key, null, owner))
+                        {
+                            currentValue = null;
+                            isCurrentlyNull = true;
+                        }
+                    }
+                }
+            }
+        }
+
+        private static bool TryAssignDictionaryValue(IDictionary dictionary, object? key, object? newValue, object? owner)
+        {
+            try
+            {
+                if (!DictionaryContainsKey(dictionary, key))
+                    return false;
+
+                object? existing = dictionary[key];
+                if (Equals(existing, newValue))
+                    return false;
+
+                dictionary[key] = newValue!;
+                NotifyInspectorValueEdited(owner);
+                return true;
+            }
+            catch
+            {
+                return false;
+            }
+        }
+
+        private static void DrawDictionaryAssetElement(PropertyInfo property, Type declaredValueType, Type? runtimeType, IDictionary dictionary, object? key, XRAsset? currentValue, object? owner)
+        {
+            var assetType = ResolveAssetEditorType(declaredValueType, runtimeType);
+            if (assetType is null)
+            {
+                ImGui.TextDisabled("Asset editor unavailable for this type.");
+                return;
+            }
+
+            string assetId = $"DictAsset_{property.Name}_{FormatDictionaryKey(key)}";
+            if (!DrawAssetFieldForCollection(assetId, assetType, currentValue, selected =>
+            {
+                TryAssignDictionaryValue(dictionary, key, selected, owner);
+            }))
+            {
+                ImGui.TextDisabled("Asset editor unavailable for this type.");
+            }
+        }
+
+        private static bool TryAddDictionaryEntry(IDictionary dictionary, Type keyType, Type valueType, object? owner)
+        {
+            if (dictionary.IsReadOnly)
+                return false;
+
+            object? baseKey = CreateDefaultDictionaryKey(keyType);
+            object? uniqueKey = EnsureUniqueDictionaryKey(dictionary, baseKey, keyType);
+            if (uniqueKey is null)
+            {
+                Debug.LogWarning($"Unable to auto-generate a unique key for dictionary of '{keyType.Name}'.");
+                return false;
+            }
+
+            object? newValue = ImGuiEditorUtilities.CreateDefaultElement(valueType);
+            try
+            {
+                dictionary[uniqueKey] = newValue;
+                NotifyInspectorValueEdited(owner);
+                return true;
+            }
+            catch (Exception ex)
+            {
+                Debug.LogException(ex, $"Failed to add dictionary entry '{keyType.Name}' → '{valueType.Name}'.");
+                return false;
+            }
+        }
+
+        private static object? CreateDefaultDictionaryKey(Type keyType)
+        {
+            keyType = Nullable.GetUnderlyingType(keyType) ?? keyType;
+
+            if (keyType == typeof(string))
+                return "Key";
+
+            if (IsNumericType(keyType))
+                return Convert.ChangeType(0, keyType, CultureInfo.InvariantCulture);
+
+            if (keyType.IsValueType)
+                return Activator.CreateInstance(keyType);
+
+            if (keyType.GetConstructor(Type.EmptyTypes) is not null)
+                return Activator.CreateInstance(keyType);
+
+            return null;
+        }
+
+        private static object? EnsureUniqueDictionaryKey(IDictionary dictionary, object? baseKey, Type keyType)
+        {
+            if (baseKey is null)
+                return null;
+
+            if (!DictionaryContainsKey(dictionary, baseKey))
+                return baseKey;
+
+            if (keyType == typeof(string))
+            {
+                string root = string.IsNullOrWhiteSpace(baseKey as string) ? "Key" : (string)baseKey;
+                int index = 1;
+                string candidate;
+                do
+                {
+                    candidate = $"{root}_{index++}";
+                }
+                while (DictionaryContainsKey(dictionary, candidate));
+                return candidate;
+            }
+
+            if (IsNumericType(keyType))
+            {
+                long attempt = 0;
+                if (baseKey is IConvertible convertible)
+                    attempt = convertible.ToInt64(CultureInfo.InvariantCulture);
+
+                object? candidate;
+                do
+                {
+                    candidate = Convert.ChangeType(attempt++, keyType, CultureInfo.InvariantCulture);
+                }
+                while (candidate is not null && DictionaryContainsKey(dictionary, candidate));
+                return candidate;
+            }
+
+            return null;
+        }
+
+        private static bool DictionaryContainsKey(IDictionary dictionary, object? key)
+        {
+            if (key is null)
+            {
+                foreach (var existing in dictionary.Keys)
+                    if (existing is null)
+                        return true;
+                return false;
+            }
+
+            if (dictionary.Contains(key))
+                return true;
+
+            return FindDictionaryKeyByEquality(dictionary, key) is not null;
+        }
+
+        private static object? FindDictionaryKeyByEquality(IDictionary dictionary, object? key)
+        {
+            foreach (var existing in dictionary.Keys)
+            {
+                if (Equals(existing, key))
+                    return existing;
+            }
+            return null;
+        }
+
+        private static bool TryRemoveDictionaryEntry(IDictionary dictionary, object? key)
+        {
+            if (dictionary.IsReadOnly)
+                return false;
+
+            try
+            {
+                if (key is null)
+                {
+                    object? match = FindDictionaryKeyByEquality(dictionary, null);
+                    if (match is null)
+                        return false;
+                    dictionary.Remove(match);
+                    return true;
+                }
+
+                if (dictionary.Contains(key))
+                {
+                    dictionary.Remove(key);
+                    return true;
+                }
+
+                object? equalityMatch = FindDictionaryKeyByEquality(dictionary, key);
+                if (equalityMatch is not null)
+                {
+                    dictionary.Remove(equalityMatch);
+                    return true;
+                }
+            }
+            catch (Exception ex)
+            {
+                Debug.LogException(ex, "Failed to remove dictionary entry.");
+            }
+
+            return false;
+        }
+
+        private static bool TryReplaceDictionaryInstance(IDictionary dictionary, object? key, Type targetType, object? owner)
+        {
+            object? instance = CreateInstanceForCollectionType(targetType);
+            if (instance is null)
+                return false;
+
+            if (!DictionaryContainsKey(dictionary, key))
+                return false;
+
+            try
+            {
+                dictionary[key] = instance;
+                NotifyInspectorValueEdited(owner);
+                return true;
+            }
+            catch (Exception ex)
+            {
+                Debug.LogException(ex, $"Failed to assign dictionary entry '{targetType.FullName}'.");
+                return false;
+            }
+        }
+
+        private static (Type KeyType, Type ValueType) ResolveDictionaryTypes(Type declaredType, Type runtimeType)
+        {
+            if (TryGetDictionaryArgs(declaredType, out var key, out var value))
+                return (key, value);
+            if (TryGetDictionaryArgs(runtimeType, out key, out value))
+                return (key, value);
+            return (typeof(object), typeof(object));
+        }
+
+        private static bool TryGetDictionaryArgs(Type type, out Type key, out Type value)
+        {
+            if (type.IsGenericType)
+            {
+                var def = type.GetGenericTypeDefinition();
+                if (def == typeof(IDictionary<,>) || def == typeof(Dictionary<,>))
+                {
+                    var args = type.GetGenericArguments();
+                    key = args[0];
+                    value = args[1];
+                    return true;
+                }
+            }
+
+            foreach (var iface in type.GetInterfaces())
+            {
+                if (iface.IsGenericType && iface.GetGenericTypeDefinition() == typeof(IDictionary<,>))
+                {
+                    var args = iface.GetGenericArguments();
+                    key = args[0];
+                    value = args[1];
+                    return true;
+                }
+            }
+
+            key = typeof(object);
+            value = typeof(object);
+            return false;
+        }
+
+        private static string FormatDictionaryKey(object? key)
+            => key?.ToString() ?? "<null>";
+
+        private static bool TryCreateLinkedListAdapter(object value, out IList adapter)
+        {
+            adapter = null!;
+            Type type = value.GetType();
+            if (!IsLinkedListType(type))
+                return false;
+
+            Type elementType = type.GetGenericArguments()[0];
+            Type adapterType = typeof(LinkedListAdapter<>).MakeGenericType(elementType);
+            adapter = (IList)Activator.CreateInstance(adapterType, value)!;
+            return true;
+        }
+
+        private static bool TryCreateCollectionBufferAdapter(object value, Type elementType, out IList adapter)
+        {
+            adapter = null!;
+            if (value is not ICollection collection || value is IList || value is IDictionary)
+                return false;
+
+            adapter = new CollectionBufferAdapter(collection, elementType);
+            return true;
+        }
+
+        private static bool IsLinkedListType(Type type)
+        {
+            while (type is not null && type != typeof(object))
+            {
+                if (type.IsGenericType && type.GetGenericTypeDefinition() == typeof(LinkedList<>))
+                    return true;
+                type = type.BaseType!;
+            }
+            return false;
+        }
+
+        private sealed class LinkedListAdapter<T>(LinkedList<T> list) : IList
+        {
+            private readonly LinkedList<T> _list = list ?? throw new ArgumentNullException(nameof(list));
+
+            public object? this[int index]
+            {
+                get => (GetNode(index) ?? throw new ArgumentOutOfRangeException(nameof(index))).Value;
+                set
+                {
+                    var node = GetNode(index) ?? throw new ArgumentOutOfRangeException(nameof(index));
+                    node.Value = value is T typed ? typed : (T?)ConvertCollectionElement(value, typeof(T)) ?? default!;
+                }
+            }
+
+            public bool IsReadOnly => false;
+            public bool IsFixedSize => false;
+            public int Count => _list.Count;
+            public object SyncRoot => this;
+            public bool IsSynchronized => false;
+
+            public int Add(object? value)
+            {
+                _list.AddLast(value is T typed ? typed : (T?)ConvertCollectionElement(value, typeof(T)) ?? default!);
+                return _list.Count - 1;
+            }
+
+            public void Clear() => _list.Clear();
+
+            public bool Contains(object? value)
+            {
+                var converted = value is T typed ? typed : (T?)ConvertCollectionElement(value, typeof(T));
+                if (value is null)
+                    return _list.Contains(converted);
+                if (converted is null)
+                    return false;
+                return _list.Contains(converted);
+            }
+
+            public int IndexOf(object? value)
+            {
+                int index = 0;
+                foreach (var entry in _list)
+                {
+                    if (Equals(entry, value))
+                        return index;
+                    index++;
+                }
+                return -1;
+            }
+
+            public void Insert(int index, object? value)
+            {
+                if (index < 0 || index > _list.Count)
+                    throw new ArgumentOutOfRangeException(nameof(index));
+
+                if (index == _list.Count)
+                {
+                    Add(value);
+                    return;
+                }
+
+                var node = GetNode(index) ?? throw new ArgumentOutOfRangeException(nameof(index));
+                _list.AddBefore(node, value is T typed ? typed : (T?)ConvertCollectionElement(value, typeof(T)) ?? default!);
+            }
+
+            public void Remove(object? value)
+            {
+                if (value is T typed)
+                    _list.Remove(typed);
+                else
+                {
+                    var node = _list.First;
+                    while (node is not null)
+                    {
+                        if (Equals(node.Value, value))
+                        {
+                            _list.Remove(node);
+                            break;
+                        }
+                        node = node.Next;
+                    }
+                }
+            }
+
+            public void RemoveAt(int index)
+            {
+                var node = GetNode(index) ?? throw new ArgumentOutOfRangeException(nameof(index));
+                _list.Remove(node);
+            }
+
+            public void CopyTo(Array array, int index)
+            {
+                foreach (var entry in _list)
+                    array.SetValue(entry, index++);
+            }
+
+            public IEnumerator GetEnumerator() => _list.GetEnumerator();
+
+            private LinkedListNode<T>? GetNode(int index)
+            {
+                if (index < 0 || index >= _list.Count)
+                    return null;
+
+                var node = _list.First;
+                for (int i = 0; i < index && node is not null; i++)
+                    node = node.Next;
+                return node;
+            }
+        }
+
+        private sealed class CollectionBufferAdapter : IList
+        {
+            private readonly ICollection _collection;
+            private readonly CollectionAccessor? _accessor;
+            private readonly Type _elementType;
+            private readonly List<object?> _buffer;
+
+            public CollectionBufferAdapter(ICollection collection, Type elementType)
+            {
+                _collection = collection;
+                _elementType = elementType;
+                _buffer = new List<object?>();
+                foreach (var item in collection)
+                    _buffer.Add(item);
+                _accessor = CollectionAccessor.Create(collection.GetType());
+            }
+
+            private bool CanMutate => _accessor is not null;
+
+            public object? this[int index]
+            {
+                get => _buffer[index];
+                set
+                {
+                    _buffer[index] = value;
+                    Apply();
+                }
+            }
+
+            public bool IsReadOnly => !CanMutate;
+            public bool IsFixedSize => false;
+            public int Count => _buffer.Count;
+            public object SyncRoot => this;
+            public bool IsSynchronized => false;
+
+            public int Add(object? value)
+            {
+                _buffer.Add(value);
+                Apply();
+                return _buffer.Count - 1;
+            }
+
+            public void Clear()
+            {
+                _buffer.Clear();
+                Apply();
+            }
+
+            public bool Contains(object? value) => _buffer.Contains(value);
+
+            public int IndexOf(object? value) => _buffer.IndexOf(value);
+
+            public void Insert(int index, object? value)
+            {
+                _buffer.Insert(index, value);
+                Apply();
+            }
+
+            public void Remove(object? value)
+            {
+                if (_buffer.Remove(value))
+                    Apply();
+            }
+
+            public void RemoveAt(int index)
+            {
+                _buffer.RemoveAt(index);
+                Apply();
+            }
+
+            public void CopyTo(Array array, int index)
+            {
+                foreach (var entry in _buffer)
+                    array.SetValue(entry, index++);
+            }
+
+            public IEnumerator GetEnumerator() => _buffer.GetEnumerator();
+
+            private void Apply()
+            {
+                if (!CanMutate)
+                    return;
+                _accessor!.Apply(_collection, _buffer, _elementType);
+            }
+        }
+
+        private sealed class CollectionAccessor
+        {
+            private readonly MethodInfo? _clear;
+            private readonly MethodInfo? _add;
+            private readonly Type? _addParameter;
+
+            private CollectionAccessor(MethodInfo? clear, MethodInfo? add)
+            {
+                _clear = clear;
+                _add = add;
+                _addParameter = add?.GetParameters().FirstOrDefault()?.ParameterType;
+            }
+
+            public bool CanMutate => _clear is not null && _add is not null;
+
+            public void Apply(object collection, IEnumerable<object?> buffer, Type fallbackType)
+            {
+                if (!CanMutate)
+                    return;
+
+                _clear!.Invoke(collection, null);
+                foreach (var entry in buffer)
+                    _add!.Invoke(collection, new[] { ConvertCollectionElement(entry, _addParameter ?? fallbackType) });
+            }
+
+            public static CollectionAccessor? Create(Type type)
+            {
+                MethodInfo? clear = FindCollectionMethod(type, "Clear", 0);
+                MethodInfo? add = FindCollectionMethod(type, "Add", 1);
+
+                if (clear is null || add is null)
+                    return null;
+
+                return new CollectionAccessor(clear, add);
+            }
+        }
+
+        private static MethodInfo? FindCollectionMethod(Type type, string name, int parameterCount)
+        {
+            BindingFlags flags = BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic;
+            var method = type.GetMethods(flags).FirstOrDefault(m => m.Name == name && m.GetParameters().Length == parameterCount);
+            if (method is not null)
+                return method;
+
+            foreach (var iface in type.GetInterfaces())
+            {
+                var map = type.GetInterfaceMap(iface);
+                for (int i = 0; i < map.InterfaceMethods.Length; i++)
+                {
+                    var ifaceMethod = map.InterfaceMethods[i];
+                    if (ifaceMethod.Name != name)
+                        continue;
+                    if (ifaceMethod.GetParameters().Length != parameterCount)
+                        continue;
+                    return map.TargetMethods[i];
+                }
+            }
+
+            return null;
+        }
+
+        private static object? ConvertCollectionElement(object? value, Type targetType)
+        {
+            targetType = Nullable.GetUnderlyingType(targetType) ?? targetType;
+
+            if (value is null)
+                return targetType.IsValueType ? Activator.CreateInstance(targetType) : null;
+
+            if (targetType.IsInstanceOfType(value))
+                return value;
+
+            try
+            {
+                if (targetType.IsEnum)
+                {
+                    if (value is string s && Enum.IsDefined(targetType, s))
+                        return Enum.Parse(targetType, s, true);
+                    return Enum.ToObject(targetType, value);
+                }
+
+                return Convert.ChangeType(value, targetType, CultureInfo.InvariantCulture);
+            }
+            catch
+            {
+                return targetType.IsValueType ? Activator.CreateInstance(targetType) : null;
+            }
+        }
+
+        private static bool IsNumericType(Type type)
+        {
+            type = Nullable.GetUnderlyingType(type) ?? type;
+            return type == typeof(byte)
+                || type == typeof(sbyte)
+                || type == typeof(short)
+                || type == typeof(ushort)
+                || type == typeof(int)
+                || type == typeof(uint)
+                || type == typeof(long)
+                || type == typeof(ulong)
+                || type == typeof(float)
+                || type == typeof(double)
+                || type == typeof(decimal);
         }
 
         private static bool ShouldUseCollectionTypeSelector(Type type)
@@ -1534,6 +2417,9 @@ public static partial class UnitTestingWorld
                     ImGui.EndDisabled();
             }
         }
+
+        internal static IDisposable PushInspectorAssetContext(XRAsset? asset)
+            => new InspectorAssetContextScope(asset);
 
         private readonly struct InspectorAssetContextScope : IDisposable
         {

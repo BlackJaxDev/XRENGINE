@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.ComponentModel;
 using System.Linq;
 using System.Numerics;
 using System.Reflection;
@@ -343,6 +344,9 @@ public static partial class UnitTestingWorld
             using var profilerScope = Engine.Profiler.Start("UI.DrawTransformInspector");
             ImGui.PushID(transform.GetHashCode());
 
+            DrawTransformTypeToolbar(transform);
+            ImGui.Spacing();
+
             var editor = ResolveTransformEditor(transform.GetType());
             if (editor is null)
             {
@@ -363,6 +367,162 @@ public static partial class UnitTestingWorld
 
             ImGui.PopID();
         }
+
+        private static void DrawTransformTypeToolbar(TransformBase transform)
+        {
+            string popupId = $"TransformTypePopup##{transform.GetHashCode()}";
+            string currentLabel = GetTransformTypeDisplayName(transform.GetType());
+
+            ImGui.TextUnformatted($"Type: {currentLabel}");
+            ImGui.SameLine();
+            if (ImGui.Button("Change Type..."))
+            {
+                _transformTypeSearch = string.Empty;
+                ImGui.OpenPopup(popupId);
+            }
+
+            DrawTransformTypePopup(transform, popupId);
+        }
+
+        private static void DrawTransformTypePopup(TransformBase transform, string popupId)
+        {
+            if (!ImGui.BeginPopup(popupId))
+                return;
+
+            string filter = _transformTypeSearch ?? string.Empty;
+            bool hasFilter = !string.IsNullOrWhiteSpace(filter);
+            string currentFullName = transform.GetType().FullName ?? transform.GetType().Name;
+
+            ImGui.TextDisabled($"Current: {currentFullName}");
+            ImGui.SetNextItemWidth(-1f);
+            ImGui.InputTextWithHint("##TransformTypeSearch", "Search transform types...", ref _transformTypeSearch, 256);
+            ImGui.Spacing();
+
+            var entries = EnsureTransformTypeEntries();
+            int matchCount = 0;
+
+            if (ImGui.BeginChild("TransformTypeList", new Vector2(0f, 260f), ImGuiChildFlags.Border))
+            {
+                foreach (var entry in entries)
+                {
+                    if (hasFilter)
+                    {
+                        if (!entry.Label.Contains(filter, StringComparison.OrdinalIgnoreCase) &&
+                            !entry.Tooltip.Contains(filter, StringComparison.OrdinalIgnoreCase))
+                            continue;
+                    }
+
+                    matchCount++;
+                    bool isCurrent = entry.Type == transform.GetType();
+                    var selectableFlags = isCurrent ? ImGuiSelectableFlags.Disabled : ImGuiSelectableFlags.None;
+                    if (ImGui.Selectable(entry.Label, isCurrent, selectableFlags))
+                    {
+                        TryChangeTransformType(transform, entry.Type);
+                        ImGui.CloseCurrentPopup();
+                        ImGui.EndChild();
+                        ImGui.EndPopup();
+                        return;
+                    }
+
+                    if (!string.IsNullOrWhiteSpace(entry.Tooltip) && ImGui.IsItemHovered(ImGuiHoveredFlags.Stationary))
+                        ImGui.SetTooltip(entry.Tooltip);
+                }
+
+                if (matchCount == 0)
+                    ImGui.TextDisabled("No transform types found.");
+
+                ImGui.EndChild();
+            }
+
+            ImGui.EndPopup();
+        }
+
+        private static IReadOnlyList<TransformTypeEntry> EnsureTransformTypeEntries()
+        {
+            if (_transformTypeEntries is not null)
+                return _transformTypeEntries;
+
+            var entries = TransformBase.TransformTypes
+                .Where(t => t is not null)
+                .Where(t => !t.IsAbstract && !t.IsInterface && !t.IsGenericTypeDefinition)
+                .Where(t => t.GetConstructor(Type.EmptyTypes) is not null)
+                .Select(CreateTransformTypeEntry)
+                .OrderBy(entry => entry.Label, StringComparer.OrdinalIgnoreCase)
+                .ToArray();
+
+            _transformTypeEntries = entries;
+            return _transformTypeEntries;
+        }
+
+        private static TransformTypeEntry CreateTransformTypeEntry(Type type)
+        {
+            string displayName = GetTransformTypeDisplayName(type);
+            string assemblyName = type.Assembly.GetName().Name ?? type.Assembly.FullName ?? string.Empty;
+            string label = string.IsNullOrWhiteSpace(assemblyName)
+                ? displayName
+                : $"{displayName}  ({assemblyName})";
+            string tooltip = type.FullName ?? type.Name;
+            return new TransformTypeEntry(type, label, tooltip);
+        }
+
+        private static string GetTransformTypeDisplayName(Type type)
+        {
+            var attr = type.GetCustomAttribute<DisplayNameAttribute>();
+            if (attr is not null && !string.IsNullOrWhiteSpace(attr.DisplayName))
+                return attr.DisplayName;
+            return type.Name;
+        }
+
+        private static void TryChangeTransformType(TransformBase current, Type targetType)
+        {
+            if (current.GetType() == targetType)
+                return;
+
+            var node = current.SceneNode;
+            if (node is null)
+            {
+                Debug.LogWarning($"Cannot change transform type for '{current.Name}' because it has no owning scene node.");
+                return;
+            }
+
+            TransformBase? replacement;
+            try
+            {
+                replacement = Activator.CreateInstance(targetType) as TransformBase;
+            }
+            catch (Exception ex)
+            {
+                Debug.LogException(ex, $"Failed to instantiate transform '{targetType.FullName}'.");
+                return;
+            }
+
+            if (replacement is null)
+            {
+                Debug.LogWarning($"Transform type '{targetType.FullName}' could not be created because it lacks a public parameterless constructor.");
+                return;
+            }
+
+            replacement.Name = current.Name;
+            replacement.DeriveWorldMatrix(current.WorldMatrix);
+
+            string nodeLabel = TransformEditorUtil.GetTransformDisplayName(current);
+
+            try
+            {
+                using var interaction = Undo.BeginUserInteraction();
+                using var scope = Undo.BeginChange($"Change {nodeLabel} Transform Type");
+                Undo.Track(node);
+                Undo.Track(current);
+                node.SetTransform(replacement, TransformTypeChangeFlags);
+                Undo.Track(replacement);
+            }
+            catch (Exception ex)
+            {
+                Debug.LogException(ex, $"Failed to assign transform '{targetType.FullName}' to node '{node.Name}'.");
+            }
+        }
+
+        private readonly record struct TransformTypeEntry(Type Type, string Label, string Tooltip);
 
         private static partial void DrawComponentInspectors(SceneNode node, HashSet<object> visited)
         {
@@ -484,6 +644,13 @@ public static partial class UnitTestingWorld
 
         public static void DrawDefaultAssetInspector(XRAsset asset, HashSet<object> visited)
             => DrawInspectableObject(asset, "AssetProperties", visited);
+
+        internal static void DrawAssetInspectorInline(XRAsset asset)
+        {
+            var visited = new HashSet<object>(ReferenceEqualityComparer.Instance);
+            if (!TryDrawAssetInspector(asset, visited))
+                DrawDefaultAssetInspector(asset, visited);
+        }
 
         private static bool TryDrawAssetInspector(XRAsset asset, HashSet<object> visited)
         {

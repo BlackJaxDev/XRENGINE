@@ -1,13 +1,24 @@
 ﻿using Silk.NET.OpenAL;
+using System.ComponentModel;
 using System.Numerics;
 using XREngine.Audio;
 
 namespace XREngine.Components
 {
+    [Category("Audio")]
+    [DisplayName("Audio Listener")]
+    [Description("Defines the listener position, orientation, and audio settings used for spatial mixing.")]
     public class AudioListenerComponent : XRComponent
     {
+        [Browsable(false)]
         public ListenerContext? Listener { get; private set; }
 
+        /// <summary>
+        /// Exaggeration factor for Doppler effect.
+        /// </summary>
+        [Category("Audio Settings")]
+        [DisplayName("Doppler Factor")]
+        [Description("Multiplier for Doppler pitch shift.")]
         public float DopplerFactor
         {
             get => Listener?.DopplerFactor ?? 1.0f;
@@ -20,6 +31,9 @@ namespace XREngine.Components
         /// <summary>
         /// Speed of Sound in units per second. Default: 343.3f.
         /// </summary>
+        [Category("Audio Settings")]
+        [DisplayName("Speed Of Sound")]
+        [Description("Speed of sound in units per second (default ~343 m/s).")]
         public float SpeedOfSound
         {
             get => Listener?.SpeedOfSound ?? 343.3f;
@@ -29,6 +43,12 @@ namespace XREngine.Components
                     Listener.SpeedOfSound = value;
             }
         }
+        /// <summary>
+        /// Algorithm used for attenuation.
+        /// </summary>
+        [Category("Audio Settings")]
+        [DisplayName("Distance Model")]
+        [Description("Attenuation model used for distance calculations.")]
         public DistanceModel DistanceModel
         {
             get => Listener?.DistanceModel ?? DistanceModel.None;
@@ -38,6 +58,12 @@ namespace XREngine.Components
                     Listener.DistanceModel = value;
             }
         }
+        /// <summary>
+        /// Master gain for the listener.
+        /// </summary>
+        [Category("Volume")]
+        [DisplayName("Gain")]
+        [Description("Master volume for all audio heard by this listener.")]
         public float Gain
         {
             get => Listener?.Gain ?? 1.0f;

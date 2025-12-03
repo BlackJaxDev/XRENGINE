@@ -1,4 +1,5 @@
-﻿using System.Numerics;
+﻿using System.ComponentModel;
+using System.Numerics;
 using XREngine.Components.Capture.Lights;
 using XREngine.Components.Capture.Lights.Types;
 using XREngine.Core.Attributes;
@@ -10,11 +11,20 @@ using XREngine.Scene.Transforms;
 namespace XREngine.Components.Lights
 {
     [RequiresTransform(typeof(Transform))]
+    [Category("Lighting")]
+    [DisplayName("Directional Light")]
+    [Description("Illuminates the scene with an infinite directional light that can cast cascaded shadows.")]
     public class DirectionalLightComponent : OneViewLightComponent
     {
         private const float NearZ = 0.01f;
 
         private Vector3 _scale = Vector3.One;
+        /// <summary>
+        /// Scale of the orthographic shadow volume.
+        /// </summary>
+        [Category("Shadows")]
+        [DisplayName("Shadow Volume Scale")]
+        [Description("Dimensions of the orthographic shadow frustum (width, height, depth).")]
         public Vector3 Scale
         {
             get => _scale;

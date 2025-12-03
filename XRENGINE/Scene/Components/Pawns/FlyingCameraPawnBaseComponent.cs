@@ -36,24 +36,28 @@ namespace XREngine.Components
 
         protected abstract void YawPitchUpdated();
 
+        [Browsable(false)]
         public bool ShiftPressed
         {
             get => _shiftPressed;
             private set => SetField(ref _shiftPressed, value);
         }
 
+        [Browsable(false)]
         public bool CtrlPressed
         {
             get => _ctrlPressed;
             private set => SetField(ref _ctrlPressed, value);
         }
 
+        [Browsable(false)]
         public bool RightClickPressed
         {
             get => _rightClickPressed;
             private set => SetField(ref _rightClickPressed, value);
         }
 
+        [Browsable(false)]
         public bool LeftClickPressed
         {
             get => _leftClickPressed;

@@ -1,4 +1,5 @@
-﻿using System.Numerics;
+﻿using System.ComponentModel;
+using System.Numerics;
 using XREngine.Data.Core;
 using XREngine.Data.Geometry;
 using XREngine.Rendering;
@@ -9,6 +10,9 @@ namespace XREngine.Components
     /// <summary>
     /// This component wraps a camera object.
     /// </summary>
+    [Category("Rendering")]
+    [DisplayName("Camera")]
+    [Description("Renders the world from this scene node and can optionally composite UI canvases.")]
     [XRComponentEditor("XREngine.Editor.ComponentEditors.CameraComponentEditor")]
     public class CameraComponent : XRComponent
     {
@@ -16,6 +20,12 @@ namespace XREngine.Components
         public XRCamera Camera => _camera.Value;
 
         private XRFrameBuffer? _defaultRenderTarget = null;
+        /// <summary>
+        /// Optional framebuffer target for off-screen rendering.
+        /// </summary>
+        [Category("Rendering")]
+        [DisplayName("Default Render Target")]
+        [Description("Optional framebuffer target for off-screen rendering.")]
         public XRFrameBuffer? DefaultRenderTarget 
         {
             get => _defaultRenderTarget;
@@ -33,6 +43,9 @@ namespace XREngine.Components
         /// <summary>
         /// Provides the option for the user to manually set a canvas to render on top of the camera.
         /// </summary>
+        [Category("UI")]
+        [DisplayName("User Interface")]
+        [Description("Canvas overlay rendered on top of this camera's output.")]
         public UICanvasComponent? UserInterface
         {
             get => _userInterface;
@@ -59,6 +72,9 @@ namespace XREngine.Components
         /// If true, the camera will cull objects that are not within the camera's frustum.
         /// This should always be true in production, but can be set to false for debug purposes.
         /// </summary>
+        [Category("Culling")]
+        [DisplayName("Cull With Frustum")]
+        [Description("When enabled, objects outside the camera frustum are not rendered.")]
         public bool CullWithFrustum
         {
             get => _cullWithFrustum;
@@ -69,6 +85,7 @@ namespace XREngine.Components
         /// <summary>
         /// When CullWithFrustum is true and this property is not null, this method retrieves the camera frustum to cull with.
         /// </summary>
+        [Browsable(false)]
         public Func<XRCamera>? CullingCameraOverride
         {
             get => _cullingCameraOverride;

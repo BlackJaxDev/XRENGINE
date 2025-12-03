@@ -97,6 +97,20 @@ public sealed class CameraComponentEditor : IXRComponentEditor
 
         int viewportCount = component.Camera.Viewports.Count;
         ImGui.TextDisabled($"Bound Viewports: {viewportCount}");
+
+        ImGui.Separator();
+        ImGui.TextDisabled("Render Pipeline Asset");
+        var pipeline = component.Camera.RenderPipeline;
+        ImGuiAssetUtilities.DrawAssetField<RenderPipeline>("CameraRenderPipeline", pipeline, asset =>
+        {
+            component.Camera.RenderPipeline = asset ?? Engine.Rendering.NewRenderPipeline();
+        });
+
+        ImGui.TextDisabled("Default Render Target Asset");
+        ImGuiAssetUtilities.DrawAssetField<XRFrameBuffer>("CameraDefaultRenderTarget", component.DefaultRenderTarget, asset =>
+        {
+            component.DefaultRenderTarget = asset;
+        });
     }
 
     private static void DrawParameterSection(CameraComponent component, HashSet<object> visited)

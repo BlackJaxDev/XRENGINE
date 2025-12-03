@@ -8,6 +8,7 @@ using XREngine.Data.Vectors;
 using XREngine.Rendering.Commands;
 using XREngine.Rendering.Models.Materials;
 using XREngine.Rendering.Pipelines.Commands;
+using XREngine.Rendering.PostProcessing;
 using XREngine.Rendering.RenderGraph;
 using XREngine.Rendering.Resources;
 using static XREngine.Engine.Rendering.State;
@@ -15,6 +16,7 @@ using static XREngine.Rendering.XRRenderPipelineInstance;
 
 namespace XREngine.Rendering;
 
+[XRAssetInspector("XREngine.Editor.AssetEditors.RenderPipelineInspector, XREngine.Editor")]
 public abstract class RenderPipeline : XRAsset
 {
     [Browsable(false)]
@@ -25,6 +27,14 @@ public abstract class RenderPipeline : XRAsset
     [Browsable(false)]
     public XRMaterial InvalidMaterial
         => InvalidMaterialFactory.Value;
+
+    private RenderPipelinePostProcessSchema _postProcessSchema = RenderPipelinePostProcessSchema.Empty;
+
+    /// <summary>
+    /// Structured description of the post-processing controls exposed by this pipeline.
+    /// </summary>
+    [Browsable(false)]
+    public RenderPipelinePostProcessSchema PostProcessSchema => _postProcessSchema;
 
     /// <summary>
     /// Human readable identifier for debug output.
@@ -53,7 +63,11 @@ public abstract class RenderPipeline : XRAsset
                     if (prev is { } existing)
                         existing.ParentPipeline = null;
                 },
-                chain => chain!.ParentPipeline = this);
+                chain =>
+                {
+                    chain!.ParentPipeline = this;
+                    OnCommandChainChanged();
+                });
         }
     }
     public Dictionary<int, IComparer<RenderCommand>?> PassIndicesAndSorters { get; protected set; }
@@ -66,7 +80,6 @@ public abstract class RenderPipeline : XRAsset
         if (!deferCommandChainGeneration)
             CommandChain = GenerateCommandChain();
         PassIndicesAndSorters = GetPassIndicesAndSorters();
-        PassMetadata = GeneratePassMetadata();
     }
 
     protected abstract ViewportRenderCommandContainer GenerateCommandChain();
@@ -85,6 +98,46 @@ public abstract class RenderPipeline : XRAsset
         CommandChain.BuildRenderPassMetadata(collection);
         DescribeRenderPasses(collection);
         return collection.Build();
+    }
+
+    /// <summary>
+    /// Forces the pipeline to rebuild its post-processing schema so external consumers can obtain updated descriptors.
+    /// </summary>
+    protected void RefreshPostProcessSchema()
+    {
+        RenderPipelinePostProcessSchema schema;
+        try
+        {
+            schema = BuildPostProcessSchema();
+        }
+        catch (Exception ex)
+        {
+            Debug.LogWarning($"[{DebugName}] Failed to rebuild post-process schema: {ex.Message}");
+            schema = RenderPipelinePostProcessSchema.Empty;
+        }
+
+        _postProcessSchema = schema ?? RenderPipelinePostProcessSchema.Empty;
+    }
+
+    protected virtual void OnCommandChainChanged()
+    {
+        PassMetadata = GeneratePassMetadata();
+        RefreshPostProcessSchema();
+    }
+
+    protected virtual RenderPipelinePostProcessSchema BuildPostProcessSchema()
+    {
+        RenderPipelinePostProcessSchemaBuilder builder = new(this);
+        DescribePostProcessSchema(builder);
+        return builder.Build();
+    }
+
+    /// <summary>
+    /// Allows derived pipelines to describe their post-processing stages and categories via the schema builder.
+    /// </summary>
+    /// <param name="builder">Builder to populate with stages, uniforms, and categories.</param>
+    protected virtual void DescribePostProcessSchema(RenderPipelinePostProcessSchemaBuilder builder)
+    {
     }
 
     public static RenderingState State 

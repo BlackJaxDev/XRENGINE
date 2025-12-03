@@ -1,5 +1,6 @@
 ﻿using Extensions;
 using System;
+using System.ComponentModel;
 using System.IO.MemoryMappedFiles;
 using System.Text.Json.Serialization;
 using XREngine.Data.Core;
@@ -28,11 +29,11 @@ namespace XREngine.Core.Files
         }
 
         private string? _serializedAssetType;
-
         /// <summary>
         /// Serialized type hint injected into YAML files so tools can determine the asset's concrete type without full deserialization.
         /// </summary>
         [YamlMember(Alias = "__assetType", Order = -100)]
+        [Browsable(false)]
         public string SerializedAssetType
         {
             get => GetType().FullName ?? GetType().Name;
@@ -78,6 +79,7 @@ namespace XREngine.Core.Files
         /// The root asset is the one actually written as a file instead of being included in another asset.
         /// </summary>
         [YamlIgnore]
+        [Browsable(false)]
         public XRAsset SourceAsset
         {
             get => _sourceAsset ?? this;
@@ -89,12 +91,14 @@ namespace XREngine.Core.Files
         /// </summary>
         [JsonIgnore]
         [YamlIgnore]
+        [Browsable(false)]
         private MemoryMappedFile? FileMap { get; set; }
         /// <summary>
         /// A stream to the file for sequential reading and writing.
         /// </summary>
         [JsonIgnore]
         [YamlIgnore]
+        [Browsable(false)]
         public MemoryMappedViewStream? FileMapStream { get; private set; }
 
         public void OpenForStreaming()
@@ -131,6 +135,7 @@ namespace XREngine.Core.Files
             return await Task.Run(() => Load3rdParty(filePath));
         }
 
+        [Browsable(false)]
         public bool IsDirty
         {
             get => _isDirty;

@@ -474,21 +474,21 @@ namespace XREngine.Rendering.Pipelines.Commands
 
         internal override void ReleaseContainerResources(XRRenderPipelineInstance instance)
         {
-            if (_instanceStates.TryGetValue(instance, out var state))
-            {
-                state.ResourcesDirty = true;
-                state.AoTexture?.Destroy();
-                state.AoTexture = null;
-                state.HashBuffer?.Destroy();
-                state.HashBuffer = null;
-                state.HashTimeBuffer?.Destroy();
-                state.HashTimeBuffer = null;
-                state.SpatialBuffer?.Destroy();
-                state.SpatialBuffer = null;
-                state.LastWidth = 0;
-                state.LastHeight = 0;
-                state.HashCapacity = 0;
-            }
+            if (!_instanceStates.TryGetValue(instance, out var state))
+                return;
+            
+            state.ResourcesDirty = true;
+            state.AoTexture?.Destroy();
+            state.AoTexture = null;
+            state.HashBuffer?.Destroy();
+            state.HashBuffer = null;
+            state.HashTimeBuffer?.Destroy();
+            state.HashTimeBuffer = null;
+            state.SpatialBuffer?.Destroy();
+            state.SpatialBuffer = null;
+            state.LastWidth = 0;
+            state.LastHeight = 0;
+            state.HashCapacity = 0;
         }
 
         private void DispatchStereo(

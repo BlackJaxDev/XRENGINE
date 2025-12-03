@@ -188,6 +188,9 @@ public static partial class InspectorPropertyEditors
 
     private static Action<SceneNode, PropertyInfo, object?[]?>? CreateGenericEditor(Type propType)
     {
+        if (CollectionTypes.TryCreateEditor(propType, out var collectionEditor))
+            return collectionEditor;
+
         static void GenericEditor(SceneNode n, PropertyInfo prop, object?[]? objects)
         {
             var text = TextEditor<UITextInputComponent>(n, prop, objects);

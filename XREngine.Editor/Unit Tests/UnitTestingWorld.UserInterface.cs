@@ -390,9 +390,9 @@ public static partial class UnitTestingWorld
 
             foreach (var asset in dirtyAssets)
             {
-                string displayName = GetAssetDisplayName(asset);
+                string displayName = GetAssetDisplayName(asset.Value);
                 var capturedAsset = asset;
-                _saveMenu.ChildOptions.Add(new ToolbarButton(displayName, _ => SaveSingleAsset(capturedAsset)));
+                _saveMenu.ChildOptions.Add(new ToolbarButton(displayName, _ => SaveSingleAsset(capturedAsset.Value)));
             }
         }
 

@@ -11,6 +11,7 @@ using XREngine.Rendering.Commands;
 using XREngine.Rendering.Models.Materials;
 using XREngine.Rendering.Physics.Physx;
 using XREngine.Rendering.Pipelines.Commands;
+using XREngine.Rendering.PostProcessing;
 using XREngine.Rendering.RenderGraph;
 using XREngine.Components.Capture.Lights;
 using static XREngine.Engine.Rendering.State;
@@ -148,6 +149,15 @@ public class DefaultRenderPipeline : RenderPipeline
     public const string HistoryExposureVarianceTextureName = "HistoryExposureVariance";
     public const string MotionBlurTextureName = "MotionBlur";
 
+    private const string TonemappingStageKey = "tonemapping";
+    private const string ColorGradingStageKey = "colorGrading";
+    private const string BloomStageKey = "bloom";
+    private const string AmbientOcclusionStageKey = "ambientOcclusion";
+    private const string MotionBlurStageKey = "motionBlur";
+    private const string LensDistortionStageKey = "lensDistortion";
+    private const string ChromaticAberrationStageKey = "chromaticAberration";
+    private const string FogStageKey = "fog";
+
     public DefaultRenderPipeline() : this(false)
     {
     }
@@ -209,6 +219,36 @@ public class DefaultRenderPipeline : RenderPipeline
         Chain(metadata, EDefaultRenderPass.TransparentForward, EDefaultRenderPass.OpaqueForward);
         Chain(metadata, EDefaultRenderPass.OnTopForward, EDefaultRenderPass.TransparentForward);
         Chain(metadata, EDefaultRenderPass.PostRender, EDefaultRenderPass.OnTopForward);
+    }
+
+    protected override void DescribePostProcessSchema(RenderPipelinePostProcessSchemaBuilder builder)
+    {
+        DescribeTonemappingStage(builder.Stage(TonemappingStageKey, "Tonemapping"));
+        DescribeColorGradingStage(builder.Stage(ColorGradingStageKey, "Color Grading"));
+        DescribeBloomStage(builder.Stage(BloomStageKey, "Bloom"));
+        DescribeAmbientOcclusionStage(builder.Stage(AmbientOcclusionStageKey, "Ambient Occlusion"));
+        DescribeMotionBlurStage(builder.Stage(MotionBlurStageKey, "Motion Blur"));
+        DescribeLensDistortionStage(builder.Stage(LensDistortionStageKey, "Lens Distortion"));
+        DescribeChromaticAberrationStage(builder.Stage(ChromaticAberrationStageKey, "Chromatic Aberration"));
+        DescribeFogStage(builder.Stage(FogStageKey, "Depth Fog"));
+
+        builder.Category("imaging", "Imaging")
+            .IncludeStages(TonemappingStageKey, ColorGradingStageKey);
+
+        builder.Category("bloom", "Bloom")
+            .IncludeStage(BloomStageKey);
+
+        builder.Category("ambient-occlusion", "Ambient Occlusion")
+            .IncludeStage(AmbientOcclusionStageKey);
+
+        builder.Category("motion", "Motion Blur")
+            .IncludeStage(MotionBlurStageKey);
+
+        builder.Category("lens", "Lens & Aberration")
+            .IncludeStages(LensDistortionStageKey, ChromaticAberrationStageKey);
+
+        builder.Category("atmosphere", "Atmosphere")
+            .IncludeStage(FogStageKey);
     }
 
     public ViewportRenderCommandContainer CreateFBOTargetCommands()
@@ -797,6 +837,355 @@ public class DefaultRenderPipeline : RenderPipeline
 
     private static bool ShouldUseMotionBlur()
         => GetMotionBlurSettings() is { Enabled: true };
+
+    #endregion
+
+    #region Post-Processing Schema Helpers
+
+    private static void DescribeTonemappingStage(RenderPipelinePostProcessSchemaBuilder.PostProcessStageBuilder stage)
+    {
+        stage.AddParameter(
+            nameof(PostProcessingSettings.Tonemapping),
+            PostProcessParameterKind.Int,
+            (int)ETonemappingType.Reinhard,
+            displayName: "Operator",
+            enumOptions: BuildEnumOptions<ETonemappingType>());
+    }
+
+    private static void DescribeColorGradingStage(RenderPipelinePostProcessSchemaBuilder.PostProcessStageBuilder stage)
+    {
+        stage.AddParameter(
+            nameof(ColorGradingSettings.Tint),
+            PostProcessParameterKind.Vector3,
+            Vector3.One,
+            displayName: "Tint",
+            isColor: true);
+
+        stage.AddParameter(
+            nameof(ColorGradingSettings.AutoExposure),
+            PostProcessParameterKind.Bool,
+            true,
+            displayName: "Auto Exposure");
+
+        stage.AddParameter(
+            nameof(ColorGradingSettings.Exposure),
+            PostProcessParameterKind.Float,
+            1.0f,
+            displayName: "Manual Exposure",
+            min: 0.0001f,
+            max: 10.0f,
+            step: 0.0001f);
+
+        stage.AddParameter(
+            nameof(ColorGradingSettings.AutoExposureBias),
+            PostProcessParameterKind.Float,
+            -10.0f,
+            displayName: "Exposure Bias",
+            min: -10.0f,
+            max: 10.0f,
+            step: 0.1f);
+
+        stage.AddParameter(
+            nameof(ColorGradingSettings.AutoExposureScale),
+            PostProcessParameterKind.Float,
+            0.5f,
+            displayName: "Exposure Scale",
+            min: 0.1f,
+            max: 5.0f,
+            step: 0.01f);
+
+        stage.AddParameter(
+            nameof(ColorGradingSettings.Contrast),
+            PostProcessParameterKind.Float,
+            1.0f,
+            displayName: "Contrast",
+            min: -50.0f,
+            max: 50.0f,
+            step: 0.1f);
+
+        stage.AddParameter(
+            nameof(ColorGradingSettings.Gamma),
+            PostProcessParameterKind.Float,
+            2.2f,
+            displayName: "Gamma",
+            min: 0.1f,
+            max: 4.0f,
+            step: 0.01f);
+
+        stage.AddParameter(
+            nameof(ColorGradingSettings.Hue),
+            PostProcessParameterKind.Float,
+            1.0f,
+            displayName: "Hue",
+            min: 0.0f,
+            max: 2.0f,
+            step: 0.01f);
+
+        stage.AddParameter(
+            nameof(ColorGradingSettings.Saturation),
+            PostProcessParameterKind.Float,
+            1.0f,
+            displayName: "Saturation",
+            min: 0.0f,
+            max: 2.0f,
+            step: 0.01f);
+
+        stage.AddParameter(
+            nameof(ColorGradingSettings.Brightness),
+            PostProcessParameterKind.Float,
+            1.0f,
+            displayName: "Brightness",
+            min: 0.0f,
+            max: 2.0f,
+            step: 0.01f);
+    }
+
+    private static void DescribeBloomStage(RenderPipelinePostProcessSchemaBuilder.PostProcessStageBuilder stage)
+    {
+        stage.AddParameter(
+            nameof(BloomSettings.Intensity),
+            PostProcessParameterKind.Float,
+            1.0f,
+            displayName: "Intensity",
+            min: 0.0f,
+            max: 5.0f,
+            step: 0.01f);
+
+        stage.AddParameter(
+            nameof(BloomSettings.Threshold),
+            PostProcessParameterKind.Float,
+            1.0f,
+            displayName: "Threshold",
+            min: 0.1f,
+            max: 5.0f,
+            step: 0.01f);
+
+        stage.AddParameter(
+            nameof(BloomSettings.SoftKnee),
+            PostProcessParameterKind.Float,
+            0.5f,
+            displayName: "Soft Knee",
+            min: 0.0f,
+            max: 1.0f,
+            step: 0.01f);
+
+        stage.AddParameter(
+            nameof(BloomSettings.Radius),
+            PostProcessParameterKind.Float,
+            1.0f,
+            displayName: "Blur Radius",
+            min: 0.1f,
+            max: 8.0f,
+            step: 0.01f);
+    }
+
+    private static void DescribeAmbientOcclusionStage(RenderPipelinePostProcessSchemaBuilder.PostProcessStageBuilder stage)
+    {
+        stage.AddParameter(
+            nameof(AmbientOcclusionSettings.Enabled),
+            PostProcessParameterKind.Bool,
+            true,
+            displayName: "Enabled");
+
+        stage.AddParameter(
+            nameof(AmbientOcclusionSettings.Type),
+            PostProcessParameterKind.Int,
+            (int)AmbientOcclusionSettings.EType.ScreenSpace,
+            displayName: "Method",
+            enumOptions: BuildEnumOptions<AmbientOcclusionSettings.EType>());
+
+        stage.AddParameter(
+            nameof(AmbientOcclusionSettings.Radius),
+            PostProcessParameterKind.Float,
+            0.9f,
+            displayName: "Radius",
+            min: 0.1f,
+            max: 5.0f,
+            step: 0.01f);
+
+        stage.AddParameter(
+            nameof(AmbientOcclusionSettings.Power),
+            PostProcessParameterKind.Float,
+            1.4f,
+            displayName: "Contrast",
+            min: 0.5f,
+            max: 3.0f,
+            step: 0.01f);
+
+        stage.AddParameter(
+            nameof(AmbientOcclusionSettings.Bias),
+            PostProcessParameterKind.Float,
+            0.05f,
+            displayName: "Bias",
+            min: 0.0f,
+            max: 0.2f,
+            step: 0.001f);
+
+        stage.AddParameter(
+            nameof(AmbientOcclusionSettings.Intensity),
+            PostProcessParameterKind.Float,
+            1.0f,
+            displayName: "Intensity",
+            min: 0.0f,
+            max: 4.0f,
+            step: 0.01f);
+
+        stage.AddParameter(
+            nameof(AmbientOcclusionSettings.ResolutionScale),
+            PostProcessParameterKind.Float,
+            1.0f,
+            displayName: "Resolution Scale",
+            min: 0.25f,
+            max: 2.0f,
+            step: 0.01f);
+
+        stage.AddParameter(
+            nameof(AmbientOcclusionSettings.SamplesPerPixel),
+            PostProcessParameterKind.Float,
+            1.0f,
+            displayName: "Samples / Pixel",
+            min: 0.5f,
+            max: 8.0f,
+            step: 0.1f);
+    }
+
+    private static void DescribeMotionBlurStage(RenderPipelinePostProcessSchemaBuilder.PostProcessStageBuilder stage)
+    {
+        stage.AddParameter(
+            nameof(MotionBlurSettings.Enabled),
+            PostProcessParameterKind.Bool,
+            false,
+            displayName: "Enabled");
+
+        stage.AddParameter(
+            nameof(MotionBlurSettings.ShutterScale),
+            PostProcessParameterKind.Float,
+            0.75f,
+            displayName: "Shutter Scale",
+            min: 0.0f,
+            max: 2.0f,
+            step: 0.01f);
+
+        stage.AddParameter(
+            nameof(MotionBlurSettings.MaxSamples),
+            PostProcessParameterKind.Int,
+            12,
+            displayName: "Max Samples",
+            min: 4.0f,
+            max: 64.0f,
+            step: 1.0f);
+
+        stage.AddParameter(
+            nameof(MotionBlurSettings.MaxBlurPixels),
+            PostProcessParameterKind.Float,
+            12.0f,
+            displayName: "Max Blur (px)",
+            min: 1.0f,
+            max: 64.0f,
+            step: 0.5f);
+
+        stage.AddParameter(
+            nameof(MotionBlurSettings.VelocityThreshold),
+            PostProcessParameterKind.Float,
+            0.002f,
+            displayName: "Velocity Threshold",
+            min: 0.0f,
+            max: 0.5f,
+            step: 0.0005f);
+
+        stage.AddParameter(
+            nameof(MotionBlurSettings.DepthRejectThreshold),
+            PostProcessParameterKind.Float,
+            0.002f,
+            displayName: "Depth Reject",
+            min: 0.0f,
+            max: 0.05f,
+            step: 0.0005f);
+
+        stage.AddParameter(
+            nameof(MotionBlurSettings.SampleFalloff),
+            PostProcessParameterKind.Float,
+            2.0f,
+            displayName: "Sample Falloff",
+            min: 0.1f,
+            max: 8.0f,
+            step: 0.01f);
+    }
+
+    private static void DescribeLensDistortionStage(RenderPipelinePostProcessSchemaBuilder.PostProcessStageBuilder stage)
+    {
+        stage.AddParameter(
+            nameof(LensDistortionSettings.Intensity),
+            PostProcessParameterKind.Float,
+            0.0f,
+            displayName: "Intensity",
+            min: -1.0f,
+            max: 1.0f,
+            step: 0.001f);
+    }
+
+    private static void DescribeChromaticAberrationStage(RenderPipelinePostProcessSchemaBuilder.PostProcessStageBuilder stage)
+    {
+        stage.AddParameter(
+            nameof(ChromaticAberrationSettings.Intensity),
+            PostProcessParameterKind.Float,
+            0.0f,
+            displayName: "Intensity",
+            min: 0.0f,
+            max: 1.0f,
+            step: 0.001f);
+    }
+
+    private static void DescribeFogStage(RenderPipelinePostProcessSchemaBuilder.PostProcessStageBuilder stage)
+    {
+        stage.AddParameter(
+            nameof(FogSettings.DepthFogIntensity),
+            PostProcessParameterKind.Float,
+            0.0f,
+            displayName: "Intensity",
+            min: 0.0f,
+            max: 1.0f,
+            step: 0.01f);
+
+        stage.AddParameter(
+            nameof(FogSettings.DepthFogStartDistance),
+            PostProcessParameterKind.Float,
+            100.0f,
+            displayName: "Start Distance",
+            min: 0.0f,
+            max: 100000.0f,
+            step: 1.0f);
+
+        stage.AddParameter(
+            nameof(FogSettings.DepthFogEndDistance),
+            PostProcessParameterKind.Float,
+            10000.0f,
+            displayName: "End Distance",
+            min: 0.0f,
+            max: 100000.0f,
+            step: 1.0f);
+
+        stage.AddParameter(
+            nameof(FogSettings.DepthFogColor),
+            PostProcessParameterKind.Vector3,
+            new Vector3(0.5f, 0.5f, 0.5f),
+            displayName: "Color",
+            isColor: true);
+    }
+
+    private static PostProcessEnumOption[] BuildEnumOptions<TEnum>() where TEnum : Enum
+    {
+        var values = Enum.GetValues(typeof(TEnum));
+        PostProcessEnumOption[] options = new PostProcessEnumOption[values.Length];
+
+        for (int i = 0; i < values.Length; i++)
+        {
+            var value = (TEnum)values.GetValue(i)!;
+            options[i] = new PostProcessEnumOption(value.ToString(), Convert.ToInt32(value));
+        }
+
+        return options;
+    }
 
     #endregion
 

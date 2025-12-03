@@ -1,4 +1,5 @@
-﻿using System.Reflection;
+﻿using System.Diagnostics.CodeAnalysis;
+using System.Reflection;
 using System.Runtime.InteropServices;
 
 namespace Extensions
@@ -45,16 +46,16 @@ namespace Extensions
         public static object? PtrToStructure(this Type type, IntPtr address)
             => Marshal.PtrToStructure(address, type);
 
-        public static object? CreateInstance(this Type type)
+        public static object? CreateInstance([DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicParameterlessConstructor)] this Type type)
             => Activator.CreateInstance(type);
-        public static object? CreateInstance(this Type type, params object[] args)
+        public static object? CreateInstance([DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicConstructors)] this Type type, params object[] args)
             => Activator.CreateInstance(type, args);
-        public static T? CreateInstance<T>(this Type type)
+        public static T? CreateInstance<T>([DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicParameterlessConstructor)] this Type type)
         {
             var obj = Activator.CreateInstance(type);
             return obj is null ? default : (T)obj;
         }
-        public static T? CreateInstance<T>(this Type type, params object[] args)
+        public static T? CreateInstance<T>([DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicConstructors)] this Type type, params object[] args)
         {
             var obj = Activator.CreateInstance(type, args);
             return obj is null ? default : (T)obj;

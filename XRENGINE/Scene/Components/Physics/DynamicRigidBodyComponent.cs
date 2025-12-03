@@ -1,4 +1,5 @@
-﻿using System.Numerics;
+﻿using System.ComponentModel;
+using System.Numerics;
 using MagicPhysX;
 using XREngine.Core.Attributes;
 using XREngine.Rendering.Physics.Physx;
@@ -10,6 +11,9 @@ using XREngine;
 namespace XREngine.Components.Physics
 {
     [RequiresTransform(typeof(RigidBodyTransform))]
+    [Category("Physics")]
+    [DisplayName("Dynamic Rigid Body")]
+    [Description("Simulated rigid body that responds to forces, collisions, and networking state.")]
     [XRComponentEditor("XREngine.Editor.ComponentEditors.DynamicRigidBodyComponentEditor")]
     public class DynamicRigidBodyComponent : PhysicsActorComponent
     {
@@ -63,60 +67,88 @@ namespace XREngine.Components.Physics
         /// <summary>
         /// The rigid body constructed for whatever physics engine to use.
         /// </summary>
+        [Browsable(false)]
         public IAbstractDynamicRigidBody? RigidBody
         {
             get => _rigidBody;
             set => SetField(ref _rigidBody, value);
         }
 
+        [Category("Initialization")]
+        [DisplayName("Auto Create Rigid Body")]
+        [Description("Whether to auto-create the rigid body on world registration.")]
         public bool AutoCreateRigidBody
         {
             get => _autoCreateRigidBody;
             set => SetField(ref _autoCreateRigidBody, value);
         }
 
+        [Category("Shape")]
+        [DisplayName("Material")]
+        [Description("The physics material defining friction and restitution.")]
         public AbstractPhysicsMaterial? Material
         {
             get => _material;
             set => SetField(ref _material, value);
         }
 
+        [Category("Shape")]
+        [DisplayName("Geometry")]
+        [Description("The collision geometry shape.")]
         public IPhysicsGeometry? Geometry
         {
             get => _geometry;
             set => SetField(ref _geometry, value);
         }
 
+        [Category("Shape")]
+        [DisplayName("Shape Offset Translation")]
+        [Description("Local translation offset for the collision shape.")]
         public Vector3 ShapeOffsetTranslation
         {
             get => _shapeOffsetTranslation;
             set => SetField(ref _shapeOffsetTranslation, value);
         }
 
+        [Category("Shape")]
+        [DisplayName("Shape Offset Rotation")]
+        [Description("Local rotation offset for the collision shape.")]
         public Quaternion ShapeOffsetRotation
         {
             get => _shapeOffsetRotation;
             set => SetField(ref _shapeOffsetRotation, value);
         }
 
+        [Category("Mass")]
+        [DisplayName("Density")]
+        [Description("Density used to calculate mass from geometry volume.")]
         public float Density
         {
             get => _density;
             set => SetField(ref _density, value);
         }
 
+        [Category("Initialization")]
+        [DisplayName("Initial Position")]
+        [Description("Override spawn position for the rigid body.")]
         public Vector3? InitialPosition
         {
             get => _initialPosition;
             set => SetField(ref _initialPosition, value);
         }
 
+        [Category("Initialization")]
+        [DisplayName("Initial Rotation")]
+        [Description("Override spawn rotation for the rigid body.")]
         public Quaternion? InitialRotation
         {
             get => _initialRotation;
             set => SetField(ref _initialRotation, value);
         }
 
+        [Category("Forces")]
+        [DisplayName("Gravity Enabled")]
+        [Description("Whether gravity affects this body.")]
         public bool GravityEnabled
         {
             get => RigidBody is PhysxActor actor ? actor.GravityEnabled : _gravityEnabled;
@@ -129,6 +161,9 @@ namespace XREngine.Components.Physics
             }
         }
 
+        [Category("Simulation")]
+        [DisplayName("Simulation Enabled")]
+        [Description("Whether the physics simulation is enabled.")]
         public bool SimulationEnabled
         {
             get => RigidBody is PhysxActor actor ? actor.SimulationEnabled : _simulationEnabled;
@@ -141,6 +176,9 @@ namespace XREngine.Components.Physics
             }
         }
 
+        [Category("Debug")]
+        [DisplayName("Debug Visualization")]
+        [Description("Show physics debug visualization.")]
         public bool DebugVisualization
         {
             get => RigidBody is PhysxActor actor ? actor.DebugVisualize : _debugVisualization;
@@ -153,6 +191,9 @@ namespace XREngine.Components.Physics
             }
         }
 
+        [Category("Sleep")]
+        [DisplayName("Send Sleep Notifies")]
+        [Description("Whether to notify when sleep state changes.")]
         public bool SendSleepNotifies
         {
             get => RigidBody is PhysxActor actor ? actor.SendSleepNotifies : _sendSleepNotifies;
@@ -165,6 +206,9 @@ namespace XREngine.Components.Physics
             }
         }
 
+        [Category("Collision")]
+        [DisplayName("Collision Group")]
+        [Description("The collision group this body belongs to.")]
         public ushort CollisionGroup
         {
             get => RigidBody is PhysxActor actor ? actor.CollisionGroup : _collisionGroup;
@@ -177,6 +221,9 @@ namespace XREngine.Components.Physics
             }
         }
 
+        [Category("Collision")]
+        [DisplayName("Groups Mask")]
+        [Description("Collision filter mask for collision filtering.")]
         public PhysicsGroupsMask GroupsMask
         {
             get => RigidBody is PhysxActor actor ? FromPhysxGroupsMask(actor.GroupsMask) : _groupsMask;
@@ -189,6 +236,9 @@ namespace XREngine.Components.Physics
             }
         }
 
+        [Category("Collision")]
+        [DisplayName("Dominance Group")]
+        [Description("Collision resolution dominance (higher wins).")]
         public byte DominanceGroup
         {
             get => RigidBody is PhysxActor actor ? actor.DominanceGroup : _dominanceGroup;
@@ -201,6 +251,9 @@ namespace XREngine.Components.Physics
             }
         }
 
+        [Category("Networking")]
+        [DisplayName("Owner Client")]
+        [Description("Client ID that owns this body.")]
         public byte OwnerClient
         {
             get => RigidBody is PhysxActor actor ? actor.OwnerClient : _ownerClient;
@@ -213,6 +266,9 @@ namespace XREngine.Components.Physics
             }
         }
 
+        [Category("Debug")]
+        [DisplayName("Actor Name")]
+        [Description("Debug name for the physics actor.")]
         public string? ActorName
         {
             get => RigidBody is PhysxActor actor ? actor.Name : _actorName;
@@ -225,6 +281,9 @@ namespace XREngine.Components.Physics
             }
         }
 
+        [Category("Flags")]
+        [DisplayName("Body Flags")]
+        [Description("Rigid body behavior flags (kinematic, CCD, etc).")]
         public PhysicsRigidBodyFlags BodyFlags
         {
             get => RigidBody switch
@@ -241,6 +300,9 @@ namespace XREngine.Components.Physics
             }
         }
 
+        [Category("Flags")]
+        [DisplayName("Lock Flags")]
+        [Description("Axis lock flags for constrained motion.")]
         public PhysicsLockFlags LockFlags
         {
             get => RigidBody switch
@@ -257,6 +319,9 @@ namespace XREngine.Components.Physics
             }
         }
 
+        [Category("Damping")]
+        [DisplayName("Linear Damping")]
+        [Description("Damping factor for linear velocity.")]
         public float LinearDamping
         {
             get => RigidBody is PhysxRigidBody physx ? physx.LinearDamping : _linearDamping;
@@ -269,6 +334,9 @@ namespace XREngine.Components.Physics
             }
         }
 
+        [Category("Damping")]
+        [DisplayName("Angular Damping")]
+        [Description("Damping factor for angular velocity.")]
         public float AngularDamping
         {
             get => RigidBody is PhysxRigidBody physx ? physx.AngularDamping : _angularDamping;
@@ -281,6 +349,9 @@ namespace XREngine.Components.Physics
             }
         }
 
+        [Category("Velocity")]
+        [DisplayName("Max Linear Velocity")]
+        [Description("Maximum linear velocity clamp.")]
         public float MaxLinearVelocity
         {
             get => RigidBody is PhysxRigidBody physx ? physx.MaxLinearVelocity : _maxLinearVelocity;
@@ -293,6 +364,9 @@ namespace XREngine.Components.Physics
             }
         }
 
+        [Category("Velocity")]
+        [DisplayName("Max Angular Velocity")]
+        [Description("Maximum angular velocity clamp.")]
         public float MaxAngularVelocity
         {
             get => RigidBody is PhysxRigidBody physx ? physx.MaxAngularVelocity : _maxAngularVelocity;
@@ -305,6 +379,9 @@ namespace XREngine.Components.Physics
             }
         }
 
+        [Category("Mass")]
+        [DisplayName("Mass")]
+        [Description("The mass of the rigid body in kg.")]
         public float Mass
         {
             get => RigidBody is PhysxRigidBody physx ? physx.Mass : _mass;
@@ -317,6 +394,9 @@ namespace XREngine.Components.Physics
             }
         }
 
+        [Category("Mass")]
+        [DisplayName("Inertia Tensor")]
+        [Description("Mass-space inertia tensor diagonal.")]
         public Vector3 MassSpaceInertiaTensor
         {
             get => RigidBody is PhysxRigidBody physx ? physx.MassSpaceInertiaTensor : _massSpaceInertiaTensor;
@@ -329,6 +409,9 @@ namespace XREngine.Components.Physics
             }
         }
 
+        [Category("Mass")]
+        [DisplayName("Center Of Mass Pose")]
+        [Description("Local pose of the center of mass.")]
         public PhysicsMassFrame CenterOfMassLocalPose
         {
             get => RigidBody is PhysxRigidBody physx ? new PhysicsMassFrame(physx.CMassLocalPose.Item2, physx.CMassLocalPose.Item1) : _centerOfMassPose;
@@ -341,6 +424,9 @@ namespace XREngine.Components.Physics
             }
         }
 
+        [Category("CCD")]
+        [DisplayName("Min CCD Advance")]
+        [Description("Minimum CCD advance coefficient.")]
         public float MinCcdAdvanceCoefficient
         {
             get => RigidBody is PhysxRigidBody physx ? physx.MinCCDAdvanceCoefficient : _minCcdAdvanceCoefficient;
@@ -353,6 +439,9 @@ namespace XREngine.Components.Physics
             }
         }
 
+        [Category("Contact")]
+        [DisplayName("Max Depenetration Velocity")]
+        [Description("Maximum velocity for depenetration.")]
         public float MaxDepenetrationVelocity
         {
             get => RigidBody is PhysxRigidBody physx ? physx.MaxDepenetrationVelocity : _maxDepenetrationVelocity;
@@ -365,6 +454,9 @@ namespace XREngine.Components.Physics
             }
         }
 
+        [Category("Contact")]
+        [DisplayName("Max Contact Impulse")]
+        [Description("Maximum contact impulse applied.")]
         public float MaxContactImpulse
         {
             get => RigidBody is PhysxRigidBody physx ? physx.MaxContactImpulse : _maxContactImpulse;
@@ -377,6 +469,9 @@ namespace XREngine.Components.Physics
             }
         }
 
+        [Category("Contact")]
+        [DisplayName("Contact Slop")]
+        [Description("Contact slop coefficient for solver.")]
         public float ContactSlopCoefficient
         {
             get => RigidBody is PhysxRigidBody physx ? physx.ContactSlopCoefficient : _contactSlopCoefficient;
@@ -389,6 +484,9 @@ namespace XREngine.Components.Physics
             }
         }
 
+        [Category("Sleep")]
+        [DisplayName("Stabilization Threshold")]
+        [Description("Threshold for solver stabilization.")]
         public float StabilizationThreshold
         {
             get => RigidBody is PhysxDynamicRigidBody physx ? physx.StabilizationThreshold : _stabilizationThreshold;
@@ -401,6 +499,9 @@ namespace XREngine.Components.Physics
             }
         }
 
+        [Category("Sleep")]
+        [DisplayName("Sleep Threshold")]
+        [Description("Energy threshold to enter sleep state.")]
         public float SleepThreshold
         {
             get => RigidBody is PhysxDynamicRigidBody physx ? physx.SleepThreshold : _sleepThreshold;
@@ -413,6 +514,9 @@ namespace XREngine.Components.Physics
             }
         }
 
+        [Category("Contact")]
+        [DisplayName("Contact Report Threshold")]
+        [Description("Impulse threshold to trigger contact reports.")]
         public float ContactReportThreshold
         {
             get => RigidBody is PhysxDynamicRigidBody physx ? physx.ContactReportThreshold : _contactReportThreshold;
@@ -425,6 +529,9 @@ namespace XREngine.Components.Physics
             }
         }
 
+        [Category("Sleep")]
+        [DisplayName("Wake Counter")]
+        [Description("Time before body goes to sleep when inactive.")]
         public float WakeCounter
         {
             get => RigidBody is PhysxDynamicRigidBody physx ? physx.WakeCounter : _wakeCounter;
@@ -437,6 +544,9 @@ namespace XREngine.Components.Physics
             }
         }
 
+        [Category("Solver")]
+        [DisplayName("Solver Iterations")]
+        [Description("Position and velocity solver iteration counts.")]
         public PhysicsSolverIterations SolverIterations
         {
             get => RigidBody is PhysxDynamicRigidBody physx ? new PhysicsSolverIterations(physx.SolverIterationCounts.minPositionIters, physx.SolverIterationCounts.minVelocityIters) : _solverIterations;
@@ -449,6 +559,9 @@ namespace XREngine.Components.Physics
             }
         }
 
+        [Category("Kinematic")]
+        [DisplayName("Kinematic Target")]
+        [Description("Target pose for kinematic bodies.")]
         public (Vector3 position, Quaternion rotation)? KinematicTarget
         {
             get => RigidBody is PhysxDynamicRigidBody physx ? physx.KinematicTarget : _kinematicTarget;
@@ -461,6 +574,9 @@ namespace XREngine.Components.Physics
             }
         }
 
+        [Category("Velocity")]
+        [DisplayName("Linear Velocity")]
+        [Description("Current linear velocity.")]
         public Vector3 LinearVelocity
         {
             get => RigidBody switch
@@ -485,6 +601,9 @@ namespace XREngine.Components.Physics
             }
         }
 
+        [Category("Velocity")]
+        [DisplayName("Angular Velocity")]
+        [Description("Current angular velocity.")]
         public Vector3 AngularVelocity
         {
             get => RigidBody switch

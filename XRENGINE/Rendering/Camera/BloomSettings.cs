@@ -1,4 +1,5 @@
-﻿using XREngine.Data.Core;
+﻿using System;
+using XREngine.Data.Core;
 
 namespace XREngine.Rendering
 {
@@ -37,14 +38,25 @@ namespace XREngine.Rendering
 
         public void SetBrightPassUniforms(XRRenderProgram program)
         {
-            program.Uniform("BloomIntensity", Intensity);
-            program.Uniform("BloomThreshold", Threshold);
-            program.Uniform("SoftKnee", SoftKnee);
+            float threshold = MathF.Max(0.0f, Threshold);
+            float softKnee = MathF.Min(1.0f, MathF.Max(0.0f, SoftKnee));
+
+            program.Uniform("BloomIntensity", MathF.Max(0.0f, Intensity));
+            program.Uniform("BloomThreshold", threshold);
+            program.Uniform("SoftKnee", softKnee);
             program.Uniform("Luminance", Engine.Rendering.Settings.DefaultLuminance);
         }
         public void SetBlurPassUniforms(XRRenderProgram program)
         {
-            program.Uniform("Radius", Radius);
+            float threshold = MathF.Max(0.0f, Threshold);
+            float softKnee = MathF.Min(1.0f, MathF.Max(0.0f, SoftKnee));
+            float radius = MathF.Max(0.0f, Radius);
+            bool useThreshold = threshold > 0.0f;
+
+            program.Uniform("Radius", radius);
+            program.Uniform("BloomThreshold", threshold);
+            program.Uniform("BloomSoftKnee", MathF.Max(softKnee * threshold, 1e-4f));
+            program.Uniform("UseThreshold", useThreshold);
         }
     }
 }
