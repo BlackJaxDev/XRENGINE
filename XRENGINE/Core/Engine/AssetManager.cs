@@ -1,4 +1,5 @@
-﻿using Microsoft.DotNet.PlatformAbstractions;
+﻿using Extensions;
+using Microsoft.DotNet.PlatformAbstractions;
 using Newtonsoft.Json;
 using System;
 using System.Collections.Concurrent;
@@ -565,6 +566,45 @@ namespace XREngine
             return file;
         }
 
+        public XRAsset? Load(string filePath, Type type)
+        {
+            XRAsset? file;
+#if !DEBUG
+            try
+            {
+#endif
+            if (TryGetAssetByPath(filePath, out XRAsset? existingAsset))
+                return existingAsset.GetType().IsAssignableTo(type) ? existingAsset : null;
+
+            if (!File.Exists(filePath))
+            {
+                AssetDiagnostics.RecordMissingAsset(filePath, type.Name, $"{nameof(AssetManager)}.{nameof(Load)}");
+                return null;
+            }
+
+            string extension = Path.GetExtension(filePath);
+            if (string.IsNullOrWhiteSpace(extension) || extension.Length <= 1)
+            {
+                Debug.LogWarning($"Unable to load asset at '{filePath}' because the file has no extension.");
+                return null;
+            }
+
+            string normalizedExtension = extension[1..].ToLowerInvariant();
+            file = normalizedExtension == AssetExtension
+                ? DeserializeAssetFile(filePath, type)
+                : Load3rdPartyWithCache(filePath, normalizedExtension, type);
+            PostLoaded(filePath, file);
+#if !DEBUG
+            }
+            catch (Exception e)
+            {
+                Debug.LogException(e, $"An error occurred while loading the asset at '{filePath}'.");
+                return null;
+            }
+#endif
+            return file;
+        }
+
         public T? Load<[DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicParameterlessConstructor)] T>(string filePath) where T : XRAsset, new()
         {
             T? file;
@@ -878,24 +918,25 @@ namespace XREngine
             return builder.Build();
         }
 
-        private static IReadOnlyList<IYamlTypeConverter> DiscoverYamlTypeConverters()
+        [RequiresUnreferencedCode("Calls System.Reflection.Assembly.GetTypes()")]
+        private static List<IYamlTypeConverter> DiscoverYamlTypeConverters()
         {
             List<IYamlTypeConverter> converters = [];
             HashSet<Type> registeredTypes = [];
 
             foreach (var assembly in AppDomain.CurrentDomain.GetAssemblies())
             {
-                Type[] types;
+                Type?[] types;
                 try
                 {
                     types = assembly.GetTypes();
                 }
                 catch (ReflectionTypeLoadException ex)
                 {
-                    types = ex.Types ?? Array.Empty<Type>();
+                    types = ex.Types ?? [];
                 }
 
-                foreach (var type in types)
+                foreach (Type? type in types)
                 {
                     if (type is null || type.IsAbstract || type.IsInterface)
                         continue;
@@ -924,11 +965,25 @@ namespace XREngine
             return Deserializer.Deserialize<T>(contents);
         }
 
+        public static XRAsset? DeserializeAssetFile(string filePath, Type type)
+        {
+            using var t = Engine.Profiler.Start($"AssetManager.DeserializeAsset {filePath}");
+            string contents = File.ReadAllText(filePath);
+            return Deserializer.Deserialize(contents, type) as XRAsset;
+        }
+
         private static async Task<T?> DeserializeAssetFileAsync<[DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicMethods)] T>(string filePath) where T : XRAsset, new()
         {
             using var t = Engine.Profiler.Start($"AssetManager.DeserializeAssetAsync {filePath}");
             string contents = await File.ReadAllTextAsync(filePath).ConfigureAwait(false);
             return Deserializer.Deserialize<T>(contents);
+        }
+
+        public static async Task<XRAsset?> DeserializeAssetFileAsync(string filePath, Type type)
+        {
+            using var t = Engine.Profiler.Start($"AssetManager.DeserializeAssetAsync {filePath}");
+            string contents = await File.ReadAllTextAsync(filePath).ConfigureAwait(false);
+            return Deserializer.Deserialize(contents, type) as XRAsset;
         }
 
         private T? Load3rdPartyWithCache<[DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicMethods)] T>(string filePath, string ext) where T : XRAsset, new()
@@ -943,6 +998,30 @@ namespace XREngine
             }
 
             var asset = Load3rdPartyAsset<T>(filePath, ext);
+            if (asset is null)
+                return null;
+
+            if (hasTimestamp)
+                asset.OriginalLastWriteTimeUtc = timestampUtc;
+
+            if (hasTimestamp && hasCachePath)
+                TryWriteCacheAsset(cachePath, asset);
+
+            return asset;
+        }
+
+        private XRAsset? Load3rdPartyWithCache(string filePath, string ext, [DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicMethods)] Type type)
+        {
+            bool hasTimestamp = TryGetSourceTimestamp(filePath, out DateTime timestampUtc);
+            bool hasCachePath = TryResolveCachePath(filePath, type, out string cachePath);
+
+            if (hasTimestamp && hasCachePath && TryLoadCachedAsset(cachePath, filePath, timestampUtc, type, out XRAsset? cachedAsset))
+            {
+                cachedAsset!.OriginalLastWriteTimeUtc = timestampUtc;
+                return cachedAsset;
+            }
+
+            var asset = Load3rdPartyAsset(filePath, ext, type);
             if (asset is null)
                 return null;
 
@@ -1016,7 +1095,7 @@ namespace XREngine
             return true;
         }
 
-        private bool TryLoadCachedAsset<[DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicParameterlessConstructor)] T>(string cachePath, string originalPath, DateTime sourceTimestampUtc, out T? asset) where T : XRAsset, new()
+        private static bool TryLoadCachedAsset<[DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicParameterlessConstructor)] T>(string cachePath, string originalPath, DateTime sourceTimestampUtc, out T? asset) where T : XRAsset, new()
         {
             asset = null;
             if (!File.Exists(cachePath))
@@ -1025,6 +1104,32 @@ namespace XREngine
             try
             {
                 var cachedAsset = DeserializeAssetFile<T>(cachePath);
+                if (cachedAsset?.OriginalLastWriteTimeUtc is null)
+                    return false;
+
+                if (cachedAsset.OriginalLastWriteTimeUtc.Value < sourceTimestampUtc)
+                    return false;
+
+                cachedAsset.OriginalPath = originalPath;
+                asset = cachedAsset;
+                return true;
+            }
+            catch (Exception ex)
+            {
+                Debug.LogWarning($"Failed to read cached asset '{cachePath}'. {ex.Message}");
+                return false;
+            }
+        }
+
+        private static bool TryLoadCachedAsset(string cachePath, string originalPath, DateTime sourceTimestampUtc, Type type, out XRAsset? asset)
+        {
+            asset = null;
+            if (!File.Exists(cachePath))
+                return false;
+
+            try
+            {
+                var cachedAsset = DeserializeAssetFile(cachePath, type);
                 if (cachedAsset?.OriginalLastWriteTimeUtc is null)
                     return false;
 
@@ -1145,6 +1250,61 @@ namespace XREngine
             else
             {
                 Debug.LogWarning($"The file extension '{ext}' is not supported by the asset type '{typeof(T).Name}'.");
+                return null;
+            }
+        }
+
+        private static XRAsset? Load3rdPartyAsset(string filePath, string ext, [DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicMethods)] Type type)
+        {
+            var exts = type.GetCustomAttribute<XR3rdPartyExtensionsAttribute>()?.Extensions;
+            var match = exts?.FirstOrDefault(e => e.ext == ext);
+            if (match is not null)
+            {
+                if (match.Value.staticLoad)
+                {
+                    var method = type.GetMethod("Load3rdPartyStatic", BindingFlags.Public | BindingFlags.Static);
+                    if (method is not null)
+                    {
+                        var asset = method.Invoke(null, [filePath]) as XRAsset;
+                        if (asset is not null)
+                        {
+                            asset.OriginalPath = filePath;
+                            return asset;
+                        }
+                        else
+                        {
+                            Debug.LogWarning($"The asset type '{type.Name}' has a 3rd party extension '{ext}' but the static loader method does not return the correct type or returned null.");
+                            return null;
+                        }
+                    }
+                    else
+                    {
+                        Debug.LogWarning($"The asset type '{type.Name}' has a 3rd party extension '{ext}' but does not have a static load method.");
+                        return null;
+                    }
+                }
+                else
+                {
+                    if (type.CreateInstance() is not XRAsset asset)
+                    {
+                        Debug.LogWarning($"Failed to construct 3rd party asset '{filePath}' as type '{type.Name}'.");
+                        return null;
+                    }
+
+                    asset.OriginalPath = filePath;
+                    
+                    if (asset.Load3rdParty(filePath))
+                        return asset;
+                    else
+                    {
+                        Debug.LogWarning($"Failed to load 3rd party asset '{filePath}' as type '{type.Name}'.");
+                        return null;
+                    }
+                }
+            }
+            else
+            {
+                Debug.LogWarning($"The file extension '{ext}' is not supported by the asset type '{type.Name}'.");
                 return null;
             }
         }

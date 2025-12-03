@@ -1,4 +1,5 @@
 ﻿using Extensions;
+using System.ComponentModel;
 using System.Numerics;
 using XREngine.Components.Lights;
 using XREngine.Data.Geometry;
@@ -8,6 +9,9 @@ using XREngine.Scene.Transforms;
 
 namespace XREngine.Components.Capture.Lights.Types
 {
+    [Category("Lighting")]
+    [DisplayName("Point Light")]
+    [Description("Emits omnidirectional light with optional shadow maps for local illumination.")]
     public class PointLightComponent : LightComponent
     {
         protected readonly XRViewport[] _viewports = new XRViewport[6].Fill(x => new(null, 1024, 1024)
@@ -49,6 +53,12 @@ namespace XREngine.Components.Capture.Lights.Types
                 vp.Render(ShadowMap, null, null, true, ShadowMap.Material);
         }
 
+        /// <summary>
+        /// The distance beyond which this light has no visible effect.
+        /// </summary>
+        [Category("Attenuation")]
+        [DisplayName("Radius")]
+        [Description("Distance beyond which the light has no effect.")]
         public float Radius
         {
             get => _influenceVolume.Radius;
@@ -70,6 +80,12 @@ namespace XREngine.Components.Capture.Lights.Types
         }
 
         private float _brightness = 1.0f;
+        /// <summary>
+        /// Intensity multiplier for this light.
+        /// </summary>
+        [Category("Attenuation")]
+        [DisplayName("Brightness")]
+        [Description("Intensity multiplier applied to the light output.")]
         public float Brightness
         {
             get => _brightness;

@@ -1,5 +1,6 @@
 ﻿using Extensions;
 using System.Collections.Concurrent;
+using System.ComponentModel;
 using System.Diagnostics.CodeAnalysis;
 using XREngine.Components;
 using XREngine.Data.Geometry;
@@ -9,12 +10,21 @@ using XREngine.Rendering.Models;
 namespace XREngine.Components.Scene.Mesh
 {
     [Serializable]
+    [Category("Rendering")]
+    [DisplayName("Model Renderer")]
+    [Description("Draws complex 3D model assets with material and sub-mesh support.")]
     [XRComponentEditor("XREngine.Editor.ComponentEditors.ModelComponentEditor")]
     public class ModelComponent : RenderableComponent
     {
         private readonly ConcurrentDictionary<SubMesh, RenderableMesh> _meshLinks = new();
 
         private Model? _model;
+        /// <summary>
+        /// The 3D model asset containing geometry and materials.
+        /// </summary>
+        [Category("Model")]
+        [DisplayName("Model")]
+        [Description("The 3D model asset to render.")]
         public Model? Model
         {
             get => _model;
@@ -22,6 +32,12 @@ namespace XREngine.Components.Scene.Mesh
         }
 
         private bool _renderBounds = false;
+        /// <summary>
+        /// When enabled, renders bounding volumes for debugging.
+        /// </summary>
+        [Category("Debug")]
+        [DisplayName("Render Bounds")]
+        [Description("When enabled, renders bounding volumes for debugging.")]
         public bool RenderBounds
         {
             get => _renderBounds;

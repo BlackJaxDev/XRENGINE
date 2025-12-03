@@ -42,6 +42,14 @@ public static partial class UnitTestingWorld
         private static readonly Dictionary<Type, IXRAssetInspector?> _assetInspectorCache = new();
         private static readonly Dictionary<string, MethodInfo?> _assetContextMenuHandlerCache = new(StringComparer.Ordinal);
         private static readonly Dictionary<Type, IXRTransformEditor?> _transformEditorCache = new();
+        private static readonly SceneNode.ETransformSetFlags TransformTypeChangeFlags =
+            SceneNode.ETransformSetFlags.RetainCurrentParent |
+            SceneNode.ETransformSetFlags.RetainWorldTransform |
+            SceneNode.ETransformSetFlags.ClearNewChildren |
+            SceneNode.ETransformSetFlags.RetainCurrentChildren |
+            SceneNode.ETransformSetFlags.RetainedChildrenMaintainWorldTransform;
+        private static string _transformTypeSearch = string.Empty;
+        private static IReadOnlyList<TransformTypeEntry>? _transformTypeEntries;
         private static readonly Dictionary<int, ProfilerThreadCacheEntry> _profilerThreadCache = new();
         private static bool _showProfiler;
         private static bool _showOpenGLApiObjects;
@@ -594,11 +602,10 @@ public static partial class UnitTestingWorld
                 return;
             }
 
-            Span<XRAsset> scratch = dirtySnapshot;
-            var uniqueRoots = new Dictionary<Guid, XRAsset>(scratch.Length);
-            foreach (var asset in scratch)
+            var uniqueRoots = new Dictionary<Guid, XRAsset>(dirtySnapshot.Length);
+            foreach (var asset in dirtySnapshot)
             {
-                XRAsset root = asset.SourceAsset;
+                XRAsset root = asset.Value.SourceAsset;
                 uniqueRoots[root.ID] = root;
             }
 

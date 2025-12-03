@@ -1,4 +1,5 @@
 ﻿using System.Collections.Concurrent;
+using System.ComponentModel;
 using XREngine.Core.Files;
 using YamlDotNet.Serialization;
 
@@ -20,12 +21,14 @@ namespace XREngine.Rendering
         /// True if this object is currently in use by any window rendering API.
         /// </summary>
         [YamlIgnore]
+        [Browsable(false)]
         public bool InUse => APIWrappers.Count > 0;
 
         /// <summary>
         /// This is a list of API-specific render objects attached to each active window that represent this object.
         /// </summary>
         [YamlIgnore]
+        [Browsable(false)]
         public IReadOnlyCollection<AbstractRenderAPIObject> APIWrappers => _apiWrappers;
 
         public int GetCacheIndex()

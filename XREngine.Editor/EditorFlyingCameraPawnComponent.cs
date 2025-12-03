@@ -23,6 +23,7 @@ using XREngine.Rendering.Picking;
 using XREngine.Rendering.Physics.Physx;
 using XREngine.Scene;
 using XREngine.Scene.Transforms;
+using System.ComponentModel;
 
 namespace XREngine.Editor;
 
@@ -76,6 +77,7 @@ public partial class EditorFlyingCameraPawnComponent : FlyingCameraPawnComponent
     /// <summary>
     /// The reference world position to drag the camera to when dragging or rotating the camera.
     /// </summary>
+    [Browsable(false)]
     public Vector3? WorldDragPoint
     {
         get => _worldDragPoint;
@@ -86,6 +88,7 @@ public partial class EditorFlyingCameraPawnComponent : FlyingCameraPawnComponent
     /// <summary>
     /// The last hit point in normalized viewport coordinates from the depth buffer.
     /// </summary>
+    [Browsable(false)]
     public Vector3? DepthHitNormalizedViewportPoint
     {
         get => _depthHitNormalizedViewportPoint;
@@ -99,24 +102,28 @@ public partial class EditorFlyingCameraPawnComponent : FlyingCameraPawnComponent
     /// <summary>
     /// Converts DepthHitNormalizedViewportPoint's depth Z-value to a distance based on the camera's near and far planes.
     /// </summary>
+    [Browsable(false)]
     public float LastHitDistance => XRMath.DepthToDistance(DepthHitNormalizedViewportPoint.HasValue ? DepthHitNormalizedViewportPoint.Value.Z : 0.0f, NearZ, FarZ);
 
     /// <summary>
     /// The near Z distance of the camera's frustum.
     /// </summary>
+    [Browsable(false)]
     public float NearZ => GetCamera()?.Camera.NearZ ?? 0.0f;
 
     /// <summary>
     /// The far Z distance of the camera's frustum.
     /// </summary>
+    [Browsable(false)]
     public float FarZ => GetCamera()?.Camera.FarZ ?? 0.0f;
 
     private bool _renderWorldDragPoint = false;
     /// <summary>
     /// If true, renders a sphere to display the world drag position in the scene.
     /// </summary>
+    [Category("Debug")]
     public bool RenderWorldDragPoint
-        {
+    {
         get => _renderWorldDragPoint;
         set => SetField(ref _renderWorldDragPoint, value);
     }
@@ -125,6 +132,7 @@ public partial class EditorFlyingCameraPawnComponent : FlyingCameraPawnComponent
     /// <summary>
     /// If true, renders this pawn's camera frustum in the scene.
     /// </summary>
+    [Category("Debug")]
     public bool RenderFrustum
     {
         get => _renderFrustum;
@@ -135,6 +143,7 @@ public partial class EditorFlyingCameraPawnComponent : FlyingCameraPawnComponent
     /// <summary>
     /// If true, renders debug information for raycast hits.
     /// </summary>
+    [Category("Raycasting")]
     public bool RenderRaycast
     {
         get => _renderRaycast;
@@ -142,6 +151,7 @@ public partial class EditorFlyingCameraPawnComponent : FlyingCameraPawnComponent
     }
 
     private PhysxScene.PhysxQueryFilter _physxQueryFilter = new();
+    [Category("Raycasting")]
     public PhysxScene.PhysxQueryFilter PhysxQueryFilter
     {
         get => _physxQueryFilter;
@@ -149,6 +159,7 @@ public partial class EditorFlyingCameraPawnComponent : FlyingCameraPawnComponent
     }
 
     private LayerMask _layerMask = LayerMask.GetMask(DefaultLayers.Default);
+    [Category("Raycasting")]
     public LayerMask LayerMask
     {
         get => _layerMask;
@@ -160,6 +171,7 @@ public partial class EditorFlyingCameraPawnComponent : FlyingCameraPawnComponent
     /// The last physics pick results from the raycast, sorted by distance.
     /// Use RaycastLock to access this safely.
     /// </summary>
+    [Browsable(false)]
     public SortedDictionary<float, List<(RenderInfo3D item, object? data)>> LastOctreePickResults
         => _lastOctreePickResults;
 
@@ -168,6 +180,7 @@ public partial class EditorFlyingCameraPawnComponent : FlyingCameraPawnComponent
     /// The last octree pick results from the raycast, sorted by distance.
     /// Use RaycastLock to access this safely.
     /// </summary>
+    [Browsable(false)]
     public SortedDictionary<float, List<(XRComponent? item, object? data)>> LastPhysicsPickResults
         => _lastPhysicsPickResults;
 
@@ -220,6 +233,7 @@ public partial class EditorFlyingCameraPawnComponent : FlyingCameraPawnComponent
     /// <summary>
     /// The lock used to safely access the raycast results.
     /// </summary>
+    [Browsable(false)]
     public Lock RaycastLock => _raycastLock;
 
     private bool _depthQueryRequested = false;
@@ -228,6 +242,7 @@ public partial class EditorFlyingCameraPawnComponent : FlyingCameraPawnComponent
     /// <summary>
     /// If true, raycasts will be performed to pick objects in the world.
     /// </summary>
+    [Category("Raycasting")]
     public bool AllowWorldPicking
     {
         get => _allowWorldPicking;
@@ -238,6 +253,7 @@ public partial class EditorFlyingCameraPawnComponent : FlyingCameraPawnComponent
     /// <summary>
     /// Determines whether the editor should raycast faces, edges, or vertices.
     /// </summary>
+    [Category("Raycasting")]
     public ERaycastHitMode RaycastMode
     {
         get => _raycastMode;
@@ -247,6 +263,7 @@ public partial class EditorFlyingCameraPawnComponent : FlyingCameraPawnComponent
     private readonly RenderCommandMethod3D _postRenderRC;
     private readonly RenderCommandMethod3D _renderHighlightRC;
 
+    [Browsable(false)]
     public RenderInfo[] RenderedObjects { get; }
 
     private void RenderHighlight()

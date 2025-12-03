@@ -1,4 +1,5 @@
 ﻿using Extensions;
+using System.ComponentModel;
 using System.IO.Compression;
 using System.Numerics;
 using XREngine.Data;
@@ -12,6 +13,7 @@ namespace XREngine.Scene.Transforms
         /// <summary>
         /// Used for model skinning. The inverse model-space bind matrix for this transform, set during model import.
         /// </summary>
+        [Browsable(false)]
         public Matrix4x4 InverseBindMatrix
         {
             get => _inverseBindMatrix;
@@ -19,6 +21,7 @@ namespace XREngine.Scene.Transforms
         }
 
         private Matrix4x4 _bindMatrix = Matrix4x4.Identity;
+        [Browsable(false)]
         public Matrix4x4 BindMatrix
         {
             get => _bindMatrix;
@@ -41,27 +44,36 @@ namespace XREngine.Scene.Transforms
         /// The interval in seconds between full keyframes sent to the network for this transform.
         /// All other updates are sent as deltas.
         /// </summary>
+        [Category("Networking")]
         public float ReplicationKeyframeIntervalSec
         {
             get => _replicationKeyframeIntervalSec;
             set => SetField(ref _replicationKeyframeIntervalSec, value);
         }
 
+        [Browsable(false)]
         public float TimeSinceLastKeyframeReplicated => _timeSinceLastKeyframe;
 
         private bool _forceManualRecalc = false;
+        [Browsable(false)]
         public bool ForceManualRecalc
         {
             get => _forceManualRecalc;
             set => SetField(ref _forceManualRecalc, value);
         }
 
+        [Browsable(false)]
         public Plane WorldForwardPlane => XRMath.CreatePlaneFromPointAndNormal(WorldTranslation, WorldForward);
+        [Browsable(false)]
         public Plane WorldRightPlane => XRMath.CreatePlaneFromPointAndNormal(WorldTranslation, WorldRight);
+        [Browsable(false)]
         public Plane WorldUpPlane => XRMath.CreatePlaneFromPointAndNormal(WorldTranslation, WorldUp);
 
+        [Browsable(false)]
         public Plane LocalForwardPlane => XRMath.CreatePlaneFromPointAndNormal(LocalTranslation, LocalForward);
+        [Browsable(false)]
         public Plane LocalRightPlane => XRMath.CreatePlaneFromPointAndNormal(LocalTranslation, LocalRight);
+        [Browsable(false)]
         public Plane LocalUpPlane => XRMath.CreatePlaneFromPointAndNormal(LocalTranslation, LocalUp);
 
         private float _timeSinceLastKeyframe = 0;

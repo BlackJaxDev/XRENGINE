@@ -95,30 +95,35 @@ namespace XREngine.Components.Capture.Lights.Types
             protected set => SetField(ref _shadowMap, value);
         }
 
+        [Category("Shadows")]
         public bool CastsShadows
         {
             get => _castsShadows;
             set => SetField(ref _castsShadows, value);
         }
 
+        [Category("Shadows")]
         public float ShadowExponentBase 
         {
             get => _shadowExponentBase;
             set => SetField(ref _shadowExponentBase, value);
         }
 
+        [Category("Shadows")]
         public float ShadowExponent
         {
             get => _shadowExponent;
             set => SetField(ref _shadowExponent, value);
         }
 
+        [Category("Shadows")]
         public float ShadowMinBias
         {
             get => _shadowMinBias;
             set => SetField(ref _shadowMinBias, value);
         }
 
+        [Category("Shadows")]
         public float ShadowMaxBias
         {
             get => _shadowMaxBias;
@@ -126,12 +131,15 @@ namespace XREngine.Components.Capture.Lights.Types
         }
 
         private uint _shadowMapResolutionWidth = 4096u;
+        [Category("Shadows")]
         public uint ShadowMapResolutionWidth
         {
             get => _shadowMapResolutionWidth;
             set => SetShadowMapResolution(value, ShadowMapResolutionHeight);
         }
+
         private uint _shadowMapResolutionHeight = 4096u;
+        [Category("Shadows")]
         public uint ShadowMapResolutionHeight
         {
             get => _shadowMapResolutionHeight;

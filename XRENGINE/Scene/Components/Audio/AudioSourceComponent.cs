@@ -1,6 +1,7 @@
 ﻿using Extensions;
 using MathNet.Numerics;
 using System.Collections.Concurrent;
+using System.ComponentModel;
 using System.Numerics;
 using XREngine.Audio;
 using XREngine.Data;
@@ -9,6 +10,9 @@ using static XREngine.Audio.AudioSource;
 
 namespace XREngine.Components
 {
+    [Category("Audio")]
+    [DisplayName("Audio Source")]
+    [Description("Plays positional audio with full control over attenuation, looping, and 3D spatialization.")]
     public class AudioSourceComponent : XRComponent
     {
         private ESourceState _state = ESourceState.Initial;
@@ -36,6 +40,9 @@ namespace XREngine.Components
         /// Rolloff factor is the rate at which the source's volume decreases as it moves further from the listener.
         /// Range: [0.0f - float.PositiveInfinity]
         /// </summary>
+        [Category("Attenuation")]
+        [DisplayName("Rolloff Factor")]
+        [Description("Controls how quickly volume decreases with distance.")]
         public float RolloffFactor
         {
             get => _rolloffFactor;
@@ -47,6 +54,9 @@ namespace XREngine.Components
         /// Default: 1.0f.
         /// Range: [0.0f - float.PositiveInfinity] 
         /// </summary>
+        [Category("Attenuation")]
+        [DisplayName("Reference Distance")]
+        [Description("Distance at which attenuation begins.")]
         public float ReferenceDistance
         {
             get => _referenceDistance;
@@ -57,6 +67,9 @@ namespace XREngine.Components
         /// Default: float.PositiveInfinity
         /// Range: [0.0f - float.PositiveInfinity]
         /// </summary>
+        [Category("Attenuation")]
+        [DisplayName("Max Distance")]
+        [Description("Beyond this distance attenuation stops.")]
         public float MaxDistance
         {
             get => _maxDistance;
@@ -65,6 +78,7 @@ namespace XREngine.Components
         /// <summary>
         /// The current playback state of the source.
         /// </summary>
+        [Browsable(false)]
         public ESourceState State
         {
             get => _state;
@@ -78,6 +92,9 @@ namespace XREngine.Components
         /// If true, the source's position is relative to the listener.
         /// If false, the source's position is in world space.
         /// </summary>
+        [Category("3D Settings")]
+        [DisplayName("Relative To Listener")]
+        [Description("Position is relative to the listener instead of world space.")]
         public bool RelativeToListener
         {
             get => _relativeToListener;
@@ -86,6 +103,9 @@ namespace XREngine.Components
         /// <summary>
         /// If true, the source will loop.
         /// </summary>
+        [Category("Playback")]
+        [DisplayName("Loop")]
+        [Description("Whether the audio restarts automatically when finished.")]
         public bool Loop
         {
             get => _looping;
@@ -96,6 +116,9 @@ namespace XREngine.Components
         /// Default: 1.0f
         /// Range: [0.5f - 2.0f]
         /// </summary>
+        [Category("Playback")]
+        [DisplayName("Pitch")]
+        [Description("Playback speed modifier.")]
         public float Pitch
         {
             get => _pitch;
@@ -105,6 +128,9 @@ namespace XREngine.Components
         /// The minimum gain of the source.
         /// Range: [0.0f - 1.0f] (Logarithmic)
         /// </summary>
+        [Category("Volume")]
+        [DisplayName("Min Gain")]
+        [Description("Minimum allowed volume after attenuation.")]
         public float MinGain
         {
             get => _minGain;
@@ -114,6 +140,9 @@ namespace XREngine.Components
         /// The maximum gain of the source.
         /// Range: [0.0f - 1.0f] (Logarithmic)
         /// </summary>
+        [Category("Volume")]
+        [DisplayName("Max Gain")]
+        [Description("Maximum allowed volume.")]
         public float MaxGain
         {
             get => _maxGain;
@@ -126,6 +155,9 @@ namespace XREngine.Components
         /// Each multiplication with 2 equals an amplification of +6dB.
         /// A value of 0.0f is meaningless with respect to a logarithmic scale; it is interpreted as zero volume - the channel is effectively disabled.
         /// </summary>
+        [Category("Volume")]
+        [DisplayName("Gain")]
+        [Description("Volume multiplier (1.0 = unchanged).")]
         public float Gain
         {
             get => _gain;
@@ -136,6 +168,9 @@ namespace XREngine.Components
         /// Default: 360
         /// Range: [0-360]
         /// </summary>
+        [Category("Cone")]
+        [DisplayName("Inner Cone Angle")]
+        [Description("Full volume region angle for directional sources.")]
         public float ConeInnerAngle
         {
             get => _coneInnerAngle;
@@ -146,6 +181,9 @@ namespace XREngine.Components
         /// Default: 360
         /// Range: [0-360]
         /// </summary>
+        [Category("Cone")]
+        [DisplayName("Outer Cone Angle")]
+        [Description("Transition region angle for directional sources.")]
         public float ConeOuterAngle
         {
             get => _coneOuterAngle;
@@ -156,6 +194,9 @@ namespace XREngine.Components
         /// Default: 0.0f
         /// Range: [0.0f - 1.0] (Logarithmic)
         /// </summary>
+        [Category("Cone")]
+        [DisplayName("Outer Cone Gain")]
+        [Description("Volume outside the outer cone.")]
         public float ConeOuterGain
         {
             get => _coneOuterGain;
@@ -203,6 +244,9 @@ namespace XREngine.Components
             State = ESourceState.Initial;
         }
 
+        [Category("Playback")]
+        [DisplayName("Static Buffer")]
+        [Description("Audio data buffer for static playback.")]
         public AudioData? StaticBuffer
         {
             get => _staticBuffer;
@@ -228,6 +272,9 @@ namespace XREngine.Components
         }
 
         private int _maxStreamingBuffers = 10;
+        [Category("Streaming")]
+        [DisplayName("Max Streaming Buffers")]
+        [Description("Maximum queued buffers for streaming playback.")]
         public int MaxStreamingBuffers
         {
             get => _maxStreamingBuffers;
@@ -354,6 +401,9 @@ namespace XREngine.Components
         }
 
         private bool _playOnActivate = false;
+        [Category("Playback")]
+        [DisplayName("Play On Activate")]
+        [Description("Automatically plays audio when component activates.")]
         public bool PlayOnActivate
         {
             get => _playOnActivate;

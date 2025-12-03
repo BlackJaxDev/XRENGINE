@@ -22,8 +22,10 @@ namespace XREngine.Scene.Transforms
     [Serializable]
     public abstract partial class TransformBase : XRWorldObjectBase, IRenderable
     {
+        [Browsable(false)]
         public RenderInfo[] RenderedObjects { get; }
         [YamlIgnore]
+        [Browsable(false)]
         public bool HasChanged { get; protected set; } = false;
 
         public override string ToString()
@@ -43,6 +45,7 @@ namespace XREngine.Scene.Transforms
         
         private float _selectionRadius = 0.01f;
         [YamlIgnore]
+        [Browsable(false)]
         public float SelectionRadius
         {
             get => _selectionRadius;
@@ -51,6 +54,7 @@ namespace XREngine.Scene.Transforms
 
         private Capsule? _capsule = null;
         [YamlIgnore]
+        [Browsable(false)]
         public Capsule? Capsule
         {
             get => _capsule;
@@ -141,6 +145,7 @@ namespace XREngine.Scene.Transforms
         /// Scene nodes are used to house components in relation to the scene hierarchy.
         /// </summary>
         [YamlIgnore]
+        [Browsable(false)]
         public virtual SceneNode? SceneNode
         {
             get => _sceneNode;
@@ -149,6 +154,7 @@ namespace XREngine.Scene.Transforms
 
         private int _depth = 0;
         [YamlIgnore]
+        [Browsable(false)]
         public int Depth 
         {
             get => _depth;
@@ -161,6 +167,7 @@ namespace XREngine.Scene.Transforms
         /// Will affect this transform's world matrix.
         /// </summary>
         [YamlIgnore]
+        [Browsable(false)]
         public virtual TransformBase? Parent
         {
             get => _parent;
@@ -169,6 +176,7 @@ namespace XREngine.Scene.Transforms
 
         private EventList<TransformBase> _children;
         [YamlIgnore]
+        [Browsable(false)]
         public EventList<TransformBase> Children
         {
             get => _children;

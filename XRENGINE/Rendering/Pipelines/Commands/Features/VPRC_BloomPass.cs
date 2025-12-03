@@ -141,6 +141,8 @@ namespace XREngine.Rendering.Pipelines.Commands
             var blur8 = new XRQuadFrameBuffer(bloomBlurMat) { Name = BloomBlur8FBOName };
             var blur16 = new XRQuadFrameBuffer(bloomBlurMat) { Name = BloomBlur16FBOName };
 
+            AttachBloomUniforms(blur1, blur2, blur4, blur8, blur16);
+
             if (outputTexture is not IFrameBufferAttachement outputAttach)
                 throw new InvalidOperationException("Output texture is not an IFrameBufferAttachement.");
 
@@ -218,6 +220,29 @@ namespace XREngine.Rendering.Pipelines.Commands
                 mat.SetInt(1, mipmap);
             }
             fbo.Render();
+        }
+
+        private static void AttachBloomUniforms(params XRQuadFrameBuffer[] targets)
+        {
+            foreach (var target in targets)
+                target.SettingUniforms += BloomBlurFbo_SettingUniforms;
+        }
+
+        private static void BloomBlurFbo_SettingUniforms(XRRenderProgram program)
+        {
+            var camera = ActivePipelineInstance.RenderState.SceneCamera;
+            var bloom = camera?.PostProcessing?.Bloom;
+
+            if (bloom is not null)
+            {
+                bloom.SetBlurPassUniforms(program);
+                return;
+            }
+
+            program.Uniform("Radius", 1.0f);
+            program.Uniform("UseThreshold", false);
+            program.Uniform("BloomThreshold", 1.0f);
+            program.Uniform("BloomSoftKnee", 0.5f);
         }
     }
 }

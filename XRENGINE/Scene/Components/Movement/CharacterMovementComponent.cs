@@ -1,5 +1,6 @@
 ﻿using Extensions;
 using MagicPhysX;
+using System.ComponentModel;
 using System.Numerics;
 using XREngine.Core.Attributes;
 using XREngine.Data.Colors;
@@ -11,6 +12,9 @@ namespace XREngine.Components.Movement
 {
     [OneComponentAllowed]
     [RequiresTransform(typeof(RigidBodyTransform))]
+    [Category("Gameplay")]
+    [DisplayName("Character Movement")]
+    [Description("Full-featured first/third-person character controller with jumping, crouching, and slope handling.")]
     public class CharacterMovement3DComponent : PlayerMovementComponentBase
     {
         //public RigidBodyTransform RigidBodyTransform
@@ -80,6 +84,9 @@ namespace XREngine.Components.Movement
         /// This time is the amount of time the character can still jump after leaving the ground, like a cartoon coyote running off a cliff.
         /// Makes jumping feel more responsive and forgiving.
         /// </summary>
+        [Category("Jumping")]
+        [DisplayName("Coyote Time")]
+        [Description("Grace period after leaving ground where jump is still allowed.")]
         public float CoyoteTime
         {
             get => _coyoteTime;
@@ -89,6 +96,9 @@ namespace XREngine.Components.Movement
         /// <summary>
         /// How much force is applied when jumping.
         /// </summary>
+        [Category("Jumping")]
+        [DisplayName("Jump Force")]
+        [Description("Initial upward force applied when jumping.")]
         public float JumpForce
         {
             get => _jumpForce;
@@ -98,6 +108,9 @@ namespace XREngine.Components.Movement
         /// <summary>
         /// How much force is applied when sustaining a jump for longer than the initial jump force.
         /// </summary>
+        [Category("Jumping")]
+        [DisplayName("Jump Hold Force")]
+        [Description("Additional force while jump button is held.")]
         public float JumpHoldForce
         {
             get => _jumpHoldForce;
@@ -109,6 +122,9 @@ namespace XREngine.Components.Movement
         /// Air movement should be less responsive than ground movement,
         /// but still allow for some control over the character's movement in the air.
         /// </summary>
+        [Category("Movement")]
+        [DisplayName("Air Acceleration")]
+        [Description("Movement acceleration while airborne.")]
         public float AirMovementAcceleration
         {
             get => _airMovementAcceleration;
@@ -152,6 +168,9 @@ namespace XREngine.Components.Movement
         /// <summary>
         /// The direction the character stands up in.
         /// </summary>
+        [Category("Orientation")]
+        [DisplayName("Up Direction")]
+        [Description("The up vector for the character.")]
         public Vector3 UpDirection
         { 
             get => _upDirection;
@@ -162,6 +181,9 @@ namespace XREngine.Components.Movement
         /// If true, gravity will be rotated to match the character's <see cref="UpDirection"/>.
         /// This is useful if you want gravity to always be relative to the character.
         /// </summary>
+        [Category("Orientation")]
+        [DisplayName("Rotate Gravity To Up")]
+        [Description("Apply gravity relative to character up.")]
         public bool RotateGravityToMatchCharacterUp
         {
             get => _rotateGravityToMatchCharacterUp;
@@ -171,6 +193,9 @@ namespace XREngine.Components.Movement
         /// <summary>
         /// This allows for overriding the gravity applied to just this character controller.
         /// </summary>
+        [Category("Forces")]
+        [DisplayName("Gravity Override")]
+        [Description("Custom gravity vector (null uses scene gravity).")]
         public Vector3? GravityOverride
         {
             get => _gravityOverride;
@@ -180,6 +205,9 @@ namespace XREngine.Components.Movement
         /// <summary>
         /// How high the character can step up onto a ledge.
         /// </summary>
+        [Category("Ground")]
+        [DisplayName("Step Offset")]
+        [Description("Maximum height character can step up automatically.")]
         public float StepOffset
         {
             get => _stepOffset;
@@ -191,6 +219,9 @@ namespace XREngine.Components.Movement
         /// In general it is desirable to limit where the character can walk, in particular it is unrealistic for the character to be able to climb arbitary slopes.
         /// A value of 0 disables this feature.
         /// </summary>
+        [Category("Ground")]
+        [DisplayName("Slope Limit (Cosine)")]
+        [Description("Cosine of max walkable slope angle.")]
         public float SlopeLimitCosine
         {
             get => _slopeLimitCosine;
@@ -202,6 +233,7 @@ namespace XREngine.Components.Movement
         /// In general it is desirable to limit where the character can walk, in particular it is unrealistic for the character to be able to climb arbitary slopes.
         /// A value of 0 disables this feature.
         /// </summary>
+        [Browsable(false)]
         public float SlopeLimitAngleRad
         {
             get => (float)Math.Acos(SlopeLimitCosine);
@@ -213,6 +245,9 @@ namespace XREngine.Components.Movement
         /// In general it is desirable to limit where the character can walk, in particular it is unrealistic for the character to be able to climb arbitary slopes.
         /// A value of 0 disables this feature.
         /// </summary>
+        [Category("Ground")]
+        [DisplayName("Slope Limit (Degrees)")]
+        [Description("Max walkable slope angle in degrees.")]
         public float SlopeLimitAngleDeg
         {
             get => XRMath.RadToDeg(SlopeLimitAngleRad);
@@ -222,6 +257,9 @@ namespace XREngine.Components.Movement
         /// <summary>
         /// The speed at which the character moves when walking.
         /// </summary>
+        [Category("Movement")]
+        [DisplayName("Walking Speed")]
+        [Description("Base walking movement speed.")]
         public float WalkingMovementSpeed
         {
             get => _walkingMovementSpeed;
@@ -253,6 +291,9 @@ namespace XREngine.Components.Movement
         /// Use it to avoid numerical precision issues.
         /// This is dependant on the scale of the users world, but should be a small, positive non zero value.
         /// </summary>
+        [Category("Collision")]
+        [DisplayName("Contact Offset")]
+        [Description("Contact skin width for numerical precision.")]
         public float ContactOffset
         {
             get => _contactOffset;
@@ -262,6 +303,9 @@ namespace XREngine.Components.Movement
         /// <summary>
         /// The crouch state of the character.
         /// </summary>
+        [Category("Crouch")]
+        [DisplayName("Crouch State")]
+        [Description("Current crouch posture.")]
         public ECrouchState CrouchState
         {
             get => _crouchState;
@@ -271,6 +315,10 @@ namespace XREngine.Components.Movement
         /// <summary>
         /// The current movement mode of the character.
         /// </summary>
+        [Category("Movement")]
+        [DisplayName("Movement Mode")]
+        [Description("Current movement context (walking, falling, etc.).")]
+        [Browsable(false)]
         public EMovementMode MovementMode
         {
             get => _movementMode;
@@ -279,10 +327,13 @@ namespace XREngine.Components.Movement
 
         /// <summary>
         /// Height of invisible walls created around non-walkable triangles.
-        /// The library can automatically create invisible walls around non-walkable triangles defined by the ‘slopeLimit’ parameter.
+        /// The library can automatically create invisible walls around non-walkable triangles defined by the 'slopeLimit' parameter.
         /// This defines the height of those walls.
         /// If it is 0.0, then no extra triangles are created.
         /// </summary>
+        [Category("Ground")]
+        [DisplayName("Invisible Wall Height")]
+        [Description("Height of walls around non-walkable surfaces.")]
         public float InvisibleWallHeight
         {
             get => _invisibleWallHeight;
@@ -291,8 +342,11 @@ namespace XREngine.Components.Movement
 
         /// <summary>
         /// Density of underlying kinematic actor.
-        /// The CCT creates a PhysX’s kinematic actor under the hood.This controls its density.
+        /// The CCT creates a PhysX's kinematic actor under the hood.This controls its density.
         /// </summary>
+        [Category("Capsule")]
+        [DisplayName("Density")]
+        [Description("Density of the underlying physics actor.")]
         public float Density
         {
             get => _density;
@@ -327,6 +381,9 @@ namespace XREngine.Components.Movement
         /// Amount of space around the controller we cache to improve performance.
         /// This is a scale factor that should be higher than 1.0f but not too big, ideally lower than 2.0f.
         /// </summary>
+        [Category("Capsule")]
+        [DisplayName("Volume Growth")]
+        [Description("Cached volume scale for performance.")]
         public float VolumeGrowth
         {
             get => _volumeGrowth;
@@ -337,18 +394,27 @@ namespace XREngine.Components.Movement
         /// The non-walkable mode controls if a character controller slides or not on a non-walkable part.
         /// This is only used when slopeLimit is non zero.
         /// </summary>
+        [Category("Ground")]
+        [DisplayName("Slide On Steep Slopes")]
+        [Description("Whether to slide on non-walkable surfaces.")]
         public bool SlideOnSteepSlopes
         {
             get => _slideOnSteepSlopes;
             set => SetField(ref _slideOnSteepSlopes, value);
         }
 
+        [Category("Capsule")]
+        [DisplayName("Material")]
+        [Description("Physics material for friction and restitution.")]
         public PhysxMaterial Material
         {
             get => _material;
             set => SetField(ref _material, value);
         }
 
+        [Category("Capsule")]
+        [DisplayName("Radius")]
+        [Description("Capsule collision radius.")]
         public float Radius
         {
             get => _radius;
@@ -358,6 +424,9 @@ namespace XREngine.Components.Movement
         /// <summary>
         /// How tall the character is when standing.
         /// </summary>
+        [Category("Capsule")]
+        [DisplayName("Standing Height")]
+        [Description("Character height when standing.")]
         public float StandingHeight
         {
             get => _standingHeight;
@@ -367,6 +436,9 @@ namespace XREngine.Components.Movement
         /// <summary>
         /// How tall the character is when prone.
         /// </summary>
+        [Category("Crouch")]
+        [DisplayName("Prone Height")]
+        [Description("Character height when prone.")]
         public float ProneHeight
         {
             get => _proneHeight;
@@ -376,6 +448,9 @@ namespace XREngine.Components.Movement
         /// <summary>
         /// How tall the character is when crouched.
         /// </summary>
+        [Category("Crouch")]
+        [DisplayName("Crouched Height")]
+        [Description("Character height when crouched.")]
         public float CrouchedHeight
         {
             get => _crouchedHeight;
@@ -396,6 +471,9 @@ namespace XREngine.Components.Movement
                 _ => 0.0f,
             };
 
+        [Category("Ground")]
+        [DisplayName("Constrained Climbing")]
+        [Description("Use constrained climbing mode.")]
         public bool ConstrainedClimbing
         {
             get => _constrainedClimbing;
@@ -404,15 +482,19 @@ namespace XREngine.Components.Movement
 
         /// <summary>
         /// The minimum travelled distance to consider.
-        /// If travelled distance is smaller, the character doesn’t move.
+        /// If travelled distance is smaller, the character doesn't move.
         /// This is used to stop the recursive motion algorithm when remaining distance to travel is small.
         /// </summary>
+        [Category("Movement")]
+        [DisplayName("Min Move Distance")]
+        [Description("Minimum movement distance threshold.")]
         public float MinMoveDistance
         {
             get => _minMoveDistance;
             set => SetField(ref _minMoveDistance, value);
         }
 
+        [Browsable(false)]
         public CapsuleController? Controller
         {
             get => _controller;
@@ -512,6 +594,9 @@ namespace XREngine.Components.Movement
             }
         }
 
+        [Category("Initialization")]
+        [DisplayName("Spawn Position")]
+        [Description("Initial spawn position.")]
         public Vector3 SpawnPosition
         {
             get => _spawnPosition;
@@ -627,6 +712,7 @@ namespace XREngine.Components.Movement
         }
 
         private Vector3 _acceleration;
+        [Browsable(false)]
         public Vector3 Acceleration
         {
             get => _acceleration;
@@ -634,18 +720,25 @@ namespace XREngine.Components.Movement
         }
 
         private Vector3 _lastVelocity;
+        [Browsable(false)]
         public Vector3 LastVelocity
         {
             get => _lastVelocity;
             private set => SetField(ref _lastVelocity, value);
         }
 
+        [Category("Movement")]
+        [DisplayName("Velocity")]
+        [Description("Current movement velocity.")]
         public Vector3 Velocity
         {
             get => _velocity;
             set => SetField(ref _velocity, value);
         }
 
+        [Category("Movement")]
+        [DisplayName("Friction")]
+        [Description("Dynamic friction coefficient.")]
         public float Friction
         {
             get => Material.DynamicFriction;
@@ -660,6 +753,9 @@ namespace XREngine.Components.Movement
 
         // TODO: calculate friction based on this character's material and the current surface
         private float _walkingFriction = 0.1f;
+        [Category("Movement")]
+        [DisplayName("Ground Friction")]
+        [Description("Friction applied when grounded.")]
         public float GroundFriction
         {
             get => _walkingFriction;
@@ -677,6 +773,9 @@ namespace XREngine.Components.Movement
         public bool IsJumping => _isJumping;
 
         private float _maxSpeed = 20.0f;
+        [Category("Movement")]
+        [DisplayName("Max Speed")]
+        [Description("Maximum movement speed.")]
         public float MaxSpeed
         {
             get => _maxSpeed;
@@ -686,6 +785,9 @@ namespace XREngine.Components.Movement
         /// <summary>
         /// How long jumping can be sustained.
         /// </summary>
+        [Category("Jumping")]
+        [DisplayName("Max Jump Duration")]
+        [Description("Maximum time jump button can be held.")]
         public float MaxJumpDuration
         {
             get => _maxJumpDuration;
@@ -696,6 +798,9 @@ namespace XREngine.Components.Movement
         /// <summary>
         /// Whether to tick input with physics or not.
         /// </summary>
+        [Category("Movement")]
+        [DisplayName("Tick Input With Physics")]
+        [Description("Whether to process input in physics tick.")]
         public bool TickInputWithPhysics
         {
             get => _tickInputWithPhysics;

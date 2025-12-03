@@ -1,10 +1,13 @@
 using System;
+using System.Collections;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Numerics;
 using System.Reflection;
 using System.Runtime.InteropServices;
+using System.Runtime.CompilerServices;
 using System.Text;
 using ImGuiNET;
 using XREngine;
@@ -66,7 +69,7 @@ internal static class ImGuiAssetUtilities
     }
 
     public static void DrawAssetField<TAsset>(string id, TAsset? current, Action<TAsset?> assign, AssetFieldOptions? options = null)
-        where TAsset : XRAsset, new()
+        where TAsset : XRAsset
     {
         options ??= AssetFieldOptions.ForType<TAsset>();
         var state = GetPickerState<TAsset>(options);
@@ -124,11 +127,14 @@ internal static class ImGuiAssetUtilities
             ImGui.EndPopup();
         }
 
+        if (current is not null)
+            DrawInlineAssetInspector(current);
+
         ImGui.PopID();
     }
 
     private static void DrawAssetPickerPopup<TAsset>(AssetPickerState<TAsset> state, TAsset? current, Action<TAsset?> assign)
-        where TAsset : XRAsset, new()
+        where TAsset : XRAsset
     {
         if (state.NeedsRefresh)
             RefreshAssetPickerState(state, force: true);
@@ -252,7 +258,8 @@ internal static class ImGuiAssetUtilities
         }
     }
 
-    private static AssetPickerState<TAsset> GetPickerState<TAsset>(AssetFieldOptions options) where TAsset : XRAsset, new()
+    private static AssetPickerState<TAsset> GetPickerState<TAsset>(AssetFieldOptions options)
+        where TAsset : XRAsset
     {
         string extensionKey = options.ExtensionsKey(typeof(TAsset));
         var key = new AssetPickerKey(typeof(TAsset), extensionKey);
@@ -265,7 +272,8 @@ internal static class ImGuiAssetUtilities
         return state;
     }
 
-    private static void RefreshAssetPickerState<TAsset>(AssetPickerState<TAsset> state, bool force = false) where TAsset : XRAsset, new()
+    private static void RefreshAssetPickerState<TAsset>(AssetPickerState<TAsset> state, bool force = false)
+        where TAsset : XRAsset
     {
         if (!force && !state.NeedsRefresh)
             return;
@@ -312,7 +320,7 @@ internal static class ImGuiAssetUtilities
     }
 
     private static IEnumerable<AssetCandidate<TAsset>> EnumerateFilteredCandidates<TAsset>(AssetPickerState<TAsset> state)
-        where TAsset : XRAsset, new()
+        where TAsset : XRAsset
     {
         string search = state.Search;
         if (string.IsNullOrWhiteSpace(search))
@@ -359,7 +367,7 @@ internal static class ImGuiAssetUtilities
         }
     }
 
-    private static TAsset? LoadAssetFromPath<TAsset>(string path) where TAsset : XRAsset, new()
+    private static TAsset? LoadAssetFromPath<TAsset>(string path) where TAsset : XRAsset
     {
         if (string.IsNullOrWhiteSpace(path))
             return null;
@@ -370,7 +378,7 @@ internal static class ImGuiAssetUtilities
 
         try
         {
-            return assets.Load<TAsset>(path);
+            return assets.Load(path, typeof(TAsset)) as TAsset;
         }
         catch (Exception ex)
         {
@@ -410,7 +418,7 @@ internal static class ImGuiAssetUtilities
     private static string[] GetDefaultExtensions(Type assetType)
         => DefaultExtensions.TryGetValue(assetType, out var exts)
             ? exts
-            : new[] { ".asset" };
+            : [".asset"];
 
     public sealed class AssetFieldOptions
     {
@@ -422,17 +430,17 @@ internal static class ImGuiAssetUtilities
                 .Select(NormalizeExtension)
                 .Where(static e => !string.IsNullOrEmpty(e))
                 .Distinct(StringComparer.OrdinalIgnoreCase)
-                .ToArray() ?? Array.Empty<string>();
+                .ToArray() ?? [];
         }
 
         public static AssetFieldOptions ForType<TAsset>() where TAsset : XRAsset
             => new(null);
 
         public static AssetFieldOptions ForMeshes()
-            => new(new[] { ".asset", ".mesh", ".model" });
+            => new([".asset", ".mesh", ".model"]);
 
         public static AssetFieldOptions ForMaterials()
-            => new(new[] { ".asset", ".material" });
+            => new([".asset", ".material"]);
 
         public static AssetFieldOptions WithExtensions(IEnumerable<string> extensions)
             => new(extensions);
@@ -441,11 +449,9 @@ internal static class ImGuiAssetUtilities
             => _customExtensions.Length > 0 ? _customExtensions : GetDefaultExtensions(assetType);
 
         public string ExtensionsKey(Type assetType)
-        {
-            if (_customExtensions.Length == 0)
-                return string.Join(';', GetDefaultExtensions(assetType));
-            return string.Join(';', _customExtensions);
-        }
+            => _customExtensions.Length == 0 
+                ? string.Join(';', GetDefaultExtensions(assetType))
+                : string.Join(';', _customExtensions);
 
         private static string NormalizeExtension(string ext)
         {
@@ -459,23 +465,21 @@ internal static class ImGuiAssetUtilities
         }
     }
 
-    private sealed class AssetPickerState<TAsset> where TAsset : XRAsset, new()
+    private sealed class AssetPickerState<TAsset>(string[] extensions)
+        where TAsset : XRAsset
     {
-        public AssetPickerState(string[] extensions)
-            => Extensions = extensions;
-
         public string Search { get; set; } = string.Empty;
         public bool IncludeGame { get; set; } = true;
         public bool IncludeEngine { get; set; } = true;
         public bool NeedsRefresh { get; set; } = true;
-        public IReadOnlyList<string> Extensions { get; }
-        public List<AssetCandidate<TAsset>> Candidates { get; } = new();
+        public IReadOnlyList<string> Extensions { get; } = extensions;
+        public List<AssetCandidate<TAsset>> Candidates { get; } = [];
         public AssetCandidate<TAsset>? LastPreviewCandidate { get; set; }
     }
 
-    private sealed class AssetCandidate<TAsset> where TAsset : XRAsset, new()
+    private sealed class AssetCandidate<TAsset> where TAsset : XRAsset
     {
-        private readonly List<Action<TAsset?>> _pendingAssignments = new();
+        private readonly List<Action<TAsset?>> _pendingAssignments = [];
         private TAsset? _asset;
         private XRTexture2D? _previewTexture;
         private bool _previewRequested;
@@ -604,7 +608,8 @@ internal static class ImGuiAssetUtilities
         }
     }
 
-    private static void DrawTexturePreviewPane<TAsset>(AssetCandidate<TAsset>? candidate, float paneWidth) where TAsset : XRAsset, new()
+    private static void DrawTexturePreviewPane<TAsset>(AssetCandidate<TAsset>? candidate, float paneWidth)
+        where TAsset : XRAsset
     {
         ImGui.TextDisabled("Preview");
         ImGui.Separator();
@@ -709,6 +714,289 @@ internal static class ImGuiAssetUtilities
                 return renderer;
 
         return null;
+    }
+
+    private static void DrawInlineAssetInspector(XRAsset asset)
+    {
+        ImGui.Spacing();
+        ImGui.PushID("InlineAssetInspector");
+        const ImGuiTreeNodeFlags headerFlags = ImGuiTreeNodeFlags.DefaultOpen | ImGuiTreeNodeFlags.SpanAvailWidth;
+        if (ImGui.CollapsingHeader("Inspect Asset", headerFlags))
+        {
+            DrawAssetInspectorMetadata(asset);
+            ImGui.Separator();
+
+            using var contextScope = RequiresExternalAssetContext(asset)
+                ? UnitTestingWorld.UserInterface.PushInspectorAssetContext(asset.SourceAsset ?? asset)
+                : null;
+
+            UnitTestingWorld.UserInterface.DrawAssetInspectorInline(asset);
+        }
+        ImGui.PopID();
+    }
+
+    private static void DrawAssetInspectorMetadata(XRAsset asset)
+    {
+        string displayName = !string.IsNullOrWhiteSpace(asset.Name)
+            ? asset.Name!
+            : asset.GetType().Name;
+        ImGui.TextUnformatted(displayName);
+
+        string? filePath = asset.FilePath;
+        if (!string.IsNullOrWhiteSpace(filePath))
+        {
+            string fileName = Path.GetFileName(filePath);
+            ImGui.TextDisabled(string.IsNullOrWhiteSpace(fileName) ? filePath : fileName);
+            if (ImGui.IsItemHovered())
+                ImGui.SetTooltip(filePath);
+
+            ImGui.SameLine();
+            if (ImGui.SmallButton("Copy Path"))
+                ImGui.SetClipboardText(filePath);
+        }
+        else
+        {
+            ImGui.TextDisabled("Embedded asset (not saved as a separate file)");
+        }
+
+        if (asset.ID != Guid.Empty)
+            ImGui.TextDisabled($"GUID: {asset.ID}");
+
+        bool isDirty = asset.IsDirty;
+        ImGui.TextDisabled(isDirty ? "Status: Dirty" : "Status: Saved");
+
+        if (!string.IsNullOrWhiteSpace(filePath))
+        {
+            int referenceCount = AssetReferenceAnalyzer.GetReferenceCount(asset);
+            string message = referenceCount switch
+            {
+                0 => "No other assets reference this file.",
+                1 => "1 other asset references this file.",
+                _ => $"{referenceCount} other assets reference this file."
+            };
+            ImGui.TextDisabled(message);
+        }
+    }
+
+    private static bool RequiresExternalAssetContext(XRAsset asset)
+        => !string.IsNullOrWhiteSpace(asset.FilePath);
+
+    private static class AssetReferenceAnalyzer
+    {
+        private static readonly Dictionary<Guid, CacheEntry> _cache = new();
+        private static readonly TimeSpan CacheDuration = TimeSpan.FromSeconds(2);
+
+        public static int GetReferenceCount(XRAsset asset)
+        {
+            if (asset.ID == Guid.Empty)
+                return 0;
+
+            DateTime now = DateTime.UtcNow;
+            lock (_cache)
+            {
+                if (_cache.TryGetValue(asset.ID, out var entry)
+                    && entry.Expiry > now
+                    && entry.Asset.TryGetTarget(out var cached)
+                    && ReferenceEquals(cached, asset))
+                {
+                    return entry.Count;
+                }
+            }
+
+            int count = AssetReferenceWalker.CountReferences(asset);
+
+            lock (_cache)
+            {
+                _cache[asset.ID] = new CacheEntry(new WeakReference<XRAsset>(asset), now + CacheDuration, count);
+            }
+
+            return count;
+        }
+
+        private sealed class CacheEntry
+        {
+            public CacheEntry(WeakReference<XRAsset> asset, DateTime expiry, int count)
+            {
+                Asset = asset;
+                Expiry = expiry;
+                Count = count;
+            }
+
+            public WeakReference<XRAsset> Asset { get; }
+            public DateTime Expiry { get; }
+            public int Count { get; }
+        }
+    }
+
+    private sealed class AssetReferenceWalker
+    {
+        private const int MaxTraversalDepth = 64;
+        private const int MaxEnumeratedElements = 2048;
+        private static readonly ConcurrentDictionary<Type, List<Func<object, object?>>> AccessorCache = new();
+
+        private readonly XRAsset _target;
+        private readonly Guid _targetId;
+        private readonly HashSet<object> _visited = new(ReferenceEqualityComparer.Instance);
+
+        private AssetReferenceWalker(XRAsset target)
+        {
+            _target = target;
+            _targetId = target.ID;
+        }
+
+        public static int CountReferences(XRAsset target)
+        {
+            var assets = Engine.Assets;
+            if (assets is null)
+                return 0;
+
+            var walker = new AssetReferenceWalker(target);
+            int count = 0;
+            foreach (var candidate in assets.LoadedAssetsByIDInternal.Values)
+            {
+                if (candidate is null || ReferenceEquals(candidate, target))
+                    continue;
+
+                if (walker.ContainsReference(candidate))
+                    count++;
+            }
+
+            return count;
+        }
+
+        private bool ContainsReference(object root)
+        {
+            _visited.Clear();
+            return Traverse(root, 0);
+        }
+
+        private bool Traverse(object? candidate, int depth)
+        {
+            if (candidate is null)
+                return false;
+
+            if (ReferenceEquals(candidate, _target))
+                return true;
+
+            if (!_visited.Add(candidate))
+                return false;
+
+            if (candidate is string || candidate is Type)
+                return false;
+
+            Type type = candidate.GetType();
+
+            if (ShouldSkipTraversalType(type))
+                return false;
+            if (type.IsPrimitive || type.IsEnum || type.IsPointer)
+                return false;
+
+            if (candidate is XRAsset asset && asset.ID != Guid.Empty && asset.ID == _targetId)
+                return true;
+
+            if (depth >= MaxTraversalDepth)
+                return false;
+
+            if (candidate is IDictionary dictionary)
+            {
+                int processed = 0;
+                foreach (DictionaryEntry entry in dictionary)
+                {
+                    if (Traverse(entry.Key, depth + 1) || Traverse(entry.Value, depth + 1))
+                        return true;
+
+                    if (++processed >= MaxEnumeratedElements)
+                        break;
+                }
+                return false;
+            }
+
+            if (candidate is IEnumerable enumerable)
+            {
+                int processed = 0;
+                foreach (var item in enumerable)
+                {
+                    if (Traverse(item, depth + 1))
+                        return true;
+
+                    if (++processed >= MaxEnumeratedElements)
+                        break;
+                }
+                return false;
+            }
+
+            if (type.IsValueType)
+                return false;
+
+            foreach (var accessor in GetAccessors(type))
+            {
+                object? value;
+                try
+                {
+                    value = accessor(candidate);
+                }
+                catch
+                {
+                    continue;
+                }
+
+                if (Traverse(value, depth + 1))
+                    return true;
+            }
+
+            return false;
+        }
+
+        private static List<Func<object, object?>> GetAccessors(Type type)
+            => AccessorCache.GetOrAdd(type, static t =>
+            {
+                var accessors = new List<Func<object, object?>>();
+                for (Type? current = t; current is not null && current != typeof(object); current = current.BaseType)
+                {
+                    foreach (var property in current.GetProperties(BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.DeclaredOnly))
+                    {
+                        if (!property.CanRead)
+                            continue;
+                        if (property.GetIndexParameters().Length != 0)
+                            continue;
+                        var getter = property.GetMethod;
+                        if (getter is null || getter.IsStatic)
+                            continue;
+                        accessors.Add(property.GetValue);
+                    }
+
+                    foreach (var field in current.GetFields(BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.DeclaredOnly))
+                    {
+                        if (field.IsStatic)
+                            continue;
+                        accessors.Add(field.GetValue);
+                    }
+                }
+
+                return accessors;
+            });
+
+        private static bool ShouldSkipTraversalType(Type type)
+        {
+            string? fullName = type.FullName;
+            if (string.IsNullOrEmpty(fullName))
+                return false;
+
+            // CLR internal runtime caches have fragile reflection accessors that can crash traversal, so skip them entirely.
+            return fullName.Contains("System.RuntimeType", StringComparison.Ordinal)
+                && fullName.Contains("RuntimeTypeCache", StringComparison.Ordinal);
+        }
+    }
+
+    private sealed class ReferenceEqualityComparer : IEqualityComparer<object>
+    {
+        public static readonly ReferenceEqualityComparer Instance = new();
+
+        public new bool Equals(object? x, object? y)
+            => ReferenceEquals(x, y);
+
+        public int GetHashCode(object obj)
+            => RuntimeHelpers.GetHashCode(obj);
     }
 
     private readonly record struct AssetPickerKey(Type AssetType, string ExtensionsKey);

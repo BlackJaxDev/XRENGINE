@@ -1,4 +1,5 @@
-﻿using System.Numerics;
+﻿using System.ComponentModel;
+using System.Numerics;
 using MagicPhysX;
 using XREngine.Core.Attributes;
 using XREngine.Rendering.Physics.Physx;
@@ -9,6 +10,9 @@ using XREngine;
 namespace XREngine.Components.Physics
 {
     [RequiresTransform(typeof(RigidBodyTransform))]
+    [Category("Physics")]
+    [DisplayName("Static Rigid Body")]
+    [Description("Fixed collider that participates in the physics simulation without moving.")]
     [XRComponentEditor("XREngine.Editor.ComponentEditors.StaticRigidBodyComponentEditor")]
     public class StaticRigidBodyComponent : PhysicsActorComponent
     {
@@ -33,54 +37,79 @@ namespace XREngine.Components.Physics
         private Vector3? _initialPosition;
         private Quaternion? _initialRotation;
 
+        [Browsable(false)]
         public IAbstractStaticRigidBody? RigidBody
         {
             get => _rigidBody;
             set => SetField(ref _rigidBody, value);
         }
 
+        [Category("Initialization")]
+        [DisplayName("Auto Create Rigid Body")]
+        [Description("Whether to auto-create the rigid body on world registration.")]
         public bool AutoCreateRigidBody
         {
             get => _autoCreateRigidBody;
             set => SetField(ref _autoCreateRigidBody, value);
         }
 
+        [Category("Shape")]
+        [DisplayName("Material")]
+        [Description("The physics material defining friction and restitution.")]
         public AbstractPhysicsMaterial? Material
         {
             get => _material;
             set => SetField(ref _material, value);
         }
 
+        [Category("Shape")]
+        [DisplayName("Geometry")]
+        [Description("The collision geometry shape.")]
         public IPhysicsGeometry? Geometry
         {
             get => _geometry;
             set => SetField(ref _geometry, value);
         }
 
+        [Category("Shape")]
+        [DisplayName("Shape Offset Translation")]
+        [Description("Local translation offset for the collision shape.")]
         public Vector3 ShapeOffsetTranslation
         {
             get => _shapeOffsetTranslation;
             set => SetField(ref _shapeOffsetTranslation, value);
         }
 
+        [Category("Shape")]
+        [DisplayName("Shape Offset Rotation")]
+        [Description("Local rotation offset for the collision shape.")]
         public Quaternion ShapeOffsetRotation
         {
             get => _shapeOffsetRotation;
             set => SetField(ref _shapeOffsetRotation, value);
         }
 
+        [Category("Initialization")]
+        [DisplayName("Initial Position")]
+        [Description("Override spawn position for the rigid body.")]
         public Vector3? InitialPosition
         {
             get => _initialPosition;
             set => SetField(ref _initialPosition, value);
         }
 
+        [Category("Initialization")]
+        [DisplayName("Initial Rotation")]
+        [Description("Override spawn rotation for the rigid body.")]
         public Quaternion? InitialRotation
         {
             get => _initialRotation;
             set => SetField(ref _initialRotation, value);
         }
 
+        [Category("Forces")]
+        [DisplayName("Gravity Enabled")]
+        [Description("Whether gravity affects this body (typically false for static).")]
         public bool GravityEnabled
         {
             get => RigidBody is PhysxActor actor ? actor.GravityEnabled : _gravityEnabled;
@@ -93,6 +122,9 @@ namespace XREngine.Components.Physics
             }
         }
 
+        [Category("Simulation")]
+        [DisplayName("Simulation Enabled")]
+        [Description("Whether the physics simulation is enabled.")]
         public bool SimulationEnabled
         {
             get => RigidBody is PhysxActor actor ? actor.SimulationEnabled : _simulationEnabled;
@@ -105,6 +137,9 @@ namespace XREngine.Components.Physics
             }
         }
 
+        [Category("Debug")]
+        [DisplayName("Debug Visualization")]
+        [Description("Show physics debug visualization.")]
         public bool DebugVisualization
         {
             get => RigidBody is PhysxActor actor ? actor.DebugVisualize : _debugVisualization;
@@ -117,6 +152,9 @@ namespace XREngine.Components.Physics
             }
         }
 
+        [Category("Sleep")]
+        [DisplayName("Send Sleep Notifies")]
+        [Description("Whether to notify when sleep state changes.")]
         public bool SendSleepNotifies
         {
             get => RigidBody is PhysxActor actor ? actor.SendSleepNotifies : _sendSleepNotifies;
@@ -129,6 +167,9 @@ namespace XREngine.Components.Physics
             }
         }
 
+        [Category("Collision")]
+        [DisplayName("Collision Group")]
+        [Description("The collision group this body belongs to.")]
         public ushort CollisionGroup
         {
             get => RigidBody is PhysxActor actor ? actor.CollisionGroup : _collisionGroup;
@@ -141,6 +182,9 @@ namespace XREngine.Components.Physics
             }
         }
 
+        [Category("Collision")]
+        [DisplayName("Groups Mask")]
+        [Description("Collision filter mask for collision filtering.")]
         public PhysicsGroupsMask GroupsMask
         {
             get => RigidBody is PhysxActor actor ? FromPhysxGroupsMask(actor.GroupsMask) : _groupsMask;
@@ -153,6 +197,9 @@ namespace XREngine.Components.Physics
             }
         }
 
+        [Category("Collision")]
+        [DisplayName("Dominance Group")]
+        [Description("Collision resolution dominance (higher wins).")]
         public byte DominanceGroup
         {
             get => RigidBody is PhysxActor actor ? actor.DominanceGroup : _dominanceGroup;
@@ -165,6 +212,9 @@ namespace XREngine.Components.Physics
             }
         }
 
+        [Category("Networking")]
+        [DisplayName("Owner Client")]
+        [Description("Client ID that owns this body.")]
         public byte OwnerClient
         {
             get => RigidBody is PhysxActor actor ? actor.OwnerClient : _ownerClient;
@@ -177,6 +227,9 @@ namespace XREngine.Components.Physics
             }
         }
 
+        [Category("Debug")]
+        [DisplayName("Actor Name")]
+        [Description("Debug name for the physics actor.")]
         public string? ActorName
         {
             get => RigidBody is PhysxActor actor ? actor.Name : _actorName;
