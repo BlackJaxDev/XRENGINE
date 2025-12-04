@@ -74,6 +74,23 @@ namespace XREngine.Data.Geometry
 
         [JsonIgnore]
         [YamlIgnore]
+        public readonly bool IsValid
+        {
+            get
+            {
+                return IsFinite(_min)
+                    && IsFinite(_max)
+                    && _min.X <= _max.X
+                    && _min.Y <= _max.Y
+                    && _min.Z <= _max.Z;
+            }
+        }
+
+        private static bool IsFinite(in Vector3 value)
+            => float.IsFinite(value.X) && float.IsFinite(value.Y) && float.IsFinite(value.Z);
+
+        [JsonIgnore]
+        [YamlIgnore]
         public readonly float Volume
         {
             get

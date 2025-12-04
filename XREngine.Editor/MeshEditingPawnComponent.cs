@@ -5,6 +5,7 @@ using System.Numerics;
 using XREngine.Input;
 using XREngine.Input.Devices;
 using XREngine.Modeling;
+using XREngine.Rendering.Picking;
 using XREngine.Scene.Transforms;
 
 namespace XREngine.Editor;
@@ -22,29 +23,28 @@ public enum PrimitiveSelectionMode
 /// </summary>
 public sealed class MeshEditingPawnComponent : EditorFlyingCameraPawnComponent
 {
-    private readonly EditableMesh _mesh;
+    private EditableMesh? _mesh;
+    public EditableMesh? Mesh
+    {
+        get => _mesh;
+        set => SetField(ref _mesh, value);
+    }
+    
+    private TransformBase? _targetTransform;
+    public TransformBase? TargetTransform
+    {
+        get => _targetTransform;
+        set => SetField(ref _targetTransform, value);
+    }
+
     private readonly HashSet<int> _selectedVertices = [];
     private readonly HashSet<int> _selectedEdges = [];
     private readonly HashSet<int> _selectedFaces = [];
-    private TransformBase? _targetTransform;
 
-    public MeshEditingPawnComponent(EditableMesh mesh, TransformBase? targetTransform = null)
-    {
-        _mesh = mesh;
-        _targetTransform = targetTransform;
-    }
-
-    public EditableMesh Mesh => _mesh;
     public IReadOnlyCollection<int> SelectedVertices => _selectedVertices;
     public IReadOnlyCollection<int> SelectedEdges => _selectedEdges;
     public IReadOnlyCollection<int> SelectedFaces => _selectedFaces;
     public PrimitiveSelectionMode SelectionMode { get; private set; } = PrimitiveSelectionMode.Vertex;
-
-    public TransformBase? TargetTransform
-    {
-        get => _targetTransform;
-        set => _targetTransform = value;
-    }
 
     public override void RegisterInput(InputInterface input)
     {
@@ -77,7 +77,7 @@ public sealed class MeshEditingPawnComponent : EditorFlyingCameraPawnComponent
         bool alt = keyboard?.GetKeyState(EKey.AltLeft, EButtonInputType.Pressed) == true
                    || keyboard?.GetKeyState(EKey.AltRight, EButtonInputType.Pressed) == true;
 
-        IEnumerable<int> selection = new[] { pickedIndex.Value };
+        IEnumerable<int> selection = [pickedIndex.Value];
 
         if (alt)
         {
@@ -123,7 +123,10 @@ public sealed class MeshEditingPawnComponent : EditorFlyingCameraPawnComponent
         }
 
         EdgeKey key = new(start, end);
-        var edges = _mesh.Edges;
+        var edges = _mesh?.Edges;
+        if (edges is null)
+            return null;
+
         for (int i = 0; i < edges.Count; i++)
         {
             if (edges[i] == key)
@@ -200,13 +203,22 @@ public sealed class MeshEditingPawnComponent : EditorFlyingCameraPawnComponent
             _ => []
         };
 
-        _mesh.TransformVertices(vertices, transform);
+        _mesh?.TransformVertices(vertices, transform);
     }
 
     public int InsertVertexOnSelection(Vector3 position)
     {
+        if (_mesh is null)
+        {
+            Debug.LogWarning("No mesh is assigned to the MeshEditingPawnComponent.");
+            return -1;
+        }
+
         if (!_selectedEdges.Any())
-            throw new InvalidOperationException("An edge must be selected before inserting a vertex.");
+        {
+            Debug.LogWarning("No edge is selected to insert a vertex on.");
+            return -1;
+        }
 
         EdgeKey targetEdge = _mesh.Edges.ElementAt(_selectedEdges.First());
         int newIndex = _mesh.InsertVertexOnEdge(targetEdge, position);
@@ -219,10 +231,19 @@ public sealed class MeshEditingPawnComponent : EditorFlyingCameraPawnComponent
 
     public EdgeKey ConnectSelectedVertices()
     {
+        if (_mesh is null)
+        {
+            Debug.LogWarning("No mesh is assigned to the MeshEditingPawnComponent.");
+            return default;
+        }
+        
         if (_selectedVertices.Count < 2)
-            throw new InvalidOperationException("Select at least two vertices to create an edge.");
+        {
+            Debug.LogWarning("Select at least two vertices to create an edge.");
+            return default;
+        }
 
-        int[] picked = _selectedVertices.Take(2).ToArray();
+        int[] picked = [.. _selectedVertices.Take(2)];
         EdgeKey newEdge = _mesh.ConnectSelectedVertices(picked[0], picked[1]);
 
         _selectedEdges.Clear();
@@ -234,10 +255,10 @@ public sealed class MeshEditingPawnComponent : EditorFlyingCameraPawnComponent
     }
 
     public MeshAccelerationData BuildAccelerationData()
-        => _mesh.GenerateAccelerationStructure();
+        => _mesh?.GenerateAccelerationStructure() ?? throw new InvalidOperationException("No mesh is assigned to the MeshEditingPawnComponent.");
 
     public (List<Vector3> Vertices, List<int> Indices) BakeToMeshData()
-        => _mesh.Bake();
+        => _mesh?.Bake() ?? throw new InvalidOperationException("No mesh is assigned to the MeshEditingPawnComponent.");
 
     public void SetSelectionMode(PrimitiveSelectionMode mode)
     {
@@ -278,6 +299,8 @@ public sealed class MeshEditingPawnComponent : EditorFlyingCameraPawnComponent
 
     private IEnumerable<int> CollectVerticesFromEdges(IEnumerable<int> edgeIds)
     {
+        if (_mesh is null)
+            yield break;
         foreach (int edgeId in edgeIds)
         {
             EdgeKey edge = _mesh.Edges.ElementAt(edgeId);
@@ -288,6 +311,8 @@ public sealed class MeshEditingPawnComponent : EditorFlyingCameraPawnComponent
 
     private IEnumerable<int> CollectVerticesFromFaces(IEnumerable<int> faceIds)
     {
+        if (_mesh is null)
+            yield break;
         foreach (int faceId in faceIds)
         {
             EditableFaceData face = _mesh.Faces.ElementAt(faceId);

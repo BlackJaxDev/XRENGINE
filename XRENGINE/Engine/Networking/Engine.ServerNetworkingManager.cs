@@ -1,5 +1,11 @@
-﻿using System.Net;
+﻿using System;
+using System.Collections.Generic;
+using System.Linq;
+using System.Net;
 using System.Net.Sockets;
+using XREngine.Networking;
+using XREngine.Rendering;
+using XREngine.Scene;
 
 namespace XREngine
 {
@@ -10,6 +16,11 @@ namespace XREngine
             public override bool IsServer => true;
             public override bool IsClient => false;
             public override bool IsP2P => false;
+
+            private readonly object _playerLock = new();
+            private readonly Dictionary<int, NetworkPlayerConnection> _playersByIndex = new();
+            private readonly Dictionary<string, NetworkPlayerConnection> _playersByClientId = new(StringComparer.OrdinalIgnoreCase);
+            private int _nextServerPlayerIndex = 1;
 
             public void Start(
                 IPAddress udpMulticastGroupIP,
@@ -37,6 +48,146 @@ namespace XREngine
             {
                 //Send to clients
                 await ConsumeAndSendUDPQueue(UdpMulticastSender, MulticastEndPoint);
+            }
+
+            protected override void HandleStateChange(StateChangeInfo change, IPEndPoint? sender)
+            {
+                switch (change.Type)
+                {
+                    case EStateChangeType.PlayerJoin:
+                        if (StateChangePayloadSerializer.TryDeserialize<PlayerJoinRequest>(change.Data, out var join) && sender is not null)
+                            HandlePlayerJoin(join, sender);
+                        break;
+                    case EStateChangeType.PlayerInputSnapshot:
+                        if (StateChangePayloadSerializer.TryDeserialize<PlayerInputSnapshot>(change.Data, out var snapshot))
+                            HandlePlayerInputSnapshot(snapshot);
+                        break;
+                    case EStateChangeType.PlayerTransformUpdate:
+                        if (StateChangePayloadSerializer.TryDeserialize<PlayerTransformUpdate>(change.Data, out var transformUpdate))
+                            HandlePlayerTransformUpdate(transformUpdate);
+                        break;
+                }
+            }
+
+            private void HandlePlayerJoin(PlayerJoinRequest request, IPEndPoint sender)
+            {
+                if (string.IsNullOrWhiteSpace(request.ClientId))
+                    request.ClientId = sender.ToString();
+
+                NetworkPlayerConnection connection;
+                bool isNewPlayer = false;
+
+                lock (_playerLock)
+                {
+                    if (!_playersByClientId.TryGetValue(request.ClientId, out connection!))
+                    {
+                        connection = new NetworkPlayerConnection
+                        {
+                            ServerPlayerIndex = _nextServerPlayerIndex++,
+                            ClientId = request.ClientId
+                        };
+                        _playersByClientId[request.ClientId] = connection;
+                        _playersByIndex[connection.ServerPlayerIndex] = connection;
+                        isNewPlayer = true;
+                    }
+
+                    connection.JoinRequest = request;
+                    connection.LastEndpoint = sender;
+                    connection.LastHeardUtc = DateTime.UtcNow;
+                }
+
+                var assignment = new PlayerAssignment
+                {
+                    ServerPlayerIndex = connection.ServerPlayerIndex,
+                    PawnId = Guid.Empty,
+                    TransformId = Guid.Empty,
+                    ClientId = connection.ClientId,
+                    DisplayName = request.DisplayName,
+                    World = BuildWorldDescriptor()
+                };
+
+                BroadcastStateChange(EStateChangeType.PlayerAssignment, assignment, compress: true);
+
+                if (isNewPlayer)
+                    BroadcastExistingTransforms();
+            }
+
+            private void HandlePlayerInputSnapshot(PlayerInputSnapshot snapshot)
+            {
+                lock (_playerLock)
+                {
+                    if (!_playersByIndex.TryGetValue(snapshot.ServerPlayerIndex, out var connection))
+                        return;
+
+                    connection.LastInput = snapshot;
+                    connection.LastHeardUtc = DateTime.UtcNow;
+                }
+            }
+
+            private void HandlePlayerTransformUpdate(PlayerTransformUpdate transform)
+            {
+                lock (_playerLock)
+                {
+                    if (!_playersByIndex.TryGetValue(transform.ServerPlayerIndex, out var connection))
+                        return;
+
+                    connection.LastTransform = transform;
+                    connection.LastHeardUtc = DateTime.UtcNow;
+                }
+
+                BroadcastStateChange(EStateChangeType.PlayerTransformUpdate, transform, compress: false);
+            }
+
+            private void BroadcastExistingTransforms()
+            {
+                List<PlayerTransformUpdate> pending;
+                lock (_playerLock)
+                {
+                    pending = _playersByIndex.Values
+                        .Where(p => p.LastTransform is not null)
+                        .Select(p => p.LastTransform!)
+                        .ToList();
+                }
+
+                foreach (var transform in pending)
+                    BroadcastStateChange(EStateChangeType.PlayerTransformUpdate, transform, compress: false);
+            }
+
+            private WorldSyncDescriptor BuildWorldDescriptor()
+            {
+                XRWorldInstance? worldInstance = ResolvePrimaryWorldInstance();
+                if (worldInstance is null)
+                    return new WorldSyncDescriptor();
+
+                XRWorld? world = worldInstance.TargetWorld;
+                return new WorldSyncDescriptor
+                {
+                    WorldName = world?.Name,
+                    GameModeType = worldInstance.GameMode?.GetType().FullName,
+                    SceneNames = world?.Scenes.Select(s => s.Name ?? string.Empty).Where(static n => !string.IsNullOrWhiteSpace(n)).ToArray() ?? Array.Empty<string>()
+                };
+            }
+
+            private static XRWorldInstance? ResolvePrimaryWorldInstance()
+            {
+                foreach (var window in Windows)
+                {
+                    if (window?.TargetWorldInstance is not null)
+                        return window.TargetWorldInstance;
+                }
+
+                return XRWorldInstance.WorldInstances.Values.FirstOrDefault();
+            }
+
+            private sealed class NetworkPlayerConnection
+            {
+                public required int ServerPlayerIndex { get; init; }
+                public required string ClientId { get; init; }
+                public PlayerJoinRequest? JoinRequest { get; set; }
+                public PlayerInputSnapshot? LastInput { get; set; }
+                public PlayerTransformUpdate? LastTransform { get; set; }
+                public IPEndPoint? LastEndpoint { get; set; }
+                public DateTime LastHeardUtc { get; set; }
             }
         }
     }

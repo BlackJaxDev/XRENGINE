@@ -138,7 +138,7 @@ namespace XREngine
                     }
                     catch (Exception ex)
                     {
-                        Debug.LogWarning($"Secondary render context terminated: {ex.Message}\n{ex.StackTrace}");
+                        XREngine.Debug.LogWarning($"Secondary render context terminated: {ex.Message}\n{ex.StackTrace}");
                     }
                 }
 
@@ -147,15 +147,11 @@ namespace XREngine
                     var options = WindowOptions.Default;
                     options.Size = new Vector2D<int>(Math.Max(64, templateWindow.Window.Size.X / 8), Math.Max(64, templateWindow.Window.Size.Y / 8));
                     options.Title = "XR Secondary GPU Context";
-                    options.PreferredStencilBufferBits = templateWindow.Window.StencilBits;
-                    options.PreferredDepthBufferBits = templateWindow.Window.DepthBits;
                     options.API = templateWindow.Window.API;
-                    options.PreferredBitDepth = templateWindow.Window.VideoMode.BitsPerPixel;
                     options.IsVisible = false;
-                    options.PreferredRefreshRate = templateWindow.Window.VideoMode.RefreshRate;
-                    options.SharedContext = Engine.Rendering.Settings.AllowSecondaryContextSharingFallback
-                        ? templateWindow.Window
-                        : null;
+
+                    if (Engine.Rendering.Settings.AllowSecondaryContextSharingFallback)
+                        XREngine.Debug.LogWarning("Secondary context sharing fallback requested, but the current Silk.NET build does not expose shared-context creation. Continuing without sharing.");
 
                     var window = new XRWindow(options, templateWindow.UseNativeTitleBar);
                     _headlessWindow = window;
@@ -180,7 +176,7 @@ namespace XREngine
                     }
                     catch (Exception ex)
                     {
-                        Debug.LogWarning($"Unable to query GPU inventory: {ex.Message}");
+                        XREngine.Debug.LogWarning($"Unable to query GPU inventory: {ex.Message}");
                         return false;
                     }
                 }

@@ -1,4 +1,8 @@
-﻿namespace XREngine.Networking.LoadBalance
+﻿using System;
+using System.Collections.Generic;
+using System.Linq;
+
+namespace XREngine.Networking.LoadBalance
 {
     public abstract class LoadBalancer
     {
@@ -22,6 +26,18 @@
                 _servers.Remove(server);
         }
 
+        public IReadOnlyList<Server> SnapshotServers()
+        {
+            lock (_servers)
+                return _servers.ToArray();
+        }
+
+        public Server? GetServer(Guid serverId)
+        {
+            lock (_servers)
+                return _servers.FirstOrDefault(s => s.Id == serverId);
+        }
+
         public abstract Server? GetNextServer();
 
         //public IEnumerable<Guid> GetAvailableInstances()
@@ -31,7 +47,7 @@
 
         public (Server? server, Guid? instance) RequestInstanceServer(Guid roomId)
         {
-            foreach (var server in _servers)
+            foreach (var server in SnapshotServers())
             {
                 if (!server.Instances.Contains(roomId))
                     continue;

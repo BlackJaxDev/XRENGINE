@@ -9,6 +9,7 @@ using XREngine.Data;
 using XREngine.Data.Core;
 using XREngine.Data.Transforms.Rotations;
 using XREngine.Scene.Transforms;
+using XREngine.Networking;
 
 namespace XREngine
 {
@@ -71,14 +72,22 @@ namespace XREngine
             /// </summary>
             PlayerJoin,
             /// <summary>
+            /// Sent by the server to confirm the authoritative player slot for a joining client.
+            /// </summary>
+            PlayerAssignment,
+            /// <summary>
             /// Sent by a client to the server to request to join the game.
             /// Sent by the server to all clients when a player leaves.
             /// </summary>
             PlayerLeave,
             /// <summary>
-            /// Sent by the server to all clients to update the location of a player.
+            /// Sent by a client to the server with the latest local input values.
             /// </summary>
-            PlayerLocationUpdate,
+            PlayerInputSnapshot,
+            /// <summary>
+            /// Sent by the server to all clients to update the transform of a player.
+            /// </summary>
+            PlayerTransformUpdate,
             /// <summary>
             /// Sent by a client to the server to receive updates for player (usually if they're close enough to be relevant).
             /// </summary>
@@ -89,9 +98,11 @@ namespace XREngine
             UnrequestPlayerUpdates,
         }
 
-        public class StateChangeInfo
+        [MemoryPackable]
+        public sealed partial class StateChangeInfo
         {
             public StateChangeInfo() { }
+            [MemoryPackConstructor]
             public StateChangeInfo(EStateChangeType type, string data)
             {
                 Type = type;
@@ -154,28 +165,7 @@ namespace XREngine
                 while ((receiver?.Available ?? 0) > 0)
                 {
                     UdpReceiveResult result = await receiver!.ReceiveAsync();
-                    byte[] allData = result.Buffer;
-                    int maxLen = _udpBufferSize + allData.Length;
-                    while (maxLen > _udpInBuffer.Length)
-                    {
-                        Debug.Out($"UDP buffer overflow, doubling buffer size to {_udpInBuffer.Length * 2}");
-                        byte[] newBuffer = new byte[_udpInBuffer.Length * 2];
-                        Buffer.BlockCopy(_udpInBuffer, 0, newBuffer, 0, _udpBufferSize);
-                        _udpInBuffer = newBuffer;
-                    }
-                    Buffer.BlockCopy(allData, 0, _udpInBuffer, _udpBufferSize, allData.Length);
-                    _udpBufferSize += allData.Length;
-                    _udpBufferSize -= ReadReceivedData(_udpInBuffer, _udpBufferSize, _decompBuffer, ref anyAcked);
-                    if (_udpBufferSize < 0)
-                    {
-                        Debug.Out($"UDP buffer underflow, resetting buffer");
-                        _udpBufferSize = 0;
-                    }
-                    else if (_udpBufferSize > 0)
-                    {
-                        Debug.Out($"UDP buffer has {_udpBufferSize} bytes extra bytes, clearing.");
-                        _udpBufferSize = 0;
-                    }
+                    ReadReceivedData(result.Buffer, result.Buffer.Length, _decompBuffer, ref anyAcked, result.RemoteEndPoint);
                 }
                 //TODO: verify this is correct and not ruining the average
                 if (!anyAcked)
@@ -460,6 +450,12 @@ namespace XREngine
                 Send(Guid.Empty, compress, bytes, EBroadcastType.StateChange, resendOnFailedAck);
             }
 
+            protected void BroadcastStateChange<TPayload>(EStateChangeType type, TPayload payload, bool compress = true, bool resendOnFailedAck = false)
+            {
+                string serialized = StateChangePayloadSerializer.Serialize(payload);
+                ReplicateStateChange(new StateChangeInfo(type, serialized), compress, resendOnFailedAck);
+            }
+
             private const int HeaderLen = 16; //3 bytes for protocol, 1 byte for flags, 2 bytes for sequence, 2 bytes for ack, 4 bytes for ack bitfield, 4 bytes for data length (not including header or guid)
             private const int GuidLen = 16; //Guid is always 16 bytes
             private SevenZip.Compression.LZMA.Encoder _encoder = new();
@@ -634,11 +630,9 @@ namespace XREngine
             }
 
             protected byte[] _decompBuffer = new byte[400000];
-            protected byte[] _udpInBuffer = new byte[4096];
-            protected int _udpBufferSize = 0;
             //private (bool compress, EBroadcastType type, ushort seq, ushort ack, uint ackBitfield, int dataLength)? _lastConsumedHeader;
             
-            protected int ReadReceivedData(byte[] inBuf, int availableDataLen, byte[] decompBuffer, ref bool anyAcked)
+            protected int ReadReceivedData(byte[] inBuf, int availableDataLen, byte[] decompBuffer, ref bool anyAcked, IPEndPoint? sender)
             {
                 int offset = 0;
                 while (availableDataLen >= HeaderLen && offset < availableDataLen)
@@ -681,7 +675,7 @@ namespace XREngine
                     {
                         //if (shouldRead)
                         //    Debug.Out($"Received packet with sequence number: {seq}");
-                        offset += ReadPacketData(compressed, type, inBuf, decompBuffer, offset, dataLength, shouldRead);
+                        offset += ReadPacketData(compressed, type, inBuf, decompBuffer, offset, dataLength, shouldRead, sender);
                     }
                     else
                         return 0; //Not enough data to read packet, don't progress offset
@@ -757,7 +751,8 @@ namespace XREngine
                 byte[] decompBuffer,
                 int dataOffset, //Already offset by header length
                 int dataLength,
-                bool propogateData)
+                bool propogateData,
+                IPEndPoint? sender)
             {
                 int readLen = dataLength;
                 if (!compressed)
@@ -767,25 +762,26 @@ namespace XREngine
                 if (propogateData)
                 {
                     if (compressed)
-                        ReadCompressed(type, inBuf, decompBuffer, dataOffset, dataLength);
+                        ReadCompressed(type, inBuf, decompBuffer, dataOffset, dataLength, sender);
                     else
-                        ReadUncompressed(type, inBuf, dataOffset, dataLength);
+                        ReadUncompressed(type, inBuf, dataOffset, dataLength, sender);
                 }
 
                 return readLen;
             }
 
-            private static void ReadUncompressed(EBroadcastType type, byte[] inBuf, int dataOffset, int dataLength)
+            private void ReadUncompressed(EBroadcastType type, byte[] inBuf, int dataOffset, int dataLength, IPEndPoint? sender)
             {
                 Propogate(
                     new Guid([.. inBuf.Skip(dataOffset).Take(GuidLen)]),
                     type,
                     inBuf,
                     dataOffset + GuidLen,
-                    dataLength);
+                    dataLength,
+                    sender);
             }
 
-            private void ReadCompressed(EBroadcastType type, byte[] inBuf, byte[] decompBuffer, int dataOffset, int dataLength)
+            private void ReadCompressed(EBroadcastType type, byte[] inBuf, byte[] decompBuffer, int dataOffset, int dataLength, IPEndPoint? sender)
             {
                 int decompLen = Compression.Decompress(inBuf, dataOffset, dataLength, decompBuffer, 0, ref _decoder, ref _decompStreamIn, ref _decompStreamOut);
                 Propogate(
@@ -793,7 +789,8 @@ namespace XREngine
                     type,
                     decompBuffer,
                     GuidLen,
-                    decompLen - GuidLen);
+                    decompLen - GuidLen,
+                    sender);
             }
 
             //protected static void ReadHeader(
@@ -819,8 +816,16 @@ namespace XREngine
             /// <param name="data">The full allocated data buffer. Use data offset to skip to data.</param>
             /// <param name="dataOffset">The offset to the data for this object.</param>
             /// <param name="dataLen">The length of data for this object.</param>
-            protected static void Propogate(Guid id, EBroadcastType type, byte[] data, int dataOffset, int dataLen)
+            protected void Propogate(Guid id, EBroadcastType type, byte[] data, int dataOffset, int dataLen, IPEndPoint? sender)
             {
+                if (type == EBroadcastType.StateChange)
+                {
+                    StateChangeInfo? change = MemoryPackSerializer.Deserialize<StateChangeInfo>(data.AsSpan(dataOffset, dataLen));
+                    if (change is not null)
+                        HandleStateChange(change, sender);
+                    return;
+                }
+
                 if (!XRObjectBase.ObjectsCache.TryGetValue(id, out var obj) || obj is not XRWorldObjectBase worldObj)
                     return;
 
@@ -861,6 +866,10 @@ namespace XREngine
                             break;
                         }
                 }
+            }
+
+            protected virtual void HandleStateChange(StateChangeInfo change, IPEndPoint? sender)
+            {
             }
 
             [Flags]

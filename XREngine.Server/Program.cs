@@ -15,8 +15,11 @@ using XREngine.Rendering.Models.Materials;
 using XREngine.Rendering.UI;
 using XREngine.Scene;
 using XREngine.Scene.Transforms;
+using XREngine.Networking.LoadBalance;
+using XREngine.Networking.LoadBalance.Balancers;
 using static XREngine.GameStartupSettings;
 
+using System.Linq;
 namespace XREngine.Networking
 {
     /// <summary>
@@ -50,6 +53,12 @@ namespace XREngine.Networking
         private static void Main(string[] args)
         {
             WebAppTask = BuildWebApi();
+            bool loadBalancerOnly = args.Any(a => string.Equals(a, "--load-balancer-only", StringComparison.OrdinalIgnoreCase));
+            if (loadBalancerOnly)
+            {
+                WebAppTask?.GetAwaiter().GetResult();
+                return;
+            }
             var unitTestWorld = UnitTestingWorld.CreateUnitTestWorld(false, true);
             CreateConsoleUI(unitTestWorld.Scenes[0].RootNodes[0]);
             Engine.Run(/*Engine.LoadOrGenerateGameSettings(() => */GetEngineSettings(unitTestWorld)/*, "startup", false)*/, Engine.LoadOrGenerateGameState());
@@ -60,6 +69,11 @@ namespace XREngine.Networking
             var builder = WebApplication.CreateBuilder();
 
             builder.Services.AddControllers();
+            builder.Services.AddSingleton(sp =>
+            {
+                var strategy = new RoundRobinLeastLoadBalancer(Array.Empty<Server>());
+                return new LoadBalancerService(strategy, TimeSpan.FromSeconds(60));
+            });
             builder.Services.AddResponseCompression(opts =>
             {
                 opts.MimeTypes = ResponseCompressionDefaults.MimeTypes.Concat(["application/octet-stream"]);
