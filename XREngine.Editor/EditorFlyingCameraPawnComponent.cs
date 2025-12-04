@@ -225,6 +225,7 @@ public partial class EditorFlyingCameraPawnComponent : FlyingCameraPawnComponent
     private Vector3? _meshHitPoint = null;
     private MeshEdgePickResult? _edgePickResult = null;
     private MeshVertexPickResult? _vertexPickResult = null;
+    private MeshPickResult? _meshPickResult = null;
     private Segment _lastRaycastSegment = new(Vector3.Zero, Vector3.Zero);
     private Vector3? _depthHitNormalizedViewportPoint = null;
     private Vector3? _lastDepthHitNormalizedViewportPoint = null;
@@ -259,6 +260,13 @@ public partial class EditorFlyingCameraPawnComponent : FlyingCameraPawnComponent
         get => _raycastMode;
         set => SetField(ref _raycastMode, value);
     }
+
+    protected ERaycastHitMode CurrentRaycastMode => _raycastMode;
+    protected Triangle? CurrentFacePickResult => _facePickResult;
+    protected MeshEdgePickResult? CurrentEdgePickResult => _edgePickResult;
+    protected MeshVertexPickResult? CurrentVertexPickResult => _vertexPickResult;
+    protected MeshPickResult? CurrentMeshPickResult => _meshPickResult;
+    protected Vector3? CurrentMeshHitPoint => _meshHitPoint;
 
     private readonly RenderCommandMethod3D _postRenderRC;
     private readonly RenderCommandMethod3D _renderHighlightRC;
@@ -459,6 +467,7 @@ public partial class EditorFlyingCameraPawnComponent : FlyingCameraPawnComponent
         _meshHitPoint = null;
         _edgePickResult = null;
         _vertexPickResult = null;
+        _meshPickResult = null;
 
         var results = source ?? _lastOctreePickResults;
         if (results.Count ==0)
@@ -506,16 +515,19 @@ public partial class EditorFlyingCameraPawnComponent : FlyingCameraPawnComponent
                 case MeshPickResult meshHit:
                     _facePickResult = meshHit.WorldTriangle;
                     _meshHitPoint = meshHit.HitPoint;
+                    _meshPickResult = meshHit;
                     return;
                 case MeshEdgePickResult edgeHit:
                     _facePickResult = edgeHit.WorldTriangle;
                     _meshHitPoint = edgeHit.ClosestPoint;
                     _edgePickResult = edgeHit;
+                    _meshPickResult = edgeHit.FaceHit;
                     return;
                 case MeshVertexPickResult vertexHit:
                     _facePickResult = vertexHit.WorldTriangle;
                     _meshHitPoint = vertexHit.Position;
                     _vertexPickResult = vertexHit;
+                    _meshPickResult = vertexHit.FaceHit;
                     return;
                 case Vector3 point:
                     _meshHitPoint = point;
