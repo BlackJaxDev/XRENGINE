@@ -1,6 +1,7 @@
 using System.Numerics;
 using XREngine.Components.Scene.Mesh;
 using XREngine.Data.Geometry;
+using XREngine.Data.Rendering;
 using XREngine.Scene;
 
 namespace XREngine.Rendering.Picking;
@@ -22,7 +23,9 @@ public readonly record struct MeshPickResult(
     RenderableComponent Component,
     RenderableMesh Mesh,
     Triangle WorldTriangle,
-    Vector3 HitPoint)
+    Vector3 HitPoint,
+    int TriangleIndex,
+    IndexTriangle Indices)
 {
     public SceneNode? SceneNode => Component.SceneNode;
 }
@@ -34,7 +37,8 @@ public readonly record struct MeshEdgePickResult(
     MeshPickResult FaceHit,
     Vector3 EdgeStart,
     Vector3 EdgeEnd,
-    Vector3 ClosestPoint)
+    Vector3 ClosestPoint,
+    int EdgeIndex)
 {
     public RenderableComponent Component => FaceHit.Component;
     public SceneNode? SceneNode => FaceHit.SceneNode;
@@ -46,7 +50,8 @@ public readonly record struct MeshEdgePickResult(
 /// </summary>
 public readonly record struct MeshVertexPickResult(
     MeshPickResult FaceHit,
-    Vector3 Position)
+    Vector3 Position,
+    int VertexIndex)
 {
     public RenderableComponent Component => FaceHit.Component;
     public SceneNode? SceneNode => FaceHit.SceneNode;

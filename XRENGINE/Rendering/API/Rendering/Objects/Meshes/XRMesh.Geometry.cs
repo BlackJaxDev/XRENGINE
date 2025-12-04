@@ -1,3 +1,4 @@
+using System.Collections.Generic;
 using System.Numerics;
 using SimpleScene.Util.ssBVH;
 using XREngine.Data;
@@ -88,7 +89,19 @@ public partial class XRMesh
     {
         if (Triangles is null)
             return;
-        _bvhTree = new(new TriangleAdapter(), [.. Triangles.Select(GetTriangle)]);
+        List<Triangle> triangles = new(Triangles.Count);
+        Dictionary<Triangle, (IndexTriangle Indices, int FaceIndex)> triangleLookup = new(Triangles.Count);
+
+        for (int i = 0; i < Triangles.Count; i++)
+        {
+            IndexTriangle indices = Triangles[i];
+            Triangle triangle = GetTriangle(indices);
+            triangles.Add(triangle);
+            triangleLookup[triangle] = (indices, i);
+        }
+
+        TriangleLookup = triangleLookup;
+        _bvhTree = new(new TriangleAdapter(), triangles);
         _generating = false;
     }
 
