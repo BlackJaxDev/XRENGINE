@@ -1,4 +1,5 @@
 ﻿using Extensions;
+using MemoryPack;
 using System.Numerics;
 using XREngine.Components.Movement;
 using XREngine.Core.Attributes;
@@ -16,8 +17,19 @@ namespace XREngine.Components
     /// Requires CharacterMovement3DComponent to apply movement inputs.
     /// </summary>
     [RequireComponents(typeof(CharacterMovement3DComponent))]
-    public class CharacterPawnComponent : PawnComponent
+    public partial class CharacterPawnComponent : PawnComponent
     {
+        [MemoryPackable]
+        public partial struct NetworkInputState
+        {
+            public Vector2 Movement;
+            public Vector2 ViewAngles;
+            public bool JumpPressed;
+            public bool JumpHeld;
+            public bool ToggleCrouch;
+            public bool ToggleProne;
+        }
+
         private CharacterMovement3DComponent Movement => GetSiblingComponent<CharacterMovement3DComponent>(true)!;
         
         //private readonly GameTimer _respawnTimer = new();
@@ -34,6 +46,10 @@ namespace XREngine.Components
         protected Vector2 _keyboardMovementInput = Vector2.Zero;
         protected Vector2 _gamepadMovementInput = Vector2.Zero;
         protected Vector2 _keyboardLookInput = Vector2.Zero;
+        private bool _networkJumpPressed;
+        private bool _networkJumpHeld;
+        private bool _networkToggleCrouchRequested;
+        private bool _networkToggleProneRequested;
 
         public float KeyboardMovementInputMultiplier
         {
@@ -247,17 +263,28 @@ namespace XREngine.Components
             => PauseToggled?.Invoke();
 
         public void Jump(bool pressed)
-            => Movement.Jump(pressed);
+        {
+            Movement.Jump(pressed);
+            if (pressed)
+                _networkJumpPressed = true;
+            _networkJumpHeld = pressed;
+        }
 
         public void ToggleCrouch()
-            => Movement.CrouchState = Movement.CrouchState == CharacterMovement3DComponent.ECrouchState.Crouched
+        {
+            Movement.CrouchState = Movement.CrouchState == CharacterMovement3DComponent.ECrouchState.Crouched
                 ? CharacterMovement3DComponent.ECrouchState.Standing
                 : CharacterMovement3DComponent.ECrouchState.Crouched;
+            _networkToggleCrouchRequested = true;
+        }
 
         public void ToggleProne()
-            => Movement.CrouchState = Movement.CrouchState == CharacterMovement3DComponent.ECrouchState.Prone
+        {
+            Movement.CrouchState = Movement.CrouchState == CharacterMovement3DComponent.ECrouchState.Prone
                 ? CharacterMovement3DComponent.ECrouchState.Standing
                 : CharacterMovement3DComponent.ECrouchState.Prone;
+            _networkToggleProneRequested = true;
+        }
 
         public void LookLeft(bool pressed)
             => _keyboardLookInput.X += pressed ? -1.0f : 1.0f;
@@ -310,6 +337,29 @@ namespace XREngine.Components
             float dt = ViewRotationAffectedByTimeDilation ? Engine.Delta : Engine.UndilatedDelta;
             _viewRotation.Pitch += dt * dy * GamePadYLookInputMultiplier;
             ClampPitch();
+        }
+
+        public NetworkInputState CaptureNetworkInputState(bool resetEdgeStates = true)
+        {
+            Vector2 movement = Vector2.Clamp(_keyboardMovementInput + _gamepadMovementInput, new Vector2(-1.0f, -1.0f), new Vector2(1.0f, 1.0f));
+            NetworkInputState snapshot = new()
+            {
+                Movement = movement,
+                ViewAngles = new Vector2(_viewRotation.Yaw, _viewRotation.Pitch),
+                JumpPressed = _networkJumpPressed,
+                JumpHeld = _networkJumpHeld,
+                ToggleCrouch = _networkToggleCrouchRequested,
+                ToggleProne = _networkToggleProneRequested
+            };
+
+            if (resetEdgeStates)
+            {
+                _networkJumpPressed = false;
+                _networkToggleCrouchRequested = false;
+                _networkToggleProneRequested = false;
+            }
+
+            return snapshot;
         }
 
         private void ClampPitch()

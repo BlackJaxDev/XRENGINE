@@ -5,6 +5,7 @@ using System.Globalization;
 using System.IO;
 using System.Linq;
 using System.Numerics;
+using System.Runtime.CompilerServices;
 using ImGuiNET;
 using XREngine;
 using XREngine.Components;
@@ -149,15 +150,15 @@ public sealed class ModelComponentEditor : IXRComponentEditor
 
         var state = s_impostorStates.GetValue(modelComponent, _ => new ImpostorState());
 
-        uint sheetSize = state.SheetSize;
-        if (ImGui.InputScalar("Sheet Size (px)", ImGuiDataType.U32, ref sheetSize))
-            state.SheetSize = Math.Max(128u, sheetSize);
+        int sheetSize = (int)state.SheetSize;
+        if (ImGui.InputInt("Sheet Size (px)", ref sheetSize))
+            state.SheetSize = (uint)Math.Max(128, sheetSize);
 
         bool captureDepth = state.CaptureDepth;
         if (ImGui.Checkbox("Capture Depth", ref captureDepth))
             state.CaptureDepth = captureDepth;
 
-        ImGui.TextDisabled("Three orthographic captures will be blended into an octahedral sheet.");
+        ImGui.TextDisabled("26 directional captures (axes, edges, and diagonals) are blended into the sheet.");
 
         if (ImGui.Button("Generate Octahedral Impostor", new Vector2(-1f, 0f)))
         {
@@ -175,7 +176,7 @@ public sealed class ModelComponentEditor : IXRComponentEditor
             ImGui.TextUnformatted("Last Generation:");
             ImGui.TextDisabled($"Sheet: {result.Sheet.Width} x {result.Sheet.Height}");
             ImGui.TextDisabled($"Bounds: {size.X:0.##}, {size.Y:0.##}, {size.Z:0.##}");
-            ImGui.TextDisabled($"Views: {result.Views.Length}");
+            ImGui.TextDisabled($"Views Captured: {result.Views.Length} (dirs: {result.CaptureDirections.Count})");
         }
 
         ImGui.Spacing();

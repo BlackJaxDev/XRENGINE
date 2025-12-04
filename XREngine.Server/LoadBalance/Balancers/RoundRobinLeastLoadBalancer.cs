@@ -1,4 +1,6 @@
-﻿namespace XREngine.Networking.LoadBalance.Balancers
+﻿using System.Linq;
+
+namespace XREngine.Networking.LoadBalance.Balancers
 {
     public class RoundRobinLeastLoadBalancer(IEnumerable<Server> servers, int roundRobinThreshold = 10) : LoadBalancer(servers)
     {
@@ -15,6 +17,7 @@
                 var roundRobinServers = _servers.Where(s => s.CurrentLoad < roundRobinThreshold).ToList();
                 if (roundRobinServers.Count != 0)
                 {
+                    _currentIndex %= roundRobinServers.Count;
                     var server = roundRobinServers[_currentIndex];
                     _currentIndex = (_currentIndex + 1) % roundRobinServers.Count;
                     return server;
