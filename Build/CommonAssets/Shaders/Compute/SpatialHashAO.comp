@@ -10,21 +10,19 @@ layout(binding = 0, r16f) uniform image2D OutAO;
 
 layout(std430, binding = 1) buffer HashBuffer { uint hashData[]; };
 layout(std430, binding = 2) buffer HashTimeBuffer { uint hashTime[]; };
-layout(std430, binding = 3) buffer SpatialBuffer { uint spatialData[]; };
+layout(std430, binding = 3) buffer SpatialBuffer { uvec2 spatialData[]; };
 
 uniform uint FrameIndex;
 uniform uint HashMapSize;
-uniform float CellSizeMin;
-uniform float Bias;
-uniform float Thickness;
-uniform float MaxRayDistance;
-uniform float DistanceFade;
-uniform float Power;
-uniform float SamplesPerPixel;
-uniform float JitterScale;
-uniform int RayStepCount;
-uniform float Radius;
-uniform float FieldOfViewY;
+uniform float CellSizeMin;      // smin - smallest cell size in world units
+uniform float Bias;             // Ray start bias to avoid self-intersection
+uniform float Thickness;        // Depth tolerance for hit detection
+uniform float Power;            // Contrast adjustment for final AO
+uniform float SamplesPerPixel;  // sp - feature size in screen pixels for adaptive cell sizing
+uniform float JitterScale;      // Scale for position jittering
+uniform int RayStepCount;       // Number of ray march steps
+uniform float Radius;           // Max ray distance in world units (article uses 2m)
+uniform float FieldOfViewY;     // Vertical FOV in radians
 uniform vec2 InvResolution;
 uniform mat4 InverseProjMatrix;
 uniform mat4 ProjMatrix;
@@ -35,6 +33,7 @@ uniform mat4 ViewMatrix;
 const uint SEARCH_COUNT = 16u;          // Linear probe count for collision resolution
 const uint MaxSamplesPerCell = 500u;    // Cap to limit contention in shared cells
 const uint EmptyCell = 0u;              // Sentinel used for empty slots
+const uint MaxFrameAge = 20u;           // Frames before a cell can be reclaimed
 
 // Small integer hash used to decorrelate per-pixel jitter
 uint pcg(inout uint v)
@@ -104,25 +103,31 @@ uint SpatialHash_FindOrInsert(vec3 position, vec3 normal, float cellSize)
 
     for (uint i = 0u; i < SEARCH_COUNT; ++i)
     {
-        uint cmp = atomicCompSwap(hashData[cellIndex], EmptyCell, checksum);
+        uint storedChecksum = hashData[cellIndex];
+        bool emptyCell = storedChecksum == EmptyCell;
+        bool checksumMatch = storedChecksum == checksum;
+        bool staleCell = !emptyCell && (FrameIndex - hashTime[cellIndex]) > MaxFrameAge;
 
-        if (cmp == EmptyCell || cmp == checksum)
+        if (checksumMatch)
         {
-            uint originalTime = hashTime[cellIndex];
-            if (cmp == EmptyCell || FrameIndex - originalTime > 20u)
-            {
-                hashTime[cellIndex] = FrameIndex;
-                spatialData[cellIndex] = 0u;
-            }
-            else
-            {
-                hashTime[cellIndex] = FrameIndex;
-            }
+            hashTime[cellIndex] = FrameIndex;
             return cellIndex;
         }
 
-        if (++cellIndex >= HashMapSize)
-            break;
+        if (emptyCell || staleCell)
+        {
+            uint expected = emptyCell ? EmptyCell : storedChecksum;
+            if (atomicCompSwap(hashData[cellIndex], expected, checksum) == expected)
+            {
+                hashTime[cellIndex] = FrameIndex;
+                spatialData[cellIndex] = uvec2(0u);
+                return cellIndex;
+            }
+        }
+
+        cellIndex++;
+        if (cellIndex >= HashMapSize)
+            cellIndex = 0u;
     }
 
     return 0xffffffffu;
@@ -137,16 +142,19 @@ vec3 SampleHemisphere(vec2 xi)
     return vec3(cos(phi) * sinTheta, sin(phi) * sinTheta, cosTheta);
 }
 
-// March a ray in view space and return the first hit contribution, mimicking the article's ray marcher
+// March a ray in view space and return 1.0 if occluded (hit), 0.0 if not (miss)
+// This matches the article's binary hit/miss approach
 float RayMarchOcclusion(vec3 viewOrigin, vec3 viewDir, float maxDistance, int steps, float bias, float thickness)
 {
     float stepLength = maxDistance / float(max(steps, 1));
-    float traveled = 0.0;
 
     for (int stepIdx = 0; stepIdx < steps; ++stepIdx)
     {
-        float marchDist = min(traveled, maxDistance);
-        vec3 samplePos = viewOrigin + viewDir * (bias + marchDist);
+        float marchDist = bias + stepLength * float(stepIdx + 1);
+        if (marchDist > maxDistance)
+            break;
+            
+        vec3 samplePos = viewOrigin + viewDir * marchDist;
         vec4 clipPos = ProjMatrix * vec4(samplePos, 1.0f);
         vec3 ndc = clipPos.xyz / clipPos.w;
         vec2 sampleUV = ndc.xy * 0.5 + 0.5;
@@ -155,23 +163,22 @@ float RayMarchOcclusion(vec3 viewOrigin, vec3 viewDir, float maxDistance, int st
             break;
 
         float sceneDepth = texture(DepthTex, sampleUV).r;
+        if (sceneDepth >= 1.0)
+            continue; // sky, no geometry
+            
         float sceneDepthVS = ViewPosFromDepth(sceneDepth, sampleUV).z;
-        float expectedDepth = samplePos.z;
+        float rayDepthVS = samplePos.z;
 
-        if (sceneDepthVS < expectedDepth + thickness)
+        // Check if ray is behind the scene surface (hit)
+        // In view space, z is typically negative (looking down -Z), so "behind" means ray.z < scene.z
+        float depthDiff = rayDepthVS - sceneDepthVS;
+        if (depthDiff < 0.0 && depthDiff > -thickness)
         {
-            float depthDiff = expectedDepth - sceneDepthVS;
-            float falloff = clamp(1.0 - depthDiff / (Radius + thickness), 0.0, 1.0);
-            float distWeight = 1.0 / (1.0 + marchDist * DistanceFade);
-            return falloff * distWeight;
+            return 1.0; // Hit - occluded
         }
-
-        traveled += stepLength;
-        if (traveled > maxDistance)
-            break;
     }
 
-    return 0.0;
+    return 0.0; // Miss - not occluded
 }
 
 void main()
@@ -204,6 +211,7 @@ void main()
     float cellSize = ComputeCellSize(length(viewPos), FieldOfViewY, float(resolution.y), SamplesPerPixel, CellSizeMin);
     cellSize = max(cellSize, CellSizeMin);
 
+    // Jitter world position for hash lookup (spreads samples to neighboring cells)
     vec2 rand2 = 2.0 * (vec2(rand01(rngState), rand01(rngState)) - 0.5);
     vec3 jitteredWorldPos = worldPos + JitterScale * cellSize * (rand2.x * tangent + rand2.y * bitangent);
 
@@ -214,30 +222,39 @@ void main()
         return;
     }
 
-    uint originalData = atomicAdd(spatialData[cellIndex], 0u);
-    uint originalOcclusion = originalData >> 16u;
-    uint originalSamples = originalData & 0xFFFFu;
+    // Read current cell data: x = total hits, y = total samples
+    uint originalHits = atomicAdd(spatialData[cellIndex].x, 0u);
+    uint originalSamples = atomicAdd(spatialData[cellIndex].y, 0u);
 
     float occlusionRatio;
     if (originalSamples < MaxSamplesPerCell)
     {
+        // Sample a random direction on hemisphere
         vec2 sampleXi = vec2(rand01(rngState), rand01(rngState));
         vec3 hemi = SampleHemisphere(sampleXi);
         vec3 worldDir = normalize(hemi.x * tangent + hemi.y * bitangent + hemi.z * worldNormal);
-        vec3 viewDir = (ViewMatrix * vec4(worldDir, 0.0)).xyz;
+        vec3 viewDir = normalize((ViewMatrix * vec4(worldDir, 0.0)).xyz);
 
-        float occlusion = RayMarchOcclusion(viewPos, viewDir, MaxRayDistance, RayStepCount, Bias, Thickness);
+        // Use Radius as the max ray distance (article uses ray.TMax = 2 meters)
+        // Use original viewPos for ray origin, NOT jittered position
+        uint hit = uint(RayMarchOcclusion(viewPos, viewDir, Radius, RayStepCount, Bias, Thickness));
 
-        uint packedIncrement = (uint(round(occlusion * 65535.0)) << 16u) + 1u;
-        atomicAdd(spatialData[cellIndex], packedIncrement);
+        // Calculate new ratio including our sample
+        occlusionRatio = float(originalHits + hit) / float(originalSamples + 1u);
 
-        occlusionRatio = float(originalOcclusion + uint(round(occlusion * 65535.0))) / float(originalSamples + 1u) / 65535.0;
+        // Store hit count (0 or 1) and increment sample count
+        atomicAdd(spatialData[cellIndex].x, hit);
+        atomicAdd(spatialData[cellIndex].y, 1u);
     }
     else
     {
-        occlusionRatio = float(originalOcclusion) / float(max(originalSamples, 1u)) / 65535.0;
+        // Cell is full, just read cached value
+        occlusionRatio = float(originalHits) / float(max(originalSamples, 1u));
     }
 
+    // occlusionRatio = hits/samples = how much is blocked
+    // AO output = 1 - occlusionRatio = visibility (white = unoccluded, black = occluded)
+    // Apply power for contrast control
     float ao = pow(clamp(1.0 - occlusionRatio, 0.0, 1.0), Power);
     imageStore(OutAO, pixel, vec4(ao));
 }

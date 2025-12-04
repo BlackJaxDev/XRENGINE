@@ -231,9 +231,8 @@ namespace XREngine.Rendering.Pipelines.Commands
         private static void BloomBlurFbo_SettingUniforms(XRRenderProgram program)
         {
             var camera = ActivePipelineInstance.RenderState.SceneCamera;
-            var bloom = camera?.PostProcessing?.Bloom;
-
-            if (bloom is not null)
+            var bloomStage = camera?.GetPostProcessStageState<BloomSettings>();
+            if (bloomStage?.TryGetBacking(out BloomSettings? bloom) == true)
             {
                 bloom.SetBlurPassUniforms(program);
                 return;

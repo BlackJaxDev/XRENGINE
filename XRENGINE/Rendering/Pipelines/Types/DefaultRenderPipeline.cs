@@ -224,13 +224,13 @@ public class DefaultRenderPipeline : RenderPipeline
     protected override void DescribePostProcessSchema(RenderPipelinePostProcessSchemaBuilder builder)
     {
         DescribeTonemappingStage(builder.Stage(TonemappingStageKey, "Tonemapping"));
-        DescribeColorGradingStage(builder.Stage(ColorGradingStageKey, "Color Grading"));
-        DescribeBloomStage(builder.Stage(BloomStageKey, "Bloom"));
-        DescribeAmbientOcclusionStage(builder.Stage(AmbientOcclusionStageKey, "Ambient Occlusion"));
-        DescribeMotionBlurStage(builder.Stage(MotionBlurStageKey, "Motion Blur"));
-        DescribeLensDistortionStage(builder.Stage(LensDistortionStageKey, "Lens Distortion"));
-        DescribeChromaticAberrationStage(builder.Stage(ChromaticAberrationStageKey, "Chromatic Aberration"));
-        DescribeFogStage(builder.Stage(FogStageKey, "Depth Fog"));
+        DescribeColorGradingStage(builder.Stage(ColorGradingStageKey, "Color Grading").BackedBy<ColorGradingSettings>());
+        DescribeBloomStage(builder.Stage(BloomStageKey, "Bloom").BackedBy<BloomSettings>());
+        DescribeAmbientOcclusionStage(builder.Stage(AmbientOcclusionStageKey, "Ambient Occlusion").BackedBy<AmbientOcclusionSettings>());
+        DescribeMotionBlurStage(builder.Stage(MotionBlurStageKey, "Motion Blur").BackedBy<MotionBlurSettings>());
+        DescribeLensDistortionStage(builder.Stage(LensDistortionStageKey, "Lens Distortion").BackedBy<LensDistortionSettings>());
+        DescribeChromaticAberrationStage(builder.Stage(ChromaticAberrationStageKey, "Chromatic Aberration").BackedBy<ChromaticAberrationSettings>());
+        DescribeFogStage(builder.Stage(FogStageKey, "Depth Fog").BackedBy<FogSettings>());
 
         builder.Category("imaging", "Imaging")
             .IncludeStages(TonemappingStageKey, ColorGradingStageKey);
@@ -815,9 +815,8 @@ public class DefaultRenderPipeline : RenderPipeline
 
     private int EvaluateAmbientOcclusionMode()
     {
-        var aoSettings = State.SceneCamera?.PostProcessing?.AmbientOcclusion;
-
-        if (aoSettings is null || !aoSettings.Enabled)
+        var aoStage = State.SceneCamera?.GetPostProcessStageState<AmbientOcclusionSettings>();
+        if (aoStage?.TryGetBacking(out AmbientOcclusionSettings? aoSettings) != true || !aoSettings.Enabled)
         {
             //LogAo("EvaluateAmbientOcclusionMode -> disabled or missing; defaulting to ScreenSpace");
             return (int)AmbientOcclusionSettings.EType.ScreenSpace;
@@ -832,7 +831,8 @@ public class DefaultRenderPipeline : RenderPipeline
     private static MotionBlurSettings? GetMotionBlurSettings()
     {
         var renderState = Engine.Rendering.State.RenderingPipelineState;
-        return renderState?.SceneCamera?.PostProcessing?.MotionBlur;
+        var stage = renderState?.SceneCamera?.GetPostProcessStageState<MotionBlurSettings>();
+        return stage?.TryGetBacking(out MotionBlurSettings? settings) == true ? settings : null;
     }
 
     private static bool ShouldUseMotionBlur()
@@ -845,7 +845,7 @@ public class DefaultRenderPipeline : RenderPipeline
     private static void DescribeTonemappingStage(RenderPipelinePostProcessSchemaBuilder.PostProcessStageBuilder stage)
     {
         stage.AddParameter(
-            nameof(PostProcessingSettings.Tonemapping),
+            PostProcessParameterNames.TonemappingOperator,
             PostProcessParameterKind.Int,
             (int)ETonemappingType.Reinhard,
             displayName: "Operator",
@@ -867,6 +867,9 @@ public class DefaultRenderPipeline : RenderPipeline
             true,
             displayName: "Auto Exposure");
 
+        bool IsAutoExposure(object o) => ((ColorGradingSettings)o).AutoExposure;
+        bool IsManualExposure(object o) => !((ColorGradingSettings)o).AutoExposure;
+
         stage.AddParameter(
             nameof(ColorGradingSettings.Exposure),
             PostProcessParameterKind.Float,
@@ -874,7 +877,8 @@ public class DefaultRenderPipeline : RenderPipeline
             displayName: "Manual Exposure",
             min: 0.0001f,
             max: 10.0f,
-            step: 0.0001f);
+            step: 0.0001f,
+            visibilityCondition: IsManualExposure);
 
         stage.AddParameter(
             nameof(ColorGradingSettings.AutoExposureBias),
@@ -883,7 +887,8 @@ public class DefaultRenderPipeline : RenderPipeline
             displayName: "Exposure Bias",
             min: -10.0f,
             max: 10.0f,
-            step: 0.1f);
+            step: 0.1f,
+            visibilityCondition: IsAutoExposure);
 
         stage.AddParameter(
             nameof(ColorGradingSettings.AutoExposureScale),
@@ -892,7 +897,48 @@ public class DefaultRenderPipeline : RenderPipeline
             displayName: "Exposure Scale",
             min: 0.1f,
             max: 5.0f,
-            step: 0.01f);
+            step: 0.01f,
+            visibilityCondition: IsAutoExposure);
+
+        stage.AddParameter(
+            nameof(ColorGradingSettings.MinExposure),
+            PostProcessParameterKind.Float,
+            0.0001f,
+            displayName: "Min Exposure",
+            min: 0.0f,
+            max: 10.0f,
+            step: 0.0001f,
+            visibilityCondition: IsAutoExposure);
+
+        stage.AddParameter(
+            nameof(ColorGradingSettings.MaxExposure),
+            PostProcessParameterKind.Float,
+            500.0f,
+            displayName: "Max Exposure",
+            min: 0.0f,
+            max: 1000.0f,
+            step: 1.0f,
+            visibilityCondition: IsAutoExposure);
+
+        stage.AddParameter(
+            nameof(ColorGradingSettings.ExposureDividend),
+            PostProcessParameterKind.Float,
+            0.1f,
+            displayName: "Exposure Dividend",
+            min: 0.0f,
+            max: 10.0f,
+            step: 0.01f,
+            visibilityCondition: IsAutoExposure);
+
+        stage.AddParameter(
+            nameof(ColorGradingSettings.ExposureTransitionSpeed),
+            PostProcessParameterKind.Float,
+            0.01f,
+            displayName: "Transition Speed",
+            min: 0.0f,
+            max: 1.0f,
+            step: 0.001f,
+            visibilityCondition: IsAutoExposure);
 
         stage.AddParameter(
             nameof(ColorGradingSettings.Contrast),
@@ -994,6 +1040,15 @@ public class DefaultRenderPipeline : RenderPipeline
             displayName: "Method",
             enumOptions: BuildEnumOptions<AmbientOcclusionSettings.EType>());
 
+        bool IsSSAO(object o) => ((AmbientOcclusionSettings)o).Type == AmbientOcclusionSettings.EType.ScreenSpace;
+        bool IsMVAO(object o) => ((AmbientOcclusionSettings)o).Type == AmbientOcclusionSettings.EType.MultiViewAmbientOcclusion;
+        bool IsMSVO(object o) => ((AmbientOcclusionSettings)o).Type == AmbientOcclusionSettings.EType.MultiScaleVolumetricObscurance;
+        bool IsSpatialHash(object o) => ((AmbientOcclusionSettings)o).Type == AmbientOcclusionSettings.EType.SpatialHashRaytraced;
+
+        bool UsesRadius(object o) => IsSSAO(o) || IsMVAO(o) || IsSpatialHash(o);
+        bool UsesPower(object o) => IsSSAO(o) || IsMVAO(o) || IsSpatialHash(o);
+        bool UsesBias(object o) => IsMVAO(o) || IsMSVO(o) || IsSpatialHash(o);
+
         stage.AddParameter(
             nameof(AmbientOcclusionSettings.Radius),
             PostProcessParameterKind.Float,
@@ -1001,7 +1056,8 @@ public class DefaultRenderPipeline : RenderPipeline
             displayName: "Radius",
             min: 0.1f,
             max: 5.0f,
-            step: 0.01f);
+            step: 0.01f,
+            visibilityCondition: UsesRadius);
 
         stage.AddParameter(
             nameof(AmbientOcclusionSettings.Power),
@@ -1010,7 +1066,8 @@ public class DefaultRenderPipeline : RenderPipeline
             displayName: "Contrast",
             min: 0.5f,
             max: 3.0f,
-            step: 0.01f);
+            step: 0.01f,
+            visibilityCondition: UsesPower);
 
         stage.AddParameter(
             nameof(AmbientOcclusionSettings.Bias),
@@ -1019,7 +1076,8 @@ public class DefaultRenderPipeline : RenderPipeline
             displayName: "Bias",
             min: 0.0f,
             max: 0.2f,
-            step: 0.001f);
+            step: 0.001f,
+            visibilityCondition: UsesBias);
 
         stage.AddParameter(
             nameof(AmbientOcclusionSettings.Intensity),
@@ -1028,8 +1086,114 @@ public class DefaultRenderPipeline : RenderPipeline
             displayName: "Intensity",
             min: 0.0f,
             max: 4.0f,
-            step: 0.01f);
+            step: 0.01f,
+            visibilityCondition: IsMSVO);
 
+        // MVAO Parameters
+        stage.AddParameter(
+            nameof(AmbientOcclusionSettings.SecondaryRadius),
+            PostProcessParameterKind.Float,
+            1.6f,
+            displayName: "Secondary Radius",
+            min: 0.1f,
+            max: 5.0f,
+            step: 0.01f,
+            visibilityCondition: IsMVAO);
+
+        stage.AddParameter(
+            nameof(AmbientOcclusionSettings.MultiViewBlend),
+            PostProcessParameterKind.Float,
+            0.6f,
+            displayName: "Blend",
+            min: 0.0f,
+            max: 1.0f,
+            step: 0.01f,
+            visibilityCondition: IsMVAO);
+
+        stage.AddParameter(
+            nameof(AmbientOcclusionSettings.MultiViewSpread),
+            PostProcessParameterKind.Float,
+            0.5f,
+            displayName: "Spread",
+            min: 0.0f,
+            max: 1.0f,
+            step: 0.01f,
+            visibilityCondition: IsMVAO);
+
+        stage.AddParameter(
+            nameof(AmbientOcclusionSettings.DepthPhi),
+            PostProcessParameterKind.Float,
+            4.0f,
+            displayName: "Depth Phi",
+            min: 0.1f,
+            max: 10.0f,
+            step: 0.1f,
+            visibilityCondition: IsMVAO);
+
+        stage.AddParameter(
+            nameof(AmbientOcclusionSettings.NormalPhi),
+            PostProcessParameterKind.Float,
+            64.0f,
+            displayName: "Normal Phi",
+            min: 1.0f,
+            max: 128.0f,
+            step: 1.0f,
+            visibilityCondition: IsMVAO);
+
+        // Spatial Hash Parameters
+        // SamplesPerPixel controls the feature size in screen pixels (sp in the article, recommend 3-5)
+        stage.AddParameter(
+            nameof(AmbientOcclusionSettings.SamplesPerPixel),
+            PostProcessParameterKind.Float,
+            3.0f,
+            displayName: "Feature Size (px)",
+            min: 1.0f,
+            max: 20.0f,
+            step: 0.5f,
+            visibilityCondition: IsSpatialHash);
+
+        // CellSizeMin is smin in the article - smallest feature in world space
+        stage.AddParameter(
+            nameof(AmbientOcclusionSettings.SpatialHashCellSize),
+            PostProcessParameterKind.Float,
+            0.07f,
+            displayName: "Min Cell Size",
+            min: 0.01f,
+            max: 1.0f,
+            step: 0.01f,
+            visibilityCondition: IsSpatialHash);
+
+        stage.AddParameter(
+            nameof(AmbientOcclusionSettings.SpatialHashSteps),
+            PostProcessParameterKind.Int,
+            8,
+            displayName: "Ray Steps",
+            min: 1.0f,
+            max: 32.0f,
+            step: 1.0f,
+            visibilityCondition: IsSpatialHash);
+
+        stage.AddParameter(
+            nameof(AmbientOcclusionSettings.Thickness),
+            PostProcessParameterKind.Float,
+            0.5f,
+            displayName: "Thickness",
+            min: 0.01f,
+            max: 2.0f,
+            step: 0.01f,
+            visibilityCondition: IsSpatialHash);
+
+        stage.AddParameter(
+            nameof(AmbientOcclusionSettings.SpatialHashJitterScale),
+            PostProcessParameterKind.Float,
+            0.35f,
+            displayName: "Jitter Scale",
+            min: 0.0f,
+            max: 1.0f,
+            step: 0.01f,
+            visibilityCondition: IsSpatialHash);
+
+        // Global / Unused?
         stage.AddParameter(
             nameof(AmbientOcclusionSettings.ResolutionScale),
             PostProcessParameterKind.Float,
@@ -1037,7 +1201,8 @@ public class DefaultRenderPipeline : RenderPipeline
             displayName: "Resolution Scale",
             min: 0.25f,
             max: 2.0f,
-            step: 0.01f);
+            step: 0.01f,
+            visibilityCondition: o => !IsSSAO(o) && !IsSpatialHash(o)); // Hide for SSAO and SpatialHash
 
         stage.AddParameter(
             nameof(AmbientOcclusionSettings.SamplesPerPixel),
@@ -1046,7 +1211,8 @@ public class DefaultRenderPipeline : RenderPipeline
             displayName: "Samples / Pixel",
             min: 0.5f,
             max: 8.0f,
-            step: 0.1f);
+            step: 0.1f,
+            visibilityCondition: o => !IsSSAO(o)); // Hide for SSAO as requested
     }
 
     private static void DescribeMotionBlurStage(RenderPipelinePostProcessSchemaBuilder.PostProcessStageBuilder stage)

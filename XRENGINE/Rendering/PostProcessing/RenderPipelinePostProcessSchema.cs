@@ -31,7 +31,8 @@ public sealed class PostProcessParameterDescriptor(
     float? min,
     float? max,
     float? step,
-    IReadOnlyList<PostProcessEnumOption>? enumOptions)
+    IReadOnlyList<PostProcessEnumOption>? enumOptions,
+    Func<object, bool>? visibilityCondition)
 {
     public string Name { get; } = name;
     public string DisplayName { get; } = string.IsNullOrWhiteSpace(displayName) ? name : displayName;
@@ -44,13 +45,19 @@ public sealed class PostProcessParameterDescriptor(
     public float? Max { get; } = max;
     public float? Step { get; } = step;
     public IReadOnlyList<PostProcessEnumOption> EnumOptions { get; } = enumOptions ?? Array.Empty<PostProcessEnumOption>();
+    public Func<object, bool>? VisibilityCondition { get; } = visibilityCondition;
 }
 
-public sealed class PostProcessStageDescriptor(string key, string displayName, IReadOnlyList<PostProcessParameterDescriptor> parameters)
+public sealed class PostProcessStageDescriptor(
+    string key,
+    string displayName,
+    IReadOnlyList<PostProcessParameterDescriptor> parameters,
+    Type? backingType)
 {
     public string Key { get; } = key;
     public string DisplayName { get; } = string.IsNullOrWhiteSpace(displayName) ? key : displayName;
     public IReadOnlyList<PostProcessParameterDescriptor> Parameters { get; } = parameters ?? Array.Empty<PostProcessParameterDescriptor>();
+    public Type? BackingType { get; } = backingType;
 }
 
 public sealed class PostProcessCategoryDescriptor(string key, string displayName, string? description, IReadOnlyList<string> stageKeys)

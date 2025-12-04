@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Diagnostics.CodeAnalysis;
+using System.Globalization;
 using System.Linq;
 using System.Numerics;
 using ImGuiNET;
@@ -9,6 +10,7 @@ using XREngine.Components;
 using XREngine.Data.Rendering;
 using XREngine.Rendering;
 using XREngine.Rendering.OpenGL;
+using XREngine.Rendering.PostProcessing;
 using XREngine.Rendering.Resources;
 
 namespace XREngine.Editor.ComponentEditors;
@@ -36,6 +38,7 @@ public sealed class CameraComponentEditor : IXRComponentEditor
         new("Orthographic", typeof(XROrthographicCameraParameters)),
         new("OpenVR Eye", typeof(XROVRCameraParameters))
     ];
+
 
     private static readonly string[] PreferredPreviewTextureNames =
     [
@@ -69,7 +72,7 @@ public sealed class CameraComponentEditor : IXRComponentEditor
         ImGui.PushID(cameraComponent.GetHashCode());
         DrawCameraSettings(cameraComponent);
         DrawParameterSection(cameraComponent, visited);
-        DrawPostProcessingEditor(cameraComponent, visited);
+        DrawSchemaBasedPostProcessingEditor(cameraComponent, visited);
         DrawPreviewSection(cameraComponent);
         ImGui.PopID();
 
@@ -281,32 +284,244 @@ public sealed class CameraComponentEditor : IXRComponentEditor
             parameters.LeftEye = leftEye;
     }
 
-    private static void DrawPostProcessingEditor(CameraComponent component, HashSet<object> visited)
+    private static void DrawSchemaBasedPostProcessingEditor(CameraComponent component, HashSet<object> visited)
     {
         if (!ImGui.CollapsingHeader("Post Processing", ImGuiTreeNodeFlags.DefaultOpen))
             return;
 
-        var postProcessing = component.Camera.PostProcessing;
-        if (postProcessing is null)
-        {
-            ImGui.TextDisabled("Post processing is disabled for this camera.");
-            return;
-        }
+        var pipeline = component.Camera.RenderPipeline;
+        var schema = pipeline.PostProcessSchema;
+        var state = component.Camera.GetActivePostProcessState();
+
         ImGui.PushID("PostProcessingPanel");
 
-        DrawTonemappingControls(postProcessing);
-        DrawBloomSection(postProcessing.Bloom);
-        DrawAmbientOcclusionSection(postProcessing.AmbientOcclusion);
-        DrawMotionBlurSection(postProcessing.MotionBlur);
-        DrawColorGradingSection(postProcessing.ColorGrading);
-        DrawVignetteSection(postProcessing.Vignette);
-        DrawLensDistortionSection(postProcessing.LensDistortion);
-        DrawChromaticAberrationSection(postProcessing.ChromaticAberration);
-        DrawFogSection(postProcessing.Fog);
-
-        DrawAdvancedPostProcessingInspector(postProcessing, visited);
+        if (schema.IsEmpty || state is null)
+        {
+            ImGui.TextDisabled($"Pipeline '{pipeline.DebugName}' exposes no post-processing schema.");
+            DrawAdvancedPostProcessingInspector(state, visited);
+        }
+        else
+        {
+            DrawSchemaCategories(schema, state);
+            DrawAdvancedPostProcessingInspector(state, visited);
+        }
 
         ImGui.PopID();
+    }
+
+    private static void DrawSchemaCategories(RenderPipelinePostProcessSchema schema, PipelinePostProcessState state)
+    {
+        foreach (var category in schema.Categories)
+        {
+            if (!ImGui.CollapsingHeader(category.DisplayName, ImGuiTreeNodeFlags.DefaultOpen))
+                continue;
+
+            if (!string.IsNullOrWhiteSpace(category.Description))
+                ImGui.TextDisabled(category.Description);
+
+            ImGui.PushID(category.Key);
+
+            foreach (var stageKey in category.StageKeys)
+            {
+                if (!schema.TryGetStage(stageKey, out var stage) || !state.TryGetStage(stageKey, out var stageState))
+                    continue;
+
+                DrawSchemaStage(stage, stageState);
+            }
+
+            ImGui.PopID();
+        }
+    }
+
+    private static void DrawSchemaStage(PostProcessStageDescriptor stage, PostProcessStageState stageState)
+    {
+        if (stage.Parameters.Count == 0)
+            return;
+
+        ImGui.PushID(stage.Key);
+        ImGui.TextDisabled($"— {stage.DisplayName} —");
+
+        foreach (var param in stage.Parameters)
+            DrawSchemaParameter(param, stageState);
+
+        ImGui.PopID();
+    }
+
+    private static void DrawSchemaParameter(PostProcessParameterDescriptor param, PostProcessStageState stageState)
+    {
+        if (param.VisibilityCondition != null && stageState.BackingInstance != null)
+        {
+            if (!param.VisibilityCondition(stageState.BackingInstance))
+                return;
+        }
+
+        ImGui.PushID(param.Name);
+
+        switch (param.Kind)
+        {
+            case PostProcessParameterKind.Bool:
+                DrawBoolParameter(param, stageState);
+                break;
+            case PostProcessParameterKind.Int:
+                DrawIntParameter(param, stageState);
+                break;
+            case PostProcessParameterKind.Float:
+                DrawFloatParameter(param, stageState);
+                break;
+            case PostProcessParameterKind.Vector2:
+                DrawVector2Parameter(param, stageState);
+                break;
+            case PostProcessParameterKind.Vector3:
+                DrawVector3Parameter(param, stageState);
+                break;
+            case PostProcessParameterKind.Vector4:
+                DrawVector4Parameter(param, stageState);
+                break;
+            default:
+                ImGui.TextDisabled($"{param.DisplayName}: (unsupported type)");
+                break;
+        }
+
+        ImGui.PopID();
+    }
+
+    private static void DrawBoolParameter(PostProcessParameterDescriptor param, PostProcessStageState state)
+    {
+        bool fallback = ExtractDefault(param, false);
+        bool value = state.GetValue(param.Name, fallback);
+        if (ImGui.Checkbox(param.DisplayName, ref value))
+            state.SetValue(param.Name, value);
+    }
+
+    private static void DrawIntParameter(PostProcessParameterDescriptor param, PostProcessStageState state)
+    {
+        if (param.EnumOptions.Count > 0)
+        {
+            DrawEnumParameter(param, state);
+            return;
+        }
+
+        int fallback = ExtractDefault(param, 0);
+        int value = state.GetValue(param.Name, fallback);
+
+        float min = param.Min ?? int.MinValue;
+        float max = param.Max ?? int.MaxValue;
+
+        if (ImGui.SliderInt(param.DisplayName, ref value, (int)min, (int)max))
+            state.SetValue(param.Name, value);
+    }
+
+    private static void DrawEnumParameter(PostProcessParameterDescriptor param, PostProcessStageState state)
+    {
+        int fallback = ExtractDefault(param, 0);
+        int value = state.GetValue(param.Name, fallback);
+        string currentLabel = param.EnumOptions.FirstOrDefault(o => o.Value == value)?.Label ?? value.ToString();
+
+        if (ImGui.BeginCombo(param.DisplayName, currentLabel))
+        {
+            foreach (var option in param.EnumOptions)
+            {
+                bool selected = option.Value == value;
+                if (ImGui.Selectable(option.Label, selected) && !selected)
+                {
+                    state.SetValue(param.Name, option.Value);
+                    value = option.Value;
+                }
+                if (selected)
+                    ImGui.SetItemDefaultFocus();
+            }
+
+            ImGui.EndCombo();
+        }
+    }
+
+    private static void DrawFloatParameter(PostProcessParameterDescriptor param, PostProcessStageState state)
+    {
+        float fallback = ExtractDefault(param, 0.0f);
+        float value = state.GetValue(param.Name, fallback);
+        float min = param.Min ?? 0.0f;
+        float max = param.Max ?? 1.0f;
+        float step = param.Step ?? 0.01f;
+
+        string format = step < 0.01f ? "%.4f" : step < 0.1f ? "%.3f" : "%.2f";
+        bool useSlider = (max - min) <= 1000.0f && max < float.MaxValue / 2;
+
+        if (useSlider)
+        {
+            if (ImGui.SliderFloat(param.DisplayName, ref value, min, max, format))
+                state.SetValue(param.Name, value);
+        }
+        else
+        {
+            if (ImGui.DragFloat(param.DisplayName, ref value, step, min, max, format))
+                state.SetValue(param.Name, value);
+        }
+    }
+
+    private static void DrawVector2Parameter(PostProcessParameterDescriptor param, PostProcessStageState state)
+    {
+        Vector2 fallback = ExtractDefault(param, Vector2.Zero);
+        Vector2 value = state.GetValue(param.Name, fallback);
+
+        if (ImGui.DragFloat2(param.DisplayName, ref value, param.Step ?? 0.01f))
+            state.SetValue(param.Name, value);
+    }
+
+    private static void DrawVector3Parameter(PostProcessParameterDescriptor param, PostProcessStageState state)
+    {
+        Vector3 fallback = ExtractDefault(param, Vector3.Zero);
+        Vector3 value = state.GetValue(param.Name, fallback);
+
+        bool changed = param.IsColor
+            ? ImGui.ColorEdit3(param.DisplayName, ref value)
+            : ImGui.DragFloat3(param.DisplayName, ref value, param.Step ?? 0.01f);
+
+        if (changed)
+            state.SetValue(param.Name, value);
+    }
+
+    private static void DrawVector4Parameter(PostProcessParameterDescriptor param, PostProcessStageState state)
+    {
+        Vector4 fallback = ExtractDefault(param, Vector4.Zero);
+        Vector4 value = state.GetValue(param.Name, fallback);
+
+        bool changed = param.IsColor
+            ? ImGui.ColorEdit4(param.DisplayName, ref value)
+            : ImGui.DragFloat4(param.DisplayName, ref value, param.Step ?? 0.01f);
+
+        if (changed)
+            state.SetValue(param.Name, value);
+    }
+
+    private static T ExtractDefault<T>(PostProcessParameterDescriptor descriptor, T fallback)
+    {
+        if (descriptor.DefaultValue is T typed)
+            return typed;
+
+        if (descriptor.DefaultValue is null)
+            return fallback;
+
+        try
+        {
+            if (typeof(T) == typeof(Vector2))
+            {
+                if (descriptor.DefaultValue is Vector3 v3)
+                    return (T)(object)new Vector2(v3.X, v3.Y);
+                if (descriptor.DefaultValue is Vector4 v4)
+                    return (T)(object)new Vector2(v4.X, v4.Y);
+            }
+
+            if (typeof(T) == typeof(Vector3) && descriptor.DefaultValue is Vector4 v4Value)
+                return (T)(object)new Vector3(v4Value.X, v4Value.Y, v4Value.Z);
+
+            if (descriptor.DefaultValue is IConvertible convertible)
+                return (T)Convert.ChangeType(convertible, typeof(T), CultureInfo.InvariantCulture);
+        }
+        catch
+        {
+        }
+
+        return fallback;
     }
 
     private static void DrawPreviewSection(CameraComponent component)
@@ -504,281 +719,19 @@ public sealed class CameraComponentEditor : IXRComponentEditor
         return new Vector2(MathF.Max(1.0f, dims.X), MathF.Max(1.0f, dims.Y));
     }
 
-    private static void DrawTonemappingControls(PostProcessingSettings settings)
-    {
-        if (settings is null || !ImGui.CollapsingHeader("Tonemapping", ImGuiTreeNodeFlags.DefaultOpen))
-            return;
-
-        int currentIndex = (int)settings.Tonemapping;
-        string currentLabel = settings.Tonemapping.ToString();
-
-        ImGui.PushID("Tonemapping");
-        if (ImGui.BeginCombo("Operator", currentLabel))
-        {
-            foreach (ETonemappingType type in Enum.GetValues<ETonemappingType>())
-            {
-                bool selected = (int)type == currentIndex;
-                if (ImGui.Selectable(type.ToString(), selected) && !selected)
-                {
-                    settings.Tonemapping = type;
-                    currentIndex = (int)type;
-                }
-                if (selected)
-                    ImGui.SetItemDefaultFocus();
-            }
-            ImGui.EndCombo();
-        }
-        ImGui.PopID();
-    }
-
-    private static void DrawBloomSection(BloomSettings? bloom)
-    {
-        if (bloom is null || !ImGui.CollapsingHeader("Bloom", ImGuiTreeNodeFlags.DefaultOpen))
-            return;
-
-        ImGui.PushID("Bloom");
-        float intensity = bloom.Intensity;
-        if (ImGui.SliderFloat("Intensity", ref intensity, 0.0f, 5.0f, "%.2f"))
-            bloom.Intensity = intensity;
-
-        float threshold = bloom.Threshold;
-        if (ImGui.SliderFloat("Threshold", ref threshold, 0.1f, 5.0f, "%.2f"))
-            bloom.Threshold = threshold;
-
-        float softKnee = bloom.SoftKnee;
-        if (ImGui.SliderFloat("Soft Knee", ref softKnee, 0.0f, 1.0f, "%.2f"))
-            bloom.SoftKnee = softKnee;
-
-        float radius = bloom.Radius;
-        if (ImGui.SliderFloat("Blur Radius", ref radius, 0.1f, 8.0f, "%.2f"))
-            bloom.Radius = radius;
-
-        ImGui.PopID();
-    }
-
-    private static void DrawAmbientOcclusionSection(AmbientOcclusionSettings? ao)
-    {
-        if (ao is null || !ImGui.CollapsingHeader("Ambient Occlusion", ImGuiTreeNodeFlags.DefaultOpen))
-            return;
-
-        ImGui.PushID("AmbientOcclusion");
-        bool enabled = ao.Enabled;
-        if (ImGui.Checkbox("Enabled", ref enabled))
-            ao.Enabled = enabled;
-
-        using (new ImGuiDisabledScope(!enabled))
-        {
-            if (ImGui.BeginCombo("Method", ao.Type.ToString()))
-            {
-                foreach (AmbientOcclusionSettings.EType type in Enum.GetValues<AmbientOcclusionSettings.EType>())
-                {
-                    bool selected = ao.Type == type;
-                    if (ImGui.Selectable(type.ToString(), selected) && !selected)
-                        ao.Type = type;
-                    if (selected)
-                        ImGui.SetItemDefaultFocus();
-                }
-                ImGui.EndCombo();
-            }
-
-            float radius = ao.Radius;
-            if (ImGui.SliderFloat("Radius", ref radius, 0.1f, 5.0f, "%.2f"))
-                ao.Radius = radius;
-
-            float power = ao.Power;
-            if (ImGui.SliderFloat("Contrast", ref power, 0.5f, 3.0f, "%.2f"))
-                ao.Power = power;
-
-            float bias = ao.Bias;
-            if (ImGui.SliderFloat("Bias", ref bias, 0.0f, 0.2f, "%.3f"))
-                ao.Bias = bias;
-
-            float intensity = ao.Intensity;
-            if (ImGui.SliderFloat("Intensity", ref intensity, 0.0f, 4.0f, "%.2f"))
-                ao.Intensity = intensity;
-
-            float resolution = ao.ResolutionScale;
-            if (ImGui.SliderFloat("Resolution Scale", ref resolution, 0.25f, 2.0f, "%.2f"))
-                ao.ResolutionScale = resolution;
-
-            float spp = ao.SamplesPerPixel;
-            if (ImGui.SliderFloat("Samples / Pixel", ref spp, 0.5f, 8.0f, "%.1f"))
-                ao.SamplesPerPixel = spp;
-        }
-
-        ImGui.PopID();
-    }
-
-    private static void DrawMotionBlurSection(MotionBlurSettings? motionBlur)
-    {
-        if (motionBlur is null || !ImGui.CollapsingHeader("Motion Blur", ImGuiTreeNodeFlags.DefaultOpen))
-            return;
-
-        ImGui.PushID("MotionBlur");
-        bool enabled = motionBlur.Enabled;
-        if (ImGui.Checkbox("Enabled", ref enabled))
-            motionBlur.Enabled = enabled;
-
-        using (new ImGuiDisabledScope(!enabled))
-        {
-            float shutter = motionBlur.ShutterScale;
-            if (ImGui.SliderFloat("Shutter Scale", ref shutter, 0.0f, 2.0f, "%.2f"))
-                motionBlur.ShutterScale = shutter;
-
-            int samples = motionBlur.MaxSamples;
-            if (ImGui.SliderInt("Max Samples", ref samples, 4, 64))
-                motionBlur.MaxSamples = samples;
-
-            float maxBlur = motionBlur.MaxBlurPixels;
-            if (ImGui.SliderFloat("Max Blur (px)", ref maxBlur, 1.0f, 64.0f, "%.1f"))
-                motionBlur.MaxBlurPixels = maxBlur;
-
-            float velocityThreshold = motionBlur.VelocityThreshold;
-            if (ImGui.SliderFloat("Velocity Threshold", ref velocityThreshold, 0.0f, 0.5f, "%.3f"))
-                motionBlur.VelocityThreshold = velocityThreshold;
-
-            float depthReject = motionBlur.DepthRejectThreshold;
-            if (ImGui.SliderFloat("Depth Reject", ref depthReject, 0.0f, 0.05f, "%.3f"))
-                motionBlur.DepthRejectThreshold = depthReject;
-
-            float falloff = motionBlur.SampleFalloff;
-            if (ImGui.SliderFloat("Sample Falloff", ref falloff, 0.1f, 8.0f, "%.2f"))
-                motionBlur.SampleFalloff = falloff;
-        }
-
-        ImGui.PopID();
-    }
-
-    private static void DrawColorGradingSection(ColorGradingSettings? colorGrading)
-    {
-        if (colorGrading is null || !ImGui.CollapsingHeader("Color Grading", ImGuiTreeNodeFlags.DefaultOpen))
-            return;
-
-        ImGui.PushID("ColorGrading");
-
-        Vector3 tint = colorGrading.Tint;
-        if (ImGui.ColorEdit3("Tint", ref tint))
-            colorGrading.Tint = tint;
-
-        bool autoExposure = colorGrading.AutoExposure;
-        if (ImGui.Checkbox("Auto Exposure", ref autoExposure))
-            colorGrading.AutoExposure = autoExposure;
-
-        using (new ImGuiDisabledScope(autoExposure))
-        {
-            float exposure = colorGrading.Exposure;
-            if (ImGui.SliderFloat("Manual Exposure", ref exposure, 0.0001f, 10.0f, "%.4f"))
-                colorGrading.Exposure = exposure;
-        }
-
-        float bias = colorGrading.AutoExposureBias;
-        if (ImGui.SliderFloat("Exposure Bias", ref bias, -10.0f, 10.0f, "%.2f"))
-            colorGrading.AutoExposureBias = bias;
-
-        float scale = colorGrading.AutoExposureScale;
-        if (ImGui.SliderFloat("Exposure Scale", ref scale, 0.1f, 5.0f, "%.2f"))
-            colorGrading.AutoExposureScale = scale;
-
-        float contrast = colorGrading.Contrast;
-        if (ImGui.SliderFloat("Contrast", ref contrast, -50.0f, 50.0f, "%.1f"))
-            colorGrading.Contrast = contrast;
-
-        float gamma = colorGrading.Gamma;
-        if (ImGui.SliderFloat("Gamma", ref gamma, 0.1f, 4.0f, "%.2f"))
-            colorGrading.Gamma = gamma;
-
-        float hue = colorGrading.Hue;
-        if (ImGui.SliderFloat("Hue", ref hue, 0.0f, 2.0f, "%.2f"))
-            colorGrading.Hue = hue;
-
-        float saturation = colorGrading.Saturation;
-        if (ImGui.SliderFloat("Saturation", ref saturation, 0.0f, 2.0f, "%.2f"))
-            colorGrading.Saturation = saturation;
-
-        float brightness = colorGrading.Brightness;
-        if (ImGui.SliderFloat("Brightness", ref brightness, 0.0f, 2.0f, "%.2f"))
-            colorGrading.Brightness = brightness;
-
-        ImGui.PopID();
-    }
-
-    private static void DrawVignetteSection(VignetteSettings? vignette)
-    {
-        if (vignette is null || !ImGui.CollapsingHeader("Vignette", ImGuiTreeNodeFlags.DefaultOpen))
-            return;
-
-        ImGui.PushID("Vignette");
-        Vector3 color = vignette.Color;
-        if (ImGui.ColorEdit3("Color", ref color))
-            vignette.Color = color;
-
-        float intensity = vignette.Intensity;
-        if (ImGui.SliderFloat("Intensity", ref intensity, 0.0f, 2.0f, "%.2f"))
-            vignette.Intensity = intensity;
-
-        float power = vignette.Power;
-        if (ImGui.SliderFloat("Power", ref power, 0.1f, 6.0f, "%.2f"))
-            vignette.Power = power;
-
-        ImGui.PopID();
-    }
-
-    private static void DrawLensDistortionSection(LensDistortionSettings? lens)
-    {
-        if (lens is null || !ImGui.CollapsingHeader("Lens Distortion", ImGuiTreeNodeFlags.DefaultOpen))
-            return;
-
-        ImGui.PushID("LensDistortion");
-        float intensity = lens.Intensity;
-        if (ImGui.SliderFloat("Intensity", ref intensity, -1.0f, 1.0f, "%.3f"))
-            lens.Intensity = intensity;
-        ImGui.PopID();
-    }
-
-    private static void DrawChromaticAberrationSection(ChromaticAberrationSettings? ca)
-    {
-        if (ca is null || !ImGui.CollapsingHeader("Chromatic Aberration", ImGuiTreeNodeFlags.DefaultOpen))
-            return;
-
-        ImGui.PushID("ChromaticAberration");
-        float intensity = ca.Intensity;
-        if (ImGui.SliderFloat("Intensity", ref intensity, 0.0f, 1.0f, "%.3f"))
-            ca.Intensity = intensity;
-        ImGui.PopID();
-    }
-
-    private static void DrawFogSection(FogSettings? fog)
-    {
-        if (fog is null || !ImGui.CollapsingHeader("Fog", ImGuiTreeNodeFlags.DefaultOpen))
-            return;
-
-        ImGui.PushID("Fog");
-        float intensity = fog.DepthFogIntensity;
-        if (ImGui.SliderFloat("Intensity", ref intensity, 0.0f, 1.0f, "%.2f"))
-            fog.DepthFogIntensity = intensity;
-
-        float start = fog.DepthFogStartDistance;
-        if (ImGui.DragFloat("Start Distance", ref start, 1.0f, 0.0f, float.MaxValue, "%.1f"))
-            fog.DepthFogStartDistance = MathF.Max(0.0f, start);
-
-        float end = fog.DepthFogEndDistance;
-        if (ImGui.DragFloat("End Distance", ref end, 1.0f, 0.0f, float.MaxValue, "%.1f"))
-            fog.DepthFogEndDistance = MathF.Max(end, fog.DepthFogStartDistance + 1.0f);
-
-        Vector3 color = fog.DepthFogColor;
-        if (ImGui.ColorEdit3("Color", ref color))
-            fog.DepthFogColor = color;
-
-        ImGui.PopID();
-    }
-
-    private static void DrawAdvancedPostProcessingInspector(PostProcessingSettings settings, HashSet<object> visited)
+    private static void DrawAdvancedPostProcessingInspector(PipelinePostProcessState? state, HashSet<object> visited)
     {
         if (!ImGui.CollapsingHeader("Advanced Post Processing"))
             return;
 
+        if (state is null)
+        {
+            ImGui.TextDisabled("No post-processing state available.");
+            return;
+        }
+
         ImGui.TextDisabled("Full object view (experimental)");
-        UnitTestingWorld.UserInterface.DrawRuntimeObjectInspector("Post Processing Settings", settings, visited, defaultOpen: false);
+        UnitTestingWorld.UserInterface.DrawRuntimeObjectInspector("Post Processing State", state, visited, defaultOpen: false);
     }
 
     private static bool IsColorAttachment(EFrameBufferAttachment attachment)

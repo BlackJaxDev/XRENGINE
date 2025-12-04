@@ -244,7 +244,7 @@ namespace XREngine.Components.Lights
             if (_mirrorCamera is not null)
             {
                 _mirrorCamera.Parameters = camera.Parameters;
-                _mirrorCamera.PostProcessing = camera.PostProcessing;
+                _mirrorCamera.PostProcessStates = camera.PostProcessStates;
             }
 
             if (render)

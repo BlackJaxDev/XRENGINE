@@ -37,8 +37,17 @@ namespace XREngine.Components.Capture.Lights.Types
 
             _viewport.WorldInstanceOverride = World;
             XRCamera cam = new(GetShadowCameraParentTransform(), GetCameraParameters());
-            cam.PostProcessing!.ColorGrading.AutoExposure = false;
-            cam.PostProcessing.ColorGrading.Exposure = 1.0f;
+            var colorStage = cam.GetPostProcessStageState<ColorGradingSettings>();
+            if (colorStage?.TryGetBacking(out ColorGradingSettings? grading) == true)
+            {
+                grading.AutoExposure = false;
+                grading.Exposure = 1.0f;
+            }
+            else
+            {
+                colorStage?.SetValue(nameof(ColorGradingSettings.AutoExposure), false);
+                colorStage?.SetValue(nameof(ColorGradingSettings.Exposure), 1.0f);
+            }
             _viewport.Camera = cam;
 
             if (Type == ELightType.Dynamic && CastsShadows && ShadowMap is null)

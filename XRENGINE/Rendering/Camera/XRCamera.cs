@@ -4,6 +4,7 @@ using System.Collections.Generic;
 using System.Numerics;
 using XREngine.Data.Core;
 using XREngine.Data.Geometry;
+using XREngine.Rendering.PostProcessing;
 using XREngine.Scene.Transforms;
 using YamlDotNet.Serialization;
 
@@ -94,11 +95,26 @@ namespace XREngine.Rendering
             set => SetField(ref _transform, value);
         }
 
-        public PostProcessingSettings? PostProcessing
+        public CameraPostProcessStateCollection PostProcessStates
         {
-            get => _postProcessing;
-            set => SetField(ref _postProcessing, value);
+            get => _postProcessStates;
+            set => SetField(ref _postProcessStates, value ?? new CameraPostProcessStateCollection());
         }
+
+        public PipelinePostProcessState? GetActivePostProcessState()
+        {
+            var pipeline = _renderPipeline ?? RenderPipeline;
+            return pipeline is null ? null : _postProcessStates.GetOrCreateState(pipeline);
+        }
+
+        public PostProcessStageState? GetPostProcessStageState(string stageKey)
+            => GetActivePostProcessState()?.GetStage(stageKey);
+
+        public PostProcessStageState? GetPostProcessStageState<TSettings>() where TSettings : class
+            => GetActivePostProcessState()?.GetStage<TSettings>();
+
+        public PostProcessStageState? FindPostProcessStageByParameter(string parameterName)
+            => GetActivePostProcessState()?.FindStageByParameter(parameterName);
 
         //private Matrix4x4 _modelViewProjectionMatrix = Matrix4x4.Identity;
         //public Matrix4x4 WorldViewProjectionMatrix
@@ -331,7 +347,7 @@ namespace XREngine.Rendering
         //    //InvalidateMVP();
         //}
 
-        private PostProcessingSettings? _postProcessing = new();
+        private CameraPostProcessStateCollection _postProcessStates = new();
         private XRMaterial? _postProcessMaterial;
 
         public float FarZ
@@ -562,11 +578,73 @@ namespace XREngine.Rendering
                 : DistanceFromWorldPosition(point);
 
         public virtual void SetAmbientOcclusionUniforms(XRRenderProgram program, AmbientOcclusionSettings.EType? overrideType = null)
-            => PostProcessing?.AmbientOcclusion?.SetUniforms(program, overrideType);
+        {
+            var stage = GetPostProcessStageState<AmbientOcclusionSettings>();
+            if (stage?.TryGetBacking(out AmbientOcclusionSettings? settings) == true)
+            {
+                settings.SetUniforms(program, overrideType);
+                return;
+            }
+
+            program.Uniform("Radius", 0.9f);
+            program.Uniform("Power", 1.4f);
+        }
+
         public virtual void SetBloomBrightPassUniforms(XRRenderProgram program)
-            => PostProcessing?.Bloom?.SetBrightPassUniforms(program);
+        {
+            var stage = GetPostProcessStageState<BloomSettings>();
+            if (stage?.TryGetBacking(out BloomSettings? settings) == true)
+            {
+                settings.SetBrightPassUniforms(program);
+                return;
+            }
+
+            program.Uniform("BloomIntensity", 1.0f);
+            program.Uniform("BloomThreshold", 1.0f);
+            program.Uniform("SoftKnee", 0.5f);
+            program.Uniform("Luminance", Engine.Rendering.Settings.DefaultLuminance);
+        }
+
         public virtual void SetPostProcessUniforms(XRRenderProgram program)
-            => PostProcessing?.SetUniforms(program);
+        {
+            var state = GetActivePostProcessState();
+            if (state is null)
+                return;
+
+            if (!TryApplyStageUniform(state, program, static (VignetteSettings settings, XRRenderProgram target) => settings.SetUniforms(target)))
+                new VignetteSettings().SetUniforms(program);
+
+            if (!TryApplyStageUniform(state, program, static (ColorGradingSettings settings, XRRenderProgram target) => settings.SetUniforms(target)))
+                new ColorGradingSettings().SetUniforms(program);
+
+            if (!TryApplyStageUniform(state, program, static (ChromaticAberrationSettings settings, XRRenderProgram target) => settings.SetUniforms(target)))
+                new ChromaticAberrationSettings().SetUniforms(program);
+
+            if (!TryApplyStageUniform(state, program, static (FogSettings settings, XRRenderProgram target) => settings.SetUniforms(target)))
+                new FogSettings().SetUniforms(program);
+
+            if (!TryApplyStageUniform(state, program, static (LensDistortionSettings settings, XRRenderProgram target) => settings.SetUniforms(target)))
+                new LensDistortionSettings().SetUniforms(program);
+
+            var tonemapStage = state.FindStageByParameter(PostProcessParameterNames.TonemappingOperator);
+            int tonemap = tonemapStage?.GetValue<int>(PostProcessParameterNames.TonemappingOperator, (int)ETonemappingType.Reinhard)
+                ?? (int)ETonemappingType.Reinhard;
+            program.Uniform("TonemapType", tonemap);
+        }
+
+        private static bool TryApplyStageUniform<TSettings>(PipelinePostProcessState? state, XRRenderProgram program, Action<TSettings, XRRenderProgram> apply)
+            where TSettings : class
+        {
+            if (state is null)
+                return false;
+
+            var stage = state.GetStage<TSettings>();
+            if (stage?.TryGetBacking(out TSettings? settings) != true)
+                return false;
+
+            apply(settings, program);
+            return true;
+        }
 
         public XRMaterial? PostProcessMaterial
         {

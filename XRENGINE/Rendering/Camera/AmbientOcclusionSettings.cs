@@ -31,6 +31,7 @@ namespace XREngine.Rendering
         private float _spatialHashCellSize = 0.75f;
         private float _spatialHashMaxDistance = 1.5f;
         private int _spatialHashSteps = 6;
+        private float _spatialHashJitterScale = 0.35f;
 
         public enum EType
         {
@@ -47,16 +48,16 @@ namespace XREngine.Rendering
         {
             _enabled = true;
             _resolutionScale = 1.0f;
-            _samplesPerPixel = 1.0f;
+            _samplesPerPixel = 3.0f; // Used for cell size calculation - article recommends 3-5 pixels
             _distance = 1.0f;
             _distanceIntensity = 1.0f;
             _intensity = 1.0f;
             _color = 0.0f;
             _bias = 0.05f;
-            _thickness = 1.0f;
+            _thickness = 0.5f; // Reasonable default for screen-space ray march thickness
             _iterations = 1;
-            _radius = 0.9f;
-            _power = 1.4f;
+            _radius = 2.0f; // Max ray distance in world units - article uses 2m
+            _power = 1.0f; // Power of 1 means no contrast adjustment
             _rings = 4.0f;
             _lumaPhi = 4.0f;
             _depthPhi = 4.0f;
@@ -65,9 +66,10 @@ namespace XREngine.Rendering
             _secondaryRadius = 1.6f;
             _multiViewBlend = 0.6f;
             _multiViewSpread = 0.5f;
-            _spatialHashCellSize = 0.75f;
+            _spatialHashCellSize = 0.07f; // smin in article - smallest feature in world space
             _spatialHashMaxDistance = 1.5f;
-            _spatialHashSteps = 6;
+            _spatialHashSteps = 8; // Ray march steps
+            _spatialHashJitterScale = 0.35f;
         }
 
         public bool Enabled
@@ -233,6 +235,15 @@ namespace XREngine.Rendering
         {
             get => _spatialHashSteps;
             set => SetField(ref _spatialHashSteps, value);
+        }
+
+        /// <summary>
+        /// Scale for jittering the world position when indexing the hash. Higher values spread samples to neighboring cells for implicit filtering.
+        /// </summary>
+        public float SpatialHashJitterScale
+        {
+            get => _spatialHashJitterScale;
+            set => SetField(ref _spatialHashJitterScale, value);
         }
 
         /// <summary>
