@@ -726,10 +726,10 @@ namespace XREngine.Rendering
             if (mesh is null || ShouldIgnoreRenderableMesh(mesh))
                 return false;
 
-            if (!TryIntersectRenderableMesh(mesh, worldSegment, out distance, out Triangle worldTriangle, out Vector3 hitPoint))
+            if (!TryIntersectRenderableMesh(mesh, worldSegment, out distance, out Triangle worldTriangle, out Vector3 hitPoint, out IndexTriangle triangleIndices, out int triangleIndex))
                 return false;
 
-            MeshPickResult faceHit = new(component, mesh, worldTriangle, hitPoint);
+            MeshPickResult faceHit = new(component, mesh, worldTriangle, hitPoint, triangleIndex, triangleIndices);
             return TryBuildPickResult(hitMode, faceHit, out result);
         }
 
@@ -770,25 +770,27 @@ namespace XREngine.Rendering
             float bestWeight = float.MaxValue;
             Vector3 bestStart = default;
             Vector3 bestEnd = default;
+            int bestEdgeIndex = -1;
 
-            EvaluateEdge(bary.Z, tri.A, tri.B);
-            EvaluateEdge(bary.X, tri.B, tri.C);
-            EvaluateEdge(bary.Y, tri.C, tri.A);
+            EvaluateEdge(bary.Z, tri.A, tri.B, 0);
+            EvaluateEdge(bary.X, tri.B, tri.C, 1);
+            EvaluateEdge(bary.Y, tri.C, tri.A, 2);
 
-            if (bestWeight == float.MaxValue)
+            if (bestWeight == float.MaxValue || bestEdgeIndex < 0)
                 return false;
 
             Vector3 closest = ProjectPointOntoSegment(faceHit.HitPoint, bestStart, bestEnd);
-            result = new MeshEdgePickResult(faceHit, bestStart, bestEnd, closest);
+            result = new MeshEdgePickResult(faceHit, bestStart, bestEnd, closest, bestEdgeIndex);
             return true;
 
-            void EvaluateEdge(float coord, Vector3 start, Vector3 end)
+            void EvaluateEdge(float coord, Vector3 start, Vector3 end, int edgeIndex)
             {
                 if (coord > EdgeBarycentricThreshold || coord >= bestWeight)
                     return;
                 bestWeight = coord;
                 bestStart = start;
                 bestEnd = end;
+                bestEdgeIndex = edgeIndex;
             }
         }
 
@@ -801,23 +803,25 @@ namespace XREngine.Rendering
 
             float bestDelta = float.MaxValue;
             Vector3 bestVertex = default;
+            int bestIndex = -1;
 
-            EvaluateVertex(MathF.Abs(1.0f - bary.X), tri.A);
-            EvaluateVertex(MathF.Abs(1.0f - bary.Y), tri.B);
-            EvaluateVertex(MathF.Abs(1.0f - bary.Z), tri.C);
+            EvaluateVertex(MathF.Abs(1.0f - bary.X), tri.A, faceHit.Indices.Point0);
+            EvaluateVertex(MathF.Abs(1.0f - bary.Y), tri.B, faceHit.Indices.Point1);
+            EvaluateVertex(MathF.Abs(1.0f - bary.Z), tri.C, faceHit.Indices.Point2);
 
-            if (bestDelta > VertexBarycentricThreshold)
+            if (bestDelta > VertexBarycentricThreshold || bestIndex < 0)
                 return false;
 
-            result = new MeshVertexPickResult(faceHit, bestVertex);
+            result = new MeshVertexPickResult(faceHit, bestVertex, bestIndex);
             return true;
 
-            void EvaluateVertex(float delta, Vector3 vertex)
+            void EvaluateVertex(float delta, Vector3 vertex, int vertexIndex)
             {
                 if (delta >= bestDelta)
                     return;
                 bestDelta = delta;
                 bestVertex = vertex;
+                bestIndex = vertexIndex;
             }
         }
 
@@ -871,11 +875,15 @@ namespace XREngine.Rendering
             Segment worldSegment,
             out float distance,
             out Triangle worldTriangle,
-            out Vector3 hitPoint)
+            out Vector3 hitPoint,
+            out IndexTriangle triangleIndices,
+            out int triangleIndex)
         {
             distance = 0.0f;
             worldTriangle = default;
             hitPoint = default;
+            triangleIndices = new IndexTriangle();
+            triangleIndex = -1;
 
             var lodNode = mesh.CurrentLOD ?? mesh.LODs.First;
             var renderer = lodNode?.Value.Renderer;
@@ -964,12 +972,18 @@ namespace XREngine.Rendering
             if (bestTriangle is null)
                 return false;
 
+            Triangle localTriangle = bestTriangle.Value;
+            if (xrMesh.TriangleLookup is { } lookup && lookup.TryGetValue(localTriangle, out var indices))
+            {
+                triangleIndices = indices.Indices;
+                triangleIndex = indices.FaceIndex;
+            }
+
             Vector3 spaceHitPoint = segmentSpaceStart + segmentSpaceDir * bestDistance;
             if (spaceToWorld is null)
                 return false;
 
             hitPoint = Vector3.Transform(spaceHitPoint, spaceToWorld.Value);
-            Triangle localTriangle = bestTriangle.Value;
             worldTriangle = new Triangle(
                 Vector3.Transform(localTriangle.A, spaceToWorld.Value),
                 Vector3.Transform(localTriangle.B, spaceToWorld.Value),
