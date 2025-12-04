@@ -365,7 +365,8 @@ namespace XREngine.Rendering.Pipelines.Commands
 
         private void MVAOBlur_SetUniforms(XRRenderProgram program)
         {
-            var settings = ActivePipelineInstance.RenderState.SceneCamera?.PostProcessing?.AmbientOcclusion;
+            var stage = ActivePipelineInstance.RenderState.SceneCamera?.GetPostProcessStageState<AmbientOcclusionSettings>();
+            var settings = stage?.TryGetBacking(out AmbientOcclusionSettings? backing) == true ? backing : null;
             float depthPhi = settings?.DepthPhi is > 0.0f ? settings.DepthPhi : 4.0f;
             float normalPhi = settings?.NormalPhi is > 0.0f ? settings.NormalPhi : 64.0f;
             program.Uniform("DepthPhi", depthPhi);

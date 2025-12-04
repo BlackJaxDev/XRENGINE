@@ -351,7 +351,7 @@ namespace XREngine.Rendering.Pipelines.Commands
             };
             state.HashTimeBuffer.PushData();
 
-            state.SpatialBuffer = new XRDataBuffer("SpatialHashData", EBufferTarget.ShaderStorageBuffer, state.HashCapacity, EComponentType.UInt, 1, false, true)
+            state.SpatialBuffer = new XRDataBuffer("SpatialHashData", EBufferTarget.ShaderStorageBuffer, state.HashCapacity, EComponentType.UInt, 2, false, true)
             {
                 Usage = EBufferUsage.DynamicDraw,
                 BindingIndexOverride = 3u,
@@ -373,18 +373,23 @@ namespace XREngine.Rendering.Pipelines.Commands
                 return;
 
             var camera = ActivePipelineInstance.RenderState.SceneCamera;
-            var settings = camera?.PostProcessing?.AmbientOcclusion;
+            var stage = camera?.GetPostProcessStageState<AmbientOcclusionSettings>();
+            var settings = stage?.TryGetBacking(out AmbientOcclusionSettings? backing) == true ? backing : null;
 
-            float hashRadius = settings?.Radius > 0.0f ? settings.Radius : 0.9f;
-            float hashPower = settings?.Power > 0.0f ? settings.Power : 1.2f;
-            int hashSteps = settings?.SpatialHashSteps > 0 ? settings.SpatialHashSteps : 6;
-            float hashBias = settings?.Bias > 0.0f ? settings.Bias : 0.03f;
-            float hashCell = settings?.SpatialHashCellSize > 0.0f ? settings.SpatialHashCellSize : 0.75f;
-            float hashMaxDistance = settings?.SpatialHashMaxDistance > 0.0f ? settings.SpatialHashMaxDistance : 1.5f;
-            float hashThickness = settings?.Thickness > 0.0f ? settings.Thickness : 0.1f;
-            float hashFade = settings?.DistanceIntensity > 0.0f ? settings.DistanceIntensity : 1.0f;
-            float spp = settings?.SamplesPerPixel > 0.0f ? settings.SamplesPerPixel : 1.0f;
-            float jitterScale = 0.35f;
+            float hashRadius = settings?.Radius > 0.0f ? settings.Radius : 2.0f;  // Max ray distance in world units
+            float hashPower = settings?.Power > 0.0f ? settings.Power : 1.0f;
+            int hashSteps = settings?.SpatialHashSteps > 0 ? settings.SpatialHashSteps : 8;
+            float hashBias = settings?.Bias > 0.0f ? settings.Bias : 0.01f;
+            float hashCellMin = settings?.SpatialHashCellSize > 0.0f ? settings.SpatialHashCellSize : 0.07f;  // smin - smallest cell
+            float hashThickness = settings?.Thickness > 0.0f ? settings.Thickness : 0.5f;
+            float jitterScale = settings?.SpatialHashJitterScale >= 0.0f ? settings.SpatialHashJitterScale : 0.35f;
+
+            // SamplesPerPixel (sp) controls feature size in screen pixels for adaptive cell sizing
+            float spp = settings?.SamplesPerPixel > 0.0f ? settings.SamplesPerPixel : 3.0f;
+
+            if (spp < 1.0f)
+                spp = 1.0f;
+
             float fovY = camera?.Parameters is XRPerspectiveCameraParameters persp
                 ? XRMath.DegToRad(persp.VerticalFieldOfView)
                 : XRMath.DegToRad(60.0f);
@@ -392,14 +397,14 @@ namespace XREngine.Rendering.Pipelines.Commands
             if (Stereo && layered)
             {
                 DispatchStereo(state, normalTex, depthViewTex, aoTexture, width, height,
-                    hashRadius, hashPower, hashSteps, hashBias, hashCell, hashMaxDistance,
-                    hashThickness, hashFade, spp, jitterScale, fovY);
+                    hashRadius, hashPower, hashSteps, hashBias, hashCellMin,
+                    hashThickness, spp, jitterScale, fovY);
             }
             else
             {
                 DispatchMono(state, normalTex, depthViewTex, aoTexture, width, height,
-                    hashRadius, hashPower, hashSteps, hashBias, hashCell, hashMaxDistance,
-                    hashThickness, hashFade, spp, jitterScale, fovY, camera);
+                    hashRadius, hashPower, hashSteps, hashBias, hashCellMin,
+                    hashThickness, spp, jitterScale, fovY, camera);
             }
         }
 
@@ -423,7 +428,7 @@ namespace XREngine.Rendering.Pipelines.Commands
             XRTexture normalTex, XRTexture depthViewTex, XRTexture aoTexture,
             int width, int height,
             float hashRadius, float hashPower, int hashSteps, float hashBias,
-            float hashCell, float hashMaxDistance, float hashThickness, float hashFade,
+            float hashCellMin, float hashThickness,
             float spp, float jitterScale, float fovY, XRCamera? camera)
         {
             if (_computeProgram is null)
@@ -444,16 +449,14 @@ namespace XREngine.Rendering.Pipelines.Commands
 
             _computeProgram.Uniform("FrameIndex", state.FrameIndex++);
             _computeProgram.Uniform("HashMapSize", state.HashCapacity);
-            _computeProgram.Uniform("CellSizeMin", hashCell);
+            _computeProgram.Uniform("CellSizeMin", hashCellMin);
             _computeProgram.Uniform("Bias", hashBias);
             _computeProgram.Uniform("Thickness", hashThickness);
-            _computeProgram.Uniform("MaxRayDistance", hashMaxDistance);
-            _computeProgram.Uniform("DistanceFade", hashFade);
             _computeProgram.Uniform("Power", hashPower);
             _computeProgram.Uniform("SamplesPerPixel", spp);
             _computeProgram.Uniform("JitterScale", jitterScale);
             _computeProgram.Uniform("RayStepCount", hashSteps);
-            _computeProgram.Uniform("Radius", hashRadius);
+            _computeProgram.Uniform("Radius", hashRadius);  // Used as max ray distance
             _computeProgram.Uniform("FieldOfViewY", fovY);
             _computeProgram.Uniform("InvResolution", new Vector2(1.0f / width, 1.0f / height));
             _computeProgram.Uniform("InverseProjMatrix", inverseProj);
@@ -496,7 +499,7 @@ namespace XREngine.Rendering.Pipelines.Commands
             XRTexture normalTex, XRTexture depthViewTex, XRTexture aoTexture,
             int width, int height,
             float hashRadius, float hashPower, int hashSteps, float hashBias,
-            float hashCell, float hashMaxDistance, float hashThickness, float hashFade,
+            float hashCellMin, float hashThickness,
             float spp, float jitterScale, float fovY)
         {
             if (_computeProgramStereo is null)
@@ -531,16 +534,14 @@ namespace XREngine.Rendering.Pipelines.Commands
 
             _computeProgramStereo.Uniform("FrameIndex", state.FrameIndex++);
             _computeProgramStereo.Uniform("HashMapSize", state.HashCapacity);
-            _computeProgramStereo.Uniform("CellSizeMin", hashCell);
+            _computeProgramStereo.Uniform("CellSizeMin", hashCellMin);
             _computeProgramStereo.Uniform("Bias", hashBias);
             _computeProgramStereo.Uniform("Thickness", hashThickness);
-            _computeProgramStereo.Uniform("MaxRayDistance", hashMaxDistance);
-            _computeProgramStereo.Uniform("DistanceFade", hashFade);
             _computeProgramStereo.Uniform("Power", hashPower);
             _computeProgramStereo.Uniform("SamplesPerPixel", spp);
             _computeProgramStereo.Uniform("JitterScale", jitterScale);
             _computeProgramStereo.Uniform("RayStepCount", hashSteps);
-            _computeProgramStereo.Uniform("Radius", hashRadius);
+            _computeProgramStereo.Uniform("Radius", hashRadius);  // Used as max ray distance
             _computeProgramStereo.Uniform("FieldOfViewY", fovY);
             _computeProgramStereo.Uniform("InvResolution", new Vector2(1.0f / width, 1.0f / height));
 

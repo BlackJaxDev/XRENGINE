@@ -1,4 +1,6 @@
 ﻿
+using XREngine.Rendering;
+
 namespace XREngine.Rendering.Pipelines.Commands
 {
     public class VPRC_ExposureUpdate : ViewportRenderCommand
@@ -15,7 +17,17 @@ namespace XREngine.Rendering.Pipelines.Commands
         public bool GenerateMipmapsHere { get; set; } = true;
 
         protected override void Execute()
-            => ActivePipelineInstance.RenderState.SceneCamera?.PostProcessing?.ColorGrading?.UpdateExposure(ActivePipelineInstance.GetTexture<XRTexture>(HDRSceneTextureName)!, GenerateMipmapsHere);
+        {
+            var stage = ActivePipelineInstance.RenderState.SceneCamera?.GetPostProcessStageState<ColorGradingSettings>();
+            if (stage?.TryGetBacking(out ColorGradingSettings? grading) != true)
+                return;
+
+            var hdrTexture = ActivePipelineInstance.GetTexture<XRTexture>(HDRSceneTextureName);
+            if (hdrTexture is null)
+                return;
+
+            grading.UpdateExposure(hdrTexture, GenerateMipmapsHere);
+        }
 
         public void SetOptions(string hdrSceneTextureName, bool generateMipmapsHere)
         {

@@ -94,40 +94,42 @@ public sealed class RenderPipelinePostProcessSchemaBuilder(RenderPipeline pipeli
 
     private static PostProcessStageDescriptor? BuildStageDescriptor(StageDefinition definition)
     {
-        List<XRShader> shaders = definition.BuildShaders();
-        if (shaders.Count == 0)
-            return null;
-
-        XRRenderProgram program = new(false, true, shaders);
-        program.RefreshShaderInterfaceMetadata();
-
         List<PostProcessParameterDescriptor> parameters = new();
-        foreach (var binding in program.UniformBindings.Values)
+        List<XRShader> shaders = definition.BuildShaders();
+
+        if (shaders.Count > 0)
         {
-            if (binding.IsArray)
-                continue;
-            if (definition.HiddenUniforms.Contains(binding.Name))
-                continue;
+            XRRenderProgram program = new(false, true, shaders);
+            program.RefreshShaderInterfaceMetadata();
 
-            if (!TryConvert(binding.EngineType, out var kind))
-                continue;
+            foreach (var binding in program.UniformBindings.Values)
+            {
+                if (binding.IsArray)
+                    continue;
+                if (definition.HiddenUniforms.Contains(binding.Name))
+                    continue;
 
-            var customization = definition.GetCustomization(binding.Name);
-            string displayName = customization?.DisplayName ?? binding.Name;
-            object? defaultValue = customization?.DefaultValue ?? GetDefault(kind);
+                if (!TryConvert(binding.EngineType, out var kind))
+                    continue;
 
-            parameters.Add(new PostProcessParameterDescriptor(
-                binding.Name,
-                displayName,
-                kind,
-                isUniform: true,
-                uniformName: binding.Name,
-                defaultValue,
-                customization?.IsColor ?? false,
-                customization?.Min,
-                customization?.Max,
-                customization?.Step,
-                customization?.EnumOptions));
+                var customization = definition.GetCustomization(binding.Name);
+                string displayName = customization?.DisplayName ?? binding.Name;
+                object? defaultValue = customization?.DefaultValue ?? GetDefault(kind);
+
+                parameters.Add(new PostProcessParameterDescriptor(
+                    binding.Name,
+                    displayName,
+                    kind,
+                    isUniform: true,
+                    uniformName: binding.Name,
+                    defaultValue,
+                    customization?.IsColor ?? false,
+                    customization?.Min,
+                    customization?.Max,
+                    customization?.Step,
+                    customization?.EnumOptions,
+                    null));
+            }
         }
 
         foreach (var custom in definition.CustomParameters)
@@ -143,10 +145,14 @@ public sealed class RenderPipelinePostProcessSchemaBuilder(RenderPipeline pipeli
                 custom.Min,
                 custom.Max,
                 custom.Step,
-                custom.EnumOptions));
+                custom.EnumOptions,
+                custom.VisibilityCondition));
         }
 
-        return new PostProcessStageDescriptor(definition.Key, definition.DisplayName, parameters);
+        if (parameters.Count == 0)
+            return null;
+
+        return new PostProcessStageDescriptor(definition.Key, definition.DisplayName, parameters, definition.BackingType);
     }
 
     private static bool TryConvert(EShaderVarType? type, out PostProcessParameterKind kind)
@@ -192,6 +198,7 @@ public sealed class RenderPipelinePostProcessSchemaBuilder(RenderPipeline pipeli
         public HashSet<string> HiddenUniforms { get; } = new(StringComparer.Ordinal);
         public Dictionary<string, UniformCustomization> Customizations { get; } = new(StringComparer.Ordinal);
         public List<CustomParameterDefinition> CustomParameters { get; } = new();
+        public Type? BackingType { get; set; }
 
         public void SetShaderFactory(Func<IEnumerable<XRShader>> factory)
             => _shaderFactory = factory ?? throw new ArgumentNullException(nameof(factory));
@@ -233,6 +240,7 @@ public sealed class RenderPipelinePostProcessSchemaBuilder(RenderPipeline pipeli
         public float? Max { get; init; }
         public float? Step { get; init; }
         public IReadOnlyList<PostProcessEnumOption>? EnumOptions { get; init; }
+        public Func<object, bool>? VisibilityCondition { get; init; }
     }
 
     public sealed class PostProcessStageBuilder
@@ -241,6 +249,19 @@ public sealed class RenderPipelinePostProcessSchemaBuilder(RenderPipeline pipeli
 
         internal PostProcessStageBuilder(StageDefinition definition)
             => _definition = definition;
+
+        public PostProcessStageBuilder BackedBy<TSettings>() where TSettings : class, new()
+        {
+            _definition.BackingType = typeof(TSettings);
+            return this;
+        }
+
+        public PostProcessStageBuilder BackedBy(Type settingsType)
+        {
+            ArgumentNullException.ThrowIfNull(settingsType);
+            _definition.BackingType = settingsType;
+            return this;
+        }
 
         public PostProcessStageBuilder WithShaderFactory(Func<IEnumerable<XRShader>> factory)
         {
@@ -324,7 +345,8 @@ public sealed class RenderPipelinePostProcessSchemaBuilder(RenderPipeline pipeli
             float? max = null,
             float? step = null,
             bool isColor = false,
-            IReadOnlyList<PostProcessEnumOption>? enumOptions = null)
+            IReadOnlyList<PostProcessEnumOption>? enumOptions = null,
+            Func<object, bool>? visibilityCondition = null)
         {
             if (string.IsNullOrWhiteSpace(name))
                 throw new ArgumentException("Parameter name cannot be empty.", nameof(name));
@@ -339,7 +361,8 @@ public sealed class RenderPipelinePostProcessSchemaBuilder(RenderPipeline pipeli
                 Max = max,
                 Step = step,
                 IsColor = isColor,
-                EnumOptions = enumOptions
+                EnumOptions = enumOptions,
+                VisibilityCondition = visibilityCondition
             });
 
             return this;
