@@ -73,6 +73,8 @@ public sealed class OctahedralImposterGenerator
         ModelComponent captureComponent = captureNode.AddComponent<ModelComponent>()!;
         captureComponent.Model = model;
 
+        AABB captureBounds = TransformBounds(bounds, component.Transform);
+
         XRTexture2D[] viewTextures = new XRTexture2D[s_captureAxes.Length];
         XRTexture2D? depthTexture = settings.CaptureDepth
             ? new XRTexture2D(settings.SheetSize, settings.SheetSize, EPixelInternalFormat.DepthComponent32f, EPixelFormat.DepthComponent, EPixelType.Float, false)
@@ -84,7 +86,7 @@ public sealed class OctahedralImposterGenerator
 
         for (int i = 0; i < s_captureAxes.Length; i++)
         {
-            viewTextures[i] = CaptureView(captureWorld, bounds, settings.SheetSize, settings.CapturePadding, s_captureAxes[i], depthTexture);
+            viewTextures[i] = CaptureView(captureWorld, captureBounds, settings.SheetSize, settings.CapturePadding, s_captureAxes[i], depthTexture);
             if (viewTextures[i] is null)
                 return null;
         }
@@ -107,6 +109,14 @@ public sealed class OctahedralImposterGenerator
         foreach (SubMesh mesh in model.Meshes)
             total = AABB.Union(total, mesh.CullingBounds ?? mesh.Bounds);
         return total;
+    }
+
+    private static AABB TransformBounds(AABB bounds, Transform transform)
+    {
+        Matrix4x4 renderMatrix = transform.RenderMatrix;
+        renderMatrix.Translation = Vector3.Zero;
+
+        return bounds.Transformed(point => Vector3.Transform(point, renderMatrix));
     }
 
     private static XRTexture2D CaptureView(
