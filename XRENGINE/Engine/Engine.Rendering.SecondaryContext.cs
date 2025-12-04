@@ -170,7 +170,8 @@ namespace XREngine
                         if (!OperatingSystem.IsWindows())
                             return false;
 
-                        using var searcher = new ManagementObjectSearcher("select Name from Win32_VideoController where Status='OK'");
+                        const string gpuQuery = "select Name from Win32_VideoController where Status='OK'";
+                        using var searcher = new ManagementObjectSearcher(gpuQuery);
                         using var results = searcher.Get();
                         int count = 0;
                         foreach (var _ in results)
