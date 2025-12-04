@@ -3,6 +3,8 @@ using SimpleScene.Util.ssBVH;
 using System.ComponentModel;
 using System.Numerics;
 using XREngine.Core.Files;
+using XREngine.Data.Geometry;
+using XREngine.Data.Rendering;
 using XREngine.Data.Core;
 using XREngine.Data.Geometry;
 using XREngine.Data.Rendering;
@@ -55,6 +57,7 @@ public partial class XRMesh : XRAsset
     private List<int>? _points;
     private List<IndexLine>? _lines;
     private List<IndexTriangle>? _triangles;
+    internal Dictionary<Triangle, (IndexTriangle Indices, int FaceIndex)>? TriangleLookup { get; set; }
     private EPrimitiveType _type = EPrimitiveType.Triangles;
 
     [Browsable(false)]
