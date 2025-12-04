@@ -1,4 +1,4 @@
-// Placeholder sorting shader adapted to new 32-float command struct.
+// Placeholder sorting shader adapted to 48-float command struct.
 // Currently a no-op (pass-through) until a proper index-based GPU sort is implemented.
 #version 460 core
 
@@ -11,7 +11,7 @@ uniform int SortByDistance; // (unused placeholder)
 uniform int SortDirection;  // (unused placeholder)
 uniform int SortAlgorithm;  // (unused placeholder)
 
-const int COMMAND_FLOATS = 32;
+const int COMMAND_FLOATS = 48; // Updated for PrevWorldMatrix
 
 void main()
 {

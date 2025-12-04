@@ -2420,18 +2420,28 @@ namespace XREngine.Rendering.OpenGL
 
         private static void PassCameraUniforms(GLRenderProgram program, XRCamera? camera, EEngineUniform invView, EEngineUniform proj)
         {
-            Matrix4x4 inverseViewMatrix;
+            Matrix4x4 viewMatrix;        // The actual view matrix (inverse of camera world transform)
+            Matrix4x4 inverseViewMatrix; // The camera's world transform (inverse of view matrix)
             Matrix4x4 projMatrix;
             if (camera != null)
             {
+                // ViewMatrix is InverseRenderMatrix - the actual view transformation
+                // InverseViewMatrix is RenderMatrix - the camera's world position (kept for compatibility)
+                viewMatrix = camera.Transform.InverseRenderMatrix;
                 inverseViewMatrix = camera.Transform.RenderMatrix;
-                projMatrix = camera.ProjectionMatrix;
+                // Use unjittered projection when rendering motion vectors to match fragment shader expectations
+                bool useUnjittered = Engine.Rendering.State.RenderingPipelineState?.UseUnjitteredProjection ?? false;
+                projMatrix = useUnjittered ? camera.ProjectionMatrixUnjittered : camera.ProjectionMatrix;
             }
             else
             {
+                viewMatrix = Matrix4x4.Identity;
                 inverseViewMatrix = Matrix4x4.Identity;
                 projMatrix = Matrix4x4.Identity;
             }
+            // Pass ViewMatrix (actual view transform) for accurate motion vector computation
+            // This avoids single-precision inverse() in shader which causes precision issues for far objects
+            program.Uniform($"{EEngineUniform.ViewMatrix}{DefaultVertexShaderGenerator.VertexUniformSuffix}", viewMatrix);
             program.Uniform($"{invView}{DefaultVertexShaderGenerator.VertexUniformSuffix}", inverseViewMatrix);
             program.Uniform($"{proj}{DefaultVertexShaderGenerator.VertexUniformSuffix}", projMatrix);
         }

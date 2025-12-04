@@ -1,24 +1,25 @@
-// Minimum working-set culling shader (no octree) using a compact 32-float command struct
+// Minimum working-set culling shader (no octree) using a 48-float command struct
 #version 460 core
 
 layout(local_size_x = 256) in;
 
 /*
- Compact GPUIndirectRenderCommand (float[32], 128 bytes):
+ GPUIndirectRenderCommand (float[48], 192 bytes):
   00-15 : WorldMatrix (mat4, column-major)
-  16-19 : BoundingSphere (vec4: xyz center, w radius)
-  20 : MeshID (uint as float)
-  21 : SubmeshID (uint as float)  (optional / may mirror meshID if not flattened)
-  22 : MaterialID (uint)
-  23 : InstanceCount (uint)
-  24 : RenderPass (uint)
-  25 : ShaderProgramID (uint)
-  26 : RenderDistance (float)  (camera-space depth or squared distance)
-  27 : LayerMask (uint)
-  28 : LODLevel (uint)
-  29 : Flags (uint)
-  30 : Reserved0
-  31 : Reserved1
+  16-31 : PrevWorldMatrix (mat4, column-major) - for motion vectors
+  32-35 : BoundingSphere (vec4: xyz center, w radius)
+  36 : MeshID (uint as float)
+  37 : SubmeshID (uint as float)  (optional / may mirror meshID if not flattened)
+  38 : MaterialID (uint)
+  39 : InstanceCount (uint)
+  40 : RenderPass (uint)
+  41 : ShaderProgramID (uint)
+  42 : RenderDistance (float)  (camera-space depth or squared distance)
+  43 : LayerMask (uint)
+  44 : LODLevel (uint)
+  45 : Flags (uint)
+  46 : Reserved0
+  47 : Reserved1
 */
 
 // === Buffers ===
@@ -57,7 +58,7 @@ uniform vec3 CameraPosition;        // World-space camera position (for distance
 
 
 // === Constants ===
-const int COMMAND_FLOATS = 32;
+const int COMMAND_FLOATS = 48;
 
 // Direct field extraction performed inline to avoid parameterized unsized array issues in some GLSL drivers.
 
@@ -89,17 +90,17 @@ void main()
     if (base + COMMAND_FLOATS > inCommands.length())
         return;
 
-    // Read frequently used fields
-    vec4 bs = vec4(inCommands[base+16], inCommands[base+17], inCommands[base+18], inCommands[base+19]); // bounding sphere
+    // Read frequently used fields (offsets updated for 48-float struct with PrevWorldMatrix)
+    vec4 bs = vec4(inCommands[base+32], inCommands[base+33], inCommands[base+34], inCommands[base+35]); // bounding sphere
     vec3 center = bs.xyz;
     float radius = bs.w;
-    uint layerMask = uint(inCommands[base+27]);
-    uint renderPass = uint(inCommands[base+24]);
-    uint instanceCount = uint(inCommands[base+23]);
+    uint layerMask = uint(inCommands[base+43]);
+    uint renderPass = uint(inCommands[base+40]);
+    uint instanceCount = uint(inCommands[base+39]);
     // Compute distance metric (squared distance from camera to bounding sphere center)
     vec3 toCenter = center - CameraPosition;
     float renderDistance = dot(toCenter, toCenter);
-    uint flags = uint(inCommands[base+29]);
+    uint flags = uint(inCommands[base+45]);
 
     // Basic validity / trivially reject
     if (instanceCount == 0u) return;
@@ -124,11 +125,11 @@ void main()
     }
 
     int outBase = int(outIndex) * COMMAND_FLOATS;
-    // Copy 32 floats (loop keeps code small; driver may unroll)
+    // Copy 48 floats (loop keeps code small; driver may unroll)
     for (int i = 0; i < COMMAND_FLOATS; ++i)
         outCommands[outBase + i] = inCommands[base + i];
-    // Overwrite computed distance metric at slot 26
-    outCommands[outBase + 26] = renderDistance;
+    // Overwrite computed distance metric at slot 42
+    outCommands[outBase + 42] = renderDistance;
 
     atomicAdd(StatsCulledCount, 1u);
 }

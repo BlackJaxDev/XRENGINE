@@ -1,11 +1,11 @@
 #version 460 core
 // Extract frequently used culling metadata into SoA buffers.
-// Input: Full command buffer (float[32] per command)
+// Input: Full command buffer (float[48] per command)
 // Output: BoundingSpheres (vec4), Metadata (uvec4: InstanceCount, RenderPass, LayerMask, Flags)
 
 layout(local_size_x = 256) in;
 
-const int COMMAND_FLOATS = 32;
+const int COMMAND_FLOATS = 48; // Updated for PrevWorldMatrix
 
 layout(std430, binding = 0) buffer InCommands { float inCommands[]; };
 layout(std430, binding = 1) buffer OutBoundingSpheres { vec4 outSpheres[]; };
@@ -18,11 +18,12 @@ void main(){
     if(idx >= uint(InputCommandCount)) return;
     int base = int(idx) * COMMAND_FLOATS;
     if(base + COMMAND_FLOATS > inCommands.length()) return;
-    vec4 sphere = vec4(inCommands[base+16], inCommands[base+17], inCommands[base+18], inCommands[base+19]);
-    uint instanceCount = uint(inCommands[base+23]);
-    uint renderPass = uint(inCommands[base+24]);
-    uint layerMask = uint(inCommands[base+27]);
-    uint flags = uint(inCommands[base+29]);
+    // Updated offsets for 48-float struct
+    vec4 sphere = vec4(inCommands[base+32], inCommands[base+33], inCommands[base+34], inCommands[base+35]);
+    uint instanceCount = uint(inCommands[base+39]);
+    uint renderPass = uint(inCommands[base+40]);
+    uint layerMask = uint(inCommands[base+43]);
+    uint flags = uint(inCommands[base+45]);
     outSpheres[idx] = sphere;
     outMeta[idx] = uvec4(instanceCount, renderPass, layerMask, flags);
 }

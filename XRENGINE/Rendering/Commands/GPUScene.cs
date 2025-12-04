@@ -475,7 +475,7 @@ namespace XREngine.Rendering.Commands
         /// The initial size of the command buffer. It will grow or shrink as needed at powers of two.
         /// </summary>
         public const uint MinCommandCount = 8;
-        public const int CommandFloatCount = 32; // Updated: compact command (128 bytes)
+        public const int CommandFloatCount = 48; // Updated: command with PrevWorldMatrix (192 bytes)
 
         private readonly ConcurrentDictionary<XRMesh, uint> _meshIDMap = new();
         private uint _nextMeshID = 1;
@@ -1027,6 +1027,7 @@ namespace XREngine.Rendering.Commands
                 LayerMask = 0xFFFFFFFF,
                 RenderDistance = 0f,
                 WorldMatrix = command.WorldMatrix,
+                PrevWorldMatrix = command.WorldMatrix, // Initialize to current; will be updated on subsequent frames
                 Flags = 0,
                 LODLevel = 0,
                 ShaderProgramID = 0,

@@ -45,6 +45,9 @@ namespace XREngine.Rendering.Pipelines.Commands
                 return;
 
             using var overrideTicket = ActivePipelineInstance.RenderState.PushOverrideMaterial(material);
+            // Use unjittered projection during motion vectors pass to match the unjittered view-projection
+            // matrices passed to the fragment shader. This prevents jitter from creating artificial velocity.
+            using var unjitteredTicket = ActivePipelineInstance.RenderState.PushUnjitteredProjection();
 
             var commands = ActivePipelineInstance.MeshRenderCommands;
             if (commands is null)

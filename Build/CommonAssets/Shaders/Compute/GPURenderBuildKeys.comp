@@ -2,7 +2,7 @@
 
 layout(local_size_x = 256) in;
 
-// Culled commands buffer (float[32] per command)
+// Culled commands buffer (float[48] per command)
 layout(std430, binding = 0) buffer CulledCommands { float culled[]; };
 // Culled count
 layout(std430, binding = 1) buffer CulledCountBuffer { uint CulledCount; };
@@ -15,7 +15,7 @@ uniform int SortByDistance;   // 1 distance, 0 = use alternate key (render pass 
 uniform int SortDirection;    // 1 ascending, -1 descending
 uniform int UseMaterialBatchKey; // 1 = material-major key when SortByDistance==0
 
-const int COMMAND_FLOATS = 32;
+const int COMMAND_FLOATS = 48; // Updated for PrevWorldMatrix
 
 void main()
 {
@@ -26,10 +26,10 @@ void main()
     int base = int(idx) * COMMAND_FLOATS;
     if (base + COMMAND_FLOATS > culled.length()) return;
 
-    // Offsets per layout
-    float renderDistance = culled[base + 26];
-    uint renderPass = uint(culled[base + 24]);
-    uint flags = uint(culled[base + 29]);
+    // Offsets updated for 48-float struct
+    float renderDistance = culled[base + 42];
+    uint renderPass = uint(culled[base + 40]);
+    uint flags = uint(culled[base + 45]);
 
     uint key;
     if (SortByDistance != 0)

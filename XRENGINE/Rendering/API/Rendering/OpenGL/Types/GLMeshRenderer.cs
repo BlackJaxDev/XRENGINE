@@ -258,9 +258,13 @@ namespace XREngine.Rendering.OpenGL
 
             public GLMaterial GetRenderMaterial(XRMaterial? localMaterialOverride = null)
             {
-                var globalMaterialOverride = Engine.Rendering.State.RenderingPipelineState?.GlobalMaterialOverride;
+                var renderState = Engine.Rendering.State.RenderingPipelineState;
+                var globalMaterialOverride = renderState?.GlobalMaterialOverride;
+                // OverrideMaterial is used by pipeline passes like motion vectors via PushOverrideMaterial
+                var pipelineOverrideMaterial = renderState?.OverrideMaterial;
                 var mat =
                     (globalMaterialOverride is null ? null : (Renderer.GetOrCreateAPIRenderObject(globalMaterialOverride) as GLMaterial)) ??
+                    (pipelineOverrideMaterial is null ? null : (Renderer.GetOrCreateAPIRenderObject(pipelineOverrideMaterial) as GLMaterial)) ??
                     (localMaterialOverride is null ? null : (Renderer.GetOrCreateAPIRenderObject(localMaterialOverride) as GLMaterial)) ??
                     Material;
 
@@ -462,22 +466,32 @@ namespace XREngine.Rendering.OpenGL
 
             private static void PassCameraUniforms(GLRenderProgram vertexProgram, XRCamera? camera, EEngineUniform invView, EEngineUniform proj)
             {
-                Matrix4x4 inverseViewMatrix;
+                Matrix4x4 viewMatrix;        // The actual view matrix (inverse of camera world transform)
+                Matrix4x4 inverseViewMatrix; // The camera's world transform (inverse of view matrix)
                 Matrix4x4 projMatrix;
 
                 if (camera != null)
                 {
+                    // ViewMatrix is InverseRenderMatrix - the actual view transformation
+                    // InverseViewMatrix is RenderMatrix - the camera's world position (kept for compatibility)
+                    viewMatrix = camera.Transform.InverseRenderMatrix;
                     inverseViewMatrix = camera.Transform.RenderMatrix;
-                    projMatrix = camera.ProjectionMatrix;
+                    // Use unjittered projection when rendering motion vectors to match fragment shader expectations
+                    bool useUnjittered = Engine.Rendering.State.RenderingPipelineState?.UseUnjitteredProjection ?? false;
+                    projMatrix = useUnjittered ? camera.ProjectionMatrixUnjittered : camera.ProjectionMatrix;
                 }
                 else
                 {
                     //No camera? Everything will be rendered in NDC space instead of world space.
                     //This is used by point lights to render depth cubemaps, for example.
+                    viewMatrix = Matrix4x4.Identity;
                     inverseViewMatrix = Matrix4x4.Identity;
                     projMatrix = Matrix4x4.Identity;
                 }
 
+                // Pass ViewMatrix (actual view transform) for accurate motion vector computation
+                // This avoids single-precision inverse() in shader which causes precision issues for far objects
+                vertexProgram.Uniform($"{EEngineUniform.ViewMatrix}{DefaultVertexShaderGenerator.VertexUniformSuffix}", viewMatrix);
                 vertexProgram.Uniform($"{invView}{DefaultVertexShaderGenerator.VertexUniformSuffix}", inverseViewMatrix);
                 vertexProgram.Uniform($"{proj}{DefaultVertexShaderGenerator.VertexUniformSuffix}", projMatrix);
             }

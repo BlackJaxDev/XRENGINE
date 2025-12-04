@@ -115,6 +115,11 @@ namespace XREngine.Rendering.Shaders.Generator
             }
             else
             {
+                // ViewMatrix is the actual view matrix (InverseRenderMatrix from camera transform).
+                // InverseViewMatrix is the camera's world transform (RenderMatrix), kept for compatibility.
+                // Using ViewMatrix directly avoids single-precision inverse() computation in shader,
+                // which can cause motion vector precision issues for distant objects.
+                UniformNames.Add($"{EEngineUniform.ViewMatrix}{VertexUniformSuffix}", (EShaderVarType._mat4, false));
                 UniformNames.Add($"{EEngineUniform.InverseViewMatrix}{VertexUniformSuffix}", (EShaderVarType._mat4, false));
                 UniformNames.Add($"{EEngineUniform.ProjMatrix}{VertexUniformSuffix}", (EShaderVarType._mat4, false));
             }
@@ -619,19 +624,27 @@ namespace XREngine.Rendering.Shaders.Generator
 
         /// <summary>
         /// Creates the projection * view matrix.
+        /// Uses ViewMatrix uniform directly (precomputed on CPU) for better precision.
         /// </summary>
         private void DeclareVP(string viewMatrixName, string invViewMatrixName, string projMatrixName, string viewProjMatrixName)
         {
-            Line($"mat4 {viewMatrixName} = inverse({invViewMatrixName});");
+            // Use the precomputed ViewMatrix uniform for better precision in motion vectors
+            // ViewMatrix uniform contains camera.Transform.InverseRenderMatrix, computed on CPU with higher precision
+            string viewMatrixUniform = $"{EEngineUniform.ViewMatrix}{VertexUniformSuffix}";
+            Line($"mat4 {viewMatrixName} = {viewMatrixUniform};");
             Line($"mat4 {viewProjMatrixName} = {projMatrixName} * {viewMatrixName};");
         }
 
         /// <summary>
         /// Creates the projection * view * model matrix.
+        /// Uses ViewMatrix uniform directly (precomputed on CPU) for better precision.
         /// </summary>
         private void DeclareMVP(string viewMatrixName, string invViewMatrixName, string projMatrixName, string modelViewMatrixName, string modelViewProjMatrixName)
         {
-            Line($"mat4 {viewMatrixName} = inverse({invViewMatrixName});");
+            // Use the precomputed ViewMatrix uniform for better precision in motion vectors
+            // ViewMatrix uniform contains camera.Transform.InverseRenderMatrix, computed on CPU with higher precision
+            string viewMatrixUniform = $"{EEngineUniform.ViewMatrix}{VertexUniformSuffix}";
+            Line($"mat4 {viewMatrixName} = {viewMatrixUniform};");
             Line($"mat4 {modelViewMatrixName} = {viewMatrixName} * {EEngineUniform.ModelMatrix};");
             Line($"mat4 {modelViewProjMatrixName} = {projMatrixName} * {modelViewMatrixName};");
         }

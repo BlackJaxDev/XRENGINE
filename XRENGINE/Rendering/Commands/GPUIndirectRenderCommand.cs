@@ -12,33 +12,35 @@ namespace XREngine.Rendering.Commands
     {
         // 0 - 15 : World Matrix (16 floats)
         public Matrix4x4 WorldMatrix;            // 64 bytes
-        // 16 - 19 : Bounding Sphere
+        // 16 - 31 : Previous World Matrix for motion vectors (16 floats)
+        public Matrix4x4 PrevWorldMatrix;        // 64 bytes
+        // 32 - 35 : Bounding Sphere
         public Vector4 BoundingSphere;           // 16 bytes
-        // 20 : MeshID
+        // 36 : MeshID
         public uint MeshID;                      // 4 bytes
-        // 21 : SubmeshID (flattened mesh+submesh)
+        // 37 : SubmeshID (flattened mesh+submesh)
         public uint SubmeshID;                   // 4 bytes
-        // 22 : MaterialID
+        // 38 : MaterialID
         public uint MaterialID;                  // 4 bytes
-        // 23 : InstanceCount
+        // 39 : InstanceCount
         public uint InstanceCount;               // 4 bytes
-        // 24 : RenderPass
+        // 40 : RenderPass
         public uint RenderPass;                  // 4 bytes
-        // 25 : ShaderProgramID
+        // 41 : ShaderProgramID
         public uint ShaderProgramID;             // 4 bytes
-        // 26 : RenderDistance (camera-space depth or squared distance)
+        // 42 : RenderDistance (camera-space depth or squared distance)
         public float RenderDistance;             // 4 bytes
-        // 27 : LayerMask
+        // 43 : LayerMask
         public uint LayerMask;                   // 4 bytes
-        // 28 : LODLevel
+        // 44 : LODLevel
         public uint LODLevel;                    // 4 bytes
-        // 29 : Flags
+        // 45 : Flags
         public uint Flags;                       // 4 bytes
-        // 30 : Reserved0
+        // 46 : Reserved0
         public uint Reserved0;                   // 4 bytes
-        // 31 : Reserved1
+        // 47 : Reserved1
         public uint Reserved1;                   // 4 bytes
-                                                 // Total size: 128 bytes (32 floats)
+                                                 // Total size: 192 bytes (48 floats)
 
         /// <summary>
         /// Sets the bounding sphere for culling.

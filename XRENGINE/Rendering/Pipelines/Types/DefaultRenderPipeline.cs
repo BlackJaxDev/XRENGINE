@@ -2051,9 +2051,25 @@ public class DefaultRenderPipeline : RenderPipeline
         }
         else
         {
-            program.Uniform("HistoryReady", false);
-            program.Uniform("CurrViewProjection", Matrix4x4.Identity);
-            program.Uniform("PrevViewProjection", Matrix4x4.Identity);
+            // No TAA state available - compute view-projection from current camera
+            // Without history, we can't compute proper motion vectors, so set HistoryReady=false
+            // But we still need valid projection matrices to avoid garbage velocity values
+            var camera = Engine.Rendering.State.RenderingCamera;
+            if (camera is not null)
+            {
+                Matrix4x4 viewMatrix = camera.Transform.InverseRenderMatrix;
+                Matrix4x4 projMatrix = camera.ProjectionMatrix;
+                Matrix4x4 viewProj = projMatrix * viewMatrix;
+                program.Uniform("HistoryReady", false);
+                program.Uniform("CurrViewProjection", viewProj);
+                program.Uniform("PrevViewProjection", viewProj); // Same as current = zero velocity
+            }
+            else
+            {
+                program.Uniform("HistoryReady", false);
+                program.Uniform("CurrViewProjection", Matrix4x4.Identity);
+                program.Uniform("PrevViewProjection", Matrix4x4.Identity);
+            }
         }
     }
 
