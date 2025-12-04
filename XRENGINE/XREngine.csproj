@@ -141,6 +141,7 @@
     <PackageReference Include="Silk.NET.OpenGL.Extensions.KHR" Version="2.22.0" />
     <PackageReference Include="Silk.NET.OpenGL.Extensions.NV" Version="2.22.0" />
     <PackageReference Include="Silk.NET.OpenGL.Extensions.OVR" Version="2.22.0" />
+    <PackageReference Include="System.Management" Version="8.0.0" />
     <PackageReference Include="Silk.NET.OpenGLES.Extensions.EXT" Version="2.22.0" />
     <PackageReference Include="Silk.NET.OpenGLES.Extensions.NV" Version="2.22.0" />
     <PackageReference Include="Silk.NET.OpenXR" Version="2.22.0" />

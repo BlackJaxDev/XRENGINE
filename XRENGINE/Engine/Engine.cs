@@ -3,6 +3,7 @@ using Silk.NET.Windowing;
 using System.Collections.Concurrent;
 using System.Net;
 using System.Threading;
+using System.Linq;
 using XREngine.Audio;
 using XREngine.Data.Core;
 using XREngine.Data.Trees;
@@ -256,6 +257,7 @@ namespace XREngine
 
                 //Creating windows first is most important, because they will initialize the render context and graphics API.
                 CreateWindows(startupSettings.StartupWindows);
+                Rendering.SecondaryContext.InitializeIfSupported(Windows.FirstOrDefault());
                 XRWindow.AnyWindowFocusChanged += WindowFocusChanged;
 
                 //VR is allowed to initialize async in the background.
@@ -588,6 +590,7 @@ namespace XREngine
             //TODO: clean shutdown. Each window should dispose of assets its allocated upon its own closure
 
             //ShuttingDown = true;
+            Rendering.SecondaryContext.Dispose();
             Time.Timer.Stop();
             Assets.Dispose();
             //ShuttingDown = false;
