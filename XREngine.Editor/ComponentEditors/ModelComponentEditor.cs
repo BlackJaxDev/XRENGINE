@@ -17,6 +17,7 @@ using XREngine.Rendering.Commands;
 using XREngine.Rendering.Models;
 using XREngine.Rendering.Models.Materials;
 using XREngine.Rendering.Models.Materials.Shaders.Parameters;
+using XREngine.Rendering.Tools;
 using XREngine.Rendering.OpenGL;
 using XREngine.Diagnostics;
 using AssetFieldOptions = XREngine.Editor.ImGuiAssetUtilities.AssetFieldOptions;
@@ -47,6 +48,15 @@ public sealed class ModelComponentEditor : IXRComponentEditor
     private const string TextureImportDialogFilter = "Image Files (*.png;*.jpg;*.jpeg;*.tga;*.tif;*.tiff;*.exr;*.hdr)|*.png;*.jpg;*.jpeg;*.tga;*.tif;*.tiff;*.exr;*.hdr|XRTexture2D Asset (*.asset)|*.asset";
     private const string ImportedTextureFolderName = "Textures";
     private const string MissingAssetCategoryTexture = "Texture2D";
+
+    private sealed class ImpostorState
+    {
+        public uint SheetSize = 1024;
+        public bool CaptureDepth = true;
+        public OctahedralImposterGenerator.Result? LastResult;
+    }
+
+    private static readonly ConditionalWeakTable<ModelComponent, ImpostorState> s_impostorStates = new();
 
     public void DrawInspector(XRComponent component, HashSet<object> visited)
     {
@@ -114,6 +124,8 @@ public sealed class ModelComponentEditor : IXRComponentEditor
         ImGui.TextUnformatted($"Model: {displayName}");
         ImGui.TextUnformatted("Submeshes: " + model.Meshes.Count.ToString(CultureInfo.InvariantCulture));
 
+        DrawImpostorUtilities(modelComponent, model);
+
         if (model.Meshes.Count == 0)
             return;
 
@@ -128,6 +140,45 @@ public sealed class ModelComponentEditor : IXRComponentEditor
             DrawSubmeshSection(modelComponent, submeshIndex, subMesh, runtimeMesh);
             submeshIndex++;
         }
+    }
+
+    private static void DrawImpostorUtilities(ModelComponent modelComponent, Model model)
+    {
+        if (!ImGui.CollapsingHeader("Impostor Utilities", ImGuiTreeNodeFlags.DefaultOpen))
+            return;
+
+        var state = s_impostorStates.GetValue(modelComponent, _ => new ImpostorState());
+
+        uint sheetSize = state.SheetSize;
+        if (ImGui.InputScalar("Sheet Size (px)", ImGuiDataType.U32, ref sheetSize))
+            state.SheetSize = Math.Max(128u, sheetSize);
+
+        bool captureDepth = state.CaptureDepth;
+        if (ImGui.Checkbox("Capture Depth", ref captureDepth))
+            state.CaptureDepth = captureDepth;
+
+        ImGui.TextDisabled("Three orthographic captures will be blended into an octahedral sheet.");
+
+        if (ImGui.Button("Generate Octahedral Impostor", new Vector2(-1f, 0f)))
+        {
+            var generator = new OctahedralImposterGenerator();
+            state.LastResult = generator.Generate(modelComponent, new OctahedralImposterGenerator.Settings(state.SheetSize, 1.15f, state.CaptureDepth));
+
+            if (state.LastResult is null)
+                Debug.LogWarning("Impostor generation failed. See console for details.");
+        }
+
+        if (state.LastResult is { } result)
+        {
+            Vector3 size = result.LocalBounds.Size;
+            ImGui.Separator();
+            ImGui.TextUnformatted("Last Generation:");
+            ImGui.TextDisabled($"Sheet: {result.Sheet.Width} x {result.Sheet.Height}");
+            ImGui.TextDisabled($"Bounds: {size.X:0.##}, {size.Y:0.##}, {size.Z:0.##}");
+            ImGui.TextDisabled($"Views: {result.Views.Length}");
+        }
+
+        ImGui.Spacing();
     }
 
     private static void DrawSubmeshSection(ModelComponent modelComponent, int index, SubMesh subMesh, RenderableMesh? runtimeMesh)
