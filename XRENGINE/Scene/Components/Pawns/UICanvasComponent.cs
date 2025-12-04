@@ -109,6 +109,10 @@ namespace XREngine.Components
             if (!IsActive)
                 return;
 
+            VisualScene2D.UseGpuDispatch = true;
+
+            using var overrideMaterial = _renderPipeline.RenderState.PushOverrideMaterial(UIRenderResources.UIUberMaterial);
+
             _renderPipeline.Render(
                 VisualScene2D,
                 Camera2D,

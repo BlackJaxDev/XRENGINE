@@ -24,6 +24,13 @@ namespace XREngine.Scene
         [YamlIgnore]
         public Quadtree<RenderInfo2D> RenderTree { get; } = new Quadtree<RenderInfo2D>(new BoundingRectangleF());
 
+        private bool _useGpuDispatch = true;
+        public bool UseGpuDispatch
+        {
+            get => _useGpuDispatch;
+            set => SetField(ref _useGpuDispatch, value);
+        }
+
         public void SetBounds(BoundingRectangleF bounds)
             => RenderTree.Remake(bounds);
 
@@ -87,6 +94,28 @@ namespace XREngine.Scene
         private readonly HashSet<RenderInfo2D> _renderableSet = [];
         private readonly ConcurrentQueue<(RenderInfo2D renderable, bool add)> _pendingRenderableOperations = new(); // staged until GlobalPreRender runs on the render thread
 
+        protected override void OnPropertyChanged<T>(string? propName, T prev, T field)
+        {
+            base.OnPropertyChanged(propName, prev, field);
+
+            if (propName == nameof(UseGpuDispatch))
+                SyncRenderablesToDispatchMode();
+        }
+
+        private void SyncRenderablesToDispatchMode()
+        {
+            if (UseGpuDispatch)
+            {
+                foreach (var renderable in _renderables)
+                    GPUCommands.Add(renderable);
+            }
+            else
+            {
+                foreach (var renderable in _renderables)
+                    GPUCommands.Remove(renderable);
+            }
+        }
+
         public void AddRenderable(RenderInfo2D renderable)
             => _pendingRenderableOperations.Enqueue((renderable, true));
 
@@ -115,12 +144,18 @@ namespace XREngine.Scene
                     {
                         _renderables.Add(operation.renderable);
                         RenderTree.Add(operation.renderable);
+
+                        if (UseGpuDispatch)
+                            GPUCommands.Add(operation.renderable);
                     }
                 }
                 else if (_renderableSet.Remove(operation.renderable))
                 {
                     _renderables.Remove(operation.renderable);
                     RenderTree.Remove(operation.renderable);
+
+                    if (UseGpuDispatch)
+                        GPUCommands.Remove(operation.renderable);
                 }
             }
         }
