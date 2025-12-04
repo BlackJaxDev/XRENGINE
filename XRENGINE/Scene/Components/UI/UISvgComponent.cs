@@ -38,12 +38,9 @@ public class UISvgComponent : UIMaterialComponent
                 obj.MaintainAspectRatio);
     }
 
-    private sealed class SvgCacheEntry
+    private sealed class SvgCacheEntry(XRTexture2D texture)
     {
-        public SvgCacheEntry(XRTexture2D texture)
-            => Texture = texture;
-
-        public XRTexture2D Texture { get; }
+        public XRTexture2D Texture { get; } = texture;
         public int RefCount { get; set; } = 1;
     }
 
@@ -58,6 +55,16 @@ public class UISvgComponent : UIMaterialComponent
     {
         get => _svgPath;
         set => SetField(ref _svgPath, value);
+    }
+
+    private string? _svgData;
+    /// <summary>
+    /// Optional SVG data as a string. If set, this data is used instead of loading from <see cref="SvgPath"/>.
+    /// </summary>
+    public string? SvgData
+    {
+        get => _svgData;
+        set => SetField(ref _svgData, value);
     }
 
     private Vector2? _rasterSizeOverride;
@@ -158,7 +165,15 @@ public class UISvgComponent : UIMaterialComponent
         try
         {
             using SKSvg svg = new();
-            svg.Load(path);
+            if (!string.IsNullOrWhiteSpace(SvgData))
+            {
+                using var stream = new MemoryStream(System.Text.Encoding.UTF8.GetBytes(SvgData));
+                svg.Load(stream);
+            }
+            else
+            {
+                svg.Load(path);
+            }
             SKPicture? picture = svg.Picture;
             if (picture is null)
             {

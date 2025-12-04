@@ -1348,6 +1348,9 @@ namespace XREngine.Rendering
             sb.AppendLine($"layout(location=20) out vec3 {DefaultVertexShaderGenerator.FragPosLocalName};");
 
             sb.AppendLine("uniform mat4 ModelMatrix;");
+            // ViewMatrix is the actual view transform (camera.Transform.InverseRenderMatrix)
+            // InverseViewMatrix is the camera's world transform (camera.Transform.RenderMatrix), kept for compatibility
+            sb.AppendLine($"uniform mat4 {EEngineUniform.ViewMatrix}{DefaultVertexShaderGenerator.VertexUniformSuffix};");
             sb.AppendLine($"uniform mat4 {EEngineUniform.InverseViewMatrix}{DefaultVertexShaderGenerator.VertexUniformSuffix};");
             sb.AppendLine($"uniform mat4 {EEngineUniform.ProjMatrix}{DefaultVertexShaderGenerator.VertexUniformSuffix};");
             sb.AppendLine($"uniform bool {EEngineUniform.VRMode};");
@@ -1356,7 +1359,9 @@ namespace XREngine.Rendering
             sb.AppendLine("{");
             sb.AppendLine("    vec4 localPos = vec4(Position, 1.0);");
             sb.AppendLine($"    {DefaultVertexShaderGenerator.FragPosLocalName} = localPos.xyz;");
-            sb.AppendLine($"    mat4 viewMatrix = inverse({EEngineUniform.InverseViewMatrix}{DefaultVertexShaderGenerator.VertexUniformSuffix});");
+            // Use ViewMatrix uniform directly instead of computing inverse() in shader
+            // This ensures the same precision as the motion vectors fragment shader
+            sb.AppendLine($"    mat4 viewMatrix = {EEngineUniform.ViewMatrix}{DefaultVertexShaderGenerator.VertexUniformSuffix};");
             sb.AppendLine("    vec4 worldPos = ModelMatrix * localPos;");
             sb.AppendLine($"    vec4 clipPos = {EEngineUniform.ProjMatrix}{DefaultVertexShaderGenerator.VertexUniformSuffix} * viewMatrix * worldPos;");
             sb.AppendLine($"    if ({EEngineUniform.VRMode})");

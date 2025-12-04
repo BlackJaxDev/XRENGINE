@@ -337,7 +337,7 @@ namespace XREngine.Rendering
         /// <param name="offset">The offset into the buffer, in bytes.</param>
         /// <returns>The T value at the given offset.</returns>
         [UnconditionalSuppressMessage("AOT", "IL3050:Calling members annotated with 'RequiresDynamicCodeAttribute' may break functionality when AOT compiling.", Justification = "<Pending>")]
-        public T? Get<T>(uint offset) where T : struct
+        public T? Get<[DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicConstructors | DynamicallyAccessedMemberTypes.NonPublicConstructors)] T>(uint offset) where T : struct
             => _clientSideSource != null ? Marshal.PtrToStructure<T>(_clientSideSource.Address + offset) : default;
 
         /// <summary>
@@ -447,7 +447,7 @@ namespace XREngine.Rendering
             Marshal.StructureToPtr(data, _clientSideSource.Address[index, ElementSize], true);
         }
         
-        public T GetDataRawAtIndex<T>(uint index) where T : struct
+        public T GetDataRawAtIndex<[DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicConstructors | DynamicallyAccessedMemberTypes.NonPublicConstructors)] T>(uint index) where T : struct
         {
             if (_clientSideSource is null)
                 throw new InvalidOperationException($"Cannot get data at index {index}: client-side buffer has not been allocated.");
@@ -471,7 +471,7 @@ namespace XREngine.Rendering
         /// <param name="index"></param>
         /// <param name="count"></param>
         /// <returns></returns>
-        public T[] GetDataArrayRawAtIndex<T>(uint index, int count) where T : struct
+        public T[] GetDataArrayRawAtIndex<[DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicConstructors | DynamicallyAccessedMemberTypes.NonPublicConstructors)] T>(uint index, int count) where T : struct
         {
             T[] arr = new T[count];
             uint stride = ElementSize;
@@ -750,7 +750,7 @@ namespace XREngine.Rendering
             return remapper;
         }
 
-        public Remapper? GetDataRaw<T>(out T[] array, bool remap = true) where T : struct
+        public Remapper? GetDataRaw<[DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicConstructors | DynamicallyAccessedMemberTypes.NonPublicConstructors)] T>(out T[] array, bool remap = true) where T : struct
         {
             EComponentType componentType = EComponentType.Float;
             var componentCount = 1;
@@ -933,9 +933,9 @@ namespace XREngine.Rendering
             }
         }
 
-        private void Print<T>() where T : struct
+        private void Print<[DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicConstructors | DynamicallyAccessedMemberTypes.NonPublicConstructors)] T>() where T : struct
         {
-            GetDataRaw<T>(out T[] array);
+            GetDataRaw(out T[] array);
             StringBuilder sb = new();
             foreach (T item in array)
             {

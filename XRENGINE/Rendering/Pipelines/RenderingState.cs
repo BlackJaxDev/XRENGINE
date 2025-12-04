@@ -191,6 +191,28 @@ public sealed partial class XRRenderPipelineInstance
         public void PopOverrideMaterial()
             => _overrideMaterials.Pop();
 
+        /// <summary>
+        /// When true, camera projection matrices should be returned without jitter applied.
+        /// Used by motion vectors pass to ensure consistent projections between vertex and fragment stages.
+        /// </summary>
+        public bool UseUnjitteredProjection { get; private set; }
+        private int _unjitteredProjectionDepth;
+        public StateObject PushUnjitteredProjection()
+        {
+            _unjitteredProjectionDepth++;
+            UseUnjitteredProjection = true;
+            return StateObject.New(PopUnjitteredProjection);
+        }
+        private void PopUnjitteredProjection()
+        {
+            _unjitteredProjectionDepth--;
+            if (_unjitteredProjectionDepth <= 0)
+            {
+                _unjitteredProjectionDepth = 0;
+                UseUnjitteredProjection = false;
+            }
+        }
+
         public IReadOnlyCollection<XRViewport?> ViewportStack => _renderingViewports;
 
         public XRViewport? RenderingViewport

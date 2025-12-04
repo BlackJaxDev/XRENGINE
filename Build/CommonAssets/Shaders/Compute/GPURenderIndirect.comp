@@ -1,16 +1,16 @@
-// Minimum working-set indirect draw build shader for compact 32-float command struct
+// Minimum working-set indirect draw build shader for 48-float command struct
 #version 460 core
 
 layout(local_size_x = 256) in;
 
 // Constants
-const int COMMAND_FLOATS = 32;      // 128 bytes per command
+const int COMMAND_FLOATS = 48;      // 192 bytes per command
 const int DRAW_COMMAND_UINTS = 5;   // count, instanceCount, firstIndex, baseVertex, baseInstance
 
-/* Command layout (float[32]):
- 00-15 WorldMatrix, 16-19 BoundingSphere, 20 MeshID, 21 SubmeshID, 22 MaterialID,
- 23 InstanceCount, 24 RenderPass, 25 ShaderProgramID, 26 RenderDistance,
- 27 LayerMask, 28 LODLevel, 29 Flags, 30 Reserved0, 31 Reserved1 */
+/* Command layout (float[48]):
+ 00-15 WorldMatrix, 16-31 PrevWorldMatrix, 32-35 BoundingSphere, 36 MeshID, 37 SubmeshID, 38 MaterialID,
+ 39 InstanceCount, 40 RenderPass, 41 ShaderProgramID, 42 RenderDistance,
+ 43 LayerMask, 44 LODLevel, 45 Flags, 46 Reserved0, 47 Reserved1 */
 
 // === Buffers ===
 layout(std430, binding = 0) buffer CulledCommandsBuffer { float culled[]; };
@@ -62,13 +62,13 @@ void main()
     //}
 
     int base = int(idx) * COMMAND_FLOATS;
-    uint renderPass = floatBitsToUint(culled[base + 24]);
-    uint instanceCount = floatBitsToUint(culled[base + 23]);
+    uint renderPass = floatBitsToUint(culled[base + 40]);
+    uint instanceCount = floatBitsToUint(culled[base + 39]);
 
     if (instanceCount == 0u)
         return;
 
-    uint submeshID = floatBitsToUint(culled[base + 21]);
+    uint submeshID = floatBitsToUint(culled[base + 37]);
     uint submeshOffset = submeshID * 4u;
     if (submeshOffset + 3u >= submeshData.length())
     {

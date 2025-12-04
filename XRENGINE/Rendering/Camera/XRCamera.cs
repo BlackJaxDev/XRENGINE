@@ -188,6 +188,13 @@ namespace XREngine.Rendering
         public Matrix4x4 ProjectionMatrix
             => ApplyProjectionJitter(GetBaseProjectionMatrix());
 
+        /// <summary>
+        /// Gets the projection matrix without any jitter applied.
+        /// Useful for motion vectors and other passes that need consistent projections.
+        /// </summary>
+        public Matrix4x4 ProjectionMatrixUnjittered
+            => GetBaseProjectionMatrix();
+
         public StateObject PushProjectionJitter(in ProjectionJitterRequest request)
         {
             Vector2 clipSpaceOffset = request.ToClipSpace();
