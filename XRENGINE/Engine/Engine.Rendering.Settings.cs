@@ -153,6 +153,8 @@ namespace XREngine
                 private bool _populateVertexDataInParallel = true;
                 private bool _processMeshImportsAsynchronously = true;
                 private bool _useInterleavedMeshBuffer = true;
+                private bool _enableSecondaryGpuCompute = true;
+                private bool _allowSecondaryContextSharingFallback = true;
                 private bool _transformCullingIsAxisAligned = true;
                 private bool _renderCullingVolumes = false;
                 private float _debugTextMaxLifespan = 0.0f;
@@ -514,6 +516,23 @@ namespace XREngine
                 {
                     get => _useInterleavedMeshBuffer;
                     set => SetField(ref _useInterleavedMeshBuffer, value);
+                }
+                /// <summary>
+                /// Enables a secondary render context for GPU compute when a second adapter is present.
+                /// </summary>
+                public bool EnableSecondaryGpuCompute
+                {
+                    get => _enableSecondaryGpuCompute;
+                    set => SetField(ref _enableSecondaryGpuCompute, value);
+                }
+                /// <summary>
+                /// Allows spawning a shared-context compute thread when only one adapter is detected.
+                /// This keeps async readback from blocking the main swap chain even without a second GPU.
+                /// </summary>
+                public bool AllowSecondaryContextSharingFallback
+                {
+                    get => _allowSecondaryContextSharingFallback;
+                    set => SetField(ref _allowSecondaryContextSharingFallback, value);
                 }
                 public bool TransformCullingIsAxisAligned
                 {
