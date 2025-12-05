@@ -437,13 +437,30 @@ public class DefaultRenderPipeline : RenderPipeline
                 CreateVelocityFBO,
                 GetDesiredFBOSizeInternal);
 
+            // Ensure the velocity target is initialized to zero instead of inheriting whatever clear
+            // color previous passes left on the renderer. Non-zero clears here imprint the scene's
+            // clear color into the velocity buffer, which then looks like a color pass when previewed
+            // and corrupts motion blur accumulation.
+            c.Add<VPRC_SetClears>().Set(ColorF4.Black, null, null);
+            // Keep the existing depth buffer so skyboxes/UI behind geometry do not write into velocity.
             using (c.AddUsing<VPRC_BindFBOByName>(x => x.SetOptions(VelocityFBOName, true, true, false, false)))
             {
                 c.Add<VPRC_DepthTest>().Enable = true;
                 c.Add<VPRC_DepthWrite>().Allow = false;
-                c.Add<VPRC_RenderMotionVectorsPass>().SetOptions(GPURenderDispatch);
+                // GPU path currently ignores override materials; force CPU so motion vectors render with the correct material.
+                // Skip background/on-top passes so skyboxes/UI do not pollute the velocity buffer.
+                c.Add<VPRC_RenderMotionVectorsPass>().SetOptions(false,
+                    new[]
+                    {
+                        (int)EDefaultRenderPass.OpaqueDeferred,
+                        (int)EDefaultRenderPass.DeferredDecals,
+                        (int)EDefaultRenderPass.OpaqueForward,
+                        (int)EDefaultRenderPass.TransparentForward,
+                    });
                 c.Add<VPRC_DepthWrite>().Allow = true;
             }
+            // Restore clears for subsequent passes to the pipeline defaults.
+            c.Add<VPRC_SetClears>().Set(ColorF4.Transparent, 1.0f, 0);
 
             c.Add<VPRC_DepthTest>().Enable = false;
 
@@ -1665,6 +1682,7 @@ public class DefaultRenderPipeline : RenderPipeline
                 EPixelType.HalfFloat);
             t.MinFilter = ETexMinFilter.Nearest;
             t.MagFilter = ETexMagFilter.Nearest;
+            t.SizedInternalFormat = ESizedInternalFormat.Rg16f;
             t.Name = VelocityTextureName;
             return t;
         }
@@ -2211,9 +2229,11 @@ public class DefaultRenderPipeline : RenderPipeline
     {
         if (VPRC_TemporalAccumulationPass.TryGetTemporalUniformData(out var temporal))
         {
+            // Use jittered matrices so velocity encodes camera jitter; otherwise temporal reprojection
+            // sees zero motion for jittered color buffers and produces a stable diagonal blur.
             program.Uniform("HistoryReady", temporal.HistoryReady);
-            program.Uniform("CurrViewProjection", temporal.CurrViewProjectionUnjittered);
-            program.Uniform("PrevViewProjection", temporal.PrevViewProjectionUnjittered);
+            program.Uniform("CurrViewProjection", temporal.CurrViewProjection);
+            program.Uniform("PrevViewProjection", temporal.PrevViewProjection);
         }
         else
         {

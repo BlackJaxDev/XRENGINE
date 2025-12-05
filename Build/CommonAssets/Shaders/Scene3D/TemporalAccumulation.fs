@@ -109,6 +109,7 @@ void main()
     uv = uv * 0.5f + 0.5f;
 
     vec2 velocity = texture(VelocityTexture, uv).xy;
+    // velocity is in NDC space (-1..1). Convert to UV space by halving.
     vec2 historyUV = uv - velocity * 0.5f;
 
     vec3 currentFiltered = SampleCatmullRomFilteredColor(uv);

@@ -28,6 +28,7 @@ public sealed class VPRC_TemporalAccumulationPass : ViewportRenderCommand
         public StateObject? ActiveJitterHandle;
         public uint LastInternalWidth;
         public uint LastInternalHeight;
+        public ulong LastFrameCount;
     }
 
     internal readonly struct TemporalUniformData
@@ -42,7 +43,8 @@ public sealed class VPRC_TemporalAccumulationPass : ViewportRenderCommand
         public uint Height { get; init; }
     }
 
-    private static readonly ConditionalWeakTable<XRRenderPipelineInstance, TemporalState> TemporalStates = new();
+    // Key by XRCamera instead of PipelineInstance to support multi-view/stereo rendering correctly
+    private static readonly ConditionalWeakTable<XRCamera, TemporalState> TemporalStates = new();
 
     public enum EPhase
     {
@@ -157,13 +159,13 @@ public sealed class VPRC_TemporalAccumulationPass : ViewportRenderCommand
 
     internal static bool TryGetTemporalUniformData([NotNullWhen(true)] out TemporalUniformData data)
     {
-        if (CurrentRenderingPipeline is not { } instance)
+        if (CurrentRenderingPipeline is not { } instance || instance.RenderState.SceneCamera is not { } camera)
         {
             data = default;
             return false;
         }
 
-        if (TemporalStates.TryGetValue(instance, out TemporalState? state))
+        if (TemporalStates.TryGetValue(camera, out TemporalState? state))
         {
             data = new TemporalUniformData
             {
@@ -186,13 +188,13 @@ public sealed class VPRC_TemporalAccumulationPass : ViewportRenderCommand
     private static bool TryGetActiveState([NotNullWhen(true)] out XRRenderPipelineInstance? instance, [NotNullWhen(true)] out TemporalState? state)
     {
         instance = ActivePipelineInstance;
-        if (instance is null)
+        if (instance is null || instance.RenderState.SceneCamera is not { } camera)
         {
             state = null;
             return false;
         }
 
-        state = TemporalStates.GetValue(instance, _ => new TemporalState());
+        state = TemporalStates.GetValue(camera, _ => new TemporalState());
         return true;
     }
 
@@ -235,8 +237,17 @@ public sealed class VPRC_TemporalAccumulationPass : ViewportRenderCommand
         state.CurrentJitter = jitter;
 
         Matrix4x4 viewMatrix = camera.Transform.InverseRenderMatrix;
-        Matrix4x4 baseProjection = camera.ProjectionMatrix;
+        // Use Unjittered property to ensure we get a clean projection matrix, 
+        // even if the jitter stack has leaked or is dirty from other passes.
+        Matrix4x4 baseProjection = camera.ProjectionMatrixUnjittered;
         Matrix4x4 baseViewProjection = baseProjection * viewMatrix;
+
+        // Stabilize projection if it hasn't changed significantly to prevent micro-jitter/drift
+        // which causes diagonal motion blur on static objects, especially at distance.
+        if (state.HistoryReady && IsMatrixApproximatelyEqual(baseViewProjection, state.PrevViewProjectionUnjittered))
+        {
+            baseViewProjection = state.PrevViewProjectionUnjittered;
+        }
 
         if (jitterEnabled)
             state.ActiveJitterHandle = instance.RenderState.RequestCameraProjectionJitter(jitter);
@@ -303,5 +314,13 @@ public sealed class VPRC_TemporalAccumulationPass : ViewportRenderCommand
             f /= @base;
         }
         return result;
+    }
+
+    private static bool IsMatrixApproximatelyEqual(in Matrix4x4 a, in Matrix4x4 b, float epsilon = 1e-4f)
+    {
+        return MathF.Abs(a.M11 - b.M11) < epsilon && MathF.Abs(a.M12 - b.M12) < epsilon && MathF.Abs(a.M13 - b.M13) < epsilon && MathF.Abs(a.M14 - b.M14) < epsilon &&
+               MathF.Abs(a.M21 - b.M21) < epsilon && MathF.Abs(a.M22 - b.M22) < epsilon && MathF.Abs(a.M23 - b.M23) < epsilon && MathF.Abs(a.M24 - b.M24) < epsilon &&
+               MathF.Abs(a.M31 - b.M31) < epsilon && MathF.Abs(a.M32 - b.M32) < epsilon && MathF.Abs(a.M33 - b.M33) < epsilon && MathF.Abs(a.M34 - b.M34) < epsilon &&
+               MathF.Abs(a.M41 - b.M41) < epsilon && MathF.Abs(a.M42 - b.M42) < epsilon && MathF.Abs(a.M43 - b.M43) < epsilon && MathF.Abs(a.M44 - b.M44) < epsilon;
     }
 }

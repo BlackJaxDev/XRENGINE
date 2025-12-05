@@ -808,9 +808,9 @@ namespace XREngine.Rendering.OpenGL
                 => Api.UseProgram(BindingId);
 
             public IEnumerator<GLShader> GetEnumerator()
-                => ((IEnumerable<GLShader>)_shaderCache).GetEnumerator();
+                => ((IEnumerable<GLShader>)_shaderCache.Values).GetEnumerator();
             IEnumerator IEnumerable.GetEnumerator()
-                => ((IEnumerable<GLShader>)_shaderCache).GetEnumerator();
+                => ((IEnumerable<GLShader>)_shaderCache.Values).GetEnumerator();
 
             #region Uniforms
             public void Uniform(EEngineUniform name, Vector2 p)

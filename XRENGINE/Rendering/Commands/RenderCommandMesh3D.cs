@@ -31,6 +31,7 @@ namespace XREngine.Rendering.Commands
         private bool _renderWorldMatrixIsModelMatrix;
         private Matrix4x4 _renderPrevWorldMatrix = Matrix4x4.Identity;
         private bool _renderHasPrevWorldMatrix;
+        private static int s_MotionVectorLogBudget = 128;
 
         private Matrix4x4 _lastSubmittedModelMatrix = Matrix4x4.Identity;
         private bool _lastSubmittedModelMatrixValid;
@@ -85,6 +86,11 @@ namespace XREngine.Rendering.Commands
             OnPreRender();
             try
             {
+                if (!_renderHasPrevWorldMatrix && s_MotionVectorLogBudget-- > 0)
+                {
+                    Debug.Out($"[MotionVectors] Missing prev model; treating as static. WorldIsModel={_renderWorldMatrixIsModelMatrix}, Instances={_renderInstances}");
+                }
+
                 mesh.Render(
                     GetModelMatrix(),
                     GetPreviousModelMatrix(),
@@ -115,16 +121,18 @@ namespace XREngine.Rendering.Commands
             _renderMaterialOverride = MaterialOverride;
             _renderInstances = Instances;
             _renderWorldMatrixIsModelMatrix = WorldMatrixIsModelMatrix;
-            _renderPrevWorldMatrix = _lastSubmittedModelMatrix;
-            _renderHasPrevWorldMatrix = _lastSubmittedModelMatrixValid && _renderWorldMatrixIsModelMatrix;
-
-            if (WorldMatrixIsModelMatrix)
+            if (_renderWorldMatrixIsModelMatrix)
             {
-                _lastSubmittedModelMatrix = WorldMatrix;
+                _renderPrevWorldMatrix = _lastSubmittedModelMatrixValid ? _lastSubmittedModelMatrix : _renderWorldMatrix;
+                _renderHasPrevWorldMatrix = true;
+                _lastSubmittedModelMatrix = _renderWorldMatrix;
                 _lastSubmittedModelMatrixValid = true;
             }
             else
             {
+                // For non-model matrices, treat as static so motion vectors stay zero.
+                _renderPrevWorldMatrix = _renderWorldMatrix;
+                _renderHasPrevWorldMatrix = true;
                 _lastSubmittedModelMatrix = Matrix4x4.Identity;
                 _lastSubmittedModelMatrixValid = false;
             }
@@ -135,13 +143,10 @@ namespace XREngine.Rendering.Commands
 
         private Matrix4x4 GetPreviousModelMatrix()
         {
-            if (!_renderWorldMatrixIsModelMatrix)
-                return Matrix4x4.Identity;
+            if (!_renderHasPrevWorldMatrix)
+                return _renderWorldMatrix;
 
-            if (_renderHasPrevWorldMatrix)
-                return _renderPrevWorldMatrix;
-
-            return _renderWorldMatrix;
+            return _renderPrevWorldMatrix;
         }
     }
 }
