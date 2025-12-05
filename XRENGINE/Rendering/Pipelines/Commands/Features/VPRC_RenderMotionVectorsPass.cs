@@ -1,6 +1,8 @@
 using System.Collections.Generic;
 using XREngine.Data.Rendering;
 using XREngine.Rendering;
+using XREngine.Rendering.OpenGL;
+using Silk.NET.OpenGL;
 
 namespace XREngine.Rendering.Pipelines.Commands
 {
@@ -44,10 +46,21 @@ namespace XREngine.Rendering.Pipelines.Commands
             if (material is null)
                 return;
 
+            // Clear lingering texture bindings so the override material doesn't inherit skybox or albedo samplers.
+            if (AbstractRenderer.Current is OpenGLRenderer gl)
+            {
+                var api = gl.RawGL;
+                // Limit to a small number of slots (0-7) which covers typical material usage here.
+                for (uint i = 0; i < 8; i++)
+                {
+                    api.ActiveTexture((TextureUnit)((uint)TextureUnit.Texture0 + i));
+                    api.BindTexture(TextureTarget.Texture2D, 0);
+                    api.BindTexture(TextureTarget.TextureCubeMap, 0);
+                }
+                api.ActiveTexture(TextureUnit.Texture0);
+            }
+
             using var overrideTicket = ActivePipelineInstance.RenderState.PushOverrideMaterial(material);
-            // Use unjittered projection during motion vectors pass to match the unjittered view-projection
-            // matrices passed to the fragment shader. This prevents jitter from creating artificial velocity.
-            using var unjitteredTicket = ActivePipelineInstance.RenderState.PushUnjitteredProjection();
 
             var commands = ActivePipelineInstance.MeshRenderCommands;
             if (commands is null)

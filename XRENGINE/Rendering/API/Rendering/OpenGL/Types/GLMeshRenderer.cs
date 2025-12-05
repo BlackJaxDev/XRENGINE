@@ -457,11 +457,28 @@ namespace XREngine.Rendering.OpenGL
                     materialProgram?.Uniform(uniform, value);
                 }
 
+                // Fallback: if previous model matrix was never captured, assume static
+                // to avoid injecting false motion into the velocity buffer (causes
+                // diagonal blur on objects that are actually still). Use a loose
+                // comparison to tolerate floating-point jitter around identity.
+                if (IsApproximatelyIdentity(prevModelMatrix) && !IsApproximatelyIdentity(modelMatrix))
+                    prevModelMatrix = modelMatrix;
+
                 SetUniformBoth(EEngineUniform.ModelMatrix, modelMatrix);
                 SetUniformBoth(EEngineUniform.PrevModelMatrix, prevModelMatrix);
 
                 vertexProgram.Uniform(EEngineUniform.VRMode, stereoPass);
                 vertexProgram.Uniform(EEngineUniform.BillboardMode, (int)billboardMode);
+            }
+
+            private static bool IsApproximatelyIdentity(in Matrix4x4 m)
+            {
+                const float eps = 1e-4f;
+                return MathF.Abs(m.M11 - 1f) < eps && MathF.Abs(m.M22 - 1f) < eps && MathF.Abs(m.M33 - 1f) < eps && MathF.Abs(m.M44 - 1f) < eps
+                    && MathF.Abs(m.M12) < eps && MathF.Abs(m.M13) < eps && MathF.Abs(m.M14) < eps
+                    && MathF.Abs(m.M21) < eps && MathF.Abs(m.M23) < eps && MathF.Abs(m.M24) < eps
+                    && MathF.Abs(m.M31) < eps && MathF.Abs(m.M32) < eps && MathF.Abs(m.M34) < eps
+                    && MathF.Abs(m.M41) < eps && MathF.Abs(m.M42) < eps && MathF.Abs(m.M43) < eps;
             }
 
             private static void PassCameraUniforms(GLRenderProgram vertexProgram, XRCamera? camera, EEngineUniform invView, EEngineUniform proj)

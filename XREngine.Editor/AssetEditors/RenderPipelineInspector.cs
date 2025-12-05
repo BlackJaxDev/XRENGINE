@@ -8,8 +8,10 @@ using System.Runtime.CompilerServices;
 using System.Text;
 using ImGuiNET;
 using XREngine;
+using XREngine.Data.Rendering;
 using XREngine.Core.Files;
 using XREngine.Rendering;
+using XREngine.Rendering.OpenGL;
 using XREngine.Rendering.Pipelines.Commands;
 using XREngine.Rendering.RenderGraph;
 
@@ -44,6 +46,9 @@ public sealed class RenderPipelineInspector : IXRAssetInspector
             ImGui.Separator();
 
         DrawCommandChainSection(pipeline, state, visitedObjects);
+        ImGui.Separator();
+
+        DrawDebugViews(pipeline);
         ImGui.Separator();
 
         DrawRawInspector(pipeline, visitedObjects);
@@ -142,6 +147,100 @@ public sealed class RenderPipelineInspector : IXRAssetInspector
             ImGui.EndTable();
         }
 
+        return true;
+    }
+
+    private static void DrawDebugViews(RenderPipeline pipeline)
+    {
+        if (!ImGui.CollapsingHeader("Debug Views (Textures)", ImGuiTreeNodeFlags.DefaultOpen))
+            return;
+
+        if (!Engine.IsRenderThread)
+        {
+            ImGui.TextDisabled("Preview unavailable off render thread.");
+            return;
+        }
+
+        if (pipeline is not DefaultRenderPipeline)
+        {
+            ImGui.TextDisabled("Only default pipeline supported for debug previews.");
+            return;
+        }
+
+        XRRenderPipelineInstance? instanceWithVelocity = pipeline.Instances
+            .FirstOrDefault(inst => inst.Resources.TextureRecords.TryGetValue(DefaultRenderPipeline.VelocityTextureName, out var rec)
+                                     && rec.Instance is XRTexture2D tex && tex.SizedInternalFormat == ESizedInternalFormat.Rg16f);
+
+        if (instanceWithVelocity is null)
+        {
+            ImGui.TextDisabled(pipeline.Instances.Count == 0
+                ? "No live pipeline instances to preview."
+                : "Velocity texture not bound on any instance.");
+            return;
+        }
+
+        if (!instanceWithVelocity.Resources.TryGetTexture(DefaultRenderPipeline.VelocityTextureName, out XRTexture? velocityTex) || velocityTex is null)
+        {
+            ImGui.TextDisabled("Velocity texture not available.");
+            return;
+        }
+
+        if (TryGetTexturePreviewHandle(velocityTex, 320f, out nint handle, out Vector2 displaySize, out Vector2 pixelSize, out string failure))
+        {
+            ImGui.TextDisabled("Motion Vectors (Velocity)");
+            ImGui.Image(handle, displaySize, Vector2.Zero, Vector2.One);
+            ImGui.TextDisabled($"{pixelSize.X} x {pixelSize.Y}");
+        }
+        else
+        {
+            ImGui.TextDisabled(failure);
+        }
+    }
+
+    private static bool TryGetTexturePreviewHandle(XRTexture texture, float maxEdge, out nint handle, out Vector2 displaySize, out Vector2 pixelSize, out string failure)
+    {
+        handle = nint.Zero;
+        displaySize = new Vector2(64f, 64f);
+        pixelSize = displaySize;
+        failure = string.Empty;
+
+        if (!Engine.IsRenderThread)
+        {
+            failure = "Preview unavailable off render thread";
+            return false;
+        }
+
+        if (texture is not XRTexture2D tex2D)
+        {
+            failure = "Only 2D textures supported";
+            return false;
+        }
+
+        if (AbstractRenderer.Current is not OpenGLRenderer renderer)
+        {
+            failure = "Preview requires OpenGL renderer";
+            return false;
+        }
+
+        var apiTexture = renderer.GenericToAPI<GLTexture2D>(tex2D);
+        if (apiTexture is null)
+        {
+            failure = "Texture not uploaded";
+            return false;
+        }
+
+        uint binding = apiTexture.BindingId;
+        if (binding == OpenGLRenderer.GLObjectBase.InvalidBindingId || binding == 0)
+        {
+            failure = "Texture not ready";
+            return false;
+        }
+
+        pixelSize = new Vector2(tex2D.Width, tex2D.Height);
+        float largest = MathF.Max(1f, MathF.Max(pixelSize.X, pixelSize.Y));
+        float scale = largest > 0f ? MathF.Min(1f, maxEdge / largest) : 1f;
+        displaySize = new Vector2(pixelSize.X * scale, pixelSize.Y * scale);
+        handle = (nint)binding;
         return true;
     }
 
