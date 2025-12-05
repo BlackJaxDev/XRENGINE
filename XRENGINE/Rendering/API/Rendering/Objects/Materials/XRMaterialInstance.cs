@@ -1,15 +1,13 @@
 ﻿namespace XREngine.Rendering
 {
+    /// <summary>
+    /// A material instance that inherits from another material.
+    /// Textures and properties can be overridden on the instance.
+    /// </summary>
     public class XRMaterialInstance : XRMaterialBase
     {
-        public XRMaterialInstance()
-        {
-            _inheritedMaterial = new XRMaterial();
-            //_inheritedMaterial.Loaded += MaterialLoaded;
-        }
-
-        private XRMaterial? _inheritedMaterial;
-        public XRMaterial? InheritedMaterial
+        private XRMaterialBase? _inheritedMaterial;
+        public XRMaterialBase? InheritedMaterial
         {
             get => _inheritedMaterial;
             set

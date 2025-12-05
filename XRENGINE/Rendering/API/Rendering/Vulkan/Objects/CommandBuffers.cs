@@ -107,6 +107,7 @@ namespace XREngine.Rendering.Vulkan
             Api!.CmdBeginRenderPass(commandBuffer, &renderPassInfo, SubpassContents.Inline);
 
             ApplyDynamicState(commandBuffer);
+            RenderQueuedMeshes(commandBuffer);
             RenderImGui(commandBuffer, imageIndex);
 
             Api!.CmdEndRenderPass(commandBuffer);

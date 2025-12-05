@@ -3,6 +3,10 @@ using XREngine.Data.Rendering;
 
 namespace XREngine.Rendering
 {
+    /// <summary>
+    /// Framebuffer object for rendering targets, also known as an 'FBO'.
+    /// FBOs allow for rendering to textures or renderbuffers instead of the default framebuffer (the window canvas).
+    /// </summary>
     public class XRFrameBuffer : GenericRenderObject
     {
         public XRFrameBuffer() { }
@@ -60,6 +64,12 @@ namespace XREngine.Rendering
             {
                 switch (attachment)
                 {
+                    case XRTexture2DArrayView texture2DArrayView:
+                        texture2DArrayView.Resize(width, height);
+                        break;
+                    case XRTexture2DArray texture2DArray:
+                        texture2DArray.Resize(width, height);
+                        break;
                     case XRTexture2D texture2D:
                         texture2D.Resize(width, height);
                         break;

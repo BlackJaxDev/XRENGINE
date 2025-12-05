@@ -214,7 +214,7 @@ public sealed class MeshEditingPawnComponent : EditorFlyingCameraPawnComponent
             return -1;
         }
 
-        if (!_selectedEdges.Any())
+        if (_selectedEdges.Count == 0)
         {
             Debug.LogWarning("No edge is selected to insert a vertex on.");
             return -1;

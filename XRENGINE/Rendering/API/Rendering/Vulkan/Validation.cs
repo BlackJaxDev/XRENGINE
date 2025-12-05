@@ -63,7 +63,14 @@ public unsafe partial class VulkanRenderer
     }
     private uint DebugCallback(DebugUtilsMessageSeverityFlagsEXT messageSeverity, DebugUtilsMessageTypeFlagsEXT messageTypes, DebugUtilsMessengerCallbackDataEXT* pCallbackData, void* pUserData)
     {
-        Console.WriteLine($"validation layer:" + Marshal.PtrToStringAnsi((nint)pCallbackData->PMessage));
+        string msg = Marshal.PtrToStringAnsi((nint)pCallbackData->PMessage) ?? "<null>";
+
+        if (messageSeverity.HasFlag(DebugUtilsMessageSeverityFlagsEXT.ErrorBitExt))
+            Debug.LogError($"[Vulkan] {msg}");
+        else if (messageSeverity.HasFlag(DebugUtilsMessageSeverityFlagsEXT.WarningBitExt))
+            Debug.LogWarning($"[Vulkan] {msg}");
+        else
+            Debug.Out($"[Vulkan] {msg}");
 
         return Vk.False;
     }

@@ -40,6 +40,7 @@ internal class Program
             opts.SkipIndirectTailClear = false;
             opts.DisableCountDrawPath = false;
         });
+        Engine.UserSettings.RenderLibrary = UnitTestingWorld.Toggles.RenderAPI;
         Engine.Run(/*Engine.LoadOrGenerateGameSettings(() => */GetEngineSettings(UnitTestingWorld.CreateUnitTestWorld(true, false)/*), "startup", false*/), Engine.LoadOrGenerateGameState());
     }
 

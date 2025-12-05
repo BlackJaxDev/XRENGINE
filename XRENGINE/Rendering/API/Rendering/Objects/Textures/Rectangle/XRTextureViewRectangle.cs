@@ -1,15 +1,26 @@
-﻿using XREngine.Data.Rendering;
+﻿using System.Numerics;
+using XREngine.Data.Rendering;
 
 namespace XREngine.Rendering
 {
-    //public class XRTextureViewRectangle(
-    //    XRTextureRectangle viewedTexture,
-    //    int minLevel,
-    //    int numLevels,
-    //    int minLayer,
-    //    int numLayers,
-    //    EPixelInternalFormat internalFormat) : XRTextureView<XRTextureRectangle>(viewedTexture, minLevel, numLevels, minLayer, numLayers, internalFormat)
-    //{
-    //    public override uint MaxDimension { get; } = 2u;
-    //}
+    /// <summary>
+    /// View into a rectangle texture. Rectangle textures do not support mipmaps or array layers.
+    /// </summary>
+    public class XRTextureViewRectangle(
+        XRTextureRectangle viewedTexture,
+        ESizedInternalFormat internalFormat)
+        : XRTextureView<XRTextureRectangle>(viewedTexture, 0u, 1u, 0u, 1u, internalFormat), IFrameBufferAttachement
+    {
+        public override uint MaxDimension => ViewedTexture.MaxDimension;
+
+        public override Vector3 WidthHeightDepth => ViewedTexture.WidthHeightDepth;
+
+        public uint Width => ViewedTexture.Width;
+
+        public uint Height => ViewedTexture.Height;
+
+        public override bool HasAlphaChannel => ViewedTexture.HasAlphaChannel;
+
+        public override ETextureTarget TextureTarget => ETextureTarget.TextureRectangle;
+    }
 }

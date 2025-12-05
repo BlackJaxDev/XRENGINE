@@ -58,5 +58,10 @@ namespace XREngine.Rendering
             => NumLayers == 1 
             ? ETextureTarget.Texture2D
             : ETextureTarget.Texture2DArray;
+
+        public void Resize(uint width, uint height)
+        {
+            ViewedTexture.Resize(width, height);
+        }
     }
 }

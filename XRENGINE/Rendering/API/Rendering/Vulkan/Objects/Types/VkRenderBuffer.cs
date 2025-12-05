@@ -17,6 +17,8 @@ public unsafe partial class VulkanRenderer
         private ImageAspectFlags? _aspectOverride;
         private SampleCountFlags? _samplesOverride;
 
+        internal Image Image => _image;
+
         public override VkObjectType Type => VkObjectType.Renderbuffer;
         public override bool IsGenerated => true;
 

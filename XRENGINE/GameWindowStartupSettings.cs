@@ -17,7 +17,7 @@ namespace XREngine
         private bool _transparentFramebuffer = false;
         private bool? _outputHDR;
         private bool _useNativeTitleBar = true;
-
+        
         public ELocalPlayerIndexMask LocalPlayers
         {
             get => _localPlayers;

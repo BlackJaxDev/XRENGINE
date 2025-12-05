@@ -24,9 +24,9 @@ namespace XREngine.Rendering
         /// <summary>
         /// This class holds specific information about rendering the mesh depending on the type of pass.
         /// For example:
-        /// normal pass
-        /// using OVR_multiview
-        /// using NV_stereo_view_rendering
+        /// - Regular desktop pass or two-draw VR pass
+        /// - VR stereo pass, using OVR_multiview
+        /// - VR stereo pass, using NV_stereo_view_rendering
         /// </summary>
         public abstract class BaseVersion(XRMeshRenderer parent, Func<XRShader, bool> vertexShaderSelector, bool allowShaderPipelines) : GenericRenderObject
         {

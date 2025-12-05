@@ -590,61 +590,7 @@ namespace XREngine.Rendering
             program.Uniform("Power", 1.4f);
         }
 
-        public virtual void SetBloomBrightPassUniforms(XRRenderProgram program)
-        {
-            var stage = GetPostProcessStageState<BloomSettings>();
-            if (stage?.TryGetBacking(out BloomSettings? settings) == true)
-            {
-                settings.SetBrightPassUniforms(program);
-                return;
-            }
-
-            program.Uniform("BloomIntensity", 1.0f);
-            program.Uniform("BloomThreshold", 1.0f);
-            program.Uniform("SoftKnee", 0.5f);
-            program.Uniform("Luminance", Engine.Rendering.Settings.DefaultLuminance);
-        }
-
-        public virtual void SetPostProcessUniforms(XRRenderProgram program)
-        {
-            var state = GetActivePostProcessState();
-            if (state is null)
-                return;
-
-            if (!TryApplyStageUniform(state, program, static (VignetteSettings settings, XRRenderProgram target) => settings.SetUniforms(target)))
-                new VignetteSettings().SetUniforms(program);
-
-            if (!TryApplyStageUniform(state, program, static (ColorGradingSettings settings, XRRenderProgram target) => settings.SetUniforms(target)))
-                new ColorGradingSettings().SetUniforms(program);
-
-            if (!TryApplyStageUniform(state, program, static (ChromaticAberrationSettings settings, XRRenderProgram target) => settings.SetUniforms(target)))
-                new ChromaticAberrationSettings().SetUniforms(program);
-
-            if (!TryApplyStageUniform(state, program, static (FogSettings settings, XRRenderProgram target) => settings.SetUniforms(target)))
-                new FogSettings().SetUniforms(program);
-
-            if (!TryApplyStageUniform(state, program, static (LensDistortionSettings settings, XRRenderProgram target) => settings.SetUniforms(target)))
-                new LensDistortionSettings().SetUniforms(program);
-
-            var tonemapStage = state.FindStageByParameter(PostProcessParameterNames.TonemappingOperator);
-            int tonemap = tonemapStage?.GetValue<int>(PostProcessParameterNames.TonemappingOperator, (int)ETonemappingType.Reinhard)
-                ?? (int)ETonemappingType.Reinhard;
-            program.Uniform("TonemapType", tonemap);
-        }
-
-        private static bool TryApplyStageUniform<TSettings>(PipelinePostProcessState? state, XRRenderProgram program, Action<TSettings, XRRenderProgram> apply)
-            where TSettings : class
-        {
-            if (state is null)
-                return false;
-
-            var stage = state.GetStage<TSettings>();
-            if (stage?.TryGetBacking(out TSettings? settings) != true)
-                return false;
-
-            apply(settings, program);
-            return true;
-        }
+        // Post-process uniform setup moved to pipeline helpers.
 
         public XRMaterial? PostProcessMaterial
         {

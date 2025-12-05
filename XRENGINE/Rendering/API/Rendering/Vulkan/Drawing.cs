@@ -2,6 +2,7 @@
 using ImageMagick;
 using Silk.NET.Vulkan;
 using System.Numerics;
+using System.Runtime.InteropServices;
 using XREngine;
 using XREngine.Data.Colors;
 using XREngine.Data.Geometry;
@@ -22,7 +23,105 @@ namespace XREngine.Rendering.Vulkan
         }
         public override void CalcDotLuminanceFrontAsync(BoundingRectangle region, bool withTransparency, Vector3 luminance, Action<bool, float> callback)
         {
-            throw new NotImplementedException();
+            // Read back the last presented swapchain image region on the GPU, then compute dot-luminance on CPU.
+            // This is synchronous on a one-time command buffer but runs off the render thread.
+            if (swapChainImages is null || swapChainImages.Length == 0)
+            {
+                callback?.Invoke(false, 0f);
+                return;
+            }
+
+            _ = withTransparency; // Vulkan path always reads opaque swapchain output today.
+
+            var extent = swapChainExtent;
+            int x = Math.Max(0, region.X);
+            int y = Math.Max(0, region.Y);
+            int w = Math.Clamp(region.Width, 1, Math.Max(1, (int)extent.Width - x));
+            int h = Math.Clamp(region.Height, 1, Math.Max(1, (int)extent.Height - y));
+
+            ulong pixelStride = 4; // Assuming 8-bit RGBA swapchain formats (B8G8R8A8/R8G8B8A8).
+            ulong bufferSize = (ulong)(w * h) * pixelStride;
+
+            // Create a host-visible staging buffer to receive the image copy.
+            var (stagingBuffer, stagingMemory) = CreateBuffer(
+                bufferSize,
+                BufferUsageFlags.TransferDstBit,
+                MemoryPropertyFlags.HostVisibleBit | MemoryPropertyFlags.HostCoherentBit,
+                null);
+
+            try
+            {
+                using var scope = NewCommandScope();
+
+                var image = swapChainImages[_lastPresentedImageIndex % (uint)swapChainImages.Length];
+
+                // Transition to transfer src, copy, then transition back to present.
+                TransitionSwapchainImage(scope.CommandBuffer, image, ImageLayout.PresentSrcKhr, ImageLayout.TransferSrcOptimal);
+
+                BufferImageCopy copy = new()
+                {
+                    BufferOffset = 0,
+                    BufferRowLength = 0,
+                    BufferImageHeight = 0,
+                    ImageSubresource = new ImageSubresourceLayers
+                    {
+                        AspectMask = ImageAspectFlags.ColorBit,
+                        MipLevel = 0,
+                        BaseArrayLayer = 0,
+                        LayerCount = 1,
+                    },
+                    ImageOffset = new Offset3D { X = x, Y = y, Z = 0 },
+                    ImageExtent = new Extent3D { Width = (uint)w, Height = (uint)h, Depth = 1 }
+                };
+
+                Api!.CmdCopyImageToBuffer(
+                    scope.CommandBuffer,
+                    image,
+                    ImageLayout.TransferSrcOptimal,
+                    stagingBuffer,
+                    1,
+                    &copy);
+
+                TransitionSwapchainImage(scope.CommandBuffer, image, ImageLayout.TransferSrcOptimal, ImageLayout.PresentSrcKhr);
+            }
+            catch
+            {
+                DestroyBuffer(stagingBuffer, stagingMemory);
+                callback?.Invoke(false, 0f);
+                return;
+            }
+
+            // Map and compute luminance on CPU.
+            void* mappedPtr;
+            if (Api!.MapMemory(device, stagingMemory, 0, bufferSize, 0, &mappedPtr) != Result.Success)
+            {
+                DestroyBuffer(stagingBuffer, stagingMemory);
+                callback?.Invoke(false, 0f);
+                return;
+            }
+
+            try
+            {
+                float accum = 0f;
+                uint pixelCount = (uint)(w * h);
+                byte* p = (byte*)mappedPtr;
+                for (uint i = 0; i < pixelCount; i++)
+                {
+                    // Swapchain formats are BGRA; treat alpha as opaque for luminance.
+                    byte b = p[i * pixelStride + 0];
+                    byte g = p[i * pixelStride + 1];
+                    byte r = p[i * pixelStride + 2];
+                    accum += (r * luminance.X + g * luminance.Y + b * luminance.Z) / 255f;
+                }
+
+                float average = pixelCount > 0 ? accum / pixelCount : 0f;
+                callback?.Invoke(true, average);
+            }
+            finally
+            {
+                Api!.UnmapMemory(device, stagingMemory);
+                DestroyBuffer(stagingBuffer, stagingMemory);
+            }
         }
         public override float GetDepth(int x, int y)
         {
@@ -62,12 +161,6 @@ namespace XREngine.Rendering.Vulkan
             if (!colorBit && !depthBit && !stencilBit)
                 return;
 
-            if (depthBit || stencilBit)
-            {
-                Debug.LogWarning("Vulkan Blit currently supports color attachments only.");
-                return;
-            }
-
             if (inFBO is null || outFBO is null)
             {
                 Debug.LogWarning("Vulkan Blit currently requires both source and destination framebuffers.");
@@ -84,39 +177,62 @@ namespace XREngine.Rendering.Vulkan
             EnsureFrameBufferRegistered(outFBO);
             EnsureFrameBufferAttachmentsRegistered(outFBO);
 
-            if (!TryResolveBlitImage(inFBO, out BlitImageInfo source))
-            {
-                Debug.LogWarning($"Vulkan Blit: Unable to resolve source attachment for '{inFBO.Name ?? "<unnamed>"}'.");
-                return;
-            }
-
-            if (!TryResolveBlitImage(outFBO, out BlitImageInfo destination))
-            {
-                Debug.LogWarning($"Vulkan Blit: Unable to resolve destination attachment for '{outFBO.Name ?? "<unnamed>"}'.");
-                return;
-            }
-
-            Filter filter = linearFilter ? Filter.Linear : Filter.Nearest;
-
             using var scope = NewCommandScope();
 
-            TransitionForBlit(scope.CommandBuffer, source, source.PreferredLayout, ImageLayout.TransferSrcOptimal, source.AccessMask, AccessFlags.TransferReadBit, source.StageMask, PipelineStageFlags.TransferBit);
-            TransitionForBlit(scope.CommandBuffer, destination, destination.PreferredLayout, ImageLayout.TransferDstOptimal, destination.AccessMask, AccessFlags.TransferWriteBit, destination.StageMask, PipelineStageFlags.TransferBit);
+            void DoBlit(BlitImageInfo source, BlitImageInfo destination, Filter filter)
+            {
+                TransitionForBlit(scope.CommandBuffer, source, source.PreferredLayout, ImageLayout.TransferSrcOptimal, source.AccessMask, AccessFlags.TransferReadBit, source.StageMask, PipelineStageFlags.TransferBit);
+                TransitionForBlit(scope.CommandBuffer, destination, destination.PreferredLayout, ImageLayout.TransferDstOptimal, destination.AccessMask, AccessFlags.TransferWriteBit, destination.StageMask, PipelineStageFlags.TransferBit);
 
-            ImageBlit region = BuildImageBlit(source, destination, inX, inY, inW, inH, outX, outY, outW, outH);
+                ImageBlit region = BuildImageBlit(source, destination, inX, inY, inW, inH, outX, outY, outW, outH);
 
-            Api!.CmdBlitImage(
-                scope.CommandBuffer,
-                source.Image,
-                ImageLayout.TransferSrcOptimal,
-                destination.Image,
-                ImageLayout.TransferDstOptimal,
-                1,
-                &region,
-                filter);
+                Api!.CmdBlitImage(
+                    scope.CommandBuffer,
+                    source.Image,
+                    ImageLayout.TransferSrcOptimal,
+                    destination.Image,
+                    ImageLayout.TransferDstOptimal,
+                    1,
+                    &region,
+                    filter);
 
-            TransitionForBlit(scope.CommandBuffer, source, ImageLayout.TransferSrcOptimal, source.PreferredLayout, AccessFlags.TransferReadBit, source.AccessMask, PipelineStageFlags.TransferBit, source.StageMask);
-            TransitionForBlit(scope.CommandBuffer, destination, ImageLayout.TransferDstOptimal, destination.PreferredLayout, AccessFlags.TransferWriteBit, destination.AccessMask, PipelineStageFlags.TransferBit, destination.StageMask);
+                TransitionForBlit(scope.CommandBuffer, source, ImageLayout.TransferSrcOptimal, source.PreferredLayout, AccessFlags.TransferReadBit, source.AccessMask, PipelineStageFlags.TransferBit, source.StageMask);
+                TransitionForBlit(scope.CommandBuffer, destination, ImageLayout.TransferDstOptimal, destination.PreferredLayout, AccessFlags.TransferWriteBit, destination.AccessMask, PipelineStageFlags.TransferBit, destination.StageMask);
+            }
+
+            if (colorBit)
+            {
+                if (!TryResolveBlitImage(inFBO, wantColor: true, wantDepth: false, wantStencil: false, out BlitImageInfo srcColor))
+                {
+                    Debug.LogWarning($"Vulkan Blit: Unable to resolve source color attachment for '{inFBO.Name ?? "<unnamed>"}'.");
+                }
+                else if (!TryResolveBlitImage(outFBO, wantColor: true, wantDepth: false, wantStencil: false, out BlitImageInfo dstColor))
+                {
+                    Debug.LogWarning($"Vulkan Blit: Unable to resolve destination color attachment for '{outFBO.Name ?? "<unnamed>"}'.");
+                }
+                else
+                {
+                    Filter filter = linearFilter ? Filter.Linear : Filter.Nearest;
+                    DoBlit(srcColor, dstColor, filter);
+                }
+            }
+
+            if (depthBit || stencilBit)
+            {
+                Filter depthFilter = Filter.Nearest; // Vulkan spec: depth/stencil blits must use nearest.
+                if (!TryResolveBlitImage(inFBO, wantColor: false, wantDepth: depthBit, wantStencil: stencilBit, out BlitImageInfo srcDepth))
+                {
+                    Debug.LogWarning($"Vulkan Blit: Skipping depth/stencil blit; source attachment not compatible for '{inFBO.Name ?? "<unnamed>"}'.");
+                }
+                else if (!TryResolveBlitImage(outFBO, wantColor: false, wantDepth: depthBit, wantStencil: stencilBit, out BlitImageInfo dstDepth))
+                {
+                    Debug.LogWarning($"Vulkan Blit: Skipping depth/stencil blit; destination attachment not compatible for '{outFBO.Name ?? "<unnamed>"}'.");
+                }
+                else
+                {
+                    DoBlit(srcDepth, dstDepth, depthFilter);
+                }
+            }
         }
         public override void GetScreenshotAsync(BoundingRectangle region, bool withTransparency, Action<MagickImage, int> imageCallback)
         {
@@ -267,6 +383,7 @@ namespace XREngine.Rendering.Vulkan
             };
 
             result = khrSwapChain.QueuePresent(presentQueue, ref presentInfo);
+            _lastPresentedImageIndex = imageIndex;
 
             _frameBufferInvalidated |=
                 result == Result.ErrorOutOfDateKhr ||
@@ -394,7 +511,7 @@ namespace XREngine.Rendering.Vulkan
             public bool IsValid => Image.Handle != 0;
         }
 
-        private bool TryResolveBlitImage(XRFrameBuffer frameBuffer, out BlitImageInfo info)
+        private bool TryResolveBlitImage(XRFrameBuffer frameBuffer, bool wantColor, bool wantDepth, bool wantStencil, out BlitImageInfo info)
         {
             var targets = frameBuffer.Targets;
             if (targets is null)
@@ -405,10 +522,29 @@ namespace XREngine.Rendering.Vulkan
 
             foreach (var (target, attachment, mipLevel, layerIndex) in targets)
             {
-                if (!IsColorAttachment(attachment))
+                ImageAspectFlags aspect = ImageAspectFlags.None;
+
+                if (IsColorAttachment(attachment) && wantColor)
+                    aspect = ImageAspectFlags.ColorBit;
+                else if (attachment == EFrameBufferAttachment.DepthStencilAttachment && (wantDepth || wantStencil))
+                {
+                    aspect = (wantDepth, wantStencil) switch
+                    {
+                        (true, true) => ImageAspectFlags.DepthBit | ImageAspectFlags.StencilBit,
+                        (true, false) => ImageAspectFlags.DepthBit,
+                        (false, true) => ImageAspectFlags.StencilBit,
+                        _ => ImageAspectFlags.None
+                    };
+                }
+                else if (attachment == EFrameBufferAttachment.DepthAttachment && wantDepth)
+                    aspect = ImageAspectFlags.DepthBit;
+                else if (attachment == EFrameBufferAttachment.StencilAttachment && wantStencil)
+                    aspect = ImageAspectFlags.StencilBit;
+
+                if (aspect == ImageAspectFlags.None)
                     continue;
 
-                if (TryResolveAttachmentImage(target, mipLevel, layerIndex, ImageAspectFlags.ColorBit, out info))
+                if (TryResolveAttachmentImage(target, mipLevel, layerIndex, aspect, out info))
                     return true;
             }
 
@@ -420,40 +556,72 @@ namespace XREngine.Rendering.Vulkan
         {
             info = default;
 
+            ImageLayout layout = aspectMask.HasFlag(ImageAspectFlags.ColorBit)
+                ? ImageLayout.ColorAttachmentOptimal
+                : ImageLayout.DepthStencilAttachmentOptimal;
+
+            PipelineStageFlags stage = aspectMask.HasFlag(ImageAspectFlags.ColorBit)
+                ? PipelineStageFlags.ColorAttachmentOutputBit
+                : PipelineStageFlags.EarlyFragmentTestsBit | PipelineStageFlags.LateFragmentTestsBit;
+
+            AccessFlags access = aspectMask.HasFlag(ImageAspectFlags.ColorBit)
+                ? AccessFlags.ColorAttachmentReadBit | AccessFlags.ColorAttachmentWriteBit
+                : AccessFlags.DepthStencilAttachmentReadBit | AccessFlags.DepthStencilAttachmentWriteBit;
+
             switch (attachment)
             {
                 case XRTexture2D tex2D when GetOrCreateAPIRenderObject(tex2D, true) is VkTexture2D vkTex2D:
+                    if (!aspectMask.HasFlag(ImageAspectFlags.ColorBit))
+                        return false; // Only treat XRTexture2D as color here.
                     info = new BlitImageInfo(
                         vkTex2D.Image,
                         aspectMask,
                         0,
                         1,
                         (uint)Math.Max(mipLevel, 0),
-                        ImageLayout.ColorAttachmentOptimal,
-                        PipelineStageFlags.ColorAttachmentOutputBit,
-                        AccessFlags.ColorAttachmentReadBit | AccessFlags.ColorAttachmentWriteBit);
+                        layout,
+                        stage,
+                        access);
                     return info.IsValid;
                 case XRTexture2DArray texArray when GetOrCreateAPIRenderObject(texArray, true) is VkTexture2DArray vkArray:
+                    if (!aspectMask.HasFlag(ImageAspectFlags.ColorBit))
+                        return false;
                     info = new BlitImageInfo(
                         vkArray.Image,
                         aspectMask,
                         ResolveLayerIndex(layerIndex),
                         1,
                         (uint)Math.Max(mipLevel, 0),
-                        ImageLayout.ColorAttachmentOptimal,
-                        PipelineStageFlags.ColorAttachmentOutputBit,
-                        AccessFlags.ColorAttachmentReadBit | AccessFlags.ColorAttachmentWriteBit);
+                        layout,
+                        stage,
+                        access);
                     return info.IsValid;
                 case XRTextureCube texCube when GetOrCreateAPIRenderObject(texCube, true) is VkTextureCube vkCube:
+                    if (!aspectMask.HasFlag(ImageAspectFlags.ColorBit))
+                        return false;
                     info = new BlitImageInfo(
                         vkCube.Image,
                         aspectMask,
                         ResolveLayerIndex(layerIndex),
                         1,
                         (uint)Math.Max(mipLevel, 0),
-                        ImageLayout.ColorAttachmentOptimal,
-                        PipelineStageFlags.ColorAttachmentOutputBit,
-                        AccessFlags.ColorAttachmentReadBit | AccessFlags.ColorAttachmentWriteBit);
+                        layout,
+                        stage,
+                        access);
+                    return info.IsValid;
+                case XRRenderBuffer renderBuffer when GetOrCreateAPIRenderObject(renderBuffer, true) is VkRenderBuffer vkRenderBuffer:
+                    // Allow depth/stencil or color depending on the requested aspect and buffer format.
+                    if (aspectMask.HasFlag(ImageAspectFlags.DepthBit | ImageAspectFlags.StencilBit) && !vkRenderBuffer.Aspect.HasFlag(aspectMask))
+                        return false;
+                    info = new BlitImageInfo(
+                        vkRenderBuffer.Image,
+                        aspectMask,
+                        0,
+                        1,
+                        0,
+                        layout,
+                        stage,
+                        access);
                     return info.IsValid;
                 default:
                     return false;
@@ -535,6 +703,44 @@ namespace XREngine.Rendering.Vulkan
                 commandBuffer,
                 srcStage,
                 dstStage,
+                DependencyFlags.None,
+                0,
+                null,
+                0,
+                null,
+                1,
+                barrierPtr);
+        }
+
+        private void TransitionSwapchainImage(CommandBuffer commandBuffer, Image image, ImageLayout oldLayout, ImageLayout newLayout)
+        {
+            ImageMemoryBarrier barrier = new()
+            {
+                SType = StructureType.ImageMemoryBarrier,
+                SrcAccessMask = AccessFlags.MemoryReadBit,
+                DstAccessMask = newLayout == ImageLayout.TransferSrcOptimal ? AccessFlags.TransferReadBit : AccessFlags.MemoryReadBit,
+                OldLayout = oldLayout,
+                NewLayout = newLayout,
+                SrcQueueFamilyIndex = Vk.QueueFamilyIgnored,
+                DstQueueFamilyIndex = Vk.QueueFamilyIgnored,
+                Image = image,
+                SubresourceRange = new ImageSubresourceRange
+                {
+                    AspectMask = ImageAspectFlags.ColorBit,
+                    BaseMipLevel = 0,
+                    LevelCount = 1,
+                    BaseArrayLayer = 0,
+                    LayerCount = 1
+                }
+            };
+
+            ImageMemoryBarrier* barrierPtr = stackalloc ImageMemoryBarrier[1];
+            barrierPtr[0] = barrier;
+
+            Api!.CmdPipelineBarrier(
+                commandBuffer,
+                PipelineStageFlags.AllCommandsBit,
+                newLayout == ImageLayout.TransferSrcOptimal ? PipelineStageFlags.TransferBit : PipelineStageFlags.AllCommandsBit,
                 DependencyFlags.None,
                 0,
                 null,

@@ -37,6 +37,7 @@
   "PhysicsChain": false,
   "PointLight": false,
   "RecalcChildMatricesType": "Sequential",
+  "RenderAPI": "OpenGL",
   "RenderFPS": 0.0,
   "RenderMeshBounds": false,
   "RenderPhysicsDebug": false,
