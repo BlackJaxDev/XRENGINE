@@ -20,6 +20,10 @@ namespace XREngine.Rendering.Vulkan
         {
             throw new NotImplementedException();
         }
+        public override void CalcDotLuminanceFrontAsync(BoundingRectangle region, bool withTransparency, Vector3 luminance, Action<bool, float> callback)
+        {
+            throw new NotImplementedException();
+        }
         public override float GetDepth(int x, int y)
         {
             throw new NotImplementedException();

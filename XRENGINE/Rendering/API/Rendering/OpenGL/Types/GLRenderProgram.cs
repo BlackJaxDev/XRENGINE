@@ -3,8 +3,10 @@ using Silk.NET.OpenGL;
 using System.Collections;
 using System.Collections.Concurrent;
 using System.Numerics;
+using System.Linq;
 using System.Text;
 using XREngine.Data.Vectors;
+using XREngine;
 using static XREngine.Rendering.XRRenderProgram;
 
 namespace XREngine.Rendering.OpenGL
@@ -808,9 +810,9 @@ namespace XREngine.Rendering.OpenGL
                 => Api.UseProgram(BindingId);
 
             public IEnumerator<GLShader> GetEnumerator()
-                => ((IEnumerable<GLShader>)_shaderCache.Values).GetEnumerator();
+                => _shaderCache.Values.GetEnumerator();
             IEnumerator IEnumerable.GetEnumerator()
-                => ((IEnumerable<GLShader>)_shaderCache.Values).GetEnumerator();
+                => _shaderCache.Values.GetEnumerator();
 
             #region Uniforms
             public void Uniform(EEngineUniform name, Vector2 p)
@@ -1110,7 +1112,10 @@ namespace XREngine.Rendering.OpenGL
             }
 
             public void Sampler(string name, XRTexture texture, int textureUnit)
-                => Sampler(GetUniformLocation(name), texture, textureUnit);
+            {
+                int location = GetUniformLocation(name);
+                Sampler(location, texture, textureUnit);
+            }
 
             /// <summary>
             /// Passes a texture sampler into the fragment shader of this program by name.

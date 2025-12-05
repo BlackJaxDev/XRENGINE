@@ -248,6 +248,20 @@ namespace XREngine.Components.Capture.Lights.Types
             return mat;
         }
 
+        internal override void BuildShadowFrusta(List<PreparedFrustum> output)
+        {
+            output.Clear();
+
+            if (ShadowCameras is null || ShadowCameras.Length == 0)
+                return;
+
+            for (int i = 0; i < ShadowCameras.Length; i++)
+            {
+                var cam = ShadowCameras[i];
+                output.Add(cam.WorldFrustum().Prepare());
+            }
+        }
+
         protected override bool OnPropertyChanging<T>(string? propName, T field, T @new)
         {
             bool change = base.OnPropertyChanging(propName, field, @new);

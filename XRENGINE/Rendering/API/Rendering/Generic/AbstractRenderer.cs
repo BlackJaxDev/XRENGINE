@@ -294,6 +294,10 @@ namespace XREngine.Rendering
         public abstract void CalcDotLuminanceAsync(XRTexture2D texture, Action<bool, float> callback, Vector3 luminance, bool genMipmapsNow = true);
         public abstract void CalcDotLuminanceAsync(XRTexture2DArray texture, Action<bool, float> callback, Vector3 luminance, bool genMipmapsNow = true);
 
+        public void CalcDotLuminanceFrontAsync(BoundingRectangle region, bool withTransparency, Action<bool, float> callback)
+            => CalcDotLuminanceFrontAsync(region, withTransparency, Engine.Rendering.Settings.DefaultLuminance, callback);
+        public abstract void CalcDotLuminanceFrontAsync(BoundingRectangle region, bool withTransparency, Vector3 luminance, Action<bool, float> callback);
+
         public abstract void Clear(bool color, bool depth, bool stencil);
         public abstract void BindFrameBuffer(EFramebufferTarget fboTarget, XRFrameBuffer? fbo);
         public abstract void ClearColor(ColorF4 color);

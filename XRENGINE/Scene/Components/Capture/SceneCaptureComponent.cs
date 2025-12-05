@@ -6,6 +6,7 @@ using XREngine.Data.Vectors;
 using XREngine.Data.Transforms.Rotations;
 using XREngine.Rendering;
 using XREngine.Rendering.Models.Materials;
+using XREngine;
 using XREngine.Scene.Transforms;
 using YamlDotNet.Serialization;
 
@@ -54,6 +55,7 @@ namespace XREngine.Components.Lights
         private XRCubeFrameBuffer? _renderFBO;
         private XRQuadFrameBuffer? _octahedralFBO;
         private XRMaterial? _octahedralMaterial;
+        private DelSetUniforms? _octahedralSamplerBinder;
 
         private const uint OctahedralResolutionMultiplier = 2u;
         private static XRShader? s_cubemapToOctaShader;
@@ -91,8 +93,8 @@ namespace XREngine.Components.Lights
             _environmentTextureCubemap?.Destroy();
             _environmentTextureCubemap = new XRTextureCube(Resolution, EPixelInternalFormat.Rgba8, EPixelFormat.Rgba, EPixelType.UnsignedByte, false)
             {
-                MinFilter = ETexMinFilter.NearestMipmapLinear,
-                MagFilter = ETexMagFilter.Nearest,
+                MinFilter = ETexMinFilter.Linear,
+                MagFilter = ETexMagFilter.Linear,
                 UWrap = ETexWrapMode.ClampToEdge,
                 VWrap = ETexWrapMode.ClampToEdge,
                 WWrap = ETexWrapMode.ClampToEdge,
@@ -291,6 +293,10 @@ namespace XREngine.Components.Lights
             {
                 RenderingParameters renderParams = new();
                 renderParams.DepthTest.Enabled = ERenderParamUsage.Disabled;
+                renderParams.WriteRed = true;
+                renderParams.WriteGreen = true;
+                renderParams.WriteBlue = true;
+                renderParams.WriteAlpha = true;
 
                 _octahedralMaterial = new XRMaterial([_environmentTextureCubemap], GetFullscreenTriVertexShader(), GetCubemapToOctaShader())
                 {
@@ -302,6 +308,47 @@ namespace XREngine.Components.Lights
             {
                 _octahedralMaterial.Textures[0] = _environmentTextureCubemap;
             }
+
+            // Always (re)bind the sampler once per init to avoid handler accumulation across recaptures.
+            if (_octahedralSamplerBinder is not null)
+                _octahedralFBO!.SettingUniforms -= _octahedralSamplerBinder;
+
+            _octahedralSamplerBinder = program =>
+            {
+                if (_environmentTextureCubemap is null)
+                {
+                    Debug.LogWarning("SceneCapture: cubemap is null during octa blit!");
+                    return;
+                }
+
+                var cubeTex = _environmentTextureCubemap as XRTextureCube;
+                Debug.Out($"SceneCapture octa blit: cubemap '{_environmentTextureCubemap.Name}' Extent={cubeTex?.Extent ?? 0}");
+
+                // Get the GL texture object to check if it exists
+                var renderer = AbstractRenderer.Current;
+                if (renderer != null)
+                {
+                    var glTex = renderer.GetOrCreateAPIRenderObject(_environmentTextureCubemap, generateNow: true);
+                    if (glTex != null)
+                    {
+                        var handle = glTex.GetHandle();
+                        Debug.Out($"SceneCapture: GL cubemap handle={handle}, IsGenerated={glTex.IsGenerated}");
+                    }
+                    else
+                    {
+                        Debug.LogWarning("SceneCapture: Failed to get GL texture object for cubemap!");
+                    }
+                }
+
+                // Force bind the cubemap to texture unit 0 and set the sampler uniform
+                _environmentTextureCubemap.Bind();
+                program.Sampler("Texture0", _environmentTextureCubemap, 0);
+            };
+            _octahedralFBO!.SettingUniforms += _octahedralSamplerBinder;
+
+            _octahedralFBO.FullScreenMesh.GetDefaultVersion().AllowShaderPipelines = false;
+            _octahedralFBO.FullScreenMesh.GetOVRMultiViewVersion().AllowShaderPipelines = false;
+            _octahedralFBO.FullScreenMesh.GetNVStereoVersion().AllowShaderPipelines = false;
 
             _octahedralFBO!.SetRenderTargets((_environmentTextureOctahedral!, EFrameBufferAttachment.ColorAttachment0, 0, -1));
         }
@@ -330,20 +377,42 @@ namespace XREngine.Components.Lights
 
         private void EncodeEnvironmentToOctahedralMap()
         {
-            if (_octahedralFBO is null || _environmentTextureOctahedral is null)
+            if (_octahedralFBO is null || _environmentTextureOctahedral is null || _environmentTextureCubemap is null)
                 return;
+
+            // Insert a GPU sync point to ensure all cubemap face renders have completed
+            AbstractRenderer.Current?.WaitForGpu();
 
             int width = (int)Math.Max(1u, _environmentTextureOctahedral.Width);
             int height = (int)Math.Max(1u, _environmentTextureOctahedral.Height);
-            AbstractRenderer.Current?.SetRenderArea(new BoundingRectangle(IVector2.Zero, new IVector2(width, height)));
+            // Guarantee a clean viewport/scissor for the fullscreen blit
+            var pipelineState = Engine.Rendering.State.RenderingPipelineState;
+            BoundingRectangle previousCrop = pipelineState?.CurrentCropRegion ?? BoundingRectangle.Empty;
+            bool hadCrop = previousCrop.Width > 0 && previousCrop.Height > 0;
+
+            AbstractRenderer.Current?.SetCroppingEnabled(false);
+            // Ensure the viewport matches the octa target even if no pipeline state is active
+            StateObject? renderArea = pipelineState?.PushRenderArea(width, height);
+            if (renderArea is null)
+                AbstractRenderer.Current?.SetRenderArea(new BoundingRectangle(IVector2.Zero, new IVector2(width, height)));
 
             using (_octahedralFBO.BindForWritingState())
             {
+                // Make sure the cubemap is bound on GL before the blit; avoids relying solely on shader program state when other passes clear bindings.
+                _environmentTextureCubemap?.Bind();
+
                 Engine.Rendering.State.ClearByBoundFBO();
                 _octahedralFBO.Render(null, true);
             }
 
             _environmentTextureOctahedral.GenerateMipmapsGPU();
+
+            if (hadCrop)
+            {
+                AbstractRenderer.Current?.SetCroppingEnabled(true);
+                AbstractRenderer.Current?.CropRenderArea(previousCrop);
+            }
+            renderArea?.Dispose();
         }
 
         private void GetDepthParams(out IFrameBufferAttachement depthAttachment, out int[] depthLayers)

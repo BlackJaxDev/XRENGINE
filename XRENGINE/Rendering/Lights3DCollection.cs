@@ -1,9 +1,11 @@
-﻿using MIConvexHull;
+﻿using System;
+using MIConvexHull;
 using System.Collections.Concurrent;
 using System.Numerics;
 using XREngine.Components.Lights;
 using XREngine.Data;
 using XREngine.Data.Core;
+using XREngine.Data.Colors;
 using XREngine.Data.Geometry;
 using XREngine.Data.Rendering;
 using XREngine.Data.Trees;
@@ -47,6 +49,8 @@ namespace XREngine.Scene
         /// All light probes in the scene.
         /// </summary>
         public EventList<LightProbeComponent> LightProbes { get; } = [];
+
+        private readonly List<PreparedFrustum> _frustumScratch = new(6);
 
         private readonly ConcurrentQueue<SceneCaptureComponentBase> _captureQueue = new();
         private ConcurrentBag<SceneCaptureComponentBase> _captureBagUpdating = [];
@@ -143,6 +147,94 @@ namespace XREngine.Scene
                 (_captureBagUpdating, _captureBagRendering) = (_captureBagRendering, _captureBagUpdating);
                 foreach (SceneCaptureComponentBase capture in _captureBagRendering)
                     capture.SwapBuffers();
+            }
+        }
+
+        /// <summary>
+        /// Tests the active player camera frustum against each light's shadow frusta and records intersection AABBs for cascaded shadows.
+        /// </summary>
+        /// <param name="camera">Active player camera.</param>
+        public void UpdateCameraLightIntersections(XRCamera camera)
+        {
+            if (camera is null)
+                return;
+
+            PreparedFrustum preparedCamera = camera.WorldFrustum().Prepare();
+            Vector3 cameraForward = camera.Transform.WorldForward;
+
+            UpdateDirectionalCameraLightIntersections(DynamicDirectionalLights, preparedCamera, cameraForward, new ColorF4(0.2f, 0.8f, 1.0f, 1.0f));
+            UpdateCameraLightIntersections(DynamicSpotLights, preparedCamera, new ColorF4(1.0f, 0.85f, 0.2f, 1.0f));
+            UpdateCameraLightIntersections(DynamicPointLights, preparedCamera, new ColorF4(1.0f, 0.2f, 0.8f, 1.0f));
+        }
+
+        private void UpdateDirectionalCameraLightIntersections(IReadOnlyList<DirectionalLightComponent> lights, PreparedFrustum preparedCamera, Vector3 cameraForward, ColorF4 debugColor)
+        {
+            for (int i = 0; i < lights.Count; i++)
+            {
+                var light = lights[i];
+                _frustumScratch.Clear();
+                light.BuildShadowFrusta(_frustumScratch);
+                light.UpdateCameraIntersections(preparedCamera, _frustumScratch);
+                light.UpdateCascadeAabbs(cameraForward);
+
+                RenderIntersectionDebug(light, debugColor);
+                RenderCascadeDebug(light, debugColor);
+            }
+        }
+
+        private void UpdateCameraLightIntersections<TLight>(IReadOnlyList<TLight> lights, PreparedFrustum preparedCamera, ColorF4 debugColor)
+            where TLight : LightComponent
+        {
+            for (int i = 0; i < lights.Count; i++)
+            {
+                var light = lights[i];
+                _frustumScratch.Clear();
+                light.BuildShadowFrusta(_frustumScratch);
+                light.UpdateCameraIntersections(preparedCamera, _frustumScratch);
+
+                RenderIntersectionDebug(light, debugColor);
+            }
+        }
+
+        private static void RenderIntersectionDebug(LightComponent light, ColorF4 color)
+        {
+            // Only render debug when explicitly enabled
+            if (!light.PreviewBoundingVolume)
+                return;
+
+            var intersections = light.CameraIntersections;
+            if (intersections.Count == 0)
+                return;
+
+            for (int i = 0; i < intersections.Count; i++)
+            {
+                var aabb = intersections[i];
+                Vector3 min = aabb.Min;
+                Vector3 max = aabb.Max;
+                Vector3 center = (min + max) * 0.5f;
+                Vector3 halfExtents = (max - min) * 0.5f;
+                Engine.Rendering.Debug.RenderAABB(halfExtents, center, false, color);
+            }
+        }
+
+        private static void RenderCascadeDebug(DirectionalLightComponent light, ColorF4 baseColor)
+        {
+            // Only render debug when explicitly enabled
+            if (!light.PreviewBoundingVolume)
+                return;
+
+            var cascades = light.CascadedShadowAabbs;
+            if (cascades.Count == 0)
+                return;
+
+            // Slightly vary alpha per cascade for readability.
+            const float alphaStep = 0.15f;
+            for (int i = 0; i < cascades.Count; i++)
+            {
+                var cascade = cascades[i];
+                float alpha = MathF.Max(0.1f, 1.0f - (cascade.CascadeIndex * alphaStep));
+                ColorF4 color = new(baseColor.R, baseColor.G, baseColor.B, alpha);
+                Engine.Rendering.Debug.RenderAABB(cascade.HalfExtents, cascade.Center, false, color);
             }
         }
 

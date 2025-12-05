@@ -15,6 +15,7 @@ using XREngine.Scene;
 using XREngine.Scene.Transforms;
 using XREngine.Timers;
 using YamlDotNet.Serialization;
+using System.ComponentModel;
 
 namespace XREngine.Components.Capture.Lights
 {
@@ -39,6 +40,13 @@ namespace XREngine.Components.Capture.Lights
             ];
             VisualRenderInfo.RenderCommands.Add(_debugAxesCommand);
             VisualRenderInfo.PreCollectCommandsCallback += OnPreCollectRenderInfo;
+        }
+
+        [Category("Debug")]
+        public bool RenderDebugAxesOnSelection
+        {
+            get => _debugAxesCommand.Enabled;
+            set => _debugAxesCommand.Enabled = value;
         }
 
         private readonly RenderCommandMesh3D _visualRC;
@@ -147,14 +155,13 @@ namespace XREngine.Components.Capture.Lights
 
         private bool OnPreCollectRenderInfo(RenderInfo info, RenderCommandCollection passes, XRCamera? camera)
         {
-            _debugAxesCommand.Enabled = IsParentNodeSelected();
+            //_debugAxesCommand.Enabled = IsParentNodeSelected();
             return true;
         }
 
         protected override void OnTransformRenderWorldMatrixChanged(TransformBase transform, Matrix4x4 renderMatrix)
         {
-            if (_visualRC != null)
-                _visualRC.WorldMatrix = renderMatrix;
+            _visualRC?.WorldMatrix = renderMatrix;
             
             base.OnTransformRenderWorldMatrixChanged(transform, renderMatrix);
         }
@@ -250,7 +257,7 @@ namespace XREngine.Components.Capture.Lights
         private static uint GetOctaExtent(uint baseResolution)
             => Math.Max(1u, baseResolution * OctahedralResolutionMultiplier);
 
-        private XRTexture2D CreateIrradianceTexture(uint extent)
+        private static XRTexture2D CreateIrradianceTexture(uint extent)
             => new(extent, extent, EPixelInternalFormat.Rgb8, EPixelFormat.Rgb, EPixelType.UnsignedByte, false)
             {
                 MinFilter = ETexMinFilter.Linear,
@@ -263,7 +270,7 @@ namespace XREngine.Components.Capture.Lights
                 Name = "LightProbeIrradianceOcta",
             };
 
-        private XRTexture2D CreatePrefilterTexture(uint extent)
+        private static XRTexture2D CreatePrefilterTexture(uint extent)
             => new(extent, extent, EPixelInternalFormat.Rgb16f, EPixelFormat.Rgb, EPixelType.HalfFloat, false)
             {
                 MinFilter = ETexMinFilter.LinearMipmapLinear,
@@ -405,6 +412,8 @@ namespace XREngine.Components.Capture.Lights
         // Visualize each capture camera's basis when the probe's node is selected.
         private void RenderCameraOrientationDebug()
         {
+            using var prof = Engine.Profiler.Start("LightProbeComponent.RenderCameraOrientationDebug");
+
             const float forwardOffset = 0.7f;
             const float frameHalfExtent = 0.18f;
             const float frameInset = 0.02f;

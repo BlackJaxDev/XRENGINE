@@ -1,6 +1,7 @@
 ﻿using XREngine.Components.Lights;
 using XREngine.Rendering;
 using XREngine.Scene.Transforms;
+using XREngine.Data.Geometry;
 
 namespace XREngine.Components.Capture.Lights.Types
 {
@@ -91,6 +92,16 @@ namespace XREngine.Components.Capture.Lights.Types
             }
 
             _viewport.Render(ShadowMap, null, null, true, ShadowMap.Material);
+        }
+
+        internal override void BuildShadowFrusta(List<PreparedFrustum> output)
+        {
+            output.Clear();
+
+            if (ShadowCamera is null)
+                return;
+
+            output.Add(ShadowCamera.WorldFrustum().Prepare());
         }
     }
 }

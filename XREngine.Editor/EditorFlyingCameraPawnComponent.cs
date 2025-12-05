@@ -370,7 +370,12 @@ public partial class EditorFlyingCameraPawnComponent : FlyingCameraPawnComponent
             {
                 string desktop = Environment.GetFolderPath(Environment.SpecialFolder.DesktopDirectory);
                 string capturePath = Path.Combine(desktop, $"{pipeline.GetType().Name}_{DateTime.Now:yyyy-MM-dd_HH-mm-ss}");
-                Engine.Rendering.State.CurrentRenderingPipeline?.CaptureAllTextures(capturePath);
+                AbstractRenderer.Current?.GetScreenshotAsync(vp.Region, false, (img, index) =>
+                {
+                    Utility.EnsureDirPathExists(capturePath);
+                    img?.Flip();
+                    img?.Write(Path.Combine(capturePath, $"Screenshot_{index:D4}.png"));
+                });
             }
         }
 

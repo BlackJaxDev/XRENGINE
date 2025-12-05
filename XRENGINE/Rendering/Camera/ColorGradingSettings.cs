@@ -4,6 +4,7 @@ using System.Runtime.Intrinsics.X86;
 using XREngine.Data;
 using XREngine.Data.Colors;
 using XREngine.Data.Core;
+using XREngine.Data.Geometry;
 
 namespace XREngine.Rendering
 {
@@ -21,7 +22,7 @@ namespace XREngine.Rendering
         private float _exposureTransitionSpeed = 0.01f;
         private ColorF3 _tint = new(1.0f, 1.0f, 1.0f);
         private bool _autoExposure = true;
-        private float _autoExposureBias = -10.0f;
+        private float _autoExposureBias = 0.0f;
         private float _autoExposureScale = 0.5f;
         private float _exposureDividend = 0.1f;
         private float _minExposure = 0.0001f;
@@ -157,7 +158,7 @@ uniform ColorGradeStruct ColorGrade;";
         private float _lastUpdateTime = 0.0f;
         private float _lastLumDot = 0.0f;
 
-        public void UpdateExposure(XRTexture hdrSceneTexture, bool generateMipmapsNow)
+        public void UpdateExposure(BoundingRectangle rect)
         {
             if (!RequiresAutoExposure || Engine.Rendering.State.IsLightProbePass || Engine.Rendering.State.IsShadowPass || Engine.Rendering.State.IsSceneCapturePass)
                 return;
@@ -168,20 +169,41 @@ uniform ColorGradeStruct ColorGrade;";
 
             _lastUpdateTime = time;
 
-            //"blocking" non-PBO version seems to be faster than the async version when it comes to just one pixel
-            switch (hdrSceneTexture)
+            void OnResult(bool success, float dot)
             {
-                case XRTexture2D t2d:
-                    //Engine.Rendering.State.CalculateDotLuminanceAsync(t2d, generateMipmapsNow, LerpExposure);
-                    _lastLumDot = Engine.Rendering.State.CalculateDotLuminance(t2d, generateMipmapsNow);
-                    break;
-                case XRTexture2DArray t2da:
-                    //Engine.Rendering.State.CalculateDotLuminanceAsync(t2da, generateMipmapsNow, LerpExposure);
-                    _lastLumDot = Engine.Rendering.State.CalculateDotLuminance(t2da, generateMipmapsNow);
-                    break;
+                _lastLumDot = dot;
+                LerpExposure(success, dot);
             }
 
-            LerpExposure(true, _lastLumDot);
+            Engine.Rendering.State.CalculateFrontBufferDotLuminanceAsync(rect, false, OnResult);
+        }
+
+        public void UpdateExposure(XRTexture tex, bool generateMipmapsNow)
+        {
+            if (!RequiresAutoExposure || Engine.Rendering.State.IsLightProbePass || Engine.Rendering.State.IsShadowPass || Engine.Rendering.State.IsSceneCapturePass)
+                return;
+
+            float time = Engine.ElapsedTime;
+            if (time - _lastUpdateTime < _secBetweenExposureUpdates)
+                return;
+
+            _lastUpdateTime = time;
+
+            void OnResult(bool success, float dot)
+            {
+                _lastLumDot = dot;
+                LerpExposure(success, dot);
+            }
+
+            switch (tex)
+            {
+                case XRTexture2D t2d:
+                    Engine.Rendering.State.CalculateDotLuminanceAsync(t2d, generateMipmapsNow, OnResult);
+                    break;
+                case XRTexture2DArray t2da:
+                    Engine.Rendering.State.CalculateDotLuminanceAsync(t2da, generateMipmapsNow, OnResult);
+                    break;
+            }
         }
 
         private void LerpExposure(bool success, float lumDot)

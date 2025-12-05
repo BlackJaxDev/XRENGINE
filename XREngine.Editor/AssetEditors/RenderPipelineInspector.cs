@@ -19,11 +19,17 @@ namespace XREngine.Editor.AssetEditors;
 
 public sealed class RenderPipelineInspector : IXRAssetInspector
 {
+    #region Constants & Fields
+
     private static readonly Vector4 DirtyBadgeColor = new(0.95f, 0.55f, 0.2f, 1f);
     private static readonly Vector4 CleanBadgeColor = new(0.5f, 0.8f, 0.5f, 1f);
     private static readonly Vector4 WarningColor = new(0.95f, 0.45f, 0.45f, 1f);
 
     private readonly ConditionalWeakTable<RenderPipeline, EditorState> _stateCache = new();
+
+    #endregion
+
+    #region Public API
 
     public void DrawInspector(XRAsset asset, HashSet<object> visitedObjects)
     {
@@ -48,11 +54,15 @@ public sealed class RenderPipelineInspector : IXRAssetInspector
         DrawCommandChainSection(pipeline, state, visitedObjects);
         ImGui.Separator();
 
-        DrawDebugViews(pipeline);
+        DrawDebugViews(pipeline, state);
         ImGui.Separator();
 
         DrawRawInspector(pipeline, visitedObjects);
     }
+
+    #endregion
+
+    #region Section Drawing - Header
 
     private static void DrawHeader(RenderPipeline pipeline)
     {
@@ -91,6 +101,10 @@ public sealed class RenderPipelineInspector : IXRAssetInspector
         ImGui.SameLine();
         ImGui.TextDisabled($"Branch Resources: {pipeline.CommandChain.BranchResources}");
     }
+
+    #endregion
+
+    #region Section Drawing - Instances
 
     private static bool DrawInstancesSection(RenderPipeline pipeline)
     {
@@ -150,9 +164,13 @@ public sealed class RenderPipelineInspector : IXRAssetInspector
         return true;
     }
 
-    private static void DrawDebugViews(RenderPipeline pipeline)
+    #endregion
+
+    #region Section Drawing - Debug Views
+
+    private static void DrawDebugViews(RenderPipeline pipeline, EditorState state)
     {
-        if (!ImGui.CollapsingHeader("Debug Views (Textures)", ImGuiTreeNodeFlags.DefaultOpen))
+        if (!ImGui.CollapsingHeader("Debug Views (Framebuffers)", ImGuiTreeNodeFlags.DefaultOpen))
             return;
 
         if (!Engine.IsRenderThread)
@@ -161,88 +179,124 @@ public sealed class RenderPipelineInspector : IXRAssetInspector
             return;
         }
 
-        if (pipeline is not DefaultRenderPipeline)
+        var instances = pipeline.Instances;
+        if (instances.Count == 0)
         {
-            ImGui.TextDisabled("Only default pipeline supported for debug previews.");
+            ImGui.TextDisabled("No live pipeline instances to preview.");
             return;
         }
 
-        XRRenderPipelineInstance? instanceWithVelocity = pipeline.Instances
-            .FirstOrDefault(inst => inst.Resources.TextureRecords.TryGetValue(DefaultRenderPipeline.VelocityTextureName, out var rec)
-                                     && rec.Instance is XRTexture2D tex && tex.SizedInternalFormat == ESizedInternalFormat.Rg16f);
+        state.SelectedInstanceIndex = Math.Clamp(state.SelectedInstanceIndex, 0, Math.Max(0, instances.Count - 1));
+        string currentInstanceLabel = instances[state.SelectedInstanceIndex].DebugDescriptor;
 
-        if (instanceWithVelocity is null)
+        ImGui.SetNextItemWidth(360f);
+        if (ImGui.BeginCombo("Instance##RenderPipelineFbo", currentInstanceLabel))
         {
-            ImGui.TextDisabled(pipeline.Instances.Count == 0
-                ? "No live pipeline instances to preview."
-                : "Velocity texture not bound on any instance.");
+            for (int i = 0; i < instances.Count; i++)
+            {
+                string label = instances[i].DebugDescriptor;
+                bool selected = i == state.SelectedInstanceIndex;
+                if (ImGui.Selectable(label, selected))
+                    state.SelectedInstanceIndex = i;
+                if (selected)
+                    ImGui.SetItemDefaultFocus();
+            }
+            ImGui.EndCombo();
+        }
+
+        var selectedInstance = instances[state.SelectedInstanceIndex];
+        var fboRecords = selectedInstance.Resources.FrameBufferRecords
+            .Where(pair => pair.Value.Instance is not null)
+            .OrderBy(pair => pair.Key, StringComparer.OrdinalIgnoreCase)
+            .ToList();
+
+        if (fboRecords.Count == 0)
+        {
+            ImGui.TextDisabled("Instance has no framebuffers to preview.");
             return;
         }
 
-        if (!instanceWithVelocity.Resources.TryGetTexture(DefaultRenderPipeline.VelocityTextureName, out XRTexture? velocityTex) || velocityTex is null)
+        if (string.IsNullOrWhiteSpace(state.SelectedFboName)
+            || !fboRecords.Any(pair => pair.Key.Equals(state.SelectedFboName, StringComparison.OrdinalIgnoreCase)))
         {
-            ImGui.TextDisabled("Velocity texture not available.");
+            state.SelectedFboName = fboRecords[0].Key;
+        }
+
+        string currentFboLabel = state.SelectedFboName ?? fboRecords[0].Key;
+        ImGui.SetNextItemWidth(260f);
+        if (ImGui.BeginCombo("Framebuffer##RenderPipelineFbo", currentFboLabel))
+        {
+            foreach (var pair in fboRecords)
+            {
+                bool selected = pair.Key.Equals(state.SelectedFboName, StringComparison.OrdinalIgnoreCase);
+                if (ImGui.Selectable(pair.Key, selected))
+                    state.SelectedFboName = pair.Key;
+                if (selected)
+                    ImGui.SetItemDefaultFocus();
+            }
+            ImGui.EndCombo();
+        }
+
+        bool flipPreview = state.FlipPreview;
+        ImGui.Checkbox("Flip Preview Vertically", ref state.FlipPreview);
+
+        var selectedRecord = fboRecords.First(pair => pair.Key.Equals(state.SelectedFboName, StringComparison.OrdinalIgnoreCase));
+        XRFrameBuffer fbo = selectedRecord.Value.Instance!;
+
+        ImGui.TextDisabled($"Dimensions: {fbo.Width} x {fbo.Height}");
+        ImGui.TextDisabled($"Targets: {fbo.Targets?.Length ?? 0}");
+        ImGui.TextDisabled($"Texture Types: {fbo.TextureTypes}");
+
+        var targets = fbo.Targets;
+        if (targets is null || targets.Length == 0)
+        {
+            ImGui.TextDisabled("Framebuffer has no attachments.");
             return;
         }
 
-        if (TryGetTexturePreviewHandle(velocityTex, 320f, out nint handle, out Vector2 displaySize, out Vector2 pixelSize, out string failure))
+        for (int i = 0; i < targets.Length; i++)
         {
-            ImGui.TextDisabled("Motion Vectors (Velocity)");
-            ImGui.Image(handle, displaySize, Vector2.Zero, Vector2.One);
-            ImGui.TextDisabled($"{pixelSize.X} x {pixelSize.Y}");
-        }
-        else
-        {
-            ImGui.TextDisabled(failure);
+            var (target, attachment, mipLevel, layerIndex) = targets[i];
+            ImGui.PushID(i);
+
+            string attachmentLabel = $"[{i + 1}] {attachment}";
+            if (mipLevel > 0)
+                attachmentLabel += $" | Mip {mipLevel}";
+            if (layerIndex >= 0)
+                attachmentLabel += $" | Layer {layerIndex}";
+            ImGui.TextUnformatted(attachmentLabel);
+
+            if (target is XRTexture tex)
+            {
+                string texLabel = tex.Name ?? tex.GetType().Name;
+                ImGui.TextDisabled(texLabel);
+
+                if (TryGetTexturePreviewHandle(tex, 320f, out nint handle, out Vector2 displaySize, out Vector2 pixelSize, out string failure))
+                {
+                    Vector2 uv0 = flipPreview ? new Vector2(0f, 1f) : Vector2.Zero;
+                    Vector2 uv1 = flipPreview ? new Vector2(1f, 0f) : Vector2.One;
+                    ImGui.Image(handle, displaySize, uv0, uv1);
+                    ImGui.TextDisabled($"Size: {pixelSize.X} x {pixelSize.Y}");
+                }
+                else
+                {
+                    ImGui.TextDisabled(failure);
+                }
+            }
+            else
+            {
+                ImGui.TextDisabled("Attachment is not a texture.");
+            }
+
+            ImGui.PopID();
+            if (i < targets.Length - 1)
+                ImGui.Separator();
         }
     }
 
-    private static bool TryGetTexturePreviewHandle(XRTexture texture, float maxEdge, out nint handle, out Vector2 displaySize, out Vector2 pixelSize, out string failure)
-    {
-        handle = nint.Zero;
-        displaySize = new Vector2(64f, 64f);
-        pixelSize = displaySize;
-        failure = string.Empty;
+    #endregion
 
-        if (!Engine.IsRenderThread)
-        {
-            failure = "Preview unavailable off render thread";
-            return false;
-        }
-
-        if (texture is not XRTexture2D tex2D)
-        {
-            failure = "Only 2D textures supported";
-            return false;
-        }
-
-        if (AbstractRenderer.Current is not OpenGLRenderer renderer)
-        {
-            failure = "Preview requires OpenGL renderer";
-            return false;
-        }
-
-        var apiTexture = renderer.GenericToAPI<GLTexture2D>(tex2D);
-        if (apiTexture is null)
-        {
-            failure = "Texture not uploaded";
-            return false;
-        }
-
-        uint binding = apiTexture.BindingId;
-        if (binding == OpenGLRenderer.GLObjectBase.InvalidBindingId || binding == 0)
-        {
-            failure = "Texture not ready";
-            return false;
-        }
-
-        pixelSize = new Vector2(tex2D.Width, tex2D.Height);
-        float largest = MathF.Max(1f, MathF.Max(pixelSize.X, pixelSize.Y));
-        float scale = largest > 0f ? MathF.Min(1f, maxEdge / largest) : 1f;
-        displaySize = new Vector2(pixelSize.X * scale, pixelSize.Y * scale);
-        handle = (nint)binding;
-        return true;
-    }
+    #region Section Drawing - Render Passes
 
     private static bool DrawPassMetadataSection(RenderPipeline pipeline, EditorState state)
     {
@@ -319,6 +373,10 @@ public sealed class RenderPipelineInspector : IXRAssetInspector
         return true;
     }
 
+    #endregion
+
+    #region Section Drawing - Command Chain
+
     private static void DrawCommandChainSection(RenderPipeline pipeline, EditorState state, HashSet<object> visited)
     {
         if (!ImGui.CollapsingHeader("Command Chain", ImGuiTreeNodeFlags.DefaultOpen))
@@ -394,6 +452,10 @@ public sealed class RenderPipelineInspector : IXRAssetInspector
         }
     }
 
+    #endregion
+
+    #region Section Drawing - Raw Inspector
+
     private static void DrawRawInspector(RenderPipeline pipeline, HashSet<object> visited)
     {
         if (!ImGui.CollapsingHeader("Raw Properties"))
@@ -403,6 +465,10 @@ public sealed class RenderPipelineInspector : IXRAssetInspector
         UnitTestingWorld.UserInterface.DrawDefaultAssetInspector(pipeline, visited);
         ImGui.PopID();
     }
+
+    #endregion
+
+    #region Pass Filtering
 
     private static IEnumerable<RenderPassMetadata> FilterPasses(IReadOnlyCollection<RenderPassMetadata> passes, string filter)
     {
@@ -433,17 +499,9 @@ public sealed class RenderPipelineInspector : IXRAssetInspector
         return false;
     }
 
-    private static bool CommandMatches(ViewportRenderCommand command, string filter)
-    {
-        if (Contains(command.GetType().Name, filter))
-            return true;
+    #endregion
 
-        foreach (var badge in GetCommandBadges(command))
-            if (Contains(badge, filter))
-                return true;
-
-        return false;
-    }
+    #region Command Tree - Building & Population
 
     private static CommandTreeNode BuildCommandTree(ViewportRenderCommandContainer container, string label, string path, out Dictionary<string, CommandTreeNode> nodeMap)
     {
@@ -612,6 +670,10 @@ public sealed class RenderPipelineInspector : IXRAssetInspector
         return builder.ToString();
     }
 
+    #endregion
+
+    #region Command Tree - Visibility & Selection
+
     private static void EnsureSelectedCommand(EditorState state, Dictionary<string, CommandTreeNode> nodeMap, CommandTreeNode root)
     {
         var firstVisible = FindFirstVisibleCommandNode(root);
@@ -664,6 +726,10 @@ public sealed class RenderPipelineInspector : IXRAssetInspector
         node.IsVisible = matches || childVisible;
     }
 
+    #endregion
+
+    #region Command Tree - Drawing
+
     private static bool DrawCommandTree(CommandTreeNode root, EditorState state)
     {
         bool any = false;
@@ -703,6 +769,10 @@ public sealed class RenderPipelineInspector : IXRAssetInspector
 
         return true;
     }
+
+    #endregion
+
+    #region Command Badges & Inspection
 
     private static List<string> GetCommandBadges(ViewportRenderCommand command)
     {
@@ -746,6 +816,73 @@ public sealed class RenderPipelineInspector : IXRAssetInspector
         return false;
     }
 
+    private static bool CommandMatches(ViewportRenderCommand command, string filter)
+    {
+        if (Contains(command.GetType().Name, filter))
+            return true;
+
+        foreach (var badge in GetCommandBadges(command))
+            if (Contains(badge, filter))
+                return true;
+
+        return false;
+    }
+
+    #endregion
+
+    #region Texture Preview
+
+    private static bool TryGetTexturePreviewHandle(XRTexture texture, float maxEdge, out nint handle, out Vector2 displaySize, out Vector2 pixelSize, out string failure)
+    {
+        handle = nint.Zero;
+        displaySize = new Vector2(64f, 64f);
+        pixelSize = displaySize;
+        failure = string.Empty;
+
+        if (!Engine.IsRenderThread)
+        {
+            failure = "Preview unavailable off render thread";
+            return false;
+        }
+
+        if (texture is not XRTexture2D tex2D)
+        {
+            failure = "Only 2D textures supported";
+            return false;
+        }
+
+        if (AbstractRenderer.Current is not OpenGLRenderer renderer)
+        {
+            failure = "Preview requires OpenGL renderer";
+            return false;
+        }
+
+        var apiTexture = renderer.GenericToAPI<GLTexture2D>(tex2D);
+        if (apiTexture is null)
+        {
+            failure = "Texture not uploaded";
+            return false;
+        }
+
+        uint binding = apiTexture.BindingId;
+        if (binding == OpenGLRenderer.GLObjectBase.InvalidBindingId || binding == 0)
+        {
+            failure = "Texture not ready";
+            return false;
+        }
+
+        pixelSize = new Vector2(tex2D.Width, tex2D.Height);
+        float largest = MathF.Max(1f, MathF.Max(pixelSize.X, pixelSize.Y));
+        float scale = largest > 0f ? MathF.Min(1f, maxEdge / largest) : 1f;
+        displaySize = new Vector2(pixelSize.X * scale, pixelSize.Y * scale);
+        handle = (nint)binding;
+        return true;
+    }
+
+    #endregion
+
+    #region String Utilities
+
     private static bool Contains(string? haystack, string needle)
         => !string.IsNullOrWhiteSpace(haystack)
            && haystack.IndexOf(needle, StringComparison.OrdinalIgnoreCase) >= 0;
@@ -757,25 +894,25 @@ public sealed class RenderPipelineInspector : IXRAssetInspector
         return pipeline.GetType().Name;
     }
 
+    #endregion
+
+    #region Nested Types
+
     private sealed class EditorState
     {
         public string PassSearch = string.Empty;
         public string CommandSearch = string.Empty;
         public string? SelectedCommandPath;
+        public int SelectedInstanceIndex;
+        public string? SelectedFboName;
+        public bool FlipPreview = true;
     }
 
-    private sealed class CommandTreeNode
+    private sealed class CommandTreeNode(string label, string path, ViewportRenderCommand? command)
     {
-        public CommandTreeNode(string label, string path, ViewportRenderCommand? command)
-        {
-            Label = label;
-            Path = path;
-            Command = command;
-        }
-
-        public string Label { get; }
-        public string Path { get; }
-        public ViewportRenderCommand? Command { get; }
+        public string Label { get; } = label;
+        public string Path { get; } = path;
+        public ViewportRenderCommand? Command { get; } = command;
         public List<CommandTreeNode> Children { get; } = new();
         public bool IsVisible { get; set; }
     }
@@ -804,4 +941,6 @@ public sealed class RenderPipelineInspector : IXRAssetInspector
             ImGui.EndChild();
         }
     }
+
+    #endregion
 }

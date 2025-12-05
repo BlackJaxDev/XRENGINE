@@ -978,6 +978,10 @@ internal static class ImGuiAssetUtilities
 
         private static bool ShouldSkipTraversalType(Type type)
         {
+            // System.Threading.Lock (.NET 9+) has internal state that throws on reflection access.
+            if (type == typeof(System.Threading.Lock))
+                return true;
+
             string? fullName = type.FullName;
             if (string.IsNullOrEmpty(fullName))
                 return false;

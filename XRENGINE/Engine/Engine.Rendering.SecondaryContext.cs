@@ -34,10 +34,10 @@ namespace XREngine
                     if (IsRunning || templateWindow is null)
                         return;
 
-                    if (!Engine.Rendering.Settings.EnableSecondaryGpuCompute)
+                    if (!Settings.EnableSecondaryGpuCompute)
                         return;
 
-                    if (!HasMultipleGpus() && !Engine.Rendering.Settings.AllowSecondaryContextSharingFallback)
+                    if (!HasMultipleGpus() && !Settings.AllowSecondaryContextSharingFallback)
                         return;
 
                     _cts = new CancellationTokenSource();

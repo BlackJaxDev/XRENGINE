@@ -230,7 +230,7 @@ public sealed class OctahedralImposterGenerator
     private static bool ComposeOctahedralSheet(IReadOnlyList<XRTexture2D> views, XRTexture2D sheet)
     {
         XRShader? blendShader = Engine.Assets.LoadEngineAsset<XRShader>("Shaders", "Tools", "OctahedralImposterBlend.fs");
-        XRShader? fullscreenShader = Engine.Assets.LoadEngineAsset<XRShader>("Shaders", "FullscreenTri.vs");
+        XRShader? fullscreenShader = Engine.Assets.LoadEngineAsset<XRShader>("Shaders", "Scene3D", "FullscreenTri.vs");
 
         if (blendShader is null || fullscreenShader is null)
         {

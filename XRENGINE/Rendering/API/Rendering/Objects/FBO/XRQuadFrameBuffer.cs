@@ -60,6 +60,12 @@ namespace XREngine.Rendering
             mat.RenderOptions.CullMode = ECullMode.None;
             FullScreenMesh = new XRMeshRenderer(Mesh(useTriangle), mat);
             FullScreenMesh.SettingUniforms += SetUniforms;
+
+            // Force simple program linking for fullscreen blits; shader pipelines may skip rendering
+            // if no separable program is present on the material (common for utility shaders).
+            FullScreenMesh.GetDefaultVersion().AllowShaderPipelines = false;
+            FullScreenMesh.GetOVRMultiViewVersion().AllowShaderPipelines = false;
+            FullScreenMesh.GetNVStereoVersion().AllowShaderPipelines = false;
         }
 
         public XRQuadFrameBuffer(
