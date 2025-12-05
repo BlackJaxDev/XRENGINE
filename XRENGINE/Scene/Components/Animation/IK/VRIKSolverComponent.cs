@@ -16,6 +16,7 @@ namespace XREngine.Components.Animation
 
         public override void Visualize()
         {
+            using var profilerState = Engine.Profiler.Start("VRIKSolverComponent.Visualize");
             Solver.Visualize();
         }
 

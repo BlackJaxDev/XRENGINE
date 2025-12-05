@@ -397,6 +397,9 @@ namespace XREngine.Data.Geometry
         public Frustum Clone()
             => new(_planes, _corners);
 
+        public PreparedFrustum Prepare()
+            => PreparedFrustum.FromFrustum(this);
+
         public bool Intersects(AABB boundingBox)
         {
             for (int i = 0; i < 6; i++)

@@ -1,9 +1,13 @@
-﻿using MagicPhysX;
+﻿using Assimp;
+using MagicPhysX;
 using System.Numerics;
+using XREngine.Core;
 using XREngine.Core.Attributes;
 using XREngine.Data.Components.Scene;
+using XREngine.Data.Geometry;
 using XREngine.Data.Rendering;
 using XREngine.Input.Devices;
+using XREngine.Rendering;
 using XREngine.Rendering.Commands;
 using XREngine.Rendering.Info;
 using XREngine.Rendering.Physics.Physx;
@@ -150,18 +154,27 @@ namespace XREngine.Components
         private bool _screenshotRequested = false;
         private void PostRender()
         {
-            if (Engine.Rendering.State.IsStereoPass && _screenshotRequested)
+            if (!Engine.Rendering.State.IsStereoPass || !_screenshotRequested)
+                return;
+
+            using var prof = Engine.Profiler.Start("VRPlayerInputSet.PostRender.Screenshot");
+
+            _screenshotRequested = false;
+
+            var pipeline = Engine.Rendering.State.CurrentRenderingPipeline;
+            if (pipeline is null)
+                return;
+
+            string desktop = Environment.GetFolderPath(Environment.SpecialFolder.DesktopDirectory);
+            string capturePath = Path.Combine(desktop, $"{pipeline.GetType().Name}_{DateTime.Now:yyyy-MM-dd_HH-mm-ss}");
+
+            BoundingRectangle vp = new BoundingRectangle();
+            AbstractRenderer.Current?.GetScreenshotAsync(vp, false, (img, index) =>
             {
-                _screenshotRequested = false;
-
-                var pipeline = Engine.Rendering.State.CurrentRenderingPipeline;
-                if (pipeline is null)
-                    return;
-
-                string desktop = Environment.GetFolderPath(Environment.SpecialFolder.DesktopDirectory);
-                string capturePath = Path.Combine(desktop, $"{pipeline.GetType().Name}_{DateTime.Now:yyyy-MM-dd_HH-mm-ss}");
-                pipeline.CaptureAllTextures(capturePath);
-            }
+                Utility.EnsureDirPathExists(capturePath);
+                img?.Flip();
+                img?.Write(Path.Combine(capturePath, $"Screenshot_{index:D4}.png"));
+            });
         }
 
         public bool SpringEnabled

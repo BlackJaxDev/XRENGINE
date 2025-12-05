@@ -19,6 +19,7 @@ using XREngine.Rendering.UI;
 using XREngine.Rendering.Shaders.Generator;
 using PixelFormat = Silk.NET.OpenGL.PixelFormat;
 using XREngine.Components;
+using System.Runtime.InteropServices;
 
 namespace XREngine.Rendering.OpenGL
 {
@@ -710,59 +711,87 @@ namespace XREngine.Rendering.OpenGL
                 _ => TextureTarget.Texture2D
             };
 
-        public override void CalcDotLuminanceAsync(XRTexture2DArray texture, Action<bool, float> callback, Vector3 luminance, bool genMipmapsNow = true)
+        public override unsafe void CalcDotLuminanceAsync(XRTexture2DArray texture, Action<bool, float> callback, Vector3 luminance, bool genMipmapsNow = true)
         {
+            using var prof = Engine.Profiler.Start("GLRenderer.CalcDotLuminanceAsync");
+
             var glTex = GenericToAPI<GLTexture2DArray>(texture);
             if (glTex is null)
             {
                 callback(false, 0.0f);
                 return;
             }
+
             if (genMipmapsNow)
                 glTex.GenerateMipmaps();
-            EPixelFormat format = EPixelFormat.Bgr;
-            EPixelType pixelType = EPixelType.Float;
-            var data = XRTexture.AllocateBytes(1, 1, format, pixelType);
-            Api.BindFramebuffer(FramebufferTarget.ReadFramebuffer, 0);
-            Api.ReadBuffer(ReadBufferMode.Front);
-            nuint size = (uint)data.Length;
-            uint pbo = ReadFBOToPBO(new BoundingRectangle(0, 0, 1, 1), format, pixelType, size, out IntPtr sync);
-            void FenceCheck()
+
+            int mipLevel = XRTexture.GetSmallestMipmapLevel(texture.Width, texture.Height);
+            int layerCount = (int)texture.Depth;
+            if (layerCount <= 0)
             {
-                if (GetData(size, data, sync, pbo))
+                callback(false, 0.0f);
+                return;
+            }
+
+            uint byteSize = (uint)(sizeof(Vector4) * layerCount);
+            uint pbo = Api.GenBuffer();
+            Api.BindBuffer(GLEnum.PixelPackBuffer, pbo);
+            Api.BufferData(GLEnum.PixelPackBuffer, byteSize, null, GLEnum.StreamRead);
+
+            Api.GetTextureSubImage(
+                glTex.BindingId,
+                mipLevel,
+                0, 0, 0,
+                1, 1, (uint)layerCount,
+                GLObjectBase.ToGLEnum(EPixelFormat.Rgba),
+                GLObjectBase.ToGLEnum(EPixelType.Float),
+                byteSize,
+                (void*)IntPtr.Zero);
+
+            IntPtr sync = Api.FenceSync(GLEnum.SyncGpuCommandsComplete, 0u);
+            Api.BindBuffer(GLEnum.PixelPackBuffer, 0);
+
+            bool FenceCheck()
+            {
+                if (!GetData(byteSize, _rgbDataForAsync(ref _asyncBuffer), sync, pbo))
+                    return false;
+
+                Api.DeleteSync(sync);
+                Api.DeleteBuffer(pbo);
+
+                Span<Vector4> samples = MemoryMarshal.Cast<byte, Vector4>(_asyncBuffer.AsSpan(0, (int)byteSize));
+                Vector3 accum = Vector3.Zero;
+                for (int i = 0; i < layerCount; i++)
                 {
-                    Api.DeleteSync(sync);
-                    Api.DeleteBuffer(pbo);
-                    Vector3 rgb;
-                    unsafe
-                    {
-                        fixed (byte* ptr = data)
-                        {
-                            float* fptr = (float*)ptr;
-                            rgb = new(fptr[0], fptr[1], fptr[2]);
-                        }
-                    }
-                    if (float.IsNaN(rgb.X) || float.IsNaN(rgb.Y) || float.IsNaN(rgb.Z))
+                    Vector4 s = samples[i];
+                    if (float.IsNaN(s.X) || float.IsNaN(s.Y) || float.IsNaN(s.Z))
                     {
                         callback(false, 0.0f);
-                        return;
+                        return true;
                     }
-                    callback(true, rgb.Dot(luminance));
+                    accum += s.XYZ();
                 }
-                else
-                {
-                    Engine.EnqueueMainThreadTask(FenceCheck);
-                }
+
+                Vector3 average = accum / layerCount;
+                callback(true, average.Dot(luminance));
+                return true;
             }
-            Engine.EnqueueMainThreadTask(FenceCheck);
+
+            Engine.AddMainThreadCoroutine(FenceCheck);
         }
 
-        private byte[] _rgbData = XRTexture.AllocateBytes(1, 1, EPixelFormat.Rgb, EPixelType.Float);
-        private uint _pbo = 0;
-        private IntPtr? _sync = null;
-
-        public override void CalcDotLuminanceAsync(XRTexture2D texture, Action<bool, float> callback, Vector3 luminance, bool genMipmapsNow = true)
+        private byte[] _asyncBuffer = XRTexture.AllocateBytes(16, 1, EPixelFormat.Rgba, EPixelType.Float);
+        private static byte[] _rgbDataForAsync(ref byte[] buffer)
         {
+            if (buffer.Length < 16)
+                buffer = XRTexture.AllocateBytes(16, 1, EPixelFormat.Rgba, EPixelType.Float);
+            return buffer;
+        }
+
+        public override unsafe void CalcDotLuminanceAsync(XRTexture2D texture, Action<bool, float> callback, Vector3 luminance, bool genMipmapsNow = true)
+        {
+            using var prof = Engine.Profiler.Start("GLRenderer.CalcDotLuminanceAsync");
+
             var glTex = GenericToAPI<GLTexture2D>(texture);
             if (glTex is null)
             {
@@ -773,103 +802,107 @@ namespace XREngine.Rendering.OpenGL
             if (genMipmapsNow)
                 glTex.GenerateMipmaps();
 
-            nuint size = (uint)_rgbData.Length;
+            int mipLevel = XRTexture.GetSmallestMipmapLevel(texture.Width, texture.Height);
 
-            //Create a PBO if it doesn't exist
-            if (_pbo == 0)
-            {
-                uint pbo = Api.GenBuffer();
-                Api.BindBuffer(GLEnum.PixelPackBuffer, pbo);
-                unsafe
-                {
-                    Api.BufferData(GLEnum.PixelPackBuffer, size, null, GLEnum.StreamRead);
-                }
-            }
-            else
-            {
-                Api.BindBuffer(GLEnum.PixelPackBuffer, _pbo);
-            }
+            uint byteSize = (uint)sizeof(Vector4);
+            uint pbo = Api.GenBuffer();
+            Api.BindBuffer(GLEnum.PixelPackBuffer, pbo);
+            Api.BufferData(GLEnum.PixelPackBuffer, byteSize, null, GLEnum.StreamRead);
 
-            //If the sync object doesn't exist, initiate a readback and create a sync object to wait on
-            if (_sync is null)
-            {
-                Api.BindFramebuffer(FramebufferTarget.ReadFramebuffer, 0);
-                Api.ReadBuffer(ReadBufferMode.Front);
+            Api.GetTextureImage(
+                glTex.BindingId,
+                mipLevel,
+                GLObjectBase.ToGLEnum(EPixelFormat.Rgba),
+                GLObjectBase.ToGLEnum(EPixelType.Float),
+                byteSize,
+                (void*)IntPtr.Zero);
 
-                unsafe
-                {
-                    Api.ReadPixels(0, 0, 1u, 1u, GLEnum.Rgb, GLEnum.Float, null);
-                }
-                _sync = Api.FenceSync(GLEnum.SyncGpuCommandsComplete, 0u);
-            }
-
-            //Check if the sync object is ready
-            var result = Api.ClientWaitSync(_sync.Value, 0u, 0u);
-
-            //If not ready, return false
-            if (!(result == GLEnum.AlreadySignaled || result == GLEnum.ConditionSatisfied))
-            {
-                Api.BindBuffer(GLEnum.PixelPackBuffer, 0);
-                callback(false, 0.0f);
-                return;
-            }
-
-            //If ready, read the data from the PBO
-            unsafe
-            {
-                fixed (byte* ptr = _rgbData)
-                {
-                    Api.GetBufferSubData(GLEnum.PixelPackBuffer, IntPtr.Zero, size, ptr);
-                }
-            }
+            IntPtr sync = Api.FenceSync(GLEnum.SyncGpuCommandsComplete, 0u);
             Api.BindBuffer(GLEnum.PixelPackBuffer, 0);
 
-            //Delete the sync object to initiate a new readback on the next call
-            Api.DeleteSync(_sync.Value);
-            _sync = null;
-
-            //Calculate the dot product of the color and the luminance
-            Vector3 rgb;
-            unsafe
+            bool FenceCheck()
             {
-                fixed (byte* ptr = _rgbData)
+                if (!GetData(byteSize, _rgbDataForAsync(ref _asyncBuffer), sync, pbo))
+                    return false;
+
+                Api.DeleteSync(sync);
+                Api.DeleteBuffer(pbo);
+
+                Vector3 rgb;
+                unsafe
                 {
-                    float* fptr = (float*)ptr;
-                    rgb = new(fptr[0], fptr[1], fptr[2]);
+                    fixed (byte* ptr = _asyncBuffer)
+                    {
+                        float* fptr = (float*)ptr;
+                        rgb = new(fptr[0], fptr[1], fptr[2]);
+                    }
                 }
+
+                if (float.IsNaN(rgb.X) || float.IsNaN(rgb.Y) || float.IsNaN(rgb.Z))
+                {
+                    callback(false, 0.0f);
+                    return true;
+                }
+
+                callback(true, rgb.Dot(luminance));
+                return true;
             }
 
-            if (float.IsNaN(rgb.X) || float.IsNaN(rgb.Y) || float.IsNaN(rgb.Z))
-            {
-                callback(false, 0.0f);
-                return;
-            }
-
-            callback(true, rgb.Dot(luminance));
+            Engine.AddMainThreadCoroutine(FenceCheck);
         }
 
         public override unsafe bool CalcDotLuminance(XRTexture2DArray texture, Vector3 luminance, out float dotLuminance, bool genMipmapsNow = true)
         {
+            using var prof = Engine.Profiler.Start("GLRenderer.CalcDotLuminance");
+
             dotLuminance = 1.0f;
             var glTex = GenericToAPI<GLTexture2DArray>(texture);
             if (glTex is null)
                 return false;
+
             if (genMipmapsNow)
                 glTex.GenerateMipmaps();
-            //Calculate average color value using 1x1 mipmap of scene
-            Vector4 rgb = Vector4.Zero;
-            void* addr = &rgb;
-            Api.GetTextureImage(glTex.BindingId, texture.SmallestMipmapLevel, GLObjectBase.ToGLEnum(EPixelFormat.Rgba), GLObjectBase.ToGLEnum(EPixelType.Float), (uint)sizeof(Vector4), addr);
-            if (float.IsNaN(rgb.X) ||
-                float.IsNaN(rgb.Y) ||
-                float.IsNaN(rgb.Z))
+
+            int layerCount = (int)texture.Depth;
+            if (layerCount <= 0)
                 return false;
-            //Calculate luminance factor off of the average color
-            dotLuminance = rgb.XYZ().Dot(luminance);
+
+            Span<Vector4> samples = layerCount <= 8
+                ? stackalloc Vector4[layerCount]
+                : new Vector4[layerCount];
+
+            int mipLevel = XRTexture.GetSmallestMipmapLevel(texture.Width, texture.Height);
+
+            fixed (Vector4* ptr = samples)
+            {
+                uint byteSize = (uint)(sizeof(Vector4) * layerCount);
+                Api.GetTextureImage(
+                    glTex.BindingId,
+                    mipLevel,
+                    GLObjectBase.ToGLEnum(EPixelFormat.Rgba),
+                    GLObjectBase.ToGLEnum(EPixelType.Float),
+                    byteSize,
+                    ptr);
+            }
+
+            Vector3 accum = Vector3.Zero;
+            for (int i = 0; i < samples.Length; i++)
+            {
+                Vector4 sample = samples[i];
+                if (float.IsNaN(sample.X) || float.IsNaN(sample.Y) || float.IsNaN(sample.Z))
+                    return false;
+
+                accum += sample.XYZ();
+            }
+
+            Vector3 average = accum / layerCount;
+            dotLuminance = average.Dot(luminance);
             return true;
         }
         public override unsafe bool CalcDotLuminance(XRTexture2D texture, Vector3 luminance, out float dotLuminance, bool genMipmapsNow = true)
         {
+            using var prof = Engine.Profiler.Start("GLRenderer.CalcDotLuminance");
+
             dotLuminance = 1.0f;
             var glTex = GenericToAPI<GLTexture2D>(texture);
             if (glTex is null)
@@ -879,10 +912,12 @@ namespace XREngine.Rendering.OpenGL
             if (genMipmapsNow)
                 glTex.GenerateMipmaps();
             
+            int mipLevel = XRTexture.GetSmallestMipmapLevel(texture.Width, texture.Height);
+
             //Get the average color from the scene texture
             Vector4 rgb = Vector4.Zero;
             void* addr = &rgb;
-            Api.GetTextureImage(glTex.BindingId, texture.SmallestMipmapLevel, GLObjectBase.ToGLEnum(EPixelFormat.Rgba), GLObjectBase.ToGLEnum(EPixelType.Float), (uint)sizeof(Vector4), addr);
+            Api.GetTextureImage(glTex.BindingId, mipLevel, GLObjectBase.ToGLEnum(EPixelFormat.Rgba), GLObjectBase.ToGLEnum(EPixelType.Float), (uint)sizeof(Vector4), addr);
 
             if (float.IsNaN(rgb.X) ||
                 float.IsNaN(rgb.Y) ||
@@ -892,6 +927,90 @@ namespace XREngine.Rendering.OpenGL
             //Calculate luminance factor off of the average color
             dotLuminance = rgb.XYZ().Dot(luminance);
             return true;
+        }
+
+        public override unsafe void CalcDotLuminanceFrontAsync(BoundingRectangle region, bool withTransparency, Vector3 luminance, Action<bool, float> callback)
+        {
+            using var prof = Engine.Profiler.Start("GLRenderer.CalcDotLuminanceFrontAsync");
+
+            uint w = (uint)region.Width;
+            uint h = (uint)region.Height;
+            if (w == 0 || h == 0)
+            {
+                callback(false, 0.0f);
+                return;
+            }
+
+            //TODO: move temp allocations out of this method
+
+            // Copy the requested front buffer region into a temporary FBO-backed texture, generate mipmaps, then read the 1x1 mip via ReadPixels.
+            Api.BindFramebuffer(FramebufferTarget.ReadFramebuffer, 0);
+            Api.ReadBuffer(ReadBufferMode.Front);
+
+            uint tempTex = Api.GenTexture();
+            Api.BindTexture(TextureTarget.Texture2D, tempTex);
+
+            int mipLevels = 1 + (int)MathF.Floor(MathF.Log2(MathF.Max(w, h)));
+            if (mipLevels < 1)
+                mipLevels = 1;
+
+            Api.TexStorage2D(TextureTarget.Texture2D, (uint)mipLevels, GLEnum.Rgba8, w, h);
+
+            uint tempFbo = Api.GenFramebuffer();
+            Api.BindFramebuffer(FramebufferTarget.DrawFramebuffer, tempFbo);
+            Api.FramebufferTexture2D(FramebufferTarget.DrawFramebuffer, FramebufferAttachment.ColorAttachment0, TextureTarget.Texture2D, tempTex, 0);
+
+            Api.BlitFramebuffer(
+                region.X, region.Y, region.X + (int)w, region.Y + (int)h,
+                0, 0, (int)w, (int)h,
+                ClearBufferMask.ColorBufferBit,
+                GLEnum.Linear);
+
+            Api.BindTexture(TextureTarget.Texture2D, tempTex);
+            Api.GenerateMipmap(TextureTarget.Texture2D);
+
+            int mipLevel = XRTexture.GetSmallestMipmapLevel(w, h);
+
+            // Re-attach the smallest mip for readback.
+            Api.BindFramebuffer(FramebufferTarget.ReadFramebuffer, tempFbo);
+            Api.FramebufferTexture2D(FramebufferTarget.ReadFramebuffer, FramebufferAttachment.ColorAttachment0, TextureTarget.Texture2D, tempTex, mipLevel);
+            Api.ReadBuffer(ReadBufferMode.ColorAttachment0);
+
+            uint byteSize = 4; // RGBA8
+            uint pbo = Api.GenBuffer();
+            Api.BindBuffer(GLEnum.PixelPackBuffer, pbo);
+            Api.BufferData(GLEnum.PixelPackBuffer, byteSize, null, GLEnum.StreamRead);
+
+            Api.ReadPixels(0, 0, 1, 1, GLObjectBase.ToGLEnum(EPixelFormat.Rgba), GLObjectBase.ToGLEnum(EPixelType.UnsignedByte), (void*)IntPtr.Zero);
+
+            IntPtr sync = Api.FenceSync(GLEnum.SyncGpuCommandsComplete, 0u);
+            Api.BindBuffer(GLEnum.PixelPackBuffer, 0);
+
+            bool FenceCheck()
+            {
+                if (!GetData(byteSize, _rgbDataForAsync(ref _asyncBuffer), sync, pbo))
+                    return false;
+
+                Api.DeleteSync(sync);
+                Api.DeleteBuffer(pbo);
+                Api.DeleteTexture(tempTex);
+                Api.DeleteFramebuffer(tempFbo);
+
+                float r = _asyncBuffer[0] / 255.0f;
+                float g = _asyncBuffer[1] / 255.0f;
+                float b = _asyncBuffer[2] / 255.0f;
+
+                if (float.IsNaN(r) || float.IsNaN(g) || float.IsNaN(b))
+                {
+                    callback(false, 0.0f);
+                    return true;
+                }
+
+                callback(true, new Vector3(r, g, b).Dot(luminance));
+                return true;
+            }
+
+            Engine.AddMainThreadCoroutine(FenceCheck);
         }
 
         public override void GetScreenshotAsync(BoundingRectangle region, bool withTransparency, Action<MagickImage, int> imageCallback)

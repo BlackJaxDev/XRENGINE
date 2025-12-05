@@ -1,6 +1,7 @@
 ﻿using System.ComponentModel;
 using System.Numerics;
 using XREngine.Data.Colors;
+using XREngine.Data.Geometry;
 using XREngine.Data.Rendering;
 using XREngine.Rendering;
 using XREngine.Rendering.Commands;
@@ -11,6 +12,8 @@ namespace XREngine.Components.Capture.Lights.Types
 {
     public abstract class LightComponent : XRComponent, IRenderable
     {
+        public readonly record struct FrustumIntersectionAabb(int FrustumIndex, Vector3 Min, Vector3 Max);
+
         protected ColorF3 _color = new(1.0f, 1.0f, 1.0f);
         protected float _diffuseIntensity = 1.0f;
         private XRMaterialFrameBuffer? _shadowMap = null;
@@ -23,6 +26,8 @@ namespace XREngine.Components.Capture.Lights.Types
         private Matrix4x4 _lightMatrix = Matrix4x4.Identity;
         private Matrix4x4 _meshCenterAdjustMatrix = Matrix4x4.Identity;
         private readonly RenderCommandMesh3D _shadowVolumeRC = new((int)EDefaultRenderPass.OpaqueForward);
+        private readonly List<FrustumIntersectionAabb> _cameraIntersections = new(6);
+        private bool _previewBoundingVolume = false;
 
         /// <summary>
         /// This matrix is the location of the center of the light source. Used for rendering the light mesh.
@@ -167,6 +172,30 @@ namespace XREngine.Components.Capture.Lights.Types
         public RenderInfo3D RenderInfo { get; }
         public RenderInfo[] RenderedObjects { get; }
 
+        /// <summary>
+        /// When true, renders a wireframe preview of this light's bounding volume.
+        /// </summary>
+        [Category("Debug")]
+        [DisplayName("Preview Bounding Volume")]
+        public bool PreviewBoundingVolume
+        {
+            get => _previewBoundingVolume;
+            set
+            {
+                if (SetField(ref _previewBoundingVolume, value))
+                    RenderInfo.IsVisible = value || Engine.Rendering.Settings.VisualizeDirectionalLightVolumes;
+            }
+        }
+
+        /// <summary>
+        /// Most recent intersections between the active player camera frustum and this light's shadow frusta.
+        /// </summary>
+        public IReadOnlyList<FrustumIntersectionAabb> CameraIntersections => _cameraIntersections;
+        /// <summary>
+        /// True when the active player camera intersects at least one of this light's shadow frusta.
+        /// </summary>
+        public bool IntersectsActiveCamera => _cameraIntersections.Count > 0;
+
         public virtual void SetShadowMapResolution(uint width, uint height)
         {
             SetField(ref _shadowMapResolutionWidth, width, nameof(ShadowMapResolutionWidth));
@@ -214,6 +243,26 @@ namespace XREngine.Components.Capture.Lights.Types
         public abstract void SwapBuffers();
         public abstract void CollectVisibleItems();
         public abstract void RenderShadowMap(bool collectVisibleNow = false);
+
+        /// <summary>
+        /// Populate a prepared-frustum list representing this light's shadow cameras.
+        /// Point lights emit six frusta; directional/spot emit one.
+        /// </summary>
+        internal abstract void BuildShadowFrusta(List<PreparedFrustum> output);
+
+        internal void UpdateCameraIntersections(in PreparedFrustum cameraFrustum, List<PreparedFrustum> lightFrusta)
+        {
+            _cameraIntersections.Clear();
+
+            if (lightFrusta.Count == 0)
+                return;
+
+            for (int i = 0; i < lightFrusta.Count; i++)
+            {
+                if (GeoUtil.TryIntersectFrustaAabb(cameraFrustum, lightFrusta[i], out Vector3 min, out Vector3 max))
+                    _cameraIntersections.Add(new FrustumIntersectionAabb(i, min, max));
+            }
+        }
 
         public static EPixelInternalFormat GetShadowDepthMapFormat(EDepthPrecision precision)
             => precision switch

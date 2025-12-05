@@ -22,11 +22,13 @@ namespace XREngine.Rendering.Pipelines.Commands
             if (stage?.TryGetBacking(out ColorGradingSettings? grading) != true)
                 return;
 
-            var hdrTexture = ActivePipelineInstance.GetTexture<XRTexture>(HDRSceneTextureName);
-            if (hdrTexture is null)
-                return;
+            //var hdrTexture = ActivePipelineInstance.GetTexture<XRTexture>(HDRSceneTextureName);
+            //if (hdrTexture is null)
+            //    return;
 
-            grading.UpdateExposure(hdrTexture, GenerateMipmapsHere);
+            var vp = ActivePipelineInstance.RenderState.WindowViewport;
+            if (vp != null)
+                grading?.UpdateExposure(vp.Region);
         }
 
         public void SetOptions(string hdrSceneTextureName, bool generateMipmapsHere)

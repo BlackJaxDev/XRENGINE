@@ -507,7 +507,6 @@ public class DefaultRenderPipeline : RenderPipeline
             //    CreateUserInterfaceFBO,
             //    GetDesiredFBOSizeInternal);
 
-            c.Add<VPRC_ExposureUpdate>().SetOptions(HDRSceneTextureName, true);
         }
         using (c.AddUsing<VPRC_PushViewportRenderArea>(t => t.UseInternalResolution = false))
         {
@@ -525,6 +524,13 @@ public class DefaultRenderPipeline : RenderPipeline
                 c.Add<VPRC_RenderScreenSpaceUI>()/*.OutputTargetFBOName = UserInterfaceFBOName*/;
             }
         }
+
+        // Auto exposure should sample the final color buffer after post-processing and UI blits.
+        // When FXAA is enabled the post-process output is a 2D texture; otherwise we fall back to
+        // the HDR scene texture (also 2D when non-stereo).
+        string exposureSource = EnableFxaa ? PostProcessOutputTextureName : HDRSceneTextureName;
+        c.Add<VPRC_ExposureUpdate>().SetOptions(exposureSource, true);
+
         c.Add<VPRC_RenderMeshesPass>().SetOptions((int)EDefaultRenderPass.PostRender, false);
         c.Add<VPRC_TemporalAccumulationPass>().Phase = VPRC_TemporalAccumulationPass.EPhase.Commit;
         return c;
@@ -864,7 +870,7 @@ public class DefaultRenderPipeline : RenderPipeline
         stage.AddParameter(
             PostProcessParameterNames.TonemappingOperator,
             PostProcessParameterKind.Int,
-            (int)ETonemappingType.Reinhard,
+            (int)ETonemappingType.Mobius,
             displayName: "Operator",
             enumOptions: BuildEnumOptions<ETonemappingType>());
     }
@@ -900,7 +906,7 @@ public class DefaultRenderPipeline : RenderPipeline
         stage.AddParameter(
             nameof(ColorGradingSettings.AutoExposureBias),
             PostProcessParameterKind.Float,
-            -10.0f,
+            1.0f,
             displayName: "Exposure Bias",
             min: -10.0f,
             max: 10.0f,
@@ -2229,11 +2235,12 @@ public class DefaultRenderPipeline : RenderPipeline
     {
         if (VPRC_TemporalAccumulationPass.TryGetTemporalUniformData(out var temporal))
         {
-            // Use jittered matrices so velocity encodes camera jitter; otherwise temporal reprojection
-            // sees zero motion for jittered color buffers and produces a stable diagonal blur.
+            // Use unjittered matrices so static scenes stay black in the velocity buffer and motion
+            // vectors represent only real motion. The render pass already forces an unjittered
+            // projection stack to match these matrices.
             program.Uniform("HistoryReady", temporal.HistoryReady);
-            program.Uniform("CurrViewProjection", temporal.CurrViewProjection);
-            program.Uniform("PrevViewProjection", temporal.PrevViewProjection);
+            program.Uniform("CurrViewProjection", temporal.CurrViewProjectionUnjittered);
+            program.Uniform("PrevViewProjection", temporal.PrevViewProjectionUnjittered);
         }
         else
         {

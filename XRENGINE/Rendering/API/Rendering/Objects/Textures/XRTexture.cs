@@ -241,14 +241,32 @@ namespace XREngine.Rendering
         }
 
         /// <summary>
-        /// Returns the level of the smallest allowed mipmap based on the maximum dimension of the base texture.
+        /// Returns the mip level index of the 1x1 (or smallest) mip for this texture.
+        /// Example: a 1920x1080 texture yields 11 mip levels indexed 0..10, so this returns 10.
         /// </summary>
-        public int SmallestMipmapLevel =>
-            Math.Min((int)Math.Floor(Math.Log2(MaxDimension)) + 1, SmallestAllowedMipmapLevel);
+        public int SmallestMipmapLevel
+        {
+            get
+            {
+                uint maxDim = MaxDimension;
+                if (maxDim == 0)
+                    return 0;
+
+                int smallest = (int)Math.Floor(Math.Log2(maxDim));
+                return Math.Min(smallest, SmallestAllowedMipmapLevel);
+            }
+        }
 
         //Note: 3.321928f is approx 1 / (log base 10 of 2)
         public static int GetSmallestMipmapLevel(uint width, uint height, int smallestAllowedMipmapLevel = 1000)
-            => Math.Min((int)Math.Floor(Math.Log10(Math.Max(width, height)) * 3.321928f), smallestAllowedMipmapLevel);
+        {
+            uint maxDim = Math.Max(width, height);
+            if (maxDim == 0)
+                return 0;
+
+            int smallest = (int)Math.Floor(Math.Log10(maxDim) * 3.321928f);
+            return Math.Min(smallest, smallestAllowedMipmapLevel);
+        }
 
         public abstract uint MaxDimension { get; }
 

@@ -1,11 +1,7 @@
-using System;
-using System.Collections.Generic;
+using ImGuiNET;
 using System.Diagnostics.CodeAnalysis;
 using System.Globalization;
-using System.Linq;
 using System.Numerics;
-using ImGuiNET;
-using XREngine;
 using XREngine.Components;
 using XREngine.Data.Rendering;
 using XREngine.Rendering;
@@ -20,16 +16,10 @@ public sealed class CameraComponentEditor : IXRComponentEditor
     private const float PreviewMaxEdge = 256.0f;
     private const float PreviewMinEdge = 96.0f;
 
-    private readonly struct ParameterOption
+    private readonly struct ParameterOption(string label, Type type)
     {
-        public ParameterOption(string label, Type type)
-        {
-            Label = label;
-            ParameterType = type;
-        }
-
-        public string Label { get; }
-        public Type ParameterType { get; }
+        public string Label { get; } = label;
+        public Type ParameterType { get; } = type;
     }
 
     private static readonly ParameterOption[] ParameterOptions =

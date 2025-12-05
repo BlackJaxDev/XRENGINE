@@ -17,6 +17,8 @@ namespace XREngine.Components
 
         public void Render()
         {
+            using var profilerState = Engine.Profiler.Start("DebugDrawComponent.Render");
+
             foreach (var shape in Shapes)
                 shape.Render(Transform);
         }

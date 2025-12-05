@@ -291,6 +291,8 @@ namespace XREngine.Rendering.OpenGL
                     return;
                 }
 
+                using var prof = Engine.Profiler.Start("GLMeshRenderer.Render");
+
                 if (!IsGenerated)
                 {
                     Dbg("Not generated yet - calling Generate()","Render");

@@ -3,6 +3,8 @@ using Silk.NET.OpenGL;
 using XREngine;
 using XREngine.Data;
 using XREngine.Data.Rendering;
+using System.Linq;
+using System.Collections.Concurrent;
 
 namespace XREngine.Rendering.OpenGL
 {
@@ -10,6 +12,7 @@ namespace XREngine.Rendering.OpenGL
     {
         public class GLDataBuffer(OpenGLRenderer renderer, XRDataBuffer buffer) : GLObject<XRDataBuffer>(renderer, buffer), IApiDataBuffer
         {
+            private static readonly ConcurrentDictionary<string, byte> _missingInterleavedLogs = new();
             protected override void UnlinkData()
             {
                 Data.PushDataRequested -= PushData;
@@ -140,7 +143,12 @@ namespace XREngine.Rendering.OpenGL
                                     else
                                     {
                                         string programName = vertexProgram.Data?.Name ?? "<unnamed>";
-                                        Debug.Out($"[GLDataBuffer] Interleaved attribute '{name}' missing in program '{programName}' for buffer '{GetDescribingName()}'.");
+                                        string shaderNames = vertexProgram.Data?.Shaders is { Count: > 0 }
+                                            ? string.Join(", ", vertexProgram.Data.Shaders.Select(s => s?.Name ?? s?.FilePath ?? "<unnamed>"))
+                                            : "<no shaders>";
+                                        string key = $"{vertexProgram.BindingId}:{programName}:{name}:{GetDescribingName()}";
+                                        if (_missingInterleavedLogs.TryAdd(key, 0))
+                                            Debug.Out($"[GLDataBuffer] Interleaved attribute '{name}' missing in program '{programName}' (id {vertexProgram.BindingId}) for buffer '{GetDescribingName()}'. Shaders: [{shaderNames}]");
                                     }
                                 }
                                 // Bind the interleaved buffer once

@@ -1,4 +1,5 @@
-﻿using XREngine.Data.Colors;
+﻿using System.Numerics;
+using XREngine.Data.Colors;
 using XREngine.Data.Geometry;
 using XREngine.Data.Rendering;
 using XREngine.Rendering;
@@ -210,6 +211,11 @@ namespace XREngine
                     => AbstractRenderer.Current?.CalcDotLuminanceAsync(texture, callback, Settings.DefaultLuminance, generateMipmapsNow);
                 public static void CalculateDotLuminanceAsync(XRTexture2DArray texture, bool generateMipmapsNow, Action<bool, float> callback)
                     => AbstractRenderer.Current?.CalcDotLuminanceAsync(texture, callback, Settings.DefaultLuminance, generateMipmapsNow);
+
+                public static void CalculateFrontBufferDotLuminanceAsync(BoundingRectangle region, bool withTransparency, Action<bool, float> callback)
+                    => AbstractRenderer.Current?.CalcDotLuminanceFrontAsync(region, withTransparency, callback);
+                public static void CalculateFrontBufferDotLuminanceAsync(BoundingRectangle region, bool withTransparency, Vector3 luminance, Action<bool, float> callback)
+                    => AbstractRenderer.Current?.CalcDotLuminanceFrontAsync(region, withTransparency, luminance, callback);
 
                 public static void ColorMask(bool red, bool green, bool blue, bool alpha)
                     => AbstractRenderer.Current?.ColorMask(red, green, blue, alpha);

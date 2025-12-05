@@ -1,5 +1,7 @@
-﻿using System.ComponentModel;
+﻿using System;
+using System.ComponentModel;
 using System.Numerics;
+using System.Linq;
 using XREngine.Components.Capture.Lights;
 using XREngine.Components.Capture.Lights.Types;
 using XREngine.Core.Attributes;
@@ -16,9 +18,20 @@ namespace XREngine.Components.Lights
     [Description("Illuminates the scene with an infinite directional light that can cast cascaded shadows.")]
     public class DirectionalLightComponent : OneViewLightComponent
     {
+        public readonly record struct CascadedShadowAabb(
+            int FrustumIndex,
+            int CascadeIndex,
+            Vector3 Center,
+            Vector3 HalfExtents,
+            Quaternion Orientation);
+
         private const float NearZ = 0.01f;
 
         private Vector3 _scale = Vector3.One;
+        private int _cascadeCount = 4;
+        private float[] _cascadePercentages = new float[] { 0.1f, 0.2f, 0.3f, 0.4f };
+        private float _cascadeOverlapPercent = 0.1f;
+        private readonly List<CascadedShadowAabb> _cascadeAabbs = new(4);
         /// <summary>
         /// Scale of the orthographic shadow volume.
         /// </summary>
@@ -31,10 +44,270 @@ namespace XREngine.Components.Lights
             set => SetField(ref _scale, value);
         }
 
+        /// <summary>
+        /// Number of cascaded shadow map splits to generate within the camera/light intersection AABB.
+        /// </summary>
+        [Category("Shadows")]
+        [DisplayName("Cascade Count")]
+        public int CascadeCount
+        {
+            get => _cascadeCount;
+            set
+            {
+                int clamped = Math.Clamp(value, 1, 8);
+                if (SetField(ref _cascadeCount, clamped))
+                    NormalizeCascadePercentages();
+            }
+        }
+
+        /// <summary>
+        /// Symmetric overlap applied to each cascade slice along the forward axis (0-1 of slice length).
+        /// </summary>
+        [Category("Shadows")]
+        [DisplayName("Cascade Overlap %")]
+        public float CascadeOverlapPercent
+        {
+            get => _cascadeOverlapPercent;
+            set => SetField(ref _cascadeOverlapPercent, Math.Clamp(value, 0.0f, 1.0f));
+        }
+
+        /// <summary>
+        /// Percentages (should sum to 1) allocated to each cascade along the camera forward axis.
+        /// Length is clamped/expanded to match CascadeCount and normalized on assignment.
+        /// </summary>
+        [Category("Shadows")]
+        [DisplayName("Cascade Percentages")]
+        public float[] CascadePercentages
+        {
+            get => _cascadePercentages.ToArray();
+            set => SetCascadePercentages(value);
+        }
+
+        /// <summary>
+        /// Cascaded shadow AABBs derived from the current camera/light intersection.
+        /// </summary>
+        public IReadOnlyList<CascadedShadowAabb> CascadedShadowAabbs => _cascadeAabbs;
+
         public static XRMesh GetVolumeMesh()
             => XRMesh.Shapes.SolidBox(new Vector3(-0.5f), new Vector3(0.5f));
         protected override XRMesh GetWireframeMesh()
             => XRMesh.Shapes.WireframeBox(new Vector3(-0.5f), new Vector3(0.5f));
+
+        private static float[] CreateUniformPercentages(int count)
+        {
+            if (count <= 0)
+                return Array.Empty<float>();
+
+            float uniform = 1.0f / count;
+            float[] result = new float[count];
+            for (int i = 0; i < count; i++)
+                result[i] = uniform;
+            return result;
+        }
+
+        private void SetCascadePercentages(float[]? value)
+        {
+            float[] next;
+            if (value is null || value.Length == 0)
+            {
+                next = CreateUniformPercentages(_cascadeCount);
+            }
+            else
+            {
+                next = value.ToArray();
+            }
+
+            if (next.Length != _cascadeCount)
+                Array.Resize(ref next, _cascadeCount);
+
+            float sum = next.Take(_cascadeCount).Select(MathF.Abs).Sum();
+            if (sum <= float.Epsilon)
+                next = CreateUniformPercentages(_cascadeCount);
+            else
+            {
+                for (int i = 0; i < _cascadeCount; i++)
+                    next[i] = MathF.Abs(next[i]) / sum;
+            }
+
+            SetField(ref _cascadePercentages, next, nameof(CascadePercentages));
+        }
+
+        private void NormalizeCascadePercentages()
+        {
+            if (_cascadePercentages.Length != _cascadeCount)
+                Array.Resize(ref _cascadePercentages, _cascadeCount);
+
+            float sum = _cascadePercentages.Take(_cascadeCount).Select(MathF.Abs).Sum();
+            if (sum <= float.Epsilon)
+            {
+                _cascadePercentages = CreateUniformPercentages(_cascadeCount);
+                return;
+            }
+
+            for (int i = 0; i < _cascadeCount; i++)
+                _cascadePercentages[i] = MathF.Abs(_cascadePercentages[i]) / sum;
+        }
+
+        private float[] GetEffectiveCascadePercentages()
+        {
+            if (_cascadePercentages.Length != _cascadeCount)
+                NormalizeCascadePercentages();
+
+            float sum = _cascadePercentages.Take(_cascadeCount).Sum();
+            if (sum <= float.Epsilon)
+                return CreateUniformPercentages(_cascadeCount);
+
+            float[] result = new float[_cascadeCount];
+            for (int i = 0; i < _cascadeCount; i++)
+                result[i] = _cascadePercentages[i] / sum;
+            return result;
+        }
+
+        internal void UpdateCascadeAabbs(Vector3 cameraForward)
+        {
+            _cascadeAabbs.Clear();
+
+            if (!CastsShadows || CameraIntersections.Count == 0)
+                return;
+
+            Vector3 fwd = cameraForward;
+            if (fwd.LengthSquared() < 1e-6f)
+                fwd = Vector3.UnitZ;
+            fwd = Vector3.Normalize(fwd);
+
+            // Build light-space basis: Z = light direction, Y = world up (fallback X if nearly parallel).
+            Vector3 lightDir = Transform.WorldForward;
+            if (lightDir.LengthSquared() < 1e-6f)
+                lightDir = Vector3.UnitZ;
+            lightDir = Vector3.Normalize(lightDir);
+
+            Vector3 up = Transform.WorldUp;
+            if (MathF.Abs(Vector3.Dot(lightDir, up)) > 0.99f)
+                up = Vector3.UnitX;
+
+            Vector3 right = Vector3.Normalize(Vector3.Cross(up, lightDir));
+            up = Vector3.Normalize(Vector3.Cross(lightDir, right));
+
+            // World-to-light: rows are right, up, lightDir (light Z points along light direction).
+            Matrix4x4 worldToLight = new(
+                right.X, right.Y, right.Z, 0,
+                up.X, up.Y, up.Z, 0,
+                lightDir.X, lightDir.Y, lightDir.Z, 0,
+                0, 0, 0, 1);
+
+            Matrix4x4.Invert(worldToLight, out Matrix4x4 lightToWorld);
+            Quaternion lightRotation = Quaternion.CreateFromRotationMatrix(lightToWorld);
+
+            float[] percentages = GetEffectiveCascadePercentages();
+            float overlap = _cascadeOverlapPercent;
+
+            foreach (var intersection in CameraIntersections)
+            {
+                Vector3 min = intersection.Min;
+                Vector3 max = intersection.Max;
+
+                // Build 8 corners of intersection AABB.
+                Span<Vector3> cornersWS = stackalloc Vector3[8];
+                cornersWS[0] = new Vector3(min.X, min.Y, min.Z);
+                cornersWS[1] = new Vector3(min.X, min.Y, max.Z);
+                cornersWS[2] = new Vector3(min.X, max.Y, min.Z);
+                cornersWS[3] = new Vector3(min.X, max.Y, max.Z);
+                cornersWS[4] = new Vector3(max.X, min.Y, min.Z);
+                cornersWS[5] = new Vector3(max.X, min.Y, max.Z);
+                cornersWS[6] = new Vector3(max.X, max.Y, min.Z);
+                cornersWS[7] = new Vector3(max.X, max.Y, max.Z);
+
+                // Transform corners to light space.
+                Span<Vector3> cornersLS = stackalloc Vector3[8];
+                for (int i = 0; i < cornersWS.Length; i++)
+                    cornersLS[i] = Vector3.Transform(cornersWS[i], worldToLight);
+
+                // Compute tight axis-aligned bounds in light space.
+                Vector3 lsMin = new(float.MaxValue);
+                Vector3 lsMax = new(float.MinValue);
+                for (int i = 0; i < cornersLS.Length; i++)
+                {
+                    lsMin = Vector3.Min(lsMin, cornersLS[i]);
+                    lsMax = Vector3.Max(lsMax, cornersLS[i]);
+                }
+
+                Vector3 lsCenter = (lsMin + lsMax) * 0.5f;
+                Vector3 lsHalfExtents = (lsMax - lsMin) * 0.5f;
+
+                // Slice axis: camera forward transformed to light space, then project onto XY plane of light.
+                Vector3 fwdLS = Vector3.TransformNormal(fwd, worldToLight);
+                // Zero out the light-Z component so slicing is perpendicular to light direction.
+                fwdLS.Z = 0;
+                if (fwdLS.LengthSquared() < 1e-6f)
+                    fwdLS = Vector3.UnitX; // fallback if camera looks along light
+                fwdLS = Vector3.Normalize(fwdLS);
+
+                // Project light-space corners onto slice axis to find span.
+                float projMin = float.MaxValue;
+                float projMax = float.MinValue;
+                for (int i = 0; i < cornersLS.Length; i++)
+                {
+                    float p = Vector3.Dot(cornersLS[i], fwdLS);
+                    projMin = MathF.Min(projMin, p);
+                    projMax = MathF.Max(projMax, p);
+                }
+
+                float projLen = MathF.Max(projMax - projMin, 1e-4f);
+
+                // Perpendicular half-extent (axis orthogonal to slice within XY).
+                Vector3 perpLS = new(-fwdLS.Y, fwdLS.X, 0);
+                float perpMin = float.MaxValue;
+                float perpMax = float.MinValue;
+                for (int i = 0; i < cornersLS.Length; i++)
+                {
+                    float p = Vector3.Dot(cornersLS[i], perpLS);
+                    perpMin = MathF.Min(perpMin, p);
+                    perpMax = MathF.Max(perpMax, p);
+                }
+                float halfPerp = (perpMax - perpMin) * 0.5f;
+                float halfZ = lsHalfExtents.Z; // full depth along light direction
+
+                // Center along perpendicular and Z axes.
+                float centerPerp = (perpMin + perpMax) * 0.5f;
+                float centerZ = lsCenter.Z;
+
+                float cumulative = 0.0f;
+                for (int cascadeIndex = 0; cascadeIndex < _cascadeCount; cascadeIndex++)
+                {
+                    float pct = percentages[cascadeIndex];
+                    if (pct <= 0.0f)
+                        continue;
+
+                    float segStart = projMin + projLen * cumulative;
+                    float segEnd = segStart + projLen * pct;
+                    cumulative += pct;
+
+                    // Apply symmetric overlap, clamped within overall span.
+                    float segLen = segEnd - segStart;
+                    float expand = segLen * overlap * 0.5f;
+                    segStart = MathF.Max(projMin, segStart - expand);
+                    segEnd = MathF.Min(projMax, segEnd + expand);
+
+                    float centerSlice = (segStart + segEnd) * 0.5f;
+                    float halfSlice = MathF.Max((segEnd - segStart) * 0.5f, 1e-6f);
+
+                    // Reconstruct center in light space.
+                    Vector3 centerLS = fwdLS * centerSlice + perpLS * centerPerp + new Vector3(0, 0, centerZ);
+                    // Half-extents: slice direction, perpendicular, light depth.
+                    Vector3 halfExtentsLS = new(halfSlice, halfPerp, halfZ);
+
+                    // Convert center back to world space.
+                    Vector3 centerWS = Vector3.Transform(centerLS, lightToWorld);
+
+                    _cascadeAabbs.Add(new CascadedShadowAabb(
+                        intersection.FrustumIndex,
+                        cascadeIndex,
+                        centerWS,
+                        halfExtentsLS,
+                        lightRotation));
+                }
+            }
+        }
 
         protected override XRCameraParameters GetCameraParameters()
         {

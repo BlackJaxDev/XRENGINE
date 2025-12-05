@@ -37,10 +37,21 @@ namespace XREngine.Rendering.Commands
         public event Action? PreRender;
         public event Action? PostRender;
 
+        private StateObject? _renderState;
+
         protected void OnPreRender()
-            => PreRender?.Invoke();
+        {
+            _renderState = Engine.Profiler.Start("RenderCommand.Render");
+            
+            PreRender?.Invoke();
+        }
         protected void OnPostRender()
-            => PostRender?.Invoke();
+        {
+            PostRender?.Invoke();
+
+            _renderState?.Dispose();
+            _renderState = null;
+        }
 
         public abstract void Render();
 

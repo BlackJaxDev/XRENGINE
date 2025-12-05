@@ -175,7 +175,13 @@ namespace XREngine.Rendering
             if (camera is null)
                 return;
 
-            (worldOverride ?? World)?.VisualScene?.CollectRenderedItems(
+            XRWorldInstance? world = worldOverride ?? World;
+
+            // Only run player-view light intersection bookkeeping for player-associated viewports.
+            if (AssociatedPlayer is not null && world is not null)
+                world.Lights.UpdateCameraLightIntersections(camera);
+
+            world?.VisualScene?.CollectRenderedItems(
                 renderCommandsOverride ?? _renderPipeline.MeshRenderCommands,
                 camera,
                 CameraComponent?.CullWithFrustum ?? CullWithFrustum,

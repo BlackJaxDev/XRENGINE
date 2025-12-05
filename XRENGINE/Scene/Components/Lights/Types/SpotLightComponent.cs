@@ -211,8 +211,7 @@ namespace XREngine.Components.Capture.Lights.Types
             SetField(ref _outerCone, new(coneOrigin, -dir, d, MathF.Tan(DegToRad(OuterCutoffAngleDegrees)) * d));
             SetField(ref _innerCone, new(coneOrigin, -dir, d, MathF.Tan(DegToRad(InnerCutoffAngleDegrees)) * d));
 
-            if (ShadowCamera != null)
-                ShadowCamera.FarZ = d;
+            ShadowCamera?.FarZ = d;
 
             MeshCenterAdjustMatrix = Matrix4x4.CreateScale(OuterCone.Radius, OuterCone.Radius, OuterCone.Height) * Matrix4x4.CreateTranslation(Globals.Forward * (Distance * 0.5f));
         }
