@@ -50,7 +50,7 @@ public static class XRAssetGraphUtility
         if (root is null)
             return;
 
-        Trace.WriteLine($"[XRAssetGraphUtility] RefreshAssetGraph START for '{root.FilePath ?? root.GetType().Name}'");
+        //Trace.WriteLine($"[XRAssetGraphUtility] RefreshAssetGraph START for '{root.FilePath ?? root.GetType().Name}'");
         var sw = Stopwatch.StartNew();
 
         if (!ReferenceEquals(root.SourceAsset, root))
@@ -64,7 +64,7 @@ public static class XRAssetGraphUtility
         root.EmbeddedAssets.Set(discoveredAssets, reportRemoved: false, reportAdded: false, reportModified: false);
 
         sw.Stop();
-        Trace.WriteLine($"[XRAssetGraphUtility] RefreshAssetGraph END for '{root.FilePath ?? root.GetType().Name}' - visited {visitedObjects.Count} objects, found {discoveredAssets.Count} embedded assets in {sw.ElapsedMilliseconds}ms");
+        //Trace.WriteLine($"[XRAssetGraphUtility] RefreshAssetGraph END for '{root.FilePath ?? root.GetType().Name}' - visited {visitedObjects.Count} objects, found {discoveredAssets.Count} embedded assets in {sw.ElapsedMilliseconds}ms");
     }
 
     private const int MaxTraversalDepth = 64;
@@ -102,7 +102,7 @@ public static class XRAssetGraphUtility
         {
             if (!ReferenceEquals(asset, root))
             {
-                Trace.WriteLine($"[XRAssetGraphUtility] Found embedded asset: {asset.GetType().Name}, root='{root.FilePath ?? root.GetType().Name}', asset FilePath='{asset.FilePath}'");
+                //Trace.WriteLine($"[XRAssetGraphUtility] Found embedded asset: {asset.GetType().Name}, root='{root.FilePath ?? root.GetType().Name}', asset FilePath='{asset.FilePath}'");
                 if (!ReferenceEquals(asset.SourceAsset, root))
                     asset.SourceAsset = root;
 

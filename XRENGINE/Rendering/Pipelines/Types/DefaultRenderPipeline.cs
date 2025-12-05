@@ -839,16 +839,15 @@ public class DefaultRenderPipeline : RenderPipeline
     private int EvaluateAmbientOcclusionMode()
     {
         var aoStage = State.SceneCamera?.GetPostProcessStageState<AmbientOcclusionSettings>();
-        if (aoStage?.TryGetBacking(out AmbientOcclusionSettings? aoSettings) != true || !aoSettings.Enabled)
+        if (aoStage?.TryGetBacking(out AmbientOcclusionSettings? aoSettings) == true && aoSettings is not null && aoSettings.Enabled)
         {
-            //LogAo("EvaluateAmbientOcclusionMode -> disabled or missing; defaulting to ScreenSpace");
-            return (int)AmbientOcclusionSettings.EType.ScreenSpace;
+            int result = (int)aoSettings.Type;
+            //LogAo($"EvaluateAmbientOcclusionMode -> camera={State.SceneCamera?.GetType().Name ?? "<none>"}, type={aoSettings.Type}");
+            return result;
         }
 
-        int result = (int)aoSettings.Type;
-        string cameraLabel = State.SceneCamera is null ? "<none>" : State.SceneCamera.GetType().Name;
-        //LogAo($"EvaluateAmbientOcclusionMode -> camera={cameraLabel}, type={aoSettings.Type}");
-        return result;
+        //LogAo("EvaluateAmbientOcclusionMode -> disabled or missing; defaulting to ScreenSpace");
+        return (int)AmbientOcclusionSettings.EType.ScreenSpace;
     }
 
     private static MotionBlurSettings? GetMotionBlurSettings()
@@ -1304,17 +1303,56 @@ public class DefaultRenderPipeline : RenderPipeline
     private static void DescribeLensDistortionStage(RenderPipelinePostProcessSchemaBuilder.PostProcessStageBuilder stage)
     {
         stage.AddParameter(
+            nameof(LensDistortionSettings.Mode),
+            PostProcessParameterKind.Int,
+            (int)ELensDistortionMode.None,
+            displayName: "Mode",
+            enumOptions: BuildEnumOptions<ELensDistortionMode>());
+
+        bool IsRadialMode(object o) => ((LensDistortionSettings)o).Mode == ELensDistortionMode.Radial;
+        bool IsPaniniMode(object o) => ((LensDistortionSettings)o).Mode == ELensDistortionMode.Panini;
+
+        stage.AddParameter(
             nameof(LensDistortionSettings.Intensity),
             PostProcessParameterKind.Float,
             0.0f,
             displayName: "Intensity",
             min: -1.0f,
             max: 1.0f,
-            step: 0.001f);
+            step: 0.001f,
+            visibilityCondition: IsRadialMode);
+
+        stage.AddParameter(
+            nameof(LensDistortionSettings.PaniniDistance),
+            PostProcessParameterKind.Float,
+            1.0f,
+            displayName: "Distance",
+            min: 0.0f,
+            max: 1.0f,
+            step: 0.01f,
+            visibilityCondition: IsPaniniMode);
+
+        stage.AddParameter(
+            nameof(LensDistortionSettings.PaniniCropToFit),
+            PostProcessParameterKind.Float,
+            1.0f,
+            displayName: "Crop to Fit",
+            min: 0.0f,
+            max: 1.0f,
+            step: 0.01f,
+            visibilityCondition: IsPaniniMode);
     }
 
     private static void DescribeChromaticAberrationStage(RenderPipelinePostProcessSchemaBuilder.PostProcessStageBuilder stage)
     {
+        stage.AddParameter(
+            nameof(ChromaticAberrationSettings.Enabled),
+            PostProcessParameterKind.Bool,
+            false,
+            displayName: "Enabled");
+
+        bool IsEnabled(object o) => ((ChromaticAberrationSettings)o).Enabled;
+
         stage.AddParameter(
             nameof(ChromaticAberrationSettings.Intensity),
             PostProcessParameterKind.Float,
@@ -1322,7 +1360,8 @@ public class DefaultRenderPipeline : RenderPipeline
             displayName: "Intensity",
             min: 0.0f,
             max: 1.0f,
-            step: 0.001f);
+            step: 0.001f,
+            visibilityCondition: IsEnabled);
     }
 
     private static void DescribeFogStage(RenderPipelinePostProcessSchemaBuilder.PostProcessStageBuilder stage)
@@ -1362,14 +1401,14 @@ public class DefaultRenderPipeline : RenderPipeline
             isColor: true);
     }
 
-    private static PostProcessEnumOption[] BuildEnumOptions<TEnum>() where TEnum : Enum
+    private static PostProcessEnumOption[] BuildEnumOptions<TEnum>() where TEnum : struct, Enum
     {
-        var values = Enum.GetValues(typeof(TEnum));
+        var values = Enum.GetValues<TEnum>();
         PostProcessEnumOption[] options = new PostProcessEnumOption[values.Length];
 
         for (int i = 0; i < values.Length; i++)
         {
-            var value = (TEnum)values.GetValue(i)!;
+            var value = values[i];
             options[i] = new PostProcessEnumOption(value.ToString(), Convert.ToInt32(value));
         }
 
@@ -2505,17 +2544,10 @@ public class DefaultRenderPipeline : RenderPipeline
 
     private void PostProcessFBO_SettingUniforms(XRRenderProgram materialProgram)
     {
-        var sceneCam = RenderingPipelineState?.SceneCamera;
         materialProgram.Uniform("OutputHDR", Engine.Rendering.Settings.OutputHDR);
-        if (sceneCam is null)
-            return;
 
-        //sceneCam.SetUniforms(materialProgram);
-
-        //if (IsStereoPass)
-        //    RenderingPipelineState?.StereoRightEyeCamera?.SetUniforms(materialProgram, false);
-
-        sceneCam.SetPostProcessUniforms(materialProgram);
+        var state = RenderingPipelineState?.SceneCamera?.GetActivePostProcessState();
+        ApplyPostProcessUniforms(state, materialProgram);
     }
 
     private void FxaaFBO_SettingUniforms(XRRenderProgram materialProgram)
@@ -2527,39 +2559,87 @@ public class DefaultRenderPipeline : RenderPipeline
     }
     private void BrightPassFBO_SettingUniforms(XRRenderProgram program)
     {
-        var sceneCam = RenderingPipelineState?.SceneCamera;
-        if (sceneCam is null)
-            return;
-
-        sceneCam.SetBloomBrightPassUniforms(program);
+        var state = RenderingPipelineState?.SceneCamera?.GetActivePostProcessState();
+        ApplyBloomBrightPassUniforms(state, program);
     }
     private void LightCombineFBO_SettingUniforms(XRRenderProgram program)
     {
         if (!UsesLightProbeGI)
             return;
 
-        if (RenderingWorld is null || RenderingWorld.Lights.LightProbes.Count == 0)
+        var world = RenderingWorld;
+        if (world is null || world.Lights.LightProbes.Count == 0)
             return;
 
-        LightProbeComponent probe = RenderingWorld.Lights.LightProbes[0];
+        //TODO: render probe octahedral map to texture array for multiple probes.
+        //Generate Delaunay tetrahedralization for interpolation between probes.
+        //For each pixel, find enclosing tetrahedron and interpolate between the 4 probes.
+        LightProbeComponent probe = world.Lights.LightProbes[0];
 
         int baseCount = GetFBO<XRQuadFrameBuffer>(LightCombineFBOName)?.Material?.Textures?.Count ?? 0;
 
-        if (probe.IrradianceTexture != null)
+        var irradiance = probe.IrradianceTexture;
+        if (irradiance != null)
         {
-            var tex = probe.IrradianceTexture;
-            if (tex != null)
-                program.Sampler("Irradiance", tex, baseCount);
+            program.Sampler("Irradiance", irradiance, baseCount);
+            ++baseCount;
         }
 
-        ++baseCount;
+        var prefilter = probe.PrefilterTexture;
+        if (prefilter != null)
+            program.Sampler("Prefilter", prefilter, baseCount);
+    }
 
-        if (probe.PrefilterTexture != null)
+
+    private static TSettings? GetSettings<TSettings>(PipelinePostProcessState? state) where TSettings : class
+        => state?.GetStage<TSettings>()?.TryGetBacking(out TSettings? settings) == true ? settings : null;
+
+    private static void ApplyBloomBrightPassUniforms(PipelinePostProcessState? state, XRRenderProgram program)
+    {
+        var settings = GetSettings<BloomSettings>(state);
+        if (settings is not null)
         {
-            var tex = probe.PrefilterTexture;
-            if (tex != null)
-                program.Sampler("Prefilter", tex, baseCount);
+            settings.SetBrightPassUniforms(program);
+            return;
         }
+
+        // Fallback defaults
+        program.Uniform("BloomIntensity", 1.0f);
+        program.Uniform("BloomThreshold", 1.0f);
+        program.Uniform("SoftKnee", 0.5f);
+        program.Uniform("Luminance", Engine.Rendering.Settings.DefaultLuminance);
+    }
+
+    private void ApplyPostProcessUniforms(PipelinePostProcessState? state, XRRenderProgram program)
+    {
+        // Vignette
+        var vignette = GetSettings<VignetteSettings>(state);
+        (vignette ?? new VignetteSettings()).SetUniforms(program);
+
+        // Color grading
+        var color = GetSettings<ColorGradingSettings>(state);
+        (color ?? new ColorGradingSettings()).SetUniforms(program);
+
+        // Chromatic aberration
+        var chroma = GetSettings<ChromaticAberrationSettings>(state);
+        (chroma ?? new ChromaticAberrationSettings()).SetUniforms(program);
+
+        // Fog
+        var fog = GetSettings<FogSettings>(state);
+        (fog ?? new FogSettings()).SetUniforms(program);
+
+        // Lens distortion - pass camera FOV and aspect ratio for Panini projection
+        var lens = GetSettings<LensDistortionSettings>(state);
+        var perspParams = RenderingPipelineState?.SceneCamera?.Parameters as XRPerspectiveCameraParameters;
+        float? cameraFov = perspParams?.VerticalFieldOfView;
+        float aspectRatio = perspParams?.AspectRatio ?? ((float)InternalWidth / Math.Max(1, InternalHeight));
+        (lens ?? new LensDistortionSettings()).SetUniforms(program, cameraFov, aspectRatio);
+
+        // Tonemapping operator
+        var tonemapStage = state?.FindStageByParameter(PostProcessParameterNames.TonemappingOperator);
+        int tonemap = tonemapStage?.GetValue<int>(PostProcessParameterNames.TonemappingOperator, (int)ETonemappingType.Reinhard)
+            ?? (int)ETonemappingType.Reinhard;
+        program.Uniform("TonemapType", tonemap);
     }
 
     private void RestirCompositeFBO_SettingUniforms(XRRenderProgram program)

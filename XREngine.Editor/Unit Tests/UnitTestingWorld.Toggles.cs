@@ -107,6 +107,8 @@ public static partial class UnitTestingWorld
         /// </summary>
         public bool AllowShaderPipelines = false;
         public bool RenderMeshBounds = true;
+
+        public ERenderLibrary RenderAPI = ERenderLibrary.OpenGL;
         public Engine.Rendering.ELoopType RecalcChildMatricesType = Engine.Rendering.ELoopType.Asynchronous;
         public bool TickGroupedItemsInParallel = true;
         public bool SinglePassStereoVR = false;

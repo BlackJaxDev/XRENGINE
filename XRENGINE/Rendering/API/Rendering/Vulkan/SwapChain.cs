@@ -46,6 +46,7 @@ public unsafe partial class VulkanRenderer
     private KhrSwapchain? khrSwapChain;
     private SwapchainKHR swapChain;
     private Image[]? swapChainImages;
+    private uint _lastPresentedImageIndex;
     //private VkBuffer<UniformBufferObject>[]? uniformBuffers;
     private Format swapChainImageFormat;
     private Extent2D swapChainExtent;
@@ -152,7 +153,7 @@ public unsafe partial class VulkanRenderer
             ImageColorSpace = surfaceFormat.ColorSpace,
             ImageExtent = extent,
             ImageArrayLayers = 1,
-            ImageUsage = ImageUsageFlags.ColorAttachmentBit,
+            ImageUsage = ImageUsageFlags.ColorAttachmentBit | ImageUsageFlags.TransferSrcBit | ImageUsageFlags.TransferDstBit,
         };
 
         var indices = FamilyQueueIndices;

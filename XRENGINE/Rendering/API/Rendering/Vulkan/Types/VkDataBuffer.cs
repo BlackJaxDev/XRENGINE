@@ -58,6 +58,16 @@ namespace XREngine.Rendering.Vulkan
 
             public override VkObjectType Type => VkObjectType.Buffer;
 
+            /// <summary>
+            /// Exposes the backing Vulkan buffer handle for binding in render commands.
+            /// </summary>
+            public Buffer? BufferHandle => _vkBuffer;
+
+            /// <summary>
+            /// Exposes the backing Vulkan memory handle. Primarily useful for debugging.
+            /// </summary>
+            public DeviceMemory? MemoryHandle => _vkMemory;
+
             protected internal override void PostGenerated()
             {
                 if (Data.Resizable)

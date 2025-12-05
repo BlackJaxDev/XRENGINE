@@ -15,7 +15,10 @@ public unsafe partial class VulkanRenderer
     private void CreateInstance()
     {
         if (EnableValidationLayers && !CheckValidationLayerSupport())
-            throw new Exception("Validation layers requested, but not available.");
+        {
+            System.Console.WriteLine("Vulkan validation layers requested but not available. Continuing without them.");
+            EnableValidationLayers = false;
+        }
 
         ApplicationInfo appInfo = new()
         {

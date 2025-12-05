@@ -5,6 +5,7 @@ using System.Runtime.CompilerServices;
 namespace XREngine.Rendering.Vulkan;
 public unsafe partial class VulkanRenderer
 {
+    private bool _supportsAnisotropy;
     private Device device;
     private Queue graphicsQueue;
     private Queue presentQueue;
@@ -57,7 +58,15 @@ public unsafe partial class VulkanRenderer
             };
 
         // Specify device features to enable (none specifically enabled here)
+        PhysicalDeviceFeatures supportedFeatures = new();
+        Api!.GetPhysicalDeviceFeatures(_physicalDevice, out supportedFeatures);
+
         PhysicalDeviceFeatures deviceFeatures = new();
+        if (supportedFeatures.SamplerAnisotropy)
+        {
+            deviceFeatures.SamplerAnisotropy = Vk.True;
+            _supportsAnisotropy = true;
+        }
 
         // Configure the logical device creation
         DeviceCreateInfo createInfo = new()

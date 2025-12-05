@@ -9,10 +9,12 @@ namespace XREngine.Rendering.Vulkan;
 
 public unsafe partial class VulkanRenderer
 {
+    internal bool SamplerAnisotropyEnabled => _supportsAnisotropy;
     private VulkanImGuiBackend? _imguiBackend;
     private readonly ImGuiDrawDataCache _imguiDrawData = new();
 
-    protected override bool SupportsImGui => true;
+    // Vulkan ImGui path is not implemented; disable to avoid native crashes in ImGui.NET.
+    protected override bool SupportsImGui => false;
 
     private sealed class VulkanImGuiBackend : IImGuiRendererBackend, IDisposable
     {
@@ -64,7 +66,7 @@ public unsafe partial class VulkanRenderer
         => _imguiBackend ??= new VulkanImGuiBackend(this);
 
     protected override IImGuiRendererBackend? GetImGuiBackend(XRViewport? viewport)
-        => GetOrCreateImGuiBackend();
+        => SupportsImGui ? GetOrCreateImGuiBackend() : null;
 
     private void DisposeImGuiResources()
     {

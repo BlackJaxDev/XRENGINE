@@ -325,47 +325,48 @@ namespace XREngine.Rendering.OpenGL
         protected override AbstractRenderAPIObject CreateAPIRenderObject(GenericRenderObject renderObject)
             => renderObject switch
             {
-                //Meshes
+                //Materials
                 XRMaterial data => new GLMaterial(this, data),
-                XRMeshRenderer.BaseVersion data => new GLMeshRenderer(this, data),
-                XRRenderProgramPipeline data => new GLRenderProgramPipeline(this, data),
-                XRRenderProgram data => new GLRenderProgram(this, data),
-                XRDataBuffer data => new GLDataBuffer(this, data),
-                XRSampler s => new GLSampler(this, s),
                 XRShader s => new GLShader(this, s),
 
-                //FBOs
+                //Meshes
+                //"BaseVersion" here is the base class for different mesh renderers necessary for different render paths (like VR or not).
+                XRMeshRenderer.BaseVersion data => new GLMeshRenderer(this, data),
+
+                //Programs
+                XRRenderProgramPipeline data => new GLRenderProgramPipeline(this, data),
+                XRRenderProgram data => new GLRenderProgram(this, data),
+
+                //Buffers
+                XRDataBuffer data => new GLDataBuffer(this, data),
+                XRDataBufferView data => new GLDataBufferView(this, data),
+
+                //Render Targets
                 XRRenderBuffer data => new GLRenderBuffer(this, data),
                 XRFrameBuffer data => new GLFrameBuffer(this, data),
-
-                //TODO: Implement these
 
                 //Texture 1D
                 XRTexture1D data => new GLTexture1D(this, data),
                 XRTexture1DArray data => new GLTexture1DArray(this, data),
                 XRTextureViewBase data => new GLTextureView(this, data),
-                //XRTexture1DArrayView data => new GLTextureView(this, data),
 
                 //Texture 2D
                 XRTexture2D data => new GLTexture2D(this, data),
                 XRTexture2DArray data => new GLTexture2DArray(this, data),
-                //XRTexture2DView data => new GLTextureView(this, data),
-                //XRTexture2DArrayView data => new GLTextureView(this, data),
+                XRTextureRectangle data => new GLTextureRectangle(this, data),
 
                 //Texture 3D
                 XRTexture3D data => new GLTexture3D(this, data),
-                //XRTexture3DArray data => new GLTexture3DArray(this, data),
-                //XRTexture3DView data => new GLTextureView(this, data),
 
                 //Texture Cube
                 XRTextureCube data => new GLTextureCube(this, data),
                 XRTextureCubeArray data => new GLTextureCubeArray(this, data),
-                //XRTextureCubeView data => new GLTextureView(this, data),
 
                 //Texture Buffer
-                //XRTextureBuffer data => new GLTextureBuffer(this, data),
-                //XRTextureBufferArray data => new GLTextureBufferArray(this, data),
-                //XRTextureBufferView data => new GLTextureView(this, data),
+                XRTextureBuffer data => new GLTextureBuffer(this, data),
+
+                //Samplers
+                XRSampler s => new GLSampler(this, s),
 
                 //Feedback
                 XRRenderQuery data => new GLRenderQuery(this, data),

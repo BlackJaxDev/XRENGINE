@@ -25,8 +25,23 @@ namespace XREngine.Rendering
             get => _view2D;
             set => SetField(ref _view2D, value);
         }
-        public override uint MaxDimension { get; } = 2u;
-        public override Vector3 WidthHeightDepth => new(0, 0, 0);
-        public override ETextureTarget TextureTarget => ETextureTarget.TextureBuffer;
+        public override uint MaxDimension => ViewedTexture.MaxDimension;
+        public override Vector3 WidthHeightDepth
+            => View2D
+                ? new(ViewedTexture.Extent, ViewedTexture.Extent, 1)
+                : new(ViewedTexture.Extent, ViewedTexture.Extent, ViewedTexture.LayerCount);
+
+        public override bool HasAlphaChannel => ViewedTexture.HasAlphaChannel;
+
+        public override ETextureTarget TextureTarget
+        {
+            get
+            {
+                if (View2D)
+                    return Array ? ETextureTarget.Texture2DArray : ETextureTarget.Texture2D;
+
+                return Array ? ETextureTarget.TextureCubeMapArray : ETextureTarget.TextureCubeMap;
+            }
+        }
     }
 }

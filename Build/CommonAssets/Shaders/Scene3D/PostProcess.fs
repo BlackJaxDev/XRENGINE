@@ -44,7 +44,12 @@ struct DepthFogStruct
 };
 uniform DepthFogStruct DepthFog;
 
+// Lens distortion mode: 0=None, 1=Radial, 2=RadialAutoFromFOV, 3=Panini
+uniform int LensDistortionMode;
 uniform float LensDistortionIntensity;
+uniform float PaniniDistance;
+uniform float PaniniCrop;
+uniform vec2 PaniniViewExtents; // tan(fov/2) * aspect, tan(fov/2)
 
 vec3 RGBtoHSV(vec3 c)
 {
@@ -141,32 +146,71 @@ vec3 NeutralTM(vec3 c)
   return (x * (x + 0.0245786f)) / (x * (0.983729f * x + 0.432951f) + 0.238081f);
 }
 
-vec3 Distort(sampler2D tex, vec2 uv, float intensity)
+vec2 ApplyLensDistortion(vec2 uv, float intensity)
 {
-    //Distort UVs based on lens distortion
-    uv = uv - vec2(0.5);
+    uv -= vec2(0.5);
     float uva = atan(uv.x, uv.y);
     float uvd = sqrt(dot(uv, uv));
-    uvd = uvd * (1.0 + intensity * uvd * uvd);
-    return texture(tex, vec2(0.5) + vec2(sin(uva), cos(uva)) * uvd).rgb;
+    uvd *= 1.0 + intensity * uvd * uvd;
+    return vec2(0.5) + vec2(sin(uva), cos(uva)) * uvd;
+}
+
+// Panini projection - preserves vertical lines while compressing horizontal periphery
+// Based on Unity's implementation from the Stockholm demo team
+// d = 1.0 is "unit distance" (simplified), d != 1.0 is "generic" panini
+vec2 ApplyPaniniProjection(vec2 view_pos, float d)
+{
+    // Generic Panini projection
+    // Given a point on the image plane, project it onto a cylinder
+    // then back onto the image plane from a different viewpoint
+    
+    float view_dist = 1.0 + d;
+    float view_hyp_sq = view_pos.x * view_pos.x + view_dist * view_dist;
+    
+    float isect_D = view_pos.x * d;
+    float isect_discrim = view_hyp_sq - isect_D * isect_D;
+    
+    float cyl_dist_minus_d = (-isect_D * view_pos.x + view_dist * sqrt(max(isect_discrim, 0.0))) / view_hyp_sq;
+    float cyl_dist = cyl_dist_minus_d + d;
+    
+    vec2 cyl_pos = view_pos * (cyl_dist / view_dist);
+    return cyl_pos / (cyl_dist - d);
+}
+
+vec2 ApplyLensDistortionByMode(vec2 uv)
+{
+    // Mode: 0=None, 1=Radial, 2=RadialAutoFromFOV, 3=Panini
+    if (LensDistortionMode == 1 || LensDistortionMode == 2)
+    {
+        if (LensDistortionIntensity != 0.0)
+            return ApplyLensDistortion(uv, LensDistortionIntensity);
+    }
+    else if (LensDistortionMode == 3)
+    {
+        if (PaniniDistance > 0.0)
+        {
+            // Convert UV [0,1] to view position using view extents
+            // PaniniViewExtents contains (tan(fov/2) * aspect, tan(fov/2))
+            // PaniniCrop is the scale factor for crop-to-fit
+            vec2 view_pos = (2.0 * uv - 1.0) * PaniniViewExtents * PaniniCrop;
+            vec2 proj_pos = ApplyPaniniProjection(view_pos, PaniniDistance);
+            // Convert back to UV
+            vec2 proj_ndc = proj_pos / PaniniViewExtents;
+            return proj_ndc * 0.5 + 0.5;
+        }
+    }
+    return uv;
 }
 
 vec3 SampleHDR(vec2 uv)
 {
-  if (LensDistortionIntensity != 0.0f)
-  {
-      //Apply lens distortion
-      return Distort(HDRSceneTex, uv, LensDistortionIntensity);
-  }
-  else
-  {
-      return texture(HDRSceneTex, uv).rgb;
-  }
+  vec2 duv = ApplyLensDistortionByMode(uv);
+  return texture(HDRSceneTex, duv).rgb;
 }
 vec3 SampleBloom(vec2 uv, float lod)
 {
-  //Sample bloom texture at given LOD
-  return textureLod(Texture1, uv, lod).rgb;
+  vec2 duv = ApplyLensDistortionByMode(uv);
+  return textureLod(Texture1, duv, lod).rgb;
 }
 
 void main()
@@ -180,17 +224,13 @@ void main()
   //Perform HDR operations
   vec3 hdrSceneColor;
   
-  //Apply chromatic aberration with texel‐based offsets and clamping
+  //Apply chromatic aberration with screen-space offsets
   if (ChromaticAberrationIntensity > 0.0f)
   {
-      // Compute texel size for this texture
-      ivec2 texSize = textureSize(HDRSceneTex, 0);
-      vec2 texelSize = 1.0f / vec2(texSize);
-  
-      // Direction from center
+      // Direction from center of screen
       vec2 dir = uv - 0.5;
-      // Scale by intensity and texel size
-      vec2 off = dir * ChromaticAberrationIntensity * texelSize;
+      // Scale by intensity directly (0-1 range produces visible offset)
+      vec2 off = dir * ChromaticAberrationIntensity * 0.1;
   
       // Clamp UVs to avoid sampling outside [0,1]
       vec2 uvR = clamp(uv + off, vec2(0.0f), vec2(1.0f));

@@ -470,7 +470,18 @@ namespace XREngine
         {
             bool preferHdrOutput = windowSettings.OutputHDR ?? Rendering.Settings.OutputHDR;
             var options = GetWindowOptions(windowSettings, preferHdrOutput);
-            XRWindow window = new(options, windowSettings.UseNativeTitleBar);
+            XRWindow window;
+            try
+            {
+                window = new XRWindow(options, windowSettings.UseNativeTitleBar);
+            }
+            catch (Exception ex) when (options.API.API == ContextAPI.Vulkan)
+            {
+                Debug.LogWarning($"Vulkan initialization failed, falling back to OpenGL: {ex.Message}");
+                // Fallback to OpenGL context
+                options.API = new GraphicsAPI(ContextAPI.OpenGL, ContextProfile.Core, ContextFlags.ForwardCompatible, new APIVersion(4, 6));
+                window = new XRWindow(options, windowSettings.UseNativeTitleBar);
+            }
             window.PreferHDROutput = preferHdrOutput;
             CreateViewports(windowSettings.LocalPlayers, window);
             window.UpdateViewportSizes();
