@@ -19,6 +19,7 @@ using XREngine.Data.Rendering;
 using XREngine.Rendering;
 using XREngine.Rendering.Models.Materials;
 using XREngine.Rendering.OpenGL;
+using XREngine.Rendering.API.Rendering.OpenXR;
 using XREngine.Scene;
 using XREngine.Scene.Transforms;
 using ETextureType = Valve.VR.ETextureType;
@@ -27,10 +28,11 @@ namespace XREngine
 {
     public static partial class Engine
     {
-        public static class VRState
-        {
-            private static VR? _api = null;
-            public static VR Api => _api ??= new VR();
+            public static class VRState
+            {
+                private static OpenXRAPI? _openXR;
+                private static VR? _api = null;
+                public static VR Api => _api ??= new VR();
 
             public enum VRMode
             {
@@ -175,6 +177,28 @@ namespace XREngine
             {
                 action = GetAction(category, name);
                 return action is not null;
+            }
+
+            public static bool InitializeOpenXR(XRWindow? window)
+            {
+                if (window is null)
+                {
+                    Debug.LogWarning("Cannot initialize OpenXR without an attached window.");
+                    return false;
+                }
+
+                try
+                {
+                    _openXR ??= new OpenXRAPI();
+                    _openXR.Window = window;
+                    IsInVR = true;
+                    return true;
+                }
+                catch (Exception ex)
+                {
+                    Debug.LogWarning($"Failed to initialize OpenXR: {ex.Message}");
+                    return false;
+                }
             }
 
             private static void CreateActions(IActionManifest actionManifest, VR vr)
