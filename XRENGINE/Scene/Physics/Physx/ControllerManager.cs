@@ -34,6 +34,7 @@ namespace XREngine.Rendering.Physics.Physx
         delegate PxQueryHitType DelPostFilterCallback(PxFilterData* filterData, PxQueryHit* hit, PxShape* shape, PxRigidActor* actor);
 
         [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
+        [return: MarshalAs(UnmanagedType.I1)] // PhysX expects a 1-byte bool; mismatched marshaling can corrupt the stack
         delegate bool DelFilterControllerCollision(PxController* a, PxController* b);
 
         private readonly DelDestructor? DestructorInstance = null;

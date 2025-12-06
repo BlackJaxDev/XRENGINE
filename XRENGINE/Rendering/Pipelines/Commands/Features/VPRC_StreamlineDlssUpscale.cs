@@ -13,25 +13,25 @@ namespace XREngine.Rendering.Pipelines.Commands
 
         protected override void Execute()
         {
-            TryRunStreamline();
-            base.Execute();
+            if (!TryRunStreamline())
+                base.Execute();
         }
 
-        private void TryRunStreamline()
+        private bool TryRunStreamline()
         {
             if (!NvidiaDlssManager.IsSupported || !Engine.Rendering.Settings.EnableNvidiaDlss)
-                return;
+                return false;
 
             if (FrameBufferName is null)
-                return;
+                return false;
 
             var viewport = ActivePipelineInstance.RenderState.WindowViewport;
             if (viewport is null)
-                return;
+                return false;
 
             var sourceFbo = ActivePipelineInstance.GetFBO<XRQuadFrameBuffer>(FrameBufferName);
             if (sourceFbo is null)
-                return;
+                return false;
 
             XRFrameBuffer? destination = null;
             if (TargetFrameBufferName is not null)
@@ -44,7 +44,7 @@ namespace XREngine.Rendering.Pipelines.Commands
                 ? ActivePipelineInstance.GetTexture<XRTexture>(MotionTextureName)
                 : null;
 
-            StreamlineNative.TryDispatchUpscale(
+            return StreamlineNative.TryDispatchUpscale(
                 viewport,
                 sourceFbo,
                 destination,

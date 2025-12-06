@@ -13,11 +13,14 @@ namespace XREngine
         /// </summary>
         public static class PlayMode
         {
-            private static EPlayModeState _state = EPlayModeState.Edit;
+            private static EPlayModeState _state = EPlayModeState.Play;
             private static PlayModeConfiguration _configuration = new();
             private static WorldStateSnapshot? _editModeSnapshot;
             private static readonly object _stateLock = new();
             private static GameMode? _activeGameMode;
+            // TEMP: keep physics running without entering play mode transitions.
+            private static bool _forcePlayWithoutTransitions = true;
+            private static bool _editModeSimulationActive;
 
             #region Properties
 
@@ -129,6 +132,12 @@ namespace XREngine
             /// </summary>
             public static async Task EnterPlayModeAsync()
             {
+                if (_forcePlayWithoutTransitions)
+                {
+                    await ForcePlayWithoutTransitionsAsync();
+                    return;
+                }
+
                 if (State != EPlayModeState.Edit)
                 {
                     Debug.LogWarning($"Cannot enter play mode from state: {State}");
@@ -194,6 +203,12 @@ namespace XREngine
             /// </summary>
             public static async Task ExitPlayModeAsync()
             {
+                if (_forcePlayWithoutTransitions)
+                {
+                    Debug.LogWarning("Play mode exit ignored: transitions are disabled and physics stays enabled.");
+                    return;
+                }
+
                 if (State != EPlayModeState.Play && State != EPlayModeState.Paused)
                 {
                     Debug.LogWarning($"Cannot exit play mode from state: {State}");
@@ -267,6 +282,12 @@ namespace XREngine
             /// </summary>
             public static void TogglePlayMode()
             {
+                if (_forcePlayWithoutTransitions)
+                {
+                    _ = ForcePlayWithoutTransitionsAsync();
+                    return;
+                }
+
                 if (IsPlaying || IsPaused)
                     _ = ExitPlayModeAsync();
                 else if (IsEditing)
@@ -278,6 +299,12 @@ namespace XREngine
             /// </summary>
             public static void Pause()
             {
+                if (_forcePlayWithoutTransitions)
+                {
+                    Debug.LogWarning("Pause ignored: physics simulation is forced on while transitions are disabled.");
+                    return;
+                }
+
                 if (State != EPlayModeState.Play)
                 {
                     Debug.LogWarning($"Cannot pause from state: {State}");
@@ -304,6 +331,12 @@ namespace XREngine
             /// </summary>
             public static void Resume()
             {
+                if (_forcePlayWithoutTransitions)
+                {
+                    Debug.LogWarning("Resume ignored: physics simulation is forced on while transitions are disabled.");
+                    return;
+                }
+
                 if (State != EPlayModeState.Paused)
                 {
                     Debug.LogWarning($"Cannot resume from state: {State}");
@@ -330,6 +363,12 @@ namespace XREngine
             /// </summary>
             public static void StepFrame()
             {
+                if (_forcePlayWithoutTransitions)
+                {
+                    Debug.LogWarning("StepFrame ignored: physics simulation is forced on while transitions are disabled.");
+                    return;
+                }
+
                 if (State != EPlayModeState.Paused)
                 {
                     Debug.LogWarning($"Cannot step frame from state: {State}");
@@ -396,6 +435,37 @@ namespace XREngine
 
                 // Priority 4: Create default
                 return new GameMode();
+            }
+
+            /// <summary>
+            /// Forces the engine into a simulated state without performing edit->play transitions.
+            /// </summary>
+            private static async Task ForcePlayWithoutTransitionsAsync()
+            {
+                if (_editModeSimulationActive)
+                    return;
+
+                Configuration.SimulatePhysics = true;
+
+                var targetWorld = ResolveStartupWorld();
+                _activeGameMode = ResolveGameMode(targetWorld);
+
+                foreach (var worldInstance in XRWorldInstance.WorldInstances.Values)
+                {
+                    worldInstance.PhysicsEnabled = true;
+                    worldInstance.GameMode = _activeGameMode;
+                    if (_activeGameMode is not null)
+                        _activeGameMode.WorldInstance = worldInstance;
+
+                    await worldInstance.BeginPlay();
+                }
+
+                _activeGameMode?.OnBeginPlay();
+
+                State = EPlayModeState.Play;
+                _editModeSimulationActive = true;
+
+                Debug.LogWarning("Play mode transitions are temporarily disabled; running with physics always simulated.");
             }
 
             /// <summary>

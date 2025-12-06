@@ -823,10 +823,11 @@ public unsafe partial class OpenXRAPI : XRBase
         };
 
         var viewState = new ViewState { Type = StructureType.ViewState };
-        uint viewCapacityInput = _viewCount;
+        uint viewCountOutput = _viewCount;
         fixed (View* viewsPtr = _views)
         {
-            if (Api.LocateViews(_session, in viewLocateInfo, ref viewState, ref viewCapacityInput, viewsPtr) != Result.Success)
+            var viewsSpan = new Span<View>(viewsPtr, (int)_viewCount);
+            if (Api.LocateView(_session, &viewLocateInfo, &viewState, &viewCountOutput, viewsSpan) != Result.Success)
             {
                 Debug.LogWarning("Failed to locate OpenXR views.");
                 return false;

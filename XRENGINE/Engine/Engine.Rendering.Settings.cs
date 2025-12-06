@@ -3,6 +3,7 @@ using System;
 using System.ComponentModel;
 using System.Linq;
 using System.Numerics;
+using XREngine.Components;
 using XREngine.Components.Scene.Mesh;
 using XREngine.Core.Files;
 using XREngine.Data.Colors;
@@ -879,15 +880,15 @@ namespace XREngine
                 if (applyAll || propertyName == nameof(EngineSettings.RenderTransformDebugInfo))
                     ApplyTransformDebugSetting();
 
-                if (applyAll || propertyName == nameof(EngineSettings.EnableNvidiaDlss)
-                    || propertyName == nameof(EngineSettings.DlssQuality)
-                    || propertyName == nameof(EngineSettings.DlssCustomScale)
-                    || propertyName == nameof(EngineSettings.DlssSharpness)
-                    || propertyName == nameof(EngineSettings.DlssEnableFrameSmoothing)
-                    || propertyName == nameof(EngineSettings.DlssFrameSmoothingStrength))
-                {
-                    Engine.ApplyNvidiaDlssPreference();
-                }
+                //if (applyAll || propertyName == nameof(EngineSettings.EnableNvidiaDlss)
+                //    || propertyName == nameof(EngineSettings.DlssQuality)
+                //    || propertyName == nameof(EngineSettings.DlssCustomScale)
+                //    || propertyName == nameof(EngineSettings.DlssSharpness)
+                //    || propertyName == nameof(EngineSettings.DlssEnableFrameSmoothing)
+                //    || propertyName == nameof(EngineSettings.DlssFrameSmoothingStrength))
+                //{
+                //    Engine.ApplyNvidiaDlssPreference();
+                //}
             }
 
             private static void ApplyRenderMeshBoundsSetting()

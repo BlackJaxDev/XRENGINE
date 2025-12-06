@@ -182,16 +182,15 @@ namespace XREngine.Rendering.Physics.Physx
 
         public ConcurrentQueue<(Vector3 delta, float minDist, float elapsedTime)> _inputBuffer = new();
 
+        // Execute immediately to avoid deferred calls hitting invalid native state
         public void Move(Vector3 delta, float minDist, float elapsedTime)
-            => _inputBuffer.Enqueue((delta, minDist, elapsedTime));
+            => ConsumeMove(delta, minDist, elapsedTime);
 
         private void ConsumeMove(Vector3 delta, float minDist, float elapsedTime)
         {
-            var manager = Scene?.GetOrCreateControllerManager();
-            PxControllerFilters* filtersPtr = manager!.ControllerFilters;
-
             PxVec3 d = PxVec3_new_3(delta.X, delta.Y, delta.Z);
-            PxControllerCollisionFlags flags = ControllerPtr->MoveMut(&d, minDist, elapsedTime, filtersPtr, null);
+            // Passing null filters avoids invoking CCT filter callbacks that currently cause native crashes
+            PxControllerCollisionFlags flags = ControllerPtr->MoveMut(&d, minDist, elapsedTime, null, null);
             CollidingSides = (flags & PxControllerCollisionFlags.CollisionSides) != 0;
             CollidingUp = (flags & PxControllerCollisionFlags.CollisionUp) != 0;
             CollidingDown = (flags & PxControllerCollisionFlags.CollisionDown) != 0;
@@ -199,9 +198,14 @@ namespace XREngine.Rendering.Physics.Physx
 
         public void ConsumeInputBuffer(float delta)
         {
+            if (_inputBuffer.IsEmpty)
+                return;
+
             Vector3 totalDelta = Vector3.Zero;
             while (_inputBuffer.TryDequeue(out var input))
                 totalDelta += input.delta;
+            if (totalDelta == Vector3.Zero)
+                return;
             ConsumeMove(totalDelta, 0.00001f, delta);
         }
 
