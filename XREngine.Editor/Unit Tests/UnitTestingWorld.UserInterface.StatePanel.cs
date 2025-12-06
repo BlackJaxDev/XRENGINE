@@ -1,9 +1,11 @@
 using ImGuiNET;
+using System;
 using System.Linq;
 using System.Numerics;
 using XREngine;
 using XREngine.Input;
 using XREngine.Rendering;
+using XREngine.Rendering.OpenGL;
 
 namespace XREngine.Editor;
 
@@ -399,6 +401,44 @@ public static partial class UnitTestingWorld
 
                                     ImGui.EndTable();
                                 }
+
+                                // Light probe details and previews for each viewport
+                                foreach (var viewport in viewports)
+                                {
+                                    var pipeline = viewport.RenderPipelineInstance?.Pipeline as DefaultRenderPipeline;
+                                    if (pipeline is null)
+                                        continue;
+
+                                    var irr = pipeline.ProbeIrradianceArray;
+                                    var pre = pipeline.ProbePrefilterArray;
+                                    int probeCount = pipeline.ProbeCount;
+                                    uint width = irr?.Width ?? pre?.Width ?? 0u;
+                                    uint height = irr?.Height ?? pre?.Height ?? 0u;
+                                    uint layers = irr?.Depth ?? pre?.Depth ?? 0u;
+
+                                    bool hasArrays = (irr is not null || pre is not null) && layers > 0;
+                                    if (!hasArrays)
+                                        continue;
+
+                                    ImGui.Spacing();
+                                    ImGui.PushID(viewport.GetHashCode());
+                                    if (ImGui.TreeNode($"Light Probes##{viewport.GetHashCode()}") )
+                                    {
+                                        ImGui.Text($"Probes Built: {probeCount}");
+                                        ImGui.Text($"Array Size: {width} x {height}");
+                                        ImGui.Text($"Layers: {layers}");
+
+                                        int maxLayer = Math.Max(0, (int)layers - 1);
+                                        if (_probePreviewLayer > maxLayer)
+                                            _probePreviewLayer = maxLayer;
+                                        ImGui.SliderInt("Preview Layer", ref _probePreviewLayer, 0, maxLayer);
+
+                                        DrawProbeArrayPreview("Irradiance", irr, _probePreviewLayer);
+                                        DrawProbeArrayPreview("Prefilter", pre, _probePreviewLayer);
+                                        ImGui.TreePop();
+                                    }
+                                    ImGui.PopID();
+                                }
                             }
                             else
                             {
@@ -412,6 +452,113 @@ public static partial class UnitTestingWorld
 
                 ImGui.Unindent();
             }
+        }
+
+        private static void DrawProbeArrayPreview(string label, XRTexture2DArray? array, int layerIndex)
+        {
+            if (array is null || array.Textures.Length == 0)
+            {
+                ImGui.TextDisabled($"{label}: not available");
+                return;
+            }
+
+            int clampedLayer = Math.Clamp(layerIndex, 0, array.Textures.Length - 1);
+            XRTexture2D? layerTexture = array.Textures[clampedLayer];
+            if (layerTexture is null)
+            {
+                ImGui.TextDisabled($"{label}: no layer texture");
+                return;
+            }
+
+            if (!TryGetTexturePreviewData(layerTexture, out nint handle, out Vector2 displaySize, out Vector2 pixelSize, out string? failure))
+            {
+                ImGui.TextDisabled(failure ?? $"{label}: preview unavailable");
+                return;
+            }
+
+            Vector2 uv0 = new(0.0f, 1.0f);
+            Vector2 uv1 = new(1.0f, 0.0f);
+            ImGui.TextUnformatted($"{label} (Layer {clampedLayer})");
+            ImGui.Image(handle, displaySize, uv0, uv1);
+            ImGui.TextDisabled($"{(int)pixelSize.X} x {(int)pixelSize.Y}");
+        }
+
+        private static bool TryGetTexturePreviewData(
+            XRTexture texture,
+            out nint handle,
+            out Vector2 displaySize,
+            out Vector2 pixelSize,
+            out string? failureReason)
+        {
+            pixelSize = GetTexturePixelSize(texture);
+            displaySize = GetPreviewSize(pixelSize);
+            handle = nint.Zero;
+            failureReason = null;
+
+            if (!Engine.IsRenderThread)
+            {
+                failureReason = "Preview unavailable off render thread";
+                return false;
+            }
+
+            var renderer = TryGetOpenGLRenderer();
+            if (renderer is null)
+            {
+                failureReason = "Preview requires OpenGL renderer";
+                return false;
+            }
+
+            switch (texture)
+            {
+                case XRTexture2D tex2D:
+                    var apiTexture = renderer.GenericToAPI<GLTexture2D>(tex2D);
+                    if (apiTexture is null)
+                    {
+                        failureReason = "Texture not uploaded";
+                        return false;
+                    }
+
+                    uint binding = apiTexture.BindingId;
+                    if (binding == OpenGLRenderer.GLObjectBase.InvalidBindingId || binding == 0)
+                    {
+                        failureReason = "Texture not ready";
+                        return false;
+                    }
+
+                    handle = (nint)binding;
+                    return true;
+
+                default:
+                    failureReason = $"{texture.GetType().Name} preview not supported";
+                    return false;
+            }
+        }
+
+        private static Vector2 GetTexturePixelSize(XRTexture texture)
+        {
+            return texture switch
+            {
+                XRTexture2D tex2D => new Vector2(tex2D.Width, tex2D.Height),
+                _ => new Vector2(texture.WidthHeightDepth.X, texture.WidthHeightDepth.Y),
+            };
+        }
+
+        private static Vector2 GetPreviewSize(Vector2 pixelSize)
+        {
+            const float maxPreviewWidth = 256f;
+            const float maxPreviewHeight = 256f;
+
+            float aspect = pixelSize.X > 0f ? pixelSize.Y / pixelSize.X : 1f;
+            float width = MathF.Min(maxPreviewWidth, pixelSize.X);
+            float height = width * aspect;
+
+            if (height > maxPreviewHeight && aspect > 0f)
+            {
+                height = maxPreviewHeight;
+                width = height / aspect;
+            }
+
+            return new Vector2(width, height);
         }
     }
 }

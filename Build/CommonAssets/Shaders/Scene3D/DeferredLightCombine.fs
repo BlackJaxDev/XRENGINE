@@ -189,31 +189,31 @@ void main()
         vec3 fragPosWS = WorldPosFromDepth(depth, uv);
         //float fogDensity = noise3(fragPosWS);
 
-        vec4 probeWeights;
-        ivec4 probeIndices;
-        ResolveProbeWeights(fragPosWS, probeWeights, probeIndices);
+        float roughness = rmse.x; 
+        	float metallic = rmse.y; 
+        float specularIntensity = rmse.z; 
+        float emissiveIntensity = rmse.w; 
 
-        vec3 irradianceColor = vec3(0.0f);
-        vec3 prefilteredColor = vec3(0.0f);
+        vec4 probeWeights; 
+        ivec4 probeIndices; 
+        ResolveProbeWeights(fragPosWS, probeWeights, probeIndices); 
 
-        for (int i = 0; i < 4; ++i)
-        {
-                if (probeIndices[i] < 0)
-                        continue;
-                irradianceColor += probeWeights[i] * SampleOctaArray(IrradianceArray, normal, probeIndices[i]);
-                prefilteredColor += probeWeights[i] * SampleOctaArrayLod(PrefilterArray, normal, probeIndices[i], roughness * MAX_REFLECTION_LOD);
-        }
+        vec3 irradianceColor = vec3(0.0f); 
+        vec3 prefilteredColor = vec3(0.0f); 
 
-        if (irradianceColor == vec3(0.0f) && ProbeCount > 0)
-        {
-                irradianceColor = SampleOctaArray(IrradianceArray, normal, 0.0f);
-                prefilteredColor = SampleOctaArrayLod(PrefilterArray, normal, 0.0f, roughness * MAX_REFLECTION_LOD);
-        }
+        for (int i = 0; i < 4; ++i) 
+        { 
+                if (probeIndices[i] < 0) 
+                        continue; 
+                irradianceColor += probeWeights[i] * SampleOctaArray(IrradianceArray, normal, probeIndices[i]); 
+                prefilteredColor += probeWeights[i] * SampleOctaArrayLod(PrefilterArray, normal, probeIndices[i], roughness * MAX_REFLECTION_LOD); 
+        } 
 
-	float roughness = rmse.x;
-  	float metallic = rmse.y;
-	float specularIntensity = rmse.z;
-	float emissiveIntensity = rmse.w;
+        if (irradianceColor == vec3(0.0f) && ProbeCount > 0) 
+        { 
+                irradianceColor = SampleOctaArray(IrradianceArray, normal, 0.0f); 
+                prefilteredColor = SampleOctaArrayLod(PrefilterArray, normal, 0.0f, roughness * MAX_REFLECTION_LOD); 
+        } 
 
 	vec3 CameraPosition = InverseViewMatrix[3].xyz;
 	vec3 V = normalize(CameraPosition - fragPosWS);
