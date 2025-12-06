@@ -384,9 +384,16 @@ namespace XREngine
 
             bool result;
             if (runVRInPlace)
-                result = await VRState.InitializeLocal(vrSettings.ActionManifest, vrSettings.VRManifest, _windows[0]);
+            {
+                var window = _windows.FirstOrDefault();
+                result = VRState.InitializeOpenXR(window) ||
+                    await VRState.InitializeLocal(vrSettings.ActionManifest, vrSettings.VRManifest, window ?? _windows[0]);
+            }
             else
+            {
                 result = await VRState.IninitializeClient(vrSettings.ActionManifest, vrSettings.VRManifest);
+            }
+
             return result;
         }
 

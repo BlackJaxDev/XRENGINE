@@ -46,6 +46,11 @@ public unsafe partial class OpenXRAPI : XRBase
     /// </summary>
     private uint _viewCount;
 
+    private Space _appSpace;
+    private View[] _views = new View[2];
+    private FrameState _frameState;
+    private GL? _gl;
+
     /// <summary>
     /// Gets the OpenXR API instance.
     /// </summary>
@@ -184,15 +189,21 @@ public unsafe partial class OpenXRAPI : XRBase
     /// This implementation supports parallel rendering of eyes when available.
     /// </summary>
     /// <param name="renderCallback">Callback function to render content to each eye's texture.</param>
-    public void RenderFrame(DelRenderToFBO renderCallback)
+    public void RenderFrame(DelRenderToFBO? renderCallback)
     {
         PollEvents();
 
         if (_sessionState != SessionState.Focused)
             return;
 
-        WaitFrame(out FrameState frameState);
-        BeginFrame();
+        if (!WaitFrame(out _frameState))
+            return;
+
+        if (!BeginFrame())
+            return;
+
+        if (!LocateViews())
+            return;
 
         var projectionViews = stackalloc CompositionLayerProjectionView[2];
         var layer = new CompositionLayerProjection
@@ -206,11 +217,13 @@ public unsafe partial class OpenXRAPI : XRBase
         var frameEndInfo = new FrameEndInfo
         {
             Type = StructureType.FrameEndInfo,
-            DisplayTime = frameState.PredictedDisplayTime,
+            DisplayTime = _frameState.PredictedDisplayTime,
             EnvironmentBlendMode = EnvironmentBlendMode.Opaque,
             LayerCount = 1,
             Layers = layers
         };
+
+        renderCallback ??= RenderViewportsToSwapchain;
 
         if (_parallelRenderingEnabled && Window?.Renderer is VulkanRenderer)
         {
@@ -247,6 +260,12 @@ public unsafe partial class OpenXRAPI : XRBase
             return;
 
         // Render to the texture
+        if (_gl is not null)
+        {
+            _gl.BindFramebuffer(FramebufferTarget.Framebuffer, _swapchainFramebuffers[viewIndex][imageIndex]);
+            _gl.Viewport(0, 0, _viewConfigViews[viewIndex].RecommendedImageRectWidth, _viewConfigViews[viewIndex].RecommendedImageRectHeight);
+        }
+
         renderCallback(_swapchainImagesGL[viewIndex][imageIndex].Image, viewIndex);
 
         // Release the image
@@ -256,32 +275,12 @@ public unsafe partial class OpenXRAPI : XRBase
         };
         Api.ReleaseSwapchainImage(_swapchains[viewIndex], in releaseInfo);
 
+        _gl?.BindFramebuffer(FramebufferTarget.Framebuffer, 0);
+
         // Setup projection view
         projectionViews[viewIndex].Type = StructureType.View;
-        projectionViews[viewIndex].Fov = new Fovf
-        {
-            AngleLeft = -0.5f,
-            AngleRight = 0.5f,
-            AngleUp = 0.5f,
-            AngleDown = -0.5f
-        };
-        // Set the pose to identity for now
-        projectionViews[viewIndex].Pose = new Posef
-        {
-            Orientation = new Quaternionf
-            {
-                X = 0,
-                Y = 0,
-                Z = 0,
-                W = 1
-            },
-            Position = new Vector3f
-            {
-                X = viewIndex * 0.1f,
-                Y = 0,
-                Z = 0
-            }
-        };
+        projectionViews[viewIndex].Fov = _views[viewIndex].Fov;
+        projectionViews[viewIndex].Pose = _views[viewIndex].Pose;
         // Set the swapchain image
         projectionViews[viewIndex].SubImage.Swapchain = _swapchains[viewIndex];
         projectionViews[viewIndex].SubImage.ImageRect = new Rect2Di
@@ -326,6 +325,8 @@ public unsafe partial class OpenXRAPI : XRBase
         {
             throw new Exception($"Expected 2 views, got {_viewCount}");
         }
+
+        _views = new View[_viewCount];
 
         fixed (ViewConfigurationView* viewConfigViewsPtr = _viewConfigViews)
         {
@@ -380,13 +381,15 @@ public unsafe partial class OpenXRAPI : XRBase
         switch (Window?.Renderer)
         {
             case OpenGLRenderer renderer:
+                CreateOpenGLSession(renderer);
+                CreateReferenceSpace();
                 InitializeOpenGLSwapchains(renderer);
-                CreateOpenGLSession();
                 Window.RenderViewportsCallback += Window_RenderViewportsCallback;
                 break;
             case VulkanRenderer renderer:
-                InitializeVulkanSwapchains(renderer);
                 CreateVulkanSession();
+                CreateReferenceSpace();
+                InitializeVulkanSwapchains(renderer);
                 Window.RenderViewportsCallback += Window_RenderViewportsCallback;
                 break;
             //case D3D12Renderer renderer:
@@ -417,6 +420,26 @@ public unsafe partial class OpenXRAPI : XRBase
         {
             throw new Exception($"Failed to get system: {result}");
         }
+    }
+
+    private void CreateReferenceSpace()
+    {
+        var spaceCreateInfo = new ReferenceSpaceCreateInfo
+        {
+            Type = StructureType.ReferenceSpaceCreateInfo,
+            ReferenceSpaceType = ReferenceSpaceType.Local,
+            PoseInReferenceSpace = new Posef
+            {
+                Orientation = new Quaternionf { X = 0, Y = 0, Z = 0, W = 1 },
+                Position = new Vector3f { X = 0, Y = 0, Z = 0 }
+            }
+        };
+
+        Space space = default;
+        if (Api.CreateReferenceSpace(_session, in spaceCreateInfo, ref space) != Result.Success)
+            throw new Exception("Failed to create reference space");
+
+        _appSpace = space;
     }
 
     ///// <summary>
@@ -470,10 +493,12 @@ public unsafe partial class OpenXRAPI : XRBase
     /// Creates an OpenXR session using OpenGL graphics binding.
     /// </summary>
     /// <exception cref="Exception">Thrown when session creation fails.</exception>
-    private void CreateOpenGLSession()
+    private void CreateOpenGLSession(OpenGLRenderer renderer)
     {
         if (Window is null)
             throw new Exception("Window is null");
+
+        _gl = renderer.RawGL;
 
         var requirements = new GraphicsRequirementsOpenGLKHR
         {
@@ -527,6 +552,16 @@ public unsafe partial class OpenXRAPI : XRBase
     private readonly SwapchainImageOpenGLKHR*[] _swapchainImagesGL = new SwapchainImageOpenGLKHR*[2];
 
     /// <summary>
+    /// OpenGL framebuffer handles for each swapchain image.
+    /// </summary>
+    private readonly uint[][] _swapchainFramebuffers = new uint[2][];
+
+    /// <summary>
+    /// Number of swapchain images per view.
+    /// </summary>
+    private readonly uint[] _swapchainImageCounts = new uint[2];
+
+    /// <summary>
     /// Vulkan swapchain image pointers for each view.
     /// </summary>
     private readonly SwapchainImageVulkan2KHR*[] _swapchainImagesVK = new SwapchainImageVulkan2KHR*[2];
@@ -543,6 +578,9 @@ public unsafe partial class OpenXRAPI : XRBase
     /// <exception cref="Exception">Thrown when swapchain creation fails.</exception>
     private unsafe void InitializeOpenGLSwapchains(OpenGLRenderer renderer)
     {
+        if (_gl is null)
+            throw new Exception("OpenGL context not initialized for OpenXR");
+
         // Get view configuration
         var viewConfigType = ViewConfigurationType.PrimaryStereo;
         _viewCount = 0;
@@ -550,6 +588,8 @@ public unsafe partial class OpenXRAPI : XRBase
 
         if (_viewCount != 2)
             throw new Exception($"Expected 2 views, got {_viewCount}");
+
+        _views = new View[_viewCount];
         
         fixed (ViewConfigurationView* viewConfigViewsPtr = _viewConfigViews)
         {
@@ -584,13 +624,25 @@ public unsafe partial class OpenXRAPI : XRBase
 
             _swapchainImagesGL[i] = (SwapchainImageOpenGLKHR*)Marshal.AllocHGlobal((int)imageCount * sizeof(SwapchainImageOpenGLKHR));
 
+            _swapchainImageCounts[i] = imageCount;
+            _swapchainFramebuffers[i] = new uint[imageCount];
+
             for (uint j = 0; j < imageCount; j++)
                 _swapchainImagesGL[i][j].Type = StructureType.SwapchainImageOpenglKhr;
 
             Api.EnumerateSwapchainImages(_swapchains[i], imageCount, &imageCount, (SwapchainImageBaseHeader*)_swapchainImagesGL[i]);
 
+            for (uint j = 0; j < imageCount; j++)
+            {
+                uint fbo = _gl.GenFramebuffer();
+                _gl.BindFramebuffer(FramebufferTarget.Framebuffer, fbo);
+                _gl.FramebufferTexture2D(FramebufferTarget.Framebuffer, FramebufferAttachment.ColorAttachment0, TextureTarget.Texture2D, _swapchainImagesGL[i][j].Image, 0);
+                _swapchainFramebuffers[i][j] = fbo;
+            }
+
             Console.WriteLine($"Created swapchain {i} with {imageCount} images ({swapchainCreateInfo.Width}x{swapchainCreateInfo.Height})");
         }
+        _gl.BindFramebuffer(FramebufferTarget.Framebuffer, 0);
     }
 
     /// <summary>
@@ -599,6 +651,29 @@ public unsafe partial class OpenXRAPI : XRBase
     /// <param name="textureHandle">OpenGL texture handle to render to.</param>
     /// <param name="viewIndex">Index of the view (eye) being rendered.</param>
     public delegate void DelRenderToFBO(uint textureHandle, uint viewIndex);
+
+    private void RenderViewportsToSwapchain(uint textureHandle, uint viewIndex)
+    {
+        if (Window is null)
+            return;
+
+        if (Window.Renderer is OpenGLRenderer renderer)
+        {
+            var previous = AbstractRenderer.Current;
+            try
+            {
+                renderer.Active = true;
+                AbstractRenderer.Current = renderer;
+                _gl?.Clear((uint)(ClearBufferMask.ColorBufferBit | ClearBufferMask.DepthBufferBit));
+                Window.RenderViewports();
+            }
+            finally
+            {
+                renderer.Active = false;
+                AbstractRenderer.Current = previous;
+            }
+        }
+    }
 
     ///// <summary>
     ///// Renders a frame for both eyes in the XR device.
@@ -733,6 +808,31 @@ public unsafe partial class OpenXRAPI : XRBase
             Debug.LogWarning("Failed to wait for OpenXR frame.");
             return false;
         }
+        _frameState = frameState;
+        return true;
+    }
+
+    private bool LocateViews()
+    {
+        var viewLocateInfo = new ViewLocateInfo
+        {
+            Type = StructureType.ViewLocateInfo,
+            DisplayTime = _frameState.PredictedDisplayTime,
+            Space = _appSpace,
+            ViewConfigurationType = ViewConfigurationType.PrimaryStereo
+        };
+
+        var viewState = new ViewState { Type = StructureType.ViewState };
+        uint viewCapacityInput = _viewCount;
+        fixed (View* viewsPtr = _views)
+        {
+            if (Api.LocateViews(_session, in viewLocateInfo, ref viewState, ref viewCapacityInput, viewsPtr) != Result.Success)
+            {
+                Debug.LogWarning("Failed to locate OpenXR views.");
+                return false;
+            }
+        }
+
         return true;
     }
 
@@ -779,12 +879,29 @@ public unsafe partial class OpenXRAPI : XRBase
     /// </summary>
     protected void CleanUp()
     {
+        if (Window is not null)
+            Window.RenderViewportsCallback -= Window_RenderViewportsCallback;
+
         // Cleanup swapchains
         for (int i = 0; i < _viewCount; i++)
         {
-            Marshal.FreeHGlobal((nint)_swapchainImagesGL[i]);
-            Api.DestroySwapchain(_swapchains[i]);
+            if (_swapchainFramebuffers[i] is not null && _gl is not null)
+                foreach (var fbo in _swapchainFramebuffers[i])
+                    _gl.DeleteFramebuffer(fbo);
+
+            if (_swapchainImagesGL[i] != null)
+                Marshal.FreeHGlobal((nint)_swapchainImagesGL[i]);
+            if (_swapchains[i].Handle != 0)
+                Api.DestroySwapchain(_swapchains[i]);
         }
+
+        if (_appSpace.Handle != 0)
+            Api.DestroySpace(_appSpace);
+
+        if (_session.Handle != 0)
+            Api.DestroySession(_session);
+
+        DestroyValidationLayers();
         DestroyInstance();
     }
 }
