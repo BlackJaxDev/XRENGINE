@@ -1,4 +1,5 @@
 ﻿using System;
+using System.Collections;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
@@ -57,6 +58,11 @@ public class DefaultRenderPipeline : RenderPipeline
     public bool UsesRestirGI => _globalIlluminationMode == EGlobalIlluminationMode.Restir;
     public bool UsesVoxelConeTracing => _globalIlluminationMode == EGlobalIlluminationMode.VoxelConeTracing;
     public bool UsesLightProbeGI => _globalIlluminationMode == EGlobalIlluminationMode.LightProbesAndIbl;
+
+    // Light probe debug accessors (for editor/state panels)
+    public XRTexture2DArray? ProbeIrradianceArray => _probeIrradianceArray;
+    public XRTexture2DArray? ProbePrefilterArray => _probePrefilterArray;
+    public int ProbeCount => _probePositionBuffer is null ? 0 : (int)_probePositionBuffer.ElementCount;
 
     protected static bool GPURenderDispatch => Engine.UserSettings.GPURenderDispatch;
 
@@ -2573,6 +2579,7 @@ public class DefaultRenderPipeline : RenderPipeline
         private XRDataBuffer? _probeTetraBuffer;
         private int _lastProbeCount = 0;
         private readonly Dictionary<Guid, Vector3> _cachedProbePositions = new();
+        private readonly Dictionary<Guid, (XRTexture2D Irradiance, XRTexture2D Prefilter)> _cachedProbeTextures = new();
         private volatile bool _pendingProbeRefresh;
         private Job? _probeTessellationJob;
 
@@ -2596,11 +2603,15 @@ public class DefaultRenderPipeline : RenderPipeline
                 return;
 
             IReadOnlyList<LightProbeComponent> probes = world.Lights.LightProbes;
-            if (probes.Count == 0)
+            var readyProbes = GetReadyProbes(probes);
+            if (readyProbes.Count == 0)
+            {
+                ClearProbeResources();
                 return;
+            }
 
-            if (_pendingProbeRefresh || ProbeConfigurationChanged(probes))
-                BuildProbeResources(probes);
+            if (_pendingProbeRefresh || ProbeConfigurationChanged(readyProbes))
+                BuildProbeResources(readyProbes);
 
             if (_probeIrradianceArray is null || _probePrefilterArray is null || _probePositionBuffer is null)
                 return;
@@ -2610,32 +2621,54 @@ public class DefaultRenderPipeline : RenderPipeline
             program.Sampler("IrradianceArray", _probeIrradianceArray, baseCount++);
             program.Sampler("PrefilterArray", _probePrefilterArray, baseCount);
 
-            program.Uniform("ProbeCount", probes.Count);
-            _probePositionBuffer.BindSSBO(program, 0);
+            int probeCount = (int)_probePositionBuffer.ElementCount;
+            program.Uniform("ProbeCount", probeCount);
+            _probePositionBuffer.BindTo(program, 0);
 
-            if (_probeTetraBuffer != null)
-            {
-                program.Uniform("TetraCount", (int)(_probeTetraBuffer.ElementCount / 1));
-                _probeTetraBuffer.BindSSBO(program, 1);
-            }
-            else
-            {
-                program.Uniform("TetraCount", 0);
-            }
+            int tetraCount = _probeTetraBuffer != null ? (int)_probeTetraBuffer.ElementCount : 0;
+            program.Uniform("TetraCount", tetraCount);
+            if (tetraCount > 0)
+                _probeTetraBuffer!.BindTo(program, 1);
         }
 
-        private bool ProbeConfigurationChanged(IReadOnlyList<LightProbeComponent> probes)
+        private static List<LightProbeComponent> GetReadyProbes(IReadOnlyList<LightProbeComponent> probes)
         {
-            if (_lastProbeCount != probes.Count)
+            var readyProbes = new List<LightProbeComponent>(probes.Count);
+            foreach (var probe in probes)
+            {
+                if (probe.IrradianceTexture != null && probe.PrefilterTexture != null)
+                    readyProbes.Add(probe);
+            }
+
+            return readyProbes;
+        }
+
+        private bool ProbeConfigurationChanged(IReadOnlyList<LightProbeComponent> readyProbes)
+        {
+            if (_lastProbeCount != readyProbes.Count)
             {
                 _pendingProbeRefresh = true;
                 return true;
             }
 
-            foreach (var probe in probes)
+            if (_cachedProbePositions.Count != readyProbes.Count || _cachedProbeTextures.Count != readyProbes.Count)
+            {
+                _pendingProbeRefresh = true;
+                return true;
+            }
+
+            foreach (var probe in readyProbes)
             {
                 var position = probe.Transform.RenderTranslation;
-                if (!_cachedProbePositions.TryGetValue(probe.Id, out var cached) || cached != position)
+                if (!_cachedProbePositions.TryGetValue(probe.ID, out var cachedPos) || cachedPos != position)
+                {
+                    _pendingProbeRefresh = true;
+                    return true;
+                }
+
+                if (!_cachedProbeTextures.TryGetValue(probe.ID, out var cachedTex)
+                    || cachedTex.Irradiance != probe.IrradianceTexture
+                    || cachedTex.Prefilter != probe.PrefilterTexture)
                 {
                     _pendingProbeRefresh = true;
                     return true;
@@ -2645,32 +2678,47 @@ public class DefaultRenderPipeline : RenderPipeline
             return false;
         }
 
-        private void BuildProbeResources(IReadOnlyList<LightProbeComponent> probes)
+        private void ClearProbeResources()
         {
-            _pendingProbeRefresh = false;
-            _lastProbeCount = probes.Count;
-
             _probeIrradianceArray?.Destroy();
+            _probeIrradianceArray = null;
             _probePrefilterArray?.Destroy();
+            _probePrefilterArray = null;
             _probePositionBuffer?.Dispose();
+            _probePositionBuffer = null;
             _probeTetraBuffer?.Dispose();
+            _probeTetraBuffer = null;
+            _probeTessellationJob?.Cancel();
+            _probeTessellationJob = null;
+            _cachedProbePositions.Clear();
+            _cachedProbeTextures.Clear();
+            _lastProbeCount = 0;
+            _pendingProbeRefresh = false;
+        }
 
-            if (probes.Count == 0)
-                return;
+        private void BuildProbeResources(IList<LightProbeComponent> readyProbes)
+        {
+            ClearProbeResources();
 
-            var irrTextures = new List<XRTexture2D>(probes.Count);
-            var preTextures = new List<XRTexture2D>(probes.Count);
-            var positions = new List<ProbePositionData>(probes.Count);
-
-            foreach (var probe in probes)
+            if (readyProbes.Count == 0)
             {
-                if (probe.IrradianceTexture != null && probe.PrefilterTexture != null)
-                {
-                    irrTextures.Add(probe.IrradianceTexture);
-                    preTextures.Add(probe.PrefilterTexture);
-                    positions.Add(new ProbePositionData { Position = new Vector4(probe.Transform.RenderTranslation, 1.0f) });
-                    _cachedProbePositions[probe.Id] = probe.Transform.RenderTranslation;
-                }
+                _pendingProbeRefresh = false;
+                return;
+            }
+
+            var irrTextures = new List<XRTexture2D>(readyProbes.Count);
+            var preTextures = new List<XRTexture2D>(readyProbes.Count);
+            var positions = new List<ProbePositionData>(readyProbes.Count);
+
+            foreach (var probe in readyProbes)
+            {
+                irrTextures.Add(probe.IrradianceTexture!);
+                preTextures.Add(probe.PrefilterTexture!);
+
+                var position = probe.Transform.RenderTranslation;
+                positions.Add(new ProbePositionData { Position = new Vector4(position, 1.0f) });
+                _cachedProbePositions[probe.ID] = position;
+                _cachedProbeTextures[probe.ID] = (probe.IrradianceTexture!, probe.PrefilterTexture!);
             }
 
             if (irrTextures.Count == 0 || preTextures.Count == 0)
@@ -2694,19 +2742,22 @@ public class DefaultRenderPipeline : RenderPipeline
             {
                 BindingIndexOverride = 0,
             };
-            _probePositionBuffer.SetDataRaw(positions, positions.Count);
+            _probePositionBuffer.SetDataRaw<ProbePositionData>(positions);
             _probePositionBuffer.PushData();
 
-            StartTetrahedralizationJob(probes);
+            _lastProbeCount = positions.Count;
+            _pendingProbeRefresh = false;
+
+            StartTetrahedralizationJob(readyProbes);
         }
 
-        private void StartTetrahedralizationJob(IReadOnlyList<LightProbeComponent> probes)
+        private void StartTetrahedralizationJob(IList<LightProbeComponent> probes)
         {
             _probeTessellationJob?.Cancel();
             _probeTessellationJob = Engine.Jobs.Schedule(() => RunTetrahedralization(probes));
         }
 
-        private IEnumerable RunTetrahedralization(IReadOnlyList<LightProbeComponent> probes)
+        private IEnumerable RunTetrahedralization(IList<LightProbeComponent> probes)
         {
             var probeIndices = new Dictionary<LightProbeComponent, int>(probes.Count);
             for (int i = 0; i < probes.Count; ++i)
@@ -2744,11 +2795,13 @@ public class DefaultRenderPipeline : RenderPipeline
                 return;
             }
 
-            _probeTetraBuffer = new XRDataBuffer("LightProbeTetra", EBufferTarget.ShaderStorageBuffer, (uint)tetraData.Count, EComponentType.Struct, (uint)Marshal.SizeOf<ProbeTetraData>(), false, false)
+            var tetraList = tetraData as IList<ProbeTetraData> ?? new List<ProbeTetraData>(tetraData);
+
+            _probeTetraBuffer = new XRDataBuffer("LightProbeTetra", EBufferTarget.ShaderStorageBuffer, (uint)tetraList.Count, EComponentType.Struct, (uint)Marshal.SizeOf<ProbeTetraData>(), false, false)
             {
                 BindingIndexOverride = 1,
             };
-            _probeTetraBuffer.SetDataRaw(tetraData, tetraData.Count);
+            _probeTetraBuffer.SetDataRaw<ProbeTetraData>(tetraList);
             _probeTetraBuffer.PushData();
         }
 
