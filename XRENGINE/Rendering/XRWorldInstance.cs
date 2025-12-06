@@ -187,7 +187,7 @@ namespace XREngine.Rendering
         private void TickDuring() 
             => TickGroup(ETickGroup.DuringPhysics);
 
-        private bool _physicsEnabled = false;
+        private bool _physicsEnabled = true;
         /// <summary>
         /// Whether physics simulation is currently active for this world.
         /// Physics is automatically enabled/disabled when entering/exiting play mode.
