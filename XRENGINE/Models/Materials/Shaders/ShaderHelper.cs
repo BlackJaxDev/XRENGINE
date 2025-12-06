@@ -152,6 +152,9 @@ void main()
         public static XRShader? UnlitColorFragForward()
              => LoadEngineShader(Path.Combine("Common", "UnlitColoredForward.fs"));
 
+        public static XRShader? UIUberFragment()
+            => LoadEngineShader(Path.Combine("UI", "UIUber.fs"));
+
         public static XRShader? GaussianSplatVertex()
             => LoadEngineShader(Path.Combine("Gaussian", "GaussianSplat.vs"));
 

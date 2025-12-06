@@ -12,7 +12,7 @@ namespace XREngine.Rendering.UI
     public class UIMaterialComponent : UIRenderableComponent
     {
         public UIMaterialComponent()
-            : this(XRMaterial.CreateUnlitColorMaterialForward(Color.Magenta), false) { }
+            : this(UIRenderResources.UIUberMaterial, false) { }
 
         public UIMaterialComponent(XRMaterial quadMaterial, bool flipVerticalUVCoord = false)
         {
@@ -57,9 +57,7 @@ namespace XREngine.Rendering.UI
         {
             if (Material is null)
             {
-                var mat = XRMaterial.CreateUnlitColorMaterialForward(Color.Magenta);
-                mat.RenderOptions = _renderParameters;
-                Material = mat;
+                Material = UIRenderResources.UIUberMaterial;
             }
             RemakeMesh(Material);
         }
