@@ -874,7 +874,11 @@ public static class CookedBinarySerializer
     }
 
     private static bool IsMemoryPackUnsupported(Exception ex)
-        => ex is MemoryPackSerializationException or NotSupportedException or InvalidOperationException;
+        => ex is MemoryPackSerializationException
+            or NotSupportedException
+            or InvalidOperationException
+            or ArgumentException
+            || ex.InnerException is not null && IsMemoryPackUnsupported(ex.InnerException);
 
     private enum CookedBinaryObjectEncoding : byte
     {

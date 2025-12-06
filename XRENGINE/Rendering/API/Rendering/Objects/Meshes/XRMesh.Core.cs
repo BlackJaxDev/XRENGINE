@@ -51,6 +51,7 @@ public partial class XRMesh : XRAsset
     public int VertexCount { get; internal set; }
 
     private Vertex[] _vertices = [];
+    [Browsable(false)]
     public Vertex[] Vertices { get => _vertices; private set => SetField(ref _vertices, value); }
 
     // Primitive index storage
@@ -108,13 +109,16 @@ public partial class XRMesh : XRAsset
 
     // Blendshapes
     private string[] _blendshapeNames = [];
+    [Browsable(false)]
     public string[] BlendshapeNames
     {
         get => _blendshapeNames;
         set => SetField(ref _blendshapeNames, value);
     }
     private readonly Dictionary<string, int> _blendshapeNameToIndex = [];
+    [Browsable(false)]
     public uint BlendshapeCount => (uint)(BlendshapeNames?.Length ?? 0);
+    [Browsable(false)]
     public bool HasBlendshapes => BlendshapeCount > 0;
 
     // Buffers (per-vertex)

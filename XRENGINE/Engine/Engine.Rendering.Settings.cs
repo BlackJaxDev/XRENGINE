@@ -793,6 +793,7 @@ namespace XREngine
                     get => _debugTextMaxLifespan;
                     set => SetField(ref _debugTextMaxLifespan, value);
                 }
+                public bool RenderLightProbeTetrahedra { get; set; } = true;
             }
 
             private static void ApplyEngineSettingChange(string? propertyName)

@@ -217,6 +217,11 @@ namespace XREngine
                 public static void CalculateFrontBufferDotLuminanceAsync(BoundingRectangle region, bool withTransparency, Vector3 luminance, Action<bool, float> callback)
                     => AbstractRenderer.Current?.CalcDotLuminanceFrontAsync(region, withTransparency, luminance, callback);
 
+                public static void CalcDotLuminanceFrontAsyncCompute(BoundingRectangle region, bool withTransparency, Action<bool, float> callback)
+                    => AbstractRenderer.Current?.CalcDotLuminanceFrontAsyncCompute(region, withTransparency, callback);
+                public static void CalcDotLuminanceFrontAsyncCompute(BoundingRectangle region, bool withTransparency, Vector3 luminance, Action<bool, float> callback)
+                    => AbstractRenderer.Current?.CalcDotLuminanceFrontAsyncCompute(region, withTransparency, luminance, callback);
+
                 public static void ColorMask(bool red, bool green, bool blue, bool alpha)
                     => AbstractRenderer.Current?.ColorMask(red, green, blue, alpha);
 

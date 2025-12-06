@@ -213,21 +213,49 @@ namespace XREngine.Rendering.OpenGL
 
                 Api.PixelStore(PixelStoreParameter.UnpackAlignment, 1);
 
-                EPixelInternalFormat? internalFormatForce = null;
                 if (!Data.Resizable && !_storageSet)
                 {
                     Api.TextureStorage3D(BindingId, (uint)Data.SmallestMipmapLevel, ToGLEnum(Data.SizedInternalFormat), Data.Width, Data.Height, Data.Depth);
-                    internalFormatForce = ToBaseInternalFormat(Data.SizedInternalFormat);
                     _storageSet = true;
                 }
 
                 var glTarget = ToGLEnum(TextureTarget);
-                if (Mipmaps is null || Mipmaps.Length == 0)
-                    PushMipmap(glTarget, 0, null, internalFormatForce);
-                else
+                
+                // Copy each source texture's data to its respective layer in the array
+                for (int layer = 0; layer < Data.Textures.Length; ++layer)
                 {
-                    for (int i = 0; i < Mipmaps.Length; ++i)
-                        PushMipmap(glTarget, i, Mipmaps[i], internalFormatForce);
+                    var tex = Data.Textures[layer];
+                    if (tex is null)
+                        continue;
+
+                    // Get the GL object for the source texture so we can copy from GPU to GPU
+                    var glSourceTex = Renderer.GetOrCreateAPIRenderObject(tex) as GLTexture2D;
+                    if (glSourceTex is null)
+                        continue;
+
+                    // Make sure source texture is valid on the GPU
+                    glSourceTex.Bind();
+                    glSourceTex.Unbind();
+
+                    uint srcId = glSourceTex.BindingId;
+                    if (srcId == InvalidBindingId)
+                        continue;
+
+                    // Copy all mip levels from the source 2D texture to this layer of the array
+                    int numMips = Math.Max(1, tex.SmallestMipmapLevel);
+                    for (int mip = 0; mip < numMips; ++mip)
+                    {
+                        uint mipWidth = Math.Max(1u, tex.Width >> mip);
+                        uint mipHeight = Math.Max(1u, tex.Height >> mip);
+
+                        // glCopyImageSubData(srcName, srcTarget, srcLevel, srcX, srcY, srcZ,
+                        //                    dstName, dstTarget, dstLevel, dstX, dstY, dstZ,
+                        //                    srcWidth, srcHeight, srcDepth)
+                        Api.CopyImageSubData(
+                            srcId, CopyImageSubDataTarget.Texture2D, mip, 0, 0, 0,
+                            BindingId, CopyImageSubDataTarget.Texture2DArray, mip, 0, 0, layer,
+                            mipWidth, mipHeight, 1);
+                    }
                 }
 
                 int baseLevel = 0;
@@ -239,6 +267,19 @@ namespace XREngine.Rendering.OpenGL
                 Api.TextureParameterI(BindingId, GLEnum.TextureMaxLevel, in maxLevel);
                 Api.TextureParameterI(BindingId, GLEnum.TextureMinLod, in minLOD);
                 Api.TextureParameterI(BindingId, GLEnum.TextureMaxLod, in maxLOD);
+
+                // Set filter and wrap parameters (required for correct sampling)
+                int magFilter = (int)ToGLEnum(Data.MagFilter);
+                Api.TextureParameterI(BindingId, GLEnum.TextureMagFilter, in magFilter);
+
+                int minFilter = (int)ToGLEnum(Data.MinFilter);
+                Api.TextureParameterI(BindingId, GLEnum.TextureMinFilter, in minFilter);
+
+                int uWrap = (int)ToGLEnum(Data.UWrap);
+                Api.TextureParameterI(BindingId, GLEnum.TextureWrapS, in uWrap);
+
+                int vWrap = (int)ToGLEnum(Data.VWrap);
+                Api.TextureParameterI(BindingId, GLEnum.TextureWrapT, in vWrap);
 
                 if (Data.AutoGenerateMipmaps)
                     GenerateMipmaps();
@@ -255,78 +296,6 @@ namespace XREngine.Rendering.OpenGL
                 IsPushing = false;
                 Unbind();
             }
-        }
-
-        private unsafe void PushMipmap(GLEnum glTarget, int i, MipmapInfo? info, EPixelInternalFormat? internalFormatForce)
-        {
-            if (!Data.Resizable && !_storageSet)
-            {
-                Debug.LogWarning("Texture storage not set on non-resizable texture, can't push mipmaps.");
-                return;
-            }
-
-            GLEnum pixelFormat;
-            GLEnum pixelType;
-            InternalFormat internalPixelFormat;
-
-            DataSource? data;
-            bool hasPushedResized;
-            Mipmap2D? mip = info?.Mipmap;
-            if (mip is null)
-            {
-                internalPixelFormat = ToInternalFormat(internalFormatForce ?? EPixelInternalFormat.Rgb);
-                pixelFormat = GLEnum.Rgb;
-                pixelType = GLEnum.UnsignedByte;
-                data = null;
-                hasPushedResized = false;
-            }
-            else
-            {
-                pixelFormat = ToGLEnum(mip.PixelFormat);
-                pixelType = ToGLEnum(mip.PixelType);
-                internalPixelFormat = ToInternalFormat(internalFormatForce ?? mip.InternalFormat);
-                data = mip.Data;
-                hasPushedResized = info!.HasPushedResizedData;
-            }
-
-            if (data is null || data.Length == 0)
-                Push(glTarget, i, Data.Width >> i, Data.Height >> i, pixelFormat, pixelType, internalPixelFormat, hasPushedResized);
-            else
-            {
-                Push(glTarget, i, mip!.Width, mip.Height, pixelFormat, pixelType, internalPixelFormat, data, hasPushedResized);
-                data?.Dispose();
-            }
-
-            if (info != null)
-            {
-                info.HasPushedResizedData = true;
-                //info.HasPushedUpdateData = true;
-            }
-        }
-
-        //TODO: allow pushing specific images in the array instead of the whole array at once
-
-        private unsafe void Push(GLEnum glTarget, int i, uint w, uint h, GLEnum pixelFormat, GLEnum pixelType, InternalFormat internalPixelFormat, bool hasPushedResized)
-        {
-            if (!hasPushedResized && Data.Resizable)
-                Api.TexImage3D(glTarget, i, internalPixelFormat, w, h, Data.Depth, 0, pixelFormat, pixelType, IntPtr.Zero.ToPointer());
-        }
-
-        private unsafe void Push(GLEnum glTarget, int i, uint w, uint h, GLEnum pixelFormat, GLEnum pixelType, InternalFormat internalPixelFormat, DataSource bmp, bool hasPushedResized)
-        {
-            // If a non-zero named buffer object is bound to the GL_PIXEL_UNPACK_BUFFER target (see glBindBuffer) while a texture image is specified,
-            // the data ptr is treated as a byte offset into the buffer object's data store.
-            void* ptr = bmp.Address.Pointer;
-            if (ptr is null)
-            {
-                Debug.LogWarning("Texture data source is null.");
-                return;
-            }
-
-            if (hasPushedResized || _storageSet)
-                Api.TexSubImage3D(glTarget, i, 0, 0, 0, w, h, Data.Depth, pixelFormat, pixelType, ptr);
-            else
-                Api.TexImage3D(glTarget, i, internalPixelFormat, w, h, Data.Depth, 0, pixelFormat, pixelType, ptr);
         }
     }
 }

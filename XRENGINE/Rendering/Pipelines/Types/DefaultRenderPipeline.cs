@@ -2573,237 +2573,304 @@ public class DefaultRenderPipeline : RenderPipeline
         var state = RenderingPipelineState?.SceneCamera?.GetActivePostProcessState();
         ApplyBloomBrightPassUniforms(state, program);
     }
-        private XRTexture2DArray? _probeIrradianceArray;
-        private XRTexture2DArray? _probePrefilterArray;
-        private XRDataBuffer? _probePositionBuffer;
-        private XRDataBuffer? _probeTetraBuffer;
-        private int _lastProbeCount = 0;
-        private readonly Dictionary<Guid, Vector3> _cachedProbePositions = new();
-        private readonly Dictionary<Guid, (XRTexture2D Irradiance, XRTexture2D Prefilter)> _cachedProbeTextures = new();
-        private volatile bool _pendingProbeRefresh;
-        private Job? _probeTessellationJob;
+    private XRTexture2DArray? _probeIrradianceArray;
+    private XRTexture2DArray? _probePrefilterArray;
+    private XRDataBuffer? _probePositionBuffer;
+    private XRDataBuffer? _probeTetraBuffer;
+    private int _lastProbeCount = 0;
+    private readonly Dictionary<Guid, Vector3> _cachedProbePositions = new();
+    private readonly Dictionary<Guid, (XRTexture2D Irradiance, XRTexture2D Prefilter)> _cachedProbeTextures = new();
+    private readonly Dictionary<Guid, uint> _cachedProbeCaptureVersions = new();
+    private volatile bool _pendingProbeRefresh;
+    private Job? _probeTessellationJob;
 
-        private struct ProbePositionData
-        {
-            public Vector4 Position;
-        }
+    private struct ProbePositionData
+    {
+        public Vector4 Position;
+    }
 
-        private struct ProbeTetraData
-        {
-            public Vector4 Indices;
-        }
+    private struct ProbeTetraData
+    {
+        public Vector4 Indices;
+    }
 
-        private void LightCombineFBO_SettingUniforms(XRRenderProgram program)
-        {
-            if (!UsesLightProbeGI)
-                return;
+    private void LightCombineFBO_SettingUniforms(XRRenderProgram program)
+    {
+        if (!UsesLightProbeGI)
+            return;
 
-            var world = RenderingWorld;
-            if (world is null)
-                return;
+        var world = RenderingWorld;
+        if (world is null)
+            return;
 
-            IReadOnlyList<LightProbeComponent> probes = world.Lights.LightProbes;
-            var readyProbes = GetReadyProbes(probes);
-            if (readyProbes.Count == 0)
-            {
-                ClearProbeResources();
-                return;
-            }
-
-            if (_pendingProbeRefresh || ProbeConfigurationChanged(readyProbes))
-                BuildProbeResources(readyProbes);
-
-            if (_probeIrradianceArray is null || _probePrefilterArray is null || _probePositionBuffer is null)
-                return;
-
-            int baseCount = GetFBO<XRQuadFrameBuffer>(LightCombineFBOName)?.Material?.Textures?.Count ?? 0;
-
-            program.Sampler("IrradianceArray", _probeIrradianceArray, baseCount++);
-            program.Sampler("PrefilterArray", _probePrefilterArray, baseCount);
-
-            int probeCount = (int)_probePositionBuffer.ElementCount;
-            program.Uniform("ProbeCount", probeCount);
-            _probePositionBuffer.BindTo(program, 0);
-
-            int tetraCount = _probeTetraBuffer != null ? (int)_probeTetraBuffer.ElementCount : 0;
-            program.Uniform("TetraCount", tetraCount);
-            if (tetraCount > 0)
-                _probeTetraBuffer!.BindTo(program, 1);
-        }
-
-        private static List<LightProbeComponent> GetReadyProbes(IReadOnlyList<LightProbeComponent> probes)
-        {
-            var readyProbes = new List<LightProbeComponent>(probes.Count);
-            foreach (var probe in probes)
-            {
-                if (probe.IrradianceTexture != null && probe.PrefilterTexture != null)
-                    readyProbes.Add(probe);
-            }
-
-            return readyProbes;
-        }
-
-        private bool ProbeConfigurationChanged(IReadOnlyList<LightProbeComponent> readyProbes)
-        {
-            if (_lastProbeCount != readyProbes.Count)
-            {
-                _pendingProbeRefresh = true;
-                return true;
-            }
-
-            if (_cachedProbePositions.Count != readyProbes.Count || _cachedProbeTextures.Count != readyProbes.Count)
-            {
-                _pendingProbeRefresh = true;
-                return true;
-            }
-
-            foreach (var probe in readyProbes)
-            {
-                var position = probe.Transform.RenderTranslation;
-                if (!_cachedProbePositions.TryGetValue(probe.ID, out var cachedPos) || cachedPos != position)
-                {
-                    _pendingProbeRefresh = true;
-                    return true;
-                }
-
-                if (!_cachedProbeTextures.TryGetValue(probe.ID, out var cachedTex)
-                    || cachedTex.Irradiance != probe.IrradianceTexture
-                    || cachedTex.Prefilter != probe.PrefilterTexture)
-                {
-                    _pendingProbeRefresh = true;
-                    return true;
-                }
-            }
-
-            return false;
-        }
-
-        private void ClearProbeResources()
-        {
-            _probeIrradianceArray?.Destroy();
-            _probeIrradianceArray = null;
-            _probePrefilterArray?.Destroy();
-            _probePrefilterArray = null;
-            _probePositionBuffer?.Dispose();
-            _probePositionBuffer = null;
-            _probeTetraBuffer?.Dispose();
-            _probeTetraBuffer = null;
-            _probeTessellationJob?.Cancel();
-            _probeTessellationJob = null;
-            _cachedProbePositions.Clear();
-            _cachedProbeTextures.Clear();
-            _lastProbeCount = 0;
-            _pendingProbeRefresh = false;
-        }
-
-        private void BuildProbeResources(IList<LightProbeComponent> readyProbes)
+        IReadOnlyList<LightProbeComponent> probes = world.Lights.LightProbes;
+        var readyProbes = GetReadyProbes(probes);
+        if (readyProbes.Count == 0)
         {
             ClearProbeResources();
+            return;
+        }
 
-            if (readyProbes.Count == 0)
+        if (_pendingProbeRefresh || ProbeConfigurationChanged(readyProbes))
+            BuildProbeResources(readyProbes);
+
+        if (_probeIrradianceArray is null || _probePrefilterArray is null || _probePositionBuffer is null)
+            return;
+
+        // Use explicit texture units to match the shader's fixed bindings (layout(binding = 7/8)).
+        const int irradianceUnit = 7;
+        const int prefilterUnit = 8;
+        program.Sampler("IrradianceArray", _probeIrradianceArray, irradianceUnit);
+        program.Sampler("PrefilterArray", _probePrefilterArray, prefilterUnit);
+
+        int probeCount = (int)_probePositionBuffer.ElementCount;
+        program.Uniform("ProbeCount", probeCount);
+        _probePositionBuffer.BindTo(program, 0);
+
+        int tetraCount = _probeTetraBuffer != null ? (int)_probeTetraBuffer.ElementCount : 0;
+        program.Uniform("TetraCount", tetraCount);
+        if (tetraCount > 0)
+        {
+            _probeTetraBuffer!.BindTo(program, 1);
+
+            if (Engine.Rendering.Settings.RenderLightProbeTetrahedra)
+                RenderProbeTetrahedra(readyProbes, tetraCount);
+        }
+    }
+
+    private void RenderProbeTetrahedra(List<LightProbeComponent> readyProbes, int tetraCount)
+    {
+        for (uint i = 0; i < tetraCount; ++i)
+        {
+            var tetraData = _probeTetraBuffer!.GetDataRawAtIndex<ProbeTetraData>(i);
+            var indices = tetraData.Indices;
+            Vector3 p0 = readyProbes[(int)indices.X].Transform.RenderTranslation;
+            Vector3 p1 = readyProbes[(int)indices.Y].Transform.RenderTranslation;
+            Vector3 p2 = readyProbes[(int)indices.Z].Transform.RenderTranslation;
+            Vector3 p3 = readyProbes[(int)indices.W].Transform.RenderTranslation;
+            Engine.Rendering.Debug.RenderLine(p0, p1, ColorF4.Cyan);
+            Engine.Rendering.Debug.RenderLine(p0, p2, ColorF4.Cyan);
+            Engine.Rendering.Debug.RenderLine(p0, p3, ColorF4.Cyan);
+            Engine.Rendering.Debug.RenderLine(p1, p2, ColorF4.Cyan);
+            Engine.Rendering.Debug.RenderLine(p1, p3, ColorF4.Cyan);
+            Engine.Rendering.Debug.RenderLine(p2, p3, ColorF4.Cyan);
+        }
+    }
+
+    private static List<LightProbeComponent> GetReadyProbes(IReadOnlyList<LightProbeComponent> probes)
+    {
+        var readyProbes = new List<LightProbeComponent>(probes.Count);
+        foreach (var probe in probes)
+        {
+            if (probe.IrradianceTexture != null && probe.PrefilterTexture != null)
+                readyProbes.Add(probe);
+        }
+
+        return readyProbes;
+    }
+
+    private bool ProbeConfigurationChanged(IReadOnlyList<LightProbeComponent> readyProbes)
+    {
+        if (_lastProbeCount != readyProbes.Count)
+        {
+            _pendingProbeRefresh = true;
+            return true;
+        }
+
+        if (_cachedProbePositions.Count != readyProbes.Count || _cachedProbeTextures.Count != readyProbes.Count)
+        {
+            _pendingProbeRefresh = true;
+            return true;
+        }
+
+        foreach (var probe in readyProbes)
+        {
+            var position = probe.Transform.RenderTranslation;
+            if (!_cachedProbePositions.TryGetValue(probe.ID, out var cachedPos) || cachedPos != position)
             {
-                _pendingProbeRefresh = false;
-                return;
+                _pendingProbeRefresh = true;
+                return true;
             }
 
-            var irrTextures = new List<XRTexture2D>(readyProbes.Count);
-            var preTextures = new List<XRTexture2D>(readyProbes.Count);
-            var positions = new List<ProbePositionData>(readyProbes.Count);
-
-            foreach (var probe in readyProbes)
+            if (!_cachedProbeTextures.TryGetValue(probe.ID, out var cachedTex)
+                || cachedTex.Irradiance != probe.IrradianceTexture
+                || cachedTex.Prefilter != probe.PrefilterTexture)
             {
-                irrTextures.Add(probe.IrradianceTexture!);
-                preTextures.Add(probe.PrefilterTexture!);
-
-                var position = probe.Transform.RenderTranslation;
-                positions.Add(new ProbePositionData { Position = new Vector4(position, 1.0f) });
-                _cachedProbePositions[probe.ID] = position;
-                _cachedProbeTextures[probe.ID] = (probe.IrradianceTexture!, probe.PrefilterTexture!);
+                _pendingProbeRefresh = true;
+                return true;
             }
 
-            if (irrTextures.Count == 0 || preTextures.Count == 0)
-                return;
-
-            _probeIrradianceArray = new XRTexture2DArray([.. irrTextures])
+            if (!_cachedProbeCaptureVersions.TryGetValue(probe.ID, out var cachedVersion)
+                || cachedVersion != probe.CaptureVersion)
             {
-                Name = "LightProbeIrradianceArray",
-                MinFilter = ETexMinFilter.Linear,
-                MagFilter = ETexMagFilter.Linear,
-            };
+                _pendingProbeRefresh = true;
+                return true;
+            }
+        }
 
-            _probePrefilterArray = new XRTexture2DArray([.. preTextures])
-            {
-                Name = "LightProbePrefilterArray",
-                MinFilter = ETexMinFilter.LinearMipmapLinear,
-                MagFilter = ETexMagFilter.Linear,
-            };
+        return false;
+    }
 
-            _probePositionBuffer = new XRDataBuffer("LightProbePositions", EBufferTarget.ShaderStorageBuffer, (uint)positions.Count, EComponentType.Struct, (uint)Marshal.SizeOf<ProbePositionData>(), false, false)
-            {
-                BindingIndexOverride = 0,
-            };
-            _probePositionBuffer.SetDataRaw<ProbePositionData>(positions);
-            _probePositionBuffer.PushData();
+    private void ClearProbeResources()
+    {
+        _probeIrradianceArray?.Destroy();
+        _probeIrradianceArray = null;
+        _probePrefilterArray?.Destroy();
+        _probePrefilterArray = null;
+        _probePositionBuffer?.Dispose();
+        _probePositionBuffer = null;
+        _probeTetraBuffer?.Dispose();
+        _probeTetraBuffer = null;
+        _probeTessellationJob?.Cancel();
+        _probeTessellationJob = null;
+        _cachedProbePositions.Clear();
+        _cachedProbeTextures.Clear();
+        _cachedProbeCaptureVersions.Clear();
+        _lastProbeCount = 0;
+        _pendingProbeRefresh = false;
+    }
 
-            _lastProbeCount = positions.Count;
+    private void BuildProbeResources(IList<LightProbeComponent> readyProbes)
+    {
+        ClearProbeResources();
+
+        if (readyProbes.Count == 0)
+        {
             _pendingProbeRefresh = false;
-
-            StartTetrahedralizationJob(readyProbes);
+            return;
         }
 
-        private void StartTetrahedralizationJob(IList<LightProbeComponent> probes)
+        var irrTextures = new List<XRTexture2D>(readyProbes.Count);
+        var preTextures = new List<XRTexture2D>(readyProbes.Count);
+        var positions = new List<ProbePositionData>(readyProbes.Count);
+
+        foreach (var probe in readyProbes)
         {
-            _probeTessellationJob?.Cancel();
-            _probeTessellationJob = Engine.Jobs.Schedule(() => RunTetrahedralization(probes));
+            irrTextures.Add(probe.IrradianceTexture!);
+            preTextures.Add(probe.PrefilterTexture!);
+
+            var position = probe.Transform.RenderTranslation;
+            positions.Add(new ProbePositionData { Position = new Vector4(position, 1.0f) });
+            _cachedProbePositions[probe.ID] = position;
+            _cachedProbeTextures[probe.ID] = (probe.IrradianceTexture!, probe.PrefilterTexture!);
+            _cachedProbeCaptureVersions[probe.ID] = probe.CaptureVersion;
         }
 
-        private IEnumerable RunTetrahedralization(IList<LightProbeComponent> probes)
+        if (irrTextures.Count == 0 || preTextures.Count == 0)
+            return;
+
+        _probeIrradianceArray = new XRTexture2DArray([.. irrTextures])
         {
-            var probeIndices = new Dictionary<LightProbeComponent, int>(probes.Count);
-            for (int i = 0; i < probes.Count; ++i)
-                probeIndices[probes[i]] = i;
+            Name = "LightProbeIrradianceArray",
+            MinFilter = ETexMinFilter.Linear,
+            MagFilter = ETexMagFilter.Linear,
+        };
 
-            var triangulation = Triangulation.CreateDelaunay<LightProbeComponent, Lights3DCollection.LightProbeCell>(probes);
-            var cells = triangulation.Cells.ToList();
-            var tetraData = new List<ProbeTetraData>(cells.Count);
-            foreach (var cell in cells)
-            {
-                var v = cell.Vertices;
-                if (v.Length >= 4)
-                {
-                    tetraData.Add(new ProbeTetraData
-                    {
-                        Indices = new Vector4(
-                            probeIndices[v[0]],
-                            probeIndices[v[1]],
-                            probeIndices[v[2]],
-                            probeIndices[v[3]])
-                    });
-                }
-            }
+        _probePrefilterArray = new XRTexture2DArray([.. preTextures])
+        {
+            Name = "LightProbePrefilterArray",
+            MinFilter = ETexMinFilter.LinearMipmapLinear,
+            MagFilter = ETexMagFilter.Linear,
+        };
 
-            UploadTetrahedralization(tetraData);
+        _probePositionBuffer = new XRDataBuffer("LightProbePositions", EBufferTarget.ShaderStorageBuffer, (uint)positions.Count, EComponentType.Struct, (uint)Marshal.SizeOf<ProbePositionData>(), false, false)
+        {
+            BindingIndexOverride = 0,
+        };
+        _probePositionBuffer.SetDataRaw<ProbePositionData>(positions);
+        _probePositionBuffer.PushData();
+
+        _lastProbeCount = positions.Count;
+        _pendingProbeRefresh = false;
+
+        StartTetrahedralizationJob(readyProbes);
+    }
+
+    private void StartTetrahedralizationJob(IList<LightProbeComponent> probes)
+    {
+        _probeTessellationJob?.Cancel();
+        _probeTessellationJob = Engine.Jobs.Schedule(() => RunTetrahedralization(probes));
+    }
+
+    private IEnumerable RunTetrahedralization(IList<LightProbeComponent> probes)
+    {
+        var probeIndices = new Dictionary<LightProbeComponent, int>(probes.Count);
+        for (int i = 0; i < probes.Count; ++i)
+            probeIndices[probes[i]] = i;
+
+        // If we don't have enough probes for a tetrahedralization, create a minimal fallback so shaders still have data.
+        if (probes.Count is > 0 and < 5)
+        {
+            UploadTetrahedralization(BuildFallbackTetraData(probeIndices));
             yield break;
         }
 
-        private void UploadTetrahedralization(IReadOnlyList<ProbeTetraData> tetraData)
+        if (!Lights3DCollection.TryCreateDelaunay(probes, out var triangulation))
         {
-            _probeTetraBuffer?.Dispose();
-            if (tetraData.Count == 0)
-            {
-                _probeTetraBuffer = null;
-                return;
-            }
-
-            var tetraList = tetraData as IList<ProbeTetraData> ?? new List<ProbeTetraData>(tetraData);
-
-            _probeTetraBuffer = new XRDataBuffer("LightProbeTetra", EBufferTarget.ShaderStorageBuffer, (uint)tetraList.Count, EComponentType.Struct, (uint)Marshal.SizeOf<ProbeTetraData>(), false, false)
-            {
-                BindingIndexOverride = 1,
-            };
-            _probeTetraBuffer.SetDataRaw<ProbeTetraData>(tetraList);
-            _probeTetraBuffer.PushData();
+            Debug.LogWarning("Probe tetrahedralization failed; skipping tetra buffer upload.");
+            UploadTetrahedralization([]);
+            yield break;
         }
+
+        var cells = triangulation.Cells.ToList();
+        var tetraData = new List<ProbeTetraData>(cells.Count);
+        foreach (var cell in cells)
+        {
+            var v = cell.Vertices;
+            if (v.Length >= 4)
+            {
+                tetraData.Add(new ProbeTetraData
+                {
+                    Indices = new Vector4(
+                        probeIndices[v[0]],
+                        probeIndices[v[1]],
+                        probeIndices[v[2]],
+                        probeIndices[v[3]])
+                });
+            }
+        }
+
+        UploadTetrahedralization(tetraData);
+        yield break;
+    }
+
+    private static List<ProbeTetraData> BuildFallbackTetraData(Dictionary<LightProbeComponent, int> indices)
+    {
+        int count = indices.Count;
+        var list = new List<ProbeTetraData>(1);
+
+        int a = indices.Values.ElementAt(0);
+        int b = count >= 2 ? indices.Values.ElementAt(1) : a;
+        int c = count >= 3 ? indices.Values.ElementAt(2) : b;
+        int d = count >= 4 ? indices.Values.ElementAt(3) : c;
+
+        // Build one degenerate tetra that repeats available probes; shaders can treat this as a single-sample approximation.
+        list.Add(new ProbeTetraData
+        {
+            Indices = new Vector4(a, b, c, d)
+        });
+
+        return list;
+    }
+
+    private void UploadTetrahedralization(IReadOnlyList<ProbeTetraData> tetraData)
+    {
+        _probeTetraBuffer?.Dispose();
+        if (tetraData.Count == 0)
+        {
+            _probeTetraBuffer = null;
+            return;
+        }
+
+        var tetraList = tetraData as IList<ProbeTetraData> ?? [.. tetraData];
+
+        _probeTetraBuffer = new XRDataBuffer("LightProbeTetra", EBufferTarget.ShaderStorageBuffer, (uint)tetraList.Count, EComponentType.Struct, (uint)Marshal.SizeOf<ProbeTetraData>(), false, false)
+        {
+            BindingIndexOverride = 1,
+        };
+        _probeTetraBuffer.SetDataRaw(tetraList);
+        _probeTetraBuffer.PushData();
+    }
 
 
     private static TSettings? GetSettings<TSettings>(PipelinePostProcessState? state) where TSettings : class

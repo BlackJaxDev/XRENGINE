@@ -21,6 +21,10 @@ namespace XREngine.Rendering.Vulkan
         {
             throw new NotImplementedException();
         }
+        public override void CalcDotLuminanceFrontAsyncCompute(BoundingRectangle region, bool withTransparency, Vector3 luminance, Action<bool, float> callback)
+        {
+            throw new NotImplementedException();
+        }
         public override void CalcDotLuminanceFrontAsync(BoundingRectangle region, bool withTransparency, Vector3 luminance, Action<bool, float> callback)
         {
             // Read back the last presented swapchain image region on the GPU, then compute dot-luminance on CPU.

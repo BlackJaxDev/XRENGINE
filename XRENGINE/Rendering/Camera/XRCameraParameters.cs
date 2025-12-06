@@ -49,12 +49,19 @@ namespace XREngine.Rendering
 
         private void VerifyProjection()
         {
-            if (_projectionMatrix is not null)
-                return;
-            
-            _projectionMatrix = CalculateProjectionMatrix();
-            _untransformedFrustum = CalculateUntransformedFrustum();
-            ProjectionMatrixChanged?.Invoke(this);
+            bool changed = false;
+
+            if (_projectionMatrix is null)
+            {
+                _projectionMatrix = CalculateProjectionMatrix();
+                changed = true;
+            }
+
+            if (_untransformedFrustum is null || changed)
+                _untransformedFrustum = CalculateUntransformedFrustum();
+
+            if (changed)
+                ProjectionMatrixChanged?.Invoke(this);
         }
 
         /// <summary>

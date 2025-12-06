@@ -2,6 +2,7 @@
 using MIConvexHull;
 using System.Collections.Concurrent;
 using System.Numerics;
+using System.Linq;
 using XREngine.Components.Lights;
 using XREngine.Data;
 using XREngine.Data.Core;
@@ -49,6 +50,8 @@ namespace XREngine.Scene
         /// All light probes in the scene.
         /// </summary>
         public EventList<LightProbeComponent> LightProbes { get; } = [];
+
+        private const float ProbePositionQuantization = 0.001f;
 
         private readonly List<PreparedFrustum> _frustumScratch = new(6);
 
@@ -316,9 +319,98 @@ namespace XREngine.Scene
         /// <param name="scene"></param>
         public void GenerateDelauanyTriangulation(VisualScene scene)
         {
-            _cells = Triangulation.CreateDelaunay<LightProbeComponent, LightProbeCell>(LightProbes);
+            if (!TryCreateDelaunay(LightProbes, out _cells))
+            {
+                Debug.LogWarning("Light probe triangulation failed; skipping cell generation.");
+                return;
+            }
             //_instancedCellRenderer = new XRMeshRenderer(GenerateInstancedCellMesh(), new XRMaterial(XRShader.EngineShader("Common/DelaunayCell.frag", EShaderType.Fragment)));
             scene.GenericRenderTree.AddRange(_cells.Cells.Select(x => x.RenderInfo));
+        }
+
+        public static bool TryCreateDelaunay(IList<LightProbeComponent> probes, out ITriangulation<LightProbeComponent, LightProbeCell>? triangulation)
+        {
+            triangulation = null;
+            if (probes is null || probes.Count < 5)
+                return false;
+
+            var filtered = FilterDistinctProbes(probes)
+                .Where(p => IsFinite(p.Transform.WorldTranslation))
+                .ToList();
+
+            if (filtered.Count < 5)
+                return false;
+
+            //if (!Has3DSpan(filtered))
+            //{
+            //    Debug.LogWarning("Light probe triangulation skipped: probes are coplanar or degenerate.");
+            //    return false;
+            //}
+
+            try
+            {
+                triangulation = Triangulation.CreateDelaunay<LightProbeComponent, LightProbeCell>(filtered);
+                return triangulation.Cells.Any();
+            }
+            catch (ConvexHullGenerationException ex)
+            {
+                Debug.LogWarning($"Light probe triangulation failed: {ex.Message}");
+                return false;
+            }
+            catch (ArgumentException ex)
+            {
+                Debug.LogWarning($"Light probe triangulation failed: {ex.Message}");
+                return false;
+            }
+        }
+
+        private static bool Has3DSpan(IList<LightProbeComponent> probes)
+        {
+            if (probes.Count < 4)
+                return false;
+
+            // Use a dynamic tolerance based on the probe extents so tiny volumes are treated as coplanar.
+            Vector3 firstPos = probes[0].Transform.WorldTranslation;
+            var bounds = new AABB(firstPos, firstPos);
+            foreach (var probe in probes)
+                bounds.ExpandToInclude(probe.Transform.WorldTranslation);
+
+            float span = bounds.Size.Length();
+            float minVolume6 = MathF.Max(1e-6f, MathF.Pow(span, 3) * 1e-6f);
+
+            Vector3 origin = probes[0].Transform.WorldTranslation;
+            for (int i = 1; i < probes.Count - 2; ++i)
+                for (int j = i + 1; j < probes.Count - 1; ++j)
+                    for (int k = j + 1; k < probes.Count; ++k)
+                    {
+                        Vector3 v1 = probes[i].Transform.WorldTranslation - origin;
+                        Vector3 v2 = probes[j].Transform.WorldTranslation - origin;
+                        Vector3 v3 = probes[k].Transform.WorldTranslation - origin;
+                        float volume6 = MathF.Abs(Vector3.Dot(Vector3.Cross(v1, v2), v3));
+                        if (volume6 > minVolume6)
+                            return true;
+                    }
+
+            return false;
+        }
+
+        private static bool IsFinite(Vector3 v)
+            => float.IsFinite(v.X) && float.IsFinite(v.Y) && float.IsFinite(v.Z);
+
+        private static IList<LightProbeComponent> FilterDistinctProbes(IList<LightProbeComponent> probes)
+        {
+            var distinct = new Dictionary<(int, int, int), LightProbeComponent>();
+            float inv = 1.0f / ProbePositionQuantization;
+
+            foreach (var probe in probes)
+            {
+                Vector3 pos = probe.Transform.WorldTranslation;
+                var key = ((int)MathF.Round(pos.X * inv), (int)MathF.Round(pos.Y * inv), (int)MathF.Round(pos.Z * inv));
+                if (!distinct.ContainsKey(key))
+                    distinct[key] = probe;
+            }
+
+            return distinct.Values.ToList();
         }
 
         public void RenderCells(ICollection<LightProbeCell> probes)

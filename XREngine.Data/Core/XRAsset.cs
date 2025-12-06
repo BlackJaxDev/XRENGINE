@@ -1,5 +1,5 @@
 ﻿using Extensions;
-using System;
+using MemoryPack;
 using System.ComponentModel;
 using System.IO.MemoryMappedFiles;
 using System.Text.Json.Serialization;
@@ -11,8 +11,10 @@ namespace XREngine.Core.Files
     /// <summary>
     /// An asset is a common base class for all engine-formatted objects that are loaded from disk.
     /// </summary>
+    [MemoryPackable(GenerateType.NoGenerate)]
     public abstract partial class XRAsset : XRObjectBase
     {
+        [MemoryPackConstructor]
         public XRAsset() { }
         public XRAsset(string name) => Name = name;
 
@@ -99,6 +101,7 @@ namespace XREngine.Core.Files
         [JsonIgnore]
         [YamlIgnore]
         [Browsable(false)]
+        [MemoryPackIgnore]
         public MemoryMappedViewStream? FileMapStream { get; private set; }
 
         public void OpenForStreaming()
