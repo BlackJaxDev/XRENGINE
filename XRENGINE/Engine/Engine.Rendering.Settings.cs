@@ -7,6 +7,7 @@ using XREngine.Components.Scene.Mesh;
 using XREngine.Core.Files;
 using XREngine.Data.Colors;
 using XREngine.Data.Core;
+using XREngine.Rendering.DLSS;
 using XREngine.Scene;
 
 namespace XREngine
@@ -107,6 +108,12 @@ namespace XREngine
                 private Vector3 _defaultLuminance = new(0.299f, 0.587f, 0.114f);
                 private bool _outputHDR = false;
                 private EAntiAliasingMode _antiAliasingMode = EAntiAliasingMode.None;
+                private bool _enableNvidiaDlss = false;
+                private EDlssQualityMode _dlssQuality = EDlssQualityMode.Quality;
+                private float _dlssCustomScale = 0.77f;
+                private float _dlssSharpness = 0.2f;
+                private bool _dlssEnableFrameSmoothing = true;
+                private float _dlssFrameSmoothingStrength = 0.15f;
                 private uint _msaaSampleCount = 4u;
                 private bool _allowShaderPipelines = true;
                 private bool _useIntegerUniformsInShaders = true;
@@ -239,6 +246,72 @@ namespace XREngine
                         if (!SetField(ref _antiAliasingMode, value))
                             return;
                     }
+                }
+
+                /// <summary>
+                /// Enables NVIDIA DLSS frame upscaling when supported hardware and drivers are present.
+                /// </summary>
+                [Category("Upscaling")]
+                [Description("Enables NVIDIA DLSS frame upscaling when supported hardware and drivers are present.")]
+                public bool EnableNvidiaDlss
+                {
+                    get => _enableNvidiaDlss;
+                    set => SetField(ref _enableNvidiaDlss, value);
+                }
+
+                /// <summary>
+                /// DLSS quality/performance trade-off. Custom allows explicit scaling control.
+                /// </summary>
+                [Category("Upscaling")]
+                [Description("DLSS quality/performance trade-off. Custom allows explicit scaling control.")]
+                public EDlssQualityMode DlssQuality
+                {
+                    get => _dlssQuality;
+                    set => SetField(ref _dlssQuality, value);
+                }
+
+                /// <summary>
+                /// Custom render scale when DlssQuality is set to Custom. Values are clamped to 25%-100%.
+                /// </summary>
+                [Category("Upscaling")]
+                [Description("Custom render scale when DlssQuality is set to Custom. Values are clamped to 25%-100%.")]
+                public float DlssCustomScale
+                {
+                    get => _dlssCustomScale;
+                    set => SetField(ref _dlssCustomScale, Math.Clamp(value, 0.25f, 1.0f));
+                }
+
+                /// <summary>
+                /// DLSS sharpening amount forwarded to the runtime when available.
+                /// </summary>
+                [Category("Upscaling")]
+                [Description("DLSS sharpening amount forwarded to the runtime when available.")]
+                public float DlssSharpness
+                {
+                    get => _dlssSharpness;
+                    set => SetField(ref _dlssSharpness, Math.Clamp(value, 0.0f, 1.0f));
+                }
+
+                /// <summary>
+                /// Smooths resolution transitions to avoid visible oscillation when DLSS settings change.
+                /// </summary>
+                [Category("Upscaling")]
+                [Description("Smooths resolution transitions to avoid visible oscillation when DLSS settings change.")]
+                public bool DlssEnableFrameSmoothing
+                {
+                    get => _dlssEnableFrameSmoothing;
+                    set => SetField(ref _dlssEnableFrameSmoothing, value);
+                }
+
+                /// <summary>
+                /// Lerp factor used when smoothing DLSS resolution changes. Higher values converge faster.
+                /// </summary>
+                [Category("Upscaling")]
+                [Description("Lerp factor used when smoothing DLSS resolution changes. Higher values converge faster.")]
+                public float DlssFrameSmoothingStrength
+                {
+                    get => _dlssFrameSmoothingStrength;
+                    set => SetField(ref _dlssFrameSmoothingStrength, Math.Clamp(value, 0.0f, 1.0f));
                 }
 
                 /// <summary>
@@ -805,6 +878,16 @@ namespace XREngine
 
                 if (applyAll || propertyName == nameof(EngineSettings.RenderTransformDebugInfo))
                     ApplyTransformDebugSetting();
+
+                if (applyAll || propertyName == nameof(EngineSettings.EnableNvidiaDlss)
+                    || propertyName == nameof(EngineSettings.DlssQuality)
+                    || propertyName == nameof(EngineSettings.DlssCustomScale)
+                    || propertyName == nameof(EngineSettings.DlssSharpness)
+                    || propertyName == nameof(EngineSettings.DlssEnableFrameSmoothing)
+                    || propertyName == nameof(EngineSettings.DlssFrameSmoothingStrength))
+                {
+                    Engine.ApplyNvidiaDlssPreference();
+                }
             }
 
             private static void ApplyRenderMeshBoundsSetting()

@@ -1,6 +1,7 @@
 ﻿using System.Collections.Concurrent;
 using System.Collections.Generic;
 using XREngine.Rendering;
+using XREngine.Rendering.DLSS;
 using XREngine.Rendering.Physics.Physx;
 using XREngine.Rendering.Pipelines.Commands;
 using XREngine.Scene;
@@ -134,6 +135,25 @@ namespace XREngine
                                 debugPipeline.GpuRenderDispatch = useGpu;
                             else
                                 ApplyGpuRenderDispatchToPipeline(pipeline, useGpu);
+                        }
+                    }
+                }
+
+                Engine.InvokeOnMainThread(() => Apply(), true);
+            }
+
+            public static void ApplyNvidiaDlssPreference()
+            {
+                void Apply()
+                {
+                    foreach (XRWindow window in Engine.Windows)
+                    {
+                        foreach (XRViewport viewport in window.Viewports)
+                        {
+                            if (!NvidiaDlssManager.IsSupported || !Settings.EnableNvidiaDlss)
+                                NvidiaDlssManager.ResetViewport(viewport);
+                            else
+                                NvidiaDlssManager.ApplyToViewport(viewport, Settings);
                         }
                     }
                 }
