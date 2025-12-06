@@ -765,17 +765,17 @@ internal static class ImGuiAssetUtilities
         bool isDirty = asset.IsDirty;
         ImGui.TextDisabled(isDirty ? "Status: Dirty" : "Status: Saved");
 
-        if (!string.IsNullOrWhiteSpace(filePath))
-        {
-            int referenceCount = AssetReferenceAnalyzer.GetReferenceCount(asset);
-            string message = referenceCount switch
-            {
-                0 => "No other assets reference this file.",
-                1 => "1 other asset references this file.",
-                _ => $"{referenceCount} other assets reference this file."
-            };
-            ImGui.TextDisabled(message);
-        }
+        //if (!string.IsNullOrWhiteSpace(filePath))
+        //{
+        //    int referenceCount = AssetReferenceAnalyzer.GetReferenceCount(asset);
+        //    string message = referenceCount switch
+        //    {
+        //        0 => "No other assets reference this file.",
+        //        1 => "1 other asset references this file.",
+        //        _ => $"{referenceCount} other assets reference this file."
+        //    };
+        //    ImGui.TextDisabled(message);
+        //}
     }
 
     private static bool RequiresExternalAssetContext(XRAsset asset)

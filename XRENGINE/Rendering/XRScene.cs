@@ -1,4 +1,5 @@
-﻿using XREngine.Core.Files;
+﻿using MemoryPack;
+using XREngine.Core.Files;
 using XREngine.Rendering;
 
 namespace XREngine.Scene
@@ -6,7 +7,8 @@ namespace XREngine.Scene
     /// <summary>
     /// Defines a collection of root scene nodes that can be loaded in and out of a world.
     /// </summary>
-    public class XRScene : XRAsset
+    [MemoryPackable(GenerateType.NoGenerate)]
+    public partial class XRScene : XRAsset
     {
         public XRScene() { }
         public XRScene(string name) : base(name) { }

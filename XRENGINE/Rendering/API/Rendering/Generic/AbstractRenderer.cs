@@ -298,6 +298,10 @@ namespace XREngine.Rendering
             => CalcDotLuminanceFrontAsync(region, withTransparency, Engine.Rendering.Settings.DefaultLuminance, callback);
         public abstract void CalcDotLuminanceFrontAsync(BoundingRectangle region, bool withTransparency, Vector3 luminance, Action<bool, float> callback);
 
+        public void CalcDotLuminanceFrontAsyncCompute(BoundingRectangle region, bool withTransparency, Action<bool, float> callback)
+            => CalcDotLuminanceFrontAsyncCompute(region, withTransparency, Engine.Rendering.Settings.DefaultLuminance, callback);
+        public abstract void CalcDotLuminanceFrontAsyncCompute(BoundingRectangle region, bool withTransparency, Vector3 luminance, Action<bool, float> callback);
+
         public abstract void Clear(bool color, bool depth, bool stencil);
         public abstract void BindFrameBuffer(EFramebufferTarget fboTarget, XRFrameBuffer? fbo);
         public abstract void ClearColor(ColorF4 color);

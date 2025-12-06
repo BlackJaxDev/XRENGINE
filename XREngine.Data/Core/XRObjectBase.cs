@@ -1,4 +1,5 @@
-﻿using System.Collections.Concurrent;
+﻿using MemoryPack;
+using System.Collections.Concurrent;
 using System.ComponentModel;
 using XREngine.Core;
 using YamlDotNet.Serialization;
@@ -9,7 +10,8 @@ namespace XREngine.Data.Core
     /// This base class is for any object that is managed by the engine, has a unique ID, and should be destroyed after use.
     /// </summary>
     [Serializable]
-    public abstract class XRObjectBase : XRBase, IDisposable, IPoolable
+    [MemoryPackable(GenerateType.NoGenerate)]
+    public abstract partial class XRObjectBase : XRBase, IDisposable, IPoolable
     {
         [Browsable(false)]
         public Guid ID { get; internal set; } = Guid.NewGuid();

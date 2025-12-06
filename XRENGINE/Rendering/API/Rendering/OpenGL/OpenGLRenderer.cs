@@ -398,6 +398,38 @@ namespace XREngine.Rendering.OpenGL
             _imguiController = null;
             _imguiBackend = null;
             ResetImGuiFrameMarker();
+
+            // Clean up cached luminance front resources
+            if (_luminanceFrontTex != 0)
+            {
+                Api.DeleteTexture(_luminanceFrontTex);
+                _luminanceFrontTex = 0;
+            }
+            if (_luminanceFrontFbo != 0)
+            {
+                Api.DeleteFramebuffer(_luminanceFrontFbo);
+                _luminanceFrontFbo = 0;
+            }
+            if (_luminanceFrontPbo != 0)
+            {
+                Api.DeleteBuffer(_luminanceFrontPbo);
+                _luminanceFrontPbo = 0;
+            }
+            _luminanceFrontPboSize = 0;
+            _luminanceFrontTexWidth = 0;
+            _luminanceFrontTexHeight = 0;
+            _luminanceFrontMipLevels = 0;
+
+            // Clean up compute shader resources
+            if (_luminanceResultBuffer != 0)
+            {
+                Api.DeleteBuffer(_luminanceResultBuffer);
+                _luminanceResultBuffer = 0;
+            }
+            _luminanceResultBufferSize = 0;
+            _luminanceComputeProgram?.Destroy();
+            _luminanceComputeProgram = null;
+            _luminanceComputeInitialized = false;
         }
 
         protected override void WindowRenderCallback(double delta)
@@ -789,6 +821,96 @@ namespace XREngine.Rendering.OpenGL
             return buffer;
         }
 
+        // Cached resources for CalcDotLuminanceFrontAsync to avoid per-frame allocations
+        private uint _luminanceFrontTex;
+        private uint _luminanceFrontFbo;
+        private uint _luminanceFrontTexWidth;
+        private uint _luminanceFrontTexHeight;
+        private int _luminanceFrontMipLevels;
+        private uint _luminanceFrontPbo;
+        private uint _luminanceFrontPboSize;
+
+        // Extension support flags (cached after first check)
+        private bool? _hasTextureFilterMinmax;
+        private bool HasTextureFilterMinmax => _hasTextureFilterMinmax ??= IsExtensionSupported("GL_ARB_texture_filter_minmax");
+
+        // Compute shader for parallel luminance reduction
+        private XRRenderProgram? _luminanceComputeProgram;
+        private uint _luminanceResultBuffer;
+        private uint _luminanceResultBufferSize;
+        private bool _luminanceComputeInitialized;
+
+        private const string LuminanceComputeShaderSource = @"
+#version 460
+
+layout(local_size_x = 16, local_size_y = 16, local_size_z = 1) in;
+
+layout(binding = 0) uniform sampler2D inputTexture;
+layout(std430, binding = 0) buffer ResultBuffer {
+    vec4 result;
+};
+
+uniform ivec2 textureSize;
+uniform vec3 luminanceWeights;
+
+shared vec4 sharedAccum[256];
+
+void main() {
+    uint localIdx = gl_LocalInvocationID.x + gl_LocalInvocationID.y * 16u;
+    ivec2 gid = ivec2(gl_GlobalInvocationID.xy);
+    
+    vec4 accum = vec4(0.0);
+    if (gid.x < textureSize.x && gid.y < textureSize.y) {
+        vec2 uv = (vec2(gid) + 0.5) / vec2(textureSize);
+        accum = textureLod(inputTexture, uv, 0.0);
+    }
+    sharedAccum[localIdx] = accum;
+    
+    barrier();
+    
+    // Parallel reduction within workgroup
+    for (uint stride = 128u; stride > 0u; stride >>= 1u) {
+        if (localIdx < stride) {
+            sharedAccum[localIdx] += sharedAccum[localIdx + stride];
+        }
+        barrier();
+    }
+    
+    // First thread in workgroup atomically adds to result
+    if (localIdx == 0u) {
+        uint pixelCount = uint(textureSize.x * textureSize.y);
+        vec4 avg = sharedAccum[0] / float(pixelCount);
+        result = avg;
+    }
+}
+";
+
+        private void EnsureLuminanceComputeResources()
+        {
+            if (_luminanceComputeInitialized)
+                return;
+
+            try
+            {
+                var shader = new XRShader(EShaderType.Compute, LuminanceComputeShaderSource);
+                _luminanceComputeProgram = new XRRenderProgram(true, false, shader);
+                
+                // Create result buffer (single vec4)
+                _luminanceResultBuffer = Api.GenBuffer();
+                _luminanceResultBufferSize = 16; // sizeof(vec4)
+                Api.BindBuffer(GLEnum.ShaderStorageBuffer, _luminanceResultBuffer);
+                Api.BufferData(GLEnum.ShaderStorageBuffer, _luminanceResultBufferSize, IntPtr.Zero, GLEnum.DynamicRead);
+                Api.BindBuffer(GLEnum.ShaderStorageBuffer, 0);
+                
+                _luminanceComputeInitialized = true;
+            }
+            catch (Exception ex)
+            {
+                Debug.LogWarning($"Failed to initialize luminance compute shader: {ex.Message}");
+                _luminanceComputeInitialized = false;
+            }
+        }
+
         public override unsafe void CalcDotLuminanceAsync(XRTexture2D texture, Action<bool, float> callback, Vector3 luminance, bool genMipmapsNow = true)
         {
             using var prof = Engine.Profiler.Start("GLRenderer.CalcDotLuminanceAsync");
@@ -942,24 +1064,53 @@ namespace XREngine.Rendering.OpenGL
                 return;
             }
 
-            //TODO: move temp allocations out of this method
-
-            // Copy the requested front buffer region into a temporary FBO-backed texture, generate mipmaps, then read the 1x1 mip via ReadPixels.
+            // Copy the requested front buffer region into a cached FBO-backed texture, generate mipmaps, then read the 1x1 mip via ReadPixels.
             Api.BindFramebuffer(FramebufferTarget.ReadFramebuffer, 0);
             Api.ReadBuffer(ReadBufferMode.Front);
 
-            uint tempTex = Api.GenTexture();
-            Api.BindTexture(TextureTarget.Texture2D, tempTex);
-
+            // Check if we need to reallocate the cached texture/FBO (dimensions changed or not yet allocated)
             int mipLevels = 1 + (int)MathF.Floor(MathF.Log2(MathF.Max(w, h)));
             if (mipLevels < 1)
                 mipLevels = 1;
 
-            Api.TexStorage2D(TextureTarget.Texture2D, (uint)mipLevels, GLEnum.Rgba8, w, h);
+            if (_luminanceFrontTex == 0 || _luminanceFrontTexWidth != w || _luminanceFrontTexHeight != h)
+            {
+                // Clean up old resources if they exist
+                if (_luminanceFrontTex != 0)
+                    Api.DeleteTexture(_luminanceFrontTex);
+                if (_luminanceFrontFbo != 0)
+                    Api.DeleteFramebuffer(_luminanceFrontFbo);
+                if (_luminanceFrontPbo != 0)
+                    Api.DeleteBuffer(_luminanceFrontPbo);
 
-            uint tempFbo = Api.GenFramebuffer();
-            Api.BindFramebuffer(FramebufferTarget.DrawFramebuffer, tempFbo);
-            Api.FramebufferTexture2D(FramebufferTarget.DrawFramebuffer, FramebufferAttachment.ColorAttachment0, TextureTarget.Texture2D, tempTex, 0);
+                // Create new texture with immutable storage
+                _luminanceFrontTex = Api.GenTexture();
+                Api.BindTexture(TextureTarget.Texture2D, _luminanceFrontTex);
+                Api.TexStorage2D(TextureTarget.Texture2D, (uint)mipLevels, GLEnum.Rgba8, w, h);
+
+                // Create FBO and attach texture
+                _luminanceFrontFbo = Api.GenFramebuffer();
+                Api.BindFramebuffer(FramebufferTarget.DrawFramebuffer, _luminanceFrontFbo);
+                Api.FramebufferTexture2D(FramebufferTarget.DrawFramebuffer, FramebufferAttachment.ColorAttachment0, TextureTarget.Texture2D, _luminanceFrontTex, 0);
+
+                // Create cached PBO for readback (4 bytes for RGBA8)
+                _luminanceFrontPbo = Api.GenBuffer();
+                _luminanceFrontPboSize = 4;
+                Api.BindBuffer(GLEnum.PixelPackBuffer, _luminanceFrontPbo);
+                Api.BufferData(GLEnum.PixelPackBuffer, _luminanceFrontPboSize, IntPtr.Zero, GLEnum.StreamRead);
+                Api.BindBuffer(GLEnum.PixelPackBuffer, 0);
+
+                _luminanceFrontTexWidth = w;
+                _luminanceFrontTexHeight = h;
+                _luminanceFrontMipLevels = mipLevels;
+            }
+            else
+            {
+                Api.BindTexture(TextureTarget.Texture2D, _luminanceFrontTex);
+                Api.BindFramebuffer(FramebufferTarget.DrawFramebuffer, _luminanceFrontFbo);
+                // Re-attach mip 0 for the blit target
+                Api.FramebufferTexture2D(FramebufferTarget.DrawFramebuffer, FramebufferAttachment.ColorAttachment0, TextureTarget.Texture2D, _luminanceFrontTex, 0);
+            }
 
             Api.BlitFramebuffer(
                 region.X, region.Y, region.X + (int)w, region.Y + (int)h,
@@ -967,20 +1118,20 @@ namespace XREngine.Rendering.OpenGL
                 ClearBufferMask.ColorBufferBit,
                 GLEnum.Linear);
 
-            Api.BindTexture(TextureTarget.Texture2D, tempTex);
+            Api.BindTexture(TextureTarget.Texture2D, _luminanceFrontTex);
             Api.GenerateMipmap(TextureTarget.Texture2D);
 
             int mipLevel = XRTexture.GetSmallestMipmapLevel(w, h);
 
             // Re-attach the smallest mip for readback.
-            Api.BindFramebuffer(FramebufferTarget.ReadFramebuffer, tempFbo);
-            Api.FramebufferTexture2D(FramebufferTarget.ReadFramebuffer, FramebufferAttachment.ColorAttachment0, TextureTarget.Texture2D, tempTex, mipLevel);
+            Api.BindFramebuffer(FramebufferTarget.ReadFramebuffer, _luminanceFrontFbo);
+            Api.FramebufferTexture2D(FramebufferTarget.ReadFramebuffer, FramebufferAttachment.ColorAttachment0, TextureTarget.Texture2D, _luminanceFrontTex, mipLevel);
             Api.ReadBuffer(ReadBufferMode.ColorAttachment0);
 
-            uint byteSize = 4; // RGBA8
-            uint pbo = Api.GenBuffer();
+            // Use cached PBO for async readback
+            uint pbo = _luminanceFrontPbo;
+            uint byteSize = _luminanceFrontPboSize;
             Api.BindBuffer(GLEnum.PixelPackBuffer, pbo);
-            Api.BufferData(GLEnum.PixelPackBuffer, byteSize, null, GLEnum.StreamRead);
 
             Api.ReadPixels(0, 0, 1, 1, GLObjectBase.ToGLEnum(EPixelFormat.Rgba), GLObjectBase.ToGLEnum(EPixelType.UnsignedByte), (void*)IntPtr.Zero);
 
@@ -993,9 +1144,7 @@ namespace XREngine.Rendering.OpenGL
                     return false;
 
                 Api.DeleteSync(sync);
-                Api.DeleteBuffer(pbo);
-                Api.DeleteTexture(tempTex);
-                Api.DeleteFramebuffer(tempFbo);
+                // Note: PBO, texture and FBO are cached and NOT deleted here
 
                 float r = _asyncBuffer[0] / 255.0f;
                 float g = _asyncBuffer[1] / 255.0f;
@@ -1013,6 +1162,131 @@ namespace XREngine.Rendering.OpenGL
 
             Engine.AddMainThreadCoroutine(FenceCheck);
         }
+
+        /// <summary>
+        /// Calculates average luminance using a compute shader for parallel reduction.
+        /// This is an alternative to the mipmap-based approach that can be more efficient for large textures.
+        /// </summary>
+        public unsafe override void CalcDotLuminanceFrontAsyncCompute(BoundingRectangle region, bool withTransparency, Vector3 luminance, Action<bool, float> callback)
+        {
+            using var prof = Engine.Profiler.Start("GLRenderer.CalcDotLuminanceFrontAsyncCompute");
+
+            uint w = (uint)region.Width;
+            uint h = (uint)region.Height;
+            if (w == 0 || h == 0)
+            {
+                callback(false, 0.0f);
+                return;
+            }
+
+            EnsureLuminanceComputeResources();
+            if (!_luminanceComputeInitialized || _luminanceComputeProgram is null)
+            {
+                // Fall back to mipmap method
+                CalcDotLuminanceFrontAsync(region, withTransparency, luminance, callback);
+                return;
+            }
+
+            // First, blit front buffer to texture (reuse existing cached texture)
+            Api.BindFramebuffer(FramebufferTarget.ReadFramebuffer, 0);
+            Api.ReadBuffer(ReadBufferMode.Front);
+
+            int mipLevels = 1; // No mipmaps needed for compute path
+            if (_luminanceFrontTex == 0 || _luminanceFrontTexWidth != w || _luminanceFrontTexHeight != h)
+            {
+                if (_luminanceFrontTex != 0)
+                    Api.DeleteTexture(_luminanceFrontTex);
+                if (_luminanceFrontFbo != 0)
+                    Api.DeleteFramebuffer(_luminanceFrontFbo);
+
+                _luminanceFrontTex = Api.GenTexture();
+                Api.BindTexture(TextureTarget.Texture2D, _luminanceFrontTex);
+                Api.TexStorage2D(TextureTarget.Texture2D, (uint)mipLevels, GLEnum.Rgba8, w, h);
+
+                _luminanceFrontFbo = Api.GenFramebuffer();
+                Api.BindFramebuffer(FramebufferTarget.DrawFramebuffer, _luminanceFrontFbo);
+                Api.FramebufferTexture2D(FramebufferTarget.DrawFramebuffer, FramebufferAttachment.ColorAttachment0, TextureTarget.Texture2D, _luminanceFrontTex, 0);
+
+                _luminanceFrontTexWidth = w;
+                _luminanceFrontTexHeight = h;
+                _luminanceFrontMipLevels = mipLevels;
+            }
+            else
+            {
+                Api.BindTexture(TextureTarget.Texture2D, _luminanceFrontTex);
+                Api.BindFramebuffer(FramebufferTarget.DrawFramebuffer, _luminanceFrontFbo);
+                Api.FramebufferTexture2D(FramebufferTarget.DrawFramebuffer, FramebufferAttachment.ColorAttachment0, TextureTarget.Texture2D, _luminanceFrontTex, 0);
+            }
+
+            Api.BlitFramebuffer(
+                region.X, region.Y, region.X + (int)w, region.Y + (int)h,
+                0, 0, (int)w, (int)h,
+                ClearBufferMask.ColorBufferBit,
+                GLEnum.Linear);
+
+            // Clear result buffer
+            Vector4 zero = Vector4.Zero;
+            Api.BindBuffer(GLEnum.ShaderStorageBuffer, _luminanceResultBuffer);
+            Api.BufferSubData(GLEnum.ShaderStorageBuffer, IntPtr.Zero, 16, &zero);
+
+            // Bind resources and dispatch compute
+            var glProgram = GenericToAPI<GLRenderProgram>(_luminanceComputeProgram);
+            if (glProgram is null || !glProgram.IsLinked)
+            {
+                callback(false, 0.0f);
+                return;
+            }
+
+            Api.UseProgram(glProgram.BindingId);
+            glProgram.Uniform("textureSize", new Data.Vectors.IVector2((int)w, (int)h));
+            glProgram.Uniform("luminanceWeights", luminance);
+
+            Api.ActiveTexture(GLEnum.Texture0);
+            Api.BindTexture(TextureTarget.Texture2D, _luminanceFrontTex);
+            glProgram.Uniform("inputTexture", 0);
+
+            Api.BindBufferBase(GLEnum.ShaderStorageBuffer, 0, _luminanceResultBuffer);
+
+            uint groupsX = (w + 15) / 16;
+            uint groupsY = (h + 15) / 16;
+            Api.DispatchCompute(groupsX, groupsY, 1);
+
+            Api.MemoryBarrier((uint)MemoryBarrierMask.ShaderStorageBarrierBit);
+
+            // Async readback from result buffer
+            IntPtr sync = Api.FenceSync(GLEnum.SyncGpuCommandsComplete, 0u);
+
+            bool FenceCheck()
+            {
+                var result = Api.ClientWaitSync(sync, 0u, 0u);
+                if (!(result == GLEnum.AlreadySignaled || result == GLEnum.ConditionSatisfied))
+                    return false;
+
+                Api.DeleteSync(sync);
+
+                Vector4 avg;
+                Api.BindBuffer(GLEnum.ShaderStorageBuffer, _luminanceResultBuffer);
+                Api.GetBufferSubData(GLEnum.ShaderStorageBuffer, IntPtr.Zero, 16, &avg);
+                Api.BindBuffer(GLEnum.ShaderStorageBuffer, 0);
+
+                if (float.IsNaN(avg.X) || float.IsNaN(avg.Y) || float.IsNaN(avg.Z))
+                {
+                    callback(false, 0.0f);
+                    return true;
+                }
+
+                callback(true, new Vector3(avg.X, avg.Y, avg.Z).Dot(luminance));
+                return true;
+            }
+
+            Engine.AddMainThreadCoroutine(FenceCheck);
+        }
+
+        /// <summary>
+        /// Checks if GL_ARB_texture_filter_minmax extension is available.
+        /// This extension provides hardware-accelerated min/max/average filtering.
+        /// </summary>
+        public bool SupportsTextureFilterMinmax => HasTextureFilterMinmax;
 
         public override void GetScreenshotAsync(BoundingRectangle region, bool withTransparency, Action<MagickImage, int> imageCallback)
         {
