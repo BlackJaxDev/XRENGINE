@@ -529,7 +529,10 @@ public class DefaultRenderPipeline : RenderPipeline
             using (c.AddUsing<VPRC_BindOutputFBO>())
             {
                 //c.Add<VPRC_ClearByBoundFBO>();
-                c.Add<VPRC_RenderQuadFBO>().FrameBufferName = EnableFxaa ? FxaaFBOName : PostProcessFBOName;
+                var dlssBlit = c.Add<VPRC_StreamlineDlssUpscale>();
+                dlssBlit.FrameBufferName = EnableFxaa ? FxaaFBOName : PostProcessFBOName;
+                dlssBlit.DepthTextureName = DepthViewTextureName;
+                dlssBlit.MotionTextureName = VelocityTextureName;
 
                 //We're not rendering to an FBO, we're rendering direct to the screen on top of the scene
                 c.Add<VPRC_RenderScreenSpaceUI>()/*.OutputTargetFBOName = UserInterfaceFBOName*/;
