@@ -1,4 +1,5 @@
-﻿using System;
+﻿using MemoryPack;
+using System;
 using XREngine.Data.Rendering;
 
 namespace XREngine.Rendering
@@ -7,7 +8,8 @@ namespace XREngine.Rendering
     /// Lightweight view over a region of an <see cref="XRDataBuffer"/> so render backends
     /// can bind subranges or reinterpret the buffer with a specific sized internal format.
     /// </summary>
-    public class XRDataBufferView : GenericRenderObject, IDisposable
+    [MemoryPackable]
+    public partial class XRDataBufferView : GenericRenderObject, IDisposable
     {
         private XRDataBuffer _buffer;
         private ESizedInternalFormat _internalFormat;

@@ -1,6 +1,7 @@
 ﻿using System.Collections.Concurrent;
 using System.ComponentModel;
 using System.Reflection;
+using MemoryPack;
 using XREngine.Components;
 using XREngine.Data.Core;
 using XREngine.Rendering;
@@ -51,6 +52,7 @@ namespace XREngine
         }
 
         private object? _userData;
+        [MemoryPackIgnore]
         public object? UserData
         {
             get => _userData;
@@ -157,6 +159,7 @@ namespace XREngine
         internal XRWorldInstance? _world = null;
         [YamlIgnore]
         [Browsable(false)]
+        [MemoryPackIgnore]
         public XRWorldInstance? World
         {
             get => _world;
@@ -190,6 +193,7 @@ namespace XREngine
 
         [Browsable(false)]
         [Category("Networking")]
+        [MemoryPackIgnore]
         public float LastTickReplicationTime { get; private set; } = 0;
         [Category("Networking")]
         public float TimeBetweenReplications { get; set; } = 0.1f;

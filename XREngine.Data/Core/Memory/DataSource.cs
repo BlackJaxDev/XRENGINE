@@ -1,20 +1,31 @@
-﻿using SixLabors.ImageSharp.PixelFormats;
+﻿using System;
 using System.Diagnostics;
 using System.Runtime.InteropServices;
+using MemoryPack;
+using SixLabors.ImageSharp.PixelFormats;
 using XREngine.Data.Core;
 using YamlDotNet.Serialization;
 
 namespace XREngine.Data
 {
     //Stores a reference to unmanaged data
-    public class DataSource : XRBase, IDisposable
+    [MemoryPackable(GenerateType.NoGenerate)]
+    public partial class DataSource : XRBase, IDisposable
     {
+        static DataSource()
+        {
+            MemoryPackFormatterProvider.Register(new DataSourceFormatter());
+        }
+
+        [MemoryPackConstructor]
+        private DataSource() { }
         /// <summary>
         /// If true, this data source references memory that was allocated somewhere else.
         /// </summary>
         public bool External { get; }
         public uint Length { get; set; }
         [YamlIgnore]
+        [MemoryPackIgnore]
         public VoidPtr Address { get; set; }
 
         public static DataSource Allocate<T>(uint count, bool zeroMemory = false) where T : unmanaged
@@ -26,6 +37,7 @@ namespace XREngine.Data
                 Memory.Move(source.Address, ptr, source.Length);
             return source;
         }
+
         public DataSource(byte[] data)
         {
             External = false;
@@ -177,5 +189,55 @@ namespace XREngine.Data
         }
 
         #endregion
+
+        private sealed class DataSourceFormatter : MemoryPackFormatter<DataSource>
+        {
+            public override void Serialize<TBufferWriter>(ref MemoryPackWriter<TBufferWriter> writer, scoped ref DataSource? value)
+            {
+                if (value is null)
+                {
+                    writer.WriteNullObjectHeader();
+                    return;
+                }
+
+                writer.WriteObjectHeader((byte)2);
+                writer.WriteUnmanaged(value.External);
+                writer.WriteUnmanaged(value.Length);
+
+                if (value.Length == 0 || value.Address == IntPtr.Zero)
+                    return;
+
+                writer.WriteUnmanagedArray(value.GetBytes());
+            }
+
+            public override void Deserialize(ref MemoryPackReader reader, scoped ref DataSource? value)
+            {
+                if (!reader.TryReadObjectHeader(out byte count))
+                {
+                    value = null;
+                    return;
+                }
+
+                if (count != 2)
+                {
+                    MemoryPackSerializationException.ThrowInvalidPropertyCount(2, count);
+                }
+
+                reader.ReadUnmanaged(out bool external);
+
+                byte[]? payload = reader.ReadUnmanagedArray<byte>();
+
+                if (payload is null || payload.Length == 0)
+                {
+                    value?.Dispose();
+                    value = new DataSource(0);
+                    return;
+                }
+
+                value?.Dispose();
+                value = new DataSource(payload);
+                // External flag cannot be preserved without exposing a setter; deserialized buffers are owned
+            }
+        }
     }
 }

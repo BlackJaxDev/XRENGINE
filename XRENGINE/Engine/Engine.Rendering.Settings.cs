@@ -1,4 +1,5 @@
 ﻿using MagicPhysX;
+using MemoryPack;
 using System;
 using System.ComponentModel;
 using System.Linq;
@@ -104,7 +105,8 @@ namespace XREngine
             /// <summary>
             /// Contains global rendering settings.
             /// </summary>
-            public class EngineSettings : XRAsset
+            [MemoryPackable(GenerateType.NoGenerate)]
+            public partial class EngineSettings : XRAsset
             {
                 private Vector3 _defaultLuminance = new(0.299f, 0.587f, 0.114f);
                 private bool _outputHDR = false;

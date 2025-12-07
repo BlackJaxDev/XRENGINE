@@ -401,12 +401,7 @@ internal static class ImGuiAssetUtilities
     }
 
     private static string FormatAssetLabel(string? preferredName, object? fallback)
-    {
-        if (!string.IsNullOrWhiteSpace(preferredName))
-            return preferredName!;
-
-        return fallback?.GetType().Name ?? "<none>";
-    }
+        => !string.IsNullOrWhiteSpace(preferredName) ? preferredName! : fallback?.GetType().Name ?? "<none>";
 
     private static readonly Dictionary<Type, string[]> DefaultExtensions = new()
     {

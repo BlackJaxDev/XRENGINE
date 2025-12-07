@@ -1,8 +1,10 @@
-﻿using XREngine.Core.Files;
+﻿using MemoryPack;
+using XREngine.Core.Files;
 
 namespace XREngine.Rendering.Models
 {
-    public class Model : XRAsset
+    [MemoryPackable(GenerateType.NoGenerate)]
+    public partial class Model : XRAsset
     {
         public Model() { }
         public Model(params SubMesh[] meshes)

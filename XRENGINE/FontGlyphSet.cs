@@ -1,4 +1,5 @@
-﻿using SharpFont;
+﻿using MemoryPack;
+using SharpFont;
 using SkiaSharp;
 using System.Numerics;
 using XREngine.Core.Files;
@@ -8,11 +9,22 @@ using XREngine.Data.Vectors;
 
 namespace XREngine.Rendering
 {
+    [MemoryPackable]
     [XR3rdPartyExtensions("otf", "ttf")]
-    public class FontGlyphSet : XRAsset
+    public partial class FontGlyphSet : XRAsset
     {
-        static FontGlyphSet()
+        static partial void StaticConstructor()
             => EnsureNativeFreetypeAvailable();
+
+        [MemoryPackConstructor]
+        public FontGlyphSet(List<string> characters, Dictionary<string, Glyph>? glyphs, XRTexture2D? atlas)
+        {
+            _characters = characters;
+            _glyphs = glyphs;
+            _atlas = atlas;
+        }
+
+        public FontGlyphSet() { }
 
         private const float FontDrawSize = 100.0f;
 
@@ -722,12 +734,14 @@ namespace XREngine.Rendering
             return new Vector2(width, height);
         }
 
-        public class Glyph
+        [MemoryPackable]
+        public partial class Glyph
         {
             public Vector2 Position;
             public IVector2 Size;
             public Vector2 Bearing;
 
+            [MemoryPackConstructor]
             public Glyph() { }
             public Glyph(IVector2 size, Vector2 bearing)
             {

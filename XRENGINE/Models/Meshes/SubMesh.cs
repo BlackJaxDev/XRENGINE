@@ -1,4 +1,5 @@
-﻿using XREngine.Core.Files;
+﻿using MemoryPack;
+using XREngine.Core.Files;
 using XREngine.Data.Geometry;
 using XREngine.Scene.Transforms;
 
@@ -7,7 +8,8 @@ namespace XREngine.Rendering.Models
     /// <summary>
     /// Represents various levels of detail for a mesh that can be rendered.
     /// </summary>
-    public class SubMesh : XRAsset
+    [MemoryPackable(GenerateType.NoGenerate)]
+    public partial class SubMesh : XRAsset
     {
         public SortedSet<SubMeshLOD> LODs { get; } = new(new LODSorter());
 

@@ -1,4 +1,5 @@
-﻿using System.ComponentModel;
+﻿using MemoryPack;
+using System.ComponentModel;
 using System.Numerics;
 using XREngine.Core.Files;
 
@@ -7,7 +8,8 @@ namespace XREngine.Physics
     /// <summary>
     /// Contains parameters for constructing a new rigid body.
     /// </summary>
-    public class RigidBodyConstructionInfo : XRAsset, ICollisionObjectConstructionInfo
+    [MemoryPackable(GenerateType.NoGenerate)]
+    public partial class RigidBodyConstructionInfo : XRAsset, ICollisionObjectConstructionInfo
     {
         public RigidBodyConstructionInfo() { }
         public RigidBodyConstructionInfo(

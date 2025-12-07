@@ -1,4 +1,5 @@
-﻿using System.ComponentModel;
+﻿using MemoryPack;
+using System.ComponentModel;
 using XREngine.Core.Files;
 using XREngine.Data.Rendering;
 
@@ -7,7 +8,8 @@ namespace XREngine.Rendering.Models.Materials
     /// <summary>
     /// Contains parameters for rendering an object, such as blending and depth testing.
     /// </summary>
-    public class RenderingParameters : XRAsset
+    [MemoryPackable(GenerateType.NoGenerate)]
+    public partial class RenderingParameters : XRAsset
     {
         private DepthTest _depthTest = new();
         private StencilTest _stencilTest = new();

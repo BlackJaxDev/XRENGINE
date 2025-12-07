@@ -1,4 +1,5 @@
-﻿using System.Numerics;
+﻿using MemoryPack;
+using System.Numerics;
 using XREngine.Core.Files;
 using XREngine.Scene;
 
@@ -7,7 +8,8 @@ namespace XREngine.Physics
     public delegate void DelCollision(XRCollisionObject @this, XRCollisionObject other, XRContactInfo info, bool thisIsA);
     public delegate void DelOnHit(XRRigidBody me, XRRigidBody other, XRContactInfo collisionPoint);
 
-    public abstract class XRCollisionObject : XRAsset, IDisposable, IAbstractPhysicsActor
+    [MemoryPackable(GenerateType.NoGenerate)]
+    public abstract partial class XRCollisionObject : XRAsset, IDisposable, IAbstractPhysicsActor
     {
         public event DelMatrixUpdate? TransformChanged;
         protected internal void OnTransformChanged(Matrix4x4 worldTransform)

@@ -1,3 +1,4 @@
+using MemoryPack;
 using System;
 using System.Collections.Generic;
 using System.IO;
@@ -13,7 +14,8 @@ namespace XREngine.Rendering.Models.Gaussian;
 /// Represents a collection of gaussian splats loaded from a binary .splat file.
 /// </summary>
 [Serializable]
-public sealed class GaussianSplatCloud : XRAsset
+[MemoryPackable(GenerateType.NoGenerate)]
+public sealed partial class GaussianSplatCloud : XRAsset
 {
     public const int RecordFloatCount = 14;
     public const int RecordByteCount = RecordFloatCount * sizeof(float);

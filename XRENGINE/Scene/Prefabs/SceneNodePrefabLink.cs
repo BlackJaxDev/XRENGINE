@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using MemoryPack;
 
 namespace XREngine.Scene.Prefabs
 {
@@ -7,7 +8,8 @@ namespace XREngine.Scene.Prefabs
     /// Lightweight metadata stored on a scene node so the editor/runtime can trace it back to the prefab asset and node definition.
     /// </summary>
     [Serializable]
-    public class SceneNodePrefabLink
+    [MemoryPackable]
+    public partial class SceneNodePrefabLink
     {
         /// <summary>
         /// Asset identifier for the prefab source that authored this node.
@@ -42,7 +44,8 @@ namespace XREngine.Scene.Prefabs
     /// Represents a single property override stored on a prefab instance node.
     /// </summary>
     [Serializable]
-    public class SceneNodePrefabPropertyOverride
+    [MemoryPackable]
+    public partial class SceneNodePrefabPropertyOverride
     {
         public string PropertyPath { get; set; } = string.Empty;
         public string SerializedValue { get; set; } = string.Empty;

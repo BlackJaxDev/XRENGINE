@@ -1,4 +1,5 @@
 ﻿using Extensions;
+using MemoryPack;
 using System.ComponentModel;
 using XREngine.Core.Files;
 using XREngine.Data.Animation;
@@ -6,16 +7,24 @@ using XREngine.Data.Core;
 
 namespace XREngine.Animation
 {
-    public abstract class BaseAnimation : XRAsset
+    [MemoryPackable(GenerateType.NoGenerate)]
+    public abstract partial class BaseAnimation : XRAsset
     {
         protected const string AnimCategory = "Animation";
 
+        [field: MemoryPackIgnore]
         public event Action<BaseAnimation>? AnimationStarted;
+        [field: MemoryPackIgnore]
         public event Action<BaseAnimation>? AnimationEnded;
+        [field: MemoryPackIgnore]
         public event Action<BaseAnimation>? AnimationPaused;
+        [field: MemoryPackIgnore]
         public event Action<BaseAnimation>? CurrentFrameChanged;
+        [field: MemoryPackIgnore]
         public event Action<BaseAnimation>? SpeedChanged;
+        [field: MemoryPackIgnore]
         public event Action<BaseAnimation>? LoopChanged;
+        [field: MemoryPackIgnore]
         public event Action<BaseAnimation>? LengthChanged;
 
         protected void OnAnimationStarted() => AnimationStarted?.Invoke(this);
@@ -28,8 +37,10 @@ namespace XREngine.Animation
 
         protected float _lengthInSeconds = 0.0f;
         protected float _speed = 1.0f;
+        [MemoryPackIgnore]
         protected float _currentTime = 0.0f;
         protected bool _looped = false;
+        [MemoryPackIgnore]
         protected EAnimationState _state = EAnimationState.Stopped;
 
         public BaseAnimation(float lengthInSeconds, bool looped)

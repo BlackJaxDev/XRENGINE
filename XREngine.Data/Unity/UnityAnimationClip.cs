@@ -1,4 +1,5 @@
-﻿using System.Diagnostics;
+﻿using MemoryPack;
+using System.Diagnostics;
 using XREngine.Core.Files;
 using XREngine.Data;
 using YamlDotNet.Core;
@@ -6,8 +7,9 @@ using YamlDotNet.Serialization;
 
 namespace Unity
 {
+    [MemoryPackable(GenerateType.NoGenerate)]
     [XR3rdPartyExtensions("anim:static")]
-    public class UnityAnimationClip : XRAsset
+    public partial class UnityAnimationClip : XRAsset
     {
         public class Wrapper
         {

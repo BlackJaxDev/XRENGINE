@@ -1,15 +1,18 @@
 ﻿using Extensions;
+using MemoryPack;
 using System.Numerics;
 using XREngine.Data.Core;
 
 namespace XREngine.Animation
 {
-    public class BlendTree2D : BlendTree
+    [MemoryPackable]
+    public partial class BlendTree2D : BlendTree
     {
         public override string ToString()
             => $"BlendTree2D: {Name} ({XParameterName}, {YParameterName})";
 
-        public class Child : XRBase
+        [MemoryPackable]
+        public partial class Child : XRBase
         {
             private MotionBase? _motion;
             /// <summary>
@@ -69,12 +72,17 @@ namespace XREngine.Animation
             set => SetField(ref _children, value);
         }
 
+        [MemoryPackIgnore]
         private Child[] _sortedByX = [];
+        [MemoryPackIgnore]
         private Child[] _sortedByY = [];
+        [MemoryPackIgnore]
         private bool _needsSort = true;
 
         // Pre-allocated arrays to store bounding children
+        [MemoryPackIgnore]
         private readonly Child?[] _boundingChildren = new Child?[4];
+        [MemoryPackIgnore]
         private int _boundingChildCount;
 
         // Pre-allocated weight storage
@@ -83,7 +91,9 @@ namespace XREngine.Animation
             public Child Child;
             public float Weight;
         }
+        [MemoryPackIgnore]
         private readonly ChildWeight[] _childWeights = new ChildWeight[4];
+        [MemoryPackIgnore]
         private int _weightCount;
 
         private string _xParameterName = string.Empty;

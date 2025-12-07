@@ -1,4 +1,5 @@
-﻿using System.ComponentModel.DataAnnotations;
+﻿using MemoryPack;
+using System.ComponentModel.DataAnnotations;
 using System.Numerics;
 using XREngine.Core.Files;
 
@@ -10,7 +11,8 @@ namespace XREngine.Components.Animation
         /// The settings for VRIK tracker calibration.
         /// </summary>
         [System.Serializable]
-        public class Settings : XRAsset
+        [MemoryPackable(GenerateType.NoGenerate)]
+        public partial class Settings : XRAsset
         {
             private float _hipRotationWeight = 1.0f;
             [Range(0f, 1f)]

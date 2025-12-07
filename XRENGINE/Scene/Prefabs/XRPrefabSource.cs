@@ -1,3 +1,4 @@
+using MemoryPack;
 using System;
 using XREngine.Core.Files;
 using XREngine.Rendering;
@@ -8,7 +9,8 @@ namespace XREngine.Scene.Prefabs
     /// Serialized asset that owns a standalone hierarchy of scene nodes which can be instantiated into any world.
     /// </summary>
     [Serializable]
-    public class XRPrefabSource : XRAsset
+    [MemoryPackable(GenerateType.NoGenerate)]
+    public partial class XRPrefabSource : XRAsset
     {
         private SceneNode? _rootNode;
 

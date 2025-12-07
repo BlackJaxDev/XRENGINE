@@ -1,8 +1,12 @@
-﻿using XREngine.Data.Rendering;
+﻿using MemoryPack;
+using XREngine.Data.Rendering;
 
 namespace XREngine.Rendering
 {
-    public abstract class XRTextureViewBase(
+    [MemoryPackable]
+    [MemoryPackUnion(0, typeof(XRTextureViewRectangle))]
+    [MemoryPackUnion(1, typeof(XRTextureViewCubeArray))]
+    public abstract partial class XRTextureViewBase(
         uint minLevel,
         uint numLevels,
         uint minLayer,

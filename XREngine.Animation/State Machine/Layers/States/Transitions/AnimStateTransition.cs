@@ -1,16 +1,19 @@
-﻿using XREngine.Data.Core;
+﻿using MemoryPack;
+using XREngine.Data.Core;
 
 namespace XREngine.Animation
 {
     /// <summary>
     /// Describes a condition and how to transition to a new state.
     /// </summary>
-    public class AnimStateTransition : XRBase
+    [MemoryPackable]
+    public partial class AnimStateTransition : XRBase
     {
         public override string ToString()
             => $"AnimStateTransition: {Name} ({DestinationState?.ToString() ?? "null"})";
 
         //[Browsable(false)]
+        [MemoryPackIgnore]
         public AnimStateBase? Owner { get; internal set; }
 
         public event Action? Started;
@@ -29,7 +32,7 @@ namespace XREngine.Animation
                 SetField(ref _destinationState, value);
             }
         }
-
+        
         private List<AnimTransitionCondition> _conditions = [];
         /// <summary>
         /// The condition to test if this transition should occur; run every frame.

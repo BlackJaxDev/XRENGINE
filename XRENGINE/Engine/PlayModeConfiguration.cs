@@ -1,3 +1,4 @@
+using MemoryPack;
 using XREngine.Components;
 using XREngine.Core.Files;
 using XREngine.Scene;
@@ -32,7 +33,8 @@ namespace XREngine
     /// Configuration for how play mode behaves when entering and exiting.
     /// </summary>
     [Serializable]
-    public class PlayModeConfiguration : XRAsset
+    [MemoryPackable]
+    public partial class PlayModeConfiguration : XRAsset
     {
         private XRWorld? _startupWorld;
         private XRScene? _startupScene;
@@ -71,6 +73,7 @@ namespace XREngine
         /// 3. StartupWorld.Settings.DefaultGameMode
         /// 4. Global default GameMode
         /// </summary>
+        [MemoryPackIgnore]
         public GameMode? GameModeOverride
         {
             get => _gameModeOverride;

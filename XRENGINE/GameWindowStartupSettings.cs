@@ -1,9 +1,11 @@
-﻿using XREngine.Data.Core;
+﻿using MemoryPack;
+using XREngine.Data.Core;
 using XREngine.Scene;
 
 namespace XREngine
 {
-    public class GameWindowStartupSettings : XRBase
+    [MemoryPackable]
+    public partial class GameWindowStartupSettings : XRBase
     {
         private EWindowState _windowState = EWindowState.Windowed;
         private string? _windowTitle;

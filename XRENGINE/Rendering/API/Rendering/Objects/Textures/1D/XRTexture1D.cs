@@ -1,11 +1,13 @@
-﻿using System;
+﻿using MemoryPack;
+using System;
 using System.Linq;
 using System.Numerics;
 using XREngine.Data.Rendering;
 
 namespace XREngine.Rendering
 {
-    public class XRTexture1D : XRTexture
+    [MemoryPackable]
+    public partial class XRTexture1D : XRTexture
     {
         private Mipmap1D[] _mipmaps = [];
         private ESizedInternalFormat _sizedInternalFormat = ESizedInternalFormat.Rgba8;
@@ -16,6 +18,7 @@ namespace XREngine.Rendering
         private bool _resizable = true;
         private bool _exclusiveSharing = true;
 
+        [MemoryPackConstructor]
         public XRTexture1D()
             : this(1u, EPixelInternalFormat.Rgba8, EPixelFormat.Rgba, EPixelType.UnsignedByte, true)
         {

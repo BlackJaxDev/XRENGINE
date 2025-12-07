@@ -1,4 +1,5 @@
 ﻿using ImageMagick;
+using MemoryPack;
 using SixLabors.ImageSharp;
 using SixLabors.ImageSharp.PixelFormats;
 using XREngine.Data;
@@ -11,13 +12,16 @@ namespace XREngine.Rendering
     /// Defines raw image data for a 2D texture mipmap.
     /// Has support for resizing with and converting to/from MagickImage.
     /// </summary>
-    public class Mipmap2D : XRBase
+    [MemoryPackable]
+    public partial class Mipmap2D : XRBase
     {
         //private static object _lock = new();
         
+        [field: MemoryPackIgnore]
         public event Action? Invalidated;
         public void Invalidate() => Invalidated?.Invoke();
 
+        [MemoryPackConstructor]
         public Mipmap2D() { }
         public Mipmap2D(MagickImage? image)
         {
@@ -67,10 +71,18 @@ namespace XREngine.Rendering
             loadTask?.ContinueWith(OnLoaded);
         }
 
+        [MemoryPackIgnore]
         public DataSource? Data
         {
             get => _bytes;
             set => SetField(ref _bytes, value);
+        }
+
+        [MemoryPackInclude]
+        public byte[]? DataBytes
+        {
+            get => _bytes?.GetBytes();
+            set => _bytes = value is null ? null : new DataSource(value);
         }
         public uint Width
         {
@@ -179,6 +191,7 @@ namespace XREngine.Rendering
         private DataSource? _bytes = null;
         private uint _width = 0;
         private uint _height = 0;
+        [MemoryPackIgnore]
         public XRDataBuffer? _streamingPBO = null;
 
         public EPixelInternalFormat InternalFormat
@@ -187,6 +200,7 @@ namespace XREngine.Rendering
             set => SetField(ref _internalFormat, value);
         }
 
+        [MemoryPackIgnore]
         public XRDataBuffer? StreamingPBO
         {
             get => _streamingPBO;

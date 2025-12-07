@@ -1,4 +1,5 @@
 using Extensions;
+using MemoryPack;
 using SimpleScene.Util.ssBVH;
 using System.ComponentModel;
 using System.Numerics;
@@ -14,10 +15,12 @@ using Matrix4x4 = System.Numerics.Matrix4x4;
 
 namespace XREngine.Rendering;
 
+[MemoryPackable(GenerateType.NoGenerate)]
 public partial class XRMesh : XRAsset
 {
     private delegate void DelVertexAction(XRMesh @this, int index, int remappedIndex, Vertex vtx, Matrix4x4? dataTransform);
 
+    [MemoryPackIgnore]
     [YamlIgnore] public XREvent<XRMesh>? DataChanged;
 
     // Interleaving / layout
@@ -58,6 +61,7 @@ public partial class XRMesh : XRAsset
     private List<int>? _points;
     private List<IndexLine>? _lines;
     private List<IndexTriangle>? _triangles;
+    [MemoryPackIgnore]
     internal Dictionary<Triangle, (IndexTriangle Indices, int FaceIndex)>? TriangleLookup { get; set; }
     private EPrimitiveType _type = EPrimitiveType.Triangles;
 
@@ -97,6 +101,7 @@ public partial class XRMesh : XRAsset
     }
 
     // Bone usage / skinning
+    [MemoryPackIgnore]
     private (TransformBase tfm, Matrix4x4 invBindWorldMtx)[] _utilizedBones = [];
     public (TransformBase tfm, Matrix4x4 invBindWorldMtx)[] UtilizedBones
     {
@@ -115,6 +120,7 @@ public partial class XRMesh : XRAsset
         get => _blendshapeNames;
         set => SetField(ref _blendshapeNames, value);
     }
+    [MemoryPackIgnore]
     private readonly Dictionary<string, int> _blendshapeNameToIndex = [];
     [Browsable(false)]
     public uint BlendshapeCount => (uint)(BlendshapeNames?.Length ?? 0);
@@ -122,26 +128,40 @@ public partial class XRMesh : XRAsset
     public bool HasBlendshapes => BlendshapeCount > 0;
 
     // Buffers (per-vertex)
+    [MemoryPackIgnore]
     public XRDataBuffer? PositionsBuffer { get; internal set; }
+    [MemoryPackIgnore]
     public XRDataBuffer? NormalsBuffer { get; internal set; }
+    [MemoryPackIgnore]
     public XRDataBuffer? TangentsBuffer { get; internal set; }
+    [MemoryPackIgnore]
     public XRDataBuffer[]? ColorBuffers { get; internal set; } = [];
+    [MemoryPackIgnore]
     public XRDataBuffer[]? TexCoordBuffers { get; internal set; } = [];
+    [MemoryPackIgnore]
     public XRDataBuffer? InterleavedVertexBuffer { get; private set; }
 
     // Bone weight indirection
+    [MemoryPackIgnore]
     public XRDataBuffer? BoneWeightOffsets { get; private set; }
+    [MemoryPackIgnore]
     public XRDataBuffer? BoneWeightCounts { get; private set; }
 
     // Blendshape indirection
+    [MemoryPackIgnore]
     public XRDataBuffer? BlendshapeCounts { get; private set; }
 
     // Non-per-vertex (skinning / blendshape)
+    [MemoryPackIgnore]
     public XRDataBuffer? BoneWeightIndices { get; private set; }
+    [MemoryPackIgnore]
     public XRDataBuffer? BoneWeightValues { get; private set; }
+    [MemoryPackIgnore]
     public XRDataBuffer? BlendshapeDeltas { get; private set; }
+    [MemoryPackIgnore]
     public XRDataBuffer? BlendshapeIndices { get; private set; }
 
+    [MemoryPackIgnore]
     public BufferCollection Buffers { get; internal set; } = [];
 
     // Weight stats
@@ -149,12 +169,16 @@ public partial class XRMesh : XRAsset
     public int MaxWeightCount => _maxWeightCount;
 
     // BVH / spatial
+    [MemoryPackIgnore]
     private BVH<XREngine.Data.Geometry.Triangle>? _bvhTree;
+    [MemoryPackIgnore]
     private bool _generating;
 
     // SDF
+    [MemoryPackIgnore]
     public XRTexture3D? SignedDistanceField { get; internal set; }
 
+    [MemoryPackIgnore]
     private readonly Lock _boundsLock = new();
 
     public XRMesh()

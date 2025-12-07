@@ -1,8 +1,10 @@
 ﻿using System.Diagnostics;
+using MemoryPack;
 
 namespace XREngine.Animation
 {
-    public class AnimState : AnimStateBase
+    [MemoryPackable]
+    public partial class AnimState : AnimStateBase
     {
         public override string ToString()
             => $"AnimState: {Name} / ({Motion?.ToString() ?? "null"})";
@@ -15,6 +17,7 @@ namespace XREngine.Animation
         }
 
         private List<AnimStateComponent> _components = [];
+        [MemoryPackIgnore]
         public List<AnimStateComponent> Components
         {
             get => _components;
@@ -28,11 +31,11 @@ namespace XREngine.Animation
             return comp;
         }
 
-        private MotionBase? _animation;
+        private MotionBase? _motion;
         public MotionBase? Motion
         {
-            get => _animation;
-            set => SetField(ref _animation, value);
+            get => _motion;
+            set => SetField(ref _motion, value);
         }
 
         private float _startSecond = 0.0f;
@@ -49,6 +52,7 @@ namespace XREngine.Animation
             set => SetField(ref _endSecond, value);
         }
 
+        [MemoryPackConstructor]
         public AnimState() { }
         public AnimState(string name)
             => Name = name;

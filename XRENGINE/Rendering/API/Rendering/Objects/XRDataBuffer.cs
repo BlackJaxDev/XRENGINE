@@ -1,4 +1,5 @@
 ﻿using Extensions;
+using MemoryPack;
 using System.Diagnostics.CodeAnalysis;
 using System.Numerics;
 using System.Runtime.InteropServices;
@@ -12,7 +13,8 @@ using YamlDotNet.Serialization;
 
 namespace XREngine.Rendering
 {
-    public class XRDataBuffer : GenericRenderObject, IDisposable
+    [MemoryPackable]
+    public partial class XRDataBuffer : GenericRenderObject, IDisposable
     {
         public delegate void DelPushSubData(int offset, uint length);
         public delegate void DelSetBlockName(XRRenderProgram program, string blockName);
@@ -33,6 +35,7 @@ namespace XREngine.Rendering
         public event DelFlushRange? FlushRangeRequested;
         public event DelBindSSBO? BindSSBORequested;
 
+        [MemoryPackConstructor]
         public XRDataBuffer() { }
         public XRDataBuffer(
             string bindingName,

@@ -319,7 +319,7 @@ namespace XREngine.Scene
         /// <param name="scene"></param>
         public void GenerateDelauanyTriangulation(VisualScene scene)
         {
-            if (!TryCreateDelaunay(LightProbes, out _cells))
+            if (!TryCreateDelaunay(LightProbes, out _cells) || _cells is null)
             {
                 Debug.LogWarning("Light probe triangulation failed; skipping cell generation.");
                 return;

@@ -460,13 +460,18 @@ namespace XREngine.Rendering
                 {
                     case nameof(TargetWorld):
                         if (TargetWorld != null)
+                        {
+                            // Unsubscribe from previous settings changes
+                            TargetWorld.Settings.PropertyChanged -= OnWorldSettingsChanged;
                             foreach (var scene in TargetWorld.Scenes)
                                 UnloadScene(scene);
-                        break;
+                        }
+                  break;
                 }
             }
             return change;
         }
+        
         protected override void OnPropertyChanged<T>(string? propName, T prev, T field)
         {
             base.OnPropertyChanged(propName, prev, field);
@@ -479,6 +484,12 @@ namespace XREngine.Rendering
                             LoadScene(scene);
                         if (VisualScene.GenericRenderTree is I3DRenderTree tree)
                             tree.Remake(TargetWorld.Settings.Bounds);
+   
+                        // Apply world settings when the target world changes
+                        ApplySettings(TargetWorld.Settings);
+   
+                        // Subscribe to settings changes
+                        TargetWorld.Settings.PropertyChanged += OnWorldSettingsChanged;
                     }
                     break;
             }
@@ -1000,8 +1011,117 @@ namespace XREngine.Rendering
         public static XRWorldInstance GetOrInitWorld(XRWorld targetWorld)
         {
             if (!WorldInstances.TryGetValue(targetWorld, out var instance))
-                WorldInstances.Add(targetWorld, instance = new(targetWorld));
+     WorldInstances.Add(targetWorld, instance = new(targetWorld));
             return instance;
+ }
+
+        #region World Settings
+
+        private void OnWorldSettingsChanged(object? sender, IXRPropertyChangedEventArgs args)
+        {
+            if (sender is not WorldSettings settings)
+    return;
+
+        // Apply the specific setting that changed
+       ApplySettingByProperty(settings, args.PropertyName);
         }
+
+    /// <summary>
+        /// Applies a specific world setting based on the property name that changed.
+      /// </summary>
+     private void ApplySettingByProperty(WorldSettings settings, string? propertyName)
+        {
+        switch (propertyName)
+          {
+             case nameof(WorldSettings.Gravity):
+          PhysicsScene.Gravity = settings.Gravity;
+    break;
+        case nameof(WorldSettings.Bounds):
+   if (VisualScene.GenericRenderTree is I3DRenderTree tree)
+                tree.Remake(settings.Bounds);
+          break;
+         case nameof(WorldSettings.MasterVolume):
+      case nameof(WorldSettings.SpeedOfSound):
+     case nameof(WorldSettings.DopplerFactor):
+    case nameof(WorldSettings.DefaultAudioAttenuation):
+     ApplyAudioSettings(settings);
+   break;
+   // For other properties, they are automatically picked up by rendering systems
+    // that query the settings directly
+        }
+ }
+
+        /// <summary>
+   /// Applies all settings from the WorldSettings to this world instance.
+        /// This is called when a world is first loaded or when you want to refresh all settings.
+        /// </summary>
+        public void ApplySettings(WorldSettings settings)
+      {
+            if (settings is null)
+                return;
+
+     ApplyPhysicsSettings(settings);
+    ApplyAudioSettings(settings);
+ ApplyBoundsSettings(settings);
+      }
+
+     /// <summary>
+        /// Applies physics-related settings to the physics scene.
+ /// </summary>
+    private void ApplyPhysicsSettings(WorldSettings settings)
+ {
+     PhysicsScene.Gravity = settings.Gravity;
+          
+            // Additional physics settings could be applied here when the physics system supports them:
+     // PhysicsScene.Timestep = settings.PhysicsTimestep;
+            // PhysicsScene.Substeps = settings.PhysicsSubsteps;
+            // PhysicsScene.DefaultLinearDamping = settings.DefaultLinearDamping;
+   // PhysicsScene.DefaultAngularDamping = settings.DefaultAngularDamping;
+            // PhysicsScene.EnableContinuousCollision = settings.EnableContinuousCollision;
+        }
+
+        /// <summary>
+        /// Applies audio-related settings to audio systems.
+        /// </summary>
+        private void ApplyAudioSettings(WorldSettings settings)
+        {
+            // Apply audio settings to listeners in this world
+         foreach (var listener in Listeners)
+       {
+ // listener.SpeedOfSound = settings.SpeedOfSound;
+          // listener.DopplerFactor = settings.DopplerFactor;
+     }
+            
+            // Engine-level audio settings could be applied via Engine.Audio
+      // Engine.Audio?.SetMasterVolume(settings.MasterVolume);
+ }
+
+        /// <summary>
+        /// Applies world bounds settings to the visual scene.
+    /// </summary>
+        private void ApplyBoundsSettings(WorldSettings settings)
+    {
+            if (VisualScene.GenericRenderTree is I3DRenderTree tree)
+        tree.Remake(settings.Bounds);
+  }
+
+        /// <summary>
+     /// Gets the current world settings, or creates default settings if none exist.
+        /// </summary>
+        public WorldSettings GetSettings()
+        {
+            return TargetWorld?.Settings ?? new WorldSettings();
+    }
+
+        /// <summary>
+        /// Gets the effective ambient light color from world settings, or a default if not available.
+        /// </summary>
+        public Data.Colors.ColorF3 GetEffectiveAmbientColor()
+        {
+            var settings = TargetWorld?.Settings;
+            return settings?.GetEffectiveAmbientColor() ?? new Data.Colors.ColorF3(0.03f, 0.03f, 0.03f);
+        }
+
+ #endregion
     }
 }

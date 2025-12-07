@@ -1,3 +1,4 @@
+using MemoryPack;
 using XREngine.Core.Files;
 
 namespace XREngine
@@ -6,10 +7,12 @@ namespace XREngine
     /// User settings that are specific to a project and saved in the project directory.
     /// This class wraps UserSettings as an XRAsset so it can be serialized to the project directory.
     /// </summary>
-    public class ProjectUserSettings : XRAsset
+    [MemoryPackable]
+    public partial class ProjectUserSettings : XRAsset
     {
         private UserSettings _settings = new();
 
+        [MemoryPackConstructor]
         public ProjectUserSettings() { }
 
         public ProjectUserSettings(UserSettings settings)

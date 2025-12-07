@@ -1,10 +1,20 @@
 ﻿using ImageMagick;
+using MemoryPack;
 using System.Numerics;
 using XREngine.Data.Colors;
 using XREngine.Data.Rendering;
 
 namespace XREngine.Rendering
 {
+    [MemoryPackable]
+    [MemoryPackUnion(0, typeof(XRTexture2D))]
+    [MemoryPackUnion(1, typeof(XRTexture2DArray))]
+    [MemoryPackUnion(2, typeof(XRTexture3D))]
+    [MemoryPackUnion(3, typeof(XRTextureCube))]
+    [MemoryPackUnion(4, typeof(XRTextureCubeArray))]
+    [MemoryPackUnion(5, typeof(XRTexture1D))]
+    [MemoryPackUnion(6, typeof(XRTexture1DArray))]
+    [MemoryPackUnion(7, typeof(XRTextureBuffer))]
     public abstract partial class XRTexture : GenericRenderObject
     {
         /// <summary>
@@ -219,7 +229,9 @@ namespace XREngine.Rendering
         public delegate void DelAttachToFBO(XRFrameBuffer target, EFrameBufferAttachment attachment, int mipLevel);
         public delegate void DelDetachFromFBO(XRFrameBuffer target, EFrameBufferAttachment attachment, int mipLevel);
         
+        [field: MemoryPackIgnore]
         public event DelAttachToFBO? AttachToFBORequested;
+        [field: MemoryPackIgnore]
         public event DelDetachFromFBO? DetachFromFBORequested;
 
         private EFrameBufferAttachment? _frameBufferAttachment;
@@ -355,10 +367,15 @@ namespace XREngine.Rendering
         public void SampleIn(XRRenderProgram program, int textureIndex)
             => program.Sampler(ResolveSamplerName(textureIndex, null), this, textureIndex);
 
+        [field: MemoryPackIgnore]
         public event Action? PushDataRequested;
+        [field: MemoryPackIgnore]
         public event Action? BindRequested;
+        [field: MemoryPackIgnore]
         public event Action? UnbindRequested;
+        [field: MemoryPackIgnore]
         public event DelClear? ClearRequested;
+        [field: MemoryPackIgnore]
         public event Action? GenerateMipmapsRequested;
 
         public delegate void DelClear(ColorF4 color, int level = 0);

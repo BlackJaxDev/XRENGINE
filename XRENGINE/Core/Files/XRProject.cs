@@ -1,3 +1,4 @@
+using MemoryPack;
 using System;
 using System.Collections.Generic;
 using System.IO;
@@ -12,7 +13,8 @@ namespace XREngine
     /// The project root (directory containing the .xrproj) must only contain the descriptor file and
     /// the standard project folders: Assets, Intermediate, Build, Packages, Config, and Cache.
     /// </summary>
-    public class XRProject : XRAsset
+    [MemoryPackable]
+    public partial class XRProject : XRAsset
     {
         public const string ProjectExtension = "xrproj";
         public const string EngineSettingsFileName = "engine_settings.asset";
@@ -42,6 +44,7 @@ namespace XREngine
         private string _author = string.Empty;
         private string _startupScenePath = string.Empty;
 
+        [MemoryPackConstructor]
         public XRProject() { }
 
         public XRProject(string projectName)
@@ -191,6 +194,7 @@ namespace XREngine
             };
 
             project.EnsureStructure();
+            project.Save();
 
             return project;
         }
@@ -271,7 +275,16 @@ namespace XREngine
             if (string.IsNullOrWhiteSpace(FilePath))
                 return;
 
-            Engine.Assets?.Save(this);
+            if (Engine.Assets is not null)
+            {
+                Engine.Assets.Save(this);
+                return;
+            }
+
+            // Fallback path for unit tests or tools running without Engine.Assets
+            Directory.CreateDirectory(Path.GetDirectoryName(FilePath)!);
+            string yaml = AssetManager.Serializer.Serialize(this);
+            File.WriteAllText(FilePath, yaml);
         }
     }
 }

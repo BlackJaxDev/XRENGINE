@@ -1,6 +1,9 @@
-﻿namespace XREngine.Animation
+﻿using MemoryPack;
+
+namespace XREngine.Animation
 {
-    public class TrackingControllerComponent : AnimStateComponent
+    [MemoryPackable]
+    public partial class TrackingControllerComponent : AnimStateComponent
     {
         public enum ETrackingMode
         {

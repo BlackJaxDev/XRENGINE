@@ -1,4 +1,5 @@
 ﻿using ImageMagick;
+using MemoryPack;
 using System.Numerics;
 using XREngine.Data;
 using XREngine.Data.Rendering;
@@ -7,7 +8,8 @@ using XREngine.Data.Vectors;
 namespace XREngine.Rendering
 {
     [XR3rdPartyExtensions("gif")]
-    public class XRTexture2DArray : XRTexture, IFrameBufferAttachement
+    [MemoryPackable]
+    public partial class XRTexture2DArray : XRTexture, IFrameBufferAttachement
     {
         private bool _multiSample;
         private XRTexture2D[] _textures = [];
@@ -15,6 +17,11 @@ namespace XREngine.Rendering
         private ESizedInternalFormat _sizedInternalFormat = ESizedInternalFormat.Rgba8;
 
         public override Vector3 WidthHeightDepth => new(Width, Height, Depth);
+
+        [MemoryPackConstructor]
+        public XRTexture2DArray()
+        {
+        }
 
         public XRTexture2DArray(params XRTexture2D[] textures)
         {
@@ -63,7 +70,8 @@ namespace XREngine.Rendering
 
         public Mipmap2D[]? Mipmaps => Textures.Length > 0 ? Textures[0].Mipmaps : null;
 
-        public class OVRMultiView(int offset, uint numViews)
+        [MemoryPackable]
+        public partial class OVRMultiView(int offset, uint numViews)
         {
             public uint NumViews = numViews;
             public int Offset = offset;

@@ -1,11 +1,14 @@
-﻿using System.Numerics;
+﻿using System.Collections.Generic;
+using System.Numerics;
+using MemoryPack;
 using XREngine.Core.Files;
 using XREngine.Data.Core;
 using static XREngine.Animation.AnimLayer;
 
 namespace XREngine.Animation
 {
-    public class AnimStateMachine : XRAsset
+    [MemoryPackable]
+    public partial class AnimStateMachine : XRAsset
     {
         private bool _animatePhysics = false;
         public bool AnimatePhysics
@@ -25,8 +28,11 @@ namespace XREngine.Animation
             set => SetField(ref _layers, value);
         }
         
+        [MemoryPackIgnore]
         protected internal Dictionary<string, object?> _defaultValues = [];
+        [MemoryPackIgnore]
         protected internal Dictionary<string, object?> _animationValues = [];
+        [MemoryPackIgnore]
         protected internal readonly Dictionary<string, AnimationMember> _animatedCurves = [];
 
         public void Initialize(object? rootObject)
@@ -94,11 +100,21 @@ namespace XREngine.Animation
                     member.ApplyAnimationValue(kvp.Value);
         }
 
+        [MemoryPackIgnore]
         private EventDictionary<string, AnimVar> _variables = [];
+        [MemoryPackIgnore]
         public EventDictionary<string, AnimVar> Variables
         {
             get => _variables;
             set => SetField(ref _variables, value);
+        }
+
+        // Persist variables as a dictionary; restore EventDictionary behavior on load.
+        [MemoryPackInclude]
+        private Dictionary<string, AnimVar> SerializedVariables
+        {
+            get => new(_variables);
+            set => Variables = new EventDictionary<string, AnimVar>(value ?? []);
         }
 
         protected override bool OnPropertyChanging<T>(string? propName, T field, T @new)
@@ -143,6 +159,7 @@ namespace XREngine.Animation
                 VariableChanged?.Invoke(variable.Value);
         }
 
+        [MemoryPackIgnore]
         public XREvent<AnimVar>? VariableChanged;
 
         /// <summary>

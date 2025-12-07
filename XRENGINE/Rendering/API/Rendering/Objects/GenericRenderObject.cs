@@ -1,4 +1,5 @@
-﻿using System.Collections.Concurrent;
+﻿using MemoryPack;
+using System.Collections.Concurrent;
 using System.ComponentModel;
 using XREngine.Core.Files;
 using YamlDotNet.Serialization;
@@ -9,8 +10,10 @@ namespace XREngine.Rendering
     /// This is the base class for generic render objects that aren't specific to any rendering api.
     /// Rendering APIs wrap this object to provide actual rendering functionality.
     /// </summary>
-    public abstract class GenericRenderObject : XRAsset
+    [MemoryPackable(GenerateType.NoGenerate)]
+    public abstract partial class GenericRenderObject : XRAsset
     {
+        [MemoryPackIgnore]
         private readonly ConcurrentHashSet<AbstractRenderAPIObject> _apiWrappers = [];
 
         internal static readonly ConcurrentDictionary<Type, List<GenericRenderObject>> _roCache = [];
@@ -27,6 +30,7 @@ namespace XREngine.Rendering
         /// <summary>
         /// This is a list of API-specific render objects attached to each active window that represent this object.
         /// </summary>
+        [MemoryPackIgnore]
         [YamlIgnore]
         [Browsable(false)]
         public IReadOnlyCollection<AbstractRenderAPIObject> APIWrappers => _apiWrappers;

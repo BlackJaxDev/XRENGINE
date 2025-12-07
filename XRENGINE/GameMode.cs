@@ -219,13 +219,11 @@ namespace XREngine
         /// <param name="possessor">The player index that will possess the pawn.</param>
         public void ForcePossession(PawnComponent pawnComponent, ELocalPlayerIndex possessor)
         {
-            var localPlayer = Engine.State.GetLocalPlayer(possessor);
-            localPlayer ??= EnsureLocalPlayerController(possessor);
-
+            var localPlayer = Engine.State.GetOrCreateLocalPlayer(possessor);
             if (localPlayer != null)
-                pawnComponent.Controller = localPlayer;
+                localPlayer.ControlledPawn = pawnComponent;
             else
-                Debug.Out($"Local player {possessor} does not exist.");
+                Debug.LogWarning($"Failed to possess pawn: could not resolve local player for index {possessor}");
         }
 
         /// <summary>

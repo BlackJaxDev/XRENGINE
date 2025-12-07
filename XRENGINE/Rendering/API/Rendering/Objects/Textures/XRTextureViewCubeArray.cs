@@ -1,9 +1,11 @@
-﻿using System.Numerics;
+﻿using MemoryPack;
+using System.Numerics;
 using XREngine.Data.Rendering;
 
 namespace XREngine.Rendering
 {
-    public class XRTextureViewCubeArray(
+    [MemoryPackable]
+    public partial class XRTextureViewCubeArray(
         XRTextureCubeArray viewedTexture,
         uint minLevel,
         uint numLevels,

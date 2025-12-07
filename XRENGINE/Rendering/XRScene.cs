@@ -7,9 +7,10 @@ namespace XREngine.Scene
     /// <summary>
     /// Defines a collection of root scene nodes that can be loaded in and out of a world.
     /// </summary>
-    [MemoryPackable(GenerateType.NoGenerate)]
+    [MemoryPackable]
     public partial class XRScene : XRAsset
     {
+        [MemoryPackConstructor]
         public XRScene() { }
         public XRScene(string name) : base(name) { }
         public XRScene(params SceneNode[] rootNodes) => RootNodes.AddRange(rootNodes);

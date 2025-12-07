@@ -1,11 +1,13 @@
-﻿using System;
+﻿using MemoryPack;
+using System;
 using System.Linq;
 using System.Numerics;
 using XREngine.Data.Rendering;
 
 namespace XREngine.Rendering
 {
-    public class XRTextureCubeArray : XRTexture
+    [MemoryPackable]
+    public partial class XRTextureCubeArray : XRTexture
     {
         private XRTextureCube[] _cubes = Array.Empty<XRTextureCube>();
         private bool _resizable = true;
@@ -17,6 +19,7 @@ namespace XREngine.Rendering
         private ETexWrapMode _wWrap = ETexWrapMode.ClampToEdge;
         private float _lodBias = 0.0f;
 
+        [MemoryPackConstructor]
         public XRTextureCubeArray()
         {
         }

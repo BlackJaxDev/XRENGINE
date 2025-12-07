@@ -1,15 +1,25 @@
 ﻿using System.Numerics;
+using MemoryPack;
 using XREngine.Core.Files;
 using XREngine.Data;
 
 namespace XREngine.Animation
 {
-    public abstract class MotionBase : XRAsset
+    [MemoryPackable]
+    [MemoryPackUnion(0, typeof(AnimationClip))]
+    [MemoryPackUnion(1, typeof(BlendTree1D))]
+    [MemoryPackUnion(2, typeof(BlendTree2D))]
+    [MemoryPackUnion(3, typeof(BlendTreeDirect))]
+    public abstract partial class MotionBase : XRAsset
     {
+        [MemoryPackIgnore]
         protected readonly Dictionary<string, AnimationMember> _animatedCurves = [];
+        [MemoryPackIgnore]
         protected internal Dictionary<string, object?> _animationValues = [];
 
+        [MemoryPackIgnore]
         public Dictionary<string, object?> AnimationValues => _animationValues;
+        [MemoryPackIgnore]
         public Dictionary<string, AnimationMember> AnimatedCurves => _animatedCurves;
 
         public void Initialize(AnimLayer layer, AnimStateMachine owner, object? rootObject)

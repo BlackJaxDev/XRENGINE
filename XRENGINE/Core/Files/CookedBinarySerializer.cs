@@ -8,9 +8,12 @@ using System.IO;
 using System.Linq;
 using System.Reflection;
 using System.Runtime.CompilerServices;
+using System.Threading;
 using System.Text;
 using MemoryPack;
 using XREngine.Data;
+using XREngine.Scene;
+using XREngine.Scene.Transforms;
 using YamlDotNet.Serialization;
 
 namespace XREngine.Core.Files;
@@ -298,6 +301,23 @@ public static class CookedBinarySerializer
 {
     internal const string ReflectionWarningMessage = "Cooked binary serialization relies on reflection and cannot be statically analyzed for trimming or AOT";
 
+    // Prevent MemoryPack from re-entering itself (XRAsset envelope calls back into cooked serialization).
+    private static readonly AsyncLocal<int> MemoryPackRecursionDepth = new();
+    private static bool IsMemoryPackSuppressed => MemoryPackRecursionDepth.Value > 0;
+
+    private readonly struct MemoryPackRecursionScope : IDisposable
+    {
+        public MemoryPackRecursionScope() => MemoryPackRecursionDepth.Value++;
+        public void Dispose() => MemoryPackRecursionDepth.Value--;
+    }
+
+    internal static T ExecuteWithMemoryPackSuppressed<T>(Func<T> func)
+    {
+        ArgumentNullException.ThrowIfNull(func);
+        using var _ = new MemoryPackRecursionScope();
+        return func();
+    }
+
     [RequiresUnreferencedCode(ReflectionWarningMessage)]
     [RequiresDynamicCode(ReflectionWarningMessage)]
     public static byte[] Serialize(object? value, CookedBinarySerializationCallbacks? callbacks = null)
@@ -567,7 +587,11 @@ public static class CookedBinarySerializer
         else
         {
             writer.Write((byte)CookedBinaryObjectEncoding.Reflection);
-            WriteObjectContent(writer, value, runtimeType, allowCustom, callbacks);
+            using var scope = EnterReflectionScope(value, out bool isCycle);
+            if (!isCycle)
+                WriteObjectContent(writer, value, runtimeType, allowCustom, callbacks);
+            else
+                writer.Write(0); // zero members to break the cycle
         }
     }
 
@@ -753,6 +777,14 @@ public static class CookedBinarySerializer
     {
         int length = reader.ReadInt32();
         byte[] payload = reader.ReadBytes(length);
+        if (typeof(XRAsset).IsAssignableFrom(targetType))
+        {
+            XRAsset? asset = XRAssetMemoryPackAdapter.Deserialize(payload, targetType);
+            if (asset is null)
+                throw new InvalidOperationException($"MemoryPack deserialization returned null for asset type '{targetType}'.");
+            return asset;
+        }
+
         object? instance = MemoryPackSerializer.Deserialize(targetType, payload);
         if (instance is null)
             throw new InvalidOperationException($"MemoryPack deserialization returned null for type '{targetType}'.");
@@ -794,7 +826,7 @@ public static class CookedBinarySerializer
                 return guid;
         }
 
-        return System.Convert.ChangeType(value, targetType, CultureInfo.InvariantCulture);
+        return Convert.ChangeType(value, targetType, CultureInfo.InvariantCulture);
     }
 
     private static void WriteTypeName(CookedBinaryWriter writer, Type type)
@@ -847,10 +879,78 @@ public static class CookedBinarySerializer
 
     private static readonly ConcurrentDictionary<string, Type> TypeCache = new();
 
+    private static readonly AsyncLocal<ReferenceLoopGuard?> ReflectionLoopGuard = new();
+
+    private static ReferenceLoopScope EnterReflectionScope(object instance, out bool isCycle)
+    {
+        var guard = ReflectionLoopGuard.Value ??= new ReferenceLoopGuard();
+        return guard.Enter(instance, out isCycle);
+    }
+
+    private sealed class ReferenceLoopGuard
+    {
+        private readonly HashSet<object> _seen = new(ReferenceEqualityComparer.Instance);
+
+        public ReferenceLoopScope Enter(object instance, out bool isCycle)
+        {
+            if (!_seen.Add(instance))
+            {
+                isCycle = true;
+                return new ReferenceLoopScope(this, null);
+            }
+
+            isCycle = false;
+            return new ReferenceLoopScope(this, instance);
+        }
+
+        public void Exit(object instance)
+            => _seen.Remove(instance);
+    }
+
+    private readonly struct ReferenceLoopScope : IDisposable
+    {
+        private readonly ReferenceLoopGuard _guard;
+        private readonly object? _instance;
+
+        public ReferenceLoopScope(ReferenceLoopGuard guard, object? instance)
+        {
+            _guard = guard;
+            _instance = instance;
+        }
+
+        public void Dispose()
+        {
+            if (_instance is not null)
+                _guard.Exit(_instance);
+        }
+    }
+
     private static bool TrySerializeWithMemoryPack(object value, Type runtimeType, out byte[]? data)
     {
+        // Re-entrancy guard prevents XRAsset envelope from recursing back into MemoryPack.
+        if (IsMemoryPackSuppressed)
+        {
+            data = null;
+            return false;
+        }
+
+        // Scene graph objects form parent/child cycles; avoid MemoryPack to prevent stack overflows.
+        if (runtimeType.IsAssignableTo(typeof(SceneNode)) || runtimeType.IsAssignableTo(typeof(TransformBase)))
+        {
+            data = null;
+            return false;
+        }
+
+        using var _ = new MemoryPackRecursionScope();
+
         try
         {
+            if (value is XRAsset asset)
+            {
+                data = XRAssetMemoryPackAdapter.Serialize(asset);
+                return true;
+            }
+
             data = MemoryPackSerializer.Serialize(runtimeType, value);
             return data is not null;
         }
@@ -1022,6 +1122,13 @@ public static class CookedBinarySerializer
             }
 
             AddBytes(1); // encoding flag
+            using var scope = EnterReflectionScope(value, out bool isCycle);
+            if (isCycle)
+            {
+                AddBytes(sizeof(int)); // zero members marker to break the cycle
+                return;
+            }
+
             AddObjectContent(value, runtimeType, allowCustom);
         }
 

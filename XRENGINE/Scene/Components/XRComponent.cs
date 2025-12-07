@@ -6,6 +6,7 @@ using System.Runtime.Serialization;
 using XREngine.Data.Core;
 using XREngine.Scene;
 using XREngine.Scene.Transforms;
+using YamlDotNet.Serialization;
 
 namespace XREngine.Components
 {
@@ -118,6 +119,7 @@ namespace XREngine.Components
         /// It will be set automatically when the component is added to a scene node, and never change.
         /// If you set any events on the scene node from a component, make sure to unregister them by overriding OnDestroying().
         /// </summary>
+        [YamlIgnore]
         [Browsable(false)]
         public SceneNode SceneNode
         {

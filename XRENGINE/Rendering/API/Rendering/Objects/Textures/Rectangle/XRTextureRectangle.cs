@@ -1,4 +1,5 @@
-﻿using System;
+﻿using MemoryPack;
+using System;
 using System.Numerics;
 using XREngine.Data;
 using XREngine.Data.Rendering;
@@ -8,7 +9,8 @@ namespace XREngine.Rendering
     /// <summary>
     /// Simple non-power-of-two rectangle texture wrapper.
     /// </summary>
-    public class XRTextureRectangle : XRTexture
+    [MemoryPackable]
+    public partial class XRTextureRectangle : XRTexture
     {
         private uint _width;
         private uint _height;
@@ -24,6 +26,7 @@ namespace XREngine.Rendering
         private DataSource? _data;
         private XRDataBuffer? _streamingPbo;
 
+        [MemoryPackConstructor]
         public XRTextureRectangle(
             uint width = 1,
             uint height = 1,

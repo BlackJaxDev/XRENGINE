@@ -1,13 +1,16 @@
-﻿using XREngine.Data.Core;
+﻿using MemoryPack;
+using XREngine.Data.Core;
 
 namespace XREngine.Animation
 {
-    public class BlendTreeDirect : BlendTree
+    [MemoryPackable]
+    public partial class BlendTreeDirect : BlendTree
     {
         public override string ToString()
             => $"BlendTreeDirect: {Name}";
 
-        public class Child : XRBase
+        [MemoryPackable]
+        public partial class Child : XRBase
         {
             private MotionBase? _motion;
             /// <summary>

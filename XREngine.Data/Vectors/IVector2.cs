@@ -1,4 +1,5 @@
-﻿using System.ComponentModel;
+﻿using MemoryPack;
+using System.ComponentModel;
 using System.Drawing;
 using System.Numerics;
 using System.Runtime.InteropServices;
@@ -10,8 +11,9 @@ using YamlDotNet.Serialization;
 namespace XREngine.Data.Vectors;
 
 [Serializable]
+[MemoryPackable]
 [StructLayout(LayoutKind.Sequential, Pack = 1)]
-public unsafe struct IVector2(int x, int y) : IBufferable, IUniformable
+public unsafe partial struct IVector2(int x, int y) : IBufferable, IUniformable
 {
     public static readonly IVector2 Zero = new(0, 0);
     public static readonly IVector2 One = new(1, 1);

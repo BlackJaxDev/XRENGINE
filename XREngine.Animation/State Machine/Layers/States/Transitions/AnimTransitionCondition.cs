@@ -1,8 +1,10 @@
-﻿using XREngine.Data.Core;
+﻿using MemoryPack;
+using XREngine.Data.Core;
 
 namespace XREngine.Animation
 {
-    public class AnimTransitionCondition : XRBase
+    [MemoryPackable]
+    public partial class AnimTransitionCondition : XRBase
     {
         public enum EComparison
         {
@@ -46,6 +48,9 @@ namespace XREngine.Animation
             get => _comparisonBool;
             set => SetField(ref _comparisonBool, value);
         }
+
+        [MemoryPackConstructor]
+        public AnimTransitionCondition() { }
 
         public AnimTransitionCondition(string paramName, EComparison comparison, float comparisonValue)
         {

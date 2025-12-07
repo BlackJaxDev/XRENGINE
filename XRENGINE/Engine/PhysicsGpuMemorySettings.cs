@@ -1,8 +1,10 @@
+using MemoryPack;
 using XREngine.Core.Files;
 
 namespace XREngine
 {
-    public class PhysicsGpuMemorySettings : XRAsset
+    [MemoryPackable]
+    public partial class PhysicsGpuMemorySettings : XRAsset
     {
         private const uint MinByteCapacity = 1024u;
         private const uint MinEntryCount = 1024u;

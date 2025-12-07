@@ -2,6 +2,7 @@
 using System;
 using System.Collections.Generic;
 using System.Diagnostics.CodeAnalysis;
+using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using XREngine.Core.Files;
@@ -148,7 +149,20 @@ namespace XREngine
                     if (desiredType.IsInstanceOfType(existing))
                         return existing;
 
+                    // Preserve viewport bindings when swapping controller types so input devices stay wired up.
+                    var viewportsToReassign = _windows
+                        .SelectMany(w => w.Viewports)
+                        .Where(vp => vp.AssociatedPlayer == existing)
+                        .ToArray();
+
                     RemoveLocalPlayer(index);
+
+                    var replacement = AddLocalPlayer(index, desiredType);
+
+                    foreach (var viewport in viewportsToReassign)
+                        viewport.AssociatedPlayer = replacement;
+
+                    return replacement;
                 }
 
                 return AddLocalPlayer(index, desiredType);
