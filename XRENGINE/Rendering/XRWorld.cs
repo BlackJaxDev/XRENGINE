@@ -1,4 +1,5 @@
-﻿using XREngine.Core.Files;
+﻿using MemoryPack;
+using XREngine.Core.Files;
 
 namespace XREngine.Scene
 {
@@ -7,7 +8,8 @@ namespace XREngine.Scene
     /// For example, multiple viewports can point to cameras in this world and see the same 3D scene from different viewpoints.
     /// </summary>
     [Serializable]
-    public class XRWorld : XRAsset
+    [MemoryPackable(GenerateType.NoGenerate)]
+    public partial class XRWorld : XRAsset
     {
         private List<XRScene> _scenes = [];
         private GameMode? _defaultGameMode = null;

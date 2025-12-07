@@ -19,29 +19,28 @@ namespace XREngine.Input
             set => SetField(ref _controlledPawn, value is null && _pawnPossessionQueue.Count > 0 ? _pawnPossessionQueue.Dequeue() : value);
         }
 
-        protected override bool OnPropertyChanging<T>(string? propName, T field, T @new)
-        {
-            bool change = base.OnPropertyChanging(propName, field, @new);
-            if (change)
-            {
-                switch (propName)
-                {
-                    case nameof(ControlledPawn):
-                        if (ControlledPawn?.Controller == this)
-                            ControlledPawn.Controller = null;
-                        break;
-                }
-            }
-            return change;
-        }
+        //protected override bool OnPropertyChanging<T>(string? propName, T field, T @new)
+        //{
+        //    bool change = base.OnPropertyChanging(propName, field, @new);
+        //    if (change)
+        //    {
+        //        switch (propName)
+        //        {
+        //            case nameof(ControlledPawn):
+        //                //if (ControlledPawn?.Controller == this)
+        //                //    ControlledPawn.Controller = null;
+        //                break;
+        //        }
+        //    }
+        //    return change;
+        //}
         protected override void OnPropertyChanged<T>(string? propName, T prev, T field)
         {
             base.OnPropertyChanged(propName, prev, field);
             switch (propName)
             {
                 case nameof(ControlledPawn):
-                    if (ControlledPawn is not null)
-                        ControlledPawn.Controller = this;
+                    ControlledPawn?.Controller = this;
                     break;
             }
         }

@@ -1,4 +1,5 @@
-﻿using System.Numerics;
+﻿using MemoryPack;
+using System.Numerics;
 using XREngine.Data.Rendering;
 
 namespace XREngine.Rendering
@@ -6,12 +7,14 @@ namespace XREngine.Rendering
     /// <summary>
     /// Texture buffer backed by a data buffer and interpreted with a sized internal format.
     /// </summary>
-    public class XRTextureBuffer : XRTexture
+    [MemoryPackable]
+    public partial class XRTextureBuffer : XRTexture
     {
         private XRDataBuffer? _dataBuffer;
         private ESizedInternalFormat _sizedInternalFormat = ESizedInternalFormat.Rgba8;
         private uint _texelCount;
 
+        [MemoryPackConstructor]
         public XRTextureBuffer()
         {
         }

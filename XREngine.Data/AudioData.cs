@@ -1,12 +1,14 @@
-﻿using NAudio.Wave;
+﻿using MemoryPack;
+using NAudio.Wave;
 using NVorbis;
 using XREngine.Core;
 using XREngine.Core.Files;
 
 namespace XREngine.Data
 {
+    [MemoryPackable]
     [XR3rdPartyExtensions("wav", "ogg", "mp3", "flac")]
-    public class AudioData : XRAsset, IPoolable
+    public partial class AudioData : XRAsset, IPoolable
     {
         private DataSource? _data;
         private int _frequency;

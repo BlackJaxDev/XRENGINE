@@ -1,8 +1,12 @@
-﻿using XREngine.Data.Rendering;
+﻿using MemoryPack;
+using System;
+using System.Numerics;
+using XREngine.Data.Rendering;
 
 namespace XREngine.Rendering
 {
-    public abstract class XRTextureView<T>(
+    [MemoryPackable]
+        public partial class XRTextureView<T>(
         T viewedTexture,
         uint minLevel,
         uint numLevels,
@@ -28,6 +32,14 @@ namespace XREngine.Rendering
                     break;
             }
         }
+
+        public override ETextureTarget TextureTarget => throw new NotSupportedException("Texture view requires a concrete subtype for target.");
+
+        public override uint MaxDimension => ViewedTexture.MaxDimension;
+
+        public override Vector3 WidthHeightDepth => ViewedTexture.WidthHeightDepth;
+
+        public override bool HasAlphaChannel => ViewedTexture.HasAlphaChannel;
 
         public override XRTexture GetViewedTexture()
             => ViewedTexture;

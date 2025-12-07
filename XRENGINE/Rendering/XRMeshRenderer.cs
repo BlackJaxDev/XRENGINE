@@ -1,4 +1,5 @@
 ﻿using Extensions;
+using MemoryPack;
 using System.Diagnostics.CodeAnalysis;
 using System.Numerics;
 using System.Runtime.InteropServices;
@@ -19,7 +20,8 @@ namespace XREngine.Rendering
     /// A mesh renderer is in charge of rendering one or more meshes with one or more materials.
     /// The API driver will optimize the rendering of these meshes as much as possible depending on how it's set up.
     /// </summary>
-    public class XRMeshRenderer : XRAsset
+    [MemoryPackable(GenerateType.NoGenerate)]
+    public partial class XRMeshRenderer : XRAsset
     {
         /// <summary>
         /// This class holds specific information about rendering the mesh depending on the type of pass.
@@ -84,6 +86,7 @@ namespace XREngine.Rendering
             }
         }
 
+        [MemoryPackIgnore]
         public Dictionary<int, BaseVersion> GeneratedVertexShaderVersions { get; set; } = [];
 
         /// <summary>
@@ -159,7 +162,14 @@ namespace XREngine.Rendering
         /// <summary>
         /// Subscribe to this event to send your own uniforms to the material.
         /// </summary>
-        public event DelSetUniforms? SettingUniforms;
+        [MemoryPackIgnore]
+        private DelSetUniforms? _settingUniforms;
+
+        public event DelSetUniforms? SettingUniforms
+        {
+            add => _settingUniforms += value;
+            remove => _settingUniforms -= value;
+        }
 
         public delegate ShaderVar DelParameterRequested(int index);
 
@@ -229,7 +239,9 @@ namespace XREngine.Rendering
             set => SetField(ref _material, value);
         }
 
+        [MemoryPackIgnore]
         private RenderBone[]? _bones;
+        [MemoryPackIgnore]
         public RenderBone[]? Bones => _bones;
 
         protected override void OnPropertyChanged<T>(string? propName, T prev, T field)
@@ -538,27 +550,32 @@ namespace XREngine.Rendering
             BlendshapeWeights = null;
         }
 
+        [MemoryPackIgnore]
         public BufferCollection Buffers { get; private set; } = [];
 
         /// <summary>
         /// All bone matrices for the mesh.
         /// Stream-write buffer.
         /// </summary>
+        [MemoryPackIgnore]
         public XRDataBuffer? BoneMatricesBuffer { get; private set; }
 
         /// <summary>
         /// All bone inverse bind matrices for the mesh.
         /// </summary>
+        [MemoryPackIgnore]
         public XRDataBuffer? BoneInvBindMatricesBuffer { get; private set; }
 
         /// <summary>
         /// All blendshape weights for the mesh.
         /// </summary>
+        [MemoryPackIgnore]
         public XRDataBuffer? BlendshapeWeights { get; private set; }
 
         /// <summary>
         /// Indirect draw buffer for the mesh - renders multiple meshes with a single draw call.
         /// </summary>
+        [MemoryPackIgnore]
         public XRDataBuffer? IndirectDrawBuffer { get; private set; }
 
         private void PopulateBoneMatrixBuffers()
@@ -673,7 +690,7 @@ namespace XREngine.Rendering
         public void SetParameter(string name, Matrix4x4 value) => Parameter<ShaderMat4>(name)?.SetValue(value);
 
         internal void OnSettingUniforms(XRRenderProgram vertexProgram, XRRenderProgram materialProgram)
-            => SettingUniforms?.Invoke(vertexProgram, materialProgram);
+            => _settingUniforms?.Invoke(vertexProgram, materialProgram);
 
         /// <summary>
         /// Retrieve all meshes and materials used by this renderer.

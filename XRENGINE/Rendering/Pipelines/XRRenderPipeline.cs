@@ -1,4 +1,5 @@
-﻿using System;
+﻿using MemoryPack;
+using System;
 using System.ComponentModel;
 using XREngine.Core.Files;
 using XREngine.Data.Core;
@@ -17,7 +18,8 @@ using static XREngine.Rendering.XRRenderPipelineInstance;
 namespace XREngine.Rendering;
 
 [XRAssetInspector("XREngine.Editor.AssetEditors.RenderPipelineInspector, XREngine.Editor")]
-public abstract class RenderPipeline : XRAsset
+[MemoryPackable(GenerateType.NoGenerate)]
+public abstract partial class RenderPipeline : XRAsset
 {
     [Browsable(false)]
     public List<XRRenderPipelineInstance> Instances { get; } = [];

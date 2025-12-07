@@ -1,6 +1,9 @@
-﻿namespace XREngine.Animation
+﻿using MemoryPack;
+
+namespace XREngine.Animation
 {
-    public class AnimParameterDriverComponent : AnimStateComponent
+    [MemoryPackable]
+    public partial class AnimParameterDriverComponent : AnimStateComponent
     {
         public enum EOperation
         {

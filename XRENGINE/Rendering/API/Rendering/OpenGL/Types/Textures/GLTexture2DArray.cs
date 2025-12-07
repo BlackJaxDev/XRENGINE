@@ -10,6 +10,7 @@ namespace XREngine.Rendering.OpenGL
     public class GLTexture2DArray(OpenGLRenderer renderer, XRTexture2DArray data) : GLTexture<XRTexture2DArray>(renderer, data)
     {
         private bool _storageSet = false;
+        private ESizedInternalFormat _allocatedInternalFormat = ESizedInternalFormat.Rgba8;
 
         public class MipmapInfo : XRBase
         {
@@ -168,6 +169,7 @@ namespace XREngine.Rendering.OpenGL
         private void DataResized()
         {
             _storageSet = false;
+            _allocatedInternalFormat = ESizedInternalFormat.Rgba8;
             Mipmaps.ForEach(m =>
             {
                 m.HasPushedResizedData = false;
@@ -184,12 +186,27 @@ namespace XREngine.Rendering.OpenGL
                 //m.HasPushedUpdateData = false;
             });
             _storageSet = false;
+            _allocatedInternalFormat = ESizedInternalFormat.Rgba8;
             base.PostGenerated();
         }
         protected internal override void PostDeleted()
         {
             _storageSet = false;
+            _allocatedInternalFormat = ESizedInternalFormat.Rgba8;
             base.PostDeleted();
+        }
+
+        private void EnsureStorage(ESizedInternalFormat desiredFormat)
+        {
+            uint levels = (uint)Math.Max(1, Data.SmallestMipmapLevel + 1);
+
+            bool needsAllocation = !_storageSet || _allocatedInternalFormat != desiredFormat;
+            if (!needsAllocation)
+                return;
+
+            Api.TextureStorage3D(BindingId, levels, ToGLEnum(desiredFormat), Data.Width, Data.Height, Data.Depth);
+            _storageSet = true;
+            _allocatedInternalFormat = desiredFormat;
         }
 
         public override void PushData()
@@ -213,11 +230,29 @@ namespace XREngine.Rendering.OpenGL
 
                 Api.PixelStore(PixelStoreParameter.UnpackAlignment, 1);
 
-                if (!Data.Resizable && !_storageSet)
+                // Choose a sized internal format that matches the first available source texture so CopyImageSubData is compatible.
+                XRTexture2D? firstSource = null;
+                for (int i = 0; i < Data.Textures.Length && firstSource is null; ++i)
+                    firstSource = Data.Textures[i];
+
+                if (firstSource is null)
                 {
-                    Api.TextureStorage3D(BindingId, (uint)Data.SmallestMipmapLevel, ToGLEnum(Data.SizedInternalFormat), Data.Width, Data.Height, Data.Depth);
-                    _storageSet = true;
+                    if (allowPostPushCallback)
+                        OnPostPushData();
+                    IsPushing = false;
+                    return;
                 }
+
+                var desiredInternalFormat = Data.SizedInternalFormat;
+                if (desiredInternalFormat != firstSource.SizedInternalFormat)
+                {
+                    Debug.LogWarning($"Adjusting texture array internal format from {desiredInternalFormat} to {firstSource.SizedInternalFormat} to match source textures.");
+                    desiredInternalFormat = firstSource.SizedInternalFormat;
+                    Data.SizedInternalFormat = desiredInternalFormat;
+                }
+
+                // Allocate storage (or reallocate if format changed) before copying data.
+                EnsureStorage(desiredInternalFormat);
 
                 var glTarget = ToGLEnum(TextureTarget);
                 
@@ -238,11 +273,23 @@ namespace XREngine.Rendering.OpenGL
                     glSourceTex.Unbind();
 
                     uint srcId = glSourceTex.BindingId;
+
+                            if (tex.SizedInternalFormat != Data.SizedInternalFormat)
+                            {
+                                Debug.LogWarning($"Skipping copy into texture array layer {layer} because source internal format {tex.SizedInternalFormat} != target {Data.SizedInternalFormat}.");
+                                continue;
+                            }
+
+                            if (tex.Width != Data.Width || tex.Height != Data.Height)
+                            {
+                                Debug.LogWarning($"Skipping copy into texture array layer {layer} because source size {tex.Width}x{tex.Height} != target {Data.Width}x{Data.Height}.");
+                                continue;
+                            }
                     if (srcId == InvalidBindingId)
                         continue;
 
                     // Copy all mip levels from the source 2D texture to this layer of the array
-                    int numMips = Math.Max(1, tex.SmallestMipmapLevel);
+                    int numMips = Math.Max(1, tex.SmallestMipmapLevel + 1);
                     for (int mip = 0; mip < numMips; ++mip)
                     {
                         uint mipWidth = Math.Max(1u, tex.Width >> mip);

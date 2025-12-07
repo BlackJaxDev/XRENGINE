@@ -1,8 +1,10 @@
+using MemoryPack;
 using XREngine.Core.Files;
 
 namespace XREngine
 {
-    public class PhysicsVisualizeSettings : XRAsset
+    [MemoryPackable]
+    public partial class PhysicsVisualizeSettings : XRAsset
     {
         public void SetAllTrue()
         {

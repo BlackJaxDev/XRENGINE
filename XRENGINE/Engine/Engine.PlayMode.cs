@@ -13,13 +13,15 @@ namespace XREngine
         /// </summary>
         public static class PlayMode
         {
-            private static EPlayModeState _state = EPlayModeState.Play;
+            // Default to edit mode so the editor starts in a non-simulating state.
+            private static EPlayModeState _state = EPlayModeState.Edit;
             private static PlayModeConfiguration _configuration = new();
             private static WorldStateSnapshot? _editModeSnapshot;
             private static readonly object _stateLock = new();
             private static GameMode? _activeGameMode;
-            // TEMP: keep physics running without entering play mode transitions.
-            private static bool _forcePlayWithoutTransitions = true;
+            // TEMP flag previously forced physics on without transitions; keep it disabled by default
+            // so editor play/edit toggles behave normally.
+            private static bool _forcePlayWithoutTransitions = false;
             private static bool _editModeSimulationActive;
 
             #region Properties

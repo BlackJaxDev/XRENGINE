@@ -33,6 +33,11 @@ public class AssetCookingTests
                 LogOutputToFile = false
             };
             string startupYaml = AssetManager.Serializer.Serialize(startup);
+            if (!startupYaml.Contains("__assetType:", StringComparison.Ordinal))
+            {
+                string typeHint = typeof(GameStartupSettings).FullName ?? nameof(GameStartupSettings);
+                startupYaml = $"__assetType: {typeHint}{Environment.NewLine}{startupYaml}";
+            }
             string startupAssetPath = Path.Combine(assetSubdir, "startup.asset");
             File.WriteAllText(startupAssetPath, startupYaml, Encoding.UTF8);
             byte[] originalAssetBytes = File.ReadAllBytes(startupAssetPath);

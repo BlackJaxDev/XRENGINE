@@ -1,5 +1,6 @@
 ﻿using ImageMagick;
 using ImageMagick.Drawing;
+using MemoryPack;
 using SixLabors.ImageSharp;
 using SixLabors.ImageSharp.PixelFormats;
 using System;
@@ -22,6 +23,7 @@ using YamlDotNet.RepresentationModel;
 namespace XREngine.Rendering
 {
     [XR3rdPartyExtensions("png", "jpg", "jpeg", "tif", "tiff", "tga", "exr", "hdr")]
+    [MemoryPackable]
     public partial class XRTexture2D : XRTexture, IFrameBufferAttachement, ICookedBinarySerializable
     {
         public override void Reload(string path)
@@ -566,6 +568,7 @@ namespace XREngine.Rendering
             return data;
         }
 
+        [MemoryPackConstructor]
         public XRTexture2D() : this(1u, 1u, EPixelInternalFormat.Rgb8, EPixelFormat.Rgb, EPixelType.UnsignedByte, true) { }
         public XRTexture2D(uint width, uint height, EPixelInternalFormat internalFormat, EPixelFormat format, EPixelType type, int mipmapCount)
         {
@@ -742,7 +745,8 @@ namespace XREngine.Rendering
             Resized?.Invoke();
         }
 
-        public event Action? Resized;
+    [field: MemoryPackIgnore]
+    public event Action? Resized;
 
         /// <summary>
         /// Generates mipmaps from the base texture.
@@ -809,6 +813,7 @@ namespace XREngine.Rendering
                 AutoGenerateMipmaps = false,
             };
 
+        [MemoryPackIgnore]
         private XRDataBuffer? _pbo;
 
         public bool ShouldLoadDataFromInternalPBO

@@ -1,11 +1,13 @@
-﻿using XREngine.Data.Core;
+﻿using MemoryPack;
+using XREngine.Data.Core;
 using XREngine.Data.Rendering;
 
 namespace XREngine.Rendering
 {
     public partial class XRTexture2D
     {
-        public class GrabPassInfo : XRBase
+        [MemoryPackable]
+        public partial class GrabPassInfo : XRBase
         {
             private EReadBufferMode _readBuffer;
             private bool _colorBit;
@@ -14,6 +16,7 @@ namespace XREngine.Rendering
             private bool _linearFilter;
             private bool _resizeToFit;
             private float _resizeScale;
+            [MemoryPackIgnore]
             private XRTexture2D? _resultTexture;
 
             public EReadBufferMode ReadBuffer
@@ -51,13 +54,16 @@ namespace XREngine.Rendering
                 get => _resizeScale;
                 set => SetField(ref _resizeScale, value);
             }
+            [MemoryPackIgnore]
             public XRTexture2D? ResultTexture
             {
                 get => _resultTexture;
                 set => SetField(ref _resultTexture, value);
             }
 
+            [MemoryPackIgnore]
             private XRFrameBuffer? _resultFBO = null;
+            [MemoryPackIgnore]
             public XRFrameBuffer? ResultFBO => _resultFBO ??= (ResultTexture is null ? null : new((ResultTexture, EFrameBufferAttachment.ColorAttachment0, 0, -1)));
 
             public GrabPassInfo(XRTexture2D? resultTexture, EReadBufferMode readBuffer, bool colorBit, bool depthBit, bool stencilBit, bool linearFilter, bool resizeToFit, float resizeScale)
@@ -72,6 +78,7 @@ namespace XREngine.Rendering
                 _resultTexture = resultTexture;
             }
 
+            [MemoryPackConstructor]
             public GrabPassInfo() { }
 
             protected override void OnPropertyChanged<T>(string? propName, T prev, T field)

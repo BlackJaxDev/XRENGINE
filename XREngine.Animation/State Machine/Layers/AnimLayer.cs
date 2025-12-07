@@ -1,4 +1,6 @@
 ﻿using Extensions;
+using MemoryPack;
+using System.Collections.Generic;
 using System.Diagnostics;
 using System.Numerics;
 using System.Reflection.Emit;
@@ -7,7 +9,8 @@ using XREngine.Data.Core;
 
 namespace XREngine.Animation
 {
-    public class AnimLayer : XRBase
+    [MemoryPackable]
+    public partial class AnimLayer : XRBase
     {
         public enum EApplyType
         {
@@ -21,12 +24,16 @@ namespace XREngine.Animation
             Override,
         }
 
+        [MemoryPackIgnore]
         public AnyState AnyState { get; } = new AnyState();
 
+        [MemoryPackIgnore]
         public AnimStateMachine? OwningStateMachine { get; internal set; } = null;
 
+        [MemoryPackIgnore]
         protected internal readonly Dictionary<string, object?> _animatedValues = [];
         
+        [MemoryPackIgnore]
         private readonly BlendManager _blendManager = new();
 
         private EApplyType _applyType = EApplyType.Override;
@@ -57,29 +64,35 @@ namespace XREngine.Animation
             set => SetField(ref _initialStateIndex, value);
         }
 
+        [MemoryPackIgnore]
         private AnimState? _currentState = null;
         /// <summary>
         /// The state that's currently executing.
         /// </summary>
+        [MemoryPackIgnore]
         public AnimState? CurrentState
         {
             get => _currentState;
             set => SetField(ref _currentState, value);
         }
 
+        [MemoryPackIgnore]
         private AnimState? _nextState = null;
         /// <summary>
         /// The state we're currently blending into, and also executing, if any.
         /// </summary>
+        [MemoryPackIgnore]
         public AnimState? NextState
         {
             get => _nextState;
             set => SetField(ref _nextState, value);
         }
 
+        [MemoryPackIgnore]
         public AnimStateTransition? CurrentTransition
             => _blendManager.CurrentTransition;
 
+        [MemoryPackConstructor]
         public AnimLayer() { }
         public AnimLayer(params AnimState[] states)
             => States = [.. states];

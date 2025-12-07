@@ -1,10 +1,12 @@
-﻿using System.Numerics;
+﻿using MemoryPack;
+using System.Numerics;
 using XREngine.Data.Rendering;
 using XREngine.Rendering.Models.Materials.Textures;
 
 namespace XREngine.Rendering
 {
-    public class XRTextureCube : XRTexture, IFrameBufferAttachement
+    [MemoryPackable]
+    public partial class XRTextureCube : XRTexture, IFrameBufferAttachement
     {
         public delegate void DelAttachFaceToFBO(XRFrameBuffer target, EFrameBufferAttachment attachment, ECubemapFace face, int mipLevel);
         public delegate void DelDetachFaceFromFBO(XRFrameBuffer target, EFrameBufferAttachment attachment, ECubemapFace face, int mipLevel);
@@ -14,6 +16,7 @@ namespace XREngine.Rendering
 
         public override Vector3 WidthHeightDepth => new(Extent, Extent, 6);
 
+        [MemoryPackConstructor]
         public XRTextureCube()
             : this(1u) { }
 

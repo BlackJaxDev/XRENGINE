@@ -1,11 +1,13 @@
-﻿using System;
+﻿using MemoryPack;
+using System;
 using System.Linq;
 using System.Numerics;
 using XREngine.Data.Rendering;
 
 namespace XREngine.Rendering
 {
-    public class XRTexture1DArray : XRTexture
+    [MemoryPackable]
+    public partial class XRTexture1DArray : XRTexture
     {
         private XRTexture1D[] _textures = [];
         private bool _resizable = true;
@@ -15,6 +17,7 @@ namespace XREngine.Rendering
         private ETexWrapMode _uWrap = ETexWrapMode.Repeat;
         private float _lodBias = 0.0f;
 
+        [MemoryPackConstructor]
         public XRTexture1DArray()
         {
         }

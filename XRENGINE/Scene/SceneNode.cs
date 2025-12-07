@@ -1,4 +1,4 @@
-﻿using System.Collections.Generic;
+﻿using MemoryPack;
 using System.Diagnostics.CodeAnalysis;
 using XREngine.Components;
 using XREngine.Core.Attributes;
@@ -11,7 +11,8 @@ using YamlDotNet.Serialization;
 namespace XREngine.Scene
 {
     [Serializable]
-    public sealed class SceneNode : XRWorldObjectBase
+    [MemoryPackable]
+    public sealed partial class SceneNode : XRWorldObjectBase
     {
         //private static SceneNode? _dummy;
         //internal static SceneNode Dummy => _dummy ??= new SceneNode() { IsDummy = true };
@@ -19,6 +20,7 @@ namespace XREngine.Scene
 
         public const string DefaultName = "New Scene Node";
 
+        [MemoryPackConstructor]
         public SceneNode()
             : this(DefaultName) { }
         public SceneNode(TransformBase transform)

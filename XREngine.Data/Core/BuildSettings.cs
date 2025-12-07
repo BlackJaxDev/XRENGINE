@@ -1,3 +1,4 @@
+using MemoryPack;
 using System;
 using System.ComponentModel;
 using XREngine.Core.Files;
@@ -18,7 +19,8 @@ namespace XREngine
     }
 
     [Serializable]
-    public class BuildSettings : XRAsset
+    [MemoryPackable]
+    public partial class BuildSettings : XRAsset
     {
         private EBuildConfiguration _configuration = EBuildConfiguration.Development;
         private EBuildPlatform _platform = EBuildPlatform.Windows64;

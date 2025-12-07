@@ -64,9 +64,18 @@ namespace XREngine.Rendering.Physics.Physx
 
         public override Vector3 Gravity
         {
-            get => _scene->GetGravity();
+            get
+            {
+                if (_scene is null)
+                    return Vector3.Zero;
+
+                return _scene->GetGravity();
+            }
             set
             {
+                if (_scene is null)
+                    return;
+
                 PxVec3 g = value;
                 _scene->SetGravityMut(&g);
             }

@@ -1,9 +1,11 @@
 ﻿using System.Numerics;
+using MemoryPack;
 using XREngine.Core.Files;
 
 namespace XREngine.Animation
 {
-    public class TransformKeyCollection : XRAsset
+    [MemoryPackable]
+    public partial class TransformKeyCollection : XRAsset
     {
         public TransformKeyCollection() { }
 
@@ -12,12 +14,19 @@ namespace XREngine.Animation
         public bool AbsoluteTranslation { get; set; } = false;
         public bool AbsoluteRotation { get; set; } = false;
 
+        [MemoryPackIgnore]
         public PropAnimFloat TranslationX { get; } = new PropAnimFloat() { DefaultValue = 0.0f };
+        [MemoryPackIgnore]
         public PropAnimFloat TranslationY { get; } = new PropAnimFloat() { DefaultValue = 0.0f };
+        [MemoryPackIgnore]
         public PropAnimFloat TranslationZ { get; } = new PropAnimFloat() { DefaultValue = 0.0f };
+        [MemoryPackIgnore]
         public PropAnimFloat ScaleX { get; } = new PropAnimFloat() { DefaultValue = 0.0f };
+        [MemoryPackIgnore]
         public PropAnimFloat ScaleY { get; } = new PropAnimFloat() { DefaultValue = 0.0f };
+        [MemoryPackIgnore]
         public PropAnimFloat ScaleZ { get; } = new PropAnimFloat() { DefaultValue = 0.0f };
+        [MemoryPackIgnore]
         public PropAnimQuaternion Rotation { get; } = new PropAnimQuaternion() { DefaultValue = Quaternion.Identity };
 
         public void SetLength(float seconds, bool stretchAnimation, bool notifyChanged = true)

@@ -1,10 +1,11 @@
 ﻿using System.ComponentModel;
 using System.Numerics;
+using MemoryPack;
 using XREngine.Data.Core;
 
 namespace XREngine.Animation
 {
-    public abstract class AnimStateBase : XRBase
+    public abstract partial class AnimStateBase : XRBase
     {
         public AnimStateBase(params AnimStateTransition[] transitions)
             => Transitions = [.. transitions];
@@ -16,6 +17,7 @@ namespace XREngine.Animation
         public AnimStateBase() { }
 
         [Browsable(false)]
+        [MemoryPackIgnore]
         public AnimLayer? OwningLayer { get; internal set; }
 
         private EventList<AnimStateTransition> _transitions = [];

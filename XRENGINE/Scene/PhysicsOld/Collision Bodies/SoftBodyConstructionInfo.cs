@@ -1,4 +1,5 @@
-﻿using System.Numerics;
+﻿using MemoryPack;
+using System.Numerics;
 using XREngine.Core.Files;
 
 namespace XREngine.Physics
@@ -6,7 +7,8 @@ namespace XREngine.Physics
     /// <summary>
     /// Contains parameters for constructing a new soft body.
     /// </summary>
-    public class SoftBodyConstructionInfo : XRAsset, ICollisionObjectConstructionInfo
+    [MemoryPackable(GenerateType.NoGenerate)]
+    public partial class SoftBodyConstructionInfo : XRAsset, ICollisionObjectConstructionInfo
     {
         private bool _collisionEnabled = true;
         private bool _simulatePhysics = true;

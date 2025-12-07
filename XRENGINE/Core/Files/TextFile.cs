@@ -1,4 +1,5 @@
-﻿using System.Text;
+﻿using MemoryPack;
+using System.Text;
 using System.Text.Json.Serialization;
 using XREngine.Data;
 using YamlDotNet.Serialization;
@@ -13,7 +14,8 @@ namespace XREngine.Core.Files
     /// </summary>
     [XRAssetInspector("XREngine.Editor.AssetEditors.TextFileInspector")]
     [XR3rdPartyExtensions("txt")]
-    public class TextFile : XRAsset
+    [MemoryPackable]
+    public partial class TextFile : XRAsset
     {
         public event Action? TextChanged;
 
@@ -24,10 +26,12 @@ namespace XREngine.Core.Files
             set => SetField(ref _text, value);
         }
 
+        [MemoryPackIgnore]
         private Encoding _encoding = Encoding.Default;
         [YamlIgnore]
         [JsonIgnore]
         [JsonIgnoreNewtonsoft]
+        [MemoryPackIgnore]
         public Encoding Encoding
         {
             get
@@ -62,6 +66,7 @@ namespace XREngine.Core.Files
             TextChanged?.Invoke();
         }
 
+        [MemoryPackConstructor]
         public TextFile()
         {
             FilePath = null;

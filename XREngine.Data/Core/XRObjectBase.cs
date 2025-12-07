@@ -82,6 +82,7 @@ namespace XREngine.Data.Core
         /// </summary>
         [YamlIgnore]
         [Browsable(false)]
+        [MemoryPackIgnore]
         public bool IsDestroyed { get; private set; } = false;
 
         private static readonly ConcurrentQueue<XRObjectBase> _objectsToDestroy = new();

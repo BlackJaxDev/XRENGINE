@@ -1,4 +1,5 @@
-﻿using System.Numerics;
+﻿using MemoryPack;
+using System.Numerics;
 using XREngine.Data.Rendering;
 
 namespace XREngine.Rendering
@@ -6,7 +7,8 @@ namespace XREngine.Rendering
     /// <summary>
     /// View into a rectangle texture. Rectangle textures do not support mipmaps or array layers.
     /// </summary>
-    public class XRTextureViewRectangle(
+    [MemoryPackable]
+    public partial class XRTextureViewRectangle(
         XRTextureRectangle viewedTexture,
         ESizedInternalFormat internalFormat)
         : XRTextureView<XRTextureRectangle>(viewedTexture, 0u, 1u, 0u, 1u, internalFormat), IFrameBufferAttachement

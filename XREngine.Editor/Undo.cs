@@ -1567,13 +1567,13 @@ public static class Undo
             switch (target)
             {
                 case TransformBase transform:
-                    // Schedule transform matrix recalculation
-                    ScheduleTransformRefresh(transform);
+                    // Recalculate immediately so editor-visible transforms update even if the world tick is paused
+                    transform.RecalculateMatrices(forceWorldRecalc: true, setRenderMatrixNow: true);
                     break;
                 case SceneNode node when string.Equals(propertyName, nameof(SceneNode.Transform), StringComparison.Ordinal):
                     // If the SceneNode's Transform property changed, refresh the new transform
                     if (node.Transform is TransformBase nodeTransform)
-                        ScheduleTransformRefresh(nodeTransform);
+                        nodeTransform.RecalculateMatrices(forceWorldRecalc: true, setRenderMatrixNow: true);
                     break;
             }
         }

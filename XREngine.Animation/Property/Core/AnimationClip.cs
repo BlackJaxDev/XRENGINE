@@ -1,4 +1,5 @@
 ﻿using System.Numerics;
+using MemoryPack;
 using XREngine.Animation.IK;
 using XREngine.Data;
 using XREngine.Data.MMD;
@@ -10,7 +11,8 @@ namespace XREngine.Animation
     /// Represents a single animation clip that can be played with an AnimationClipComponent or an AnimStateMachineComponent.
     /// </summary>
     [XR3rdPartyExtensions("vmd")]
-    public class AnimationClip : MotionBase
+    [MemoryPackable]
+    public partial class AnimationClip : MotionBase
     {
         public override string ToString()
             => $"AnimationClip: {Name}";
@@ -22,6 +24,7 @@ namespace XREngine.Animation
             set => SetField(ref _traversalMethod, value);
         }
 
+        [MemoryPackConstructor]
         public AnimationClip()
             : base() { }
         public AnimationClip(AnimationMember rootFolder)
@@ -80,7 +83,10 @@ namespace XREngine.Animation
 
         private int _endedAnimations = 0;
 
+        [MemoryPackIgnore]
         private AnimationMember? _rootMember;
+
+        [MemoryPackIgnore]
         public AnimationMember? RootMember
         {
             get => _rootMember;

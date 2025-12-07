@@ -1,10 +1,12 @@
-﻿using XREngine.Data.Core;
+﻿using MemoryPack;
+using XREngine.Data.Core;
 using XREngine.Data.Vectors;
 
 namespace XREngine
 {
     [Serializable]
-    public class UserSettings : XRBase
+    [MemoryPackable]
+    public partial class UserSettings : XRBase
     {
         private EWindowState _windowState = EWindowState.Windowed;
         private EVSyncMode _vSyncMode = EVSyncMode.Adaptive;

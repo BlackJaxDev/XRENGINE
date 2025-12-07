@@ -1,8 +1,10 @@
-﻿using XREngine.Data.Core;
+﻿using MemoryPack;
+using XREngine.Data.Core;
 
 namespace XREngine.Animation
 {
-    public class BlendTree1D : BlendTree
+    [MemoryPackable]
+    public partial class BlendTree1D : BlendTree
     {
         public override string ToString()
             => $"BlendTree1D: {Name} ({ParameterName})";
@@ -14,7 +16,8 @@ namespace XREngine.Animation
             set => SetField(ref _parameterName, value);
         }
 
-        public class Child : XRBase
+        [MemoryPackable]
+        public partial class Child : XRBase
         {
             private MotionBase? _motion;
             public MotionBase? Motion
@@ -52,6 +55,7 @@ namespace XREngine.Animation
             set => SetField(ref _children, value);
         }
 
+        [MemoryPackIgnore]
         private readonly Comparer<Child> _childComparer = Comparer<Child>.Create((a, b) => a.Threshold.CompareTo(b.Threshold));
 
         private bool _needsSort = true;

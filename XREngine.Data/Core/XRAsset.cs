@@ -1,5 +1,6 @@
 ﻿using Extensions;
 using MemoryPack;
+using System;
 using System.ComponentModel;
 using System.IO.MemoryMappedFiles;
 using System.Text.Json.Serialization;
@@ -36,6 +37,7 @@ namespace XREngine.Core.Files
         /// </summary>
         [YamlMember(Alias = "__assetType", Order = -100)]
         [Browsable(false)]
+        [MemoryPackIgnore]
         public string SerializedAssetType
         {
             get => GetType().FullName ?? GetType().Name;
@@ -139,6 +141,7 @@ namespace XREngine.Core.Files
         }
 
         [Browsable(false)]
+        [MemoryPackIgnore]
         public bool IsDirty
         {
             get => _isDirty;
@@ -228,4 +231,5 @@ namespace XREngine.Core.Files
                 XRAssetGraphUtility.RefreshAssetGraph(SourceAsset);
         }
     }
+
 }

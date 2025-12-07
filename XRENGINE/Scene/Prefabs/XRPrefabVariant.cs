@@ -1,3 +1,4 @@
+using MemoryPack;
 using System;
 using System.Collections.Generic;
 using System.Diagnostics.CodeAnalysis;
@@ -11,7 +12,8 @@ namespace XREngine.Scene.Prefabs
     /// Prefab asset that derives from another prefab source and carries serialized overrides.
     /// </summary>
     [Serializable]
-    public class XRPrefabVariant : XRAsset
+    [MemoryPackable(GenerateType.NoGenerate)]
+    public partial class XRPrefabVariant : XRAsset
     {
         private XRPrefabSource? _basePrefab;
         private Guid _basePrefabId;

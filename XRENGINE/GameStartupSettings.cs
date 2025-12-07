@@ -1,10 +1,12 @@
-﻿using XREngine.Components.Scene.Transforms;
+﻿using MemoryPack;
+using XREngine.Components.Scene.Transforms;
 using XREngine.Core.Files;
 using XREngine.Data.Rendering;
 
 namespace XREngine
 {
-    public class GameStartupSettings : XRAsset
+    [MemoryPackable]
+    public partial class GameStartupSettings : XRAsset
     {
         private ENetworkingType _networkingType = ENetworkingType.Local;
         private List<GameWindowStartupSettings> _startupWindows = [];

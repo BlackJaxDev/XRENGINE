@@ -83,13 +83,9 @@ namespace XREngine.Components
                 switch (propName)
                 {
                     case nameof(Controller):
-                        //Call before unregistering anything
                         PreUnpossess();
-                        if (Controller?.ControlledPawn == this)
-                            Controller.ControlledPawn = null;
                         if (Controller is LocalPlayerController localPlayerController)
                             UnregisterTick(ETickGroup.Normal, ETickOrder.Input, TickInput);
-                        //Call after unregistering controller
                         PostUnpossess();
                         break;
                 }
@@ -102,13 +98,9 @@ namespace XREngine.Components
             switch (propName)
             {
                 case nameof(Controller):
-                    //Call before possessing the new pawn
                     PrePossess();
-                    if (Controller is not null)
-                        Controller.ControlledPawn = this;
                     if (Controller is LocalPlayerController localPlayerController)
                         RegisterTick(ETickGroup.Normal, ETickOrder.Input, TickInput);
-                    //Call after possessing the new pawn
                     PostPossess();
                     break;
             }

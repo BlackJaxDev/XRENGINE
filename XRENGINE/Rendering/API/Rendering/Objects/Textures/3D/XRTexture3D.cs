@@ -1,4 +1,5 @@
-﻿using System;
+﻿using MemoryPack;
+using System;
 using System.Linq;
 using System.Numerics;
 using XREngine.Data;
@@ -7,7 +8,8 @@ using XREngine.Data.Rendering;
 
 namespace XREngine.Rendering
 {
-    public class XRTexture3D : XRTexture
+    [MemoryPackable]
+    public partial class XRTexture3D : XRTexture
     {
         private Mipmap3D[] _mipmaps = [];
         private ESizedInternalFormat _sizedInternalFormat = ESizedInternalFormat.Rgba8;
@@ -94,6 +96,7 @@ namespace XREngine.Rendering
 
         public event Action? Resized;
 
+        [MemoryPackConstructor]
         public XRTexture3D()
             : this(1, 1, 1, EPixelInternalFormat.Rgb8, EPixelFormat.Rgb, EPixelType.UnsignedByte, true)
         {

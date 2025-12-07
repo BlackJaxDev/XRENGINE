@@ -373,3 +373,4 @@ XREngine.Editor/imgui.ini
 !Build/Submodules/**
 XRENGINE/Build/Engine/
 MagicPhysXPkg/
+generated/
