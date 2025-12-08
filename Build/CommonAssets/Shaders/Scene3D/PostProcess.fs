@@ -51,6 +51,11 @@ uniform float PaniniDistance;
 uniform float PaniniCrop;
 uniform vec2 PaniniViewExtents; // tan(fov/2) * aspect, tan(fov/2)
 
+// Bloom combine controls
+uniform int BloomStartMip = 0;
+uniform int BloomEndMip = 4;
+uniform float BloomLodWeights[5] = float[](0.6, 0.5, 0.35, 0.2, 0.1);
+
 vec3 RGBtoHSV(vec3 c)
 {
     vec4 K = vec4(0.0f, -1.0f / 3.0f, 2.0f / 3.0f, -1.0f);
@@ -247,10 +252,15 @@ void main()
       hdrSceneColor = SampleHDR(uv);
   }
   
-  //Add each blurred bloom mipmap
-  //Starts at 1/2 size lod because original image is not blurred (and doesn't need to be)
-  for (float lod = 1.0f; lod < 5.0f; lod += 1.0f)
-    hdrSceneColor += SampleBloom(uv, lod);
+  //Add bloom mipmaps with configurable range/weights
+  int startMip = clamp(BloomStartMip, 0, 4);
+  int endMip = clamp(BloomEndMip, startMip, 4);
+  for (int lod = startMip; lod <= endMip; ++lod)
+  {
+    float w = BloomLodWeights[lod];
+    if (w > 0.0f)
+      hdrSceneColor += SampleBloom(uv, float(lod)) * w;
+  }
 
   //Tone mapping / HDR selection
   vec3 sceneColor;

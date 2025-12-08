@@ -1,5 +1,6 @@
 ﻿using System;
 using System.Numerics;
+using XREngine.Components.Scene.Transforms;
 using XREngine.Data.Geometry;
 using XREngine.Data.Rendering;
 using XREngine.Data.Vectors;
@@ -140,6 +141,8 @@ namespace XREngine.Components.Lights
             for (int i = 0; i < cameras.Length; i++)
             {
                 XRCamera cam = cameras[i];
+                // Exclude gizmos layer from capture so debug visuals don't appear in reflections/probes
+                cam.CullingMask = DefaultLayers.EverythingExceptGizmos;
                 Viewports[i] = new XRViewport(null, Resolution, Resolution)
                 {
                     WorldInstanceOverride = World,

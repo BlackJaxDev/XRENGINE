@@ -1,15 +1,19 @@
-﻿using Silk.NET.Maths;
+﻿using ExCSS;
+using Jitter2;
+using Silk.NET.Maths;
 using Silk.NET.Windowing;
 using System.Collections.Concurrent;
-using System.Net;
-using System.Threading;
 using System.Linq;
+using System.Net;
+using System.Numerics;
+using System.Threading;
 using XREngine.Audio;
 using XREngine.Data.Core;
 using XREngine.Data.Trees;
 using XREngine.Rendering;
 using XREngine.Scene;
 using XREngine.Scene.Transforms;
+using static XREngine.Rendering.XRWorldInstance;
 
 namespace XREngine
 {
@@ -24,7 +28,7 @@ namespace XREngine
         private static readonly EventList<XRWindow> _windows = [];
         private static int _suppressedCleanupRequests;
         private static UserSettings _userSettings = null!;
-        private static BuildSettings _buildSettings = null!;
+        private static GameStartupSettings _gameSettings = null!;
 
         public static XREvent<UserSettings>? UserSettingsChanged;
         public static event Action<BuildSettings>? BuildSettingsChanged;
@@ -124,18 +128,18 @@ namespace XREngine
         /// </summary>
         public static BuildSettings BuildSettings
         {
-            get => _buildSettings;
+            get => GameSettings.BuildSettings;
             set
             {
-                if (ReferenceEquals(_buildSettings, value) && value is not null)
+                if (ReferenceEquals(GameSettings.BuildSettings, value) && value is not null)
                     return;
 
-                if (_buildSettings is not null)
-                    _buildSettings.PropertyChanged -= HandleBuildSettingsChanged;
+                if (GameSettings.BuildSettings is not null)
+                    GameSettings.BuildSettings.PropertyChanged -= HandleBuildSettingsChanged;
 
-                _buildSettings = value ?? new BuildSettings();
-                _buildSettings.PropertyChanged += HandleBuildSettingsChanged;
-                BuildSettingsChanged?.Invoke(_buildSettings);
+                GameSettings.BuildSettings = value ?? new BuildSettings();
+                GameSettings.BuildSettings.PropertyChanged += HandleBuildSettingsChanged;
+                BuildSettingsChanged?.Invoke(GameSettings.BuildSettings);
             }
         }
 
@@ -181,12 +185,31 @@ namespace XREngine
 
         private static void HandleBuildSettingsChanged(object? sender, IXRPropertyChangedEventArgs e)
         {
-            BuildSettingsChanged?.Invoke(_buildSettings);
+            BuildSettingsChanged?.Invoke(GameSettings.BuildSettings);
         }
         /// <summary>
         /// Game-defined settings, such as initial world and libraries.
         /// </summary>
-        public static GameStartupSettings GameSettings { get; set; }
+        public static GameStartupSettings GameSettings
+        {
+            get => _gameSettings;
+            set
+            {
+                if (ReferenceEquals(_gameSettings, value) && value is not null)
+                    return;
+
+                if (_gameSettings?.BuildSettings is not null)
+                    _gameSettings.BuildSettings.PropertyChanged -= HandleBuildSettingsChanged;
+
+                _gameSettings = value ?? new GameStartupSettings();
+
+                if (_gameSettings.BuildSettings is null)
+                    _gameSettings.BuildSettings = new BuildSettings();
+
+                _gameSettings.BuildSettings.PropertyChanged += HandleBuildSettingsChanged;
+                BuildSettingsChanged?.Invoke(_gameSettings.BuildSettings);
+            }
+        }
         /// <summary>
         /// All networking-related functions.
         /// </summary>
@@ -477,6 +500,7 @@ namespace XREngine
         {
             bool preferHdrOutput = windowSettings.OutputHDR ?? Rendering.Settings.OutputHDR;
             var options = GetWindowOptions(windowSettings, preferHdrOutput);
+
             XRWindow window;
             try
             {
@@ -489,14 +513,31 @@ namespace XREngine
                 options.API = new GraphicsAPI(ContextAPI.OpenGL, ContextProfile.Core, ContextFlags.ForwardCompatible, new APIVersion(4, 6));
                 window = new XRWindow(options, windowSettings.UseNativeTitleBar);
             }
+
             window.PreferHDROutput = preferHdrOutput;
             CreateViewports(windowSettings.LocalPlayers, window);
             window.UpdateViewportSizes();
             _windows.Add(window);
+
             Rendering.ApplyRenderPipelinePreference();
 
             /*Task.Run(() => */window.SetWorld(windowSettings.TargetWorld);
+            window.TargetWorldInstance?.AnyTransformWorldMatrixChanged += TargetWorldInstance_AnyTransformWorldMatrixChanged;
             return window;
+        }
+
+        private static void TargetWorldInstance_AnyTransformWorldMatrixChanged(XRWorldInstance instance, TransformBase tfm, Matrix4x4 mtx)
+        {
+            if (PlayMode.IsEditing && !instance.TransitioningPlay && instance.PlayState == EPlayState.Playing)
+            {
+                var sceneNode = tfm.SceneNode;
+                if (sceneNode is null)
+                    return;
+
+                // In edit mode, refresh play lifecycle for this node when the world matrix changes
+                sceneNode.OnEndPlay();
+                sceneNode.OnBeginPlay();
+            }
         }
 
         private static void CreateViewports(ELocalPlayerIndexMask localPlayerMask, XRWindow window)

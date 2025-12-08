@@ -3,12 +3,11 @@ using System.ComponentModel;
 using System.Runtime.Intrinsics.X86;
 using XREngine.Data;
 using XREngine.Data.Colors;
-using XREngine.Data.Core;
 using XREngine.Data.Geometry;
 
 namespace XREngine.Rendering
 {
-    public class ColorGradingSettings : XRBase
+    public class ColorGradingSettings : PostProcessSettings
     {
         public const string ColorGradeUniformName = "ColorGrade";
 
@@ -116,7 +115,7 @@ namespace XREngine.Rendering
             }
         }
 
-        internal void SetUniforms(XRRenderProgram program)
+        public override void SetUniforms(XRRenderProgram program)
         {
             program.Uniform($"{ColorGradeUniformName}.{nameof(Tint)}", Tint);
             program.Uniform($"{ColorGradeUniformName}.{nameof(Exposure)}", Exposure);

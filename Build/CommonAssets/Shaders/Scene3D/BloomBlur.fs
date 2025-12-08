@@ -6,11 +6,11 @@ layout(location = 0) in vec3 FragPos;
 uniform sampler2D Texture0;
 
 uniform float Ping;
-uniform int LOD;
+uniform int LOD; // Source mip to sample; target mip is set by FBO attachment.
 uniform float Radius = 1.0f;
 uniform float BloomThreshold = 0.4f;
 uniform bool UseThreshold = true;
-uniform float BloomSoftKnee = 1f;
+uniform float BloomSoftKnee = 1.0f;
 
 // Soft knee helper for bloom thresholding
 float BloomSoftThreshold(in vec3 col)
@@ -33,8 +33,8 @@ void main()
       uv = clamp(uv, 0.0f, 1.0f);
 
       vec2 scale = vec2(Ping, 1.0f - Ping);
-      vec2 texelSize = 1.0f / textureSize(Texture0, LOD) * scale;
-      float lodf = float(LOD);
+    vec2 texelSize = 1.0f / textureSize(Texture0, LOD) * scale;
+    float lodf = float(LOD) + 0.5f; // slight bias to smooth transitions between mips
       // Sample center and apply soft-knee bloom threshold weight
       vec3 centerCol = textureLod(Texture0, uv, lodf).rgb;
       float centerW = UseThreshold ? BloomSoftThreshold(centerCol) : 1.0f;

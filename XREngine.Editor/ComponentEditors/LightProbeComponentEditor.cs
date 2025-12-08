@@ -35,6 +35,8 @@ public sealed class LightProbeComponentEditor : IXRComponentEditor
         }
 
         DrawProbeStatus(lightProbe);
+        DrawProxyAndInfluence(lightProbe);
+        DrawHdrAndStreaming(lightProbe);
         DrawCapturePreviews(lightProbe);
         ComponentEditorLayout.DrawActivePreviewDialog();
     }
@@ -50,6 +52,10 @@ public sealed class LightProbeComponentEditor : IXRComponentEditor
         bool gizmoVisible = lightProbe.PreviewEnabled;
         if (ImGui.Checkbox("Show Probe Gizmo", ref gizmoVisible))
             lightProbe.PreviewEnabled = gizmoVisible;
+
+        bool drawInfluence = lightProbe.RenderInfluenceOnSelection;
+        if (ImGui.Checkbox("Draw Influence/Proxy Gizmos", ref drawInfluence))
+            lightProbe.RenderInfluenceOnSelection = drawInfluence;
 
         ImGui.TextDisabled($"Preview Mode: {lightProbe.PreviewDisplay}");
 
@@ -78,6 +84,113 @@ public sealed class LightProbeComponentEditor : IXRComponentEditor
     ];
 
     private static readonly ConditionalWeakTable<XRTextureCube, CubemapPreviewCache> CubemapPreviewCaches = new();
+
+    private static void DrawProxyAndInfluence(LightProbeComponent lightProbe)
+    {
+        if (!ImGui.CollapsingHeader("Proxy & Influence", ImGuiTreeNodeFlags.DefaultOpen))
+            return;
+
+        bool parallax = lightProbe.ParallaxCorrectionEnabled;
+        if (ImGui.Checkbox("Enable Parallax Correction", ref parallax))
+            lightProbe.ParallaxCorrectionEnabled = parallax;
+
+        Vector3 proxyCenter = lightProbe.ProxyBoxCenterOffset;
+        if (ImGui.DragFloat3("Proxy Center Offset", ref proxyCenter, 0.01f))
+            lightProbe.ProxyBoxCenterOffset = proxyCenter;
+
+        Vector3 proxyExtents = lightProbe.ProxyBoxHalfExtents;
+        if (ImGui.DragFloat3("Proxy Half Extents", ref proxyExtents, 0.01f, 0.001f))
+            lightProbe.ProxyBoxHalfExtents = new Vector3(
+                MathF.Max(0.0001f, proxyExtents.X),
+                MathF.Max(0.0001f, proxyExtents.Y),
+                MathF.Max(0.0001f, proxyExtents.Z));
+
+        Vector4 proxyRotation = new(
+            lightProbe.ProxyBoxRotation.X,
+            lightProbe.ProxyBoxRotation.Y,
+            lightProbe.ProxyBoxRotation.Z,
+            lightProbe.ProxyBoxRotation.W);
+        if (ImGui.DragFloat4("Proxy Rotation (xyzw)", ref proxyRotation, 0.01f))
+        {
+            var q = new Quaternion(proxyRotation.X, proxyRotation.Y, proxyRotation.Z, proxyRotation.W);
+            if (q.LengthSquared() > float.Epsilon)
+                q = Quaternion.Normalize(q);
+            lightProbe.ProxyBoxRotation = q;
+        }
+
+        ImGui.Separator();
+        int influenceShape = (int)lightProbe.InfluenceShape;
+        if (ImGui.Combo("Influence Shape", ref influenceShape, "Sphere\0Box\0"))
+            lightProbe.InfluenceShape = (LightProbeComponent.EInfluenceShape)influenceShape;
+
+        Vector3 influenceOffset = lightProbe.InfluenceOffset;
+        if (ImGui.DragFloat3("Influence Offset", ref influenceOffset, 0.01f))
+            lightProbe.InfluenceOffset = influenceOffset;
+
+        if (lightProbe.InfluenceShape == LightProbeComponent.EInfluenceShape.Sphere)
+        {
+            float inner = lightProbe.InfluenceSphereInnerRadius;
+            float outer = lightProbe.InfluenceSphereOuterRadius;
+
+            if (ImGui.DragFloat("Inner Radius", ref inner, 0.01f, 0.0f, outer, "%.3f"))
+                lightProbe.InfluenceSphereInnerRadius = inner;
+            if (ImGui.DragFloat("Outer Radius", ref outer, 0.01f, 0.001f, float.MaxValue, "%.3f"))
+                lightProbe.InfluenceSphereOuterRadius = outer;
+        }
+        else
+        {
+            Vector3 inner = lightProbe.InfluenceBoxInnerExtents;
+            Vector3 outer = lightProbe.InfluenceBoxOuterExtents;
+
+            if (ImGui.DragFloat3("Inner Extents", ref inner, 0.01f, 0.0f))
+                lightProbe.InfluenceBoxInnerExtents = inner;
+
+            if (ImGui.DragFloat3("Outer Extents", ref outer, 0.01f, 0.001f))
+                lightProbe.InfluenceBoxOuterExtents = outer;
+        }
+    }
+
+    private static void DrawHdrAndStreaming(LightProbeComponent lightProbe)
+    {
+        if (!ImGui.CollapsingHeader("HDR & Streaming", ImGuiTreeNodeFlags.DefaultOpen))
+            return;
+
+        int hdrEncoding = (int)lightProbe.HdrEncoding;
+        if (ImGui.Combo("HDR Encoding", ref hdrEncoding, "Rgb16f\0RGBM\0RGBE\0YCoCg\0"))
+            lightProbe.HdrEncoding = (LightProbeComponent.EHdrEncoding)hdrEncoding;
+        if (ImGui.IsItemHovered())
+            ImGui.SetTooltip("HDR encoding for baked probes. Rgb16f is highest quality, others reduce memory.");
+
+        bool normalized = lightProbe.NormalizedCubemap;
+        if (ImGui.Checkbox("Normalized Cubemap", ref normalized))
+            lightProbe.NormalizedCubemap = normalized;
+        if (ImGui.IsItemHovered())
+            ImGui.SetTooltip("Normalize intensity during bake; allows probe reuse at different brightness levels.");
+
+        if (normalized)
+        {
+            ImGui.Indent();
+            float normScale = lightProbe.NormalizationScale;
+            if (ImGui.DragFloat("Normalization Scale", ref normScale, 0.01f, 0.0001f, 100.0f, "%.4f"))
+                lightProbe.NormalizationScale = normScale;
+            ImGui.Unindent();
+        }
+
+        ImGui.Separator();
+        bool streaming = lightProbe.StreamHighMipsOnDemand;
+        if (ImGui.Checkbox("Stream High Mips on Demand", ref streaming))
+            lightProbe.StreamHighMipsOnDemand = streaming;
+        if (ImGui.IsItemHovered())
+            ImGui.SetTooltip("Load only low-res mips initially; stream high-res when probe becomes visible/dominant.");
+
+        if (streaming)
+        {
+            ImGui.Indent();
+            ImGui.TextDisabled($"Streamed Mip Level: {lightProbe.StreamedMipLevel}");
+            ImGui.TextDisabled($"Target Mip Level: {lightProbe.TargetMipLevel}");
+            ImGui.Unindent();
+        }
+    }
 
     private static void DrawCubemapPreview(LightProbeComponent lightProbe)
     {

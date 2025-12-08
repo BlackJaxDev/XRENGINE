@@ -345,6 +345,7 @@ namespace XREngine.Rendering
         public event Action<string, Vector4>? UniformSetVector4Requested = null;
 
         public event Action<string, float[]>? UniformSetFloatArrayRequested = null;
+        public event Action<string, Span<float>> ? UniformSetFloatSpanRequested = null;
         public event Action<string, Vector2[]>? UniformSetVector2ArrayRequested = null;
         public event Action<string, Vector3[]>? UniformSetVector3ArrayRequested = null;
         public event Action<string, Vector4[]>? UniformSetVector4ArrayRequested = null;
@@ -545,6 +546,13 @@ namespace XREngine.Rendering
         /// <param name="value"></param>
         public void Uniform(string name, float[] value)
             => UniformSetFloatArrayRequested?.Invoke(name, value);
+        /// <summary>
+        /// Sends a Span&lt;float&gt; property value to the shader program.
+        /// </summary>
+        /// <param name="name"></param>
+        /// <param name="value"></param>
+        public void Uniform(string name, Span<float> value)
+            => UniformSetFloatSpanRequested?.Invoke(name, value);
         /// <summary>
         /// Sends a Vector2[] property value to the shader program.
         /// </summary>

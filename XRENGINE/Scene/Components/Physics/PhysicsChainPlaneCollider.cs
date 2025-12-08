@@ -1,4 +1,5 @@
 ﻿using System.Numerics;
+using XREngine.Components.Scene.Transforms;
 using XREngine.Data.Colors;
 using XREngine.Data.Core;
 using XREngine.Data.Geometry;
@@ -16,10 +17,9 @@ public class PhysicsChainPlaneCollider : PhysicsChainColliderBase, IRenderable
 
     public PhysicsChainPlaneCollider()
     {
-        RenderedObjects =
-        [
-            RenderInfo3D.New(this, new RenderCommandMethod3D((int)EDefaultRenderPass.OpaqueForward, OnDrawGizmosSelected))
-        ];
+        var renderInfo = RenderInfo3D.New(this, new RenderCommandMethod3D((int)EDefaultRenderPass.OpaqueForward, OnDrawGizmosSelected));
+        renderInfo.Layer = DefaultLayers.GizmosIndex;
+        RenderedObjects = [renderInfo];
     }
 
     public override void Prepare()

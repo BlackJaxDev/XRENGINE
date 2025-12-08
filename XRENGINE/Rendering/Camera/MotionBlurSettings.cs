@@ -1,11 +1,11 @@
 ﻿
+
 using System.ComponentModel;
 using System.Numerics;
-using XREngine.Data.Core;
 
 namespace XREngine.Rendering
 {
-    public class MotionBlurSettings : XRBase
+    public class MotionBlurSettings : PostProcessSettings
     {
         private bool _enabled;
         private float _shutterScale = 0.75f;
@@ -64,7 +64,10 @@ namespace XREngine.Rendering
             set => SetField(ref _sampleFalloff, Math.Clamp(value, 0.1f, 8.0f));
         }
 
-        internal void SetUniforms(XRRenderProgram program, Vector2 texelSize)
+        public override void SetUniforms(XRRenderProgram program)
+            => SetUniforms(program, Vector2.Zero);
+
+        public void SetUniforms(XRRenderProgram program, Vector2 texelSize)
         {
             program.Uniform("TexelSize", texelSize);
             program.Uniform("ShutterScale", _shutterScale);

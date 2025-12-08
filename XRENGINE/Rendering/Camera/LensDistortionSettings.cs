@@ -1,11 +1,11 @@
 ﻿
+
 using System;
 using System.Numerics;
-using XREngine.Data.Core;
 
 namespace XREngine.Rendering
 {
-    public class LensDistortionSettings : XRBase
+    public class LensDistortionSettings : PostProcessSettings
     {
         private ELensDistortionMode _mode = ELensDistortionMode.None;
         /// <summary>
@@ -52,7 +52,7 @@ namespace XREngine.Rendering
             set => SetField(ref _paniniCropToFit, Math.Clamp(value, 0.0f, 1.0f));
         }
 
-        public void SetUniforms(XRRenderProgram program)
+        public override void SetUniforms(XRRenderProgram program)
             => SetUniforms(program, null, 1.0f);
 
         public void SetUniforms(XRRenderProgram program, float? cameraVerticalFovDegrees)

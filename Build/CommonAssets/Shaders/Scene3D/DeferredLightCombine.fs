@@ -29,8 +29,38 @@ layout(std430, binding = 1) buffer LightProbeTetrahedra
         vec4 TetraIndices[];
 };
 
+struct ProbeParam
+{
+        vec4 InfluenceInner;       // xyz inner extents or inner radius (x) for sphere
+        vec4 InfluenceOuter;       // xyz outer extents or outer radius (x) for sphere
+        vec4 InfluenceOffsetShape; // xyz offset, w = shape (0 sphere, 1 box)
+        vec4 ProxyCenterEnable;    // xyz center offset, w = parallax enabled (1/0)
+        vec4 ProxyHalfExtents;     // xyz half extents, w = normalization scale
+        vec4 ProxyRotation;        // xyzw quaternion
+};
+
+layout(std430, binding = 2) buffer LightProbeParameters
+{
+        ProbeParam ProbeParams[];
+};
+
+// Sparse grid accelerator: flattened cells with offsets into a compact probe list
+layout(std430, binding = 3) buffer LightProbeGridCells
+{
+        ivec2 CellOffsetCount[]; // x=offset, y=count
+};
+
+layout(std430, binding = 4) buffer LightProbeGridIndices
+{
+        int CellProbeIndices[];
+};
+
 uniform int ProbeCount;
 uniform int TetraCount;
+uniform ivec3 ProbeGridDims;
+uniform vec3 ProbeGridOrigin;
+uniform float ProbeGridCellSize;
+uniform bool UseProbeGrid;
 vec2 EncodeOcta(vec3 dir)
 {
 	dir = normalize(dir);
@@ -71,6 +101,69 @@ vec3 SampleOctaArrayLod(sampler2DArray tex, vec3 dir, float layer, float lod)
 {
         vec2 uv = EncodeOcta(dir);
         return textureLod(tex, vec3(uv, layer), lod).rgb;
+}
+
+mat3 QuaternionToMat3(vec4 q)
+{
+        vec3 q2 = q.xyz + q.xyz;
+        vec3 qq = q.xyz * q2;
+        float qx2 = q.x * q2.x;
+        float qy2 = q.y * q2.y;
+        float qz2 = q.z * q2.z;
+
+        vec3 qwq = q.w * q2;
+        vec3 m0 = vec3(1.0f - (qy2 + qz2), qq.x + qwq.z, qq.y - qwq.y);
+        vec3 m1 = vec3(qq.x - qwq.z, 1.0f - (qx2 + qz2), qq.z + qwq.x);
+        vec3 m2 = vec3(qq.y + qwq.y, qq.z - qwq.x, 1.0f - (qx2 + qy2));
+        return mat3(m0, m1, m2);
+}
+
+float ComputeInfluenceWeight(int probeIndex, vec3 worldPos)
+{
+        ProbeParam p = ProbeParams[probeIndex];
+        int shape = int(p.InfluenceOffsetShape.w + 0.5f);
+        vec3 center = ProbePositions[probeIndex].xyz + p.InfluenceOffsetShape.xyz;
+        if (shape == 0)
+        {
+                float inner = p.InfluenceInner.x;
+                float outer = max(p.InfluenceOuter.x, inner + 0.0001f);
+                float dist = length(worldPos - center);
+                float ndf = clamp((dist - inner) / (outer - inner), 0.0f, 1.0f);
+                return 1.0f - ndf;
+        }
+        vec3 inner = p.InfluenceInner.xyz;
+        vec3 outer = max(p.InfluenceOuter.xyz, inner + vec3(0.0001f));
+        vec3 rel = abs(worldPos - center);
+        vec3 ndf3 = clamp((rel - inner) / (outer - inner), 0.0f, 1.0f);
+        float ndf = max(ndf3.x, max(ndf3.y, ndf3.z));
+        return 1.0f - ndf;
+}
+
+vec3 ApplyParallax(int probeIndex, vec3 dirWS, vec3 worldPos)
+{
+        ProbeParam p = ProbeParams[probeIndex];
+        if (p.ProxyCenterEnable.w < 0.5f)
+                return dirWS;
+
+        vec3 proxyCenter = ProbePositions[probeIndex].xyz + p.ProxyCenterEnable.xyz;
+        vec3 halfExt = max(p.ProxyHalfExtents.xyz, vec3(0.0001f));
+        mat3 rot = QuaternionToMat3(p.ProxyRotation);
+        mat3 invRot = transpose(rot);
+
+        vec3 rayOrigLS = invRot * (worldPos - proxyCenter);
+        vec3 rayDirLS = invRot * dirWS;
+        rayDirLS = normalize(rayDirLS);
+
+        vec3 t1 = (halfExt - rayOrigLS) / max(rayDirLS, vec3(1e-6f));
+        vec3 t2 = (-halfExt - rayOrigLS) / max(rayDirLS, vec3(1e-6f));
+        vec3 tmax = max(t1, t2);
+        float dist = min(tmax.x, min(tmax.y, tmax.z));
+        if (dist <= 0.0f || isnan(dist) || isinf(dist))
+                return dirWS;
+
+        vec3 hitLS = rayOrigLS + rayDirLS * dist;
+        vec3 hitWS = proxyCenter + rot * hitLS;
+        return normalize(hitWS - ProbePositions[probeIndex].xyz);
 }
 
 
@@ -172,6 +265,69 @@ void ResolveProbeWeights(vec3 worldPos, out vec4 weights, out ivec4 indices)
         if (sum > 0.0f)
                 weights /= sum;
 }
+
+void ResolveProbeWeightsGrid(vec3 worldPos, out vec4 weights, out ivec4 indices)
+{
+        weights = vec4(0.0f);
+        indices = ivec4(-1);
+
+        if (ProbeGridDims.x <= 0 || ProbeGridDims.y <= 0 || ProbeGridDims.z <= 0 || ProbeGridCellSize <= 0.0f)
+                return;
+
+        vec3 rel = (worldPos - ProbeGridOrigin) / ProbeGridCellSize;
+        ivec3 cell = clamp(ivec3(floor(rel)), ivec3(0), ProbeGridDims - ivec3(1));
+        int flatIndex = cell.x + cell.y * ProbeGridDims.x + cell.z * ProbeGridDims.x * ProbeGridDims.y;
+
+        ivec2 oc = CellOffsetCount[flatIndex];
+        int offset = oc.x;
+        int count = oc.y;
+        if (count <= 0)
+                return;
+
+        float bestDistances[4];
+        int bestIndices[4];
+        for (int k = 0; k < 4; ++k)
+        {
+                bestDistances[k] = 1e20f;
+                bestIndices[k] = -1;
+        }
+
+        for (int i = 0; i < count; ++i)
+        {
+                int probeIndex = CellProbeIndices[offset + i];
+                if (probeIndex < 0 || probeIndex >= ProbeCount)
+                        continue;
+                float d = length(worldPos - ProbePositions[probeIndex].xyz);
+                for (int k = 0; k < 4; ++k)
+                {
+                        if (d < bestDistances[k])
+                        {
+                                for (int s = 3; s > k; --s)
+                                {
+                                        bestDistances[s] = bestDistances[s - 1];
+                                        bestIndices[s] = bestIndices[s - 1];
+                                }
+                                bestDistances[k] = d;
+                                bestIndices[k] = probeIndex;
+                                break;
+                        }
+                }
+        }
+
+        float sum = 0.0f;
+        for (int k = 0; k < 4; ++k)
+        {
+                if (bestIndices[k] >= 0)
+                {
+                        float w = 1.0f / max(bestDistances[k], 0.0001f);
+                        weights[k] = w;
+                        indices[k] = bestIndices[k];
+                        sum += w;
+                }
+        }
+        if (sum > 0.0f)
+                weights /= sum;
+}
 void main()
 {
         vec2 uv = FragPos.xy;
@@ -194,27 +350,6 @@ void main()
         float specularIntensity = rmse.z; 
         float emissiveIntensity = rmse.w; 
 
-        vec4 probeWeights; 
-        ivec4 probeIndices; 
-        ResolveProbeWeights(fragPosWS, probeWeights, probeIndices); 
-
-        vec3 irradianceColor = vec3(0.0f); 
-        vec3 prefilteredColor = vec3(0.0f); 
-
-        for (int i = 0; i < 4; ++i) 
-        { 
-                if (probeIndices[i] < 0) 
-                        continue; 
-                irradianceColor += probeWeights[i] * SampleOctaArray(IrradianceArray, normal, probeIndices[i]); 
-                prefilteredColor += probeWeights[i] * SampleOctaArrayLod(PrefilterArray, normal, probeIndices[i], roughness * MAX_REFLECTION_LOD); 
-        } 
-
-        if (irradianceColor == vec3(0.0f) && ProbeCount > 0) 
-        { 
-                irradianceColor = SampleOctaArray(IrradianceArray, normal, 0.0f); 
-                prefilteredColor = SampleOctaArrayLod(PrefilterArray, normal, 0.0f, roughness * MAX_REFLECTION_LOD); 
-        } 
-
 	vec3 CameraPosition = InverseViewMatrix[3].xyz;
 	vec3 V = normalize(CameraPosition - fragPosWS);
 	float NoV = max(dot(normal, V), 0.0f);
@@ -227,11 +362,64 @@ void main()
 	vec3 kD = (1.0f - kS) * (1.0f - metallic);
         vec3 R = reflect(-V, normal);
 
-        //TODO: fix reflection vector, blend environment cubemaps via influence radius
+        vec4 probeWeights; 
+        ivec4 probeIndices; 
+        if (UseProbeGrid)
+        {
+                ResolveProbeWeightsGrid(fragPosWS, probeWeights, probeIndices);
+                if (probeIndices.x < 0 && probeIndices.y < 0 && probeIndices.z < 0 && probeIndices.w < 0)
+                        ResolveProbeWeights(fragPosWS, probeWeights, probeIndices);
+        }
+        else
+        {
+                ResolveProbeWeights(fragPosWS, probeWeights, probeIndices);
+        }
+
+        vec3 irradianceColor = vec3(0.0f); 
+        vec3 prefilteredColor = vec3(0.0f); 
+        float totalWeight = 0.0f;
+
+        for (int i = 0; i < 4; ++i) 
+        { 
+                if (probeIndices[i] < 0) 
+                        continue; 
+                float influence = ComputeInfluenceWeight(probeIndices[i], fragPosWS);
+                float w = probeWeights[i] * influence;
+                if (w <= 0.0f)
+                        continue;
+                vec3 parallaxDir = ApplyParallax(probeIndices[i], normal, fragPosWS);
+                vec3 reflDir = ApplyParallax(probeIndices[i], R, fragPosWS);
+                
+                // Fetch normalization scale (allows normalized probes to share textures)
+                float normScale = ProbeParams[probeIndices[i]].ProxyHalfExtents.w;
+                normScale = max(normScale, 0.0001f);
+                
+                // Clamp mip level to prefilter array's available mips
+                float maxMip = float(textureQueryLevels(PrefilterArray) - 1);
+                float desiredLod = roughness * MAX_REFLECTION_LOD;
+                float clampedLod = min(desiredLod, maxMip);
+                
+                irradianceColor += w * normScale * SampleOctaArray(IrradianceArray, parallaxDir, probeIndices[i]);
+                prefilteredColor += w * normScale * SampleOctaArrayLod(PrefilterArray, reflDir, probeIndices[i], clampedLod);
+                totalWeight += w;
+        } 
+
+        if (totalWeight > 0.0f)
+        {
+                irradianceColor /= totalWeight;
+                prefilteredColor /= totalWeight;
+        }
+        else if (ProbeCount > 0) 
+        { 
+                float maxMip = float(textureQueryLevels(PrefilterArray) - 1);
+                float clampedLod = min(roughness * MAX_REFLECTION_LOD, maxMip);
+                irradianceColor = SampleOctaArray(IrradianceArray, normal, 0.0f); 
+                prefilteredColor = SampleOctaArrayLod(PrefilterArray, normal, 0.0f, clampedLod); 
+        } 
 
         vec3 diffuse = irradianceColor * albedoColor;
         vec3 specular = prefilteredColor * (kS * brdfValue.x + brdfValue.y);
         vec3 ambient = (kD * diffuse + specular) * ao;
 
-	OutLo = ambient + InLo + emissiveIntensity * albedoColor;
+        OutLo = ambient + InLo + emissiveIntensity * albedoColor;
 }

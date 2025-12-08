@@ -261,6 +261,13 @@ namespace XREngine.Components
         }
 
         /// <summary>
+        /// Called once when the owning scene begins play (scene loaded).
+        /// </summary>
+        protected internal virtual void OnBeginPlay()
+        {
+        }
+
+        /// <summary>
         /// If true, all registered ticks will be unregistered when the component is set to inactive.
         /// If false, ticks will remain registered when the component is stopped and must be manually unregistered.
         /// True by default.
@@ -280,6 +287,13 @@ namespace XREngine.Components
             VerifyInterfacesOnStop();
             if (UnregisterTicksOnStop)
                 ClearTicks();
+        }
+
+        /// <summary>
+        /// Called once when the owning scene ends play (scene unloaded).
+        /// </summary>
+        protected internal virtual void OnEndPlay()
+        {
         }
 
         /// <summary>

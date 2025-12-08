@@ -1,9 +1,8 @@
 ﻿
-using XREngine.Data.Core;
 
 namespace XREngine.Rendering
 {
-    public class ChromaticAberrationSettings : XRBase
+    public class ChromaticAberrationSettings : PostProcessSettings
     {
         private bool _enabled;
         public bool Enabled
@@ -19,7 +18,7 @@ namespace XREngine.Rendering
             set => SetField(ref _intensity, value);
         }
 
-        public void SetUniforms(XRRenderProgram program)
+        public override void SetUniforms(XRRenderProgram program)
         {
             program.Uniform("ChromaticAberrationIntensity", _enabled ? _intensity : 0.0f);
         }

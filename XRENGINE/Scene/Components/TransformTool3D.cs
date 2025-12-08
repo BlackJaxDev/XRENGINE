@@ -18,6 +18,7 @@ using XREngine.Rendering.Physics.Physx;
 using XREngine.Rendering.Physics.Physx.Joints;
 using XREngine.Scene;
 using XREngine.Scene.Transforms;
+using XREngine.Components.Scene.Transforms;
 
 namespace XREngine.Actors.Types
 {
@@ -29,6 +30,7 @@ namespace XREngine.Actors.Types
             TransformSpace = ETransformSpace.World;
             _rc = new RenderCommandMethod3D((int)EDefaultRenderPass.OnTopForward, Render);
             RenderInfo = RenderInfo3D.New(this, _rc);
+            RenderInfo.Layer = DefaultLayers.GizmosIndex;
             RenderedObjects = [RenderInfo];
             UpdateModelComponent();
         }
@@ -1350,10 +1352,13 @@ namespace XREngine.Actors.Types
         {
             if ((!_hiCam && !_hiSphere && !_hiAxis.Any) || Engine.Rendering.State.IsShadowPass || !RenderDebugInfo)
                 return;
+
+            var camera = Engine.Rendering.State.RenderingCamera;
+            if (camera != null && !camera.CullingMask.Contains(DefaultLayers.GizmosIndex))
+                return;
             
             Engine.Rendering.Debug.RenderPoint(_lastPointWorld, ColorF4.Black);
 
-            var camera = Engine.Rendering.State.RenderingCamera;
             if (camera != null)
                 Engine.Rendering.Debug.RenderLine(
                     _lastPointWorld,

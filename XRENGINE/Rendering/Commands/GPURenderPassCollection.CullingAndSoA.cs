@@ -1153,7 +1153,7 @@ namespace XREngine.Rendering.Commands
 
             shader.Uniform("CameraPosition", camera.Transform.WorldTranslation);
             shader.Uniform("MaxRenderDistance", camera.FarZ * camera.FarZ);
-            shader.Uniform("CameraLayerMask", unchecked((uint)0xFFFFFFFF));
+            shader.Uniform("CameraLayerMask", unchecked((uint)camera.CullingMask.Value));
             shader.Uniform("CurrentRenderPass", RenderPass);
             shader.Uniform("DisabledFlagsMask", 0u);
             shader.Uniform("InputCommandCount", (int)count);

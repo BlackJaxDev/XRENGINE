@@ -8,6 +8,7 @@ using XREngine.Rendering;
 using XREngine.Rendering.OpenGL;
 using XREngine.Rendering.PostProcessing;
 using XREngine.Rendering.Resources;
+using XREngine.Scene;
 
 namespace XREngine.Editor.ComponentEditors;
 
@@ -77,6 +78,48 @@ public sealed class CameraComponentEditor : IXRComponentEditor
         bool cullWithFrustum = component.CullWithFrustum;
         if (ImGui.Checkbox("Cull With Frustum", ref cullWithFrustum))
             component.CullWithFrustum = cullWithFrustum;
+
+        // Culling Mask
+        int cullingMask = component.Camera.CullingMask.Value;
+        bool cullingChanged = false;
+
+        ImGui.Text("Culling Mask");
+        ImGui.SameLine();
+        ImGui.TextDisabled($"(0x{cullingMask:X8})");
+        if (ImGui.IsItemHovered())
+            ImGui.SetTooltip("Bitmask determining which layers this camera renders. -1 = all layers.");
+
+        const int columns = 4;
+        if (ImGui.BeginTable("CullingMaskTable", columns, ImGuiTableFlags.BordersInnerV))
+        {
+            var layerNames = Engine.GameSettings.LayerNames;
+            for (int layer = 0; layer < 32; layer++)
+            {
+                if (layer % columns == 0)
+                    ImGui.TableNextRow();
+
+                ImGui.TableSetColumnIndex(layer % columns);
+
+                string label = layerNames.TryGetValue(layer, out var name) && !string.IsNullOrWhiteSpace(name)
+                    ? name
+                    : $"Layer {layer}";
+
+                bool enabled = (cullingMask & (1 << layer)) != 0;
+                if (ImGui.Checkbox(label, ref enabled))
+                {
+                    cullingChanged = true;
+                    if (enabled)
+                        cullingMask |= 1 << layer;
+                    else
+                        cullingMask &= ~(1 << layer);
+                }
+            }
+
+            ImGui.EndTable();
+        }
+
+        if (cullingChanged)
+            component.Camera.CullingMask = new LayerMask(cullingMask);
 
         string uiOverlay = component.GetUserInterfaceOverlay()?.SceneNode?.Name
             ?? component.GetUserInterfaceOverlay()?.GetType().Name

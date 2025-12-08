@@ -21,6 +21,7 @@ using XREngine.Rendering.RenderGraph;
 using XREngine.Components.Capture.Lights;
 using XREngine.Scene;
 using static XREngine.Engine.Rendering.State;
+using XREngine.Data.Vectors;
 
 namespace XREngine.Rendering;
 
@@ -1058,6 +1059,69 @@ public class DefaultRenderPipeline : RenderPipeline
             displayName: "Blur Radius",
             min: 0.1f,
             max: 8.0f,
+            step: 0.01f);
+
+        stage.AddParameter(
+            nameof(BloomSettings.StartMip),
+            PostProcessParameterKind.Int,
+            0,
+            displayName: "Start Mip (Quality)",
+            min: 0,
+            max: 4,
+            step: 1);
+
+        stage.AddParameter(
+            nameof(BloomSettings.EndMip),
+            PostProcessParameterKind.Int,
+            4,
+            displayName: "End Mip",
+            min: 0,
+            max: 4,
+            step: 1);
+
+        stage.AddParameter(
+            nameof(BloomSettings.Lod0Weight),
+            PostProcessParameterKind.Float,
+            0.6f,
+            displayName: "LOD0 Weight",
+            min: 0.0f,
+            max: 2.0f,
+            step: 0.01f);
+
+        stage.AddParameter(
+            nameof(BloomSettings.Lod1Weight),
+            PostProcessParameterKind.Float,
+            0.5f,
+            displayName: "LOD1 Weight",
+            min: 0.0f,
+            max: 2.0f,
+            step: 0.01f);
+
+        stage.AddParameter(
+            nameof(BloomSettings.Lod2Weight),
+            PostProcessParameterKind.Float,
+            0.35f,
+            displayName: "LOD2 Weight",
+            min: 0.0f,
+            max: 2.0f,
+            step: 0.01f);
+
+        stage.AddParameter(
+            nameof(BloomSettings.Lod3Weight),
+            PostProcessParameterKind.Float,
+            0.2f,
+            displayName: "LOD3 Weight",
+            min: 0.0f,
+            max: 2.0f,
+            step: 0.01f);
+
+        stage.AddParameter(
+            nameof(BloomSettings.Lod4Weight),
+            PostProcessParameterKind.Float,
+            0.1f,
+            displayName: "LOD4 Weight",
+            min: 0.0f,
+            max: 2.0f,
             step: 0.01f);
     }
 
@@ -2580,6 +2644,13 @@ public class DefaultRenderPipeline : RenderPipeline
     private XRTexture2DArray? _probePrefilterArray;
     private XRDataBuffer? _probePositionBuffer;
     private XRDataBuffer? _probeTetraBuffer;
+    private XRDataBuffer? _probeParamBuffer;
+    private XRDataBuffer? _probeGridCellBuffer;
+    private XRDataBuffer? _probeGridIndexBuffer;
+    private Vector3 _probeGridOrigin;
+    private float _probeGridCellSize;
+    private IVector3 _probeGridDims;
+    private bool _useProbeGridAcceleration = true;
     private int _lastProbeCount = 0;
     private readonly Dictionary<Guid, Vector3> _cachedProbePositions = new();
     private readonly Dictionary<Guid, (XRTexture2D Irradiance, XRTexture2D Prefilter)> _cachedProbeTextures = new();
@@ -2587,9 +2658,30 @@ public class DefaultRenderPipeline : RenderPipeline
     private volatile bool _pendingProbeRefresh;
     private Job? _probeTessellationJob;
 
+    public bool UseProbeGridAcceleration
+    {
+        get => _useProbeGridAcceleration;
+        set => _useProbeGridAcceleration = value;
+    }
+
     private struct ProbePositionData
     {
         public Vector4 Position;
+    }
+
+    private struct ProbeParamData
+    {
+        public Vector4 InfluenceInner;       // xyz inner extents or inner radius
+        public Vector4 InfluenceOuter;       // xyz outer extents or outer radius
+        public Vector4 InfluenceOffsetShape; // xyz offset, w shape (0 sphere, 1 box)
+        public Vector4 ProxyCenterEnable;    // xyz center offset, w enable (1/0)
+        public Vector4 ProxyHalfExtents;     // xyz half extents, w normalization scale
+        public Vector4 ProxyRotation;        // xyzw quaternion
+    }
+
+    private struct ProbeGridCell
+    {
+        public IVector2 OffsetCount;
     }
 
     private struct ProbeTetraData
@@ -2617,7 +2709,7 @@ public class DefaultRenderPipeline : RenderPipeline
         if (_pendingProbeRefresh || ProbeConfigurationChanged(readyProbes))
             BuildProbeResources(readyProbes);
 
-        if (_probeIrradianceArray is null || _probePrefilterArray is null || _probePositionBuffer is null)
+        if (_probeIrradianceArray is null || _probePrefilterArray is null || _probePositionBuffer is null || _probeParamBuffer is null)
             return;
 
         // Use explicit texture units to match the shader's fixed bindings (layout(binding = 7/8)).
@@ -2629,6 +2721,17 @@ public class DefaultRenderPipeline : RenderPipeline
         int probeCount = (int)_probePositionBuffer.ElementCount;
         program.Uniform("ProbeCount", probeCount);
         _probePositionBuffer.BindTo(program, 0);
+        _probeParamBuffer.BindTo(program, 2);
+        program.Uniform("UseProbeGrid", _useProbeGridAcceleration && _probeGridCellBuffer is not null && _probeGridIndexBuffer is not null);
+
+        if (_useProbeGridAcceleration && _probeGridCellBuffer is not null && _probeGridIndexBuffer is not null)
+        {
+            _probeGridCellBuffer.BindTo(program, 3);
+            _probeGridIndexBuffer.BindTo(program, 4);
+            program.Uniform("ProbeGridOrigin", _probeGridOrigin);
+            program.Uniform("ProbeGridCellSize", _probeGridCellSize);
+            program.Uniform("ProbeGridDims", _probeGridDims);
+        }
 
         int tetraCount = _probeTetraBuffer != null ? (int)_probeTetraBuffer.ElementCount : 0;
         program.Uniform("TetraCount", tetraCount);
@@ -2658,6 +2761,85 @@ public class DefaultRenderPipeline : RenderPipeline
             Engine.Rendering.Debug.RenderLine(p1, p3, ColorF4.Cyan);
             Engine.Rendering.Debug.RenderLine(p2, p3, ColorF4.Cyan);
         }
+    }
+
+    private void BuildProbeGrid(List<ProbePositionData> positions)
+    {
+        _probeGridCellBuffer?.Dispose();
+        _probeGridCellBuffer = null;
+        _probeGridIndexBuffer?.Dispose();
+        _probeGridIndexBuffer = null;
+        _probeGridOrigin = Vector3.Zero;
+        _probeGridCellSize = 0f;
+        _probeGridDims = IVector3.Zero;
+
+        if (positions.Count == 0)
+            return;
+
+        Vector3 min = new(float.MaxValue);
+        Vector3 max = new(float.MinValue);
+        foreach (var p in positions)
+        {
+            min = Vector3.Min(min, p.Position.XYZ());
+            max = Vector3.Max(max, p.Position.XYZ());
+        }
+
+        Vector3 extents = max - min;
+        float maxExtent = Math.Max(extents.X, Math.Max(extents.Y, extents.Z));
+        if (maxExtent <= 0.0001f)
+            maxExtent = 1.0f;
+
+        const int targetCellsPerAxis = 16;
+        _probeGridCellSize = maxExtent / targetCellsPerAxis;
+        _probeGridOrigin = min;
+        Vector3 dimsF = extents / _probeGridCellSize + Vector3.One;
+        IVector3 dimsI = new(
+            Math.Max(1, (int)Math.Ceiling(dimsF.X)),
+            Math.Max(1, (int)Math.Ceiling(dimsF.Y)),
+            Math.Max(1, (int)Math.Ceiling(dimsF.Z)));
+        dimsI = IVector3.Min(dimsI, new IVector3(64, 64, 64));
+        _probeGridDims = dimsI;
+
+        int cellCount = dimsI.X * dimsI.Y * dimsI.Z;
+        var cellLists = new List<int>[cellCount];
+        for (int i = 0; i < cellCount; ++i)
+            cellLists[i] = new List<int>(4);
+
+        for (int i = 0; i < positions.Count; ++i)
+        {
+            Vector4 pos4 = positions[i].Position;
+            Vector3 rel = (new Vector3(pos4.X, pos4.Y, pos4.Z) - _probeGridOrigin) / _probeGridCellSize;
+            IVector3 cell = new(
+                Math.Clamp((int)MathF.Floor(rel.X), 0, dimsI.X - 1),
+                Math.Clamp((int)MathF.Floor(rel.Y), 0, dimsI.Y - 1),
+                Math.Clamp((int)MathF.Floor(rel.Z), 0, dimsI.Z - 1));
+            int flat = cell.X + cell.Y * dimsI.X + cell.Z * dimsI.X * dimsI.Y;
+            cellLists[flat].Add(i);
+        }
+
+        var offsets = new List<ProbeGridCell>(cellCount);
+        var indices = new List<int>();
+        for (int c = 0; c < cellCount; ++c)
+        {
+            var list = cellLists[c];
+            int offset = indices.Count;
+            indices.AddRange(list);
+            offsets.Add(new ProbeGridCell { OffsetCount = new IVector2(offset, list.Count) });
+        }
+
+        _probeGridCellBuffer = new XRDataBuffer("LightProbeGridCells", EBufferTarget.ShaderStorageBuffer, (uint)offsets.Count, EComponentType.Struct, (uint)Marshal.SizeOf<ProbeGridCell>(), false, false)
+        {
+            BindingIndexOverride = 3,
+        };
+        _probeGridCellBuffer.SetDataRaw(offsets);
+        _probeGridCellBuffer.PushData();
+
+        _probeGridIndexBuffer = new XRDataBuffer("LightProbeGridIndices", EBufferTarget.ShaderStorageBuffer, (uint)indices.Count, EComponentType.Int, sizeof(int), false, false)
+        {
+            BindingIndexOverride = 4,
+        };
+        _probeGridIndexBuffer.SetDataRaw(indices);
+        _probeGridIndexBuffer.PushData();
     }
 
     private static List<LightProbeComponent> GetReadyProbes(IReadOnlyList<LightProbeComponent> probes)
@@ -2722,8 +2904,17 @@ public class DefaultRenderPipeline : RenderPipeline
         _probePrefilterArray = null;
         _probePositionBuffer?.Dispose();
         _probePositionBuffer = null;
+        _probeParamBuffer?.Dispose();
+        _probeParamBuffer = null;
         _probeTetraBuffer?.Dispose();
         _probeTetraBuffer = null;
+        _probeGridCellBuffer?.Dispose();
+        _probeGridCellBuffer = null;
+        _probeGridIndexBuffer?.Dispose();
+        _probeGridIndexBuffer = null;
+        _probeGridOrigin = Vector3.Zero;
+        _probeGridCellSize = 0f;
+        _probeGridDims = IVector3.Zero;
         _probeTessellationJob?.Cancel();
         _probeTessellationJob = null;
         _cachedProbePositions.Clear();
@@ -2746,6 +2937,7 @@ public class DefaultRenderPipeline : RenderPipeline
         var irrTextures = new List<XRTexture2D>(readyProbes.Count);
         var preTextures = new List<XRTexture2D>(readyProbes.Count);
         var positions = new List<ProbePositionData>(readyProbes.Count);
+        var parameters = new List<ProbeParamData>(readyProbes.Count);
 
         foreach (var probe in readyProbes)
         {
@@ -2754,6 +2946,16 @@ public class DefaultRenderPipeline : RenderPipeline
 
             var position = probe.Transform.RenderTranslation;
             positions.Add(new ProbePositionData { Position = new Vector4(position, 1.0f) });
+
+            parameters.Add(new ProbeParamData
+            {
+                InfluenceInner = new Vector4(probe.InfluenceBoxInnerExtents, probe.InfluenceSphereInnerRadius),
+                InfluenceOuter = new Vector4(probe.InfluenceBoxOuterExtents, probe.InfluenceSphereOuterRadius),
+                InfluenceOffsetShape = new Vector4(probe.InfluenceOffset, probe.InfluenceShape == LightProbeComponent.EInfluenceShape.Box ? 1.0f : 0.0f),
+                ProxyCenterEnable = new Vector4(probe.ProxyBoxCenterOffset, probe.ParallaxCorrectionEnabled ? 1.0f : 0.0f),
+                ProxyHalfExtents = new Vector4(probe.ProxyBoxHalfExtents, probe.NormalizationScale),
+                ProxyRotation = new Vector4(probe.ProxyBoxRotation.X, probe.ProxyBoxRotation.Y, probe.ProxyBoxRotation.Z, probe.ProxyBoxRotation.W),
+            });
             _cachedProbePositions[probe.ID] = position;
             _cachedProbeTextures[probe.ID] = (probe.IrradianceTexture!, probe.PrefilterTexture!);
             _cachedProbeCaptureVersions[probe.ID] = probe.CaptureVersion;
@@ -2782,6 +2984,16 @@ public class DefaultRenderPipeline : RenderPipeline
         };
         _probePositionBuffer.SetDataRaw<ProbePositionData>(positions);
         _probePositionBuffer.PushData();
+
+        _probeParamBuffer = new XRDataBuffer("LightProbeParameters", EBufferTarget.ShaderStorageBuffer, (uint)parameters.Count, EComponentType.Struct, (uint)Marshal.SizeOf<ProbeParamData>(), false, false)
+        {
+            BindingIndexOverride = 2,
+        };
+        _probeParamBuffer.SetDataRaw<ProbeParamData>(parameters);
+        _probeParamBuffer.PushData();
+
+        if (_useProbeGridAcceleration)
+            BuildProbeGrid(positions);
 
         _lastProbeCount = positions.Count;
         _pendingProbeRefresh = false;
@@ -2895,7 +3107,7 @@ public class DefaultRenderPipeline : RenderPipeline
         program.Uniform("Luminance", Engine.Rendering.Settings.DefaultLuminance);
     }
 
-    private void ApplyPostProcessUniforms(PipelinePostProcessState? state, XRRenderProgram program)
+    private static void ApplyPostProcessUniforms(PipelinePostProcessState? state, XRRenderProgram program)
     {
         // Vignette
         var vignette = GetSettings<VignetteSettings>(state);
@@ -2919,6 +3131,10 @@ public class DefaultRenderPipeline : RenderPipeline
         float? cameraFov = perspParams?.VerticalFieldOfView;
         float aspectRatio = perspParams?.AspectRatio ?? ((float)InternalWidth / Math.Max(1, InternalHeight));
         (lens ?? new LensDistortionSettings()).SetUniforms(program, cameraFov, aspectRatio);
+
+        // Bloom combine weights/range
+        var bloom = GetSettings<BloomSettings>(state);
+        (bloom ?? new BloomSettings()).SetCombineUniforms(program);
 
         // Tonemapping operator
         var tonemapStage = state?.FindStageByParameter(PostProcessParameterNames.TonemappingOperator);

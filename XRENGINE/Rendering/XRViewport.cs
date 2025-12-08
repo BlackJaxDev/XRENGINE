@@ -84,11 +84,9 @@ namespace XREngine.Rendering
                 if (_associatedPlayer == value)
                     return;
 
-                if (_associatedPlayer is not null)
-                    _associatedPlayer.Viewport = null;
+                _associatedPlayer?.Viewport = null;
                 SetField(ref _associatedPlayer, value);
-                if (_associatedPlayer is not null)
-                    _associatedPlayer.Viewport = this;
+                _associatedPlayer?.Viewport = this;
             }
         }
 

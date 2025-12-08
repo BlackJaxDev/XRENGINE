@@ -175,10 +175,7 @@ namespace XREngine
                         
                         // Set the game mode
                         worldInstance.GameMode = _activeGameMode;
-                        if (_activeGameMode is not null)
-                        {
-                            _activeGameMode.WorldInstance = worldInstance;
-                        }
+                        _activeGameMode?.WorldInstance = worldInstance;
 
                         // Begin play
                         await worldInstance.BeginPlay();

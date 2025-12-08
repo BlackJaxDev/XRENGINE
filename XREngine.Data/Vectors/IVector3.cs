@@ -10,6 +10,9 @@ namespace XREngine.Data.Vectors;
 [StructLayout(LayoutKind.Sequential, Pack = 1)]
 public unsafe struct IVector3(int x, int y, int z) : IBufferable, IUniformable
 {
+    public static readonly IVector3 Zero = new(0, 0, 0);
+    public static readonly IVector3 One = new(1, 1, 1);
+
     public int X { readonly get => x; set => x = value; }
     public int Y { readonly get => y; set => y = value; }
     public int Z { readonly get => z; set => z = value; }
@@ -36,6 +39,12 @@ public unsafe struct IVector3(int x, int y, int z) : IBufferable, IUniformable
         for (int i = 0; i < ComponentCount; ++i)
             Data[i] = *data++;
     }
+
+    public static IVector3 Min(IVector3 l, IVector3 r)
+        => new(
+            Math.Min(l.X, r.X),
+            Math.Min(l.Y, r.Y),
+            Math.Min(l.Z, r.Z));
 
     public int this[int index]
     {

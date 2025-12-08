@@ -1,8 +1,8 @@
 ﻿using System;
-using MIConvexHull;
 using System.Collections.Concurrent;
-using System.Numerics;
+using System.Diagnostics;
 using System.Linq;
+using System.Numerics;
 using XREngine.Components.Lights;
 using XREngine.Data;
 using XREngine.Data.Core;
@@ -18,6 +18,7 @@ using XREngine.Components.Capture.Lights.Types;
 using XREngine.Scene.Transforms;
 using XREngine.Rendering.Commands;
 using YamlDotNet.Serialization;
+using MIConvexHull;
 
 namespace XREngine.Scene
 {
@@ -58,6 +59,12 @@ namespace XREngine.Scene
         private readonly ConcurrentQueue<SceneCaptureComponentBase> _captureQueue = new();
         private ConcurrentBag<SceneCaptureComponentBase> _captureBagUpdating = [];
         private ConcurrentBag<SceneCaptureComponentBase> _captureBagRendering = [];
+        private readonly Stopwatch _captureBudgetStopwatch = new();
+
+        /// <summary>
+        /// Budget in milliseconds for processing capture work (collect + render) per frame on the main thread.
+        /// </summary>
+        public double CaptureBudgetMilliseconds { get; set; } = 2.0;
 
         public List<SceneCaptureComponentBase> CaptureComponents { get; } = [];
 
@@ -105,10 +112,20 @@ namespace XREngine.Scene
             foreach (SceneCaptureComponentBase sc in CaptureComponents)
                 sc.CollectVisible();
 
-            while (_captureQueue.TryDequeue(out SceneCaptureComponentBase? capture))
+            double budgetMs = CaptureBudgetMilliseconds;
+            _captureBudgetStopwatch.Restart();
+
+            while (_captureQueue.TryPeek(out _))
             {
+                if (_captureBudgetStopwatch.Elapsed.TotalMilliseconds > budgetMs)
+                    break;
+
+                if (!_captureQueue.TryDequeue(out SceneCaptureComponentBase? capture))
+                    break;
+
                 if (_captureBagUpdating.Contains(capture))
                     continue;
+
                 _captureBagUpdating.Add(capture);
                 capture.CollectVisible();
             }
@@ -148,8 +165,21 @@ namespace XREngine.Scene
             {
                 _captureBagRendering.Clear();
                 (_captureBagUpdating, _captureBagRendering) = (_captureBagRendering, _captureBagUpdating);
+
+                double budgetMs = CaptureBudgetMilliseconds;
+                _captureBudgetStopwatch.Restart();
+
                 foreach (SceneCaptureComponentBase capture in _captureBagRendering)
+                {
+                    if (_captureBudgetStopwatch.Elapsed.TotalMilliseconds > budgetMs)
+                    {
+                        // push remaining work to next frame
+                        _captureQueue.Enqueue(capture);
+                        continue;
+                    }
+
                     capture.SwapBuffers();
+                }
             }
         }
 
@@ -257,8 +287,20 @@ namespace XREngine.Scene
             foreach (SceneCaptureComponentBase sc in CaptureComponents)
                 sc.Render();
 
+            double budgetMs = CaptureBudgetMilliseconds;
+            _captureBudgetStopwatch.Restart();
+
             foreach (SceneCaptureComponentBase capture in _captureBagRendering)
+            {
+                if (_captureBudgetStopwatch.Elapsed.TotalMilliseconds > budgetMs)
+                {
+                    // Defer remaining captures to next frame
+                    _captureQueue.Enqueue(capture);
+                    continue;
+                }
+
                 capture.Render();
+            }
         }
 
         public void Clear()
