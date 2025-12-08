@@ -167,10 +167,8 @@ namespace XREngine
                 if (XRWorldInstance.WorldInstances.TryGetValue(SourceWorld, out var instance))
                 {
                     runtimeInstance = instance;
-                    if (instance.IsPlaying)
-                    {
+                    if (instance.PlayState == XRWorldInstance.EPlayState.Playing)
                         instance.EndPlay();
-                    }
                 }
 
                 // Restore settings

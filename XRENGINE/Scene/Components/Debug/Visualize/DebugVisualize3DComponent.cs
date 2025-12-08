@@ -1,4 +1,5 @@
 ﻿using XREngine.Components;
+using XREngine.Components.Scene.Transforms;
 using XREngine.Data.Rendering;
 using XREngine.Rendering;
 using XREngine.Rendering.Commands;
@@ -29,6 +30,7 @@ namespace XREngine.Components
         public DebugVisualize3DComponent()
         {
             RenderedObjects = [_renderInfo = RenderInfo3D.New(this, _rc = new((int)EDefaultRenderPass.OnTopForward, Render))];
+            _renderInfo.Layer = DefaultLayers.GizmosIndex;
             _renderInfo.CollectedForRenderCallback += RenderInfo_PreRenderCallback;
             _renderInfo.SwapBuffersCallback += RenderInfo_SwapBuffersCallback;
         }

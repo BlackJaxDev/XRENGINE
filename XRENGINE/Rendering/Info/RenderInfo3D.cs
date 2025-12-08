@@ -55,6 +55,7 @@ namespace XREngine.Rendering.Info
         private bool _visibleInLightingProbes = true;
         private bool _hiddenFromOwner = false;
         private bool _visibleToOwnerOnly = false;
+        private int _layer = 0;
 
         public Matrix4x4 CullingOffsetMatrix
         {
@@ -76,6 +77,15 @@ namespace XREngine.Rendering.Info
         {
             get => _visibleToOwnerOnly;
             set => SetField(ref _visibleToOwnerOnly, value);
+        }
+
+        /// <summary>
+        /// The layer index this renderable belongs to. Used for camera layer masking.
+        /// </summary>
+        public int Layer
+        {
+            get => _layer;
+            set => SetField(ref _layer, Math.Clamp(value, 0, 31));
         }
 
         /// <summary>
@@ -135,6 +145,7 @@ namespace XREngine.Rendering.Info
             bool collectMirrors) => 
             (!passes.IsShadowPass || CastsShadows) && 
             (collectMirrors || Owner is not MirrorCaptureComponent) &&
+            (camera is null || camera.CullingMask.Contains(_layer)) &&
             Intersects(cullingVolume, containsOnly);
 
         public bool Intersects(IVolume? cullingVolume, bool containsOnly)

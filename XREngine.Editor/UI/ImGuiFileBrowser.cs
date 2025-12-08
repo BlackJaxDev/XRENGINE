@@ -283,7 +283,7 @@ public static class ImGuiFileBrowser
     private static void EnsureWorldInstanceIsRunning(XRWindow window)
     {
         var instance = window.TargetWorldInstance;
-        if (instance is null || instance.IsPlaying)
+        if (instance is null || instance.PlayState == XRWorldInstance.EPlayState.Playing)
             return;
 
         try
@@ -854,7 +854,7 @@ public static class ImGuiFileBrowser
         // Clean up world instance
         if (state.World is not null && XRWorldInstance.WorldInstances.TryGetValue(state.World, out var instance))
         {
-            if (instance.IsPlaying)
+            if (instance.PlayState == XRWorldInstance.EPlayState.Playing)
             {
                 try
                 {

@@ -206,18 +206,20 @@ namespace XREngine.Rendering.Pipelines.Commands
             {
                 using (ActivePipelineInstance.RenderState.PushRenderArea(rect))
                 {
-                    BloomBlur(fbo, mipmap, 0.0f);
-                    BloomBlur(fbo, mipmap, 1.0f);
+                    // Blur this mip by sampling from the next higher-res mip to avoid read/write hazards.
+                    int sourceMip = Math.Max(0, mipmap - 1);
+                    BloomBlur(fbo, sourceMip, 0.0f);
+                    BloomBlur(fbo, sourceMip, 1.0f);
                 }
             }
         }
-        private static void BloomBlur(XRQuadFrameBuffer fbo, int mipmap, float dir)
+        private static void BloomBlur(XRQuadFrameBuffer fbo, int sourceMip, float dir)
         {
             var mat = fbo.Material;
             if (mat is not null)
             {
                 mat.SetFloat(0, dir);
-                mat.SetInt(1, mipmap);
+                mat.SetInt(1, sourceMip);
             }
             fbo.Render();
         }

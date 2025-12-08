@@ -9,6 +9,7 @@ using XREngine.Core.Files;
 using XREngine.Data.Colors;
 using XREngine.Editor.ComponentEditors;
 using XREngine.Rendering.OpenGL;
+using XREngine.Scene;
 
 namespace XREngine.Editor;
 
@@ -2056,6 +2057,26 @@ public static partial class UnitTestingWorld
                             isCurrentlyNull = false;
                         }
                     }
+                }
+                handled = true;
+            }
+            else if (effectiveType == typeof(LayerMask))
+            {
+                int maskValue = currentValue is LayerMask mask ? mask.Value : 0;
+                using (new ImGuiDisabledScope(!canWrite))
+                {
+                    ImGui.SetNextItemWidth(-1f);
+                    if (ImGui.InputInt("##Value", ref maskValue) && canWrite)
+                    {
+                        var newMask = new LayerMask(maskValue);
+                        if (TryApplyInspectorValue(owner, property, currentValue, newMask))
+                        {
+                            currentValue = newMask;
+                            isCurrentlyNull = false;
+                        }
+                    }
+                    if (ImGui.IsItemHovered())
+                        ImGui.SetTooltip("Layer bitmask. -1 = all layers.");
                 }
                 handled = true;
             }

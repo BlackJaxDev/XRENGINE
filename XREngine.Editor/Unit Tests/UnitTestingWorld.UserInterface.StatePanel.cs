@@ -279,7 +279,7 @@ public static partial class UnitTestingWorld
                             ImGui.Text(world.Name ?? "<unnamed>");
 
                             ImGui.TableNextColumn();
-                            if (instance.IsPlaying)
+                            if (instance.PlayState == XRWorldInstance.EPlayState.Playing)
                                 ImGui.TextColored(new Vector4(0.3f, 1.0f, 0.3f, 1.0f), "Yes");
                             else
                                 ImGui.TextColored(new Vector4(0.5f, 0.5f, 0.5f, 1.0f), "No");

@@ -510,9 +510,14 @@ public static partial class UnitTestingWorld
                 ImGui.MenuItem("OpenGL Errors", null, ref _showOpenGLErrors);
                 ImGui.MenuItem("Missing Assets", null, ref _showMissingAssets);
                 ImGui.Separator();
-                ImGui.MenuItem("Engine Settings", null, ref _showEngineSettings);
-                ImGui.MenuItem("User Settings", null, ref _showUserSettings);
-                ImGui.MenuItem("Build Settings", null, ref _showBuildSettings);
+                if (ImGui.MenuItem("Engine Settings"))
+                    OpenSettingsInInspector(Engine.Rendering.Settings, "Engine Settings");
+
+                if (ImGui.MenuItem("User Settings"))
+                    OpenSettingsInInspector(Engine.UserSettings, "User Settings");
+
+                if (ImGui.MenuItem("Game Settings"))
+                    OpenSettingsInInspector(Engine.GameSettings, "Game Settings");
                 ImGui.EndMenu();
             }
 
@@ -764,6 +769,15 @@ public static partial class UnitTestingWorld
             }
 
             return null;
+        }
+
+        private static void OpenSettingsInInspector(object? settingsRoot, string title)
+        {
+            if (settingsRoot is null)
+                return;
+
+            _showInspector = true;
+            SetInspectorStandaloneTarget(settingsRoot, title);
         }
 
         private static void SetInspectorStandaloneTarget(object target, string? title, Action? onClear = null)

@@ -1,10 +1,10 @@
 ﻿
+
 using XREngine.Data.Colors;
-using XREngine.Data.Core;
 
 namespace XREngine.Rendering
 {
-    public class FogSettings : XRBase
+    public class FogSettings : PostProcessSettings
     {
         public const string StructUniformName = "DepthFog";
 
@@ -34,7 +34,7 @@ namespace XREngine.Rendering
             set => SetField(ref _depthFogColor, value);
         }
 
-        public void SetUniforms(XRRenderProgram program)
+        public override void SetUniforms(XRRenderProgram program)
         {
             XRCamera? camera = Engine.Rendering.State.RenderingPipelineState?.SceneCamera;
             if (camera is null)

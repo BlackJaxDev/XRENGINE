@@ -8,6 +8,7 @@ using XREngine.Data.Geometry;
 using XREngine.Data.Rendering;
 using XREngine.Data.Vectors;
 using XREngine.Rendering;
+using XREngine.Components.Scene.Transforms;
 using XREngine.Rendering.Commands;
 using XREngine.Rendering.Info;
 using XREngine.Rendering.Models.Materials;
@@ -27,6 +28,27 @@ namespace XREngine.Components.Capture.Lights
             Environment,
             Irradiance,
             Prefilter,
+        }
+
+        public enum EInfluenceShape
+        {
+            Sphere,
+            Box,
+        }
+
+        /// <summary>
+        /// HDR encoding format for baked/static probes. Dynamic captures use Rgb16f.
+        /// </summary>
+        public enum EHdrEncoding
+        {
+            /// <summary>Default full-precision half-float RGB.</summary>
+            Rgb16f,
+            /// <summary>RGBM encoding (RGB * M in alpha, 8-bit per channel).</summary>
+            RGBM,
+            /// <summary>RGBE shared-exponent encoding.</summary>
+            RGBE,
+            /// <summary>YCoCg color space encoding.</summary>
+            YCoCg,
         }
 
         private readonly record struct FaceDebugInfo(string Name, ColorF4 Color);
@@ -59,9 +81,33 @@ namespace XREngine.Components.Capture.Lights
 
         private readonly RenderCommandMesh3D _visualRC;
         private readonly RenderCommandMethod3D _debugAxesCommand;
+        private readonly RenderCommandMethod3D _debugInfluenceCommand;
         private readonly GameTimer _realtimeCaptureTimer;
 
+        private bool _parallaxCorrectionEnabled = false;
+        private Vector3 _proxyBoxCenterOffset = Vector3.Zero;
+        private Vector3 _proxyBoxHalfExtents = Vector3.One;
+        private Quaternion _proxyBoxRotation = Quaternion.Identity;
+
+        private EInfluenceShape _influenceShape = EInfluenceShape.Sphere;
+        private Vector3 _influenceOffset = Vector3.Zero;
+        private float _influenceSphereInnerRadius = 0.0f;
+        private float _influenceSphereOuterRadius = 5.0f;
+        private Vector3 _influenceBoxInnerExtents = Vector3.Zero;
+        private Vector3 _influenceBoxOuterExtents = new(5.0f, 5.0f, 5.0f);
+
+        // HDR encoding & normalization
+        private EHdrEncoding _hdrEncoding = EHdrEncoding.Rgb16f;
+        private bool _normalizedCubemap = false;
+        private float _normalizationScale = 1.0f;
+
+        // Mip streaming state
+        private int _streamedMipLevel = 0;
+        private int _targetMipLevel = 0;
+        private bool _streamHighMipsOnDemand = false;
+
         private bool _autoShowPreviewOnSelect = true;
+        private bool _renderInfluenceOnSelection = true;
         private bool _realtime = false;
         private TimeSpan? _realTimeUpdateInterval = TimeSpan.FromMilliseconds(100.0f);
         private uint _irradianceResolution = 32;
@@ -86,11 +132,17 @@ namespace XREngine.Components.Capture.Lights
             {
                 Enabled = false,
             };
+            _debugInfluenceCommand = new RenderCommandMethod3D(EDefaultRenderPass.OnTopForward, RenderVolumesDebug)
+            {
+                Enabled = false,
+            };
             RenderedObjects =
             [
                 VisualRenderInfo = RenderInfo3D.New(this, _visualRC = new RenderCommandMesh3D((int)EDefaultRenderPass.OpaqueForward)),
             ];
+            VisualRenderInfo.Layer = DefaultLayers.GizmosIndex;
             VisualRenderInfo.RenderCommands.Add(_debugAxesCommand);
+            VisualRenderInfo.RenderCommands.Add(_debugInfluenceCommand);
             VisualRenderInfo.PreCollectCommandsCallback += OnPreCollectRenderInfo;
         }
 
@@ -121,6 +173,12 @@ namespace XREngine.Components.Capture.Lights
         {
             get => _autoShowPreviewOnSelect;
             set => SetField(ref _autoShowPreviewOnSelect, value);
+        }
+
+        public bool RenderInfluenceOnSelection
+        {
+            get => _renderInfluenceOnSelection;
+            set => SetField(ref _renderInfluenceOnSelection, value);
         }
 
         public ERenderPreview PreviewDisplay
@@ -202,6 +260,179 @@ namespace XREngine.Components.Capture.Lights
 
         [Browsable(false)]
         public uint CaptureVersion { get; private set; }
+
+        #endregion
+
+        #region Parallax Proxy Properties
+
+        /// <summary>
+        /// Enable parallax correction using the proxy box settings below.
+        /// </summary>
+        public bool ParallaxCorrectionEnabled
+        {
+            get => _parallaxCorrectionEnabled;
+            set => SetField(ref _parallaxCorrectionEnabled, value);
+        }
+
+        /// <summary>
+        /// Center of the proxy box relative to the probe origin.
+        /// </summary>
+        public Vector3 ProxyBoxCenterOffset
+        {
+            get => _proxyBoxCenterOffset;
+            set => SetField(ref _proxyBoxCenterOffset, value);
+        }
+
+        /// <summary>
+        /// Half extents of the proxy box. Must be positive.
+        /// </summary>
+        public Vector3 ProxyBoxHalfExtents
+        {
+            get => _proxyBoxHalfExtents;
+            set => SetField(ref _proxyBoxHalfExtents, ClampHalfExtents(value));
+        }
+
+        /// <summary>
+        /// Orientation of the proxy box in local space.
+        /// </summary>
+        public Quaternion ProxyBoxRotation
+        {
+            get => _proxyBoxRotation;
+            set => SetField(ref _proxyBoxRotation, value);
+        }
+
+        #endregion
+
+        #region Influence Volume Properties
+
+        /// <summary>
+        /// Shape used to weight contribution for blending.
+        /// </summary>
+        public EInfluenceShape InfluenceShape
+        {
+            get => _influenceShape;
+            set => SetField(ref _influenceShape, value);
+        }
+
+        /// <summary>
+        /// Optional offset for the influence volume relative to the probe origin.
+        /// </summary>
+        public Vector3 InfluenceOffset
+        {
+            get => _influenceOffset;
+            set => SetField(ref _influenceOffset, value);
+        }
+
+        public float InfluenceSphereInnerRadius
+        {
+            get => _influenceSphereInnerRadius;
+            set => SetField(ref _influenceSphereInnerRadius, ClampNonNegative(value, _influenceSphereOuterRadius));
+        }
+
+        public float InfluenceSphereOuterRadius
+        {
+            get => _influenceSphereOuterRadius;
+            set
+            {
+                float clampedOuter = MathF.Max(value, _influenceSphereInnerRadius + float.Epsilon);
+                if (SetField(ref _influenceSphereOuterRadius, clampedOuter))
+                    _influenceSphereInnerRadius = ClampNonNegative(_influenceSphereInnerRadius, clampedOuter);
+            }
+        }
+
+        public Vector3 InfluenceBoxInnerExtents
+        {
+            get => _influenceBoxInnerExtents;
+            set => SetField(ref _influenceBoxInnerExtents, ClampBoxInnerExtents(value, _influenceBoxOuterExtents));
+        }
+
+        public Vector3 InfluenceBoxOuterExtents
+        {
+            get => _influenceBoxOuterExtents;
+            set
+            {
+                Vector3 clampedOuter = ClampHalfExtents(value);
+                if (SetField(ref _influenceBoxOuterExtents, clampedOuter))
+                    _influenceBoxInnerExtents = ClampBoxInnerExtents(_influenceBoxInnerExtents, clampedOuter);
+            }
+        }
+
+        #endregion
+
+        #region HDR Encoding & Normalization Properties
+
+        /// <summary>
+        /// HDR encoding format for baked/static probes. Dynamic captures always use Rgb16f.
+        /// </summary>
+        public EHdrEncoding HdrEncoding
+        {
+            get => _hdrEncoding;
+            set => SetField(ref _hdrEncoding, value);
+        }
+
+        /// <summary>
+        /// When true, the cubemap is normalized (divided by average luminance) and
+        /// NormalizationScale stores the original intensity. At runtime, multiply
+        /// by diffuse ambient/SH to reuse the same probe in multiple locations.
+        /// </summary>
+        public bool NormalizedCubemap
+        {
+            get => _normalizedCubemap;
+            set => SetField(ref _normalizedCubemap, value);
+        }
+
+        /// <summary>
+        /// Scale factor to recover original intensity from a normalized cubemap.
+        /// Set automatically during bake if NormalizedCubemap is enabled.
+        /// </summary>
+        public float NormalizationScale
+        {
+            get => _normalizationScale;
+            set => SetField(ref _normalizationScale, MathF.Max(0.0001f, value));
+        }
+
+        #endregion
+
+        #region Mip Streaming Properties
+
+        /// <summary>
+        /// When true, only low mips are loaded initially; high mips stream on demand
+        /// when the probe enters view or becomes dominant in the blend set.
+        /// </summary>
+        public bool StreamHighMipsOnDemand
+        {
+            get => _streamHighMipsOnDemand;
+            set => SetField(ref _streamHighMipsOnDemand, value);
+        }
+
+        /// <summary>
+        /// Current highest-resolution mip level loaded (0 = full res).
+        /// </summary>
+        [Browsable(false)]
+        public int StreamedMipLevel
+        {
+            get => _streamedMipLevel;
+            private set => SetField(ref _streamedMipLevel, value);
+        }
+
+        /// <summary>
+        /// Target mip level requested by the blending system (0 = full res).
+        /// </summary>
+        [Browsable(false)]
+        public int TargetMipLevel
+        {
+            get => _targetMipLevel;
+            set => SetField(ref _targetMipLevel, Math.Max(0, value));
+        }
+
+        /// <summary>
+        /// Request streaming to a specific mip level (0 = highest detail).
+        /// </summary>
+        public void RequestMipLevel(int level)
+        {
+            TargetMipLevel = level;
+            // TODO: Queue async mip upload when streaming is implemented
+        }
 
         #endregion
 
@@ -419,6 +650,21 @@ namespace XREngine.Components.Capture.Lights
                 new ShaderInt(Math.Max(1, sourceDimension), "SourceDim"),
             ];
 
+        private static Vector3 ClampHalfExtents(Vector3 extents)
+            => new(
+                MathF.Max(0.0001f, MathF.Abs(extents.X)),
+                MathF.Max(0.0001f, MathF.Abs(extents.Y)),
+                MathF.Max(0.0001f, MathF.Abs(extents.Z)));
+
+        private static Vector3 ClampBoxInnerExtents(Vector3 inner, Vector3 outer)
+            => new(
+                MathF.Max(0.0f, MathF.Min(MathF.Abs(inner.X), outer.X)),
+                MathF.Max(0.0f, MathF.Min(MathF.Abs(inner.Y), outer.Y)),
+                MathF.Max(0.0f, MathF.Min(MathF.Abs(inner.Z), outer.Z)));
+
+        private static float ClampNonNegative(float value, float maxInclusive)
+            => MathF.Max(0.0f, MathF.Min(value, maxInclusive));
+
         private static uint GetOctaExtent(uint baseResolution)
             => Math.Max(1u, baseResolution * OctahedralResolutionMultiplier);
 
@@ -474,8 +720,11 @@ namespace XREngine.Components.Capture.Lights
 
         private bool OnPreCollectRenderInfo(RenderInfo info, RenderCommandCollection passes, XRCamera? camera)
         {
+            if (camera != null && !camera.CullingMask.Contains(DefaultLayers.GizmosIndex))
+                return false;
             if (AutoShowPreviewOnSelect)
                 PreviewEnabled = IsSceneNodeSelected();
+            _debugInfluenceCommand.Enabled = RenderInfluenceOnSelection && IsSceneNodeSelected();
             return true;
         }
 
@@ -535,6 +784,38 @@ namespace XREngine.Components.Capture.Lights
                 RenderAxisPair(cameraOrigin, transform.RenderUp, ColorF4.Green, "+Y", "-Y", axisLength, axisOffset, arrowSize);
                 RenderAxisPair(cameraOrigin, transform.RenderForward, ColorF4.Blue, "-Z", "+Z", axisLength, axisOffset, arrowSize);
             }
+        }
+
+        private void RenderVolumesDebug()
+        {
+            using var prof = Engine.Profiler.Start("LightProbeComponent.RenderVolumesDebug");
+
+            Vector3 probeOrigin = Transform.RenderTranslation;
+
+            // Influence volume visualization
+            Vector3 influenceCenter = probeOrigin + InfluenceOffset;
+            const float alpha = 0.35f;
+            ColorF4 outerColor = new(0.35f, 0.75f, 1.0f, alpha);
+            ColorF4 innerColor = new(0.65f, 1.0f, 0.85f, alpha * 0.9f);
+
+            if (InfluenceShape == EInfluenceShape.Sphere)
+            {
+                Engine.Rendering.Debug.RenderSphere(influenceCenter, InfluenceSphereOuterRadius, false, outerColor);
+                if (InfluenceSphereInnerRadius > 0.0001f)
+                    Engine.Rendering.Debug.RenderSphere(influenceCenter, InfluenceSphereInnerRadius, false, innerColor);
+            }
+            else
+            {
+                Matrix4x4 influenceTransform = Matrix4x4.Identity;
+                Engine.Rendering.Debug.RenderBox(InfluenceBoxOuterExtents, influenceCenter, influenceTransform, false, outerColor);
+                Engine.Rendering.Debug.RenderBox(InfluenceBoxInnerExtents, influenceCenter, influenceTransform, false, innerColor);
+            }
+
+            // Proxy box visualization (parallax volume)
+            ColorF4 proxyColor = new(1.0f, 0.6f, 0.2f, alpha);
+            Matrix4x4 proxyRotation = Matrix4x4.CreateFromQuaternion(ProxyBoxRotation);
+            Vector3 proxyCenter = probeOrigin + ProxyBoxCenterOffset;
+            Engine.Rendering.Debug.RenderBox(ProxyBoxHalfExtents, proxyCenter, proxyRotation, false, proxyColor);
         }
 
         private static void RenderAxisPair(

@@ -5,6 +5,7 @@ using System.ComponentModel;
 using System.Diagnostics.CodeAnalysis;
 using System.Numerics;
 using System.Reflection;
+using XREngine.Components.Scene.Transforms;
 using XREngine.Data.Geometry;
 using XREngine.Data.Rendering;
 using XREngine.Rendering.Commands;
@@ -565,6 +566,7 @@ namespace XREngine.Scene.Transforms
             _inverseWorldMatrix = Matrix4x4.Identity;
 
             RenderInfo = RenderInfo3D.New(this, new RenderCommandMethod3D((int)EDefaultRenderPass.OnTopForward, RenderDebug));
+            RenderInfo.Layer = DefaultLayers.GizmosIndex;
             RenderedObjects = GetDebugRenderInfo();
             DebugRender = Engine.Rendering.Settings.RenderTransformDebugInfo;
 
@@ -1010,9 +1012,23 @@ namespace XREngine.Scene.Transforms
         }
 
         /// <summary>
+        /// Called when play begins for the scene containing this transform.
+        /// </summary>
+        protected internal virtual void OnSceneNodeBeginPlay()
+        {
+        }
+
+        /// <summary>
         /// Called when the scene node this transform is attached to is deactivated in the scene.
         /// </summary>
         protected internal virtual void OnSceneNodeDeactivated()
+        {
+        }
+
+        /// <summary>
+        /// Called when play ends for the scene containing this transform.
+        /// </summary>
+        protected internal virtual void OnSceneNodeEndPlay()
         {
         }
 

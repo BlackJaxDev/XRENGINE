@@ -95,6 +95,14 @@ namespace XREngine.Scene
         private readonly EventList<XRComponent> _components = new() { ThreadSafe = true };
         private EventList<XRComponent> ComponentsInternal => _components;
 
+        private bool _hasBegunPlay = false;
+
+        /// <summary>
+        /// True after the node has received a begin play call and until end play is invoked.
+        /// </summary>
+        [YamlIgnore]
+        public bool HasBegunPlay => _hasBegunPlay;
+
         [YamlMember(Order = 0)]
         public EventList<XRComponent> ComponentsSerialized
         {
@@ -830,11 +838,30 @@ namespace XREngine.Scene
             Activated?.Invoke(this);
         }
 
+        /// <summary>
+        /// Called when the scene is loaded / play begins. Different from activation which can toggle while data stays loaded.
+        /// </summary>
+        public void OnBeginPlay()
+        {
+            if (_hasBegunPlay)
+                return;
+
+            BeginPlayTransform();
+            BeginPlayComponents();
+            _hasBegunPlay = true;
+        }
+
         private void ActivateComponents()
         {
             foreach (XRComponent component in ComponentsInternal)
                 if (component.IsActive)
                     component.OnComponentActivated();
+        }
+
+        private void BeginPlayComponents()
+        {
+            foreach (XRComponent component in ComponentsInternal)
+                component.OnBeginPlay();
         }
 
         private void ActivateTransform()
@@ -857,6 +884,19 @@ namespace XREngine.Scene
             //}
         }
 
+        private void BeginPlayTransform()
+        {
+            if (_transform is null)
+                return;
+
+            _transform.OnSceneNodeBeginPlay();
+            //lock (_transform.Children)
+            //{
+                foreach (var child in _transform.Children)
+                    child?.SceneNode?.OnBeginPlay();
+            //}
+        }
+
         /// <summary>
         /// Called when the scene node is removed from a world or deactivated.
         /// </summary>
@@ -867,11 +907,30 @@ namespace XREngine.Scene
             Deactivated?.Invoke(this);
         }
 
+        /// <summary>
+        /// Called when the scene is unloaded / play ends. Different from deactivation which can toggle while data stays loaded.
+        /// </summary>
+        public void OnEndPlay()
+        {
+            if (!_hasBegunPlay)
+                return;
+
+            EndPlayComponents();
+            EndPlayTransform();
+            _hasBegunPlay = false;
+        }
+
         private void DeactivateComponents()
         {
             foreach (XRComponent component in ComponentsInternal)
                 if (component.IsActive)
                     component.OnComponentDeactivated();
+        }
+
+        private void EndPlayComponents()
+        {
+            foreach (XRComponent component in ComponentsInternal)
+                component.OnEndPlay();
         }
 
         private void DeactivateTransform()
@@ -892,6 +951,19 @@ namespace XREngine.Scene
                     if (node.IsActiveSelf)
                         node.OnDeactivated();
                 }
+            //}
+        }
+
+        private void EndPlayTransform()
+        {
+            if (_transform is null)
+                return;
+
+            _transform.OnSceneNodeEndPlay();
+            //lock (_transform.Children)
+            //{
+                foreach (var child in _transform.Children)
+                    child?.SceneNode?.OnEndPlay();
             //}
         }
 

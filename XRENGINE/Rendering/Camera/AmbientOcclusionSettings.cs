@@ -1,11 +1,9 @@
 ﻿using System;
 using XREngine.Data;
-using XREngine.Data.Core;
-using XREngine;
 
 namespace XREngine.Rendering
 {
-    public class AmbientOcclusionSettings : XRBase
+    public class AmbientOcclusionSettings : PostProcessSettings
     {
         private bool _enabled = true;
         private EType _type = EType.ScreenSpace;
@@ -279,7 +277,10 @@ namespace XREngine.Rendering
             Power = Interp.Lerp(from.Power, to.Power, time);
         }
 
-        public void SetUniforms(XRRenderProgram program, EType? overrideType = null)
+        public override void SetUniforms(XRRenderProgram program)
+            => SetUniforms(program, null);
+
+        public void SetUniforms(XRRenderProgram program, EType? overrideType)
         {
             var typeToApply = overrideType ?? Type;
 

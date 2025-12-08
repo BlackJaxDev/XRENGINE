@@ -5,6 +5,7 @@ using System.Numerics;
 using XREngine.Data.Core;
 using XREngine.Data.Geometry;
 using XREngine.Rendering.PostProcessing;
+using XREngine.Scene;
 using XREngine.Scene.Transforms;
 using YamlDotNet.Serialization;
 
@@ -93,6 +94,17 @@ namespace XREngine.Rendering
         {
             get => _transform ?? SetFieldReturn(ref _transform, new Transform())!;
             set => SetField(ref _transform, value);
+        }
+
+        private LayerMask _cullingMask = LayerMask.Everything;
+        /// <summary>
+        /// Determines which layers this camera renders. Only renderables whose Layer
+        /// is included in this mask will be collected during the visible pass.
+        /// </summary>
+        public LayerMask CullingMask
+        {
+            get => _cullingMask;
+            set => SetField(ref _cullingMask, value);
         }
 
         public CameraPostProcessStateCollection PostProcessStates

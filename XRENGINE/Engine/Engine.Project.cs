@@ -147,6 +147,8 @@ namespace XREngine
                 if (settings is not null)
                 {
                     BuildSettings = settings;
+                    if (GameSettings is not null)
+                        GameSettings.BuildSettings = BuildSettings;
                     Debug.Out("Loaded project build settings.");
                 }
             }

@@ -189,6 +189,7 @@ namespace XREngine.Rendering.OpenGL
                 Data.UniformSetQuaternionArrayRequested += Uniform;
                 Data.UniformSetIntArrayRequested += Uniform;
                 Data.UniformSetFloatArrayRequested += Uniform;
+                Data.UniformSetFloatSpanRequested += Uniform;
                 Data.UniformSetUIntArrayRequested += Uniform;
                 Data.UniformSetDoubleArrayRequested += Uniform;
                 Data.UniformSetMatrix4x4ArrayRequested += Uniform;
@@ -365,6 +366,7 @@ namespace XREngine.Rendering.OpenGL
                 Data.UniformSetQuaternionArrayRequested -= Uniform;
                 Data.UniformSetIntArrayRequested -= Uniform;
                 Data.UniformSetFloatArrayRequested -= Uniform;
+                Data.UniformSetFloatSpanRequested -= Uniform;
                 Data.UniformSetUIntArrayRequested -= Uniform;
                 Data.UniformSetDoubleArrayRequested -= Uniform;
                 Data.UniformSetMatrix4x4ArrayRequested -= Uniform;
@@ -924,6 +926,8 @@ namespace XREngine.Rendering.OpenGL
                 => Uniform(GetUniformLocation(name), p);
             public void Uniform(string name, float[] p)
                 => Uniform(GetUniformLocation(name), p);
+            public void Uniform(string name, Span<float> p)
+                => Uniform(GetUniformLocation(name), p);
             public void Uniform(string name, uint[] p)
                 => Uniform(GetUniformLocation(name), p);
             public void Uniform(string name, double[] p)
@@ -1060,6 +1064,18 @@ namespace XREngine.Rendering.OpenGL
                 fixed (float* ptr = p)
                 {
                     Api.ProgramUniform1(BindingId, location, (uint)p.Length, ptr);
+                }
+            }
+            public void Uniform(int location, Span<float> p)
+            {
+                if (location < 0)
+                    return;
+                unsafe
+                {
+                    fixed (float* ptr = p)
+                    {
+                        Api.ProgramUniform1(BindingId, location, (uint)p.Length, ptr);
+                    }
                 }
             }
             public void Uniform(int location, uint[] p)

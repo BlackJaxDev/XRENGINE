@@ -147,6 +147,8 @@ public static partial class InspectorPropertyEditors
                 return EngineTypes.CreateColorEditor;
             case Type t when t == typeof(PropAnimFloat):
                 return EngineTypes.CreatePropAnimFloatEditor;
+            case Type t when t == typeof(LayerMask):
+                return EngineTypes.CreateLayerMaskEditor;
             default:
                 {
                     if (propType.IsEnum)

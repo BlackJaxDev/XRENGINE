@@ -41,6 +41,12 @@ public static partial class InspectorPropertyEditors
             PrimitiveTypes.CreateSingleEditor()(node.NewChild(nameof(Vector2Transformer.Y)), transformer.GetTransformedProperty(nameof(Vector2Transformer.Y)), tfmObj);
         }
 
+        public static void CreateLayerMaskEditor(SceneNode node, PropertyInfo info, object?[]? objects)
+        {
+            InitListArrangement(node, info, objects, out LayerMaskTransformer transformer, out object?[] tfmObj);
+            PrimitiveTypes.CreateInt32Editor()(node.NewChild(nameof(LayerMaskTransformer.Value)), transformer.GetTransformedProperty(nameof(LayerMaskTransformer.Value)), tfmObj);
+        }
+
         private static void InitListArrangement<T>(SceneNode node, PropertyInfo info, object?[]? objects, out T transformer, out object?[] tfmObj) where T : DataTransformerBase
         {
             var tfm = node.SetTransform<UIListTransform>();

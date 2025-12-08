@@ -8,6 +8,7 @@ namespace XREngine
     [MemoryPackable]
     public partial class GameStartupSettings : XRAsset
     {
+        private BuildSettings _buildSettings = new();
         private ENetworkingType _networkingType = ENetworkingType.Local;
         private List<GameWindowStartupSettings> _startupWindows = [];
         private ETwoPlayerPreference _twoPlayerViewportPreference;
@@ -152,6 +153,12 @@ namespace XREngine
             set => SetField(ref _runVRInPlace, value);
         }
         public Dictionary<int, string> LayerNames { get; set; } = DefaultLayers.All;
+
+        public BuildSettings BuildSettings
+        {
+            get => _buildSettings;
+            set => SetField(ref _buildSettings, value ?? new BuildSettings());
+        }
 
         /// <summary>
         /// The maximum number of times a mirror can reflect another mirror.

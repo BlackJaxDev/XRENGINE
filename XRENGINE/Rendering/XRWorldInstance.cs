@@ -187,7 +187,7 @@ namespace XREngine.Rendering
         private void TickDuring() 
             => TickGroup(ETickGroup.DuringPhysics);
 
-        private bool _physicsEnabled = true;
+        private bool _physicsEnabled = false;
         /// <summary>
         /// Whether physics simulation is currently active for this world.
         /// Physics is automatically enabled/disabled when entering/exiting play mode.
@@ -212,29 +212,58 @@ namespace XREngine.Rendering
         public void FixedUpdate()
         {
             TickGroup(ETickGroup.PrePhysics);
-            
             // Only step physics if enabled (typically only during play mode)
             if (PhysicsEnabled)
-            {
                 PhysicsScene.StepSimulation();
-            }
-            
             TickGroup(ETickGroup.DuringPhysics);
             TickGroup(ETickGroup.PostPhysics);
         }
 
-        public bool IsPlaying { get; private set; }
+        public enum EPlayState
+        {
+            Stopped,
+            BeginningPlay,
+            Playing,
+            EndingPlay,
+            Paused
+        }
+
+        private EPlayState _playState = EPlayState.Stopped;
+        public EPlayState PlayState 
+        {
+            get => _playState;
+            private set => SetField(ref _playState, value);
+        }
+
+        public bool TransitioningPlay => 
+            PlayState == EPlayState.BeginningPlay || 
+            PlayState == EPlayState.EndingPlay;
+
+        public void PausePlay()
+        {
+            if (PlayState != EPlayState.Playing)
+                return;
+            PlayState = EPlayState.Paused;
+        }
+        public void ResumePlay()
+        {
+            if (PlayState != EPlayState.Paused)
+                return;
+            PlayState = EPlayState.Playing;
+        }
 
         public async Task BeginPlay()
         {
             using var profilerScope = Engine.Profiler.Start("WorldInstance.BeginPlay");
 
+            PlayState = EPlayState.BeginningPlay;
             PreBeginPlay?.Invoke(this);
             VisualScene.Initialize();
             PhysicsScene.Initialize();
             await BeginPlayInternal();
             LinkTimeCallbacks();
             PostBeginPlay?.Invoke(this);
+            PlayState = EPlayState.Playing;
         }
 
         protected virtual async Task BeginPlayInternal()
@@ -246,30 +275,36 @@ namespace XREngine.Rendering
                 await node.Transform.RecalculateMatrixHeirarchy(true, true, Engine.Rendering.Settings.RecalcChildMatricesLoopType);
 
             foreach (SceneNode node in RootNodes)
+                node.OnBeginPlay();
+
+            foreach (SceneNode node in RootNodes)
                 if (node.IsActiveSelf)
                     node.OnActivated();
-
-            IsPlaying = true;
         }
 
         public void EndPlay()
         {
             using var profilerScope = Engine.Profiler.Start("WorldInstance.EndPlay");
             
+            PlayState = EPlayState.EndingPlay;
             PreEndPlay?.Invoke(this);
             UnlinkTimeCallbacks();
             PhysicsScene.Destroy();
             VisualScene.Destroy();
             EndPlayInternal();
             PostEndPlay?.Invoke(this);
+            PlayState = EPlayState.Stopped;
         }
         protected virtual void EndPlayInternal()
         {
             VisualScene.GenericRenderTree.Swap();
+
+            foreach (SceneNode node in RootNodes)
+                node.OnEndPlay();
+
             foreach (SceneNode node in RootNodes)
                 if (node.IsActiveSelf)
                     node.OnDeactivated();
-            IsPlaying = false;
         }
 
         private void LinkTimeCallbacks()
@@ -392,7 +427,12 @@ namespace XREngine.Rendering
         }
 
         public void EnqueueRenderTransformChange(TransformBase transform, Matrix4x4 worldMatrix)
-            => _pushToRenderWrite.Enqueue((transform, worldMatrix));
+        {
+            _pushToRenderWrite.Enqueue((transform, worldMatrix));
+            AnyTransformWorldMatrixChanged?.Invoke(this, transform, worldMatrix);
+        }
+
+        public event Action<XRWorldInstance, TransformBase, Matrix4x4>? AnyTransformWorldMatrixChanged;
 
         private static async Task RecalcTransformDepthSequential(IEnumerable<TransformBase> bag)
         {
@@ -490,6 +530,20 @@ namespace XREngine.Rendering
    
                         // Subscribe to settings changes
                         TargetWorld.Settings.PropertyChanged += OnWorldSettingsChanged;
+                    }
+                    break;
+                case nameof(PlayState):
+                    if (field is EPlayState newState)
+                    {
+                        switch (newState)
+                        {
+                            case EPlayState.Playing:
+                                PhysicsEnabled = true;
+                                break;
+                            case EPlayState.Stopped:
+                                PhysicsEnabled = false;
+                                break;
+                        }
                     }
                     break;
             }
