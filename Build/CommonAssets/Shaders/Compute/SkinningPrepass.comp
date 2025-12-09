@@ -1,0 +1,316 @@
+#version 450
+
+layout(local_size_x = 256) in;
+
+layout(std430, binding = 0) buffer BoneMatricesBuffer
+{
+    mat4 BoneMatrices[];
+};
+
+layout(std430, binding = 1) buffer BoneInvBindMatricesBuffer
+{
+    mat4 BoneInvBindMatrices[];
+};
+
+layout(std430, binding = 2) buffer BoneIndicesOrOffsetsBuffer
+{
+    uvec4 BoneIndicesOrOffsets[];
+};
+
+layout(std430, binding = 3) buffer BoneWeightsOrCountsBuffer
+{
+    uvec4 BoneWeightsOrCounts[];
+};
+
+layout(std430, binding = 4) buffer BlendshapeCountsBuffer
+{
+    uvec2 BlendshapeCounts[];
+};
+
+layout(std430, binding = 5) buffer BlendshapeIndicesBuffer
+{
+    uvec4 BlendshapeIndices[];
+};
+
+layout(std430, binding = 6) buffer BlendshapeDeltasBuffer
+{
+    vec4 BlendshapeDeltas[];
+};
+
+layout(std430, binding = 7) buffer BlendshapeWeightsBuffer
+{
+    float BlendshapeWeights[];
+};
+
+layout(std430, binding = 8) buffer PositionsBuffer
+{
+    vec4 Positions[];
+};
+
+layout(std430, binding = 9) buffer NormalsBuffer
+{
+    vec4 Normals[];
+};
+
+layout(std430, binding = 10) buffer TangentsBuffer
+{
+    vec4 Tangents[];
+};
+
+layout(std430, binding = 13) buffer BoneIndexListBuffer
+{
+    uvec4 BoneIndexList[];
+};
+
+layout(std430, binding = 14) buffer BoneWeightListBuffer
+{
+    vec4 BoneWeightList[];
+};
+
+layout(std430, binding = 15) buffer InterleavedBuffer
+{
+    uint Interleaved[];
+};
+
+uniform uint vertexCount;
+uniform int hasSkinning;
+uniform int hasNormals;
+uniform int hasTangents;
+uniform int hasBlendshapes;
+uniform int allowBlendshapes;
+uniform int absoluteBlendshapePositions;
+uniform int maxBlendshapeAccumulation;
+uniform int useIntegerUniforms;
+uniform int optimized4;
+uniform int interleaved;
+uniform uint interleavedStride;
+uniform uint positionOffsetBytes;
+uniform uint normalOffsetBytes;
+uniform uint tangentOffsetBytes;
+
+const float MIN_BLEND_WEIGHT = 0.0001f;
+
+uint decodeIndex(uint raw)
+{
+    return useIntegerUniforms != 0 ? raw : uint(round(uintBitsToFloat(raw)));
+}
+
+uint decodeCount(uvec2 raw)
+{
+    return useIntegerUniforms != 0 ? raw.y : uint(round(uintBitsToFloat(raw.y)));
+}
+
+uint decodeStart(uvec2 raw)
+{
+    return useIntegerUniforms != 0 ? raw.x : uint(round(uintBitsToFloat(raw.x)));
+}
+
+ivec4 decodeBlendshapeIndices(uvec4 raw)
+{
+    if (useIntegerUniforms != 0)
+        return ivec4(raw);
+    return ivec4(
+        round(uintBitsToFloat(raw.x)),
+        round(uintBitsToFloat(raw.y)),
+        round(uintBitsToFloat(raw.z)),
+        round(uintBitsToFloat(raw.w)));
+}
+
+void applyBlendshapes(inout vec3 position, inout vec3 normal, inout vec3 tangent, uint vertexIndex)
+{
+    if (hasBlendshapes == 0 || allowBlendshapes == 0)
+        return;
+
+    uvec2 countData = BlendshapeCounts[vertexIndex];
+    uint start = decodeStart(countData);
+    uint count = decodeCount(countData);
+    if (count == 0u)
+        return;
+
+    if (maxBlendshapeAccumulation != 0)
+    {
+        vec3 maxPos = vec3(0.0);
+        vec3 maxNrm = vec3(0.0);
+        vec3 maxTan = vec3(0.0);
+        for (uint i = 0u; i < count; ++i)
+        {
+            ivec4 bs = decodeBlendshapeIndices(BlendshapeIndices[start + i]);
+            int blendIndex = bs.x;
+            float weight = BlendshapeWeights[blendIndex];
+            if (weight <= MIN_BLEND_WEIGHT)
+                continue;
+
+            int posIndex = bs.y;
+            int nrmIndex = bs.z;
+            int tanIndex = bs.w;
+
+            maxPos = max(maxPos, BlendshapeDeltas[posIndex].xyz * weight);
+            maxNrm = max(maxNrm, BlendshapeDeltas[nrmIndex].xyz * weight);
+            maxTan = max(maxTan, BlendshapeDeltas[tanIndex].xyz * weight);
+        }
+
+        position += maxPos;
+        if (hasNormals != 0)
+            normal += maxNrm;
+        if (hasTangents != 0)
+            tangent += maxTan;
+    }
+    else
+    {
+        for (uint i = 0u; i < count; ++i)
+        {
+            ivec4 bs = decodeBlendshapeIndices(BlendshapeIndices[start + i]);
+            int blendIndex = bs.x;
+            float weight = BlendshapeWeights[blendIndex];
+            if (weight <= MIN_BLEND_WEIGHT)
+                continue;
+
+            int posIndex = bs.y;
+            int nrmIndex = bs.z;
+            int tanIndex = bs.w;
+
+            position += BlendshapeDeltas[posIndex].xyz * weight;
+            if (hasNormals != 0)
+                normal += BlendshapeDeltas[nrmIndex].xyz * weight;
+            if (hasTangents != 0)
+                tangent += BlendshapeDeltas[tanIndex].xyz * weight;
+        }
+    }
+}
+
+uint loadIndexValue(uint raw)
+{
+    return useIntegerUniforms != 0 ? raw : uint(round(uintBitsToFloat(raw)));
+}
+
+void applySkinningOptimized4(inout vec3 position, inout vec3 normal, inout vec3 tangent, uint vertexIndex)
+{
+    uvec4 indices = BoneIndicesOrOffsets[vertexIndex];
+    vec4 weightsRaw = uintBitsToFloat(BoneWeightsOrCounts[vertexIndex]);
+
+    for (int i = 0; i < 4; ++i)
+    {
+        int boneIndex = int(decodeIndex(indices[i]));
+        float weight = weightsRaw[i];
+        if (boneIndex <= 0 || weight <= 0.0f)
+            continue;
+
+        mat4 boneMatrix = BoneInvBindMatrices[boneIndex] * BoneMatrices[boneIndex];
+        vec4 skinnedPos = boneMatrix * vec4(position, 1.0f);
+        position += skinnedPos.xyz * weight;
+
+        if (hasNormals != 0)
+        {
+            mat3 boneMatrix3 = transpose(inverse(mat3(boneMatrix)));
+            normal += (boneMatrix3 * normal) * weight;
+        }
+        if (hasTangents != 0)
+        {
+            mat3 boneMatrix3 = transpose(inverse(mat3(boneMatrix)));
+            tangent += (boneMatrix3 * tangent) * weight;
+        }
+    }
+}
+
+void applySkinningVariable(inout vec3 position, inout vec3 normal, inout vec3 tangent, uint vertexIndex)
+{
+    uint offset = loadIndexValue(BoneIndicesOrOffsets[vertexIndex].x);
+    uint count = loadIndexValue(BoneWeightsOrCounts[vertexIndex].x);
+    if (count == 0u)
+        return;
+
+    for (uint i = 0u; i < count; ++i)
+    {
+        uint listIndex = offset + i;
+        uint rawIndex = BoneIndexList[listIndex].x;
+        float weight = BoneWeightList[listIndex].x;
+        int boneIndex = int(loadIndexValue(rawIndex));
+        if (boneIndex <= 0 || weight <= 0.0f)
+            continue;
+
+        mat4 boneMatrix = BoneInvBindMatrices[boneIndex] * BoneMatrices[boneIndex];
+        vec4 skinnedPos = boneMatrix * vec4(position, 1.0f);
+        position += skinnedPos.xyz * weight;
+
+        if (hasNormals != 0)
+        {
+            mat3 boneMatrix3 = transpose(inverse(mat3(boneMatrix)));
+            normal += (boneMatrix3 * normal) * weight;
+        }
+        if (hasTangents != 0)
+        {
+            mat3 boneMatrix3 = transpose(inverse(mat3(boneMatrix)));
+            tangent += (boneMatrix3 * tangent) * weight;
+        }
+    }
+}
+
+void applySkinning(inout vec3 position, inout vec3 normal, inout vec3 tangent, uint vertexIndex)
+{
+    if (hasSkinning == 0)
+        return;
+
+    if (optimized4 != 0)
+        applySkinningOptimized4(position, normal, tangent, vertexIndex);
+    else
+        applySkinningVariable(position, normal, tangent, vertexIndex);
+}
+
+float loadInterleavedFloat(uint byteOffset)
+{
+    return uintBitsToFloat(Interleaved[byteOffset >> 2]);
+}
+
+void storeInterleavedFloat(uint byteOffset, float value)
+{
+    Interleaved[byteOffset >> 2] = floatBitsToUint(value);
+}
+
+vec3 loadInterleavedVec3(uint baseByte)
+{
+    return vec3(
+        loadInterleavedFloat(baseByte + 0u),
+        loadInterleavedFloat(baseByte + 4u),
+        loadInterleavedFloat(baseByte + 8u));
+}
+
+void storeInterleavedVec3(uint baseByte, vec3 value)
+{
+    storeInterleavedFloat(baseByte + 0u, value.x);
+    storeInterleavedFloat(baseByte + 4u, value.y);
+    storeInterleavedFloat(baseByte + 8u, value.z);
+}
+
+void main()
+{
+    uint idx = gl_GlobalInvocationID.x;
+    if (idx >= vertexCount)
+        return;
+
+    bool useInterleaved = interleaved != 0;
+    uint baseByte = idx * interleavedStride;
+
+    vec3 basePosition = useInterleaved ? loadInterleavedVec3(baseByte + positionOffsetBytes) : Positions[idx].xyz;
+    vec3 baseNormal = (hasNormals != 0) ? (useInterleaved ? loadInterleavedVec3(baseByte + normalOffsetBytes) : Normals[idx].xyz) : vec3(0.0);
+    vec3 baseTangent = (hasTangents != 0) ? (useInterleaved ? loadInterleavedVec3(baseByte + tangentOffsetBytes) : Tangents[idx].xyz) : vec3(0.0);
+
+    applyBlendshapes(basePosition, baseNormal, baseTangent, idx);
+    applySkinning(basePosition, baseNormal, baseTangent, idx);
+
+    if (useInterleaved)
+    {
+        storeInterleavedVec3(baseByte + positionOffsetBytes, basePosition);
+        if (hasNormals != 0)
+            storeInterleavedVec3(baseByte + normalOffsetBytes, normalize(baseNormal));
+        if (hasTangents != 0)
+            storeInterleavedVec3(baseByte + tangentOffsetBytes, normalize(baseTangent));
+    }
+    else
+    {
+        Positions[idx].xyz = basePosition;
+        if (hasNormals != 0)
+            Normals[idx].xyz = normalize(baseNormal);
+        if (hasTangents != 0)
+            Tangents[idx].xyz = normalize(baseTangent);
+    }
+}

@@ -3,6 +3,7 @@ using MemoryPack;
 using System.Diagnostics.CodeAnalysis;
 using System.Numerics;
 using System.Runtime.InteropServices;
+using System.Threading;
 using XREngine.Core.Files;
 using XREngine.Data;
 using XREngine.Data.Colors;
@@ -23,6 +24,15 @@ namespace XREngine.Rendering
     [MemoryPackable(GenerateType.NoGenerate)]
     public partial class XRMeshRenderer : XRAsset
     {
+        private static int _settingsRevision;
+
+        static XRMeshRenderer()
+        {
+            Engine.Rendering.SettingsChanged += () => Interlocked.Increment(ref _settingsRevision);
+        }
+
+        private static int CurrentSettingsRevision => Volatile.Read(ref _settingsRevision);
+
         /// <summary>
         /// This class holds specific information about rendering the mesh depending on the type of pass.
         /// For example:
@@ -44,7 +54,20 @@ namespace XREngine.Rendering
             }
 
             private string? _vertexShaderSource;
-            public string? VertexShaderSource => _vertexShaderSource ??= GenerateVertexShaderSource();
+            private int _vertexShaderSettingsRevision = -1;
+            public string? VertexShaderSource
+            {
+                get
+                {
+                    int settingsRev = CurrentSettingsRevision;
+                    if (_vertexShaderSource is null || _vertexShaderSettingsRevision != settingsRev)
+                    {
+                        _vertexShaderSource = GenerateVertexShaderSource();
+                        _vertexShaderSettingsRevision = settingsRev;
+                    }
+                    return _vertexShaderSource;
+                }
+            }
 
             public bool AllowShaderPipelines
             {
@@ -53,7 +76,10 @@ namespace XREngine.Rendering
             }
 
             public void ResetVertexShaderSource()
-                => _vertexShaderSource = null;
+            {
+                _vertexShaderSource = null;
+                _vertexShaderSettingsRevision = -1;
+            }
 
             protected abstract string? GenerateVertexShaderSource();
 

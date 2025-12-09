@@ -11,6 +11,10 @@ namespace XREngine.Rendering.OpenGL
     {
         private bool _storageSet = false;
         private ESizedInternalFormat _allocatedInternalFormat = ESizedInternalFormat.Rgba8;
+        private uint _allocatedWidth = 0;
+        private uint _allocatedHeight = 0;
+        private uint _allocatedDepth = 0;
+        private uint _allocatedLevels = 0;
 
         public class MipmapInfo : XRBase
         {
@@ -170,6 +174,10 @@ namespace XREngine.Rendering.OpenGL
         {
             _storageSet = false;
             _allocatedInternalFormat = ESizedInternalFormat.Rgba8;
+            _allocatedWidth = 0;
+            _allocatedHeight = 0;
+            _allocatedDepth = 0;
+            _allocatedLevels = 0;
             Mipmaps.ForEach(m =>
             {
                 m.HasPushedResizedData = false;
@@ -187,26 +195,41 @@ namespace XREngine.Rendering.OpenGL
             });
             _storageSet = false;
             _allocatedInternalFormat = ESizedInternalFormat.Rgba8;
+            _allocatedWidth = 0;
+            _allocatedHeight = 0;
+            _allocatedDepth = 0;
+            _allocatedLevels = 0;
             base.PostGenerated();
         }
         protected internal override void PostDeleted()
         {
             _storageSet = false;
             _allocatedInternalFormat = ESizedInternalFormat.Rgba8;
+            _allocatedWidth = 0;
+            _allocatedHeight = 0;
+            _allocatedDepth = 0;
+            _allocatedLevels = 0;
             base.PostDeleted();
         }
 
-        private void EnsureStorage(ESizedInternalFormat desiredFormat)
+        private void EnsureStorage(ESizedInternalFormat desiredFormat, uint width, uint height, uint depth, uint levels)
         {
-            uint levels = (uint)Math.Max(1, Data.SmallestMipmapLevel + 1);
-
-            bool needsAllocation = !_storageSet || _allocatedInternalFormat != desiredFormat;
+            bool needsAllocation = !_storageSet
+                || _allocatedInternalFormat != desiredFormat
+                || _allocatedWidth != width
+                || _allocatedHeight != height
+                || _allocatedDepth != depth
+                || _allocatedLevels != levels;
             if (!needsAllocation)
                 return;
 
-            Api.TextureStorage3D(BindingId, levels, ToGLEnum(desiredFormat), Data.Width, Data.Height, Data.Depth);
+            Api.TextureStorage3D(BindingId, levels, ToGLEnum(desiredFormat), width, height, depth);
             _storageSet = true;
             _allocatedInternalFormat = desiredFormat;
+            _allocatedWidth = width;
+            _allocatedHeight = height;
+            _allocatedDepth = depth;
+            _allocatedLevels = levels;
         }
 
         public override void PushData()
@@ -251,8 +274,22 @@ namespace XREngine.Rendering.OpenGL
                     Data.SizedInternalFormat = desiredInternalFormat;
                 }
 
+                // Ensure array dimensions match the first valid source so storage is allocated correctly.
+                uint targetWidth = Data.Width;
+                uint targetHeight = Data.Height;
+                uint targetDepth = (uint)Math.Max(1, Data.Textures.Length);
+
+                if (targetWidth == 0 || targetHeight == 0)
+                {
+                    targetWidth = firstSource.Width;
+                    targetHeight = firstSource.Height;
+                }
+
+                // Keep mip level count in sync with the target dimensions to avoid CopyImageSubData hitting undefined mips.
+                uint targetLevels = (uint)Math.Max(1, XRTexture.GetSmallestMipmapLevel(targetWidth, targetHeight, Data.SmallestAllowedMipmapLevel) + 1);
+
                 // Allocate storage (or reallocate if format changed) before copying data.
-                EnsureStorage(desiredInternalFormat);
+                EnsureStorage(desiredInternalFormat, targetWidth, targetHeight, targetDepth, targetLevels);
 
                 var glTarget = ToGLEnum(TextureTarget);
                 
@@ -280,9 +317,9 @@ namespace XREngine.Rendering.OpenGL
                                 continue;
                             }
 
-                            if (tex.Width != Data.Width || tex.Height != Data.Height)
+                            if (tex.Width != targetWidth || tex.Height != targetHeight)
                             {
-                                Debug.LogWarning($"Skipping copy into texture array layer {layer} because source size {tex.Width}x{tex.Height} != target {Data.Width}x{Data.Height}.");
+                                Debug.LogWarning($"Skipping copy into texture array layer {layer} because source size {tex.Width}x{tex.Height} != target {targetWidth}x{targetHeight}.");
                                 continue;
                             }
                     if (srcId == InvalidBindingId)

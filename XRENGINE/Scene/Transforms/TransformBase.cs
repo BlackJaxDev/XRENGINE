@@ -469,6 +469,7 @@ namespace XREngine.Scene.Transforms
         {
             get
             {
+                /*
                 if (!_inverseRenderMatrixDirty)
                 {
                     lock (_inverseRenderMatrixLock)
@@ -479,12 +480,14 @@ namespace XREngine.Scene.Transforms
                 {
                     if (!_inverseRenderMatrixDirty)
                         return _inverseRenderMatrix;
-
+*/
                     var inverted = Matrix4x4.Invert(RenderMatrix, out var inv) ? inv : Matrix4x4.Identity;
                     _inverseRenderMatrix = inverted;
                     _inverseRenderMatrixDirty = false;
                     return inverted;
+                    /*
                 }
+                */
             }
         }
 

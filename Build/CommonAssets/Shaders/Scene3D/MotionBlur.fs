@@ -3,9 +3,10 @@
 layout(location = 0) in vec3 FragPos;
 layout(location = 0) out vec4 OutColor;
 
-layout(binding = 0) uniform sampler2D MotionBlur;
-layout(binding = 1) uniform sampler2D Texture1; // Velocity buffer
-layout(binding = 2) uniform sampler2D Texture2; // Depth view
+// Sampler names must match the SamplerName property of the textures passed to the material.
+uniform sampler2D MotionBlur;  // Copied scene color
+uniform sampler2D Velocity;    // Velocity buffer
+uniform sampler2D DepthView;   // Depth buffer view
 
 uniform vec2 TexelSize;
 uniform float ShutterScale;
@@ -22,7 +23,7 @@ bool IsValidUv(vec2 uv)
 
 float DepthDifference(vec2 uv, float baseDepth)
 {
-    return abs(texture(Texture2, uv).r - baseDepth);
+    return abs(texture(DepthView, uv).r - baseDepth);
 }
 
 void main()
@@ -35,8 +36,8 @@ void main()
 
     vec2 uv = clipXY * 0.5f + 0.5f;
     vec4 baseColor = texture(MotionBlur, uv);
-    vec2 velocity = texture(Texture1, uv).xy;
-    float depth = texture(Texture2, uv).r;
+    vec2 velocity = texture(Velocity, uv).xy;
+    float depth = texture(DepthView, uv).r;
 
     if (MaxSamples <= 1)
     {

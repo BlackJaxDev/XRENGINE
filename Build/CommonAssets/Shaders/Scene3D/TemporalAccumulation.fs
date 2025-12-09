@@ -4,12 +4,14 @@ layout(location = 0) in vec3 FragPos;
 layout(location = 0) out vec4 OutColor;
 layout(location = 1) out vec2 OutExposureVariance;
 
-layout(binding = 0) uniform sampler2D CurrentColorTexture;
-layout(binding = 1) uniform sampler2D HistoryColorTexture;
-layout(binding = 2) uniform sampler2D VelocityTexture;
-layout(binding = 3) uniform sampler2D DepthTexture;
-layout(binding = 4) uniform sampler2D HistoryDepthTexture;
-layout(binding = 5) uniform sampler2D HistoryExposureVarianceTexture;
+// Sampler names must match the SamplerName property of the textures passed to the material.
+// These are bound by name, not by explicit binding index.
+uniform sampler2D TemporalColorInput;      // Current frame color (was CurrentColorTexture)
+uniform sampler2D HistoryColor;            // History frame color (was HistoryColorTexture)
+uniform sampler2D Velocity;                // Motion vectors (was VelocityTexture)
+uniform sampler2D DepthView;               // Current depth (was DepthTexture)
+uniform sampler2D HistoryDepth;            // History depth (was HistoryDepthTexture)
+uniform sampler2D HistoryExposureVariance; // History exposure/variance (was HistoryExposureVarianceTexture)
 
 uniform bool HistoryReady;
 uniform vec2 TexelSize;
@@ -44,8 +46,8 @@ vec3 SampleCatmullRomFilteredColor(vec2 uv)
     for (int i = 0; i < 4; ++i)
     {
         float offset = (float(i) - 1.5f) * CatmullRadius;
-        accumX += texture(CurrentColorTexture, uv + vec2(offset, 0.0f) * TexelSize).rgb * weights[i];
-        accumY += texture(CurrentColorTexture, uv + vec2(0.0f, offset) * TexelSize).rgb * weights[i];
+        accumX += texture(TemporalColorInput, uv + vec2(offset, 0.0f) * TexelSize).rgb * weights[i];
+        accumY += texture(TemporalColorInput, uv + vec2(0.0f, offset) * TexelSize).rgb * weights[i];
     }
     return 0.5f * (accumX + accumY);
 }
@@ -64,7 +66,7 @@ vec3 NeighborhoodClamp(vec2 uv, out vec3 maxColor)
         for (int y = -1; y <= 1; ++y)
         {
             vec2 offset = vec2(float(x), float(y)) * TexelSize;
-            vec3 sampleColor = texture(CurrentColorTexture, uv + offset).rgb;
+            vec3 sampleColor = texture(TemporalColorInput, uv + offset).rgb;
             minColor = min(minColor, sampleColor);
             maxColor = max(maxColor, sampleColor);
         }
@@ -74,13 +76,13 @@ vec3 NeighborhoodClamp(vec2 uv, out vec3 maxColor)
 
 float EvaluateDepthDiscontinuity(vec2 uv)
 {
-    float centerDepth = texture(DepthTexture, uv).r;
+    float centerDepth = texture(DepthView, uv).r;
     float minDepth = centerDepth;
     float maxDepth = centerDepth;
     const vec2 offsets[4] = vec2[](vec2(1.0f, 0.0f), vec2(-1.0f, 0.0f), vec2(0.0f, 1.0f), vec2(0.0f, -1.0f));
     for (int i = 0; i < 4; ++i)
     {
-        float sampleDepth = texture(DepthTexture, uv + offsets[i] * TexelSize).r;
+        float sampleDepth = texture(DepthView, uv + offsets[i] * TexelSize).r;
         minDepth = min(minDepth, sampleDepth);
         maxDepth = max(maxDepth, sampleDepth);
     }
@@ -90,7 +92,7 @@ float EvaluateDepthDiscontinuity(vec2 uv)
 
 float EvaluateReactiveMask(vec2 uv, vec2 velocity, float currentLuma, float historyLuma)
 {
-    vec4 currentSample = texture(CurrentColorTexture, uv);
+    vec4 currentSample = texture(TemporalColorInput, uv);
     float transparencyMask = smoothstep(ReactiveTransparencyRange.x, ReactiveTransparencyRange.y, 1.0f - currentSample.a);
     float velocityMask = smoothstep(0.0f, ReactiveVelocityScale, length(velocity));
     float luminanceDelta = abs(currentLuma - historyLuma);
@@ -108,7 +110,7 @@ void main()
 
     uv = uv * 0.5f + 0.5f;
 
-    vec2 velocity = texture(VelocityTexture, uv).xy;
+    vec2 velocity = texture(Velocity, uv).xy;
     // velocity is in NDC space (-1..1). Convert to UV space by halving.
     vec2 historyUV = uv - velocity * 0.5f;
 
@@ -120,13 +122,13 @@ void main()
     vec3 historyColor = currentFiltered;
     vec2 historyStats = vec2(currentLuma, 0.0f);
     bool canUseHistory = HistoryReady && IsValidUV(historyUV);
-    float currentDepth = texture(DepthTexture, uv).r;
+    float currentDepth = texture(DepthView, uv).r;
     float historyDepth = currentDepth;
     if (canUseHistory)
     {
-        historyColor = texture(HistoryColorTexture, historyUV).rgb;
-        historyStats = texture(HistoryExposureVarianceTexture, historyUV).rg;
-        historyDepth = texture(HistoryDepthTexture, historyUV).r;
+        historyColor = texture(HistoryColor, historyUV).rgb;
+        historyStats = texture(HistoryExposureVariance, historyUV).rg;
+        historyDepth = texture(HistoryDepth, historyUV).r;
         if (abs(historyDepth - currentDepth) > DepthRejectThreshold)
         {
             canUseHistory = false;

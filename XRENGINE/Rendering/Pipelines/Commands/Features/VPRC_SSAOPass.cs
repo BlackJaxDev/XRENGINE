@@ -292,14 +292,8 @@ namespace XREngine.Rendering.Pipelines.Commands
                 Name = SSAOBlurFBOName
             };
 
-            XRFrameBuffer gbufferFBO = new((ssaoAttach, EFrameBufferAttachment.ColorAttachment0, 0, -1))
-            {
-                Name = GBufferFBOFBOName
-            };
-
             instance.SetFBO(ssaoGenFBO);
             instance.SetFBO(ssaoBlurFBO);
-            instance.SetFBO(gbufferFBO);
         }
 
         private void SSAOGen_SetUniforms(XRRenderProgram program)

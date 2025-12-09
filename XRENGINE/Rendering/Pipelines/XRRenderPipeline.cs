@@ -142,8 +142,11 @@ public abstract partial class RenderPipeline : XRAsset
     {
     }
 
-    public static RenderingState State 
-        => CurrentRenderingPipeline!.RenderState;
+    private static RenderingState? TryState
+        => CurrentRenderingPipeline?.RenderState;
+
+    public static RenderingState State
+        => TryState ?? throw new InvalidOperationException("Rendering pipeline state is not available.");
 
     public static T? GetTexture<T>(string name) where T : XRTexture
         => CurrentRenderingPipeline!.GetTexture<T>(name);
@@ -164,18 +167,24 @@ public abstract partial class RenderPipeline : XRAsset
         => CurrentRenderingPipeline!.SetFBO(fbo, descriptor);
 
     protected static uint InternalWidth
-        => (uint)State.WindowViewport!.InternalWidth;
+        => (uint)(TryState?.WindowViewport?.InternalWidth ?? 0);
     protected static uint InternalHeight
-        => (uint)State.WindowViewport!.InternalHeight;
+        => (uint)(TryState?.WindowViewport?.InternalHeight ?? 0);
     protected static uint FullWidth
-        => (uint)State.WindowViewport!.Width;
+        => (uint)(TryState?.WindowViewport?.Width ?? 0);
     protected static uint FullHeight
-        => (uint)State.WindowViewport!.Height;
+        => (uint)(TryState?.WindowViewport?.Height ?? 0);
 
     protected static bool NeedsRecreateTextureInternalSize(XRTexture t)
     {
         uint w = InternalWidth;
         uint h = InternalHeight;
+        if (w == 0 || h == 0)
+        {
+            string name = CurrentRenderingPipeline?.GetType().Name ?? "RenderPipeline";
+            Debug.LogWarning($"[{name}] Internal size unavailable while checking texture resize.");
+            return false;
+        }
         switch (t)
         {
             case XRTexture2D t2d:
@@ -195,6 +204,12 @@ public abstract partial class RenderPipeline : XRAsset
     {
         uint w = FullWidth;
         uint h = FullHeight;
+        if (w == 0 || h == 0)
+        {
+            string name = CurrentRenderingPipeline?.GetType().Name ?? "RenderPipeline";
+            Debug.LogWarning($"[{name}] Full size unavailable while checking texture resize.");
+            return false;
+        }
         switch (t)
         {
             case XRTexture2D t2d:
@@ -263,6 +278,13 @@ public abstract partial class RenderPipeline : XRAsset
         => (InternalWidth, InternalHeight);
     protected static (uint x, uint y) GetDesiredFBOSizeFull()
         => ((uint)State.WindowViewport!.Width, (uint)State.WindowViewport!.Height);
+
+    /// <summary>
+    /// Optional resolution request (percentage of viewport size, e.g. 0.67 = 67%) that the active
+    /// pipeline instance should apply to the bound viewport before executing commands. When null,
+    /// the pipeline will not override the viewport's internal resolution.
+    /// </summary>
+    internal float? RequestedInternalResolution { get; set; }
 
     /// <summary>
     /// Creates a texture used by PBR shading to light an opaque surface.

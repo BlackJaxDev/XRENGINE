@@ -111,6 +111,7 @@ namespace XREngine
                 private Vector3 _defaultLuminance = new(0.299f, 0.587f, 0.114f);
                 private bool _outputHDR = false;
                 private EAntiAliasingMode _antiAliasingMode = EAntiAliasingMode.None;
+                private float _tsrRenderScale = 0.67f;
                 private bool _enableNvidiaDlss = false;
                 private EDlssQualityMode _dlssQuality = EDlssQualityMode.Quality;
                 private float _dlssCustomScale = 0.77f;
@@ -169,6 +170,20 @@ namespace XREngine
                 private bool _transformCullingIsAxisAligned = true;
                 private bool _renderCullingVolumes = false;
                 private float _debugTextMaxLifespan = 0.0f;
+                private bool _logMissingShaderSamplers = true;
+
+                /// <summary>
+                /// If true, logs a warning when a texture sampler uniform is not found during binding.
+                /// This helps diagnose mismatched texture SamplerName properties vs shader sampler uniform names.
+                /// Does not log warnings for optional engine uniforms like matrices that shaders may not use.
+                /// </summary>
+                [Category("Debug")]
+                [Description("If true, logs a warning when a texture sampler uniform is not found. Useful for diagnosing mismatched SamplerName properties vs shader sampler declarations.")]
+                public bool LogMissingShaderSamplers
+                {
+                    get => _logMissingShaderSamplers;
+                    set => SetField(ref _logMissingShaderSamplers, value);
+                }
 
                 /// <summary>
                 /// If true, the engine will render the octree for the 3D world.
@@ -240,7 +255,7 @@ namespace XREngine
                 /// Selects which anti-aliasing technique to use. Future modes (TAA/TSR) fall back to None until implemented.
                 /// </summary>
                 [Category("Performance")]
-                [Description("Selects which anti-aliasing technique to use. Future modes (TAA/TSR) fall back to None until implemented.")]
+                [Description("Selects which anti-aliasing technique to use.")]
                 public EAntiAliasingMode AntiAliasingMode
                 {
                     get => _antiAliasingMode;
@@ -249,6 +264,17 @@ namespace XREngine
                         if (!SetField(ref _antiAliasingMode, value))
                             return;
                     }
+                }
+
+                /// <summary>
+                /// When TSR is enabled, scales the internal render resolution before temporal upscaling.
+                /// </summary>
+                [Category("Performance")]
+                [Description("Internal resolution scale used by temporal super-resolution (TSR). Values below 1.0 render below native and upscale temporally.")]
+                public float TsrRenderScale
+                {
+                    get => _tsrRenderScale;
+                    set => SetField(ref _tsrRenderScale, Math.Clamp(value, 0.5f, 1.0f));
                 }
 
                 /// <summary>
