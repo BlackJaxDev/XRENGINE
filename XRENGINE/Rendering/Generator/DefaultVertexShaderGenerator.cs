@@ -45,7 +45,7 @@ namespace XREngine.Rendering.Shaders.Generator
                 for (uint i = 0; i < Mesh.ColorCount; ++i)
                     InputVars.Add($"{ECommonBufferType.Color}{i}", (location++, EShaderVarType._vec4));
 
-            if (Mesh.HasSkinning && Engine.Rendering.Settings.AllowSkinning)
+            if (Mesh.HasSkinning && Engine.Rendering.Settings.AllowSkinning && !UseComputeSkinning)
             {
                 bool optimizeTo4Weights = Engine.Rendering.Settings.OptimizeSkinningTo4Weights || (Engine.Rendering.Settings.OptimizeSkinningWeightsIfPossible && Mesh.MaxWeightCount <= 4);
                 if (optimizeTo4Weights)
@@ -152,6 +152,20 @@ namespace XREngine.Rendering.Shaders.Generator
         public virtual bool UseOVRMultiView => false;
         public virtual bool UseNVStereo => false;
 
+        private bool UseComputeSkinning => Engine.Rendering.Settings.CalculateSkinningInComputeShader && Mesh.HasSkinning && Engine.Rendering.Settings.AllowSkinning;
+        private bool UseComputeBlendshapes => Engine.Rendering.Settings.CalculateBlendshapesInComputeShader && Mesh.BlendshapeCount > 0 && Engine.Rendering.Settings.AllowBlendshapes;
+        private bool UseComputeDeformation => UseComputeSkinning || UseComputeBlendshapes;
+
+        private const int ComputeInterleavedBinding = 9;
+        private const int ComputePositionBinding = 11;
+        private const int ComputeNormalBinding = 12;
+        private const int ComputeTangentBinding = 15;
+
+        private const string ComputeInterleavedBufferName = "SkinnedInterleaved";
+        private const string ComputePositionBufferName = "SkinnedPositions";
+        private const string ComputeNormalBufferName = "SkinnedNormals";
+        private const string ComputeTangentBufferName = "SkinnedTangents";
+
         private const string ViewMatrixName = "ViewMatrix";
         private const string ModelViewMatrixName = "mvMatrix";
         private const string ModelViewProjMatrixName = "mvpMatrix";
@@ -168,7 +182,7 @@ namespace XREngine.Rendering.Shaders.Generator
             }
 
             //Transform position, normals and tangents
-            WriteMeshTransforms(Mesh.HasSkinning && Engine.Rendering.Settings.AllowSkinning);
+            WriteMeshTransforms(Mesh.HasSkinning && Engine.Rendering.Settings.AllowSkinning && !UseComputeSkinning);
             if (UseNVStereo)
                 Line("gl_Layer = 0;");
 
@@ -234,7 +248,7 @@ namespace XREngine.Rendering.Shaders.Generator
             bool wroteAnything = false;
 
             int binding = 0;
-            if (Mesh.BlendshapeCount > 0 && !Engine.Rendering.Settings.CalculateBlendshapesInComputeShader && Engine.Rendering.Settings.AllowBlendshapes)
+            if (Mesh.BlendshapeCount > 0 && !UseComputeBlendshapes && Engine.Rendering.Settings.AllowBlendshapes)
             {
                 EShaderVarType intVarType = Engine.Rendering.Settings.UseIntegerUniformsInShaders
                     ? EShaderVarType._ivec4
@@ -251,7 +265,7 @@ namespace XREngine.Rendering.Shaders.Generator
 
                 wroteAnything = true;
             }
-            bool skinning = Mesh.HasSkinning && Engine.Rendering.Settings.AllowSkinning;
+            bool skinning = Mesh.HasSkinning && Engine.Rendering.Settings.AllowSkinning && !UseComputeSkinning;
             if (skinning)
             {
                 using (StartShaderStorageBufferBlock($"{ECommonBufferType.BoneMatrices}Buffer", binding++))
@@ -273,8 +287,39 @@ namespace XREngine.Rendering.Shaders.Generator
                 wroteAnything = true;
             }
 
+            if (UseComputeDeformation)
+            {
+                WriteComputeResultBuffers();
+                wroteAnything = true;
+            }
+
             if (wroteAnything)
                 Line();
+        }
+
+        private void WriteComputeResultBuffers()
+        {
+            if (Mesh.Interleaved)
+            {
+                using (StartShaderStorageBufferBlock($"{ComputeInterleavedBufferName}Input", ComputeInterleavedBinding))
+                    WriteUniform(EShaderVarType._float, ComputeInterleavedBufferName, true);
+                return;
+            }
+
+            using (StartShaderStorageBufferBlock($"{ComputePositionBufferName}Input", ComputePositionBinding))
+                WriteUniform(EShaderVarType._vec4, ComputePositionBufferName, true);
+
+            if (Mesh.HasNormals)
+            {
+                using (StartShaderStorageBufferBlock($"{ComputeNormalBufferName}Input", ComputeNormalBinding))
+                    WriteUniform(EShaderVarType._vec4, ComputeNormalBufferName, true);
+            }
+
+            if (Mesh.HasTangents)
+            {
+                using (StartShaderStorageBufferBlock($"{ComputeTangentBufferName}Input", ComputeTangentBinding))
+                    WriteUniform(EShaderVarType._vec4, ComputeTangentBufferName, true);
+            }
         }
 
         /// <summary>
@@ -301,17 +346,28 @@ namespace XREngine.Rendering.Shaders.Generator
             }
 
             Line();
-
-            //Blendshape calc directly updates base position, normal, and tangent
-            WriteBlendshapeCalc();
-
-            if (!hasSkinning || !WriteSkinningCalc())
+            if (UseComputeDeformation)
             {
+                WriteComputeBaseAssignments(hasNormals, hasTangents);
                 Line($"{FinalPositionName} = vec4({BasePositionName}, 1.0f);");
                 if (hasNormals)
                     Line($"{FinalNormalName} = {BaseNormalName};");
                 if (hasTangents)
                     Line($"{FinalTangentName} = {BaseTangentName};");
+            }
+            else
+            {
+                //Blendshape calc directly updates base position, normal, and tangent
+                WriteBlendshapeCalc();
+
+                if (!hasSkinning || !WriteSkinningCalc())
+                {
+                    Line($"{FinalPositionName} = vec4({BasePositionName}, 1.0f);");
+                    if (hasNormals)
+                        Line($"{FinalNormalName} = {BaseNormalName};");
+                    if (hasTangents)
+                        Line($"{FinalTangentName} = {BaseTangentName};");
+                }
             }
 
             Line();
@@ -327,6 +383,49 @@ namespace XREngine.Rendering.Shaders.Generator
             }
 
             ResolvePosition(FinalPositionName);
+        }
+
+        private void WriteComputeBaseAssignments(bool hasNormals, bool hasTangents)
+        {
+            if (Mesh.Interleaved)
+            {
+                uint strideFloats = Mesh.InterleavedStride / 4u;
+                Line($"uint interleavedStrideFloats = {strideFloats}u;");
+                Line("uint baseInterleavedIndex = interleavedStrideFloats * uint(gl_VertexID);");
+
+                uint posOffsetFloats = Mesh.PositionOffset / 4u;
+                Line($"{BasePositionName} = vec3({ComputeInterleavedBufferName}[baseInterleavedIndex + {posOffsetFloats}u], {ComputeInterleavedBufferName}[baseInterleavedIndex + {posOffsetFloats + 1u}u], {ComputeInterleavedBufferName}[baseInterleavedIndex + {posOffsetFloats + 2u}u]);");
+
+                if (hasNormals)
+                {
+                    if (Mesh.NormalOffset.HasValue)
+                    {
+                        uint nrmOffsetFloats = Mesh.NormalOffset.Value / 4u;
+                        Line($"{BaseNormalName} = vec3({ComputeInterleavedBufferName}[baseInterleavedIndex + {nrmOffsetFloats}u], {ComputeInterleavedBufferName}[baseInterleavedIndex + {nrmOffsetFloats + 1u}u], {ComputeInterleavedBufferName}[baseInterleavedIndex + {nrmOffsetFloats + 2u}u]);");
+                    }
+                    else
+                        Line($"{BaseNormalName} = vec3(0.0f);");
+                }
+
+                if (hasTangents)
+                {
+                    if (Mesh.TangentOffset.HasValue)
+                    {
+                        uint tanOffsetFloats = Mesh.TangentOffset.Value / 4u;
+                        Line($"{BaseTangentName} = vec3({ComputeInterleavedBufferName}[baseInterleavedIndex + {tanOffsetFloats}u], {ComputeInterleavedBufferName}[baseInterleavedIndex + {tanOffsetFloats + 1u}u], {ComputeInterleavedBufferName}[baseInterleavedIndex + {tanOffsetFloats + 2u}u]);");
+                    }
+                    else
+                        Line($"{BaseTangentName} = vec3(0.0f);");
+                }
+
+                return;
+            }
+
+            Line($"{BasePositionName} = {ComputePositionBufferName}[gl_VertexID].xyz;");
+            if (hasNormals)
+                Line($"{BaseNormalName} = {ComputeNormalBufferName}[gl_VertexID].xyz;");
+            if (hasTangents)
+                Line($"{BaseTangentName} = {ComputeTangentBufferName}[gl_VertexID].xyz;");
         }
 
         private bool NeedsSkinningCalc()

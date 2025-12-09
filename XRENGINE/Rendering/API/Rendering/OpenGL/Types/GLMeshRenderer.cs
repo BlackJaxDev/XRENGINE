@@ -88,6 +88,8 @@ namespace XREngine.Rendering.OpenGL
             /// </summary>
             private GLRenderProgram? _combinedProgram;
 
+            private int _shaderConfigVersion = -1;
+
             /// <summary>
             /// This is the program that will be used to render the mesh.
             /// Use this for setting buffer bindings and uniforms.
@@ -299,6 +301,26 @@ namespace XREngine.Rendering.OpenGL
                     Generate();
                 }
 
+                // Recreate programs/buffers if compute skinning/blendshape mode changed
+                var settingsVersion = Engine.Rendering.Settings.ShaderConfigVersion;
+                if (_shaderConfigVersion != settingsVersion)
+                {
+                    _shaderConfigVersion = settingsVersion;
+
+                    _combinedProgram?.Destroy();
+                    _combinedProgram = null;
+
+                    _separatedVertexProgram?.Destroy();
+                    _separatedVertexProgram = null;
+
+                    if (!Engine.Rendering.Settings.CalculateSkinningInComputeShader)
+                        DestroySkinnedBuffers();
+
+                    // Recreate programs to pick up new shader defines (e.g., compute skinning toggle)
+                    BuffersBound = false; // force rebind of attributes to the new program layout
+                    GenProgramsAndBuffers();
+                }
+
                 GLMaterial material = GetRenderMaterial(materialOverride);
                 if (GetPrograms(material, out var vtx, out var mat))
                 {
@@ -333,6 +355,19 @@ namespace XREngine.Rendering.OpenGL
                 }
             }
 
+            private void DestroySkinnedBuffers()
+            {
+                MeshRenderer.SkinnedInterleavedBuffer?.Destroy();
+                MeshRenderer.SkinnedPositionsBuffer?.Destroy();
+                MeshRenderer.SkinnedNormalsBuffer?.Destroy();
+                MeshRenderer.SkinnedTangentsBuffer?.Destroy();
+
+                MeshRenderer.SkinnedInterleavedBuffer = null;
+                MeshRenderer.SkinnedPositionsBuffer = null;
+                MeshRenderer.SkinnedNormalsBuffer = null;
+                MeshRenderer.SkinnedTangentsBuffer = null;
+            }
+
             /// <summary>
             /// Binds the skinned vertex buffers from compute pre-pass to the VAO,
             /// overriding the original mesh buffers for position, normal, and tangent.
@@ -340,6 +375,9 @@ namespace XREngine.Rendering.OpenGL
             /// </summary>
             private void BindSkinnedVertexBuffers(GLRenderProgram vertexProgram)
             {
+                if (!Engine.Rendering.Settings.CalculateSkinningInComputeShader)
+                    return;
+
                 // Check for interleaved skinned buffer first
                 var skinnedInterleaved = MeshRenderer.SkinnedInterleavedBuffer;
                 if (skinnedInterleaved is not null)
@@ -348,7 +386,9 @@ namespace XREngine.Rendering.OpenGL
                     return;
                 }
 
-                // Otherwise try separate buffers
+                // For non-interleaved compute skinning, the vertex shader reads from SSBOs
+                // using gl_VertexID indexing (not vertex attributes). Bind the output buffers
+                // as SSBOs at the expected binding points.
                 var skinnedPos = MeshRenderer.SkinnedPositionsBuffer;
                 var skinnedNorm = MeshRenderer.SkinnedNormalsBuffer;
                 var skinnedTan = MeshRenderer.SkinnedTangentsBuffer;
@@ -356,61 +396,51 @@ namespace XREngine.Rendering.OpenGL
                 if (skinnedPos is null && skinnedNorm is null && skinnedTan is null)
                     return;
 
-                uint vaoId = BindingId;
+                // Binding points must match DefaultVertexShaderGenerator constants:
+                // ComputePositionBinding = 11, ComputeNormalBinding = 12, ComputeTangentBinding = 15
+                const uint positionBinding = 11;
+                const uint normalBinding = 12;
+                const uint tangentBinding = 15;
 
-                // Bind skinned position buffer to the Position attribute location
+                // Bind skinned position buffer as SSBO
                 if (skinnedPos is not null)
                 {
                     var glBuffer = Renderer.GenericToAPI<GLDataBuffer>(skinnedPos);
                     if (glBuffer is not null)
                     {
-                        glBuffer.Generate(); // Ensure GPU buffer exists
-                        uint bindingIndex = (uint)Api.GetAttribLocation(vertexProgram.BindingId, ECommonBufferType.Position.ToString());
-                        if (bindingIndex != uint.MaxValue)
-                        {
-                            // Bind the skinned positions buffer to this attribute's binding point
-                            // Note: stride is 16 bytes (vec4), offset is 0
-                            Api.VertexArrayVertexBuffer(vaoId, bindingIndex, glBuffer.BindingId, 0, (uint)(sizeof(float) * 4));
-                        }
+                        glBuffer.Generate();
+                        Api.BindBufferBase(GLEnum.ShaderStorageBuffer, positionBinding, glBuffer.BindingId);
                     }
                 }
 
-                // Bind skinned normal buffer to the Normal attribute location
+                // Bind skinned normal buffer as SSBO
                 if (skinnedNorm is not null)
                 {
                     var glBuffer = Renderer.GenericToAPI<GLDataBuffer>(skinnedNorm);
                     if (glBuffer is not null)
                     {
                         glBuffer.Generate();
-                        uint bindingIndex = (uint)Api.GetAttribLocation(vertexProgram.BindingId, ECommonBufferType.Normal.ToString());
-                        if (bindingIndex != uint.MaxValue)
-                        {
-                            Api.VertexArrayVertexBuffer(vaoId, bindingIndex, glBuffer.BindingId, 0, (uint)(sizeof(float) * 4));
-                        }
+                        Api.BindBufferBase(GLEnum.ShaderStorageBuffer, normalBinding, glBuffer.BindingId);
                     }
                 }
 
-                // Bind skinned tangent buffer to the Tangent attribute location
+                // Bind skinned tangent buffer as SSBO
                 if (skinnedTan is not null)
                 {
                     var glBuffer = Renderer.GenericToAPI<GLDataBuffer>(skinnedTan);
                     if (glBuffer is not null)
                     {
                         glBuffer.Generate();
-                        uint bindingIndex = (uint)Api.GetAttribLocation(vertexProgram.BindingId, ECommonBufferType.Tangent.ToString());
-                        if (bindingIndex != uint.MaxValue)
-                        {
-                            Api.VertexArrayVertexBuffer(vaoId, bindingIndex, glBuffer.BindingId, 0, (uint)(sizeof(float) * 4));
-                        }
+                        Api.BindBufferBase(GLEnum.ShaderStorageBuffer, tangentBinding, glBuffer.BindingId);
                     }
                 }
 
-                Dbg("Bound skinned vertex buffers from compute pre-pass", "Buffers");
+                Dbg("Bound skinned vertex buffers as SSBOs for compute pre-pass", "Buffers");
             }
 
             /// <summary>
-            /// Binds the skinned interleaved buffer from compute pre-pass to the VAO,
-            /// using the same stride and offsets as the original interleaved buffer.
+            /// Binds the skinned interleaved buffer from compute pre-pass as an SSBO
+            /// at binding 9, matching the vertex shader's expectation for compute deformation.
             /// </summary>
             private void BindSkinnedInterleavedBuffer(GLRenderProgram vertexProgram, XRDataBuffer skinnedInterleavedBuffer)
             {
@@ -420,44 +450,13 @@ namespace XREngine.Rendering.OpenGL
 
                 glBuffer.Generate();
 
-                var mesh = MeshRenderer.Mesh;
-                if (mesh is null)
-                    return;
+                // The vertex shader declares: layout(std430, binding = 9) buffer SkinnedInterleavedInput { float SkinnedInterleaved[]; };
+                // It reads vertex data via gl_VertexID indexing, so we bind as SSBO at binding 9.
+                // This binding must match ComputeInterleavedBinding in DefaultVertexShaderGenerator.
+                const uint interleavedBinding = 9;
+                Api.BindBufferBase(GLEnum.ShaderStorageBuffer, interleavedBinding, glBuffer.BindingId);
 
-                uint vaoId = BindingId;
-                uint stride = mesh.InterleavedStride;
-                uint bufferId = glBuffer.BindingId;
-
-                // Bind position attribute
-                {
-                    uint bindingIndex = (uint)Api.GetAttribLocation(vertexProgram.BindingId, ECommonBufferType.Position.ToString());
-                    if (bindingIndex != uint.MaxValue)
-                    {
-                        Api.VertexArrayVertexBuffer(vaoId, bindingIndex, bufferId, (int)mesh.PositionOffset, stride);
-                    }
-                }
-
-                // Bind normal attribute
-                if (mesh.HasNormals && mesh.NormalOffset.HasValue)
-                {
-                    uint bindingIndex = (uint)Api.GetAttribLocation(vertexProgram.BindingId, ECommonBufferType.Normal.ToString());
-                    if (bindingIndex != uint.MaxValue)
-                    {
-                        Api.VertexArrayVertexBuffer(vaoId, bindingIndex, bufferId, (int)mesh.NormalOffset.Value, stride);
-                    }
-                }
-
-                // Bind tangent attribute
-                if (mesh.HasTangents && mesh.TangentOffset.HasValue)
-                {
-                    uint bindingIndex = (uint)Api.GetAttribLocation(vertexProgram.BindingId, ECommonBufferType.Tangent.ToString());
-                    if (bindingIndex != uint.MaxValue)
-                    {
-                        Api.VertexArrayVertexBuffer(vaoId, bindingIndex, bufferId, (int)mesh.TangentOffset.Value, stride);
-                    }
-                }
-
-                Dbg("Bound skinned interleaved buffer from compute pre-pass", "Buffers");
+                Dbg("Bound skinned interleaved buffer as SSBO at binding 9 for compute pre-pass", "Buffers");
             }
 
             private void BindSSBOs(GLRenderProgram program)
@@ -658,6 +657,8 @@ namespace XREngine.Rendering.OpenGL
 
             private void GenProgramsAndBuffers()
             {
+                BuffersBound = false; // program rebuild requires attribute rebinding
+
                 var material = Material;
                 if (material is null)
                 {
@@ -784,6 +785,16 @@ namespace XREngine.Rendering.OpenGL
                 foreach (var pair in rendBuffers)
                     _bufferCache[pair.Key] = Renderer.GenericToAPI<GLDataBuffer>(pair.Value)!;
 
+                // When compute skinning is active, the vertex shader no longer consumes
+                // bone weight offset/count attributes. Drop them from the VAO binding set
+                // to avoid binding failures and attribute corruption; compute skinning
+                // still reads them via SSBO bindings set in the dispatcher.
+                if (Engine.Rendering.Settings.CalculateSkinningInComputeShader)
+                {
+                    _bufferCache.Remove(ECommonBufferType.BoneMatrixOffset.ToString());
+                    _bufferCache.Remove(ECommonBufferType.BoneMatrixCount.ToString());
+                }
+
                 Dbg($"CollectBuffers end. Total={_bufferCache.Count}","Buffers");
 
                 //Data.Buffers.Added += Buffers_Added;
@@ -843,7 +854,7 @@ namespace XREngine.Rendering.OpenGL
                 foreach (GLDataBuffer buffer in _bufferCache.Values)
                 {
                     buffer.Generate();
-                    //buffer.BindToProgram(program, this);
+                    buffer.BindToRenderer(program, this); // set attribute formats/bindings for this program
                 }
                 
                 if (TriangleIndicesBuffer is not null)

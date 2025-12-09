@@ -248,6 +248,7 @@ internal sealed class SkinningPrepassDispatcher : IDisposable
             if (isInterleaved)
             {
                 // Create a single interleaved output buffer matching the input format
+                // Use resizable=true so compute shader can write to it with mutable storage
                 int stride = (int)mesh.InterleavedStride;
                 _renderer.SkinnedInterleavedBuffer = new XRDataBuffer(
                     "InterleavedSkinned",
@@ -255,7 +256,7 @@ internal sealed class SkinningPrepassDispatcher : IDisposable
                     (uint)(vertexCount * stride / sizeof(float)),
                     EComponentType.Float,
                     1, // Individual floats, stride handled at binding time
-                    false,
+                    true, // Resizable - uses mutable storage that compute shaders can write to
                     false)
                 {
                     Usage = EBufferUsage.DynamicDraw,
@@ -265,13 +266,14 @@ internal sealed class SkinningPrepassDispatcher : IDisposable
             else
             {
                 // Create separate output buffers for positions, normals, tangents
+                // Use ShaderStorageBuffer target and resizable=true so the compute shader can write to them
                 _renderer.SkinnedPositionsBuffer = new XRDataBuffer(
                     ECommonBufferType.Position.ToString(),
-                    EBufferTarget.ArrayBuffer,
+                    EBufferTarget.ShaderStorageBuffer,
                     (uint)vertexCount,
                     EComponentType.Float,
                     4, // vec4
-                    false,
+                    true, // Resizable - uses mutable storage that compute shaders can write to
                     false)
                 {
                     Usage = EBufferUsage.DynamicDraw,
@@ -282,11 +284,11 @@ internal sealed class SkinningPrepassDispatcher : IDisposable
                 {
                     _renderer.SkinnedNormalsBuffer = new XRDataBuffer(
                         ECommonBufferType.Normal.ToString(),
-                        EBufferTarget.ArrayBuffer,
+                        EBufferTarget.ShaderStorageBuffer,
                         (uint)vertexCount,
                         EComponentType.Float,
                         4, // vec4
-                        false,
+                        true, // Resizable - uses mutable storage that compute shaders can write to
                         false)
                     {
                         Usage = EBufferUsage.DynamicDraw,
@@ -298,11 +300,11 @@ internal sealed class SkinningPrepassDispatcher : IDisposable
                 {
                     _renderer.SkinnedTangentsBuffer = new XRDataBuffer(
                         ECommonBufferType.Tangent.ToString(),
-                        EBufferTarget.ArrayBuffer,
+                        EBufferTarget.ShaderStorageBuffer,
                         (uint)vertexCount,
                         EComponentType.Float,
                         4, // vec4
-                        false,
+                        true, // Resizable - uses mutable storage that compute shaders can write to
                         false)
                     {
                         Usage = EBufferUsage.DynamicDraw,

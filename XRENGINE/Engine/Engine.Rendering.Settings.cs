@@ -2,6 +2,7 @@
 using MemoryPack;
 using System;
 using System.ComponentModel;
+using System.Threading;
 using System.Linq;
 using System.Numerics;
 using XREngine.Components;
@@ -131,6 +132,10 @@ namespace XREngine
                 private bool _allowBinaryProgramCaching = true;
                 private bool _calculateBlendshapesInComputeShader = false;
                 private bool _calculateSkinningInComputeShader = false;
+                private int _shaderConfigVersion = 0;
+
+                private void BumpShaderConfigVersion()
+                    => Interlocked.Increment(ref _shaderConfigVersion);
                 private bool _calculateSkinnedBoundsInComputeShader = false;
                 private string _defaultFontFolder = "Roboto";
                 private string _defaultFontFileName = "Roboto-Medium.ttf";
@@ -164,7 +169,7 @@ namespace XREngine
                 private bool _renderWindowsWhileInVR = true;
                 private bool _populateVertexDataInParallel = true;
                 private bool _processMeshImportsAsynchronously = true;
-                private bool _useInterleavedMeshBuffer = true;
+                private bool _useInterleavedMeshBuffer = false;
                 private bool _enableSecondaryGpuCompute = false;
                 private bool _allowSecondaryContextSharingFallback = false;
                 private bool _transformCullingIsAxisAligned = true;
@@ -544,7 +549,7 @@ namespace XREngine
                 public bool CalculateBlendshapesInComputeShader
                 {
                     get => _calculateBlendshapesInComputeShader;
-                    set => SetField(ref _calculateBlendshapesInComputeShader, value);
+                    set => SetField(ref _calculateBlendshapesInComputeShader, value, null, _ => BumpShaderConfigVersion());
                 }
                 
                 /// <summary>
@@ -556,8 +561,10 @@ namespace XREngine
                 public bool CalculateSkinningInComputeShader
                 {
                     get => _calculateSkinningInComputeShader;
-                    set => SetField(ref _calculateSkinningInComputeShader, value);
+                    set => SetField(ref _calculateSkinningInComputeShader, value, null, _ => BumpShaderConfigVersion());
                 }
+
+                internal int ShaderConfigVersion => _shaderConfigVersion;
 
                 /// <summary>
                 /// If true, the engine will use a compute shader to evaluate skinned mesh bounds and BVH inputs.
