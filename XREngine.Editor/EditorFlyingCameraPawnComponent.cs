@@ -799,7 +799,8 @@ public partial class EditorFlyingCameraPawnComponent : FlyingCameraPawnComponent
     {
         if (IsHoveringUI())
             return;
-        _lastScrollDelta = diff;
+        // Accumulate all scroll events until the next tick so none are dropped when multiple arrive in a frame.
+        _lastScrollDelta = (_lastScrollDelta ?? 0.0f) + diff;
         _depthQueryRequested = true;
     }
 

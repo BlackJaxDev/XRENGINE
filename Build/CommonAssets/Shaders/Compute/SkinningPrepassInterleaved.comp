@@ -64,12 +64,12 @@ layout(std430, binding = 9) buffer InterleavedOutBuffer
 // Variable weight skinning buffers (only used when optimized4 == 0)
 layout(std430, binding = 10) buffer BoneIndexListBuffer
 {
-    uvec4 BoneIndexList[];
+    uint BoneIndexList[];
 };
 
 layout(std430, binding = 11) buffer BoneWeightListBuffer
 {
-    vec4 BoneWeightList[];
+    float BoneWeightList[];
 };
 
 uniform uint vertexCount;
@@ -228,13 +228,15 @@ mat3 adjoint(mat4 m)
 
 void applySkinningOptimized4(inout vec3 position, inout vec3 normal, inout vec3 tangent, uint vertexIndex)
 {
-    // When optimized4=1, data is laid out as uvec4 per vertex (16 bytes stride)
+    // When optimized4=1, data is laid out as ivec4/vec4 per vertex (16 bytes stride each)
+    // Note: The C# PopulateOptWeightsParallel always writes bone indices as int,
+    // so we read them directly as int without useIntegerUniforms decoding.
     uint base = vertexIndex * 4u;
-    uvec4 indices = uvec4(
-        BoneIndicesOrOffsetsRaw[base + 0u],
-        BoneIndicesOrOffsetsRaw[base + 1u],
-        BoneIndicesOrOffsetsRaw[base + 2u],
-        BoneIndicesOrOffsetsRaw[base + 3u]);
+    ivec4 indices = ivec4(
+        int(BoneIndicesOrOffsetsRaw[base + 0u]),
+        int(BoneIndicesOrOffsetsRaw[base + 1u]),
+        int(BoneIndicesOrOffsetsRaw[base + 2u]),
+        int(BoneIndicesOrOffsetsRaw[base + 3u]));
     vec4 weightsRaw = vec4(
         uintBitsToFloat(BoneWeightsOrCountsRaw[base + 0u]),
         uintBitsToFloat(BoneWeightsOrCountsRaw[base + 1u]),
@@ -255,7 +257,7 @@ void applySkinningOptimized4(inout vec3 position, inout vec3 normal, inout vec3 
 
     for (int i = 0; i < 4; ++i)
     {
-        int boneIndex = int(decodeIndex(indices[i]));
+        int boneIndex = indices[i];
         float weight = weightsRaw[i];
         if (boneIndex <= 0 || weight <= 0.0f)
             continue;
@@ -264,7 +266,7 @@ void applySkinningOptimized4(inout vec3 position, inout vec3 normal, inout vec3 
         if (uint(boneIndex) >= boneCount)
             continue;
 
-        mat4 boneMatrix = BoneInvBindMatrices[boneIndex] * BoneMatrices[boneIndex];
+        mat4 boneMatrix = BoneMatrices[boneIndex] * BoneInvBindMatrices[boneIndex];
         vec4 p = boneMatrix * vec4(basePosition, 1.0f);
         skinnedPos += p.xyz * weight;
         totalWeight += weight;
@@ -318,8 +320,8 @@ void applySkinningVariable(inout vec3 position, inout vec3 normal, inout vec3 ta
     for (uint i = 0u; i < safeCount; ++i)
     {
         uint listIndex = offset + i;
-        uint rawIndex = BoneIndexList[listIndex].x;
-        float weight = BoneWeightList[listIndex].x;
+        uint rawIndex = BoneIndexList[listIndex];
+        float weight = BoneWeightList[listIndex];
         int boneIndex = int(loadIndexValue(rawIndex));
         if (boneIndex <= 0 || weight <= 0.0f)
             continue;
@@ -327,7 +329,7 @@ void applySkinningVariable(inout vec3 position, inout vec3 normal, inout vec3 ta
         if (uint(boneIndex) >= boneCount)
             continue;
 
-        mat4 boneMatrix = BoneInvBindMatrices[boneIndex] * BoneMatrices[boneIndex];
+        mat4 boneMatrix = BoneMatrices[boneIndex] * BoneInvBindMatrices[boneIndex];
         vec4 p = boneMatrix * vec4(basePosition, 1.0f);
         skinnedPos += p.xyz * weight;
         totalWeight += weight;
