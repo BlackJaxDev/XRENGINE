@@ -3,9 +3,9 @@
 layout(location = 0) out float OutIntensity;
 layout(location = 0) in vec3 FragPos;
 
-uniform sampler2D Texture0; // Raw AO
-uniform sampler2D Texture1; // Depth
-uniform sampler2D Texture2; // Normal
+uniform sampler2D SSAOIntensityTexture; // Raw AO
+uniform sampler2D DepthView; // Depth
+uniform sampler2D Normal; // Normal
 
 uniform float DepthPhi = 4.0f;
 uniform float NormalPhi = 64.0f;
@@ -17,11 +17,11 @@ void main()
         discard;
     uv = uv * 0.5f + 0.5f;
 
-    vec2 texelSize = 1.0f / vec2(textureSize(Texture0, 0));
+    vec2 texelSize = 1.0f / vec2(textureSize(SSAOIntensityTexture, 0));
 
-    float centerAO = texture(Texture0, uv).r;
-    float centerDepth = texture(Texture1, uv).r;
-    vec3 centerNormal = normalize(texture(Texture2, uv).rgb);
+    float centerAO = texture(SSAOIntensityTexture, uv).r;
+    float centerDepth = texture(DepthView, uv).r;
+    vec3 centerNormal = normalize(texture(Normal, uv).rgb);
 
     float weightSum = 0.0f;
     float result = 0.0f;
@@ -33,9 +33,9 @@ void main()
             vec2 pixelOffset = vec2(float(x), float(y));
             vec2 sampleUV = uv + pixelOffset * texelSize;
 
-            float sampleAO = texture(Texture0, sampleUV).r;
-            float sampleDepth = texture(Texture1, sampleUV).r;
-            vec3 sampleNormal = normalize(texture(Texture2, sampleUV).rgb);
+            float sampleAO = texture(SSAOIntensityTexture, sampleUV).r;
+            float sampleDepth = texture(DepthView, sampleUV).r;
+            vec3 sampleNormal = normalize(texture(Normal, sampleUV).rgb);
 
             float depthWeight = exp(-abs(sampleDepth - centerDepth) * DepthPhi);
             float normalWeight = pow(max(dot(sampleNormal, centerNormal), 0.0f), NormalPhi);

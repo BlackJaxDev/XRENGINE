@@ -6,8 +6,8 @@ const float InvPI = 0.31831f;
 layout(location = 0) out float OutIntensity;
 layout(location = 0) in vec3 FragPos;
 
-uniform sampler2D Texture0; //Normal
-uniform sampler2D Texture1; //Depth
+uniform sampler2D Normal; //Normal
+uniform sampler2D DepthView; //Depth
 
 uniform vec4 ScaleFactors; // Multi-scale factors
 uniform float Bias = 0.05f;
@@ -38,7 +38,7 @@ float ComputeObscurance(vec3 pos, vec3 normal, float radius, vec2 texCoord)
         vec2 sampleOffset = vec2(cos(angle), sin(angle)) * radius / vec2(ScreenWidth, ScreenHeight);
 
         vec2 uv = texCoord + sampleOffset;
-        float depth = texture(Texture1, uv).r;
+        float depth = texture(DepthView, uv).r;
         vec3 samplePos = ViewPosFromDepth(depth, uv);
         vec3 diff = samplePos - pos;
 
@@ -58,9 +58,9 @@ void main()
     //Normalize uv from [-1, 1] to [0, 1]
     uv = uv * 0.5f + 0.5f;
     
-    vec3 normal = texture(Texture0, uv).rgb;
+    vec3 normal = texture(Normal, uv).rgb;
     vec3 viewNormal = normalize((inverse(InverseViewMatrix) * vec4(normal, 0.0f)).rgb);
-    float depth = texture(Texture1, uv).r;
+    float depth = texture(DepthView, uv).r;
     vec3 position = ViewPosFromDepth(depth, uv);
 
     float totalOcclusion = 0.0f;

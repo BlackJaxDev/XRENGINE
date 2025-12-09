@@ -7,15 +7,30 @@ namespace System
     public static class Win32
     {
         [StructLayout(LayoutKind.Sequential, Pack = 1)]
-        public class SafeHandle : IDisposable
+        public class SafeHandle(VoidPtr handle) : IDisposable
         {
-            public VoidPtr Handle { get; private set; }
+            public VoidPtr Handle { get; private set; } = handle;
 
-            public SafeHandle(VoidPtr handle) { Handle = handle; }
+            ~SafeHandle()
+            {
+                Dispose();
+            }
 
-            ~SafeHandle() { Dispose(); }
-            public void Dispose() { if (Handle != 0) { CloseHandle(Handle); Handle = 0; } }
-            public void ErrorCheck() { if (Handle == 0) Marshal.ThrowExceptionForHR(Marshal.GetHRForLastWin32Error()); }
+            public void Dispose()
+            {
+                if (Handle != 0)
+                {
+                    CloseHandle(Handle);
+                    Handle = 0;
+                    GC.SuppressFinalize(this);
+                }
+            }
+
+            public void ErrorCheck()
+            {
+                if (Handle == 0)
+                    Marshal.ThrowExceptionForHR(Marshal.GetHRForLastWin32Error());
+            }
 
             public static implicit operator SafeHandle(VoidPtr handle) { return new SafeHandle(handle); }
 

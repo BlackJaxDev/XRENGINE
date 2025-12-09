@@ -2,7 +2,7 @@
 
 layout(location = 0) out vec4 OutColor;
 
-uniform sampler2D Texture0;
+uniform sampler2D RestirGITexture;
 uniform float ScreenWidth;
 uniform float ScreenHeight;
 
@@ -15,6 +15,6 @@ void main()
     }
 
     vec2 uv = gl_FragCoord.xy / vec2(ScreenWidth, ScreenHeight);
-    vec3 gi = texture(Texture0, uv).rgb;
+    vec3 gi = texture(RestirGITexture, uv).rgb;
     OutColor = vec4(gi, 0.0);
 }

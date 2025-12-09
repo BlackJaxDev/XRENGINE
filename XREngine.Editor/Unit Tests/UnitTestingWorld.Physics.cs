@@ -50,7 +50,7 @@ public static partial class UnitTestingWorld
             var floorComp = floor.AddComponent<StaticRigidBodyComponent>()!;
 
             PhysxMaterial floorPhysMat = new(0.5f, 0.5f, 0.7f);
-            floorPhysMat.RestitutionCombineMode = ECombineMode.Max;
+            //floorPhysMat.RestitutionCombineMode = ECombineMode.Max;
 
             Vector3 floorHalfExtents = new(5000.0f, 0.5f, 5000.0f);
             floorComp.Material = floorPhysMat;
@@ -62,11 +62,11 @@ public static partial class UnitTestingWorld
 
             void OnFloorActivated(SceneNode node)
             {
-                if (node.World?.PhysicsScene is PhysxScene scene)
-                {
-                    scene.BounceThresholdVelocity = 0.01f;
-                    Debug.Physics($"[UnitTestingWorld.Physics] Set BounceThresholdVelocity to {scene.BounceThresholdVelocity}");
-                }
+                //if (node.World?.PhysicsScene is PhysxScene scene)
+                //{
+                //    scene.BounceThresholdVelocity = 0.01f;
+                //    Debug.Physics($"[UnitTestingWorld.Physics] Set BounceThresholdVelocity to {scene.BounceThresholdVelocity}");
+                //}
 
                 EnsureStaticRigidBodyReady(node, floorComp);
                 //ForceFloorOverlapProbe(node, floorComp);

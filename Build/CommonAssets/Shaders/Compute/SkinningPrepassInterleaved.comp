@@ -1,5 +1,9 @@
 #version 450
 
+// Interleaved version of SkinningPrepass.comp
+// This shader reads from and writes to interleaved vertex buffers.
+// It uses fewer SSBO bindings by not needing separate position/normal/tangent buffers.
+
 layout(local_size_x = 256) in;
 
 layout(std430, binding = 0) buffer BoneMatricesBuffer
@@ -46,56 +50,27 @@ layout(std430, binding = 7) buffer BlendshapeWeightsBuffer
     float BlendshapeWeights[];
 };
 
-// Input buffers (read-only, original mesh data)
-layout(std430, binding = 8) readonly buffer PositionsInBuffer
+// Interleaved vertex buffers - input and output
+layout(std430, binding = 8) readonly buffer InterleavedInBuffer
 {
-    // Source positions are tightly packed vec3 (12 byte stride), so read as floats to avoid std430 vec4 padding.
-    float PositionsIn[];
+    uint InterleavedIn[];
 };
 
-layout(std430, binding = 9) readonly buffer NormalsInBuffer
+layout(std430, binding = 9) buffer InterleavedOutBuffer
 {
-    // Normals are stored as vec3 per vertex (12 byte stride).
-    float NormalsIn[];
-};
-
-layout(std430, binding = 10) readonly buffer TangentsInBuffer
-{
-    // Tangents are stored as vec3 per vertex (12 byte stride).
-    float TangentsIn[];
-};
-
-// Output buffers (write-only, skinned results)
-// These reuse bindings 11-13 which don't conflict with bone index/weight lists
-// since those are only used for variable weight skinning path
-layout(std430, binding = 11) writeonly buffer PositionsOutBuffer
-{
-    vec4 PositionsOut[];
-};
-
-layout(std430, binding = 12) writeonly buffer NormalsOutBuffer
-{
-    vec4 NormalsOut[];
-};
-
-layout(std430, binding = 15) writeonly buffer TangentsOutBuffer
-{
-    vec4 TangentsOut[];
+    uint InterleavedOut[];
 };
 
 // Variable weight skinning buffers (only used when optimized4 == 0)
-layout(std430, binding = 13) buffer BoneIndexListBuffer
+layout(std430, binding = 10) buffer BoneIndexListBuffer
 {
     uvec4 BoneIndexList[];
 };
 
-layout(std430, binding = 14) buffer BoneWeightListBuffer
+layout(std430, binding = 11) buffer BoneWeightListBuffer
 {
     vec4 BoneWeightList[];
 };
-
-// Note: Interleaved vertex buffer support has been removed to stay within 
-// the 16 SSBO binding limit. Compute skinning only works with non-interleaved meshes.
 
 uniform uint vertexCount;
 uniform int hasSkinning;
@@ -107,6 +82,10 @@ uniform int absoluteBlendshapePositions;
 uniform int maxBlendshapeAccumulation;
 uniform int useIntegerUniforms;
 uniform int optimized4;
+uniform uint interleavedStride;
+uniform uint positionOffsetBytes;
+uniform uint normalOffsetBytes;
+uniform uint tangentOffsetBytes;
 
 const float MIN_BLEND_WEIGHT = 0.0001f;
 
@@ -136,22 +115,38 @@ ivec4 decodeBlendshapeIndices(uvec4 raw)
         round(uintBitsToFloat(raw.w)));
 }
 
-vec3 loadPosition(uint vertexIndex)
+float loadInterleavedFloat(uint byteOffset)
 {
-    uint base = vertexIndex * 3u;
-    return vec3(PositionsIn[base + 0u], PositionsIn[base + 1u], PositionsIn[base + 2u]);
+    return uintBitsToFloat(InterleavedIn[byteOffset >> 2]);
 }
 
-vec3 loadNormal(uint vertexIndex)
+void storeInterleavedFloat(uint byteOffset, float value)
 {
-    uint base = vertexIndex * 3u;
-    return vec3(NormalsIn[base + 0u], NormalsIn[base + 1u], NormalsIn[base + 2u]);
+    InterleavedOut[byteOffset >> 2] = floatBitsToUint(value);
 }
 
-vec3 loadTangent(uint vertexIndex)
+vec3 loadInterleavedVec3(uint baseByte)
 {
-    uint base = vertexIndex * 3u;
-    return vec3(TangentsIn[base + 0u], TangentsIn[base + 1u], TangentsIn[base + 2u]);
+    return vec3(
+        loadInterleavedFloat(baseByte + 0u),
+        loadInterleavedFloat(baseByte + 4u),
+        loadInterleavedFloat(baseByte + 8u));
+}
+
+void storeInterleavedVec3(uint baseByte, vec3 value)
+{
+    storeInterleavedFloat(baseByte + 0u, value.x);
+    storeInterleavedFloat(baseByte + 4u, value.y);
+    storeInterleavedFloat(baseByte + 8u, value.z);
+}
+
+// Preserve non-skinned attributes (uvs, colors, custom data) so downstream vertex fetches stay valid.
+void copyInterleavedVertex(uint baseByte)
+{
+    uint wordBase = baseByte >> 2u;
+    uint wordCount = interleavedStride >> 2u;
+    for (uint i = 0u; i < wordCount; ++i)
+        InterleavedOut[wordBase + i] = InterleavedIn[wordBase + i];
 }
 
 void applyBlendshapes(inout vec3 position, inout vec3 normal, inout vec3 tangent, uint vertexIndex)
@@ -373,20 +368,21 @@ void main()
     if (idx >= vertexCount)
         return;
 
-    // Note: Interleaved vertex buffer support has been removed to stay within
-    // the 16 SSBO binding limit. Compute skinning only works with non-interleaved meshes.
-    // If interleaved mode is requested, this shader will not produce correct results.
+    uint baseByte = idx * interleavedStride;
 
-    vec3 basePosition = loadPosition(idx);
-    vec3 baseNormal = (hasNormals != 0) ? loadNormal(idx) : vec3(0.0);
-    vec3 baseTangent = (hasTangents != 0) ? loadTangent(idx) : vec3(0.0);
+    // Start by copying the incoming vertex so all attributes remain intact.
+    copyInterleavedVertex(baseByte);
+
+    vec3 basePosition = loadInterleavedVec3(baseByte + positionOffsetBytes);
+    vec3 baseNormal = (hasNormals != 0) ? loadInterleavedVec3(baseByte + normalOffsetBytes) : vec3(0.0);
+    vec3 baseTangent = (hasTangents != 0) ? loadInterleavedVec3(baseByte + tangentOffsetBytes) : vec3(0.0);
 
     applyBlendshapes(basePosition, baseNormal, baseTangent, idx);
     applySkinning(basePosition, baseNormal, baseTangent, idx);
 
-    PositionsOut[idx].xyz = basePosition;
+    storeInterleavedVec3(baseByte + positionOffsetBytes, basePosition);
     if (hasNormals != 0)
-        NormalsOut[idx].xyz = normalize(baseNormal);
+        storeInterleavedVec3(baseByte + normalOffsetBytes, normalize(baseNormal));
     if (hasTangents != 0)
-        TangentsOut[idx].xyz = normalize(baseTangent);
+        storeInterleavedVec3(baseByte + tangentOffsetBytes, normalize(baseTangent));
 }

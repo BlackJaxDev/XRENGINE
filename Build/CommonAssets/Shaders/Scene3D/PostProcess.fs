@@ -4,9 +4,9 @@ layout(location = 0) out vec4 OutColor;
 layout(location = 0) in vec3 FragPos;
 
 uniform sampler2D HDRSceneTex; //HDR scene color
-uniform sampler2D Texture1; //Bloom
-uniform sampler2D Texture2; //Depth
-uniform usampler2D Texture3; //Stencil
+uniform sampler2D BloomBlurTexture; //Bloom
+uniform sampler2D DepthView; //Depth
+uniform usampler2D StencilView; //Stencil
 
 uniform vec3 HighlightColor = vec3(0.92f, 1.0f, 0.086f);
 uniform bool OutputHDR = false;
@@ -83,7 +83,7 @@ float GetStencilHighlightIntensity(vec2 uv)
     vec2 texelSize = 1.0f / texSize;
     vec2 texelX = vec2(texelSize.x, 0.0f);
     vec2 texelY = vec2(0.0f, texelSize.y);
-    uint stencilCurrent = texture(Texture3, uv).r;
+    uint stencilCurrent = texture(StencilView, uv).r;
     uint selectionBits = stencilCurrent & 1;
     uint diff = 0;
     vec2 zero = vec2(0.0f);
@@ -95,10 +95,10 @@ float GetStencilHighlightIntensity(vec2 uv)
           vec2 yNeg = clamp(uv - texelY * i, zero, uv);
           vec2 xPos = clamp(uv + texelX * i, zero, uv);
           vec2 xNeg = clamp(uv - texelX * i, zero, uv);
-          diff += (texture(Texture3, yPos).r & 1) - selectionBits;
-          diff += (texture(Texture3, yNeg).r & 1) - selectionBits;
-          diff += (texture(Texture3, xPos).r & 1) - selectionBits;
-          diff += (texture(Texture3, xNeg).r & 1) - selectionBits;
+          diff += (texture(StencilView, yPos).r & 1) - selectionBits;
+          diff += (texture(StencilView, yNeg).r & 1) - selectionBits;
+          diff += (texture(StencilView, xPos).r & 1) - selectionBits;
+          diff += (texture(StencilView, xNeg).r & 1) - selectionBits;
     }
     return clamp(float(diff), 0.0f, 1.0f);
 }
@@ -215,7 +215,7 @@ vec3 SampleHDR(vec2 uv)
 vec3 SampleBloom(vec2 uv, float lod)
 {
   vec2 duv = ApplyLensDistortionByMode(uv);
-  return textureLod(Texture1, duv, lod).rgb;
+  return textureLod(BloomBlurTexture, duv, lod).rgb;
 }
 
 void main()
@@ -288,7 +288,7 @@ void main()
   //Apply depth-based fog
   if (DepthFog.Intensity > 0.0f)
   {
-      float depth = texture(Texture2, uv).r;
+      float depth = texture(DepthView, uv).r;
       float fogFactor = clamp((depth - DepthFog.Start) / (DepthFog.End - DepthFog.Start), 0.0f, 1.0f);
       sceneColor = mix(sceneColor, DepthFog.Color, fogFactor * DepthFog.Intensity);
   }

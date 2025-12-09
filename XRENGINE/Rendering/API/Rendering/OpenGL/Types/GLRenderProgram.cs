@@ -5,6 +5,7 @@ using System.Collections.Concurrent;
 using System.Numerics;
 using System.Linq;
 using System.Text;
+using System.Threading;
 using XREngine.Data.Vectors;
 using XREngine;
 using static XREngine.Rendering.XRRenderProgram;
@@ -32,6 +33,12 @@ namespace XREngine.Rendering.OpenGL
             private readonly ConcurrentDictionary<int, string> _locationNameCache = new();
             private readonly ConcurrentDictionary<string, UniformInfo> _uniformMetadata = new();
             private readonly ConcurrentDictionary<string, byte> _loggedUniformMismatches = new();
+
+            private int _uniformBindingAttempts;
+            private int _uniformBindings;
+            private int _samplerBindingAttempts;
+            private int _samplerBindings;
+            private readonly ConcurrentDictionary<string, byte> _loggedEmptyBindingBatches = new();
 
             private readonly ConcurrentBag<string> _failedAttributes = [];
             private readonly ConcurrentBag<string> _failedUniforms = [];
@@ -410,6 +417,11 @@ namespace XREngine.Rendering.OpenGL
                 _locationNameCache.Clear();
                 _uniformMetadata.Clear();
                 _loggedUniformMismatches.Clear();
+                _loggedEmptyBindingBatches.Clear();
+                _uniformBindingAttempts = 0;
+                _uniformBindings = 0;
+                _samplerBindingAttempts = 0;
+                _samplerBindings = 0;
             }
 
             private void CacheActiveUniforms()
@@ -449,6 +461,52 @@ namespace XREngine.Rendering.OpenGL
                             _uniformMetadata[baseName] = new UniformInfo(type, size);
                         }
                     }
+                }
+            }
+
+            public void BeginBindingBatch()
+            {
+                Interlocked.Exchange(ref _uniformBindingAttempts, 0);
+                Interlocked.Exchange(ref _uniformBindings, 0);
+                Interlocked.Exchange(ref _samplerBindingAttempts, 0);
+                Interlocked.Exchange(ref _samplerBindings, 0);
+            }
+
+            private bool MarkUniformBinding(int location)
+            {
+                if (location < 0)
+                    return false;
+
+                Interlocked.Increment(ref _uniformBindingAttempts);
+                Interlocked.Increment(ref _uniformBindings);
+                return true;
+            }
+
+            private bool MarkSamplerBinding(int location)
+            {
+                if (location < 0)
+                    return false;
+
+                Interlocked.Increment(ref _samplerBindingAttempts);
+                Interlocked.Increment(ref _samplerBindings);
+                return true;
+            }
+
+            public void WarnIfNoUniformOrSamplerBindings(string? materialName)
+            {
+                int attempts = _uniformBindingAttempts + _samplerBindingAttempts;
+                int successes = _uniformBindings + _samplerBindings;
+                if (attempts == 0 || successes > 0)
+                    return;
+
+                string programName = Data.Name ?? BindingId.ToString();
+                string matName = string.IsNullOrWhiteSpace(materialName) ? "<unnamed material>" : materialName!;
+                string key = $"{programName}:{matName}";
+
+                if (_loggedEmptyBindingBatches.TryAdd(key, 1))
+                {
+                    Debug.LogError($"[Shader Binding] Program '{programName}' rendered material '{matName}' with no uniforms or samplers bound. " +
+                        "Check that material parameter and sampler names match the shader.");
                 }
             }
 
@@ -569,11 +627,24 @@ namespace XREngine.Rendering.OpenGL
             public ulong Hash { get; private set; }
             private BinaryProgram? _cachedProgram = null;
 
+            public bool HasUniform(string name)
+            {
+                if (string.IsNullOrWhiteSpace(name))
+                    return false;
+
+                if (_uniformMetadata.ContainsKey(name))
+                    return true;
+
+                int loc = GetUniformLocation(name);
+                return loc >= 0;
+            }
+
             protected override uint CreateObject()
             {
                 Reset();
 
                 uint handle = Api.CreateProgram();
+
                 Api.ProgramParameter(handle, GLEnum.ProgramSeparable, Data.Separable ? 1 : 0);
 
                 return handle;
@@ -858,56 +929,56 @@ namespace XREngine.Rendering.OpenGL
 
             public void Uniform(int location, Vector2 p)
             {
-                if (location < 0) return;
+                if (!MarkUniformBinding(location)) return;
                 Api.ProgramUniform2(BindingId, location, p);
             }
             public void Uniform(int location, Vector3 p)
             {
-                if (location < 0) return;
+                if (!MarkUniformBinding(location)) return;
                 Api.ProgramUniform3(BindingId, location, p);
             }
             public void Uniform(int location, Vector4 p)
             {
-                if (location < 0) return;
+                if (!MarkUniformBinding(location)) return;
                 if (!ValidateUniformType(location, GLEnum.FloatVec4))
                     return;
                 Api.ProgramUniform4(BindingId, location, p);
             }
             public void Uniform(int location, Quaternion p)
             {
-                if (location < 0) return;
+                if (!MarkUniformBinding(location)) return;
                 if (!ValidateUniformType(location, GLEnum.FloatVec4))
                     return;
                 Api.ProgramUniform4(BindingId, location, p);
             }
             public void Uniform(int location, int p)
             {
-                if (location < 0) return;
+                if (!MarkUniformBinding(location)) return;
                 Api.ProgramUniform1(BindingId, location, p);
             }
             public void Uniform(int location, float p)
             {
-                if (location < 0) return;
+                if (!MarkUniformBinding(location)) return;
                 Api.ProgramUniform1(BindingId, location, p);
             }
             public void Uniform(int location, uint p)
             {
-                if (location < 0) return;
+                if (!MarkUniformBinding(location)) return;
                 Api.ProgramUniform1(BindingId, location, p);
             }
             public void Uniform(int location, double p)
             {
-                if (location < 0) return;
+                if (!MarkUniformBinding(location)) return;
                 Api.ProgramUniform1(BindingId, location, p);
             }
             public void Uniform(int location, Matrix4x4 p)
             {
-                if (location < 0) return;
+                if (!MarkUniformBinding(location)) return;
                 Api.ProgramUniformMatrix4(BindingId, location, 1, false, &p.M11);
             }
             public void Uniform(int location, bool p)
             {
-                if (location < 0) return;
+                if (!MarkUniformBinding(location)) return;
                 Api.ProgramUniform1(BindingId, location, p ? 1 : 0);
             }
 
@@ -936,28 +1007,28 @@ namespace XREngine.Rendering.OpenGL
 
             public void Uniform(int location, IVector2 p)
             {
-                if (location < 0) return;
+                if (!MarkUniformBinding(location)) return;
                 if (!ValidateUniformType(location, GLEnum.IntVec2))
                     return;
                 Api.ProgramUniform2(BindingId, location, p.X, p.Y);
             }
             public void Uniform(int location, IVector3 p)
             {
-                if (location < 0) return;
+                if (!MarkUniformBinding(location)) return;
                 if (!ValidateUniformType(location, GLEnum.IntVec3))
                     return;
                 Api.ProgramUniform3(BindingId, location, p.X, p.Y, p.Z);
             }
             public void Uniform(int location, IVector4 p)
             {
-                if (location < 0) return;
+                if (!MarkUniformBinding(location)) return;
                 if (!ValidateUniformType(location, GLEnum.IntVec4))
                     return;
                 Api.ProgramUniform4(BindingId, location, p.X, p.Y, p.Z, p.W);
             }
             public void Uniform(int location, IVector2[] p)
             {
-                if (location < 0 || p.Length == 0)
+                if (!MarkUniformBinding(location) || p.Length == 0)
                     return;
                 if (!ValidateUniformType(location, GLEnum.IntVec2))
                     return;
@@ -969,7 +1040,7 @@ namespace XREngine.Rendering.OpenGL
             }
             public void Uniform(int location, IVector3[] p)
             {
-                if (location < 0 || p.Length == 0)
+                if (!MarkUniformBinding(location) || p.Length == 0)
                     return;
                 if (!ValidateUniformType(location, GLEnum.IntVec3))
                     return;
@@ -981,7 +1052,7 @@ namespace XREngine.Rendering.OpenGL
             }
             public void Uniform(int location, IVector4[] p)
             {
-                if (location < 0 || p.Length == 0)
+                if (!MarkUniformBinding(location) || p.Length == 0)
                     return;
                 if (!ValidateUniformType(location, GLEnum.IntVec4))
                     return;
@@ -1007,7 +1078,7 @@ namespace XREngine.Rendering.OpenGL
 
             public void Uniform(int location, Vector2[] p)
             {
-                if (location < 0)
+                if (!MarkUniformBinding(location))
                     return;
                 fixed (Vector2* ptr = p)
                 {
@@ -1016,7 +1087,7 @@ namespace XREngine.Rendering.OpenGL
             }
             public void Uniform(int location, Vector3[] p)
             {
-                if (location < 0)
+                if (!MarkUniformBinding(location))
                     return;
                 fixed (Vector3* ptr = p)
                 {
@@ -1025,7 +1096,7 @@ namespace XREngine.Rendering.OpenGL
             }
             public void Uniform(int location, Vector4[] p)
             {
-                if (location < 0)
+                if (!MarkUniformBinding(location))
                     return;
                 if (!ValidateUniformType(location, GLEnum.FloatVec4))
                     return;
@@ -1036,7 +1107,7 @@ namespace XREngine.Rendering.OpenGL
             }
             public void Uniform(int location, Quaternion[] p)
             {
-                if (location < 0)
+                if (!MarkUniformBinding(location))
                     return;
                 if (!ValidateUniformType(location, GLEnum.FloatVec4))
                     return;
@@ -1047,7 +1118,7 @@ namespace XREngine.Rendering.OpenGL
             }
             public void Uniform(int location, int[] p)
             {
-                if (location < 0)
+                if (!MarkUniformBinding(location))
                     return;
                 fixed (int* ptr = p)
                 {
@@ -1056,7 +1127,7 @@ namespace XREngine.Rendering.OpenGL
             }
             public void Uniform(int location, float[] p)
             {
-                if (location < 0)
+                if (!MarkUniformBinding(location))
                     return;
                 fixed (float* ptr = p)
                 {
@@ -1065,7 +1136,7 @@ namespace XREngine.Rendering.OpenGL
             }
             public void Uniform(int location, Span<float> p)
             {
-                if (location < 0)
+                if (!MarkUniformBinding(location))
                     return;
                 unsafe
                 {
@@ -1077,7 +1148,7 @@ namespace XREngine.Rendering.OpenGL
             }
             public void Uniform(int location, uint[] p)
             {
-                if (location < 0)
+                if (!MarkUniformBinding(location))
                     return;
                 fixed (uint* ptr = p)
                 {
@@ -1086,7 +1157,7 @@ namespace XREngine.Rendering.OpenGL
             }
             public void Uniform(int location, double[] p)
             {
-                if (location < 0)
+                if (!MarkUniformBinding(location))
                     return;
                 fixed (double* ptr = p)
                 {
@@ -1095,7 +1166,7 @@ namespace XREngine.Rendering.OpenGL
             }
             public void Uniform(int location, Matrix4x4[] p)
             {
-                if (location < 0)
+                if (!MarkUniformBinding(location))
                     return;
                 fixed (Matrix4x4* ptr = p)
                 {
@@ -1104,13 +1175,17 @@ namespace XREngine.Rendering.OpenGL
             }
             public void Uniform(int location, bool[] p)
             {
-                if (location < 0)
+                if (!MarkUniformBinding(location))
                     return;
 
                 int[] conv = new int[p.Length];
                 for (int i = 0; i < p.Length; i++)
                     conv[i] = p[i] ? 1 : 0;
-                Uniform(location, conv);
+
+                fixed (int* ptr = conv)
+                {
+                    Api.ProgramUniform1(BindingId, location, (uint)conv.Length, ptr);
+                }
             }
             #endregion
 
@@ -1126,6 +1201,9 @@ namespace XREngine.Rendering.OpenGL
 
             public void Sampler(string name, XRTexture texture, int textureUnit)
             {
+                if (!HasUniform(name))
+                    return;
+
                 int location = GetUniformLocation(name);
                 if (location < 0 && Engine.Rendering.Settings.LogMissingShaderSamplers)
                 {
@@ -1147,6 +1225,9 @@ namespace XREngine.Rendering.OpenGL
             /// </summary>
             public void Sampler(string name, IGLTexture texture, int textureUnit)
             {
+                if (!HasUniform(name))
+                    return;
+
                 int location = GetUniformLocation(name);
                 if (location < 0 && Engine.Rendering.Settings.LogMissingShaderSamplers)
                 {
@@ -1169,7 +1250,7 @@ namespace XREngine.Rendering.OpenGL
             /// </summary>
             public void Sampler(int location, IGLTexture texture, int textureUnit)
             {
-                if (location < 0)
+                if (!MarkSamplerBinding(location))
                     return;
 
                 texture.PreSampling();

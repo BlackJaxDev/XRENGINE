@@ -91,6 +91,7 @@ namespace XREngine.Rendering.Pipelines.Commands
                 EPixelType.HalfFloat,
                 EFrameBufferAttachment.ColorAttachment0);
             msvoTex.Name = MSVOIntensityTextureName;
+            msvoTex.SamplerName = MSVOIntensityTextureName;
             msvoTex.MinFilter = ETexMinFilter.Nearest;
             msvoTex.MagFilter = ETexMagFilter.Nearest;
             ActivePipelineInstance.SetTexture(msvoTex);

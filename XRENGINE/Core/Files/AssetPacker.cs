@@ -1,8 +1,4 @@
-﻿using System;
-using System.Collections.Generic;
-using System.IO;
-using System.Linq;
-using System.Text;
+﻿using System.Text;
 using XREngine.Data;
 
 namespace XREngine.Core.Files
@@ -38,18 +34,11 @@ namespace XREngine.Core.Files
             public bool FromExisting => CompressedData is null;
         }
 
-        private sealed class BucketLayout
+        private sealed class BucketLayout(int bucketCount, int[] starts, int[] counts)
         {
-            public BucketLayout(int bucketCount, int[] starts, int[] counts)
-            {
-                BucketCount = bucketCount;
-                Starts = starts;
-                Counts = counts;
-            }
-
-            public int BucketCount { get; }
-            public int[] Starts { get; }
-            public int[] Counts { get; }
+            public int BucketCount { get; } = bucketCount;
+            public int[] Starts { get; } = starts;
+            public int[] Counts { get; } = counts;
         }
 
         private struct TocEntry
@@ -322,7 +311,7 @@ namespace XREngine.Core.Files
                         .ToList();
                     return (sorted, null);
                 default:
-                    return (new List<TocEntry>(entries), null);
+                    return ([.. entries], null);
             }
         }
 
@@ -334,7 +323,7 @@ namespace XREngine.Core.Files
             foreach (var entry in entries)
             {
                 int bucketIndex = (int)(entry.Hash & (bucketCount - 1));
-                buckets[bucketIndex] ??= new List<TocEntry>();
+                buckets[bucketIndex] ??= [];
                 buckets[bucketIndex]!.Add(entry);
             }
 
@@ -589,14 +578,14 @@ namespace XREngine.Core.Files
         {
             if (entry.Hash != targetHash)
             {
-                data = Array.Empty<byte>();
+                data = [];
                 return false;
             }
 
             string currentPath = NormalizePath(stringCompressor.GetString(entry.StringOffset));
             if (!string.Equals(currentPath, normalizedPath, StringComparison.Ordinal))
             {
-                data = Array.Empty<byte>();
+                data = [];
                 return false;
             }
 

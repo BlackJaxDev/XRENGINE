@@ -97,10 +97,10 @@ void main()
 	vec2 uv = gl_FragCoord.xy / vec2(ScreenWidth, ScreenHeight);
 
 	//Retrieve shading information from GBuffer textures
-	vec3 albedo = texture(Texture0, uv).rgb;
-	vec3 normal = texture(Texture1, uv).rgb;
-	vec3 rms = texture(Texture2, uv).rgb;
-	float depth = texture(Texture3, uv).r;
+	vec3 albedo = texture(AlbedoOpacity, uv).rgb;
+	vec3 normal = texture(Normal, uv).rgb;
+	vec3 rms = texture(RMSE, uv).rgb;
+	float depth = texture(DepthView, uv).r;
 
 	//Resolve world fragment position using depth and screen UV
 	vec3 fragPosWS = WorldPosFromDepth(depth, uv);

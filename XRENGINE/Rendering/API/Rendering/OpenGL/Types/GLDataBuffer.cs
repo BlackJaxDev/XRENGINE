@@ -483,7 +483,12 @@ namespace XREngine.Rendering.OpenGL
                     return;
 
                 Bind();
-                Api.BindBufferBase(ToGLEnum(Data.Target), blockIndex, BindingId);
+                // When using vertex buffers as SSBOs (compute skinning), bind with SSBO target even if the buffer was created as an array buffer.
+                GLEnum bindTarget = ToGLEnum(Data.Target);
+                if (bindTarget == GLEnum.ArrayBuffer)
+                    bindTarget = GLEnum.ShaderStorageBuffer;
+
+                Api.BindBufferBase(bindTarget, blockIndex, BindingId);
                 Unbind();
             }
 

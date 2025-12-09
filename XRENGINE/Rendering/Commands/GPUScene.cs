@@ -335,8 +335,8 @@ namespace XREngine.Rendering.Commands
             if (_atlasIndices is not null)
             {
                 IndexTriangle[] faceSnapshot = _indirectFaceIndices.Count > 0
-                    ? _indirectFaceIndices.ToArray()
-                    : Array.Empty<IndexTriangle>();
+                    ? [.. _indirectFaceIndices]
+                    : [];
 
                 int requiredIndices = faceSnapshot.Length * 3;
                 if (requiredIndices > 0)
@@ -745,7 +745,7 @@ namespace XREngine.Rendering.Commands
             }
 
             // Update offsets for remaining meshes now that we compacted buffers.
-            List<XRMesh> meshesToAdjust = new(_atlasMeshOffsets.Keys);
+            List<XRMesh> meshesToAdjust = [.. _atlasMeshOffsets.Keys];
             foreach (XRMesh otherMesh in meshesToAdjust)
             {
                 if (otherMesh == mesh)

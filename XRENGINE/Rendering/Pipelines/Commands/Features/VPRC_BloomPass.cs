@@ -88,6 +88,7 @@ namespace XREngine.Rendering.Pipelines.Commands
                 t.SizedInternalFormat = sizedInternalFormat;
                 t.OVRMultiViewParameters = new(0, 2u);
                 t.Name = BloomOutputTextureName;
+                t.SamplerName = BloomOutputTextureName;
                 t.MagFilter = ETexMagFilter.Linear;
                 t.MinFilter = ETexMinFilter.LinearMipmapLinear;
                 t.UWrap = ETexWrapMode.ClampToEdge;
@@ -105,6 +106,7 @@ namespace XREngine.Rendering.Pipelines.Commands
                 //t.Resizable = false;
                 t.SizedInternalFormat = sizedInternalFormat;
                 t.Name = BloomOutputTextureName;
+                t.SamplerName = BloomOutputTextureName;
                 t.MagFilter = ETexMagFilter.Linear;
                 t.MinFilter = ETexMinFilter.LinearMipmapLinear;
                 t.UWrap = ETexWrapMode.ClampToEdge;

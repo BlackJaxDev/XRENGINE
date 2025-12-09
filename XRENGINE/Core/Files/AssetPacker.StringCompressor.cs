@@ -1,8 +1,5 @@
-using System;
 using System.Buffers;
 using System.Buffers.Binary;
-using System.Collections.Generic;
-using System.Linq;
 using System.Text;
 
 namespace XREngine.Core.Files
@@ -12,10 +9,10 @@ namespace XREngine.Core.Files
         // Optimized string compression with prefix and dictionary compression
         private class StringCompressor
         {
-            private List<string> _strings = new();
+            private List<string> _strings = [];
             private Dictionary<string, int> _stringOffsets = new(StringComparer.Ordinal);
             private readonly Dictionary<string, int> _commonSubstrings = new(StringComparer.Ordinal);
-            private readonly List<string> _substringByIndex = new();
+            private readonly List<string> _substringByIndex = [];
 
             // Offset relative to the beginning of the serialized string table data.
             public long DictionaryOffset { get; private set; }

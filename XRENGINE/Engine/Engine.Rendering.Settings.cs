@@ -110,7 +110,7 @@ namespace XREngine
             {
                 private Vector3 _defaultLuminance = new(0.299f, 0.587f, 0.114f);
                 private bool _outputHDR = false;
-                private EAntiAliasingMode _antiAliasingMode = EAntiAliasingMode.None;
+                private EAntiAliasingMode _antiAliasingMode = EAntiAliasingMode.Fxaa;
                 private float _tsrRenderScale = 0.67f;
                 private bool _enableNvidiaDlss = false;
                 private EDlssQualityMode _dlssQuality = EDlssQualityMode.Quality;

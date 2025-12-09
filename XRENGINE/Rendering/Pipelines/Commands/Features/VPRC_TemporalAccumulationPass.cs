@@ -139,7 +139,7 @@ public sealed class VPRC_TemporalAccumulationPass : ViewportRenderCommand
         SetHistoryExposureReady(shouldAccumulate);
         if (shouldAccumulate)
         {
-            Debug.Out("[Temporal] Rendering accumulation FBO.");
+            //Debug.Out("[Temporal] Rendering accumulation FBO.");
             accumulationFBO.Render(accumulationFBO);
         }
 
