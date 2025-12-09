@@ -235,6 +235,7 @@ namespace XREngine.Rendering.Pipelines.Commands
                 t.SizedInternalFormat = ESizedInternalFormat.R16f;
                 t.OVRMultiViewParameters = new(0, 2u);
                 t.Name = IntensityTextureName;
+                t.SamplerName = IntensityTextureName;
                 t.MinFilter = ETexMinFilter.Nearest;
                 t.MagFilter = ETexMagFilter.Nearest;
                 t.UWrap = ETexWrapMode.ClampToEdge;
@@ -250,6 +251,7 @@ namespace XREngine.Rendering.Pipelines.Commands
                 EPixelType.HalfFloat,
                 EFrameBufferAttachment.ColorAttachment0);
             tex.Name = IntensityTextureName;
+            tex.SamplerName = IntensityTextureName;
             tex.MinFilter = ETexMinFilter.Nearest;
             tex.MagFilter = ETexMagFilter.Nearest;
             tex.UWrap = ETexWrapMode.ClampToEdge;

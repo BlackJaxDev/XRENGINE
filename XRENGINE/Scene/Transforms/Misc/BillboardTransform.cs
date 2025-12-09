@@ -1,4 +1,5 @@
 ﻿using Extensions;
+using System;
 using System.Numerics;
 using XREngine.Data.Core;
 using XREngine.Data.Geometry;
@@ -128,6 +129,17 @@ namespace XREngine.Scene.Transforms
             set => SetField(ref _scaleByDistance, value);
         }
 
+        private bool _scaleByVerticalFov = false;
+        /// <summary>
+        /// If true, the distance-based scale is modulated by the active camera's vertical FOV (perspective only).
+        /// This keeps screen-space size stable when zooming the camera.
+        /// </summary>
+        public bool ScaleByVerticalFov
+        {
+            get => _scaleByVerticalFov;
+            set => SetField(ref _scaleByVerticalFov, value);
+        }
+
         /// <summary>
         /// This scalar is multiplied by the distance from the camera to scale the billboard.
         /// </summary>
@@ -160,6 +172,7 @@ namespace XREngine.Scene.Transforms
             {
                 case nameof(Perspective):
                 case nameof(ScaleByDistance):
+                case nameof(ScaleByVerticalFov):
                 case nameof(DistanceScale):
                     MarkWorldModified();
                     break;
@@ -175,22 +188,48 @@ namespace XREngine.Scene.Transforms
         private void OnConstrainDirectionChanged(TransformBase @base, Matrix4x4 worldMatrix)
             => MarkWorldModified();
 
+        private XRCamera? _subscribedCamera;
+
         protected internal override void OnSceneNodeActivated()
         {
             base.OnSceneNodeActivated();
-            var vp = Engine.State.MainPlayer.Viewport;
-            if (vp is null || vp.ActiveCamera is null)
+            var camera = Engine.State.MainPlayer.Viewport?.ActiveCamera;
+            if (camera is null)
                 return;
-            vp.ActiveCamera.Transform.WorldMatrixChanged += CameraMoved;
+
+            if (_subscribedCamera == camera)
+                return;
+
+            if (_subscribedCamera != null && _subscribedCamera != camera)
+                UnsubscribeFromCamera();
+
+            _subscribedCamera = camera;
+            _subscribedCamera.Transform.WorldMatrixChanged += CameraMoved;
+            _subscribedCamera.Parameters.PropertyChanged += CameraParametersChanged;
         }
         protected internal override void OnSceneNodeDeactivated()
         {
             base.OnSceneNodeDeactivated();
-            var vp = Engine.State.MainPlayer.Viewport;
-            if (vp is null || vp.ActiveCamera is null)
-                return;
-            vp.ActiveCamera.Transform.WorldMatrixChanged -= CameraMoved;
+            UnsubscribeFromCamera();
         }
+
+        private void UnsubscribeFromCamera()
+        {
+            if (_subscribedCamera is null)
+            {
+                var camera = Engine.State.MainPlayer.Viewport?.ActiveCamera;
+                camera?.Transform.WorldMatrixChanged -= CameraMoved;
+                camera?.Parameters.PropertyChanged -= CameraParametersChanged;
+                return;
+            }
+
+            _subscribedCamera.Transform.WorldMatrixChanged -= CameraMoved;
+            _subscribedCamera.Parameters.PropertyChanged -= CameraParametersChanged;
+            _subscribedCamera = null;
+        }
+
+        private void CameraParametersChanged(object? sender, IXRPropertyChangedEventArgs e)
+            => MarkWorldModified();
 
         private void CameraMoved(TransformBase @base, Matrix4x4 worldMatrix)
             => RecalculateMatrixHeirarchy(true, false, Engine.Rendering.Settings.RecalcChildMatricesLoopType);
@@ -257,6 +296,13 @@ namespace XREngine.Scene.Transforms
             {
                 float distance = pos.Distance(cameraPos);
                 float scale = distance * DistanceScale;
+
+                if (_scaleByVerticalFov && camera.Parameters is XRPerspectiveCameraParameters persp)
+                {
+                    float fovScale = MathF.Tan(0.5f * XRMath.DegToRad(persp.VerticalFieldOfView));
+                    scale *= fovScale;
+                }
+
                 worldMtx = Matrix4x4.CreateScale(scale) * worldMtx;
             }
 

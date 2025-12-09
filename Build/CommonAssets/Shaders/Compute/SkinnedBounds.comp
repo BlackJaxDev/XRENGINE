@@ -24,7 +24,8 @@ layout(std430, binding = 3) buffer BoneWeightsBuffer
 
 layout(std430, binding = 4) buffer PositionBuffer
 {
-    vec4 Positions[];
+    // Positions are stored as tightly packed vec3 (12-byte stride) in non-interleaved meshes.
+    float Positions[];
 };
 
 layout(std430, binding = 5) buffer OutputPositionBuffer
@@ -132,6 +133,12 @@ void atomicMaxVec(inout uvec4 target, vec4 value)
     }
 }
 
+vec3 loadPosition(uint vertexIndex)
+{
+    uint base = vertexIndex * 3u;
+    return vec3(Positions[base + 0u], Positions[base + 1u], Positions[base + 2u]);
+}
+
 void main()
 {
     uint index = gl_GlobalInvocationID.x;
@@ -143,7 +150,7 @@ void main()
     bool isValid = index < vertexCount;
     if (isValid)
     {
-        vec4 basePosition = Positions[index];
+        vec4 basePosition = vec4(loadPosition(index), 1.0);
         vec4 skinnedPosition = vec4(0.0);
 
         if (hasSkinning != 0)
@@ -152,6 +159,8 @@ void main()
             vec4 weights = BoneWeights[index];
             float accumulatedWeight = 0.0;
 
+            uint boneCount = BoneMatrices.length();
+
             for (int i = 0; i < 4; ++i)
             {
                 int boneIndex = indices[i];
@@ -159,6 +168,10 @@ void main()
                 accumulatedWeight += weight;
 
                 if (boneIndex <= 0 || weight <= 0.0)
+                    continue;
+
+                // Avoid reading outside the bone matrix buffers
+                if (uint(boneIndex) >= boneCount)
                     continue;
 
                 mat4 boneMatrix = BoneInvBindMatrices[boneIndex] * BoneMatrices[boneIndex];

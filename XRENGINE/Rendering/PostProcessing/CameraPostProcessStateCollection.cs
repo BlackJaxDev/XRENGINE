@@ -18,6 +18,7 @@ namespace XREngine.Rendering.PostProcessing;
 [Serializable]
 public sealed class CameraPostProcessStateCollection
 {
+    private readonly object _pipelinesSync = new();
     private Dictionary<Guid, PipelinePostProcessState> _pipelines = new();
 
     public IReadOnlyDictionary<Guid, PipelinePostProcessState> Pipelines => _pipelines;
@@ -26,35 +27,50 @@ public sealed class CameraPostProcessStateCollection
     {
         ArgumentNullException.ThrowIfNull(pipeline);
 
-        if (!_pipelines.TryGetValue(pipeline.ID, out var state))
+        lock (_pipelinesSync)
         {
-            state = new PipelinePostProcessState();
-            _pipelines[pipeline.ID] = state;
-        }
+            if (!_pipelines.TryGetValue(pipeline.ID, out var state))
+            {
+                state = new PipelinePostProcessState();
+                _pipelines[pipeline.ID] = state;
+                state.BindToPipeline(pipeline);
+                return state;
+            }
 
-        state.BindToPipeline(pipeline);
-        return state;
+            // Only rebind if this state is not already for this pipeline ID (or schema changed).
+            if (state.PipelineId != pipeline.ID)
+                state.BindToPipeline(pipeline);
+
+            return state;
+        }
     }
 
     public bool TryGetState(Guid pipelineId, out PipelinePostProcessState state)
-        => _pipelines.TryGetValue(pipelineId, out state);
+    {
+        lock (_pipelinesSync)
+            return _pipelines.TryGetValue(pipelineId, out state);
+    }
 
     public void SetState(Guid pipelineId, PipelinePostProcessState replacement)
     {
         ArgumentNullException.ThrowIfNull(replacement);
-        _pipelines[pipelineId] = replacement;
+        lock (_pipelinesSync)
+            _pipelines[pipelineId] = replacement;
     }
 
     [OnDeserialized]
     private void OnDeserialized(StreamingContext context)
     {
-        if (_pipelines is null)
+        lock (_pipelinesSync)
         {
-            _pipelines = new();
-            return;
-        }
+            if (_pipelines is null)
+            {
+                _pipelines = new();
+                return;
+            }
 
-        _pipelines = new Dictionary<Guid, PipelinePostProcessState>(_pipelines);
+            _pipelines = new Dictionary<Guid, PipelinePostProcessState>(_pipelines);
+        }
     }
 }
 
@@ -64,6 +80,7 @@ public sealed class CameraPostProcessStateCollection
 [Serializable]
 public sealed class PipelinePostProcessState
 {
+    private readonly object _stagesSync = new();
     private Dictionary<string, PostProcessStageState> _stages = new(StringComparer.OrdinalIgnoreCase);
 
     public Guid PipelineId { get; private set; }
@@ -78,22 +95,32 @@ public sealed class PipelinePostProcessState
     {
         ArgumentNullException.ThrowIfNull(pipeline);
 
-        PipelineId = pipeline.ID;
-        PipelineName = pipeline.DebugName;
-        Schema = pipeline.PostProcessSchema ?? RenderPipelinePostProcessSchema.Empty;
-        SynchronizeStages();
+        lock (_stagesSync)
+        {
+            PipelineId = pipeline.ID;
+            PipelineName = pipeline.DebugName;
+            Schema = pipeline.PostProcessSchema ?? RenderPipelinePostProcessSchema.Empty;
+            SynchronizeStages();
+        }
     }
 
     public bool TryGetStage(string stageKey, out PostProcessStageState state)
-        => _stages.TryGetValue(stageKey, out state);
+    {
+        lock (_stagesSync)
+            return _stages.TryGetValue(stageKey, out state);
+    }
 
     public PostProcessStageState? GetStage(string stageKey)
-        => _stages.TryGetValue(stageKey, out var stage) ? stage : null;
+    {
+        lock (_stagesSync)
+            return _stages.TryGetValue(stageKey, out var stage) ? stage : null;
+    }
 
     public PostProcessStageState? GetStage(Type backingType)
     {
         ArgumentNullException.ThrowIfNull(backingType);
-        return _stages.Values.FirstOrDefault(stage => stage.Descriptor?.BackingType == backingType);
+        lock (_stagesSync)
+            return _stages.Values.FirstOrDefault(stage => stage.Descriptor?.BackingType == backingType);
     }
 
     public PostProcessStageState? GetStage<TBacking>() where TBacking : class
@@ -102,7 +129,8 @@ public sealed class PipelinePostProcessState
     public PostProcessStageState? FindStageByParameter(string parameterName)
     {
         ArgumentException.ThrowIfNullOrEmpty(parameterName);
-        return _stages.Values.FirstOrDefault(stage => stage.Values.ContainsKey(parameterName));
+        lock (_stagesSync)
+            return _stages.Values.FirstOrDefault(stage => stage.Values.ContainsKey(parameterName));
     }
 
     private void SynchronizeStages()
@@ -150,6 +178,7 @@ public sealed class PostProcessStageState : IDisposable
 {
     private Dictionary<string, object?> _values = new(StringComparer.OrdinalIgnoreCase);
     private Dictionary<string, PropertyInfo> _backingProperties = new(StringComparer.OrdinalIgnoreCase);
+    private readonly object _backingSync = new();
     private IXRNotifyPropertyChanged? _backingNotifier;
     private bool _suppressBackingCallbacks;
 
@@ -242,13 +271,18 @@ public sealed class PostProcessStageState : IDisposable
             return;
 
         BackingInstance = Activator.CreateInstance(descriptor.BackingType);
-        _backingProperties = new Dictionary<string, PropertyInfo>(StringComparer.OrdinalIgnoreCase);
 
+        // Build backing property map off-thread then publish under lock to avoid concurrent mutations.
+        var backingMap = new Dictionary<string, PropertyInfo>(StringComparer.OrdinalIgnoreCase);
         foreach (var parameter in descriptor.Parameters)
         {
             var prop = descriptor.BackingType.GetProperty(parameter.Name, BindingFlags.Instance | BindingFlags.Public | BindingFlags.IgnoreCase);
             if (prop is not null && prop.CanWrite)
-                _backingProperties[parameter.Name] = prop;
+                backingMap[parameter.Name] = prop;
+        }
+        lock (_backingSync)
+        {
+            _backingProperties = backingMap;
         }
 
         if (BackingInstance is IXRNotifyPropertyChanged notifier)
@@ -257,32 +291,45 @@ public sealed class PostProcessStageState : IDisposable
             notifier.PropertyChanged += OnBackingPropertyChanged;
         }
 
-        foreach (var (parameter, property) in _backingProperties)
+        KeyValuePair<string, PropertyInfo>[]? propsSnapshot;
+        object? backing;
+        lock (_backingSync)
         {
-            if (!_values.TryGetValue(parameter, out var raw))
-                continue;
+            backing = BackingInstance;
+            propsSnapshot = [.. _backingProperties];
+        }
 
-            if (!TryCoerce(raw, property.PropertyType, out var coerced))
+        if (backing is null)
+            return;
+
+        foreach (var (parameter, property) in propsSnapshot)
+        {
+            if (parameter is null || !_values.TryGetValue(parameter, out var raw) || !TryCoerce(raw, property.PropertyType, out var coerced))
                 continue;
 
             _suppressBackingCallbacks = true;
-            property.SetValue(BackingInstance, coerced);
+            property.SetValue(backing, coerced);
             _suppressBackingCallbacks = false;
         }
     }
 
     private void PushValueToBacking<T>(string parameterName, T value)
     {
-        if (BackingInstance is null)
-            return;
-        if (!_backingProperties.TryGetValue(parameterName, out var property))
+        object? backing;
+        PropertyInfo? property;
+        lock (_backingSync)
+        {
+            backing = BackingInstance;
+            _backingProperties.TryGetValue(parameterName, out property);
+        }
+        if (backing is null || property is null)
             return;
 
         if (!TryCoerce(value, property.PropertyType, out var coerced))
             return;
 
         _suppressBackingCallbacks = true;
-        property.SetValue(BackingInstance, coerced);
+        property.SetValue(backing, coerced);
         _suppressBackingCallbacks = false;
     }
 
@@ -299,7 +346,10 @@ public sealed class PostProcessStageState : IDisposable
         if (value is ColorF3 color)
             value = new Vector3(color.R, color.G, color.B);
 
-        _values[args.PropertyName] = value;
+        lock (_backingSync)
+        {
+            _values[args.PropertyName] = value;
+        }
     }
 
     private static bool TryCoerce(object? value, Type targetType, out object? result)
@@ -409,11 +459,15 @@ public sealed class PostProcessStageState : IDisposable
 
     private void TeardownBacking()
     {
-        if (_backingNotifier is not null)
-            _backingNotifier.PropertyChanged -= OnBackingPropertyChanged;
+        var notifier = _backingNotifier;
+        if (notifier is not null)
+            notifier.PropertyChanged -= OnBackingPropertyChanged;
 
         _backingNotifier = null;
-        _backingProperties.Clear();
+        lock (_backingSync)
+        {
+            _backingProperties.Clear();
+        }
         BackingInstance = null;
     }
 
@@ -431,6 +485,9 @@ public sealed class PostProcessStageState : IDisposable
         else if (_values.Comparer != StringComparer.OrdinalIgnoreCase)
             _values = new Dictionary<string, object?>(_values, StringComparer.OrdinalIgnoreCase);
 
-        _backingProperties = new(StringComparer.OrdinalIgnoreCase);
+        lock (_backingSync)
+        {
+            _backingProperties = new(StringComparer.OrdinalIgnoreCase);
+        }
     }
 }

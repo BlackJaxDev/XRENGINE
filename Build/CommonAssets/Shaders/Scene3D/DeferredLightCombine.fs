@@ -2,17 +2,18 @@
 
 const float PI = 3.14159265359f;
 const float InvPI = 0.31831f;
-const float MAX_REFLECTION_LOD = 4.0f;
+// Reflection mip is derived from the texture's mip count; no fixed cap.
+const float MAX_REFLECTION_LOD = 4.0f; // Deprecated; retained to avoid breaking includes, actual max is queried per texture.
 
 layout(location = 0) out vec3 OutLo; //Diffuse Light Color, to start off the HDR Scene Texture
 layout(location = 0) in vec3 FragPos;
 
-layout(binding = 0) uniform sampler2D Texture0; //AlbedoOpacity
-layout(binding = 1) uniform sampler2D Texture1; //Normal
-layout(binding = 2) uniform sampler2D Texture2; //PBR: Roughness, Metallic, Specular, Index of refraction
-layout(binding = 3) uniform sampler2D Texture3; //SSAO Intensity
-layout(binding = 4) uniform sampler2D Texture4; //Depth
-layout(binding = 5) uniform sampler2D Texture5; //Diffuse Light Color
+layout(binding = 0) uniform sampler2D AlbedoOpacity;
+layout(binding = 1) uniform sampler2D Normal;
+layout(binding = 2) uniform sampler2D RMSE;
+layout(binding = 3) uniform sampler2D SSAOIntensityTexture;
+layout(binding = 4) uniform sampler2D DepthView; //Depth
+layout(binding = 5) uniform sampler2D LightingTexture;
 
 layout(binding = 6) uniform sampler2D BRDF;
 
@@ -336,12 +337,12 @@ void main()
 	//Normalize uv from [-1, 1] to [0, 1]
 	uv = uv * 0.5f + 0.5f;
 
-	vec3 albedoColor = texture(Texture0, uv).rgb;
-	vec3 normal = texture(Texture1, uv).rgb;
-	vec4 rmse = texture(Texture2, uv);
-	float ao = texture(Texture3, uv).r;
-	float depth = texture(Texture4, uv).r;
-	vec3 InLo = max(texture(Texture5, uv).rgb, vec3(0.0f));
+        vec3 albedoColor = texture(AlbedoOpacity, uv).rgb;
+        vec3 normal = texture(Normal, uv).rgb;
+        vec4 rmse = texture(RMSE, uv);
+        float ao = texture(SSAOIntensityTexture, uv).r;
+        float depth = texture(DepthView, uv).r;
+        vec3 InLo = max(texture(LightingTexture, uv).rgb, vec3(0.0f));
         vec3 fragPosWS = WorldPosFromDepth(depth, uv);
         //float fogDensity = noise3(fragPosWS);
 

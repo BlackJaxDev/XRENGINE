@@ -9,11 +9,11 @@ namespace XREngine.Data.Rendering
         public override FaceType Type => FaceType.Triangles;
 
         [YamlIgnore]
-        public int Point0 => _points[0];
+        public int Point0 => _points.TryGet(0, out int v) ? v : -1;
         [YamlIgnore]
-        public int Point1 => _points[1];
+        public int Point1 => _points.TryGet(1, out int v) ? v : -1;
         [YamlIgnore]
-        public int Point2 => _points[2];
+        public int Point2 => _points.TryGet(2, out int v) ? v : -1;
 
         public IndexTriangle() { }
         /// <summary>

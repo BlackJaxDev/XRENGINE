@@ -8,7 +8,12 @@ namespace XREngine.Rendering;
 public partial class DefaultRenderPipeline
 {
     private XRTexture CreateBRDFTexture()
-        => PrecomputeBRDF();
+    {
+        var tex = PrecomputeBRDF();
+        tex.Name ??= BRDFTextureName;
+        tex.SamplerName ??= BRDFTextureName;
+        return tex;
+    }
 
     private XRTexture CreateDepthStencilTexture()
     {
@@ -27,6 +32,7 @@ public partial class DefaultRenderPipeline
             t.MinFilter = ETexMinFilter.Nearest;
             t.MagFilter = ETexMagFilter.Nearest;
             t.Name = DepthStencilTextureName;
+            t.SamplerName = DepthStencilTextureName;
             return t;
         }
         else
@@ -41,6 +47,7 @@ public partial class DefaultRenderPipeline
             t.MinFilter = ETexMinFilter.Nearest;
             t.MagFilter = ETexMagFilter.Nearest;
             t.Name = DepthStencilTextureName;
+            t.SamplerName = DepthStencilTextureName;
             return t;
         }
     }
@@ -89,6 +96,7 @@ public partial class DefaultRenderPipeline
             {
                 DepthStencilViewFormat = EDepthStencilFmt.Stencil,
                 Name = StencilViewTextureName,
+                SamplerName = StencilViewTextureName,
             };
         }
         else
@@ -101,6 +109,7 @@ public partial class DefaultRenderPipeline
             {
                 DepthStencilViewFormat = EDepthStencilFmt.Stencil,
                 Name = StencilViewTextureName,
+                SamplerName = StencilViewTextureName,
             };
         }
     }
@@ -122,6 +131,7 @@ public partial class DefaultRenderPipeline
             t.MinFilter = ETexMinFilter.Nearest;
             t.MagFilter = ETexMagFilter.Nearest;
             t.Name = HistoryDepthStencilTextureName;
+            t.SamplerName = HistoryDepthStencilTextureName;
             return t;
         }
         else
@@ -137,6 +147,7 @@ public partial class DefaultRenderPipeline
             t.MinFilter = ETexMinFilter.Nearest;
             t.MagFilter = ETexMagFilter.Nearest;
             t.Name = HistoryDepthStencilTextureName;
+            t.SamplerName = HistoryDepthStencilTextureName;
             return t;
         }
     }
@@ -188,6 +199,7 @@ public partial class DefaultRenderPipeline
             t.MinFilter = ETexMinFilter.Nearest;
             t.MagFilter = ETexMagFilter.Nearest;
             t.Name = AlbedoOpacityTextureName;
+            t.SamplerName = AlbedoOpacityTextureName;
             return t;
         }
         else
@@ -200,6 +212,7 @@ public partial class DefaultRenderPipeline
             t.MinFilter = ETexMinFilter.Nearest;
             t.MagFilter = ETexMagFilter.Nearest;
             t.Name = AlbedoOpacityTextureName;
+            t.SamplerName = AlbedoOpacityTextureName;
             return t;
         }
     }
@@ -220,6 +233,7 @@ public partial class DefaultRenderPipeline
             t.MinFilter = ETexMinFilter.Nearest;
             t.MagFilter = ETexMagFilter.Nearest;
             t.Name = NormalTextureName;
+            t.SamplerName = NormalTextureName;
             return t;
         }
         else
@@ -232,6 +246,7 @@ public partial class DefaultRenderPipeline
             t.MinFilter = ETexMinFilter.Nearest;
             t.MagFilter = ETexMagFilter.Nearest;
             t.Name = NormalTextureName;
+            t.SamplerName = NormalTextureName;
             return t;
         }
     }
@@ -249,6 +264,8 @@ public partial class DefaultRenderPipeline
             t.Resizable = false;
             t.SizedInternalFormat = ESizedInternalFormat.Rgba8;
             t.OVRMultiViewParameters = new(0, 2u);
+            t.Name = RMSETextureName;
+            t.SamplerName = RMSETextureName;
             return t;
         }
         else
@@ -258,6 +275,8 @@ public partial class DefaultRenderPipeline
                 EPixelInternalFormat.Rgba8,
                 EPixelFormat.Rgba,
                 EPixelType.UnsignedByte);
+            t.Name = RMSETextureName;
+            t.SamplerName = RMSETextureName;
             return t;
         }
     }
@@ -275,6 +294,8 @@ public partial class DefaultRenderPipeline
             t.OVRMultiViewParameters = new(0, 2u);
             t.Resizable = false;
             t.SizedInternalFormat = ESizedInternalFormat.Rgb16f;
+            t.Name = DiffuseTextureName;
+            t.SamplerName = DiffuseTextureName;
             return t;
         }
         else
@@ -284,6 +305,8 @@ public partial class DefaultRenderPipeline
                 EPixelInternalFormat.Rgb16f,
                 EPixelFormat.Rgb,
                 EPixelType.HalfFloat);
+            t.Name = DiffuseTextureName;
+            t.SamplerName = DiffuseTextureName;
             return t;
         }
     }
@@ -544,7 +567,7 @@ public partial class DefaultRenderPipeline
             t.SizedInternalFormat = ESizedInternalFormat.Rgba16f;
             t.MinFilter = ETexMinFilter.Nearest;
             t.MagFilter = ETexMagFilter.Nearest;
-            t.SamplerName = "Texture0";
+            t.SamplerName = RestirGITextureName;
             t.Name = RestirGITextureName;
             return t;
         }
@@ -557,7 +580,7 @@ public partial class DefaultRenderPipeline
                 EPixelType.HalfFloat);
             t.MinFilter = ETexMinFilter.Nearest;
             t.MagFilter = ETexMagFilter.Nearest;
-            t.SamplerName = "Texture0";
+            t.SamplerName = RestirGITextureName;
             t.Name = RestirGITextureName;
             return t;
         }
@@ -572,6 +595,7 @@ public partial class DefaultRenderPipeline
         texture.VWrap = ETexWrapMode.ClampToEdge;
         texture.WWrap = ETexWrapMode.ClampToEdge;
         texture.AutoGenerateMipmaps = true;
+        texture.SamplerName = VoxelConeTracingVolumeTextureName;
         texture.Name = VoxelConeTracingVolumeTextureName;
         return texture;
     }
@@ -673,6 +697,33 @@ public partial class DefaultRenderPipeline
         texture.VWrap = ETexWrapMode.ClampToEdge;
         texture.SamplerName = PostProcessOutputTextureName;
         texture.Name = PostProcessOutputTextureName;
+        return texture;
+    }
+
+    private XRTexture CreateFxaaOutputTexture()
+    {
+        var (width, height) = GetDesiredFBOSizeFull();
+        bool outputHdr = Engine.Rendering.Settings.OutputHDR;
+
+        EPixelInternalFormat internalFormat = outputHdr ? EPixelInternalFormat.Rgba16f : EPixelInternalFormat.Rgba8;
+        EPixelType pixelType = outputHdr ? EPixelType.HalfFloat : EPixelType.UnsignedByte;
+        ESizedInternalFormat sized = outputHdr ? ESizedInternalFormat.Rgba16f : ESizedInternalFormat.Rgba8;
+
+        XRTexture2D texture = XRTexture2D.CreateFrameBufferTexture(
+            width,
+            height,
+            internalFormat,
+            EPixelFormat.Rgba,
+            pixelType,
+            EFrameBufferAttachment.ColorAttachment0);
+        texture.Resizable = true;
+        texture.SizedInternalFormat = sized;
+        texture.MinFilter = ETexMinFilter.Linear;
+        texture.MagFilter = ETexMagFilter.Linear;
+        texture.UWrap = ETexWrapMode.ClampToEdge;
+        texture.VWrap = ETexWrapMode.ClampToEdge;
+        texture.SamplerName = FxaaOutputTextureName;
+        texture.Name = FxaaOutputTextureName;
         return texture;
     }
 }

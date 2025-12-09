@@ -14,12 +14,16 @@ layout(std430, binding = 1) buffer BoneInvBindMatricesBuffer
 
 layout(std430, binding = 2) buffer BoneIndicesOrOffsetsBuffer
 {
-    uvec4 BoneIndicesOrOffsets[];
+    // When optimized4=1: stores 4 bone indices per vertex (stride 16 bytes)
+    // When optimized4=0: stores 1 offset per vertex (stride 4 bytes)
+    uint BoneIndicesOrOffsetsRaw[];
 };
 
 layout(std430, binding = 3) buffer BoneWeightsOrCountsBuffer
 {
-    uvec4 BoneWeightsOrCounts[];
+    // When optimized4=1: stores 4 bone weights per vertex (stride 16 bytes)  
+    // When optimized4=0: stores 1 count per vertex (stride 4 bytes)
+    uint BoneWeightsOrCountsRaw[];
 };
 
 layout(std430, binding = 4) buffer BlendshapeCountsBuffer
@@ -42,21 +46,44 @@ layout(std430, binding = 7) buffer BlendshapeWeightsBuffer
     float BlendshapeWeights[];
 };
 
-layout(std430, binding = 8) buffer PositionsBuffer
+// Input buffers (read-only, original mesh data)
+layout(std430, binding = 8) readonly buffer PositionsInBuffer
 {
-    vec4 Positions[];
+    // Source positions are tightly packed vec3 (12 byte stride), so read as floats to avoid std430 vec4 padding.
+    float PositionsIn[];
 };
 
-layout(std430, binding = 9) buffer NormalsBuffer
+layout(std430, binding = 9) readonly buffer NormalsInBuffer
 {
-    vec4 Normals[];
+    // Normals are stored as vec3 per vertex (12 byte stride).
+    float NormalsIn[];
 };
 
-layout(std430, binding = 10) buffer TangentsBuffer
+layout(std430, binding = 10) readonly buffer TangentsInBuffer
 {
-    vec4 Tangents[];
+    // Tangents are stored as vec3 per vertex (12 byte stride).
+    float TangentsIn[];
 };
 
+// Output buffers (write-only, skinned results)
+// These reuse bindings 11-13 which don't conflict with bone index/weight lists
+// since those are only used for variable weight skinning path
+layout(std430, binding = 11) writeonly buffer PositionsOutBuffer
+{
+    vec4 PositionsOut[];
+};
+
+layout(std430, binding = 12) writeonly buffer NormalsOutBuffer
+{
+    vec4 NormalsOut[];
+};
+
+layout(std430, binding = 15) writeonly buffer TangentsOutBuffer
+{
+    vec4 TangentsOut[];
+};
+
+// Variable weight skinning buffers (only used when optimized4 == 0)
 layout(std430, binding = 13) buffer BoneIndexListBuffer
 {
     uvec4 BoneIndexList[];
@@ -67,10 +94,8 @@ layout(std430, binding = 14) buffer BoneWeightListBuffer
     vec4 BoneWeightList[];
 };
 
-layout(std430, binding = 15) buffer InterleavedBuffer
-{
-    uint Interleaved[];
-};
+// Note: Interleaved vertex buffer support has been removed to stay within 
+// the 16 SSBO binding limit. Compute skinning only works with non-interleaved meshes.
 
 uniform uint vertexCount;
 uniform int hasSkinning;
@@ -82,11 +107,6 @@ uniform int absoluteBlendshapePositions;
 uniform int maxBlendshapeAccumulation;
 uniform int useIntegerUniforms;
 uniform int optimized4;
-uniform int interleaved;
-uniform uint interleavedStride;
-uniform uint positionOffsetBytes;
-uniform uint normalOffsetBytes;
-uniform uint tangentOffsetBytes;
 
 const float MIN_BLEND_WEIGHT = 0.0001f;
 
@@ -114,6 +134,24 @@ ivec4 decodeBlendshapeIndices(uvec4 raw)
         round(uintBitsToFloat(raw.y)),
         round(uintBitsToFloat(raw.z)),
         round(uintBitsToFloat(raw.w)));
+}
+
+vec3 loadPosition(uint vertexIndex)
+{
+    uint base = vertexIndex * 3u;
+    return vec3(PositionsIn[base + 0u], PositionsIn[base + 1u], PositionsIn[base + 2u]);
+}
+
+vec3 loadNormal(uint vertexIndex)
+{
+    uint base = vertexIndex * 3u;
+    return vec3(NormalsIn[base + 0u], NormalsIn[base + 1u], NormalsIn[base + 2u]);
+}
+
+vec3 loadTangent(uint vertexIndex)
+{
+    uint base = vertexIndex * 3u;
+    return vec3(TangentsIn[base + 0u], TangentsIn[base + 1u], TangentsIn[base + 2u]);
 }
 
 void applyBlendshapes(inout vec3 position, inout vec3 normal, inout vec3 tangent, uint vertexIndex)
@@ -183,10 +221,42 @@ uint loadIndexValue(uint raw)
     return useIntegerUniforms != 0 ? raw : uint(round(uintBitsToFloat(raw)));
 }
 
+// Matches vertex shader adjoint() - computes cofactor matrix for normal transformation
+mat3 adjoint(mat4 m)
+{
+    return mat3(
+        cross(m[1].xyz, m[2].xyz),
+        cross(m[2].xyz, m[0].xyz),
+        cross(m[0].xyz, m[1].xyz)
+    );
+}
+
 void applySkinningOptimized4(inout vec3 position, inout vec3 normal, inout vec3 tangent, uint vertexIndex)
 {
-    uvec4 indices = BoneIndicesOrOffsets[vertexIndex];
-    vec4 weightsRaw = uintBitsToFloat(BoneWeightsOrCounts[vertexIndex]);
+    // When optimized4=1, data is laid out as uvec4 per vertex (16 bytes stride)
+    uint base = vertexIndex * 4u;
+    uvec4 indices = uvec4(
+        BoneIndicesOrOffsetsRaw[base + 0u],
+        BoneIndicesOrOffsetsRaw[base + 1u],
+        BoneIndicesOrOffsetsRaw[base + 2u],
+        BoneIndicesOrOffsetsRaw[base + 3u]);
+    vec4 weightsRaw = vec4(
+        uintBitsToFloat(BoneWeightsOrCountsRaw[base + 0u]),
+        uintBitsToFloat(BoneWeightsOrCountsRaw[base + 1u]),
+        uintBitsToFloat(BoneWeightsOrCountsRaw[base + 2u]),
+        uintBitsToFloat(BoneWeightsOrCountsRaw[base + 3u]));
+
+    // Preserve the source vertex attributes for each bone contribution
+    vec3 basePosition = position;
+    vec3 baseNormal = normal;
+    vec3 baseTangent = tangent;
+
+    vec3 skinnedPos = vec3(0.0);
+    vec3 skinnedNormal = vec3(0.0);
+    vec3 skinnedTangent = vec3(0.0);
+    float totalWeight = 0.0f;
+
+    uint boneCount = BoneMatrices.length();
 
     for (int i = 0; i < 4; ++i)
     {
@@ -195,31 +265,62 @@ void applySkinningOptimized4(inout vec3 position, inout vec3 normal, inout vec3 
         if (boneIndex <= 0 || weight <= 0.0f)
             continue;
 
-        mat4 boneMatrix = BoneInvBindMatrices[boneIndex] * BoneMatrices[boneIndex];
-        vec4 skinnedPos = boneMatrix * vec4(position, 1.0f);
-        position += skinnedPos.xyz * weight;
+        // Drop invalid indices instead of indexing past the buffer and crashing
+        if (uint(boneIndex) >= boneCount)
+            continue;
 
+        mat4 boneMatrix = BoneInvBindMatrices[boneIndex] * BoneMatrices[boneIndex];
+        vec4 p = boneMatrix * vec4(basePosition, 1.0f);
+        skinnedPos += p.xyz * weight;
+        totalWeight += weight;
+
+        // Use adjoint for normal transformation - matches vertex shader and is much faster
+        mat3 boneMatrix3 = adjoint(boneMatrix);
         if (hasNormals != 0)
-        {
-            mat3 boneMatrix3 = transpose(inverse(mat3(boneMatrix)));
-            normal += (boneMatrix3 * normal) * weight;
-        }
+            skinnedNormal += (boneMatrix3 * baseNormal) * weight;
         if (hasTangents != 0)
-        {
-            mat3 boneMatrix3 = transpose(inverse(mat3(boneMatrix)));
-            tangent += (boneMatrix3 * tangent) * weight;
-        }
+            skinnedTangent += (boneMatrix3 * baseTangent) * weight;
     }
+
+    // If no bones contributed, preserve original position (vertex has no skinning)
+    if (totalWeight <= 0.0001f)
+        return;
+
+    position = skinnedPos;
+    if (hasNormals != 0)
+        normal = skinnedNormal;
+    if (hasTangents != 0)
+        tangent = skinnedTangent;
 }
 
 void applySkinningVariable(inout vec3 position, inout vec3 normal, inout vec3 tangent, uint vertexIndex)
 {
-    uint offset = loadIndexValue(BoneIndicesOrOffsets[vertexIndex].x);
-    uint count = loadIndexValue(BoneWeightsOrCounts[vertexIndex].x);
+    // When optimized4=0, offset and count are single values per vertex (4 bytes stride)
+    uint offset = loadIndexValue(BoneIndicesOrOffsetsRaw[vertexIndex]);
+    uint count = loadIndexValue(BoneWeightsOrCountsRaw[vertexIndex]);
     if (count == 0u)
         return;
 
-    for (uint i = 0u; i < count; ++i)
+    vec3 basePosition = position;
+    vec3 baseNormal = normal;
+    vec3 baseTangent = tangent;
+
+    vec3 skinnedPos = vec3(0.0);
+    vec3 skinnedNormal = vec3(0.0);
+    vec3 skinnedTangent = vec3(0.0);
+    float totalWeight = 0.0f;
+
+    uint boneCount = BoneMatrices.length();
+
+    uint indexListSize = BoneIndexList.length();
+    uint weightListSize = BoneWeightList.length();
+    if (offset >= indexListSize || offset >= weightListSize)
+        return;
+
+    uint maxAvailable = min(indexListSize - offset, weightListSize - offset);
+    uint safeCount = min(count, maxAvailable);
+
+    for (uint i = 0u; i < safeCount; ++i)
     {
         uint listIndex = offset + i;
         uint rawIndex = BoneIndexList[listIndex].x;
@@ -228,21 +329,31 @@ void applySkinningVariable(inout vec3 position, inout vec3 normal, inout vec3 ta
         if (boneIndex <= 0 || weight <= 0.0f)
             continue;
 
-        mat4 boneMatrix = BoneInvBindMatrices[boneIndex] * BoneMatrices[boneIndex];
-        vec4 skinnedPos = boneMatrix * vec4(position, 1.0f);
-        position += skinnedPos.xyz * weight;
+        if (uint(boneIndex) >= boneCount)
+            continue;
 
+        mat4 boneMatrix = BoneInvBindMatrices[boneIndex] * BoneMatrices[boneIndex];
+        vec4 p = boneMatrix * vec4(basePosition, 1.0f);
+        skinnedPos += p.xyz * weight;
+        totalWeight += weight;
+
+        // Use adjoint for normal transformation - matches vertex shader and is much faster
+        mat3 boneMatrix3 = adjoint(boneMatrix);
         if (hasNormals != 0)
-        {
-            mat3 boneMatrix3 = transpose(inverse(mat3(boneMatrix)));
-            normal += (boneMatrix3 * normal) * weight;
-        }
+            skinnedNormal += (boneMatrix3 * baseNormal) * weight;
         if (hasTangents != 0)
-        {
-            mat3 boneMatrix3 = transpose(inverse(mat3(boneMatrix)));
-            tangent += (boneMatrix3 * tangent) * weight;
-        }
+            skinnedTangent += (boneMatrix3 * baseTangent) * weight;
     }
+
+    // If no bones contributed, preserve original position (vertex has no skinning)
+    if (totalWeight <= 0.0001f)
+        return;
+
+    position = skinnedPos;
+    if (hasNormals != 0)
+        normal = skinnedNormal;
+    if (hasTangents != 0)
+        tangent = skinnedTangent;
 }
 
 void applySkinning(inout vec3 position, inout vec3 normal, inout vec3 tangent, uint vertexIndex)
@@ -256,61 +367,26 @@ void applySkinning(inout vec3 position, inout vec3 normal, inout vec3 tangent, u
         applySkinningVariable(position, normal, tangent, vertexIndex);
 }
 
-float loadInterleavedFloat(uint byteOffset)
-{
-    return uintBitsToFloat(Interleaved[byteOffset >> 2]);
-}
-
-void storeInterleavedFloat(uint byteOffset, float value)
-{
-    Interleaved[byteOffset >> 2] = floatBitsToUint(value);
-}
-
-vec3 loadInterleavedVec3(uint baseByte)
-{
-    return vec3(
-        loadInterleavedFloat(baseByte + 0u),
-        loadInterleavedFloat(baseByte + 4u),
-        loadInterleavedFloat(baseByte + 8u));
-}
-
-void storeInterleavedVec3(uint baseByte, vec3 value)
-{
-    storeInterleavedFloat(baseByte + 0u, value.x);
-    storeInterleavedFloat(baseByte + 4u, value.y);
-    storeInterleavedFloat(baseByte + 8u, value.z);
-}
-
 void main()
 {
     uint idx = gl_GlobalInvocationID.x;
     if (idx >= vertexCount)
         return;
 
-    bool useInterleaved = interleaved != 0;
-    uint baseByte = idx * interleavedStride;
+    // Note: Interleaved vertex buffer support has been removed to stay within
+    // the 16 SSBO binding limit. Compute skinning only works with non-interleaved meshes.
+    // If interleaved mode is requested, this shader will not produce correct results.
 
-    vec3 basePosition = useInterleaved ? loadInterleavedVec3(baseByte + positionOffsetBytes) : Positions[idx].xyz;
-    vec3 baseNormal = (hasNormals != 0) ? (useInterleaved ? loadInterleavedVec3(baseByte + normalOffsetBytes) : Normals[idx].xyz) : vec3(0.0);
-    vec3 baseTangent = (hasTangents != 0) ? (useInterleaved ? loadInterleavedVec3(baseByte + tangentOffsetBytes) : Tangents[idx].xyz) : vec3(0.0);
+    vec3 basePosition = loadPosition(idx);
+    vec3 baseNormal = (hasNormals != 0) ? loadNormal(idx) : vec3(0.0);
+    vec3 baseTangent = (hasTangents != 0) ? loadTangent(idx) : vec3(0.0);
 
     applyBlendshapes(basePosition, baseNormal, baseTangent, idx);
     applySkinning(basePosition, baseNormal, baseTangent, idx);
 
-    if (useInterleaved)
-    {
-        storeInterleavedVec3(baseByte + positionOffsetBytes, basePosition);
-        if (hasNormals != 0)
-            storeInterleavedVec3(baseByte + normalOffsetBytes, normalize(baseNormal));
-        if (hasTangents != 0)
-            storeInterleavedVec3(baseByte + tangentOffsetBytes, normalize(baseTangent));
-    }
-    else
-    {
-        Positions[idx].xyz = basePosition;
-        if (hasNormals != 0)
-            Normals[idx].xyz = normalize(baseNormal);
-        if (hasTangents != 0)
-            Tangents[idx].xyz = normalize(baseTangent);
-    }
+    PositionsOut[idx].xyz = basePosition;
+    if (hasNormals != 0)
+        NormalsOut[idx].xyz = normalize(baseNormal);
+    if (hasTangents != 0)
+        TangentsOut[idx].xyz = normalize(baseTangent);
 }

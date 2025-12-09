@@ -79,6 +79,7 @@ public partial class DefaultRenderPipeline
     private XRFrameBuffer CreateFxaaFBO()
     {
         XRTexture fxaaSource = GetTexture<XRTexture>(PostProcessOutputTextureName)!;
+        XRTexture fxaaOutput = GetTexture<XRTexture>(FxaaOutputTextureName)!;
         XRShader fxaaShader = XRShader.EngineShader(Path.Combine(SceneShaderPath, "FXAA.fs"), EShaderType.Fragment);
         XRMaterial fxaaMaterial = new([fxaaSource], fxaaShader)
         {
@@ -96,6 +97,10 @@ public partial class DefaultRenderPipeline
         {
             Name = FxaaFBOName
         };
+        if (fxaaOutput is not IFrameBufferAttachement fxaaAttach)
+            throw new InvalidOperationException("FXAA output texture is not an FBO-attachable texture.");
+
+        fxaaFbo.SetRenderTargets((fxaaAttach, EFrameBufferAttachment.ColorAttachment0, 0, -1));
         fxaaFbo.SettingUniforms += FxaaFBO_SettingUniforms;
         return fxaaFbo;
     }
@@ -441,7 +446,7 @@ public partial class DefaultRenderPipeline
             GetTexture<XRTexture>(AmbientOcclusionIntensityTextureName)!,
             GetTexture<XRTexture>(DepthViewTextureName)!,
             diffuseTexture,
-            GetTexture<XRTexture2D>(BRDFTextureName)!,
+            GetTexture<XRTexture>(BRDFTextureName)!,
         ];
         XRShader lightCombineShader = XRShader.EngineShader(Path.Combine(SceneShaderPath, DeferredLightCombineShaderName()), EShaderType.Fragment);
         XRMaterial lightCombineMat = new(lightCombineTextures, lightCombineShader)

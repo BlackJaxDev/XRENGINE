@@ -206,6 +206,7 @@ namespace XREngine.Rendering.Pipelines.Commands
                 t.SizedInternalFormat = ESizedInternalFormat.R16f;
                 t.OVRMultiViewParameters = new(0, 2u);
                 t.Name = IntensityTextureName;
+                t.SamplerName = IntensityTextureName;
                 t.MinFilter = ETexMinFilter.Nearest;
                 t.MagFilter = ETexMagFilter.Nearest;
                 t.UWrap = ETexWrapMode.ClampToEdge;
@@ -222,6 +223,7 @@ namespace XREngine.Rendering.Pipelines.Commands
                     EPixelType.HalfFloat,
                     EFrameBufferAttachment.ColorAttachment0);
                 t.Name = IntensityTextureName;
+                    t.SamplerName = IntensityTextureName;
                 t.MinFilter = ETexMinFilter.Nearest;
                 t.MagFilter = ETexMagFilter.Nearest;
                 t.UWrap = ETexWrapMode.ClampToEdge;
@@ -293,8 +295,14 @@ namespace XREngine.Rendering.Pipelines.Commands
             };
             mvaoBlurFbo.SettingUniforms += MVAOBlur_SetUniforms;
 
+            XRFrameBuffer outputFbo = new((aoAttach, EFrameBufferAttachment.ColorAttachment0, 0, -1))
+            {
+                Name = OutputFBOName
+            };
+
             instance.SetFBO(mvaoGenFbo);
             instance.SetFBO(mvaoBlurFbo);
+            instance.SetFBO(outputFbo);
             Log("Registered AO FBOs (gen/blur/output)");
         }
 
@@ -378,6 +386,7 @@ namespace XREngine.Rendering.Pipelines.Commands
             XRTexture2D noiseTexture = new()
             {
                 Name = NoiseTextureName,
+                SamplerName = NoiseTextureName,
                 MinFilter = ETexMinFilter.Nearest,
                 MagFilter = ETexMagFilter.Nearest,
                 UWrap = ETexWrapMode.Repeat,

@@ -314,6 +314,9 @@ namespace XREngine.Rendering.OpenGL
                     BindSSBOs(mat!);
                     BindSSBOs(vtx!);
 
+                    // Bind skinned vertex buffers from compute pre-pass (if available)
+                    BindSkinnedVertexBuffers(vtx!);
+
                     MeshRenderer.PushBoneMatricesToGPU();
                     MeshRenderer.PushBlendshapeWeightsToGPU();
 
@@ -328,6 +331,133 @@ namespace XREngine.Rendering.OpenGL
                     Dbg("GetPrograms failed - render skipped","Render");
                     //Debug.LogWarning("Failed to get programs for mesh renderer.");
                 }
+            }
+
+            /// <summary>
+            /// Binds the skinned vertex buffers from compute pre-pass to the VAO,
+            /// overriding the original mesh buffers for position, normal, and tangent.
+            /// Supports both interleaved and non-interleaved output buffers.
+            /// </summary>
+            private void BindSkinnedVertexBuffers(GLRenderProgram vertexProgram)
+            {
+                // Check for interleaved skinned buffer first
+                var skinnedInterleaved = MeshRenderer.SkinnedInterleavedBuffer;
+                if (skinnedInterleaved is not null)
+                {
+                    BindSkinnedInterleavedBuffer(vertexProgram, skinnedInterleaved);
+                    return;
+                }
+
+                // Otherwise try separate buffers
+                var skinnedPos = MeshRenderer.SkinnedPositionsBuffer;
+                var skinnedNorm = MeshRenderer.SkinnedNormalsBuffer;
+                var skinnedTan = MeshRenderer.SkinnedTangentsBuffer;
+
+                if (skinnedPos is null && skinnedNorm is null && skinnedTan is null)
+                    return;
+
+                uint vaoId = BindingId;
+
+                // Bind skinned position buffer to the Position attribute location
+                if (skinnedPos is not null)
+                {
+                    var glBuffer = Renderer.GenericToAPI<GLDataBuffer>(skinnedPos);
+                    if (glBuffer is not null)
+                    {
+                        glBuffer.Generate(); // Ensure GPU buffer exists
+                        uint bindingIndex = (uint)Api.GetAttribLocation(vertexProgram.BindingId, ECommonBufferType.Position.ToString());
+                        if (bindingIndex != uint.MaxValue)
+                        {
+                            // Bind the skinned positions buffer to this attribute's binding point
+                            // Note: stride is 16 bytes (vec4), offset is 0
+                            Api.VertexArrayVertexBuffer(vaoId, bindingIndex, glBuffer.BindingId, 0, (uint)(sizeof(float) * 4));
+                        }
+                    }
+                }
+
+                // Bind skinned normal buffer to the Normal attribute location
+                if (skinnedNorm is not null)
+                {
+                    var glBuffer = Renderer.GenericToAPI<GLDataBuffer>(skinnedNorm);
+                    if (glBuffer is not null)
+                    {
+                        glBuffer.Generate();
+                        uint bindingIndex = (uint)Api.GetAttribLocation(vertexProgram.BindingId, ECommonBufferType.Normal.ToString());
+                        if (bindingIndex != uint.MaxValue)
+                        {
+                            Api.VertexArrayVertexBuffer(vaoId, bindingIndex, glBuffer.BindingId, 0, (uint)(sizeof(float) * 4));
+                        }
+                    }
+                }
+
+                // Bind skinned tangent buffer to the Tangent attribute location
+                if (skinnedTan is not null)
+                {
+                    var glBuffer = Renderer.GenericToAPI<GLDataBuffer>(skinnedTan);
+                    if (glBuffer is not null)
+                    {
+                        glBuffer.Generate();
+                        uint bindingIndex = (uint)Api.GetAttribLocation(vertexProgram.BindingId, ECommonBufferType.Tangent.ToString());
+                        if (bindingIndex != uint.MaxValue)
+                        {
+                            Api.VertexArrayVertexBuffer(vaoId, bindingIndex, glBuffer.BindingId, 0, (uint)(sizeof(float) * 4));
+                        }
+                    }
+                }
+
+                Dbg("Bound skinned vertex buffers from compute pre-pass", "Buffers");
+            }
+
+            /// <summary>
+            /// Binds the skinned interleaved buffer from compute pre-pass to the VAO,
+            /// using the same stride and offsets as the original interleaved buffer.
+            /// </summary>
+            private void BindSkinnedInterleavedBuffer(GLRenderProgram vertexProgram, XRDataBuffer skinnedInterleavedBuffer)
+            {
+                var glBuffer = Renderer.GenericToAPI<GLDataBuffer>(skinnedInterleavedBuffer);
+                if (glBuffer is null)
+                    return;
+
+                glBuffer.Generate();
+
+                var mesh = MeshRenderer.Mesh;
+                if (mesh is null)
+                    return;
+
+                uint vaoId = BindingId;
+                uint stride = mesh.InterleavedStride;
+                uint bufferId = glBuffer.BindingId;
+
+                // Bind position attribute
+                {
+                    uint bindingIndex = (uint)Api.GetAttribLocation(vertexProgram.BindingId, ECommonBufferType.Position.ToString());
+                    if (bindingIndex != uint.MaxValue)
+                    {
+                        Api.VertexArrayVertexBuffer(vaoId, bindingIndex, bufferId, (int)mesh.PositionOffset, stride);
+                    }
+                }
+
+                // Bind normal attribute
+                if (mesh.HasNormals && mesh.NormalOffset.HasValue)
+                {
+                    uint bindingIndex = (uint)Api.GetAttribLocation(vertexProgram.BindingId, ECommonBufferType.Normal.ToString());
+                    if (bindingIndex != uint.MaxValue)
+                    {
+                        Api.VertexArrayVertexBuffer(vaoId, bindingIndex, bufferId, (int)mesh.NormalOffset.Value, stride);
+                    }
+                }
+
+                // Bind tangent attribute
+                if (mesh.HasTangents && mesh.TangentOffset.HasValue)
+                {
+                    uint bindingIndex = (uint)Api.GetAttribLocation(vertexProgram.BindingId, ECommonBufferType.Tangent.ToString());
+                    if (bindingIndex != uint.MaxValue)
+                    {
+                        Api.VertexArrayVertexBuffer(vaoId, bindingIndex, bufferId, (int)mesh.TangentOffset.Value, stride);
+                    }
+                }
+
+                Dbg("Bound skinned interleaved buffer from compute pre-pass", "Buffers");
             }
 
             private void BindSSBOs(GLRenderProgram program)
@@ -634,6 +764,8 @@ namespace XREngine.Rendering.OpenGL
 
             /// <summary>
             /// Collects the buffers from the mesh and the mesh renderer to bind them later.
+            /// Note: Skinned vertex buffers from compute pre-pass are bound dynamically in BindSkinnedVertexBuffers,
+            /// not stored in the buffer cache.
             /// </summary>
             private void CollectBuffers()
             {
@@ -643,12 +775,15 @@ namespace XREngine.Rendering.OpenGL
                 var meshBuffers = Mesh?.Buffers as IEventDictionary<string, XRDataBuffer>;
                 var rendBuffers = (IEventDictionary<string, XRDataBuffer>)MeshRenderer.Buffers;
 
+                // Add mesh buffers first
                 if (meshBuffers is not null)
                     foreach (var pair in meshBuffers)
-                        _bufferCache.Add(pair.Key, Renderer.GenericToAPI<GLDataBuffer>(pair.Value)!);
+                        _bufferCache[pair.Key] = Renderer.GenericToAPI<GLDataBuffer>(pair.Value)!;
 
+                // Override with renderer buffers (uses indexer to replace existing keys)
                 foreach (var pair in rendBuffers)
-                    _bufferCache.Add(pair.Key, Renderer.GenericToAPI<GLDataBuffer>(pair.Value)!);
+                    _bufferCache[pair.Key] = Renderer.GenericToAPI<GLDataBuffer>(pair.Value)!;
+
                 Dbg($"CollectBuffers end. Total={_bufferCache.Count}","Buffers");
 
                 //Data.Buffers.Added += Buffers_Added;
@@ -662,7 +797,7 @@ namespace XREngine.Rendering.OpenGL
 
             private void Buffers_Added(string key, XRDataBuffer value)
             {
-                _bufferCache.Add(key, Renderer.GenericToAPI<GLDataBuffer>(value)!);
+                _bufferCache[key] = Renderer.GenericToAPI<GLDataBuffer>(value)!;
             }
 
             private void CheckProgramLinked(object? s, IXRPropertyChangedEventArgs e)

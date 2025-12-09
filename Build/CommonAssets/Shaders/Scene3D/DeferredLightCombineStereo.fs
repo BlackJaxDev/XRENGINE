@@ -9,12 +9,12 @@ const float MAX_REFLECTION_LOD = 4.0f;
 layout(location = 0) out vec3 OutLo; //Diffuse Light Color, to start off the HDR Scene Texture
 layout(location = 0) in vec3 FragPos;
 
-layout(binding = 0) uniform sampler2DArray Texture0; //AlbedoOpacity
-layout(binding = 1) uniform sampler2DArray Texture1; //Normal
-layout(binding = 2) uniform sampler2DArray Texture2; //PBR: Roughness, Metallic, Specular, Index of refraction
-layout(binding = 3) uniform sampler2DArray Texture3; //SSAO Intensity
-layout(binding = 4) uniform sampler2DArray Texture4; //Depth
-layout(binding = 5) uniform sampler2DArray Texture5; //Diffuse Light Color
+layout(binding = 0) uniform sampler2DArray AlbedoOpacity;
+layout(binding = 1) uniform sampler2DArray Normal;
+layout(binding = 2) uniform sampler2DArray RMSE;
+layout(binding = 3) uniform sampler2DArray SSAOIntensityTexture;
+layout(binding = 4) uniform sampler2DArray DepthView;
+layout(binding = 5) uniform sampler2DArray LightingTexture;
 
 layout(binding = 6) uniform sampler2D BRDF;
 
@@ -87,12 +87,12 @@ void main()
 	mat4 InverseViewMatrix = leftEye ? LeftEyeInverseViewMatrix : RightEyeInverseViewMatrix;
 	mat4 ProjMatrix = leftEye ? LeftEyeProjMatrix : RightEyeProjMatrix;
 
-	vec3 albedoColor = texture(Texture0, uvi).rgb;
-	vec3 normal = texture(Texture1, uvi).rgb;
-	vec3 rms = texture(Texture2, uvi).rgb;
-	float ao = texture(Texture3, uvi).r;
-	float depth = texture(Texture4, uvi).r;
-	vec3 InLo = texture(Texture5, uvi).rgb;
+	vec3 albedoColor = texture(AlbedoOpacity, uvi).rgb;
+	vec3 normal = texture(Normal, uvi).rgb;
+	vec3 rms = texture(RMSE, uvi).rgb;
+	float ao = texture(SSAOIntensityTexture, uvi).r;
+	float depth = texture(DepthView, uvi).r;
+	vec3 InLo = texture(LightingTexture, uvi).rgb;
 	vec3 irradianceColor = SampleOcta(Irradiance, normal);
 	vec3 fragPosWS = WorldPosFromDepth(depth, uv, InverseViewMatrix, ProjMatrix);
 	//float fogDensity = noise3(fragPosWS);

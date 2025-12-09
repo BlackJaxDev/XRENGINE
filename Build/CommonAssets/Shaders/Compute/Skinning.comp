@@ -75,10 +75,16 @@ void main()
     vec3 finalNormal = vec3(0.0);
     vec3 finalTangent = vec3(0.0);
 
+    uint boneCount = BoneMatrices.length();
+
     for (int i = 0; i < 4; i++)
     {
         int boneIndex = BoneMatrixIndices[index * 4 + i];
         float weight = BoneMatrixWeights[index * 4 + i];
+
+        if (boneIndex < 0 || uint(boneIndex) >= boneCount || weight <= 0.0)
+            continue;
+
         mat4 boneMatrix = BoneInvBindMatrices[boneIndex] * BoneMatrices[boneIndex] * RootInvModelMatrix;
 
         finalPosition += (boneMatrix * basePosition) * weight;

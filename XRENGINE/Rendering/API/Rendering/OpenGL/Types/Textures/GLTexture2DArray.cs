@@ -311,6 +311,18 @@ namespace XREngine.Rendering.OpenGL
 
                     uint srcId = glSourceTex.BindingId;
 
+                    if (!Api.IsTexture(srcId))
+                    {
+                        Debug.LogWarning($"Skipping copy into texture array layer {layer} because source texture id {srcId} is not valid.");
+                        continue;
+                    }
+
+                    if (!Api.IsTexture(BindingId))
+                    {
+                        Debug.LogWarning($"Skipping copy into texture array because destination texture id {BindingId} is not valid.");
+                        break;
+                    }
+
                             if (tex.SizedInternalFormat != Data.SizedInternalFormat)
                             {
                                 Debug.LogWarning($"Skipping copy into texture array layer {layer} because source internal format {tex.SizedInternalFormat} != target {Data.SizedInternalFormat}.");

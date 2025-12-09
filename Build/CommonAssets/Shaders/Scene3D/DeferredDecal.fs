@@ -1,13 +1,13 @@
 #version 450
 
-layout (location = 0) out vec4 AlbedoOpacity;
-layout (location = 1) out vec3 Normal;
-layout (location = 2) out vec4 RMSI;
+layout (location = 0) out vec4 OutAlbedoOpacity;
+layout (location = 1) out vec3 OutNormal;
+layout (location = 2) out vec4 OutRMSI;
 
-uniform sampler2D Texture0; //Screen AlbedoOpacity
-uniform sampler2D Texture1; //Screen Normal
-uniform sampler2D Texture2; //Screen RMSI
-uniform sampler2D Texture3; //Screen Depth
+uniform sampler2D AlbedoOpacity; //Screen AlbedoOpacity
+uniform sampler2D Normal; //Screen Normal
+uniform sampler2D RMSE; //Screen RMSI
+uniform sampler2D DepthView; //Screen Depth
 uniform sampler2D Texture4; //Decal AlbedoOpacity
 //uniform sampler2D Texture5; //Decal Normal
 //uniform sampler2D Texture6; //Decal Roughness / Metallic
@@ -32,10 +32,10 @@ void main()
 	vec2 uv = gl_FragCoord.xy / vec2(ScreenWidth, ScreenHeight);
 
 	//Retrieve shading information from GBuffer textures
-	vec4 albedo = texture(Texture0, uv);
-	vec3 normal = texture(Texture1, uv).rgb;
-	vec4 rmsi = texture(Texture2, uv);
-	float depth = texture(Texture3, uv).r;
+	vec4 albedo = texture(AlbedoOpacity, uv);
+	vec3 normal = texture(Normal, uv).rgb;
+	vec4 rmsi = texture(RMSE, uv);
+	float depth = texture(DepthView, uv).r;
 
 	//Resolve world fragment position using depth and screen UV
 	vec3 fragPosWS = WorldPosFromDepth(depth, uv);
@@ -68,7 +68,7 @@ void main()
 	//decalNormal = mix(normal, decalNormal, decalAlbedo.a);
 	//decalRMSI = mix(rmsi, decalRMSI, decalAlbedo.a);
 
-	AlbedoOpacity = vec4(decalAlbedoOpacity.rgb, albedo.a);
-  	Normal = normal;
-	RMSI = rmsi;
+	OutAlbedoOpacity = vec4(decalAlbedoOpacity.rgb, albedo.a);
+  	OutNormal = normal;
+	OutRMSI = rmsi;
 }

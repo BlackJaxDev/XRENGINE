@@ -166,6 +166,7 @@ namespace XREngine.Actors.Types
             rootBillboardTfm.Perspective = true;
             rootBillboardTfm.ScaleByDistance = true;
             rootBillboardTfm.DistanceScale = ToolScale;
+            rootBillboardTfm.ScaleByVerticalFov = true;
 
             ModelComponent translationModelComp = skelRoot.AddComponent<ModelComponent>("Translation Model")!;
             translationModelComp.Model = new Model(translationMeshes);

@@ -6,9 +6,9 @@ layout(location = 0) out vec4 OutColor;
 layout(location = 0) in vec3 FragPos;
 
 uniform sampler2DArray HDRSceneTex; //HDR scene color
-uniform sampler2DArray Texture1; //Bloom
-uniform sampler2DArray Texture2; //Depth
-uniform usampler2DArray Texture3; //Stencil
+uniform sampler2DArray BloomBlurTexture; //Bloom
+uniform sampler2DArray DepthView; //Depth
+uniform usampler2DArray StencilView; //Stencil
 
 uniform float ChromaticAberrationIntensity;
 
@@ -119,7 +119,7 @@ void main()
     // Starts at 1/2 size lod because original image is not blurred (and doesn't need to be)
         for (float lod = 1.0; lod < 5.0; lod += 1.0)
         {
-            vec3 bloomSample = textureLod(Texture1, vec3(duv, gl_ViewID_OVR), lod).rgb;
+            vec3 bloomSample = textureLod(BloomBlurTexture, vec3(duv, gl_ViewID_OVR), lod).rgb;
             hdrSceneColor += bloomSample;
         }
 

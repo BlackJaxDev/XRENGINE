@@ -8,9 +8,9 @@ const float PI = 3.14159265359f;
 layout(location = 0) out float OutIntensity;
 layout(location = 0) in vec3 FragPos;
 
-uniform sampler2D Texture0; //Normal
-uniform sampler2D Texture1; //Noise
-uniform sampler2D Texture2; //Depth
+uniform sampler2D Normal; //Normal
+uniform sampler2D SSAONoiseTexture; //Noise
+uniform sampler2D DepthView; //Depth
 
 uniform vec3 Samples[128];
 uniform int KernelSize = 96;
@@ -64,11 +64,11 @@ void main()
 
     uv = uv * 0.5f + 0.5f;
 
-    vec3 encodedNormal = texture(Texture0, uv).rgb;
-    float depth = texture(Texture2, uv).r;
+    vec3 encodedNormal = texture(Normal, uv).rgb;
+    float depth = texture(DepthView, uv).r;
     vec3 fragPosVS = ViewPosFromDepth(depth, uv);
 
-    vec3 randomVec = vec3(texture(Texture1, uv * NoiseScale).rg * 2.0f - 1.0f, 0.0f);
+    vec3 randomVec = vec3(texture(SSAONoiseTexture, uv * NoiseScale).rg * 2.0f - 1.0f, 0.0f);
     vec3 viewNormal = normalize((inverse(InverseViewMatrix) * vec4(encodedNormal, 0.0f)).rgb);
     vec3 viewTangent = normalize(randomVec - viewNormal * dot(randomVec, viewNormal));
     vec3 viewBitangent = cross(viewNormal, viewTangent);
@@ -95,7 +95,7 @@ void main()
             if (sampleUV.x < 0.0f || sampleUV.x > 1.0f || sampleUV.y < 0.0f || sampleUV.y > 1.0f)
                 break;
 
-            float sceneDepth = texture(Texture2, sampleUV).r;
+            float sceneDepth = texture(DepthView, sampleUV).r;
             float sceneDepthVS = ViewPosFromDepth(sceneDepth, sampleUV).z;
             float expectedDepth = samplePos.z;
 

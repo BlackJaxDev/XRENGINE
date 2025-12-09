@@ -52,6 +52,44 @@ namespace XREngine.Rendering
         public RootNodeCollection RootNodes => _rootNodes;
         public Lights3DCollection Lights { get; }
 
+        // Physics raycasts must run on the fixed-update (physics) thread.
+        private readonly ConcurrentQueue<PhysicsRaycastRequest> _pendingPhysicsRaycasts = new();
+        private readonly ConcurrentQueue<PhysicsRaycastRequest> _physicsRaycastRequestPool = new();
+
+        private sealed class PhysicsRaycastRequest
+        {
+            public Segment Segment;
+            public LayerMask LayerMask;
+            public AbstractPhysicsScene.IAbstractQueryFilter? Filter;
+            public SortedDictionary<float, List<(XRComponent? item, object? data)>> Results = null!;
+            public Action<SortedDictionary<float, List<(XRComponent? item, object? data)>>>? FinishedCallback;
+
+            [MethodImpl(MethodImplOptions.AggressiveInlining)]
+            public void Set(
+                Segment segment,
+                LayerMask layerMask,
+                AbstractPhysicsScene.IAbstractQueryFilter? filter,
+                SortedDictionary<float, List<(XRComponent? item, object? data)>> results,
+                Action<SortedDictionary<float, List<(XRComponent? item, object? data)>>>? finishedCallback)
+            {
+                Segment = segment;
+                LayerMask = layerMask;
+                Filter = filter;
+                Results = results;
+                FinishedCallback = finishedCallback;
+            }
+
+            [MethodImpl(MethodImplOptions.AggressiveInlining)]
+            public void Clear()
+            {
+                Results = null!;
+                Filter = null;
+                FinishedCallback = null;
+                Segment = default;
+                LayerMask = default;
+            }
+        }
+
         #region Prefab instancing
 
         public SceneNode InstantiatePrefab(XRPrefabSource prefab,
@@ -215,6 +253,7 @@ namespace XREngine.Rendering
             // Only step physics if enabled (typically only during play mode)
             if (PhysicsEnabled)
                 PhysicsScene.StepSimulation();
+            ProcessQueuedPhysicsRaycasts();
             TickGroup(ETickGroup.DuringPhysics);
             TickGroup(ETickGroup.PostPhysics);
         }
@@ -703,6 +742,38 @@ namespace XREngine.Rendering
             Sequences.Clear();
         }
 
+        private static readonly Action<SortedDictionary<float, List<(XRComponent? item, object? data)>>> _noopPhysicsRaycastCallback = _ => { };
+
+        private void ProcessQueuedPhysicsRaycasts()
+        {
+            while (_pendingPhysicsRaycasts.TryDequeue(out var request))
+            {
+                try
+                {
+                    request.Results.Clear();
+
+                    PhysicsScene.RaycastSingleAsync(
+                        request.Segment,
+                        request.LayerMask,
+                        request.Filter,
+                        request.Results,
+                        _noopPhysicsRaycastCallback);
+
+                    request.FinishedCallback?.Invoke(request.Results);
+                }
+                catch (Exception ex)
+                {
+                    XREngine.Debug.LogException(ex, "Queued physics raycast failed.");
+                    request.FinishedCallback?.Invoke(request.Results);
+                }
+                finally
+                {
+                    request.Clear();
+                    _physicsRaycastRequestPool.Enqueue(request);
+                }
+            }
+        }
+
         public void RaycastPhysicsAsync(
             CameraComponent cameraComponent,
             Vector2 normalizedScreenPoint,
@@ -725,7 +796,12 @@ namespace XREngine.Rendering
             Action<SortedDictionary<float, List<(XRComponent? item, object? data)>>> finishedCallback)
         {
             orderedResults.Clear();
-            PhysicsScene.RaycastSingleAsync(worldSegment, layerMask, filter, orderedResults, finishedCallback);
+
+            if (!_physicsRaycastRequestPool.TryDequeue(out var request))
+                request = new PhysicsRaycastRequest();
+
+            request.Set(worldSegment, layerMask, filter, orderedResults, finishedCallback);
+            _pendingPhysicsRaycasts.Enqueue(request);
         }
 
         /// <summary>

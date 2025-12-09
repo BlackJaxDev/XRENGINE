@@ -32,7 +32,7 @@ public static partial class UnitTestingWorld
                     characterPawnModelParentNode = CreateCharacterVRPawn(rootNode, setUI, out var pawn, out _, out var leftHand, out var rightHand);
                     if (Toggles.AllowEditingInVR || Toggles.AddCameraVRPickup)
                     {
-                        SceneNode cameraNode = CreateCamera(rootNode, out var camComp);
+                        SceneNode cameraNode = CreateCamera(rootNode, out var camComp, null);
                         var pawn2 = CreateDesktopCamera(cameraNode, isServer, Toggles.AllowEditingInVR && !Toggles.AddCameraVRPickup, Toggles.AddCameraVRPickup, false);
                         if (setUI)
                             UserInterface.CreateEditorUI(rootNode, camComp, pawn2);
@@ -47,7 +47,7 @@ public static partial class UnitTestingWorld
                 characterPawnModelParentNode = CreateDesktopCharacterPawn(rootNode, setUI);
             else
             {
-                SceneNode cameraNode = CreateCamera(rootNode, out var camComp);
+                SceneNode cameraNode = CreateCamera(rootNode, out var camComp, null);
                 var pawn = CreateDesktopCamera(cameraNode, isServer, true, false, true);
                 if (setUI)
                     UserInterface.CreateEditorUI(rootNode, camComp!, pawn);

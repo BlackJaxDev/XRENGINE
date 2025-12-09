@@ -519,7 +519,17 @@ namespace XREngine.Rendering
         /// with Z being the normalized depth (0.0f - 1.0f) from NearDepth (0.0f) to FarDepth (1.0f).
         /// </summary>
         public Vector3 WorldToNormalizedViewportCoordinate(Vector3 worldPoint)
-            => ((Vector3.Transform(Vector3.Transform(worldPoint, Transform.InverseWorldMatrix), ProjectionMatrix) + Vector3.One) * new Vector3(0.5f));
+        {
+            // Project to normalized [0,1] UV with depth in [0,1].
+            Vector3 clip01 = (Vector3.Transform(Vector3.Transform(worldPoint, Transform.InverseWorldMatrix), ProjectionMatrix) + Vector3.One) * new Vector3(0.5f);
+
+            // Apply forward lens distortion so predicted screen UV matches post-process sampling.
+            var lens = GetActiveLensParams();
+            if (lens.Enabled)
+                clip01 = new Vector3(ApplyLensDistortionInverse(clip01.XY(), lens), clip01.Z);
+
+            return clip01;
+        }
 
         /// <summary>
         /// Takes an X, Y coordinate relative to the camera's origin along with the normalized depth (0.0f - 1.0f) from NearDepth (0.0f) to FarDepth (1.0f), and returns a position in the world.
@@ -538,10 +548,22 @@ namespace XREngine.Rendering
         {
             Vector3 clipSpacePos = normalizedPointDepth;
 
+            // Undo lens distortion on the incoming mouse/screen UV so we unproject the same rays used for rendering.
             if (xyRange == ERange.ZeroToOne)
             {
-                clipSpacePos.X = normalizedPointDepth.X * 2.0f - 1.0f;
-                clipSpacePos.Y = normalizedPointDepth.Y * 2.0f - 1.0f;
+                var lens = GetActiveLensParams();
+                if (lens.Enabled)
+                {
+                    Vector2 undistorted = ApplyLensDistortionForward(clipSpacePos.XY(), lens);
+                    clipSpacePos.X = undistorted.X;
+                    clipSpacePos.Y = undistorted.Y;
+                }
+            }
+
+            if (xyRange == ERange.ZeroToOne)
+            {
+                clipSpacePos.X = clipSpacePos.X * 2.0f - 1.0f;
+                clipSpacePos.Y = clipSpacePos.Y * 2.0f - 1.0f;
             }
 
             if (depthRange == ERange.ZeroToOne)
@@ -558,6 +580,197 @@ namespace XREngine.Rendering
             NegativeOneToOne,
             ZeroToOne
         }
+
+        #region Lens Distortion helpers
+        private readonly struct LensParams(ELensDistortionMode mode, float intensity, float paniniDistance, float paniniCrop, Vector2 paniniViewExtents)
+        {
+            public ELensDistortionMode Mode { get; } = mode;
+            public float Intensity { get; } = intensity;
+            public float PaniniDistance { get; } = paniniDistance;
+            public float PaniniCrop { get; } = paniniCrop;
+            public Vector2 PaniniViewExtents { get; } = paniniViewExtents;
+
+            public bool Enabled
+                => Mode != ELensDistortionMode.None && (Mode == ELensDistortionMode.Panini ? PaniniDistance > 0.0f : MathF.Abs(Intensity) > 0.0f);
+        }
+
+        private LensParams GetActiveLensParams()
+        {
+            var stage = GetPostProcessStageState<LensDistortionSettings>();
+            if (stage is null)
+                return new LensParams(ELensDistortionMode.None, 0.0f, 0.0f, 1.0f, Vector2.One);
+
+            // Only use the backing instance to avoid concurrent dictionary access on stage values.
+            if (!stage.TryGetBacking(out LensDistortionSettings? backing) || backing is null)
+                return new LensParams(ELensDistortionMode.None, 0.0f, 0.0f, 1.0f, Vector2.One);
+
+            // Lens needs camera FOV/aspect; fall back to disabled if not perspective.
+            if (Parameters is not XRPerspectiveCameraParameters persp)
+                return new LensParams(ELensDistortionMode.None, 0.0f, 0.0f, 1.0f, Vector2.One);
+
+            float fovDeg = persp.VerticalFieldOfView;
+            float aspect = persp.AspectRatio;
+
+            ELensDistortionMode mode = backing.Mode;
+            float intensity = backing.Mode switch
+            {
+                ELensDistortionMode.Radial => backing.Intensity,
+                ELensDistortionMode.RadialAutoFromFOV => LensDistortionSettings.ComputeCorrectionFromFovDegrees(fovDeg),
+                _ => 0.0f
+            };
+
+            float paniniDistance = backing.Mode == ELensDistortionMode.Panini ? backing.PaniniDistance : 0.0f;
+            float paniniCrop = 1.0f;
+            Vector2 paniniViewExtents = Vector2.One;
+            if (backing.Mode == ELensDistortionMode.Panini && paniniDistance > 0.0f)
+            {
+                float fovRad = fovDeg * MathF.PI / 180.0f;
+                paniniViewExtents = LensDistortionSettings.CalcViewExtents(fovRad, aspect);
+                var cropExtents = LensDistortionSettings.CalcCropExtents(fovRad, paniniDistance, aspect);
+                float scaleX = cropExtents.X / paniniViewExtents.X;
+                float scaleY = cropExtents.Y / paniniViewExtents.Y;
+                float scaleF = MathF.Min(scaleX, scaleY);
+                paniniCrop = float.Lerp(1.0f, Math.Clamp(scaleF, 0.0f, 1.0f), backing.PaniniCropToFit);
+            }
+
+            return new LensParams(mode, intensity, paniniDistance, paniniCrop, paniniViewExtents);
+        }
+
+        private static Vector2 ApplyLensDistortionForward(Vector2 uv01, LensParams lens)
+        {
+            return lens.Mode switch
+            {
+                ELensDistortionMode.Radial or ELensDistortionMode.RadialAutoFromFOV => ApplyRadialDistortion(uv01, lens.Intensity),
+                ELensDistortionMode.Panini => ApplyPaniniForward(uv01, lens),
+                _ => uv01
+            };
+        }
+
+        private static Vector2 ApplyLensDistortionInverse(Vector2 uv01, LensParams lens)
+        {
+            return lens.Mode switch
+            {
+                ELensDistortionMode.Radial or ELensDistortionMode.RadialAutoFromFOV => InvertRadialDistortion(uv01, lens.Intensity),
+                ELensDistortionMode.Panini => InvertPanini(uv01, lens),
+                _ => uv01
+            };
+        }
+
+        private static Vector2 ApplyRadialDistortion(Vector2 uv01, float intensity)
+        {
+            if (MathF.Abs(intensity) <= float.Epsilon)
+                return uv01;
+
+            Vector2 centered = uv01 - new Vector2(0.5f, 0.5f);
+            float r = centered.Length();
+            if (r <= float.Epsilon)
+                return uv01;
+
+            float theta = MathF.Atan2(centered.Y, centered.X);
+            float rd = r * (1.0f + intensity * r * r);
+            Vector2 distorted = new(MathF.Cos(theta) * rd, MathF.Sin(theta) * rd);
+            return distorted + new Vector2(0.5f, 0.5f);
+        }
+
+        private static Vector2 InvertRadialDistortion(Vector2 uv01, float intensity)
+        {
+            if (MathF.Abs(intensity) <= float.Epsilon)
+                return uv01;
+
+            Vector2 centered = uv01 - new Vector2(0.5f, 0.5f);
+            float rd = centered.Length();
+            if (rd <= float.Epsilon)
+                return new Vector2(0.5f, 0.5f);
+
+            Vector2 dir = centered / rd;
+            float r = rd;
+            for (int i = 0; i < 6; i++)
+            {
+                float f = r + intensity * r * r * r - rd; // f(r) = r + k r^3 - rd
+                float df = 1.0f + 3.0f * intensity * r * r;
+                if (MathF.Abs(df) <= 1e-6f)
+                    break;
+                r -= f / df;
+            }
+
+            r = MathF.Max(r, 0.0f);
+            return dir * r + new Vector2(0.5f, 0.5f);
+        }
+
+        private static Vector2 ApplyPaniniForward(Vector2 uv01, LensParams lens)
+        {
+            if (lens.PaniniDistance <= 0.0f)
+                return uv01;
+
+            Vector2 viewPos = (uv01 * 2.0f - Vector2.One) * lens.PaniniViewExtents * lens.PaniniCrop;
+            Vector2 projPos = ApplyPaniniProjection(viewPos, lens.PaniniDistance);
+            Vector2 projNdc = projPos / lens.PaniniViewExtents;
+            return projNdc * 0.5f + new Vector2(0.5f, 0.5f);
+        }
+
+        private static Vector2 InvertPanini(Vector2 uv01, LensParams lens)
+        {
+            if (lens.PaniniDistance <= 0.0f)
+                return uv01;
+
+            // Iteratively solve for the undistorted view-space position whose distorted UV matches the input.
+            // Start from a view guess without pre-applying crop to avoid over-scaling the estimate.
+            Vector2 view = (uv01 * 2.0f - Vector2.One) * lens.PaniniViewExtents;
+
+            const int iterations = 10;
+            const float delta = 1e-3f;
+            for (int i = 0; i < iterations; i++)
+            {
+                Vector2 uvGuess = ApplyPaniniFromView(view, lens);
+                Vector2 err = uvGuess - uv01;
+                if (err.LengthSquared() < 1e-10f)
+                    break;
+
+                // Numerical Jacobian
+                Vector2 uvDx = ApplyPaniniFromView(view + new Vector2(delta, 0.0f), lens);
+                Vector2 uvDy = ApplyPaniniFromView(view + new Vector2(0.0f, delta), lens);
+
+                Vector2 jx = (uvDx - uvGuess) / delta;
+                Vector2 jy = (uvDy - uvGuess) / delta;
+
+                float det = jx.X * jy.Y - jx.Y * jy.X;
+                if (MathF.Abs(det) <= 1e-10f)
+                    break;
+
+                // Inverse Jacobian * error
+                Vector2 step;
+                step.X = ( jy.Y * err.X - jx.Y * err.Y) / det;
+                step.Y = (-jy.X * err.X + jx.X * err.Y) / det;
+
+                view -= step;
+            }
+
+            Vector2 uvUndistorted = (view / (lens.PaniniViewExtents * lens.PaniniCrop)) * 0.5f + new Vector2(0.5f, 0.5f);
+            return uvUndistorted;
+        }
+
+        private static Vector2 ApplyPaniniFromView(Vector2 viewPos, LensParams lens)
+        {
+            Vector2 projPos = ApplyPaniniProjection(viewPos, lens.PaniniDistance);
+            Vector2 projNdc = projPos / lens.PaniniViewExtents;
+            return projNdc * 0.5f + new Vector2(0.5f, 0.5f);
+        }
+
+        private static Vector2 ApplyPaniniProjection(Vector2 viewPos, float d)
+        {
+            float viewDist = 1.0f + d;
+            float viewHypSq = viewPos.X * viewPos.X + viewDist * viewDist;
+
+            float isectD = viewPos.X * d;
+            float isectDiscrim = viewHypSq - isectD * isectD;
+
+            float cylDistMinusD = (-isectD * viewPos.X + viewDist * MathF.Sqrt(MathF.Max(isectDiscrim, 0.0f))) / viewHypSq;
+            float cylDist = cylDistMinusD + d;
+
+            Vector2 cylPos = viewPos * (cylDist / viewDist);
+            return cylPos / (cylDist - d);
+        }
+        #endregion
 
         public Segment GetWorldSegment(Vector2 normalizedScreenPoint)
         {

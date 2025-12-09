@@ -3,7 +3,7 @@
 layout(location = 0) out vec3 BloomColor;
 layout(location = 0) in vec3 FragPos;
 
-uniform sampler2D Texture0;
+uniform sampler2D BloomBlurTexture;
 
 uniform float Ping;
 uniform int LOD;
@@ -24,11 +24,11 @@ void main()
       uv = uv * 0.5f + 0.5f;
 
       vec2 scale = vec2(Ping, 1.0f - Ping);
-      vec2 texelSize = 1.0f / textureSize(Texture0, LOD) * scale;
+      vec2 texelSize = 1.0f / textureSize(BloomBlurTexture, LOD) * scale;
       float lodf = float(LOD);
 
       float totalWeight = 0.0f;
-       vec3 result = textureLod(Texture0, uv, lodf).rgb * Gaussian(0);
+      vec3 result = textureLod(BloomBlurTexture, uv, lodf).rgb * Gaussian(0);
 
       for (int i = -SampleCount; i <= SampleCount; ++i)
       {
@@ -36,8 +36,8 @@ void main()
          float weight = Gaussian(offset * Radius);
          vec2 uvOffset = texelSize * offset * Radius;
 
-         result += textureLod(Texture0, uv + uvOffset, lodf).rgb * weight;
-         result += textureLod(Texture0, uv - uvOffset, lodf).rgb * weight;
+         result += textureLod(BloomBlurTexture, uv + uvOffset, lodf).rgb * weight;
+         result += textureLod(BloomBlurTexture, uv - uvOffset, lodf).rgb * weight;
       }
 
       BloomColor = result / totalWeight;

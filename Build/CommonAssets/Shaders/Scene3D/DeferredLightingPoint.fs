@@ -6,10 +6,10 @@ const float InvPI = 0.31831f;
 layout(location = 0) out vec3 OutColor; //Diffuse lighting output
 layout(location = 0) in vec3 FragPos;
 
-uniform sampler2D Texture0; //AlbedoOpacity
-uniform sampler2D Texture1; //Normal
-uniform sampler2D Texture2; //PBR: Roughness, Metallic, Specular, Index of refraction
-uniform sampler2D Texture3; //Depth
+uniform sampler2D AlbedoOpacity; //AlbedoOpacity
+uniform sampler2D Normal; //Normal
+uniform sampler2D RMSE; //PBR: Roughness, Metallic, Specular, Index of refraction
+uniform sampler2D DepthView; //Depth
 uniform samplerCube ShadowMap; //Point Shadow Map
 
 uniform float ScreenWidth;
@@ -184,10 +184,10 @@ void main()
 	vec2 uv = gl_FragCoord.xy / vec2(ScreenWidth, ScreenHeight);
 
 	//Retrieve shading information from GBuffer textures
-	vec3 albedo = texture(Texture0, uv).rgb;
-	vec3 normal = texture(Texture1, uv).rgb;
-	vec3 rms = texture(Texture2, uv).rgb;
-	float depth = texture(Texture3, uv).r;
+	vec3 albedo = texture(AlbedoOpacity, uv).rgb;
+	vec3 normal = texture(Normal, uv).rgb;
+	vec3 rms = texture(RMSE, uv).rgb;
+	float depth = texture(DepthView, uv).r;
 
 	//Resolve world fragment position using depth and screen UV
 	vec3 fragPosWS = WorldPosFromDepth(depth, uv);

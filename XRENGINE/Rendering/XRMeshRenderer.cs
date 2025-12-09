@@ -604,6 +604,34 @@ namespace XREngine.Rendering
         [MemoryPackIgnore]
         public XRDataBuffer? IndirectDrawBuffer { get; private set; }
 
+        /// <summary>
+        /// Output buffer for skinned positions from compute shader pre-pass.
+        /// When set, this buffer is used instead of the mesh's position buffer for rendering.
+        /// </summary>
+        [MemoryPackIgnore]
+        public XRDataBuffer? SkinnedPositionsBuffer { get; internal set; }
+
+        /// <summary>
+        /// Output buffer for skinned normals from compute shader pre-pass.
+        /// When set, this buffer is used instead of the mesh's normal buffer for rendering.
+        /// </summary>
+        [MemoryPackIgnore]
+        public XRDataBuffer? SkinnedNormalsBuffer { get; internal set; }
+
+        /// <summary>
+        /// Output buffer for skinned tangents from compute shader pre-pass.
+        /// When set, this buffer is used instead of the mesh's tangent buffer for rendering.
+        /// </summary>
+        [MemoryPackIgnore]
+        public XRDataBuffer? SkinnedTangentsBuffer { get; internal set; }
+
+        /// <summary>
+        /// Output buffer for skinned interleaved data from compute shader pre-pass.
+        /// When set, this buffer is used instead of the mesh's interleaved buffer for rendering.
+        /// </summary>
+        [MemoryPackIgnore]
+        public XRDataBuffer? SkinnedInterleavedBuffer { get; internal set; }
+
         private void PopulateBoneMatrixBuffers()
         {
             //using var timer = Engine.Profiler.Start();

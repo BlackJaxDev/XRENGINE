@@ -8,9 +8,9 @@ const float InvPI = 0.31831f;
 layout(location = 0) out float OutIntensity;
 layout(location = 0) in vec3 FragPos;
 
-uniform sampler2DArray Texture0; //Normal
-uniform sampler2D Texture1; //SSAO Noise
-uniform sampler2DArray Texture2; //Depth
+uniform sampler2DArray Normal; //Normal
+uniform sampler2D SSAONoiseTexture; //SSAO Noise
+uniform sampler2DArray DepthView; //Depth
 
 uniform vec3 Samples[128];
 uniform float Radius = 0.75f;
@@ -42,12 +42,12 @@ void main()
     mat4 InverseViewMatrix = leftEye ? LeftEyeInverseViewMatrix : RightEyeInverseViewMatrix;
     mat4 ProjMatrix = leftEye ? LeftEyeProjMatrix : RightEyeProjMatrix;
     
-    vec3 Normal = texture(Texture0, uvi).rgb;
-    float Depth = texture(Texture2, uvi).r;
+    vec3 Normal = texture(Normal, uvi).rgb;
+    float Depth = texture(DepthView, uvi).r;
 
     vec3 FragPosVS = ViewPosFromDepth(Depth, uv, ProjMatrix);
 
-    vec3 randomVec = vec3(texture(Texture1, uv * NoiseScale).rg * 2.0f - 1.0f, 0.0f);
+    vec3 randomVec = vec3(texture(SSAONoiseTexture, uv * NoiseScale).rg * 2.0f - 1.0f, 0.0f);
     vec3 viewNormal = normalize((inverse(InverseViewMatrix) * vec4(Normal, 0.0f)).rgb);
     vec3 viewTangent = normalize(randomVec - viewNormal * dot(randomVec, viewNormal));
     vec3 viewBitangent = cross(viewNormal, viewTangent);
@@ -70,7 +70,7 @@ void main()
         offset.xyz /= offset.w;
         offset.xyz = offset.xyz * 0.5f + 0.5f;
 
-        sampleDepth = ViewPosFromDepth(texture(Texture2, vec3(offset.xy, gl_ViewID_OVR)).r, offset.xy, ProjMatrix).z;
+        sampleDepth = ViewPosFromDepth(texture(DepthView, vec3(offset.xy, gl_ViewID_OVR)).r, offset.xy, ProjMatrix).z;
 
         occlusion += (sampleDepth >= noiseSample.z + bias ? smoothstep(0.0f, 1.0f, Radius / abs(FragPosVS.z - sampleDepth)) : 0.0f);
     }

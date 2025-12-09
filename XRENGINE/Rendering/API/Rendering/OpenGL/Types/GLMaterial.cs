@@ -66,6 +66,8 @@ namespace XREngine.Rendering.OpenGL
                 if (materialProgram is null)
                     return;
 
+                materialProgram.BeginBindingBatch();
+
                 bool forceUniformUpdate = !ReferenceEquals(_lastUniformProgram, materialProgram.Data) ||
                     _lastUniformProgramBindingId != materialProgram.BindingId;
 
@@ -79,6 +81,8 @@ namespace XREngine.Rendering.OpenGL
                 SetTextureUniforms(materialProgram);
                 SetEngineUniforms(materialProgram);
                 Data.OnSettingUniforms(materialProgram.Data);
+
+                materialProgram.WarnIfNoUniformOrSamplerBindings(Data.Name);
             }
 
             private void SetEngineUniforms(GLRenderProgram program)

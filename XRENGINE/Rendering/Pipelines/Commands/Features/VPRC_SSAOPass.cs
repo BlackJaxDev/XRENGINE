@@ -1,11 +1,8 @@
 ﻿using Extensions;
-using System.Collections.Generic;
 using System.Numerics;
 using System.Runtime.CompilerServices;
-using XREngine;
 using XREngine.Data;
 using XREngine.Data.Rendering;
-using XREngine.Rendering;
 using XREngine.Rendering.Models.Materials;
 
 namespace XREngine.Rendering.Pipelines.Commands
@@ -207,6 +204,7 @@ namespace XREngine.Rendering.Pipelines.Commands
                 t.SizedInternalFormat = ESizedInternalFormat.R16f;
                 t.OVRMultiViewParameters = new(0, 2u);
                 t.Name = SSAOIntensityTextureName;
+                t.SamplerName = SSAOIntensityTextureName;
                 t.MinFilter = ETexMinFilter.Nearest;
                 t.MagFilter = ETexMagFilter.Nearest;
                 t.UWrap = ETexWrapMode.ClampToEdge;
@@ -225,6 +223,7 @@ namespace XREngine.Rendering.Pipelines.Commands
                 //t.Resizable = false;
                 //t.SizedInternalFormat = ESizedInternalFormat.R16f;
                 t.Name = SSAOIntensityTextureName;
+                t.SamplerName = SSAOIntensityTextureName;
                 t.MinFilter = ETexMinFilter.Nearest;
                 t.MagFilter = ETexMagFilter.Nearest;
                 t.UWrap = ETexWrapMode.ClampToEdge;
@@ -292,8 +291,14 @@ namespace XREngine.Rendering.Pipelines.Commands
                 Name = SSAOBlurFBOName
             };
 
+            XRFrameBuffer gbufferFBO = new((ssaoAttach, EFrameBufferAttachment.ColorAttachment0, 0, -1))
+            {
+                Name = GBufferFBOFBOName
+            };
+
             instance.SetFBO(ssaoGenFBO);
             instance.SetFBO(ssaoBlurFBO);
+            instance.SetFBO(gbufferFBO);
         }
 
         private void SSAOGen_SetUniforms(XRRenderProgram program)
@@ -327,6 +332,7 @@ namespace XREngine.Rendering.Pipelines.Commands
             XRTexture2D noiseTex = new()
             {
                 Name = SSAONoiseTextureName,
+                SamplerName = SSAONoiseTextureName,
                 MinFilter = ETexMinFilter.Nearest,
                 MagFilter = ETexMagFilter.Nearest,
                 UWrap = ETexWrapMode.Repeat,
