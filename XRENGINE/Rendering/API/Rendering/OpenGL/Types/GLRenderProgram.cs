@@ -85,10 +85,7 @@ namespace XREngine.Rendering.OpenGL
                 if (location < 0)
                 {
                     if (!failed)
-                    {
                         _failedUniforms.Add(name);
-                        //Debug.LogWarning($"Uniform {name} not found in OpenGL program.");
-                    }
                     return false;
                 }
                 return true;
@@ -1130,6 +1127,17 @@ namespace XREngine.Rendering.OpenGL
             public void Sampler(string name, XRTexture texture, int textureUnit)
             {
                 int location = GetUniformLocation(name);
+                if (location < 0 && Engine.Rendering.Settings.LogMissingShaderSamplers)
+                {
+                    // Only log once per mismatch
+                    string key = $"{Data.Name ?? BindingId.ToString()}:{name}:{textureUnit}";
+                    if (_loggedUniformMismatches.TryAdd(key, 1))
+                    {
+                        Debug.LogWarning($"[Shader Texture Binding] Sampler '{name}' not found in program '{Data.Name ?? BindingId.ToString()}' for texture unit {textureUnit}. " +
+                            $"Texture: '{texture.Name}', SamplerName: '{texture.SamplerName}'. " +
+                            $"Ensure the shader declares a sampler2D uniform with this exact name.");
+                    }
+                }
                 Sampler(location, texture, textureUnit);
             }
 
@@ -1138,7 +1146,23 @@ namespace XREngine.Rendering.OpenGL
             /// The name is cached so that retrieving the sampler's location is only required once.
             /// </summary>
             public void Sampler(string name, IGLTexture texture, int textureUnit)
-                => Sampler(GetUniformLocation(name), texture, textureUnit);
+            {
+                int location = GetUniformLocation(name);
+                if (location < 0 && Engine.Rendering.Settings.LogMissingShaderSamplers)
+                {
+                    // Only log once per mismatch
+                    string key = $"{Data.Name ?? BindingId.ToString()}:{name}:{textureUnit}";
+                    if (_loggedUniformMismatches.TryAdd(key, 1))
+                    {
+                        string texName = texture.Data?.Name ?? "unknown";
+                        string samplerName = (texture.Data as XRTexture)?.SamplerName ?? "null";
+                        Debug.LogWarning($"[Shader Texture Binding] Sampler '{name}' not found in program '{Data.Name ?? BindingId.ToString()}' for texture unit {textureUnit}. " +
+                            $"Texture: '{texName}', SamplerName: '{samplerName}'. " +
+                            $"Ensure the shader declares a sampler uniform with this exact name.");
+                    }
+                }
+                Sampler(location, texture, textureUnit);
+            }
 
             /// <summary>
             /// Passes a texture sampler value into the fragment shader of this program by location.

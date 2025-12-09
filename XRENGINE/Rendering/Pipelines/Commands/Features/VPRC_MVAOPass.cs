@@ -293,14 +293,8 @@ namespace XREngine.Rendering.Pipelines.Commands
             };
             mvaoBlurFbo.SettingUniforms += MVAOBlur_SetUniforms;
 
-            XRFrameBuffer outputFbo = new((aoAttach, EFrameBufferAttachment.ColorAttachment0, 0, -1))
-            {
-                Name = OutputFBOName
-            };
-
             instance.SetFBO(mvaoGenFbo);
             instance.SetFBO(mvaoBlurFbo);
-            instance.SetFBO(outputFbo);
             Log("Registered AO FBOs (gen/blur/output)");
         }
 

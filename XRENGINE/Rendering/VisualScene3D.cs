@@ -7,6 +7,7 @@ using XREngine.Data.Rendering;
 using XREngine.Data.Trees;
 using XREngine.Rendering;
 using XREngine.Rendering.Commands;
+using XREngine.Rendering.Compute;
 using XREngine.Rendering.Info;
 using YamlDotNet.Serialization;
 
@@ -102,6 +103,26 @@ namespace XREngine.Scene
         {
             base.GlobalPreRender();
             ProcessPendingRenderableOperations();
+
+            if (Engine.Rendering.Settings.CalculateSkinningInComputeShader || Engine.Rendering.Settings.CalculateBlendshapesInComputeShader)
+                RunSkinningPrepass();
+        }
+
+        private void RunSkinningPrepass()
+        {
+            HashSet<XRMeshRenderer> dispatched = new();
+
+            foreach (var renderable in _renderables)
+            {
+                foreach (var cmd in renderable.RenderCommands)
+                {
+                    if (cmd is RenderCommandMesh3D meshCommand && meshCommand.Mesh is { } renderer)
+                    {
+                        if (dispatched.Add(renderer))
+                            SkinningPrepassDispatcher.Instance.Run(renderer);
+                    }
+                }
+            }
         }
 
         public void ApplyRenderDispatchPreference(bool useGpu)

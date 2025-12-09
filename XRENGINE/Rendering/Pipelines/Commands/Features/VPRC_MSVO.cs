@@ -137,13 +137,8 @@ namespace XREngine.Rendering.Pipelines.Commands
             };
             msvoGenFBO.SettingUniforms += MSVOGen_SetUniforms;
 
-            XRFrameBuffer gbufferFBO = new((msvoTex, EFrameBufferAttachment.ColorAttachment0, 0, -1))
-            {
-                Name = GBufferFBOFBOName
-            };
-
             ActivePipelineInstance.SetFBO(msvoGenFBO);
-            ActivePipelineInstance.SetFBO(gbufferFBO);
+            // Output GBuffer FBO is now owned by the pipeline.
         }
 
         private void MSVOGen_SetUniforms(XRRenderProgram program)

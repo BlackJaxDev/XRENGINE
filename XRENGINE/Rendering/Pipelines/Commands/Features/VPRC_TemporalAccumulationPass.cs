@@ -1,6 +1,7 @@
 using System.Diagnostics.CodeAnalysis;
 using System.Numerics;
 using System.Runtime.CompilerServices;
+using XREngine;
 using XREngine.Data.Rendering;
 using XREngine.Rendering;
 using static XREngine.Engine.Rendering.State;
@@ -24,6 +25,7 @@ public sealed class VPRC_TemporalAccumulationPass : ViewportRenderCommand
         public Matrix4x4 PrevViewProjectionUnjittered = Matrix4x4.Identity;
         public Matrix4x4 PrevInverseViewProjection = Matrix4x4.Identity;
         public bool HistoryReady;
+        public bool HistoryExposureReady;
         public bool PendingHistoryReady;
         public StateObject? ActiveJitterHandle;
         public uint LastInternalWidth;
@@ -41,6 +43,7 @@ public sealed class VPRC_TemporalAccumulationPass : ViewportRenderCommand
         public Matrix4x4 CurrViewProjectionUnjittered { get; init; }
         public uint Width { get; init; }
         public uint Height { get; init; }
+        public bool HistoryExposureReady { get; init; }
     }
 
     // Key by XRCamera instead of PipelineInstance to support multi-view/stereo rendering correctly
@@ -84,12 +87,15 @@ public sealed class VPRC_TemporalAccumulationPass : ViewportRenderCommand
         switch (Phase)
         {
             case EPhase.Begin:
+                //Debug.Out("[Temporal] Begin phase");
                 BeginTemporalFrame();
                 break;
             case EPhase.Accumulate:
+                //Debug.Out("[Temporal] Accumulate phase");
                 ExecuteAccumulation(pipeline);
                 break;
             case EPhase.Commit:
+                //Debug.Out("[Temporal] Commit phase");
                 CommitTemporalFrame();
                 break;
         }
@@ -99,7 +105,10 @@ public sealed class VPRC_TemporalAccumulationPass : ViewportRenderCommand
     {
         var renderer = AbstractRenderer.Current;
         if (renderer is null)
+        {
+            Debug.Out("[Temporal] Accumulate skipped: renderer unavailable.");
             return;
+        }
 
         var forwardFBO = ActivePipelineInstance.GetFBO<XRFrameBuffer>(ForwardFBOName);
         var temporalInputFBO = ActivePipelineInstance.GetFBO<XRFrameBuffer>(TemporalInputFBOName);
@@ -108,7 +117,12 @@ public sealed class VPRC_TemporalAccumulationPass : ViewportRenderCommand
         var historyExposureFBO = ActivePipelineInstance.GetFBO<XRFrameBuffer>(HistoryExposureFBOName);
 
         if (forwardFBO is null || temporalInputFBO is null || accumulationFBO is null || historyColorFBO is null || historyExposureFBO is null)
+        {
+            Debug.Out("[Temporal] Accumulate skipped: missing FBO(s)." +
+                $" forward={(forwardFBO!=null)} temporalInput={(temporalInputFBO!=null)} accumulation={(accumulationFBO!=null)}" +
+                $" historyColor={(historyColorFBO!=null)} historyExposure={(historyExposureFBO!=null)}");
             return;
+        }
 
         // Always keep the history buffers in sync with the latest color/depth, even if temporal AA is disabled.
         renderer.BlitFBOToFBO(
@@ -121,8 +135,13 @@ public sealed class VPRC_TemporalAccumulationPass : ViewportRenderCommand
             false);
 
         bool shouldAccumulate = ShouldUseTemporalJitter();
+        //Debug.Out($"[Temporal] shouldAccumulate={shouldAccumulate}");
+        SetHistoryExposureReady(shouldAccumulate);
         if (shouldAccumulate)
-            accumulationFBO.Render();
+        {
+            Debug.Out("[Temporal] Rendering accumulation FBO.");
+            accumulationFBO.Render(accumulationFBO);
+        }
 
         renderer.BlitFBOToFBO(
             forwardFBO,
@@ -147,6 +166,7 @@ public sealed class VPRC_TemporalAccumulationPass : ViewportRenderCommand
 
         // Always flag history as captured - motion blur depends on view-projection tracking
         // even when TAA/jitter is disabled.
+        //Debug.Out("[Temporal] Flagging history captured.");
         FlagTemporalHistoryCaptured();
     }
 
@@ -155,6 +175,14 @@ public sealed class VPRC_TemporalAccumulationPass : ViewportRenderCommand
         var mode = Engine.Rendering.Settings.AntiAliasingMode;
         return mode == Engine.Rendering.EAntiAliasingMode.Taa
             || mode == Engine.Rendering.EAntiAliasingMode.Tsr;
+    }
+
+    private static void SetHistoryExposureReady(bool ready)
+    {
+        if (!TryGetActiveState(out _, out var state))
+            return;
+
+        state.HistoryExposureReady = ready;
     }
 
     internal static bool TryGetTemporalUniformData([NotNullWhen(true)] out TemporalUniformData data)
@@ -170,6 +198,7 @@ public sealed class VPRC_TemporalAccumulationPass : ViewportRenderCommand
             data = new TemporalUniformData
             {
                 HistoryReady = state.HistoryReady,
+                HistoryExposureReady = state.HistoryExposureReady,
                 PrevViewProjection = state.PrevViewProjection,
                 PrevViewProjectionUnjittered = state.PrevViewProjectionUnjittered,
                 CurrInverseViewProjection = state.CurrInverseViewProjection,
@@ -201,9 +230,13 @@ public sealed class VPRC_TemporalAccumulationPass : ViewportRenderCommand
     private static void BeginTemporalFrame()
     {
         if (!TryGetActiveState(out var instance, out var state))
+        {
+            Debug.Out("[Temporal] Begin skipped: no active state.");
             return;
+        }
 
         state.PendingHistoryReady = false;
+        state.HistoryExposureReady = false;
 
         var viewport = instance.RenderState.WindowViewport;
         uint width = viewport is null ? 0u : (uint)viewport.InternalWidth;
@@ -216,6 +249,8 @@ public sealed class VPRC_TemporalAccumulationPass : ViewportRenderCommand
             state.HistoryReady = false;
             state.PendingHistoryReady = false;
             state.HaltonIndex = 1;
+            state.HistoryExposureReady = false;
+            Debug.Out($"[Temporal] Resolution change detected. New={width}x{height}; history reset.");
         }
 
         state.ActiveJitterHandle?.Dispose();
@@ -229,12 +264,18 @@ public sealed class VPRC_TemporalAccumulationPass : ViewportRenderCommand
             state.CurrViewProjectionUnjittered = Matrix4x4.Identity;
             state.CurrInverseViewProjection = Matrix4x4.Identity;
             state.HistoryReady = false;
+            Debug.Out("[Temporal] Begin: no camera; resetting state.");
             return;
         }
 
         bool jitterEnabled = ShouldUseTemporalJitter();
         Vector2 jitter = jitterEnabled ? GenerateHaltonJitter(state) : Vector2.Zero;
         state.CurrentJitter = jitter;
+        //Debug.Out($"[Temporal] JitterEnabled={jitterEnabled} Jitter=({jitter.X:F6},{jitter.Y:F6}) HaltonIndex={state.HaltonIndex}");
+
+        // Exposure history is only reliable when we are actively running temporal accumulation.
+        if (!jitterEnabled)
+            state.HistoryExposureReady = false;
 
         Matrix4x4 viewMatrix = camera.Transform.InverseRenderMatrix;
         // Use Unjittered property to ensure we get a clean projection matrix, 
@@ -247,6 +288,7 @@ public sealed class VPRC_TemporalAccumulationPass : ViewportRenderCommand
         if (state.HistoryReady && IsMatrixApproximatelyEqual(baseViewProjection, state.PrevViewProjectionUnjittered))
         {
             baseViewProjection = state.PrevViewProjectionUnjittered;
+            //Debug.Out("[Temporal] Stabilized projection using previous unjittered VP.");
         }
 
         if (jitterEnabled)
@@ -260,15 +302,22 @@ public sealed class VPRC_TemporalAccumulationPass : ViewportRenderCommand
         state.CurrViewProjectionUnjittered = baseViewProjection;
         state.CurrViewProjection = jitteredViewProjection;
         state.CurrInverseViewProjection = inverseViewProjection;
+        //Debug.Out("[Temporal] Begin completed: VP/Jitter prepared.");
     }
 
     private static void FlagTemporalHistoryCaptured()
     {
         if (!TryGetActiveState(out var instance, out var state))
+        {
+            Debug.Out("[Temporal] FlagHistoryCaptured skipped: no active state.");
             return;
+        }
 
         if (instance.RenderState.SceneCamera is null)
+        {
+            Debug.Out("[Temporal] FlagHistoryCaptured skipped: no camera.");
             return;
+        }
 
         state.PendingHistoryReady = true;
     }
@@ -276,7 +325,10 @@ public sealed class VPRC_TemporalAccumulationPass : ViewportRenderCommand
     private static void CommitTemporalFrame()
     {
         if (!TryGetActiveState(out var instance, out var state))
+        {
+            Debug.Out("[Temporal] Commit skipped: no active state.");
             return;
+        }
 
         state.ActiveJitterHandle?.Dispose();
         state.ActiveJitterHandle = null;
@@ -284,7 +336,10 @@ public sealed class VPRC_TemporalAccumulationPass : ViewportRenderCommand
         // Always commit view-projection history for motion blur, even if TAA accumulation was skipped.
         // Only skip if no history was captured this frame at all.
         if (!state.PendingHistoryReady)
+        {
+            Debug.Out("[Temporal] Commit skipped: no pending history.");
             return;
+        }
 
         state.PendingHistoryReady = false;
         state.PreviousJitter = state.CurrentJitter;
@@ -292,6 +347,7 @@ public sealed class VPRC_TemporalAccumulationPass : ViewportRenderCommand
         state.PrevViewProjectionUnjittered = state.CurrViewProjectionUnjittered;
         state.PrevInverseViewProjection = state.CurrInverseViewProjection;
         state.HistoryReady = true;
+        //Debug.Out("[Temporal] Commit completed: history stored.");
     }
 
     private static Vector2 GenerateHaltonJitter(TemporalState state)

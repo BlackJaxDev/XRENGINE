@@ -7,6 +7,7 @@ using System.Reflection;
 using System.Runtime.CompilerServices;
 using System.Text;
 using ImGuiNET;
+using Silk.NET.OpenGL;
 using XREngine;
 using XREngine.Data.Rendering;
 using XREngine.Core.Files;
@@ -247,6 +248,48 @@ public sealed class RenderPipelineInspector : IXRAssetInspector
         ImGui.TextDisabled($"Targets: {fbo.Targets?.Length ?? 0}");
         ImGui.TextDisabled($"Texture Types: {fbo.TextureTypes}");
 
+        const ImGuiTableFlags tableFlags = ImGuiTableFlags.BordersInnerV | ImGuiTableFlags.RowBg | ImGuiTableFlags.SizingStretchSame;
+        if (ImGui.BeginTable("RenderPipelineFboIO", 2, tableFlags))
+        {
+            ImGui.TableSetupColumn("Inputs");
+            ImGui.TableSetupColumn("Outputs");
+            ImGui.TableHeadersRow();
+
+            ImGui.TableNextRow();
+            ImGui.TableSetColumnIndex(0);
+            DrawFboInputs(fbo, flipPreview);
+
+            ImGui.TableSetColumnIndex(1);
+            DrawFboOutputs(fbo, flipPreview);
+
+            ImGui.EndTable();
+        }
+    }
+
+    private static void DrawFboInputs(XRFrameBuffer fbo, bool flipPreview)
+    {
+        var inputs = CollectFboInputs(fbo);
+        if (inputs.Count == 0)
+        {
+            ImGui.TextDisabled("No input textures detected for this framebuffer.");
+            return;
+        }
+
+        for (int i = 0; i < inputs.Count; i++)
+        {
+            XRTexture tex = inputs[i];
+            ImGui.PushID(tex.GetHashCode());
+            string label = tex.Name ?? tex.GetType().Name;
+            ImGui.TextUnformatted(label);
+            DrawTexturePreview(tex, flipPreview);
+            ImGui.PopID();
+            if (i < inputs.Count - 1)
+                ImGui.Separator();
+        }
+    }
+
+    private static void DrawFboOutputs(XRFrameBuffer fbo, bool flipPreview)
+    {
         var targets = fbo.Targets;
         if (targets is null || targets.Length == 0)
         {
@@ -270,18 +313,7 @@ public sealed class RenderPipelineInspector : IXRAssetInspector
             {
                 string texLabel = tex.Name ?? tex.GetType().Name;
                 ImGui.TextDisabled(texLabel);
-
-                if (TryGetTexturePreviewHandle(tex, 320f, out nint handle, out Vector2 displaySize, out Vector2 pixelSize, out string failure))
-                {
-                    Vector2 uv0 = flipPreview ? new Vector2(0f, 1f) : Vector2.Zero;
-                    Vector2 uv1 = flipPreview ? new Vector2(1f, 0f) : Vector2.One;
-                    ImGui.Image(handle, displaySize, uv0, uv1);
-                    ImGui.TextDisabled($"Size: {pixelSize.X} x {pixelSize.Y}");
-                }
-                else
-                {
-                    ImGui.TextDisabled(failure);
-                }
+                DrawTexturePreview(tex, flipPreview);
             }
             else
             {
@@ -292,6 +324,62 @@ public sealed class RenderPipelineInspector : IXRAssetInspector
             if (i < targets.Length - 1)
                 ImGui.Separator();
         }
+    }
+
+    private static void DrawTexturePreview(XRTexture texture, bool flipPreview)
+    {
+        var previewState = GetPreviewState(texture);
+
+        int layerCount = GetLayerCount(texture);
+        int mipCount = GetMipCount(texture);
+
+        DrawPreviewControls(previewState, layerCount, mipCount);
+
+        if (TryGetTexturePreviewHandle(texture, 320f, previewState, out nint handle, out Vector2 displaySize, out Vector2 pixelSize, out string failure))
+        {
+            Vector2 uv0 = flipPreview ? new Vector2(0f, 1f) : Vector2.Zero;
+            Vector2 uv1 = flipPreview ? new Vector2(1f, 0f) : Vector2.One;
+            ImGui.Image(handle, displaySize, uv0, uv1);
+
+            var infoParts = new List<string>
+            {
+                $"Size: {pixelSize.X} x {pixelSize.Y}",
+                GetChannelLabel(previewState.Channel)
+            };
+
+            if (layerCount > 1)
+                infoParts.Add($"Layer {previewState.Layer}");
+            if (mipCount > 1)
+                infoParts.Add($"Mip {previewState.Mip}");
+
+            ImGui.TextDisabled(string.Join(" | ", infoParts));
+        }
+        else
+        {
+            ImGui.TextDisabled(failure);
+        }
+    }
+
+    private static List<XRTexture> CollectFboInputs(XRFrameBuffer fbo)
+    {
+        if (fbo is XRMaterialFrameBuffer materialFbo && materialFbo.Material is { } material)
+        {
+            var unique = new List<XRTexture>();
+            foreach (XRTexture? tex in material.Textures)
+            {
+                if (tex is null || tex.FrameBufferAttachment is not null)
+                    continue;
+
+                if (unique.Any(existing => ReferenceEquals(existing, tex)))
+                    continue;
+
+                unique.Add(tex);
+            }
+
+            return unique;
+        }
+
+        return new List<XRTexture>();
     }
 
     #endregion
@@ -832,7 +920,14 @@ public sealed class RenderPipelineInspector : IXRAssetInspector
 
     #region Texture Preview
 
-    private static bool TryGetTexturePreviewHandle(XRTexture texture, float maxEdge, out nint handle, out Vector2 displaySize, out Vector2 pixelSize, out string failure)
+    private static bool TryGetTexturePreviewHandle(
+        XRTexture texture,
+        float maxEdge,
+        TexturePreviewState previewState,
+        out nint handle,
+        out Vector2 displaySize,
+        out Vector2 pixelSize,
+        out string failure)
     {
         handle = nint.Zero;
         displaySize = new Vector2(64f, 64f);
@@ -845,38 +940,292 @@ public sealed class RenderPipelineInspector : IXRAssetInspector
             return false;
         }
 
-        if (texture is not XRTexture2D tex2D)
-        {
-            failure = "Only 2D textures supported";
-            return false;
-        }
-
         if (AbstractRenderer.Current is not OpenGLRenderer renderer)
         {
             failure = "Preview requires OpenGL renderer";
             return false;
         }
 
-        var apiTexture = renderer.GenericToAPI<GLTexture2D>(tex2D);
-        if (apiTexture is null)
+        XRTexture previewTexture = GetPreviewTexture(texture, previewState, out int mipLevel, out _, out string previewError);
+        if (previewTexture is null)
+        {
+            failure = previewError;
+            return false;
+        }
+
+        var apiRenderObject = renderer.GetOrCreateAPIRenderObject(previewTexture);
+        if (apiRenderObject is not IGLTexture || apiRenderObject is not OpenGLRenderer.GLObjectBase apiObject)
         {
             failure = "Texture not uploaded";
             return false;
         }
 
-        uint binding = apiTexture.BindingId;
+        uint binding = apiObject.BindingId;
         if (binding == OpenGLRenderer.GLObjectBase.InvalidBindingId || binding == 0)
         {
             failure = "Texture not ready";
             return false;
         }
 
-        pixelSize = new Vector2(tex2D.Width, tex2D.Height);
+        Vector2 fullSize = GetPixelSizeForPreview(texture, mipLevel);
+        pixelSize = fullSize;
         float largest = MathF.Max(1f, MathF.Max(pixelSize.X, pixelSize.Y));
         float scale = largest > 0f ? MathF.Min(1f, maxEdge / largest) : 1f;
         displaySize = new Vector2(pixelSize.X * scale, pixelSize.Y * scale);
+        bool previewUsesView = previewTexture is XRTextureViewBase;
+        if (previewUsesView || previewState.Channel != TextureChannelView.RGBA)
+            ApplyChannelSwizzle(renderer, binding, previewState.Channel);
         handle = (nint)binding;
         return true;
+    }
+
+    #endregion
+
+    #region Texture Preview Helpers
+
+    private enum TextureChannelView
+    {
+        RGBA,
+        R,
+        G,
+        B,
+        A,
+        Luminance,
+    }
+
+    private sealed class TexturePreviewState
+    {
+        public int Layer;
+        public int Mip;
+        public TextureChannelView Channel = TextureChannelView.RGBA;
+    }
+
+    private sealed class TextureViewCacheKeyComparer : IEqualityComparer<XRTexture>
+    {
+        public bool Equals(XRTexture? x, XRTexture? y) => ReferenceEquals(x, y);
+        public int GetHashCode(XRTexture obj) => RuntimeHelpers.GetHashCode(obj);
+    }
+
+    private static readonly Dictionary<XRTexture, TexturePreviewState> PreviewStates = new(new TextureViewCacheKeyComparer());
+    private static readonly Dictionary<XRTexture, Dictionary<(int mip, int layer), XRTextureViewBase>> PreviewViews = new(new TextureViewCacheKeyComparer());
+
+    private static TexturePreviewState GetPreviewState(XRTexture texture)
+    {
+        if (!PreviewStates.TryGetValue(texture, out var state))
+        {
+            state = new TexturePreviewState();
+            PreviewStates[texture] = state;
+        }
+
+        int maxLayers = GetLayerCount(texture);
+        if (state.Layer >= maxLayers)
+            state.Layer = Math.Max(0, maxLayers - 1);
+
+        int maxMips = GetMipCount(texture);
+        if (state.Mip >= maxMips)
+            state.Mip = Math.Max(0, maxMips - 1);
+
+        return state;
+    }
+
+    private static void DrawPreviewControls(TexturePreviewState state, int layerCount, int mipCount)
+    {
+        if (layerCount > 1)
+        {
+            int layer = state.Layer;
+            if (ImGui.SliderInt("Layer##TexturePreview", ref layer, 0, layerCount - 1))
+                state.Layer = layer;
+        }
+
+        if (mipCount > 1)
+        {
+            int mip = state.Mip;
+            if (ImGui.SliderInt("Mip##TexturePreview", ref mip, 0, mipCount - 1))
+                state.Mip = mip;
+        }
+
+        string channelLabel = GetChannelLabel(state.Channel);
+        if (ImGui.BeginCombo("Channel##TexturePreview", channelLabel))
+        {
+            foreach (TextureChannelView view in Enum.GetValues<TextureChannelView>())
+            {
+                bool selected = view == state.Channel;
+                if (ImGui.Selectable(GetChannelLabel(view), selected))
+                    state.Channel = view;
+                if (selected)
+                    ImGui.SetItemDefaultFocus();
+            }
+            ImGui.EndCombo();
+        }
+    }
+
+    private static string GetChannelLabel(TextureChannelView channel)
+        => channel switch
+        {
+            TextureChannelView.R => "Red",
+            TextureChannelView.G => "Green",
+            TextureChannelView.B => "Blue",
+            TextureChannelView.A => "Alpha",
+            TextureChannelView.Luminance => "Luma",
+            _ => "RGBA",
+        };
+
+    private static int GetLayerCount(XRTexture texture)
+        => texture switch
+        {
+            XRTexture2DArray array => (int)Math.Max(1u, array.Depth),
+            XRTexture2DArrayView view => (int)Math.Max(1u, view.NumLayers),
+            _ => 1,
+        };
+
+    private static int GetMipCount(XRTexture texture)
+    {
+        switch (texture)
+        {
+            case XRTexture2D tex2D when tex2D.Mipmaps is { Length: > 0 } mips:
+                return mips.Length;
+            case XRTexture2D tex2D:
+                return Math.Max(1, tex2D.SmallestMipmapLevel + 1);
+            case XRTexture2DArray array when array.Mipmaps is { Length: > 0 } arrayMips:
+                return arrayMips.Length;
+            case XRTexture2DArray array:
+                return Math.Max(1, array.SmallestMipmapLevel + 1);
+            case XRTextureViewBase view:
+                return (int)Math.Max(1u, view.NumLevels);
+            default:
+                return 1;
+        }
+    }
+
+    private static XRTexture? GetPreviewTexture(XRTexture texture, TexturePreviewState state, out int mipLevel, out int layerIndex, out string failure)
+    {
+        mipLevel = Math.Max(0, state.Mip);
+        layerIndex = Math.Max(0, state.Layer);
+        failure = string.Empty;
+
+        switch (texture)
+        {
+            case XRTexture2DArray arrayTex:
+                int clampedLayer = Math.Min(layerIndex, Math.Max(0, GetLayerCount(arrayTex) - 1));
+                int clampedMip = Math.Min(mipLevel, Math.Max(0, GetMipCount(arrayTex) - 1));
+                state.Layer = clampedLayer;
+                state.Mip = clampedMip;
+                return GetOrCreateArrayView(arrayTex, clampedLayer, clampedMip);
+
+            case XRTexture2D tex2D when state.Mip > 0 || state.Channel != TextureChannelView.RGBA:
+                int clamped2DMip = Math.Min(mipLevel, Math.Max(0, GetMipCount(tex2D) - 1));
+                state.Mip = clamped2DMip;
+                return GetOrCreate2DView(tex2D, clamped2DMip);
+
+            case XRTexture2D tex2D:
+                state.Mip = 0;
+                state.Layer = 0;
+                return tex2D;
+
+            case XRTextureViewBase view:
+                return view;
+
+            default:
+                failure = "Only 2D and 2D array textures supported";
+                return null;
+        }
+    }
+
+    private static XRTexture2DView GetOrCreate2DView(XRTexture2D texture, int mip)
+    {
+        if (!PreviewViews.TryGetValue(texture, out var views))
+        {
+            views = new Dictionary<(int mip, int layer), XRTextureViewBase>();
+            PreviewViews[texture] = views;
+        }
+
+        var key = (mip, 0);
+        if (views.TryGetValue(key, out var existing) && existing is XRTexture2DView cachedView)
+        {
+            cachedView.MinLevel = (uint)mip;
+            cachedView.NumLevels = 1;
+            return cachedView;
+        }
+
+        var view = new XRTexture2DView(texture, (uint)mip, 1u, texture.SizedInternalFormat, false, texture.MultiSample);
+        views[key] = view;
+        return view;
+    }
+
+    private static XRTexture2DArrayView GetOrCreateArrayView(XRTexture2DArray texture, int layer, int mip)
+    {
+        if (!PreviewViews.TryGetValue(texture, out var views))
+        {
+            views = new Dictionary<(int mip, int layer), XRTextureViewBase>();
+            PreviewViews[texture] = views;
+        }
+
+        var key = (mip, layer);
+        if (views.TryGetValue(key, out var existing) && existing is XRTexture2DArrayView cachedView)
+        {
+            cachedView.MinLevel = (uint)mip;
+            cachedView.NumLevels = 1;
+            cachedView.MinLayer = (uint)layer;
+            cachedView.NumLayers = 1;
+            return cachedView;
+        }
+
+        var view = new XRTexture2DArrayView(texture, (uint)mip, 1u, (uint)layer, 1u, texture.SizedInternalFormat, false, texture.MultiSample);
+        views[key] = view;
+        return view;
+    }
+
+    private static Vector2 GetPixelSizeForPreview(XRTexture texture, int mipLevel)
+    {
+        static uint Shifted(uint value, int mip)
+            => Math.Max(1u, value >> mip);
+
+        return texture switch
+        {
+            XRTexture2D tex2D => new Vector2(Shifted(tex2D.Width, mipLevel), Shifted(tex2D.Height, mipLevel)),
+            XRTexture2DArray array => new Vector2(Shifted(array.Width, mipLevel), Shifted(array.Height, mipLevel)),
+            XRTextureViewBase view => new Vector2(Shifted((uint)view.WidthHeightDepth.X, mipLevel), Shifted((uint)view.WidthHeightDepth.Y, mipLevel)),
+            _ => new Vector2(1f, 1f),
+        };
+    }
+
+    private static void ApplyChannelSwizzle(OpenGLRenderer renderer, uint binding, TextureChannelView channel)
+    {
+        var gl = renderer.RawGL;
+
+        int r = (int)GLEnum.Red;
+        int g = (int)GLEnum.Green;
+        int b = (int)GLEnum.Blue;
+        int a = (int)GLEnum.Alpha;
+
+        switch (channel)
+        {
+            case TextureChannelView.R:
+                g = b = r;
+                a = (int)GLEnum.One;
+                break;
+            case TextureChannelView.G:
+                r = b = g;
+                a = (int)GLEnum.One;
+                break;
+            case TextureChannelView.B:
+                r = g = b;
+                a = (int)GLEnum.One;
+                break;
+            case TextureChannelView.A:
+                r = g = b = a;
+                a = (int)GLEnum.One;
+                break;
+            case TextureChannelView.Luminance:
+                r = g = b = (int)GLEnum.Red;
+                a = (int)GLEnum.One;
+                break;
+        }
+
+        gl.TextureParameterI(binding, GLEnum.TextureSwizzleR, in r);
+        gl.TextureParameterI(binding, GLEnum.TextureSwizzleG, in g);
+        gl.TextureParameterI(binding, GLEnum.TextureSwizzleB, in b);
+        gl.TextureParameterI(binding, GLEnum.TextureSwizzleA, in a);
     }
 
     #endregion

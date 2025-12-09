@@ -1,6 +1,7 @@
 using ImGuiNET;
 using System.Diagnostics.CodeAnalysis;
 using System.Globalization;
+using System.Linq;
 using System.Numerics;
 using XREngine.Components;
 using XREngine.Data.Rendering;
@@ -557,6 +558,7 @@ public sealed class CameraComponentEditor : IXRComponentEditor
         return fallback;
     }
 
+
     private static void DrawPreviewSection(CameraComponent component)
     {
         if (!ImGui.CollapsingHeader("Camera Preview", ImGuiTreeNodeFlags.DefaultOpen))
@@ -662,7 +664,7 @@ public sealed class CameraComponentEditor : IXRComponentEditor
         {
             if (resources.TryGetTexture(name, out XRTexture? candidate) && candidate is XRTexture2D)
             {
-                texture = candidate;
+                texture = candidate!;
                 return true;
             }
         }
@@ -671,7 +673,7 @@ public sealed class CameraComponentEditor : IXRComponentEditor
         {
             if (resources.TryGetFrameBuffer(fboName, out XRFrameBuffer? fbo) && TryExtractTextureFromFbo(fbo, out XRTexture? candidate, out _))
             {
-                texture = candidate;
+                texture = candidate!;
                 return true;
             }
         }
@@ -680,7 +682,7 @@ public sealed class CameraComponentEditor : IXRComponentEditor
         {
             if (TryExtractTextureFromFbo(fbo, out XRTexture? candidate, out _))
             {
-                texture = candidate;
+                texture = candidate!;
                 return true;
             }
         }
@@ -791,5 +793,12 @@ public sealed class CameraComponentEditor : IXRComponentEditor
             if (_disabled)
                 ImGui.EndDisabled();
         }
+    }
+
+    private sealed class DebugViewState
+    {
+        public int SelectedPipelineIndex;
+        public string? SelectedFboName;
+        public bool FlipPreview = true;
     }
 }

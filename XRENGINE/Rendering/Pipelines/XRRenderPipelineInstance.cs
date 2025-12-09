@@ -36,6 +36,9 @@ public sealed partial class XRRenderPipelineInstance : XRBase
 
     public RenderResourceRegistry Resources { get; } = new();
 
+    // Track the last applied internal resolution scale to avoid resetting the viewport every frame.
+    private float? _appliedInternalResolutionScale;
+
     private RenderPipeline? _pipeline;
     public RenderPipeline? Pipeline
     {
@@ -252,6 +255,29 @@ public sealed partial class XRRenderPipelineInstance : XRBase
         {
             Debug.LogWarning("No render pipeline is set.");
             return;
+        }
+
+        // Honor any internal resolution request from the pipeline before executing commands.
+        if (viewport is not null)
+        {
+            float? requestedScale = Pipeline.RequestedInternalResolution;
+
+            // Avoid redundant resets: only touch the viewport when the requested scale changes.
+            if (requestedScale.HasValue)
+            {
+                float scale = Math.Clamp(requestedScale.Value, 0.25f, 1.25f);
+                if (_appliedInternalResolutionScale != scale)
+                {
+                    _appliedInternalResolutionScale = scale;
+                    viewport.SetInternalResolutionPercentage(scale, scale);
+                }
+            }
+            else if (_appliedInternalResolutionScale.HasValue)
+            {
+                // Restore to native internal resolution once the request is cleared.
+                _appliedInternalResolutionScale = null;
+                viewport.SetInternalResolution(viewport.Width, viewport.Height, true);
+            }
         }
 
         using (PushRenderingPipeline(this))
