@@ -1,11 +1,22 @@
+using System;
 using System.Collections;
 using System.Collections.Concurrent;
+using System.Collections.Generic;
+using System.Threading;
 
 namespace XREngine
 {
     public class JobManager
     {
-        private readonly ConcurrentQueue<Job> _pending = new();
+        private const int PriorityLevels = 5; // Matches JobPriority enum
+        private readonly ConcurrentQueue<Job>[] _pendingByPriority =
+        [
+            new(), // Lowest
+            new(), // Low
+            new(), // Normal
+            new(), // High
+            new(), // Highest
+        ];
         private readonly List<Job> _active = new();
         private readonly object _activeLock = new();
 
@@ -14,22 +25,28 @@ namespace XREngine
             get
             {
                 lock (_activeLock)
-                    return _active.ToArray();
+                    return [.. _active];
             }
         }
 
         public void Schedule(Job job)
-            => Schedule(job, CancellationToken.None);
+            => Schedule(job, JobPriority.Normal, CancellationToken.None);
 
         public void Schedule(Job job, CancellationToken cancellationToken)
+            => Schedule(job, JobPriority.Normal, cancellationToken);
+
+        public void Schedule(Job job, JobPriority priority, CancellationToken cancellationToken = default)
         {
             ArgumentNullException.ThrowIfNull(job);
 
             if (!job.TryStart())
                 throw new InvalidOperationException("Job has already been scheduled or completed.");
 
+            job.Priority = priority;
             job.LinkCancellationToken(cancellationToken);
-            _pending.Enqueue(job);
+
+            int bucket = Math.Clamp((int)priority, 0, PriorityLevels - 1);
+            _pendingByPriority[bucket].Enqueue(job);
         }
 
         public EnumeratorJob Schedule(
@@ -39,10 +56,11 @@ namespace XREngine
             Action<Exception>? error = null,
             Action? canceled = null,
             Action<float, object?>? progressWithPayload = null,
-            CancellationToken cancellationToken = default)
+            CancellationToken cancellationToken = default,
+            JobPriority priority = JobPriority.Normal)
         {
             var job = new EnumeratorJob(routine, progress, completed, error, canceled, progressWithPayload);
-            Schedule(job, cancellationToken);
+            Schedule(job, priority, cancellationToken);
             return job;
         }
 
@@ -53,18 +71,17 @@ namespace XREngine
             Action<Exception>? error = null,
             Action? canceled = null,
             Action<float, object?>? progressWithPayload = null,
-            CancellationToken cancellationToken = default)
+            CancellationToken cancellationToken = default,
+            JobPriority priority = JobPriority.Normal)
         {
             var job = new EnumeratorJob(routineFactory, progress, completed, error, canceled, progressWithPayload);
-            Schedule(job, cancellationToken);
+            Schedule(job, priority, cancellationToken);
             return job;
         }
 
-        public bool Cancel(Job job)
+        public static bool Cancel(Job job)
         {
-            if (job is null)
-                throw new ArgumentNullException(nameof(job));
-
+            ArgumentNullException.ThrowIfNull(job);
             job.Cancel();
             return true;
         }
@@ -91,14 +108,13 @@ namespace XREngine
                 return true;
             }
 
-            foreach (var pending in _pending)
-            {
-                if (pending.Id == jobId)
-                {
-                    pending.Cancel();
-                    return true;
-                }
-            }
+            foreach (var queue in _pendingByPriority)
+                foreach (var pending in queue)
+                    if (pending.Id == jobId)
+                    {
+                        pending.Cancel();
+                        return true;
+                    }
 
             return false;
         }
@@ -107,13 +123,17 @@ namespace XREngine
         {
             var didWork = false;
 
-            while (_pending.TryDequeue(out var pending))
+            for (int p = PriorityLevels - 1; p >= 0; p--)
             {
-                lock (_activeLock)
+                var queue = _pendingByPriority[p];
+                while (queue.TryDequeue(out var pending))
                 {
-                    _active.Add(pending);
+                    lock (_activeLock)
+                    {
+                        _active.Add(pending);
+                    }
+                    didWork = true;
                 }
-                didWork = true;
             }
 
             Job[] snapshot;
@@ -122,7 +142,15 @@ namespace XREngine
                 if (_active.Count == 0)
                     return didWork;
 
-                snapshot = _active.ToArray();
+                var highestPriority = GetHighestActivePriorityUnsafe();
+                var topTier = new List<Job>(_active.Count);
+                foreach (var job in _active)
+                {
+                    if (job.Priority == highestPriority)
+                        topTier.Add(job);
+                }
+
+                snapshot = [.. topTier];
             }
 
             foreach (var job in snapshot)
@@ -143,6 +171,18 @@ namespace XREngine
             }
 
             return didWork;
+        }
+
+        private JobPriority GetHighestActivePriorityUnsafe()
+        {
+            JobPriority highest = JobPriority.Lowest;
+            foreach (var job in _active)
+            {
+                if (job.Priority > highest)
+                    highest = job.Priority;
+            }
+
+            return highest;
         }
     }
 }

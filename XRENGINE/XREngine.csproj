@@ -382,6 +382,10 @@
     <None Update="swscale-8.dll">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </None>
+    <None Update="RestirGI.Native.dll">
+      <CopyToOutputDirectory>Always</CopyToOutputDirectory>
+      <CopyToPublishDirectory>Always</CopyToPublishDirectory>
+    </None>
   </ItemGroup>
 
   <ItemGroup>
@@ -408,6 +412,14 @@
 
   <Target Name="ForceFreetype64Publish" AfterTargets="Publish" Condition="Exists('$(Freetype64Source)') and '$(PublishDir)' != ''">
     <Copy SourceFiles="$(Freetype64Source)" DestinationFiles="$(PublishDir)freetype6.dll" SkipUnchangedFiles="false" />
+  </Target>
+
+  <Target Name="CopyRestirNative" AfterTargets="Build">
+    <PropertyGroup>
+      <RestirNativeSource>$(SolutionDir)Build\RestirGI\bin\$(Configuration)\RestirGINative.dll</RestirNativeSource>
+      <RestirNativeDest>$(MSBuildThisFileDirectory)RestirGI.Native.dll</RestirNativeDest>
+    </PropertyGroup>
+    <Copy SourceFiles="$(RestirNativeSource)" DestinationFiles="$(RestirNativeDest)" SkipUnchangedFiles="true" Condition="Exists('$(RestirNativeSource)')" />
   </Target>
 
 </Project>

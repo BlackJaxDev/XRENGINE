@@ -1,6 +1,9 @@
 using Assimp;
+using System.Collections;
 using System.Collections.Concurrent;
 using System.Numerics;
+using System.Threading;
+using System.Threading.Tasks;
 using XREngine.Data.Rendering;
 using XREngine.Scene;
 
@@ -153,7 +156,7 @@ public partial class XRMesh
         bool hasTexCoordAction = vertexActions.ContainsKey(3);
         bool hasColorAction = vertexActions.ContainsKey(4);
 
-        Parallel.For(0, faceCount, i =>
+        void ProcessFace(int i)
         {
             Face face = mesh.Faces[i];
             int numInd = face.IndexCount;
@@ -201,7 +204,44 @@ public partial class XRMesh
                     localOffset++;
                 }
             }
-        });
+        }
+
+        if (Engine.Rendering.Settings.ProcessMeshImportsAsynchronously)
+        {
+            // Spread face processing across the job thread via an enumerator so other jobs can interleave
+            IEnumerable ProcessFacesRoutine()
+            {
+                for (int i = 0; i < faceCount; i++)
+                {
+                    ProcessFace(i);
+                    yield return null; // Yield to let the job scheduler advance between faces
+                }
+            }
+
+            // If we're already on the job thread we can't enqueue and wait without deadlocking, so process inline
+            if (Engine.JobThreadId.HasValue && Engine.JobThreadId.Value == Thread.CurrentThread.ManagedThreadId)
+            {
+                foreach (var _ignore in ProcessFacesRoutine())
+                {
+                    // Inline iteration; yield points above ensure the caller job can make progress between steps
+                }
+            }
+            else
+            {
+                var completion = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+
+                Engine.Jobs.Schedule(
+                    ProcessFacesRoutine,
+                    completed: () => completion.TrySetResult(true),
+                    error: ex => completion.TrySetException(ex));
+
+                completion.Task.Wait();
+            }
+        }
+        else
+        {
+            Parallel.For(0, faceCount, ProcessFace);
+        }
 
         points = pointsArray;
         lines = linesArray;

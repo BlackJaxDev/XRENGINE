@@ -1,0 +1,89 @@
+#version 450
+
+layout(local_size_x = 16, local_size_y = 16, local_size_z = 1) in;
+
+// Stereo input textures (2D arrays with layer 0 = left eye, layer 1 = right eye)
+layout(binding = 0) uniform sampler2DArray gDepth;
+layout(binding = 1) uniform sampler2DArray gNormal;
+layout(binding = 2, rgba16f) writeonly uniform image2DArray gOutput;
+layout(binding = 3) uniform sampler3D LightVolumeTex;
+
+// Per-eye matrices
+uniform mat4 leftInvProjMatrix;
+uniform mat4 leftCameraToWorldMatrix;
+uniform mat4 rightInvProjMatrix;
+uniform mat4 rightCameraToWorldMatrix;
+
+uniform vec3 leftCameraPosition;
+uniform vec3 rightCameraPosition;
+uniform ivec2 resolution;
+uniform uint frameIndex;
+uniform mat4 volumeWorldToLocal;
+uniform vec3 volumeHalfExtents;
+uniform vec4 volumeTint;
+uniform float volumeIntensity;
+
+vec3 ReconstructWorldPosition(vec2 uv, float depth, mat4 invProj, mat4 camToWorld)
+{
+    vec4 clip = vec4(uv * 2.0 - 1.0, depth * 2.0 - 1.0, 1.0);
+    vec4 view = invProj * clip;
+    view /= max(view.w, 1e-6);
+    vec4 world = camToWorld * view;
+    return world.xyz;
+}
+
+vec3 DecodeNormal(vec3 encoded, mat4 camToWorld)
+{
+    // Normal is stored in view space as 0..1; remap and rotate into world space.
+    vec3 n = normalize(encoded * 2.0 - 1.0);
+    vec3 worldN = normalize((camToWorld * vec4(n, 0.0)).xyz);
+    return worldN;
+}
+
+void ProcessEye(ivec2 pix, int eye)
+{
+    vec2 uv = (vec2(pix) + 0.5) / vec2(resolution);
+    float depth = texture(gDepth, vec3(uv, float(eye))).r;
+    
+    if (depth <= 0.0)
+    {
+        imageStore(gOutput, ivec3(pix, eye), vec4(0.0));
+        return;
+    }
+
+    // Select per-eye matrices
+    mat4 invProj = (eye == 0) ? leftInvProjMatrix : rightInvProjMatrix;
+    mat4 camToWorld = (eye == 0) ? leftCameraToWorldMatrix : rightCameraToWorldMatrix;
+
+    vec3 worldPos = ReconstructWorldPosition(uv, depth, invProj, camToWorld);
+    vec3 normalWS = DecodeNormal(texture(gNormal, vec3(uv, float(eye))).rgb, camToWorld);
+
+    vec4 localPos4 = volumeWorldToLocal * vec4(worldPos, 1.0);
+    vec3 localPos = localPos4.xyz;
+    vec3 uvw = (localPos / max(volumeHalfExtents, vec3(1e-4))) * 0.5 + 0.5;
+
+    if (any(lessThan(uvw, vec3(0.0))) || any(greaterThan(uvw, vec3(1.0))))
+    {
+        imageStore(gOutput, ivec3(pix, eye), vec4(0.0));
+        return;
+    }
+
+    vec3 volumeRadiance = texture(LightVolumeTex, uvw).rgb;
+
+    // Simple lambertian weight using encoded normal to avoid completely flat output.
+    float facing = clamp(dot(normalWS, normalize(volumeRadiance + vec3(1e-4))), 0.0, 1.0);
+    vec3 gi = volumeRadiance * volumeTint.rgb * volumeIntensity * facing;
+
+    imageStore(gOutput, ivec3(pix, eye), vec4(gi, 1.0));
+}
+
+void main()
+{
+    ivec2 pix = ivec2(gl_GlobalInvocationID.xy);
+    if (pix.x >= resolution.x || pix.y >= resolution.y)
+        return;
+
+    // Process both eyes
+    ProcessEye(pix, 0); // Left eye
+    ProcessEye(pix, 1); // Right eye
+}

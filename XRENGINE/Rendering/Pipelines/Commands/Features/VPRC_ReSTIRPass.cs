@@ -1,6 +1,7 @@
 using System.IO;
 using System.Numerics;
 using System.Runtime.InteropServices;
+using XREngine;
 using XREngine.Data.Rendering;
 using XREngine.Data.Vectors;
 using XREngine.Rendering.GI;
@@ -61,7 +62,10 @@ namespace XREngine.Rendering.Pipelines.Commands
 
             if (!_restirInitialized)
             {
-                RestirGI.Init();
+                // Attempt NV ray tracing init once; fall back to compute path when unavailable.
+                if (!RestirGI.TryInit())
+                    Debug.LogWarning("ReSTIR NV ray tracing unavailable; falling back to compute path.");
+
                 _restirInitialized = true;
             }
 
@@ -109,10 +113,7 @@ namespace XREngine.Rendering.Pipelines.Commands
             if (RayTracingPipelineId == 0 || RayTracingSbtBufferId == 0 || RayTracingSbtStride == 0)
                 return false;
 
-            if (!RestirGI.TryInit())
-                return false;
-
-            if (!RestirGI.TryBind(RayTracingPipelineId))
+            if (!RestirGI.TryInit() || !RestirGI.TryBind(RayTracingPipelineId))
                 return false;
 
             var parameters = RestirGI.TraceParameters.CreateSingleTable(

@@ -1,4 +1,5 @@
-﻿using Extensions;
+﻿using System;
+using Extensions;
 using XREngine.Data.Rendering;
 using XREngine.Rendering.Models.Materials;
 
@@ -17,12 +18,76 @@ namespace XREngine.Rendering.Shaders.Generator
     /// </summary>
     public class DefaultVertexShaderGenerator : ShaderGeneratorBase
     {
+        private const uint MaxVertexAttribs = 16;
+
+        private bool _useNormals;
+        private bool _useTangents;
+        private bool _useSkinningInputs;
+        private bool _useBlendshapeInput;
+        private int _texCoordsUsed;
+        private int _colorsUsed;
+
         public DefaultVertexShaderGenerator(XRMesh mesh) : base(mesh)
         {
             HelperMethodWriters.Add(WriteAdjointMethod);
+
+            ComputeAttributeBudget();
             AddUniforms();
             AddOutputs();
             AddInputs();
+        }
+
+        private void ComputeAttributeBudget()
+        {
+            uint location = 0u; //Reserve locations in the same order we will emit attributes
+
+            // Position is mandatory
+            location++;
+
+            _useNormals = Mesh.HasNormals && location < MaxVertexAttribs;
+            if (_useNormals)
+                location++;
+
+            _useTangents = Mesh.HasTangents && location < MaxVertexAttribs;
+            if (_useTangents)
+                location++;
+
+            bool needSkinning = Mesh.HasSkinning && Engine.Rendering.Settings.AllowSkinning && !UseComputeSkinning;
+            uint skinningSlots = needSkinning ? 2u : 0u; //Both code paths consume two attributes
+
+            if (needSkinning)
+            {
+                //Make room by dropping lower-priority tangents/normals if needed
+                if (location + skinningSlots > MaxVertexAttribs && _useTangents)
+                {
+                    _useTangents = false;
+                    location--;
+                }
+                if (location + skinningSlots > MaxVertexAttribs && _useNormals)
+                {
+                    _useNormals = false;
+                    location--;
+                }
+
+                _useSkinningInputs = location + skinningSlots <= MaxVertexAttribs;
+                if (_useSkinningInputs)
+                    location += skinningSlots;
+            }
+            else
+                _useSkinningInputs = false;
+
+            bool needBlendshapeAttr = Mesh.BlendshapeCount > 0 && !Engine.Rendering.Settings.CalculateBlendshapesInComputeShader && Engine.Rendering.Settings.AllowBlendshapes;
+            _useBlendshapeInput = needBlendshapeAttr && location < MaxVertexAttribs;
+            if (_useBlendshapeInput)
+                location++;
+
+            uint remaining = MaxVertexAttribs - location;
+
+            _texCoordsUsed = Mesh.HasTexCoords ? (int)Math.Min(remaining, (uint)Mesh.TexCoordCount) : 0;
+            location += (uint)_texCoordsUsed;
+            remaining = MaxVertexAttribs - location;
+
+            _colorsUsed = Mesh.HasColors ? (int)Math.Min(remaining, (uint)Mesh.ColorCount) : 0;
         }
 
         private void AddInputs()
@@ -31,21 +96,13 @@ namespace XREngine.Rendering.Shaders.Generator
 
             InputVars.Add(ECommonBufferType.Position.ToString(), (location++, EShaderVarType._vec3));
 
-            if (Mesh.HasNormals)
+            if (_useNormals)
                 InputVars.Add(ECommonBufferType.Normal.ToString(), (location++, EShaderVarType._vec3));
 
-            if (Mesh.HasTangents)
+            if (_useTangents)
                 InputVars.Add(ECommonBufferType.Tangent.ToString(), (location++, EShaderVarType._vec3));
 
-            if (Mesh.HasTexCoords)
-                for (uint i = 0; i < Mesh.TexCoordCount; ++i)
-                    InputVars.Add($"{ECommonBufferType.TexCoord}{i}", (location++, EShaderVarType._vec2));
-
-            if (Mesh.HasColors)
-                for (uint i = 0; i < Mesh.ColorCount; ++i)
-                    InputVars.Add($"{ECommonBufferType.Color}{i}", (location++, EShaderVarType._vec4));
-
-            if (Mesh.HasSkinning && Engine.Rendering.Settings.AllowSkinning && !UseComputeSkinning)
+            if (_useSkinningInputs && Mesh.HasSkinning && Engine.Rendering.Settings.AllowSkinning && !UseComputeSkinning)
             {
                 bool optimizeTo4Weights = Engine.Rendering.Settings.OptimizeSkinningTo4Weights || (Engine.Rendering.Settings.OptimizeSkinningWeightsIfPossible && Mesh.MaxWeightCount <= 4);
                 if (optimizeTo4Weights)
@@ -68,7 +125,15 @@ namespace XREngine.Rendering.Shaders.Generator
                 }
             }
 
-            if (Mesh.BlendshapeCount > 0 && !Engine.Rendering.Settings.CalculateBlendshapesInComputeShader && Engine.Rendering.Settings.AllowBlendshapes)
+            if (_texCoordsUsed > 0)
+                for (uint i = 0; i < _texCoordsUsed; ++i)
+                    InputVars.Add($"{ECommonBufferType.TexCoord}{i}", (location++, EShaderVarType._vec2));
+
+            if (_colorsUsed > 0)
+                for (uint i = 0; i < _colorsUsed; ++i)
+                    InputVars.Add($"{ECommonBufferType.Color}{i}", (location++, EShaderVarType._vec4));
+
+            if (_useBlendshapeInput)
             {
                 EShaderVarType intVarType = Engine.Rendering.Settings.UseIntegerUniformsInShaders
                     ? EShaderVarType._ivec2
@@ -85,18 +150,18 @@ namespace XREngine.Rendering.Shaders.Generator
             // Always provide FragNorm to satisfy fragment inputs expecting it
             OutputVars.Add(FragNormName, (1, EShaderVarType._vec3));
 
-            if (Mesh.HasTangents)
+            if (_useTangents)
             {
                 OutputVars.Add(FragTanName, (2, EShaderVarType._vec3));
                 OutputVars.Add(FragBinormName, (3, EShaderVarType._vec3)); //Binormal is created in vertex shader if tangents exist
             }
 
-            if (Mesh.HasTexCoords)
-                for (int i = 0; i < Mesh.TexCoordCount.ClampMax(8); ++i)
+            if (_texCoordsUsed > 0)
+                for (int i = 0; i < _texCoordsUsed.ClampMax(8); ++i)
                     OutputVars.Add(string.Format(FragUVName, i), (4u + (uint)i, EShaderVarType._vec2));
 
-            if (Mesh.HasColors)
-                for (int i = 0; i < Mesh.ColorCount.ClampMax(8); ++i)
+            if (_colorsUsed > 0)
+                for (int i = 0; i < _colorsUsed.ClampMax(8); ++i)
                     OutputVars.Add(string.Format(FragColorName, i), (12u + (uint)i, EShaderVarType._vec4));
 
             OutputVars.Add(FragPosLocalName, (20, EShaderVarType._vec3)); //Local position in model space
@@ -175,27 +240,27 @@ namespace XREngine.Rendering.Shaders.Generator
         protected override void WriteMain()
         {
             //Normal matrix is used to transform normals, tangents, and binormals in mesh transform calculations
-            if (Mesh.HasNormals)
+            if (_useNormals)
             {
                 Line($"mat3 {NormalMatrixName} = adjoint({EEngineUniform.ModelMatrix});");
                 Line();
             }
 
             //Transform position, normals and tangents
-            WriteMeshTransforms(Mesh.HasSkinning && Engine.Rendering.Settings.AllowSkinning && !UseComputeSkinning);
+            WriteMeshTransforms(_useSkinningInputs && Mesh.HasSkinning && Engine.Rendering.Settings.AllowSkinning && !UseComputeSkinning);
             if (UseNVStereo)
                 Line("gl_Layer = 0;");
 
             // Ensure FragNorm is always initialized to a sensible default when normals are absent
-            if (!Mesh.HasNormals)
+            if (!_useNormals)
                 Line($"{FragNormName} = vec3(0.0f, 0.0f, 1.0f);");
 
-            if (Mesh.ColorCount != 0)
-                for (int i = 0; i < Mesh.ColorCount; ++i)
+            if (_colorsUsed != 0)
+                for (int i = 0; i < _colorsUsed; ++i)
                     Line($"{string.Format(FragColorName, i)} = {ECommonBufferType.Color}{i};");
 
-            if (Mesh.TexCoordCount != 0)
-                for (int i = 0; i < Mesh.TexCoordCount; ++i)
+            if (_texCoordsUsed != 0)
+                for (int i = 0; i < _texCoordsUsed; ++i)
                     Line($"{string.Format(FragUVName, i)} = {ECommonBufferType.TexCoord}{i};");
         }
 
@@ -309,13 +374,13 @@ namespace XREngine.Rendering.Shaders.Generator
             using (StartShaderStorageBufferBlock($"{ComputePositionBufferName}Input", ComputePositionBinding))
                 WriteUniform(EShaderVarType._vec4, ComputePositionBufferName, true);
 
-            if (Mesh.HasNormals)
+            if (_useNormals)
             {
                 using (StartShaderStorageBufferBlock($"{ComputeNormalBufferName}Input", ComputeNormalBinding))
                     WriteUniform(EShaderVarType._vec4, ComputeNormalBufferName, true);
             }
 
-            if (Mesh.HasTangents)
+            if (_useTangents)
             {
                 using (StartShaderStorageBufferBlock($"{ComputeTangentBufferName}Input", ComputeTangentBinding))
                     WriteUniform(EShaderVarType._vec4, ComputeTangentBufferName, true);
@@ -327,8 +392,8 @@ namespace XREngine.Rendering.Shaders.Generator
         /// </summary>
         private void WriteMeshTransforms(bool hasSkinning)
         {
-            bool hasNormals = Mesh.HasNormals;
-            bool hasTangents = Mesh.HasTangents;
+            bool hasNormals = _useNormals;
+            bool hasTangents = _useTangents;
 
             Line($"vec4 {FinalPositionName} = vec4(0.0f);");
             Line($"vec3 {BasePositionName} = {ECommonBufferType.Position};");
@@ -439,6 +504,9 @@ namespace XREngine.Rendering.Shaders.Generator
             if (Engine.Rendering.Settings.CalculateSkinningInComputeShader)
                 return false;
 
+            bool hasNormals = _useNormals;
+            bool hasTangents = _useTangents;
+
             bool optimizeTo4Weights = Engine.Rendering.Settings.OptimizeSkinningTo4Weights || (Engine.Rendering.Settings.OptimizeSkinningWeightsIfPossible && Mesh.MaxWeightCount <= 4);
             if (optimizeTo4Weights)
             {
@@ -450,8 +518,10 @@ namespace XREngine.Rendering.Shaders.Generator
                     Line($"mat4 boneMatrix = {ECommonBufferType.BoneInvBindMatrices}[boneIndex] * {ECommonBufferType.BoneMatrices}[boneIndex];"); // * {EEngineUniform.RootInvModelMatrix}
                     Line($"{FinalPositionName} += (boneMatrix * vec4({BasePositionName}, 1.0f)) * weight;");
                     Line("mat3 boneMatrix3 = adjoint(boneMatrix);");
-                    Line($"{FinalNormalName} += (boneMatrix3 * {BaseNormalName}) * weight;");
-                    Line($"{FinalTangentName} += (boneMatrix3 * {BaseTangentName}) * weight;");
+                    if (hasNormals)
+                        Line($"{FinalNormalName} += (boneMatrix3 * {BaseNormalName}) * weight;");
+                    if (hasTangents)
+                        Line($"{FinalTangentName} += (boneMatrix3 * {BaseTangentName}) * weight;");
                 }
             }
             else
@@ -465,8 +535,10 @@ namespace XREngine.Rendering.Shaders.Generator
                     Line($"mat4 boneMatrix = {ECommonBufferType.BoneInvBindMatrices}[boneIndex] * {ECommonBufferType.BoneMatrices}[boneIndex];"); // * {EEngineUniform.RootInvModelMatrix}
                     Line($"{FinalPositionName} += (boneMatrix * vec4({BasePositionName}, 1.0f)) * weight;");
                     Line("mat3 boneMatrix3 = adjoint(boneMatrix);");
-                    Line($"{FinalNormalName} += (boneMatrix3 * {BaseNormalName}) * weight;");
-                    Line($"{FinalTangentName} += (boneMatrix3 * {BaseTangentName}) * weight;");
+                    if (hasNormals)
+                        Line($"{FinalNormalName} += (boneMatrix3 * {BaseNormalName}) * weight;");
+                    if (hasTangents)
+                        Line($"{FinalTangentName} += (boneMatrix3 * {BaseTangentName}) * weight;");
                 }
             }
 
@@ -475,8 +547,11 @@ namespace XREngine.Rendering.Shaders.Generator
         
         private bool WriteBlendshapeCalc()
         {
-            if (Engine.Rendering.Settings.CalculateBlendshapesInComputeShader || Mesh.BlendshapeCount == 0 || !Engine.Rendering.Settings.AllowBlendshapes)
+            if (Engine.Rendering.Settings.CalculateBlendshapesInComputeShader || Mesh.BlendshapeCount == 0 || !Engine.Rendering.Settings.AllowBlendshapes || !_useBlendshapeInput)
                 return false;
+
+            bool hasNormals = _useNormals;
+            bool hasTangents = _useTangents;
 
             bool absolute = Engine.Rendering.Settings.UseAbsoluteBlendshapePositions;
 
@@ -485,8 +560,10 @@ namespace XREngine.Rendering.Shaders.Generator
             {
                 // MAX blendshape accumulation
                 Line("vec3 maxPositionDelta = vec3(0.0f);");
-                Line("vec3 maxNormalDelta = vec3(0.0f);");
-                Line("vec3 maxTangentDelta = vec3(0.0f);");
+                if (hasNormals)
+                    Line("vec3 maxNormalDelta = vec3(0.0f);");
+                if (hasTangents)
+                    Line("vec3 maxTangentDelta = vec3(0.0f);");
                 Line($"for (int i = 0; i < int({ECommonBufferType.BlendshapeCount}.y); i++)");
                 using (OpenBracketState())
                 {
@@ -501,16 +578,22 @@ namespace XREngine.Rendering.Shaders.Generator
                     using (OpenBracketState())
                     {
                         Line($"int blendshapeDeltaPosIndex = int(blendshapeIndices.y);");
-                        Line($"int blendshapeDeltaNrmIndex = int(blendshapeIndices.z);");
-                        Line($"int blendshapeDeltaTanIndex = int(blendshapeIndices.w);");
+                        if (hasNormals)
+                            Line($"int blendshapeDeltaNrmIndex = int(blendshapeIndices.z);");
+                        if (hasTangents)
+                            Line($"int blendshapeDeltaTanIndex = int(blendshapeIndices.w);");
                         Line($"maxPositionDelta = max(maxPositionDelta, {ECommonBufferType.BlendshapeDeltas}[blendshapeDeltaPosIndex].xyz * weight);");
-                        Line($"maxNormalDelta = max(maxNormalDelta, {ECommonBufferType.BlendshapeDeltas}[blendshapeDeltaNrmIndex].xyz * weight);");
-                        Line($"maxTangentDelta = max(maxTangentDelta, {ECommonBufferType.BlendshapeDeltas}[blendshapeDeltaTanIndex].xyz * weight);");
+                        if (hasNormals)
+                            Line($"maxNormalDelta = max(maxNormalDelta, {ECommonBufferType.BlendshapeDeltas}[blendshapeDeltaNrmIndex].xyz * weight);");
+                        if (hasTangents)
+                            Line($"maxTangentDelta = max(maxTangentDelta, {ECommonBufferType.BlendshapeDeltas}[blendshapeDeltaTanIndex].xyz * weight);");
                     }
                 }
                 Line($"{BasePositionName} += maxPositionDelta;");
-                Line($"{BaseNormalName} += maxNormalDelta;");
-                Line($"{BaseTangentName} += maxTangentDelta;");
+                if (hasNormals)
+                    Line($"{BaseNormalName} += maxNormalDelta;");
+                if (hasTangents)
+                    Line($"{BaseTangentName} += maxTangentDelta;");
             }
             else
             {
@@ -524,15 +607,19 @@ namespace XREngine.Rendering.Shaders.Generator
                         Line($"vec4 blendshapeIndices = {ECommonBufferType.BlendshapeIndices}[index];");
                     Line($"int blendshapeIndex = int(blendshapeIndices.x);");
                     Line($"int blendshapeDeltaPosIndex = int(blendshapeIndices.y);");
-                    Line($"int blendshapeDeltaNrmIndex = int(blendshapeIndices.z);");
-                    Line($"int blendshapeDeltaTanIndex = int(blendshapeIndices.w);");
+                    if (hasNormals)
+                        Line($"int blendshapeDeltaNrmIndex = int(blendshapeIndices.z);");
+                    if (hasTangents)
+                        Line($"int blendshapeDeltaTanIndex = int(blendshapeIndices.w);");
                     Line($"float weight = {ECommonBufferType.BlendshapeWeights}[blendshapeIndex];");
                     Line($"if (weight > {minWeight})");
                     using (OpenBracketState())
                     {
                         Line($"{BasePositionName} += {ECommonBufferType.BlendshapeDeltas}[blendshapeDeltaPosIndex].xyz * weight;");
-                        Line($"{BaseNormalName} += ({ECommonBufferType.BlendshapeDeltas}[blendshapeDeltaNrmIndex].xyz * weight);");
-                        Line($"{BaseTangentName} += ({ECommonBufferType.BlendshapeDeltas}[blendshapeDeltaTanIndex].xyz * weight);");
+                        if (hasNormals)
+                            Line($"{BaseNormalName} += ({ECommonBufferType.BlendshapeDeltas}[blendshapeDeltaNrmIndex].xyz * weight);");
+                        if (hasTangents)
+                            Line($"{BaseTangentName} += ({ECommonBufferType.BlendshapeDeltas}[blendshapeDeltaTanIndex].xyz * weight);");
                     }
                 }
             }

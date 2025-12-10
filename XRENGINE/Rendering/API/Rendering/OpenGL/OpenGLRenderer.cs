@@ -139,6 +139,31 @@ namespace XREngine.Rendering.OpenGL
                 Debug.Out($"OpenGL Shading Language Version: {shadingLanguageVersion}");
 
                 Engine.Rendering.State.IsNVIDIA = vendor.Contains("NVIDIA");
+
+                // Probe for GL_NV_ray_tracing support early so features can decide whether to attempt the RT path.
+                bool hasNvRayTracing = false;
+                try
+                {
+                    int extCount = api.GetInteger(GLEnum.NumExtensions);
+                    for (uint i = 0; i < extCount; i++)
+                    {
+                        string ext = new((sbyte*)api.GetString(StringName.Extensions, i));
+                        if (ext == "GL_NV_ray_tracing")
+                        {
+                            hasNvRayTracing = true;
+                            break;
+                        }
+                    }
+                }
+                catch (Exception ex)
+                {
+                    Debug.LogWarning($"Failed to query GL extensions for NV ray tracing: {ex.Message}");
+                }
+
+                Engine.Rendering.State.HasNvRayTracing = hasNvRayTracing;
+                Debug.Out(EOutputVerbosity.Normal, false, hasNvRayTracing
+                    ? "GL_NV_ray_tracing: available"
+                    : "GL_NV_ray_tracing: NOT reported; RT path will fall back.");
             }
 
             GLRenderProgram.ReadBinaryShaderCache(version);

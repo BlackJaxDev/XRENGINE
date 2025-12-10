@@ -130,8 +130,8 @@ namespace XREngine
                 private bool _lightProbesCaptureDepth = false;
                 private uint _lightProbeDepthResolution = 256u;
                 private bool _allowBinaryProgramCaching = true;
-                private bool _calculateBlendshapesInComputeShader = false;
-                private bool _calculateSkinningInComputeShader = false;
+                private bool _calculateBlendshapesInComputeShader = true;
+                private bool _calculateSkinningInComputeShader = true;
                 private int _shaderConfigVersion = 0;
 
                 private void BumpShaderConfigVersion()
@@ -167,7 +167,7 @@ namespace XREngine
                 private bool _preferNVStereo = true;
                 private bool _renderVRSinglePassStereo = false;
                 private bool _renderWindowsWhileInVR = true;
-                private bool _populateVertexDataInParallel = true;
+                private bool _populateVertexDataInParallel = false;
                 private bool _processMeshImportsAsynchronously = true;
                 private bool _useInterleavedMeshBuffer = false;
                 private bool _enableSecondaryGpuCompute = false;

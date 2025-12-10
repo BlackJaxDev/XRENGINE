@@ -1,0 +1,71 @@
+#version 450
+
+layout(local_size_x = 16, local_size_y = 16, local_size_z = 1) in;
+
+layout(binding = 0) uniform sampler2D gDepth;
+layout(binding = 1) uniform sampler2D gNormal;
+layout(binding = 2, rgba16f) writeonly uniform image2D gOutput;
+layout(binding = 3) uniform sampler3D LightVolumeTex;
+
+uniform mat4 invProjMatrix;
+uniform mat4 cameraToWorldMatrix;
+uniform vec3 cameraPosition;
+uniform ivec2 resolution;
+uniform uint frameIndex;
+uniform mat4 volumeWorldToLocal;
+uniform vec3 volumeHalfExtents;
+uniform vec4 volumeTint;
+uniform float volumeIntensity;
+
+vec3 ReconstructWorldPosition(vec2 uv, float depth)
+{
+    vec4 clip = vec4(uv * 2.0 - 1.0, depth * 2.0 - 1.0, 1.0);
+    vec4 view = invProjMatrix * clip;
+    view /= max(view.w, 1e-6);
+    vec4 world = cameraToWorldMatrix * view;
+    return world.xyz;
+}
+
+vec3 DecodeNormal(vec3 encoded)
+{
+    // Normal is stored in view space as 0..1; remap and rotate into world space.
+    vec3 n = normalize(encoded * 2.0 - 1.0);
+    vec3 worldN = normalize((cameraToWorldMatrix * vec4(n, 0.0)).xyz);
+    return worldN;
+}
+
+void main()
+{
+    ivec2 pix = ivec2(gl_GlobalInvocationID.xy);
+    if (pix.x >= resolution.x || pix.y >= resolution.y)
+        return;
+
+    vec2 uv = (vec2(pix) + 0.5) / vec2(resolution);
+    float depth = texture(gDepth, uv).r;
+    if (depth <= 0.0)
+    {
+        imageStore(gOutput, pix, vec4(0.0));
+        return;
+    }
+
+    vec3 worldPos = ReconstructWorldPosition(uv, depth);
+    vec3 normalWS = DecodeNormal(texture(gNormal, uv).rgb);
+
+    vec4 localPos4 = volumeWorldToLocal * vec4(worldPos, 1.0);
+    vec3 localPos = localPos4.xyz;
+    vec3 uvw = (localPos / max(volumeHalfExtents, vec3(1e-4))) * 0.5 + 0.5;
+
+    if (any(lessThan(uvw, vec3(0.0))) || any(greaterThan(uvw, vec3(1.0))))
+    {
+        imageStore(gOutput, pix, vec4(0.0));
+        return;
+    }
+
+    vec3 volumeRadiance = texture(LightVolumeTex, uvw).rgb;
+
+    // Simple lambertian weight using encoded normal to avoid completely flat output.
+    float facing = clamp(dot(normalWS, normalize(volumeRadiance + vec3(1e-4))), 0.0, 1.0);
+    vec3 gi = volumeRadiance * volumeTint.rgb * volumeIntensity * facing;
+
+    imageStore(gOutput, pix, vec4(gi, 1.0));
+}

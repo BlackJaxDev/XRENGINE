@@ -62,14 +62,8 @@ namespace XREngine
         {
             IEnumerable ImportRoutine()
             {
-                var importTask = ImportAsync(path, options, onCompleted: null, materialFactory, parent, scaleConversion, zUp);
-                yield return importTask;
-
-                if (cancellationToken.IsCancellationRequested || !importTask.IsCompletedSuccessfully)
-                    yield break;
-
-                var (rootNode, materials, meshes) = importTask.Result;
-                onFinished?.Invoke(new ModelImporterResult(rootNode, materials, meshes));
+                var result = ImportInternal(path, options, parent, scaleConversion, zUp, onFinished, materialFactory, onProgress, cancellationToken);
+                yield return new JobProgress(1f, result);
             }
 
             return Engine.Jobs.Schedule(
@@ -166,9 +160,8 @@ namespace XREngine
             XRTexture[] textureList = new XRTexture[textures.Count];
             XRMaterial mat = new(textureList);
             
-            // Load textures in parallel and wait for completion
-            void MakeTexture(int i) => LoadTexture(modelFilePath, textures, textureList, i);
-            Parallel.For(0, textures.Count, MakeTexture);
+            for (int i = 0; i < textures.Count; i++)
+                LoadTexture(modelFilePath, textures, textureList, i);
             
             // Set up the material with the loaded textures - must complete before returning
             // to avoid race conditions where the mesh renders before the shader is set
@@ -295,21 +288,63 @@ namespace XREngine
                 parent.Transform.AddChild(node.Transform, false, true);
             return node;
         }
-        public static async Task<(SceneNode? rootNode, IReadOnlyCollection<XRMaterial> materials, IReadOnlyCollection<XRMesh> meshes)> ImportAsync(
+
+        public static Task<(SceneNode? rootNode, IReadOnlyCollection<XRMaterial> materials, IReadOnlyCollection<XRMesh> meshes)> ImportAsync(
             string path,
             PostProcessSteps options,
             Action? onCompleted,
             DelMaterialFactory? materialFactory,
             SceneNode? parent,
             float scaleConversion = 1.0f,
-            bool zUp = false)
-            => await Task.Run(() =>
-            {
-                SceneNode? node = Import(path, options, out var materials, out var meshes, onCompleted, materialFactory, parent, scaleConversion, zUp);
-                return (node, materials, meshes);
-            });
+            bool zUp = false,
+            CancellationToken cancellationToken = default)
+        {
+            var tcs = new TaskCompletionSource<(SceneNode?, IReadOnlyCollection<XRMaterial>, IReadOnlyCollection<XRMesh>)>(TaskCreationOptions.RunContinuationsAsynchronously);
 
-        private readonly ConcurrentBag<Action> _meshProcessActions = [];
+            ScheduleImportJob(
+                path,
+                options,
+                onFinished: result =>
+                {
+                    onCompleted?.Invoke();
+                    tcs.TrySetResult((result.RootNode, result.Materials, result.Meshes));
+                },
+                onError: ex => tcs.TrySetException(ex),
+                onCanceled: () => tcs.TrySetCanceled(cancellationToken),
+                onProgress: null,
+                cancellationToken: cancellationToken,
+                parent: parent,
+                scaleConversion: scaleConversion,
+                zUp: zUp,
+                materialFactory: materialFactory);
+
+            return tcs.Task;
+        }
+
+        private static ModelImporterResult ImportInternal(
+            string path,
+            PostProcessSteps options,
+            SceneNode? parent,
+            float scaleConversion,
+            bool zUp,
+            Action<ModelImporterResult>? onFinished,
+            DelMaterialFactory? materialFactory,
+            Action<float>? onProgress,
+            CancellationToken cancellationToken)
+        {
+            using var importer = new ModelImporter(path, onCompleted: null, materialFactory);
+            var node = importer.Import(options, true, true, scaleConversion, zUp, true, false, cancellationToken, onProgress);
+            cancellationToken.ThrowIfCancellationRequested();
+
+            var result = new ModelImporterResult(node, importer._materials, importer._meshes);
+            if (parent != null && node != null)
+                parent.Transform.AddChild(node.Transform, false, true);
+
+            onFinished?.Invoke(result);
+            return result;
+        }
+
+        private readonly List<Action> _meshProcessActions = [];
         private readonly List<NodeTransformInfo> _nodeTransforms = [];
 
         public unsafe SceneNode? Import(
@@ -318,7 +353,10 @@ namespace XREngine
             bool removeAssimpFBXNodes = true,
             float scaleConversion = 1.0f,
             bool zUp = false,
-            bool multiThread = true)
+            bool multiThread = true,
+            bool? processMeshesAsynchronously = null,
+            CancellationToken cancellationToken = default,
+            Action<float>? onProgress = null)
         {
             SetAssimpConfig(preservePivots, scaleConversion, zUp, multiThread);
 
@@ -329,29 +367,22 @@ namespace XREngine
             if (scene is null || scene.SceneFlags == SceneFlags.Incomplete || scene.RootNode is null)
                 return null;
 
+            cancellationToken.ThrowIfCancellationRequested();
+
+            _meshProcessActions.Clear();
+
             SceneNode rootNode;
             using (Engine.Profiler.Start($"Assemble model hierarchy"))
             {
                 rootNode = new(Path.GetFileNameWithoutExtension(SourceFilePath));
                 _nodeTransforms.Clear();
-                ProcessNode(true, scene.RootNode, scene, rootNode, null, Matrix4x4.Identity, removeAssimpFBXNodes);
-                NormalizeNodeScales(scene, rootNode);
+                ProcessNode(true, scene.RootNode, scene, rootNode, null, Matrix4x4.Identity, removeAssimpFBXNodes, null, cancellationToken);
+                NormalizeNodeScales(scene, rootNode, cancellationToken);
             }
 
-            Action meshProcessAction = multiThread
-                ? ProcessMeshesParallel
-                : ProcessMeshesSequential;
-
-            if (Engine.Rendering.Settings.ProcessMeshImportsAsynchronously)
-            {
-                void Complete(object o) => _onCompleted?.Invoke();
-                Task.Run(meshProcessAction).ContinueWith(Complete);
-            }
-            else
-            {
-                meshProcessAction();
-                _onCompleted?.Invoke();
-            }
+            var meshProcessAction = () => ProcessMeshesOnJobThread(onProgress, cancellationToken);
+            bool processMeshesAsync = processMeshesAsynchronously ?? Engine.Rendering.Settings.ProcessMeshImportsAsynchronously;
+            RunMeshProcessing(meshProcessAction, processMeshesAsync, cancellationToken);
 
             return rootNode;
         }
@@ -368,26 +399,48 @@ namespace XREngine
             _assimp.ZAxisRotation = 180.0f;
         }
 
-        //TODO: more extreme idea: allocate all initial meshes, and sequentially populate every mesh's buffers in parallel
-        private void ProcessMeshesParallel()
+        private void ProcessMeshesOnJobThread(Action<float>? reportProgress, CancellationToken cancellationToken)
         {
-            using var t = Engine.Profiler.Start("Processing meshes in parallel");
-            Parallel.ForEach(_meshProcessActions, action => action());
+            using var t = Engine.Profiler.Start("Processing meshes on job thread");
+            int total = _meshProcessActions.Count;
+            for (int i = 0; i < total; i++)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                _meshProcessActions[i]();
+                if (reportProgress != null && total > 0)
+                    reportProgress((i + 1) / (float)total);
+            }
         }
 
-        private void ProcessMeshesSequential()
+        private void RunMeshProcessing(Action meshProcessAction, bool processAsynchronously, CancellationToken cancellationToken)
         {
-            using var t = Engine.Profiler.Start("Processing meshes sequentially");
-            foreach (var action in _meshProcessActions)
-                action();
+            if (!processAsynchronously)
+            {
+                meshProcessAction();
+                _onCompleted?.Invoke();
+                return;
+            }
+
+            IEnumerable MeshRoutine()
+            {
+                meshProcessAction();
+                yield break;
+            }
+
+            Engine.Jobs.Schedule(
+                MeshRoutine,
+                completed: _onCompleted,
+                error: ex => Debug.LogException(ex, $"Mesh processing job failed for '{SourceFilePath}'."),
+                cancellationToken: cancellationToken);
         }
 
-        private void NormalizeNodeScales(AScene scene, SceneNode rootNode)
+        private void NormalizeNodeScales(AScene scene, SceneNode rootNode, CancellationToken cancellationToken)
         {
             using var t = Engine.Profiler.Start("Normalizing node scales");
 
             foreach (var nodeInfo in _nodeTransforms)
             {
+            cancellationToken.ThrowIfCancellationRequested();
                 nodeInfo.OriginalWorldMatrix = nodeInfo.SceneNode.Transform.WorldMatrix;
 
                 var transform = nodeInfo.SceneNode.GetTransformAs<Transform>(false)!;
@@ -437,7 +490,7 @@ namespace XREngine
                 //Debug.Out($"Processing node {nodeInfo.AssimpNode.Name} with world T[{translation}] R[{rotation}] S[{scale}]");
 
                 Matrix4x4 geometryTransform = nodeInfo.OriginalWorldMatrix * rootTransform.InverseWorldMatrix;
-                EnqueueProcessMeshes(nodeInfo.AssimpNode, scene, nodeInfo.SceneNode, geometryTransform, rootTransform);
+                EnqueueProcessMeshes(nodeInfo.AssimpNode, scene, nodeInfo.SceneNode, geometryTransform, rootTransform, cancellationToken);
             }
         }
 
@@ -449,8 +502,11 @@ namespace XREngine
             TransformBase? rootTransform,
             Matrix4x4 rootTransformMatrix,
             bool removeAssimpFBXNodes = true,
-            Matrix4x4? fbxMatrixParent = null)
+            Matrix4x4? fbxMatrixParent = null,
+            CancellationToken cancellationToken = default)
         {
+            cancellationToken.ThrowIfCancellationRequested();
+
             Matrix4x4 nodeTransform = node.Transform.Transposed() * rootTransformMatrix;
             Matrix4x4.Decompose(nodeTransform, out Vector3 scale, out _, out _);
 
@@ -490,7 +546,8 @@ namespace XREngine
                     rootTransform,
                     Matrix4x4.Identity,
                     removeAssimpFBXNodes,
-                    fbxMatrix);
+                    fbxMatrix,
+                    cancellationToken);
             }
         }
 
@@ -557,18 +614,20 @@ namespace XREngine
             return sceneNode;
         }
 
-        private unsafe void EnqueueProcessMeshes(Node node, AScene scene, SceneNode sceneNode, Matrix4x4 dataTransform, TransformBase rootTransform)
+        private unsafe void EnqueueProcessMeshes(Node node, AScene scene, SceneNode sceneNode, Matrix4x4 dataTransform, TransformBase rootTransform, CancellationToken cancellationToken)
         {
             int count = node.MeshCount;
             if (count == 0)
                 return;
 
-            _meshProcessActions.Add(() => ProcessMeshes(node, scene, sceneNode, dataTransform, rootTransform));
+            _meshProcessActions.Add(() => ProcessMeshes(node, scene, sceneNode, dataTransform, rootTransform, cancellationToken));
         }
 
-        private unsafe void ProcessMeshes(Node node, AScene scene, SceneNode sceneNode, Matrix4x4 dataTransform, TransformBase rootTransform)
+        private unsafe void ProcessMeshes(Node node, AScene scene, SceneNode sceneNode, Matrix4x4 dataTransform, TransformBase rootTransform, CancellationToken cancellationToken)
         {
             using var t = Engine.Profiler.Start($"Processing meshes for {node.Name}");
+
+            cancellationToken.ThrowIfCancellationRequested();
 
             ModelComponent modelComponent = sceneNode.AddComponent<ModelComponent>()!;
             Model model = new();
@@ -577,10 +636,11 @@ namespace XREngine
             modelComponent.Model = model;
             for (var i = 0; i < node.MeshCount; i++)
             {
+                cancellationToken.ThrowIfCancellationRequested();
                 int meshIndex = node.MeshIndices[i];
                 Mesh mesh = scene.Meshes[meshIndex];
 
-                (XRMesh xrMesh, XRMaterial xrMaterial) = ProcessSubMesh(mesh, scene, dataTransform);
+                (XRMesh xrMesh, XRMaterial xrMaterial) = ProcessSubMesh(mesh, scene, dataTransform, cancellationToken);
 
                 _meshes.Add(xrMesh);
                 _materials.Add(xrMaterial);
@@ -599,24 +659,30 @@ namespace XREngine
         private unsafe (XRMesh mesh, XRMaterial material) ProcessSubMesh(
             Mesh mesh,
             AScene scene,
-            Matrix4x4 dataTransform)
+            Matrix4x4 dataTransform,
+            CancellationToken cancellationToken)
         {
             using var t = Engine.Profiler.Start($"Processing submesh for {mesh.Name}");
 
-            Task<XRMesh> newMesh = Task.Run(() => new XRMesh(mesh, _assimp, _nodeCache, dataTransform));
-            Task<XRMaterial> newMaterial = Task.Run(() => ProcessMaterial(mesh, scene));
-            Task.WaitAll(newMesh, newMaterial);
-            return (newMesh.Result, newMaterial.Result);
+            cancellationToken.ThrowIfCancellationRequested();
+
+            var xrMesh = new XRMesh(mesh, _assimp, _nodeCache, dataTransform);
+            cancellationToken.ThrowIfCancellationRequested();
+            var xrMaterial = ProcessMaterial(mesh, scene, cancellationToken);
+            return (xrMesh, xrMaterial);
         }
 
-        private unsafe XRMaterial ProcessMaterial(Mesh mesh, AScene scene)
+        private unsafe XRMaterial ProcessMaterial(Mesh mesh, AScene scene, CancellationToken cancellationToken)
         {
             using var t = Engine.Profiler.Start($"Processing material for {mesh.Name}");
+
+            cancellationToken.ThrowIfCancellationRequested();
 
             Material matInfo = scene.Materials[mesh.MaterialIndex];
             List<TextureSlot> textures = [];
             for (int i = 0; i < 22; ++i)
             {
+                cancellationToken.ThrowIfCancellationRequested();
                 TextureType type = (TextureType)i;
                 var maps = LoadMaterialTextures(matInfo, type);
                 if (maps.Count > 0)

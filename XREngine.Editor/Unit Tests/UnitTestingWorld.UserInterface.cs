@@ -104,8 +104,7 @@ public static partial class UnitTestingWorld
             if (Toggles.VisualizeQuadtree)
                 rootCanvasNode.AddComponent<DebugVisualizeQuadtreeComponent>();
 
-            if (screenSpaceCamera is not null)
-                screenSpaceCamera.UserInterface = canvas;
+            screenSpaceCamera?.UserInterface = canvas;
 
             if (UnitTestingWorld.Toggles.RiveUI)
             {

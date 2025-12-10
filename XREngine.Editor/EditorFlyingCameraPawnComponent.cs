@@ -268,6 +268,21 @@ public partial class EditorFlyingCameraPawnComponent : FlyingCameraPawnComponent
     protected MeshPickResult? CurrentMeshPickResult => _meshPickResult;
     protected Vector3? CurrentMeshHitPoint => _meshHitPoint;
 
+    public bool TryGetLastMeshHit(out MeshPickResult result)
+    {
+        using (_raycastLock.EnterScope())
+        {
+            if (_meshPickResult.HasValue)
+            {
+                result = _meshPickResult.Value;
+                return true;
+            }
+        }
+
+        result = default;
+        return false;
+    }
+
     private readonly RenderCommandMethod3D _postRenderRC;
     private readonly RenderCommandMethod3D _renderHighlightRC;
 

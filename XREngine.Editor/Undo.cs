@@ -818,7 +818,17 @@ public static class Undo
 
             // Verify LIFO order
             if (_scopeStack.Count == 0 || !ReferenceEquals(_scopeStack.Peek(), scope))
-                throw new InvalidOperationException("Change scopes must be disposed in LIFO order.");
+            {
+                Debug.LogWarning("Change scopes must be disposed in LIFO order.");
+                //Recover by removing all scopes until we find the target
+                while (_scopeStack.Count > 0)
+                {
+                    var popped = _scopeStack.Pop();
+                    if (ReferenceEquals(popped, scope))
+                        break;
+                }
+                return;
+            }
 
             _scopeStack.Pop();
             scope.Completed = true;

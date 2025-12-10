@@ -6,7 +6,7 @@
   "AddPhysics": true,
   "AllowEditingInVR": false,
   "AllowShaderPipelines": false,
-  "AnimatedModelDesktopPath": "misc\\mitsuki.fbx",
+  "AnimatedModelDesktopPath": "misc\\juji.fbx",
   "AnimatedModelImportFlags": "Triangulate, FlipUVs",
   "AnimatedModelScale": 1.0,
   "AnimatedModelZUp": false,

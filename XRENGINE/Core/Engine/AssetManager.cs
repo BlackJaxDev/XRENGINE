@@ -2,13 +2,17 @@
 using Microsoft.DotNet.PlatformAbstractions;
 using Newtonsoft.Json;
 using System;
+using System.Collections;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Diagnostics.CodeAnalysis;
 using System.IO;
+using System.Linq;
 using System.Numerics;
 using System.Reflection;
+using System.Threading;
+using System.Threading.Tasks;
 using XREngine.Core.Engine;
 using XREngine.Core.Files;
 using XREngine.Data;
@@ -29,6 +33,53 @@ namespace XREngine
     public class AssetManager
     {
         public const string AssetExtension = "asset";
+
+        private static bool IsOnJobThread
+            => Engine.JobThreadId.HasValue && Engine.JobThreadId.Value == Thread.CurrentThread.ManagedThreadId;
+
+        private static void RunOnJobThreadBlocking(Action action, JobPriority priority = JobPriority.Normal)
+            => RunOnJobThreadBlocking(() => { action(); return true; }, priority);
+
+        private static T RunOnJobThreadBlocking<T>(Func<T> work, JobPriority priority = JobPriority.Normal)
+        {
+            ArgumentNullException.ThrowIfNull(work);
+
+            if (IsOnJobThread || !Engine.JobThreadId.HasValue)
+                return work();
+
+            var tcs = new TaskCompletionSource<T>(TaskCreationOptions.RunContinuationsAsynchronously);
+            Engine.Jobs.Schedule(() => JobRoutine(work, tcs), priority: priority);
+            return tcs.Task.GetAwaiter().GetResult();
+        }
+
+        private static Task RunOnJobThreadAsync(Action action, JobPriority priority = JobPriority.Normal)
+            => RunOnJobThreadAsync(() => { action(); return true; }, priority);
+
+        private static Task<T> RunOnJobThreadAsync<T>(Func<T> work, JobPriority priority = JobPriority.Normal)
+        {
+            ArgumentNullException.ThrowIfNull(work);
+
+            if (IsOnJobThread || !Engine.JobThreadId.HasValue)
+                return Task.FromResult(work());
+
+            var tcs = new TaskCompletionSource<T>(TaskCreationOptions.RunContinuationsAsynchronously);
+            Engine.Jobs.Schedule(() => JobRoutine(work, tcs), priority: priority);
+            return tcs.Task;
+        }
+
+        private static IEnumerable JobRoutine<T>(Func<T> work, TaskCompletionSource<T> tcs)
+        {
+            try
+            {
+                tcs.TrySetResult(work());
+            }
+            catch (Exception ex)
+            {
+                tcs.TrySetException(ex);
+            }
+
+            yield break;
+        }
 
         public AssetManager(string? engineAssetsDirPath = null)
         {
@@ -170,6 +221,7 @@ namespace XREngine
         void OnGameFileCreated(object sender, FileSystemEventArgs args)
         {
             OnFileCreated(args);
+            HandleMetadataCreated(args.FullPath);
             GameFileCreated?.Invoke(args);
         }
         private static void OnFileCreated(FileSystemEventArgs args)
@@ -185,6 +237,7 @@ namespace XREngine
         async void OnGameFileChanged(object sender, FileSystemEventArgs args)
         {
             await OnFileChanged(args);
+            HandleMetadataChanged(args.FullPath);
             GameFileChanged?.Invoke(args);
         }
         private async Task OnFileChanged(FileSystemEventArgs args)
@@ -214,6 +267,7 @@ namespace XREngine
         void OnGameFileDeleted(object sender, FileSystemEventArgs args)
         {
             OnFileDeleted(args);
+            HandleMetadataDeleted(args.FullPath);
             GameFileDeleted?.Invoke(args);
         }
         private static void OnFileDeleted(FileSystemEventArgs args)
@@ -244,6 +298,7 @@ namespace XREngine
         void OnGameFileRenamed(object sender, RenamedEventArgs args)
         {
             OnFileRenamed(args);
+            HandleMetadataRenamed(args.OldFullPath, args.FullPath);
             GameFileRenamed?.Invoke(args);
         }
         void OnEngineFileRenamed(object sender, RenamedEventArgs args)
@@ -270,6 +325,345 @@ namespace XREngine
 
                 asset.OriginalPath = args.FullPath;
                 asset.Reload();
+            }
+        }
+
+        public void SyncMetadataWithAssets()
+        {
+            if (string.IsNullOrWhiteSpace(GameAssetsPath) || string.IsNullOrWhiteSpace(GameMetadataPath))
+                return;
+
+            string assetsRoot = Path.GetFullPath(GameAssetsPath);
+            string metadataRoot = Path.GetFullPath(GameMetadataPath);
+            if (!Directory.Exists(assetsRoot))
+                return;
+
+            Directory.CreateDirectory(metadataRoot);
+
+            foreach (string directory in Directory.EnumerateDirectories(assetsRoot, "*", SearchOption.AllDirectories))
+                EnsureMetadataForAssetPath(directory, true);
+
+            foreach (string file in Directory.EnumerateFiles(assetsRoot, "*", SearchOption.AllDirectories))
+                EnsureMetadataForAssetPath(file, false);
+        }
+
+        private void HandleMetadataCreated(string path)
+        {
+            if (!IsPathUnderGameAssets(path))
+                return;
+
+            EnsureMetadataForAssetPath(path, SafeIsDirectory(path));
+        }
+
+        private void HandleMetadataChanged(string path)
+        {
+            if (!IsPathUnderGameAssets(path))
+                return;
+
+            EnsureMetadataForAssetPath(path, SafeIsDirectory(path));
+        }
+
+        private void HandleMetadataDeleted(string path)
+        {
+            RemoveMetadataForPath(path, SafeIsDirectory(path));
+        }
+
+        private void HandleMetadataRenamed(string oldPath, string newPath)
+        {
+            bool isDirectory = SafeIsDirectory(newPath) || SafeIsDirectory(oldPath);
+            MoveMetadataForPath(oldPath, newPath, isDirectory);
+        }
+
+        private bool IsPathUnderGameAssets(string path)
+        {
+            if (string.IsNullOrWhiteSpace(GameAssetsPath) || string.IsNullOrWhiteSpace(GameMetadataPath) || string.IsNullOrWhiteSpace(path))
+                return false;
+
+            string normalizedAssets = Path.GetFullPath(GameAssetsPath);
+            string normalizedPath = Path.GetFullPath(path);
+            return normalizedPath.StartsWith(normalizedAssets, StringComparison.OrdinalIgnoreCase);
+        }
+
+        private static bool SafeIsDirectory(string path)
+        {
+            try
+            {
+                if (Directory.Exists(path))
+                    return true;
+                if (File.Exists(path))
+                    return false;
+
+                FileAttributes attributes = File.GetAttributes(path);
+                return attributes.HasFlag(FileAttributes.Directory);
+            }
+            catch
+            {
+                return !Path.HasExtension(path);
+            }
+        }
+
+        private bool TryGetMetadataPath(string assetPath, out string metadataPath, out string relativePath)
+        {
+            metadataPath = string.Empty;
+            relativePath = string.Empty;
+
+            if (!IsPathUnderGameAssets(assetPath))
+                return false;
+
+            string assetsRoot = Path.GetFullPath(GameAssetsPath);
+            string assetFullPath = Path.GetFullPath(assetPath);
+            relativePath = Path.GetRelativePath(assetsRoot, assetFullPath);
+            if (relativePath.StartsWith("..", StringComparison.Ordinal) || relativePath == ".")
+                return false;
+
+            string target = Path.Combine(GameMetadataPath!, relativePath);
+            metadataPath = $"{target}.meta";
+            return true;
+        }
+
+        private void EnsureMetadataForAssetPath(string assetPath, bool isDirectory)
+        {
+            if (!TryGetMetadataPath(assetPath, out string metaPath, out string relativePath))
+                return;
+
+            lock (_metadataLock)
+            {
+                string? directory = Path.GetDirectoryName(metaPath);
+                if (!string.IsNullOrWhiteSpace(directory))
+                    Directory.CreateDirectory(directory);
+
+                AssetMetadata meta = TryReadMetadata(metaPath) ?? new AssetMetadata();
+                meta.Name = Path.GetFileName(assetPath);
+                meta.RelativePath = relativePath.Replace(Path.DirectorySeparatorChar, '/');
+                meta.IsDirectory = isDirectory;
+
+                if (isDirectory)
+                {
+                    if (meta.Guid == Guid.Empty)
+                        meta.Guid = Guid.NewGuid();
+                    meta.Import = null;
+                }
+                else
+                {
+                    string ext = Path.GetExtension(assetPath);
+                    bool isAssetFile = ext.Equals($".{AssetExtension}", StringComparison.OrdinalIgnoreCase);
+
+                    if (isAssetFile)
+                    {
+                        if (meta.Guid == Guid.Empty)
+                        {
+                            Guid extracted = TryExtractGuidFromAsset(assetPath);
+                            meta.Guid = extracted == Guid.Empty ? Guid.NewGuid() : extracted;
+                        }
+
+                        meta.Import = null;
+                    }
+                    else
+                    {
+                        if (meta.Guid == Guid.Empty)
+                            meta.Guid = Guid.NewGuid();
+
+                        meta.Import ??= new AssetImportMetadata();
+                        meta.Import.SourceExtension = ext.StartsWith(".", StringComparison.Ordinal) ? ext[1..] : ext;
+                        meta.Import.SourceLastWriteTimeUtc = SafeGetLastWriteTimeUtc(assetPath);
+                        meta.Import.ImporterType = ResolveImporterNameForExtension(ext);
+                    }
+                }
+
+                meta.LastSyncedUtc = DateTime.UtcNow;
+                WriteMetadataFile(metaPath, meta);
+            }
+        }
+
+        private void RemoveMetadataForPath(string assetPath, bool isDirectory)
+        {
+            if (!TryGetMetadataPath(assetPath, out string metaPath, out _))
+                return;
+
+            lock (_metadataLock)
+            {
+                if (File.Exists(metaPath))
+                    File.Delete(metaPath);
+
+                TryPruneEmptyMetadataDirectories(Path.GetDirectoryName(metaPath));
+            }
+        }
+
+        private void MoveMetadataForPath(string oldPath, string newPath, bool isDirectory)
+        {
+            if (!TryGetMetadataPath(oldPath, out string oldMeta, out _))
+            {
+                EnsureMetadataForAssetPath(newPath, isDirectory);
+                return;
+            }
+
+            if (!TryGetMetadataPath(newPath, out string newMeta, out _))
+            {
+                RemoveMetadataForPath(oldPath, isDirectory);
+                return;
+            }
+
+            lock (_metadataLock)
+            {
+                string? newDir = Path.GetDirectoryName(newMeta);
+                if (!string.IsNullOrWhiteSpace(newDir))
+                    Directory.CreateDirectory(newDir);
+
+                if (File.Exists(oldMeta))
+                {
+                    try
+                    {
+                        File.Move(oldMeta, newMeta, true);
+                    }
+                    catch
+                    {
+                        File.Copy(oldMeta, newMeta, true);
+                        File.Delete(oldMeta);
+                    }
+                }
+
+                TryPruneEmptyMetadataDirectories(Path.GetDirectoryName(oldMeta));
+            }
+
+            EnsureMetadataForAssetPath(newPath, isDirectory);
+        }
+
+        private static AssetMetadata? TryReadMetadata(string metaPath)
+        {
+            if (!File.Exists(metaPath))
+                return null;
+
+            try
+            {
+                string text = File.ReadAllText(metaPath);
+                return Deserializer.Deserialize<AssetMetadata>(text);
+            }
+            catch
+            {
+                return null;
+            }
+        }
+
+        private static void WriteMetadataFile(string metaPath, AssetMetadata meta)
+        {
+            string yaml = Serializer.Serialize(meta);
+            File.WriteAllText(metaPath, yaml);
+        }
+
+        private static Guid TryExtractGuidFromAsset(string assetPath)
+        {
+            try
+            {
+                foreach (string line in File.ReadLines(assetPath))
+                {
+                    string trimmed = line.Trim();
+                    if (!trimmed.StartsWith("ID:", StringComparison.OrdinalIgnoreCase))
+                        continue;
+
+                    string guidText = trimmed[3..].Trim();
+                    if (Guid.TryParse(guidText, out Guid guid))
+                        return guid;
+                }
+            }
+            catch
+            {
+                // Ignore parse errors and fall back to generating a new GUID.
+            }
+
+            return Guid.Empty;
+        }
+
+        private static DateTime? SafeGetLastWriteTimeUtc(string path)
+        {
+            try
+            {
+                DateTime timestamp = File.GetLastWriteTimeUtc(path);
+                return timestamp == DateTime.MinValue ? null : timestamp;
+            }
+            catch
+            {
+                return null;
+            }
+        }
+
+        private static string? ResolveImporterNameForExtension(string extension)
+        {
+            if (string.IsNullOrWhiteSpace(extension))
+                return null;
+
+            string normalized = extension.TrimStart('.').ToLowerInvariant();
+            var map = ThirdPartyExtensionMap.Value;
+
+            return map.TryGetValue(normalized, out Type? type)
+                ? type.FullName ?? type.Name
+                : null;
+        }
+
+        private static Dictionary<string, Type> CreateThirdPartyExtensionMap()
+        {
+            var map = new Dictionary<string, Type>(StringComparer.OrdinalIgnoreCase);
+            Type baseType = typeof(XRAsset);
+
+            foreach (var assembly in AppDomain.CurrentDomain.GetAssemblies())
+            {
+                Type?[] types;
+                try
+                {
+                    types = assembly.GetTypes();
+                }
+                catch (ReflectionTypeLoadException ex)
+                {
+                    types = ex.Types ?? [];
+                }
+
+                foreach (Type? type in types)
+                {
+                    if (type is null || !baseType.IsAssignableFrom(type) || type.IsAbstract || type.IsInterface)
+                        continue;
+
+                    var attribute = type.GetCustomAttribute<XR3rdPartyExtensionsAttribute>();
+                    if (attribute is null)
+                        continue;
+
+                    foreach (var (ext, _) in attribute.Extensions)
+                    {
+                        if (string.IsNullOrWhiteSpace(ext))
+                            continue;
+
+                        string normalized = ext.TrimStart('.');
+                        if (!map.ContainsKey(normalized))
+                            map.Add(normalized, type);
+                    }
+                }
+            }
+
+            return map;
+        }
+
+        private void TryPruneEmptyMetadataDirectories(string? directory)
+        {
+            if (string.IsNullOrWhiteSpace(directory) || string.IsNullOrWhiteSpace(GameMetadataPath))
+                return;
+
+            string root = Path.GetFullPath(GameMetadataPath);
+            string current = Path.GetFullPath(directory);
+
+            while (current.StartsWith(root, StringComparison.OrdinalIgnoreCase))
+            {
+                if (!Directory.Exists(current))
+                    break;
+
+                using var enumerator = Directory.EnumerateFileSystemEntries(current).GetEnumerator();
+                if (enumerator.MoveNext())
+                    break;
+
+                Directory.Delete(current);
+
+                string? parent = Path.GetDirectoryName(current);
+                if (string.IsNullOrWhiteSpace(parent))
+                    break;
+
+                current = parent;
             }
         }
 
@@ -355,6 +749,13 @@ namespace XREngine
             set => UpdateGameAssetsPath(value);
         }
 
+        private string? _gameMetadataPath;
+        public string? GameMetadataPath
+        {
+            get => _gameMetadataPath;
+            set => _gameMetadataPath = NormalizeOptionalDirectoryPath(value, nameof(GameMetadataPath));
+        }
+
         private string? _gameCachePath;
         public string? GameCachePath
         {
@@ -383,6 +784,8 @@ namespace XREngine
         
         // Track recently saved assets to prevent immediate reload from file watcher
         private readonly ConcurrentDictionary<string, DateTime> _recentlySavedPaths = new(StringComparer.OrdinalIgnoreCase);
+        private readonly object _metadataLock = new();
+        private static readonly Lazy<Dictionary<string, Type>> ThirdPartyExtensionMap = new(CreateThirdPartyExtensionMap);
 
         public XRAsset? GetAssetByID(Guid id)
             => LoadedAssetsByIDInternal.TryGetValue(id, out XRAsset? asset) ? asset : null;
@@ -403,14 +806,21 @@ namespace XREngine
             => LoadedAssetsByOriginalPathInternal.TryGetValue(path, out asset);
 
         public T LoadEngineAsset<[DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicConstructors)] T>(params string[] relativePathFolders) where T : XRAsset, new()
+            => LoadEngineAsset<T>(JobPriority.Normal, relativePathFolders);
+
+        public T LoadEngineAsset<[DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicConstructors)] T>(JobPriority priority, params string[] relativePathFolders) where T : XRAsset, new()
         {
             string path = ResolveEngineAssetPath(relativePathFolders);
-            return Load<T>(path) ?? throw new FileNotFoundException($"Unable to find engine file at {path}");
+            return Load<T>(path, priority) ?? throw new FileNotFoundException($"Unable to find engine file at {path}");
         }
-        public async Task<T> LoadEngineAssetAsync<[DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicConstructors)] T>(params string[] relativePathFolders) where T : XRAsset, new()
+
+        public Task<T> LoadEngineAssetAsync<[DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicConstructors)] T>(params string[] relativePathFolders) where T : XRAsset, new()
+            => LoadEngineAssetAsync<T>(JobPriority.Normal, relativePathFolders);
+
+        public async Task<T> LoadEngineAssetAsync<[DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicConstructors)] T>(JobPriority priority, params string[] relativePathFolders) where T : XRAsset, new()
         {
             string path = ResolveEngineAssetPath(relativePathFolders);
-            return await LoadAsync<T>(path) ?? throw new FileNotFoundException($"Unable to find engine file at {path}");
+            return await LoadAsync<T>(path, priority) ?? throw new FileNotFoundException($"Unable to find engine file at {path}");
         }
 
         public T? LoadGameAsset<[DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicConstructors)] T>(params string[] relativePathFolders) where T : XRAsset, new()
@@ -527,34 +937,34 @@ namespace XREngine
             AssetLoaded?.Invoke(file);
         }
 
-        public async Task<T?> LoadAsync<[DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicParameterlessConstructor)] T>(string filePath) where T : XRAsset, new()
+        private T? LoadCore<[DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicParameterlessConstructor)] T>(string filePath) where T : XRAsset, new()
         {
             T? file;
 #if !DEBUG
             try
             {
 #endif
-            if (TryGetAssetByPath(filePath, out XRAsset? existingAsset))
-                return existingAsset is T tAsset ? tAsset : null;
+                if (TryGetAssetByPath(filePath, out XRAsset? existingAsset))
+                    return existingAsset is T tAsset ? tAsset : null;
 
-            if (!File.Exists(filePath))
-            {
-                AssetDiagnostics.RecordMissingAsset(filePath, typeof(T).Name, $"{nameof(AssetManager)}.{nameof(LoadAsync)}");
-                return null;
-            }
+                if (!File.Exists(filePath))
+                {
+                    AssetDiagnostics.RecordMissingAsset(filePath, typeof(T).Name, $"{nameof(AssetManager)}.{nameof(Load)}");
+                    return null;
+                }
 
-            string extension = Path.GetExtension(filePath);
-            if (string.IsNullOrWhiteSpace(extension) || extension.Length <= 1)
-            {
-                Debug.LogWarning($"Unable to load asset at '{filePath}' because the file has no extension.");
-                return null;
-            }
+                string extension = Path.GetExtension(filePath);
+                if (string.IsNullOrWhiteSpace(extension) || extension.Length <= 1)
+                {
+                    Debug.LogWarning($"Unable to load asset at '{filePath}' because the file has no extension.");
+                    return null;
+                }
 
-            string normalizedExtension = extension[1..].ToLowerInvariant();
-            file = normalizedExtension == AssetExtension
-                ? await DeserializeAssetFileAsync<T>(filePath).ConfigureAwait(false)
-                : await Load3rdPartyWithCacheAsync<T>(filePath, normalizedExtension).ConfigureAwait(false);
-            PostLoaded(filePath, file);
+                string normalizedExtension = extension[1..].ToLowerInvariant();
+                file = normalizedExtension == AssetExtension
+                    ? DeserializeAssetFile<T>(filePath)
+                    : Load3rdPartyWithCache<T>(filePath, normalizedExtension);
+                PostLoaded(filePath, file);
 #if !DEBUG
             }
             catch (Exception e)
@@ -566,34 +976,34 @@ namespace XREngine
             return file;
         }
 
-        public XRAsset? Load(string filePath, Type type)
+        private XRAsset? LoadCore(string filePath, Type type)
         {
             XRAsset? file;
 #if !DEBUG
             try
             {
 #endif
-            if (TryGetAssetByPath(filePath, out XRAsset? existingAsset))
-                return existingAsset.GetType().IsAssignableTo(type) ? existingAsset : null;
+                if (TryGetAssetByPath(filePath, out XRAsset? existingAsset))
+                    return existingAsset.GetType().IsAssignableTo(type) ? existingAsset : null;
 
-            if (!File.Exists(filePath))
-            {
-                AssetDiagnostics.RecordMissingAsset(filePath, type.Name, $"{nameof(AssetManager)}.{nameof(Load)}");
-                return null;
-            }
+                if (!File.Exists(filePath))
+                {
+                    AssetDiagnostics.RecordMissingAsset(filePath, type.Name, $"{nameof(AssetManager)}.{nameof(Load)}");
+                    return null;
+                }
 
-            string extension = Path.GetExtension(filePath);
-            if (string.IsNullOrWhiteSpace(extension) || extension.Length <= 1)
-            {
-                Debug.LogWarning($"Unable to load asset at '{filePath}' because the file has no extension.");
-                return null;
-            }
+                string extension = Path.GetExtension(filePath);
+                if (string.IsNullOrWhiteSpace(extension) || extension.Length <= 1)
+                {
+                    Debug.LogWarning($"Unable to load asset at '{filePath}' because the file has no extension.");
+                    return null;
+                }
 
-            string normalizedExtension = extension[1..].ToLowerInvariant();
-            file = normalizedExtension == AssetExtension
-                ? DeserializeAssetFile(filePath, type)
-                : Load3rdPartyWithCache(filePath, normalizedExtension, type);
-            PostLoaded(filePath, file);
+                string normalizedExtension = extension[1..].ToLowerInvariant();
+                file = normalizedExtension == AssetExtension
+                    ? DeserializeAssetFile(filePath, type)
+                    : Load3rdPartyWithCache(filePath, normalizedExtension, type);
+                PostLoaded(filePath, file);
 #if !DEBUG
             }
             catch (Exception e)
@@ -605,46 +1015,7 @@ namespace XREngine
             return file;
         }
 
-        public T? Load<[DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicParameterlessConstructor)] T>(string filePath) where T : XRAsset, new()
-        {
-            T? file;
-#if !DEBUG
-            try
-            {
-#endif
-            if (TryGetAssetByPath(filePath, out XRAsset? existingAsset))
-                return existingAsset is T tAsset ? tAsset : null;
-
-            if (!File.Exists(filePath))
-            {
-                AssetDiagnostics.RecordMissingAsset(filePath, typeof(T).Name, $"{nameof(AssetManager)}.{nameof(Load)}");
-                return null;
-            }
-
-            string extension = Path.GetExtension(filePath);
-            if (string.IsNullOrWhiteSpace(extension) || extension.Length <= 1)
-            {
-                Debug.LogWarning($"Unable to load asset at '{filePath}' because the file has no extension.");
-                return null;
-            }
-
-            string normalizedExtension = extension[1..].ToLowerInvariant();
-            file = normalizedExtension == AssetExtension
-                ? DeserializeAssetFile<T>(filePath)
-                : Load3rdPartyWithCache<T>(filePath, normalizedExtension);
-            PostLoaded(filePath, file);
-#if !DEBUG
-            }
-            catch (Exception e)
-            {
-                Debug.LogException(e, $"An error occurred while loading the asset at '{filePath}'.");
-                return null;
-            }
-#endif
-            return file;
-        }
-
-        public async Task SaveAsync(XRAsset asset)
+        private void SaveExistingAssetCore(XRAsset asset)
         {
             if (asset.FilePath is null)
             {
@@ -655,11 +1026,10 @@ namespace XREngine
             try
             {
 #endif
-            using var t = Engine.Profiler.Start($"AssetManager.SaveAsync {asset.FilePath}");
-            // Ensure SourceAsset/EmbeddedAssets are up-to-date before serialization
-            XRAssetGraphUtility.RefreshAssetGraph(asset);
-            await asset.SerializeToAsync(asset.FilePath, Serializer);
-            PostSaved(asset, false);
+                using var t = Engine.Profiler.Start($"AssetManager.Save {asset.FilePath}");
+                XRAssetGraphUtility.RefreshAssetGraph(asset);
+                asset.SerializeTo(asset.FilePath, Serializer);
+                PostSaved(asset, false);
 #if !DEBUG
             }
             catch (Exception e)
@@ -669,89 +1039,57 @@ namespace XREngine
 #endif
         }
 
-        public void Save(XRAsset asset)
+        private void SaveToDirectoryCore(XRAsset asset, string directory)
         {
-            if (asset.FilePath is null)
-            {
-                Debug.LogWarning("Cannot save an asset without a file path.");
-                return;
-            }
 #if !DEBUG
             try
             {
 #endif
-            //Debug.Out($"Saving asset to '{asset.FilePath}'...");
-            using var t = Engine.Profiler.Start($"AssetManager.Save {asset.FilePath}");
-            // Ensure SourceAsset/EmbeddedAssets are up-to-date before serialization
-            XRAssetGraphUtility.RefreshAssetGraph(asset);
-            asset.SerializeTo(asset.FilePath, Serializer);
-            PostSaved(asset, false);
+                string path = VerifyAssetPath(asset, directory);
+                using var t = Engine.Profiler.Start($"AssetManager.SaveTo {path}");
+
+                if (File.Exists(path) && !(AllowOverwriteCallback?.Invoke(path) ?? true))
+                    path = GetUniqueAssetPath(path);
+
+                asset.FilePath = path;
+                XRAssetGraphUtility.RefreshAssetGraph(asset);
+                asset.SerializeTo(path, Serializer);
+                PostSaved(asset, true);
 #if !DEBUG
             }
             catch (Exception e)
             {
-                Debug.LogException(e, $"An error occurred while saving the asset at '{asset.FilePath}'.");
+                Debug.LogException(e, $"An error occurred while saving the asset to '{directory}'.");
             }
 #endif
         }
+
+        public Task<T?> LoadAsync<[DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicParameterlessConstructor)] T>(string filePath, JobPriority priority = JobPriority.Normal) where T : XRAsset, new()
+            => RunOnJobThreadAsync(() => LoadCore<T>(filePath), priority);
+
+        public XRAsset? Load(string filePath, Type type, JobPriority priority = JobPriority.Normal)
+            => RunOnJobThreadBlocking(() => LoadCore(filePath, type), priority);
+
+        public T? Load<[DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicParameterlessConstructor)] T>(string filePath, JobPriority priority = JobPriority.Normal) where T : XRAsset, new()
+            => RunOnJobThreadBlocking(() => LoadCore<T>(filePath), priority);
+
+        public Task SaveAsync(XRAsset asset, JobPriority priority = JobPriority.Normal)
+            => RunOnJobThreadAsync(() => { SaveExistingAssetCore(asset); return true; }, priority);
+
+        public void Save(XRAsset asset, JobPriority priority = JobPriority.Normal)
+            => RunOnJobThreadBlocking(() => { SaveExistingAssetCore(asset); return true; }, priority);
 
         public void SaveTo(XRAsset asset, Environment.SpecialFolder folder, params string[] folderNames)
             => SaveTo(asset, Path.Combine([Environment.GetFolderPath(folder), ..folderNames]));
-        public void SaveTo(XRAsset asset, string directory)
-        {
-#if !DEBUG
-            try
-            {
-#endif
-            string path = VerifyAssetPath(asset, directory);
-            using var t = Engine.Profiler.Start($"AssetManager.SaveTo {path}");
 
-            if (File.Exists(path) && !(AllowOverwriteCallback?.Invoke(path) ?? true))
-                path = GetUniqueAssetPath(path);
-
-            asset.FilePath = path;
-            //Debug.Out($"Saving asset to '{path}'...");
-            // Ensure SourceAsset/EmbeddedAssets are up-to-date before serialization
-            XRAssetGraphUtility.RefreshAssetGraph(asset);
-            asset.SerializeTo(path, Serializer);
-            PostSaved(asset, true);
-#if !DEBUG
-            }
-            catch (Exception e)
-            {
-                Debug.LogException(e, $"An error occurred while saving the asset to '{directory}'.");
-            }
-#endif
-        }
+        public void SaveTo(XRAsset asset, string directory, JobPriority priority = JobPriority.Normal)
+            => RunOnJobThreadBlocking(() => { SaveToDirectoryCore(asset, directory); return true; }, priority);
 
         public Task SaveToAsync(XRAsset asset, Environment.SpecialFolder folder, params string[] folderNames)
             => SaveToAsync(asset, Path.Combine([Environment.GetFolderPath(folder), .. folderNames]));
-        public async Task SaveToAsync(XRAsset asset, string directory)
-        {
-#if !DEBUG
-            try
-            {
-#endif
-            string path = VerifyAssetPath(asset, directory);
-            using var t = Engine.Profiler.Start($"AssetManager.SaveToAsync {path}");
 
-            if (File.Exists(path) && !(AllowOverwriteCallback?.Invoke(path) ?? true))
-                path = GetUniqueAssetPath(path);
-
-            asset.FilePath = path;
-            //Debug.Out($"Saving asset to '{path}'...");
-            // Ensure SourceAsset/EmbeddedAssets are up-to-date before serialization
-            XRAssetGraphUtility.RefreshAssetGraph(asset);
-            await asset.SerializeToAsync(path, Serializer);
-            PostSaved(asset, true);
-#if !DEBUG
-            }
-            catch (Exception e)
-            {
-                Debug.LogException(e, $"An error occurred while saving the asset to '{directory}'.");
-            }
-#endif
-        }
+        public Task SaveToAsync(XRAsset asset, string directory, JobPriority priority = JobPriority.Normal)
+            => RunOnJobThreadAsync(() => { SaveToDirectoryCore(asset, directory); return true; }, priority);
 
         public Task SaveGameAssetToAsync(XRAsset asset, params string[] folderNames)
             => SaveToAsync(asset, Path.Combine(GameAssetsPath, Path.Combine(folderNames)));
@@ -1378,7 +1716,7 @@ namespace XREngine
 
         public async Task SaveAllAsync()
         {
-            var tasks = DirtyAssets.Values.Select(SaveAsync);
+            var tasks = DirtyAssets.Values.Select(x => SaveAsync(x));
             await Task.WhenAll(tasks);
             DirtyAssets.Clear();
         }

@@ -535,8 +535,33 @@ public static partial class UnitTestingWorld
                 ImGui.EndMenu();
             }
 
+            DrawProjectStatusIndicator();
             DrawJobProgressIndicator();
             ImGui.EndMainMenuBar();
+        }
+
+
+        private static void DrawProjectStatusIndicator()
+        {
+            string label;
+            bool sandboxMode = Engine.CurrentProject is null;
+            if (sandboxMode)
+                label = "Sandbox mode (engine-global; cannot build)";
+            else
+                label = $"Project: {Engine.CurrentProject!.ProjectName}";
+
+            ImGui.SameLine(0f, 12f);
+            ImGui.AlignTextToFramePadding();
+
+            if (sandboxMode)
+            {
+                var warningColor = new Vector4(0.96f, 0.78f, 0.32f, 1f);
+                ImGui.TextColored(warningColor, label);
+            }
+            else
+            {
+                ImGui.Text(label);
+            }
         }
 
 

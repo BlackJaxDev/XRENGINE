@@ -9,5 +9,6 @@ namespace XREngine
         LightProbesAndIbl = 1,
         Restir = 2,
         VoxelConeTracing = 3,
+        LightVolumes = 4,
     }
 }
