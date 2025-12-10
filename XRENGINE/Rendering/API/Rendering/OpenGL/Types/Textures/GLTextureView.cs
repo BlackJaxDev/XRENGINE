@@ -4,9 +4,14 @@ using static XREngine.Rendering.OpenGL.OpenGLRenderer;
 
 namespace XREngine.Rendering.OpenGL
 {
+    /// <summary>
+    /// Provides a view into an existing texture's data.
+    /// </summary>
+    /// <param name="renderer"></param>
+    /// <param name="data"></param>
     public class GLTextureView(OpenGLRenderer renderer, XRTextureViewBase data) : GLTexture<XRTextureViewBase>(renderer, data)
     {
-        public override GLObjectType Type => GLObjectType.Texture;
+        public override EGLObjectType Type => EGLObjectType.Texture;
 
         public override ETextureTarget TextureTarget => Data.TextureTarget;
 

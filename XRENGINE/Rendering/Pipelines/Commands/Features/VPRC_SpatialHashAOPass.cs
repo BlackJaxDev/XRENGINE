@@ -207,7 +207,7 @@ namespace XREngine.Rendering.Pipelines.Commands
             state.LastWidth = width;
             state.LastHeight = height;
 
-            Log($"Regenerating resources: size={width}x{height}, stereo={Stereo}");
+            //Log($"Regenerating resources: size={width}x{height}, stereo={Stereo}");
 
             state.AoTexture?.Destroy();
             state.AoTexture = CreateAOTexture(width, height);
@@ -421,7 +421,7 @@ namespace XREngine.Rendering.Pipelines.Commands
                     continue;
 
                 instance.Resources.RemoveFrameBuffer(name);
-                Log($"Invalidated dependent FBO '{name}'");
+                //Log($"Invalidated dependent FBO '{name}'");
             }
         }
 

@@ -14,7 +14,7 @@ namespace XREngine.Rendering.OpenGL
         {
 
         }
-        public override GLObjectType Type => GLObjectType.TransformFeedback;
+        public override EGLObjectType Type => EGLObjectType.TransformFeedback;
         
         public void Bind()
             => Api.BindTransformFeedback(GLEnum.TransformFeedback, BindingId);

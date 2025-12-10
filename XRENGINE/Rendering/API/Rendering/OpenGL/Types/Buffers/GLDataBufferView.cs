@@ -9,7 +9,7 @@ namespace XREngine.Rendering.OpenGL
     /// </summary>
     public class GLDataBufferView(OpenGLRenderer renderer, XRDataBufferView data) : GLObject<XRDataBufferView>(renderer, data)
     {
-        public override GLObjectType Type => GLObjectType.Buffer;
+        public override EGLObjectType Type => EGLObjectType.Buffer;
 
         protected override void LinkData() { }
         protected override void UnlinkData() { }

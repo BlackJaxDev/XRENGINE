@@ -357,7 +357,6 @@ namespace XREngine.Components.Scene.Mesh
             if (!IsSkinned)
                 return false;
 
-            SkinnedMeshBoundsCalculator.Result gpuResult = default;
             bool useGpu;
 
             lock (_skinnedDataLock)
@@ -371,7 +370,7 @@ namespace XREngine.Components.Scene.Mesh
                     return TryComputeSkinnedBoundsOnCpuLocked();
             }
 
-            if (useGpu && TryComputeSkinnedBoundsOnGpu(out gpuResult))
+            if (useGpu && TryComputeSkinnedBoundsOnGpu(out SkinnedMeshBoundsCalculator.Result gpuResult))
             {
                 lock (_skinnedDataLock)
                 {
@@ -389,16 +388,11 @@ namespace XREngine.Components.Scene.Mesh
         }
 
         private bool TryComputeSkinnedBoundsOnGpu(out SkinnedMeshBoundsCalculator.Result result)
-        {
-            if (!SkinnedMeshBoundsCalculator.Instance.TryCompute(this, out result))
-                return false;
-
-            return true;
-        }
+            => SkinnedMeshBoundsCalculator.Instance.TryCompute(this, out result);
 
         private bool ApplySkinnedBoundsResult(SkinnedMeshBoundsCalculator.Result result, bool markBvhDirty)
         {
-            var positions = result.Positions ?? Array.Empty<Vector3>();
+            var positions = result.Positions ?? [];
             _skinnedVertexPositions = positions;
             _skinnedVertexCount = positions.Length;
             if (_skinnedVertexCount == 0)
@@ -617,6 +611,31 @@ namespace XREngine.Components.Scene.Mesh
             }
 
             return localSegment;
+        }
+
+        /// <summary>
+        /// Attempts to retrieve the current world-space bounds for this mesh, preferring skinned bounds when available.
+        /// </summary>
+        public bool TryGetWorldBounds(out AABB worldBounds)
+        {
+            // Default to an invalid box so callers can check IsValid before use.
+            worldBounds = default;
+
+            // Prefer the live skinned bounds when skinning is active and successfully computed.
+            if (IsSkinned && EnsureSkinnedBounds())
+            {
+                worldBounds = _skinnedLocalBounds.Transformed(p => Vector3.Transform(p, _skinnedRootRenderMatrix));
+                return worldBounds.IsValid;
+            }
+
+            // Fall back to the bind-pose/local culling bounds.
+            AABB localBounds = RenderInfo?.LocalCullingVolume ?? _bindPoseBounds;
+            if (!localBounds.IsValid)
+                return false;
+
+            Matrix4x4 basis = Component.Transform.RenderMatrix;
+            worldBounds = localBounds.Transformed(p => Vector3.Transform(p, basis));
+            return worldBounds.IsValid;
         }
 
         protected override bool OnPropertyChanging<T>(string? propName, T field, T @new)

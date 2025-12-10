@@ -250,7 +250,7 @@ public sealed class VPRC_TemporalAccumulationPass : ViewportRenderCommand
             state.PendingHistoryReady = false;
             state.HaltonIndex = 1;
             state.HistoryExposureReady = false;
-            Debug.Out($"[Temporal] Resolution change detected. New={width}x{height}; history reset.");
+            //Debug.Out($"[Temporal] Resolution change detected. New={width}x{height}; history reset.");
         }
 
         state.ActiveJitterHandle?.Dispose();

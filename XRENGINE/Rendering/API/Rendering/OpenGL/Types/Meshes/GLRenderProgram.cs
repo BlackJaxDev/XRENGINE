@@ -24,7 +24,7 @@ namespace XREngine.Rendering.OpenGL
                 private set => SetField(ref _isLinked, value);
             }
 
-            public override GLObjectType Type => GLObjectType.Program;
+            public override EGLObjectType Type => EGLObjectType.Program;
 
             private readonly ConcurrentDictionary<string, int>
                 _uniformCache = new(),

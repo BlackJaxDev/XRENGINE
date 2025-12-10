@@ -9,7 +9,7 @@ namespace XREngine.Rendering.OpenGL
 {
     public abstract class GLTexture<T>(OpenGLRenderer renderer, T data) : GLObject<T>(renderer, data), IGLTexture where T : XRTexture
     {
-        public override GLObjectType Type => GLObjectType.Texture;
+        public override EGLObjectType Type => EGLObjectType.Texture;
 
         public XREvent<PreBindCallback>? PreBind;
         public XREvent<PrePushDataCallback>? PrePushData;
