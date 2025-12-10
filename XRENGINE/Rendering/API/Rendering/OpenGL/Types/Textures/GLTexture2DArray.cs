@@ -253,6 +253,33 @@ namespace XREngine.Rendering.OpenGL
 
                 Api.PixelStore(PixelStoreParameter.UnpackAlignment, 1);
 
+                // Fast path: render-target arrays already have GPU storage populated via FBO. Skip CPU->GPU copy from slices.
+                if (Data.FrameBufferAttachment.HasValue)
+                {
+                    // Ensure sampler state is up to date and bail out.
+                    int magFilterRt = (int)ToGLEnum(Data.MagFilter);
+                    Api.TextureParameterI(BindingId, GLEnum.TextureMagFilter, in magFilterRt);
+
+                    int minFilterRt = (int)ToGLEnum(Data.MinFilter);
+                    Api.TextureParameterI(BindingId, GLEnum.TextureMinFilter, in minFilterRt);
+
+                    int uWrapRt = (int)ToGLEnum(Data.UWrap);
+                    Api.TextureParameterI(BindingId, GLEnum.TextureWrapS, in uWrapRt);
+
+                    int vWrapRt = (int)ToGLEnum(Data.VWrap);
+                    Api.TextureParameterI(BindingId, GLEnum.TextureWrapT, in vWrapRt);
+
+                    int baseLevelRt = 0;
+                    int maxLevelRt = 0;
+                    Api.TextureParameterI(BindingId, GLEnum.TextureBaseLevel, in baseLevelRt);
+                    Api.TextureParameterI(BindingId, GLEnum.TextureMaxLevel, in maxLevelRt);
+
+                    if (allowPostPushCallback)
+                        OnPostPushData();
+                    IsPushing = false;
+                    return;
+                }
+
                 // Choose a sized internal format that matches the first available source texture so CopyImageSubData is compatible.
                 XRTexture2D? firstSource = null;
                 for (int i = 0; i < Data.Textures.Length && firstSource is null; ++i)

@@ -14,7 +14,7 @@ namespace XREngine.Rendering.OpenGL
         {
 
         }
-        public override GLObjectType Type => GLObjectType.Query;
+        public override EGLObjectType Type => EGLObjectType.Query;
 
         public static GLEnum ToGLEnum(EQueryTarget target)
             => target switch

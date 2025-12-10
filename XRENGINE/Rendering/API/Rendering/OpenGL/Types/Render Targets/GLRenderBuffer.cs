@@ -6,7 +6,7 @@ namespace XREngine.Rendering.OpenGL
 {
     public class GLRenderBuffer(OpenGLRenderer renderer, XRRenderBuffer data) : GLObject<XRRenderBuffer>(renderer, data)
     {
-        public override GLObjectType Type => GLObjectType.Renderbuffer;
+        public override EGLObjectType Type => EGLObjectType.Renderbuffer;
 
         protected override void LinkData()
         {

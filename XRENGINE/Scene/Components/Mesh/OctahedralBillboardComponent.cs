@@ -113,7 +113,7 @@ namespace XREngine.Components.Scene.Mesh
         public void ApplyCaptureResult(OctahedralImposterGenerator.Result result, bool matchBounds = true)
         {
             ArgumentNullException.ThrowIfNull(result);
-            ImposterViews = new XRTexture2DArray(result.Views);
+            ImposterViews = result.Views;
 
             if (matchBounds)
             {
@@ -158,7 +158,7 @@ namespace XREngine.Components.Scene.Mesh
 
             _instanceBuffer = CreateInstanceBuffer();
             if (_instanceBuffer is not null)
-                _renderer.Buffers[_instanceBuffer.AttributeName] = _instanceBuffer;
+                _renderer.Buffers.Add(_instanceBuffer.AttributeName, _instanceBuffer);
 
             _renderCommand.Mesh = _renderer;
             _renderCommand.RenderPass = material.RenderPass;

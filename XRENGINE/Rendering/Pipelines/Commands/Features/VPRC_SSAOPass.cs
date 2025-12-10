@@ -181,7 +181,7 @@ namespace XREngine.Rendering.Pipelines.Commands
             state.LastWidth = width;
             state.LastHeight = height;
 
-            Log($"Regenerating resources: size={width}x{height}, stereo={Stereo}");
+            //Log($"Regenerating resources: size={width}x{height}, stereo={Stereo}");
 
             GenerateNoiseKernel();
 
@@ -355,7 +355,7 @@ namespace XREngine.Rendering.Pipelines.Commands
 
             instance.SetTexture(noiseTex);
             noiseTex.PushData();
-            Log($"Created noise texture {noiseTex.Name} {NoiseWidth}x{NoiseHeight}");
+            //Log($"Created noise texture {noiseTex.Name} {NoiseWidth}x{NoiseHeight}");
             return state.NoiseTexture = noiseTex;
         }
 
@@ -370,7 +370,7 @@ namespace XREngine.Rendering.Pipelines.Commands
                     continue;
 
                 instance.Resources.RemoveFrameBuffer(name);
-                Log($"Invalidated dependent FBO '{name}'");
+                //Log($"Invalidated dependent FBO '{name}'");
             }
         }
 

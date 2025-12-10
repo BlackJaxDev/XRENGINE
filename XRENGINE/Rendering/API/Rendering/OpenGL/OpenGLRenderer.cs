@@ -1744,42 +1744,42 @@ void main() {
             }
 
             bindingIds = bindingIds.Where(i => i != GLObjectBase.InvalidBindingId).ToArray();
-            GLObjectType type = objs[0].Type;
+            EGLObjectType type = objs[0].Type;
             uint len = (uint)bindingIds.Length;
             switch (type)
             {
-                case GLObjectType.Buffer:
+                case EGLObjectType.Buffer:
                     Api.DeleteBuffers(len, bindingIds);
                     break;
-                case GLObjectType.Framebuffer:
+                case EGLObjectType.Framebuffer:
                     Api.DeleteFramebuffers(len, bindingIds);
                     break;
-                case GLObjectType.Program:
+                case EGLObjectType.Program:
                     foreach (var i in objs)
                         Api.DeleteProgram(i.BindingId);
                     break;
-                case GLObjectType.ProgramPipeline:
+                case EGLObjectType.ProgramPipeline:
                     Api.DeleteProgramPipelines(len, bindingIds);
                     break;
-                case GLObjectType.Query:
+                case EGLObjectType.Query:
                     Api.DeleteQueries(len, bindingIds);
                     break;
-                case GLObjectType.Renderbuffer:
+                case EGLObjectType.Renderbuffer:
                     Api.DeleteRenderbuffers(len, bindingIds);
                     break;
-                case GLObjectType.Sampler:
+                case EGLObjectType.Sampler:
                     Api.DeleteSamplers(len, bindingIds);
                     break;
-                case GLObjectType.Texture:
+                case EGLObjectType.Texture:
                     Api.DeleteTextures(len, bindingIds);
                     break;
-                case GLObjectType.TransformFeedback:
+                case EGLObjectType.TransformFeedback:
                     Api.DeleteTransformFeedbacks(len, bindingIds);
                     break;
-                case GLObjectType.VertexArray:
+                case EGLObjectType.VertexArray:
                     Api.DeleteVertexArrays(len, bindingIds);
                     break;
-                case GLObjectType.Shader:
+                case EGLObjectType.Shader:
                     foreach (uint i in bindingIds)
                         Api.DeleteShader(i);
                     break;
@@ -1795,45 +1795,45 @@ void main() {
             }
         }
 
-        public uint[] CreateObjects(GLObjectType type, uint count)
+        public uint[] CreateObjects(EGLObjectType type, uint count)
         {
             uint[] ids = new uint[count];
             switch (type)
             {
-                case GLObjectType.Buffer:
+                case EGLObjectType.Buffer:
                     Api.CreateBuffers(count, ids);
                     break;
-                case GLObjectType.Framebuffer:
+                case EGLObjectType.Framebuffer:
                     Api.CreateFramebuffers(count, ids);
                     break;
-                case GLObjectType.Program:
+                case EGLObjectType.Program:
                     for (int i = 0; i < count; ++i)
                         ids[i] = Api.CreateProgram();
                     break;
-                case GLObjectType.ProgramPipeline:
+                case EGLObjectType.ProgramPipeline:
                     Api.CreateProgramPipelines(count, ids);
                     break;
-                case GLObjectType.Query:
+                case EGLObjectType.Query:
                     //throw new InvalidOperationException("Call CreateQueries instead.");
                     Api.GenQueries(count, ids);
                     break;
-                case GLObjectType.Renderbuffer:
+                case EGLObjectType.Renderbuffer:
                     Api.CreateRenderbuffers(count, ids);
                     break;
-                case GLObjectType.Sampler:
+                case EGLObjectType.Sampler:
                     Api.CreateSamplers(count, ids);
                     break;
-                case GLObjectType.Texture:
+                case EGLObjectType.Texture:
                     //throw new InvalidOperationException("Call CreateTextures instead.");
                     Api.GenTextures(count, ids);
                     break;
-                case GLObjectType.TransformFeedback:
+                case EGLObjectType.TransformFeedback:
                     Api.CreateTransformFeedbacks(count, ids);
                     break;
-                case GLObjectType.VertexArray:
+                case EGLObjectType.VertexArray:
                     Api.CreateVertexArrays(count, ids);
                     break;
-                case GLObjectType.Shader:
+                case EGLObjectType.Shader:
                     //for (int i = 0; i < count; ++i)
                     //    ids[i] = Api.CreateShader(CurrentShaderMode);
                     break;
@@ -1844,44 +1844,44 @@ void main() {
         //public T[] CreateObjects<T>(uint count) where T : GLObjectBase, new()
         //    => CreateObjects(TypeFor<T>(), count).Select(i => (T)Activator.CreateInstance(typeof(T), this, i)!).ToArray();
 
-        private static GLObjectType TypeFor<T>() where T : GLObjectBase, new()
+        private static EGLObjectType TypeFor<T>() where T : GLObjectBase, new()
             => typeof(T) switch
             {
                 Type t when typeof(GLDataBuffer).IsAssignableFrom(t)
-                    => GLObjectType.Buffer,
+                    => EGLObjectType.Buffer,
 
                 Type t when typeof(GLShader).IsAssignableFrom(t)
-                    => GLObjectType.Shader,
+                    => EGLObjectType.Shader,
 
                 Type t when typeof(GLRenderProgram).IsAssignableFrom(t)
-                    => GLObjectType.Program,
+                    => EGLObjectType.Program,
 
                 Type t when typeof(GLMeshRenderer).IsAssignableFrom(t)
-                    => GLObjectType.VertexArray,
+                    => EGLObjectType.VertexArray,
 
                 Type t when typeof(GLRenderQuery).IsAssignableFrom(t)
-                    => GLObjectType.Query,
+                    => EGLObjectType.Query,
 
                 Type t when typeof(GLRenderProgramPipeline).IsAssignableFrom(t)
-                    => GLObjectType.ProgramPipeline,
+                    => EGLObjectType.ProgramPipeline,
 
                 Type t when typeof(GLTransformFeedback).IsAssignableFrom(t)
-                    => GLObjectType.TransformFeedback,
+                    => EGLObjectType.TransformFeedback,
 
                 Type t when typeof(GLSampler).IsAssignableFrom(t)
-                    => GLObjectType.Sampler,
+                    => EGLObjectType.Sampler,
 
                 Type t when typeof(IGLTexture).IsAssignableFrom(t)
-                    => GLObjectType.Texture,
+                    => EGLObjectType.Texture,
 
                 Type t when typeof(GLRenderBuffer).IsAssignableFrom(t)
-                    => GLObjectType.Renderbuffer,
+                    => EGLObjectType.Renderbuffer,
 
                 Type t when typeof(GLFrameBuffer).IsAssignableFrom(t)
-                    => GLObjectType.Framebuffer,
+                    => EGLObjectType.Framebuffer,
 
                 Type t when typeof(GLMaterial).IsAssignableFrom(t)
-                    => GLObjectType.Material,
+                    => EGLObjectType.Material,
                 _ => throw new InvalidOperationException($"Type {typeof(T)} is not a valid GLObjectBase type."),
             };
 
@@ -2230,11 +2230,11 @@ void main() {
         {
             if (version is null)
             {
-                Unbind();
+                UnbindMeshRenderer();
                 return;
             }
             var glMesh = GenericToAPI<GLMeshRenderer>(version);
-            BindForRender(glMesh);
+            BindMeshRenderer(glMesh);
         }
 
         public override bool ValidateIndexedVAO(XRMeshRenderer.BaseVersion? version)
@@ -2766,7 +2766,7 @@ void main() {
                 return;
 
             // Bind VAO to ensure we write into the correct object
-            BindForRender(glMesh);
+            BindMeshRenderer(glMesh);
 
             // Rebind mesh + renderer buffers against this program's attribute locations
             // 1) Mesh vertex buffers

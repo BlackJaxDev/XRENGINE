@@ -10,7 +10,7 @@ namespace XREngine.Rendering.OpenGL
     {
         public class GLMaterial(OpenGLRenderer renderer, XRMaterial material) : GLObject<XRMaterial>(renderer, material)
         {
-            public override GLObjectType Type => GLObjectType.Material;
+            public override EGLObjectType Type => EGLObjectType.Material;
 
             private float _secondsLive = 0.0f;
             private uint _lastUniformProgramBindingId = uint.MaxValue;

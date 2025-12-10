@@ -12,7 +12,7 @@ namespace XREngine.Rendering.OpenGL
         public abstract class GLObjectBase : AbstractRenderObject<OpenGLRenderer>, IGLObject
         {
             public const uint InvalidBindingId = 0;
-            public abstract GLObjectType Type { get; }
+            public abstract EGLObjectType Type { get; }
 
             public override nint GetHandle() => (nint)BindingId;
 
@@ -673,37 +673,37 @@ namespace XREngine.Rendering.OpenGL
                 uint id = _bindingId!.Value;
                 switch (Type)
                 {
-                    case GLObjectType.Buffer:
+                    case EGLObjectType.Buffer:
                         Api.DeleteBuffer(id);
                         break;
-                    case GLObjectType.Framebuffer:
+                    case EGLObjectType.Framebuffer:
                         Api.DeleteFramebuffer(id);
                         break;
-                    case GLObjectType.Program:
+                    case EGLObjectType.Program:
                         Api.DeleteProgram(id);
                         break;
-                    case GLObjectType.ProgramPipeline:
+                    case EGLObjectType.ProgramPipeline:
                         Api.DeleteProgramPipeline(id);
                         break;
-                    case GLObjectType.Query:
+                    case EGLObjectType.Query:
                         Api.DeleteQuery(id);
                         break;
-                    case GLObjectType.Renderbuffer:
+                    case EGLObjectType.Renderbuffer:
                         Api.DeleteRenderbuffer(id);
                         break;
-                    case GLObjectType.Sampler:
+                    case EGLObjectType.Sampler:
                         Api.DeleteSampler(id);
                         break;
-                    case GLObjectType.Texture:
+                    case EGLObjectType.Texture:
                         Api.DeleteTexture(id);
                         break;
-                    case GLObjectType.TransformFeedback:
+                    case EGLObjectType.TransformFeedback:
                         Api.DeleteTransformFeedback(id);
                         break;
-                    case GLObjectType.VertexArray:
+                    case EGLObjectType.VertexArray:
                         Api.DeleteVertexArray(id);
                         break;
-                    case GLObjectType.Shader:
+                    case EGLObjectType.Shader:
                         Api.DeleteShader(id);
                         break;
                 }

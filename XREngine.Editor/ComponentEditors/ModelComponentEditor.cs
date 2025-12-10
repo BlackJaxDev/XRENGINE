@@ -155,9 +155,7 @@ public sealed class ModelComponentEditor : IXRComponentEditor
 
         if (ImGui.Button("Generate Octahedral Impostor", new Vector2(-1f, 0f)))
         {
-            var generator = new OctahedralImposterGenerator();
-            state.LastResult = generator.Generate(modelComponent, new OctahedralImposterGenerator.Settings(state.SheetSize, 1.15f, state.CaptureDepth));
-
+            state.LastResult = OctahedralImposterGenerator.Generate(modelComponent, new OctahedralImposterGenerator.Settings(state.SheetSize, 1.15f, state.CaptureDepth));
             if (state.LastResult is null)
                 Debug.LogWarning("Impostor generation failed. See console for details.");
         }
@@ -167,12 +165,96 @@ public sealed class ModelComponentEditor : IXRComponentEditor
             Vector3 size = result.LocalBounds.Size;
             ImGui.Separator();
             ImGui.TextUnformatted("Last Generation:");
-            ImGui.TextDisabled($"Sheet: {result.Sheet.Width} x {result.Sheet.Height}");
+            ImGui.TextDisabled($"Views: {result.Views.Width} x {result.Views.Height} x {result.Views.Depth}");
             ImGui.TextDisabled($"Bounds: {size.X:0.##}, {size.Y:0.##}, {size.Z:0.##}");
-            ImGui.TextDisabled($"Views Captured: {result.Views.Length} (dirs: {result.CaptureDirections.Count})");
+            ImGui.TextDisabled($"Views Captured: {result.Views.Depth} (dirs: {result.CaptureDirections.Count})");
+
+            ImGui.Spacing();
+            ImGui.TextUnformatted("View Previews:");
+            
+            // Display all 26 views in a grid
+            float availWidth = ImGui.GetContentRegionAvail().X;
+            int columns = Math.Max(1, (int)(availWidth / 110f)); // ~100px per thumbnail + spacing
+            
+            if (ImGui.BeginTable("ImpostorViewsGrid", columns, ImGuiTableFlags.None))
+            {
+                for (int i = 0; i < result.Views.Textures.Length; i++)
+                {
+                    ImGui.TableNextColumn();
+                    ImGui.PushID($"ImpostorView_{i}");
+                    ImGui.TextDisabled(GetImpostorViewLabel(i));
+                    DrawTexturePreviewCell(result.Views.Textures[i], 100f);
+                    ImGui.PopID();
+                }
+                ImGui.EndTable();
+            }
+
+            if (ImGui.Button("Create Billboard Impostor", new Vector2(-1f, 0f)))
+                TryCreateBillboardFromImpostor(modelComponent, result);
+            
+            if (ImGui.IsItemHovered())
+                ImGui.SetTooltip("Disable this ModelComponent and attach an octahedral billboard imposter using the generated captures.");
         }
 
         ImGui.Spacing();
+    }
+
+    /// <summary>
+    /// Returns a descriptive label for the impostor view at the given index.
+    /// Order matches OctahedralImposterGenerator.BuildCaptureDirections().
+    /// </summary>
+    private static string GetImpostorViewLabel(int index) => index switch
+    {
+        // Axis-aligned (6)
+        0 => "0: +X (Right)",
+        1 => "1: -X (Left)",
+        2 => "2: +Y (Top)",
+        3 => "3: -Y (Bottom)",
+        4 => "4: +Z (Front)",
+        5 => "5: -Z (Back)",
+        // Edge midpoints - XY plane (4)
+        6 => "6: +X+Y",
+        7 => "7: +X-Y",
+        8 => "8: -X+Y",
+        9 => "9: -X-Y",
+        // Edge midpoints - XZ plane (4)
+        10 => "10: +X+Z",
+        11 => "11: +X-Z",
+        12 => "12: -X+Z",
+        13 => "13: -X-Z",
+        // Edge midpoints - YZ plane (4)
+        14 => "14: +Y+Z",
+        15 => "15: +Y-Z",
+        16 => "16: -Y+Z",
+        17 => "17: -Y-Z",
+        // Elevated diagonals (8)
+        18 => "18: -X-Y-Z",
+        19 => "19: -X-Y+Z",
+        20 => "20: -X+Y-Z",
+        21 => "21: -X+Y+Z",
+        22 => "22: +X-Y-Z",
+        23 => "23: +X-Y+Z",
+        24 => "24: +X+Y-Z",
+        25 => "25: +X+Y+Z",
+        _ => $"{index}: Unknown"
+    };
+
+    private static void TryCreateBillboardFromImpostor(ModelComponent modelComponent, OctahedralImposterGenerator.Result result)
+    {
+        OctahedralBillboardComponent? billboard = modelComponent.SceneNode.GetOrAddComponent<OctahedralBillboardComponent>(out bool wasAdded);
+        if (billboard is null)
+        {
+            Debug.LogWarning("Failed to add an octahedral billboard component to the scene node.");
+            return;
+        }
+
+        billboard.ApplyCaptureResult(result, matchBounds: true);
+        modelComponent.IsActive = false;
+
+        if (wasAdded)
+            Debug.Out("Created octahedral impostor billboard and disabled the original model component.");
+        else
+            Debug.Out("Updated existing octahedral impostor billboard and disabled the original model component.");
     }
 
     private static void DrawSubmeshSection(ModelComponent modelComponent, int index, SubMesh subMesh, RenderableMesh? runtimeMesh)
@@ -380,8 +462,7 @@ public sealed class ModelComponentEditor : IXRComponentEditor
                     if (ImGui.DragInt("##Int", ref value))
                     {
                         i.SetValue(value);
-                        if (renderer is not null)
-                            renderer.Material?.MarkDirty();
+                        renderer?.Material?.MarkDirty();
                     }
                     break;
                 }
@@ -393,8 +474,7 @@ public sealed class ModelComponentEditor : IXRComponentEditor
                     if (ImGui.DragInt("##UInt", ref intValue, 1.0f, 0, int.MaxValue))
                     {
                         ui.SetValue((uint)intValue);
-                        if (renderer is not null)
-                            renderer.Material?.MarkDirty();
+                        renderer?.Material?.MarkDirty();
                     }
                     break;
                 }
@@ -416,8 +496,7 @@ public sealed class ModelComponentEditor : IXRComponentEditor
                     if (ImGui.DragFloat2("##Vec2", ref value, 0.01f))
                     {
                         v2.SetValue(value);
-                        if (renderer is not null)
-                            renderer.Material?.MarkDirty();
+                        renderer?.Material?.MarkDirty();
                     }
                     break;
                 }
@@ -428,8 +507,7 @@ public sealed class ModelComponentEditor : IXRComponentEditor
                     if (ImGui.DragFloat3("##Vec3", ref value, 0.01f))
                     {
                         v3.SetValue(value);
-                        if (renderer is not null)
-                            renderer.Material?.MarkDirty();
+                        renderer?.Material?.MarkDirty();
                     }
                     break;
                 }
@@ -440,8 +518,7 @@ public sealed class ModelComponentEditor : IXRComponentEditor
                     if (ImGui.DragFloat4("##Vec4", ref value, 0.01f))
                     {
                         v4.SetValue(value);
-                        if (renderer is not null)
-                            renderer.Material?.MarkDirty();
+                        renderer?.Material?.MarkDirty();
                     }
                     break;
                 }
@@ -466,6 +543,9 @@ public sealed class ModelComponentEditor : IXRComponentEditor
     }
 
     private static void DrawTexturePreviewCell(XRTexture? texture)
+        => DrawTexturePreviewCell(texture, null);
+
+    private static void DrawTexturePreviewCell(XRTexture? texture, float? maxSize)
     {
         if (texture is null)
         {
@@ -474,6 +554,15 @@ public sealed class ModelComponentEditor : IXRComponentEditor
         }
 
         bool hasPreview = TryGetTexturePreviewData(texture, out nint handle, out Vector2 displaySize, out Vector2 pixelSize, out string? failureReason);
+        
+        // Apply max size constraint if specified
+        if (maxSize.HasValue && hasPreview)
+        {
+            float scale = Math.Min(maxSize.Value / displaySize.X, maxSize.Value / displaySize.Y);
+            if (scale < 1f)
+                displaySize *= scale;
+        }
+        
         string previewLabel = FormatAssetLabel(texture.Name, texture);
 
         if (hasPreview)
@@ -1304,8 +1393,7 @@ public sealed class ModelComponentEditor : IXRComponentEditor
                 ImGui.TextDisabled($"Runtime Material Pass: {DescribeRenderPass(renderer.Material.RenderPass)}");
         }
 
-        if (runtimeMesh is not null)
-            runtimeMesh.RenderInfo.LocalCullingVolume = subMesh.CullingBounds ?? subMesh.Bounds;
+        runtimeMesh?.RenderInfo.LocalCullingVolume = subMesh.CullingBounds ?? subMesh.Bounds;
     }
 
     private static void UpdateLodDistance(

@@ -45,7 +45,7 @@ namespace XREngine.Rendering.OpenGL
                 Data.BindSSBORequested += BindSSBO;
             }
 
-            public override GLObjectType Type => GLObjectType.Buffer;
+            public override EGLObjectType Type => EGLObjectType.Buffer;
 
             protected internal override void PostGenerated()
             {

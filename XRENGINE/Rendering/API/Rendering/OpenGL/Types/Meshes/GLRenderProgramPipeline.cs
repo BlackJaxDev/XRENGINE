@@ -7,7 +7,7 @@ namespace XREngine.Rendering.OpenGL
     {
         public class GLRenderProgramPipeline(OpenGLRenderer renderer, XRRenderProgramPipeline data) : GLObject<XRRenderProgramPipeline>(renderer, data)
         {
-            public override GLObjectType Type => GLObjectType.ProgramPipeline;
+            public override EGLObjectType Type => EGLObjectType.ProgramPipeline;
 
             public void Bind()
                 => Api.BindProgramPipeline(BindingId);

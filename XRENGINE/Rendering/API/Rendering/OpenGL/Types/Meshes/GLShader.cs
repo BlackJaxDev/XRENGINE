@@ -38,7 +38,7 @@ namespace XREngine.Rendering.OpenGL
                 }
             }
 
-            public override GLObjectType Type => GLObjectType.Shader;
+            public override EGLObjectType Type => EGLObjectType.Shader;
             
             public event Action? SourceChanged;
 

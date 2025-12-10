@@ -3,7 +3,8 @@
 
 #version 450 core
 
-layout(location = 0) in vec2 TexCoord;
+// FullscreenTri.vs outputs vec3 FragPos at location 0 (clip-space XY in [-1,1])
+layout(location = 0) in vec3 FragPos;
 layout(location = 0) out vec4 FragColor;
 
 const int VIEW_COUNT = 26;
@@ -101,6 +102,8 @@ void selectNearestViews(vec3 dir, out ivec3 indices, out vec3 weights)
 
 void main()
 {
+    // Convert clip-space FragPos [-1,1] to texture UV [0,1]
+    vec2 TexCoord = FragPos.xy * 0.5 + 0.5;
     vec3 dir = decodeOctahedral(TexCoord);
 
     ivec3 indices;

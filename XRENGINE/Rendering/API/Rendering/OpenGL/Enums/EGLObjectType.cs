@@ -5,7 +5,7 @@
         /// <summary>
         /// The type of render object that is handled by the renderer.
         /// </summary>
-        public enum GLObjectType
+        public enum EGLObjectType
         {
             Buffer,
             Shader,

@@ -7,7 +7,7 @@ namespace XREngine.Rendering.OpenGL
 {
     public class GLFrameBuffer(OpenGLRenderer renderer, XRFrameBuffer data) : GLObject<XRFrameBuffer>(renderer, data)
     {
-        public override GLObjectType Type => GLObjectType.Framebuffer;
+        public override EGLObjectType Type => EGLObjectType.Framebuffer;
 
         protected override void UnlinkData()
         {

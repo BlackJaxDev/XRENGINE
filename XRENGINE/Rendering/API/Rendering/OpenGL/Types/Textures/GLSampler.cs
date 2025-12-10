@@ -14,7 +14,7 @@ namespace XREngine.Rendering.OpenGL
         {
 
         }
-        public override GLObjectType Type => GLObjectType.Sampler;
+        public override EGLObjectType Type => EGLObjectType.Sampler;
 
         public void SetParameter(ESamplerParameter parameter, int value)
             => Api.SamplerParameter(BindingId, ToGLEnum(parameter), value);
