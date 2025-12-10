@@ -1,7 +1,20 @@
+using System;
 using System.Collections;
+using System.Collections.Generic;
+using System.Threading;
+using System.Threading.Tasks;
 
 namespace XREngine
 {
+    public enum JobPriority
+    {
+        Lowest = 0,
+        Low = 1,
+        Normal = 2,
+        High = 3,
+        Highest = 4,
+    }
+
     public abstract class Job
     {
         private const int StateCreated = 0;
@@ -20,6 +33,8 @@ namespace XREngine
         private CancellationTokenSource? _cts;
         private CancellationTokenRegistration _externalCancellation;
         private bool _hasExternalCancellation;
+
+        public JobPriority Priority { get; internal set; } = JobPriority.Normal;
 
         protected Job()
         {

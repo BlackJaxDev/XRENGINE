@@ -21,6 +21,7 @@ namespace XREngine
         public const string UserSettingsFileName = "user_settings.asset";
         public const string BuildSettingsFileName = "build_settings.asset";
         public const string AssetsDirectoryName = "Assets";
+        public const string MetadataDirectoryName = "Metadata";
         public const string IntermediateDirectoryName = "Intermediate";
         public const string BuildDirectoryName = "Build";
         public const string PackagesDirectoryName = "Packages";
@@ -30,6 +31,7 @@ namespace XREngine
         private static readonly string[] RequiredDirectoryNames =
         [
             AssetsDirectoryName,
+            MetadataDirectoryName,
             IntermediateDirectoryName,
             BuildDirectoryName,
             PackagesDirectoryName,
@@ -120,6 +122,13 @@ namespace XREngine
         public string? AssetsDirectory => ProjectDirectory is null 
             ? null 
             : Path.Combine(ProjectDirectory, AssetsDirectoryName);
+
+        /// <summary>
+        /// Gets the Metadata directory path which mirrors the Assets directory structure with .meta files.
+        /// </summary>
+        public string? MetadataDirectory => ProjectDirectory is null
+            ? null
+            : Path.Combine(ProjectDirectory, MetadataDirectoryName);
 
         /// <summary>
         /// Gets the Intermediate directory path for generated outputs (solutions, DLLs, caches).

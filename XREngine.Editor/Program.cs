@@ -23,6 +23,7 @@ internal class Program
         //ConsoleHelper.EnsureConsoleAttached();
         Undo.Initialize();
         Debug.Out("XREngine Editor starting...");
+        EditorFileDropHandler.Initialize();
         RenderInfo2D.ConstructorOverride = RenderInfo2DConstructor;
         RenderInfo3D.ConstructorOverride = RenderInfo3DConstructor;
         CodeManager.Instance.CompileOnChange = false;

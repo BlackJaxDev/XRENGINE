@@ -1,6 +1,7 @@
 ﻿using System;
 using System.Numerics;
 using System.Runtime.InteropServices;
+using XREngine;
 
 namespace XREngine.Rendering.GI;
 
@@ -9,6 +10,10 @@ public static class RestirGI
     [DllImport("RestirGI.Native.dll", EntryPoint = "InitReSTIRRayTracingNV")]
     [return: MarshalAs(UnmanagedType.I1)]
     private static extern bool InitReSTIRRayTracingNVNative();
+
+    [DllImport("RestirGI.Native.dll", EntryPoint = "IsReSTIRRayTracingSupportedNV")]
+    [return: MarshalAs(UnmanagedType.I1)]
+    private static extern bool IsReSTIRRayTracingSupportedNVNative();
 
     [DllImport("RestirGI.Native.dll", EntryPoint = "BindReSTIRPipelineNV")]
     [return: MarshalAs(UnmanagedType.I1)]
@@ -24,14 +29,62 @@ public static class RestirGI
         uint width, uint height, uint depth);
 
     private static bool _initialized;
+    private static bool _supportLogged;
+    private static bool _isRayTracingSupported;
+
+    static RestirGI()
+    {
+        VerifyRayTracingSupport(logSuccess: true);
+    }
 
     public static bool TryInit()
     {
+        VerifyRayTracingSupport(logSuccess: false);
+
         if (_initialized)
             return true;
 
         _initialized = InitReSTIRRayTracingNVNative();
         return _initialized;
+    }
+
+    /// <summary>
+    /// Verifies GL_NV_ray_tracing support via the native bridge and logs the result once.
+    /// </summary>
+    public static bool VerifyRayTracingSupport(bool logSuccess)
+    {
+        if (_supportLogged)
+            return _isRayTracingSupported;
+
+        try
+        {
+            _isRayTracingSupported = IsReSTIRRayTracingSupportedNVNative();
+
+            if (_isRayTracingSupported)
+            {
+                if (logSuccess)
+                    Debug.Out(EOutputVerbosity.Normal, false, "ReSTIR NV ray tracing: GL_NV_ray_tracing reported by driver.");
+            }
+            else
+            {
+                Debug.LogWarning("ReSTIR NV ray tracing unavailable: GL_NV_ray_tracing extension not reported. Compute fallback will be used.");
+            }
+        }
+        catch (DllNotFoundException ex)
+        {
+            Debug.LogWarning($"ReSTIR NV ray tracing unavailable: RestirGI.Native.dll missing ({ex.Message}). Compute fallback will be used.");
+        }
+        catch (EntryPointNotFoundException ex)
+        {
+            Debug.LogWarning($"ReSTIR NV ray tracing unavailable: native DLL is outdated (missing IsReSTIRRayTracingSupportedNV). Rebuild RestirGI.Native.dll. Details: {ex.Message}");
+        }
+        catch (Exception ex)
+        {
+            Debug.LogWarning($"ReSTIR NV ray tracing probe failed: {ex.Message}");
+        }
+
+        _supportLogged = true;
+        return _isRayTracingSupported;
     }
 
     public static void Init()

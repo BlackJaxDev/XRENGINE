@@ -95,6 +95,10 @@ namespace XREngine
                 /// </summary>
                 public static bool IsNVIDIA { get; internal set; }
                 /// <summary>
+                /// True when GL_NV_ray_tracing is reported by the current OpenGL context.
+                /// </summary>
+                public static bool HasNvRayTracing { get; internal set; }
+                /// <summary>
                 /// If true, the current render is a light probe pass - only what's needed for light probes is rendered.
                 /// All light probe passes contain a scene capture pass.
                 /// </summary>

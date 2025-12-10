@@ -505,4 +505,38 @@ public partial class DefaultRenderPipeline
         fbo.SettingUniforms += RestirCompositeFBO_SettingUniforms;
         return fbo;
     }
+
+    private XRFrameBuffer CreateLightVolumeCompositeFBO()
+    {
+        XRTexture giTexture = GetTexture<XRTexture>(LightVolumeGITextureName)!;
+        XRShader compositeShader = XRShader.EngineShader(Path.Combine(SceneShaderPath, "LightVolumeComposite.fs"), EShaderType.Fragment);
+        BlendMode additiveBlend = new()
+        {
+            Enabled = ERenderParamUsage.Enabled,
+            RgbSrcFactor = EBlendingFactor.One,
+            AlphaSrcFactor = EBlendingFactor.One,
+            RgbDstFactor = EBlendingFactor.One,
+            AlphaDstFactor = EBlendingFactor.One,
+            RgbEquation = EBlendEquationMode.FuncAdd,
+            AlphaEquation = EBlendEquationMode.FuncAdd
+        };
+
+        XRMaterial material = new([giTexture], compositeShader)
+        {
+            RenderOptions = new RenderingParameters()
+            {
+                DepthTest = new DepthTest()
+                {
+                    Enabled = ERenderParamUsage.Unchanged,
+                    Function = EComparison.Always,
+                    UpdateDepth = false,
+                },
+                BlendModeAllDrawBuffers = additiveBlend
+            }
+        };
+
+        var fbo = new XRQuadFrameBuffer(material) { Name = LightVolumeCompositeFBOName };
+        fbo.SettingUniforms += LightVolumeCompositeFBO_SettingUniforms;
+        return fbo;
+    }
 }

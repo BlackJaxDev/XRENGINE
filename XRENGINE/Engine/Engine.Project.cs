@@ -67,6 +67,7 @@ namespace XREngine
             CurrentProject = project;
 
             ConfigureProjectDirectories(project);
+            Assets.SyncMetadataWithAssets();
 
             // Load project-specific engine settings
             LoadProjectEngineSettings();
@@ -298,6 +299,7 @@ namespace XREngine
             }
 
             EnsureDirectory(project.AssetsDirectory);
+            EnsureDirectory(project.MetadataDirectory);
             EnsureDirectory(project.PackagesDirectory);
             EnsureDirectory(project.IntermediateDirectory);
             EnsureDirectory(project.BuildDirectory);
@@ -306,6 +308,8 @@ namespace XREngine
 
             if (project.AssetsDirectory is not null)
                 Assets.GameAssetsPath = project.AssetsDirectory;
+            if (project.MetadataDirectory is not null)
+                Assets.GameMetadataPath = project.MetadataDirectory;
             if (project.PackagesDirectory is not null)
                 Assets.PackagesPath = project.PackagesDirectory;
             if (project.IntermediateDirectory is not null)

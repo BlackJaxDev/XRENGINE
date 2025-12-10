@@ -121,7 +121,7 @@ namespace XREngine.Rendering.Physics.Physx
             }
 
             sceneDesc.simulationEventCallback = _simulationEventCallbackPtr;
-            Debug.Physics("[PhysxScene] Simulation event callbacks configured");
+            //Debug.Physics("[PhysxScene] Simulation event callbacks configured");
         }
 
         private void ReleaseSimulationEventCallbacks()
@@ -186,13 +186,15 @@ namespace XREngine.Rendering.Physics.Physx
 
             var (actor0Label, actor1Label) = scene.DescribeContactActors(pairHeader);
             //System.IO.File.AppendAllText("physx_debug.log", $"[PhysxScene] OnContact actors={actor0Label} <-> {actor1Label}\n");
-            Debug.Physics(
+            /*Debug.Physics(
                 "[PhysxScene] OnContact actors={0} <-> {1} nbPairs={2} headerFlags={3}",
                 actor0Label,
                 actor1Label,
                 nbPairs,
                 pairHeader->flags);
+                */
 
+/*
             for (uint pairIndex = 0; pairIndex < nbPairs; pairIndex++)
             {
                 var pairPtr = pairs + pairIndex;
@@ -209,6 +211,7 @@ namespace XREngine.Rendering.Physics.Physx
                     shape0Label,
                     shape1Label);
             }
+*/
         }
 
         public override void Initialize()
@@ -513,6 +516,8 @@ namespace XREngine.Rendering.Physics.Physx
             {
                 shape = PhysxShape.Get(ptr) ?? new PhysxShape(ptr);
                 Shapes[(nint)ptr] = shape;
+
+                /*
                 var flags = ptr->GetFlags();
                 Debug.Physics(
                     "[PhysxScene] Registered shape ptr=0x{0:X} sim={1} query={2} trigger={3}",
@@ -520,6 +525,7 @@ namespace XREngine.Rendering.Physics.Physx
                     flags.HasFlag(PxShapeFlags.SimulationShape),
                     flags.HasFlag(PxShapeFlags.SceneQueryShape),
                     flags.HasFlag(PxShapeFlags.TriggerShape));
+                    */
             }
 
             return shape;

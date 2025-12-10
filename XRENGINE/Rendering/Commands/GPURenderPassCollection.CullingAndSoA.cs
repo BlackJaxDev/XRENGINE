@@ -24,8 +24,8 @@ namespace XREngine.Rendering.Commands
         private int _passthroughFallbackForceLogBudget = 2;
         private int _cpuFallbackRejectLogBudget = 6;
         private int _cpuFallbackDetailLogBudget = 8;
-    private int _sanitizerDetailLogBudget = 4;
-    private int _sanitizerSampleLogBudget = 12;
+        private int _sanitizerDetailLogBudget = 4;
+        private int _sanitizerSampleLogBudget = 12;
         private int _copyAtomicOverflowLogBudget = 4;
         private int _filteredCountLogBudget = 6;
         private bool _skipGpuSubmissionThisPass;

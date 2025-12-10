@@ -228,6 +228,8 @@ namespace XREngine.Timers
 
         private void JobManagerLoop()
         {
+            Engine.JobThreadId ??= Thread.CurrentThread.ManagedThreadId;
+
             while (IsRunning)
             {
                 //using (Engine.Profiler.Start("EngineTimer.JobManager.Process"))

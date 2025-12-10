@@ -26,6 +26,7 @@ namespace XREngine
         public static bool IsPlaying => PlayMode.IsPlaying;
         
         public static JobManager Jobs { get; } = new JobManager();
+        public static int? JobThreadId { get; internal set; }
 
         public static GameState LoadOrGenerateGameState(
             Func<GameState>? generateFactory = null,

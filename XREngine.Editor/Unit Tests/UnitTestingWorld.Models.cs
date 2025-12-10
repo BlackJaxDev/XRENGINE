@@ -1,6 +1,7 @@
 ﻿using Assimp;
 using Extensions;
 using System.Numerics;
+using XREngine;
 using XREngine.Animation;
 using XREngine.Animation.IK;
 using XREngine.Components;
@@ -89,7 +90,7 @@ public static partial class UnitTestingWorld
             skyboxComp!.Name = "TestSkybox";
             skyboxComp.Model = new Model([new SubMesh(
             XRMesh.Shapes.SolidBox(new Vector3(-9000), new Vector3(9000), true, XRMesh.Shapes.ECubemapTextureUVs.None),
-            new XRMaterial([skyEquirect], Engine.Assets.LoadEngineAsset<XRShader>("Shaders", "Scene3D", "Equirect.fs"))
+            new XRMaterial([skyEquirect], Engine.Assets.LoadEngineAsset<XRShader>(JobPriority.Highest, "Shaders", "Scene3D", "Equirect.fs"))
             {
                 RenderPass = (int)EDefaultRenderPass.Background,
                 RenderOptions = new RenderingParameters()
@@ -489,178 +490,178 @@ public static partial class UnitTestingWorld
 
             switch (name)
             {
-                case "Boots": // "BaseColor, Roughness, BaseColor, , Roughness"
-                              //textureList[0].Load3rdParty();
-                    mat.Shaders.Add(albedoRoughness);
-                    mat.Textures =
-                    [
-                        textureList[0],
-                    textureList[1],
-                ];
-                    MakeDefaultParameters(mat);
-                    break;
+                //case "Boots": // "BaseColor, Roughness, BaseColor, , Roughness"
+                //              //textureList[0].Load3rdParty();
+                //    mat.Shaders.Add(albedoRoughness);
+                //    mat.Textures =
+                //    [
+                //        textureList[0],
+                //    textureList[1],
+                //];
+                //    MakeDefaultParameters(mat);
+                //    break;
 
-                case "Metal": // "T_MainTex_D, T_MainTex_D"
-                    mat.Shaders.Add(color);
-                    MakeDefaultParameters(mat);
-                    mat.SetVector3("BaseColor", new Vector3(0.6f));
-                    mat.SetFloat("Roughness", 0.5f);
-                    mat.SetFloat("Metallic", 1.0f);
-                    mat.SetFloat("Specular", 1.0f);
-                    break;
+                //case "Metal": // "T_MainTex_D, T_MainTex_D"
+                //    mat.Shaders.Add(color);
+                //    MakeDefaultParameters(mat);
+                //    mat.SetVector3("BaseColor", new Vector3(0.6f));
+                //    mat.SetFloat("Roughness", 0.5f);
+                //    mat.SetFloat("Metallic", 1.0f);
+                //    mat.SetFloat("Specular", 1.0f);
+                //    break;
 
-                case "BackHair": // "HairEarTail Texture, HairEarTail Texture"
-                    mat.Shaders.Add(albedo);
-                    mat.Textures =
-                    [
-                        textureList[0],
-                ];
-                    MakeDefaultParameters(mat);
-                    break;
+                //case "BackHair": // "HairEarTail Texture, HairEarTail Texture"
+                //    mat.Shaders.Add(albedo);
+                //    mat.Textures =
+                //    [
+                //        textureList[0],
+                //];
+                //    MakeDefaultParameters(mat);
+                //    break;
 
-                case "Goth_Bunny_Straps": // "Arm matcaps, Arm matcaps"
-                    mat.Shaders.Add(albedoMatcap);
-                    mat.Textures =
-                    [
-                        textureList.TryGet(0),
-                ];
-                    MakeDefaultParameters(mat);
-                    break;
+                //case "Goth_Bunny_Straps": // "Arm matcaps, Arm matcaps"
+                //    mat.Shaders.Add(albedoMatcap);
+                //    mat.Textures =
+                //    [
+                //        textureList.TryGet(0),
+                //];
+                //    MakeDefaultParameters(mat);
+                //    break;
 
-                case "black_1": // "T_MainTex_D, T_MainTex_D, "
-                    mat.Shaders.Add(color);
-                    MakeDefaultParameters(mat);
-                    break;
+                //case "black_1": // "T_MainTex_D, T_MainTex_D, "
+                //    mat.Shaders.Add(color);
+                //    MakeDefaultParameters(mat);
+                //    break;
 
-                case "Ears": // "ears emiss, ears emiss"
-                    mat.Shaders.Add(albedo);
-                    mat.Textures =
-                    [
-                        textureList[0],
-                ];
-                    MakeDefaultParameters(mat);
-                    break;
+                //case "Ears": // "ears emiss, ears emiss"
+                //    mat.Shaders.Add(albedo);
+                //    mat.Textures =
+                //    [
+                //        textureList[0],
+                //];
+                //    MakeDefaultParameters(mat);
+                //    break;
 
-                case "Material #130": // no textures provided
-                    mat.Shaders.Add(color);
-                    MakeDefaultParameters(mat);
-                    break;
+                //case "Material #130": // no textures provided
+                //    mat.Shaders.Add(color);
+                //    MakeDefaultParameters(mat);
+                //    break;
 
-                case "Material #132": // "BLACK, NORMAL, METALIC, Regular_Roughness"
-                    mat.Shaders.Add(albedoNormalRoughnessMetallic);
-                    mat.Textures =
-                    [
-                        textureList[0],
-                    textureList[1],
-                    textureList[2],
-                    textureList[3],
-                ];
-                    MakeDefaultParameters(mat);
-                    break;
+                //case "Material #132": // "BLACK, NORMAL, METALIC, Regular_Roughness"
+                //    mat.Shaders.Add(albedoNormalRoughnessMetallic);
+                //    mat.Textures =
+                //    [
+                //        textureList[0],
+                //    textureList[1],
+                //    textureList[2],
+                //    textureList[3],
+                //];
+                //    MakeDefaultParameters(mat);
+                //    break;
 
-                case "1": // "No Saturation 06 (1), No Saturation 06 (1)
-                    mat.Shaders.Add(albedo);
-                    mat.Textures = [textureList[0]];
-                    MakeDefaultParameters(mat);
-                    break;
+                //case "1": // "No Saturation 06 (1), No Saturation 06 (1)
+                //    mat.Shaders.Add(albedo);
+                //    mat.Textures = [textureList[0]];
+                //    MakeDefaultParameters(mat);
+                //    break;
 
-                case "2": // "61, 61"
-                    mat.Shaders.Add(albedo);
-                    mat.Textures = [textureList[0]];
-                    MakeDefaultParameters(mat);
-                    break;
+                //case "2": // "61, 61"
+                //    mat.Shaders.Add(albedo);
+                //    mat.Textures = [textureList[0]];
+                //    MakeDefaultParameters(mat);
+                //    break;
 
-                case "Goth_Bunny_Thigh_Highs": // "generator5, generator5"
-                    mat.Shaders.Add(albedo);
-                    mat.Textures = [textureList[0]];
-                    MakeDefaultParameters(mat);
-                    break;
+                //case "Goth_Bunny_Thigh_Highs": // "generator5, generator5"
+                //    mat.Shaders.Add(albedo);
+                //    mat.Textures = [textureList[0]];
+                //    MakeDefaultParameters(mat);
+                //    break;
 
-                case "LEFT_EYE": // "Eye_5, left eye by nanna, Eye_5"
-                    mat.Shaders.Add(albedo);
-                    mat.Textures = [textureList[0]];
-                    MakeDefaultParameters(mat);
-                    break;
+                //case "LEFT_EYE": // "Eye_5, left eye by nanna, Eye_5"
+                //    mat.Shaders.Add(albedo);
+                //    mat.Textures = [textureList[0]];
+                //    MakeDefaultParameters(mat);
+                //    break;
 
-                case "Back_hair": // "Hair1, hairglow-mono_emission, Hair1"
-                    mat.Shaders.Add(albedoEmissive);
-                    mat.Textures = [textureList[0], textureList[1]];
-                    MakeDefaultParameters(mat);
-                    break;
+                //case "Back_hair": // "Hair1, hairglow-mono_emission, Hair1"
+                //    mat.Shaders.Add(albedoEmissive);
+                //    mat.Textures = [textureList[0], textureList[1]];
+                //    MakeDefaultParameters(mat);
+                //    break;
 
-                case "New_002": // "lis_dlcu_029_02_base_PP1_K, lis_dlcu_029_02_base_PP1_K"
-                    mat.Shaders.Add(albedo);
-                    mat.Textures = [textureList[0]];
-                    MakeDefaultParameters(mat);
-                    break;
+                //case "New_002": // "lis_dlcu_029_02_base_PP1_K, lis_dlcu_029_02_base_PP1_K"
+                //    mat.Shaders.Add(albedo);
+                //    mat.Textures = [textureList[0]];
+                //    MakeDefaultParameters(mat);
+                //    break;
 
-                case "Mat_Glow": // "T_MainTex_D, T_MainTex_D"
-                    mat.Shaders.Add(color);
-                    mat.Textures = [textureList[0]];
-                    MakeDefaultParameters(mat);
-                    break;
+                //case "Mat_Glow": // "T_MainTex_D, T_MainTex_D"
+                //    mat.Shaders.Add(color);
+                //    mat.Textures = [textureList[0]];
+                //    MakeDefaultParameters(mat);
+                //    break;
 
-                case "FABRIC 1_FRONT_1830": // No textures given
-                    mat.Shaders.Add(color);
-                    MakeDefaultParameters(mat);
-                    break;
+                //case "FABRIC 1_FRONT_1830": // No textures given
+                //    mat.Shaders.Add(color);
+                //    MakeDefaultParameters(mat);
+                //    break;
 
-                case "Material #131": // "7"
-                    mat.Shaders.Add(albedo);
-                    mat.Textures = [textureList[0]];
-                    MakeDefaultParameters(mat);
-                    break;
+                //case "Material #131": // "7"
+                //    mat.Shaders.Add(albedo);
+                //    mat.Textures = [textureList[0]];
+                //    MakeDefaultParameters(mat);
+                //    break;
 
-                case "tail": // "T_MainTex_D, EM backhair, T_MainTex_D"
-                    mat.Shaders.Add(albedoEmissive);
-                    mat.Textures = [textureList[0], textureList[1]];
-                    MakeDefaultParameters(mat);
-                    break;
+                //case "tail": // "T_MainTex_D, EM backhair, T_MainTex_D"
+                //    mat.Shaders.Add(albedoEmissive);
+                //    mat.Textures = [textureList[0], textureList[1]];
+                //    MakeDefaultParameters(mat);
+                //    break;
 
-                case "hoodie": // "low poly_defaultMat.001_BaseColor.1001, low poly_defaultMat.001_Roughness.1001, "
-                    mat.Shaders.Add(albedoRoughness);
-                    mat.Textures = [textureList[0], textureList[1]];
-                    MakeDefaultParameters(mat);
-                    break;
+                //case "hoodie": // "low poly_defaultMat.001_BaseColor.1001, low poly_defaultMat.001_Roughness.1001, "
+                //    mat.Shaders.Add(albedoRoughness);
+                //    mat.Textures = [textureList[0], textureList[1]];
+                //    MakeDefaultParameters(mat);
+                //    break;
 
-                case "Face": // "googleface, googleface"
-                    mat.Shaders.Add(albedo);
-                    mat.Textures = [textureList[0]];
-                    MakeDefaultParameters(mat);
-                    break;
+                //case "Face": // "googleface, googleface"
+                //    mat.Shaders.Add(albedo);
+                //    mat.Textures = [textureList[0]];
+                //    MakeDefaultParameters(mat);
+                //    break;
 
-                case "Material #98": // "Shorts_bake_Merge, Shorts_Normal_OpenGL"
-                    mat.Shaders.Add(albedoNormal);
-                    mat.Textures = [textureList[0]];
-                    MakeDefaultParameters(mat);
-                    break;
+                //case "Material #98": // "Shorts_bake_Merge, Shorts_Normal_OpenGL"
+                //    mat.Shaders.Add(albedoNormal);
+                //    mat.Textures = [textureList[0]];
+                //    MakeDefaultParameters(mat);
+                //    break;
 
-                case "Material.002": // Empty setup
-                    mat.Shaders.Add(color);
-                    MakeDefaultParameters(mat);
-                    break;
+                //case "Material.002": // Empty setup
+                //    mat.Shaders.Add(color);
+                //    MakeDefaultParameters(mat);
+                //    break;
 
-                case "metal.002": // Empty setup
-                    mat.Shaders.Add(color);
-                    MakeDefaultParameters(mat);
-                    break;
+                //case "metal.002": // Empty setup
+                //    mat.Shaders.Add(color);
+                //    MakeDefaultParameters(mat);
+                //    break;
 
-                case "Body": // "Body, Body"
-                    mat.Shaders.Add(albedo);
-                    mat.Textures = [textureList[0]];
-                    MakeDefaultParameters(mat);
-                    break;
+                //case "Body": // "Body, Body"
+                //    mat.Shaders.Add(albedo);
+                //    mat.Textures = [textureList[0]];
+                //    MakeDefaultParameters(mat);
+                //    break;
 
-                case "RIGHT_EYE": // "Eye_5, right eye by nanna, Eye_5"
-                    mat.Shaders.Add(color);
-                    mat.Textures = [textureList[0]];
-                    MakeDefaultParameters(mat);
-                    break;
+                //case "RIGHT_EYE": // "Eye_5, right eye by nanna, Eye_5"
+                //    mat.Shaders.Add(color);
+                //    mat.Textures = [textureList[0]];
+                //    MakeDefaultParameters(mat);
+                //    break;
 
-                case "TEETH___SOCK": // "T_MainTex_D, T_MainTex_D"
-                    mat.Shaders.Add(color);
-                    MakeDefaultParameters(mat);
-                    break;
+                //case "TEETH___SOCK": // "T_MainTex_D, T_MainTex_D"
+                //    mat.Shaders.Add(color);
+                //    MakeDefaultParameters(mat);
+                //    break;
 
                 default:
                     // Default material setup - use textured deferred if we have valid albedo textures
