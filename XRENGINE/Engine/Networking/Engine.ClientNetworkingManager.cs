@@ -6,6 +6,7 @@ using System.Net;
 using System.Net.Sockets;
 using System.Diagnostics.CodeAnalysis;
 using XREngine.Components;
+using XREngine.Input;
 using XREngine.Networking;
 using XREngine.Rendering;
 using XREngine.Scene;
@@ -33,7 +34,7 @@ namespace XREngine
             private const double TransformSyncIntervalSeconds = 1.0 / 20.0;
             private const double JoinRetrySeconds = 3.0;
             private const double HeartbeatIntervalSeconds = 3.0;
-            private readonly Dictionary<int, RemotePlayerAvatar> _remotePlayers = new();
+            private readonly Dictionary<int, RemotePlayerState> _remotePlayers = new();
             private readonly HashSet<int> _localServerIndices = new();
 
             public ClientNetworkingManager() : base(peerId: null)
@@ -51,6 +52,8 @@ namespace XREngine
                         Time.Timer.UpdateFrame -= TickClientNetwork;
                         _tickRegistered = false;
                     }
+
+                    ClearRemotePlayers();
                 }
 
                 base.Dispose(disposing);
@@ -304,9 +307,9 @@ namespace XREngine
                     return;
                 }
 
-                var avatar = GetOrCreateRemoteAvatar(assignment.ServerPlayerIndex);
-                if (avatar is not null && !string.IsNullOrWhiteSpace(assignment.DisplayName))
-                    avatar.Node.Name = assignment.DisplayName;
+                var remote = GetOrCreateRemotePlayer(assignment.ServerPlayerIndex, assignment.DisplayName);
+                if (remote is not null && !string.IsNullOrWhiteSpace(assignment.DisplayName) && remote.Pawn.SceneNode is not null)
+                    remote.Pawn.SceneNode.Name = assignment.DisplayName;
             }
 
             private void AttachAssignmentToLocalPlayer(PlayerAssignment assignment)
@@ -321,11 +324,7 @@ namespace XREngine
                         player.PlayerInfo.ServerIndex = assignment.ServerPlayerIndex;
                         player.PlayerInfo.LocalIndex ??= player.LocalPlayerIndex;
                         _localServerIndices.Add(assignment.ServerPlayerIndex);
-                        if (_remotePlayers.TryGetValue(assignment.ServerPlayerIndex, out var avatar))
-                        {
-                            avatar.Node.World?.RootNodes.Remove(avatar.Node);
-                            _remotePlayers.Remove(assignment.ServerPlayerIndex);
-                        }
+                        RemoveRemotePlayer(assignment.ServerPlayerIndex);
                         return;
                     }
                 }
@@ -439,11 +438,7 @@ namespace XREngine
                 }
 
                 // Remove remote avatar if present
-                if (_remotePlayers.TryGetValue(leave.ServerPlayerIndex, out var avatar))
-                {
-                    avatar.Node.World?.RootNodes.Remove(avatar.Node);
-                    _remotePlayers.Remove(leave.ServerPlayerIndex);
-                }
+                RemoveRemotePlayer(leave.ServerPlayerIndex);
             }
 
             private void HandleServerError(ServerErrorMessage error)
@@ -467,7 +462,7 @@ namespace XREngine
                         player.PlayerInfo.ServerIndex = -1;
                     }
                     _localServerIndices.Clear();
-                    _remotePlayers.Clear();
+                    ClearRemotePlayers();
                     _assignmentReceived = false;
                 }
             }
@@ -477,28 +472,97 @@ namespace XREngine
                 if (_localServerIndices.Contains(update.ServerPlayerIndex))
                     return;
 
-                var avatar = GetOrCreateRemoteAvatar(update.ServerPlayerIndex);
-                if (avatar?.Node.Transform is Transform transform)
-                {
-                    transform.TargetTranslation = update.Translation;
-                    transform.TargetRotation = update.Rotation;
-                }
+                var remote = GetOrCreateRemotePlayer(update.ServerPlayerIndex);
+                remote?.Controller.ApplyNetworkTransform(update);
             }
 
-            private RemotePlayerAvatar? GetOrCreateRemoteAvatar(int serverPlayerIndex)
+            private RemotePlayerState? GetOrCreateRemotePlayer(int serverPlayerIndex, string? displayName = null)
             {
-                if (_remotePlayers.TryGetValue(serverPlayerIndex, out var avatar))
-                    return avatar;
+                if (_localServerIndices.Contains(serverPlayerIndex))
+                    return null;
 
-                XRWorldInstance? worldInstance = ResolvePrimaryWorldInstance();
+                if (_remotePlayers.TryGetValue(serverPlayerIndex, out var existing))
+                {
+                    UpdateRemoteDisplayName(existing, displayName);
+                    return existing;
+                }
+
+                XRWorldInstance? worldInstance = ResolvePrimaryWorldInstance() ?? EnsureClientWorld(new WorldSyncDescriptor());
                 if (worldInstance is null)
                     return null;
 
-                var node = new SceneNode(worldInstance, $"RemotePlayer_{serverPlayerIndex}");
+                var pawn = CreateRemotePawn(worldInstance, serverPlayerIndex, displayName);
+                if (pawn is null)
+                    return null;
+
+                var controller = new RemotePlayerController(serverPlayerIndex)
+                {
+                    ControlledPawn = pawn
+                };
+
+                if (!State.RemotePlayers.Contains(controller))
+                    State.RemotePlayers.Add(controller);
+
+                var remote = new RemotePlayerState(serverPlayerIndex, controller, pawn);
+                _remotePlayers[serverPlayerIndex] = remote;
+                return remote;
+            }
+
+            private static PawnComponent? CreateRemotePawn(XRWorldInstance worldInstance, int serverPlayerIndex, string? displayName)
+            {
+                var pawnType = worldInstance.GameMode?.DefaultPlayerPawnClass ?? typeof(FlyingCameraPawnComponent);
+                if (pawnType is null)
+                    return null;
+
+                var nodeName = string.IsNullOrWhiteSpace(displayName) ? $"RemotePlayer_{serverPlayerIndex}" : displayName!;
+                var node = new SceneNode(worldInstance, nodeName);
+
+                if (node.AddComponent(pawnType) is not PawnComponent pawn)
+                {
+                    node.Destroy();
+                    return null;
+                }
+
                 worldInstance.RootNodes.Add(node);
-                avatar = new RemotePlayerAvatar(serverPlayerIndex, node);
-                _remotePlayers[serverPlayerIndex] = avatar;
-                return avatar;
+                return pawn;
+            }
+
+            private void RemoveRemotePlayer(int serverPlayerIndex)
+            {
+                if (!_remotePlayers.TryGetValue(serverPlayerIndex, out var remote))
+                    return;
+
+                DestroyRemotePlayer(remote);
+                _remotePlayers.Remove(serverPlayerIndex);
+            }
+
+            private void ClearRemotePlayers()
+            {
+                foreach (var remote in _remotePlayers.Values)
+                    DestroyRemotePlayer(remote);
+
+                _remotePlayers.Clear();
+            }
+
+            private static void DestroyRemotePlayer(RemotePlayerState remote)
+            {
+                if (remote.Pawn.SceneNode is { } node)
+                {
+                    node.World?.RootNodes.Remove(node);
+                    node.Destroy();
+                }
+
+                State.RemotePlayers.Remove(remote.Controller);
+                remote.Controller.Destroy();
+            }
+
+            private static void UpdateRemoteDisplayName(RemotePlayerState remote, string? displayName)
+            {
+                if (string.IsNullOrWhiteSpace(displayName))
+                    return;
+
+                if (remote.Pawn.SceneNode is { } node)
+                    node.Name = displayName;
             }
 
             private static XRWorldInstance? ResolvePrimaryWorldInstance()
@@ -526,16 +590,18 @@ namespace XREngine
                     Debug.Out($"[Client] Connected to server world '{descriptor.WorldName}', but local world is '{world.Name}'.");
             }
 
-            private sealed class RemotePlayerAvatar
+            private sealed class RemotePlayerState
             {
-                public RemotePlayerAvatar(int serverPlayerIndex, SceneNode node)
+                public RemotePlayerState(int serverPlayerIndex, RemotePlayerController controller, PawnComponent pawn)
                 {
                     ServerPlayerIndex = serverPlayerIndex;
-                    Node = node;
+                    Controller = controller;
+                    Pawn = pawn;
                 }
 
                 public int ServerPlayerIndex { get; }
-                public SceneNode Node { get; }
+                public RemotePlayerController Controller { get; }
+                public PawnComponent Pawn { get; }
             }
 
             ~ClientNetworkingManager()

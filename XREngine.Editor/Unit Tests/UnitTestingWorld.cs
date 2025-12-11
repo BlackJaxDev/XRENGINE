@@ -14,11 +14,7 @@ namespace XREngine.Editor;
 
 public static partial class UnitTestingWorld
 {
-    /// <summary>
-    /// Creates a test world with a variety of objects for testing purposes.
-    /// </summary>
-    /// <returns></returns>
-    public static XRWorld CreateUnitTestWorld(bool setUI, bool isServer)
+    private static void ApplyRenderSettingsFromToggles()
     {
         var s = Engine.Rendering.Settings;
         s.RenderMesh3DBounds = Toggles.RenderMeshBounds;
@@ -36,6 +32,15 @@ public static partial class UnitTestingWorld
             s.PhysicsVisualizeSettings.SetAllTrue();
 
         Engine.Profiler.EnableFrameLogging = Toggles.EnableProfilerLogging;
+    }
+
+    /// <summary>
+    /// Creates a test world with a variety of objects for testing purposes.
+    /// </summary>
+    /// <returns></returns>
+    public static XRWorld CreateUnitTestWorld(bool setUI, bool isServer)
+    {
+        ApplyRenderSettingsFromToggles();
 
         string desktopDir = Environment.GetFolderPath(Environment.SpecialFolder.DesktopDirectory);
         //UnityPackageExtractor.ExtractAsync(Path.Combine(desktopDir, "Animations.unitypackage"), Path.Combine(desktopDir, "Extracted"), true);
@@ -103,6 +108,14 @@ public static partial class UnitTestingWorld
         Undo.TrackWorld(world);
         return world;
     }
+
+    public static XRWorld CreateSelectedWorld(bool setUI, bool isServer)
+        => Toggles.WorldKind switch
+        {
+            UnitTestWorldKind.MathIntersections => CreateMathIntersectionsWorld(setUI, isServer),
+            UnitTestWorldKind.MeshEditing => CreateMeshEditingWorld(setUI, isServer),
+            _ => CreateUnitTestWorld(setUI, isServer),
+        };
 
     private static void AddMirror(SceneNode rootNode)
     {

@@ -142,7 +142,7 @@ public static partial class UnitTestingWorld
             humanComp.HipToHeadIKEnabled = false;
 
             var animator = rootNode.AddComponent<AnimStateMachineComponent>()!;
-            var heightScale = rootNode.AddComponent<HeightScaleComponent>()!;
+            var heightScale = rootNode.AddComponent<VRHeightScaleComponent>()!;
 
             if (Toggles.FaceTracking)
             {
