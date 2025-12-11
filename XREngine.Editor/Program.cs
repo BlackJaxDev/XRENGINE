@@ -42,7 +42,7 @@ internal class Program
             opts.DisableCountDrawPath = false;
         });
         Engine.UserSettings.RenderLibrary = UnitTestingWorld.Toggles.RenderAPI;
-        Engine.Run(/*Engine.LoadOrGenerateGameSettings(() => */GetEngineSettings(UnitTestingWorld.CreateUnitTestWorld(true, false)/*), "startup", false*/), Engine.LoadOrGenerateGameState());
+        Engine.Run(/*Engine.LoadOrGenerateGameSettings(() => */GetEngineSettings(UnitTestingWorld.CreateSelectedWorld(true, false)/*), "startup", false*/), Engine.LoadOrGenerateGameState());
     }
 
     private static JsonSerializerSettings DefaultJsonSettings() => new()
@@ -120,6 +120,15 @@ internal class Program
             FixedFramesPerSecond = fixedHz,
             NetworkingType = GameStartupSettings.ENetworkingType.Client,
         };
+
+        // Allow overriding networking mode via env var for quick local testing.
+        string? netOverride = Environment.GetEnvironmentVariable("XRE_NET_MODE");
+        if (!string.IsNullOrWhiteSpace(netOverride) &&
+            Enum.TryParse<GameStartupSettings.ENetworkingType>(netOverride, true, out var mode))
+        {
+            settings.NetworkingType = mode;
+            Debug.Out($"Networking mode overridden to {mode} via XRE_NET_MODE.");
+        }
         if (UnitTestingWorld.Toggles.VRPawn && !UnitTestingWorld.Toggles.EmulatedVRPawn)
             EditorVR.ApplyVRSettings(settings);
         return settings;

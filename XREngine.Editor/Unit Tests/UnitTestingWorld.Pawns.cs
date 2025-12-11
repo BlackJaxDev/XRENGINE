@@ -56,6 +56,26 @@ public static partial class UnitTestingWorld
             return characterPawnModelParentNode;
         }
 
+        public static MeshEditingPawnComponent CreateMeshEditingPawn(SceneNode rootNode, bool setUI)
+        {
+            SceneNode cameraNode = CreateCamera(rootNode, out CameraComponent? camComp, 45.0f, true);
+
+            var listener = cameraNode.AddComponent<AudioListenerComponent>("Mesh Editing Listener")!;
+            listener.Gain = 1.0f;
+            listener.DistanceModel = DistanceModel.InverseDistance;
+            listener.DopplerFactor = 0.5f;
+            listener.SpeedOfSound = 343.3f;
+
+            var pawn = cameraNode.AddComponent<MeshEditingPawnComponent>()!;
+            pawn.Name = "Mesh Editing Pawn";
+            pawn.EnqueuePossessionByLocalPlayer(ELocalPlayerIndex.One);
+
+            if (setUI && camComp is not null)
+                UserInterface.CreateEditorUI(rootNode, camComp);
+
+            return pawn;
+        }
+
         #region VR
 
         private static SceneNode CreateCharacterVRPawn(
@@ -424,7 +444,7 @@ public static partial class UnitTestingWorld
         public static void InitializeLocomotion(
             SceneNode rootNode,
             HumanoidComponent humanComp,
-            HeightScaleComponent heightScale,
+            VRHeightScaleComponent heightScale,
             VRIKSolverComponent? vrIKSolver)
         {
             SceneNode rigidBodyNode;

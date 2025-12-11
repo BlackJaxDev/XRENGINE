@@ -10,9 +10,9 @@ namespace XREngine.Components
     /// <summary>
     /// Handles all scaling of the avatar's height to synchronize it with the real-world height of the user.
     /// </summary>
-    public class HeightScaleComponent : XRComponent
+    public class VRHeightScaleComponent : XRComponent
     {
-        public HeightScaleComponent()
+        public VRHeightScaleComponent()
         {
             Engine.VRState.ModelHeightChanged += UpdateHeightScale;
             Engine.VRState.DesiredAvatarHeightChanged += UpdateHeightScale;

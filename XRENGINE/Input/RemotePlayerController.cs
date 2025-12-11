@@ -1,63 +1,47 @@
-﻿using XREngine.Input.Devices;
+﻿using System.Numerics;
+using XREngine.Components;
+using XREngine.Input.Devices;
+using XREngine.Networking;
+using XREngine.Scene.Transforms;
 
 namespace XREngine.Input
 {
-    //TODO: handle receiving controller input packets from the server
-    public class RemotePlayerController(int serverPlayerIndex) : PlayerController<ServerInputInterface>(new ServerInputInterface(serverPlayerIndex))
+    /// <summary>
+    /// Represents a player that is controlled remotely by another client.
+    /// All movement/state comes from network messages instead of local input devices.
+    /// </summary>
+    public class RemotePlayerController : PlayerController<ServerInputInterface>
     {
-        //public override PawnComponent? ControlledPawn
-        //{
-        //    get => base.ControlledPawn;
-        //    set
-        //    {
-        //        if (_controlledPawn == value)
-        //            return;
+        public RemotePlayerController(int serverPlayerIndex) : base(new ServerInputInterface(serverPlayerIndex))
+        {
+            PlayerInfo.ServerIndex = serverPlayerIndex;
+        }
 
-        //        if (_controlledPawn != null)
-        //        {
-        //            //_controlledPawn.OnUnPossessing();
-        //            _input.TryUnregisterInput();
+        public int ServerPlayerIndex => PlayerInfo.ServerIndex;
 
-        //            _input.InputRegistration -= _controlledPawn.RegisterInput;
-        //            if (_controlledPawn != _controlledPawn.HUD)
-        //                _input.InputRegistration -= _controlledPawn.HUD.RegisterInput;
-        //        }
+        /// <summary>
+        /// Applies the latest transform information received from the server.
+        /// </summary>
+        public void ApplyNetworkTransform(PlayerTransformUpdate update)
+        {
+            ApplyNetworkTransform(update.Translation, update.Rotation);
+        }
 
-        //        _controlledPawn = value;
-
-        //        if (_controlledPawn is null && _pawnPossessionQueue != null && _pawnPossessionQueue.Count != 0)
-        //            _controlledPawn = _pawnPossessionQueue.Dequeue();
-
-        //        //Engine.PrintLine("Assigned new controlled pawn to Player " + _serverPlayerIndex + ": " + (_controlledPawn is null ? "null" : _controlledPawn.GetType().GetFriendlyName()));
-
-        //        if (_controlledPawn != null)
-        //        {
-        //            _input.InputRegistration += _controlledPawn.RegisterInput;
-        //            if (_controlledPawn != _controlledPawn.HUD)
-        //                _input.InputRegistration += _controlledPawn.HUD.RegisterInput;
-
-        //            //_controlledPawn.OnPossessed(this);
-        //            _input.TryRegisterInput();
-        //        }
-        //    }
-        //}
+        /// <summary>
+        /// Applies a raw transform update to the controlled pawn, if present.
+        /// </summary>
+        public void ApplyNetworkTransform(Vector3 translation, Quaternion rotation)
+        {
+            if (ControlledPawn?.SceneNode?.Transform is Transform transform)
+            {
+                transform.TargetTranslation = translation;
+                transform.TargetRotation = rotation;
+            }
+        }
 
         protected override void RegisterInput(InputInterface input)
         {
-            //input.RegisterButtonEvent(EKey.Escape, ButtonInputType.Pressed, OnTogglePause);
-            //input.RegisterButtonEvent(GamePadButton.SpecialRight, ButtonInputType.Pressed, OnTogglePause);
-            //base.RegisterInput(input);
+            // Remote controllers do not register local input; all input/state comes from the network.
         }
-
-        //internal void Destroy()
-        //{
-        //    UnlinkControlledPawn();
-        //    _input.InputRegistration -= RegisterInput;
-        //}
-        //internal override void UnlinkControlledPawn()
-        //{
-        //    _pawnPossessionQueue?.Clear();
-        //    ControlledPawn = null;
-        //}
     }
 }

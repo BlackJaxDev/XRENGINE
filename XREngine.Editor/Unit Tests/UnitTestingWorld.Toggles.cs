@@ -6,8 +6,17 @@ public static partial class UnitTestingWorld
 {
     public static Settings Toggles { get; set; } = new();
 
+    public enum UnitTestWorldKind
+    {
+        Default,
+        MathIntersections,
+        MeshEditing,
+    }
+
     public class Settings
     {
+        public UnitTestWorldKind WorldKind { get; set; } = UnitTestWorldKind.Default;
+        
         //Debug visualize
         public bool VisualizeOctree = false;
         public bool VisualizeQuadtree = false;

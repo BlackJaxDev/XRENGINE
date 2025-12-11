@@ -14,7 +14,7 @@ using XREngine.Scene.Transforms;
 
 namespace XREngine.Components.VR
 {
-    [RequireComponents(typeof(HeightScaleComponent))]
+    [RequireComponents(typeof(VRHeightScaleComponent))]
     public class VRPlayerCharacterComponent : XRComponent, IRenderable
     {
         public VRPlayerCharacterComponent()
@@ -169,8 +169,8 @@ namespace XREngine.Components.VR
             set => SetField(ref _humanoidComponent, value);
         }
 
-        private HeightScaleComponent? _heightScaleComponent;
-        public HeightScaleComponent? HeightScaleComponent
+        private VRHeightScaleComponent? _heightScaleComponent;
+        public VRHeightScaleComponent? HeightScaleComponent
         {
             get => _heightScaleComponent;
             set => SetField(ref _heightScaleComponent, value);
@@ -243,8 +243,8 @@ namespace XREngine.Components.VR
             => TrackerCollection ?? GetSiblingComponent<VRTrackerCollectionComponent>();
         public CharacterMovement3DComponent? GetCharacterMovement()
             => CharacterMovementComponent ?? GetSiblingComponent<CharacterMovement3DComponent>();
-        public HeightScaleComponent? GetHeightScaleComponent()
-            => HeightScaleComponent ?? GetSiblingComponent<HeightScaleComponent>();
+        public VRHeightScaleComponent? GetHeightScaleComponent()
+            => HeightScaleComponent ?? GetSiblingComponent<VRHeightScaleComponent>();
 
         private string? _eyesModelResolveName = "face";
         public string? EyesModelResolveName
