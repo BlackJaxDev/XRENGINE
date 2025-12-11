@@ -63,6 +63,7 @@ public static partial class UnitTestingWorld
         private static bool _showHierarchy = true;
         private static bool _showInspector = true;
         private static bool _showAssetExplorer = true;
+        private static bool _showNetworking;
         private static bool _profilerSortByTime;
         private static readonly Dictionary<string, bool> _profilerNodeOpenCache = new();
         private static readonly TimeSpan ProfilerThreadCacheTimeout = TimeSpan.FromSeconds(15.0);
@@ -395,6 +396,7 @@ public static partial class UnitTestingWorld
             DrawEngineSettingsPanel();
             DrawUserSettingsPanel();
             DrawBuildSettingsPanel();
+            DrawNetworkingPanel();
             DrawHierarchyPanel();
             DrawInspectorPanel();
             DrawAssetExplorerPanel();
@@ -509,6 +511,7 @@ public static partial class UnitTestingWorld
                 ImGui.MenuItem("OpenGL API Objects", null, ref _showOpenGLApiObjects);
                 ImGui.MenuItem("OpenGL Errors", null, ref _showOpenGLErrors);
                 ImGui.MenuItem("Missing Assets", null, ref _showMissingAssets);
+                ImGui.MenuItem("Networking", null, ref _showNetworking);
                 ImGui.Separator();
                 if (ImGui.MenuItem("Engine Settings"))
                     OpenSettingsInInspector(Engine.Rendering.Settings, "Engine Settings");

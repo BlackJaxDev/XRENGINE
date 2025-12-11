@@ -128,6 +128,7 @@ namespace XREngine.Timers
         private Task? RenderTask = null;
         private Task? SingleTask = null;
         private Task? FixedUpdateTask = null;
+        // JobManager now runs its own worker threads; this task is no longer used.
         private Task? JobManagerTask = null;
 
         //private static bool IsApplicationIdle() => NativeMethods.PeekMessage(out _, IntPtr.Zero, 0, 0, 0) == 0;
@@ -157,7 +158,7 @@ namespace XREngine.Timers
             UpdateTask = Task.Run(UpdateThread);
             CollectVisibleTask = Task.Run(CollectVisibleThread);
             FixedUpdateTask = Task.Run(FixedUpdateThread);
-            JobManagerTask = Task.Run(JobManagerLoop);
+            // JobManager is now internally multi-threaded; no loop needed here.
             //There are 4 main threads: Update, Collect Visible, Render, and FixedUpdate.
             //Update runs as fast as requested without fences.
             //Collect Visible waits for Render to finish swapping buffers.
@@ -217,6 +218,7 @@ namespace XREngine.Timers
 
                     using (Engine.Profiler.Start("EngineTimer.CollectVisibleThread.DispatchSwapBuffers"))
                     {
+                        Engine.Jobs.ProcessCollectVisibleSwapJobs();
                         DispatchSwapBuffers();
                     }
                 }
@@ -226,19 +228,7 @@ namespace XREngine.Timers
             }
         }
 
-        private void JobManagerLoop()
-        {
-            Engine.JobThreadId ??= Thread.CurrentThread.ManagedThreadId;
-
-            while (IsRunning)
-            {
-                //using (Engine.Profiler.Start("EngineTimer.JobManager.Process"))
-                //{
-                if (!Engine.Jobs.Process())
-                    Thread.Sleep(1);
-                //}
-            }
-        }
+        // Legacy JobManager loop removed; JobManager now owns its worker threads.
 
         /// <summary>
         /// This thread runs at a fixed rate, executing logic that should not be tied to the update/render threads.

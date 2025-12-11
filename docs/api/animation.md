@@ -1,5 +1,7 @@
 # Animation System
 
+[← Docs index](../README.md)
+
 The animation module in XRENGINE mixes traditional timeline playback, data-driven property animation, blend trees, state machines, and inverse kinematics to drive characters and props. This document explains how those systems are structured in the repository and how they work together at runtime.
 
 ## Design Goals

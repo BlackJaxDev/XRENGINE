@@ -357,21 +357,35 @@ MigrationBackup/
 
 # Fody - auto-generated XML schema
 FodyWeavers.xsd
+
+# Engine build files
 Build/CommonAssets/Fonts/*/*.png
 Build/Editor/*
 Build/Engine/*
-XREngine.Editor/Build/Editor/Debug/
-XRENGINE/Build/Engine/Debug/
-XREngine.Editor/ShaderCache/
-XRENGINE/Rendering/GI/build/
 Build/Tools/
 Build/Dependencies/CoACD/
-ShaderCache/
-XREngine.Editor/imgui.ini
+Build/RestirGI/
 
+# Submodules
 !Build/Submodules/
 !Build/Submodules/**
+
+# Binary shader cache
+ShaderCache/
+
+XREngine.Editor/Build/Editor/Debug/
+XREngine.Editor/ShaderCache/
+
+XRENGINE/Build/Engine/Debug/
 XRENGINE/Build/Engine/
-MagicPhysXPkg/
+
+XRENGINE/Rendering/GI/build/
+XREngine.Editor/imgui.ini
 generated/
-Build/RestirGI/
+
+docs/docfx/_site/
+docs/docfx/api/**
+!docs/docfx/api/index.md
+docs/docfx/.cache/
+docs/docfx/obj/
+docs/docfx/manifest.json

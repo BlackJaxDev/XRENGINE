@@ -4,6 +4,7 @@ using XREngine.Data.Core;
 using XREngine.Data.Geometry;
 using XREngine.Input;
 using XREngine.Input.Devices;
+using XREngine.Networking;
 using XREngine.Rendering;
 
 namespace XREngine.Components
@@ -264,5 +265,10 @@ namespace XREngine.Components
 
         public CameraComponent? GetCamera()
             => CameraComponent is not null ? CameraComponent : GetSiblingComponent<CameraComponent>();
+
+        public virtual IPawnInputSnapshot? CaptureNetworkInputState()
+        {
+            return null;
+        }
     }
 }

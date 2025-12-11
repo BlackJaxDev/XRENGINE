@@ -40,13 +40,11 @@ Running the editor launches the Unit Testing World, a collection of scenes that 
 - Compute-based experimentation exists for animation and physics chains, but these paths are not production ready yet.
 
 ## Documentation
-Design notes and API references live under `docs/`:
-- `docs/architecture/README.md`
-- `docs/rendering.md`
-- `docs/rendering/CoACD.md`
-- `docs/physics.md`
-- `docs/animation.md`
-- `docs/vr-development.md`
+Start with the docs index at `docs/README.md` for a structured map of architecture notes, API guides, and rendering deep dives. Highlights:
+- `docs/architecture/README.md` – runtime flow, threading, project layout.
+- `docs/api/*.md` – system-level API guides (scene, components, transforms, animation, physics, rendering, VR, engine API).
+- `docs/rendering/*.md` – rendering notes including CoACD integration and GPU pipeline details.
+- `docs/work/README.md` – working docs (TODOs, checklists, Vulkan and indirect rendering design workstreams).
 
 ## Contributing
 Review `CONTRIBUTING.md` for coding standards, pull request expectations, and issue reporting. Active areas of contribution include rendering backends, XR tooling, editor UX, and automated testing.

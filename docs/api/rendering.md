@@ -1,5 +1,7 @@
 # Rendering Architecture
 
+[← Docs index](../README.md)
+
 XRENGINE renders each world through a staged pipeline that separates scene updates, visibility gathering, GPU command construction, and pass execution. The system is built around GPU-driven multi-draw indirect rendering but retains CPU fallbacks for debugging and platforms that do not support the compute path.
 
 ## Frame Ownership

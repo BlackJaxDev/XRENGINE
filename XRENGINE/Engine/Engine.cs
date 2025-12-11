@@ -3,10 +3,13 @@ using Jitter2;
 using Silk.NET.Maths;
 using Silk.NET.Windowing;
 using System.Collections.Concurrent;
+using System.Collections.Generic;
+using System.IO;
 using System.Linq;
 using System.Net;
 using System.Numerics;
 using System.Threading;
+using System.Threading.Tasks;
 using XREngine.Audio;
 using XREngine.Data.Core;
 using XREngine.Data.Trees;
@@ -53,28 +56,38 @@ namespace XREngine
             TransformBase.ProcessParentReassignments();
         }
 
-        private static readonly ConcurrentQueue<Action> _asyncTaskQueue = new();
-        private static readonly ConcurrentQueue<Action> _mainThreadTaskQueue = new();
-        private static readonly List<Func<bool>> _mainThreadCoroutines = [];
-        private static readonly ConcurrentQueue<Func<bool>> _mainThreadCoroutinesAddQueue = new();
 
         public static bool IsRenderThread => Environment.CurrentManagedThreadId == RenderThreadId;
         public static int RenderThreadId { get; private set; }
 
         /// <summary>
-        /// These tasks will be executed on a separate dedicated thread.
+        /// These tasks will be executed during the collect-visible/render swap point.
         /// </summary>
         /// <param name="task"></param>
-        public static void EnqueueAsyncTask(Action task)
-            => _asyncTaskQueue.Enqueue(task);
+        public static void EnqueueSwapTask(Action task)
+            => Jobs.Schedule(new ActionJob(task), JobPriority.Normal, JobAffinity.CollectVisibleSwap);
+
+        /// <summary>
+        /// These tasks will be executed during the collect-visible/render swap point.
+        /// Calls repeatedly until the task returns true.
+        /// </summary>
+        public static void AddSwapCoroutine(Func<bool> task)
+            => Jobs.Schedule(new CoroutineJob(task), JobPriority.Normal, JobAffinity.CollectVisibleSwap);
+        
         /// <summary>
         /// These tasks will be executed on the main thread, and usually are rendering tasks.
         /// </summary>
         /// <param name="task"></param>
         public static void EnqueueMainThreadTask(Action task)
-            => _mainThreadTaskQueue.Enqueue(task);
+            => Jobs.Schedule(new ActionJob(task), JobPriority.Normal, JobAffinity.MainThread);
+
+        /// <summary>
+        /// These tasks will be executed on the main thread, and usually are rendering tasks.
+        /// Calls repeatedly until the task returns true.
+        /// </summary>
+        /// <param name="task"></param>
         public static void AddMainThreadCoroutine(Func<bool> task)
-            => _mainThreadCoroutinesAddQueue.Enqueue(task);
+            => Jobs.Schedule(new CoroutineJob(task), JobPriority.Normal, JobAffinity.MainThread);
 
         /// <summary>
         /// Invokes the task on the main thread if the current thread is not the render thread.
@@ -90,7 +103,7 @@ namespace XREngine
                     task();
                 return false;
             }
-            
+
             EnqueueMainThreadTask(task);
             return true;
         }
@@ -278,6 +291,8 @@ namespace XREngine
                 GameSettings = startupSettings;
                 UserSettings = GameSettings.DefaultUserSettings;
 
+                ConfigureJobManager(GameSettings);
+
                 //Creating windows first is most important, because they will initialize the render context and graphics API.
                 CreateWindows(startupSettings.StartupWindows);
                 Rendering.SecondaryContext.InitializeIfSupported(Windows.FirstOrDefault());
@@ -422,6 +437,11 @@ namespace XREngine
 
         private static void InitializeNetworking(GameStartupSettings startupSettings)
         {
+            if (Networking is BaseNetworkingManager previousNet)
+            {
+                previousNet.RemoteJobRequestReceived -= HandleRemoteJobRequestAsync;
+            }
+
             var appType = startupSettings.NetworkingType;
             switch (appType)
             {
@@ -444,6 +464,104 @@ namespace XREngine
                     Networking = p2pClient;
                     p2pClient.Start(IPAddress.Parse(startupSettings.UdpMulticastGroupIP), startupSettings.UdpMulticastPort, IPAddress.Parse(startupSettings.ServerIP));
                     break;
+            }
+
+            if (Networking is BaseNetworkingManager net)
+            {
+                Jobs.RemoteTransport = new RemoteJobNetworkingTransport(net);
+                net.RemoteJobRequestReceived += HandleRemoteJobRequestAsync;
+            }
+            else
+            {
+                Jobs.RemoteTransport = null;
+            }
+        }
+
+        private static Task<RemoteJobResponse?> HandleRemoteJobRequestAsync(RemoteJobRequest request)
+            => HandleRemoteJobRequestInternalAsync(request);
+
+        private static async Task<RemoteJobResponse?> HandleRemoteJobRequestInternalAsync(RemoteJobRequest request)
+        {
+            if (request is null)
+                return null;
+
+            return request.Operation switch
+            {
+                RemoteJobOperations.AssetLoad => await HandleRemoteAssetLoadAsync(request).ConfigureAwait(false),
+                _ => RemoteJobResponse.FromError(request.JobId, $"Unsupported remote job operation '{request.Operation}'."),
+            };
+        }
+
+        private static async Task<RemoteJobResponse?> HandleRemoteAssetLoadAsync(RemoteJobRequest request)
+        {
+            string? path = null;
+            request.Metadata?.TryGetValue("path", out path);
+            Guid assetId = Guid.Empty;
+            if (request.Metadata?.TryGetValue("id", out var idText) == true)
+                Guid.TryParse(idText, out assetId);
+
+            try
+            {
+                byte[]? payload = null;
+                string? resolvedPath = null;
+
+                if (request.TransferMode == RemoteJobTransferMode.PushDataToRemote && request.Payload is { Length: > 0 })
+                {
+                    payload = request.Payload;
+                }
+                else if (assetId != Guid.Empty)
+                {
+                    if (Assets.TryGetAssetByID(assetId, out var existing) && !string.IsNullOrWhiteSpace(existing.FilePath) && File.Exists(existing.FilePath))
+                    {
+                        resolvedPath = existing.FilePath;
+                        payload = await File.ReadAllBytesAsync(existing.FilePath).ConfigureAwait(false);
+                    }
+                    else if (Assets.TryResolveAssetPathById(assetId, out var resolvedByMeta) && !string.IsNullOrWhiteSpace(resolvedByMeta) && File.Exists(resolvedByMeta))
+                    {
+                        resolvedPath = resolvedByMeta;
+                        payload = await File.ReadAllBytesAsync(resolvedByMeta).ConfigureAwait(false);
+                    }
+                }
+                else if (!string.IsNullOrWhiteSpace(path) && File.Exists(path))
+                {
+                    resolvedPath = path;
+                    payload = await File.ReadAllBytesAsync(path).ConfigureAwait(false);
+                }
+
+                if (payload is null)
+                    return RemoteJobResponse.FromError(request.JobId, assetId != Guid.Empty
+                        ? $"Asset not found for remote load with id '{assetId}'."
+                        : $"Asset not found for remote load at '{path}'.");
+
+                IReadOnlyDictionary<string, string>? responseMetadata = null;
+                if (!string.IsNullOrWhiteSpace(resolvedPath))
+                {
+                    responseMetadata = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+                    {
+                        ["path"] = resolvedPath,
+                    };
+                }
+
+                return new RemoteJobResponse
+                {
+                    JobId = request.JobId,
+                    Success = true,
+                    Payload = payload,
+                    Metadata = responseMetadata,
+                    SenderId = Networking is BaseNetworkingManager net ? net.LocalPeerId : null,
+                    TargetId = request.SenderId,
+                };
+            }
+            catch (Exception ex)
+            {
+                return new RemoteJobResponse
+                {
+                    JobId = request.JobId,
+                    Success = false,
+                    Error = ex.Message,
+                    SenderId = Networking is BaseNetworkingManager net ? net.LocalPeerId : null,
+                    TargetId = request.SenderId,
+                };
             }
         }
 
@@ -469,8 +587,6 @@ namespace XREngine
         private static void SwapBuffers()
         {
             using var sample = Engine.Profiler.Start("Engine.SwapBuffers");
-            while (_asyncTaskQueue.TryDequeue(out var task))
-                task.Invoke();
         }
 
         private static void DequeueMainThreadTasks()
@@ -481,13 +597,8 @@ namespace XREngine
 
         private static void ProcessPendingMainThreadWork()
         {
-            while (_mainThreadTaskQueue.TryDequeue(out var task))
-                task.Invoke();
-            while (_mainThreadCoroutinesAddQueue.TryDequeue(out var task))
-                _mainThreadCoroutines.Add(task);
-            for (int i = 0; i < _mainThreadCoroutines.Count; i++)
-                if (_mainThreadCoroutines[i].Invoke())
-                    _mainThreadCoroutines.RemoveAt(i--);
+            // Execute main-thread-affinity jobs scheduled via the job system
+            Jobs.ProcessMainThreadJobs();
         }
 
         public static void CreateWindows(List<GameWindowStartupSettings> windows)
@@ -651,6 +762,7 @@ namespace XREngine
             //ShuttingDown = true;
             Rendering.SecondaryContext.Dispose();
             Time.Timer.Stop();
+            Jobs.Shutdown();
             Assets.Dispose();
             //ShuttingDown = false;
         }

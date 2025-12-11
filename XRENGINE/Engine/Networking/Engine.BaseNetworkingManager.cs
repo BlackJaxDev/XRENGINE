@@ -1,5 +1,8 @@
 ﻿using MemoryPack;
+using System;
 using System.Collections.Concurrent;
+using System.Threading;
+using System.Threading.Tasks;
 using System.Net;
 using System.Net.NetworkInformation;
 using System.Net.Sockets;
@@ -81,6 +84,10 @@ namespace XREngine
             /// </summary>
             PlayerLeave,
             /// <summary>
+            /// Heartbeat to keep a connection alive and update liveness state.
+            /// </summary>
+            Heartbeat,
+            /// <summary>
             /// Sent by a client to the server with the latest local input values.
             /// </summary>
             PlayerInputSnapshot,
@@ -96,6 +103,18 @@ namespace XREngine
             /// Sent by a client to the server to stop receiving updates for a player.
             /// </summary>
             UnrequestPlayerUpdates,
+            /// <summary>
+            /// Sent by a client to request remote job execution (e.g., remote asset load).
+            /// </summary>
+            RemoteJobRequest,
+            /// <summary>
+            /// Sent by the remote host in response to a remote job request.
+            /// </summary>
+            RemoteJobResponse,
+            /// <summary>
+            /// Server-to-client error/status message (HTTP-like codes).
+            /// </summary>
+            ServerError,
         }
 
         [MemoryPackable]
@@ -113,7 +132,7 @@ namespace XREngine
             public string Data { get; set; } = string.Empty;
         }
 
-        public abstract class BaseNetworkingManager : XRBase
+        public abstract class BaseNetworkingManager : XRBase, IDisposable
         {
             protected ConcurrentQueue<(ushort sequenceNum, byte[])> UdpSendQueue { get; } = new();
 
@@ -123,11 +142,60 @@ namespace XREngine
 
             public bool UDPServerConnectionEstablished
                 => UdpReceiver?.Client.Connected ?? false;
+            public string LocalPeerId { get; }
+            protected static string CurrentProtocolVersion { get; } = typeof(Engine).Assembly.GetName().Version?.ToString() ?? "dev";
+            public event Func<RemoteJobRequest, Task<RemoteJobResponse?>>? RemoteJobRequestReceived;
+            public event Action<RemoteJobResponse>? RemoteJobResponseReceived;
+            public event Action<ServerErrorMessage>? ServerErrorReceived;
 
-            public BaseNetworkingManager()
-                => Time.Timer.UpdateFrame += ConsumeQueues;
+            private readonly CancellationTokenSource _consumeCts = new();
+            private Task _consumeTask = Task.CompletedTask;
+            private bool _disposed;
+
+            protected BaseNetworkingManager(string? peerId = null)
+            {
+                LocalPeerId = string.IsNullOrWhiteSpace(peerId) ? Guid.NewGuid().ToString("N") : peerId;
+                Time.Timer.UpdateFrame += OnUpdateFrame;
+            }
             ~BaseNetworkingManager()
-                => Time.Timer.UpdateFrame -= ConsumeQueues;
+                => Dispose(false);
+
+            public void Dispose()
+            {
+                Dispose(true);
+                GC.SuppressFinalize(this);
+            }
+
+            protected virtual void Dispose(bool disposing)
+            {
+                if (_disposed)
+                    return;
+
+                _disposed = true;
+                if (disposing)
+                {
+                    _consumeCts.Cancel();
+                    Time.Timer.UpdateFrame -= OnUpdateFrame;
+
+                    _consumeCts.Dispose();
+
+                    try
+                    {
+                        _consumeTask.Wait(TimeSpan.FromMilliseconds(50));
+                    }
+                    catch
+                    {
+                        // ignore wait failures
+                    }
+
+                    DisposeSockets();
+                }
+                else
+                {
+                    Time.Timer.UpdateFrame -= OnUpdateFrame;
+                    DisposeSockets();
+                }
+            }
             
             /// <summary>
             /// Sends from server to all connected clients, or from client to all other p2p clients.
@@ -138,6 +206,26 @@ namespace XREngine
             /// </summary>
             public UdpClient? UdpReceiver { get; set; }
             public IPEndPoint? MulticastEndPoint { get; set; }
+
+            protected virtual void DisposeSockets()
+            {
+                try
+                {
+                    UdpReceiver?.Close();
+                    UdpReceiver?.Dispose();
+                }
+                catch { }
+
+                try
+                {
+                    UdpMulticastSender?.Close();
+                    UdpMulticastSender?.Dispose();
+                }
+                catch { }
+
+                UdpReceiver = null;
+                UdpMulticastSender = null;
+            }
 
             public static bool IsConnected()
                 => NetworkInterface.GetIsNetworkAvailable();
@@ -171,10 +259,34 @@ namespace XREngine
                 if (!anyAcked)
                     UpdateRTT(0.0f);
             }
-            public virtual void ConsumeQueues()
+            private void OnUpdateFrame()
             {
-                ReadUDP();
-                SendUDP();
+                if (_disposed || _consumeCts.IsCancellationRequested)
+                    return;
+
+                if (!_consumeTask.IsCompleted)
+                    return;
+
+                _consumeTask = ConsumeQueuesAsync();
+            }
+
+            public virtual void ConsumeQueues() => OnUpdateFrame();
+
+            private async Task ConsumeQueuesAsync()
+            {
+                try
+                {
+                    await ReadUDP().ConfigureAwait(false);
+                    await SendUDP().ConfigureAwait(false);
+                }
+                catch (OperationCanceledException)
+                {
+                    //ignore cancellation
+                }
+                catch (Exception ex)
+                {
+                    Debug.Out($"[Net] ConsumeQueues exception: {ex}");
+                }
             }
 
             /// <summary>
@@ -262,8 +374,7 @@ namespace XREngine
                 get
                 {
                     float now = Engine.ElapsedTime;
-                    while (_bytesSentLog.TryPeek(out (float timestamp, int bytes) entry) && entry.timestamp < now - 1.0f)
-                        _bytesSentLog.TryDequeue(out _); // Remove entries older than 1 second.
+                    TrimBytesSentLog(now);
                     int sum = 0;
                     foreach (var (timestamp, bytes) in _bytesSentLog)
                         sum += bytes;
@@ -273,6 +384,12 @@ namespace XREngine
             }
             public float KBytesSentLastSecond => BytesSentLastSecond / 1024.0f;
             public float MBytesSentLastSecond => KBytesSentLastSecond / 1024.0f;
+
+            private void TrimBytesSentLog(float now)
+            {
+                while (_bytesSentLog.TryPeek(out (float timestamp, int bytes) entry) && entry.timestamp < now - 1.0f)
+                    _bytesSentLog.TryDequeue(out _);
+            }
 
             public string DataPerSecondString
             {
@@ -297,6 +414,9 @@ namespace XREngine
                 if (UdpSendQueue.IsEmpty)
                     return;
 
+                float now = Engine.ElapsedTime;
+                TrimBytesSentLog(now);
+
                 int packetsAllowed = int.MaxValue;
                 if (MaxSendablePacketsPerSecond is not null)
                 {
@@ -314,10 +434,14 @@ namespace XREngine
                         continue;
 
                     await client.SendAsync(data.bytes, data.bytes.Length, endPoint);
-                    _bytesSentLog.Enqueue((Engine.ElapsedTime, data.bytes.Length));
+                    float timestamp = Engine.ElapsedTime;
+                    _bytesSentLog.Enqueue((timestamp, data.bytes.Length));
+                    TrimBytesSentLog(timestamp);
                     packetsSent++;
                 }
                 _packetTokens -= packetsSent;
+                if (_packetTokens < 0)
+                    _packetTokens = 0;
             }
 
             private void ClearOldRTTs()
@@ -448,6 +572,27 @@ namespace XREngine
                 var bytes = MemoryPackSerializer.Serialize(data);
                 //var bytes = Encoding.UTF8.GetBytes(AssetManager.Serializer.Serialize(data));
                 Send(Guid.Empty, compress, bytes, EBroadcastType.StateChange, resendOnFailedAck);
+            }
+
+            public void BroadcastRemoteJobRequest(RemoteJobRequest request, bool compress = true, bool resendOnFailedAck = false)
+            {
+                ArgumentNullException.ThrowIfNull(request);
+                string serialized = StateChangePayloadSerializer.Serialize(request);
+                ReplicateStateChange(new StateChangeInfo(EStateChangeType.RemoteJobRequest, serialized), compress, resendOnFailedAck);
+            }
+
+            public void BroadcastRemoteJobResponse(RemoteJobResponse response, bool compress = true, bool resendOnFailedAck = false)
+            {
+                ArgumentNullException.ThrowIfNull(response);
+                string serialized = StateChangePayloadSerializer.Serialize(response);
+                ReplicateStateChange(new StateChangeInfo(EStateChangeType.RemoteJobResponse, serialized), compress, resendOnFailedAck);
+            }
+
+            public void BroadcastServerError(ServerErrorMessage error, bool compress = true, bool resendOnFailedAck = false)
+            {
+                ArgumentNullException.ThrowIfNull(error);
+                string serialized = StateChangePayloadSerializer.Serialize(error);
+                ReplicateStateChange(new StateChangeInfo(EStateChangeType.ServerError, serialized), compress, resendOnFailedAck);
             }
 
             protected void BroadcastStateChange<TPayload>(EStateChangeType type, TPayload payload, bool compress = true, bool resendOnFailedAck = false)
@@ -862,7 +1007,11 @@ namespace XREngine
                     case EBroadcastType.Transform:
                         {
                             if (worldObj is TransformBase transform)
-                                transform.DecodeFromBytes(data);
+                            {
+                                byte[] slice = new byte[dataLen];
+                                Buffer.BlockCopy(data, dataOffset, slice, 0, dataLen);
+                                transform.DecodeFromBytes(slice);
+                            }
                             break;
                         }
                 }
@@ -870,6 +1019,75 @@ namespace XREngine
 
             protected virtual void HandleStateChange(StateChangeInfo change, IPEndPoint? sender)
             {
+                if (change.Type == EStateChangeType.RemoteJobRequest)
+                {
+                    if (StateChangePayloadSerializer.TryDeserialize<RemoteJobRequest>(change.Data, out var request) && request is not null)
+                    {
+                        if (!string.IsNullOrWhiteSpace(request.TargetId) && !string.Equals(request.TargetId, LocalPeerId, StringComparison.OrdinalIgnoreCase))
+                            return;
+
+                        _ = DispatchRemoteJobRequestAsync(request);
+                    }
+                    return;
+                }
+
+                if (change.Type == EStateChangeType.RemoteJobResponse)
+                {
+                    if (StateChangePayloadSerializer.TryDeserialize<RemoteJobResponse>(change.Data, out var response) && response is not null)
+                    {
+                        if (!string.IsNullOrWhiteSpace(response.TargetId) && !string.Equals(response.TargetId, LocalPeerId, StringComparison.OrdinalIgnoreCase))
+                            return;
+
+                        RemoteJobResponseReceived?.Invoke(response);
+                    }
+                    return;
+                }
+
+                if (change.Type == EStateChangeType.ServerError)
+                {
+                    if (StateChangePayloadSerializer.TryDeserialize<ServerErrorMessage>(change.Data, out var error) && error is not null)
+                    {
+                        ServerErrorReceived?.Invoke(error);
+                    }
+                    return;
+                }
+            }
+
+            private async Task DispatchRemoteJobRequestAsync(RemoteJobRequest request)
+            {
+                var handler = RemoteJobRequestReceived;
+                if (handler is null)
+                    return;
+
+                try
+                {
+                    var response = await handler(request).ConfigureAwait(false);
+                    if (response != null)
+                    {
+                        var enriched = new RemoteJobResponse
+                        {
+                            JobId = response.JobId,
+                            Success = response.Success,
+                            Payload = response.Payload,
+                            Error = response.Error,
+                            Metadata = response.Metadata,
+                            SenderId = LocalPeerId,
+                            TargetId = request.SenderId,
+                        };
+                        BroadcastRemoteJobResponse(enriched);
+                    }
+                }
+                catch (Exception ex)
+                {
+                    BroadcastRemoteJobResponse(new RemoteJobResponse
+                    {
+                        JobId = request.JobId,
+                        Success = false,
+                        Error = ex.Message,
+                        SenderId = LocalPeerId,
+                        TargetId = request.SenderId,
+                    });
+                }
             }
 
             [Flags]

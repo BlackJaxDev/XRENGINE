@@ -1,5 +1,7 @@
 # CoACD Integration
 
+[← Docs index](../README.md)
+
 CoACD does not currently publish a NuGet package. The engine now pulls the upstream repository, builds `_coacd` from source, and drops the produced native binary into `XRENGINE/runtimes/<rid>/native`. A fallback script is still available when you simply want to extract the vendor-provided wheel.
 
 ## Building from source (default path)

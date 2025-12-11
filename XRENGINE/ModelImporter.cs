@@ -62,7 +62,21 @@ namespace XREngine
         {
             IEnumerable ImportRoutine()
             {
-                var result = ImportInternal(path, options, parent, scaleConversion, zUp, onFinished, materialFactory, onProgress, cancellationToken);
+                var importTask = Task.Run(() => ImportInternal(path, options, parent, scaleConversion, zUp, onFinished, materialFactory, onProgress, cancellationToken), cancellationToken);
+                yield return importTask;
+
+                if (importTask.IsCanceled)
+                {
+                    yield break;
+                }
+
+                if (importTask.IsFaulted)
+                {
+                    // Surface the exception to the job system
+                    throw importTask.Exception!.GetBaseException();
+                }
+
+                var result = importTask.Result;
                 yield return new JobProgress(1f, result);
             }
 

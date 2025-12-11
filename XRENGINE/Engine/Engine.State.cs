@@ -25,8 +25,23 @@ namespace XREngine
         /// </summary>
         public static bool IsPlaying => PlayMode.IsPlaying;
         
-        public static JobManager Jobs { get; } = new JobManager();
+        public static JobManager Jobs { get; private set; } = new JobManager();
         public static int? JobThreadId { get; internal set; }
+
+        internal static void ConfigureJobManager(GameStartupSettings startupSettings)
+        {
+            var previous = Jobs;
+
+            // Always recreate to apply new configuration; shut down old workers cleanly.
+            previous?.Shutdown();
+
+            JobThreadId = null;
+            Jobs = new JobManager(
+                startupSettings?.JobWorkers,
+                startupSettings?.JobQueueLimit,
+                startupSettings?.JobQueueWarningThreshold,
+                startupSettings?.JobWorkerCap);
+        }
 
         public static GameState LoadOrGenerateGameState(
             Func<GameState>? generateFactory = null,
@@ -79,6 +94,15 @@ namespace XREngine
             float renderHz = 90.0f;
             float fixedHz = 45.0f;
 
+            // Reserve threads for so worker pool doesn't starve them.
+            int reservedThreads = 4; // render + update + fixed-update + collectvisible
+            int defaultWorkers = Math.Max(1, Environment.ProcessorCount - reservedThreads);
+            int defaultWorkerCap = 16;
+            int defaultQueueLimit = 8192;
+            int defaultQueueWarn = 2048;
+            if (defaultWorkers > defaultWorkerCap)
+                defaultWorkers = defaultWorkerCap;
+
             int primaryX = NativeMethods.GetSystemMetrics(0);
             int primaryY = NativeMethods.GetSystemMetrics(1);
 
@@ -105,6 +129,10 @@ namespace XREngine
                 },
                 TargetUpdatesPerSecond = updateHz,
                 FixedFramesPerSecond = fixedHz,
+                JobWorkers = defaultWorkers,
+                JobWorkerCap = defaultWorkerCap,
+                JobQueueLimit = defaultQueueLimit,
+                JobQueueWarningThreshold = defaultQueueWarn,
             };
         }
 

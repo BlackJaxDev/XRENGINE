@@ -136,4 +136,4 @@ Known gaps to keep in mind:
 - [Scene System](scene.md)
 - [Rendering System](rendering.md)
 - [Animation System](animation.md)
-- [GPU Physics Chain Verification](../gpu-physics-chain-engine-verification.md)
+- [GPU Physics Chain Verification](../work/design/gpu-physics-chain-engine-verification.md)

@@ -90,6 +90,46 @@ public static partial class UnitTestingWorld
                 ImGui.Text($"Triangles Rendered: {triangles:N0}");
             }
 
+            if (ImGui.CollapsingHeader("Job System", ImGuiTreeNodeFlags.DefaultOpen))
+            {
+                var jobs = Engine.Jobs;
+                ImGui.Text($"Workers: {jobs.WorkerCount}");
+                bool bounded = jobs.IsQueueBounded;
+                ImGui.Text($"Queue: {(bounded ? "bounded" : "unbounded")}, capacity {jobs.QueueCapacity}, in-use {jobs.QueueSlotsInUse}, available {jobs.QueueSlotsAvailable}");
+
+                if (ImGui.BeginTable("JobSystemStats", 6, ImGuiTableFlags.Borders | ImGuiTableFlags.RowBg | ImGuiTableFlags.SizingFixedFit))
+                {
+                    ImGui.TableSetupColumn("Priority");
+                    ImGui.TableSetupColumn("Any");
+                    ImGui.TableSetupColumn("Main");
+                    ImGui.TableSetupColumn("Collect");
+                    ImGui.TableSetupColumn("Avg Wait (ms)");
+                    ImGui.TableSetupColumn("Starving?");
+                    ImGui.TableHeadersRow();
+
+                    for (int i = 0; i <= (int)JobPriority.Highest; i++)
+                    {
+                        var priority = (JobPriority)i;
+                        int any = jobs.GetQueuedCount(priority, JobAffinity.Any);
+                        int main = jobs.GetQueuedCount(priority, JobAffinity.MainThread);
+                        int collect = jobs.GetQueuedCount(priority, JobAffinity.CollectVisibleSwap);
+                        double waitMs = jobs.GetAverageWait(priority).TotalMilliseconds;
+                        bool starving = waitMs >= 2000.0; // mirrors StarvationWarningThreshold
+
+                        ImGui.TableNextRow();
+                        ImGui.TableSetColumnIndex(0); ImGui.Text(priority.ToString());
+                        ImGui.TableSetColumnIndex(1); ImGui.Text(any.ToString());
+                        ImGui.TableSetColumnIndex(2); ImGui.Text(main.ToString());
+                        ImGui.TableSetColumnIndex(3); ImGui.Text(collect.ToString());
+                        ImGui.TableSetColumnIndex(4); ImGui.Text($"{waitMs:F1}");
+                        ImGui.TableSetColumnIndex(5);
+                        ImGui.TextDisabled(starving ? "yes" : "no");
+                    }
+
+                    ImGui.EndTable();
+                }
+            }
+
             ImGui.Checkbox("Sort by Time", ref _profilerSortByTime);
             ImGui.SameLine();
             ImGui.SetNextItemWidth(100);
