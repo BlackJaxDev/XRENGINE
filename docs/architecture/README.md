@@ -1,5 +1,7 @@
 # XRENGINE Architecture
 
+[← Docs index](../README.md)
+
 High-level notes on how the engine stages work, render, and synchronize data across threads.
 
 ## Runtime Flow
@@ -38,3 +40,8 @@ High-level notes on how the engine stages work, render, and synchronize data acr
 - `Build/`: the latest cooked builds, organized per configuration and platform for distribution.
 - `Packages/`: third-party or externally sourced content mirrored into the project.
 - `Config/`: persistent project + engine settings, including `engine_settings.asset` and per-user overrides.
+
+## Further Reading
+- [Job System](job-system.md)
+- [Networking Overview](networking-overview.md)
+- [Editor Undo System](undo-system.md)

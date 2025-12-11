@@ -1,0 +1,64 @@
+{
+  "metadata": [
+    {
+      "src": [
+        {
+          "src": "../../",
+          "files": [
+            "**/XREngine*.csproj"
+          ],
+          "exclude": [
+            "**/bin/**",
+            "**/obj/**",
+            "**/Submodules/**"
+          ]
+        }
+      ],
+      "dest": "api",
+      "filter": "filterConfig.yml",
+      "allowCompilationErrors": true
+    }
+  ],
+  "build": {
+    "content": [
+      {
+        "files": [
+          "index.md",
+          "toc.yml"
+        ]
+      },
+      {
+        "files": [
+          "api/**.yml",
+          "api/index.md"
+        ]
+      }
+    ],
+    "resource": [
+      {
+        "files": [
+          "styles/**"
+        ]
+      }
+    ],
+    "dest": "_site",
+    "globalMetadata": {
+      "_appTitle": "XRENGINE API",
+      "_enableSearch": true,
+      "_gitContribute": {
+        "repo": "https://github.com/BlackJaxDev/XRENGINE",
+        "branch": "master",
+        "path": "/"
+      }
+    },
+    "template": [
+      "default"
+    ],
+    "xrefService": [
+      "https://xref.docs.microsoft.com/query?uid={uid}"
+    ],
+    "styles": [
+      "styles/custom.css"
+    ]
+  }
+}

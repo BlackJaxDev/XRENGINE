@@ -8,7 +8,7 @@ namespace XREngine.Rendering.Models.Materials
     {
         public static XRShader LoadEngineShader(string relativePath, EShaderType? type = null)
         {
-            XRShader source = Engine.Assets.LoadEngineAsset<XRShader>(JobPriority.Highest, "Shaders", relativePath);
+            XRShader source = Engine.Assets.LoadEngineAsset<XRShader>(JobPriority.Highest, bypassJobThread: true, "Shaders", relativePath);
             source._type = type ?? XRShader.ResolveType(Path.GetExtension(relativePath));
             //source.GenerateAsync = true;
             return source;
@@ -16,7 +16,7 @@ namespace XREngine.Rendering.Models.Materials
 
         public static async Task<XRShader> LoadEngineShaderAsync(string relativePath, EShaderType? type = null)
         {
-            XRShader source = await Engine.Assets.LoadEngineAssetAsync<XRShader>(JobPriority.Highest, "Shaders", relativePath);
+            XRShader source = await Engine.Assets.LoadEngineAssetAsync<XRShader>(JobPriority.Highest, bypassJobThread: true, "Shaders", relativePath);
             source._type = type ?? XRShader.ResolveType(Path.GetExtension(relativePath));
             //source.GenerateAsync = true;
             return source;

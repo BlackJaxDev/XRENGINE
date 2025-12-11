@@ -6,11 +6,11 @@ using XREngine.Core.Attributes;
 using XREngine.Data.Core;
 using XREngine.Data.Transforms.Rotations;
 using XREngine.Input.Devices;
+using XREngine.Networking;
 using XREngine.Scene.Transforms;
 
 namespace XREngine.Components
 {
-
     /// <summary>
     /// Pawn used for moveable player characters.
     /// Converts inputs into kinematic rigid body movements and provides inputs for a camera view.
@@ -20,7 +20,7 @@ namespace XREngine.Components
     public partial class CharacterPawnComponent : PawnComponent
     {
         [MemoryPackable]
-        public partial struct NetworkInputState
+        public partial struct NetworkInputState : IPawnInputSnapshot
         {
             public Vector2 Movement;
             public Vector2 ViewAngles;

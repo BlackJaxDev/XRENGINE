@@ -15,6 +15,14 @@ namespace XREngine
         Highest = 4,
     }
 
+    public enum JobAffinity
+    {
+        Any = 0,
+        MainThread = 1,
+        CollectVisibleSwap = 2,
+        Remote = 3,
+    }
+
     public abstract class Job
     {
         private const int StateCreated = 0;
@@ -25,6 +33,7 @@ namespace XREngine
         private readonly Guid _id = Guid.NewGuid();
         private Stack<IEnumerator>? _executionStack;
         private Task? _pendingTask;
+        private TaskCompletionSource<bool>? _completionSource;
         private int _state;
         private int _isFaulted;
         private int _isCanceled;
@@ -33,8 +42,14 @@ namespace XREngine
         private CancellationTokenSource? _cts;
         private CancellationTokenRegistration _externalCancellation;
         private bool _hasExternalCancellation;
+        private int _starvationLogged;
+
+        internal long LastEnqueuedTimestamp;
+        internal long FirstEnqueuedTimestamp;
+        internal bool UsesQueueSlot;
 
         public JobPriority Priority { get; internal set; } = JobPriority.Normal;
+        public JobAffinity Affinity { get; internal set; } = JobAffinity.Any;
 
         protected Job()
         {
@@ -45,19 +60,22 @@ namespace XREngine
         public float Progress => Volatile.Read(ref _progress);
         public bool IsRunning => Volatile.Read(ref _state) == StateRunning;
         public bool IsCompleted => Volatile.Read(ref _state) == StateCompleted;
-    public bool IsFaulted => Volatile.Read(ref _isFaulted) == 1;
-    public bool IsCanceled => Volatile.Read(ref _isCanceled) == 1;
-    public bool IsCancellationRequested => CancellationToken.IsCancellationRequested;
+        public bool IsFaulted => Volatile.Read(ref _isFaulted) == 1;
+        public bool IsCanceled => Volatile.Read(ref _isCanceled) == 1;
+        public bool IsCancellationRequested => CancellationToken.IsCancellationRequested;
         public Exception? Exception => _exception;
         public object? Result { get; private set; }
         public object? Payload { get; private set; }
         public SynchronizationContext? CallbackContext { get; set; }
-    public CancellationToken CancellationToken => _cts?.Token ?? CancellationToken.None;
+        public CancellationToken CancellationToken => _cts?.Token ?? CancellationToken.None;
+        internal Task? PendingTask => _pendingTask;
+        public JobHandle Handle { get; internal set; }
+        internal bool StarvationWarningEmitted => _starvationLogged == 1;
 
         public event Action<Job, float>? ProgressChanged;
-    public event Action<Job, float, object?>? ProgressWithPayload;
+        public event Action<Job, float, object?>? ProgressWithPayload;
         public event Action<Job>? Completed;
-    public event Action<Job>? Canceled;
+        public event Action<Job>? Canceled;
         public event Action<Job, Exception>? Faulted;
 
         public abstract IEnumerable Process();
@@ -91,6 +109,12 @@ namespace XREngine
                 var routine = Process() ?? throw new InvalidOperationException("Job routine cannot be null.");
                 _executionStack.Push(routine.GetEnumerator());
                 _pendingTask = null;
+                _completionSource = null;
+                Handle = default;
+                UsesQueueSlot = false;
+                LastEnqueuedTimestamp = 0;
+                FirstEnqueuedTimestamp = 0;
+                _starvationLogged = 0;
                 Result = null;
                 Payload = null;
                 _exception = null;
@@ -137,6 +161,23 @@ namespace XREngine
                 _hasExternalCancellation = true;
             }
         }
+
+        internal void AttachCompletionSource(TaskCompletionSource<bool> completionSource)
+        {
+            _completionSource = completionSource;
+            Handle = new JobHandle(_id, completionSource.Task, this);
+        }
+
+        internal void MarkQueued(long timestamp)
+        {
+            LastEnqueuedTimestamp = timestamp;
+            if (FirstEnqueuedTimestamp == 0)
+                FirstEnqueuedTimestamp = timestamp;
+            Interlocked.Exchange(ref _starvationLogged, 0);
+        }
+
+        internal bool TryMarkStarvationLogged()
+            => Interlocked.Exchange(ref _starvationLogged, 1) == 0;
 
         internal JobStepResult Step()
         {
@@ -233,6 +274,8 @@ namespace XREngine
                     var task = taskFactory();
                     return AttachTask(task ?? throw new InvalidOperationException("Task factory returned null."));
                 }
+                case WaitForNextDispatch:
+                    return JobStepResult.Idle;
                 case Action action:
                     action();
                     return JobStepResult.Progressed;
@@ -268,7 +311,7 @@ namespace XREngine
             return JobStepResult.Progressed;
         }
 
-        private JobStepResult CompleteInternal()
+        private JobStepResult CompleteInternal(bool setCompletion = true)
         {
             if (Interlocked.Exchange(ref _state, StateCompleted) == StateCompleted)
                 return JobStepResult.Completed;
@@ -277,6 +320,8 @@ namespace XREngine
 
             UpdateProgress(1f);
             InvokeCompletion();
+            if (setCompletion)
+                _completionSource?.TrySetResult(true);
             return JobStepResult.Completed;
         }
 
@@ -311,8 +356,9 @@ namespace XREngine
             {
             }
 
-            var result = CompleteInternal();
+            var result = CompleteInternal(false);
             InvokeCancellation();
+            _completionSource?.TrySetCanceled();
             return result;
         }
 
@@ -320,10 +366,14 @@ namespace XREngine
         {
             _exception = ex;
             Interlocked.Exchange(ref _isFaulted, 1);
-            var result = CompleteInternal();
+            var result = CompleteInternal(false);
             InvokeFault(ex);
+            _completionSource?.TrySetException(ex);
             return result;
         }
+
+        internal JobStepResult Fail(Exception ex)
+            => FailInternal(ex);
 
         private void UpdateProgress(float value, object? payload = null, bool persistPayload = false)
         {

@@ -22,6 +22,11 @@ namespace XREngine
         private float _fixedFramesPerSecond = 90.0f;
         private bool _runVRInPlace = false;
 
+        private int? _jobWorkers = null;
+        private int? _jobWorkerCap = null;
+        private int? _jobQueueLimit = null;
+        private int? _jobQueueWarningThreshold = null;
+
         private string _udpMulticastGroupIP = "239.0.0.222";
         private int _udpMulticastPort = 5000;
         //private string _tcpListenerIP = "0.0.0.0";
@@ -151,6 +156,42 @@ namespace XREngine
         {
             get => _runVRInPlace;
             set => SetField(ref _runVRInPlace, value);
+        }
+
+        /// <summary>
+        /// Optional override for the number of job worker threads. If null, defaults are used.
+        /// </summary>
+        public int? JobWorkers
+        {
+            get => _jobWorkers;
+            set => SetField(ref _jobWorkers, value);
+        }
+
+        /// <summary>
+        /// Optional cap for the maximum number of job worker threads.
+        /// </summary>
+        public int? JobWorkerCap
+        {
+            get => _jobWorkerCap;
+            set => SetField(ref _jobWorkerCap, value);
+        }
+
+        /// <summary>
+        /// Optional limit on queued jobs; if null, the JobManager default or environment override is used.
+        /// </summary>
+        public int? JobQueueLimit
+        {
+            get => _jobQueueLimit;
+            set => SetField(ref _jobQueueLimit, value);
+        }
+
+        /// <summary>
+        /// Optional threshold at which queue length warnings are emitted.
+        /// </summary>
+        public int? JobQueueWarningThreshold
+        {
+            get => _jobQueueWarningThreshold;
+            set => SetField(ref _jobQueueWarningThreshold, value);
         }
         public Dictionary<int, string> LayerNames { get; set; } = DefaultLayers.All;
 

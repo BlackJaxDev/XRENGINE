@@ -1,0 +1,10 @@
+apiRules:
+- include:
+    uidRegex: ^XREngine
+    type: Namespace
+- exclude:
+    uidRegex: ^XREngine\.UnitTests
+    type: Namespace
+- exclude:
+    uidRegex: ^XREngine\.Tests
+    type: Namespace

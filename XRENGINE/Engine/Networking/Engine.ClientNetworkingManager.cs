@@ -4,6 +4,7 @@ using System.Linq;
 using System.Numerics;
 using System.Net;
 using System.Net.Sockets;
+using System.Diagnostics.CodeAnalysis;
 using XREngine.Components;
 using XREngine.Networking;
 using XREngine.Rendering;
@@ -23,12 +24,37 @@ namespace XREngine
             private readonly string _clientId = Guid.NewGuid().ToString("N");
             private bool _joinRequested;
             private bool _tickRegistered;
+            private bool _assignmentReceived;
             private double _lastInputSyncTime;
             private double _lastTransformSyncTime;
+            private double _lastJoinRequestTime;
+            private double _lastHeartbeatTime;
             private const double InputSyncIntervalSeconds = 1.0 / 60.0;
             private const double TransformSyncIntervalSeconds = 1.0 / 20.0;
+            private const double JoinRetrySeconds = 3.0;
+            private const double HeartbeatIntervalSeconds = 3.0;
             private readonly Dictionary<int, RemotePlayerAvatar> _remotePlayers = new();
             private readonly HashSet<int> _localServerIndices = new();
+
+            public ClientNetworkingManager() : base(peerId: null)
+            {
+            }
+
+            protected override void Dispose(bool disposing)
+            {
+                if (disposing)
+                {
+                    SendPlayerLeaveForLocals("Client disposed");
+
+                    if (_tickRegistered)
+                    {
+                        Time.Timer.UpdateFrame -= TickClientNetwork;
+                        _tickRegistered = false;
+                    }
+                }
+
+                base.Dispose(disposing);
+            }
 
             /// <summary>
             /// The server IP to send to.
@@ -65,17 +91,47 @@ namespace XREngine
                 await ConsumeAndSendUDPQueue(UdpSender, ServerIP);
             }
 
+            public override void ConsumeQueues()
+            {
+                base.ConsumeQueues();
+
+                // If the UDP connection drops, proactively send leave once
+                if (!UDPServerConnectionEstablished && _assignmentReceived)
+                {
+                    SendPlayerLeaveForLocals("UDP disconnected");
+                    _assignmentReceived = false;
+                }
+            }
+
             protected override void HandleStateChange(StateChangeInfo change, IPEndPoint? sender)
             {
+                if (change.Type is EStateChangeType.RemoteJobRequest or EStateChangeType.RemoteJobResponse)
+                {
+                    base.HandleStateChange(change, sender);
+                    return;
+                }
+
                 switch (change.Type)
                 {
                     case EStateChangeType.PlayerAssignment:
-                        if (StateChangePayloadSerializer.TryDeserialize<PlayerAssignment>(change.Data, out var assignment))
+                        if (StateChangePayloadSerializer.TryDeserialize<PlayerAssignment>(change.Data, out var assignment) && assignment is not null)
+                        {
+#pragma warning disable IL2026
                             HandlePlayerAssignment(assignment);
+#pragma warning restore IL2026
+                        }
                         break;
                     case EStateChangeType.PlayerTransformUpdate:
-                        if (StateChangePayloadSerializer.TryDeserialize<PlayerTransformUpdate>(change.Data, out var transformUpdate))
+                        if (StateChangePayloadSerializer.TryDeserialize<PlayerTransformUpdate>(change.Data, out var transformUpdate) && transformUpdate is not null)
                             HandleRemoteTransform(transformUpdate);
+                        break;
+                    case EStateChangeType.PlayerLeave:
+                        if (StateChangePayloadSerializer.TryDeserialize<PlayerLeaveNotice>(change.Data, out var leave) && leave is not null)
+                            HandlePlayerLeave(leave);
+                        break;
+                    case EStateChangeType.ServerError:
+                        if (StateChangePayloadSerializer.TryDeserialize<ServerErrorMessage>(change.Data, out var error) && error is not null)
+                            HandleServerError(error);
                         break;
                 }
             }
@@ -96,7 +152,7 @@ namespace XREngine
 
                 double now = Engine.ElapsedTime;
 
-                if (!_joinRequested)
+                if (!_assignmentReceived && (!_joinRequested || now - _lastJoinRequestTime >= JoinRetrySeconds))
                     SendJoinRequest();
 
                 if (now - _lastInputSyncTime >= InputSyncIntervalSeconds)
@@ -110,6 +166,12 @@ namespace XREngine
                     SendLocalTransformSnapshots();
                     _lastTransformSyncTime = now;
                 }
+
+                if (_assignmentReceived && now - _lastHeartbeatTime >= HeartbeatIntervalSeconds)
+                {
+                    SendHeartbeat();
+                    _lastHeartbeatTime = now;
+                }
             }
 
             private void SendJoinRequest()
@@ -118,12 +180,35 @@ namespace XREngine
                 {
                     ClientId = _clientId,
                     DisplayName = Environment.UserName,
-                    BuildVersion = "dev",
+                    BuildVersion = CurrentProtocolVersion,
                     WorldName = ResolvePrimaryWorldInstance()?.TargetWorld?.Name
                 };
 
                 BroadcastStateChange(EStateChangeType.PlayerJoin, request, compress: true);
                 _joinRequested = true;
+                _lastJoinRequestTime = Engine.ElapsedTime;
+            }
+
+            private void SendHeartbeat()
+            {
+                foreach (var player in State.LocalPlayers)
+                {
+                    if (player is null)
+                        continue;
+
+                    int serverIndex = player.PlayerInfo.ServerIndex;
+                    if (serverIndex < 0)
+                        continue;
+
+                    var heartbeat = new PlayerHeartbeat
+                    {
+                        ServerPlayerIndex = serverIndex,
+                        ClientId = _clientId,
+                        TimestampUtc = GetUtcSeconds()
+                    };
+
+                    BroadcastStateChange(EStateChangeType.Heartbeat, heartbeat, compress: false);
+                }
             }
 
             private void SendLocalInputSnapshots()
@@ -137,13 +222,13 @@ namespace XREngine
                     if (serverIndex < 0)
                         continue;
 
-                    if (player.ControlledPawn is not CharacterPawnComponent pawn)
+                    if (player.ControlledPawn is null)
                         continue;
 
                     var snapshot = new PlayerInputSnapshot
                     {
                         ServerPlayerIndex = serverIndex,
-                        Input = pawn.CaptureNetworkInputState(),
+                        Input = player.ControlledPawn.CaptureNetworkInputState(),
                         TimestampUtc = GetUtcSeconds()
                     };
 
@@ -179,16 +264,43 @@ namespace XREngine
                 }
             }
 
+            private void SendPlayerLeaveForLocals(string reason)
+            {
+                foreach (var player in State.LocalPlayers)
+                {
+                    if (player is null)
+                        continue;
+
+                    int serverIndex = player.PlayerInfo.ServerIndex;
+                    if (serverIndex < 0)
+                        continue;
+
+                    var leave = new PlayerLeaveNotice
+                    {
+                        ServerPlayerIndex = serverIndex,
+                        ClientId = _clientId,
+                        Reason = reason
+                    };
+
+                    BroadcastStateChange(EStateChangeType.PlayerLeave, leave, compress: false);
+
+                    player.PlayerInfo.ServerIndex = -1;
+                    _localServerIndices.Remove(serverIndex);
+                }
+            }
+
+            [RequiresUnreferencedCode("World/GameMode reflection for networking sync")]
             private void HandlePlayerAssignment(PlayerAssignment assignment)
             {
                 bool isLocal = string.Equals(assignment.ClientId, _clientId, StringComparison.OrdinalIgnoreCase);
 
                 if (assignment.World is not null)
-                    WarnWhenWorldDiffers(assignment.World);
+                    ApplyWorldDescriptor(assignment.World);
 
                 if (isLocal)
                 {
                     AttachAssignmentToLocalPlayer(assignment);
+                    _assignmentReceived = true;
                     return;
                 }
 
@@ -216,6 +328,147 @@ namespace XREngine
                         }
                         return;
                     }
+                }
+            }
+
+            [RequiresUnreferencedCode("World/GameMode reflection for networking sync")]
+            private void ApplyWorldDescriptor(WorldSyncDescriptor descriptor)
+            {
+                XRWorldInstance? worldInstance = ResolvePrimaryWorldInstance();
+                if (worldInstance is null)
+                {
+                    worldInstance = EnsureClientWorld(descriptor);
+                    if (worldInstance is null)
+                        return;
+                }
+
+                if (!string.IsNullOrWhiteSpace(descriptor.WorldName) && worldInstance.TargetWorld is not null)
+                    worldInstance.TargetWorld.Name = descriptor.WorldName!;
+
+                if (!string.IsNullOrWhiteSpace(descriptor.GameModeType))
+                    EnsureClientGameMode(worldInstance, descriptor.GameModeType!);
+
+                // Scene list replication is advisory for now; loading scenes requires asset context.
+                WarnWhenWorldDiffers(descriptor);
+            }
+
+            private static XRWorldInstance? EnsureClientWorld(WorldSyncDescriptor descriptor)
+            {
+                XRWorld world = new()
+                {
+                    Name = string.IsNullOrWhiteSpace(descriptor.WorldName) ? "RemoteWorld" : descriptor.WorldName!
+                };
+
+                var instance = XRWorldInstance.GetOrInitWorld(world);
+
+                foreach (var window in Windows)
+                {
+                    if (window is null)
+                        continue;
+
+                    window.TargetWorldInstance ??= instance;
+                    break;
+                }
+
+                return instance;
+            }
+
+            [RequiresUnreferencedCode("Game mode reflection for networking sync")]
+            private static void EnsureClientGameMode(XRWorldInstance worldInstance, string gameModeTypeName)
+            {
+                var gmType = ResolveTypeIgnoreCase(gameModeTypeName);
+                if (gmType is null || !typeof(GameMode).IsAssignableFrom(gmType))
+                {
+                    Debug.Out($"[Client] Unable to resolve game mode type '{gameModeTypeName}'.");
+                    return;
+                }
+
+                if (worldInstance.GameMode is not null && worldInstance.GameMode.GetType() == gmType)
+                    return;
+
+                try
+                {
+                    var gameMode = (GameMode?)Activator.CreateInstance(gmType);
+                    if (gameMode is null)
+                        return;
+
+                    worldInstance.GameMode = gameMode;
+                    gameMode.WorldInstance = worldInstance;
+                }
+                catch (Exception ex)
+                {
+                    Debug.Out($"[Client] Failed to instantiate game mode '{gameModeTypeName}': {ex.Message}");
+                }
+            }
+
+            [RequiresUnreferencedCode("Type resolution via reflection for networking sync")]
+            private static Type? ResolveTypeIgnoreCase(string typeName)
+            {
+                foreach (var asm in AppDomain.CurrentDomain.GetAssemblies())
+                {
+                    Type? match = null;
+                    try
+                    {
+                        match = asm.GetTypes().FirstOrDefault(t => string.Equals(t.FullName, typeName, StringComparison.OrdinalIgnoreCase));
+                    }
+                    catch
+                    {
+                        // ignore reflection type load issues
+                    }
+
+                    if (match is not null)
+                        return match;
+                }
+
+                return null;
+            }
+
+            private void HandlePlayerLeave(PlayerLeaveNotice leave)
+            {
+                // If this leave refers to a local player, clear the server index
+                foreach (var player in State.LocalPlayers)
+                {
+                    if (player is null)
+                        continue;
+
+                    if (player.PlayerInfo.ServerIndex == leave.ServerPlayerIndex)
+                    {
+                        player.PlayerInfo.ServerIndex = -1;
+                        _localServerIndices.Remove(leave.ServerPlayerIndex);
+                    }
+                }
+
+                // Remove remote avatar if present
+                if (_remotePlayers.TryGetValue(leave.ServerPlayerIndex, out var avatar))
+                {
+                    avatar.Node.World?.RootNodes.Remove(avatar.Node);
+                    _remotePlayers.Remove(leave.ServerPlayerIndex);
+                }
+            }
+
+            private void HandleServerError(ServerErrorMessage error)
+            {
+                if (!string.IsNullOrWhiteSpace(error.ClientId) && !string.Equals(error.ClientId, _clientId, StringComparison.OrdinalIgnoreCase))
+                    return;
+
+                if (error.ServerPlayerIndex is int idx && !_localServerIndices.Contains(idx) && !string.IsNullOrWhiteSpace(error.ClientId))
+                    return;
+
+                string title = string.IsNullOrWhiteSpace(error.Title) ? "Server Error" : error.Title;
+                Debug.Out($"[Client][Error {error.StatusCode}] {title}: {error.Detail}");
+
+                if (error.Fatal)
+                {
+                    foreach (var player in State.LocalPlayers)
+                    {
+                        if (player is null)
+                            continue;
+
+                        player.PlayerInfo.ServerIndex = -1;
+                    }
+                    _localServerIndices.Clear();
+                    _remotePlayers.Clear();
+                    _assignmentReceived = false;
                 }
             }
 
