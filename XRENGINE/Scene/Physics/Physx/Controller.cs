@@ -221,18 +221,23 @@ namespace XREngine.Rendering.Physics.Physx
             private set => SetField(ref _collidingDown, value);
         }
 
-        public ConcurrentQueue<(Vector3 delta, float minDist)> _inputBuffer = new();
+        public ConcurrentQueue<(Vector3 delta, float minDist, float elapsedTime)> _inputBuffer = new();
 
         // Queue movement so it runs during PhysxScene.StepSimulation (before simulate) instead of
-        // from arbitrary tick threads. This avoids native crashes from calling PxController::move
-        // concurrently with other scene/controller operations.
+        // from arbitrary tick threads. This avoids native stalls/crashes from calling PxController::move
+        // concurrently with other scene/controller operations (PhysX scene/controller locking).
         public void Move(Vector3 delta, float minDist, float elapsedTime)
         {
             if (IsReleased)
                 return;
-            // We intentionally ignore the caller-provided elapsedTime.
-            // PxController::move should be driven with the physics fixed dt (see ConsumeInputBuffer).
-            _inputBuffer.Enqueue((delta, minDist));
+
+            // Native safety: PhysX controllers are not tolerant of NaN/Inf inputs.
+            if (!float.IsFinite(delta.X) || !float.IsFinite(delta.Y) || !float.IsFinite(delta.Z))
+                return;
+            if (!float.IsFinite(minDist) || !float.IsFinite(elapsedTime) || elapsedTime <= 0.0f)
+                return;
+
+            _inputBuffer.Enqueue((delta, minDist, elapsedTime));
         }
 
         private void ConsumeMove(Vector3 delta, float minDist, float elapsedTime)
@@ -305,7 +310,6 @@ namespace XREngine.Rendering.Physics.Physx
             }
         }
 
-        private int _moveLogCount = 0;
         public void ConsumeInputBuffer(float delta)
         {
             if (IsReleased)
@@ -314,35 +318,10 @@ namespace XREngine.Rendering.Physics.Physx
             if (_inputBuffer.IsEmpty)
                 return;
 
-            Vector3 totalDelta = Vector3.Zero;
-            float minDist = 0.00001f;
+            // Consume queued moves on the physics thread (PhysxScene.StepSimulation).
+            // We keep per-call elapsedTime to match the producer tick's integration.
             while (_inputBuffer.TryDequeue(out var input))
-            {
-                totalDelta += input.delta;
-                minDist = MathF.Max(minDist, input.minDist);
-            }
-            if (totalDelta == Vector3.Zero)
-                return;
-
-            // Log first 30 moves to diagnose movement issues
-            if (_moveLogCount < 30)
-            {
-                _moveLogCount++;
-                var posBefore = Position;
-                ConsumeMove(totalDelta, minDist, delta);
-                var posAfter = Position;
-                Debug.Log(ELogCategory.Physics,
-                    "[Controller.Move] #{0} delta=({1:F4},{2:F4},{3:F4}) before=({4:F2},{5:F2},{6:F2}) after=({7:F2},{8:F2},{9:F2}) colDown={10}",
-                    _moveLogCount,
-                    totalDelta.X, totalDelta.Y, totalDelta.Z,
-                    posBefore.X, posBefore.Y, posBefore.Z,
-                    posAfter.X, posAfter.Y, posAfter.Z,
-                    CollidingDown);
-            }
-            else
-            {
-                ConsumeMove(totalDelta, minDist, delta);
-            }
+                ConsumeMove(input.delta, input.minDist, input.elapsedTime);
         }
 
         public void Resize(float height)

@@ -687,18 +687,11 @@ namespace XREngine
             return int.TryParse(value, out int parsed) && parsed > 0 ? parsed : null;
         }
 
-        private sealed class RemoteDispatchJob : Job
+        private sealed class RemoteDispatchJob(RemoteJobRequest request, IRemoteJobTransport transport, TaskCompletionSource<RemoteJobResponse> result) : Job
         {
-            private readonly RemoteJobRequest _request;
-            private readonly IRemoteJobTransport _transport;
-            private readonly TaskCompletionSource<RemoteJobResponse> _result;
-
-            public RemoteDispatchJob(RemoteJobRequest request, IRemoteJobTransport transport, TaskCompletionSource<RemoteJobResponse> result)
-            {
-                _request = request;
-                _transport = transport;
-                _result = result;
-            }
+            private readonly RemoteJobRequest _request = request;
+            private readonly IRemoteJobTransport _transport = transport;
+            private readonly TaskCompletionSource<RemoteJobResponse> _result = result;
 
             public override IEnumerable Process()
             {

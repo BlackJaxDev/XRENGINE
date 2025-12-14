@@ -18,6 +18,7 @@ namespace XREngine
         Rendering,
         OpenGL,
         Physics,
+        Audio,
     }
 
     /// <summary>
@@ -55,6 +56,7 @@ namespace XREngine
             [ELogCategory.Rendering] = null,
             [ELogCategory.OpenGL] = null,
             [ELogCategory.Physics] = null,
+            [ELogCategory.Audio] = null,
         };
 
         /// <summary>
@@ -190,7 +192,66 @@ namespace XREngine
         /// Convenience helper that routes output through the physics log.
         /// </summary>
         public static void Physics(string message, params object[] args)
-            => Out(EOutputVerbosity.Normal, false, $"{PhysicsPrefix} {message}", args);
+            => Log(ELogCategory.Physics, EOutputVerbosity.Normal, false, $"{PhysicsPrefix} {message}", args);
+
+        public static void Rendering(string message, params object[] args)
+            => Log(ELogCategory.Rendering, EOutputVerbosity.Normal, false, message, args);
+        public static void OpenGL(string message, params object[] args)
+            => Log(ELogCategory.OpenGL, EOutputVerbosity.Normal, false, message, args);
+        public static void Audio(string message, params object[] args)
+            => Log(ELogCategory.Audio, EOutputVerbosity.Normal, false, message, args);
+
+        /// <summary>
+        /// Logs a message under an explicit category (no keyword-based classification).
+        /// </summary>
+        public static void Log(ELogCategory category, string message, params object[] args)
+            => Log(category, EOutputVerbosity.Verbose, true, message, args);
+
+        /// <summary>
+        /// Logs a message under an explicit category (no keyword-based classification).
+        /// </summary>
+        public static void Log(ELogCategory category, EOutputVerbosity verbosity, bool debugOnly, string message, params object[] args)
+        {
+#if DEBUG || EDITOR
+            if (!AllowOutput)
+            {
+                Suppressed(message);
+                return;
+            }
+
+            GameStartupSettings settings = Engine.GameSettings;
+            if (verbosity > settings.OutputVerbosity)
+            {
+                Suppressed(message);
+                return;
+            }
+
+            if (args.Length > 0)
+                message = string.Format(message, args);
+
+            DateTime now = DateTime.Now;
+
+            double recentness = Engine.UserSettings.DebugOutputRecencySeconds;
+            if (recentness > 0.0)
+            {
+                List<string> removeKeys = [];
+                RecentMessageCache.ForEach(x =>
+                {
+                    TimeSpan span = now - x.Value;
+                    if (span.TotalSeconds >= recentness)
+                        removeKeys.Add(x.Key);
+                });
+                removeKeys.ForEach(x => RecentMessageCache.TryRemove(x, out _));
+
+                if (RecentMessageCache.ContainsKey(message))
+                    return;
+                RecentMessageCache.TryAdd(message, now);
+            }
+
+            bool logToFile = settings.LogOutputToFile;
+            WriteLogMessage(message, logToFile, category);
+#endif
+        }
         /// <summary>
         /// Prints a message for debugging purposes.
         /// </summary>
@@ -324,14 +385,14 @@ namespace XREngine
             return stackTrace;
         }
 
-        private static void WriteLogMessage(string message, bool logToFile)
+        private static void WriteLogMessage(string message, bool logToFile, ELogCategory? categoryOverride = null)
         {
             StreamWriter? writer = null;
             ELogCategory category;
 
             lock (LogWriterLock)
             {
-                category = ClassifyMessage(message);
+            category = categoryOverride ?? ClassifyMessage(message);
                 writer = EnsureLogWriterInternal(category, logToFile);
                 if (writer is not null)
                     writer.WriteLine($"{DateTime.Now:O} {message}");
@@ -366,6 +427,7 @@ namespace XREngine
                     ELogCategory.OpenGL => "opengl",
                     ELogCategory.Rendering => "rendering",
                     ELogCategory.Physics => "physics",
+                    ELogCategory.Audio => "audio",
                     _ => "general",
                 };
                 string fileName = $"log_{fileSuffix}_{_logSessionId}.txt";
@@ -436,6 +498,18 @@ namespace XREngine
 
             _logSessionId = null;
             _logRunDirectory = null;
+        }
+
+        /// <summary>
+        /// Ensures the current run log directory exists and returns its path.
+        /// Useful for capturing native stdout/stderr alongside engine logs.
+        /// </summary>
+        public static string EnsureLogRunDirectory()
+        {
+            lock (LogWriterLock)
+            {
+                return GetLogRunDirectory();
+            }
         }
 
         private static string GetLogsRootDirectory()
