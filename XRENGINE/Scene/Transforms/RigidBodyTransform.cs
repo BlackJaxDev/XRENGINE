@@ -196,7 +196,8 @@ namespace XREngine.Scene.Transforms
                     }
             }
 
-            RecalculateMatrixHeirarchy(true, false, Engine.Rendering.ELoopType.Asynchronous);
+            // Must pass true for children so child transforms (camera, boom, etc.) update
+            RecalculateMatrixHeirarchy(true, true, Engine.Rendering.ELoopType.Asynchronous);
         }
 
         private (Vector3 position, Quaternion rotation) _lastPhysicsTransform;
@@ -256,7 +257,8 @@ namespace XREngine.Scene.Transforms
             private set => SetField(ref _lastRotation, value);
         }
 
-        internal void OnPhysicsStepped()
+        private int _steppedLogCount = 0;
+        public void OnPhysicsStepped()
         {
             if (RigidBody is null)
                 return;

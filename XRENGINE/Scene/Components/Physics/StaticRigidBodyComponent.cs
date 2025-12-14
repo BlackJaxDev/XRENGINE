@@ -18,6 +18,8 @@ namespace XREngine.Components.Physics
     {
         public RigidBodyTransform RigidBodyTransform => SceneNode.GetTransformAs<RigidBodyTransform>(true)!;
 
+        private int _rigidBodyOwnershipSyncDepth;
+
         private IAbstractStaticRigidBody? _rigidBody;
         private AbstractPhysicsScene? _registeredPhysicsScene;
         private bool _autoCreateRigidBody = true;
@@ -42,6 +44,19 @@ namespace XREngine.Components.Physics
         {
             get => _rigidBody;
             set => SetField(ref _rigidBody, value);
+        }
+
+        internal void SetRigidBodyFromRigidBodyOwner(IAbstractStaticRigidBody? body)
+        {
+            try
+            {
+                _rigidBodyOwnershipSyncDepth++;
+                RigidBody = body;
+            }
+            finally
+            {
+                _rigidBodyOwnershipSyncDepth--;
+            }
         }
 
         [Category("Initialization")]
@@ -223,7 +238,11 @@ namespace XREngine.Components.Physics
                 if (!SetField(ref _ownerClient, value))
                     return;
                 if (RigidBody is PhysxActor physx)
-                    physx.OwnerClient = value;
+                {
+                    // PhysX disallows changing ownerClient while the actor is already in a scene.
+                    if (physx.Scene is null)
+                        physx.OwnerClient = value;
+                }
             }
         }
 
@@ -320,8 +339,11 @@ namespace XREngine.Components.Physics
             {
                 RemoveRigidBodyFromScene();
 
-                if (RigidBody.OwningComponent == this)
-                    RigidBody.OwningComponent = null;
+                if (_rigidBodyOwnershipSyncDepth == 0)
+                {
+                    if (RigidBody.OwningComponent == this)
+                        RigidBody.OwningComponent = null;
+                }
 
                 if (RigidBodyTransform.RigidBody == RigidBody)
                     RigidBodyTransform.RigidBody = null;
@@ -334,7 +356,8 @@ namespace XREngine.Components.Physics
             base.OnPropertyChanged(propName, prev, field);
             if (propName == nameof(RigidBody) && RigidBody is not null)
             {
-                RigidBody.OwningComponent = this;
+                if (_rigidBodyOwnershipSyncDepth == 0)
+                    RigidBody.OwningComponent = this;
                 RigidBodyTransform.RigidBody = RigidBody;
                 ApplyCachedProperties();
                 TryRegisterRigidBodyWithScene();
@@ -358,7 +381,9 @@ namespace XREngine.Components.Physics
             actor.CollisionGroup = _collisionGroup;
             actor.GroupsMask = ToPhysxGroupsMask(_groupsMask);
             actor.DominanceGroup = _dominanceGroup;
-            actor.OwnerClient = _ownerClient;
+            // PhysX disallows setting ownerClient once the actor is inserted into a scene.
+            if (actor.Scene is null)
+                actor.OwnerClient = _ownerClient;
             if (_actorName is not null)
                 actor.Name = _actorName;
 

@@ -1,11 +1,13 @@
 ﻿using Extensions;
 using MagicPhysX;
 using System.ComponentModel;
+using System.Drawing.Drawing2D;
 using System.Numerics;
 using XREngine.Core.Attributes;
 using XREngine.Data.Colors;
 using XREngine.Data.Core;
 using XREngine.Rendering.Physics.Physx;
+using XREngine.Scene;
 using XREngine.Scene.Transforms;
 
 namespace XREngine.Components.Movement
@@ -42,6 +44,9 @@ namespace XREngine.Components.Movement
         private float _proneHeight = new FeetInches(1, 0.0f).ToMeters();
         private bool _constrainedClimbing = false;
         private CapsuleController? _controller;
+
+        private AbstractPhysicsScene? _subscribedPhysicsScene;
+        private PhysxControllerActorProxy? _controllerActorProxy;
         private float _minMoveDistance = 0.00001f;
         private float _contactOffset = 0.001f;
         private Vector3 _upDirection = Globals.Up;
@@ -341,19 +346,6 @@ namespace XREngine.Components.Movement
         }
 
         /// <summary>
-        /// Density of underlying kinematic actor.
-        /// The CCT creates a PhysX's kinematic actor under the hood.This controls its density.
-        /// </summary>
-        [Category("Capsule")]
-        [DisplayName("Density")]
-        [Description("Density of the underlying physics actor.")]
-        public float Density
-        {
-            get => _density;
-            set => SetField(ref _density, value);
-        }
-
-        /// <summary>
         /// Scale coefficient for underlying kinematic actor.
         /// The CCT creates a PhysX’s kinematic actor under the hood.
         /// This controls its scale factor.
@@ -401,15 +393,6 @@ namespace XREngine.Components.Movement
         {
             get => _slideOnSteepSlopes;
             set => SetField(ref _slideOnSteepSlopes, value);
-        }
-
-        [Category("Capsule")]
-        [DisplayName("Material")]
-        [Description("Physics material for friction and restitution.")]
-        public PhysxMaterial Material
-        {
-            get => _material;
-            set => SetField(ref _material, value);
         }
 
         [Category("Capsule")]
@@ -594,17 +577,14 @@ namespace XREngine.Components.Movement
             }
         }
 
-        [Category("Initialization")]
-        [DisplayName("Spawn Position")]
-        [Description("Initial spawn position.")]
-        public Vector3 SpawnPosition
-        {
-            get => _spawnPosition;
-            set => SetField(ref _spawnPosition, value);
-        }
-
         protected internal unsafe override void OnComponentActivated()
         {
+            // Character movement uses a PhysX CCT (controller) and wraps its hidden rigid actor.
+            // Prevent the DynamicRigidBodyComponent base from auto-creating/registering a separate rigid body.
+            AutoCreateRigidBody = false;
+
+            base.OnComponentActivated();
+
             _subUpdateTick = GroundMovementTick;
             RegisterTick(TickInputWithPhysics ? ETickGroup.PrePhysics : ETickGroup.Late, (int)ETickOrder.Animation, MainUpdateTick);
             
@@ -613,7 +593,20 @@ namespace XREngine.Components.Movement
             if (manager is null)
                 return;
 
-            Vector3 pos = SpawnPosition;
+            // Keep our transform driven by the controller after each physics step.
+            // Without wrapping the controller actor as a rigid body, nothing else updates the RigidBodyTransform.
+            if (World?.PhysicsScene is { } physicsScene && _subscribedPhysicsScene != physicsScene)
+            {
+                _subscribedPhysicsScene?.OnSimulationStep -= OnPhysicsSimulationStep;
+                physicsScene.OnSimulationStep += OnPhysicsSimulationStep;
+                _subscribedPhysicsScene = physicsScene;
+            }
+
+            PhysxMaterial? material = ResolvePhysxMaterial();
+            if (material is null)
+                return;
+
+            Vector3 pos = InitialPosition ?? Transform.WorldTranslation;
             Vector3 up = Globals.Up;
             Controller = manager.CreateCapsuleController(
                 pos,
@@ -629,7 +622,7 @@ namespace XREngine.Components.Movement
                 SlideOnSteepSlopes 
                     ? PxControllerNonWalkableMode.PreventClimbingAndForceSliding
                     : PxControllerNonWalkableMode.PreventClimbing,
-                Material,
+                material,
                 0,
                 null,
                 Radius,
@@ -638,51 +631,86 @@ namespace XREngine.Components.Movement
                     ? PxCapsuleClimbingMode.Constrained
                     : PxCapsuleClimbingMode.Easy);
 
-            //Wrap the hidden actor and apply to the transform
-            //The constructor automatically caches the actor
-            //We have to construct the rigid body with the hidden reference manually
-            var rb = new PhysxDynamicRigidBody(Controller.ControllerPtr->GetActor());
-            //var rb = RigidBodyReference;
-
-            if (rb is not null)
+            // Link the transform to a read-only proxy of the controller.
+            // This allows the engine's normal physics->transform pipeline to run (RigidBodyTransform.OnPhysicsStepped)
+            // without mutating the controller actor (which previously caused PxController::move crashes).
+            // NOTE: We pass the controller pointer, not the actor, because CCT doesn't update actor pose after MoveMut.
+            unsafe
             {
-                rb.OwningComponent = this;
-                RigidBody = rb;
-                rb.Flags |= PxRigidBodyFlags.EnableCcd | PxRigidBodyFlags.EnableSpeculativeCcd | PxRigidBodyFlags.EnableCcdFriction;
+                _controllerActorProxy = new PhysxControllerActorProxy(Controller.ControllerPtr);
+            }
 
-                var tfm = RigidBodyTransform;
-                tfm.InterpolationMode = RigidBodyTransform.EInterpolationMode.Interpolate;
-                tfm.RigidBody = rb;
-            }
-            else
-            {
-                Debug.LogWarning("Failed to create character controller.");
-            }
+            // CCT doesn't have rotation like regular physics actors, so clear the default -90° Z offset
+            // that RigidBodyTransform applies for normal PhysX actors.
+            RigidBodyTransform.PostRotationOffset = Quaternion.Identity;
+            RigidBodyTransform.RigidBody = _controllerActorProxy;
+            RigidBodyTransform.InterpolationMode = RigidBodyTransform.EInterpolationMode.Interpolate;
+            _controllerActorProxy?.RefreshFromNative();
+            RigidBodyTransform.OnPhysicsStepped();
         }
 
         protected internal override void OnComponentDeactivated()
         {
             _subUpdateTick = null;
 
-            if (World is not null && RigidBody is not null)
-                World.PhysicsScene.RemoveActor(RigidBody);
-            RigidBodyTransform.RigidBody = null;
+            if (_subscribedPhysicsScene is not null)
+            {
+                _subscribedPhysicsScene.OnSimulationStep -= OnPhysicsSimulationStep;
+                _subscribedPhysicsScene = null;
+            }
 
-            Controller?.Release();
+            // Controller owns its internal actor via PxControllerManager; do not remove it as a normal actor.
+            RigidBodyTransform.RigidBody = null;
+            _controllerActorProxy = null;
+
+            Controller?.RequestRelease();
             Controller = null;
         }
 
+        private void OnPhysicsSimulationStep()
+        {
+            // Runs from the physics fixed-step.
+            if (Controller is null)
+                return;
+
+            // IMPORTANT: refresh cached state only after FetchResults.
+            _controllerActorProxy?.RefreshFromNative();
+
+            // Drive the transform update via the engine's standard rigid-body sync path.
+            RigidBodyTransform.OnPhysicsStepped();
+        }
+
+        private int _inputLogCount = 0;
         private unsafe void MainUpdateTick()
         {
             if (Controller is null)
                 return;
 
-            Velocity = RigidBodyTransform.RigidBody?.LinearVelocity ?? Vector3.Zero;
+            // If no rigid body is bound (expected for CCT), keep our last computed Velocity.
+            Velocity = RigidBodyTransform.RigidBody?.LinearVelocity ?? Velocity;
             Acceleration = (Velocity - LastVelocity) / DeltaTime;
 
             RenderCapsule();
 
-            var moveDelta = (_subUpdateTick?.Invoke(ConsumeInput()) ?? Vector3.Zero) + ConsumeLiteralInput();
+            var rawInput = ConsumeInput();
+            var tickResult = _subUpdateTick?.Invoke(rawInput) ?? Vector3.Zero;
+            var literalInput = ConsumeLiteralInput();
+            var moveDelta = tickResult + literalInput;
+
+            // Log first 30 input processing cycles
+            if (_inputLogCount < 30 && (rawInput != Vector3.Zero || literalInput != Vector3.Zero))
+            {
+                _inputLogCount++;
+                Debug.Log(ELogCategory.Physics,
+                    "[MainTick] #{0} rawInput=({1:F4},{2:F4},{3:F4}) tickResult=({4:F4},{5:F4},{6:F4}) moveDelta=({7:F4},{8:F4},{9:F4}) dt={10:F4} tick={11}",
+                    _inputLogCount,
+                    rawInput.X, rawInput.Y, rawInput.Z,
+                    tickResult.X, tickResult.Y, tickResult.Z,
+                    moveDelta.X, moveDelta.Y, moveDelta.Z,
+                    DeltaTime,
+                    _subUpdateTick == GroundMovementTick ? "Ground" : "Air");
+            }
+
             if (moveDelta.LengthSquared() > MinMoveDistance * MinMoveDistance)
                 Controller.Move(moveDelta, MinMoveDistance, DeltaTime);
 
@@ -736,21 +764,6 @@ namespace XREngine.Components.Movement
             set => SetField(ref _velocity, value);
         }
 
-        [Category("Movement")]
-        [DisplayName("Friction")]
-        [Description("Dynamic friction coefficient.")]
-        public float Friction
-        {
-            get => Material.DynamicFriction;
-            set => Material.DynamicFriction = value;
-        }
-
-        //public float GroundFriction
-        //{
-        //    get => Material.StaticFriction;
-        //    set => Material.StaticFriction = value;
-        //}
-
         // TODO: calculate friction based on this character's material and the current surface
         private float _walkingFriction = 0.1f;
         [Category("Movement")]
@@ -794,7 +807,7 @@ namespace XREngine.Components.Movement
             set => SetField(ref _maxJumpDuration, value);
         }
 
-        private bool _tickInputWithPhysics = true; //Seems more responsive calculating on update, separate from physics
+        private bool _tickInputWithPhysics = false; //Seems more responsive calculating on update, separate from physics
         /// <summary>
         /// Whether to tick input with physics or not.
         /// </summary>
@@ -808,6 +821,8 @@ namespace XREngine.Components.Movement
         }
 
         private float DeltaTime => TickInputWithPhysics ? Engine.FixedDelta : Engine.Delta;
+
+        protected override float InputDeltaTime => DeltaTime;
 
         protected virtual Vector3 GroundMovementTick(Vector3 posDelta)
         {
