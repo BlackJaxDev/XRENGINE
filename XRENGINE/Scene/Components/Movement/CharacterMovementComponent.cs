@@ -151,8 +151,7 @@ namespace XREngine.Components.Movement
             get => Controller?.FootPosition ?? (Position - UpDirection * HalfHeight);
             set
             {
-                if (Controller is not null)
-                    Controller.FootPosition = value;
+                Controller?.FootPosition = value;
             }
         }
 
@@ -165,8 +164,7 @@ namespace XREngine.Components.Movement
             get => Controller?.Position ?? Transform.WorldTranslation;
             set
             {
-                if (Controller is not null)
-                    Controller.Position = value;
+                Controller?.Position = value;
             }
         }
 
@@ -549,30 +547,24 @@ namespace XREngine.Components.Movement
                     Controller?.Resize(GetCurrentHeight());
                     break;
                 case nameof(Radius):
-                    if (Controller is not null)
-                        Controller.Radius = Radius;
+                    Controller?.Radius = Radius;
                     break;
                 case nameof(SlopeLimitCosine):
-                    if (Controller is not null)
-                        Controller.SlopeLimit = SlopeLimitCosine;
+                    Controller?.SlopeLimit = SlopeLimitCosine;
                     break;
                 case nameof(StepOffset):
-                    if (Controller is not null)
-                        Controller.StepOffset = StepOffset;
+                    Controller?.StepOffset = StepOffset;
                     break;
                 case nameof(ContactOffset):
-                    if (Controller is not null)
-                        Controller.ContactOffset = ContactOffset;
+                    Controller?.ContactOffset = ContactOffset;
                     break;
                 case nameof(UpDirection):
-                    if (Controller is not null)
-                        Controller.UpDirection = UpDirection;
+                    Controller?.UpDirection = UpDirection;
                     break;
                 case nameof(SlideOnSteepSlopes):
-                    if (Controller is not null)
-                        Controller.ClimbingMode = ConstrainedClimbing 
-                            ? PxCapsuleClimbingMode.Constrained
-                            : PxCapsuleClimbingMode.Easy;
+                    Controller?.ClimbingMode = ConstrainedClimbing 
+                        ? PxCapsuleClimbingMode.Constrained
+                        : PxCapsuleClimbingMode.Easy;
                     break;
             }
         }
@@ -652,12 +644,8 @@ namespace XREngine.Components.Movement
         protected internal override void OnComponentDeactivated()
         {
             _subUpdateTick = null;
-
-            if (_subscribedPhysicsScene is not null)
-            {
-                _subscribedPhysicsScene.OnSimulationStep -= OnPhysicsSimulationStep;
-                _subscribedPhysicsScene = null;
-            }
+            _subscribedPhysicsScene?.OnSimulationStep -= OnPhysicsSimulationStep;
+            _subscribedPhysicsScene = null;
 
             // Controller owns its internal actor via PxControllerManager; do not remove it as a normal actor.
             RigidBodyTransform.RigidBody = null;
