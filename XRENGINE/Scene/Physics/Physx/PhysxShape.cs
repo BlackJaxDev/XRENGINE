@@ -1,4 +1,5 @@
 ﻿using MagicPhysX;
+using System.Collections.Concurrent;
 using System.Numerics;
 using System.Runtime.InteropServices;
 using XREngine.Data.Geometry;
@@ -12,7 +13,8 @@ namespace XREngine.Rendering.Physics.Physx
         public PhysxShape(PxShape* shape)
         {
             _shapePtr = shape;
-            All.Add((nint)shape, this);
+            PhysxObjectLog.AddOrUpdate(All, nameof(All), (nint)shape, this);
+            PhysxObjectLog.Created(this, (nint)shape, "from-existing");
         }
         public PhysxShape(IPhysicsGeometry geometry, PhysxMaterial material, PxShapeFlags flags, bool isExclusive = false)
         {
@@ -20,7 +22,8 @@ namespace XREngine.Rendering.Physics.Physx
             PxShape* shape = PhysxScene.PhysicsPtr->CreateShapeMut(geomStruct.ToStructPtr<PxGeometry>(), material.MaterialPtr, isExclusive, flags);
 
             _shapePtr = shape;
-            All.Add((nint)shape, this);
+            PhysxObjectLog.AddOrUpdate(All, nameof(All), (nint)shape, this);
+            PhysxObjectLog.Created(this, (nint)shape, $"flags={flags} exclusive={isExclusive}");
         }
 
         public PxShape* ShapePtr => _shapePtr;
@@ -28,7 +31,7 @@ namespace XREngine.Rendering.Physics.Physx
         public override unsafe PxBase* BasePtr => (PxBase*)_shapePtr;
         public override unsafe PxRefCounted* RefCountedPtr => (PxRefCounted*)_shapePtr;
 
-        public static Dictionary<nint, PhysxShape> All { get; } = [];
+        public static ConcurrentDictionary<nint, PhysxShape> All { get; } = new();
         public static PhysxShape? Get(PxShape* ptr)
             => All.TryGetValue((nint)ptr, out var shape) ? shape : null;
 
@@ -68,25 +71,75 @@ namespace XREngine.Rendering.Physics.Physx
         public PxShapeFlags Flags
         {
             get => ShapePtr->GetFlags(); 
-            set => ShapePtr->SetFlagsMut(value);
+            set
+            {
+                if (IsReleased)
+                {
+                    PhysxObjectLog.Modified(this, (nint)_shapePtr, nameof(Flags), "ignored (released)");
+                    return;
+                }
+                var prev = ShapePtr->GetFlags();
+                ShapePtr->SetFlagsMut(value);
+                PhysxObjectLog.Modified(this, (nint)_shapePtr, nameof(Flags), $"{prev} -> {value}");
+            }
         }
 
         public void SetFlag(PxShapeFlag flag, bool value)
-            => ShapePtr->SetFlagMut(flag, value);
+        {
+            if (IsReleased)
+            {
+                PhysxObjectLog.Modified(this, (nint)_shapePtr, nameof(SetFlag), "ignored (released)");
+                return;
+            }
+            ShapePtr->SetFlagMut(flag, value);
+            PhysxObjectLog.Modified(this, (nint)_shapePtr, nameof(SetFlag), $"{flag}={value}");
+        }
 
         public float ContactOffset
         {
             get => ShapePtr->GetContactOffset();
-            set => ShapePtr->SetContactOffsetMut(value);
+            set
+            {
+                if (IsReleased)
+                {
+                    PhysxObjectLog.Modified(this, (nint)_shapePtr, nameof(ContactOffset), "ignored (released)");
+                    return;
+                }
+                var prev = ShapePtr->GetContactOffset();
+                ShapePtr->SetContactOffsetMut(value);
+                PhysxObjectLog.Modified(this, (nint)_shapePtr, nameof(ContactOffset), $"{prev} -> {value}");
+            }
         }
 
         public override void Release()
-            => ShapePtr->ReleaseMut();
+        {
+            if (IsReleased)
+                return;
+
+            _isReleased = true;
+
+            // Remove from global + per-scene caches first so late lookups don't return a released wrapper.
+            PhysxObjectLog.RemoveIfSame(All, nameof(All), (nint)_shapePtr, this);
+            foreach (var scene in PhysxScene.Scenes.Values)
+                scene.Shapes.TryRemove((nint)_shapePtr, out _);
+
+            PhysxObjectLog.Released(this, (nint)_shapePtr, $"refCount={ReferenceCount}");
+            ShapePtr->ReleaseMut();
+        }
 
         public PxGeometry* Geometry
         {
             get => ShapePtr->GetGeometry();
-            set => ShapePtr->SetGeometryMut(value);
+            set
+            {
+                if (IsReleased)
+                {
+                    PhysxObjectLog.Modified(this, (nint)_shapePtr, nameof(Geometry), "ignored (released)");
+                    return;
+                }
+                ShapePtr->SetGeometryMut(value);
+                PhysxObjectLog.Modified(this, (nint)_shapePtr, nameof(Geometry));
+            }
         }
 
         public unsafe PhysxRigidActor? GetActor()
@@ -103,19 +156,38 @@ namespace XREngine.Rendering.Physics.Physx
             {
                 var tfm = PhysxScene.MakeTransform(value.position, value.rotation);
                 ShapePtr->SetLocalPoseMut(&tfm);
+                PhysxObjectLog.Modified(this, (nint)_shapePtr, nameof(LocalPose), $"pos={value.position} rot={value.rotation}");
             }
         }
 
         public PxFilterData SimulationFilterData
         {
             get => ShapePtr->GetSimulationFilterData();
-            set => ShapePtr->SetSimulationFilterDataMut(&value);
+            set
+            {
+                if (IsReleased)
+                {
+                    PhysxObjectLog.Modified(this, (nint)_shapePtr, nameof(SimulationFilterData), "ignored (released)");
+                    return;
+                }
+                ShapePtr->SetSimulationFilterDataMut(&value);
+                PhysxObjectLog.Modified(this, (nint)_shapePtr, nameof(SimulationFilterData), $"word0=0x{value.word0:X8} word1=0x{value.word1:X8} word2=0x{value.word2:X8}");
+            }
         }
 
         public PxFilterData QueryFilterData
         {
             get => ShapePtr->GetQueryFilterData();
-            set => ShapePtr->SetQueryFilterDataMut(&value);
+            set
+            {
+                if (IsReleased)
+                {
+                    PhysxObjectLog.Modified(this, (nint)_shapePtr, nameof(QueryFilterData), "ignored (released)");
+                    return;
+                }
+                ShapePtr->SetQueryFilterDataMut(&value);
+                PhysxObjectLog.Modified(this, (nint)_shapePtr, nameof(QueryFilterData), $"word0=0x{value.word0:X8} word1=0x{value.word1:X8} word2=0x{value.word2:X8}");
+            }
         }
 
         public PhysxMaterial[] Materials
@@ -130,6 +202,7 @@ namespace XREngine.Rendering.Physics.Physx
             for (int i = 0; i < materials.Length; i++)
                 mats[i] = materials[i].MaterialPtr;
             ShapePtr->SetMaterialsMut(mats, (ushort)materials.Length);
+            PhysxObjectLog.Modified(this, (nint)_shapePtr, nameof(Materials), $"count={materials.Length}");
         }
 
         public unsafe ushort MaterialCount

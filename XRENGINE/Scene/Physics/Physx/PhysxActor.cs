@@ -1,4 +1,5 @@
 ﻿using MagicPhysX;
+using System.Collections.Concurrent;
 using XREngine.Data.Geometry;
 using XREngine.Scene;
 
@@ -12,11 +13,23 @@ namespace XREngine.Rendering.Physics.Physx
         private ushort _collisionGroup;
         private PxGroupsMask _groupsMask;
 
-        public static Dictionary<nint, PhysxActor> AllActors { get; } = [];
+        public static ConcurrentDictionary<nint, PhysxActor> AllActors { get; } = new();
         public static PhysxActor? Get(PxActor* ptr)
             => AllActors.TryGetValue((nint)ptr, out var actor) ? actor : null;
 
-        ~PhysxActor() => Release();
+        ~PhysxActor()
+        {
+            try
+            {
+                if (ActorPtr is not null)
+                    PhysxObjectLog.Modified(this, (nint)ActorPtr, "Finalizer", "invoked");
+                else
+                    Debug.Log(ELogCategory.Physics, "[PhysxObj] ~ {0} Finalizer invoked (null ptr)", GetType().Name);
+            }
+            catch { }
+
+            Release();
+        }
 
         public bool DebugVisualize
         {
@@ -42,22 +55,60 @@ namespace XREngine.Rendering.Physics.Physx
         public PxActorFlags ActorFlags
         {
             get => ActorPtr->GetActorFlags();
-            set => ActorPtr->SetActorFlagsMut(value);
+            set
+            {
+                if (IsReleased)
+                {
+                    PhysxObjectLog.Modified(this, (nint)ActorPtr, nameof(ActorFlags), "ignored (released)");
+                    return;
+                }
+                var prev = ActorPtr->GetActorFlags();
+                ActorPtr->SetActorFlagsMut(value);
+                PhysxObjectLog.Modified(this, (nint)ActorPtr, nameof(ActorFlags), $"{prev} -> {value}");
+            }
         }
 
         public void SetActorFlag(PxActorFlag flag, bool value)
-            => ActorPtr->SetActorFlagMut(flag, value);
+        {
+            if (IsReleased)
+            {
+                PhysxObjectLog.Modified(this, (nint)ActorPtr, nameof(SetActorFlag), "ignored (released)");
+                return;
+            }
+            ActorPtr->SetActorFlagMut(flag, value);
+            PhysxObjectLog.Modified(this, (nint)ActorPtr, nameof(SetActorFlag), $"{flag}={value}");
+        }
 
         public byte DominanceGroup
         {
             get => ActorPtr->GetDominanceGroup();
-            set => ActorPtr->SetDominanceGroupMut(value);
+            set
+            {
+                if (IsReleased)
+                {
+                    PhysxObjectLog.Modified(this, (nint)ActorPtr, nameof(DominanceGroup), "ignored (released)");
+                    return;
+                }
+                var prev = ActorPtr->GetDominanceGroup();
+                ActorPtr->SetDominanceGroupMut(value);
+                PhysxObjectLog.Modified(this, (nint)ActorPtr, nameof(DominanceGroup), $"{prev} -> {value}");
+            }
         }
 
         public byte OwnerClient
         {
             get => ActorPtr->GetOwnerClient();
-            set => ActorPtr->SetOwnerClientMut(value);
+            set
+            {
+                if (IsReleased)
+                {
+                    PhysxObjectLog.Modified(this, (nint)ActorPtr, nameof(OwnerClient), "ignored (released)");
+                    return;
+                }
+                var prev = ActorPtr->GetOwnerClient();
+                ActorPtr->SetOwnerClientMut(value);
+                PhysxObjectLog.Modified(this, (nint)ActorPtr, nameof(OwnerClient), $"{prev} -> {value}");
+            }
         }
 
         public PxAggregate* Aggregate => ActorPtr->GetAggregate();
@@ -71,6 +122,7 @@ namespace XREngine.Rendering.Physics.Physx
                     return;
                 _collisionGroup = value;
                 ActorPtr->PhysPxSetGroup(value);
+                PhysxObjectLog.Modified(this, (nint)ActorPtr, nameof(CollisionGroup), $"-> {value}");
                 OnCollisionFilteringChanged();
             }
         }
@@ -85,6 +137,7 @@ namespace XREngine.Rendering.Physics.Physx
                 _groupsMask = value;
                 var mask = value;
                 ActorPtr->PhysPxSetGroupsMask(&mask);
+                PhysxObjectLog.Modified(this, (nint)ActorPtr, nameof(GroupsMask), $"-> {mask.bits0:X4}:{mask.bits1:X4}:{mask.bits2:X4}:{mask.bits3:X4}");
                 OnCollisionFilteringChanged();
             }
         }
@@ -109,8 +162,14 @@ namespace XREngine.Rendering.Physics.Physx
             }
             set
             {
+                if (IsReleased)
+                {
+                    PhysxObjectLog.Modified(this, (nint)ActorPtr, nameof(Name), "ignored (released)");
+                    return;
+                }
                 fixed (byte* name = System.Text.Encoding.UTF8.GetBytes(value))
                     ActorPtr->SetNameMut(name);
+                PhysxObjectLog.Modified(this, (nint)ActorPtr, nameof(Name), $"=\"{value}\"");
             }
         }
 
@@ -126,11 +185,20 @@ namespace XREngine.Rendering.Physics.Physx
             protected set => SetField(ref _isReleased, value);
         }
 
+        protected virtual void RemoveFromCaches()
+        {
+            if (ActorPtr is null)
+                return;
+            PhysxObjectLog.RemoveIfSame(AllActors, nameof(AllActors), (nint)ActorPtr, this);
+        }
+
         public virtual void Release()
         {
             if (IsReleased)
                 return;
             IsReleased = true;
+            RemoveFromCaches();
+            PhysxObjectLog.Released(this, (nint)ActorPtr);
             ActorPtr->ReleaseMut();
         }
 
@@ -145,11 +213,15 @@ namespace XREngine.Rendering.Physics.Physx
 
         public void OnAddedToScene(PhysxScene physxScene)
         {
+            PhysxObjectLog.Modified(this, (nint)ActorPtr, "OnAddedToScene", $"scene=0x{(nint)physxScene.ScenePtr:X}");
             AddedToScene?.Invoke(physxScene);
             if (this is PhysxRigidActor rigid)
                 rigid.RefreshShapeFilterData();
         }
         public void OnRemovedFromScene(PhysxScene physxScene)
-            => RemovedFromScene?.Invoke(physxScene);
+        {
+            PhysxObjectLog.Modified(this, (nint)ActorPtr, "OnRemovedFromScene", $"scene=0x{(nint)physxScene.ScenePtr:X}");
+            RemovedFromScene?.Invoke(physxScene);
+        }
     }
 }

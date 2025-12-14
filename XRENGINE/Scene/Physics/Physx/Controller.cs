@@ -1,10 +1,13 @@
 ﻿using Jitter2;
 using MagicPhysX;
+using System;
 using System.Collections.Concurrent;
 using System.Numerics;
 using System.Runtime.InteropServices;
+using System.Threading;
 using XREngine.Data;
 using XREngine.Data.Core;
+using XREngine;
 using static MagicPhysX.NativeMethods;
 using static XREngine.Engine;
 
@@ -14,7 +17,30 @@ namespace XREngine.Rendering.Physics.Physx
     {
         public abstract PxController* ControllerPtr { get; }
 
-        public PhysxScene Scene => PhysxScene.Scenes[(nint)ControllerPtr->GetSceneMut()];
+        internal ControllerManager? Manager { get; set; }
+
+        private int _released;
+        public bool IsReleased => Volatile.Read(ref _released) != 0;
+
+        private int _nativeReleased;
+
+        private readonly object _nativeCallLock = new();
+
+        private bool _hasLoggedMoveDebug;
+
+        public PhysxScene Scene
+        {
+            get
+            {
+                // Prefer the managed back-reference; querying the native pointer after release can crash.
+                if (Manager is not null)
+                    return Manager.Scene;
+                var scenePtr = (nint)ControllerPtr->GetSceneMut();
+                if (PhysxScene.Scenes.TryGetValue(scenePtr, out var scene))
+                    return scene;
+                throw new KeyNotFoundException($"PhysxScene not found for PxScene* 0x{scenePtr:X}");
+            }
+        }
 
         public PxUserControllerHitReport* UserControllerHitReport
             => _userControllerHitReportSource.ToStructPtr<PxUserControllerHitReport>();
@@ -78,7 +104,11 @@ namespace XREngine.Rendering.Physics.Physx
         public void* UserData
         {
             get => ControllerPtr->GetUserData();
-            set => ControllerPtr->SetUserDataMut(value);
+            set
+            {
+                ControllerPtr->SetUserDataMut(value);
+                Debug.Log(ELogCategory.Physics, "[PhysxObj] ~ Controller ptr=0x{0:X} UserData=0x{1:X}", (nint)ControllerPtr, (nint)value);
+            }
         }
 
         public (Vector3 deltaXP, PhysxShape? touchedShape, PhysxRigidActor? touchedActor, uint touchedObstacleHandle, PxControllerCollisionFlags collisionFlags, bool standOnAnotherCCT, bool standOnObstacle, bool isMovingUp) State
@@ -119,6 +149,7 @@ namespace XREngine.Rendering.Physics.Physx
             {
                 PxExtendedVec3 pos = PxExtendedVec3_new_1(value.X, value.Y, value.Z);
                 ControllerPtr->SetPositionMut(&pos);
+                Debug.Log(ELogCategory.Physics, "[PhysxObj] ~ Controller ptr=0x{0:X} Position={1}", (nint)ControllerPtr, value);
             }
         }
 
@@ -133,6 +164,7 @@ namespace XREngine.Rendering.Physics.Physx
             {
                 PxExtendedVec3 pos = PxExtendedVec3_new_1(value.X, value.Y, value.Z);
                 ControllerPtr->SetFootPositionMut(&pos);
+                Debug.Log(ELogCategory.Physics, "[PhysxObj] ~ Controller ptr=0x{0:X} FootPosition={1}", (nint)ControllerPtr, value);
             }
         }
 
@@ -147,19 +179,28 @@ namespace XREngine.Rendering.Physics.Physx
             {
                 PxVec3 up = PxVec3_new_3(value.X, value.Y, value.Z);
                 ControllerPtr->SetUpDirectionMut(&up);
+                Debug.Log(ELogCategory.Physics, "[PhysxObj] ~ Controller ptr=0x{0:X} UpDirection={1}", (nint)ControllerPtr, value);
             }
         }
 
         public float SlopeLimit
         {
             get => ControllerPtr->GetSlopeLimit();
-            set => ControllerPtr->SetSlopeLimitMut(value);
+            set
+            {
+                ControllerPtr->SetSlopeLimitMut(value);
+                Debug.Log(ELogCategory.Physics, "[PhysxObj] ~ Controller ptr=0x{0:X} SlopeLimit={1}", (nint)ControllerPtr, value);
+            }
         }
 
         public float StepOffset
         {
             get => ControllerPtr->GetStepOffset();
-            set => ControllerPtr->SetStepOffsetMut(value);
+            set
+            {
+                ControllerPtr->SetStepOffsetMut(value);
+                Debug.Log(ELogCategory.Physics, "[PhysxObj] ~ Controller ptr=0x{0:X} StepOffset={1}", (nint)ControllerPtr, value);
+            }
         }
 
         public PhysxDynamicRigidBody? Actor => PhysxDynamicRigidBody.AllDynamic.TryGetValue((nint)ControllerPtr->GetActor(), out var value) ? value : null;
@@ -180,33 +221,128 @@ namespace XREngine.Rendering.Physics.Physx
             private set => SetField(ref _collidingDown, value);
         }
 
-        public ConcurrentQueue<(Vector3 delta, float minDist, float elapsedTime)> _inputBuffer = new();
+        public ConcurrentQueue<(Vector3 delta, float minDist)> _inputBuffer = new();
 
-        // Execute immediately to avoid deferred calls hitting invalid native state
+        // Queue movement so it runs during PhysxScene.StepSimulation (before simulate) instead of
+        // from arbitrary tick threads. This avoids native crashes from calling PxController::move
+        // concurrently with other scene/controller operations.
         public void Move(Vector3 delta, float minDist, float elapsedTime)
-            => ConsumeMove(delta, minDist, elapsedTime);
+        {
+            if (IsReleased)
+                return;
+            // We intentionally ignore the caller-provided elapsedTime.
+            // PxController::move should be driven with the physics fixed dt (see ConsumeInputBuffer).
+            _inputBuffer.Enqueue((delta, minDist));
+        }
 
         private void ConsumeMove(Vector3 delta, float minDist, float elapsedTime)
         {
+            if (IsReleased)
+                return;
+
+            // Native safety: PhysX controllers are not tolerant of NaN/Inf inputs.
+            if (!float.IsFinite(delta.X) || !float.IsFinite(delta.Y) || !float.IsFinite(delta.Z))
+                return;
+            if (!float.IsFinite(minDist) || !float.IsFinite(elapsedTime) || elapsedTime <= 0.0f)
+                return;
+
             PxVec3 d = PxVec3_new_3(delta.X, delta.Y, delta.Z);
-            // Passing null filters avoids invoking CCT filter callbacks that currently cause native crashes
-            PxControllerCollisionFlags flags = ControllerPtr->MoveMut(&d, minDist, elapsedTime, null, null);
-            CollidingSides = (flags & PxControllerCollisionFlags.CollisionSides) != 0;
-            CollidingUp = (flags & PxControllerCollisionFlags.CollisionUp) != 0;
-            CollidingDown = (flags & PxControllerCollisionFlags.CollisionDown) != 0;
+            lock (_nativeCallLock)
+            {
+                if (IsReleased)
+                    return;
+
+                // IMPORTANT: In our MagicPhysX/PhysX build, passing null PxControllerFilters can AV inside PxController::move.
+                // Use the manager-provided filters (and an obstacle context if present) for stability.
+                var mgr = Manager;
+                if (mgr is null)
+                    return;
+
+                // Build filters on-stack exactly like the working smoke test does.
+                PxFilterData stackFilterData = PxFilterData_new_2(0, 0, 0, 0);
+                PxControllerFilters stackFilters = PxControllerFilters_new(&stackFilterData, null, null);
+                stackFilters.mFilterFlags = PxQueryFlags.Static | PxQueryFlags.Dynamic;
+
+                // Pass null for obstacle context like the smoke test initially did
+                PxObstacleContext* obstacleContext = null;
+                
+                // Diagnostic: log once per controller on first move
+                if (!_hasLoggedMoveDebug)
+                {
+                    _hasLoggedMoveDebug = true;
+                    
+                    // Test that controller is valid by calling a simple method first
+                    var testPos = ControllerPtr->GetPosition();
+                    var ctrlScene = ControllerPtr->GetSceneMut();
+                    var ctrlActor = ControllerPtr->GetActor();
+                    
+                    Debug.Log(ELogCategory.Physics,
+                        "[Controller.MoveMut] DIAG controller=0x{0:X} scene=0x{1:X} actor=0x{2:X} obstacleCtx=0x{3:X} pos=({4},{5},{6})",
+                        (nint)ControllerPtr,
+                        (nint)ctrlScene,
+                        (nint)ctrlActor,
+                        (nint)obstacleContext,
+                        testPos->x, testPos->y, testPos->z);
+                    
+                    // Log the displacement we're about to use
+                    Debug.Log(ELogCategory.Physics,
+                        "[Controller.MoveMut] DIAG2 disp=({0},{1},{2}) minDist={3} elapsedTime={4}",
+                        d.x, d.y, d.z, minDist, elapsedTime);
+                    
+                    // Log filter struct fields
+                    Debug.Log(ELogCategory.Physics,
+                        "[Controller.MoveMut] DIAG3 filterData=0x{0:X} filterFlags={1} filterCallback=0x{2:X} cctFilterCallback=0x{3:X}",
+                        (nint)stackFilters.mFilterData,
+                        stackFilters.mFilterFlags,
+                        (nint)stackFilters.mFilterCallback,
+                        (nint)stackFilters.mCCTFilterCallback);
+                }
+
+                PxControllerCollisionFlags flags = ControllerPtr->MoveMut(&d, minDist, elapsedTime, &stackFilters, obstacleContext);
+                CollidingSides = (flags & PxControllerCollisionFlags.CollisionSides) != 0;
+                CollidingUp = (flags & PxControllerCollisionFlags.CollisionUp) != 0;
+                CollidingDown = (flags & PxControllerCollisionFlags.CollisionDown) != 0;
+            }
         }
 
+        private int _moveLogCount = 0;
         public void ConsumeInputBuffer(float delta)
         {
+            if (IsReleased)
+                return;
+
             if (_inputBuffer.IsEmpty)
                 return;
 
             Vector3 totalDelta = Vector3.Zero;
+            float minDist = 0.00001f;
             while (_inputBuffer.TryDequeue(out var input))
+            {
                 totalDelta += input.delta;
+                minDist = MathF.Max(minDist, input.minDist);
+            }
             if (totalDelta == Vector3.Zero)
                 return;
-            ConsumeMove(totalDelta, 0.00001f, delta);
+
+            // Log first 30 moves to diagnose movement issues
+            if (_moveLogCount < 30)
+            {
+                _moveLogCount++;
+                var posBefore = Position;
+                ConsumeMove(totalDelta, minDist, delta);
+                var posAfter = Position;
+                Debug.Log(ELogCategory.Physics,
+                    "[Controller.Move] #{0} delta=({1:F4},{2:F4},{3:F4}) before=({4:F2},{5:F2},{6:F2}) after=({7:F2},{8:F2},{9:F2}) colDown={10}",
+                    _moveLogCount,
+                    totalDelta.X, totalDelta.Y, totalDelta.Z,
+                    posBefore.X, posBefore.Y, posBefore.Z,
+                    posAfter.X, posAfter.Y, posAfter.Z,
+                    CollidingDown);
+            }
+            else
+            {
+                ConsumeMove(totalDelta, minDist, delta);
+            }
         }
 
         public void Resize(float height)
@@ -223,8 +359,54 @@ namespace XREngine.Rendering.Physics.Physx
 
         public void Release()
         {
-            Scene.GetOrCreateControllerManager().Controllers.Remove((nint)ControllerPtr);
-            ControllerPtr->ReleaseMut();
+            RequestRelease();
+        }
+
+        /// <summary>
+        /// Marks the controller for release and schedules native release on the physics step.
+        /// Safe to call from any thread.
+        /// </summary>
+        public void RequestRelease()
+        {
+            if (Interlocked.Exchange(ref _released, 1) != 0)
+                return;
+
+            Debug.Log(ELogCategory.Physics, "[PhysxObj] ~ Controller RequestRelease ptr=0x{0:X}", (nint)ControllerPtr);
+
+            while (_inputBuffer.TryDequeue(out _)) { }
+
+            // Prefer deferring to the physics thread.
+            var scene = Manager?.Scene;
+            if (scene is not null)
+            {
+                scene.QueueControllerRelease(this);
+                return;
+            }
+
+            // Fallback: no managed scene available (shutdown path). Release immediately.
+            ReleaseNativeNow();
+        }
+
+        /// <summary>
+        /// Performs the actual native PxController release. Intended to be called from PhysxScene.StepSimulation.
+        /// </summary>
+        internal void ReleaseNativeNow()
+        {
+            if (Interlocked.Exchange(ref _nativeReleased, 1) != 0)
+                return;
+
+            Debug.Log(ELogCategory.Physics, "[PhysxObj] - Controller ReleaseNativeNow ptr=0x{0:X}", (nint)ControllerPtr);
+
+            lock (_nativeCallLock)
+            {
+                // Remove from the manager without querying native state.
+                if (Manager is not null)
+                    Manager.Controllers.TryRemove((nint)ControllerPtr, out _);
+                else
+                    Scene.GetOrCreateControllerManager().Controllers.TryRemove((nint)ControllerPtr, out _);
+
+                ControllerPtr->ReleaseMut();
+            }
         }
 
         public PxControllerShapeType Type => PxController_getType(ControllerPtr);

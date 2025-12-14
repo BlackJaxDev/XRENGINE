@@ -21,10 +21,11 @@ namespace XREngine.Components.Physics
         private const float DefaultLinearDamping = 0.05f;
         private const float DefaultAngularDamping = 0.05f;
 
+        private int _rigidBodyOwnershipSyncDepth;
+
         public RigidBodyTransform RigidBodyTransform => SceneNode.GetTransformAs<RigidBodyTransform>(true)!;
 
         private IAbstractDynamicRigidBody? _rigidBody;
-        private AbstractPhysicsScene? _registeredPhysicsScene;
         private bool _autoCreateRigidBody = true;
         private bool _gravityEnabled = true;
         private bool _simulationEnabled = true;
@@ -72,6 +73,19 @@ namespace XREngine.Components.Physics
         {
             get => _rigidBody;
             set => SetField(ref _rigidBody, value);
+        }
+
+        internal void SetRigidBodyFromRigidBodyOwner(IAbstractDynamicRigidBody? body)
+        {
+            try
+            {
+                _rigidBodyOwnershipSyncDepth++;
+                RigidBody = body;
+            }
+            finally
+            {
+                _rigidBodyOwnershipSyncDepth--;
+            }
         }
 
         [Category("Initialization")]
@@ -262,7 +276,11 @@ namespace XREngine.Components.Physics
                 if (!SetField(ref _ownerClient, value))
                     return;
                 if (RigidBody is PhysxActor physx)
-                    physx.OwnerClient = value;
+                {
+                    // PhysX disallows changing ownerClient while the actor is already in a scene.
+                    if (physx.Scene is null)
+                        physx.OwnerClient = value;
+                }
             }
         }
 
@@ -682,7 +700,7 @@ namespace XREngine.Components.Physics
             return body;
         }
 
-        private PhysxMaterial? ResolvePhysxMaterial()
+        protected PhysxMaterial? ResolvePhysxMaterial()
         {
             if (Material is PhysxMaterial physxMaterial)
                 return physxMaterial;
@@ -709,8 +727,11 @@ namespace XREngine.Components.Physics
             {
                 RemoveRigidBodyFromScene();
 
-                if (RigidBody.OwningComponent == this)
-                    RigidBody.OwningComponent = null;
+                if (_rigidBodyOwnershipSyncDepth == 0)
+                {
+                    if (RigidBody.OwningComponent == this)
+                        RigidBody.OwningComponent = null;
+                }
 
                 if (RigidBodyTransform.RigidBody == RigidBody)
                     RigidBodyTransform.RigidBody = null;
@@ -723,7 +744,8 @@ namespace XREngine.Components.Physics
             base.OnPropertyChanged(propName, prev, field);
             if (propName == nameof(RigidBody) && RigidBody is not null)
             {
-                RigidBody.OwningComponent = this;
+                if (_rigidBodyOwnershipSyncDepth == 0)
+                    RigidBody.OwningComponent = this;
                 RigidBodyTransform.RigidBody = RigidBody;
                 ApplyAllCachedProperties();
                 TryRegisterRigidBodyWithScene();
@@ -770,7 +792,9 @@ namespace XREngine.Components.Physics
             actor.CollisionGroup = _collisionGroup;
             actor.GroupsMask = ToPhysxGroupsMask(_groupsMask);
             actor.DominanceGroup = _dominanceGroup;
-            actor.OwnerClient = _ownerClient;
+            // PhysX disallows setting ownerClient once the actor is inserted into a scene.
+            if (actor.Scene is null)
+                actor.OwnerClient = _ownerClient;
             if (_actorName is not null)
                 actor.Name = _actorName;
         }
@@ -914,20 +938,29 @@ namespace XREngine.Components.Physics
             if (scene is null)
                 return;
 
-            if (_registeredPhysicsScene == scene)
-                return;
-
-            if (_registeredPhysicsScene is not null && _registeredPhysicsScene != scene)
-                _registeredPhysicsScene.RemoveActor(RigidBody);
-
-                if (_registeredPhysicsScene is not null)
+            if (scene is PhysxScene physxScene && RigidBody is PhysxActor physxActor)
+            {
+                // Character controllers (CCT) create a hidden rigid actor that is already attached to the PhysX scene
+                // by the controller manager. Attempting to add it again can assert/crash in PhysX.
+                if (physxActor.Scene is not null)
                 {
-                    Debug.Physics("[DynamicRigidBodyComponent] Attempted to double-register actorType={0} in scene {1}", RigidBody.GetType().Name, scene.GetType().Name);
+                    if (physxActor.Scene == physxScene)
+                    {
+                        Debug.Physics(
+                            "[DynamicRigidBodyComponent] Actor already registered with PhysxScene; skipping add actorType={0}",
+                            physxActor.GetType().Name);
+                        return;
+                    }
+
+                    Debug.Physics(
+                        "[DynamicRigidBodyComponent] Actor belongs to a different PhysxScene; skipping add actorType={0}",
+                        physxActor.GetType().Name);
                     return;
                 }
+            }
 
-                scene.AddActor(RigidBody);
-                _registeredPhysicsScene = scene;
+            scene.AddActor(RigidBody);
+
             if (RigidBody is PhysxActor actor)
             {
                 Debug.Physics(
@@ -942,22 +975,37 @@ namespace XREngine.Components.Physics
         private void RemoveRigidBodyFromScene()
         {
             if (RigidBody is null)
-            {
-                _registeredPhysicsScene = null;
                 return;
+
+            var scene = World?.PhysicsScene;
+            if (scene is null)
+                return;
+
+            if (scene is PhysxScene physxScene && RigidBody is PhysxActor physxActor)
+            {
+                // If the actor is attached to another PhysX scene, remove it from that scene instead of blindly
+                // calling remove on the current scene.
+                if (physxActor.Scene is not null && physxActor.Scene != physxScene)
+                {
+                    physxActor.Scene.RemoveActor(physxActor);
+                    Debug.Physics(
+                        "[DynamicRigidBodyComponent] Removed actorType={0} from foreign PhysxScene",
+                        physxActor.GetType().Name);
+                    return;
+                }
+
+                // If the actor isn't in any scene, there's nothing to remove.
+                if (physxActor.Scene is null)
+                    return;
             }
 
-            if (_registeredPhysicsScene is not null)
+            scene.RemoveActor(RigidBody);
+            if (RigidBody is PhysxActor actor)
             {
-                _registeredPhysicsScene.RemoveActor(RigidBody);
-                if (RigidBody is PhysxActor actor)
-                {
-                    Debug.Physics(
-                        "[DynamicRigidBodyComponent] Removed actorType={0} from scene {1}",
-                        actor.GetType().Name,
-                        _registeredPhysicsScene.GetType().Name);
-                }
-                _registeredPhysicsScene = null;
+                Debug.Physics(
+                    "[DynamicRigidBodyComponent] Removed actorType={0} from scene {1}",
+                    actor.GetType().Name,
+                    scene.GetType().Name);
             }
         }
 

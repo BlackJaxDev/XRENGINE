@@ -1,4 +1,5 @@
 ﻿using MagicPhysX;
+using System.Collections.Concurrent;
 using System.Numerics;
 using XREngine.Components;
 using XREngine.Scene;
@@ -15,7 +16,7 @@ namespace XREngine.Rendering.Physics.Physx
 
         public abstract XRComponent? GetOwningComponent();
 
-        public static Dictionary<nint, PhysxRigidActor> AllRigidActors { get; } = [];
+        public static ConcurrentDictionary<nint, PhysxRigidActor> AllRigidActors { get; } = new();
         public static PhysxRigidActor? Get(PxRigidActor* ptr)
             => AllRigidActors.TryGetValue((nint)ptr, out var actor) ? actor : null;
 
@@ -69,7 +70,15 @@ namespace XREngine.Rendering.Physics.Physx
         }
 
         private void SetTransform(PxTransform pose, bool wake = true)
-            => RigidActorPtr->SetGlobalPoseMut(&pose, wake);
+        {
+            if (IsReleased)
+            {
+                PhysxObjectLog.Modified(this, (nint)RigidActorPtr, "SetTransform", "ignored (released)");
+                return;
+            }
+            RigidActorPtr->SetGlobalPoseMut(&pose, wake);
+            PhysxObjectLog.Modified(this, (nint)RigidActorPtr, "SetTransform", $"wake={wake}");
+        }
 
         public void SetTransform(Vector3 position, Quaternion rotation, bool wake = true)
             => SetTransform(new() { p = position, q = rotation }, wake);
@@ -107,12 +116,26 @@ namespace XREngine.Rendering.Physics.Physx
 
         public void AttachShape(PhysxShape shape)
         {
+            if (IsReleased)
+            {
+                PhysxObjectLog.Modified(this, (nint)RigidActorPtr, nameof(AttachShape), "ignored (released)");
+                return;
+            }
             RigidActorPtr->AttachShapeMut(shape.ShapePtr);
+            PhysxObjectLog.Modified(this, (nint)RigidActorPtr, nameof(AttachShape), $"shape=0x{(nint)shape.ShapePtr:X}");
             RefreshShapeFilterData();
         }
 
         public void DetachShape(PhysxShape shape, bool wakeOnLostTouch)
-            => RigidActorPtr->DetachShapeMut(shape.ShapePtr, wakeOnLostTouch);
+        {
+            if (IsReleased)
+            {
+                PhysxObjectLog.Modified(this, (nint)RigidActorPtr, nameof(DetachShape), "ignored (released)");
+                return;
+            }
+            RigidActorPtr->DetachShapeMut(shape.ShapePtr, wakeOnLostTouch);
+            PhysxObjectLog.Modified(this, (nint)RigidActorPtr, nameof(DetachShape), $"shape=0x{(nint)shape.ShapePtr:X} wakeOnLostTouch={wakeOnLostTouch}");
+        }
 
         protected override void OnCollisionFilteringChanged()
         {
@@ -187,13 +210,15 @@ namespace XREngine.Rendering.Physics.Physx
         private static string FormatGroupsMask(PxGroupsMask mask)
             => $"{mask.bits0:X4}:{mask.bits1:X4}:{mask.bits2:X4}:{mask.bits3:X4}";
 
-        public override void Release()
+        protected override void RemoveFromCaches()
         {
-            if (IsReleased)
-                return;
-            IsReleased = true;
-            RigidActorPtr->ReleaseMut();
+            if (RigidActorPtr is not null)
+                PhysxObjectLog.RemoveIfSame(AllRigidActors, nameof(AllRigidActors), (nint)RigidActorPtr, this);
+            base.RemoveFromCaches();
         }
+
+        public override void Release()
+            => base.Release();
 
         public PxQueryFilterCallback* CreateRaycastFilterCallback()
             => RigidActorPtr->CreateRaycastFilterCallback();
