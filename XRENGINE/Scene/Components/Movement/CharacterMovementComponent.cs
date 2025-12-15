@@ -685,20 +685,6 @@ namespace XREngine.Components.Movement
             var literalInput = ConsumeLiteralInput();
             var moveDelta = tickResult + literalInput;
 
-            // Log first 30 input processing cycles
-            if (_inputLogCount < 30 && (rawInput != Vector3.Zero || literalInput != Vector3.Zero))
-            {
-                _inputLogCount++;
-                Debug.Log(ELogCategory.Physics,
-                    "[MainTick] #{0} rawInput=({1:F4},{2:F4},{3:F4}) tickResult=({4:F4},{5:F4},{6:F4}) moveDelta=({7:F4},{8:F4},{9:F4}) dt={10:F4} tick={11}",
-                    _inputLogCount,
-                    rawInput.X, rawInput.Y, rawInput.Z,
-                    tickResult.X, tickResult.Y, tickResult.Z,
-                    moveDelta.X, moveDelta.Y, moveDelta.Z,
-                    DeltaTime,
-                    _subUpdateTick == GroundMovementTick ? "Ground" : "Air");
-            }
-
             if (moveDelta.LengthSquared() > MinMoveDistance * MinMoveDistance)
                 Controller.Move(moveDelta, MinMoveDistance, DeltaTime);
 
@@ -712,8 +698,7 @@ namespace XREngine.Components.Movement
                 if (_subUpdateTick == GroundMovementTick)
                     _subUpdateTick = AirMovementTick;
             }
-            //(Vector3 deltaXP, PhysxShape? touchedShape, PhysxRigidActor? touchedActor, uint touchedObstacleHandle, PxControllerCollisionFlags collisionFlags, bool standOnAnotherCCT, bool standOnObstacle, bool isMovingUp) state = Controller.State;
-            //Debug.Out($"DeltaXP: {state.deltaXP}, TouchedShape: {state.touchedShape}, TouchedActor: {state.touchedActor}, TouchedObstacleHandle: {state.touchedObstacleHandle}, CollisionFlags: {state.collisionFlags}, StandOnAnotherCCT: {state.standOnAnotherCCT}, StandOnObstacle: {state.standOnObstacle}, IsMovingUp: {state.isMovingUp}");
+            
             LastVelocity = Velocity;
         }
 

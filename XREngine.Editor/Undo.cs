@@ -1042,7 +1042,7 @@ public static class Undo
                 if (transform.World is { } world && !transform.ForceManualRecalc)
                     world.AddDirtyTransform(transform);
                 else
-                    transform.RecalculateMatrices(forceWorldRecalc: true, setRenderMatrixNow: true);
+                    transform.RecalculateMatrices(forceWorldRecalc: true, setRenderMatrixNow: false);
             }
             catch (Exception ex)
             {
@@ -1578,12 +1578,12 @@ public static class Undo
             {
                 case TransformBase transform:
                     // Recalculate immediately so editor-visible transforms update even if the world tick is paused
-                    transform.RecalculateMatrices(forceWorldRecalc: true, setRenderMatrixNow: true);
+                    transform.RecalculateMatrices(forceWorldRecalc: true, setRenderMatrixNow: false);
                     break;
                 case SceneNode node when string.Equals(propertyName, nameof(SceneNode.Transform), StringComparison.Ordinal):
                     // If the SceneNode's Transform property changed, refresh the new transform
                     if (node.Transform is TransformBase nodeTransform)
-                        nodeTransform.RecalculateMatrices(forceWorldRecalc: true, setRenderMatrixNow: true);
+                        nodeTransform.RecalculateMatrices(forceWorldRecalc: true, setRenderMatrixNow: false);
                     break;
             }
         }

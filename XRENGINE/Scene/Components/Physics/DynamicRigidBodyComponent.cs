@@ -674,7 +674,7 @@ namespace XREngine.Components.Physics
             };
         }
 
-        private IAbstractDynamicRigidBody? CreatePhysxDynamicRigidBody()
+        private PhysxDynamicRigidBody? CreatePhysxDynamicRigidBody()
         {
             var (position, rotation) = GetSpawnPose();
             var geometry = Geometry;

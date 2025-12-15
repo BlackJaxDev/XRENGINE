@@ -1,12 +1,17 @@
-﻿using System;
-using Newtonsoft.Json;
+﻿using Newtonsoft.Json;
 using Newtonsoft.Json.Converters;
+using System;
+using System.Numerics;
 using XREngine;
 using XREngine.Editor;
 using XREngine.Native;
+using XREngine.Rendering;
 using XREngine.Rendering.Commands;
 using XREngine.Rendering.Info;
 using XREngine.Scene;
+using XREngine.Scene.Transforms;
+using static XREngine.Engine;
+using static XREngine.Rendering.XRWorldInstance;
 
 internal class Program
 {
@@ -43,6 +48,25 @@ internal class Program
         });
         Engine.UserSettings.RenderLibrary = UnitTestingWorld.Toggles.RenderAPI;
         Engine.Run(/*Engine.LoadOrGenerateGameSettings(() => */GetEngineSettings(UnitTestingWorld.CreateSelectedWorld(true, false)/*), "startup", false*/), Engine.LoadOrGenerateGameState());
+    }
+
+    private static void TargetWorldInstance_AnyTransformWorldMatrixChanged(XRWorldInstance instance, TransformBase tfm, Matrix4x4 mtx)
+    {
+        if (PlayMode.IsEditing && !instance.TransitioningPlay && instance.PlayState == EPlayState.Playing)
+        {
+            var sceneNode = tfm.SceneNode;
+            if (sceneNode is null)
+                return;
+
+            // Many transforms (e.g., skeletal bones) have no components. Refreshing play lifecycle for them
+            // is extremely expensive and can cause frame stutter when large hierarchies update.
+            if (sceneNode.ComponentsSerialized.Count == 0)
+                return;
+
+            // In edit mode, refresh play lifecycle for this node when the world matrix changes
+            sceneNode.OnEndPlay();
+            sceneNode.OnBeginPlay();
+        }
     }
 
     private static JsonSerializerSettings DefaultJsonSettings() => new()

@@ -58,7 +58,7 @@ public class UserInterfaceRenderPipeline : RenderPipeline
 
         using (c.AddUsing<VPRC_PushOutputFBORenderArea>())
         {
-            using (c.AddUsing<VPRC_BindOutputFBO>())
+            using (c.AddUsing<VPRC_BindOutputFBO>(t => t.SetOptions(write: true, clearColor: false, clearDepth: false, clearStencil: false)))
             {
                 //c.Add<VPRC_StencilMask>().Set(~0u);
                 //c.Add<VPRC_ClearByBoundFBO>();
@@ -92,7 +92,7 @@ public class UserInterfaceRenderPipeline : RenderPipeline
         
         using (c.AddUsing<VPRC_PushViewportRenderArea>(t => t.UseInternalResolution = false))
         {
-            using (c.AddUsing<VPRC_BindOutputFBO>())
+            using (c.AddUsing<VPRC_BindOutputFBO>(t => t.SetOptions(write: true, clearColor: false, clearDepth: false, clearStencil: false)))
             {
                 //c.Add<VPRC_StencilMask>().Set(~0u);
                 //c.Add<VPRC_ClearByBoundFBO>();
