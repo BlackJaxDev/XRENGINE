@@ -1,8 +1,10 @@
 ﻿using MagicPhysX;
+using System.Collections.Concurrent;
 using System.Numerics;
 using System.Runtime.InteropServices;
 using XREngine.Data;
 using XREngine.Data.Core;
+using XREngine;
 using static MagicPhysX.NativeMethods;
 
 namespace XREngine.Rendering.Physics.Physx
@@ -52,6 +54,8 @@ namespace XREngine.Rendering.Physics.Physx
         {
             ControllerManagerPtr = manager;
 
+            Debug.Log(ELogCategory.Physics, "[PhysxObj] + ControllerManager ptr=0x{0:X}", (nint)manager);
+
             DestructorInstance = Destructor;
             PreFilterCallbackInstance = PreFilterCallback;
             PostFilterCallbackInstance = PostFilterCallback;
@@ -71,8 +75,11 @@ namespace XREngine.Rendering.Physics.Physx
             PxFilterData filterData = PxFilterData_new_2(0, 0, 0, 0);
             _filterDataSource = DataSource.FromStruct(filterData);
 
-            var filter = PxControllerFilters_new(FilterData, QueryFilterCallback, ControllerFilterCallback);
-            filter.mFilterFlags = PxQueryFlags.Static | PxQueryFlags.Dynamic | PxQueryFlags.Prefilter | PxQueryFlags.Postfilter;
+            // IMPORTANT: Pass null callbacks to avoid native AV when PhysX invokes vtable-based callbacks.
+            // The smoke test proved that null callbacks + Static|Dynamic flags work reliably.
+            // Do NOT use Prefilter/Postfilter flags as they cause PhysX to invoke callbacks.
+            var filter = PxControllerFilters_new(FilterData, null, null);
+            filter.mFilterFlags = PxQueryFlags.Static | PxQueryFlags.Dynamic;
             _controllerFiltersSource = DataSource.FromStruct(filter);
 
             //SetTessellation(true, 1.0f);
@@ -80,18 +87,34 @@ namespace XREngine.Rendering.Physics.Physx
 
         public PxControllerManager* ControllerManagerPtr { get; }
 
-        public PhysxScene Scene => PhysxScene.Scenes[(nint)ControllerManagerPtr->GetScene()];
+        public PxObstacleContext* DefaultObstacleContextPtr
+            => ControllerManagerPtr->GetNbObstacleContexts() > 0 ? ControllerManagerPtr->GetObstacleContextMut(0) : null;
 
-        public Dictionary<nint, Controller> Controllers { get; } = [];
+        public PhysxScene Scene
+        {
+            get
+            {
+                var scenePtr = (nint)ControllerManagerPtr->GetScene();
+                if (PhysxScene.Scenes.TryGetValue(scenePtr, out var scene))
+                    return scene;
+                throw new KeyNotFoundException($"PhysxScene not found for PxScene* 0x{scenePtr:X}");
+            }
+        }
+
+        public ConcurrentDictionary<nint, Controller> Controllers { get; } = [];
 
         public uint ControllerCount => ControllerManagerPtr->GetNbControllers();
         public Controller[] GetControllers()
         {
             uint count = ControllerCount;
-            Controller[] controllers = new Controller[count];
+            var controllers = new List<Controller>((int)count);
             for (uint i = 0; i < count; i++)
-                controllers[i] = Controllers[(nint)ControllerManagerPtr->GetControllerMut(i)];
-            return controllers;
+            {
+                var ptr = (nint)ControllerManagerPtr->GetControllerMut(i);
+                if (Controllers.TryGetValue(ptr, out var controller))
+                    controllers.Add(controller);
+            }
+            return controllers.ToArray();
         }
         public BoxController CreateAABBController(
             Vector3 position,
@@ -132,8 +155,8 @@ namespace XREngine.Rendering.Physics.Physx
                 density,
                 scaleCoeff,
                 volumeGrowth,
-                controller.UserControllerHitReport,
-                null,//controller.ControllerBehaviorCallback, //TODO: doesn't work right now, access violation
+                null, // reportCallback - null avoids vtable callback crashes (smoke test uses null)
+                null, // behaviorCallback - null avoids vtable callback crashes
                 nonWalkableMode,
                 material,
                 clientID,
@@ -145,7 +168,11 @@ namespace XREngine.Rendering.Physics.Physx
                 throw new Exception("Invalid box controller description");
 
             controller.BoxControllerPtr = (PxBoxController*)ControllerManagerPtr->CreateControllerMut(genericDesc);
-            Controllers.Add((nint)controller.ControllerPtr, controller);
+            controller.Manager = this;
+            if (!Controllers.TryAdd((nint)controller.ControllerPtr, controller))
+                Debug.Log(ELogCategory.Physics, "[PhysxCache] ! Controllers duplicate key ptr=0x{0:X}", (nint)controller.ControllerPtr);
+
+            Debug.Log(ELogCategory.Physics, "[PhysxObj] + BoxController ptr=0x{0:X} actor=0x{1:X}", (nint)controller.ControllerPtr, (nint)controller.ControllerPtr->GetActor());
             return controller;
         }
 
@@ -188,8 +215,8 @@ namespace XREngine.Rendering.Physics.Physx
                 density,
                 scaleCoeff,
                 volumeGrowth,
-                controller.UserControllerHitReport,
-                null,//controller.ControllerBehaviorCallback, //TODO: doesn't work right now, access violation
+                null, // reportCallback - null avoids vtable callback crashes (smoke test uses null)
+                null, // behaviorCallback - null avoids vtable callback crashes
                 nonWalkableMode,
                 material,
                 clientID,
@@ -201,7 +228,11 @@ namespace XREngine.Rendering.Physics.Physx
                 throw new Exception("Invalid capsule controller description");
 
             controller.CapsuleControllerPtr = (PxCapsuleController*)ControllerManagerPtr->CreateControllerMut(genericDesc);
-            Controllers.Add((nint)controller.ControllerPtr, controller);
+            controller.Manager = this;
+            if (!Controllers.TryAdd((nint)controller.ControllerPtr, controller))
+                Debug.Log(ELogCategory.Physics, "[PhysxCache] ! Controllers duplicate key ptr=0x{0:X}", (nint)controller.ControllerPtr);
+
+            Debug.Log(ELogCategory.Physics, "[PhysxObj] + CapsuleController ptr=0x{0:X} actor=0x{1:X}", (nint)controller.ControllerPtr, (nint)controller.ControllerPtr->GetActor());
             return controller;
         }
 
@@ -253,8 +284,9 @@ namespace XREngine.Rendering.Physics.Physx
 
         public void DestroyAllControllers()
         {
+            Debug.Log(ELogCategory.Physics, "[PhysxObj] ~ ControllerManager DestroyAllControllers count={0}", Controllers.Count);
             foreach (var controller in Controllers.Values)
-                controller.Release();
+                controller.RequestRelease();
             ControllerManagerPtr->PurgeControllersMut();
             Controllers.Clear();
         }
@@ -283,15 +315,18 @@ namespace XREngine.Rendering.Physics.Physx
             PxObstacleContext* context = ControllerManagerPtr->CreateObstacleContextMut();
             var obstacleContext = new ObstacleContext(context);
             ObstacleContexts.Add((nint)context, obstacleContext);
+            Debug.Log(ELogCategory.Physics, "[PhysxObj] + ObstacleContext ptr=0x{0:X}", (nint)context);
             return obstacleContext;
         }
         public void ReleaseObstacleContext(ObstacleContext context)
         {
             context.Release();
             ObstacleContexts.Remove((nint)context.ContextPtr);
+            Debug.Log(ELogCategory.Physics, "[PhysxObj] - ObstacleContext ptr=0x{0:X}", (nint)context.ContextPtr);
         }
         public void DestroyAllObstacleContexts()
         {
+            Debug.Log(ELogCategory.Physics, "[PhysxObj] ~ DestroyAllObstacleContexts count={0}", ObstacleContexts.Count);
             foreach (var context in ObstacleContexts.Values)
                 context.Release();
             ObstacleContexts.Clear();

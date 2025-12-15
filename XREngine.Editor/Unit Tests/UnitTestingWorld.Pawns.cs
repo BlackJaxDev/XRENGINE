@@ -206,7 +206,7 @@ public static partial class UnitTestingWorld
         private static void InitMovement(CharacterMovement3DComponent movementComp)
         {
             movementComp.StandingHeight = 1.89f;
-            movementComp.SpawnPosition = new Vector3(0.0f, 10.0f, 0.0f);
+            movementComp.InitialPosition = new Vector3(0.0f, 10.0f, 0.0f);
             movementComp.Velocity = new Vector3(0.0f, 0.0f, 0.0f);
             //movementComp.JumpHoldForce = 1.0f;
             //movementComp.GravityOverride = new Vector3(0.0f, -1.0f, 0.0f);
@@ -369,7 +369,7 @@ public static partial class UnitTestingWorld
             //create node to translate camera up half the height of the character
             SceneNode cameraOffsetNode = new(footNode, "Camera Offset");
             var cameraOffsetTfm = cameraOffsetNode.SetTransform<Transform>();
-            cameraOffsetTfm.Translation = new Vector3(0.0f, 0.0f, 0.0f);
+            cameraOffsetTfm.Translation = new Vector3(0.0f, (movementComp.HalfHeight * 1.8f), 0.0f);
 
             SceneNode cameraParentNode;
             if (Toggles.ThirdPersonPawn)
@@ -444,7 +444,7 @@ public static partial class UnitTestingWorld
         public static void InitializeLocomotion(
             SceneNode rootNode,
             HumanoidComponent humanComp,
-            VRHeightScaleComponent heightScale,
+            HeightScaleBaseComponent heightScale,
             VRIKSolverComponent? vrIKSolver)
         {
             SceneNode rigidBodyNode;
@@ -459,7 +459,7 @@ public static partial class UnitTestingWorld
                 heightScale.CharacterMovementComponent = rigidBodyNode.GetComponent<CharacterMovement3DComponent>()!;
 
                 var player = rigidBodyNode.AddComponent<VRPlayerCharacterComponent>()!;
-                player.HeightScaleComponent = heightScale;
+                player.HeightScaleComponent = heightScale as VRHeightScaleComponent;
                 player.IKSolver = vrIKSolver;
                 player.HumanoidComponent = humanComp;
                 player.EyeLBoneName = EyeLNodeName;

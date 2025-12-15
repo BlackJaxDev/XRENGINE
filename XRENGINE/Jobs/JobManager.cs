@@ -644,10 +644,25 @@ namespace XREngine
             return true;
         }
 
-        internal void ProcessMainThreadJobs(int maxJobs = 128)
+        private int SnapshotQueuedMainThreadJobs()
         {
+            int total = 0;
+            for (int i = 0; i < PriorityLevels; i++)
+                total += Math.Max(0, Volatile.Read(ref _pendingMainThreadCounts[i]));
+            return total;
+        }
+
+        /// <summary>
+        /// Drains main-thread jobs that were already queued when this method begins.
+        /// This method never waits/spins for more work, and it will not chase newly-enqueued jobs.
+        /// </summary>
+        internal void ProcessMainThreadJobs(int maxJobs = int.MaxValue)
+        {
+            int snapshot = SnapshotQueuedMainThreadJobs();
+            int remaining = Math.Min(Math.Max(0, maxJobs), snapshot);
+
             int processed = 0;
-            while (processed < maxJobs && TryDequeueWithAging(_pendingMainThreadByPriority, JobAffinity.MainThread, out var job, out var bucket))
+            while (processed < remaining && TryDequeueWithAging(_pendingMainThreadByPriority, JobAffinity.MainThread, out var job, out var bucket))
             {
                 RecordWait(job, bucket);
                 ExecuteJob(job);
@@ -698,18 +713,11 @@ namespace XREngine
             return int.TryParse(value, out int parsed) && parsed > 0 ? parsed : null;
         }
 
-        private sealed class RemoteDispatchJob : Job
+        private sealed class RemoteDispatchJob(RemoteJobRequest request, IRemoteJobTransport transport, TaskCompletionSource<RemoteJobResponse> result) : Job
         {
-            private readonly RemoteJobRequest _request;
-            private readonly IRemoteJobTransport _transport;
-            private readonly TaskCompletionSource<RemoteJobResponse> _result;
-
-            public RemoteDispatchJob(RemoteJobRequest request, IRemoteJobTransport transport, TaskCompletionSource<RemoteJobResponse> result)
-            {
-                _request = request;
-                _transport = transport;
-                _result = result;
-            }
+            private readonly RemoteJobRequest _request = request;
+            private readonly IRemoteJobTransport _transport = transport;
+            private readonly TaskCompletionSource<RemoteJobResponse> _result = result;
 
             public override IEnumerable Process()
             {

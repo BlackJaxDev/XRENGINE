@@ -1047,10 +1047,9 @@ namespace XREngine.Rendering
                 if (skinned)
                     return false; // Skinned BVH build is asynchronous; try again next frame.
 
-                xrMesh.GenerateBVH();
-                bvh = xrMesh.BVHTree;
-                if (bvh is null)
-                    return false;
+                // Static BVH build is now scheduled through the job system; try again next frame.
+                _ = xrMesh.BVHTree;
+                return false;
             }
 
             Vector3 segmentSpaceStart;

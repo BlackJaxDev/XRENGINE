@@ -196,7 +196,9 @@ namespace XREngine.Scene.Transforms
                     }
             }
 
-            RecalculateMatrixHeirarchy(true, false, Engine.Rendering.ELoopType.Asynchronous);
+            // Intentionally do NOT force immediate matrix hierarchy recalculation here.
+            // SetPositionAndRotation() already marks the world matrix dirty; XRWorldInstance.PostUpdate
+            // will recalc transforms in a single, predictable place before rendering.
         }
 
         private (Vector3 position, Quaternion rotation) _lastPhysicsTransform;
@@ -256,7 +258,8 @@ namespace XREngine.Scene.Transforms
             private set => SetField(ref _lastRotation, value);
         }
 
-        internal void OnPhysicsStepped()
+        private int _steppedLogCount = 0;
+        public void OnPhysicsStepped()
         {
             if (RigidBody is null)
                 return;

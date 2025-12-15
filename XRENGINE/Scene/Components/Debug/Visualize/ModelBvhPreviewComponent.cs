@@ -15,6 +15,8 @@ namespace XREngine.Components;
 /// Only meshes that survive camera culling are visualized so the view stays uncluttered.
 /// </summary>
 [Serializable]
+[HideInInspector]
+[Obsolete("BVH preview is now available from the ModelComponent ImGui editor. This component remains for backward compatibility.")]
 public sealed class ModelBvhPreviewComponent : DebugVisualize3DComponent
 {
     private readonly Stack<BVHNode<Triangle>> _nodeStack = new();

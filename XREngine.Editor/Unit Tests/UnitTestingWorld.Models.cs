@@ -6,6 +6,7 @@ using XREngine.Animation;
 using XREngine.Animation.IK;
 using XREngine.Components;
 using XREngine.Components.Animation;
+using XREngine.Components.Movement;
 using XREngine.Components.Scene.Mesh;
 using XREngine.Data.Colors;
 using XREngine.Data.Components;
@@ -61,7 +62,7 @@ public static partial class UnitTestingWorld
                         characterParentNode.Transform.AddChild(node.Transform, false, true);
                     return node;
                 }
-                Task.Run(ImportAnimated).ContinueWith(nodeTask => OnFinishedImportingAvatar(nodeTask.Result));
+                Task.Run(ImportAnimated).ContinueWith(nodeTask => OnFinishedImportingAvatar(nodeTask.Result, characterParentNode));
                 //ModelImporter.ImportAsync(fbxPathDesktop, animFlags, null, null, characterParentNode, ModelScale, ModelZUp).ContinueWith(OnFinishedAvatarAsync);
             }
             if (Toggles.ImportStaticModel)
@@ -69,13 +70,29 @@ public static partial class UnitTestingWorld
                 var importedModelsNode = new SceneNode(rootNode) { Name = "Static Model Root" };
                 string path = Path.Combine(Engine.Assets.EngineAssetsPath, "Models", "Sponza", "sponza.obj");
 
-                //string path2 = Path.Combine(Engine.Assets.EngineAssetsPath, "Models", "main1_sponza", "NewSponza_Main_Yup_003.fbx");
-                //var task2 = ModelImporter.ImportAsync(path2, staticFlags, null, null, importedModelsNode, 1, false).ContinueWith(OnFinishedWorld);
+                (SceneNode? rootNode, IReadOnlyCollection<XRMaterial> materials, IReadOnlyCollection<XRMesh> meshes) ImportStatic()
+                {
+                    if (!File.Exists(path))
+                    {
+                        Debug.LogWarning($"Static model file not found at {path}");
+                        return (null, Array.Empty<XRMaterial>(), Array.Empty<XRMesh>());
+                    }
 
-                //string path = Path.Combine(Engine.Assets.EngineAssetsPath, "Models", "pkg_a_curtains", "NewSponza_Curtains_FBX_YUp.fbx");
-                var task1 = ModelImporter.ImportAsync(path, Toggles.StaticModelImportFlags, null, null, importedModelsNode, 1, false).ContinueWith(OnFinishedWorld);
+                    SceneNode? importedRoot = ModelImporter.Import(
+                        path,
+                        Toggles.StaticModelImportFlags,
+                        out var materials,
+                        out var meshes,
+                        onCompleted: null,
+                        materialFactory: null,
+                        parent: importedModelsNode,
+                        scaleConversion: 1.0f,
+                        zUp: false);
 
-                //await Task.WhenAll(task1, task2);
+                    return (importedRoot, materials, meshes);
+                }
+
+                Task.Run(ImportStatic).ContinueWith(OnFinishedWorld);
             }
         }
 
@@ -127,6 +144,9 @@ public static partial class UnitTestingWorld
             OnFinishedImportingAvatar(rootNode);
         }
         public static void OnFinishedImportingAvatar(SceneNode? rootNode)
+            => OnFinishedImportingAvatar(rootNode, characterParentNode: null);
+
+        public static void OnFinishedImportingAvatar(SceneNode? rootNode, SceneNode? characterParentNode)
         {
             if (rootNode is null)
                 return;
@@ -142,8 +162,18 @@ public static partial class UnitTestingWorld
             humanComp.HipToHeadIKEnabled = false;
 
             var animator = rootNode.AddComponent<AnimStateMachineComponent>()!;
-            var heightScale = rootNode.AddComponent<VRHeightScaleComponent>()!;
 
+            // VRHeightScaleComponent depends on VRState. For desktop locomotion we just scale once to fit the capsule.
+            HeightScaleBaseComponent? heightScale = null;
+            if (Toggles.VRPawn)
+                heightScale = rootNode.AddComponent<VRHeightScaleComponent>()!;
+            else
+            {
+                var desktopHeightScale = rootNode.AddComponent<HeightScaleComponent>()!;
+                heightScale = desktopHeightScale;
+                TryScaleAvatarToFitDesktopCapsule(rootNode, humanComp, desktopHeightScale, characterParentNode);
+            }
+            
             if (Toggles.FaceTracking)
             {
                 const string vrcftPrefix = "/avatar/parameters/";
@@ -291,8 +321,7 @@ public static partial class UnitTestingWorld
                 face.Humanoid = humanComp;
                 //deactivate glasses node
                 var glasses = humanComp.SceneNode?.FindDescendant(x => x.Name?.Contains("glasses", StringComparison.InvariantCultureIgnoreCase) ?? false);
-                if (glasses != null)
-                    glasses.IsActiveSelf = false;
+                glasses?.IsActiveSelf = false;
             }
 
             if (Toggles.AnimationClipVMD)
@@ -338,6 +367,49 @@ public static partial class UnitTestingWorld
                     }
                 }
             }
+        }
+
+        private static void TryScaleAvatarToFitDesktopCapsule(
+            SceneNode avatarRoot,
+            HumanoidComponent humanoid,
+            HeightScaleComponent heightScale,
+            SceneNode? characterParentNode)
+        {
+            // Determine the character capsule dimensions from the desktop character movement component.
+            var characterNode = characterParentNode?.Parent;
+            var movement = characterNode?.GetComponent<CharacterMovement3DComponent>();
+            if (movement is null)
+                return;
+
+            // Measure model height in bind space using the humanoid head vs root, similar to VRHeightScaleComponent.MeasureAvatarHeight.
+            var headNode = humanoid.Head.Node;
+            if (headNode is null)
+                return;
+
+            float headY = headNode.Transform.BindMatrix.Translation.Y;
+            float rootY = humanoid.SceneNode.Transform.BindMatrix.Translation.Y;
+            float modelHeight = headY - rootY;
+            if (!float.IsFinite(modelHeight) || modelHeight <= 0.001f)
+                return;
+
+            float capsuleOuterHeight = movement.CurrentHeight + 2.0f * (movement.Radius + movement.ContactOffset);
+            if (!float.IsFinite(capsuleOuterHeight) || capsuleOuterHeight <= 0.001f)
+                return;
+
+            // Use the HeightScaleComponent that was just added to apply measured height + a single uniform scale.
+            // Keep the desktop character capsule as the source of truth: only scale down (never up) to fit.
+            float rawRatio = capsuleOuterHeight / modelHeight;
+            if (!float.IsFinite(rawRatio) || rawRatio <= 0.0f)
+                return;
+
+            float ratio = MathF.Min(1.0f, rawRatio);
+
+            // Ensure the component has what it needs without letting it resize the character capsule.
+            heightScale.HumanoidComponent = humanoid;
+            heightScale.CharacterMovementComponent = null;
+
+            heightScale.ApplyMeasuredHeight(modelHeight);
+            heightScale.RealWorldHeightRatio = ratio;
         }
 
         #region Hardcoded stuff, varies per model

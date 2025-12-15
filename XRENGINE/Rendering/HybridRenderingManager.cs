@@ -632,6 +632,7 @@ namespace XREngine.Rendering
         private static void DispatchRenderIndirectRange(
             XRDataBuffer? indirectDrawBuffer,
             XRMeshRenderer? vaoRenderer,
+            XRDataBuffer? culledCommandsBuffer,
             uint drawOffset,
             uint drawCount,
             XRDataBuffer? parameterBuffer,
@@ -653,10 +654,14 @@ namespace XREngine.Rendering
             if (graphicsProgram is not null)
             {
                 graphicsProgram.Use();
+
+                // Bind per-draw command data (world matrix, etc.) for GPU-indirect vertex shader
+                culledCommandsBuffer?.BindTo(graphicsProgram, 0);
                 
                 // Set camera/engine uniforms
                 if (camera is not null)
                     renderer.SetEngineUniforms(graphicsProgram, camera);
+                // Legacy materials might still reference ModelMatrix; set a sensible default.
                 graphicsProgram.Uniform(EEngineUniform.ModelMatrix.ToString(), modelMatrix);
             }
 
@@ -1146,7 +1151,8 @@ namespace XREngine.Rendering
                     InstanceCount = gpuCommand.InstanceCount == 0 ? 1u : gpuCommand.InstanceCount,
                     FirstIndex = meshEntry.FirstIndex,
                     BaseVertex = (int)meshEntry.FirstVertex,
-                    BaseInstance = 0
+                    // Match GPURenderIndirect.comp: baseInstance encodes the culled-command index.
+                    BaseInstance = i
                 };
 
                 indirectDrawBuffer.SetDataRawAtIndex(written, drawCmd);
@@ -1220,36 +1226,18 @@ namespace XREngine.Rendering
                 GpuDebug($"  Shader type: {shader.Type}");
             }
 
-            // Ensure we only ever attach a single vertex shader to this combined program
-            int existingVertexIndex = shaderList.FindIndex(shader => shader.Type == EShaderType.Vertex);
-            GpuDebug($"Existing vertex shader index: {existingVertexIndex}");
-
-            if (existingVertexIndex >= 0)
+            // For GPU-driven indirect rendering we need a vertex shader that fetches the per-draw world matrix
+            // from the culled commands buffer (indexed by gl_BaseInstance). Material-provided vertex shaders
+            // generally assume CPU-driven per-object uniforms.
+            for (int i = shaderList.Count - 1; i >= 0; --i)
             {
-                for (int i = shaderList.Count - 1; i >= 0; --i)
-                {
-                    if (shaderList[i].Type == EShaderType.Vertex && i != existingVertexIndex)
-                    {
-                        if (_warnedMultiVertexMaterials.Add(materialID) && (Engine.UserSettings?.EnableGpuIndirectDebugLogging ?? false))
-                            Debug.Out($"Material {material.Name ?? "<unnamed>"} has multiple vertex shaders; keeping the first and discarding the rest for combined program.");
-                        shaderList.RemoveAt(i);
-                    }
-                }
+                if (shaderList[i].Type == EShaderType.Vertex)
+                    shaderList.RemoveAt(i);
             }
 
-            XRShader? generatedVertexShader = null;
-
-            // If the material lacks a vertex shader, generate a default one using the VAO's mesh
-            if (existingVertexIndex < 0)
-            {
-                GpuDebug("Material lacks vertex shader - generating default");
-                generatedVertexShader = CreateDefaultVertexShader(vaoRenderer);
-                if (generatedVertexShader is not null)
-                {
-                    shaderList.Add(generatedVertexShader);
-                    GpuDebug("Vertex shader added to shader list");
-                }
-            }
+            XRShader? generatedVertexShader = CreateGpuIndirectVertexShader(vaoRenderer);
+            if (generatedVertexShader is not null)
+                shaderList.Add(generatedVertexShader);
 
             GpuDebug($"Final shader list count: {shaderList.Count}");
             //Debug.Out("Creating and linking program...");
@@ -1268,6 +1256,123 @@ namespace XREngine.Rendering
             //Debug.Out("Program cached");
             
             return program;
+        }
+
+        private XRShader? CreateGpuIndirectVertexShader(XRMeshRenderer? vaoRenderer)
+        {
+            // Build a vertex shader compatible with the engine's default fragment shader expectations,
+            // but sourcing ModelMatrix from the culled command buffer via gl_BaseInstance.
+            var sb = new StringBuilder();
+            sb.AppendLine("#version 460");
+            sb.AppendLine();
+            sb.AppendLine("// GPU indirect: per-draw command data (float[48]) bound at SSBO binding=0");
+            sb.AppendLine("layout(std430, binding = 0) buffer CulledCommandsBuffer { float culled[]; };");
+            sb.AppendLine("const int COMMAND_FLOATS = 48;");
+            sb.AppendLine();
+
+            uint location = 0;
+            sb.AppendLine($"layout(location={location++}) in vec3 {ECommonBufferType.Position};");
+
+            bool hasNormals = HasRendererBuffer(vaoRenderer, ECommonBufferType.Normal.ToString());
+            bool hasTangents = HasRendererBuffer(vaoRenderer, ECommonBufferType.Tangent.ToString());
+
+            if (hasNormals)
+                sb.AppendLine($"layout(location={location++}) in vec3 {ECommonBufferType.Normal};");
+            if (hasTangents)
+                sb.AppendLine($"layout(location={location++}) in vec4 {ECommonBufferType.Tangent};");
+
+            var texCoordBindings = GetRendererBuffersWithPrefix(vaoRenderer, ECommonBufferType.TexCoord.ToString());
+            foreach (string binding in texCoordBindings)
+                sb.AppendLine($"layout(location={location++}) in vec2 {binding};");
+
+            var colorBindings = GetRendererBuffersWithPrefix(vaoRenderer, ECommonBufferType.Color.ToString());
+            foreach (string binding in colorBindings)
+                sb.AppendLine($"layout(location={location++}) in vec4 {binding};");
+
+            sb.AppendLine("layout(location=0) out vec3 FragPos;");
+            sb.AppendLine("layout(location=1) out vec3 FragNorm;");
+            if (hasTangents)
+            {
+                sb.AppendLine("layout(location=2) out vec3 FragTan;");
+                sb.AppendLine("layout(location=3) out vec3 FragBinorm;");
+            }
+
+            for (int i = 0; i < texCoordBindings.Count && i < 8; ++i)
+                sb.AppendLine($"layout(location={4 + i}) out vec2 {string.Format(DefaultVertexShaderGenerator.FragUVName, i)};");
+
+            for (int i = 0; i < colorBindings.Count && i < 8; ++i)
+                sb.AppendLine($"layout(location={12 + i}) out vec4 {string.Format(DefaultVertexShaderGenerator.FragColorName, i)};");
+
+            sb.AppendLine($"layout(location=20) out vec3 {DefaultVertexShaderGenerator.FragPosLocalName};");
+            sb.AppendLine();
+
+            sb.AppendLine($"uniform mat4 {EEngineUniform.ViewMatrix}{DefaultVertexShaderGenerator.VertexUniformSuffix};");
+            sb.AppendLine($"uniform mat4 {EEngineUniform.InverseViewMatrix}{DefaultVertexShaderGenerator.VertexUniformSuffix};");
+            sb.AppendLine($"uniform mat4 {EEngineUniform.ProjMatrix}{DefaultVertexShaderGenerator.VertexUniformSuffix};");
+            sb.AppendLine($"uniform bool {EEngineUniform.VRMode};");
+            sb.AppendLine();
+
+            sb.AppendLine("mat4 LoadWorldMatrix(uint commandIndex)");
+            sb.AppendLine("{");
+            sb.AppendLine("    int base = int(commandIndex) * COMMAND_FLOATS;");
+            sb.AppendLine("    // Matrix4x4 is row-major in CPU memory; construct GLSL mat4 by columns.");
+            sb.AppendLine("    vec4 c0 = vec4(culled[base+0], culled[base+4], culled[base+8],  culled[base+12]);");
+            sb.AppendLine("    vec4 c1 = vec4(culled[base+1], culled[base+5], culled[base+9],  culled[base+13]);");
+            sb.AppendLine("    vec4 c2 = vec4(culled[base+2], culled[base+6], culled[base+10], culled[base+14]);");
+            sb.AppendLine("    vec4 c3 = vec4(culled[base+3], culled[base+7], culled[base+11], culled[base+15]);");
+            sb.AppendLine("    return mat4(c0, c1, c2, c3);");
+            sb.AppendLine("}");
+            sb.AppendLine();
+
+            sb.AppendLine("void main()");
+            sb.AppendLine("{");
+            sb.AppendLine("    mat4 ModelMatrix = LoadWorldMatrix(uint(gl_BaseInstance));");
+            sb.AppendLine("    vec4 localPos = vec4(Position, 1.0);");
+            sb.AppendLine($"    {DefaultVertexShaderGenerator.FragPosLocalName} = localPos.xyz;");
+            sb.AppendLine($"    mat4 viewMatrix = {EEngineUniform.ViewMatrix}{DefaultVertexShaderGenerator.VertexUniformSuffix};");
+            sb.AppendLine("    vec4 worldPos = ModelMatrix * localPos;");
+            sb.AppendLine($"    vec4 clipPos = {EEngineUniform.ProjMatrix}{DefaultVertexShaderGenerator.VertexUniformSuffix} * viewMatrix * worldPos;");
+            sb.AppendLine($"    if ({EEngineUniform.VRMode})");
+            sb.AppendLine("        FragPos = worldPos.xyz;");
+            sb.AppendLine("    else");
+            sb.AppendLine("        FragPos = clipPos.xyz / max(clipPos.w, 1e-6);");
+            sb.AppendLine();
+
+            if (hasNormals || hasTangents)
+                sb.AppendLine("    mat3 normalMatrix = transpose(inverse(mat3(ModelMatrix)));");
+
+            if (hasNormals)
+            {
+                sb.AppendLine("    FragNorm = normalize(normalMatrix * Normal);");
+                if (hasTangents)
+                {
+                    sb.AppendLine("    FragTan = normalize(normalMatrix * Tangent.xyz);");
+                    sb.AppendLine("    FragBinorm = normalize(cross(FragNorm, FragTan));");
+                }
+            }
+            else
+            {
+                sb.AppendLine("    FragNorm = vec3(0.0, 0.0, 1.0);");
+                if (hasTangents)
+                {
+                    sb.AppendLine("    FragTan = vec3(1.0, 0.0, 0.0);");
+                    sb.AppendLine("    FragBinorm = vec3(0.0, 1.0, 0.0);");
+                }
+            }
+
+            for (int i = 0; i < texCoordBindings.Count && i < 8; ++i)
+                sb.AppendLine($"    {string.Format(DefaultVertexShaderGenerator.FragUVName, i)} = {texCoordBindings[i]};");
+
+            for (int i = 0; i < colorBindings.Count && i < 8; ++i)
+                sb.AppendLine($"    {string.Format(DefaultVertexShaderGenerator.FragColorName, i)} = {colorBindings[i]};");
+
+            sb.AppendLine("    gl_Position = clipPos;");
+            sb.AppendLine("}");
+
+            return new XRShader(EShaderType.Vertex, sb.ToString())
+            {
+                Name = "GPUIndirect_AutoVS"
+            };
         }
 
         private XRShader? CreateDefaultVertexShader(XRMeshRenderer? vaoRenderer)
@@ -1629,6 +1734,7 @@ namespace XREngine.Rendering
                 DispatchRenderIndirectRange(
                     indirectDrawBuffer,
                     vaoRenderer,
+                    renderPasses.CulledSceneToRenderBuffer,
                     batch.Offset,
                     effectiveCount,
                     dispatchParameterBuffer,

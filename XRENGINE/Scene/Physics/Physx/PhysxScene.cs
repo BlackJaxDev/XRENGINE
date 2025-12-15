@@ -1,5 +1,6 @@
 ﻿using Extensions;
 using MagicPhysX;
+using System.Collections.Concurrent;
 using System.Numerics;
 using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
@@ -24,7 +25,7 @@ namespace XREngine.Rendering.Physics.Physx
         private static PxPhysics* _physicsPtr;
         public static PxPhysics* PhysicsPtr => _physicsPtr;
 
-        public static Dictionary<nint, PhysxScene> Scenes { get; } = [];
+        public static ConcurrentDictionary<nint, PhysxScene> Scenes { get; } = new();
 
         static PhysxScene()
         {
@@ -88,7 +89,19 @@ namespace XREngine.Rendering.Physics.Physx
 
             if (_scene is not null)
             {
-                Scenes.Remove((nint)_scene);
+                Debug.Log(ELogCategory.Physics, "[PhysxScene] Clearing caches shapes={0} joints={1}", Shapes.Count, Joints.Count);
+                Shapes.Clear();
+                Joints.Clear();
+                ContactJoints.Clear();
+                DistanceJoints.Clear();
+                D6Joints.Clear();
+                FixedJoints.Clear();
+                PrismaticJoints.Clear();
+                RevoluteJoints.Clear();
+                SphericalJoints.Clear();
+
+                Scenes.TryRemove(new KeyValuePair<nint, PhysxScene>((nint)_scene, this));
+                PhysxObjectLog.Released(this, (nint)_scene, "scene-destroy");
                 _scene->ReleaseMut();
                 _scene = null;
             }
@@ -228,41 +241,43 @@ namespace XREngine.Rendering.Physics.Physx
             sceneDesc.gravity = DefaultGravity;
             sceneDesc.cpuDispatcher = _dispatcher = (PxCpuDispatcher*)phys_PxDefaultCpuDispatcherCreate(4, null, PxDefaultCpuDispatcherWaitForWorkMode.WaitForWork, 0);
 
-            ConfigureSimulationEventCallbacks(ref sceneDesc);
+            // DISABLED: Simulation event callbacks may cause issues - smoke test doesn't use them
+            // ConfigureSimulationEventCallbacks(ref sceneDesc);
 
             sceneDesc.filterShader = get_default_simulation_filter_shader();
-            var filterShaderCallback = (delegate* unmanaged[Cdecl]<FilterShaderCallbackInfo*, PxFilterFlags>)Marshal.GetFunctionPointerForDelegate(CustomFilterShaderInstance).ToPointer();
-            enable_custom_filter_shader(&sceneDesc, filterShaderCallback, 1u);
+            // DISABLED: Custom filter shader may cause issues with CCT scene queries.
+            // The smoke test works without any custom filter shader.
+            // var filterShaderCallback = (delegate* unmanaged[Cdecl]<FilterShaderCallbackInfo*, PxFilterFlags>)Marshal.GetFunctionPointerForDelegate(CustomFilterShaderInstance).ToPointer();
+            // enable_custom_filter_shader(&sceneDesc, filterShaderCallback, 1u);
 
             sceneDesc.flags =
                 PxSceneFlags.EnableCcd |
                 PxSceneFlags.EnableActiveActors;
             //PxSceneFlags.EnableStabilization |
             //PxSceneFlags.EnableEnhancedDeterminism;
-            sceneDesc.broadPhaseType = PxBroadPhaseType.Gpu;
-            var gpuMemorySettings = Engine.Rendering.Settings.PhysicsGpuMemorySettings;
-            sceneDesc.gpuDynamicsConfig = new PxgDynamicsMemoryConfig
-            {
-                maxRigidContactCount = gpuMemorySettings.MaxRigidContactCount,
-                maxRigidPatchCount = gpuMemorySettings.MaxRigidPatchCount,
-                tempBufferCapacity = gpuMemorySettings.TempBufferCapacity,
-                heapCapacity = gpuMemorySettings.HeapCapacity,
-                foundLostPairsCapacity = gpuMemorySettings.FoundLostPairsCapacity,
-                foundLostAggregatePairsCapacity = gpuMemorySettings.FoundLostAggregatePairsCapacity,
-                totalAggregatePairsCapacity = gpuMemorySettings.TotalAggregatePairsCapacity,
-                maxSoftBodyContacts = gpuMemorySettings.MaxSoftBodyContacts,
-                maxFemClothContacts = gpuMemorySettings.MaxFemClothContacts,
-                maxParticleContacts = gpuMemorySettings.MaxParticleContacts,
-                collisionStackSize = gpuMemorySettings.CollisionStackSize,
-                maxHairContacts = gpuMemorySettings.MaxHairContacts
-            };
+            
+            // Use SAP broadphase like the working smoke test (GPU broadphase may have issues with CCT)
+            sceneDesc.broadPhaseType = PxBroadPhaseType.Sap;
+            // GPU memory config only applies to GPU broadphase, skip for SAP
+            // var gpuMemorySettings = Engine.Rendering.Settings.PhysicsGpuMemorySettings;
+            // sceneDesc.gpuDynamicsConfig = new PxgDynamicsMemoryConfig { ... };
             _scene = _physicsPtr->CreateSceneMut(&sceneDesc);
-            Scenes.Add((nint)_scene, this);
+            PhysxObjectLog.Created(this, (nint)_scene, "scene-created");
+            if (!Scenes.TryAdd((nint)_scene, this))
+                Debug.Log(ELogCategory.Physics, "[PhysxScene] Duplicate scene ptr registered ptr=0x{0:X}", (nint)_scene);
 
             LinkVisualizationSettings();
         }
 
         public DataSource? _scratchBlock = new(32000, true);
+
+        private readonly ConcurrentQueue<Controller> _pendingControllerReleases = new();
+        internal void QueueControllerRelease(Controller controller)
+        {
+            if (controller is null)
+                return;
+            _pendingControllerReleases.Enqueue(controller);
+        }
 
         public override unsafe void StepSimulation()
         {
@@ -271,6 +286,19 @@ namespace XREngine.Rendering.Physics.Physx
             float dt = Engine.Time.Timer.FixedUpdateDelta;
             //Debug.Physics($"[PhysxScene] StepSimulation dt={dt}");
             //System.IO.File.AppendAllText("physx_debug.log", $"[PhysxScene] StepSimulation dt={dt}\n");
+
+            // Process deferred controller releases first so PxController::move never races PxController::release.
+            while (_pendingControllerReleases.TryDequeue(out var pendingRelease))
+            {
+                try
+                {
+                    pendingRelease.ReleaseNativeNow();
+                }
+                catch (Exception ex)
+                {
+                    Debug.Log(ELogCategory.Physics, "[PhysxScene] Deferred controller release failed: {0}", ex);
+                }
+            }
 
             var controllers = _controllerManager?.Controllers?.Values;
             if (controllers is not null)
@@ -310,7 +338,8 @@ namespace XREngine.Rendering.Physics.Physx
         }
 
         public void Simulate(float elapsedTime, PxBaseTask* completionTask, bool controlSimulation)
-            => _scene->SimulateMut(elapsedTime, completionTask, _scratchBlock is null ? null : _scratchBlock.Address.Pointer, _scratchBlock?.Length ?? 0, controlSimulation);
+            // Match smoke test: pass null scratch block instead of custom one
+            => _scene->SimulateMut(elapsedTime, completionTask, null, 0, controlSimulation);
         public void Collide(float elapsedTime, PxBaseTask* completionTask, bool controlSimulation)
             => _scene->CollideMut(elapsedTime, completionTask, _scratchBlock is null ? null : _scratchBlock.Address.Pointer, _scratchBlock?.Length ?? 0, controlSimulation);
         public void FlushSimulation(bool sendPendingReports)
@@ -400,27 +429,60 @@ namespace XREngine.Rendering.Physics.Physx
 
         public void AddActor(PhysxActor actor)
         {
+            // PhysX disallows adding the same actor twice; this can happen for actors managed by other systems
+            // (e.g. CCT hidden actor) where the actor is already inserted into a scene.
+            if (actor.ScenePtr is not null)
+            {
+                if (actor.ScenePtr == _scene)
+                {
+                    Debug.Log(ELogCategory.Physics, "[PhysxScene] Skipped AddActor: actor already in this scene actorType={0} ptr=0x{1:X}", actor.GetType().Name, (nint)actor.ActorPtr);
+                    return;
+                }
+
+                Debug.Log(ELogCategory.Physics, "[PhysxScene] Skipped AddActor: actor already in another scene actorType={0} ptr=0x{1:X}", actor.GetType().Name, (nint)actor.ActorPtr);
+                return;
+            }
+
             _scene->AddActorMut(actor.ActorPtr, null);
             actor.OnAddedToScene(this);
-            Debug.Physics("[PhysxScene] Added actorType={0} group={1} mask={2}", actor.GetType().Name, actor is PhysxActor pa ? pa.CollisionGroup : (ushort)0, actor is PhysxActor pa2 ? FormatGroupsMask(pa2.GroupsMask) : "----");
+            Debug.Log(ELogCategory.Physics, "[PhysxScene] Added actorType={0} ptr=0x{1:X} group={2} mask={3}", actor.GetType().Name, (nint)actor.ActorPtr, actor is PhysxActor pa ? pa.CollisionGroup : (ushort)0, actor is PhysxActor pa2 ? FormatGroupsMask(pa2.GroupsMask) : "----");
         }
         public void AddActors(PhysxActor[] actors)
         {
-            PxActor** ptrs = stackalloc PxActor*[actors.Length];
-            for (int i = 0; i < actors.Length; i++)
-                ptrs[i] = actors[i].ActorPtr;
-            _scene->AddActorsMut(ptrs, (uint)actors.Length);
-            foreach (var actor in actors)
+            // Filter out actors already assigned to a scene to avoid PhysX invalid-operation warnings.
+            var addList = new List<PhysxActor>(actors.Length);
+            foreach (var a in actors)
+            {
+                if (a.ScenePtr is null)
+                {
+                    addList.Add(a);
+                    continue;
+                }
+
+                if (a.ScenePtr == _scene)
+                    Debug.Log(ELogCategory.Physics, "[PhysxScene] Skipped AddActors: actor already in this scene actorType={0} ptr=0x{1:X}", a.GetType().Name, (nint)a.ActorPtr);
+                else
+                    Debug.Log(ELogCategory.Physics, "[PhysxScene] Skipped AddActors: actor already in another scene actorType={0} ptr=0x{1:X}", a.GetType().Name, (nint)a.ActorPtr);
+            }
+
+            if (addList.Count == 0)
+                return;
+
+            PxActor** ptrs = stackalloc PxActor*[addList.Count];
+            for (int i = 0; i < addList.Count; i++)
+                ptrs[i] = addList[i].ActorPtr;
+            _scene->AddActorsMut(ptrs, (uint)addList.Count);
+            foreach (var actor in addList)
             {
                 actor.OnAddedToScene(this);
-                Debug.Physics("[PhysxScene] Added actorType={0} group={1} mask={2}", actor.GetType().Name, actor is PhysxActor pa ? pa.CollisionGroup : (ushort)0, actor is PhysxActor pa2 ? FormatGroupsMask(pa2.GroupsMask) : "----");
+                Debug.Log(ELogCategory.Physics, "[PhysxScene] Added actorType={0} ptr=0x{1:X} group={2} mask={3}", actor.GetType().Name, (nint)actor.ActorPtr, actor is PhysxActor pa ? pa.CollisionGroup : (ushort)0, actor is PhysxActor pa2 ? FormatGroupsMask(pa2.GroupsMask) : "----");
             }
         }
         public void RemoveActor(PhysxActor actor, bool wakeOnLostTouch = false)
         {
             _scene->RemoveActorMut(actor.ActorPtr, wakeOnLostTouch);
             actor.OnRemovedFromScene(this);
-            Debug.Physics("[PhysxScene] Removed actorType={0}", actor.GetType().Name);
+            Debug.Log(ELogCategory.Physics, "[PhysxScene] Removed actorType={0} ptr=0x{1:X}", actor.GetType().Name, (nint)actor.ActorPtr);
         }
         public void RemoveActors(PhysxActor[] actors, bool wakeOnLostTouch = false)
         {
@@ -431,7 +493,7 @@ namespace XREngine.Rendering.Physics.Physx
             foreach (var actor in actors)
             {
                 actor.OnRemovedFromScene(this);
-                Debug.Physics("[PhysxScene] Removed actorType={0}", actor.GetType().Name);
+                Debug.Log(ELogCategory.Physics, "[PhysxScene] Removed actorType={0} ptr=0x{1:X}", actor.GetType().Name, (nint)actor.ActorPtr);
             }
         }
 
@@ -506,7 +568,7 @@ namespace XREngine.Rendering.Physics.Physx
         }
 
 
-        public Dictionary<nint, PhysxShape> Shapes { get; } = [];
+        public ConcurrentDictionary<nint, PhysxShape> Shapes { get; } = new();
         public PhysxShape? GetShape(PxShape* ptr)
         {
             if (ptr is null)
@@ -516,6 +578,7 @@ namespace XREngine.Rendering.Physics.Physx
             {
                 shape = PhysxShape.Get(ptr) ?? new PhysxShape(ptr);
                 Shapes[(nint)ptr] = shape;
+                Debug.Log(ELogCategory.Physics, "[PhysxScene] Registered shape ptr=0x{0:X}", (nint)ptr);
 
                 /*
                 var flags = ptr->GetFlags();
@@ -533,11 +596,11 @@ namespace XREngine.Rendering.Physics.Physx
 
         #region Joints
 
-        public Dictionary<nint, PhysxJoint> Joints { get; } = [];
+        public ConcurrentDictionary<nint, PhysxJoint> Joints { get; } = new();
         public PhysxJoint? GetJoint(PxJoint* ptr)
             => Joints.TryGetValue((nint)ptr, out var joint) ? joint : null;
 
-        public Dictionary<nint, PhysxJoint_Contact> ContactJoints { get; } = [];
+        public ConcurrentDictionary<nint, PhysxJoint_Contact> ContactJoints { get; } = new();
         public PhysxJoint_Contact? GetContactJoint(PxContactJoint* ptr)
             => ContactJoints.TryGetValue((nint)ptr, out var joint) ? joint : null;
         public PhysxJoint_Contact NewContactJoint(PhysxRigidActor actor0, (Vector3 position, Quaternion rotation) localFrame0, PhysxRigidActor actor1, (Vector3 position, Quaternion rotation) localFrame1)
@@ -546,12 +609,13 @@ namespace XREngine.Rendering.Physics.Physx
             PxTransform pxlocalFrame1 = new() { p = localFrame1.position, q = localFrame1.rotation };
             var joint = PhysicsPtr->PhysPxContactJointCreate(actor0.RigidActorPtr, &pxlocalFrame0, actor1.RigidActorPtr, &pxlocalFrame1);
             var jointObj = new PhysxJoint_Contact(joint);
-            Joints.Add((nint)joint, jointObj);
-            ContactJoints.Add((nint)joint, jointObj);
+            Joints[(nint)joint] = jointObj;
+            ContactJoints[(nint)joint] = jointObj;
+            Debug.Log(ELogCategory.Physics, "[PhysxObj] + PhysxJoint_Contact ptr=0x{0:X}", (nint)joint);
             return jointObj;
         }
 
-        public Dictionary<nint, PhysxJoint_Distance> DistanceJoints { get; } = [];
+        public ConcurrentDictionary<nint, PhysxJoint_Distance> DistanceJoints { get; } = new();
         public PhysxJoint_Distance? GetDistanceJoint(PxDistanceJoint* ptr)
             => DistanceJoints.TryGetValue((nint)ptr, out var joint) ? joint : null;
         public PhysxJoint_Distance NewDistanceJoint(PhysxRigidActor actor0, (Vector3 position, Quaternion rotation) localFrame0, PhysxRigidActor actor1, (Vector3 position, Quaternion rotation) localFrame1)
@@ -560,12 +624,13 @@ namespace XREngine.Rendering.Physics.Physx
             PxTransform pxlocalFrame1 = new() { p = localFrame1.position, q = localFrame1.rotation };
             var joint = PhysicsPtr->PhysPxDistanceJointCreate(actor0.RigidActorPtr, &pxlocalFrame0, actor1.RigidActorPtr, &pxlocalFrame1);
             var jointObj = new PhysxJoint_Distance(joint);
-            Joints.Add((nint)joint, jointObj);
-            DistanceJoints.Add((nint)joint, jointObj);
+            Joints[(nint)joint] = jointObj;
+            DistanceJoints[(nint)joint] = jointObj;
+            Debug.Log(ELogCategory.Physics, "[PhysxObj] + PhysxJoint_Distance ptr=0x{0:X}", (nint)joint);
             return jointObj;
         }
 
-        public Dictionary<nint, PhysxJoint_D6> D6Joints { get; } = [];
+        public ConcurrentDictionary<nint, PhysxJoint_D6> D6Joints { get; } = new();
         public PhysxJoint_D6? GetD6Joint(PxD6Joint* ptr)
             => D6Joints.TryGetValue((nint)ptr, out var joint) ? joint : null;
         public PhysxJoint_D6 NewD6Joint(PhysxRigidActor actor0, (Vector3 position, Quaternion rotation) localFrame0, PhysxRigidActor actor1, (Vector3 position, Quaternion rotation) localFrame1)
@@ -574,12 +639,13 @@ namespace XREngine.Rendering.Physics.Physx
             PxTransform pxlocalFrame1 = new() { p = localFrame1.position, q = localFrame1.rotation };
             var joint = PhysicsPtr->PhysPxD6JointCreate(actor0.RigidActorPtr, &pxlocalFrame0, actor1.RigidActorPtr, &pxlocalFrame1);
             var jointObj = new PhysxJoint_D6(joint);
-            Joints.Add((nint)joint, jointObj);
-            D6Joints.Add((nint)joint, jointObj);
+            Joints[(nint)joint] = jointObj;
+            D6Joints[(nint)joint] = jointObj;
+            Debug.Log(ELogCategory.Physics, "[PhysxObj] + PhysxJoint_D6 ptr=0x{0:X}", (nint)joint);
             return jointObj;
         }
 
-        public Dictionary<nint, PhysxJoint_Fixed> FixedJoints { get; } = [];
+        public ConcurrentDictionary<nint, PhysxJoint_Fixed> FixedJoints { get; } = new();
         public PhysxJoint_Fixed? GetFixedJoint(PxFixedJoint* ptr)
             => FixedJoints.TryGetValue((nint)ptr, out var joint) ? joint : null;
         public PhysxJoint_Fixed NewFixedJoint(PhysxRigidActor actor0, (Vector3 position, Quaternion rotation) localFrame0, PhysxRigidActor actor1, (Vector3 position, Quaternion rotation) localFrame1)
@@ -588,12 +654,13 @@ namespace XREngine.Rendering.Physics.Physx
             PxTransform pxlocalFrame1 = new() { p = localFrame1.position, q = localFrame1.rotation };
             var joint = PhysicsPtr->PhysPxFixedJointCreate(actor0.RigidActorPtr, &pxlocalFrame0, actor1.RigidActorPtr, &pxlocalFrame1);
             var jointObj = new PhysxJoint_Fixed(joint);
-            Joints.Add((nint)joint, jointObj);
-            FixedJoints.Add((nint)joint, jointObj);
+            Joints[(nint)joint] = jointObj;
+            FixedJoints[(nint)joint] = jointObj;
+            Debug.Log(ELogCategory.Physics, "[PhysxObj] + PhysxJoint_Fixed ptr=0x{0:X}", (nint)joint);
             return jointObj;
         }
 
-        public Dictionary<nint, PhysxJoint_Prismatic> PrismaticJoints { get; } = [];
+        public ConcurrentDictionary<nint, PhysxJoint_Prismatic> PrismaticJoints { get; } = new();
         public PhysxJoint_Prismatic? GetPrismaticJoint(PxPrismaticJoint* ptr)
             => PrismaticJoints.TryGetValue((nint)ptr, out var joint) ? joint : null;
         public PhysxJoint_Prismatic NewPrismaticJoint(PhysxRigidActor actor0, (Vector3 position, Quaternion rotation) localFrame0, PhysxRigidActor actor1, (Vector3 position, Quaternion rotation) localFrame1)
@@ -602,12 +669,13 @@ namespace XREngine.Rendering.Physics.Physx
             PxTransform pxlocalFrame1 = new() { p = localFrame1.position, q = localFrame1.rotation };
             var joint = PhysicsPtr->PhysPxPrismaticJointCreate(actor0.RigidActorPtr, &pxlocalFrame0, actor1.RigidActorPtr, &pxlocalFrame1);
             var jointObj = new PhysxJoint_Prismatic(joint);
-            Joints.Add((nint)joint, jointObj);
-            PrismaticJoints.Add((nint)joint, jointObj);
+            Joints[(nint)joint] = jointObj;
+            PrismaticJoints[(nint)joint] = jointObj;
+            Debug.Log(ELogCategory.Physics, "[PhysxObj] + PhysxJoint_Prismatic ptr=0x{0:X}", (nint)joint);
             return jointObj;
         }
 
-        public Dictionary<nint, PhysxJoint_Revolute> RevoluteJoints { get; } = [];
+        public ConcurrentDictionary<nint, PhysxJoint_Revolute> RevoluteJoints { get; } = new();
         public PhysxJoint_Revolute? GetRevoluteJoint(PxRevoluteJoint* ptr)
             => RevoluteJoints.TryGetValue((nint)ptr, out var joint) ? joint : null;
         public PhysxJoint_Revolute NewRevoluteJoint(PhysxRigidActor actor0, (Vector3 position, Quaternion rotation) localFrame0, PhysxRigidActor actor1, (Vector3 position, Quaternion rotation) localFrame1)
@@ -616,12 +684,13 @@ namespace XREngine.Rendering.Physics.Physx
             PxTransform pxlocalFrame1 = new() { p = localFrame1.position, q = localFrame1.rotation };
             var joint = PhysicsPtr->PhysPxRevoluteJointCreate(actor0.RigidActorPtr, &pxlocalFrame0, actor1.RigidActorPtr, &pxlocalFrame1);
             var jointObj = new PhysxJoint_Revolute(joint);
-            Joints.Add((nint)joint, jointObj);
-            RevoluteJoints.Add((nint)joint, jointObj);
+            Joints[(nint)joint] = jointObj;
+            RevoluteJoints[(nint)joint] = jointObj;
+            Debug.Log(ELogCategory.Physics, "[PhysxObj] + PhysxJoint_Revolute ptr=0x{0:X}", (nint)joint);
             return jointObj;
         }
 
-        public Dictionary<nint, PhysxJoint_Spherical> SphericalJoints { get; } = [];
+        public ConcurrentDictionary<nint, PhysxJoint_Spherical> SphericalJoints { get; } = new();
         public PhysxJoint_Spherical? GetSphericalJoint(PxSphericalJoint* ptr)
             => SphericalJoints.TryGetValue((nint)ptr, out var joint) ? joint : null;
         public PhysxJoint_Spherical NewSphericalJoint(PhysxRigidActor actor0, (Vector3 position, Quaternion rotation) localFrame0, PhysxRigidActor actor1, (Vector3 position, Quaternion rotation) localFrame1)
@@ -630,8 +699,9 @@ namespace XREngine.Rendering.Physics.Physx
             PxTransform pxlocalFrame1 = new() { p = localFrame1.position, q = localFrame1.rotation };
             var joint = PhysicsPtr->PhysPxSphericalJointCreate(actor0.RigidActorPtr, &pxlocalFrame0, actor1.RigidActorPtr, &pxlocalFrame1);
             var jointObj = new PhysxJoint_Spherical(joint);
-            Joints.Add((nint)joint, jointObj);
-            SphericalJoints.Add((nint)joint, jointObj);
+            Joints[(nint)joint] = jointObj;
+            SphericalJoints[(nint)joint] = jointObj;
+            Debug.Log(ELogCategory.Physics, "[PhysxObj] + PhysxJoint_Spherical ptr=0x{0:X}", (nint)joint);
             return jointObj;
         }
 
@@ -968,14 +1038,39 @@ namespace XREngine.Rendering.Physics.Physx
 
         private ControllerManager? _controllerManager;
         public ControllerManager GetOrCreateControllerManager(bool lockingEnabled = false)
-            => _controllerManager ??= new ControllerManager(_scene->PhysPxCreateControllerManager(lockingEnabled));
+        {
+            if (_controllerManager is not null)
+                return _controllerManager;
+
+            var mgrPtr = _scene->PhysPxCreateControllerManager(lockingEnabled);
+            _controllerManager = new ControllerManager(mgrPtr);
+            Debug.Log(ELogCategory.Physics, "[PhysxObj] + ControllerManager ptr=0x{0:X} lockingEnabled={1}", (nint)mgrPtr, lockingEnabled);
+            return _controllerManager;
+        }
 
         public void ReleaseControllerManager()
         {
             if (_controllerManager == null)
                 return;
+
+            Debug.Log(ELogCategory.Physics, "[PhysxScene] ReleaseControllerManager controllers={0}", _controllerManager.Controllers.Count);
+
+            // Release controllers before releasing the manager.
+            foreach (var controller in _controllerManager.Controllers.Values)
+            {
+                try
+                {
+                    controller.RequestRelease();
+                    controller.ReleaseNativeNow();
+                }
+                catch (Exception ex)
+                {
+                    Debug.Log(ELogCategory.Physics, "[PhysxScene] Controller release during manager teardown failed: {0}", ex);
+                }
+            }
             
             _controllerManager.ControllerManagerPtr->ReleaseMut();
+            Debug.Log(ELogCategory.Physics, "[PhysxObj] - ControllerManager ptr=0x{0:X}", (nint)_controllerManager.ControllerManagerPtr);
             _controllerManager = null;
         }
 

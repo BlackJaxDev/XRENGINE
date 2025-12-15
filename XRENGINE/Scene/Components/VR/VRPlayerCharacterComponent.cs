@@ -428,7 +428,7 @@ namespace XREngine.Components.VR
             //Move the avatar root transform to match the headset's rotation and Y translation
             avatarRootTfm.Translation = new Vector3(0.0f, rootTrans.Y, 0.0f);
             avatarRootTfm.Rotation = rootRot;
-            avatarRootTfm.RecalculateMatrices(true, true);
+            avatarRootTfm.RecalculateMatrices(true, false);
             AddMovementInputFromDevice(playspaceRootTfm, movementOffset.Translation);
         }
 

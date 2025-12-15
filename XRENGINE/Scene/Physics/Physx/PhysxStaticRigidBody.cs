@@ -1,4 +1,5 @@
 ﻿using MagicPhysX;
+using System.Collections.Concurrent;
 using System.Numerics;
 using XREngine.Components;
 using XREngine.Scene;
@@ -11,7 +12,7 @@ namespace XREngine.Rendering.Physics.Physx
     {
         private readonly unsafe PxRigidStatic* _obj;
 
-        public static Dictionary<nint, PhysxStaticRigidBody> AllStaticRigidBodies { get; } = [];
+        public static ConcurrentDictionary<nint, PhysxStaticRigidBody> AllStaticRigidBodies { get; } = new();
         public static PhysxStaticRigidBody? GetStaticBody(PxRigidStatic* ptr)
             => AllStaticRigidBodies.TryGetValue((nint)ptr, out var body) ? body : null;
 
@@ -21,9 +22,7 @@ namespace XREngine.Rendering.Physics.Physx
         internal PhysxStaticRigidBody(PxRigidStatic* obj)
         {
             _obj = obj;
-            AllActors.Add((nint)_obj, this);
-            AllRigidActors.Add((nint)_obj, this);
-            AllStaticRigidBodies.Add((nint)_obj, this);
+            CachePtr("from-existing");
         }
 
         public PhysxStaticRigidBody(
@@ -32,9 +31,7 @@ namespace XREngine.Rendering.Physics.Physx
         {
             var tfm = PhysxScene.MakeTransform(position, rotation);
             _obj = PhysxScene.PhysicsPtr->CreateRigidStaticMut(&tfm);
-            AllActors.Add((nint)_obj, this);
-            AllRigidActors.Add((nint)_obj, this);
-            AllStaticRigidBodies.Add((nint)_obj, this);
+            CachePtr("empty");
         }
         public PhysxStaticRigidBody(
             PhysxShape shape,
@@ -43,9 +40,7 @@ namespace XREngine.Rendering.Physics.Physx
         {
             var tfm = PhysxScene.MakeTransform(position, rotation);
             _obj = PhysxScene.PhysicsPtr->PhysPxCreateStatic1(&tfm, shape.ShapePtr);
-            AllActors.Add((nint)_obj, this);
-            AllRigidActors.Add((nint)_obj, this);
-            AllStaticRigidBodies.Add((nint)_obj, this);
+            CachePtr($"shape=0x{(nint)shape.ShapePtr:X}");
         }
         public PhysxStaticRigidBody(
             PhysxMaterial material,
@@ -59,9 +54,21 @@ namespace XREngine.Rendering.Physics.Physx
             var shapeTfm = PhysxScene.MakeTransform(shapeOffsetTranslation, shapeOffsetRotation);
             using var structObj = geometry.GetPhysxStruct();
             _obj = PhysxScene.PhysicsPtr->PhysPxCreateStatic(&tfm, structObj.ToStructPtr<PxGeometry>(), material.MaterialPtr, &shapeTfm);
-            AllActors.Add((nint)_obj, this);
-            AllRigidActors.Add((nint)_obj, this);
-            AllStaticRigidBodies.Add((nint)_obj, this);
+            CachePtr("from-geometry");
+        }
+
+        private void CachePtr(string detail)
+        {
+            PhysxObjectLog.AddOrUpdate(AllActors, nameof(AllActors), (nint)_obj, this);
+            PhysxObjectLog.AddOrUpdate(AllRigidActors, nameof(AllRigidActors), (nint)_obj, this);
+            PhysxObjectLog.AddOrUpdate(AllStaticRigidBodies, nameof(AllStaticRigidBodies), (nint)_obj, this);
+            PhysxObjectLog.Created(this, (nint)_obj, detail);
+        }
+
+        protected override void RemoveFromCaches()
+        {
+            PhysxObjectLog.RemoveIfSame(AllStaticRigidBodies, nameof(AllStaticRigidBodies), (nint)_obj, this);
+            base.RemoveFromCaches();
         }
 
         public static PhysxStaticRigidBody CreatePlane(PxPlane plane, PhysxMaterial material)
@@ -103,7 +110,7 @@ namespace XREngine.Rendering.Physics.Physx
                         if (OwningComponent is not null)
                         {
                             if (OwningComponent.RigidBody == this)
-                                OwningComponent.RigidBody = null;
+                                OwningComponent.SetRigidBodyFromRigidBodyOwner(null);
                         }
                         break;
                 }
@@ -119,7 +126,7 @@ namespace XREngine.Rendering.Physics.Physx
                     if (OwningComponent is not null)
                     {
                         if (OwningComponent.RigidBody != this)
-                            OwningComponent.RigidBody = this;
+                            OwningComponent.SetRigidBodyFromRigidBodyOwner(this);
                     }
                     break;
             }

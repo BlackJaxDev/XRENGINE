@@ -310,7 +310,7 @@ namespace XREngine
 
                 //Attach event callbacks for processing async and main thread tasks
                 Time.Timer.SwapBuffers += SwapBuffers;
-                Time.Timer.RenderFrame += DequeueMainThreadTasks;
+                //Time.Timer.RenderFrame += DequeueMainThreadTasks;
                 success = true;
             }
             catch (Exception e)
@@ -596,6 +596,8 @@ namespace XREngine
 
         private static void ProcessPendingMainThreadWork()
         {
+            using var scope = Engine.Profiler.Start();
+
             // Execute main-thread-affinity jobs scheduled via the job system
             Jobs.ProcessMainThreadJobs();
         }
@@ -632,22 +634,8 @@ namespace XREngine
             Rendering.ApplyRenderPipelinePreference();
 
             /*Task.Run(() => */window.SetWorld(windowSettings.TargetWorld);
-            window.TargetWorldInstance?.AnyTransformWorldMatrixChanged += TargetWorldInstance_AnyTransformWorldMatrixChanged;
+
             return window;
-        }
-
-        private static void TargetWorldInstance_AnyTransformWorldMatrixChanged(XRWorldInstance instance, TransformBase tfm, Matrix4x4 mtx)
-        {
-            if (PlayMode.IsEditing && !instance.TransitioningPlay && instance.PlayState == EPlayState.Playing)
-            {
-                var sceneNode = tfm.SceneNode;
-                if (sceneNode is null)
-                    return;
-
-                // In edit mode, refresh play lifecycle for this node when the world matrix changes
-                sceneNode.OnEndPlay();
-                sceneNode.OnBeginPlay();
-            }
         }
 
         private static void CreateViewports(ELocalPlayerIndexMask localPlayerMask, XRWindow window)

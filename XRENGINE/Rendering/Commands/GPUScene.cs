@@ -183,7 +183,7 @@ namespace XREngine.Rendering.Commands
                 normals[v] = mesh.GetNormal(v);
                 var tan = mesh.GetTangent(v);
                 tangents[v] = new Vector4(tan, 1.0f);
-                uv0[v] = mesh.GetTexCoord(0, v);
+                uv0[v] = mesh.GetTexCoord(v, 0);
             }
 
             // Indices: expand mesh primitive lists into triangle list (only triangle topology supported here)
@@ -552,6 +552,7 @@ namespace XREngine.Rendering.Commands
 
             using (_lock.EnterScope())
             {
+                uint startCommandCount = _totalCommandCount;
                 bool anyAdded = false;
                 SceneLog($"Adding commands for {renderInfo.Owner?.GetType().Name ?? "<null>"}");
                 for (int i = 0; i < renderInfo.RenderCommands.Count; i++)
@@ -672,8 +673,16 @@ namespace XREngine.Rendering.Commands
                 }
                 if (anyAdded)
                 {
-                    // Upload modified command entries (full buffer for simplicity)
-                    AllLoadedCommandsBuffer.PushSubData();
+                    // Upload only the newly appended command range.
+                    // Pushing the full buffer can hitch when high-detail meshes/submeshes stream in later.
+                    uint addedCount = _totalCommandCount - startCommandCount;
+                    uint elementSize = AllLoadedCommandsBuffer.ElementSize;
+                    if (elementSize == 0)
+                        elementSize = (uint)(CommandFloatCount * sizeof(float));
+
+                    uint byteOffset = startCommandCount * elementSize;
+                    uint byteCount = addedCount * elementSize;
+                    AllLoadedCommandsBuffer.PushSubData((int)byteOffset, byteCount);
                     SceneLog($"GPUScene.Add: Added commands, total now {_totalCommandCount} in CommandsInputBuffer");
                 }
                 RebuildAtlasIfDirty();

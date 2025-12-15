@@ -1,4 +1,5 @@
 ﻿using MagicPhysX;
+using System.Collections.Concurrent;
 using System.Numerics;
 using XREngine.Components;
 using XREngine.Scene;
@@ -10,7 +11,7 @@ namespace XREngine.Rendering.Physics.Physx
     {
         private readonly unsafe PxRigidDynamic* _obj;
 
-        public static Dictionary<nint, PhysxDynamicRigidBody> AllDynamic { get; } = [];
+        public static ConcurrentDictionary<nint, PhysxDynamicRigidBody> AllDynamic { get; } = new();
         public static PhysxDynamicRigidBody? Get(PxRigidDynamic* ptr)
             => AllDynamic.TryGetValue((nint)ptr, out var body) ? body : null;
 
@@ -25,40 +26,63 @@ namespace XREngine.Rendering.Physics.Physx
         {
             PxVec3 v = value;
             _obj->SetAngularVelocityMut(&v, wake);
+            PhysxObjectLog.Modified(this, (nint)_obj, nameof(SetAngularVelocity), $"value={value} wake={wake}");
         }
         public void SetLinearVelocity(Vector3 value, bool wake = true)
         {
             PxVec3 v = value;
             _obj->SetLinearVelocityMut(&v, wake);
+            PhysxObjectLog.Modified(this, (nint)_obj, nameof(SetLinearVelocity), $"value={value} wake={wake}");
         }
 
         public PxRigidDynamicLockFlags LockFlags
         {
             get => _obj->GetRigidDynamicLockFlags();
-            set => _obj->SetRigidDynamicLockFlagsMut(value);
+            set
+            {
+                var prev = _obj->GetRigidDynamicLockFlags();
+                _obj->SetRigidDynamicLockFlagsMut(value);
+                PhysxObjectLog.Modified(this, (nint)_obj, nameof(LockFlags), $"{prev} -> {value}");
+            }
         }
 
         public void SetLockFlag(PxRigidDynamicLockFlag flag, bool value)
         {
             _obj->SetRigidDynamicLockFlagMut(flag, value);
+            PhysxObjectLog.Modified(this, (nint)_obj, nameof(SetLockFlag), $"{flag}={value}");
         }
 
         public float StabilizationThreshold
         {
             get => _obj->GetStabilizationThreshold();
-            set => _obj->SetStabilizationThresholdMut(value);
+            set
+            {
+                var prev = _obj->GetStabilizationThreshold();
+                _obj->SetStabilizationThresholdMut(value);
+                PhysxObjectLog.Modified(this, (nint)_obj, nameof(StabilizationThreshold), $"{prev} -> {value}");
+            }
         }
 
         public float SleepThreshold
         {
             get => _obj->GetSleepThreshold();
-            set => _obj->SetSleepThresholdMut(value);
+            set
+            {
+                var prev = _obj->GetSleepThreshold();
+                _obj->SetSleepThresholdMut(value);
+                PhysxObjectLog.Modified(this, (nint)_obj, nameof(SleepThreshold), $"{prev} -> {value}");
+            }
         }
 
         public float ContactReportThreshold
         {
             get => _obj->GetContactReportThreshold();
-            set => _obj->SetContactReportThresholdMut(value);
+            set
+            {
+                var prev = _obj->GetContactReportThreshold();
+                _obj->SetContactReportThresholdMut(value);
+                PhysxObjectLog.Modified(this, (nint)_obj, nameof(ContactReportThreshold), $"{prev} -> {value}");
+            }
         }
 
         public (Vector3 position, Quaternion rotation)? KinematicTarget
@@ -75,20 +99,37 @@ namespace XREngine.Rendering.Physics.Physx
                 {
                     var tfm = PhysxScene.MakeTransform(value.Value.position, value.Value.rotation);
                     _obj->SetKinematicTargetMut(&tfm);
+                    PhysxObjectLog.Modified(this, (nint)_obj, nameof(KinematicTarget), $"set pos={value.Value.position} rot={value.Value.rotation}");
                 }
                 else
+                {
                     _obj->SetKinematicTargetMut(null);
+                    PhysxObjectLog.Modified(this, (nint)_obj, nameof(KinematicTarget), "cleared");
+                }
             }
         }
 
         public float WakeCounter
         {
             get => _obj->GetWakeCounter();
-            set => _obj->SetWakeCounterMut(value);
+            set
+            {
+                var prev = _obj->GetWakeCounter();
+                _obj->SetWakeCounterMut(value);
+                PhysxObjectLog.Modified(this, (nint)_obj, nameof(WakeCounter), $"{prev} -> {value}");
+            }
         }
 
-        public void WakeUp() => _obj->WakeUpMut();
-        public void PutToSleep() => _obj->PutToSleepMut();
+        public void WakeUp()
+        {
+            _obj->WakeUpMut();
+            PhysxObjectLog.Modified(this, (nint)_obj, nameof(WakeUp));
+        }
+        public void PutToSleep()
+        {
+            _obj->PutToSleepMut();
+            PhysxObjectLog.Modified(this, (nint)_obj, nameof(PutToSleep));
+        }
 
         public (uint minPositionIters, uint minVelocityIters) SolverIterationCounts
         {
@@ -98,7 +139,11 @@ namespace XREngine.Rendering.Physics.Physx
                 _obj->GetSolverIterationCounts(&minPositionIters, &minVelocityIters);
                 return (minPositionIters, minVelocityIters);
             }
-            set => _obj->SetSolverIterationCountsMut(value.minPositionIters, value.minVelocityIters);
+            set
+            {
+                _obj->SetSolverIterationCountsMut(value.minPositionIters, value.minVelocityIters);
+                PhysxObjectLog.Modified(this, (nint)_obj, nameof(SolverIterationCounts), $"pos={value.minPositionIters} vel={value.minVelocityIters}");
+            }
         }
 
         public PhysxDynamicRigidBody()
@@ -108,6 +153,7 @@ namespace XREngine.Rendering.Physics.Physx
         {
             _obj = obj;
             CachePtr();
+            PhysxObjectLog.Created(this, (nint)_obj, "from-existing");
         }
 
         public PhysxDynamicRigidBody(
@@ -124,6 +170,7 @@ namespace XREngine.Rendering.Physics.Physx
             using var structObj = geometry.GetPhysxStruct();
             _obj = PhysxScene.PhysicsPtr->PhysPxCreateDynamic(&tfm, structObj.ToStructPtr<PxGeometry>(), material.MaterialPtr, density, &shapeTfm);
             CachePtr();
+            PhysxObjectLog.Created(this, (nint)_obj, $"density={density}");
         }
 
         public PhysxDynamicRigidBody(
@@ -135,6 +182,7 @@ namespace XREngine.Rendering.Physics.Physx
             var tfm = PhysxScene.MakeTransform(position, rotation);
             _obj = PhysxScene.PhysicsPtr->PhysPxCreateDynamic1(&tfm, shape.ShapePtr, density);
             CachePtr();
+            PhysxObjectLog.Created(this, (nint)_obj, $"shape=0x{(nint)shape.ShapePtr:X} density={density}");
         }
 
         public PhysxDynamicRigidBody(
@@ -144,24 +192,20 @@ namespace XREngine.Rendering.Physics.Physx
             var tfm = PhysxScene.MakeTransform(position, rotation);
             _obj = PhysxScene.PhysicsPtr->CreateRigidDynamicMut(&tfm);
             CachePtr();
+            PhysxObjectLog.Created(this, (nint)_obj, "empty");
         }
 
-        public override void Release()
+        protected override void RemoveFromCaches()
         {
-            if (IsReleased)
-                return;
-            AllActors.Remove((nint)_obj);
-            AllRigidActors.Remove((nint)_obj);
-            AllDynamic.Remove((nint)_obj);
-            base.Release();
-
+            PhysxObjectLog.RemoveIfSame(AllDynamic, nameof(AllDynamic), (nint)_obj, this);
+            base.RemoveFromCaches();
         }
 
         private void CachePtr()
         {
-            AllActors.Add((nint)_obj, this);
-            AllRigidActors.Add((nint)_obj, this);
-            AllDynamic.Add((nint)_obj, this);
+            PhysxObjectLog.AddOrUpdate(AllActors, nameof(AllActors), (nint)_obj, this);
+            PhysxObjectLog.AddOrUpdate(AllRigidActors, nameof(AllRigidActors), (nint)_obj, this);
+            PhysxObjectLog.AddOrUpdate(AllDynamic, nameof(AllDynamic), (nint)_obj, this);
         }
 
         private DynamicRigidBodyComponent? _owningComponent;
@@ -185,7 +229,7 @@ namespace XREngine.Rendering.Physics.Physx
                         if (OwningComponent is not null)
                         {
                             if (OwningComponent.RigidBody == this)
-                                OwningComponent.RigidBody = null;
+                                OwningComponent.SetRigidBodyFromRigidBodyOwner(null);
                         }
                         break;
                 }
@@ -201,7 +245,7 @@ namespace XREngine.Rendering.Physics.Physx
                     if (OwningComponent is not null)
                     {
                         if (OwningComponent.RigidBody != this)
-                            OwningComponent.RigidBody = this;
+                            OwningComponent.SetRigidBodyFromRigidBodyOwner(this);
                     }
                     break;
             }
