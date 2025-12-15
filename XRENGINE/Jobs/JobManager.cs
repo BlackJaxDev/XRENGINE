@@ -9,6 +9,15 @@ namespace XREngine
 {
     public class JobManager
     {
+        [ThreadStatic]
+        private static bool _isJobWorkerThread;
+
+        /// <summary>
+        /// True when executing on any JobManager worker thread (including remote dispatch worker).
+        /// Use this instead of <see cref="Engine.JobThreadId"/>, which only tracks the first worker.
+        /// </summary>
+        public static bool IsJobWorkerThread => _isJobWorkerThread;
+
         private const int PriorityLevels = 5; // Matches JobPriority enum
         private const int DefaultWorkerCap = 16;
         private const int DefaultReservedThreads = 4; // render + update + fixed update + collect visible / swap buffers
@@ -420,6 +429,7 @@ namespace XREngine
 
         private void WorkerLoop()
         {
+            _isJobWorkerThread = true;
             if (!Engine.JobThreadId.HasValue)
                 Engine.JobThreadId = Thread.CurrentThread.ManagedThreadId;
 
@@ -445,6 +455,7 @@ namespace XREngine
 
         private void RemoteWorkerLoop()
         {
+            _isJobWorkerThread = true;
             var token = _cts.Token;
             while (!token.IsCancellationRequested)
             {

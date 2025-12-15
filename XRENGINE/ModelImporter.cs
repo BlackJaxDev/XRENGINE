@@ -62,21 +62,9 @@ namespace XREngine
         {
             IEnumerable ImportRoutine()
             {
-                var importTask = Task.Run(() => ImportInternal(path, options, parent, scaleConversion, zUp, onFinished, materialFactory, onProgress, cancellationToken), cancellationToken);
-                yield return importTask;
-
-                if (importTask.IsCanceled)
-                {
-                    yield break;
-                }
-
-                if (importTask.IsFaulted)
-                {
-                    // Surface the exception to the job system
-                    throw importTask.Exception!.GetBaseException();
-                }
-
-                var result = importTask.Result;
+                // Run on the job system thread directly (no Task.Run). The job system already executes
+                // this enumerator on a worker thread.
+                var result = ImportInternal(path, options, parent, scaleConversion, zUp, onFinished, materialFactory, onProgress, cancellationToken);
                 yield return new JobProgress(1f, result);
             }
 
@@ -358,7 +346,8 @@ namespace XREngine
             return result;
         }
 
-        private readonly List<Action> _meshProcessActions = [];
+        private readonly List<Func<IEnumerable>> _meshProcessRoutines = [];
+        private readonly List<Action> _meshFinalizeActions = [];
         private readonly List<NodeTransformInfo> _nodeTransforms = [];
 
         public unsafe SceneNode? Import(
@@ -383,7 +372,9 @@ namespace XREngine
 
             cancellationToken.ThrowIfCancellationRequested();
 
-            _meshProcessActions.Clear();
+            _meshProcessRoutines.Clear();
+            _meshFinalizeActions.Clear();
+            bool processMeshesAsync = processMeshesAsynchronously ?? Engine.Rendering.Settings.ProcessMeshImportsAsynchronously;
 
             SceneNode rootNode;
             using (Engine.Profiler.Start($"Assemble model hierarchy"))
@@ -391,11 +382,10 @@ namespace XREngine
                 rootNode = new(Path.GetFileNameWithoutExtension(SourceFilePath));
                 _nodeTransforms.Clear();
                 ProcessNode(true, scene.RootNode, scene, rootNode, null, Matrix4x4.Identity, removeAssimpFBXNodes, null, cancellationToken);
-                NormalizeNodeScales(scene, rootNode, cancellationToken);
+                NormalizeNodeScales(scene, rootNode, cancellationToken, processMeshesAsync);
             }
 
-            var meshProcessAction = () => ProcessMeshesOnJobThread(onProgress, cancellationToken);
-            bool processMeshesAsync = processMeshesAsynchronously ?? Engine.Rendering.Settings.ProcessMeshImportsAsynchronously;
+            void meshProcessAction() => ProcessMeshesOnJobThread(onProgress, cancellationToken);
             RunMeshProcessing(meshProcessAction, processMeshesAsync, cancellationToken);
 
             return rootNode;
@@ -416,11 +406,16 @@ namespace XREngine
         private void ProcessMeshesOnJobThread(Action<float>? reportProgress, CancellationToken cancellationToken)
         {
             using var t = Engine.Profiler.Start("Processing meshes on job thread");
-            int total = _meshProcessActions.Count;
+            int total = _meshProcessRoutines.Count;
             for (int i = 0; i < total; i++)
             {
                 cancellationToken.ThrowIfCancellationRequested();
-                _meshProcessActions[i]();
+                foreach (var step in _meshProcessRoutines[i]())
+                {
+                    cancellationToken.ThrowIfCancellationRequested();
+                    if (step is Task task)
+                        task.GetAwaiter().GetResult();
+                }
                 if (reportProgress != null && total > 0)
                     reportProgress((i + 1) / (float)total);
             }
@@ -435,20 +430,70 @@ namespace XREngine
                 return;
             }
 
-            IEnumerable MeshRoutine()
+            // Schedule one job per mesh (each action is one mesh).
+            // This avoids a single long-running job and lets other jobs interleave.
+            int total = _meshProcessRoutines.Count;
+            if (total <= 0)
             {
-                meshProcessAction();
-                yield break;
+                _onCompleted?.Invoke();
+                return;
             }
 
-            Engine.Jobs.Schedule(
-                MeshRoutine,
-                completed: _onCompleted,
-                error: ex => Debug.LogException(ex, $"Mesh processing job failed for '{SourceFilePath}'."),
-                cancellationToken: cancellationToken);
+            int remaining = total;
+            int faulted = 0;
+            int canceled = 0;
+            void TryFinalize()
+            {
+                if (Interlocked.Decrement(ref remaining) != 0)
+                    return;
+
+                if (Volatile.Read(ref faulted) != 0)
+                    return;
+                if (Volatile.Read(ref canceled) != 0)
+                    return;
+
+                // Flush pending model mutations in swap once all mesh jobs are done.
+                //Engine.EnqueueSwapTask(() =>
+                //{
+                    try
+                    {
+                        foreach (var finalize in _meshFinalizeActions)
+                            finalize();
+                        _onCompleted?.Invoke();
+                    }
+                    catch (Exception ex)
+                    {
+                        Debug.LogException(ex, $"Mesh finalize failed for '{SourceFilePath}'.");
+                    }
+                //});
+            }
+
+            for (int i = 0; i < total; i++)
+            {
+                var routineFactory = _meshProcessRoutines[i];
+
+                Engine.Jobs.Schedule(
+                    routineFactory,
+                    completed: () =>
+                    {
+                        TryFinalize();
+                    },
+                    error: ex =>
+                    {
+                        Interlocked.Exchange(ref faulted, 1);
+                        Debug.LogException(ex, $"Mesh processing job failed for '{SourceFilePath}'.");
+                        TryFinalize();
+                    },
+                    canceled: () =>
+                    {
+                        Interlocked.Exchange(ref canceled, 1);
+                        TryFinalize();
+                    },
+                    cancellationToken: cancellationToken);
+            }
         }
 
-        private void NormalizeNodeScales(AScene scene, SceneNode rootNode, CancellationToken cancellationToken)
+        private void NormalizeNodeScales(AScene scene, SceneNode rootNode, CancellationToken cancellationToken, bool scheduleOneJobPerMesh)
         {
             using var t = Engine.Profiler.Start("Normalizing node scales");
 
@@ -504,7 +549,7 @@ namespace XREngine
                 //Debug.Out($"Processing node {nodeInfo.AssimpNode.Name} with world T[{translation}] R[{rotation}] S[{scale}]");
 
                 Matrix4x4 geometryTransform = nodeInfo.OriginalWorldMatrix * rootTransform.InverseWorldMatrix;
-                EnqueueProcessMeshes(nodeInfo.AssimpNode, scene, nodeInfo.SceneNode, geometryTransform, rootTransform, cancellationToken);
+                EnqueueProcessMeshes(nodeInfo.AssimpNode, scene, nodeInfo.SceneNode, geometryTransform, rootTransform, cancellationToken, scheduleOneJobPerMesh);
             }
         }
 
@@ -628,34 +673,51 @@ namespace XREngine
             return sceneNode;
         }
 
-        private unsafe void EnqueueProcessMeshes(Node node, AScene scene, SceneNode sceneNode, Matrix4x4 dataTransform, TransformBase rootTransform, CancellationToken cancellationToken)
+        private unsafe void EnqueueProcessMeshes(Node node, AScene scene, SceneNode sceneNode, Matrix4x4 dataTransform, TransformBase rootTransform, CancellationToken cancellationToken, bool marshalSubMeshAddsToMainThread)
         {
             int count = node.MeshCount;
             if (count == 0)
                 return;
 
-            _meshProcessActions.Add(() => ProcessMeshes(node, scene, sceneNode, dataTransform, rootTransform, cancellationToken));
-        }
-
-        private unsafe void ProcessMeshes(Node node, AScene scene, SceneNode sceneNode, Matrix4x4 dataTransform, TransformBase rootTransform, CancellationToken cancellationToken)
-        {
-            using var t = Engine.Profiler.Start($"Processing meshes for {node.Name}");
-
-            cancellationToken.ThrowIfCancellationRequested();
-
+            // Create the model/component once per node, then schedule a separate mesh action for each mesh index.
             ModelComponent modelComponent = sceneNode.AddComponent<ModelComponent>()!;
             Model model = new();
             model.Meshes.ThreadSafe = true;
             modelComponent.Name = node.Name;
             modelComponent.Model = model;
-            for (var i = 0; i < node.MeshCount; i++)
+
+            // For async-per-mesh processing, collect submeshes then flush once on main thread.
+            // This avoids per-mesh main-thread waits (which can deadlock if the main thread is blocked).
+            ConcurrentDictionary<int, SubMesh>? pending = marshalSubMeshAddsToMainThread
+                ? new ConcurrentDictionary<int, SubMesh>()
+                : null;
+
+            if (pending != null)
+            {
+                int[] ordered = new int[count];
+                for (int i = 0; i < count; i++)
+                    ordered[i] = node.MeshIndices[i];
+
+                _meshFinalizeActions.Add(() =>
+                {
+                    for (int i = 0; i < ordered.Length; i++)
+                        if (pending.TryGetValue(ordered[i], out var subMesh))
+                            model.Meshes.Add(subMesh);
+                });
+            }
+
+            for (var i = 0; i < count; i++)
+            {
+                int localMeshIndex = node.MeshIndices[i];
+                _meshProcessRoutines.Add(() => MeshRoutine(localMeshIndex));
+            }
+
+            IEnumerable MeshRoutine(int meshIndex)
             {
                 cancellationToken.ThrowIfCancellationRequested();
-                int meshIndex = node.MeshIndices[i];
+
                 Mesh mesh = scene.Meshes[meshIndex];
-
                 (XRMesh xrMesh, XRMaterial xrMaterial) = ProcessSubMesh(mesh, scene, dataTransform, cancellationToken);
-
                 _meshes.Add(xrMesh);
                 _materials.Add(xrMaterial);
 
@@ -665,9 +727,13 @@ namespace XREngine
                     RootTransform = rootTransform
                 };
 
-                model.Meshes.Add(subMesh);
-            }
+                if (pending != null)
+                    pending[meshIndex] = subMesh;
+                else
+                    model.Meshes.Add(subMesh);
 
+                yield break;
+            }
         }
 
         private unsafe (XRMesh mesh, XRMaterial material) ProcessSubMesh(

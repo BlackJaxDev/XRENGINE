@@ -56,7 +56,6 @@ namespace XREngine
             TransformBase.ProcessParentReassignments();
         }
 
-
         public static bool IsRenderThread => Environment.CurrentManagedThreadId == RenderThreadId;
         public static int RenderThreadId { get; private set; }
 
