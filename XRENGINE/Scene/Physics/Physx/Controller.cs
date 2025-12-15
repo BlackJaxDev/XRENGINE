@@ -252,7 +252,7 @@ namespace XREngine.Rendering.Physics.Physx
                 return;
 
             PxVec3 d = PxVec3_new_3(delta.X, delta.Y, delta.Z);
-            lock (_nativeCallLock)
+            //lock (_nativeCallLock)
             {
                 if (IsReleased)
                     return;
@@ -271,38 +271,6 @@ namespace XREngine.Rendering.Physics.Physx
                 // Pass null for obstacle context like the smoke test initially did
                 PxObstacleContext* obstacleContext = null;
                 
-                // Diagnostic: log once per controller on first move
-                if (!_hasLoggedMoveDebug)
-                {
-                    _hasLoggedMoveDebug = true;
-                    
-                    // Test that controller is valid by calling a simple method first
-                    var testPos = ControllerPtr->GetPosition();
-                    var ctrlScene = ControllerPtr->GetSceneMut();
-                    var ctrlActor = ControllerPtr->GetActor();
-                    
-                    Debug.Log(ELogCategory.Physics,
-                        "[Controller.MoveMut] DIAG controller=0x{0:X} scene=0x{1:X} actor=0x{2:X} obstacleCtx=0x{3:X} pos=({4},{5},{6})",
-                        (nint)ControllerPtr,
-                        (nint)ctrlScene,
-                        (nint)ctrlActor,
-                        (nint)obstacleContext,
-                        testPos->x, testPos->y, testPos->z);
-                    
-                    // Log the displacement we're about to use
-                    Debug.Log(ELogCategory.Physics,
-                        "[Controller.MoveMut] DIAG2 disp=({0},{1},{2}) minDist={3} elapsedTime={4}",
-                        d.x, d.y, d.z, minDist, elapsedTime);
-                    
-                    // Log filter struct fields
-                    Debug.Log(ELogCategory.Physics,
-                        "[Controller.MoveMut] DIAG3 filterData=0x{0:X} filterFlags={1} filterCallback=0x{2:X} cctFilterCallback=0x{3:X}",
-                        (nint)stackFilters.mFilterData,
-                        stackFilters.mFilterFlags,
-                        (nint)stackFilters.mFilterCallback,
-                        (nint)stackFilters.mCCTFilterCallback);
-                }
-
                 PxControllerCollisionFlags flags = ControllerPtr->MoveMut(&d, minDist, elapsedTime, &stackFilters, obstacleContext);
                 CollidingSides = (flags & PxControllerCollisionFlags.CollisionSides) != 0;
                 CollidingUp = (flags & PxControllerCollisionFlags.CollisionUp) != 0;
@@ -376,7 +344,7 @@ namespace XREngine.Rendering.Physics.Physx
 
             Debug.Log(ELogCategory.Physics, "[PhysxObj] - Controller ReleaseNativeNow ptr=0x{0:X}", (nint)ControllerPtr);
 
-            lock (_nativeCallLock)
+            //lock (_nativeCallLock)
             {
                 // Remove from the manager without querying native state.
                 if (Manager is not null)

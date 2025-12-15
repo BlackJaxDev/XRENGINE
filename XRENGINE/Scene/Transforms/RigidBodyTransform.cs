@@ -196,8 +196,9 @@ namespace XREngine.Scene.Transforms
                     }
             }
 
-            // Must pass true for children so child transforms (camera, boom, etc.) update
-            RecalculateMatrixHeirarchy(true, true, Engine.Rendering.ELoopType.Asynchronous);
+            // Intentionally do NOT force immediate matrix hierarchy recalculation here.
+            // SetPositionAndRotation() already marks the world matrix dirty; XRWorldInstance.PostUpdate
+            // will recalc transforms in a single, predictable place before rendering.
         }
 
         private (Vector3 position, Quaternion rotation) _lastPhysicsTransform;

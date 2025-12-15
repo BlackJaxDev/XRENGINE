@@ -282,10 +282,12 @@ namespace XREngine.Rendering
                     null,
                     this,
                     targetFbo,
-                    AllowUIRender ? CameraComponent?.GetUserInterfaceOverlay() : null,
+                    null,
                     shadowPass,
                     false,
                     forcedMaterial);
+
+                RenderScreenSpaceUIOverlay(targetFbo);
             }
         }
         /// <summary>
@@ -318,10 +320,28 @@ namespace XREngine.Rendering
                 rightCamera,
                 this,
                 targetFbo,
-                AllowUIRender ? CameraComponent?.GetUserInterfaceOverlay() : null,
+                null,
                 false,
                 true,
                 null);
+
+            RenderScreenSpaceUIOverlay(targetFbo);
+        }
+
+        private void RenderScreenSpaceUIOverlay(XRFrameBuffer? targetFbo)
+        {
+            if (!AllowUIRender)
+                return;
+
+            var ui = CameraComponent?.GetUserInterfaceOverlay();
+            if (ui is null || !ui.IsActive)
+                return;
+
+            if (ui.CanvasTransform.DrawSpace != ECanvasDrawSpace.Screen)
+                return;
+
+            // Render the UI using its own pipeline on top of whatever the camera pipeline produced.
+            ui.RenderScreenSpace(this, targetFbo);
         }
 
         private CameraComponent? _cameraComponent = null;

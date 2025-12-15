@@ -362,21 +362,21 @@ namespace XREngine.Rendering.UI
                     AttachCameraSpaceCameraListener();
                     // Force immediate recalculation for Camera space so bounds are correct for octree
                     if (DrawSpace == ECanvasDrawSpace.Camera)
-                        RecalculateMatrices(true, true);
+                        RecalculateMatrices(true, false);
                     else
                         MarkWorldModified();
                     break;
                 case nameof(DrawSpace):
                     // Force immediate recalculation when switching to Camera/World space
                     if (DrawSpace != ECanvasDrawSpace.Screen)
-                        RecalculateMatrices(true, true);
+                        RecalculateMatrices(true, false);
                     else
                         MarkWorldModified();
                     break;
                 case nameof(CameraDrawSpaceDistance):
                     // Force immediate recalculation for Camera space
                     if (DrawSpace == ECanvasDrawSpace.Camera)
-                        RecalculateMatrices(true, true);
+                        RecalculateMatrices(true, false);
                     else
                         MarkWorldModified();
                     break;
@@ -413,7 +413,7 @@ namespace XREngine.Rendering.UI
                 // For Camera space, we need immediate recalculation so the UI stays attached to the camera.
                 // Using MarkWorldModified() would defer the update until SwapBuffers, which is too late
                 // for proper octree positioning during CollectVisible.
-                RecalculateMatrices(true, true);
+                RecalculateMatrices(true, false);
             }
         }
 

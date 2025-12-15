@@ -1,6 +1,8 @@
+using System.Collections;
 using System.Collections.Generic;
 using System.Numerics;
 using SimpleScene.Util.ssBVH;
+using System.Threading.Tasks;
 using XREngine.Data;
 using XREngine.Data.Geometry;
 using XREngine.Data.Rendering;
@@ -79,30 +81,55 @@ public partial class XRMesh
             if (_bvhTree is null && !_generating)
             {
                 _generating = true;
-                Task.Run(GenerateBVH);
+                try
+                {
+                    //Engine.Jobs.Schedule(GenerateBVHJob);
+                }
+                catch
+                {
+                    _generating = false;
+                    throw;
+                }
             }
             return _bvhTree;
         }
     }
 
+    private IEnumerable GenerateBVHJob()
+    {
+        var task = Task.Run(GenerateBVH);
+        yield return task;
+    }
+
     public void GenerateBVH()
     {
-        if (Triangles is null)
-            return;
-        List<Triangle> triangles = new(Triangles.Count);
-        Dictionary<Triangle, (IndexTriangle Indices, int FaceIndex)> triangleLookup = new(Triangles.Count);
-
-        for (int i = 0; i < Triangles.Count; i++)
+        try
         {
-            IndexTriangle indices = Triangles[i];
-            Triangle triangle = GetTriangle(indices);
-            triangles.Add(triangle);
-            triangleLookup[triangle] = (indices, i);
-        }
+            if (Triangles is null)
+                return;
 
-        TriangleLookup = triangleLookup;
-        _bvhTree = new(new TriangleAdapter(), triangles);
-        _generating = false;
+            List<Triangle> triangles = new(Triangles.Count);
+            Dictionary<Triangle, (IndexTriangle Indices, int FaceIndex)> triangleLookup = new(Triangles.Count);
+
+            for (int i = 0; i < Triangles.Count; i++)
+            {
+                IndexTriangle indices = Triangles[i];
+                Triangle triangle = GetTriangle(indices);
+                triangles.Add(triangle);
+                triangleLookup[triangle] = (indices, i);
+            }
+
+            TriangleLookup = triangleLookup;
+            _bvhTree = new(new TriangleAdapter(), triangles);
+        }
+        catch (Exception ex)
+        {
+            Debug.LogException(ex);
+        }
+        finally
+        {
+            _generating = false;
+        }
     }
 
     private Triangle GetTriangle(IndexTriangle idx)

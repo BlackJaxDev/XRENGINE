@@ -91,7 +91,9 @@ namespace XREngine.Rendering.Physics.Physx
             => Vector3.Zero; // CCT doesn't rotate
 
         public bool IsSleeping
-            => false; // CCT is always "awake"
+            // Treat the controller as sleeping when it's effectively stationary.
+            // This lets RigidBodyTransform skip interpolation work and reduces render-thread contention.
+            => _cachedLinearVelocity.LengthSquared() < 1e-6f;
 
         public void Destroy(bool wakeOnLostTouch = false)
         {

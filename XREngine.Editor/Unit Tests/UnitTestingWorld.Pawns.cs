@@ -444,7 +444,7 @@ public static partial class UnitTestingWorld
         public static void InitializeLocomotion(
             SceneNode rootNode,
             HumanoidComponent humanComp,
-            VRHeightScaleComponent heightScale,
+            HeightScaleBaseComponent heightScale,
             VRIKSolverComponent? vrIKSolver)
         {
             SceneNode rigidBodyNode;
@@ -459,7 +459,7 @@ public static partial class UnitTestingWorld
                 heightScale.CharacterMovementComponent = rigidBodyNode.GetComponent<CharacterMovement3DComponent>()!;
 
                 var player = rigidBodyNode.AddComponent<VRPlayerCharacterComponent>()!;
-                player.HeightScaleComponent = heightScale;
+                player.HeightScaleComponent = heightScale as VRHeightScaleComponent;
                 player.IKSolver = vrIKSolver;
                 player.HumanoidComponent = humanComp;
                 player.EyeLBoneName = EyeLNodeName;

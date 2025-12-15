@@ -130,8 +130,8 @@ namespace XREngine
                 private bool _lightProbesCaptureDepth = false;
                 private uint _lightProbeDepthResolution = 256u;
                 private bool _allowBinaryProgramCaching = true;
-                private bool _calculateBlendshapesInComputeShader = true;
-                private bool _calculateSkinningInComputeShader = true;
+                private bool _calculateBlendshapesInComputeShader = false;
+                private bool _calculateSkinningInComputeShader = false;
                 private int _shaderConfigVersion = 0;
 
                 private void BumpShaderConfigVersion()

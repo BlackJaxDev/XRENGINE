@@ -34,6 +34,7 @@
 
   <ItemGroup>
     <PackageReference Include="AssimpNetter" Version="6.0.2.1" />
+    <PackageReference Include="Magick.NET-Q16-HDRI-AnyCPU" Version="14.10.0" />
     <PackageReference Include="MemoryPack" Version="1.21.4" />
     <PackageReference Include="Meshoptimizer.NET" Version="1.0.7" />
   </ItemGroup>

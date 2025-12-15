@@ -3,18 +3,23 @@ using System.Collections;
 using System.Globalization;
 using System.Numerics;
 using System.Runtime.CompilerServices;
+using SimpleScene.Util.ssBVH;
 using XREngine.Components;
 using XREngine.Components.Scene.Mesh;
+using XREngine.Data.Colors;
+using XREngine.Data.Geometry;
 using XREngine.Data.Rendering;
 using XREngine.Diagnostics;
 using XREngine.Editor.UI;
 using XREngine.Rendering;
+using XREngine.Rendering.Commands;
 using XREngine.Rendering.Models;
 using XREngine.Rendering.Models.Materials;
 using XREngine.Rendering.Models.Materials.Shaders.Parameters;
 using XREngine.Rendering.OpenGL;
 using XREngine.Rendering.Tools;
 using AssetFieldOptions = XREngine.Editor.ImGuiAssetUtilities.AssetFieldOptions;
+using XREngine.Rendering.Info;
 
 namespace XREngine.Editor.ComponentEditors;
 
@@ -23,6 +28,8 @@ public sealed class ModelComponentEditor : IXRComponentEditor
     private static readonly Vector4 ActiveLodHighlight = new(0.20f, 0.50f, 0.90f, 0.18f);
     private const float TexturePreviewMaxEdge = 96.0f;
     private const float TexturePreviewFallbackEdge = 64.0f;
+
+    private const ImGuiColorEditFlags ColorPickerFlags = ImGuiColorEditFlags.Float | ImGuiColorEditFlags.HDR | ImGuiColorEditFlags.NoOptions;
     
     private static readonly Vector4 ActiveLodTextColor = new(0.35f, 0.75f, 1.00f, 1.00f);
     private static readonly string[] TextureAssetPickerExtensions =
@@ -50,7 +57,21 @@ public sealed class ModelComponentEditor : IXRComponentEditor
         public OctahedralImposterGenerator.Result? LastResult;
     }
 
+    private sealed class BvhPreviewState
+    {
+        public bool Enabled;
+        public ColorF4 InternalNodeColor = ColorF4.Cyan;
+        public ColorF4 LeafNodeColor = ColorF4.LightGreen;
+        public bool HighlightLeafNodes = true;
+        public bool CullNodesAgainstCamera = true;
+
+        public readonly Stack<BVHNode<Triangle>> NodeStack = new();
+        public readonly HashSet<XRMesh> AttemptedBvhBuilds = new();
+        public readonly Dictionary<RenderableMesh, RenderInfo.DelPreRenderCallback> MeshHandlers = new();
+    }
+
     private static readonly ConditionalWeakTable<ModelComponent, ImpostorState> s_impostorStates = new();
+    private static readonly ConditionalWeakTable<ModelComponent, BvhPreviewState> s_bvhPreviewStates = new();
 
     public void DrawInspector(XRComponent component, HashSet<object> visited)
     {
@@ -119,6 +140,7 @@ public sealed class ModelComponentEditor : IXRComponentEditor
         ImGui.TextUnformatted("Submeshes: " + model.Meshes.Count.ToString(CultureInfo.InvariantCulture));
 
         DrawImpostorUtilities(modelComponent, model);
+        DrawBvhPreviewUtilities(modelComponent);
 
         if (model.Meshes.Count == 0)
             return;
@@ -135,6 +157,163 @@ public sealed class ModelComponentEditor : IXRComponentEditor
             submeshIndex++;
         }
     }
+
+    private static void DrawBvhPreviewUtilities(ModelComponent modelComponent)
+    {
+        var state = s_bvhPreviewStates.GetValue(modelComponent, _ => new BvhPreviewState());
+
+        if (ImGui.CollapsingHeader("BVH Preview"))
+        {
+            bool enabled = state.Enabled;
+            if (ImGui.Checkbox("Enable", ref enabled))
+                state.Enabled = enabled;
+
+            bool highlightLeafNodes = state.HighlightLeafNodes;
+            if (ImGui.Checkbox("Highlight Leaf Nodes", ref highlightLeafNodes))
+                state.HighlightLeafNodes = highlightLeafNodes;
+
+            bool cullNodes = state.CullNodesAgainstCamera;
+            if (ImGui.Checkbox("Cull Nodes Against Camera", ref cullNodes))
+                state.CullNodesAgainstCamera = cullNodes;
+
+            Vector4 internalColor = new(state.InternalNodeColor.R, state.InternalNodeColor.G, state.InternalNodeColor.B, state.InternalNodeColor.A);
+            if (ImGui.ColorEdit4("Internal Node Color", ref internalColor, ColorPickerFlags))
+                state.InternalNodeColor = new ColorF4(internalColor.X, internalColor.Y, internalColor.Z, internalColor.W);
+
+            Vector4 leafColor = new(state.LeafNodeColor.R, state.LeafNodeColor.G, state.LeafNodeColor.B, state.LeafNodeColor.A);
+            if (ImGui.ColorEdit4("Leaf Node Color", ref leafColor, ColorPickerFlags))
+                state.LeafNodeColor = new ColorF4(leafColor.X, leafColor.Y, leafColor.Z, leafColor.W);
+
+            ImGui.Spacing();
+            ImGui.TextDisabled("Draws BVH bounds for visible meshes in the current camera view.");
+        }
+
+        if (state.Enabled)
+            EnsureBvhPreviewHooks(modelComponent, state);
+        else
+            DisableBvhPreviewHooks(state);
+    }
+
+    private static void EnsureBvhPreviewHooks(ModelComponent modelComponent, BvhPreviewState state)
+    {
+        foreach (RenderableMesh mesh in modelComponent.Meshes)
+        {
+            if (state.MeshHandlers.ContainsKey(mesh))
+                continue;
+
+            RenderInfo.DelPreRenderCallback handler = (info, command, camera) => RenderBvhPreviewForMesh(mesh, command, camera, state);
+            mesh.RenderInfo.CollectedForRenderCallback += handler;
+            state.MeshHandlers.Add(mesh, handler);
+        }
+
+        if (state.MeshHandlers.Count == modelComponent.Meshes.Count)
+            return;
+
+        var currentMeshes = modelComponent.Meshes;
+        var removed = new List<RenderableMesh>();
+        foreach (var kvp in state.MeshHandlers)
+        {
+            if (!currentMeshes.Contains(kvp.Key))
+                removed.Add(kvp.Key);
+        }
+
+        for (int i = 0; i < removed.Count; i++)
+        {
+            var mesh = removed[i];
+            if (state.MeshHandlers.TryGetValue(mesh, out var handler))
+            {
+                mesh.RenderInfo.CollectedForRenderCallback -= handler;
+                state.MeshHandlers.Remove(mesh);
+            }
+        }
+    }
+
+    private static void DisableBvhPreviewHooks(BvhPreviewState state)
+    {
+        if (state.MeshHandlers.Count == 0)
+            return;
+
+        foreach (var kvp in state.MeshHandlers)
+            kvp.Key.RenderInfo.CollectedForRenderCallback -= kvp.Value;
+
+        state.MeshHandlers.Clear();
+    }
+
+    private static void RenderBvhPreviewForMesh(RenderableMesh mesh, RenderCommand command, XRCamera? camera, BvhPreviewState state)
+    {
+        if (!state.Enabled)
+            return;
+
+        if (Engine.Rendering.State.IsShadowPass)
+            return;
+
+        if (command is not RenderCommandMesh3D)
+            return;
+
+        IVolume? frustum = camera?.WorldFrustum();
+        RenderMeshTree(mesh, frustum, state);
+    }
+
+    private static void RenderMeshTree(RenderableMesh mesh, IVolume? frustum, BvhPreviewState state)
+    {
+        bool skinned = mesh.IsSkinned;
+        BVH<Triangle>? tree;
+
+        if (skinned)
+        {
+            tree = mesh.GetSkinnedBvh();
+        }
+        else
+        {
+            var renderer = mesh.CurrentLODRenderer;
+            var xrMesh = renderer?.Mesh;
+            tree = xrMesh?.BVHTree;
+            if (tree?._rootBVH is null && xrMesh is not null && state.AttemptedBvhBuilds.Add(xrMesh))
+            {
+                xrMesh.GenerateBVH();
+                tree = xrMesh.BVHTree;
+            }
+        }
+
+        var root = tree?._rootBVH;
+        if (root is null)
+            return;
+
+        state.NodeStack.Clear();
+        state.NodeStack.Push(root);
+
+        Matrix4x4 meshMatrix = skinned ? mesh.SkinnedBvhLocalToWorldMatrix : mesh.Component.Transform.RenderMatrix;
+        Matrix4x4 rotationScaleMatrix = meshMatrix;
+        rotationScaleMatrix.Translation = Vector3.Zero;
+
+        while (state.NodeStack.Count > 0)
+        {
+            var node = state.NodeStack.Pop();
+            if (node is null)
+                continue;
+
+            AABB nodeBounds = node.box;
+            AABB worldBounds = TransformAabb(nodeBounds, meshMatrix);
+            if (state.CullNodesAgainstCamera && frustum is not null)
+            {
+                EContainment containment = frustum.ContainsAABB(worldBounds);
+                if (containment == EContainment.Disjoint)
+                    continue;
+            }
+
+            ColorF4 color = node.IsLeaf && state.HighlightLeafNodes ? state.LeafNodeColor : state.InternalNodeColor;
+            Vector3 worldCenter = Vector3.Transform(nodeBounds.Center, meshMatrix);
+            Engine.Rendering.Debug.RenderBox(nodeBounds.HalfExtents, worldCenter, rotationScaleMatrix, false, color);
+
+            if (node.left is not null)
+                state.NodeStack.Push(node.left);
+            if (node.right is not null)
+                state.NodeStack.Push(node.right);
+        }
+    }
+
+    private static AABB TransformAabb(AABB localBounds, Matrix4x4 transform)
+        => localBounds.Transformed(point => Vector3.Transform(point, transform));
 
     private static void DrawImpostorUtilities(ModelComponent modelComponent, Model model)
     {
