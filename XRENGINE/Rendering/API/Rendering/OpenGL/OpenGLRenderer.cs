@@ -924,7 +924,8 @@ void main() {
                 _luminanceResultBuffer = Api.GenBuffer();
                 _luminanceResultBufferSize = 16; // sizeof(vec4)
                 Api.BindBuffer(GLEnum.ShaderStorageBuffer, _luminanceResultBuffer);
-                Api.BufferData(GLEnum.ShaderStorageBuffer, _luminanceResultBufferSize, IntPtr.Zero, GLEnum.DynamicRead);
+                var nullPtr = IntPtr.Zero;
+                Api.BufferData(GLEnum.ShaderStorageBuffer, _luminanceResultBufferSize, in nullPtr, GLEnum.DynamicRead);
                 Api.BindBuffer(GLEnum.ShaderStorageBuffer, 0);
                 
                 _luminanceComputeInitialized = true;
@@ -1122,7 +1123,8 @@ void main() {
                 _luminanceFrontPbo = Api.GenBuffer();
                 _luminanceFrontPboSize = 4;
                 Api.BindBuffer(GLEnum.PixelPackBuffer, _luminanceFrontPbo);
-                Api.BufferData(GLEnum.PixelPackBuffer, _luminanceFrontPboSize, IntPtr.Zero, GLEnum.StreamRead);
+                var nullPtr = IntPtr.Zero;
+                Api.BufferData(GLEnum.PixelPackBuffer, _luminanceFrontPboSize, in nullPtr, GLEnum.StreamRead);
                 Api.BindBuffer(GLEnum.PixelPackBuffer, 0);
 
                 _luminanceFrontTexWidth = w;

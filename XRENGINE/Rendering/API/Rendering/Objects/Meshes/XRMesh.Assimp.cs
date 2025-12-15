@@ -218,8 +218,8 @@ public partial class XRMesh
                 }
             }
 
-            // If we're already on the job thread we can't enqueue and wait without deadlocking, so process inline
-            if (Engine.JobThreadId.HasValue && Engine.JobThreadId.Value == Thread.CurrentThread.ManagedThreadId)
+            // If we're already on a job worker thread we can't enqueue and wait without deadlocking, so process inline
+            if (JobManager.IsJobWorkerThread)
             {
                 foreach (var _ignore in ProcessFacesRoutine())
                 {

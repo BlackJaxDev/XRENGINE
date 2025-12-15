@@ -43,7 +43,7 @@ namespace XREngine
         public const string AssetExtension = "asset";
 
         private static bool IsOnJobThread
-            => Engine.JobThreadId.HasValue && Engine.JobThreadId.Value == Thread.CurrentThread.ManagedThreadId;
+            => JobManager.IsJobWorkerThread;
 
         private static void RunOnJobThreadBlocking(Action action, JobPriority priority = JobPriority.Normal, bool bypassJobThread = false)
             => RunOnJobThreadBlocking(() => { action(); return true; }, priority, bypassJobThread);
@@ -52,7 +52,9 @@ namespace XREngine
         {
             ArgumentNullException.ThrowIfNull(work);
 
-            if (bypassJobThread)
+            // Never schedule+block from inside a job worker thread; doing so can exhaust the worker pool
+            // and deadlock (no workers left to run the scheduled continuation).
+            if (bypassJobThread || IsOnJobThread)
                 return work();
 
             var tcs = new TaskCompletionSource<T>(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -67,7 +69,8 @@ namespace XREngine
         {
             ArgumentNullException.ThrowIfNull(work);
 
-            if (bypassJobThread)
+            // If we're already on a job worker thread, execute inline.
+            if (bypassJobThread || IsOnJobThread)
                 return Task.FromResult(work());
 
             var tcs = new TaskCompletionSource<T>(TaskCreationOptions.RunContinuationsAsynchronously);
