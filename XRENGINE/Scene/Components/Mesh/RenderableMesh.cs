@@ -44,8 +44,8 @@ namespace XREngine.Components.Scene.Mesh
         private Matrix4x4 _skinnedRootRenderMatrix = Matrix4x4.Identity;
         private Matrix4x4 _skinnedRootRenderMatrixInverse = Matrix4x4.Identity;
 
-        internal Matrix4x4 SkinnedBvhLocalToWorldMatrix => _skinnedRootRenderMatrix;
-        internal Matrix4x4 SkinnedBvhWorldToLocalMatrix => _skinnedRootRenderMatrixInverse;
+        public Matrix4x4 SkinnedBvhLocalToWorldMatrix => _skinnedRootRenderMatrix;
+        public Matrix4x4 SkinnedBvhWorldToLocalMatrix => _skinnedRootRenderMatrixInverse;
 
         private void SetSkinnedRootRenderMatrix(Matrix4x4 matrix)
         {

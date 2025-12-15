@@ -1118,10 +1118,14 @@ namespace XREngine.Scene.Transforms
             var childrenCopy = RentChildrenCopy(out int count);
             try
             {
-                Parallel.For(0, count, async i =>
+                // NOTE: Parallel.For does not understand async delegates. Use a synchronous body.
+                // Each child can recurse sequentially within its own subtree to avoid nested parallelism.
+                Parallel.For(0, count, i =>
                 {
                     TransformBase child = childrenCopy[i];
-                    await child.RecalculateMatrixHeirarchy(true, setRenderMatrixNow, ELoopType.Parallel);
+                    child.RecalculateMatrixHeirarchy(true, setRenderMatrixNow, ELoopType.Sequential)
+                        .GetAwaiter()
+                        .GetResult();
                 });
             }
             finally
@@ -1175,10 +1179,13 @@ namespace XREngine.Scene.Transforms
             Matrix4x4 parentRenderMatrix = RenderMatrix;
             try
             {
-                Parallel.For(0, count, async i =>
+                // NOTE: Parallel.For does not understand async delegates. Use a synchronous body.
+                Parallel.For(0, count, i =>
                 {
                     TransformBase child = childrenCopy[i];
-                    await child.SetRenderMatrix(child.LocalMatrix * parentRenderMatrix, false);
+                    child.SetRenderMatrix(child.LocalMatrix * parentRenderMatrix, false)
+                        .GetAwaiter()
+                        .GetResult();
                 });
             }
             finally

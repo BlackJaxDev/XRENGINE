@@ -516,7 +516,7 @@ namespace XREngine
 
                 // Apply the new local matrix
                 transform.DeriveLocalMatrix(normalizedLocalMatrix);
-                transform.RecalculateMatrices(true, true);
+                transform.RecalculateMatrices(true, false);
 
                 // Calculate the position difference caused by scale removal
                 Vector3 newWorldPos = nodeInfo.SceneNode.Transform.WorldMatrix.Translation;
@@ -528,7 +528,7 @@ namespace XREngine
                     // For position offsets, use the full inverse transform
                     // Then set the local translation directly
                     transform.Translation = transform.Parent is null ? originalWorldPos : Vector3.Transform(originalWorldPos, transform.Parent.InverseWorldMatrix);
-                    transform.RecalculateMatrices(true, true);
+                    transform.RecalculateMatrices(true, false);
                 }
 
                 transform.SaveBindState();
@@ -634,7 +634,7 @@ namespace XREngine
                     {
                         var tfm = parentSceneNode.Transform;
                         tfm.DeriveLocalMatrix(localTransform * parentSceneNode.Transform.LocalMatrix);
-                        tfm.RecalculateMatrices(true, true);
+                        tfm.RecalculateMatrices(true, false);
                         tfm.SaveBindState();
                     }
                     else
@@ -662,7 +662,7 @@ namespace XREngine
             SceneNode sceneNode = new(parentSceneNode, name);
             var tfm = sceneNode.GetTransformAs<Transform>(true)!;
             tfm.DeriveLocalMatrix(localTransform);
-            tfm.RecalculateMatrices(true, true);
+            tfm.RecalculateMatrices(true, false);
             tfm.SaveBindState();
 
             if (_nodeCache.TryGetValue(name, out List<SceneNode>? nodes))

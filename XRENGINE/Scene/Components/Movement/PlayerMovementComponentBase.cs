@@ -55,6 +55,12 @@ namespace XREngine.Components.Movement
         public void AddLiteralInputDelta(Vector3 offset)
             => LiteralInputDirection += offset;
 
+        /// <summary>
+        /// Delta time to apply when consuming input.
+        /// Defaults to frame delta, but components that tick input with physics should override.
+        /// </summary>
+        protected virtual float InputDeltaTime => Engine.Delta;
+
         protected virtual Vector3 ConsumeLiteralInput()
         {
             var dir = _literalInputDirection;
@@ -75,7 +81,7 @@ namespace XREngine.Components.Movement
             }
 
             TargetFrameInputDirection = Vector3.Zero;
-            return (ConstantInputDirection + CurrentFrameInputDirection) * Engine.Delta;
+            return (ConstantInputDirection + CurrentFrameInputDirection) * InputDeltaTime;
         }
     }
 }

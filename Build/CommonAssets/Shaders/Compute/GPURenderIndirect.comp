@@ -65,21 +65,45 @@ void main()
     uint renderPass = floatBitsToUint(culled[base + 40]);
     uint instanceCount = floatBitsToUint(culled[base + 39]);
 
+    // Defensive pass filter (culling shader should already filter by pass, but keep this to avoid
+    // drawing mixed-pass command buffers if that assumption ever changes).
+    if (CurrentRenderPass >= 0 && renderPass != uint(CurrentRenderPass))
+        return;
+
+    // Deterministic output layout: one indirect slot per visible command.
+    // This keeps batching offsets consistent with the culled command buffer order.
+    uint outIndex = logicalIdx;
+    if (logicalIdx == 0u)
+    {
+        uint capped = min(total, uint(MaxIndirectDraws));
+        DrawCount = capped;
+        if (total > uint(MaxIndirectDraws))
+        {
+            atomicExchange(IndirectOverflowFlag, 1u);
+            atomicExchange(TruncationFlag, 1u);
+        }
+    }
+
+    if (outIndex >= uint(MaxIndirectDraws))
+        return;
+
+    uint drawBase = outIndex * DRAW_COMMAND_UINTS;
+
+    // Default to a no-op draw to avoid consuming stale commands.
+    indirectDraws[drawBase + 0u] = 0u;
+    indirectDraws[drawBase + 1u] = 0u;
+    indirectDraws[drawBase + 2u] = 0u;
+    indirectDraws[drawBase + 3u] = 0u;
+    indirectDraws[drawBase + 4u] = 0u;
+
     if (instanceCount == 0u)
         return;
 
-    uint submeshID = floatBitsToUint(culled[base + 37]);
-    uint submeshOffset = submeshID * 4u;
+    // MeshDataBuffer is indexed by MeshID (uint4 per mesh): [IndexCount, FirstIndex, BaseVertex, BaseInstance]
+    uint meshID = floatBitsToUint(culled[base + 36]);
+    uint submeshOffset = meshID * 4u;
     if (submeshOffset + 3u >= submeshData.length())
-    {
-        // Fallback for packed mesh-data buffers indexed purely by meshID.
-    uint meshID = submeshID >> 16u;
-        uint fallbackOffset = meshID * 4u;
-        if (fallbackOffset + 3u >= submeshData.length())
-            return; // unable to resolve mesh metadata
-
-        submeshOffset = fallbackOffset;
-    }
+        return;
 
     uint indexCount = submeshData[submeshOffset + 0u];
     if (indexCount == 0u)
@@ -87,18 +111,10 @@ void main()
     
     uint firstIndex = submeshData[submeshOffset + 1u];
     uint baseVertex = submeshData[submeshOffset + 2u];
-    uint baseInstance = submeshData[submeshOffset + 3u];
+    // Encode the culled-command index into baseInstance so the graphics vertex shader can
+    // fetch per-draw data (world matrix, etc.) via gl_BaseInstance.
+    uint baseInstance = idx;
 
-    // Compact via atomic counter
-    uint outIndex = atomicAdd(DrawCount, 1u);
-    if (outIndex >= uint(MaxIndirectDraws))
-    {
-        atomicExchange(IndirectOverflowFlag, 1u);
-        atomicExchange(TruncationFlag, 1u);
-        return;
-    }
-
-    uint drawBase = outIndex * DRAW_COMMAND_UINTS;
     indirectDraws[drawBase + 0u] = indexCount;
     indirectDraws[drawBase + 1u] = instanceCount;
     indirectDraws[drawBase + 2u] = firstIndex;

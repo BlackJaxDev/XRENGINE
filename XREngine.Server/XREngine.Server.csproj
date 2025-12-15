@@ -32,7 +32,7 @@
   <ItemGroup>
     <PackageReference Include="AssimpNetter" Version="6.0.2.1" />
     <PackageReference Include="GraphQL" Version="8.8.0" />
-    <PackageReference Include="Magick.NET-Q16-HDRI-AnyCPU" Version="14.9.1" />
+    <PackageReference Include="Magick.NET-Q16-HDRI-AnyCPU" Version="14.10.0" />
     <PackageReference Include="MemoryPack" Version="1.21.4" />
     <PackageReference Include="Microsoft.AspNetCore.Http" Version="2.3.0" />
     <PackageReference Include="Microsoft.Data.Sqlite.Core" Version="10.0.0" />

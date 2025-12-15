@@ -252,7 +252,7 @@ namespace XREngine.Timers
                 
                 FixedUpdateManager.Delta = elapsed;
                 FixedUpdateManager.LastTimestamp = timestamp;
-                await DispatchFixedUpdate();
+                DispatchFixedUpdate();
                 timestamp = Time();
                 FixedUpdateManager.ElapsedTime = timestamp - FixedUpdateManager.LastTimestamp;
             }
@@ -378,8 +378,8 @@ namespace XREngine.Timers
             SwapBuffers?.Invoke();
         }
 
-        private Task DispatchFixedUpdate()
-            => FixedUpdate?.InvokeAsync() ?? Task.CompletedTask;
+        private void DispatchFixedUpdate()
+            => FixedUpdate?.Invoke();
 
         public void DispatchUpdate()
         {
