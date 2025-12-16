@@ -11,6 +11,8 @@ namespace XREngine.Rendering.Pipelines.Commands
         public string? DepthTextureName { get; set; }
         public string? MotionTextureName { get; set; }
 
+        private static bool _reportedFailure;
+
         protected override void Execute()
         {
             if (!TryRunStreamline())
@@ -44,13 +46,21 @@ namespace XREngine.Rendering.Pipelines.Commands
                 ? ActivePipelineInstance.GetTexture<XRTexture>(MotionTextureName)
                 : null;
 
-            return StreamlineNative.TryDispatchUpscale(
+            bool ok = StreamlineNative.TryDispatchUpscale(
                 viewport,
                 sourceFbo,
                 destination,
                 depth,
                 motion,
-                out _);
+                out int errorCode);
+
+            if (!ok && !_reportedFailure)
+            {
+                _reportedFailure = true;
+                Debug.LogWarning($"Streamline DLSS upscale failed (errorCode={errorCode}). Falling back to standard blit.");
+            }
+
+            return ok;
         }
     }
 }

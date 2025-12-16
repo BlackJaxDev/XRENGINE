@@ -121,9 +121,22 @@ namespace XREngine.Rendering.Physics.Physx
             _simulationEventCallbackHandleAllocated = true;
 
             SimulationEventCallbackInfo callbackInfo = default;
-            var onContactPtr = Marshal.GetFunctionPointerForDelegate(OnContactDelegateInstance);
-            callbackInfo.collision_callback = (delegate* unmanaged[Cdecl]<void*, PxContactPairHeader*, PxContactPair*, uint, void>)onContactPtr.ToPointer();
-            callbackInfo.collision_user_data = (void*)GCHandle.ToIntPtr(_simulationEventCallbackHandle);
+            void* handlePtr = (void*)GCHandle.ToIntPtr(_simulationEventCallbackHandle);
+
+            callbackInfo.collision_callback = &OnContact;
+            callbackInfo.collision_user_data = handlePtr;
+
+            callbackInfo.trigger_callback = &OnTrigger;
+            callbackInfo.trigger_user_data = handlePtr;
+
+            callbackInfo.constraint_break_callback = &OnConstraintBreak;
+            callbackInfo.constraint_break_user_data = handlePtr;
+
+            callbackInfo.wake_sleep_callback = &OnWakeSleep;
+            callbackInfo.wake_sleep_user_data = handlePtr;
+
+            callbackInfo.advance_callback = &OnAdvance;
+            callbackInfo.advance_user_data = handlePtr;
 
             _simulationEventCallbackPtr = create_simulation_event_callbacks(&callbackInfo);
             if (_simulationEventCallbackPtr is null)
@@ -135,6 +148,27 @@ namespace XREngine.Rendering.Physics.Physx
 
             sceneDesc.simulationEventCallback = _simulationEventCallbackPtr;
             //Debug.Physics("[PhysxScene] Simulation event callbacks configured");
+        }
+
+        private static bool TryGetSceneFromUserData(void* userData, out PhysxScene? scene)
+        {
+            scene = null;
+            if (userData is null)
+                return false;
+
+            try
+            {
+                var handle = GCHandle.FromIntPtr((nint)userData);
+                if (!handle.IsAllocated)
+                    return false;
+                scene = handle.Target as PhysxScene;
+                return scene is not null;
+            }
+            catch
+            {
+                scene = null;
+                return false;
+            }
         }
 
         private void ReleaseSimulationEventCallbacks()
@@ -152,79 +186,63 @@ namespace XREngine.Rendering.Physics.Physx
             }
         }
 
-        [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
-        public delegate PxFilterFlags CustomFilterShaderDelegate(FilterShaderCallbackInfo* callbackInfo, PxFilterFlags filterFlags);
-
-        public CustomFilterShaderDelegate CustomFilterShaderInstance = CustomFilterShader;
-        static PxFilterFlags CustomFilterShader(FilterShaderCallbackInfo* callbackInfo, PxFilterFlags filterFlags)
+        [UnmanagedCallersOnly(CallConvs = new[] { typeof(CallConvCdecl) })]
+        private static unsafe void OnContact(void* userData, PxContactPairHeader* pairHeader, PxContactPair* pairs, uint nbPairs)
         {
-            // Console.WriteLine("[PhysxScene] CustomFilterShader called");
-            callbackInfo->pairFlags[0] = 
-                PxPairFlags.ContactDefault |
-                PxPairFlags.NotifyTouchFound |
-                PxPairFlags.SolveContact |
-                PxPairFlags.DetectCcdContact |
-                PxPairFlags.DetectDiscreteContact;
-            return default;
-        }
-
-        [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
-        public delegate void CollisionCallback(void* userData, PxContactPairHeader* pairHeader, PxContactPair* pairs, uint nbPairs);
-
-        public CollisionCallback OnContactDelegateInstance = OnContact;
-        static unsafe void OnContact(void* userData, PxContactPairHeader* pairHeader, PxContactPair* pairs, uint nbPairs)
-        {
-            //System.IO.File.AppendAllText("physx_debug.log", $"[PhysxScene] OnContact called with {nbPairs} pairs. userData={(nint)userData:X}\n");
             if (userData is null || pairHeader is null || pairs is null || nbPairs == 0)
                 return;
 
-            PhysxScene? scene = null;
-
-            try
-            {
-                var handle = GCHandle.FromIntPtr((nint)userData);
-                if (handle.IsAllocated)
-                    scene = handle.Target as PhysxScene;
-            }
-            catch
-            {
+            if (!TryGetSceneFromUserData(userData, out var scene) || scene is null)
                 return;
-            }
+            // Intentionally no-op for now; ensures native never calls a null function pointer.
+        }
 
-            if (scene is null)
-            {
-                //System.IO.File.AppendAllText("physx_debug.log", "[PhysxScene] OnContact scene is null\n");
+        [UnmanagedCallersOnly(CallConvs = new[] { typeof(CallConvCdecl) })]
+        private static unsafe void OnTrigger(void* userData, PxTriggerPair* pairs, uint count)
+        {
+            if (userData is null || pairs is null || count == 0)
                 return;
-            }
 
-            var (actor0Label, actor1Label) = scene.DescribeContactActors(pairHeader);
-            //System.IO.File.AppendAllText("physx_debug.log", $"[PhysxScene] OnContact actors={actor0Label} <-> {actor1Label}\n");
-            /*Debug.Physics(
-                "[PhysxScene] OnContact actors={0} <-> {1} nbPairs={2} headerFlags={3}",
-                actor0Label,
-                actor1Label,
-                nbPairs,
-                pairHeader->flags);
-                */
+            if (!TryGetSceneFromUserData(userData, out var scene) || scene is null)
+                return;
 
-/*
-            for (uint pairIndex = 0; pairIndex < nbPairs; pairIndex++)
-            {
-                var pairPtr = pairs + pairIndex;
-                var (shape0Label, shape1Label) = scene.DescribePairShapes(pairPtr);
-                var pair = pairPtr[0];
-                Debug.Physics(
-                    "  [PhysxScene] Pair {0} events={1} flags={2} contacts={3} patches={4} bufferSize={5} shapes={6} vs {7}",
-                    pairIndex,
-                    pair.events,
-                    pair.flags,
-                    pair.contactCount,
-                    pair.patchCount,
-                    pair.requiredBufferSize,
-                    shape0Label,
-                    shape1Label);
-            }
-*/
+            // Intentionally no-op for now; ensures native never calls a null function pointer.
+        }
+
+        [UnmanagedCallersOnly(CallConvs = new[] { typeof(CallConvCdecl) })]
+        private static unsafe void OnConstraintBreak(void* userData, PxConstraintInfo* constraints, uint count)
+        {
+            if (userData is null || constraints is null || count == 0)
+                return;
+
+            if (!TryGetSceneFromUserData(userData, out var scene) || scene is null)
+                return;
+
+            // Intentionally no-op for now; ensures native never calls a null function pointer.
+        }
+
+        [UnmanagedCallersOnly(CallConvs = new[] { typeof(CallConvCdecl) })]
+        private static unsafe void OnWakeSleep(void* userData, PxActor** actors, uint count, bool isWaking)
+        {
+            if (userData is null || actors is null || count == 0)
+                return;
+
+            if (!TryGetSceneFromUserData(userData, out var scene) || scene is null)
+                return;
+
+            // Intentionally no-op for now; ensures native never calls a null function pointer.
+        }
+
+        [UnmanagedCallersOnly(CallConvs = new[] { typeof(CallConvCdecl) })]
+        private static unsafe void OnAdvance(void* userData, PxRigidBody** bodyBuffer, PxTransform* poseBuffer, uint count)
+        {
+            if (userData is null || bodyBuffer is null || poseBuffer is null || count == 0)
+                return;
+
+            if (!TryGetSceneFromUserData(userData, out var scene) || scene is null)
+                return;
+
+            // Intentionally no-op for now; ensures native never calls a null function pointer.
         }
 
         public override void Initialize()
@@ -241,8 +259,7 @@ namespace XREngine.Rendering.Physics.Physx
             sceneDesc.gravity = DefaultGravity;
             sceneDesc.cpuDispatcher = _dispatcher = (PxCpuDispatcher*)phys_PxDefaultCpuDispatcherCreate(4, null, PxDefaultCpuDispatcherWaitForWorkMode.WaitForWork, 0);
 
-            // DISABLED: Simulation event callbacks may cause issues - smoke test doesn't use them
-            // ConfigureSimulationEventCallbacks(ref sceneDesc);
+            ConfigureSimulationEventCallbacks(ref sceneDesc);
 
             sceneDesc.filterShader = get_default_simulation_filter_shader();
             // DISABLED: Custom filter shader may cause issues with CCT scene queries.

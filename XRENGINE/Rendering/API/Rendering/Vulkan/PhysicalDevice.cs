@@ -1,5 +1,6 @@
 ﻿using Silk.NET.Vulkan;
 using System.Runtime.InteropServices;
+using XREngine;
 
 namespace XREngine.Rendering.Vulkan;
 public unsafe partial class VulkanRenderer
@@ -31,6 +32,10 @@ public unsafe partial class VulkanRenderer
         
         if (_physicalDevice.Handle == 0)
             throw new Exception("Failed to find a suitable GPU for Vulkan.");
+
+        Api!.GetPhysicalDeviceProperties(_physicalDevice, out var properties);
+        // NVIDIA PCI vendor ID.
+        Engine.Rendering.State.IsNVIDIA = properties.VendorID == 0x10DE;
     }
 
     private bool IsDeviceSuitable(PhysicalDevice device, out QueueFamilyIndices indices)
