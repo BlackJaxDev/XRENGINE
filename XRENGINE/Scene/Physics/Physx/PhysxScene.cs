@@ -262,10 +262,11 @@ namespace XREngine.Rendering.Physics.Physx
             ConfigureSimulationEventCallbacks(ref sceneDesc);
 
             sceneDesc.filterShader = get_default_simulation_filter_shader();
-            // DISABLED: Custom filter shader may cause issues with CCT scene queries.
-            // The smoke test works without any custom filter shader.
-            // var filterShaderCallback = (delegate* unmanaged[Cdecl]<FilterShaderCallbackInfo*, PxFilterFlags>)Marshal.GetFunctionPointerForDelegate(CustomFilterShaderInstance).ToPointer();
-            // enable_custom_filter_shader(&sceneDesc, filterShaderCallback, 1u);
+            // Custom filter shader callback (managed -> native function pointer).
+            // This applies the engine's group/mask filtering encoded into PxFilterData by PhysxRigidActor.RefreshShapeFilterData().
+            // Keep this callback simple and conservative: if filter data is unset, allow the pair.
+            var filterShaderCallback = (delegate* unmanaged[Cdecl]<FilterShaderCallbackInfo*, PxFilterFlags>)&CustomSimulationFilterShader;
+            enable_custom_filter_shader(&sceneDesc, filterShaderCallback, 0u);
 
             sceneDesc.flags =
                 PxSceneFlags.EnableCcd |
@@ -284,6 +285,86 @@ namespace XREngine.Rendering.Physics.Physx
                 Debug.Log(ELogCategory.Physics, "[PhysxScene] Duplicate scene ptr registered ptr=0x{0:X}", (nint)_scene);
 
             LinkVisualizationSettings();
+        }
+
+        private static bool IsUnsetFilterData(in PxFilterData fd)
+            => fd.word0 == 0 && fd.word1 == 0 && fd.word2 == 0 && fd.word3 == 0;
+
+        private static ulong Mask64FromFilterData(in PxFilterData fd)
+            => ((ulong)fd.word2 << 32) | fd.word1;
+
+        private static ulong GroupBit64FromFilterData(in PxFilterData fd)
+        {
+            uint w0 = fd.word0;
+            if (w0 == 0)
+                return 0;
+
+            // If word0 is a bitmask (power-of-two), interpret it as such (supports groups 0..31).
+            // Otherwise interpret word0 as a group index (supports groups 0..63).
+            int groupIndex;
+            if ((w0 & (w0 - 1)) == 0)
+            {
+                groupIndex = BitOperations.TrailingZeroCount(w0);
+            }
+            else
+            {
+                groupIndex = unchecked((int)w0);
+            }
+
+            if ((uint)groupIndex >= 64u)
+                return 0;
+
+            return 1UL << groupIndex;
+        }
+
+        [UnmanagedCallersOnly(CallConvs = new[] { typeof(CallConvCdecl) })]
+        private static unsafe PxFilterFlags CustomSimulationFilterShader(FilterShaderCallbackInfo* info)
+        {
+            if (info is null || info->pairFlags is null)
+                return 0;
+
+            bool isTrigger0 = phys_PxFilterObjectIsTrigger(info->attributes0);
+            bool isTrigger1 = phys_PxFilterObjectIsTrigger(info->attributes1);
+
+            // PhysX behavior: trigger-trigger pairs do not generate trigger notifications.
+            if (isTrigger0 && isTrigger1)
+                return PxFilterFlags.Suppress;
+
+            // Always accept triggers (subject to the above rule).
+            if (isTrigger0 || isTrigger1)
+            {
+                *info->pairFlags = PxPairFlags.TriggerDefault;
+                return 0;
+            }
+
+            // If filter data is missing/uninitialized for either shape, don't unexpectedly suppress the pair.
+            // This keeps CCT/internal shapes from breaking if they don't populate PxFilterData.
+            PxFilterData fd0 = info->filterData0;
+            PxFilterData fd1 = info->filterData1;
+            if (IsUnsetFilterData(fd0) || IsUnsetFilterData(fd1))
+            {
+                *info->pairFlags = PxPairFlags.ContactDefault | PxPairFlags.DetectCcdContact;
+                return 0;
+            }
+
+            ulong group0 = GroupBit64FromFilterData(fd0);
+            ulong group1 = GroupBit64FromFilterData(fd1);
+            ulong mask0 = Mask64FromFilterData(fd0);
+            ulong mask1 = Mask64FromFilterData(fd1);
+
+            // Conservative fallback: if either group resolves to 0, allow.
+            if (group0 == 0 || group1 == 0)
+            {
+                *info->pairFlags = PxPairFlags.ContactDefault | PxPairFlags.DetectCcdContact;
+                return 0;
+            }
+
+            bool allow = (group0 & mask1) != 0 && (group1 & mask0) != 0;
+            if (!allow)
+                return PxFilterFlags.Suppress;
+
+            *info->pairFlags = PxPairFlags.ContactDefault | PxPairFlags.DetectCcdContact;
+            return 0;
         }
 
         public DataSource? _scratchBlock = new(32000, true);

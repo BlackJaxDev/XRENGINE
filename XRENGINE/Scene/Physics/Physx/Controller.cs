@@ -265,7 +265,10 @@ namespace XREngine.Rendering.Physics.Physx
 
                 // Build filters on-stack exactly like the working smoke test does.
                 PxFilterData stackFilterData = PxFilterData_new_2(0, 0, 0, 0);
-                PxControllerFilters stackFilters = PxControllerFilters_new(&stackFilterData, null, null);
+                // Re-enable only the CCT-vs-CCT filter callback (no query pre/post filters yet).
+                // This lets us control whether controllers collide with other controllers.
+                PxControllerFilterCallback* cctFilterCallback = mgr.ControllerFilterCallback;
+                PxControllerFilters stackFilters = PxControllerFilters_new(&stackFilterData, null, cctFilterCallback);
                 stackFilters.mFilterFlags = PxQueryFlags.Static | PxQueryFlags.Dynamic;
 
                 // Pass null for obstacle context like the smoke test initially did

@@ -63,7 +63,9 @@ namespace XREngine.Rendering.Physics.Physx
 
             _controllerFilterCallbackSource = DataSource.FromStruct(new PxControllerFilterCallback()
             {
-                vtable_ = PhysxScene.Native.CreateVTable(DestructorInstance, FilterControllerCollisionInstance)
+                // VTable order must match the native class layout.
+                // PhysX PxControllerFilterCallback: filter() is the first virtual, then destructor.
+                vtable_ = PhysxScene.Native.CreateVTable(FilterControllerCollisionInstance, DestructorInstance)
             });
             _queryFilterCallbackSource = DataSource.FromStruct(new PxQueryFilterCallback()
             {
