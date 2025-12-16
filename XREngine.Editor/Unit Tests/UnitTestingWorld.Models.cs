@@ -75,7 +75,7 @@ public static partial class UnitTestingWorld
                     if (!File.Exists(path))
                     {
                         Debug.LogWarning($"Static model file not found at {path}");
-                        return (null, Array.Empty<XRMaterial>(), Array.Empty<XRMesh>());
+                        return (null, [], []);
                     }
 
                     SceneNode? importedRoot = ModelImporter.Import(
