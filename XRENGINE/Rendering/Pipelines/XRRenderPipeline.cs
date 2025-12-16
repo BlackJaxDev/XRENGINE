@@ -166,14 +166,16 @@ public abstract partial class RenderPipeline : XRAsset
     public static void SetFBO(XRFrameBuffer fbo, FrameBufferResourceDescriptor? descriptor = null)
         => CurrentRenderingPipeline!.SetFBO(fbo, descriptor);
 
+    // OpenGL (and most GPU APIs) disallow 0-sized textures. During startup or when a window is
+    // minimized, the viewport can temporarily report 0; clamp to 1 to avoid invalid allocations.
     protected static uint InternalWidth
-        => (uint)(TryState?.WindowViewport?.InternalWidth ?? 0);
+        => (uint)Math.Max(1, TryState?.WindowViewport?.InternalWidth ?? 0);
     protected static uint InternalHeight
-        => (uint)(TryState?.WindowViewport?.InternalHeight ?? 0);
+        => (uint)Math.Max(1, TryState?.WindowViewport?.InternalHeight ?? 0);
     protected static uint FullWidth
-        => (uint)(TryState?.WindowViewport?.Width ?? 0);
+        => (uint)Math.Max(1, TryState?.WindowViewport?.Width ?? 0);
     protected static uint FullHeight
-        => (uint)(TryState?.WindowViewport?.Height ?? 0);
+        => (uint)Math.Max(1, TryState?.WindowViewport?.Height ?? 0);
 
     protected static bool NeedsRecreateTextureInternalSize(XRTexture t)
     {
@@ -277,7 +279,7 @@ public abstract partial class RenderPipeline : XRAsset
     protected static (uint x, uint y) GetDesiredFBOSizeInternal()
         => (InternalWidth, InternalHeight);
     protected static (uint x, uint y) GetDesiredFBOSizeFull()
-        => ((uint)State.WindowViewport!.Width, (uint)State.WindowViewport!.Height);
+        => (FullWidth, FullHeight);
 
     /// <summary>
     /// Optional resolution request (percentage of viewport size, e.g. 0.67 = 67%) that the active

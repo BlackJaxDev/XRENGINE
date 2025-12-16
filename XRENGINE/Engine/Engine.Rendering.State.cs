@@ -124,6 +124,19 @@ namespace XREngine
                 public static bool ReverseCulling { get; internal set; } = false;
                 public static bool IsMainPass => !IsMirrorPass && !IsSceneCapturePass && !IsLightProbePass;
 
+                // Forward+ (tiled light culling) published state.
+                // These are populated by VPRC_ForwardPlusLightCullingPass each frame when available.
+                public static XRDataBuffer? ForwardPlusLocalLightsBuffer { get; internal set; }
+                public static XRDataBuffer? ForwardPlusVisibleIndicesBuffer { get; internal set; }
+                public static Vector2 ForwardPlusScreenSize { get; internal set; }
+                public static int ForwardPlusTileSize { get; internal set; }
+                public static int ForwardPlusMaxLightsPerTile { get; internal set; }
+                public static int ForwardPlusLocalLightCount { get; internal set; }
+                public static bool ForwardPlusEnabled
+                    => ForwardPlusLocalLightsBuffer is not null &&
+                       ForwardPlusVisibleIndicesBuffer is not null &&
+                       ForwardPlusLocalLightCount > 0;
+
                 //public static XRRenderPipelineInstance? CurrentCollectingVisiblePipeline => CollectingVisiblePipelineStack.Count > 0 ? CollectingVisiblePipelineStack.Peek() : null;
                 //public static XRRenderPipelineInstance.RenderingState? CollectingVisiblePipelineState => CurrentCollectingVisiblePipeline?.RenderState;
 

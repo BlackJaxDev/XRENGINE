@@ -25,7 +25,10 @@ public static partial class UnitTestingWorld
 
         AddGroundCrosshair(rootNode);
         AddFrustumIntersectionRig(rootNode);
+        AddFrustumContainmentRig(rootNode);
         AddRaySphereRig(rootNode);
+        AddSegmentAabbRig(rootNode);
+        AddRayTriangleRig(rootNode);
 
         var world = new XRWorld("Math Intersections World", scene);
         Undo.TrackWorld(world);
@@ -124,6 +127,138 @@ public static partial class UnitTestingWorld
                 Vector3 hitPoint = rayOrigin + rayDirection * hitDistance;
                 debug.AddPoint(hitPoint, ColorF4.Yellow);
                 debug.AddLine(rayOrigin, hitPoint, ColorF4.LightGold);
+            }
+        });
+    }
+
+    private static void AddFrustumContainmentRig(SceneNode rootNode)
+    {
+        var rigNode = rootNode.NewChild("FrustumContainmentRig");
+
+        var frustumNode = rigNode.NewChild("CameraFrustum");
+        var frustumTfm = frustumNode.SetTransform<Transform>();
+        frustumTfm.Translation = new Vector3(0.0f, 2.0f, -6.0f);
+        frustumTfm.Rotation = Quaternion.Identity;
+        var frustumDebug = frustumNode.AddComponent<DebugDrawComponent>()!;
+
+        var shapesNode = rigNode.NewChild("TestShapes");
+        var shapesDebug = shapesNode.AddComponent<DebugDrawComponent>()!;
+
+        const float aspect = 16.0f / 9.0f;
+        const float nearZ = 0.35f;
+        const float farZ = 16.0f;
+        const float fov = 70.0f;
+
+        rigNode.RegisterAnimationTick<SceneNode>(_ =>
+        {
+            float t = (float)Engine.ElapsedTime;
+            frustumTfm.Rotation =
+                Quaternion.CreateFromAxisAngle(Globals.Up, XRMath.DegToRad(MathF.Sin(t * 0.35f) * 25.0f)) *
+                Quaternion.CreateFromAxisAngle(Globals.Right, XRMath.DegToRad(MathF.Sin(t * 0.25f) * 10.0f));
+
+            var frustum = BuildFrustum(frustumTfm, fov, aspect, nearZ, farZ);
+            DrawFrustum(frustumDebug, frustum, ColorF4.LightBlue);
+
+            shapesDebug.ClearShapes();
+
+            // Moving sphere
+            var sphere = new Sphere(
+                new Vector3(MathF.Sin(t * 0.8f) * 4.0f, 2.0f + MathF.Sin(t * 0.55f) * 0.8f, 4.0f + MathF.Cos(t * 0.7f) * 2.0f),
+                0.9f);
+            var sphereContain = frustum.ContainsSphere(sphere);
+            shapesDebug.AddSphere(sphere.Radius, sphere.Center, ContainmentColor(sphereContain), false);
+
+            // Moving AABB
+            Vector3 boxCenter = new(MathF.Cos(t * 0.5f) * 3.0f, 1.25f + MathF.Sin(t * 0.4f) * 0.5f, 7.0f);
+            Vector3 boxHalf = new(0.75f, 0.6f, 0.9f);
+            var aabb = new AABB(boxCenter - boxHalf, boxCenter + boxHalf);
+            var aabbContain = frustum.ContainsAABB(aabb);
+            shapesDebug.AddBox(boxHalf, boxCenter, ContainmentColor(aabbContain), false);
+
+            // Capsule (approximated as two spheres for containment visualization)
+            Vector3 capA = new(-4.5f, 1.2f + MathF.Sin(t * 0.6f) * 0.8f, 6.5f);
+            Vector3 capB = capA + new Vector3(0.0f, 2.3f, 0.0f);
+            float capR = 0.5f;
+            Vector3 capDir = capB - capA;
+            float capLen = capDir.Length();
+            Vector3 capUp = capLen > 1e-6f ? capDir / capLen : Globals.Up;
+            var capsule = new Capsule((capA + capB) * 0.5f, capUp, capR, capLen * 0.5f);
+            var capContain = frustum.ContainsCapsule(capsule);
+            shapesDebug.AddCapsule(capR, capA, capB, ContainmentColor(capContain), false);
+        });
+
+        static ColorF4 ContainmentColor(EContainment containment)
+            => containment switch
+            {
+                EContainment.Contains => ColorF4.LightGreen,
+                EContainment.Intersects => ColorF4.Yellow,
+                _ => ColorF4.DarkRed,
+            };
+    }
+
+    private static void AddSegmentAabbRig(SceneNode rootNode)
+    {
+        var rigNode = rootNode.NewChild("SegmentAabbRig");
+        var debug = rigNode.AddComponent<DebugDrawComponent>()!;
+
+        Vector3 aabbCenter = new(8.0f, 1.5f, -2.0f);
+        Vector3 aabbHalf = new(1.3f, 1.0f, 0.9f);
+        Vector3 aabbMin = aabbCenter - aabbHalf;
+        Vector3 aabbMax = aabbCenter + aabbHalf;
+
+        rigNode.RegisterAnimationTick<SceneNode>(_ =>
+        {
+            float t = (float)Engine.ElapsedTime;
+            Vector3 segA = new(4.0f, 1.0f + MathF.Sin(t * 0.7f) * 1.2f, -6.0f);
+            Vector3 segB = new(12.0f, 2.0f + MathF.Cos(t * 0.8f) * 1.0f, 2.0f);
+
+            bool hit = GeoUtil.SegmentIntersectsAABB(segA, segB, aabbMin, aabbMax, out Vector3 pEnter, out Vector3 pExit);
+
+            debug.ClearShapes();
+            debug.AddBox(aabbHalf, aabbCenter, hit ? ColorF4.LightGreen : ColorF4.Gray, false);
+            debug.AddLine(segA, segB, hit ? ColorF4.LightGreen : ColorF4.LightGray);
+            debug.AddPoint(segA, ColorF4.LightGold);
+            debug.AddPoint(segB, ColorF4.LightGold);
+
+            if (hit)
+            {
+                debug.AddPoint(pEnter, ColorF4.Yellow);
+                debug.AddPoint(pExit, ColorF4.Orange);
+            }
+        });
+    }
+
+    private static void AddRayTriangleRig(SceneNode rootNode)
+    {
+        var rigNode = rootNode.NewChild("RayTriangleRig");
+        var debug = rigNode.AddComponent<DebugDrawComponent>()!;
+
+        Vector3 a = new(-10.0f, 1.0f, 10.0f);
+        Vector3 b = new(-6.0f, 3.0f, 12.0f);
+        Vector3 c = new(-8.0f, 0.5f, 15.0f);
+
+        rigNode.RegisterAnimationTick<SceneNode>(_ =>
+        {
+            float t = (float)Engine.ElapsedTime;
+            Vector3 origin = new(-14.0f, 2.0f + MathF.Sin(t * 0.65f) * 1.25f, 8.0f);
+            Vector3 dir = Vector3.Normalize(new Vector3(1.0f, MathF.Sin(t * 0.35f) * 0.15f, 0.85f));
+            const float length = 30.0f;
+
+            bool hit = GeoUtil.RayIntersectsTriangle(origin, dir, a, b, c, out float dist);
+            Vector3 end = origin + dir * length;
+
+            debug.ClearShapes();
+            debug.AddLine(a, b, ColorF4.White);
+            debug.AddLine(b, c, ColorF4.White);
+            debug.AddLine(c, a, ColorF4.White);
+            debug.AddLine(origin, end, hit ? ColorF4.LightGreen : ColorF4.LightGray);
+            debug.AddPoint(origin, ColorF4.LightGold);
+
+            if (hit)
+            {
+                Vector3 hitPoint = origin + dir * dist;
+                debug.AddPoint(hitPoint, ColorF4.Yellow);
+                debug.AddLine(origin, hitPoint, ColorF4.LightGold);
             }
         });
     }

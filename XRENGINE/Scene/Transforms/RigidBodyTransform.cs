@@ -2,6 +2,7 @@
 using System.Numerics;
 using XREngine.Components;
 using XREngine.Data.Core;
+using XREngine.Scene.Physics;
 using YamlDotNet.Serialization;
 
 namespace XREngine.Scene.Transforms
@@ -294,5 +295,39 @@ namespace XREngine.Scene.Transforms
             => Matrix4x4.Identity;
         protected override Matrix4x4 CreateWorldMatrix()
             => Matrix4x4.CreateFromQuaternion(PostRotationOffset * Rotation * PreRotationOffset) * Matrix4x4.CreateTranslation(PositionOffset + Position);
+
+        protected override void OnWorldMatrixChanged(Matrix4x4 worldMatrix)
+        {
+            base.OnWorldMatrixChanged(worldMatrix);
+            EvaluatePhysicsResetMinYPlane(worldMatrix);
+        }
+
+        private void EvaluatePhysicsResetMinYPlane(Matrix4x4 worldMatrix)
+        {
+            // Only dynamic rigid bodies participate in the min-Y reset mechanism.
+            if (RigidBody is not IAbstractDynamicRigidBody dynBody)
+                return;
+
+            var world = World;
+            if (world is null || !world.PhysicsEnabled)
+                return;
+
+            float minYDist = world.TargetWorld?.Settings?.PhysicsResetMinYDist ?? 0.0f;
+            if (minYDist <= 0.0f)
+                return;
+
+            Vector3 gravity = world.PhysicsScene.Gravity;
+            float gLenSq = gravity.LengthSquared();
+            if (gLenSq < 1e-8f)
+                return;
+
+            Vector3 up = -(gravity / MathF.Sqrt(gLenSq));
+            float planeD = -minYDist; // dot(up, x) == planeD
+
+            Vector3 worldPos = worldMatrix.Translation;
+            float signed = Vector3.Dot(up, worldPos);
+            if (signed < planeD)
+                world.EnqueuePhysicsResetFromMinYPlane(dynBody);
+        }
     }
 }

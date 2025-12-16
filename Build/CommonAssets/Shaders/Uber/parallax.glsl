@@ -20,6 +20,12 @@ const int PARALLAX_SIMPLE = 0;
 const int PARALLAX_STEEP = 1;
 const int PARALLAX_OCCLUSION = 2;
 const int PARALLAX_RELIEF = 3;
+// Silhouette Parallax Occlusion Mapping (SPOM): like POM but can discard when ray exits UV bounds
+const int PARALLAX_SILHOUETTE_OCCLUSION = 4;
+
+bool isUvIn01(vec2 uv) {
+    return uv.x >= 0.0 && uv.x <= 1.0 && uv.y >= 0.0 && uv.y <= 1.0;
+}
 
 // ============================================
 // Sample Height Map
@@ -128,6 +134,75 @@ vec2 calculateParallaxOcclusion(vec2 uv, vec3 viewDirTangent, float heightScale,
 }
 
 // ============================================
+// Silhouette Parallax Occlusion Mapping (SPOM)
+// ============================================
+// Like POM, but tracks whether the ray left the base UV [0,1] range.
+// Returns UVs in *parallax-map ST space* (same as inputs to sampleHeightMap).
+vec2 calculateSilhouetteParallaxOcclusion(vec2 transformedUV, vec3 viewDirTangent, float heightScale, int minSamples, int maxSamples, out float valid) {
+    valid = 1.0;
+
+    // Calculate number of samples based on view angle
+    float viewAngle = abs(dot(vec3(0.0, 0.0, 1.0), viewDirTangent));
+    int numSamples = int(mix(float(maxSamples), float(minSamples), viewAngle));
+
+    float layerDepth = 1.0 / float(numSamples);
+    float currentLayerDepth = 0.0;
+
+    vec2 deltaUV = viewDirTangent.xy * heightScale / float(numSamples);
+
+    vec2 currentUV = transformedUV;
+    float currentHeight = sampleHeightMap(currentUV);
+
+    vec2 prevUV = currentUV;
+    float prevHeight = currentHeight;
+    float prevLayerDepth = currentLayerDepth;
+
+    for (int i = 0; i < maxSamples; i++) {
+        vec2 baseUV = (currentUV - _ParallaxMap_ST.zw) / _ParallaxMap_ST.xy;
+        if (!isUvIn01(baseUV)) {
+            valid = 0.0;
+            return transformedUV;
+        }
+
+        if (currentLayerDepth >= currentHeight) {
+            break;
+        }
+
+        prevUV = currentUV;
+        prevHeight = currentHeight;
+        prevLayerDepth = currentLayerDepth;
+
+        currentUV -= deltaUV;
+        currentHeight = sampleHeightMap(currentUV);
+        currentLayerDepth += layerDepth;
+    }
+
+    // Final bounds check before interpolation
+    if (!isUvIn01((currentUV - _ParallaxMap_ST.zw) / _ParallaxMap_ST.xy) ||
+        !isUvIn01((prevUV - _ParallaxMap_ST.zw) / _ParallaxMap_ST.xy)) {
+        valid = 0.0;
+        return transformedUV;
+    }
+
+    float afterDepth = currentHeight - currentLayerDepth;
+    float beforeDepth = prevHeight - prevLayerDepth;
+    float denom = (afterDepth - beforeDepth);
+    float weight = 0.0;
+    if (abs(denom) > 1e-6) {
+        weight = afterDepth / denom;
+    }
+
+    vec2 finalUV = mix(currentUV, prevUV, clamp(weight, 0.0, 1.0));
+
+    if (!isUvIn01((finalUV - _ParallaxMap_ST.zw) / _ParallaxMap_ST.xy)) {
+        valid = 0.0;
+        return transformedUV;
+    }
+
+    return finalUV;
+}
+
+// ============================================
 // Relief Mapping (Highest Quality)
 // ============================================
 // POM with binary search refinement
@@ -218,6 +293,51 @@ vec2 applyParallax(vec2 uv, vec3 worldPos, vec3 viewDir, mat3 TBN, int parallaxM
     // Transform back from ST space
     parallaxUV = (parallaxUV - _ParallaxMap_ST.zw) / _ParallaxMap_ST.xy;
     
+    return parallaxUV;
+}
+
+// applyParallax variant that can report validity for silhouette-style parallax modes.
+// Returns UVs in base mesh UV space.
+vec2 applyParallaxWithValidity(vec2 uv, vec3 worldPos, vec3 viewDir, mat3 TBN, int parallaxMode, out float valid) {
+    valid = 1.0;
+
+    if (_EnableParallax < 0.5) {
+        return uv;
+    }
+
+    // Transform view direction to tangent space
+    mat3 TBN_T = transpose(TBN);
+    vec3 viewDirTangent = normalize(TBN_T * viewDir);
+
+    // Ensure we're looking down at the surface (positive Z in tangent space)
+    if (viewDirTangent.z <= 0.0) {
+        return uv;
+    }
+
+    vec2 transformedUV = uv * _ParallaxMap_ST.xy + _ParallaxMap_ST.zw;
+
+    float heightScale = _ParallaxStrength;
+    int minSamples = int(_ParallaxMinSamples);
+    int maxSamples = int(_ParallaxMaxSamples);
+
+    vec2 parallaxUV_ST;
+
+    if (parallaxMode == PARALLAX_SILHOUETTE_OCCLUSION) {
+        parallaxUV_ST = calculateSilhouetteParallaxOcclusion(transformedUV, viewDirTangent, heightScale, minSamples, maxSamples, valid);
+    } else if (parallaxMode == PARALLAX_SIMPLE) {
+        parallaxUV_ST = calculateSimpleParallax(transformedUV, viewDirTangent, heightScale);
+    } else if (parallaxMode == PARALLAX_STEEP) {
+        parallaxUV_ST = calculateSteepParallax(transformedUV, viewDirTangent, heightScale, maxSamples);
+    } else if (parallaxMode == PARALLAX_OCCLUSION) {
+        parallaxUV_ST = calculateParallaxOcclusion(transformedUV, viewDirTangent, heightScale, minSamples, maxSamples);
+    } else if (parallaxMode == PARALLAX_RELIEF) {
+        parallaxUV_ST = calculateReliefParallax(transformedUV, viewDirTangent, heightScale, minSamples, maxSamples / 2);
+    } else {
+        parallaxUV_ST = transformedUV;
+    }
+
+    // Transform back from ST space
+    vec2 parallaxUV = (parallaxUV_ST - _ParallaxMap_ST.zw) / _ParallaxMap_ST.xy;
     return parallaxUV;
 }
 

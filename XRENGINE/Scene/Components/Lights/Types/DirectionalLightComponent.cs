@@ -2,6 +2,7 @@
 using System.ComponentModel;
 using System.Numerics;
 using System.Linq;
+using XREngine.Components;
 using XREngine.Components.Capture.Lights;
 using XREngine.Components.Capture.Lights.Types;
 using XREngine.Core.Attributes;
@@ -12,6 +13,7 @@ using XREngine.Scene.Transforms;
 
 namespace XREngine.Components.Lights
 {
+    [XRComponentEditor("XREngine.Editor.ComponentEditors.DirectionalLightComponentEditor")]
     [RequiresTransform(typeof(Transform))]
     [Category("Lighting")]
     [DisplayName("Directional Light")]

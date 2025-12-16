@@ -294,6 +294,18 @@ namespace XREngine.Rendering
         public abstract void CalcDotLuminanceAsync(XRTexture2D texture, Action<bool, float> callback, Vector3 luminance, bool genMipmapsNow = true);
         public abstract void CalcDotLuminanceAsync(XRTexture2DArray texture, Action<bool, float> callback, Vector3 luminance, bool genMipmapsNow = true);
 
+        /// <summary>
+        /// True if this renderer supports updating and sampling auto exposure entirely on the GPU.
+        /// </summary>
+        public virtual bool SupportsGpuAutoExposure => false;
+
+        /// <summary>
+        /// Updates a 1x1 exposure texture based on the supplied HDR source texture.
+        /// Implementations should avoid CPU readback and keep the exposure value on-GPU.
+        /// </summary>
+        public virtual void UpdateAutoExposureGpu(XRTexture sourceTex, XRTexture2D exposureTex, ColorGradingSettings settings, float deltaTime, bool generateMipmapsNow)
+            => throw new NotSupportedException();
+
         public void CalcDotLuminanceFrontAsync(BoundingRectangle region, bool withTransparency, Action<bool, float> callback)
             => CalcDotLuminanceFrontAsync(region, withTransparency, Engine.Rendering.Settings.DefaultLuminance, callback);
         public abstract void CalcDotLuminanceFrontAsync(BoundingRectangle region, bool withTransparency, Vector3 luminance, Action<bool, float> callback);

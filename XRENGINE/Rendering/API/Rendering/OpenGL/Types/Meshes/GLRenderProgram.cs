@@ -205,13 +205,16 @@ namespace XREngine.Rendering.OpenGL
                 Data.UniformSetIVector3ArrayRequested += Uniform;
                 Data.UniformSetIVector4ArrayRequested += Uniform;
 
-                //Data.UniformSetUVector2Requested += Uniform;
-                //Data.UniformSetUVector3Requested += Uniform;
-                //Data.UniformSetUVector4Requested += Uniform;
+                Data.UniformSetBoolRequested += Uniform;
+                Data.UniformSetBoolArrayRequested += Uniform;
+                
+                Data.UniformSetBoolVector2Requested += Uniform;
+                Data.UniformSetBoolVector3Requested += Uniform;
+                Data.UniformSetBoolVector4Requested += Uniform;
 
-                //Data.UniformSetBoolVector2Requested += Uniform;
-                //Data.UniformSetBoolVector3Requested += Uniform;
-                //Data.UniformSetBoolVector4Requested += Uniform;
+                Data.UniformSetBoolVector2ArrayRequested += Uniform;
+                Data.UniformSetBoolVector3ArrayRequested += Uniform;
+                Data.UniformSetBoolVector4ArrayRequested += Uniform;
 
                 Data.SamplerRequested += Sampler;
                 Data.SamplerRequestedByLocation += Sampler;
@@ -386,9 +389,16 @@ namespace XREngine.Rendering.OpenGL
                 //Data.UniformSetUVector3Requested -= Uniform;
                 //Data.UniformSetUVector4Requested -= Uniform;
 
-                //Data.UniformSetBoolVector2Requested -= Uniform;
-                //Data.UniformSetBoolVector3Requested -= Uniform;
-                //Data.UniformSetBoolVector4Requested -= Uniform;
+                Data.UniformSetBoolRequested -= Uniform;
+                Data.UniformSetBoolArrayRequested -= Uniform;
+
+                Data.UniformSetBoolVector2Requested -= Uniform;
+                Data.UniformSetBoolVector3Requested -= Uniform;
+                Data.UniformSetBoolVector4Requested -= Uniform;
+
+                Data.UniformSetBoolVector2ArrayRequested -= Uniform;
+                Data.UniformSetBoolVector3ArrayRequested -= Uniform;
+                Data.UniformSetBoolVector4ArrayRequested -= Uniform;
 
                 Data.SamplerRequested -= Sampler;
                 Data.SamplerRequestedByLocation -= Sampler;
@@ -1004,6 +1014,18 @@ namespace XREngine.Rendering.OpenGL
                 => Uniform(GetUniformLocation(name), p);
             public void Uniform(string name, bool[] p)
                 => Uniform(GetUniformLocation(name), p);
+            public void Uniform(string name, BoolVector2 p)
+                => Uniform(GetUniformLocation(name), p);
+            public void Uniform(string name, BoolVector3 p)
+                => Uniform(GetUniformLocation(name), p);
+            public void Uniform(string name, BoolVector4 p)
+                => Uniform(GetUniformLocation(name), p);
+            public void Uniform(string name, BoolVector2[] p)
+                => Uniform(GetUniformLocation(name), p);
+            public void Uniform(string name, BoolVector3[] p)
+                => Uniform(GetUniformLocation(name), p);
+            public void Uniform(string name, BoolVector4[] p)
+                => Uniform(GetUniformLocation(name), p);
 
             public void Uniform(int location, IVector2 p)
             {
@@ -1185,6 +1207,68 @@ namespace XREngine.Rendering.OpenGL
                 fixed (int* ptr = conv)
                 {
                     Api.ProgramUniform1(BindingId, location, (uint)conv.Length, ptr);
+                }
+            }
+
+            public void Uniform(int location, BoolVector2 p)
+            {
+                if (!MarkUniformBinding(location)) return;
+                Api.ProgramUniform2(BindingId, location, p.X ? 1 : 0, p.Y ? 1 : 0);
+            }
+            public void Uniform(int location, BoolVector3 p)
+            {
+                if (!MarkUniformBinding(location)) return;
+                Api.ProgramUniform3(BindingId, location, p.X ? 1 : 0, p.Y ? 1 : 0, p.Z ? 1 : 0);
+            }
+            public void Uniform(int location, BoolVector4 p)
+            {
+                if (!MarkUniformBinding(location)) return;
+                Api.ProgramUniform4(BindingId, location, p.X ? 1 : 0, p.Y ? 1 : 0, p.Z ? 1 : 0, p.W ? 1 : 0);
+            }
+
+            public void Uniform(int location, BoolVector2[] p)
+            {
+                if (!MarkUniformBinding(location)) return;
+                int[] conv = new int[p.Length * 2];
+                for (int i = 0; i < p.Length; i++)
+                {
+                    conv[i * 2] = p[i].X ? 1 : 0;
+                    conv[i * 2 + 1] = p[i].Y ? 1 : 0;
+                }
+                fixed (int* ptr = conv)
+                {
+                    Api.ProgramUniform2(BindingId, location, (uint)p.Length, ptr);
+                }
+            }
+            public void Uniform(int location, BoolVector3[] p)
+            {
+                if (!MarkUniformBinding(location)) return;
+                int[] conv = new int[p.Length * 3];
+                for (int i = 0; i < p.Length; i++)
+                {
+                    conv[i * 3] = p[i].X ? 1 : 0;
+                    conv[i * 3 + 1] = p[i].Y ? 1 : 0;
+                    conv[i * 3 + 2] = p[i].Z ? 1 : 0;
+                }
+                fixed (int* ptr = conv)
+                {
+                    Api.ProgramUniform3(BindingId, location, (uint)p.Length, ptr);
+                }
+            }
+            public void Uniform(int location, BoolVector4[] p)
+            {
+                if (!MarkUniformBinding(location)) return;
+                int[] conv = new int[p.Length * 4];
+                for (int i = 0; i < p.Length; i++)
+                {
+                    conv[i * 4] = p[i].X ? 1 : 0;
+                    conv[i * 4 + 1] = p[i].Y ? 1 : 0;
+                    conv[i * 4 + 2] = p[i].Z ? 1 : 0;
+                    conv[i * 4 + 3] = p[i].W ? 1 : 0;
+                }
+                fixed (int* ptr = conv)
+                {
+                    Api.ProgramUniform4(BindingId, location, (uint)p.Length, ptr);
                 }
             }
             #endregion

@@ -1,6 +1,7 @@
 ﻿using Extensions;
 using System.ComponentModel;
 using System.Numerics;
+using XREngine.Components;
 using XREngine.Components.Lights;
 using XREngine.Data.Geometry;
 using XREngine.Data.Rendering;
@@ -9,6 +10,7 @@ using XREngine.Scene.Transforms;
 
 namespace XREngine.Components.Capture.Lights.Types
 {
+    [XRComponentEditor("XREngine.Editor.ComponentEditors.PointLightComponentEditor")]
     [Category("Lighting")]
     [DisplayName("Point Light")]
     [Description("Emits omnidirectional light with optional shadow maps for local illumination.")]

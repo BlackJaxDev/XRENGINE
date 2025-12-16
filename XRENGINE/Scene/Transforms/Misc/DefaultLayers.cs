@@ -3,15 +3,18 @@ namespace XREngine.Components.Scene.Transforms
 {
     public class DefaultLayers
     {
-        public const int DefaultIndex = 0;
+        public const int DynamicIndex = 0;
+        public const int StaticIndex = 1;
         public const int GizmosIndex = 31;
 
-        public static string Default { get; } = "Default";
+        public static string Dynamic { get; } = "Dynamic";
+        public static string Static { get; } = "Static";
         public static string Gizmos { get; } = "Gizmos";
 
         public static Dictionary<int, string> All { get; } = new()
         {
-            { DefaultIndex, Default },
+            { DynamicIndex, Dynamic },
+            { StaticIndex, Static },
             { GizmosIndex, Gizmos }
         };
 

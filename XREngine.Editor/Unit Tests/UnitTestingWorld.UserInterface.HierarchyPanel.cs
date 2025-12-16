@@ -292,20 +292,37 @@ public static partial class UnitTestingWorld
             ImGui.PushID(scene.ID.ToString());
             string sceneName = string.IsNullOrWhiteSpace(scene.Name) ? "Untitled Scene" : scene.Name!;
             string headerLabel = $"{sceneName}{(scene.IsDirty ? " *" : string.Empty)}##SceneHeader";
-            bool open = ImGui.CollapsingHeader(headerLabel, ImGuiTreeNodeFlags.DefaultOpen);
-            if (ImGui.IsItemHovered() && !string.IsNullOrWhiteSpace(scene.FilePath))
-                ImGui.SetTooltip(scene.FilePath);
+            bool open;
+            // Use a two-column layout so the collapsing header can't steal clicks
+            // from the controls rendered to its right.
+            if (ImGui.BeginTable("SceneHeaderRow", 2, ImGuiTableFlags.SizingFixedFit | ImGuiTableFlags.NoSavedSettings))
+            {
+                ImGui.TableSetupColumn("Header", ImGuiTableColumnFlags.WidthStretch);
+                ImGui.TableSetupColumn("Controls", ImGuiTableColumnFlags.WidthFixed);
+                ImGui.TableNextRow();
 
-            ImGui.SameLine();
-            bool visible = scene.IsVisible;
-            if (ImGui.Checkbox("Visible##SceneVisible", ref visible))
-                ToggleSceneVisibility(scene, world, visible);
+                ImGui.TableSetColumnIndex(0);
+                open = ImGui.CollapsingHeader(headerLabel, ImGuiTreeNodeFlags.DefaultOpen);
+                if (ImGui.IsItemHovered() && !string.IsNullOrWhiteSpace(scene.FilePath))
+                    ImGui.SetTooltip(scene.FilePath);
 
-            ImGui.SameLine();
-            if (ImGui.SmallButton("Unload"))
-                UnloadSceneFromWorld(scene, world);
-            if (ImGui.IsItemHovered())
-                ImGui.SetTooltip("Unload this scene from the active world");
+                ImGui.TableSetColumnIndex(1);
+                bool visible = scene.IsVisible;
+                if (ImGui.Checkbox("Visible##SceneVisible", ref visible))
+                    ToggleSceneVisibility(scene, world, visible);
+
+                ImGui.SameLine();
+                if (ImGui.SmallButton("Unload"))
+                    UnloadSceneFromWorld(scene, world);
+                if (ImGui.IsItemHovered())
+                    ImGui.SetTooltip("Unload this scene from the active world");
+
+                ImGui.EndTable();
+            }
+            else
+            {
+                open = ImGui.CollapsingHeader(headerLabel, ImGuiTreeNodeFlags.DefaultOpen);
+            }
 
             if (open)
             {

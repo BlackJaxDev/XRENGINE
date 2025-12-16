@@ -2,12 +2,12 @@
 
 layout(local_size_x = 256) in;
 
-layout(std430, binding = 0) buffer BoneMatricesBuffer
+layout(row_major, std430, binding = 0) buffer BoneMatricesBuffer
 {
     mat4 BoneMatrices[];
 };
 
-layout(std430, binding = 1) buffer BoneInvBindMatricesBuffer
+layout(row_major, std430, binding = 1) buffer BoneInvBindMatricesBuffer
 {
     mat4 BoneInvBindMatrices[];
 };
@@ -264,24 +264,26 @@ void applySkinningOptimized4(inout vec3 position, inout vec3 normal, inout vec3 
     {
         int boneIndex = indices[i];
         float weight = weightsRaw[i];
-        if (boneIndex <= 0 || weight <= 0.0f)
+        if (boneIndex < 0 || weight <= 0.0f)
             continue;
 
         // Drop invalid indices instead of indexing past the buffer and crashing
         if (uint(boneIndex) >= boneCount)
             continue;
 
-        mat4 boneMatrix = BoneMatrices[boneIndex] * BoneInvBindMatrices[boneIndex];
-        vec4 p = boneMatrix * vec4(basePosition, 1.0f);
+        // With row_major buffers, use row-vector multiplication to match CPU/System.Numerics conventions.
+        // (This keeps results consistent with the vertex-skinning path without changing it.)
+        mat4 boneMatrix = BoneInvBindMatrices[boneIndex] * BoneMatrices[boneIndex];
+        vec4 p = vec4(basePosition, 1.0f) * boneMatrix;
         skinnedPos += p.xyz * weight;
         totalWeight += weight;
 
         // Use adjoint for normal transformation - matches vertex shader and is much faster
         mat3 boneMatrix3 = adjoint(boneMatrix);
         if (hasNormals != 0)
-            skinnedNormal += (boneMatrix3 * baseNormal) * weight;
+            skinnedNormal += (baseNormal * boneMatrix3) * weight;
         if (hasTangents != 0)
-            skinnedTangent += (boneMatrix3 * baseTangent) * weight;
+            skinnedTangent += (baseTangent * boneMatrix3) * weight;
     }
 
     // If no bones contributed, preserve original position (vertex has no skinning)
@@ -328,23 +330,24 @@ void applySkinningVariable(inout vec3 position, inout vec3 normal, inout vec3 ta
         uint rawIndex = BoneIndexList[listIndex];
         float weight = BoneWeightList[listIndex];
         int boneIndex = int(loadIndexValue(rawIndex));
-        if (boneIndex <= 0 || weight <= 0.0f)
+        if (boneIndex < 0 || weight <= 0.0f)
             continue;
 
         if (uint(boneIndex) >= boneCount)
             continue;
 
-        mat4 boneMatrix = BoneMatrices[boneIndex] * BoneInvBindMatrices[boneIndex];
-        vec4 p = boneMatrix * vec4(basePosition, 1.0f);
+        // With row_major buffers, use row-vector multiplication to match CPU/System.Numerics conventions.
+        mat4 boneMatrix = BoneInvBindMatrices[boneIndex] * BoneMatrices[boneIndex];
+        vec4 p = vec4(basePosition, 1.0f) * boneMatrix;
         skinnedPos += p.xyz * weight;
         totalWeight += weight;
 
         // Use adjoint for normal transformation - matches vertex shader and is much faster
         mat3 boneMatrix3 = adjoint(boneMatrix);
         if (hasNormals != 0)
-            skinnedNormal += (boneMatrix3 * baseNormal) * weight;
+            skinnedNormal += (baseNormal * boneMatrix3) * weight;
         if (hasTangents != 0)
-            skinnedTangent += (boneMatrix3 * baseTangent) * weight;
+            skinnedTangent += (baseTangent * boneMatrix3) * weight;
     }
 
     // If no bones contributed, preserve original position (vertex has no skinning)

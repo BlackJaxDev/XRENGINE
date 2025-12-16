@@ -3,6 +3,7 @@ using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Linq;
 using System.Numerics;
+using XREngine.Components.Capture.Lights.Types;
 using XREngine.Components.Lights;
 using XREngine.Data;
 using XREngine.Data.Core;
@@ -14,7 +15,6 @@ using XREngine.Data.Vectors;
 using XREngine.Rendering;
 using XREngine.Rendering.Info;
 using XREngine.Components.Capture.Lights;
-using XREngine.Components.Capture.Lights.Types;
 using XREngine.Scene.Transforms;
 using XREngine.Rendering.Commands;
 using YamlDotNet.Serialization;
@@ -61,6 +61,8 @@ namespace XREngine.Scene
         private ConcurrentBag<SceneCaptureComponentBase> _captureBagRendering = [];
         private readonly Stopwatch _captureBudgetStopwatch = new();
 
+        private readonly List<(Frustum Frustum, Vector3 Position, float MaxDistance)> _cameraFrustumScratch = new(4);
+
         /// <summary>
         /// Budget in milliseconds for processing capture work (collect + render) per frame on the main thread.
         /// </summary>
@@ -88,12 +90,31 @@ namespace XREngine.Scene
             program.Uniform("PointLightCount", DynamicPointLights.Count);
             program.Uniform("SpotLightCount", DynamicSpotLights.Count);
 
+            // Forward+ bindings (optional). Shaders may ignore these if they don't declare Forward+ support.
+            program.Uniform("ForwardPlusEnabled", Engine.Rendering.State.ForwardPlusEnabled);
+            if (Engine.Rendering.State.ForwardPlusEnabled)
+            {
+                program.Uniform("ForwardPlusScreenSize", Engine.Rendering.State.ForwardPlusScreenSize);
+                program.Uniform("ForwardPlusTileSize", Engine.Rendering.State.ForwardPlusTileSize);
+                program.Uniform("ForwardPlusMaxLightsPerTile", Engine.Rendering.State.ForwardPlusMaxLightsPerTile);
+
+                // Keep bindings in sync with the compute shader: 20 (local lights), 21 (visible indices).
+                program.BindBuffer(Engine.Rendering.State.ForwardPlusLocalLightsBuffer!, 20u);
+                program.BindBuffer(Engine.Rendering.State.ForwardPlusVisibleIndicesBuffer!, 21u);
+            }
+
+            // Support both legacy uniform names (DirLightData/PointLightData/SpotLightData)
+            // and dynamically generated forward shader names (DirectionalLights/PointLights/SpotLights).
+            string dirArray = program.HasUniform("DirectionalLights") ? "DirectionalLights" : "DirLightData";
+            string spotArray = program.HasUniform("SpotLights") ? "SpotLights" : "SpotLightData";
+            string pointArray = program.HasUniform("PointLights") ? "PointLights" : "PointLightData";
+
             for (int i = 0; i < DynamicDirectionalLights.Count; ++i)
-                DynamicDirectionalLights[i].SetUniforms(program, $"DirLightData[{i}]");
+                DynamicDirectionalLights[i].SetUniforms(program, $"{dirArray}[{i}]");
             for (int i = 0; i < DynamicSpotLights.Count; ++i)
-                DynamicSpotLights[i].SetUniforms(program, $"SpotLightData[{i}]");
+                DynamicSpotLights[i].SetUniforms(program, $"{spotArray}[{i}]");
             for (int i = 0; i < DynamicPointLights.Count; ++i)
-                DynamicPointLights[i].SetUniforms(program, $"PointLightData[{i}]");
+                DynamicPointLights[i].SetUniforms(program, $"{pointArray}[{i}]");
         }
 
         public bool CollectingVisibleShadowMaps { get; private set; } = false;
@@ -102,15 +123,93 @@ namespace XREngine.Scene
         {
             //CollectingVisibleShadowMaps = true;
 
-            foreach (DirectionalLightComponent l in DynamicDirectionalLights)
-                l.CollectVisibleItems();
-            foreach (SpotLightComponent l in DynamicSpotLights)
-                l.CollectVisibleItems();
-            foreach (PointLightComponent l in DynamicPointLights)
-                l.CollectVisibleItems();
+            if (Engine.Rendering.Settings.CullShadowCollectionByCameraFrusta)
+            {
+                _cameraFrustumScratch.Clear();
 
-            foreach (SceneCaptureComponentBase sc in CaptureComponents)
-                sc.CollectVisible();
+                foreach (XRWindow window in Engine.Windows)
+                {
+                    if (!ReferenceEquals(window.TargetWorldInstance, World))
+                        continue;
+
+                    foreach (XRViewport viewport in window.Viewports)
+                    {
+                        if (!ReferenceEquals(viewport.World, World))
+                            continue;
+
+                        XRCamera? camera = viewport.ActiveCamera;
+                        if (camera is null)
+                            continue;
+
+                        float maxDist = camera.ShadowCollectMaxDistance;
+                        if (float.IsFinite(maxDist))
+                            maxDist = MathF.Min(maxDist, camera.FarZ);
+                        else
+                            maxDist = camera.FarZ;
+
+                        _cameraFrustumScratch.Add((camera.WorldFrustum(), camera.Transform.WorldTranslation, maxDist));
+                    }
+                }
+
+                if (_cameraFrustumScratch.Count > 0)
+                {
+                    foreach (DirectionalLightComponent l in DynamicDirectionalLights)
+                    {
+                        if (!l.IsActiveInHierarchy || !l.CastsShadows || l.ShadowMap is null)
+                            continue;
+
+                        if (IsLightShadowRelevant(l, _cameraFrustumScratch))
+                            l.CollectVisibleItems();
+                    }
+
+                    foreach (SpotLightComponent l in DynamicSpotLights)
+                    {
+                        if (!l.IsActiveInHierarchy || !l.CastsShadows || l.ShadowMap is null)
+                            continue;
+
+                        if (IsLightShadowRelevant(l, _cameraFrustumScratch))
+                            l.CollectVisibleItems();
+                    }
+
+                    foreach (PointLightComponent l in DynamicPointLights)
+                    {
+                        if (!l.IsActiveInHierarchy || !l.CastsShadows || l.ShadowMap is null)
+                            continue;
+
+                        if (IsLightShadowRelevant(l, _cameraFrustumScratch))
+                            l.CollectVisibleItems();
+                    }
+                }
+                else
+                {
+                    // Safe fallback: if we can't discover any active cameras, preserve previous behavior.
+                    foreach (DirectionalLightComponent l in DynamicDirectionalLights)
+                        if (l.IsActiveInHierarchy)
+                            l.CollectVisibleItems();
+
+                    foreach (SpotLightComponent l in DynamicSpotLights)
+                        if (l.IsActiveInHierarchy)
+                            l.CollectVisibleItems();
+
+                    foreach (PointLightComponent l in DynamicPointLights)
+                        if (l.IsActiveInHierarchy)
+                            l.CollectVisibleItems();
+                }
+            }
+            else
+            {
+                foreach (DirectionalLightComponent l in DynamicDirectionalLights)
+                    if (l.IsActiveInHierarchy)
+                        l.CollectVisibleItems();
+                
+                foreach (SpotLightComponent l in DynamicSpotLights)
+                    if (l.IsActiveInHierarchy)
+                        l.CollectVisibleItems();
+
+                foreach (PointLightComponent l in DynamicPointLights)
+                    if (l.IsActiveInHierarchy)
+                        l.CollectVisibleItems();
+            }
 
             double budgetMs = CaptureBudgetMilliseconds;
             _captureBudgetStopwatch.Restart();
@@ -131,6 +230,93 @@ namespace XREngine.Scene
             }
 
             //CollectingVisibleShadowMaps = false;
+        }
+
+        private static bool IsLightShadowRelevant(LightComponent light, List<(Frustum Frustum, Vector3 Position, float MaxDistance)> cameras) => light switch
+        {
+            DirectionalLightComponent dir => AnyCameraIntersectsDirectional(dir, cameras),
+            SpotLightComponent spot => AnyCameraIntersectsSpot(spot, cameras),
+            PointLightComponent point => AnyCameraIntersectsPoint(point, cameras),
+            _ => true,
+        };
+
+        private static bool AnyCameraIntersectsPoint(PointLightComponent light, List<(Frustum Frustum, Vector3 Position, float MaxDistance)> cameras)
+        {
+            Vector3 center = light.Transform.RenderTranslation;
+            float radius = light.Radius;
+            Sphere sphere = new(center, radius);
+
+            for (int i = 0; i < cameras.Count; i++)
+            {
+                var cam = cameras[i];
+                if (cam.MaxDistance > 0)
+                {
+                    float maxDist = cam.MaxDistance + radius;
+                    if (Vector3.DistanceSquared(cam.Position, center) > maxDist * maxDist)
+                        continue;
+                }
+
+                if (cam.Frustum.ContainsSphere(sphere) != EContainment.Disjoint)
+                    return true;
+            }
+
+            return false;
+        }
+
+        private static bool AnyCameraIntersectsSpot(SpotLightComponent light, List<(Frustum Frustum, Vector3 Position, float MaxDistance)> cameras)
+        {
+            Cone cone = light.OuterCone;
+
+            // Bounding sphere for the cone (centered at cone.Center).
+            float halfHeight = cone.Height * 0.5f;
+            float boundRadius = MathF.Sqrt((halfHeight * halfHeight) + (cone.Radius * cone.Radius));
+
+            for (int i = 0; i < cameras.Count; i++)
+            {
+                var cam = cameras[i];
+                if (cam.MaxDistance > 0)
+                {
+                    float maxDist = cam.MaxDistance + boundRadius;
+                    if (Vector3.DistanceSquared(cam.Position, cone.Center) > maxDist * maxDist)
+                        continue;
+                }
+
+                if (cam.Frustum.ContainsCone(cone) != EContainment.Disjoint)
+                    return true;
+            }
+
+            return false;
+        }
+
+        private static bool AnyCameraIntersectsDirectional(DirectionalLightComponent light, List<(Frustum Frustum, Vector3 Position, float MaxDistance)> cameras)
+        {
+            // Directional shadow volume is represented as a unit box scaled/rotated/translated by LightMeshMatrix.
+            Box box = new()
+            {
+                LocalCenter = Vector3.Zero,
+                LocalSize = Vector3.One,
+                Transform = light.LightMeshMatrix,
+            };
+
+            Vector3 center = light.Transform.RenderTranslation;
+            Vector3 halfExtents = light.Scale * 0.5f;
+            float boundRadius = halfExtents.Length();
+
+            for (int i = 0; i < cameras.Count; i++)
+            {
+                var cam = cameras[i];
+                if (cam.MaxDistance > 0)
+                {
+                    float maxDist = cam.MaxDistance + boundRadius;
+                    if (Vector3.DistanceSquared(cam.Position, center) > maxDist * maxDist)
+                        continue;
+                }
+
+                if (cam.Frustum.Contains(box) != EContainment.Disjoint)
+                    return true;
+            }
+
+            return false;
         }
 
         public void SwapBuffers()
@@ -283,9 +469,6 @@ namespace XREngine.Scene
                 l.RenderShadowMap(collectVisibleNow);
 
             RenderingShadowMaps = false;
-
-            foreach (SceneCaptureComponentBase sc in CaptureComponents)
-                sc.Render();
 
             double budgetMs = CaptureBudgetMilliseconds;
             _captureBudgetStopwatch.Restart();

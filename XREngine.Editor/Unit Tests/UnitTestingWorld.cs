@@ -114,6 +114,8 @@ public static partial class UnitTestingWorld
         {
             UnitTestWorldKind.MathIntersections => CreateMathIntersectionsWorld(setUI, isServer),
             UnitTestWorldKind.MeshEditing => CreateMeshEditingWorld(setUI, isServer),
+            UnitTestWorldKind.UberShader => CreateUberShaderWorld(setUI, isServer),
+            UnitTestWorldKind.PhysxTesting => CreatePhysxTestingWorld(setUI, isServer),
             _ => CreateUnitTestWorld(setUI, isServer),
         };
 

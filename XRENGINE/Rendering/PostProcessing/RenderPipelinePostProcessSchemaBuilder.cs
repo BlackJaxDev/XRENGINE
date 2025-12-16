@@ -270,7 +270,7 @@ public sealed class RenderPipelinePostProcessSchemaBuilder(RenderPipeline pipeli
         }
 
         public PostProcessStageBuilder UsesEngineShader(string relativePath, EShaderType type)
-            => WithShaderFactory(() => new[] { XRShader.EngineShader(relativePath, type) });
+            => WithShaderFactory(() => [XRShader.EngineShader(relativePath, type)]);
 
         public PostProcessStageBuilder HideUniform(string uniformName)
         {

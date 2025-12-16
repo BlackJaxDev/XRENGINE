@@ -2,10 +2,27 @@
 
 namespace XREngine
 {
+    public enum EVRRuntime
+    {
+        /// <summary>
+        /// Uses OpenXR when available, otherwise falls back to OpenVR.
+        /// </summary>
+        Auto,
+        /// <summary>
+        /// Forces OpenXR initialization.
+        /// </summary>
+        OpenXR,
+        /// <summary>
+        /// Forces OpenVR (SteamVR/OpenVR.NET) initialization.
+        /// </summary>
+        OpenVR,
+    }
+
     public interface IVRGameStartupSettings
     {
         VrManifest? VRManifest { get; set; }
         IActionManifest? ActionManifest { get; }
+        EVRRuntime VRRuntime { get; set; }
         string GameName { get; set; }
         (Environment.SpecialFolder folder, string relativePath)[] GameSearchPaths { get; set; }
     }
@@ -17,7 +34,8 @@ namespace XREngine
         private VrManifest? _vrManifest;
         private ActionManifest<TCategory, TAction>? _actionManifest;
         private (Environment.SpecialFolder folder, string relativePath)[] _gameSearchPaths = [];
-        private string _gameName = "FreakEngineGame";
+        private string _gameName = "XREngine Game";
+        private EVRRuntime _vrRuntime = EVRRuntime.Auto;
 
         /// <summary>
         /// The name of the process to search for when running in client mode.
@@ -46,5 +64,11 @@ namespace XREngine
             set => SetField(ref _actionManifest, value);
         }
         IActionManifest? IVRGameStartupSettings.ActionManifest => ActionManifest;
+
+        public EVRRuntime VRRuntime
+        {
+            get => _vrRuntime;
+            set => SetField(ref _vrRuntime, value);
+        }
     }
 }

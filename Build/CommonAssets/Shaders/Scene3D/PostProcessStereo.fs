@@ -10,6 +10,10 @@ uniform sampler2DArray BloomBlurTexture; //Bloom
 uniform sampler2DArray DepthView; //Depth
 uniform usampler2DArray StencilView; //Stencil
 
+// 1x1 R32F texture containing the current exposure value (GPU-driven auto exposure)
+uniform sampler2D AutoExposureTex;
+uniform bool UseGpuAutoExposure;
+
 uniform float ChromaticAberrationIntensity;
 
 // Lens distortion mode: 0=None, 1=Radial, 2=RadialAutoFromFOV, 3=Panini
@@ -32,6 +36,17 @@ struct ColorGradeStruct
     float Brightness;
 };
 uniform ColorGradeStruct ColorGrade;
+
+float GetExposure()
+{
+    if (UseGpuAutoExposure)
+    {
+        float e = texelFetch(AutoExposureTex, ivec2(0, 0), 0).r;
+        if (!(isnan(e) || isinf(e)) && e > 0.0)
+            return e;
+    }
+    return ColorGrade.Exposure;
+}
 
 vec2 ApplyLensDistortion(vec2 uv, float intensity)
 {
@@ -124,7 +139,7 @@ void main()
         }
 
     // Tone mapping
-    vec3 ldrSceneColor = vec3(1.0) - exp(-hdrSceneColor * ColorGrade.Exposure);
+    vec3 ldrSceneColor = vec3(1.0) - exp(-hdrSceneColor * GetExposure());
 
     // Gamma-correct
     ldrSceneColor = pow(ldrSceneColor, vec3(1.0 / ColorGrade.Gamma));

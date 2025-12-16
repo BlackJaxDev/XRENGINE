@@ -158,7 +158,7 @@ public partial class EditorFlyingCameraPawnComponent : FlyingCameraPawnComponent
         set => SetField(ref _physxQueryFilter, value);
     }
 
-    private LayerMask _layerMask = LayerMask.GetMask(DefaultLayers.Default);
+    private LayerMask _layerMask = LayerMask.GetMask(DefaultLayers.Dynamic);
     [Category("Raycasting")]
     public LayerMask LayerMask
     {
@@ -713,7 +713,10 @@ public partial class EditorFlyingCameraPawnComponent : FlyingCameraPawnComponent
             if (hasInput)
                 CancelCameraFocusLerp();
             else
+            {
+                UpdateCameraFocusLerp();
                 return;
+            }
         }
 
         if (scroll.HasValue)

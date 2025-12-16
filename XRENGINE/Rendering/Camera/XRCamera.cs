@@ -97,6 +97,19 @@ namespace XREngine.Rendering
         }
 
         private LayerMask _cullingMask = LayerMask.Everything;
+
+        private float _shadowCollectMaxDistance = float.PositiveInfinity;
+
+        /// <summary>
+        /// Maximum distance from this camera to consider a light for shadow-map collection.
+        /// Used by shadow-culling in <see cref="Scene.Lights3DCollection"/>.
+        /// If set to <see cref="float.PositiveInfinity"/>, the camera's <see cref="FarZ"/> is used.
+        /// </summary>
+        public float ShadowCollectMaxDistance
+        {
+            get => _shadowCollectMaxDistance;
+            set => SetField(ref _shadowCollectMaxDistance, value);
+        }
         /// <summary>
         /// Determines which layers this camera renders. Only renderables whose Layer
         /// is included in this mask will be collected during the visible pass.

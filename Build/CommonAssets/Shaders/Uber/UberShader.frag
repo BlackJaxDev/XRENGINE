@@ -496,7 +496,15 @@ void main() {
     // Apply parallax mapping to UVs (before any texture sampling)
     if (_EnableParallax > 0.5) {
         int parallaxMode = int(_ParallaxMode);
-        mesh.uv[0] = applyParallax(mesh.uv[0], mesh.worldPos, mesh.viewDir, mesh.TBN, parallaxMode);
+        float parallaxValid = 1.0;
+        vec2 parallaxUV = applyParallaxWithValidity(mesh.uv[0], mesh.worldPos, mesh.viewDir, mesh.TBN, parallaxMode, parallaxValid);
+
+        // SPOM: discard fragments when the ray marches outside the base UV [0,1] bounds.
+        if (parallaxMode == PARALLAX_SILHOUETTE_OCCLUSION && parallaxValid < 0.5) {
+            discard;
+        }
+
+        mesh.uv[0] = parallaxUV;
     }
     
     // Calculate world normal (with normal mapping)

@@ -112,7 +112,7 @@ namespace XREngine
                 [
                     new()
                     {
-                        WindowTitle = "FREAK ENGINE",
+                        WindowTitle = "XRENGINE",
                         TargetWorld = new Scene.XRWorld(),
                         WindowState = EWindowState.Windowed,
                         X = primaryX / 2 - w / 2,
