@@ -28,34 +28,63 @@ namespace XREngine.Rendering.DLSS
 
         private static readonly ConcurrentDictionary<XRViewport, float> _lastViewportScale = new();
 
-        public static bool IsSupported { get; private set; }
-        public static string? LastError { get; private set; }
+        private static bool _probed;
+        private static bool _cachedIsSupported;
+        private static bool _lastIsNvidia;
+        private static string? _lastError;
 
-        static NvidiaDlssManager()
+        public static bool IsSupported
         {
+            get
+            {
+                EnsureDetected();
+                return _cachedIsSupported;
+            }
+        }
+
+        public static string? LastError
+        {
+            get
+            {
+                EnsureDetected();
+                return _lastError;
+            }
+        }
+
+        private static void EnsureDetected()
+        {
+            // Vulkan sets IsNVIDIA during adapter selection; OpenGL sets it when the context is created.
+            // The original static ctor probe could run before either of those, permanently caching false.
+            if (_probed && _lastIsNvidia == Engine.Rendering.State.IsNVIDIA)
+                return;
+
             DetectSupport();
         }
 
         private static void DetectSupport()
         {
+            _probed = true;
+            _lastIsNvidia = Engine.Rendering.State.IsNVIDIA;
+            _lastError = null;
+
             if (!RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
             {
-                LastError = "DLSS requires Windows.";
-                IsSupported = false;
+                _lastError = "DLSS requires Windows.";
+                _cachedIsSupported = false;
                 return;
             }
 
             if (!Engine.Rendering.State.IsNVIDIA)
             {
-                LastError = "No NVIDIA GPU detected.";
-                IsSupported = false;
+                _lastError = "No NVIDIA GPU detected.";
+                _cachedIsSupported = false;
                 return;
             }
 
             // Probe for the Streamline/DLSS runtime without taking a hard dependency on it.
-            IsSupported = TryProbeLibrary("sl.interposer.dll") || TryProbeLibrary("nvngx_dlss.dll");
-            if (!IsSupported && LastError is null)
-                LastError = "Neither sl.interposer.dll nor nvngx_dlss.dll was found on the probing path.";
+            _cachedIsSupported = TryProbeLibrary("sl.interposer.dll") || TryProbeLibrary("nvngx_dlss.dll");
+            if (!_cachedIsSupported && _lastError is null)
+                _lastError = "Neither sl.interposer.dll nor nvngx_dlss.dll was found on the probing path.";
         }
 
         private static bool TryProbeLibrary(string libraryName)
@@ -70,7 +99,7 @@ namespace XREngine.Rendering.DLSS
             }
             catch (Exception ex)
             {
-                LastError = ex.Message;
+                _lastError = ex.Message;
             }
 
             return false;
@@ -80,6 +109,8 @@ namespace XREngine.Rendering.DLSS
         {
             if (viewport is null)
                 return;
+
+            EnsureDetected();
 
             float targetScale = ComputeScale(settings);
             float currentScale = _lastViewportScale.GetOrAdd(viewport, MaxScale);
@@ -109,7 +140,9 @@ namespace XREngine.Rendering.DLSS
 
         private static float ComputeScale(Engine.Rendering.EngineSettings settings)
         {
-            if (!settings.EnableNvidiaDlss || !IsSupported)
+            EnsureDetected();
+
+            if (!settings.EnableNvidiaDlss || !_cachedIsSupported)
                 return MaxScale;
 
             static float ScaleForMode(EDlssQualityMode mode)

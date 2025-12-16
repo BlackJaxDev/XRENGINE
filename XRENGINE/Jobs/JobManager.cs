@@ -765,6 +765,10 @@ namespace XREngine
             {
                 // Ignore if the signal is already canceled
             }
+            catch (ObjectDisposedException)
+            {
+                // Ignore if the signal is already disposed
+            }
 
             try
             {
@@ -773,6 +777,10 @@ namespace XREngine
             catch (OperationCanceledException)
             {
                 // Ignore if the signal is already canceled
+            }
+            catch (ObjectDisposedException)
+            {
+                // Ignore if the signal is already disposed
             }
 
             foreach (var worker in _workers)
