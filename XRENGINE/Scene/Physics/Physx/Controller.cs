@@ -1,13 +1,9 @@
-﻿using Jitter2;
-using MagicPhysX;
-using System;
+﻿using MagicPhysX;
 using System.Collections.Concurrent;
 using System.Numerics;
 using System.Runtime.InteropServices;
-using System.Threading;
 using XREngine.Data;
 using XREngine.Data.Core;
-using XREngine;
 using static MagicPhysX.NativeMethods;
 using static XREngine.Engine;
 
@@ -50,37 +46,41 @@ namespace XREngine.Rendering.Physics.Physx
         private readonly DataSource _userControllerHitReportSource;
         private readonly DataSource _controllerBehaviorCallbackSource;
 
-        private void Destructor() { }
+        private void Destructor(void* self) { }
+
+        // Legacy delegate signatures (not used by the current vtable wiring)
+        [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
+        delegate void DelOnControllerHit(void* self, PxControllersHit* hit);
+        [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
+        delegate void DelOnShapeHit(void* self, PxControllerShapeHit* hit);
+        [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
+        delegate void DelOnObstacleHit(void* self, PxControllerObstacleHit* hit);
+
+        // Behavior callbacks do not expose an explicit this/self in the PhysX signature.
+        [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
+        delegate byte DelGetBehaviorFlagsShape(void* self, PxShape* shape, PxActor* actor);
+        [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
+        delegate byte DelGetBehaviorFlagsObstacle(void* self, PxObstacle* obstacle);
+        [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
+        delegate byte DelGetBehaviorFlagsController(void* self, PxController* controller);
 
         [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
-        delegate void DelOnControllerHit(PxControllersHit* hit);
-        [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
-        delegate void DelOnShapeHit(PxControllerShapeHit* hit);
-        [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
-        delegate void DelOnObstacleHit(PxControllerObstacleHit* hit);
+        delegate void DelDestructor(void* self);
 
-        [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
-        delegate PxControllerBehaviorFlags DelGetBehaviorFlagsShape(PxShape* shape, PxActor* actor);
-        [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
-        delegate PxControllerBehaviorFlags DelGetBehaviorFlagsObstacle(PxObstacle* obstacle);
-        [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
-        delegate PxControllerBehaviorFlags DelGetBehaviorFlagsController(PxController* controller);
-
-        [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
-        delegate void DelDestructor();
-
+        // Instance delegates used for vtables (managed thunks -> unmanaged wrappers)
         private readonly DelOnControllerHit? OnControllerHitInstance;
         private readonly DelOnShapeHit? OnShapeHitInstance;
         private readonly DelOnObstacleHit? OnObstacleHitInstance;
 
-        private readonly DelGetBehaviorFlagsShape? GetBehaviorFlagsShapeInstance;
-        private readonly DelGetBehaviorFlagsObstacle? GetBehaviorFlagsObstacleInstance;
-        private readonly DelGetBehaviorFlagsController? GetBehaviorFlagsControllerInstance;
+        private readonly DelGetBehaviorFlagsShape GetBehaviorFlagsShapeInstance;
+        private readonly DelGetBehaviorFlagsObstacle GetBehaviorFlagsObstacleInstance;
+        private readonly DelGetBehaviorFlagsController GetBehaviorFlagsControllerInstance;
 
         private readonly DelDestructor DestructorInstance;
 
         public Controller()
         {
+            // Allocate instance delegates to keep the GC alive and use managed thunks for the vtable entries.
             OnControllerHitInstance = OnControllerHit;
             OnShapeHitInstance = OnShapeHit;
             OnObstacleHitInstance = OnObstacleHit;
@@ -91,13 +91,24 @@ namespace XREngine.Rendering.Physics.Physx
 
             DestructorInstance = Destructor;
 
+            // PhysX spec order: shape, controller, obstacle, destructor.
             _userControllerHitReportSource = DataSource.FromStruct(new PxUserControllerHitReport()
             {
-                vtable_ = PhysxScene.Native.CreateVTable(OnShapeHitInstance, OnControllerHitInstance, OnObstacleHitInstance, DestructorInstance)
+                vtable_ = PhysxScene.Native.CreateVTable(
+                    OnShapeHitInstance,
+                    OnControllerHitInstance,
+                    OnObstacleHitInstance,
+                    DestructorInstance)
             });
+
+            // PhysX spec order: shape/actor, controller, obstacle, destructor.
             _controllerBehaviorCallbackSource = DataSource.FromStruct(new PxControllerBehaviorCallback()
             {
-                vtable_ = PhysxScene.Native.CreateVTable(GetBehaviorFlagsShapeInstance, GetBehaviorFlagsControllerInstance, GetBehaviorFlagsObstacleInstance, DestructorInstance)
+                vtable_ = PhysxScene.Native.CreateVTable(
+                    GetBehaviorFlagsShapeInstance,
+                    GetBehaviorFlagsControllerInstance,
+                    GetBehaviorFlagsObstacleInstance,
+                    DestructorInstance)
             });
         }
 
@@ -271,8 +282,8 @@ namespace XREngine.Rendering.Physics.Physx
                 PxControllerFilters stackFilters = PxControllerFilters_new(&stackFilterData, null, cctFilterCallback);
                 stackFilters.mFilterFlags = PxQueryFlags.Static | PxQueryFlags.Dynamic;
 
-                // Pass null for obstacle context like the smoke test initially did
-                PxObstacleContext* obstacleContext = null;
+                // Prefer the manager's default obstacle context so behavior callbacks see obstacle data (null falls back if unavailable).
+                PxObstacleContext* obstacleContext = mgr.DefaultObstacleContextPtr;
                 
                 PxControllerCollisionFlags flags = ControllerPtr->MoveMut(&d, minDist, elapsedTime, &stackFilters, obstacleContext);
                 CollidingSides = (flags & PxControllerCollisionFlags.CollisionSides) != 0;
@@ -291,8 +302,14 @@ namespace XREngine.Rendering.Physics.Physx
 
             // Consume queued moves on the physics thread (PhysxScene.StepSimulation).
             // We keep per-call elapsedTime to match the producer tick's integration.
+            float totalElapsed = 0.0f;
+            Vector3 totalMove = Vector3.Zero;
             while (_inputBuffer.TryDequeue(out var input))
-                ConsumeMove(input.delta, input.minDist, input.elapsedTime);
+            {
+                totalElapsed += input.elapsedTime;
+                totalMove += input.delta;
+            }
+            ConsumeMove(totalMove, 0.001f, totalElapsed);
         }
 
         public void Resize(float height)
@@ -380,18 +397,18 @@ namespace XREngine.Rendering.Physics.Physx
         private bool _collidingUp;
         private bool _collidingDown;
 
-        internal void OnControllerHit(PxControllersHit* hit)
+        internal void OnControllerHit(void* self, PxControllersHit* hit)
             => ControllerHit?.Invoke(this, hit);
-        internal void OnShapeHit(PxControllerShapeHit* hit)
+        internal void OnShapeHit(void* self, PxControllerShapeHit* hit)
             => ShapeHit?.Invoke(this, hit);
-        internal void OnObstacleHit(PxControllerObstacleHit* hit)
+        internal void OnObstacleHit(void* self, PxControllerObstacleHit* hit)
             => ObstacleHit?.Invoke(this, hit);
 
-        internal PxControllerBehaviorFlags GetBehaviorFlagsShape(PxShape* shape, PxActor* actor)
-            => BehaviorCallbackShape?.Invoke(shape, actor) ?? PxControllerBehaviorFlags.CctCanRideOnObject;
-        internal PxControllerBehaviorFlags GetBehaviorFlagsObstacle(PxObstacle* obstacle)
-            => BehaviorCallbackObstacle?.Invoke(obstacle) ?? PxControllerBehaviorFlags.CctCanRideOnObject;
-        internal PxControllerBehaviorFlags GetBehaviorFlagsController(PxController* controller)
-            => BehaviorCallbackController?.Invoke(controller) ?? PxControllerBehaviorFlags.CctCanRideOnObject;
+        internal byte GetBehaviorFlagsShape(void* self, PxShape* shape, PxActor* actor)
+            => (byte)(BehaviorCallbackShape?.Invoke(shape, actor) ?? PxControllerBehaviorFlags.CctCanRideOnObject);
+        internal byte GetBehaviorFlagsObstacle(void* self, PxObstacle* obstacle)
+            => (byte)(BehaviorCallbackObstacle?.Invoke(obstacle) ?? PxControllerBehaviorFlags.CctCanRideOnObject);
+        internal byte GetBehaviorFlagsController(void* self, PxController* controller)
+            => (byte)(BehaviorCallbackController?.Invoke(controller) ?? PxControllerBehaviorFlags.CctCanRideOnObject);
     }
 }

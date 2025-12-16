@@ -116,7 +116,7 @@ namespace XREngine.Rendering.Physics.Physx
                 if (Controllers.TryGetValue(ptr, out var controller))
                     controllers.Add(controller);
             }
-            return controllers.ToArray();
+            return [.. controllers];
         }
         public BoxController CreateAABBController(
             Vector3 position,
@@ -157,8 +157,8 @@ namespace XREngine.Rendering.Physics.Physx
                 density,
                 scaleCoeff,
                 volumeGrowth,
-                null, // reportCallback - null avoids vtable callback crashes (smoke test uses null)
-                null, // behaviorCallback - null avoids vtable callback crashes
+                controller.UserControllerHitReport,
+                null,//controller.ControllerBehaviorCallback,
                 nonWalkableMode,
                 material,
                 clientID,
@@ -217,8 +217,8 @@ namespace XREngine.Rendering.Physics.Physx
                 density,
                 scaleCoeff,
                 volumeGrowth,
-                null, // reportCallback - null avoids vtable callback crashes (smoke test uses null)
-                null, // behaviorCallback - null avoids vtable callback crashes
+                controller.UserControllerHitReport,
+                null,//controller.ControllerBehaviorCallback,
                 nonWalkableMode,
                 material,
                 clientID,
