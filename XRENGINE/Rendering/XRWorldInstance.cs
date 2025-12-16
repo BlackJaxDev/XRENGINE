@@ -9,14 +9,17 @@ using Extensions;
 using XREngine.Audio;
 using XREngine.Components;
 using XREngine.Components.Animation;
+using XREngine.Components.Physics;
 using XREngine.Components.Scene.Mesh;
 using XREngine.Data.Core;
 using XREngine.Data.Geometry;
 using XREngine.Data.Rendering;
 using XREngine.Data.Trees;
 using XREngine.Rendering.Info;
+using XREngine.Rendering.Lightmapping;
 using XREngine.Rendering.Picking;
 using XREngine.Scene;
+using XREngine.Scene.Physics;
 using XREngine.Scene.Prefabs;
 using XREngine.Scene.Transforms;
 using static XREngine.Engine;
@@ -51,6 +54,8 @@ namespace XREngine.Rendering
         protected RootNodeCollection _rootNodes = [];
         public RootNodeCollection RootNodes => _rootNodes;
         public Lights3DCollection Lights { get; }
+
+        public LightmapBakeManager LightmapBaking { get; }
 
         // Physics raycasts must run on the fixed-update (physics) thread.
         private readonly ConcurrentQueue<PhysicsRaycastRequest> _pendingPhysicsRaycasts = new();
@@ -209,6 +214,7 @@ namespace XREngine.Rendering
             _visualScene = visualScene;
             _physicsScene = physicsScene;
             Lights = new Lights3DCollection(this);
+            LightmapBaking = new LightmapBakeManager(this);
 
             TickLists = [];
             TickLists.Add(ETickGroup.Normal, []);
@@ -253,9 +259,140 @@ namespace XREngine.Rendering
             // Only step physics if enabled (typically only during play mode)
             if (PhysicsEnabled)
                 PhysicsScene.StepSimulation();
+
+            // Apply any per-body min-Y reset requests after stepping physics.
+            // This is intentionally per-body (not global) so only bodies that cross the plane are reset.
+            ProcessPhysicsMinYPlaneResetRequests();
+
             ProcessQueuedPhysicsRaycasts();
             TickGroup(ETickGroup.DuringPhysics);
             TickGroup(ETickGroup.PostPhysics);
+        }
+
+        private bool _physicsResetCacheValid;
+        private readonly Dictionary<DynamicRigidBodyComponent, (Vector3 position, Quaternion rotation)> _physicsResetInitialDynamicPoses = [];
+
+        // Min-Y reset is evaluated by transforms and queued here; it is applied on FixedUpdate.
+        private readonly ConcurrentQueue<IAbstractDynamicRigidBody> _pendingMinYPlaneResetRequests = new();
+        private readonly ConcurrentDictionary<IAbstractDynamicRigidBody, byte> _pendingMinYPlaneResetRequestSet =
+            new(System.Collections.Generic.ReferenceEqualityComparer.Instance);
+
+        private readonly Dictionary<IAbstractDynamicRigidBody, DynamicRigidBodyComponent> _physicsResetDynamicBodyLookup =
+            new(System.Collections.Generic.ReferenceEqualityComparer.Instance);
+
+        internal void EnqueuePhysicsResetFromMinYPlane(IAbstractDynamicRigidBody body)
+        {
+            if (!PhysicsEnabled)
+                return;
+
+            // De-dupe so a body only appears once until it's processed.
+            if (_pendingMinYPlaneResetRequestSet.TryAdd(body, 0))
+                _pendingMinYPlaneResetRequests.Enqueue(body);
+        }
+
+        private void ProcessPhysicsMinYPlaneResetRequests()
+        {
+            if (!PhysicsEnabled)
+                return;
+
+            if (_pendingMinYPlaneResetRequests.IsEmpty)
+                return;
+
+            // Re-check the setting at the time we apply the reset.
+            float minYDist = TargetWorld?.Settings?.PhysicsResetMinYDist ?? 0.0f;
+            bool enabled = minYDist > 0.0f;
+
+            if (enabled)
+                EnsurePhysicsResetCache();
+
+            while (_pendingMinYPlaneResetRequests.TryDequeue(out IAbstractDynamicRigidBody? body))
+            {
+                if (body is null)
+                    continue;
+
+                _pendingMinYPlaneResetRequestSet.TryRemove(body, out _);
+
+                if (!enabled)
+                    continue;
+
+                if (!_physicsResetDynamicBodyLookup.TryGetValue(body, out DynamicRigidBodyComponent? bodyComp))
+                    continue;
+
+                ResetDynamicPhysicsBodyToInitialPose(bodyComp);
+            }
+        }
+
+        private void EnsurePhysicsResetCache()
+        {
+            if (_physicsResetCacheValid)
+                return;
+
+            _physicsResetInitialDynamicPoses.Clear();
+            _physicsResetDynamicBodyLookup.Clear();
+
+            foreach (SceneNode root in RootNodes)
+            {
+                foreach (SceneNode node in SceneNodePrefabUtility.EnumerateHierarchy(root))
+                {
+                    foreach (var comp in node.Components)
+                    {
+                        if (comp is not DynamicRigidBodyComponent bodyComp)
+                            continue;
+                        if (bodyComp.World != this)
+                            continue;
+
+                        (Vector3 position, Quaternion rotation) pose;
+                        if (bodyComp.RigidBody is Rendering.Physics.Physx.PhysxRigidActor physxActor)
+                            pose = physxActor.Transform;
+                        else
+                        {
+                            var matrix = bodyComp.Transform.WorldMatrix;
+                            Matrix4x4.Decompose(matrix, out _, out pose.rotation, out pose.position);
+                        }
+
+                        _physicsResetInitialDynamicPoses[bodyComp] = pose;
+
+                        if (bodyComp.RigidBody is IAbstractDynamicRigidBody dynBody)
+                            _physicsResetDynamicBodyLookup[dynBody] = bodyComp;
+                    }
+                }
+            }
+
+            _physicsResetCacheValid = true;
+        }
+
+        private void ResetDynamicPhysicsBodyToInitialPose(DynamicRigidBodyComponent bodyComp)
+        {
+            if (bodyComp?.World != this)
+                return;
+
+            if (!_physicsResetInitialDynamicPoses.TryGetValue(bodyComp, out var pose))
+                return;
+
+            if (bodyComp.RigidBody is Rendering.Physics.Physx.PhysxRigidActor physxActor)
+                physxActor.SetTransform(pose.position, pose.rotation, wake: true);
+
+            bodyComp.RigidBodyTransform.SetPositionAndRotation(pose.position, pose.rotation);
+            bodyComp.KinematicTarget = null;
+            bodyComp.LinearVelocity = Vector3.Zero;
+            bodyComp.AngularVelocity = Vector3.Zero;
+        }
+
+        private void ResetDynamicPhysicsBodiesToInitialPoses()
+        {
+            foreach (var (bodyComp, pose) in _physicsResetInitialDynamicPoses)
+            {
+                if (bodyComp?.World != this)
+                    continue;
+
+                if (bodyComp.RigidBody is Rendering.Physics.Physx.PhysxRigidActor physxActor)
+                    physxActor.SetTransform(pose.position, pose.rotation, wake: true);
+
+                bodyComp.RigidBodyTransform.SetPositionAndRotation(pose.position, pose.rotation);
+                bodyComp.KinematicTarget = null;
+                bodyComp.LinearVelocity = Vector3.Zero;
+                bodyComp.AngularVelocity = Vector3.Zero;
+            }
         }
 
         public enum EPlayState
@@ -299,6 +436,10 @@ namespace XREngine.Rendering
             PreBeginPlay?.Invoke(this);
             VisualScene.Initialize();
             PhysicsScene.Initialize();
+
+            _physicsResetCacheValid = false;
+            _physicsResetInitialDynamicPoses.Clear();
+
             await BeginPlayInternal();
             LinkTimeCallbacks();
             PostBeginPlay?.Invoke(this);
@@ -331,6 +472,10 @@ namespace XREngine.Rendering
             PhysicsScene.Destroy();
             VisualScene.Destroy();
             EndPlayInternal();
+
+            _physicsResetCacheValid = false;
+            _physicsResetInitialDynamicPoses.Clear();
+
             PostEndPlay?.Invoke(this);
             PlayState = EPlayState.Stopped;
         }
@@ -405,6 +550,11 @@ namespace XREngine.Rendering
             using (Engine.Profiler.Start("WorldInstance.GlobalSwapBuffers.Lights"))
             {
                 Lights.SwapBuffers();
+            }
+
+            using (Engine.Profiler.Start("WorldInstance.GlobalSwapBuffers.LightmapBaking"))
+            {
+                LightmapBaking.Update();
             }
         }
 

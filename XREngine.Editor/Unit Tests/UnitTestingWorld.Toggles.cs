@@ -11,6 +11,8 @@ public static partial class UnitTestingWorld
         Default,
         MathIntersections,
         MeshEditing,
+        UberShader,
+        PhysxTesting,
     }
 
     public class Settings
@@ -52,6 +54,7 @@ public static partial class UnitTestingWorld
 
         //Pawns
         public bool VRPawn = true; //Enables VR input and pawn.
+        public bool UseOpenXR = false; //If true and VRPawn is enabled (and not emulated), initializes VR via OpenXR instead of OpenVR.
         public bool EmulatedVRPawn = true; //Enables an emulated VR pawn for testing without a VR headset. All this does is disallow OpenVR from starting, VRPawn must still be enabled.
         public bool Locomotion = true; //Enables the player to physically locomote in the world. Requires a physical floor.
         public bool ThirdPersonPawn = false; //If on desktop and character pawn is enabled, this will add a third person camera instead of first person.

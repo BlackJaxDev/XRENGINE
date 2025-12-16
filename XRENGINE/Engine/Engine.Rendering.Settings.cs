@@ -177,6 +177,8 @@ namespace XREngine
                 private float _debugTextMaxLifespan = 0.0f;
                 private bool _logMissingShaderSamplers = true;
 
+                private bool _cullShadowCollectionByCameraFrusta = true;
+
                 /// <summary>
                 /// If true, logs a warning when a texture sampler uniform is not found during binding.
                 /// This helps diagnose mismatched texture SamplerName properties vs shader sampler uniform names.
@@ -188,6 +190,19 @@ namespace XREngine
                 {
                     get => _logMissingShaderSamplers;
                     set => SetField(ref _logMissingShaderSamplers, value);
+                }
+
+                /// <summary>
+                /// If true, shadow-map collection work is culled using the active camera frusta
+                /// from all rendering windows/viewports.
+                /// This can drastically reduce CPU spikes when many lights are present.
+                /// </summary>
+                [Category("Performance")]
+                [Description("If true, culls shadow-map collection using active viewport camera frusta.")]
+                public bool CullShadowCollectionByCameraFrusta
+                {
+                    get => _cullShadowCollectionByCameraFrusta;
+                    set => SetField(ref _cullShadowCollectionByCameraFrusta, value);
                 }
 
                 /// <summary>

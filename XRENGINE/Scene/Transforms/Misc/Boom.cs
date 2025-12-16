@@ -106,7 +106,7 @@ namespace XREngine.Components.Scene.Transforms
             set => SetField(ref _queryFilter, value);
         }
 
-        private LayerMask _layerMask = LayerMask.GetMask(DefaultLayers.Default);
+        private LayerMask _layerMask = LayerMask.GetMask(DefaultLayers.Dynamic);
         public LayerMask LayerMask
         {
             get => _layerMask;

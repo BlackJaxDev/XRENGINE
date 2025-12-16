@@ -172,7 +172,7 @@ public partial class XRMesh : XRAsset
     [MemoryPackIgnore]
     private BVH<XREngine.Data.Geometry.Triangle>? _bvhTree;
     [MemoryPackIgnore]
-    private bool _generating;
+    private int _generatingBvh;
 
     // SDF
     [MemoryPackIgnore]

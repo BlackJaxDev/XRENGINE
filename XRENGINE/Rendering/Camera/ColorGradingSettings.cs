@@ -124,6 +124,11 @@ namespace XREngine.Rendering
             program.Uniform($"{ColorGradeUniformName}.{nameof(Hue)}", Hue);
             program.Uniform($"{ColorGradeUniformName}.{nameof(Saturation)}", Saturation);
             program.Uniform($"{ColorGradeUniformName}.{nameof(Brightness)}", Brightness);
+
+            // Optional GPU-driven auto exposure path (PostProcess.fs / PostProcessStereo.fs)
+            // Shader-side logic falls back to uniform exposure if the GPU texture isn't valid yet.
+            bool useGpuExposure = AutoExposure && AbstractRenderer.Current?.SupportsGpuAutoExposure == true;
+            program.Uniform("UseGpuAutoExposure", useGpuExposure);
         }
 
         internal static string WriteShaderSetup()
@@ -154,7 +159,7 @@ uniform ColorGradeStruct ColorGrade;";
             set => SetField(ref _secBetweenExposureUpdates, value);
         }
 
-        private float _lastUpdateTime = 0.0f;
+        private float _lastUpdateTime = float.MinValue;
         private float _lastLumDot = 0.0f;
 
         public void UpdateExposure(BoundingRectangle rect)
@@ -203,6 +208,27 @@ uniform ColorGradeStruct ColorGrade;";
                     Engine.Rendering.State.CalculateDotLuminanceAsync(t2da, generateMipmapsNow, OnResult);
                     break;
             }
+        }
+
+        public void UpdateExposureGpu(XRTexture sourceTex, XRTexture2D exposureTex, bool generateMipmapsNow)
+        {
+            if (!RequiresAutoExposure || Engine.Rendering.State.IsLightProbePass || Engine.Rendering.State.IsShadowPass || Engine.Rendering.State.IsSceneCapturePass)
+                return;
+
+            if (!AutoExposure)
+                return;
+
+            var renderer = AbstractRenderer.Current;
+            if (renderer?.SupportsGpuAutoExposure != true)
+                return;
+
+            // For GPU auto-exposure, we update every frame to ensure smooth transitions.
+            // The compute shader or the renderer will handle the time-based lerp using deltaTime.
+            float time = Engine.ElapsedTime;
+            float deltaTime = _lastUpdateTime == float.MinValue ? 0.0f : time - _lastUpdateTime;
+            _lastUpdateTime = time;
+
+            renderer.UpdateAutoExposureGpu(sourceTex, exposureTex, this, deltaTime, generateMipmapsNow);
         }
 
         private void LerpExposure(bool success, float lumDot)

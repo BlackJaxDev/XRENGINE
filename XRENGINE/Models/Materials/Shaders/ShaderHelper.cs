@@ -125,8 +125,187 @@ void main()
 ";
             return new XRShader(EShaderType.Fragment, source);
         }
+
+        public static XRShader LitTextureSilhouettePOMFragForward()
+        {
+            // Silhouette POM (parallax occlusion mapping) in forward lighting.
+            // Texture0 = Albedo, Texture1 = Height (R)
+            string source = @"
+#version 450
+
+layout (location = 0) out Vector4 OutColor;
+
+uniform float MatSpecularIntensity;
+uniform float MatShininess;
+
+uniform Vector3 CameraPosition;
+
+uniform sampler2D Texture0; // Albedo
+uniform sampler2D Texture1; // Height (R)
+
+// Parallax (silhouette POM)
+uniform float ParallaxScale;        // UV units
+uniform int ParallaxMinSteps;
+uniform int ParallaxMaxSteps;
+uniform int ParallaxRefineSteps;    // binary refinement steps
+uniform float ParallaxHeightBias;   // applied to height before inversion
+uniform float ParallaxSilhouette;   // >0.5 enables discard when UV exits [0,1]
+
+layout (location = 0) in Vector3 FragPos;
+layout (location = 1) in Vector3 FragNorm;
+layout (location = 6) in Vector2 FragUV0;
+
+" + LightingDeclBasic() + @"
+
+mat3 ComputeTBN(Vector3 n, Vector3 p, Vector2 uv)
+{
+    Vector3 dp1 = dFdx(p);
+    Vector3 dp2 = dFdy(p);
+    Vector2 duv1 = dFdx(uv);
+    Vector2 duv2 = dFdy(uv);
+
+    Vector3 dp2perp = cross(dp2, n);
+    Vector3 dp1perp = cross(n, dp1);
+    Vector3 t = dp2perp * duv1.x + dp1perp * duv2.x;
+    Vector3 b = dp2perp * duv1.y + dp1perp * duv2.y;
+
+    float invMax = inversesqrt(max(dot(t, t), dot(b, b)));
+    return mat3(t * invMax, b * invMax, n);
+}
+
+Vector2 SilhouetteParallaxOcclusionMapping(
+    sampler2D heightMap,
+    Vector2 baseUV,
+    Vector3 viewDirTS,
+    float scale,
+    int minSteps,
+    int maxSteps,
+    int refineSteps,
+    float heightBias,
+    out bool valid)
+{
+    valid = true;
+    if (viewDirTS.z <= 1e-4)
+        return baseUV;
+
+    float ndotv = clamp(abs(viewDirTS.z), 0.0, 1.0);
+    int stepCount = int(mix(float(maxSteps), float(minSteps), ndotv));
+    stepCount = max(stepCount, 1);
+
+    Vector2 parallaxDir = (viewDirTS.xy / viewDirTS.z) * scale;
+    Vector2 deltaUV = parallaxDir / float(stepCount);
+    float layerDepth = 1.0 / float(stepCount);
+
+    Vector2 uv = baseUV;
+    float currentLayerDepth = 0.0;
+
+    float h = clamp(texture(heightMap, uv).r + heightBias, 0.0, 1.0);
+    float depthFromMap = 1.0 - h;
+
+    for (int i = 0; i < stepCount; ++i)
+    {
+        if (currentLayerDepth >= depthFromMap)
+            break;
+
+        uv -= deltaUV;
+        currentLayerDepth += layerDepth;
+
+        if (uv.x < 0.0 || uv.x > 1.0 || uv.y < 0.0 || uv.y > 1.0)
+        {
+            valid = false;
+            break;
+        }
+
+        h = clamp(texture(heightMap, uv).r + heightBias, 0.0, 1.0);
+        depthFromMap = 1.0 - h;
+    }
+
+    if (!valid)
+        return uv;
+
+    // Binary refinement between previous and current UV
+    Vector2 uvPrev = uv + deltaUV;
+    float depthPrev = currentLayerDepth - layerDepth;
+
+    float hPrev = clamp(texture(heightMap, uvPrev).r + heightBias, 0.0, 1.0);
+    float mapPrev = 1.0 - hPrev;
+
+    Vector2 aUV = uvPrev;
+    Vector2 bUV = uv;
+    float aDepth = depthPrev;
+    float bDepth = currentLayerDepth;
+    float aMap = mapPrev;
+    float bMap = depthFromMap;
+
+    for (int r = 0; r < refineSteps; ++r)
+    {
+        Vector2 midUV = 0.5 * (aUV + bUV);
+        float midDepth = 0.5 * (aDepth + bDepth);
+
+        float hMid = clamp(texture(heightMap, midUV).r + heightBias, 0.0, 1.0);
+        float midMap = 1.0 - hMid;
+
+        if (midDepth < midMap)
+        {
+            aUV = midUV;
+            aDepth = midDepth;
+            aMap = midMap;
+        }
+        else
+        {
+            bUV = midUV;
+            bDepth = midDepth;
+            bMap = midMap;
+        }
+    }
+
+    return bUV;
+}
+
+void main()
+{
+    Vector3 normal = normalize(FragNorm);
+    Vector3 viewDirWS = normalize(CameraPosition - FragPos);
+
+    mat3 tbn = ComputeTBN(normal, FragPos, FragUV0);
+    Vector3 viewDirTS = transpose(tbn) * viewDirWS;
+
+    bool pomValid;
+    Vector2 uv = SilhouetteParallaxOcclusionMapping(
+        Texture1,
+        FragUV0,
+        viewDirTS,
+        ParallaxScale,
+        ParallaxMinSteps,
+        ParallaxMaxSteps,
+        ParallaxRefineSteps,
+        ParallaxHeightBias,
+        pomValid);
+
+    if (ParallaxSilhouette > 0.5 && !pomValid)
+        discard;
+
+    if (ParallaxSilhouette <= 0.5 && !pomValid)
+        uv = FragUV0;
+
+    Vector4 texColor = texture(Texture0, uv);
+    float AmbientOcclusion = 1.0;
+
+    " + LightingCalcBasic("totalLight", "Vector3(0.0f)", "normal", "FragPos", "texColor.rgb", "MatSpecularIntensity", "AmbientOcclusion") + @"
+
+    OutColor = texColor * Vector4(totalLight, 1.0);
+}
+";
+
+            return new XRShader(EShaderType.Fragment, source);
+        }
+
         public static XRShader? LitTextureFragDeferred()
             => LoadEngineShader(Path.Combine("Common", "TexturedDeferred.fs"));
+
+        public static XRShader LitTextureSilhouettePOMFragDeferred()
+            => LoadEngineShader(Path.Combine("Common", "TexturedSilhouettePOMDeferred.fs"));
+
         public static XRShader? LitColorFragDeferred()
             => LoadEngineShader(Path.Combine("Common", "ColoredDeferred.fs"));
         public static XRShader LitTextureNormalFragDeferred()
@@ -209,11 +388,33 @@ void main()
     for (int i = 0; i < DirLightCount; ++i)
         {0} += CalcDirLight(DirectionalLights[i], {2}, {3}, {4}, {5}, {6});
 
-    for (int i = 0; i < PointLightCount; ++i)
-        {0} += CalcPointLight(PointLights[i], {2}, {3}, {4}, {5}, {6});
+    if (ForwardPlusEnabled)
+    {
+        ivec2 tileCoord = ivec2(gl_FragCoord.xy) / ForwardPlusTileSize;
+        int tileCountX = (int(ForwardPlusScreenSize.x) + ForwardPlusTileSize - 1) / ForwardPlusTileSize;
+        int tileIndex = tileCoord.y * tileCountX + tileCoord.x;
+        int baseIndex = tileIndex * ForwardPlusMaxLightsPerTile;
 
-    for (int i = 0; i < SpotLightCount; ++i)
-        {0} += CalcSpotLight(SpotLights[i], {2}, {3}, {4}, {5}, {6});",
+        for (int o = 0; o < ForwardPlusMaxLightsPerTile; ++o)
+        {
+            int lightIndex = ForwardPlusVisibleIndices[baseIndex + o];
+            if (lightIndex < 0)
+                break;
+
+            ForwardPlusLocalLight l = ForwardPlusLocalLights[lightIndex];
+            {0} += (l.Color_Type.w < 0.5)
+                ? CalcForwardPlusPointLight(l, {2}, {3}, {4}, {5}, {6})
+                : CalcForwardPlusSpotLight(l, {2}, {3}, {4}, {5}, {6});
+        }
+    }
+    else
+    {
+        for (int i = 0; i < PointLightCount; ++i)
+            {0} += CalcPointLight(PointLights[i], {2}, {3}, {4}, {5}, {6});
+
+        for (int i = 0; i < SpotLightCount; ++i)
+            {0} += CalcSpotLight(SpotLights[i], {2}, {3}, {4}, {5}, {6});
+    }",
         lightVarName, baseLightVector3, normalNameVector3, fragPosNameVector3, albedoNameRGB, specNameIntensity, ambientOcclusionFloat);
         }
         public static string LightingDeclBasic()
@@ -259,6 +460,31 @@ uniform SpotLight SpotLights[16];
 
 uniform int PointLightCount;
 uniform PointLight PointLights[16];
+
+// Forward+ (tiled) light culling
+uniform bool ForwardPlusEnabled;
+uniform vec2 ForwardPlusScreenSize;
+uniform int ForwardPlusTileSize;
+uniform int ForwardPlusMaxLightsPerTile;
+
+struct ForwardPlusLocalLight
+{
+    vec4 PositionWS;
+    vec4 DirectionWS_Exponent;
+    vec4 Color_Type;     // rgb=color, w=type (0=point, 1=spot)
+    vec4 Params;         // x=radius, y=brightness, z=diffuseIntensity
+    vec4 SpotAngles;     // x=innerCutoff, y=outerCutoff
+};
+
+layout(std430, binding = 20) readonly buffer ForwardPlusLocalLightsBuffer
+{
+    ForwardPlusLocalLight ForwardPlusLocalLights[];
+};
+
+layout(std430, binding = 21) readonly buffer ForwardPlusVisibleIndicesBuffer
+{
+    int ForwardPlusVisibleIndices[];
+};
 
 //0 is fully in shadow, 1 is fully lit
 float ReadShadowMap(in Vector3 fragPos, in Vector3 normal, in float diffuseFactor, in BaseLight light)
@@ -347,6 +573,48 @@ Vector3 CalcSpotLight(SpotLight light, Vector3 normal, Vector3 fragPos, Vector3 
     }
     return Vector3(0.0);
 }
+
+Vector3 CalcForwardPlusColor(Vector3 lightColor, float diffuseIntensity, Vector3 lightDirection, Vector3 normal, Vector3 fragPos, Vector3 albedo, float spec, float ambientOcclusion)
+{
+    Vector3 DiffuseColor = Vector3(0.0);
+    Vector3 SpecularColor = Vector3(0.0);
+
+    float DiffuseFactor = dot(normal, -lightDirection);
+    if (DiffuseFactor > 0.0)
+    {
+        DiffuseColor = lightColor * diffuseIntensity * albedo * DiffuseFactor;
+
+        Vector3 posToEye = normalize(CameraPosition - fragPos);
+        Vector3 reflectDir = reflect(lightDirection, normal);
+        float SpecularFactor = dot(posToEye, reflectDir);
+        if (SpecularFactor > 0.0)
+            SpecularColor = lightColor * spec * pow(SpecularFactor, 64.0);
+    }
+
+    return (DiffuseColor + SpecularColor) * ambientOcclusion;
+}
+
+Vector3 CalcForwardPlusPointLight(ForwardPlusLocalLight light, Vector3 normal, Vector3 fragPos, Vector3 albedo, float spec, float ambientOcclusion)
+{
+    Vector3 lightToPos = fragPos - light.PositionWS.xyz;
+    float dist = length(lightToPos);
+    float attn = Attenuate(dist, light.Params.x);
+    return attn * CalcForwardPlusColor(light.Color_Type.xyz, light.Params.z, normalize(lightToPos), normal, fragPos, albedo, spec, ambientOcclusion);
+}
+
+Vector3 CalcForwardPlusSpotLight(ForwardPlusLocalLight light, Vector3 normal, Vector3 fragPos, Vector3 albedo, float spec, float ambientOcclusion)
+{
+    Vector3 lightDir = normalize(light.DirectionWS_Exponent.xyz);
+    Vector3 lightToPosN = normalize(fragPos - light.PositionWS.xyz);
+    float clampedCosine = max(0.0, dot(lightToPosN, lightDir));
+    float spotEffect = smoothstep(light.SpotAngles.y, light.SpotAngles.x, clampedCosine);
+
+    Vector3 lightToPos = fragPos - light.PositionWS.xyz;
+    float spotAttn = pow(clampedCosine, light.DirectionWS_Exponent.w);
+    float distAttn = Attenuate(length(lightToPos) / max(light.Params.y, 0.0001), light.Params.x);
+
+    return spotEffect * spotAttn * distAttn * CalcForwardPlusColor(light.Color_Type.xyz, light.Params.z, normalize(lightToPos), normal, fragPos, albedo, spec, ambientOcclusion);
+}
 ";
         }
         public static string LightingDeclPhysicallyBased()
@@ -392,6 +660,31 @@ uniform SpotLight SpotLights[16];
 
 uniform int PointLightCount;
 uniform PointLight PointLights[16];
+
+// Forward+ (tiled) light culling
+uniform bool ForwardPlusEnabled;
+uniform vec2 ForwardPlusScreenSize;
+uniform int ForwardPlusTileSize;
+uniform int ForwardPlusMaxLightsPerTile;
+
+struct ForwardPlusLocalLight
+{
+    vec4 PositionWS;
+    vec4 DirectionWS_Exponent;
+    vec4 Color_Type;     // rgb=color, w=type (0=point, 1=spot)
+    vec4 Params;         // x=radius, y=brightness, z=diffuseIntensity
+    vec4 SpotAngles;     // x=innerCutoff, y=outerCutoff
+};
+
+layout(std430, binding = 20) readonly buffer ForwardPlusLocalLightsBuffer
+{
+    ForwardPlusLocalLight ForwardPlusLocalLights[];
+};
+
+layout(std430, binding = 21) readonly buffer ForwardPlusVisibleIndicesBuffer
+{
+    int ForwardPlusVisibleIndices[];
+};
 
 //0 is fully in shadow, 1 is fully lit
 float ReadShadowMap(in Vector3 fragPos, in Vector3 normal, in float diffuseFactor, in BaseLight light)

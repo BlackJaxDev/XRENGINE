@@ -17,6 +17,19 @@ public static partial class UnitTestingWorld
         private static DateTime _lastProfilerUIUpdate = DateTime.MinValue;
         private static float _profilerUpdateIntervalSeconds = 0.5f;
 
+        private const int FpsSpikeBaselineWindowSamples = 30;
+        private const float FpsSpikeMinPreviousFps = 10.0f;
+        private const float FpsSpikeMinDeltaMs = 1.0f;
+        private static float _fpsSpikeMinDropFps = 15.0f;
+        private static float _lastFpsSpikeProcessedFrameTime = float.NegativeInfinity;
+        private static readonly List<FpsDropSpikePathEntry> _fpsDropSpikePaths = new();
+        private static readonly Dictionary<string, int> _fpsDropSpikePathIndexByKey = new(StringComparer.Ordinal);
+
+        private static readonly List<int> _fpsDropSpikeSortedIndices = new();
+        private static int _fpsDropSpikeLastSortedCount;
+        private static int _fpsDropSpikeLastSortColumn = -1;
+        private static ImGuiSortDirection _fpsDropSpikeLastSortDirection = ImGuiSortDirection.None;
+
         private static void DrawProfilerPanel()
         {
             if (!_showProfiler) return;
@@ -44,6 +57,7 @@ public static partial class UnitTestingWorld
                 snapshotForDisplay = GetSnapshotForHierarchy(frameSnapshot, out hierarchyFrameMs, out showingWorstWindowSample);
                 UpdateProfilerThreadCache(frameSnapshot.Threads);
                 UpdateRootMethodCache(frameSnapshot, history);
+                UpdateFpsDropSpikeLog(frameSnapshot, history);
                 _lastProfilerCaptureTime = frameSnapshot.FrameTime;
             }
             else
@@ -127,6 +141,147 @@ public static partial class UnitTestingWorld
                     }
 
                     ImGui.EndTable();
+                }
+            }
+
+            ImGui.Separator();
+            if (ImGui.CollapsingHeader("FPS Drop Spikes", ImGuiTreeNodeFlags.DefaultOpen))
+            {
+                if (ImGui.Button("Clear Spikes"))
+                {
+                    _fpsDropSpikePaths.Clear();
+                    _fpsDropSpikePathIndexByKey.Clear();
+                    _fpsDropSpikeSortedIndices.Clear();
+                    _fpsDropSpikeLastSortedCount = 0;
+                    _fpsDropSpikeLastSortColumn = -1;
+                    _fpsDropSpikeLastSortDirection = ImGuiSortDirection.None;
+                }
+
+                ImGui.SameLine();
+                ImGui.SetNextItemWidth(95);
+                ImGui.DragFloat("Min Drop FPS", ref _fpsSpikeMinDropFps, 0.5f, 0.0f, 1000.0f);
+
+                ImGui.Text($"Tracked paths: {_fpsDropSpikePaths.Count:N0}");
+
+                if (_fpsDropSpikePaths.Count == 0)
+                {
+                    ImGui.TextDisabled("No spikes detected yet.");
+                }
+                else
+                {
+                    float rowHeight = ImGui.GetTextLineHeightWithSpacing();
+                    float estimatedHeight = MathF.Min(12, _fpsDropSpikePaths.Count) * rowHeight + rowHeight * 2;
+
+                    if (ImGui.BeginTable("ProfilerFpsDropSpikes", 8,
+                        ImGuiTableFlags.Borders | ImGuiTableFlags.RowBg | ImGuiTableFlags.Resizable | ImGuiTableFlags.ScrollY | ImGuiTableFlags.Sortable,
+                        new Vector2(-1.0f, estimatedHeight)))
+                    {
+                        ImGui.TableSetupColumn("Worst Frame (s)", ImGuiTableColumnFlags.WidthFixed, 95f);
+                        ImGui.TableSetupColumn("Thread", ImGuiTableColumnFlags.WidthFixed, 55f);
+                        ImGui.TableSetupColumn("Count", ImGuiTableColumnFlags.WidthFixed, 55f);
+                        ImGui.TableSetupColumn("Ref FPS", ImGuiTableColumnFlags.WidthFixed, 60f);
+                        ImGui.TableSetupColumn("Now FPS", ImGuiTableColumnFlags.WidthFixed, 60f);
+                        ImGui.TableSetupColumn("Drop FPS", ImGuiTableColumnFlags.WidthFixed | ImGuiTableColumnFlags.DefaultSort | ImGuiTableColumnFlags.PreferSortDescending, 70f);
+                        ImGui.TableSetupColumn("Drop", ImGuiTableColumnFlags.WidthFixed, 55f);
+                        ImGui.TableSetupColumn("Hot Path", ImGuiTableColumnFlags.WidthStretch);
+                        ImGui.TableHeadersRow();
+
+                        var sortSpecs = ImGui.TableGetSortSpecs();
+                        bool hasSort = sortSpecs.SpecsCount > 0;
+                        if (hasSort)
+                        {
+                            var primary = sortSpecs.Specs;
+                            int sortColumn = primary.ColumnIndex;
+                            ImGuiSortDirection sortDirection = primary.SortDirection;
+                            bool countChanged = _fpsDropSpikeLastSortedCount != _fpsDropSpikePaths.Count;
+                            bool sortChanged = sortColumn != _fpsDropSpikeLastSortColumn || sortDirection != _fpsDropSpikeLastSortDirection;
+
+                            if (sortSpecs.SpecsDirty || countChanged || sortChanged)
+                            {
+                                _fpsDropSpikeSortedIndices.Clear();
+                                _fpsDropSpikeSortedIndices.Capacity = Math.Max(_fpsDropSpikeSortedIndices.Capacity, _fpsDropSpikePaths.Count);
+                                for (int i = 0; i < _fpsDropSpikePaths.Count; i++)
+                                    _fpsDropSpikeSortedIndices.Add(i);
+
+                                if (sortDirection != ImGuiSortDirection.None)
+                                {
+                                    _fpsDropSpikeSortedIndices.Sort((a, b) => CompareSpikePathRows(_fpsDropSpikePaths[a], _fpsDropSpikePaths[b], sortColumn, sortDirection));
+                                }
+
+                                _fpsDropSpikeLastSortedCount = _fpsDropSpikePaths.Count;
+                                _fpsDropSpikeLastSortColumn = sortColumn;
+                                _fpsDropSpikeLastSortDirection = sortDirection;
+                                sortSpecs.SpecsDirty = false;
+                            }
+                        }
+
+                        if (hasSort && _fpsDropSpikeSortedIndices.Count == _fpsDropSpikePaths.Count)
+                        {
+                            for (int i = 0; i < _fpsDropSpikeSortedIndices.Count; i++)
+                            {
+                                var spike = _fpsDropSpikePaths[_fpsDropSpikeSortedIndices[i]];
+                                ImGui.TableNextRow();
+
+                            ImGui.TableSetColumnIndex(0);
+                            ImGui.Text($"{spike.WorstFrameTimeSeconds:F3}");
+
+                            ImGui.TableSetColumnIndex(1);
+                            ImGui.Text(spike.ThreadId.ToString());
+
+                            ImGui.TableSetColumnIndex(2);
+                            ImGui.Text(spike.SeenCount.ToString());
+
+                            ImGui.TableSetColumnIndex(3);
+                            ImGui.Text($"{spike.WorstComparisonFps:F1}");
+
+                            ImGui.TableSetColumnIndex(4);
+                            ImGui.Text($"{spike.WorstCurrentFps:F1}");
+
+                            ImGui.TableSetColumnIndex(5);
+                            ImGui.Text($"{spike.WorstDeltaFps:F1}");
+
+                            ImGui.TableSetColumnIndex(6);
+                            ImGui.Text($"{spike.WorstDropFraction * 100.0f:F0}%");
+
+                                ImGui.TableSetColumnIndex(7);
+                                ImGui.TextWrapped(spike.HotPath);
+                            }
+                        }
+                        else
+                        {
+                            for (int i = 0; i < _fpsDropSpikePaths.Count; i++)
+                            {
+                                var spike = _fpsDropSpikePaths[i];
+                                ImGui.TableNextRow();
+
+                                ImGui.TableSetColumnIndex(0);
+                                ImGui.Text($"{spike.WorstFrameTimeSeconds:F3}");
+
+                                ImGui.TableSetColumnIndex(1);
+                                ImGui.Text(spike.ThreadId.ToString());
+
+                                ImGui.TableSetColumnIndex(2);
+                                ImGui.Text(spike.SeenCount.ToString());
+
+                                ImGui.TableSetColumnIndex(3);
+                                ImGui.Text($"{spike.WorstComparisonFps:F1}");
+
+                                ImGui.TableSetColumnIndex(4);
+                                ImGui.Text($"{spike.WorstCurrentFps:F1}");
+
+                                ImGui.TableSetColumnIndex(5);
+                                ImGui.Text($"{spike.WorstDeltaFps:F1}");
+
+                                ImGui.TableSetColumnIndex(6);
+                                ImGui.Text($"{spike.WorstDropFraction * 100.0f:F0}%");
+
+                                ImGui.TableSetColumnIndex(7);
+                                ImGui.TextWrapped(spike.HotPath);
+                            }
+                        }
+
+                        ImGui.EndTable();
+                    }
                 }
             }
 
@@ -380,6 +535,210 @@ public static partial class UnitTestingWorld
             foreach (var child in children.Values)
                 PruneAggregatedChildren(child.Children, now);
         }
+
+        private static void UpdateFpsDropSpikeLog(Engine.CodeProfiler.ProfilerFrameSnapshot frameSnapshot, Dictionary<int, float[]> history)
+        {
+            if (!float.IsFinite(frameSnapshot.FrameTime))
+                return;
+
+            // Avoid duplicate processing when the UI draws multiple times per captured snapshot.
+            if (frameSnapshot.FrameTime == _lastFpsSpikeProcessedFrameTime)
+                return;
+
+            _lastFpsSpikeProcessedFrameTime = frameSnapshot.FrameTime;
+
+            foreach (var thread in frameSnapshot.Threads)
+            {
+                if (!history.TryGetValue(thread.ThreadId, out var samples) || samples.Length < 2)
+                    continue;
+
+                float currentMs = samples[^1];
+                float previousMs = samples[^2];
+
+                if (currentMs <= 0.0001f || previousMs <= 0.0001f)
+                    continue;
+
+                float currentFps = 1000.0f / currentMs;
+                float previousFps = 1000.0f / previousMs;
+
+                if (previousFps < FpsSpikeMinPreviousFps)
+                    continue;
+
+                if (currentMs - previousMs < FpsSpikeMinDeltaMs)
+                    continue;
+
+                float baselineMs = GetMedianTailMs(samples, FpsSpikeBaselineWindowSamples, skipFromEnd: 1);
+                if (baselineMs <= 0.0001f)
+                    continue;
+
+                float baselineFps = 1000.0f / baselineMs;
+                float comparisonFps = MathF.Min(previousFps, baselineFps);
+                if (comparisonFps <= 0.0001f)
+                    continue;
+
+                float deltaFps = comparisonFps - currentFps;
+                if (deltaFps < _fpsSpikeMinDropFps)
+                    continue;
+
+                float dropFraction = deltaFps / comparisonFps;
+                if (dropFraction < 0.0f)
+                    dropFraction = 0.0f;
+                if (dropFraction > 1.0f)
+                    dropFraction = 1.0f;
+
+                string hotPath = GetHottestPath(thread.RootNodes, out float hotPathMs);
+                string key = $"{thread.ThreadId}:{hotPath}";
+                var nowUtc = DateTime.UtcNow;
+                var candidate = new FpsDropSpikePathEntry(
+                    thread.ThreadId,
+                    hotPath,
+                    1,
+                    nowUtc,
+                    nowUtc,
+                    frameSnapshot.FrameTime,
+                    comparisonFps,
+                    currentFps,
+                    deltaFps,
+                    dropFraction);
+
+                if (_fpsDropSpikePathIndexByKey.TryGetValue(key, out int existingIndex))
+                {
+                    var existing = _fpsDropSpikePaths[existingIndex];
+                    int updatedSeenCount = existing.SeenCount + 1;
+                    var updated = existing with
+                    {
+                        SeenCount = updatedSeenCount,
+                        LastSeenUtc = nowUtc
+                    };
+
+                    if (deltaFps > existing.WorstDeltaFps)
+                    {
+                        updated = updated with
+                        {
+                            WorstFrameTimeSeconds = frameSnapshot.FrameTime,
+                            WorstComparisonFps = comparisonFps,
+                            WorstCurrentFps = currentFps,
+                            WorstDeltaFps = deltaFps,
+                            WorstDropFraction = dropFraction
+                        };
+                    }
+
+                    _fpsDropSpikePaths[existingIndex] = updated;
+                }
+                else
+                {
+                    _fpsDropSpikePathIndexByKey[key] = _fpsDropSpikePaths.Count;
+                    _fpsDropSpikePaths.Add(candidate);
+                }
+            }
+        }
+
+        private static int CompareSpikePathRows(FpsDropSpikePathEntry a, FpsDropSpikePathEntry b, int sortColumn, ImGuiSortDirection direction)
+        {
+            int sign = direction == ImGuiSortDirection.Descending ? -1 : 1;
+            int result;
+            switch (sortColumn)
+            {
+                case 0: // Worst Frame (s)
+                    result = a.WorstFrameTimeSeconds.CompareTo(b.WorstFrameTimeSeconds);
+                    break;
+                case 1: // Thread
+                    result = a.ThreadId.CompareTo(b.ThreadId);
+                    break;
+                case 2: // Count
+                    result = a.SeenCount.CompareTo(b.SeenCount);
+                    break;
+                case 3: // Ref FPS
+                    result = a.WorstComparisonFps.CompareTo(b.WorstComparisonFps);
+                    break;
+                case 4: // Now FPS
+                    result = a.WorstCurrentFps.CompareTo(b.WorstCurrentFps);
+                    break;
+                case 5: // Drop FPS
+                    result = a.WorstDeltaFps.CompareTo(b.WorstDeltaFps);
+                    break;
+                case 6: // Drop %
+                    result = a.WorstDropFraction.CompareTo(b.WorstDropFraction);
+                    break;
+                case 7: // Hot Path
+                    result = string.CompareOrdinal(a.HotPath, b.HotPath);
+                    break;
+                default:
+                    result = 0;
+                    break;
+            }
+
+            if (result == 0)
+            {
+                // Deterministic tie-breaker.
+                result = a.ThreadId != b.ThreadId ? a.ThreadId.CompareTo(b.ThreadId) : string.CompareOrdinal(a.HotPath, b.HotPath);
+            }
+
+            return result * sign;
+        }
+
+        private static float GetMedianTailMs(float[] samples, int takeCount, int skipFromEnd)
+        {
+            int available = samples.Length - skipFromEnd;
+            if (available <= 0)
+                return 0.0f;
+
+            int count = Math.Min(takeCount, available);
+            if (count <= 0)
+                return 0.0f;
+
+            float[] window = new float[count];
+            Array.Copy(samples, available - count, window, 0, count);
+            Array.Sort(window);
+            int mid = count / 2;
+            return (count % 2 == 0) ? (window[mid - 1] + window[mid]) * 0.5f : window[mid];
+        }
+
+        private static string GetHottestPath(IReadOnlyList<Engine.CodeProfiler.ProfilerNodeSnapshot> roots, out float pathMs)
+        {
+            pathMs = 0.0f;
+            if (roots.Count == 0)
+                return "(no samples)";
+
+            Engine.CodeProfiler.ProfilerNodeSnapshot hottest = roots[0];
+            for (int i = 1; i < roots.Count; i++)
+            {
+                if (roots[i].ElapsedMs > hottest.ElapsedMs)
+                    hottest = roots[i];
+            }
+
+            pathMs = hottest.ElapsedMs;
+            List<string> parts = new(8) { hottest.Name };
+            var current = hottest;
+
+            while (current.Children.Count > 0)
+            {
+                var children = current.Children;
+                var best = children[0];
+                for (int i = 1; i < children.Count; i++)
+                {
+                    if (children[i].ElapsedMs > best.ElapsedMs)
+                        best = children[i];
+                }
+
+                parts.Add(best.Name);
+                current = best;
+            }
+
+            return string.Join(" > ", parts);
+        }
+
+        private readonly record struct FpsDropSpikePathEntry(
+            int ThreadId,
+            string HotPath,
+            int SeenCount,
+            DateTime FirstSeenUtc,
+            DateTime LastSeenUtc,
+            float WorstFrameTimeSeconds,
+            float WorstComparisonFps,
+            float WorstCurrentFps,
+            float WorstDeltaFps,
+            float WorstDropFraction);
 
         private static void DrawAggregatedRootMethodHierarchy(ProfilerRootMethodAggregate rootMethod)
         {

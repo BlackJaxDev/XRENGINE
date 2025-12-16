@@ -42,6 +42,7 @@ public partial class DefaultRenderPipeline
         XRTexture[] postProcessRefs =
         [
             GetTexture<XRTexture>(HDRSceneTextureName)!,
+            GetTexture<XRTexture>(AutoExposureTextureName)!,
             GetTexture<XRTexture>(BloomBlurTextureName)!,
             GetTexture<XRTexture>(DepthViewTextureName)!,
             GetTexture<XRTexture>(StencilViewTextureName)!,

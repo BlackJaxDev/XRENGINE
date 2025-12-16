@@ -35,6 +35,21 @@ namespace XREngine.Scene
    set => SetField(ref _gravity, value);
   }
 
+        private float _physicsResetMinYDist = 0.0f;
+        /// <summary>
+        /// If greater than zero, dynamic physics bodies will be reset to their initial poses when any body
+        /// passes a gravity-aligned plane this far away along the gravity direction.
+        /// The plane normal is -Gravity (i.e., aligned to "up"), and the scalar "Y" used for the check is
+        /// the projection of world position onto that up axis.
+        /// </summary>
+        [Category("Physics")]
+        [Description("If > 0, resets dynamic physics bodies to their initial poses when any body falls past a gravity-aligned plane this distance away.")]
+        public float PhysicsResetMinYDist
+        {
+          get => _physicsResetMinYDist;
+          set => SetField(ref _physicsResetMinYDist, MathF.Max(0.0f, value));
+        }
+
   private float _physicsTimestep = 1.0f / 60.0f;
    /// <summary>
         /// The fixed timestep for physics simulation in seconds.

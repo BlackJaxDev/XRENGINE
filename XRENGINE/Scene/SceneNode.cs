@@ -4,8 +4,10 @@ using XREngine.Components;
 using XREngine.Core.Attributes;
 using XREngine.Data.Core;
 using XREngine.Rendering;
+using XREngine.Rendering.Info;
 using XREngine.Scene.Prefabs;
 using XREngine.Scene.Transforms;
+using XREngine.Components.Scene.Transforms;
 using YamlDotNet.Serialization;
 
 namespace XREngine.Scene
@@ -89,6 +91,7 @@ namespace XREngine.Scene
         private void OnComponentAdded(XRComponent item)
         {
             item.AddedToSceneNode(this);
+            ApplyLayerToComponent(item);
             ComponentAdded?.Invoke((this, item));
         }
 
@@ -202,6 +205,34 @@ namespace XREngine.Scene
                     if (_transform != null)
                         _transform.Name = Name;
                     break;
+                case nameof(Layer):
+                    ApplyLayerToAllComponents();
+                    break;
+            }
+        }
+
+        private void ApplyLayerToAllComponents()
+        {
+            foreach (var component in ComponentsInternal)
+                ApplyLayerToComponent(component);
+        }
+
+        private void ApplyLayerToComponent(XRComponent component)
+        {
+            if (component is not IRenderable renderable)
+                return;
+
+            var targetLayer = Layer;
+            foreach (var ri in renderable.RenderedObjects)
+            {
+                if (ri is not RenderInfo3D ri3d)
+                    continue;
+
+                // Preserve explicit gizmo/debug layering.
+                if (ri3d.Layer == DefaultLayers.GizmosIndex)
+                    continue;
+
+                ri3d.Layer = targetLayer;
             }
         }
 
@@ -1378,6 +1409,11 @@ namespace XREngine.Scene
             base.OnDestroying();
         }
 
-        public int Layer { get; set; } = 0;
+        private int _layer = DefaultLayers.DynamicIndex;
+        public int Layer
+        {
+            get => _layer;
+            set => SetField(ref _layer, Math.Clamp(value, 0, 31));
+        }
     }
 }

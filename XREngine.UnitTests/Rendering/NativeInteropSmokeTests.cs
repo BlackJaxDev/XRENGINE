@@ -27,7 +27,7 @@ public class NativeInteropSmokeTests
 
             // Optional in older builds but required for auto-tuning; the check helps detect stale DLLs early.
             bool hasOptimalSettings = TryGetExport(handle, "slDLSSGetOptimalSettings", out _);
-            Assert.IsTrue(hasOptimalSettings, "sl.interposer.dll is missing slDLSSGetOptimalSettings; update to a newer Streamline build if DLSS keeps failing.");
+            Assert.That(hasOptimalSettings, Is.True, "sl.interposer.dll is missing slDLSSGetOptimalSettings; update to a newer Streamline build if DLSS keeps failing.");
         }
         finally
         {
@@ -46,9 +46,9 @@ public class NativeInteropSmokeTests
 
         try
         {
-            Assert.IsTrue(TryGetExport(handle, "InitReSTIRRayTracingNV", out _), "InitReSTIRRayTracingNV export is missing; rebuild the native ReSTIR bridge.");
-            Assert.IsTrue(TryGetExport(handle, "BindReSTIRPipelineNV", out _), "BindReSTIRPipelineNV export is missing; rebuild the native ReSTIR bridge.");
-            Assert.IsTrue(TryGetExport(handle, "TraceRaysNVWrapper", out _), "TraceRaysNVWrapper export is missing; rebuild the native ReSTIR bridge.");
+            Assert.That(TryGetExport(handle, "InitReSTIRRayTracingNV", out _), Is.True, "InitReSTIRRayTracingNV export is missing; rebuild the native ReSTIR bridge.");
+            Assert.That(TryGetExport(handle, "BindReSTIRPipelineNV", out _), Is.True, "BindReSTIRPipelineNV export is missing; rebuild the native ReSTIR bridge.");
+            Assert.That(TryGetExport(handle, "TraceRaysNVWrapper", out _), Is.True, "TraceRaysNVWrapper export is missing; rebuild the native ReSTIR bridge.");
         }
         finally
         {

@@ -154,7 +154,18 @@ internal class Program
             Debug.Out($"Networking mode overridden to {mode} via XRE_NET_MODE.");
         }
         if (UnitTestingWorld.Toggles.VRPawn && !UnitTestingWorld.Toggles.EmulatedVRPawn)
-            EditorVR.ApplyVRSettings(settings);
+        {
+            if (UnitTestingWorld.Toggles.UseOpenXR)
+            {
+                settings.VRRuntime = EVRRuntime.OpenXR;
+                settings.RunVRInPlace = true;
+            }
+            else
+            {
+                settings.VRRuntime = EVRRuntime.OpenVR;
+                EditorVR.ApplyVRSettings(settings);
+            }
+        }
         return settings;
     }
 }

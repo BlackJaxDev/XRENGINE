@@ -1,5 +1,6 @@
 ﻿using Extensions;
 using System.Numerics;
+using XREngine.Components;
 using XREngine.Data.Geometry;
 using XREngine.Data.Rendering;
 using XREngine.Rendering;
@@ -9,6 +10,7 @@ using static XREngine.Data.Core.XRMath;
 
 namespace XREngine.Components.Capture.Lights.Types
 {
+    [XRComponentEditor("XREngine.Editor.ComponentEditors.SpotLightComponentEditor")]
     public class SpotLightComponent(float distance, float outerCutoffDeg, float innerCutoffDeg, float brightness, float exponent) : OneViewLightComponent()
     {
         protected override XRPerspectiveCameraParameters GetCameraParameters() => new(
@@ -61,6 +63,9 @@ namespace XREngine.Components.Capture.Lights.Types
             get => RadToDeg((float)Math.Acos(_innerCutoff));
             set => SetCutoffs(value, OuterCutoffAngleDegrees, false);
         }
+
+        public float InnerCutoff => _innerCutoff;
+        public float OuterCutoff => _outerCutoff;
 
         public static XRMesh GetVolumeMesh()
             => XRMesh.Shapes.SolidCone(Vector3.Zero, Globals.Backward, 1.0f, 1.0f, 32, true);

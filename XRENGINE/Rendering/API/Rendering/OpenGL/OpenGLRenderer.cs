@@ -865,6 +865,11 @@ namespace XREngine.Rendering.OpenGL
         private uint _luminanceResultBufferSize;
         private bool _luminanceComputeInitialized;
 
+        // Compute shaders for GPU auto exposure (writes exposure into a 1x1 R32F texture)
+        private XRRenderProgram? _autoExposureComputeProgram2D;
+        private XRRenderProgram? _autoExposureComputeProgram2DArray;
+        private bool _autoExposureComputeInitialized;
+
         private const string LuminanceComputeShaderSource = @"
 #version 460
 
@@ -910,6 +915,103 @@ void main() {
 }
 ";
 
+        private const string AutoExposureComputeShaderSource2D = @"
+#version 460
+
+layout(local_size_x = 1, local_size_y = 1, local_size_z = 1) in;
+
+layout(binding = 0) uniform sampler2D SourceTex;
+layout(r32f, binding = 0) uniform image2D ExposureOut;
+
+uniform int SmallestMip;
+uniform vec3 LuminanceWeights;
+uniform float AutoExposureBias;
+uniform float AutoExposureScale;
+uniform float ExposureDividend;
+uniform float MinExposure;
+uniform float MaxExposure;
+uniform float ExposureTransitionSpeed;
+
+void main()
+{
+    vec3 rgb = texelFetch(SourceTex, ivec2(0, 0), SmallestMip).rgb;
+    float lumDot = dot(rgb, LuminanceWeights);
+
+    float current = imageLoad(ExposureOut, ivec2(0, 0)).r;
+    if (isnan(current) || isinf(current))
+        current = 0.0;
+    float clampedCurrent = clamp(current, MinExposure, MaxExposure);
+
+    if (lumDot <= 0.0)
+    {
+        imageStore(ExposureOut, ivec2(0, 0), vec4(clampedCurrent, 0.0, 0.0, 0.0));
+        return;
+    }
+
+    float target = ExposureDividend / lumDot;
+    target = AutoExposureBias + AutoExposureScale * target;
+    target = clamp(target, MinExposure, MaxExposure);
+
+    float outExposure = (current < MinExposure || current > MaxExposure)
+        ? target
+        : mix(current, target, clamp(ExposureTransitionSpeed, 0.0, 1.0));
+
+    imageStore(ExposureOut, ivec2(0, 0), vec4(outExposure, 0.0, 0.0, 0.0));
+}
+";
+
+        private const string AutoExposureComputeShaderSource2DArray = @"
+#version 460
+
+layout(local_size_x = 1, local_size_y = 1, local_size_z = 1) in;
+
+layout(binding = 0) uniform sampler2DArray SourceTex;
+layout(r32f, binding = 0) uniform image2D ExposureOut;
+
+uniform int SmallestMip;
+uniform int LayerCount;
+uniform vec3 LuminanceWeights;
+uniform float AutoExposureBias;
+uniform float AutoExposureScale;
+uniform float ExposureDividend;
+uniform float MinExposure;
+uniform float MaxExposure;
+uniform float ExposureTransitionSpeed;
+
+void main()
+{
+    vec3 rgb = texelFetch(SourceTex, ivec3(0, 0, 0), SmallestMip).rgb;
+    if (LayerCount > 1)
+    {
+        vec3 rgb1 = texelFetch(SourceTex, ivec3(0, 0, 1), SmallestMip).rgb;
+        rgb = 0.5 * (rgb + rgb1);
+    }
+
+    float lumDot = dot(rgb, LuminanceWeights);
+
+    float current = imageLoad(ExposureOut, ivec2(0, 0)).r;
+    if (isnan(current) || isinf(current))
+        current = 0.0;
+    float clampedCurrent = clamp(current, MinExposure, MaxExposure);
+
+    if (lumDot <= 0.0)
+    {
+        imageStore(ExposureOut, ivec2(0, 0), vec4(clampedCurrent, 0.0, 0.0, 0.0));
+        return;
+    }
+
+    float target = ExposureDividend / lumDot;
+    target = AutoExposureBias + AutoExposureScale * target;
+    target = clamp(target, MinExposure, MaxExposure);
+
+    float outExposure = (current < MinExposure || current > MaxExposure)
+        ? target
+        : mix(current, target, clamp(ExposureTransitionSpeed, 0.0, 1.0));
+
+    imageStore(ExposureOut, ivec2(0, 0), vec4(outExposure, 0.0, 0.0, 0.0));
+}
+";
+
         private void EnsureLuminanceComputeResources()
         {
             if (_luminanceComputeInitialized)
@@ -935,6 +1037,126 @@ void main() {
                 Debug.LogWarning($"Failed to initialize luminance compute shader: {ex.Message}");
                 _luminanceComputeInitialized = false;
             }
+        }
+
+        private void EnsureAutoExposureComputeResources()
+        {
+            if (_autoExposureComputeInitialized)
+                return;
+
+            try
+            {
+                var shader2D = new XRShader(EShaderType.Compute, AutoExposureComputeShaderSource2D);
+                _autoExposureComputeProgram2D = new XRRenderProgram(true, false, shader2D);
+
+                var shader2DArray = new XRShader(EShaderType.Compute, AutoExposureComputeShaderSource2DArray);
+                _autoExposureComputeProgram2DArray = new XRRenderProgram(true, false, shader2DArray);
+
+                _autoExposureComputeInitialized = true;
+            }
+            catch (Exception ex)
+            {
+                Debug.LogWarning($"Failed to initialize auto exposure compute shaders: {ex.Message}");
+                _autoExposureComputeInitialized = false;
+            }
+        }
+
+        public override bool SupportsGpuAutoExposure => true;
+
+        public override void UpdateAutoExposureGpu(XRTexture sourceTex, XRTexture2D exposureTex, ColorGradingSettings settings, float deltaTime, bool generateMipmapsNow)
+        {
+            using var prof = Engine.Profiler.Start("GLRenderer.UpdateAutoExposureGpu");
+
+            EnsureAutoExposureComputeResources();
+            if (!_autoExposureComputeInitialized)
+                return;
+
+            var glExposure = GenericToAPI<GLTexture2D>(exposureTex);
+            if (glExposure is null)
+                return;
+
+            int smallestMip;
+            GLRenderProgram? glProgram;
+
+            uint bindTarget;
+            uint sourceBindingId;
+            int layerCount = 1;
+
+            if (sourceTex is XRTexture2D source2D)
+            {
+                var glSource = GenericToAPI<GLTexture2D>(source2D);
+                if (glSource is null)
+                    return;
+
+                if (generateMipmapsNow)
+                    glSource.GenerateMipmaps();
+
+                smallestMip = XRTexture.GetSmallestMipmapLevel(source2D.Width, source2D.Height);
+                glProgram = GenericToAPI<GLRenderProgram>(_autoExposureComputeProgram2D);
+                bindTarget = (uint)TextureTarget.Texture2D;
+                sourceBindingId = glSource.BindingId;
+            }
+            else if (sourceTex is XRTexture2DArray source2DArray)
+            {
+                var glSource = GenericToAPI<GLTexture2DArray>(source2DArray);
+                if (glSource is null)
+                    return;
+
+                if (generateMipmapsNow)
+                    glSource.GenerateMipmaps();
+
+                smallestMip = XRTexture.GetSmallestMipmapLevel(source2DArray.Width, source2DArray.Height);
+                layerCount = (int)source2DArray.Depth;
+                glProgram = GenericToAPI<GLRenderProgram>(_autoExposureComputeProgram2DArray);
+                bindTarget = (uint)TextureTarget.Texture2DArray;
+                sourceBindingId = glSource.BindingId;
+            }
+            else
+            {
+                return;
+            }
+
+            if (glProgram is null || !glProgram.IsLinked)
+                return;
+
+            Api.UseProgram(glProgram.BindingId);
+
+            glProgram.Uniform("SmallestMip", smallestMip);
+            glProgram.Uniform("LuminanceWeights", Engine.Rendering.Settings.DefaultLuminance);
+            glProgram.Uniform("AutoExposureBias", settings.AutoExposureBias);
+            glProgram.Uniform("AutoExposureScale", settings.AutoExposureScale);
+            glProgram.Uniform("ExposureDividend", settings.ExposureDividend);
+            glProgram.Uniform("MinExposure", settings.MinExposure);
+            glProgram.Uniform("MaxExposure", settings.MaxExposure);
+
+            // Calculate time-based lerp factor
+            // alpha = 1 - exp(-speed * dt)
+            float alpha = 1.0f - MathF.Exp(-settings.ExposureTransitionSpeed * deltaTime);
+            glProgram.Uniform("ExposureTransitionSpeed", alpha);
+
+            if (sourceTex is XRTexture2DArray)
+                glProgram.Uniform("LayerCount", layerCount);
+
+            Api.ActiveTexture(GLEnum.Texture0);
+            Api.BindTexture((TextureTarget)bindTarget, sourceBindingId);
+            glProgram.Uniform("SourceTex", 0);
+
+            // Bind exposure texture as an image for read/write
+            Api.BindImageTexture(0, glExposure.BindingId, 0, false, 0, BufferAccessARB.ReadWrite, InternalFormat.R32f);
+
+            Api.DispatchCompute(1, 1, 1);
+            Api.MemoryBarrier((uint)(MemoryBarrierMask.ShaderImageAccessBarrierBit | MemoryBarrierMask.TextureFetchBarrierBit));
+
+            // Debug: read back exposure value to verify compute shader is working (once per second approx)
+            if ((int)(Engine.ElapsedTime * 10) % 10 == 0)
+            {
+                float[] exposureData = new float[1];
+                Api.GetTextureImage(glExposure.BindingId, 0, PixelFormat.Red, PixelType.Float, (uint)(sizeof(float)), exposureData);
+                //Debug.Out($"[AutoExposure] SmallestMip={smallestMip}, Computed exposure={exposureData[0]:F4}, Settings: Bias={settings.AutoExposureBias:F2}, Scale={settings.AutoExposureScale:F2}, Dividend={settings.ExposureDividend:F4}");
+            }
+
+            // Ensure that the compute shader write is visible to subsequent reads (by the fragment shader or the next compute dispatch)
+            Api.MemoryBarrier(MemoryBarrierMask.ShaderImageAccessBarrierBit | MemoryBarrierMask.TextureFetchBarrierBit);
         }
 
         public override unsafe void CalcDotLuminanceAsync(XRTexture2D texture, Action<bool, float> callback, Vector3 luminance, bool genMipmapsNow = true)

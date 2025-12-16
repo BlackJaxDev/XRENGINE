@@ -708,6 +708,26 @@ public partial class DefaultRenderPipeline
         }
     }
 
+    private XRTexture CreateAutoExposureTexture()
+    {
+        XRTexture2D texture = XRTexture2D.CreateFrameBufferTexture(
+            1u,
+            1u,
+            EPixelInternalFormat.R32f,
+            EPixelFormat.Red,
+            EPixelType.Float);
+        texture.Resizable = false;
+        texture.SizedInternalFormat = ESizedInternalFormat.R32f;
+        texture.MinFilter = ETexMinFilter.Nearest;
+        texture.MagFilter = ETexMagFilter.Nearest;
+        texture.UWrap = ETexWrapMode.ClampToEdge;
+        texture.VWrap = ETexWrapMode.ClampToEdge;
+        texture.SamplerName = AutoExposureTextureName;
+        texture.Name = AutoExposureTextureName;
+        texture.AutoGenerateMipmaps = false;
+        return texture;
+    }
+
     private XRTexture CreatePostProcessOutputTexture()
     {
         var (width, height) = GetDesiredFBOSizeFull();

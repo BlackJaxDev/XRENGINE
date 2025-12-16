@@ -2,6 +2,7 @@ using System.Collections;
 using System.Collections.Generic;
 using System.Numerics;
 using SimpleScene.Util.ssBVH;
+using System.Threading;
 using System.Threading.Tasks;
 using XREngine.Data;
 using XREngine.Data.Geometry;
@@ -78,16 +79,15 @@ public partial class XRMesh
     {
         get
         {
-            if (_bvhTree is null && !_generating)
+            if (_bvhTree is null && Interlocked.CompareExchange(ref _generatingBvh, 1, 0) == 0)
             {
-                _generating = true;
                 try
                 {
-                    //Engine.Jobs.Schedule(GenerateBVHJob);
+                    _ = Task.Run(GenerateBVH);
                 }
                 catch
                 {
-                    _generating = false;
+                    Interlocked.Exchange(ref _generatingBvh, 0);
                     throw;
                 }
             }
@@ -128,7 +128,7 @@ public partial class XRMesh
         }
         finally
         {
-            _generating = false;
+            Interlocked.Exchange(ref _generatingBvh, 0);
         }
     }
 

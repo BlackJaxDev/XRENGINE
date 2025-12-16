@@ -1,0 +1,147 @@
+#version 430
+#define TILE_SIZE 16
+#define MAX_LIGHTS_PER_TILE 1024
+
+// Matches the forward shader's LocalLight layout.
+// Everything is world-space; compute shader transforms into view-space for frustum testing.
+struct LocalLight {
+	vec4 positionWS;      // xyz = world position, w = 1
+	vec4 directionWS;     // xyz = world direction (spot), w = exponent
+	vec4 color_type;      // rgb = light color, a = type (0=point, 1=spot)
+	vec4 params;          // x = radius, y = brightness, z = diffuseIntensity, w = unused
+	vec4 spotAngles;      // x = innerCutoff, y = outerCutoff, z,w unused
+};
+
+// SSBOs
+layout(std430, binding = 20) readonly buffer ForwardPlusLocalLightsBuffer {
+	LocalLight data[];
+} fpLocalLights;
+
+layout(std430, binding = 21) writeonly buffer ForwardPlusVisibleLightIndicesBuffer {
+	int data[];
+} fpVisibleIndices;
+
+// Uniforms
+uniform sampler2D depthMap;
+uniform mat4 view;
+uniform mat4 projection;
+uniform ivec2 screenSize;
+uniform int lightCount;
+
+shared uint minDepthInt;
+shared uint maxDepthInt;
+shared uint visibleLightCount;
+shared vec4 frustumPlanes[6];
+shared int visibleLightIndices[MAX_LIGHTS_PER_TILE];
+shared mat4 viewProjection;
+
+layout(local_size_x = TILE_SIZE, local_size_y = TILE_SIZE, local_size_z = 1) in;
+
+void main()
+{
+	ivec2 location = ivec2(gl_GlobalInvocationID.xy);
+	ivec2 tileID = ivec2(gl_WorkGroupID.xy);
+	ivec2 tileCount = ivec2(gl_NumWorkGroups.xy);
+	uint tileLinear = uint(tileID.y * tileCount.x + tileID.x);
+
+	if (gl_LocalInvocationIndex == 0u)
+	{
+		minDepthInt = 0xFFFFFFFFu;
+		maxDepthInt = 0u;
+		visibleLightCount = 0u;
+		viewProjection = projection * view;
+	}
+
+	barrier();
+
+	// Step 1: min/max linear depth for this tile
+	float depthLinear = 1e20;
+	if (location.x < screenSize.x && location.y < screenSize.y)
+	{
+		vec2 uv = vec2(location) / vec2(screenSize);
+		float depth = texture(depthMap, uv).r;
+
+		// Linearize depth (same approach as the original unused shader)
+		depthLinear = (0.5 * projection[3][2]) / (depth + 0.5 * projection[2][2] - 0.5);
+	}
+
+	uint depthInt = floatBitsToUint(depthLinear);
+	atomicMin(minDepthInt, depthInt);
+	atomicMax(maxDepthInt, depthInt);
+
+	barrier();
+
+	// Step 2: build frustum planes for this tile
+	if (gl_LocalInvocationIndex == 0u)
+	{
+		float minDepth = uintBitsToFloat(minDepthInt);
+		float maxDepth = uintBitsToFloat(maxDepthInt);
+
+		vec2 negStep = (2.0 * vec2(tileID)) / vec2(tileCount);
+		vec2 posStep = (2.0 * vec2(tileID + ivec2(1, 1))) / vec2(tileCount);
+
+		frustumPlanes[0] = vec4( 1.0, 0.0, 0.0,  1.0 - negStep.x); // Left
+		frustumPlanes[1] = vec4(-1.0, 0.0, 0.0, -1.0 + posStep.x); // Right
+		frustumPlanes[2] = vec4( 0.0, 1.0, 0.0,  1.0 - negStep.y); // Bottom
+		frustumPlanes[3] = vec4( 0.0,-1.0, 0.0, -1.0 + posStep.y); // Top
+		frustumPlanes[4] = vec4( 0.0, 0.0,-1.0, -minDepth);       // Near
+		frustumPlanes[5] = vec4( 0.0, 0.0, 1.0,  maxDepth);       // Far
+
+		for (uint i = 0u; i < 4u; ++i)
+		{
+			frustumPlanes[i] *= viewProjection;
+			frustumPlanes[i] /= max(length(frustumPlanes[i].xyz), 1e-6);
+		}
+
+		frustumPlanes[4] *= view;
+		frustumPlanes[4] /= max(length(frustumPlanes[4].xyz), 1e-6);
+		frustumPlanes[5] *= view;
+		frustumPlanes[5] /= max(length(frustumPlanes[5].xyz), 1e-6);
+	}
+
+	barrier();
+
+	// Step 3: cull lights
+	uint threadCount = TILE_SIZE * TILE_SIZE;
+	uint passCount = uint((lightCount + int(threadCount) - 1) / int(threadCount));
+	for (uint pass = 0u; pass < passCount; ++pass)
+	{
+		uint lightIndex = pass * threadCount + gl_LocalInvocationIndex;
+		if (lightIndex >= uint(lightCount))
+			break;
+
+		LocalLight light = fpLocalLights.data[lightIndex];
+		vec4 posVS = view * vec4(light.positionWS.xyz, 1.0);
+		float radius = light.params.x;
+
+		float distance = 0.0;
+		for (uint p = 0u; p < 6u; ++p)
+		{
+			distance = dot(posVS, frustumPlanes[p]) + radius;
+			if (distance <= 0.0)
+				break;
+		}
+
+		if (distance > 0.0)
+		{
+			uint offset = atomicAdd(visibleLightCount, 1u);
+			if (offset < MAX_LIGHTS_PER_TILE)
+				visibleLightIndices[offset] = int(lightIndex);
+		}
+	}
+
+	barrier();
+
+	// Step 4: write out visible indices (with -1 sentinel)
+	if (gl_LocalInvocationIndex == 0u)
+	{
+		uint baseOffset = tileLinear * uint(MAX_LIGHTS_PER_TILE);
+
+		uint count = min(visibleLightCount, uint(MAX_LIGHTS_PER_TILE));
+		for (uint i = 0u; i < count; ++i)
+			fpVisibleIndices.data[baseOffset + i] = visibleLightIndices[i];
+
+		if (count < uint(MAX_LIGHTS_PER_TILE))
+			fpVisibleIndices.data[baseOffset + count] = -1;
+	}
+}

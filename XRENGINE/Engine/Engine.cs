@@ -411,23 +411,60 @@ namespace XREngine
 
         private static async Task<bool> InitializeVR(IVRGameStartupSettings vrSettings, bool runVRInPlace)
         {
-            if (vrSettings is null ||
-                vrSettings.VRManifest is null ||
-                vrSettings.ActionManifest is null)
-            {
-                Debug.LogWarning("VR settings are not properly initialized. VR will not be started.");
-                return false;
-            }
-
             bool result;
             if (runVRInPlace)
             {
                 var window = _windows.FirstOrDefault();
-                result = VRState.InitializeOpenXR(window) ||
-                    await VRState.InitializeLocal(vrSettings.ActionManifest, vrSettings.VRManifest, window ?? _windows[0]);
+
+                // OpenXR can be initialized without OpenVR manifests.
+                // OpenVR requires both the action manifest and vrmanifest.
+                if (vrSettings.VRRuntime == EVRRuntime.OpenXR)
+                {
+                    result = VRState.InitializeOpenXR(window);
+                    if (!result)
+                        Debug.LogWarning("Failed to initialize OpenXR (forced). VR will not be started.");
+                }
+                else if (vrSettings.VRRuntime == EVRRuntime.OpenVR)
+                {
+                    if (vrSettings.VRManifest is null || vrSettings.ActionManifest is null)
+                    {
+                        Debug.LogWarning("VR settings are not properly initialized for OpenVR. VR will not be started.");
+                        return false;
+                    }
+
+                    result = await VRState.InitializeLocal(vrSettings.ActionManifest, vrSettings.VRManifest, window ?? _windows[0]);
+                }
+                else
+                {
+                    // Auto: try OpenXR first, then fall back to OpenVR if configured.
+                    result = VRState.InitializeOpenXR(window);
+                    if (!result)
+                    {
+                        if (vrSettings.VRManifest is null || vrSettings.ActionManifest is null)
+                        {
+                            Debug.LogWarning("VR settings are not properly initialized. VR will not be started.");
+                            return false;
+                        }
+
+                        result = await VRState.InitializeLocal(vrSettings.ActionManifest, vrSettings.VRManifest, window ?? _windows[0]);
+                    }
+                }
             }
             else
             {
+                // Client mode currently only supports OpenVR-based transport.
+                if (vrSettings.VRRuntime == EVRRuntime.OpenXR)
+                {
+                    Debug.LogWarning("OpenXR is not supported in client VR mode. VR will not be started.");
+                    return false;
+                }
+
+                if (vrSettings.VRManifest is null || vrSettings.ActionManifest is null)
+                {
+                    Debug.LogWarning("VR settings are not properly initialized. VR will not be started.");
+                    return false;
+                }
+
                 result = await VRState.IninitializeClient(vrSettings.ActionManifest, vrSettings.VRManifest);
             }
 

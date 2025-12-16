@@ -128,7 +128,7 @@ namespace XREngine.VRClient
 
             var settings = new VRGameStartupSettings<TActionCategory, TGameAction>()
             {
-                GameName = "FreakEngineGame",
+                GameName = "XREngine Game",
                 GameSearchPaths =
                 [
                     (Environment.SpecialFolder.ProgramFiles, "MyGameFolder")

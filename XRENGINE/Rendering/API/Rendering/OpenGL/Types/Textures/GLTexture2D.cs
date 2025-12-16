@@ -101,10 +101,15 @@ namespace XREngine.Rendering.OpenGL
                 EPixelInternalFormat? internalFormatForce = null;
                 if (!Data.Resizable && !StorageSet)
                 {
+                    // Guard against 0-sized textures which cause GL_INVALID_VALUE
+                    uint w = Math.Max(1u, Data.Width);
+                    uint h = Math.Max(1u, Data.Height);
+                    uint levels = (uint)Math.Max(1, Data.SmallestMipmapLevel);
+                    
                     if (Data.MultiSample)
-                        Api.TextureStorage2DMultisample(BindingId, Data.MultiSampleCount, ToGLEnum(Data.SizedInternalFormat), Data.Width, Data.Height, Data.FixedSampleLocations);
+                        Api.TextureStorage2DMultisample(BindingId, Data.MultiSampleCount, ToGLEnum(Data.SizedInternalFormat), w, h, Data.FixedSampleLocations);
                     else
-                        Api.TextureStorage2D(BindingId, (uint)Data.SmallestMipmapLevel, ToGLEnum(Data.SizedInternalFormat), Data.Width, Data.Height);
+                        Api.TextureStorage2D(BindingId, levels, ToGLEnum(Data.SizedInternalFormat), w, h);
                     internalFormatForce = ToBaseInternalFormat(Data.SizedInternalFormat);
                     StorageSet = true;
                 }

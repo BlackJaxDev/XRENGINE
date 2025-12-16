@@ -8,8 +8,12 @@ uniform sampler2D BloomBlurTexture; //Bloom
 uniform sampler2D DepthView; //Depth
 uniform usampler2D StencilView; //Stencil
 
+// 1x1 R32F texture containing the current exposure value (GPU-driven auto exposure)
+uniform sampler2D AutoExposureTex;
+uniform bool UseGpuAutoExposure;
+
 uniform vec3 HighlightColor = vec3(0.92f, 1.0f, 0.086f);
-uniform bool OutputHDR = false;
+uniform bool OutputHDR;
 
 struct VignetteStruct
 {
@@ -32,6 +36,20 @@ struct ColorGradeStruct
     float Brightness; //1.0f = no change, 0.0f = black
 };
 uniform ColorGradeStruct ColorGrade;
+
+float GetExposure()
+{
+  if (UseGpuAutoExposure)
+  {
+    float e = texelFetch(AutoExposureTex, ivec2(0, 0), 0).r;
+    // DEBUG: Multiply by 10 to make auto-exposure changes more visible for testing
+    // The computed value (~1.14) is very close to 1.0, making changes subtle
+    // Remove the * 10.0 after confirming the system works
+    if (!(isnan(e) || isinf(e)) && e > 0.0)
+      return e * 10.0; // DEBUG: amplify to see if texture is being read
+  }
+  return ColorGrade.Exposure;
+}
 
 uniform float ChromaticAberrationIntensity;
 
@@ -108,46 +126,46 @@ uniform int TonemapType = 3; //Default to Reinhard
 
 vec3 LinearTM(vec3 c)
 {
-  return c * ColorGrade.Exposure;
+  return c * GetExposure();
 }
 vec3 GammaTM(vec3 c)
 {
-  return pow(c * ColorGrade.Exposure, vec3(1.0 / ColorGrade.Gamma));
+  return pow(c * GetExposure(), vec3(1.0 / ColorGrade.Gamma));
 }
 vec3 ClipTM(vec3 c)
 {
-  return clamp(c * ColorGrade.Exposure, 0.0, 1.0);
+  return clamp(c * GetExposure(), 0.0, 1.0);
 }
 vec3 ReinhardTM(vec3 c)
 {
-  vec3 x = c * ColorGrade.Exposure;
+  vec3 x = c * GetExposure();
   return x / (x + vec3(1.0));
 }
 vec3 HableTM(vec3 c)
 {
   const float A = 0.15, B = 0.50, C = 0.10, D = 0.20, E = 0.02, F = 0.30;
-  vec3 x = max(c * ColorGrade.Exposure - E, vec3(0.0));
+  vec3 x = max(c * GetExposure() - E, vec3(0.0));
   return ((x * (A * x + C * B) + D * E) / (x * (A * x + B) + D * F)) - E / F;
 }
 vec3 MobiusTM(vec3 c)
 {
   float a = 0.6;
-  vec3 x = c * ColorGrade.Exposure;
+  vec3 x = c * GetExposure();
   return (x * (a + 1.0)) / (x + a);
 }
 vec3 ACESTM(vec3 c)
 {
-  vec3 x = c * ColorGrade.Exposure;
+  vec3 x = c * GetExposure();
   return (x * (2.51f * x + 0.03f)) / (x * (2.43f * x + 0.59f) + 0.14f);
 }
 vec3 FilmicTM(vec3 c)
 {
-  vec3 x = c * ColorGrade.Exposure;
+  vec3 x = c * GetExposure();
   return (x * (x + 0.0245786f)) / (x * (0.983729f * x + 0.432951f) + 0.238081f);
 }
 vec3 NeutralTM(vec3 c)
 {
-  vec3 x = c * ColorGrade.Exposure;
+  vec3 x = c * GetExposure();
   return (x * (x + 0.0245786f)) / (x * (0.983729f * x + 0.432951f) + 0.238081f);
 }
 
@@ -266,7 +284,7 @@ void main()
   vec3 sceneColor;
   if (OutputHDR)
   {
-      sceneColor = hdrSceneColor * ColorGrade.Exposure;
+      sceneColor = hdrSceneColor * GetExposure();
   }
   else
   {

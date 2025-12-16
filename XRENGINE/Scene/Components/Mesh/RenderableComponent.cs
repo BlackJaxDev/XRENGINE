@@ -14,18 +14,8 @@ namespace XREngine.Components.Scene.Mesh
 
         protected virtual void Meshes_PostAnythingRemoved(RenderableMesh item)
         {
-            Engine.EnqueueSwapTask(() => MeshesRemoved_Task(item));
-        }
+            using var t = Engine.Profiler.Start("RenderableComponent.Meshes_PostAnythingRemoved");
 
-        protected virtual void Meshes_PostAnythingAdded(RenderableMesh item)
-        {
-            Engine.EnqueueSwapTask(() => MeshesAdded_Task(item));
-        }
-
-        private void MeshesRemoved_Task(RenderableMesh item)
-        {
-            using var t = Engine.Profiler.Start("RenderableComponent.MeshesRemoved_Task");
-            
             var ri = item.RenderInfo;
             int i = RenderedObjects.IndexOf(ri);
             if (i < 0)
@@ -37,9 +27,9 @@ namespace XREngine.Components.Scene.Mesh
                 ri.WorldInstance = null;
         }
 
-        private void MeshesAdded_Task(RenderableMesh item)
+        protected virtual void Meshes_PostAnythingAdded(RenderableMesh item)
         {
-            using var t = Engine.Profiler.Start("RenderableComponent.MeshesAdded_Task");
+            using var t = Engine.Profiler.Start("RenderableComponent.Meshes_PostAnythingAdded");
 
             var ri = item.RenderInfo;
             int i = RenderedObjects.IndexOf(ri);

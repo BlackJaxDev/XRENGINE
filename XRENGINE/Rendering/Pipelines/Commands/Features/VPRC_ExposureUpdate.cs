@@ -8,7 +8,12 @@ namespace XREngine.Rendering.Pipelines.Commands
         /// <summary>
         /// This is the texture that exposure will be calculated from.
         /// </summary>
-        public string HDRSceneTextureName { get; set; } = "HDRSceneTexture";
+        public string HDRSceneTextureName { get; set; } = DefaultRenderPipeline.HDRSceneTextureName;
+
+        /// <summary>
+        /// The 1x1 texture that stores the current exposure value when using GPU auto exposure.
+        /// </summary>
+        public string AutoExposureTextureName { get; set; } = DefaultRenderPipeline.AutoExposureTextureName;
 
         /// <summary>
         /// If true, the command will generate mipmaps for the HDR texture.
@@ -20,15 +25,38 @@ namespace XREngine.Rendering.Pipelines.Commands
         {
             var stage = ActivePipelineInstance.RenderState.SceneCamera?.GetPostProcessStageState<ColorGradingSettings>();
             if (stage?.TryGetBacking(out ColorGradingSettings? grading) != true)
+            {
+                Debug.Out("[ExposureUpdate] No ColorGradingSettings stage found on camera");
                 return;
+            }
 
-            //var hdrTexture = ActivePipelineInstance.GetTexture<XRTexture>(HDRSceneTextureName);
-            //if (hdrTexture is null)
-            //    return;
+            var sourceTexture = ActivePipelineInstance.GetTexture<XRTexture>(HDRSceneTextureName);
+            if (sourceTexture is null)
+            {
+                Debug.Out($"[ExposureUpdate] Source texture '{HDRSceneTextureName}' not found");
+                return;
+            }
 
-            var vp = ActivePipelineInstance.RenderState.WindowViewport;
-            if (vp != null)
-                grading?.UpdateExposure(vp.Region);
+            var renderer = AbstractRenderer.Current;
+            if (renderer?.SupportsGpuAutoExposure == true)
+            {
+                var exposureTexture = ActivePipelineInstance.GetTexture<XRTexture2D>(AutoExposureTextureName);
+                if (exposureTexture is not null)
+                {
+                    grading.UpdateExposureGpu(sourceTexture, exposureTexture, GenerateMipmapsHere);
+                    return;
+                }
+                else
+                {
+                    Debug.Out($"[ExposureUpdate] Exposure texture '{AutoExposureTextureName}' not found, falling back to CPU");
+                }
+            }
+            else
+            {
+                Debug.Out($"[ExposureUpdate] GPU auto exposure not supported, using CPU path");
+            }
+
+            grading.UpdateExposure(sourceTexture, GenerateMipmapsHere);
         }
 
         public void SetOptions(string hdrSceneTextureName, bool generateMipmapsHere)

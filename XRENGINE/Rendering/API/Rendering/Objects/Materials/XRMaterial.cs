@@ -228,6 +228,46 @@ namespace XREngine.Rendering
         public static XRMaterial CreateLitTextureMaterial(XRTexture2D texture, bool deferred = true)
             => new([texture], deferred ? ShaderHelper.LitTextureFragDeferred() : ShaderHelper.LitTextureFragForward()) { RenderPass = (int)EDefaultRenderPass.OpaqueForward };
 
+        public static XRMaterial CreateLitTextureSilhouettePOMMaterial(
+            XRTexture2D albedo,
+            XRTexture2D height,
+            bool deferred = true,
+            float parallaxScale = 0.04f,
+            int parallaxMinSteps = 12,
+            int parallaxMaxSteps = 48,
+            int parallaxRefineSteps = 5,
+            float parallaxHeightBias = 0.0f,
+            bool parallaxSilhouette = true,
+            float forwardSpecularIntensity = 1.0f,
+            float forwardShininess = 64.0f)
+        {
+            XRShader frag = deferred
+                ? ShaderHelper.LitTextureSilhouettePOMFragDeferred()
+                : ShaderHelper.LitTextureSilhouettePOMFragForward();
+
+            ShaderVar[] parameters =
+            [
+                new ShaderFloat(parallaxScale, "ParallaxScale"),
+                new ShaderInt(parallaxMinSteps, "ParallaxMinSteps"),
+                new ShaderInt(parallaxMaxSteps, "ParallaxMaxSteps"),
+                new ShaderInt(parallaxRefineSteps, "ParallaxRefineSteps"),
+                new ShaderFloat(parallaxHeightBias, "ParallaxHeightBias"),
+                new ShaderFloat(parallaxSilhouette ? 1.0f : 0.0f, "ParallaxSilhouette"),
+
+                // Forward-only uniforms (harmless for deferred; the program will ignore unused uniforms)
+                new ShaderFloat(forwardSpecularIntensity, "MatSpecularIntensity"),
+                new ShaderFloat(forwardShininess, "MatShininess"),
+            ];
+
+            XRTexture?[] textures = [albedo, height];
+            XRMaterial material = new(parameters, textures, frag);
+            material.RenderPass = deferred
+                ? (int)EDefaultRenderPass.OpaqueDeferred
+                : (int)EDefaultRenderPass.OpaqueForward;
+
+            return material;
+        }
+
         public static XRMaterial CreateUnlitColorMaterialForward()
             => CreateUnlitColorMaterialForward(Color.DarkTurquoise);
 
