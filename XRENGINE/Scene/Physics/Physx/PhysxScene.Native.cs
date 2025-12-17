@@ -86,6 +86,25 @@ namespace XREngine.Rendering.Physics.Physx
                 GC.KeepAlive(d4);
                 return (void*)vtblPtr;
             }
+            public static void* CreateVTable(nint d1, nint d2, nint d3, nint d4)
+            {
+                int count = 4;
+                nint vtblPtr = Marshal.AllocHGlobal(nint.Size * count);
+                for (int i = 0; i < 4; i++)
+                {
+                    nint offset = nint.Add(vtblPtr, nint.Size * i);
+                    var funcPtr = i switch
+                    {
+                        0 => d1,
+                        1 => d2,
+                        2 => d3,
+                        3 => d4,
+                        _ => nint.Zero,
+                    };
+                    Marshal.WriteIntPtr(offset, funcPtr);
+                }
+                return (void*)vtblPtr;
+            }
             public static void* CreateVTable<T1, T2, T3, T4, T5>(T1? d1, T2? d2, T3? d3, T4? d4, T5? d5) where T1 : Delegate where T2 : Delegate where T3 : Delegate where T4 : Delegate where T5 : Delegate
             {
                 int count = 5;

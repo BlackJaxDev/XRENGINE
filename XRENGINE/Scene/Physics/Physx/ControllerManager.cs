@@ -25,15 +25,15 @@ namespace XREngine.Rendering.Physics.Physx
         private readonly DataSource _controllerFiltersSource;
         private readonly DataSource _filterDataSource;
 
-        private void Destructor() { }
+        private void Destructor(void* self) { }
 
         [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
-        delegate void DelDestructor();
+        delegate void DelDestructor(void* self);
 
         [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
-        delegate PxQueryHitType DelPreFilterCallback(PxFilterData* filterData, PxShape* shape, PxRigidActor* actor, PxHitFlags* queryFlags);
+        delegate PxQueryHitType DelPreFilterCallback(void* self, PxFilterData* filterData, PxShape* shape, PxRigidActor* actor, PxHitFlags* queryFlags);
         [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
-        delegate PxQueryHitType DelPostFilterCallback(PxFilterData* filterData, PxQueryHit* hit, PxShape* shape, PxRigidActor* actor);
+        delegate PxQueryHitType DelPostFilterCallback(void* self, PxFilterData* filterData, PxQueryHit* hit, PxShape* shape, PxRigidActor* actor);
 
         [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
         [return: MarshalAs(UnmanagedType.I1)] // PhysX expects a 1-byte bool; mismatched marshaling can corrupt the stack
@@ -65,14 +65,14 @@ namespace XREngine.Rendering.Physics.Physx
             {
                 // VTable order must match the native class layout.
                 // PhysX PxControllerFilterCallback: filter() is the first virtual, then destructor.
-                vtable_ = PhysxScene.Native.CreateVTable(FilterControllerCollisionInstance, DestructorInstance)
+                vtable_ = PhysxScene.Native.CreateVTable(DestructorInstance, FilterControllerCollisionInstance)
             });
             _queryFilterCallbackSource = DataSource.FromStruct(new PxQueryFilterCallback()
             {
                 vtable_ = PhysxScene.Native.CreateVTable(PreFilterCallbackInstance, PostFilterCallbackInstance, DestructorInstance)
             });
 
-            CreateObstacleContext();
+            //CreateObstacleContext();
 
             PxFilterData filterData = PxFilterData_new_2(0, 0, 0, 0);
             _filterDataSource = DataSource.FromStruct(filterData);
@@ -80,8 +80,8 @@ namespace XREngine.Rendering.Physics.Physx
             // IMPORTANT: Pass null callbacks to avoid native AV when PhysX invokes vtable-based callbacks.
             // The smoke test proved that null callbacks + Static|Dynamic flags work reliably.
             // Do NOT use Prefilter/Postfilter flags as they cause PhysX to invoke callbacks.
-            var filter = PxControllerFilters_new(FilterData, null, null);
-            filter.mFilterFlags = PxQueryFlags.Static | PxQueryFlags.Dynamic;
+            var filter = PxControllerFilters_new(FilterData, QueryFilterCallback, ControllerFilterCallback);
+            filter.mFilterFlags = PxQueryFlags.Static | PxQueryFlags.Dynamic | PxQueryFlags.Prefilter | PxQueryFlags.Postfilter;
             _controllerFiltersSource = DataSource.FromStruct(filter);
 
             //SetTessellation(true, 1.0f);
@@ -103,13 +103,13 @@ namespace XREngine.Rendering.Physics.Physx
             }
         }
 
-        public ConcurrentDictionary<nint, Controller> Controllers { get; } = [];
+        public ConcurrentDictionary<nint, PhysxController> Controllers { get; } = [];
 
         public uint ControllerCount => ControllerManagerPtr->GetNbControllers();
-        public Controller[] GetControllers()
+        public PhysxController[] GetControllers()
         {
             uint count = ControllerCount;
-            var controllers = new List<Controller>((int)count);
+            var controllers = new List<PhysxController>((int)count);
             for (uint i = 0; i < count; i++)
             {
                 var ptr = (nint)ControllerManagerPtr->GetControllerMut(i);
@@ -158,7 +158,7 @@ namespace XREngine.Rendering.Physics.Physx
                 scaleCoeff,
                 volumeGrowth,
                 controller.UserControllerHitReport,
-                null,//controller.ControllerBehaviorCallback,
+                controller.ControllerBehaviorCallback,
                 nonWalkableMode,
                 material,
                 clientID,
@@ -218,7 +218,7 @@ namespace XREngine.Rendering.Physics.Physx
                 scaleCoeff,
                 volumeGrowth,
                 controller.UserControllerHitReport,
-                null,//controller.ControllerBehaviorCallback,
+                controller.ControllerBehaviorCallback,
                 nonWalkableMode,
                 material,
                 clientID,
@@ -364,7 +364,7 @@ namespace XREngine.Rendering.Physics.Physx
             ControllerManagerPtr->ShiftOriginMut(&s);
         }
 
-        internal PxQueryHitType PreFilterCallback(PxFilterData* filterData, PxShape* shape, PxRigidActor* actor, PxHitFlags* queryFlags)
+        internal PxQueryHitType PreFilterCallback(void* self, PxFilterData* filterData, PxShape* shape, PxRigidActor* actor, PxHitFlags* queryFlags)
         {
             //var a = PhysxRigidActor.Get(actor);
             //var s = PhysxShape.Get(shape);
@@ -372,7 +372,7 @@ namespace XREngine.Rendering.Physics.Physx
             //    return PxQueryHitType.Block;
             return PxQueryHitType.Block;
         }
-        internal PxQueryHitType PostFilterCallback(PxFilterData* filterData, PxQueryHit* hit, PxShape* shape, PxRigidActor* actor)
+        internal PxQueryHitType PostFilterCallback(void* self, PxFilterData* filterData, PxQueryHit* hit, PxShape* shape, PxRigidActor* actor)
         {
             return PxQueryHitType.Block;
         }

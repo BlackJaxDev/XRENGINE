@@ -5,7 +5,13 @@ using System.Drawing.Drawing2D;
 using System.Numerics;
 using XREngine.Core.Attributes;
 using XREngine.Data.Colors;
+using XREngine.Data.Geometry;
 using XREngine.Data.Core;
+using XREngine.Data.Rendering;
+using XREngine.Rendering;
+using XREngine.Rendering.Commands;
+using XREngine.Rendering.Info;
+using XREngine.Rendering.Models.Materials;
 using XREngine.Rendering.Physics.Physx;
 using XREngine.Scene;
 using XREngine.Scene.Transforms;
@@ -17,8 +23,40 @@ namespace XREngine.Components.Movement
     [Category("Gameplay")]
     [DisplayName("Character Movement")]
     [Description("Full-featured first/third-person character controller with jumping, crouching, and slope handling.")]
-    public class CharacterMovement3DComponent : PlayerMovementComponentBase
+    public class CharacterMovement3DComponent : PlayerMovementComponentBase, IRenderable
     {
+        private const int CapsuleRenderPointCountHalfCircle = 8;
+
+        private readonly XRMaterial _capsuleRenderMaterial;
+        private readonly XRMeshRenderer _capsuleRenderMeshRenderer;
+        private readonly RenderCommandMesh3D _capsuleRenderCommand;
+        private readonly RenderInfo3D _capsuleRenderInfo;
+
+        private bool _capsuleMeshDirty = true;
+        private float _lastCapsuleRenderRadius = float.NaN;
+        private float _lastCapsuleRenderHalfHeight = float.NaN;
+
+        public RenderInfo[] RenderedObjects { get; }
+
+        public CharacterMovement3DComponent()
+        {
+            _capsuleRenderMaterial = XRMaterial.CreateUnlitColorMaterialForward(ColorF4.DarkLavender);
+            _capsuleRenderMaterial.RenderOptions.DepthTest.Enabled = ERenderParamUsage.Disabled;
+            _capsuleRenderMaterial.RenderOptions.CullMode = ECullMode.None;
+            _capsuleRenderMaterial.EnableTransparency();
+
+            _capsuleRenderMeshRenderer = new XRMeshRenderer(null, _capsuleRenderMaterial);
+            _capsuleRenderCommand = new RenderCommandMesh3D((int)EDefaultRenderPass.OnTopForward, _capsuleRenderMeshRenderer, Matrix4x4.Identity, null);
+
+            _capsuleRenderInfo = RenderInfo3D.New(this, _capsuleRenderCommand);
+            _capsuleRenderInfo.CastsShadows = false;
+            _capsuleRenderInfo.ReceivesShadows = false;
+
+            RenderedObjects = [_capsuleRenderInfo];
+
+            UpdateCapsuleRenderMeshIfNeeded();
+        }
+
         //public RigidBodyTransform RigidBodyTransform
         //    => SceneNode.GetTransformAs<RigidBodyTransform>(true)!;
         //public Transform ControllerTransform
@@ -534,20 +572,25 @@ namespace XREngine.Components.Movement
                 case nameof(StandingHeight):
                     if (CrouchState == ECrouchState.Standing)
                         Controller?.Resize(StandingHeight);
+                    _capsuleMeshDirty = true;
                     break;
                 case nameof(CrouchedHeight):
                     if (CrouchState == ECrouchState.Crouched)
                         Controller?.Resize(CrouchedHeight);
+                    _capsuleMeshDirty = true;
                     break;
                 case nameof(ProneHeight):
                     if (CrouchState == ECrouchState.Prone)
                         Controller?.Resize(ProneHeight);
+                    _capsuleMeshDirty = true;
                     break;
                 case nameof(CrouchState):
                     Controller?.Resize(GetCurrentHeight());
+                    _capsuleMeshDirty = true;
                     break;
                 case nameof(Radius):
                     Controller?.Radius = Radius;
+                    _capsuleMeshDirty = true;
                     break;
                 case nameof(SlopeLimitCosine):
                     Controller?.SlopeLimit = SlopeLimitCosine;
@@ -567,6 +610,36 @@ namespace XREngine.Components.Movement
                         : PxCapsuleClimbingMode.Easy;
                     break;
             }
+        }
+
+        protected override void OnTransformRenderWorldMatrixChanged(TransformBase transform, Matrix4x4 renderMatrix)
+        {
+            base.OnTransformRenderWorldMatrixChanged(transform, renderMatrix);
+            _capsuleRenderCommand.WorldMatrix = renderMatrix;
+            _capsuleRenderInfo.CullingOffsetMatrix = renderMatrix;
+        }
+
+        private void UpdateCapsuleRenderMeshIfNeeded()
+        {
+            float radius = Radius;
+            float halfHeight = CurrentHeight * 0.5f;
+
+            if (!_capsuleMeshDirty && radius == _lastCapsuleRenderRadius && halfHeight == _lastCapsuleRenderHalfHeight)
+                return;
+
+            _lastCapsuleRenderRadius = radius;
+            _lastCapsuleRenderHalfHeight = halfHeight;
+            _capsuleMeshDirty = false;
+
+            _capsuleRenderMeshRenderer.Mesh = XRMesh.Shapes.WireframeCapsule(
+                Vector3.Zero,
+                Globals.Up,
+                radius,
+                halfHeight,
+                CapsuleRenderPointCountHalfCircle);
+
+            float yHalfExtent = halfHeight + radius;
+            _capsuleRenderInfo.LocalCullingVolume = AABB.FromSize(new Vector3(radius * 2.0f, yHalfExtent * 2.0f, radius * 2.0f));
         }
 
         protected internal unsafe override void OnComponentActivated()
@@ -678,7 +751,7 @@ namespace XREngine.Components.Movement
             Velocity = RigidBodyTransform.RigidBody?.LinearVelocity ?? Velocity;
             Acceleration = (Velocity - LastVelocity) / DeltaTime;
 
-            RenderCapsule();
+            UpdateCapsuleRenderMeshIfNeeded();
 
             var rawInput = ConsumeInput();
             var tickResult = _subUpdateTick?.Invoke(rawInput) ?? Vector3.Zero;
@@ -700,16 +773,6 @@ namespace XREngine.Components.Movement
             }
             
             LastVelocity = Velocity;
-        }
-
-        private unsafe void RenderCapsule()
-        {
-            Vector3 pos = Position;
-            Vector3 up = UpDirection;
-            float halfHeight = CurrentHeight * 0.5f;
-            float radius = Radius;
-
-            Engine.Rendering.Debug.RenderCapsule(pos - up * halfHeight, pos + up * halfHeight, radius, false, ColorF4.DarkLavender);
         }
 
         private Vector3 _acceleration;
