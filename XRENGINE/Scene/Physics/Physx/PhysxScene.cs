@@ -369,8 +369,8 @@ namespace XREngine.Rendering.Physics.Physx
 
         public DataSource? _scratchBlock = new(32000, true);
 
-        private readonly ConcurrentQueue<Controller> _pendingControllerReleases = new();
-        internal void QueueControllerRelease(Controller controller)
+        private readonly ConcurrentQueue<PhysxController> _pendingControllerReleases = new();
+        internal void QueueControllerRelease(PhysxController controller)
         {
             if (controller is null)
                 return;

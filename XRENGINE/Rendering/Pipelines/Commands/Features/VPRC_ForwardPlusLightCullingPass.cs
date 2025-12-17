@@ -5,6 +5,7 @@ using System.Numerics;
 using XREngine.Components.Capture.Lights.Types;
 using XREngine.Components.Lights;
 using XREngine.Data.Rendering;
+using XREngine.Data.Vectors;
 using XREngine.Scene;
 
 namespace XREngine.Rendering.Pipelines.Commands
@@ -119,7 +120,7 @@ namespace XREngine.Rendering.Pipelines.Commands
 
             _computeProgram!.Uniform("view", view);
             _computeProgram!.Uniform("projection", proj);
-            _computeProgram!.Uniform("screenSize", new Vector2(width, height));
+            _computeProgram!.Uniform("screenSize", new IVector2(width, height));
             _computeProgram!.Uniform("lightCount", lightCount);
 
             // Dispatch per-tile.

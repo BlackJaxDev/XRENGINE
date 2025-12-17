@@ -2,7 +2,7 @@
 
 namespace XREngine.Rendering.Physics.Physx
 {
-    public unsafe class BoxController : Controller
+    public unsafe class BoxController : PhysxController
     {
         public PxBoxController* BoxControllerPtr { get; internal set; }
         public override unsafe PxController* ControllerPtr => (PxController*)BoxControllerPtr;
