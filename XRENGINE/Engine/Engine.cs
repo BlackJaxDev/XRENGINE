@@ -801,15 +801,16 @@ namespace XREngine
         public static void RemoveWindow(XRWindow window)
         {
             _windows.Remove(window);
-            if (_windows.Count == 0)
+            if (_windows.Count != 0)
+                return;
+            
+            if (Interlocked.CompareExchange(ref _suppressedCleanupRequests, 0, 0) > 0)
             {
-                if (Interlocked.CompareExchange(ref _suppressedCleanupRequests, 0, 0) > 0)
-                {
-                    Interlocked.Decrement(ref _suppressedCleanupRequests);
-                    return;
-                }
-                Cleanup();
+                Interlocked.Decrement(ref _suppressedCleanupRequests);
+                return;
             }
+
+            Cleanup();
         }
 
         public delegate int DelBeginOperation(

@@ -22,9 +22,9 @@ namespace XREngine.Rendering.Meshlets
         private uint _padding0;
         private uint _padding1;
 
-        public EComponentType ComponentType => EComponentType.Struct;
-        public uint ComponentCount => 1;
-        public bool Normalize => false;
+        public readonly EComponentType ComponentType => EComponentType.Struct;
+        public readonly uint ComponentCount => 1;
+        public readonly bool Normalize => false;
 
         public unsafe void Read(VoidPtr address)
             => this = *(Meshlet*)address.Pointer;

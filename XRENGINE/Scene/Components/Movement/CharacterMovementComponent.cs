@@ -81,7 +81,7 @@ namespace XREngine.Components.Movement
         private float _crouchedHeight = new FeetInches(3, 0.0f).ToMeters();
         private float _proneHeight = new FeetInches(1, 0.0f).ToMeters();
         private bool _constrainedClimbing = false;
-        private CapsuleController? _controller;
+        private PhysxCapsuleController? _controller;
 
         private AbstractPhysicsScene? _subscribedPhysicsScene;
         private PhysxControllerActorProxy? _controllerActorProxy;
@@ -514,7 +514,7 @@ namespace XREngine.Components.Movement
         }
 
         [Browsable(false)]
-        public CapsuleController? Controller
+        public PhysxCapsuleController? Controller
         {
             get => _controller;
             private set => SetField(ref _controller, value);

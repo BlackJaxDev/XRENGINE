@@ -1,91 +1,105 @@
 ﻿using MagicPhysX;
 using System.Collections.Concurrent;
 using System.Numerics;
+using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
 using XREngine.Data;
 using XREngine.Data.Core;
-using XREngine;
 using static MagicPhysX.NativeMethods;
 
 namespace XREngine.Rendering.Physics.Physx
 {
-    public unsafe class Obstacle(PxObstacle* obstaclePtr) : XRBase
-    {
-        public PxObstacle* ObstaclePtr { get; } = obstaclePtr;
-    }
     public unsafe class ControllerManager : XRBase
     {
-        public PxControllerFilterCallback* ControllerFilterCallback => _controllerFilterCallbackSource.ToStructPtr<PxControllerFilterCallback>();
-        public PxQueryFilterCallback* QueryFilterCallback => _queryFilterCallbackSource.ToStructPtr<PxQueryFilterCallback>();
-        public PxControllerFilters* ControllerFilters => _controllerFiltersSource.ToStructPtr<PxControllerFilters>();
-        public PxFilterData* FilterData => _filterDataSource.ToStructPtr<PxFilterData>();
+        #region Nested Types
 
+        /// <summary>
+        /// Modern .NET 7+ VTable for PxControllerFilterCallback.
+        /// MSVC layout: destructor last, filter first.
+        /// </summary>
+        [StructLayout(LayoutKind.Sequential)]
+        public unsafe struct PxControllerFilterCallbackVTable
+        {
+            public delegate* unmanaged[Cdecl]<PxControllerFilterCallback*, PxController*, PxController*, byte> Filter;
+            public delegate* unmanaged[Cdecl]<void*, void> Destructor;
+        }
+
+        /// <summary>
+        /// Modern .NET 7+ VTable for PxQueryFilterCallback.
+        /// MSVC layout: postFilter, preFilter, destructor.
+        /// </summary>
+        [StructLayout(LayoutKind.Sequential)]
+        public unsafe struct PxQueryFilterCallbackVTable
+        {
+            public delegate* unmanaged[Cdecl]<PxQueryFilterCallback*, byte*, PxFilterData*, PxQueryHit*, PxShape*, PxRigidActor*, void> PostFilter;
+            public delegate* unmanaged[Cdecl]<PxQueryFilterCallback*, byte*, PxFilterData*, PxShape*, PxRigidActor*, PxHitFlags*, void> PreFilter;
+            public delegate* unmanaged[Cdecl]<void*, void> Destructor;
+        }
+
+        #endregion
+
+        #region Delegate Definitions
+
+        /// <summary>Delegate for CCT-vs-CCT collision filtering.</summary>
+        public delegate bool DelFilterControllerCollision(PxController* a, PxController* b);
+
+        /// <summary>Delegate for pre-filter query callback.</summary>
+        public delegate PxQueryHitType DelPreFilterCallback(PxFilterData* filterData, PxShape* shape, PxRigidActor* actor, PxHitFlags* queryFlags);
+
+        /// <summary>Delegate for post-filter query callback.</summary>
+        public delegate PxQueryHitType DelPostFilterCallback(PxFilterData* filterData, PxQueryHit* hit, PxShape* shape, PxRigidActor* actor);
+
+        // Controller creation callback delegates (retained for public API)
+        public delegate void DelOnControllerHit(PxControllersHit* hit);
+        public delegate void DelOnShapeHit(PxControllerShapeHit* hit);
+        public delegate void DelOnObstacleHit(PxControllerObstacleHit* hit);
+
+        public delegate PxControllerBehaviorFlags DelGetBehaviorFlagsShape(PxShape* shape, PxActor* actor);
+        public delegate PxControllerBehaviorFlags DelGetBehaviorFlagsObstacle(PxObstacle* obstacle);
+        public delegate PxControllerBehaviorFlags DelGetBehaviorFlagsController(PxController* controller);
+
+        #endregion
+
+        #region Static Fields
+
+        /// <summary>Maps native PxControllerFilterCallback pointers back to managed ControllerManager instances.</summary>
+        private static readonly ConcurrentDictionary<nint, ControllerManager> _controllerFilterToManager = new();
+
+        /// <summary>Maps native PxQueryFilterCallback pointers back to managed ControllerManager instances.</summary>
+        private static readonly ConcurrentDictionary<nint, ControllerManager> _queryFilterToManager = new();
+
+        #endregion
+
+        #region Instance Fields
+
+        // Native interop data sources
         private readonly DataSource _controllerFilterCallbackSource;
+        private readonly DataSource _controllerFilterCallbackVTableSource;
         private readonly DataSource _queryFilterCallbackSource;
+        private readonly DataSource _queryFilterCallbackVTableSource;
         private readonly DataSource _controllerFiltersSource;
         private readonly DataSource _filterDataSource;
 
-        private void Destructor(void* self) { }
+        // Instance filter callbacks
+        private DelFilterControllerCollision? _filterControllerCollision;
+        private DelPreFilterCallback? _preFilterCallback;
+        private DelPostFilterCallback? _postFilterCallback;
 
-        [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
-        delegate void DelDestructor(void* self);
+        #endregion
 
-        [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
-        delegate PxQueryHitType DelPreFilterCallback(void* self, PxFilterData* filterData, PxShape* shape, PxRigidActor* actor, PxHitFlags* queryFlags);
-        [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
-        delegate PxQueryHitType DelPostFilterCallback(void* self, PxFilterData* filterData, PxQueryHit* hit, PxShape* shape, PxRigidActor* actor);
+        #region Properties
 
-        [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
-        [return: MarshalAs(UnmanagedType.I1)] // PhysX expects a 1-byte bool; mismatched marshaling can corrupt the stack
-        delegate bool DelFilterControllerCollision(PxController* a, PxController* b);
+        public PxControllerFilterCallback* ControllerFilterCallback
+            => _controllerFilterCallbackSource.ToStructPtr<PxControllerFilterCallback>();
 
-        private readonly DelDestructor? DestructorInstance = null;
-        private readonly DelPreFilterCallback? PreFilterCallbackInstance = null;
-        private readonly DelPostFilterCallback? PostFilterCallbackInstance = null;
-        private readonly DelFilterControllerCollision? FilterControllerCollisionInstance = null;
+        public PxQueryFilterCallback* QueryFilterCallback
+            => _queryFilterCallbackSource.ToStructPtr<PxQueryFilterCallback>();
 
-        public PxQueryFlags QueryFlags
-        {
-            get => ControllerFilters->mFilterFlags;
-            set => ControllerFilters->mFilterFlags = value;
-        }
+        public PxControllerFilters* ControllerFilters
+            => _controllerFiltersSource.ToStructPtr<PxControllerFilters>();
 
-        public ControllerManager(PxControllerManager* manager)
-        {
-            ControllerManagerPtr = manager;
-
-            Debug.Log(ELogCategory.Physics, "[PhysxObj] + ControllerManager ptr=0x{0:X}", (nint)manager);
-
-            DestructorInstance = Destructor;
-            PreFilterCallbackInstance = PreFilterCallback;
-            PostFilterCallbackInstance = PostFilterCallback;
-            FilterControllerCollisionInstance = FilterControllerCollision;
-
-            _controllerFilterCallbackSource = DataSource.FromStruct(new PxControllerFilterCallback()
-            {
-                // VTable order must match the native class layout.
-                // PhysX PxControllerFilterCallback: filter() is the first virtual, then destructor.
-                vtable_ = PhysxScene.Native.CreateVTable(DestructorInstance, FilterControllerCollisionInstance)
-            });
-            _queryFilterCallbackSource = DataSource.FromStruct(new PxQueryFilterCallback()
-            {
-                vtable_ = PhysxScene.Native.CreateVTable(PreFilterCallbackInstance, PostFilterCallbackInstance, DestructorInstance)
-            });
-
-            //CreateObstacleContext();
-
-            PxFilterData filterData = PxFilterData_new_2(0, 0, 0, 0);
-            _filterDataSource = DataSource.FromStruct(filterData);
-
-            // IMPORTANT: Pass null callbacks to avoid native AV when PhysX invokes vtable-based callbacks.
-            // The smoke test proved that null callbacks + Static|Dynamic flags work reliably.
-            // Do NOT use Prefilter/Postfilter flags as they cause PhysX to invoke callbacks.
-            var filter = PxControllerFilters_new(FilterData, QueryFilterCallback, ControllerFilterCallback);
-            filter.mFilterFlags = PxQueryFlags.Static | PxQueryFlags.Dynamic | PxQueryFlags.Prefilter | PxQueryFlags.Postfilter;
-            _controllerFiltersSource = DataSource.FromStruct(filter);
-
-            //SetTessellation(true, 1.0f);
-        }
+        public PxFilterData* FilterData
+            => _filterDataSource.ToStructPtr<PxFilterData>();
 
         public PxControllerManager* ControllerManagerPtr { get; }
 
@@ -106,6 +120,109 @@ namespace XREngine.Rendering.Physics.Physx
         public ConcurrentDictionary<nint, PhysxController> Controllers { get; } = [];
 
         public uint ControllerCount => ControllerManagerPtr->GetNbControllers();
+
+        public PxQueryFlags QueryFlags
+        {
+            get => ControllerFilters->mFilterFlags;
+            set => ControllerFilters->mFilterFlags = value;
+        }
+
+        /// <summary>
+        /// Callback for CCT-vs-CCT collision filtering.
+        /// Return true to allow collision, false to ignore.
+        /// </summary>
+        public DelFilterControllerCollision? FilterControllerCollisionCallback
+        {
+            get => _filterControllerCollision;
+            set => _filterControllerCollision = value;
+        }
+
+        /// <summary>
+        /// Callback for pre-filter query processing.
+        /// Called before shape intersection tests.
+        /// </summary>
+        public DelPreFilterCallback? PreFilterCallbackDelegate
+        {
+            get => _preFilterCallback;
+            set => _preFilterCallback = value;
+        }
+
+        /// <summary>
+        /// Callback for post-filter query processing.
+        /// Called after shape intersection tests.
+        /// </summary>
+        public DelPostFilterCallback? PostFilterCallbackDelegate
+        {
+            get => _postFilterCallback;
+            set => _postFilterCallback = value;
+        }
+
+        public Dictionary<nint, ObstacleContext> ObstacleContexts { get; } = [];
+        public uint ObstacleContextCount => ControllerManagerPtr->GetNbObstacleContexts();
+
+        public PxRenderBuffer* RenderBuffer
+            => ControllerManagerPtr->GetRenderBufferMut();
+
+        #endregion
+
+        #region Constructor
+
+        public ControllerManager(PxControllerManager* manager)
+        {
+            ControllerManagerPtr = manager;
+
+            Debug.Log(ELogCategory.Physics, "[PhysxObj] + ControllerManager ptr=0x{0:X}", (nint)manager);
+
+            // Create controller filter callback vtable
+            _controllerFilterCallbackVTableSource = DataSource.FromStruct(new PxControllerFilterCallbackVTable
+            {
+                Filter = &FilterControllerCollisionNative,
+                Destructor = &ControllerFilterDestructor
+            });
+
+            _controllerFilterCallbackSource = DataSource.FromStruct(new PxControllerFilterCallback()
+            {
+                vtable_ = _controllerFilterCallbackVTableSource.Address
+            });
+
+            // Register for native callback lookup
+            _controllerFilterToManager[(nint)ControllerFilterCallback] = this;
+
+            // Create query filter callback vtable
+            _queryFilterCallbackVTableSource = DataSource.FromStruct(new PxQueryFilterCallbackVTable
+            {
+                PreFilter = &PreFilterCallbackNative,
+                PostFilter = &PostFilterCallbackNative,
+                Destructor = &QueryFilterDestructor
+            });
+
+            _queryFilterCallbackSource = DataSource.FromStruct(new PxQueryFilterCallback()
+            {
+                vtable_ = _queryFilterCallbackVTableSource.Address
+            });
+
+            // Register for native callback lookup
+            _queryFilterToManager[(nint)QueryFilterCallback] = this;
+
+            //CreateObstacleContext();
+
+            PxFilterData filterData = PxFilterData_new_2(0, 0, 0, 0);
+            _filterDataSource = DataSource.FromStruct(filterData);
+
+            // IMPORTANT: Pass null callbacks to avoid native AV when PhysX invokes vtable-based callbacks.
+            // The smoke test proved that null callbacks + Static|Dynamic flags work reliably.
+            // Do NOT use Prefilter/Postfilter flags as they cause PhysX to invoke callbacks.
+            var filter = PxControllerFilters_new(FilterData, QueryFilterCallback, ControllerFilterCallback);
+            filter.mFilterFlags = PxQueryFlags.Static | PxQueryFlags.Dynamic | PxQueryFlags.Prefilter | PxQueryFlags.Postfilter;
+            _controllerFiltersSource = DataSource.FromStruct(filter);
+
+            //SetTessellation(true, 1.0f);
+        }
+
+        #endregion
+
+        #region Controller Creation
+
         public PhysxController[] GetControllers()
         {
             uint count = ControllerCount;
@@ -118,7 +235,7 @@ namespace XREngine.Rendering.Physics.Physx
             }
             return [.. controllers];
         }
-        public BoxController CreateAABBController(
+        public PhysxBoxController CreateAABBController(
             Vector3 position,
             Vector3 upDirection,
             float slopeLimit,
@@ -145,7 +262,7 @@ namespace XREngine.Rendering.Physics.Physx
             desc->halfHeight = halfHeight;
 
             var genericDesc = (PxControllerDesc*)desc;
-            var controller = new BoxController();
+            var controller = new PhysxBoxController();
             SetGenericControllerParams(
                 position,
                 upDirection,
@@ -178,7 +295,7 @@ namespace XREngine.Rendering.Physics.Physx
             return controller;
         }
 
-        public CapsuleController CreateCapsuleController(
+        public PhysxCapsuleController CreateCapsuleController(
             Vector3 position,
             Vector3 upDirection,
             float slopeLimit,
@@ -197,7 +314,7 @@ namespace XREngine.Rendering.Physics.Physx
             float height,
             PxCapsuleClimbingMode climbingMode)
         {
-            var controller = new CapsuleController();
+            var controller = new PhysxCapsuleController();
 
             PxCapsuleControllerDesc* desc = PxCapsuleControllerDesc_new_alloc();
             desc->SetToDefaultMut();
@@ -238,13 +355,9 @@ namespace XREngine.Rendering.Physics.Physx
             return controller;
         }
 
-        public delegate void DelOnControllerHit(PxControllersHit* hit);
-        public delegate void DelOnShapeHit(PxControllerShapeHit* hit);
-        public delegate void DelOnObstacleHit(PxControllerObstacleHit* hit);
+        #endregion
 
-        public delegate PxControllerBehaviorFlags DelGetBehaviorFlagsShape(PxShape* shape, PxActor* actor);
-        public delegate PxControllerBehaviorFlags DelGetBehaviorFlagsObstacle(PxObstacle* obstacle);
-        public delegate PxControllerBehaviorFlags DelGetBehaviorFlagsController(PxController* controller);
+        #region Private Methods
 
         private void SetGenericControllerParams(
             Vector3 position,
@@ -284,6 +397,10 @@ namespace XREngine.Rendering.Physics.Physx
             genericDesc->userData = userData;
         }
 
+        #endregion
+
+        #region Public Methods
+
         public void DestroyAllControllers()
         {
             Debug.Log(ELogCategory.Physics, "[PhysxObj] ~ ControllerManager DestroyAllControllers count={0}", Controllers.Count);
@@ -293,14 +410,8 @@ namespace XREngine.Rendering.Physics.Physx
             Controllers.Clear();
         }
 
-        public PxRenderBuffer* RenderBuffer
-            => ControllerManagerPtr->GetRenderBufferMut();
-
         public void SetDebugRenderingFlags(PxControllerDebugRenderFlags flags)
             => ControllerManagerPtr->SetDebugRenderingFlagsMut(flags);
-
-        public Dictionary<nint, ObstacleContext> ObstacleContexts { get; } = [];
-        public uint ObstacleContextCount => ControllerManagerPtr->GetNbObstacleContexts();
 
         public ObstacleContext[] GetObstacleContexts()
         {
@@ -364,31 +475,72 @@ namespace XREngine.Rendering.Physics.Physx
             ControllerManagerPtr->ShiftOriginMut(&s);
         }
 
-        internal PxQueryHitType PreFilterCallback(void* self, PxFilterData* filterData, PxShape* shape, PxRigidActor* actor, PxHitFlags* queryFlags)
-        {
-            //var a = PhysxRigidActor.Get(actor);
-            //var s = PhysxShape.Get(shape);
-            //if (a is null && s is null)
-            //    return PxQueryHitType.Block;
-            return PxQueryHitType.Block;
-        }
-        internal PxQueryHitType PostFilterCallback(void* self, PxFilterData* filterData, PxQueryHit* hit, PxShape* shape, PxRigidActor* actor)
-        {
-            return PxQueryHitType.Block;
-        }
+        #endregion
+
+        #region Filter Callback Native Entry Points
+
         /// <summary>
-        /// Dedicated filtering callback for CCT vs CCT.
-        /// This controls collisions between CCTs (one CCT vs anoter CCT).
-        /// To make each CCT collide against all other CCTs, just return true - or simply avoid defining a callback.
-        /// To make each CCT freely go through all other CCTs, just return false.
-        /// Otherwise create a custom filtering logic in this callback.
+        /// Static native callback for CCT-vs-CCT filtering. Routes to the appropriate managed instance.
         /// </summary>
-        /// <param name="a"></param>
-        /// <param name="b"></param>
-        /// <returns></returns>
-        internal bool FilterControllerCollision(PxController* a, PxController* b)
+        [UnmanagedCallersOnly(CallConvs = [typeof(CallConvCdecl)])]
+        private static byte FilterControllerCollisionNative(PxControllerFilterCallback* self, PxController* a, PxController* b)
         {
-            return false;
+            if (!_controllerFilterToManager.TryGetValue((nint)self, out var manager))
+                return 1; // Default: allow collision
+            
+            // If no callback is set, default to allowing collision (return true)
+            bool result = manager.FilterControllerCollisionCallback?.Invoke(a, b) ?? true;
+            return result ? (byte)1 : (byte)0;
         }
+
+        /// <summary>
+        /// Static native callback for controller filter destructor.
+        /// </summary>
+        [UnmanagedCallersOnly(CallConvs = [typeof(CallConvCdecl)])]
+        private static void ControllerFilterDestructor(void* self)
+        {
+            _controllerFilterToManager.TryRemove((nint)self, out _);
+            Debug.Log(ELogCategory.Physics, "[PhysxObj] ~ ControllerFilterCallback Destructor ptr=0x{0:X}", (nint)self);
+        }
+
+        /// <summary>
+        /// Static native callback for pre-filter query. Routes to the appropriate managed instance.
+        /// The return value is a hidden param passed by pointer.
+        /// </summary>
+        [UnmanagedCallersOnly(CallConvs = [typeof(CallConvCdecl)])]
+        private static void PreFilterCallbackNative(PxQueryFilterCallback* self, byte* retPtr, PxFilterData* filterData, PxShape* shape, PxRigidActor* actor, PxHitFlags* queryFlags)
+        {
+            PxQueryHitType result = PxQueryHitType.Block;
+            if (_queryFilterToManager.TryGetValue((nint)self, out var manager))
+                result = manager.PreFilterCallbackDelegate?.Invoke(filterData, shape, actor, queryFlags) ?? PxQueryHitType.Block;
+
+            *retPtr = (byte)result;
+        }
+
+        /// <summary>
+        /// Static native callback for post-filter query. Routes to the appropriate managed instance.
+        /// The return value is a hidden param passed by pointer.
+        /// </summary>
+        [UnmanagedCallersOnly(CallConvs = [typeof(CallConvCdecl)])]
+        private static void PostFilterCallbackNative(PxQueryFilterCallback* self, byte* retPtr, PxFilterData* filterData, PxQueryHit* hit, PxShape* shape, PxRigidActor* actor)
+        {
+            PxQueryHitType result = PxQueryHitType.Block;
+            if (_queryFilterToManager.TryGetValue((nint)self, out var manager))
+                result = manager.PostFilterCallbackDelegate?.Invoke(filterData, hit, shape, actor) ?? PxQueryHitType.Block;
+
+            *retPtr = (byte)result;
+        }
+
+        /// <summary>
+        /// Static native callback for query filter destructor.
+        /// </summary>
+        [UnmanagedCallersOnly(CallConvs = [typeof(CallConvCdecl)])]
+        private static void QueryFilterDestructor(void* self)
+        {
+            _queryFilterToManager.TryRemove((nint)self, out _);
+            Debug.Log(ELogCategory.Physics, "[PhysxObj] ~ QueryFilterCallback Destructor ptr=0x{0:X}", (nint)self);
+        }
+
+        #endregion
     }
 }

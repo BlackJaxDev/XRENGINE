@@ -10,81 +10,26 @@ using static XREngine.Engine;
 
 namespace XREngine.Rendering.Physics.Physx
 {
+    /// <summary>
+    /// Abstract base class for PhysX character controllers (CCT).
+    /// Provides thread-safe movement queuing, collision state tracking, and behavior callbacks.
+    /// </summary>
     public unsafe abstract class PhysxController : XRBase
     {
-        public abstract PxController* ControllerPtr { get; }
+        #region Nested Types
 
-        internal ControllerManager? Manager { get; set; }
-
-        private int _released;
-        public bool IsReleased => Volatile.Read(ref _released) != 0;
-
-        private int _nativeReleased;
-
-        private readonly object _nativeCallLock = new();
-
-        private bool _hasLoggedMoveDebug;
-
-        public PhysxScene Scene
+        /// <summary>
+        /// Modern .NET 7+ VTable for PxUserControllerHitReport.
+        /// Note that the order is reversed from the PhysX declaration due to MSVC struct layout, save for the destructor.
+        /// </summary>
+        [StructLayout(LayoutKind.Sequential)]
+        public unsafe struct PxUserControllerHitReportVTable
         {
-            get
-            {
-                // Prefer the managed back-reference; querying the native pointer after release can crash.
-                if (Manager is not null)
-                    return Manager.Scene;
-                var scenePtr = (nint)ControllerPtr->GetSceneMut();
-                if (PhysxScene.Scenes.TryGetValue(scenePtr, out var scene))
-                    return scene;
-                throw new KeyNotFoundException($"PhysxScene not found for PxScene* 0x{scenePtr:X}");
-            }
+            public delegate* unmanaged[Cdecl]<PxUserControllerHitReport*, PxControllerObstacleHit*, void> OnObstacleHit;
+            public delegate* unmanaged[Cdecl]<PxUserControllerHitReport*, PxControllersHit*, void> OnControllerHit;
+            public delegate* unmanaged[Cdecl]<PxUserControllerHitReport*, PxControllerShapeHit*, void> OnShapeHit;
+            public delegate* unmanaged[Cdecl]<void*, void> Destructor;
         }
-
-        public PxUserControllerHitReport* UserControllerHitReport
-            => _userControllerHitReportSource.ToStructPtr<PxUserControllerHitReport>();
-        public PxControllerBehaviorCallback* ControllerBehaviorCallback
-            => _controllerBehaviorCallbackSource.ToStructPtr<PxControllerBehaviorCallback>();
-
-        private readonly DataSource _userControllerHitReportSource;
-        private readonly DataSource _controllerBehaviorCallbackSource;
-        private readonly DataSource _controllerBehaviorCallbackVTableSource;
-
-        private static void HitReportDestructor(void* self)
-        {
-            Debug.Log(ELogCategory.Physics, "[PhysxObj] ~ Controller HitReport Destructor ptr=0x{0:X}", (nint)self);
-        }
-
-        [UnmanagedCallersOnly(CallConvs = new[] { typeof(CallConvCdecl) })]
-        private static void BehaviorCallbackDestructor(void* self)
-        {
-            Debug.Log(ELogCategory.Physics, "[PhysxObj] ~ Controller BehaviorCallback Destructor ptr=0x{0:X}", (nint)self);
-        }
-
-        // Legacy delegate signatures (not used by the current vtable wiring)
-        [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
-        delegate void DelOnControllerHit(void* self, PxControllersHit* hit);
-        [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
-        delegate void DelOnShapeHit(void* self, PxControllerShapeHit* hit);
-        [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
-        delegate void DelOnObstacleHit(void* self, PxControllerObstacleHit* hit);
-
-        [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
-        [return: MarshalAs(UnmanagedType.U1)]
-        delegate PxControllerBehaviorFlags DelGetBehaviorFlagsShape(PxControllerBehaviorCallback* self, PxShape* shape, PxActor* actor);
-        [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
-        [return: MarshalAs(UnmanagedType.U1)]
-        delegate PxControllerBehaviorFlags DelGetBehaviorFlagsObstacle(PxControllerBehaviorCallback* self, PxObstacle* obstacle);
-        [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
-        [return: MarshalAs(UnmanagedType.U1)]
-        delegate PxControllerBehaviorFlags DelGetBehaviorFlagsController(PxControllerBehaviorCallback* self, PxController* controller);
-        [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
-        delegate void DelDestructor(void* self);
-
-        // Instance delegates used for vtables (managed thunks -> unmanaged wrappers)
-        private readonly DelOnControllerHit? OnControllerHitInstance;
-        private readonly DelOnShapeHit? OnShapeHitInstance;
-        private readonly DelOnObstacleHit? OnObstacleHitInstance;
-
-        private readonly DelDestructor HitReportDestructorInstance = HitReportDestructor;
 
         /// <summary>
         /// Modern .NET 7+ VTable for PxControllerBehaviorCallback.
@@ -98,39 +43,108 @@ namespace XREngine.Rendering.Physics.Physx
             public delegate* unmanaged[Cdecl]<PxControllerBehaviorCallback*, byte*, PxShape*, PxActor*, void> GetBehaviorFlagsShape;
             public delegate* unmanaged[Cdecl]<void*, void> Destructor;
         }
-        public PhysxController()
+
+        #endregion
+
+        #region Delegate Definitions
+
+        // Public event delegates
+        public delegate void ControllerHitDelegate(PhysxController controller, PxControllersHit* hit);
+        public delegate void ShapeHitDelegate(PhysxController controller, PxControllerShapeHit* hit);
+        public delegate void ObstacleHitDelegate(PhysxController controller, PxControllerObstacleHit* hit);
+
+        // Static behavior callback delegates
+        public delegate PxControllerBehaviorFlags DelGetBehaviorFlagsShape2(PxShape* shape, PxActor* actor);
+        public delegate PxControllerBehaviorFlags DelGetBehaviorFlagsObstacle2(PxObstacle* obstacle);
+        public delegate PxControllerBehaviorFlags DelGetBehaviorFlagsController2(PxController* controller);
+
+        #endregion
+
+        #region Static Fields
+
+        /// <summary>Maps native PxUserControllerHitReport pointers back to managed PhysxController instances.</summary>
+        private static readonly ConcurrentDictionary<nint, PhysxController> _hitReportToController = new();
+
+        /// <summary>Maps native PxControllerBehaviorCallback pointers back to managed PhysxController instances.</summary>
+        private static readonly ConcurrentDictionary<nint, PhysxController> _behaviorCallbackToController = new();
+
+        #endregion
+
+        #region Instance Fields
+
+        // Release state tracking
+        private int _released;
+        private int _nativeReleased;
+
+        // Collision state
+        private bool _collidingSides;
+        private bool _collidingUp;
+        private bool _collidingDown;
+
+        // Native interop data sources
+        private readonly DataSource _userControllerHitReportSource;
+        private readonly DataSource _userControllerHitReportVTableSource;
+        private readonly DataSource _controllerBehaviorCallbackSource;
+        private readonly DataSource _controllerBehaviorCallbackVTableSource;
+
+        // Movement input queue for thread-safe operation
+        private readonly ConcurrentQueue<(Vector3 delta, float minDist, float elapsedTime)> _inputBuffer = new();
+
+        // Behavior callback delegates (per-instance)
+        private DelGetBehaviorFlagsShape2? _behaviorCallbackShape;
+        private DelGetBehaviorFlagsObstacle2? _behaviorCallbackObstacle;
+        private DelGetBehaviorFlagsController2? _behaviorCallbackController;
+
+        #endregion
+
+        #region Abstract Members
+
+        /// <summary>Gets the native PhysX controller pointer.</summary>
+        public abstract PxController* ControllerPtr { get; }
+
+        #endregion
+
+        #region Properties
+
+        /// <summary>Gets or sets the controller manager this controller belongs to.</summary>
+        internal ControllerManager? Manager { get; set; }
+
+        /// <summary>Returns true if this controller has been released.</summary>
+        public bool IsReleased => Volatile.Read(ref _released) != 0;
+
+        /// <summary>Gets the PhysX scene this controller belongs to.</summary>
+        public PhysxScene Scene
         {
-            // Allocate instance delegates to keep the GC alive and use managed thunks for the vtable entries.
-            OnControllerHitInstance = OnControllerHit;
-            OnShapeHitInstance = OnShapeHit;
-            OnObstacleHitInstance = OnObstacleHit;
-
-            // PhysX spec order: shape, controller, obstacle, destructor.
-            _userControllerHitReportSource = DataSource.FromStruct(new PxUserControllerHitReport()
+            get
             {
-                vtable_ = PhysxScene.Native.CreateVTable(
-                    OnShapeHitInstance,
-                    OnControllerHitInstance,
-                    OnObstacleHitInstance,
-                    HitReportDestructorInstance)
-            });
+                // Prefer the managed back-reference; querying the native pointer after release can crash.
+                if (Manager is not null)
+                    return Manager.Scene;
 
-            // PhysX declaration order: shape, controller, obstacle, destructor
-            // MSVC declaration order: obstacle, controller, shape, destructor
-            _controllerBehaviorCallbackVTableSource = DataSource.FromStruct(new PxControllerBehaviorCallbackVTable
-            {
-                GetBehaviorFlagsShape = &GetBehaviorFlagsShape,
-                GetBehaviorFlagsController = &GetBehaviorFlagsController,
-                GetBehaviorFlagsObstacle = &GetBehaviorFlagsObstacle,
-                Destructor = &BehaviorCallbackDestructor
-            });
+                var scenePtr = (nint)ControllerPtr->GetSceneMut();
+                if (PhysxScene.Scenes.TryGetValue(scenePtr, out var scene))
+                    return scene;
 
-            _controllerBehaviorCallbackSource = DataSource.FromStruct(new PxControllerBehaviorCallback()
-            {
-                vtable_ = _controllerBehaviorCallbackVTableSource.Address
-            });
+                throw new KeyNotFoundException($"PhysxScene not found for PxScene* 0x{scenePtr:X}");
+            }
         }
 
+        /// <summary>Gets the native hit report callback structure.</summary>
+        public PxUserControllerHitReport* UserControllerHitReport
+            => _userControllerHitReportSource.ToStructPtr<PxUserControllerHitReport>();
+
+        /// <summary>Gets the native behavior callback structure.</summary>
+        public PxControllerBehaviorCallback* ControllerBehaviorCallback
+            => _controllerBehaviorCallbackSource.ToStructPtr<PxControllerBehaviorCallback>();
+
+        /// <summary>Gets the controller type (capsule, box, etc.).</summary>
+        public PxControllerShapeType Type => PxController_getType(ControllerPtr);
+
+        /// <summary>Gets the associated rigid body actor, if any.</summary>
+        public PhysxDynamicRigidBody? Actor
+            => PhysxDynamicRigidBody.AllDynamic.TryGetValue((nint)ControllerPtr->GetActor(), out var value) ? value : null;
+
+        /// <summary>Gets or sets custom user data pointer.</summary>
         public void* UserData
         {
             get => ControllerPtr->GetUserData();
@@ -141,13 +155,23 @@ namespace XREngine.Rendering.Physics.Physx
             }
         }
 
-        public (Vector3 deltaXP, PhysxShape? touchedShape, PhysxRigidActor? touchedActor, uint touchedObstacleHandle, PxControllerCollisionFlags collisionFlags, bool standOnAnotherCCT, bool standOnObstacle, bool isMovingUp) State
+        /// <summary>Gets the current controller state including touched shapes, actors, and obstacles.</summary>
+        public (
+            Vector3 deltaXP,
+            PhysxShape? touchedShape,
+            PhysxRigidActor? touchedActor,
+            uint touchedObstacleHandle,
+            PxControllerCollisionFlags collisionFlags,
+            bool standOnAnotherCCT,
+            bool standOnObstacle,
+            bool isMovingUp)
+            State
         {
             get
             {
                 PxControllerState state;
                 ControllerPtr->GetState(&state);
-                return(
+                return (
                     state.deltaXP,
                     PhysxShape.All.TryGetValue((nint)state.touchedShape, out var shape) ? shape : null,
                     PhysxRigidActor.AllRigidActors.TryGetValue((nint)state.touchedActor, out var actor) ? actor : null,
@@ -158,6 +182,8 @@ namespace XREngine.Rendering.Physics.Physx
                     state.isMovingUp);
             }
         }
+
+        /// <summary>Gets movement statistics for the controller.</summary>
         public (ushort IterationCount, ushort FullUpdateCount, ushort PartialUpdateCount, ushort TessellationCount) Stats
         {
             get
@@ -168,6 +194,7 @@ namespace XREngine.Rendering.Physics.Physx
             }
         }
 
+        /// <summary>Gets or sets the controller position (center).</summary>
         public Vector3 Position
         {
             get
@@ -183,6 +210,7 @@ namespace XREngine.Rendering.Physics.Physx
             }
         }
 
+        /// <summary>Gets or sets the foot position of the controller.</summary>
         public Vector3 FootPosition
         {
             get
@@ -198,6 +226,7 @@ namespace XREngine.Rendering.Physics.Physx
             }
         }
 
+        /// <summary>Gets or sets the up direction for the controller.</summary>
         public Vector3 UpDirection
         {
             get
@@ -213,6 +242,7 @@ namespace XREngine.Rendering.Physics.Physx
             }
         }
 
+        /// <summary>Gets or sets the maximum slope angle the controller can walk on.</summary>
         public float SlopeLimit
         {
             get => ControllerPtr->GetSlopeLimit();
@@ -223,6 +253,7 @@ namespace XREngine.Rendering.Physics.Physx
             }
         }
 
+        /// <summary>Gets or sets the maximum height of obstacles the controller can step over.</summary>
         public float StepOffset
         {
             get => ControllerPtr->GetStepOffset();
@@ -233,29 +264,122 @@ namespace XREngine.Rendering.Physics.Physx
             }
         }
 
-        public PhysxDynamicRigidBody? Actor => PhysxDynamicRigidBody.AllDynamic.TryGetValue((nint)ControllerPtr->GetActor(), out var value) ? value : null;
+        /// <summary>Gets or sets the contact offset for collision detection.</summary>
+        public float ContactOffset
+        {
+            get => ControllerPtr->GetContactOffset();
+            set => ControllerPtr->SetContactOffsetMut(value);
+        }
 
+        /// <summary>Returns true if the controller is colliding on its sides.</summary>
         public bool CollidingSides
         {
             get => _collidingSides;
             private set => SetField(ref _collidingSides, value);
         }
+
+        /// <summary>Returns true if the controller is colliding above.</summary>
         public bool CollidingUp
         {
             get => _collidingUp;
             private set => SetField(ref _collidingUp, value);
         }
+
+        /// <summary>Returns true if the controller is colliding below (standing on something).</summary>
         public bool CollidingDown
         {
             get => _collidingDown;
             private set => SetField(ref _collidingDown, value);
         }
 
-        public ConcurrentQueue<(Vector3 delta, float minDist, float elapsedTime)> _inputBuffer = new();
+        /// <summary>Callback for shape behavior flags. Invoked during CCT movement.</summary>
+        public DelGetBehaviorFlagsShape2? BehaviorCallbackShape
+        {
+            get => _behaviorCallbackShape;
+            set => _behaviorCallbackShape = value;
+        }
 
-        // Queue movement so it runs during PhysxScene.StepSimulation (before simulate) instead of
-        // from arbitrary tick threads. This avoids native stalls/crashes from calling PxController::move
-        // concurrently with other scene/controller operations (PhysX scene/controller locking).
+        /// <summary>Callback for obstacle behavior flags. Invoked during CCT movement.</summary>
+        public DelGetBehaviorFlagsObstacle2? BehaviorCallbackObstacle
+        {
+            get => _behaviorCallbackObstacle;
+            set => _behaviorCallbackObstacle = value;
+        }
+
+        /// <summary>Callback for controller-vs-controller behavior flags. Invoked during CCT movement.</summary>
+        public DelGetBehaviorFlagsController2? BehaviorCallbackController
+        {
+            get => _behaviorCallbackController;
+            set => _behaviorCallbackController = value;
+        }
+
+        #endregion
+
+        #region Events
+
+        /// <summary>Raised when this controller collides with another controller.</summary>
+        public event ControllerHitDelegate? ControllerHit;
+
+        /// <summary>Raised when this controller collides with a shape.</summary>
+        public event ShapeHitDelegate? ShapeHit;
+
+        /// <summary>Raised when this controller collides with an obstacle.</summary>
+        public event ObstacleHitDelegate? ObstacleHit;
+
+        #endregion
+
+        #region Constructor
+
+        public PhysxController()
+        {
+            // PhysX declaration order: shape, controller, obstacle, destructor
+            // MSVC declaration order: obstacle, controller, shape, destructor
+            _userControllerHitReportVTableSource = DataSource.FromStruct(new PxUserControllerHitReportVTable
+            {
+                OnShapeHit = &OnShapeHitNative,
+                OnControllerHit = &OnControllerHitNative,
+                OnObstacleHit = &OnObstacleHitNative,
+                Destructor = &HitReportDestructor
+            });
+
+            _userControllerHitReportSource = DataSource.FromStruct(new PxUserControllerHitReport()
+            {
+                vtable_ = _userControllerHitReportVTableSource.Address
+            });
+
+            // Register this instance for native callback lookup
+            _hitReportToController[(nint)UserControllerHitReport] = this;
+
+            // PhysX declaration order: shape, controller, obstacle, destructor
+            // MSVC declaration order: obstacle, controller, shape, destructor
+            _controllerBehaviorCallbackVTableSource = DataSource.FromStruct(new PxControllerBehaviorCallbackVTable
+            {
+                GetBehaviorFlagsShape = &GetBehaviorFlagsShape,
+                GetBehaviorFlagsController = &GetBehaviorFlagsController,
+                GetBehaviorFlagsObstacle = &GetBehaviorFlagsObstacle,
+                Destructor = &BehaviorCallbackDestructor
+            });
+
+            _controllerBehaviorCallbackSource = DataSource.FromStruct(new PxControllerBehaviorCallback()
+            {
+                vtable_ = _controllerBehaviorCallbackVTableSource.Address
+            });
+
+            // Register this instance for native behavior callback lookup
+            _behaviorCallbackToController[(nint)ControllerBehaviorCallback] = this;
+        }
+
+        #endregion
+
+        #region Public Methods
+
+        /// <summary>
+        /// Queues a movement request to be processed during the physics simulation step.
+        /// This method is thread-safe and avoids native crashes from concurrent PxController::move calls.
+        /// </summary>
+        /// <param name="delta">The displacement vector to move.</param>
+        /// <param name="minDist">Minimum distance threshold for movement.</param>
+        /// <param name="elapsedTime">Time elapsed since last move.</param>
         public void Move(Vector3 delta, float minDist, float elapsedTime)
         {
             if (IsReleased)
@@ -270,61 +394,11 @@ namespace XREngine.Rendering.Physics.Physx
             _inputBuffer.Enqueue((delta, minDist, elapsedTime));
         }
 
-        private void ConsumeMove(Vector3 delta, float minDist, float elapsedTime)
-        {
-            if (IsReleased)
-                return;
-
-            // Native safety: PhysX controllers are not tolerant of NaN/Inf inputs.
-            if (!float.IsFinite(delta.X) || !float.IsFinite(delta.Y) || !float.IsFinite(delta.Z))
-                return;
-            if (!float.IsFinite(minDist) || !float.IsFinite(elapsedTime) || elapsedTime <= 0.0f)
-                return;
-
-            PxVec3 d = PxVec3_new_3(delta.X, delta.Y, delta.Z);
-            //lock (_nativeCallLock)
-            {
-                if (IsReleased)
-                    return;
-
-                // IMPORTANT: In our MagicPhysX/PhysX build, passing null PxControllerFilters can AV inside PxController::move.
-                // Use the manager-provided filters (and an obstacle context if present) for stability.
-                var mgr = Manager;
-                if (mgr is null)
-                    return;
-
-                // Obstacles are optional. Only pass an obstacle context to PhysX when it actually contains
-                // obstacles; otherwise avoid the obstacle codepath entirely.
-                PxObstacleContext* obstacleContext = mgr.DefaultObstacleContextPtr;
-
-                // PhysX caches touched obstacles. If the obstacle collection changes without cache invalidation,
-                // the CCT can later dereference stale obstacle pointers.
-                if (obstacleContext != null)
-                    ControllerPtr->InvalidateCacheMut();
-
-                //test all callbacks
-                /*
-                Debug.Out("[PhysxCCT] Testing GetBehaviorFlags actor-shape callback");
-                PxControllerBehaviorFlags flag1 = PxControllerBehaviorCallback_getBehaviorFlags_mut(ControllerBehaviorCallback, (PxShape*)0xF00D, (PxActor*)0xFEED);
-                Debug.Out("[PhysxCCT]   Returned flags: 0x{0:X}", (byte)flag1);
-
-                Debug.Out("[PhysxCCT] Testing GetBehaviorFlags controller callback");
-                PxControllerBehaviorFlags flag2 = PxControllerBehaviorCallback_getBehaviorFlags_mut_1(ControllerBehaviorCallback, (PxController*)0xF00D);
-                Debug.Out("[PhysxCCT]   Returned flags: 0x{0:X}", (byte)flag2);
-
-                Debug.Out("[PhysxCCT] Testing GetBehaviorFlags obstacle callback");
-                PxControllerBehaviorFlags flag3 = PxControllerBehaviorCallback_getBehaviorFlags_mut_2(ControllerBehaviorCallback, (PxObstacle*)0xF00D);
-                Debug.Out("[PhysxCCT]   Returned flags: 0x{0:X}", (byte)flag3);
-                */
-
-                PxControllerFilters stackFilters = *mgr.ControllerFilters;
-                PxControllerCollisionFlags flags = ControllerPtr->MoveMut(&d, minDist, elapsedTime, &stackFilters, obstacleContext);
-                CollidingSides = (flags & PxControllerCollisionFlags.CollisionSides) != 0;
-                CollidingUp = (flags & PxControllerCollisionFlags.CollisionUp) != 0;
-                CollidingDown = (flags & PxControllerCollisionFlags.CollisionDown) != 0;
-            }
-        }
-
+        /// <summary>
+        /// Consumes all queued movement inputs and applies them in a single move operation.
+        /// Should be called from the physics simulation thread.
+        /// </summary>
+        /// <param name="delta">The simulation delta time (unused, per-input elapsed time is used).</param>
         public void ConsumeInputBuffer(float delta)
         {
             if (IsReleased)
@@ -345,22 +419,18 @@ namespace XREngine.Rendering.Physics.Physx
             ConsumeMove(totalMove, 0.001f, totalElapsed);
         }
 
+        /// <summary>Resizes the controller to the specified height.</summary>
+        /// <param name="height">The new height for the controller.</param>
         public void Resize(float height)
             => ControllerPtr->ResizeMut(height);
 
-        public float ContactOffset
-        {
-            get => ControllerPtr->GetContactOffset();
-            set => ControllerPtr->SetContactOffsetMut(value);
-        }
-
+        /// <summary>Invalidates the internal obstacle cache.</summary>
         public void InvalidateCache()
             => ControllerPtr->InvalidateCacheMut();
 
+        /// <summary>Releases the controller. Alias for RequestRelease().</summary>
         public void Release()
-        {
-            RequestRelease();
-        }
+            => RequestRelease();
 
         /// <summary>
         /// Marks the controller for release and schedules native release on the physics step.
@@ -373,6 +443,7 @@ namespace XREngine.Rendering.Physics.Physx
 
             Debug.Log(ELogCategory.Physics, "[PhysxObj] ~ Controller RequestRelease ptr=0x{0:X}", (nint)ControllerPtr);
 
+            // Clear the input buffer
             while (_inputBuffer.TryDequeue(out _)) { }
 
             // Prefer deferring to the physics thread.
@@ -386,6 +457,10 @@ namespace XREngine.Rendering.Physics.Physx
             // Fallback: no managed scene available (shutdown path). Release immediately.
             ReleaseNativeNow();
         }
+
+        #endregion
+
+        #region Internal Methods
 
         /// <summary>
         /// Performs the actual native PxController release. Intended to be called from PhysxScene.StepSimulation.
@@ -409,68 +484,150 @@ namespace XREngine.Rendering.Physics.Physx
             }
         }
 
-        public PxControllerShapeType Type => PxController_getType(ControllerPtr);
+        #endregion
 
-        public delegate void ControllerHitDelegate(PhysxController controller, PxControllersHit* hit);
-        public delegate void ShapeHitDelegate(PhysxController controller, PxControllerShapeHit* hit);
-        public delegate void ObstacleHitDelegate(PhysxController controller, PxControllerObstacleHit* hit);
+        #region Private Methods
 
-        public event ControllerHitDelegate? ControllerHit;
-        public event ShapeHitDelegate? ShapeHit;
-        public event ObstacleHitDelegate? ObstacleHit;
+        private void ConsumeMove(Vector3 delta, float minDist, float elapsedTime)
+        {
+            if (IsReleased)
+                return;
 
-        public delegate PxControllerBehaviorFlags DelGetBehaviorFlagsShape2(PxShape* shape, PxActor* actor);
-        public delegate PxControllerBehaviorFlags DelGetBehaviorFlagsObstacle2(PxObstacle* obstacle);
-        public delegate PxControllerBehaviorFlags DelGetBehaviorFlagsController2(PxController* controller);
+            // Native safety: PhysX controllers are not tolerant of NaN/Inf inputs.
+            if (!float.IsFinite(delta.X) || !float.IsFinite(delta.Y) || !float.IsFinite(delta.Z))
+                return;
+            if (!float.IsFinite(minDist) || !float.IsFinite(elapsedTime) || elapsedTime <= 0.0f)
+                return;
 
-        public static DelGetBehaviorFlagsController2? BehaviorCallbackController;
-        public static DelGetBehaviorFlagsObstacle2? BehaviorCallbackObstacle;
-        public static DelGetBehaviorFlagsShape2? BehaviorCallbackShape;
-        private bool _collidingSides;
-        private bool _collidingUp;
-        private bool _collidingDown;
+            PxVec3 d = PxVec3_new_3(delta.X, delta.Y, delta.Z);
 
-        internal void OnControllerHit(void* self, PxControllersHit* hit)
-            => ControllerHit?.Invoke(this, hit);
-        internal void OnShapeHit(void* self, PxControllerShapeHit* hit)
-            => ShapeHit?.Invoke(this, hit);
-        internal void OnObstacleHit(void* self, PxControllerObstacleHit* hit)
-            => ObstacleHit?.Invoke(this, hit);
+            //lock (_nativeCallLock)
+            {
+                if (IsReleased)
+                    return;
+
+                // IMPORTANT: In our MagicPhysX/PhysX build, passing null PxControllerFilters can AV inside PxController::move.
+                // Use the manager-provided filters (and an obstacle context if present) for stability.
+                var mgr = Manager;
+                if (mgr is null)
+                    return;
+
+                // Obstacles are optional. Only pass an obstacle context to PhysX when it actually contains
+                // obstacles; otherwise avoid the obstacle codepath entirely.
+                PxObstacleContext* obstacleContext = mgr.DefaultObstacleContextPtr;
+
+                // PhysX caches touched obstacles. If the obstacle collection changes without cache invalidation,
+                // the CCT can later dereference stale obstacle pointers.
+                if (obstacleContext != null)
+                    ControllerPtr->InvalidateCacheMut();
+
+                // Test all callbacks (retained for debugging)
+                /*
+                Debug.Out("[PhysxCCT] Testing GetBehaviorFlags actor-shape callback");
+                PxControllerBehaviorFlags flag1 = PxControllerBehaviorCallback_getBehaviorFlags_mut(ControllerBehaviorCallback, (PxShape*)0xF00D, (PxActor*)0xFEED);
+                Debug.Out("[PhysxCCT]   Returned flags: 0x{0:X}", (byte)flag1);
+
+                Debug.Out("[PhysxCCT] Testing GetBehaviorFlags controller callback");
+                PxControllerBehaviorFlags flag2 = PxControllerBehaviorCallback_getBehaviorFlags_mut_1(ControllerBehaviorCallback, (PxController*)0xF00D);
+                Debug.Out("[PhysxCCT]   Returned flags: 0x{0:X}", (byte)flag2);
+
+                Debug.Out("[PhysxCCT] Testing GetBehaviorFlags obstacle callback");
+                PxControllerBehaviorFlags flag3 = PxControllerBehaviorCallback_getBehaviorFlags_mut_2(ControllerBehaviorCallback, (PxObstacle*)0xF00D);
+                Debug.Out("[PhysxCCT]   Returned flags: 0x{0:X}", (byte)flag3);
+                */
+
+                PxControllerFilters stackFilters = *mgr.ControllerFilters;
+                PxControllerCollisionFlags flags = ControllerPtr->MoveMut(&d, minDist, elapsedTime, &stackFilters, obstacleContext);
+
+                CollidingSides = (flags & PxControllerCollisionFlags.CollisionSides) != 0;
+                CollidingUp = (flags & PxControllerCollisionFlags.CollisionUp) != 0;
+                CollidingDown = (flags & PxControllerCollisionFlags.CollisionDown) != 0;
+            }
+        }
+
+        #endregion
+
+        #region Hit Report Native Entry Points
+
+        /// <summary>
+        /// Static native callback for shape hits. Routes to the appropriate managed instance.
+        /// </summary>
+        [UnmanagedCallersOnly(CallConvs = [typeof(CallConvCdecl)])]
+        private static void OnShapeHitNative(PxUserControllerHitReport* self, PxControllerShapeHit* hit)
+        {
+            if (_hitReportToController.TryGetValue((nint)self, out var controller))
+                controller.ShapeHit?.Invoke(controller, hit);
+        }
+
+        /// <summary>
+        /// Static native callback for controller-vs-controller hits. Routes to the appropriate managed instance.
+        /// </summary>
+        [UnmanagedCallersOnly(CallConvs = [typeof(CallConvCdecl)])]
+        private static void OnControllerHitNative(PxUserControllerHitReport* self, PxControllersHit* hit)
+        {
+            if (_hitReportToController.TryGetValue((nint)self, out var controller))
+                controller.ControllerHit?.Invoke(controller, hit);
+        }
+
+        /// <summary>
+        /// Static native callback for obstacle hits. Routes to the appropriate managed instance.
+        /// </summary>
+        [UnmanagedCallersOnly(CallConvs = [typeof(CallConvCdecl)])]
+        private static void OnObstacleHitNative(PxUserControllerHitReport* self, PxControllerObstacleHit* hit)
+        {
+            if (_hitReportToController.TryGetValue((nint)self, out var controller))
+                controller.ObstacleHit?.Invoke(controller, hit);
+        }
+
+        /// <summary>
+        /// Static native callback for hit report destructor.
+        /// </summary>
+        [UnmanagedCallersOnly(CallConvs = [typeof(CallConvCdecl)])]
+        private static void HitReportDestructor(void* self)
+        {
+            _hitReportToController.TryRemove((nint)self, out _);
+            Debug.Log(ELogCategory.Physics, "[PhysxObj] ~ Controller HitReport Destructor ptr=0x{0:X}", (nint)self);
+        }
+
+        #endregion
+
+        #region Behavior Callback Native Entry Points
+
+        [UnmanagedCallersOnly(CallConvs = [typeof(CallConvCdecl)])]
+        private static void BehaviorCallbackDestructor(void* self)
+        {
+            _behaviorCallbackToController.TryRemove((nint)self, out _);
+            Debug.Log(ELogCategory.Physics, "[PhysxObj] ~ Controller BehaviorCallback Destructor ptr=0x{0:X}", (nint)self);
+        }
 
         /// <summary>
         /// .NET 7+ declaration for native callback so we don't need to allocate delegates - must be static.
         /// The return value is a hidden param passed by pointer.
         /// </summary>
-        /// <param name="self"></param>
-        /// <param name="retPtr"></param>
-        /// <param name="shape"></param>
-        /// <param name="actor"></param>
-        [UnmanagedCallersOnly(CallConvs = new[] { typeof(CallConvCdecl) })]
+        [UnmanagedCallersOnly(CallConvs = [typeof(CallConvCdecl)])]
         private static void GetBehaviorFlagsShape(PxControllerBehaviorCallback* self, byte* retPtr, PxShape* shape, PxActor* actor)
         {
-            Debug.Out("[PhysxCCT] GetBehaviorFlagsShape called for shape=0x{0:X} and actor=0x{1:X}", (nint)shape, (nint)actor);
+            //Debug.Out("[PhysxCCT] GetBehaviorFlagsShape called for shape=0x{0:X} and actor=0x{1:X}", (nint)shape, (nint)actor);
 
+/*
             if (PhysxShape.All.TryGetValue((nint)shape, out var physxShape))
-            {
                 Debug.Out("[PhysxCCT]   Shape is managed PhysxShape name='{0}' ptr=0x{1:X}", physxShape.Name, (nint)shape);
-            }
             else
-            {
                 Debug.Out("[PhysxCCT]   Shape is unmanaged ptr=0x{0:X}", (nint)shape);
-            }
+
             if (PhysxActor.AllActors.TryGetValue((nint)actor, out var physxActor))
-            {
                 Debug.Out("[PhysxCCT]   Actor is managed PhysxActor name='{0}' ptr=0x{1:X}", physxActor.Name, (nint)actor);
-            }
             else
-            {
                 Debug.Out("[PhysxCCT]   Actor is unmanaged ptr=0x{0:X}", (nint)actor);
-            }
+*/
 
             try
             {
-                var flags = BehaviorCallbackShape?.Invoke(shape, actor) ?? PxControllerBehaviorFlags.CctSlide;
-                Debug.Out("[PhysxCCT]   Returning flags: 0x{0:X}", (byte)flags);
+                PxControllerBehaviorFlags flags = PxControllerBehaviorFlags.CctSlide;
+                if (_behaviorCallbackToController.TryGetValue((nint)self, out var controller))
+                    flags = controller.BehaviorCallbackShape?.Invoke(shape, actor) ?? PxControllerBehaviorFlags.CctSlide;
+
+                //Debug.Out("[PhysxCCT]   Returning flags: 0x{0:X}", (byte)flags);
                 *retPtr = (byte)flags;
             }
             catch (Exception ex)
@@ -484,18 +641,18 @@ namespace XREngine.Rendering.Physics.Physx
         /// .NET 7+ declaration for native callback so we don't need to allocate delegates - must be static.
         /// The return value is a hidden param passed by pointer.
         /// </summary>
-        /// <param name="self"></param>
-        /// <param name="retPtr"></param>
-        /// <param name="obstacle"></param>
-        [UnmanagedCallersOnly(CallConvs = new[] { typeof(CallConvCdecl) })]
+        [UnmanagedCallersOnly(CallConvs = [typeof(CallConvCdecl)])]
         private static void GetBehaviorFlagsObstacle(PxControllerBehaviorCallback* self, byte* retPtr, PxObstacle* obstacle)
         {
-            Debug.Out("[PhysxCCT] GetBehaviorFlagsObstacle called for obstacle=0x{0:X}", (nint)obstacle);
-            
+            //Debug.Out("[PhysxCCT] GetBehaviorFlagsObstacle called for obstacle=0x{0:X}", (nint)obstacle);
+
             try
             {
-                var flags = BehaviorCallbackObstacle?.Invoke(obstacle) ?? PxControllerBehaviorFlags.CctSlide;
-                Debug.Out("[PhysxCCT]   Returning flags: 0x{0:X}", (byte)flags);
+                PxControllerBehaviorFlags flags = PxControllerBehaviorFlags.CctSlide;
+                if (_behaviorCallbackToController.TryGetValue((nint)self, out var controller))
+                    flags = controller.BehaviorCallbackObstacle?.Invoke(obstacle) ?? PxControllerBehaviorFlags.CctSlide;
+
+                //Debug.Out("[PhysxCCT]   Returning flags: 0x{0:X}", (byte)flags);
                 *retPtr = (byte)flags;
             }
             catch (Exception ex)
@@ -510,21 +667,23 @@ namespace XREngine.Rendering.Physics.Physx
         /// The return value is a hidden param passed by pointer.
         /// Note that CctCanRideOnObject is not supported for CCT-vs-CCT interactions; use CctUserDefinedRide instead.
         /// </summary>
-        /// <param name="self"></param>
-        /// <param name="retPtr"></param>
-        /// <param name="controller"></param>
-        [UnmanagedCallersOnly(CallConvs = new[] { typeof(CallConvCdecl) })]
-        public static void GetBehaviorFlagsController(PxControllerBehaviorCallback* self, byte* retPtr, PxController* controller)
+        [UnmanagedCallersOnly(CallConvs = [typeof(CallConvCdecl)])]
+        private static void GetBehaviorFlagsController(PxControllerBehaviorCallback* self, byte* retPtr, PxController* controller)
         {
-            Debug.Out("[PhysxCCT] GetBehaviorFlagsController called for controller ptr=0x{0:X}", (nint)controller);
+            //Debug.Out("[PhysxCCT] GetBehaviorFlagsController called for controller ptr=0x{0:X}", (nint)controller);
+
             try
             {
-                // PhysX note: eCCT_CAN_RIDE_ON_OBJECT is not supported for the CCT-vs-CCT case.
-                // Returning it can trip asserts / lead to undefined behavior, so always strip it.
-                var flags = BehaviorCallbackController?.Invoke(controller) ?? PxControllerBehaviorFlags.CctSlide;
-                flags &= ~PxControllerBehaviorFlags.CctCanRideOnObject;
+                PxControllerBehaviorFlags flags = PxControllerBehaviorFlags.CctSlide;
+                if (_behaviorCallbackToController.TryGetValue((nint)self, out var managedController))
+                {
+                    flags = managedController.BehaviorCallbackController?.Invoke(controller) ?? PxControllerBehaviorFlags.CctSlide;
+                    // PhysX note: eCCT_CAN_RIDE_ON_OBJECT is not supported for the CCT-vs-CCT case.
+                    // Returning it can trip asserts / lead to undefined behavior, so always strip it.
+                    flags &= ~PxControllerBehaviorFlags.CctCanRideOnObject;
+                }
 
-                Debug.Out("[PhysxCCT]   Returning flags: 0x{0:X}", (byte)flags);
+                //Debug.Out("[PhysxCCT]   Returning flags: 0x{0:X}", (byte)flags);
                 *retPtr = (byte)flags;
             }
             catch (Exception ex)
@@ -533,5 +692,7 @@ namespace XREngine.Rendering.Physics.Physx
                 *retPtr = (byte)PxControllerBehaviorFlags.CctSlide;
             }
         }
+
+        #endregion
     }
 }
