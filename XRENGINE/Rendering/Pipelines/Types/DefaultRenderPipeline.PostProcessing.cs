@@ -95,7 +95,7 @@ public partial class DefaultRenderPipeline
         stage.AddParameter(
             nameof(ColorGradingSettings.AutoExposureScale),
             PostProcessParameterKind.Float,
-            0.5f,
+            0.6f,
             displayName: "Exposure Scale",
             min: 0.1f,
             max: 5.0f,
@@ -125,7 +125,7 @@ public partial class DefaultRenderPipeline
         stage.AddParameter(
             nameof(ColorGradingSettings.ExposureDividend),
             PostProcessParameterKind.Float,
-            0.1f,
+            0.4f,
             displayName: "Exposure Dividend",
             min: 0.0f,
             max: 10.0f,
@@ -135,7 +135,7 @@ public partial class DefaultRenderPipeline
         stage.AddParameter(
             nameof(ColorGradingSettings.ExposureTransitionSpeed),
             PostProcessParameterKind.Float,
-            0.5f,
+            0.7f,
             displayName: "Transition Speed",
             min: 0.0f,
             max: 1.0f,
@@ -786,13 +786,6 @@ public partial class DefaultRenderPipeline
 
         var state = RenderingPipelineState?.SceneCamera?.GetActivePostProcessState();
         ApplyPostProcessUniforms(state, materialProgram);
-        
-        // Debug: verify what we're sending
-        if ((int)(Engine.ElapsedTime * 10) % 50 == 0)
-        {
-            var color = GetSettings<ColorGradingSettings>(state);
-            Debug.Out($"[PostProcess] ColorGrading instance: {(color is null ? "NULL (using default)" : "from camera")}, AutoExposure={color?.AutoExposure ?? false}, Exposure={color?.Exposure ?? 1.0f:F4}");
-        }
     }
 
     private void FxaaFBO_SettingUniforms(XRRenderProgram materialProgram)

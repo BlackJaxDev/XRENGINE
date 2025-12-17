@@ -1,4 +1,4 @@
-﻿namespace XREngine.Actors.Types
+﻿namespace XREngine.Scene.Components.Editing
 {
     public enum ETransformSpace
     {

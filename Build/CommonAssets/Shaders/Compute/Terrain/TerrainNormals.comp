@@ -1,0 +1,90 @@
+#version 450
+
+// GPU Terrain System - Normal Generation Compute Shader
+// Generates normal map from heightmap using Sobel operator
+
+layout(local_size_x = 16, local_size_y = 16, local_size_z = 1) in;
+
+// --- Heightmap ---
+layout(binding = 0) uniform sampler2D uHeightmap;
+
+// --- Normal Map Output ---
+layout(rgba16f, binding = 0) writeonly uniform image2D uNormalMap;
+
+// --- Uniforms ---
+uniform vec2 uTexelSize;        // 1.0 / heightmap resolution
+uniform float uHeightScale;      // Max height - min height
+uniform float uTerrainSize;      // World size of terrain
+uniform float uNormalStrength;   // Normal map intensity
+
+// --- Helper Functions ---
+
+// Sample height at offset
+float sampleHeight(ivec2 coord, ivec2 offset, ivec2 size) {
+    ivec2 sampleCoord = clamp(coord + offset, ivec2(0), size - 1);
+    return texelFetch(uHeightmap, sampleCoord, 0).r;
+}
+
+// Sobel kernel for gradient calculation
+// Provides smoother normals than simple finite differences
+vec2 sobelGradient(ivec2 coord, ivec2 size) {
+    // Sample 3x3 neighborhood
+    float h00 = sampleHeight(coord, ivec2(-1, -1), size);
+    float h10 = sampleHeight(coord, ivec2( 0, -1), size);
+    float h20 = sampleHeight(coord, ivec2( 1, -1), size);
+    float h01 = sampleHeight(coord, ivec2(-1,  0), size);
+    float h21 = sampleHeight(coord, ivec2( 1,  0), size);
+    float h02 = sampleHeight(coord, ivec2(-1,  1), size);
+    float h12 = sampleHeight(coord, ivec2( 0,  1), size);
+    float h22 = sampleHeight(coord, ivec2( 1,  1), size);
+    
+    // Sobel kernels
+    // Gx = [-1  0  1]    Gy = [-1 -2 -1]
+    //      [-2  0  2]         [ 0  0  0]
+    //      [-1  0  1]         [ 1  2  1]
+    
+    float gx = (h20 - h00) + 2.0 * (h21 - h01) + (h22 - h02);
+    float gy = (h02 - h00) + 2.0 * (h12 - h10) + (h22 - h20);
+    
+    return vec2(gx, gy);
+}
+
+// Alternative: Simple finite differences (faster but less smooth)
+vec2 simpleGradient(ivec2 coord, ivec2 size) {
+    float hL = sampleHeight(coord, ivec2(-1,  0), size);
+    float hR = sampleHeight(coord, ivec2( 1,  0), size);
+    float hD = sampleHeight(coord, ivec2( 0, -1), size);
+    float hU = sampleHeight(coord, ivec2( 0,  1), size);
+    
+    return vec2(hR - hL, hU - hD);
+}
+
+// --- Main ---
+void main() {
+    ivec2 coord = ivec2(gl_GlobalInvocationID.xy);
+    ivec2 size = imageSize(uNormalMap);
+    
+    if (coord.x >= size.x || coord.y >= size.y) return;
+    
+    // Calculate gradient using Sobel operator
+    vec2 gradient = sobelGradient(coord, size);
+    
+    // Scale gradient based on terrain dimensions
+    // Converts from heightmap space to world space
+    float worldTexelSize = uTerrainSize / float(size.x);
+    float heightFactor = uHeightScale / worldTexelSize;
+    
+    gradient *= heightFactor * uNormalStrength;
+    
+    // Construct normal from gradient
+    // Normal = normalize((-dh/dx, 1, -dh/dy))
+    vec3 normal = normalize(vec3(-gradient.x, 2.0, -gradient.y));
+    
+    // Transform from [-1, 1] to [0, 1] for storage
+    // Note: Using RG16F format, so we store XY only and reconstruct Z in shader
+    // This saves bandwidth and is sufficient for terrain normals
+    vec2 encodedNormal = normal.xz * 0.5 + 0.5;
+    
+    // Store normal (RG = XZ, BA unused or could store additional data)
+    imageStore(uNormalMap, coord, vec4(encodedNormal, 0.0, 1.0));
+}

@@ -1,0 +1,180 @@
+#version 450
+
+// GPU Particle System - Update Compute Shader
+// Handles particle simulation and death
+
+layout(local_size_x = 256, local_size_y = 1, local_size_z = 1) in;
+
+// --- Particle Structure ---
+struct Particle {
+    vec3 Position;
+    float Life;
+    vec3 Velocity;
+    float MaxLife;
+    vec4 Color;
+    vec3 Scale;
+    float Rotation;
+    vec3 AngularVelocity;
+    uint Flags;
+    vec4 CustomData0;
+    vec4 CustomData1;
+};
+
+// --- Buffers ---
+layout(std430, binding = 0) buffer ParticlesBuffer { Particle Particles[]; };
+layout(std430, binding = 1) buffer DeadListBuffer { uint DeadList[]; };
+layout(std430, binding = 2) buffer AliveListBuffer { uint AliveList[]; };
+
+layout(std430, binding = 3) buffer CountersBuffer {
+    uint deadCount;
+    uint aliveCount;
+    uint emitCount;
+    uint padding;
+} uCounters;
+
+layout(std140, binding = 4) uniform EmitterParamsBlock {
+    vec3 EmitterPosition;
+    float DeltaTime;
+    vec3 EmitterForward;
+    float TotalTime;
+    vec3 EmitterUp;
+    uint MaxParticles;
+    vec3 EmitterRight;
+    uint ActiveParticles;
+    vec3 Gravity;
+    float EmissionRate;
+    vec4 InitialColor;
+    vec3 InitialVelocityMin;
+    float InitialLifeMin;
+    vec3 InitialVelocityMax;
+    float InitialLifeMax;
+    vec3 InitialScaleMin;
+    float _pad0;
+    vec3 InitialScaleMax;
+    float _pad1;
+} uEmitterParams;
+
+// --- Module Uniforms ---
+// These will be set by the C# code based on active modules
+
+uniform float uDrag;
+uniform vec4 uColorStart;
+uniform vec4 uColorEnd;
+uniform float uSizeStart;
+uniform float uSizeEnd;
+uniform float uRotationSpeed;
+
+// Collision uniforms
+uniform int uColliderCount;
+uniform vec4 uColliderSpheres[16]; // xyz = center, w = radius
+
+// --- Helper Functions ---
+
+float easeInOutQuad(float t) {
+    return t < 0.5 ? 2.0 * t * t : 1.0 - pow(-2.0 * t + 2.0, 2.0) / 2.0;
+}
+
+float easeOutQuad(float t) {
+    return 1.0 - (1.0 - t) * (1.0 - t);
+}
+
+float easeInQuad(float t) {
+    return t * t;
+}
+
+// Sphere collision response
+bool collideWithSphere(vec3 sphereCenter, float sphereRadius, float particleRadius, inout vec3 position, inout vec3 velocity) {
+    vec3 diff = position - sphereCenter;
+    float dist = length(diff);
+    float minDist = sphereRadius + particleRadius;
+    
+    if (dist < minDist && dist > 0.0001) {
+        // Push particle out
+        vec3 normal = diff / dist;
+        position = sphereCenter + normal * minDist;
+        
+        // Reflect velocity
+        float vn = dot(velocity, normal);
+        if (vn < 0.0) {
+            velocity = velocity - 2.0 * vn * normal * 0.5; // 0.5 = bounciness
+        }
+        return true;
+    }
+    return false;
+}
+
+// --- Main ---
+void main() {
+    uint particleIndex = gl_GlobalInvocationID.x;
+    if (particleIndex >= uEmitterParams.MaxParticles) return;
+    
+    Particle particle = Particles[particleIndex];
+    
+    // Skip dead particles
+    if ((particle.Flags & 1u) == 0u) return;
+    
+    float deltaTime = uEmitterParams.DeltaTime;
+    
+    // Update lifetime
+    particle.Life -= deltaTime;
+    
+    // Check for death
+    if (particle.Life <= 0.0) {
+        particle.Flags = 0u; // Mark as dead
+        particle.Life = 0.0;
+        
+        // Add back to dead list
+        uint deadIdx = atomicAdd(uCounters.deadCount, 1u);
+        DeadList[deadIdx] = particleIndex;
+        atomicAdd(uCounters.aliveCount, uint(-1));
+        
+        Particles[particleIndex] = particle;
+        return;
+    }
+    
+    // Life ratio for interpolation (0 = just born, 1 = about to die)
+    float lifeRatio = 1.0 - (particle.Life / particle.MaxLife);
+    
+    // === MODULE UPDATE CODE INJECTION POINT ===
+    // The C# code generator will insert update module code here
+    // Available variables: particle (inout), deltaTime (float), lifeRatio (float)
+    
+    // Gravity module
+    particle.Velocity += uEmitterParams.Gravity * deltaTime;
+    
+    // Drag module
+    // particle.Velocity *= (1.0 - uDrag * deltaTime);
+    
+    // Color over lifetime module
+    // particle.Color = mix(uColorStart, uColorEnd, lifeRatio);
+    
+    // Size over lifetime module
+    // float sizeMult = mix(uSizeStart, uSizeEnd, easeOutQuad(lifeRatio));
+    // Use CustomData0.w to store original scale multiplier if needed
+    
+    // Rotation module
+    // particle.Rotation += uRotationSpeed * deltaTime;
+    
+    // === END MODULE CODE ===
+    
+    // Collision detection
+    float particleRadius = max(max(particle.Scale.x, particle.Scale.y), particle.Scale.z) * 0.5;
+    for (int i = 0; i < uColliderCount && i < 16; i++) {
+        collideWithSphere(
+            uColliderSpheres[i].xyz,
+            uColliderSpheres[i].w,
+            particleRadius,
+            particle.Position,
+            particle.Velocity
+        );
+    }
+    
+    // Apply velocity
+    particle.Position += particle.Velocity * deltaTime;
+    
+    // Apply angular velocity
+    particle.Rotation += length(particle.AngularVelocity) * deltaTime;
+    
+    // Write back
+    Particles[particleIndex] = particle;
+}

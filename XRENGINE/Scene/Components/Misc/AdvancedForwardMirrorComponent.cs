@@ -11,7 +11,7 @@ using XREngine.Rendering.Info;
 using XREngine.Rendering.Models.Materials;
 using XREngine.Scene.Transforms;
 
-namespace XREngine.Data.Components
+namespace XREngine.Scene.Components.Misc
 {
     public class AdvancedForwardMirrorComponent : XRComponent, IRenderable
     {

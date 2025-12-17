@@ -3,7 +3,6 @@ using Silk.NET.Input;
 using System.Collections.Generic;
 using System.Linq;
 using System.Numerics;
-using XREngine.Actors.Types;
 using XREngine.Components;
 using XREngine.Components.Scene;
 using XREngine.Components.Scripting;
@@ -17,6 +16,7 @@ using XREngine.Rendering.UI;
 using XREngine.Scene;
 using XREngine.Scene.Components.UI;
 using XREngine.Scene.Transforms;
+using XREngine.Scene.Components.Editing;
 
 namespace XREngine.Editor;
 

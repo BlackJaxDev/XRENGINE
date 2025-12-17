@@ -1,0 +1,192 @@
+#version 450
+
+// GPU Terrain System - Splat Map Generation Compute Shader
+// Calculates texture blending weights based on height, slope, and other criteria
+
+layout(local_size_x = 16, local_size_y = 16, local_size_z = 1) in;
+
+// --- Input Textures ---
+layout(binding = 0) uniform sampler2D uHeightmap;
+layout(binding = 1) uniform sampler2D uNormalMap;
+
+// --- Output Splat Map ---
+// RGBA8 = 4 layers, or could use RGBA16 for 8 layers
+layout(rgba8, binding = 0) writeonly uniform image2D uSplatMap;
+
+// --- Terrain Parameters ---
+uniform float uMinHeight;
+uniform float uMaxHeight;
+uniform float uTerrainSize;
+
+// --- Layer Parameters ---
+// Using vec4 to batch multiple layers
+uniform vec4 uHeightThresholds;     // Height thresholds for layers 0-3
+uniform vec4 uHeightBlendRanges;    // Blend ranges for height transitions
+uniform vec4 uSlopeThresholds;      // Slope thresholds (in degrees) for layers 0-3
+uniform vec4 uSlopeBlendRanges;     // Blend ranges for slope transitions
+
+// Layer blend modes
+// 0 = Height based
+// 1 = Slope based  
+// 2 = Height + Slope
+// 3 = Custom noise
+uniform ivec4 uLayerBlendModes;
+
+// --- Noise Parameters ---
+uniform float uNoiseScale;
+uniform float uNoiseStrength;
+
+// --- Helper Functions ---
+
+// Decode normal from RG storage
+vec3 decodeNormal(vec2 encodedNormal) {
+    vec2 n = encodedNormal * 2.0 - 1.0;
+    float y = sqrt(max(0.0, 1.0 - dot(n, n)));
+    return normalize(vec3(n.x, y, n.y));
+}
+
+// Calculate slope angle from normal (in degrees)
+float getSlopeAngle(vec3 normal) {
+    return acos(clamp(normal.y, -1.0, 1.0)) * 57.2957795; // radians to degrees
+}
+
+// Smooth step with configurable blend range
+float smoothBlend(float value, float threshold, float blendRange) {
+    float halfBlend = blendRange * 0.5;
+    return smoothstep(threshold - halfBlend, threshold + halfBlend, value);
+}
+
+// Simple 2D noise for variation
+float hash(vec2 p) {
+    return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453);
+}
+
+float noise2D(vec2 p) {
+    vec2 i = floor(p);
+    vec2 f = fract(p);
+    f = f * f * (3.0 - 2.0 * f);
+    
+    float a = hash(i);
+    float b = hash(i + vec2(1.0, 0.0));
+    float c = hash(i + vec2(0.0, 1.0));
+    float d = hash(i + vec2(1.0, 1.0));
+    
+    return mix(mix(a, b, f.x), mix(c, d, f.x), f.y);
+}
+
+float fbm(vec2 p, int octaves) {
+    float value = 0.0;
+    float amplitude = 0.5;
+    float frequency = 1.0;
+    
+    for (int i = 0; i < octaves; i++) {
+        value += amplitude * noise2D(p * frequency);
+        amplitude *= 0.5;
+        frequency *= 2.0;
+    }
+    
+    return value;
+}
+
+// --- Main ---
+void main() {
+    ivec2 coord = ivec2(gl_GlobalInvocationID.xy);
+    ivec2 size = imageSize(uSplatMap);
+    
+    if (coord.x >= size.x || coord.y >= size.y) return;
+    
+    // Sample heightmap and normal map
+    vec2 uv = (vec2(coord) + 0.5) / vec2(size);
+    
+    float height = texture(uHeightmap, uv).r;
+    vec2 encodedNormal = texture(uNormalMap, uv).rg;
+    vec3 normal = decodeNormal(encodedNormal);
+    
+    // Calculate derived values
+    float normalizedHeight = (height - uMinHeight) / (uMaxHeight - uMinHeight);
+    float slopeAngle = getSlopeAngle(normal);
+    
+    // World position for noise sampling
+    vec2 worldPos = uv * uTerrainSize;
+    float noiseValue = fbm(worldPos * uNoiseScale, 4);
+    
+    // Calculate weights for each layer
+    vec4 weights = vec4(0.0);
+    
+    // Layer 0: Base layer (e.g., grass on flat areas)
+    {
+        float heightWeight = 1.0 - smoothBlend(normalizedHeight, uHeightThresholds.x, uHeightBlendRanges.x);
+        float slopeWeight = 1.0 - smoothBlend(slopeAngle, uSlopeThresholds.x, uSlopeBlendRanges.x);
+        
+        if (uLayerBlendModes.x == 0) {
+            weights.x = heightWeight;
+        } else if (uLayerBlendModes.x == 1) {
+            weights.x = slopeWeight;
+        } else if (uLayerBlendModes.x == 2) {
+            weights.x = heightWeight * slopeWeight;
+        } else {
+            weights.x = heightWeight * slopeWeight + (noiseValue - 0.5) * uNoiseStrength;
+        }
+    }
+    
+    // Layer 1: Secondary layer (e.g., dirt on slopes)
+    {
+        float heightWeight = smoothBlend(normalizedHeight, uHeightThresholds.x, uHeightBlendRanges.x) *
+                            (1.0 - smoothBlend(normalizedHeight, uHeightThresholds.y, uHeightBlendRanges.y));
+        float slopeWeight = smoothBlend(slopeAngle, uSlopeThresholds.x, uSlopeBlendRanges.x) *
+                            (1.0 - smoothBlend(slopeAngle, uSlopeThresholds.y, uSlopeBlendRanges.y));
+        
+        if (uLayerBlendModes.y == 0) {
+            weights.y = heightWeight;
+        } else if (uLayerBlendModes.y == 1) {
+            weights.y = slopeWeight;
+        } else if (uLayerBlendModes.y == 2) {
+            weights.y = min(heightWeight, slopeWeight) + max(heightWeight, slopeWeight) * 0.5;
+        } else {
+            weights.y = slopeWeight + (noiseValue - 0.5) * uNoiseStrength;
+        }
+    }
+    
+    // Layer 2: Tertiary layer (e.g., rock on steep slopes)
+    {
+        float slopeWeight = smoothBlend(slopeAngle, uSlopeThresholds.y, uSlopeBlendRanges.y);
+        float heightWeight = smoothBlend(normalizedHeight, uHeightThresholds.y, uHeightBlendRanges.y);
+        
+        if (uLayerBlendModes.z == 0) {
+            weights.z = heightWeight;
+        } else if (uLayerBlendModes.z == 1) {
+            weights.z = slopeWeight;
+        } else {
+            weights.z = max(slopeWeight, heightWeight * 0.5);
+        }
+    }
+    
+    // Layer 3: Accent layer (e.g., snow on peaks)
+    {
+        float heightWeight = smoothBlend(normalizedHeight, uHeightThresholds.z, uHeightBlendRanges.z);
+        float slopeWeight = 1.0 - smoothBlend(slopeAngle, uSlopeThresholds.z, uSlopeBlendRanges.z);
+        
+        if (uLayerBlendModes.w == 0) {
+            weights.w = heightWeight;
+        } else if (uLayerBlendModes.w == 1) {
+            weights.w = heightWeight * slopeWeight;
+        } else {
+            // Snow accumulates less on steep slopes
+            weights.w = heightWeight * slopeWeight * (1.0 + (noiseValue - 0.5) * uNoiseStrength * 0.5);
+        }
+    }
+    
+    // Normalize weights to sum to 1.0
+    float totalWeight = weights.x + weights.y + weights.z + weights.w;
+    if (totalWeight > 0.001) {
+        weights /= totalWeight;
+    } else {
+        weights = vec4(1.0, 0.0, 0.0, 0.0); // Default to base layer
+    }
+    
+    // Clamp to valid range
+    weights = clamp(weights, 0.0, 1.0);
+    
+    // Store splat weights
+    imageStore(uSplatMap, coord, weights);
+}

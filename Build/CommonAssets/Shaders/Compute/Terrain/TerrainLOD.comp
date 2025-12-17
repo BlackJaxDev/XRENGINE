@@ -1,0 +1,158 @@
+#version 450
+
+// GPU Terrain System - LOD Selection Compute Shader
+// Calculates LOD level and morphing for each terrain chunk
+
+layout(local_size_x = 64, local_size_y = 1, local_size_z = 1) in;
+
+// --- Chunk Structure ---
+struct TerrainChunk {
+    vec3 WorldPosition;
+    float Size;
+    vec2 HeightmapOffset;
+    vec2 HeightmapScale;
+    uint LODLevel;
+    uint ChunkIndex;
+    float MinHeight;
+    float MaxHeight;
+    vec4 NeighborLODs; // x=north, y=east, z=south, w=west
+    uint Visible;
+    float MorphFactor;
+    float _pad0;
+    float _pad1;
+};
+
+// --- Buffers ---
+layout(std430, binding = 0) buffer ChunksBuffer { TerrainChunk Chunks[]; };
+
+layout(std140, binding = 2) uniform TerrainParamsBlock {
+    vec3 TerrainWorldPosition;
+    float TerrainWorldSize;
+    vec2 HeightmapSize;
+    float MinHeight;
+    float MaxHeight;
+    vec3 CameraPosition;
+    float LOD0Distance;
+    uint ChunkCountX;
+    uint ChunkCountZ;
+    uint TotalChunks;
+    float MorphStartRatio;
+    vec4 LayerTilings0;
+    vec4 LayerTilings1;
+    uint ActiveLayerCount;
+    uint EnableTriplanar;
+    uint EnableParallax;
+    float ParallaxScale;
+} uTerrainParams;
+
+// --- Uniforms ---
+uniform vec3 uCameraPosition;
+uniform float uLODDistances[6];
+
+// --- Helper Functions ---
+
+// Calculate chunk bounds center considering height
+vec3 getChunkCenter(TerrainChunk chunk) {
+    float heightCenter = (chunk.MinHeight + chunk.MaxHeight) * 0.5;
+    return chunk.WorldPosition + vec3(0.0, heightCenter, 0.0);
+}
+
+// Calculate distance from point to chunk (using chunk bounds)
+float getChunkDistance(TerrainChunk chunk, vec3 point) {
+    vec3 center = getChunkCenter(chunk);
+    
+    // For more accurate culling, could use distance to chunk surface
+    // For now, use center distance
+    return length(center - point);
+}
+
+// Determine LOD level based on distance
+uint calculateLODLevel(float distance) {
+    for (int i = 0; i < 5; i++) {
+        if (distance < uLODDistances[i]) {
+            return uint(i);
+        }
+    }
+    return 5u;
+}
+
+// Calculate morph factor for smooth LOD transitions
+float calculateMorphFactor(float distance, uint lodLevel) {
+    if (lodLevel >= 5u) return 0.0;
+    
+    float lodStart = lodLevel > 0u ? uLODDistances[lodLevel - 1u] : 0.0;
+    float lodEnd = uLODDistances[lodLevel];
+    float morphStart = lodStart + (lodEnd - lodStart) * uTerrainParams.MorphStartRatio;
+    
+    if (distance < morphStart) return 0.0;
+    if (distance >= lodEnd) return 1.0;
+    
+    return (distance - morphStart) / (lodEnd - morphStart);
+}
+
+// Get neighbor chunk LOD levels for seamless stitching
+vec4 getNeighborLODs(uint chunkX, uint chunkZ, uint myLOD) {
+    vec4 neighborLODs = vec4(float(myLOD));
+    
+    // North neighbor (z - 1)
+    if (chunkZ > 0u) {
+        uint neighborIdx = (chunkZ - 1u) * uTerrainParams.ChunkCountX + chunkX;
+        neighborLODs.x = float(Chunks[neighborIdx].LODLevel);
+    }
+    
+    // East neighbor (x + 1)
+    if (chunkX < uTerrainParams.ChunkCountX - 1u) {
+        uint neighborIdx = chunkZ * uTerrainParams.ChunkCountX + (chunkX + 1u);
+        neighborLODs.y = float(Chunks[neighborIdx].LODLevel);
+    }
+    
+    // South neighbor (z + 1)
+    if (chunkZ < uTerrainParams.ChunkCountZ - 1u) {
+        uint neighborIdx = (chunkZ + 1u) * uTerrainParams.ChunkCountX + chunkX;
+        neighborLODs.z = float(Chunks[neighborIdx].LODLevel);
+    }
+    
+    // West neighbor (x - 1)
+    if (chunkX > 0u) {
+        uint neighborIdx = chunkZ * uTerrainParams.ChunkCountX + (chunkX - 1u);
+        neighborLODs.w = float(Chunks[neighborIdx].LODLevel);
+    }
+    
+    return neighborLODs;
+}
+
+// --- Main ---
+void main() {
+    uint chunkIndex = gl_GlobalInvocationID.x;
+    if (chunkIndex >= uTerrainParams.TotalChunks) return;
+    
+    TerrainChunk chunk = Chunks[chunkIndex];
+    
+    // Calculate chunk grid coordinates
+    uint chunkX = chunkIndex % uTerrainParams.ChunkCountX;
+    uint chunkZ = chunkIndex / uTerrainParams.ChunkCountX;
+    
+    // Calculate distance from camera to chunk
+    float distance = getChunkDistance(chunk, uCameraPosition);
+    
+    // Determine LOD level
+    uint lodLevel = calculateLODLevel(distance);
+    
+    // Calculate morph factor for smooth transitions
+    float morphFactor = calculateMorphFactor(distance, lodLevel);
+    
+    // Update chunk data
+    chunk.LODLevel = lodLevel;
+    chunk.MorphFactor = morphFactor;
+    
+    // Write back (neighbor LODs will be calculated in a second pass)
+    Chunks[chunkIndex] = chunk;
+    
+    // Memory barrier to ensure all LOD levels are written
+    barrier();
+    memoryBarrierBuffer();
+    
+    // Second pass: calculate neighbor LODs for edge stitching
+    chunk.NeighborLODs = getNeighborLODs(chunkX, chunkZ, lodLevel);
+    Chunks[chunkIndex] = chunk;
+}

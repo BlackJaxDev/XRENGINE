@@ -4,7 +4,6 @@ using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Linq;
 using System.Numerics;
-using XREngine.Actors.Types;
 using XREngine.Components;
 using XREngine.Components.Scene.Mesh;
 using XREngine.Components.Scene.Transforms;
@@ -24,6 +23,7 @@ using XREngine.Rendering.Physics.Physx;
 using XREngine.Scene;
 using XREngine.Scene.Transforms;
 using System.ComponentModel;
+using XREngine.Scene.Components.Editing;
 
 namespace XREngine.Editor;
 

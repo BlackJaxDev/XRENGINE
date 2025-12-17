@@ -371,6 +371,8 @@ namespace XREngine.Components
 
             // Gamepad jump (A button / face down)
             input.RegisterButtonPressed(EGamePadButton.FaceDown, Jump);
+            // Gamepad run (X button / face left)
+            input.RegisterButtonPressed(EGamePadButton.FaceLeft, Run);
 
             // Keyboard movement (WASD)
             input.RegisterKeyStateChange(EKey.W, MoveForward);
@@ -608,6 +610,16 @@ namespace XREngine.Components
             if (pressed)
                 _networkJumpPressed = true;
             _networkJumpHeld = pressed;
+        }
+
+        /// <summary>
+        /// Starts or stops movement based on the specified input state.
+        /// </summary>
+        /// <param name="pressed">A value indicating whether the input is currently pressed. Pass <see langword="true"/> to start movement;
+        /// <see langword="false"/> to stop movement.</param>
+        public void Run(bool pressed)
+        {
+            Movement.Run(pressed);
         }
 
         /// <summary>

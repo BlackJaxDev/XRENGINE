@@ -1,0 +1,180 @@
+#version 450
+
+// GPU Terrain System - Chunk Culling Compute Shader
+// Performs frustum culling and generates indirect draw commands
+
+layout(local_size_x = 64, local_size_y = 1, local_size_z = 1) in;
+
+// --- Chunk Structure ---
+struct TerrainChunk {
+    vec3 WorldPosition;
+    float Size;
+    vec2 HeightmapOffset;
+    vec2 HeightmapScale;
+    uint LODLevel;
+    uint ChunkIndex;
+    float MinHeight;
+    float MaxHeight;
+    vec4 NeighborLODs;
+    uint Visible;
+    float MorphFactor;
+    float _pad0;
+    float _pad1;
+};
+
+// --- Draw Command Structure ---
+struct DrawCommand {
+    uint indexCount;
+    uint instanceCount;
+    uint firstIndex;
+    int baseVertex;
+    uint baseInstance;
+};
+
+// --- Buffers ---
+layout(std430, binding = 0) buffer ChunksBuffer { TerrainChunk Chunks[]; };
+layout(std430, binding = 1) buffer VisibleChunksBuffer { uint VisibleChunks[]; };
+layout(std430, binding = 3) buffer ChunkCountBuffer { uint VisibleChunkCount; };
+layout(std430, binding = 4) buffer IndirectDrawBuffer { DrawCommand DrawCommands[]; };
+
+layout(std140, binding = 2) uniform TerrainParamsBlock {
+    vec3 TerrainWorldPosition;
+    float TerrainWorldSize;
+    vec2 HeightmapSize;
+    float MinHeight;
+    float MaxHeight;
+    vec3 CameraPosition;
+    float LOD0Distance;
+    uint ChunkCountX;
+    uint ChunkCountZ;
+    uint TotalChunks;
+    float MorphStartRatio;
+    vec4 LayerTilings0;
+    vec4 LayerTilings1;
+    uint ActiveLayerCount;
+    uint EnableTriplanar;
+    uint EnableParallax;
+    float ParallaxScale;
+} uTerrainParams;
+
+// --- Frustum Planes ---
+// Each plane is stored as vec4(normal.xyz, distance)
+uniform vec4 uFrustumPlanes[6];
+
+// --- Index Counts Per LOD ---
+// Pre-calculated index counts for each LOD level based on grid resolution
+// LOD 0 = 32x32 grid = 32*32*6 = 6144 indices
+// LOD 1 = 16x16 grid = 16*16*6 = 1536 indices
+// LOD 2 = 8x8 grid = 8*8*6 = 384 indices
+// LOD 3 = 4x4 grid = 4*4*6 = 96 indices
+// LOD 4 = 2x2 grid = 2*2*6 = 24 indices
+// LOD 5 = 1x1 grid = 1*1*6 = 6 indices
+const uint LOD_INDEX_COUNTS[6] = uint[6](6144u, 1536u, 384u, 96u, 24u, 6u);
+const uint LOD_GRID_SIZES[6] = uint[6](32u, 16u, 8u, 4u, 2u, 1u);
+
+// --- Helper Functions ---
+
+// Calculate AABB bounds for a chunk
+void getChunkBounds(TerrainChunk chunk, out vec3 minBounds, out vec3 maxBounds) {
+    float halfSize = chunk.Size * 0.5;
+    minBounds = vec3(
+        chunk.WorldPosition.x - halfSize,
+        chunk.MinHeight,
+        chunk.WorldPosition.z - halfSize
+    );
+    maxBounds = vec3(
+        chunk.WorldPosition.x + halfSize,
+        chunk.MaxHeight,
+        chunk.WorldPosition.z + halfSize
+    );
+}
+
+// Get closest point on AABB to a point
+vec3 closestPointOnAABB(vec3 point, vec3 minBounds, vec3 maxBounds) {
+    return clamp(point, minBounds, maxBounds);
+}
+
+// Test AABB against frustum plane
+// Returns: negative = outside, positive = inside or intersecting
+float testAABBPlane(vec3 minBounds, vec3 maxBounds, vec4 plane) {
+    // Find the positive vertex (furthest along plane normal)
+    vec3 pVertex = minBounds;
+    if (plane.x >= 0.0) pVertex.x = maxBounds.x;
+    if (plane.y >= 0.0) pVertex.y = maxBounds.y;
+    if (plane.z >= 0.0) pVertex.z = maxBounds.z;
+    
+    // Test positive vertex against plane
+    return dot(plane.xyz, pVertex) + plane.w;
+}
+
+// Full frustum culling test
+bool isChunkVisible(TerrainChunk chunk) {
+    vec3 minBounds, maxBounds;
+    getChunkBounds(chunk, minBounds, maxBounds);
+    
+    // Test against all 6 frustum planes
+    for (int i = 0; i < 6; i++) {
+        if (testAABBPlane(minBounds, maxBounds, uFrustumPlanes[i]) < 0.0) {
+            return false; // Completely outside this plane
+        }
+    }
+    
+    return true;
+}
+
+// Calculate appropriate index count for LOD level
+// Accounts for edge stitching with neighboring chunks
+uint calculateIndexCount(TerrainChunk chunk) {
+    uint lod = min(chunk.LODLevel, 5u);
+    uint baseCount = LOD_INDEX_COUNTS[lod];
+    
+    // If we need edge stitching (neighbor has different LOD), we may need extra indices
+    // For simplicity, using base count. A more advanced implementation would
+    // generate edge strips at runtime or use pre-computed edge variations
+    
+    return baseCount;
+}
+
+// Calculate first index offset for this LOD level
+uint calculateFirstIndex(uint lodLevel) {
+    // Assuming all LOD levels use the same base mesh with different index ranges
+    // A more optimized approach would use separate index buffers per LOD
+    uint offset = 0u;
+    for (uint i = 0u; i < lodLevel && i < 6u; i++) {
+        offset += LOD_INDEX_COUNTS[i];
+    }
+    return offset;
+}
+
+// --- Main ---
+void main() {
+    uint chunkIndex = gl_GlobalInvocationID.x;
+    if (chunkIndex >= uTerrainParams.TotalChunks) return;
+    
+    TerrainChunk chunk = Chunks[chunkIndex];
+    
+    // Perform frustum culling
+    bool visible = isChunkVisible(chunk);
+    
+    // Update chunk visibility
+    chunk.Visible = visible ? 1u : 0u;
+    Chunks[chunkIndex] = chunk;
+    
+    if (visible) {
+        // Add to visible chunks list
+        uint visibleIndex = atomicAdd(VisibleChunkCount, 1u);
+        VisibleChunks[visibleIndex] = chunkIndex;
+        
+        // Generate draw command
+        uint lod = min(chunk.LODLevel, 5u);
+        
+        DrawCommand cmd;
+        cmd.indexCount = calculateIndexCount(chunk);
+        cmd.instanceCount = 1u;
+        cmd.firstIndex = calculateFirstIndex(lod);
+        cmd.baseVertex = 0;
+        cmd.baseInstance = chunkIndex; // Pass chunk index for per-instance data
+        
+        DrawCommands[visibleIndex] = cmd;
+    }
+}

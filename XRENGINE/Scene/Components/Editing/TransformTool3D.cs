@@ -20,7 +20,7 @@ using XREngine.Scene;
 using XREngine.Scene.Transforms;
 using XREngine.Components.Scene.Transforms;
 
-namespace XREngine.Actors.Types
+namespace XREngine.Scene.Components.Editing
 {
     [RequiresTransform(typeof(DrivenWorldTransform))]
     public class TransformTool3D : XRComponent, IRenderable

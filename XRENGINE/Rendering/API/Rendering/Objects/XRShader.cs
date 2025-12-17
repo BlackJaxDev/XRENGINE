@@ -1,5 +1,6 @@
 ﻿
 using System.Collections.Concurrent;
+using System.IO;
 using XREngine.Core.Files;
 using XREngine.Data;
 using XREngine.Rendering.Models.Materials;
@@ -106,6 +107,7 @@ namespace XREngine.Rendering
         }
         public override bool Load3rdParty(string filePath)
         {
+            Type = ResolveType(Path.GetExtension(filePath));
             TextFile file = new();
             file.LoadText(filePath);
             Source = file;
@@ -113,6 +115,7 @@ namespace XREngine.Rendering
         }
         public override async Task<bool> Load3rdPartyAsync(string filePath)
         {
+            Type = ResolveType(Path.GetExtension(filePath));
             TextFile file = new();
             await file.LoadTextAsync(filePath);
             Source = file;
