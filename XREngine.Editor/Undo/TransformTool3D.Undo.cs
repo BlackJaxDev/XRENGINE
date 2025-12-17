@@ -1,6 +1,6 @@
 using System;
-using XREngine.Actors.Types;
 using XREngine.Data.Core;
+using XREngine.Scene.Components.Editing;
 using XREngine.Scene.Transforms;
 
 namespace XREngine.Editor;

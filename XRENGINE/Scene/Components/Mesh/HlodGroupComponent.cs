@@ -28,7 +28,7 @@ namespace XREngine.Components.Scene.Mesh
     [Category("Rendering")]
     [DisplayName("HLOD Group")]
     [Description("Builds a batched proxy for child static meshes and swaps based on camera distance.")]
-    public sealed class HlodGroupComponent : XRComponent, IRenderable
+    public sealed class HLODGroupComponent : XRComponent, IRenderable
     {
         private const string ImposterNodeName = "__HLOD_Imposter";
         private const string ImposterCaptureNodeName = "__HLOD_ImposterCapture";
@@ -48,7 +48,7 @@ namespace XREngine.Components.Scene.Mesh
         private bool _built;
         private bool _building;
 
-        public HlodGroupComponent()
+        public HLODGroupComponent()
         {
             _renderCommand = new RenderCommandMesh3D((int)EDefaultRenderPass.OpaqueForward)
             {

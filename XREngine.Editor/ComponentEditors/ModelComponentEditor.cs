@@ -65,9 +65,15 @@ public sealed class ModelComponentEditor : IXRComponentEditor
         public bool HighlightLeafNodes = true;
         public bool CullNodesAgainstCamera = true;
 
-        public readonly Stack<BVHNode<Triangle>> NodeStack = new();
         public readonly HashSet<XRMesh> AttemptedBvhBuilds = new();
         public readonly Dictionary<RenderableMesh, RenderInfo.DelPreRenderCallback> MeshHandlers = new();
+        private readonly object _handlersLock = new();
+
+        public void LockHandlers(Action<Dictionary<RenderableMesh, RenderInfo.DelPreRenderCallback>> action)
+        {
+            lock (_handlersLock)
+                action(MeshHandlers);
+        }
     }
 
     private static readonly ConditionalWeakTable<ModelComponent, ImpostorState> s_impostorStates = new();
@@ -196,47 +202,53 @@ public sealed class ModelComponentEditor : IXRComponentEditor
 
     private static void EnsureBvhPreviewHooks(ModelComponent modelComponent, BvhPreviewState state)
     {
-        foreach (RenderableMesh mesh in modelComponent.Meshes)
+        state.LockHandlers(handlers =>
         {
-            if (state.MeshHandlers.ContainsKey(mesh))
-                continue;
-
-            RenderInfo.DelPreRenderCallback handler = (info, command, camera) => RenderBvhPreviewForMesh(mesh, command, camera, state);
-            mesh.RenderInfo.CollectedForRenderCallback += handler;
-            state.MeshHandlers.Add(mesh, handler);
-        }
-
-        if (state.MeshHandlers.Count == modelComponent.Meshes.Count)
-            return;
-
-        var currentMeshes = modelComponent.Meshes;
-        var removed = new List<RenderableMesh>();
-        foreach (var kvp in state.MeshHandlers)
-        {
-            if (!currentMeshes.Contains(kvp.Key))
-                removed.Add(kvp.Key);
-        }
-
-        for (int i = 0; i < removed.Count; i++)
-        {
-            var mesh = removed[i];
-            if (state.MeshHandlers.TryGetValue(mesh, out var handler))
+            foreach (RenderableMesh mesh in modelComponent.Meshes)
             {
-                mesh.RenderInfo.CollectedForRenderCallback -= handler;
-                state.MeshHandlers.Remove(mesh);
+                if (handlers.ContainsKey(mesh))
+                    continue;
+
+                RenderInfo.DelPreRenderCallback handler = (info, command, camera) => RenderBvhPreviewForMesh(mesh, command, camera, state);
+                mesh.RenderInfo.CollectedForRenderCallback += handler;
+                handlers.Add(mesh, handler);
             }
-        }
+
+            if (handlers.Count == modelComponent.Meshes.Count)
+                return;
+
+            var currentMeshes = modelComponent.Meshes;
+            var removed = new List<RenderableMesh>();
+            foreach (var kvp in handlers)
+            {
+                if (!currentMeshes.Contains(kvp.Key))
+                    removed.Add(kvp.Key);
+            }
+
+            for (int i = 0; i < removed.Count; i++)
+            {
+                var mesh = removed[i];
+                if (handlers.TryGetValue(mesh, out var handler))
+                {
+                    mesh.RenderInfo.CollectedForRenderCallback -= handler;
+                    handlers.Remove(mesh);
+                }
+            }
+        });
     }
 
     private static void DisableBvhPreviewHooks(BvhPreviewState state)
     {
-        if (state.MeshHandlers.Count == 0)
-            return;
+        state.LockHandlers(handlers =>
+        {
+            if (handlers.Count == 0)
+                return;
 
-        foreach (var kvp in state.MeshHandlers)
-            kvp.Key.RenderInfo.CollectedForRenderCallback -= kvp.Value;
+            foreach (var kvp in handlers)
+                kvp.Key.RenderInfo.CollectedForRenderCallback -= kvp.Value;
 
-        state.MeshHandlers.Clear();
+            handlers.Clear();
+        });
     }
 
     private static void RenderBvhPreviewForMesh(RenderableMesh mesh, RenderCommand command, XRCamera? camera, BvhPreviewState state)
@@ -253,6 +265,9 @@ public sealed class ModelComponentEditor : IXRComponentEditor
         IVolume? frustum = camera?.WorldFrustum();
         RenderMeshTree(mesh, frustum, state);
     }
+
+    [ThreadStatic]
+    private static Stack<BVHNode<Triangle>>? t_nodeStack;
 
     private static void RenderMeshTree(RenderableMesh mesh, IVolume? frustum, BvhPreviewState state)
     {
@@ -279,16 +294,17 @@ public sealed class ModelComponentEditor : IXRComponentEditor
         if (root is null)
             return;
 
-        state.NodeStack.Clear();
-        state.NodeStack.Push(root);
+        var nodeStack = t_nodeStack ??= new Stack<BVHNode<Triangle>>();
+        nodeStack.Clear();
+        nodeStack.Push(root);
 
         Matrix4x4 meshMatrix = skinned ? mesh.SkinnedBvhLocalToWorldMatrix : mesh.Component.Transform.RenderMatrix;
         Matrix4x4 rotationScaleMatrix = meshMatrix;
         rotationScaleMatrix.Translation = Vector3.Zero;
 
-        while (state.NodeStack.Count > 0)
+        while (nodeStack.Count > 0)
         {
-            var node = state.NodeStack.Pop();
+            var node = nodeStack.Pop();
             if (node is null)
                 continue;
 
@@ -306,9 +322,9 @@ public sealed class ModelComponentEditor : IXRComponentEditor
             Engine.Rendering.Debug.RenderBox(nodeBounds.HalfExtents, worldCenter, rotationScaleMatrix, false, color);
 
             if (node.left is not null)
-                state.NodeStack.Push(node.left);
+                nodeStack.Push(node.left);
             if (node.right is not null)
-                state.NodeStack.Push(node.right);
+                nodeStack.Push(node.right);
         }
     }
 

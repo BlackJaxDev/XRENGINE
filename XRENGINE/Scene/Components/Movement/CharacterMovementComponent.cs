@@ -3,6 +3,7 @@ using MagicPhysX;
 using System.ComponentModel;
 using System.Drawing.Drawing2D;
 using System.Numerics;
+using XREngine.Components.Movement.Modules;
 using XREngine.Core.Attributes;
 using XREngine.Data.Colors;
 using XREngine.Data.Geometry;
@@ -62,9 +63,6 @@ namespace XREngine.Components.Movement
         //public Transform ControllerTransform
         //    => SceneNode.GetTransformAs<Transform>(true)!;
 
-        private float _stepOffset = 0.0f;
-        private float _slopeLimitCosine = 0.707f;
-        private float _walkingMovementSpeed = 50f;
         private float _airMovementAcceleration = 10f;
         private float _maxJumpHeight = 10.0f;
         private Func<Vector3, Vector3>? _subUpdateTick;
@@ -74,7 +72,6 @@ namespace XREngine.Components.Movement
         private float _density = 0.5f;
         private float _scaleCoeff = 0.8f;
         private float _volumeGrowth = 1.5f;
-        private bool _slideOnSteepSlopes = true;
         private PhysxMaterial _material = new(0.9f, 0.9f, 0.1f);
         private float _radius = 0.6f;
         private float _standingHeight = new FeetInches(5, 2.0f).ToMeters();
@@ -93,14 +90,17 @@ namespace XREngine.Components.Movement
         private Vector3? _gravityOverride = null;
         private bool _rotateGravityToMatchCharacterUp = false;
 
-        private float _jumpForce = 15.0f;
-        private float _jumpHoldForce = 5.0f;
+        // Jump state (runtime only, not settings)
         private float _jumpElapsed = 0.0f;
-        private float _maxJumpDuration = 0.3f;
         private bool _isJumping = false;
-        private bool _canJump = true;
-        private float _coyoteTime = 0.2f;
+        private bool _canJumpState = true;
         private float _coyoteTimer = 0.0f;
+
+        // Running state (runtime)
+        private bool _isRunning = false;
+
+        // Movement module system - always uses a module, defaults to Modern
+        private MovementModule _movementModule = new ModernMovementModule();
 
         /// <summary>
         /// The current movement mode of the character.
@@ -124,54 +124,17 @@ namespace XREngine.Components.Movement
         }
 
         /// <summary>
-        /// This time is the amount of time the character can still jump after leaving the ground, like a cartoon coyote running off a cliff.
-        /// Makes jumping feel more responsive and forgiving.
-        /// </summary>
-        [Category("Jumping")]
-        [DisplayName("Coyote Time")]
-        [Description("Grace period after leaving ground where jump is still allowed.")]
-        public float CoyoteTime
-        {
-            get => _coyoteTime;
-            set => SetField(ref _coyoteTime, value);
-        }
-
-        /// <summary>
-        /// How much force is applied when jumping.
-        /// </summary>
-        [Category("Jumping")]
-        [DisplayName("Jump Force")]
-        [Description("Initial upward force applied when jumping.")]
-        public float JumpForce
-        {
-            get => _jumpForce;
-            set => SetField(ref _jumpForce, value);
-        }
-
-        /// <summary>
-        /// How much force is applied when sustaining a jump for longer than the initial jump force.
-        /// </summary>
-        [Category("Jumping")]
-        [DisplayName("Jump Hold Force")]
-        [Description("Additional force while jump button is held.")]
-        public float JumpHoldForce
-        {
-            get => _jumpHoldForce;
-            set => SetField(ref _jumpHoldForce, value);
-        }
-
-        /// <summary>
-        /// How much acceleration is applied to the character when moving in the air.
-        /// Air movement should be less responsive than ground movement,
-        /// but still allow for some control over the character's movement in the air.
+        /// The movement module that controls how the character responds to input.
+        /// Defaults to ModernMovementModule. Use ArcadeMovementModule or PhysicalMovementModule
+        /// for different movement feels, or create custom modules by inheriting from MovementModule.
         /// </summary>
         [Category("Movement")]
-        [DisplayName("Air Acceleration")]
-        [Description("Movement acceleration while airborne.")]
-        public float AirMovementAcceleration
+        [DisplayName("Movement Module")]
+        [Description("Movement behavior module. Defaults to Modern style.")]
+        public MovementModule MovementModule
         {
-            get => _airMovementAcceleration;
-            set => SetField(ref _airMovementAcceleration, value);
+            get => _movementModule;
+            set => SetField(ref _movementModule, value ?? new ModernMovementModule());
         }
 
         /// <summary>
@@ -244,68 +207,20 @@ namespace XREngine.Components.Movement
         }
 
         /// <summary>
-        /// How high the character can step up onto a ledge.
-        /// </summary>
-        [Category("Ground")]
-        [DisplayName("Step Offset")]
-        [Description("Maximum height character can step up automatically.")]
-        public float StepOffset
-        {
-            get => _stepOffset;
-            set => SetField(ref _stepOffset, value);
-        }
-
-        /// <summary>
-        /// The maximum slope which the character can walk up, expressed as the cosine of desired limit angle.
-        /// In general it is desirable to limit where the character can walk, in particular it is unrealistic for the character to be able to climb arbitary slopes.
-        /// A value of 0 disables this feature.
-        /// </summary>
-        [Category("Ground")]
-        [DisplayName("Slope Limit (Cosine)")]
-        [Description("Cosine of max walkable slope angle.")]
-        public float SlopeLimitCosine
-        {
-            get => _slopeLimitCosine;
-            set => SetField(ref _slopeLimitCosine, value);
-        }
-
-        /// <summary>
-        /// The maximum slope which the character can walk up, expressed in radians.
-        /// In general it is desirable to limit where the character can walk, in particular it is unrealistic for the character to be able to climb arbitary slopes.
-        /// A value of 0 disables this feature.
+        /// Whether the character is currently running/sprinting.
         /// </summary>
         [Browsable(false)]
-        public float SlopeLimitAngleRad
+        public bool IsRunning
         {
-            get => (float)Math.Acos(SlopeLimitCosine);
-            set => SlopeLimitCosine = (float)Math.Cos(value);
+            get => _isRunning;
+            private set => SetField(ref _isRunning, value);
         }
 
         /// <summary>
-        /// The maximum slope which the character can walk up, expressed in degrees.
-        /// In general it is desirable to limit where the character can walk, in particular it is unrealistic for the character to be able to climb arbitary slopes.
-        /// A value of 0 disables this feature.
+        /// The current ground movement speed, accounting for running state.
         /// </summary>
-        [Category("Ground")]
-        [DisplayName("Slope Limit (Degrees)")]
-        [Description("Max walkable slope angle in degrees.")]
-        public float SlopeLimitAngleDeg
-        {
-            get => XRMath.RadToDeg(SlopeLimitAngleRad);
-            set => SlopeLimitAngleRad = XRMath.DegToRad(value);
-        }
-
-        /// <summary>
-        /// The speed at which the character moves when walking.
-        /// </summary>
-        [Category("Movement")]
-        [DisplayName("Walking Speed")]
-        [Description("Base walking movement speed.")]
-        public float WalkingMovementSpeed
-        {
-            get => _walkingMovementSpeed;
-            set => SetField(ref _walkingMovementSpeed, value);
-        }
+        [Browsable(false)]
+        public float CurrentGroundSpeed => MovementModule.WalkingSpeed * (IsRunning ? MovementModule.RunSpeedMultiplier : 1.0f);
 
         /// <summary>
         /// Maximum height a jumping character can reach.
@@ -427,8 +342,8 @@ namespace XREngine.Components.Movement
         [Description("Whether to slide on non-walkable surfaces.")]
         public bool SlideOnSteepSlopes
         {
-            get => _slideOnSteepSlopes;
-            set => SetField(ref _slideOnSteepSlopes, value);
+            get => MovementModule.SlideOnSteepSlopes;
+            set => MovementModule.SlideOnSteepSlopes = value;
         }
 
         [Category("Capsule")]
@@ -592,11 +507,11 @@ namespace XREngine.Components.Movement
                     Controller?.Radius = Radius;
                     _capsuleMeshDirty = true;
                     break;
-                case nameof(SlopeLimitCosine):
-                    Controller?.SlopeLimit = SlopeLimitCosine;
+                case nameof(MovementModule.SlopeLimitCosine):
+                    Controller?.SlopeLimit = MovementModule.SlopeLimitCosine;
                     break;
-                case nameof(StepOffset):
-                    Controller?.StepOffset = StepOffset;
+                case nameof(MovementModule.StepOffset):
+                    Controller?.StepOffset = MovementModule.StepOffset;
                     break;
                 case nameof(ContactOffset):
                     Controller?.ContactOffset = ContactOffset;
@@ -676,11 +591,11 @@ namespace XREngine.Components.Movement
             Controller = manager.CreateCapsuleController(
                 pos,
                 up,
-                SlopeLimitCosine,
+                MovementModule.SlopeLimitCosine,
                 InvisibleWallHeight,
                 MaxJumpHeight,
                 ContactOffset,
-                StepOffset,
+                MovementModule.StepOffset,
                 Density,
                 ScaleCoeff,
                 VolumeGrowth,
@@ -800,17 +715,6 @@ namespace XREngine.Components.Movement
             set => SetField(ref _velocity, value);
         }
 
-        // TODO: calculate friction based on this character's material and the current surface
-        private float _walkingFriction = 0.1f;
-        [Category("Movement")]
-        [DisplayName("Ground Friction")]
-        [Description("Friction applied when grounded.")]
-        public float GroundFriction
-        {
-            get => _walkingFriction;
-            set => SetField(ref _walkingFriction, value.Clamp(0.0f, 1.0f));
-        }
-
         public void AddForce(Vector3 force)
         {
             //Calculate acceleration from force
@@ -820,28 +724,6 @@ namespace XREngine.Components.Movement
         }
 
         public bool IsJumping => _isJumping;
-
-        private float _maxSpeed = 20.0f;
-        [Category("Movement")]
-        [DisplayName("Max Speed")]
-        [Description("Maximum movement speed.")]
-        public float MaxSpeed
-        {
-            get => _maxSpeed;
-            set => SetField(ref _maxSpeed, value);
-        }
-
-        /// <summary>
-        /// How long jumping can be sustained.
-        /// </summary>
-        [Category("Jumping")]
-        [DisplayName("Max Jump Duration")]
-        [Description("Maximum time jump button can be held.")]
-        public float MaxJumpDuration
-        {
-            get => _maxJumpDuration;
-            set => SetField(ref _maxJumpDuration, value);
-        }
 
         private bool _tickInputWithPhysics = false; //Seems more responsive calculating on update, separate from physics
         /// <summary>
@@ -879,18 +761,22 @@ namespace XREngine.Components.Movement
                 moveDirection = Vector3.Transform(posDelta.Normalized(), rotation);
             }
 
-            // Calculate target velocity
-            Vector3 targetVelocity = moveDirection * WalkingMovementSpeed;
-            Vector3 velocityDelta = targetVelocity - Velocity;
-            Vector3 newVelocity = Velocity + velocityDelta;
-            float friction = Controller.CollidingDown ? GroundFriction : 0.0f;
-            newVelocity *= (1.0f - friction);
+            // Process ground movement through the module
+            var context = CreateMovementContext(moveDirection, dt, true);
+            var result = MovementModule.ProcessGroundMovement(in context);
+            Vector3 newVelocity = result.NewVelocity;
 
-            //Handle ground jump
+            // Handle requested mode change from module
+            ApplyRequestedModeChange(result.RequestedMode);
+
+            // Handle ground jump
             HandleJumping(dt, ref newVelocity);
 
-            //Clamp speed to max speed for deterministic movement
+            // Clamp speed to max speed for deterministic movement
             ClampSpeed(ref newVelocity);
+
+            // Update stored velocity
+            Velocity = newVelocity;
 
             // Convert to position delta
             Vector3 delta = newVelocity * dt;
@@ -901,45 +787,106 @@ namespace XREngine.Components.Movement
             return delta;
         }
 
+        /// <summary>
+        /// Creates a MovementContext for use with movement modules.
+        /// </summary>
+        private MovementModule.MovementContext CreateMovementContext(Vector3 inputDirection, float dt, bool isGrounded)
+        {
+            Vector3 gravity = Vector3.Zero;
+            if (World?.PhysicsScene is PhysxScene scene)
+                gravity = (GravityOverride ?? scene.Gravity) * MovementModule.GravityScale;
+
+            return new MovementModule.MovementContext(
+                inputDirection,
+                Velocity,
+                CurrentGroundSpeed,
+                MovementModule.MaxSpeed,
+                dt,
+                isGrounded,
+                Controller?.CollidingUp ?? false,
+                UpDirection,
+                gravity);
+        }
+
+        /// <summary>
+        /// Applies a movement mode change requested by the movement module.
+        /// </summary>
+        private void ApplyRequestedModeChange(MovementModule.ERequestedMode requestedMode)
+        {
+            switch (requestedMode)
+            {
+                case MovementModule.ERequestedMode.None:
+                    // No change requested
+                    break;
+                case MovementModule.ERequestedMode.Ground:
+                    _subUpdateTick = GroundMovementTick;
+                    MovementMode = EMovementMode.Walking;
+                    break;
+                case MovementModule.ERequestedMode.Air:
+                    _subUpdateTick = AirMovementTick;
+                    MovementMode = EMovementMode.Falling;
+                    break;
+                case MovementModule.ERequestedMode.Swimming:
+                    _subUpdateTick = SwimmingMovementTick;
+                    MovementMode = EMovementMode.Swimming;
+                    break;
+                case MovementModule.ERequestedMode.Flying:
+                    _subUpdateTick = AirMovementTick; // Use air movement for flying for now
+                    MovementMode = EMovementMode.Flying;
+                    break;
+            }
+        }
+
         private void HandleJumping(float dt, ref Vector3 delta)
         {
             if (Controller is null)
                 return;
 
+            // Don't process jumping if the module doesn't allow it
+            if (!MovementModule.CanJump)
+                return;
+
             if (Controller.CollidingDown)
             {
-                _canJump = true;
-                _coyoteTimer = _coyoteTime;
+                _canJumpState = true;
+                _coyoteTimer = MovementModule.CoyoteTime;
             }
             else
             {
                 _coyoteTimer -= dt;
-                _canJump = _coyoteTimer > 0.0f;
+                _canJumpState = _coyoteTimer > 0.0f;
             }
 
             if (!_isJumping)
                 return;
 
-            if (CanJump)
+            if (CanPerformJump)
             {
-                delta.Y = JumpForce * dt;
+                // Apply jump as an impulse (direct velocity change), not scaled by dt
+                // The velocity will be converted to position delta later
+                delta.Y = MovementModule.JumpForce;
                 _jumpElapsed = 0.0f;
-                _canJump = false;
+                _canJumpState = false;
                 _subUpdateTick = AirMovementTick;
             }
             else
             {
-                bool addingJumpForce = _isJumping && _jumpElapsed < MaxJumpDuration && !Controller.CollidingUp;
+                bool addingJumpForce = _isJumping && _jumpElapsed < MovementModule.MaxJumpDuration && !Controller.CollidingUp;
                 if (!addingJumpForce)
                     return;
                 
-                float jumpFactor = 1.0f - (_jumpElapsed / MaxJumpDuration);
-                delta.Y += JumpHoldForce * jumpFactor * dt;
+                // Sustained jump hold adds a small amount of upward acceleration
+                // This is acceleration (m/s²), so multiply by dt to get velocity change
+                float jumpFactor = 1.0f - (_jumpElapsed / MovementModule.MaxJumpDuration);
+                delta.Y += MovementModule.JumpHoldForce * jumpFactor * dt;
                 _jumpElapsed += dt;
             }
         }
 
-        public bool CanJump => (_canJump && _coyoteTimer > 0.0f) || (Controller?.CollidingDown ?? false);
+        /// <summary>
+        /// Whether the character can currently perform a jump (grounded or in coyote time).
+        /// </summary>
+        public bool CanPerformJump => MovementModule.CanJump && ((_canJumpState && _coyoteTimer > 0.0f) || (Controller?.CollidingDown ?? false));
 
         protected virtual unsafe Vector3 AirMovementTick(Vector3 posDelta)
         {
@@ -948,38 +895,81 @@ namespace XREngine.Components.Movement
 
             float dt = DeltaTime;
 
-            //Air control uses normalized input direction with reduced influence
-            Vector3 airControl = posDelta;
-            if (posDelta != Vector3.Zero)
-            {
-                airControl = new Vector3(
-                    posDelta.X,
-                    0,
-                    posDelta.Z
-                ).Normalized() * AirMovementAcceleration;
-            }
+            // Process air movement through the module
+            Vector3 inputDirection = posDelta != Vector3.Zero ? new Vector3(posDelta.X, 0, posDelta.Z).Normalized() : Vector3.Zero;
+            var context = CreateMovementContext(inputDirection, dt, false);
+            var result = MovementModule.ProcessAirMovement(in context);
+            Vector3 newVelocity = result.NewVelocity;
+            
+            // Handle requested mode change from module
+            ApplyRequestedModeChange(result.RequestedMode);
+            
+            // Apply gravity if module didn't handle it
+            if (!result.GravityApplied)
+                ApplyGravity(scene, ref newVelocity);
 
-            //Apply air control to current velocity
-            Vector3 newVelocity = Velocity + (airControl * dt);
-
-            //Apply gravity to the new velocity
-            ApplyGravity(scene, ref newVelocity);
-
-            //Handle coyote jump or sustained jump hold
+            // Handle coyote jump or sustained jump hold
             HandleJumping(dt, ref newVelocity);
 
-            //Clamp speed to max speed for deterministic movement
+            // Clamp speed to max speed for deterministic movement
             ClampSpeed(ref newVelocity);
 
-            //Convert to position delta
+            // Update stored velocity
+            Velocity = newVelocity;
+
+            // Convert to position delta
             Vector3 delta = newVelocity * dt;
 
-            //Apply landing friction
+            // Apply landing friction when hitting ground
             if (Controller.CollidingDown)
             {
-                delta *= 1.0f - GroundFriction;
+                // Reduce horizontal velocity on landing based on ground friction
+                float frictionFactor = 1.0f - MovementModule.GroundFriction;
+                delta = new Vector3(delta.X * frictionFactor, delta.Y, delta.Z * frictionFactor);
                 _subUpdateTick = GroundMovementTick;
             }
+
+            if (float.IsNaN(delta.X) || float.IsNaN(delta.Y) || float.IsNaN(delta.Z))
+                delta = Vector3.Zero;
+
+            return delta;
+        }
+
+        protected virtual unsafe Vector3 SwimmingMovementTick(Vector3 posDelta)
+        {
+            if (Controller is null || World?.PhysicsScene is not PhysxScene scene)
+                return Vector3.Zero;
+
+            float dt = DeltaTime;
+
+            // Process swimming movement through the module
+            // Swimming allows full 3D directional control
+            Vector3 inputDirection = posDelta != Vector3.Zero ? posDelta.Normalized() : Vector3.Zero;
+            var context = CreateMovementContext(inputDirection, dt, false);
+            var result = MovementModule.ProcessSwimmingMovement(in context);
+            Vector3 newVelocity = result.NewVelocity;
+
+            // Handle requested mode change from module
+            ApplyRequestedModeChange(result.RequestedMode);
+
+            // Apply gravity if module didn't handle it (reduced for buoyancy)
+            if (!result.GravityApplied)
+            {
+                Vector3 gravity = GravityOverride ?? scene.Gravity;
+                if (RotateGravityToMatchCharacterUp && Controller is not null)
+                    gravity = Vector3.Transform(gravity, XRMath.RotationBetweenVectors(Globals.Up, Controller.UpDirection));
+                // Reduced gravity underwater for buoyancy effect
+                newVelocity += gravity * MovementModule.GravityScale * 0.25f * dt;
+            }
+
+            // Clamp speed to max speed
+            ClampSpeed(ref newVelocity);
+
+            // Update stored velocity
+            Velocity = newVelocity;
+
+            // Convert to position delta
+            Vector3 delta = newVelocity * dt;
 
             if (float.IsNaN(delta.X) || float.IsNaN(delta.Y) || float.IsNaN(delta.Z))
                 delta = Vector3.Zero;
@@ -1003,8 +993,8 @@ namespace XREngine.Components.Movement
             float verticalDelta = velocity.Y;
             velocity.Y = 0;
 
-            if (velocity.Length() > MaxSpeed)
-                velocity = velocity.Normalized() * MaxSpeed;
+            if (velocity.Length() > MovementModule.MaxSpeed)
+                velocity = velocity.Normalized() * MovementModule.MaxSpeed;
             
             // Restore vertical movement
             velocity.Y = verticalDelta;
@@ -1015,7 +1005,8 @@ namespace XREngine.Components.Movement
             Vector3 gravity = GravityOverride ?? scene.Gravity;
             if (RotateGravityToMatchCharacterUp && Controller is not null)
                 gravity = Vector3.Transform(gravity, XRMath.RotationBetweenVectors(Globals.Up, Controller.UpDirection));
-            delta += gravity * DeltaTime;
+            // Apply gravity scale for snappier game feel
+            delta += gravity * MovementModule.GravityScale * DeltaTime;
         }
 
         public void Jump(bool pressed)
@@ -1025,8 +1016,18 @@ namespace XREngine.Components.Movement
             else
             {
                 _isJumping = false;
-                _jumpElapsed = MaxJumpDuration; // Cut the jump short when button is released
+                _jumpElapsed = MovementModule.MaxJumpDuration; // Cut the jump short when button is released
             }
+        }
+
+        /// <summary>
+        /// Called when the run/sprint button is pressed or released.
+        /// Bind to Shift keys or gamepad face button left (X/Square).
+        /// </summary>
+        /// <param name="pressed">True when button is pressed, false when released.</param>
+        public void Run(bool pressed)
+        {
+            IsRunning = pressed;
         }
     }
 }

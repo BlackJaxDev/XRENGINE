@@ -99,32 +99,13 @@ public static partial class UnitTestingWorld
         public static void AddSkybox(SceneNode rootNode, XRTexture2D skyEquirect)
         {
             var skybox = new SceneNode(rootNode) { Name = "TestSkyboxNode" };
-            //var skyboxTransform = skybox.SetTransform<Transform>();
-            //skyboxTransform.Translation = new Vector3(0.0f, 0.0f, 0.0f);
-            if (!skybox.TryAddComponent<ModelComponent>(out var skyboxComp))
+            if (!skybox.TryAddComponent<SkyboxComponent>(out var skyboxComp))
                 return;
 
             skyboxComp!.Name = "TestSkybox";
-            skyboxComp.Model = new Model([new SubMesh(
-            XRMesh.Shapes.SolidBox(new Vector3(-9000), new Vector3(9000), true, XRMesh.Shapes.ECubemapTextureUVs.None),
-            new XRMaterial([skyEquirect], Engine.Assets.LoadEngineAsset<XRShader>(JobPriority.Highest, "Shaders", "Scene3D", "Equirect.fs"))
-            {
-                RenderPass = (int)EDefaultRenderPass.Background,
-                RenderOptions = new RenderingParameters()
-                {
-                    CullMode = ECullMode.Back,
-                    DepthTest = new DepthTest()
-                    {
-                        UpdateDepth = false,
-                        Enabled = ERenderParamUsage.Enabled,
-                        Function = EComparison.Less,
-                    },
-                    //LineWidth = 1.0f,
-                }
-            })
-        {
-            //CullingBounds = new AABB(new Vector3(-9000), new Vector3(9000)),
-        }]);
+            skyboxComp.Projection = ESkyboxProjection.Equirectangular;
+            skyboxComp.Texture = skyEquirect;
+            skyboxComp.Intensity = 1.0f;
         }
 
         private static void OnFinishedWorld(Task<(SceneNode? rootNode, IReadOnlyCollection<XRMaterial> materials, IReadOnlyCollection<XRMesh> meshes)> task)

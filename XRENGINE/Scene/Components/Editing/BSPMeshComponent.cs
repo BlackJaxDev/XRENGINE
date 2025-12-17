@@ -1,7 +1,7 @@
 ﻿using XREngine.Components;
 using XREngine.Rendering;
 
-namespace XREngine.Actors.Types.BSP
+namespace XREngine.Scene.Components.Editing
 {
     public class BSPMeshComponent : XRComponent
     {
