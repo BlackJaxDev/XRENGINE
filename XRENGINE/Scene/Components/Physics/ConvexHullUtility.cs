@@ -24,7 +24,7 @@ internal static class ConvexHullUtility
             return inputs;
 
         return component.Model is Model model
-            ? EnumerateModelMeshes(model).ToList()
+            ? [.. EnumerateModelMeshes(model)]
             : [];
     }
 

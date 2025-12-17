@@ -74,15 +74,12 @@ namespace XREngine.Components
         public void ArcBallRotate(float pitch, float yaw, Vector3 focusPoint)
         {
             var tfm = TransformAs<Transform>();
-            if (tfm is not null)
-            {
-                tfm.Translation = XRMath.ArcballTranslation(
-                    pitch,
-                    yaw,
-                    Vector3.Transform(focusPoint, tfm.ParentInverseWorldMatrix),
-                    tfm.Translation,
-                    Vector3.Transform(Globals.Right, tfm.Rotation));
-            }
+            tfm?.Translation = XRMath.ArcballTranslation(
+                pitch,
+                yaw,
+                Vector3.Transform(focusPoint, tfm.ParentInverseWorldMatrix),
+                tfm.Translation,
+                Vector3.Transform(Globals.Right, tfm.Rotation));
 
             AddYawPitch(yaw, pitch);
         }
@@ -131,8 +128,7 @@ namespace XREngine.Components
         protected override void YawPitchUpdated()
         {
             var tfm = TransformAs<Transform>();
-            if (tfm is not null)
-                tfm.Rotation = Quaternion.CreateFromYawPitchRoll(XRMath.DegToRad(Yaw), XRMath.DegToRad(Pitch), 0.0f);
+            tfm?.Rotation = Quaternion.CreateFromYawPitchRoll(XRMath.DegToRad(Yaw), XRMath.DegToRad(Pitch), 0.0f);
         }
     }
 }
