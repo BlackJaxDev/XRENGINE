@@ -210,11 +210,9 @@ namespace XREngine.Components.Scene.Mesh
             if (_debugHooksAttached)
                 return;
 
-            if (_renderInfo is not null)
-                _renderInfo.CollectedForRenderCallback += OnCollectedForRender;
+            _renderInfo?.CollectedForRenderCallback += OnCollectedForRender;
 
-            if (_renderCommand is not null)
-                _renderCommand.PreRender += OnPreRender;
+            _renderCommand?.PreRender += OnPreRender;
 
             _debugHooksAttached = true;
         }
@@ -224,11 +222,9 @@ namespace XREngine.Components.Scene.Mesh
             if (!_debugHooksAttached)
                 return;
 
-            if (_renderInfo is not null)
-                _renderInfo.CollectedForRenderCallback -= OnCollectedForRender;
+            _renderInfo?.CollectedForRenderCallback -= OnCollectedForRender;
 
-            if (_renderCommand is not null)
-                _renderCommand.PreRender -= OnPreRender;
+            _renderCommand?.PreRender -= OnPreRender;
 
             _debugHooksAttached = false;
         }
@@ -275,8 +271,7 @@ namespace XREngine.Components.Scene.Mesh
 
             _mesh = XRMesh.Create(triangle);
 
-            if (_meshRenderer is not null)
-                _meshRenderer.Mesh = _mesh;
+            _meshRenderer?.Mesh = _mesh;
         }
 
         private void RebuildMaterial()
@@ -314,8 +309,7 @@ namespace XREngine.Components.Scene.Mesh
 
             // RenderCommand.RenderPass is what the pipeline uses to bucket this draw.
             // Some pipelines may not execute the Background pass; debug mode forces a widely-used pass.
-            if (_renderCommand is not null)
-                _renderCommand.RenderPass = _material.RenderPass;
+            _renderCommand?.RenderPass = _material.RenderPass;
 
             _material.SettingUniforms += SetUniforms;
 
@@ -353,8 +347,7 @@ namespace XREngine.Components.Scene.Mesh
         {
             DetachDebugHooks();
 
-            if (_material is not null)
-                _material.SettingUniforms -= SetUniforms;
+            _material?.SettingUniforms -= SetUniforms;
 
             _mesh?.Destroy();
             _mesh = null;
@@ -382,11 +375,8 @@ namespace XREngine.Components.Scene.Mesh
                     JobPriority.Highest,
                     "Shaders", "Scene3D", "Skybox.vs");
 
-                if (s_vertexShader is null)
-                {
-                    // Inline fallback shader
-                    s_vertexShader = new XRShader(EShaderType.Vertex, VertexShaderSource);
-                }
+                // Inline fallback shader
+                s_vertexShader ??= new XRShader(EShaderType.Vertex, VertexShaderSource);
             }
             return s_vertexShader;
         }
@@ -412,11 +402,8 @@ namespace XREngine.Components.Scene.Mesh
                     JobPriority.Highest,
                     "Shaders", "Scene3D", "SkyboxEquirect.fs");
 
-                if (s_equirectShader is null)
-                {
-                    // Inline fallback shader
-                    s_equirectShader = new XRShader(EShaderType.Fragment, EquirectShaderSource);
-                }
+                // Inline fallback shader
+                s_equirectShader ??= new XRShader(EShaderType.Fragment, EquirectShaderSource);
             }
             return s_equirectShader;
         }
@@ -429,11 +416,8 @@ namespace XREngine.Components.Scene.Mesh
                     JobPriority.Highest,
                     "Shaders", "Scene3D", "SkyboxOctahedral.fs");
 
-                if (s_octahedralShader is null)
-                {
-                    // Inline fallback shader
-                    s_octahedralShader = new XRShader(EShaderType.Fragment, OctahedralShaderSource);
-                }
+                // Inline fallback shader
+                s_octahedralShader ??= new XRShader(EShaderType.Fragment, OctahedralShaderSource);
             }
             return s_octahedralShader;
         }
@@ -446,11 +430,8 @@ namespace XREngine.Components.Scene.Mesh
                     JobPriority.Highest,
                     "Shaders", "Scene3D", "SkyboxCubemap.fs");
 
-                if (s_cubemapShader is null)
-                {
-                    // Inline fallback shader
-                    s_cubemapShader = new XRShader(EShaderType.Fragment, CubemapShaderSource);
-                }
+                // Inline fallback shader
+                s_cubemapShader ??= new XRShader(EShaderType.Fragment, CubemapShaderSource);
             }
             return s_cubemapShader;
         }
@@ -463,11 +444,8 @@ namespace XREngine.Components.Scene.Mesh
                     JobPriority.Highest,
                     "Shaders", "Scene3D", "SkyboxCubemapArray.fs");
 
-                if (s_cubemapArrayShader is null)
-                {
-                    // Inline fallback shader
-                    s_cubemapArrayShader = new XRShader(EShaderType.Fragment, CubemapArrayShaderSource);
-                }
+                // Inline fallback shader
+                s_cubemapArrayShader ??= new XRShader(EShaderType.Fragment, CubemapArrayShaderSource);
             }
             return s_cubemapArrayShader;
         }

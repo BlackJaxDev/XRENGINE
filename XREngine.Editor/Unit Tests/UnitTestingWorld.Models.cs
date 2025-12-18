@@ -8,6 +8,7 @@ using XREngine.Components;
 using XREngine.Components.Animation;
 using XREngine.Components.Movement;
 using XREngine.Components.Scene.Mesh;
+using XREngine.Components.Scene.Transforms;
 using XREngine.Data.Colors;
 using XREngine.Data.Components;
 using XREngine.Data.Core;
@@ -67,32 +68,68 @@ public static partial class UnitTestingWorld
             }
             if (Toggles.ImportStaticModel)
             {
-                var importedModelsNode = new SceneNode(rootNode) { Name = "Static Model Root" };
-                string path = Path.Combine(Engine.Assets.EngineAssetsPath, "Models", "Sponza", "sponza.obj");
+                Debug.Out($"[StaticModel] ImportStaticModel is enabled, creating parent node...");
+                var importedModelsNode = new SceneNode(rootNode) { Name = "Static Model Root", Layer = DefaultLayers.StaticIndex };
+                Debug.Out($"[StaticModel] Created 'Static Model Root' node, parent is '{rootNode.Name}'");
+                string path = Path.Combine(Engine.Assets.EngineAssetsPath, "Models", "Sponza2", "sponza.obj");
+                Debug.Out($"[StaticModel] Model path: {path}");
 
-                (SceneNode? rootNode, IReadOnlyCollection<XRMaterial> materials, IReadOnlyCollection<XRMesh> meshes) ImportStatic()
+                if (!File.Exists(path))
                 {
-                    if (!File.Exists(path))
-                    {
-                        Debug.LogWarning($"Static model file not found at {path}");
-                        return (null, [], []);
-                    }
+                    Debug.LogWarning($"[StaticModel] Static model file not found at {path}");
+                }
+                else
+                {
+                    Debug.Out($"[StaticModel] File exists, scheduling import job...");
 
-                    SceneNode? importedRoot = ModelImporter.Import(
+                    ModelImporter.DelMakeMaterialAction makeMaterialAction = Toggles.StaticModelMaterialMode switch
+                    {
+                        StaticModelMaterialMode.Deferred => ModelImporter.MakeMaterialDeferred,
+                        StaticModelMaterialMode.ForwardPlusTextured => ModelImporter.MakeMaterialForwardPlusTextured,
+                        StaticModelMaterialMode.ForwardPlusUberShader => ModelImporter.MakeMaterialForwardPlusUberShader,
+                        _ => ModelImporter.MakeMaterialDeferred,
+                    };
+
+                    // Use the job system for streaming mesh import.
+                    // The scene node tree is created first, then meshes are added one-by-one as they complete.
+                    var job = ModelImporter.ScheduleImportJob(
                         path,
                         Toggles.StaticModelImportFlags,
-                        out var materials,
-                        out var meshes,
-                        onCompleted: null,
-                        materialFactory: null,
+                        onFinished: result =>
+                        {
+                            Debug.Out($"[StaticModel] onFinished callback invoked");
+                            // Scene node tree is already built and parented by this point.
+                            // Meshes have been streaming in as they complete.
+                            if (result.RootNode != null)
+                            {
+                                Debug.Out($"[StaticModel] RootNode is not null: '{result.RootNode.Name}'");
+                                Debug.Out($"[StaticModel] RootNode parent: '{result.RootNode.Parent?.Name ?? "NULL"}'");
+                                Debug.Out($"[StaticModel] RootNode transform parent: '{result.RootNode.Transform.Parent?.SceneNode?.Name ?? "NULL"}'");
+                                Debug.Out($"[StaticModel] RootNode world position: {result.RootNode.Transform.WorldTranslation}");
+                                result.RootNode.GetTransformAs<Transform>()?.ApplyScale(new Vector3(0.01f));
+                                Debug.Out($"[StaticModel] Applied scale, new world position: {result.RootNode.Transform.WorldTranslation}");
+                                Debug.Out($"[StaticModel] Import completed: {result.Meshes.Count} meshes, {result.Materials.Count} materials");
+                            }
+                            else
+                            {
+                                Debug.LogWarning($"[StaticModel] onFinished: result.RootNode is NULL!");
+                            }
+                        },
+                        onError: ex =>
+                        {
+                            Debug.LogException(ex, $"[StaticModel] Failed to import static model: {path}");
+                        },
+                        onCanceled: () => Debug.LogWarning($"[StaticModel] Import was canceled: {path}"),
+                        onProgress: progress => Debug.Out($"[StaticModel] Progress: {progress:P0}"),
+                        cancellationToken: default,
                         parent: importedModelsNode,
                         scaleConversion: 1.0f,
-                        zUp: false);
-
-                    return (importedRoot, materials, meshes);
+                        zUp: false,
+                        materialFactory: null,
+                        makeMaterialAction: makeMaterialAction,
+                        layer: DefaultLayers.StaticIndex);
+                    Debug.Out($"[StaticModel] Import job scheduled, job ID: {job?.GetHashCode()}");
                 }
-
-                Task.Run(ImportStatic).ContinueWith(OnFinishedWorld);
             }
         }
 
@@ -108,14 +145,6 @@ public static partial class UnitTestingWorld
             skyboxComp.Intensity = 1.0f;
         }
 
-        private static void OnFinishedWorld(Task<(SceneNode? rootNode, IReadOnlyCollection<XRMaterial> materials, IReadOnlyCollection<XRMesh> meshes)> task)
-        {
-            if (task.IsCanceled || task.IsFaulted)
-                return;
-
-            (SceneNode? rootNode, IReadOnlyCollection<XRMaterial> materials, IReadOnlyCollection<XRMesh> meshes) = task.Result;
-            rootNode?.GetTransformAs<Transform>()?.ApplyScale(new Vector3(0.01f));
-        }
         private static void OnFinishedAvatarAsync(Task<(SceneNode? rootNode, IReadOnlyCollection<XRMaterial> materials, IReadOnlyCollection<XRMesh> meshes)> task)
         {
             if (task.IsCanceled || task.IsFaulted)

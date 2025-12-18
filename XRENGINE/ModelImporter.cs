@@ -11,6 +11,7 @@ using System.Numerics;
 using System.Threading;
 using System.Threading.Tasks;
 using XREngine.Components.Scene.Mesh;
+using XREngine.Components.Scene.Transforms;
 using XREngine.Data.Colors;
 using XREngine.Data.Rendering;
 using XREngine.Rendering;
@@ -58,24 +59,42 @@ namespace XREngine
             SceneNode? parent = null,
             float scaleConversion = 1.0f,
             bool zUp = false,
-            DelMaterialFactory? materialFactory = null)
+            DelMaterialFactory? materialFactory = null,
+            DelMakeMaterialAction? makeMaterialAction = null,
+            int layer = DefaultLayers.DynamicIndex)
         {
+            Debug.Out($"[ModelImporter] ScheduleImportJob called for: {path}");
+            Debug.Out($"[ModelImporter] Parent node: {parent?.Name ?? "NULL"}");
+            Debug.Out($"[ModelImporter] Thread: {Environment.CurrentManagedThreadId}");
+
             IEnumerable ImportRoutine()
             {
+                Debug.Out($"[ModelImporter] ImportRoutine started on thread: {Environment.CurrentManagedThreadId}");
                 // Run on the job system thread directly (no Task.Run). The job system already executes
                 // this enumerator on a worker thread.
-                var result = ImportInternal(path, options, parent, scaleConversion, zUp, onFinished, materialFactory, onProgress, cancellationToken);
+                var result = ImportInternal(path, options, parent, scaleConversion, zUp, onFinished, materialFactory, makeMaterialAction, onProgress, cancellationToken, layer);
+                Debug.Out($"[ModelImporter] ImportInternal completed, yielding result");
                 yield return new JobProgress(1f, result);
             }
 
-            return Engine.Jobs.Schedule(
+            var job = Engine.Jobs.Schedule(
                 ImportRoutine,
                 progress: onProgress,
-                completed: null,
-                error: onError,
-                canceled: onCanceled,
+                completed: () => Debug.Out($"[ModelImporter] Job completed callback"),
+                error: ex =>
+                {
+                    Debug.Out($"[ModelImporter] Job error callback: {ex.Message}");
+                    onError?.Invoke(ex);
+                },
+                canceled: () =>
+                {
+                    Debug.Out($"[ModelImporter] Job canceled callback");
+                    onCanceled?.Invoke();
+                },
                 progressWithPayload: null,
                 cancellationToken: cancellationToken);
+            Debug.Out($"[ModelImporter] Job scheduled");
+            return job;
         }
 
         private readonly ConcurrentDictionary<string, XRTexture2D> _texturePathCache = new();
@@ -178,22 +197,74 @@ namespace XREngine
             if (string.IsNullOrWhiteSpace(path))
                 return;
 
-            path = path.Replace("/", "\\");
-            bool rooted = Path.IsPathRooted(path);
-            if (!rooted)
+            path = ResolveTextureFilePath(modelFilePath, path);
+            textureList[i] = _texturePathCache.GetOrAdd(path, MakeTextureAction);
+        }
+
+        private readonly ConcurrentDictionary<string, bool> _missingTexturePathWarnings = new();
+
+        private string ResolveTextureFilePath(string modelFilePath, string rawPath)
+        {
+            static string Normalize(string p)
             {
-                string? dir = Path.GetDirectoryName(modelFilePath);
-                if (dir is not null)
-                    path = Path.Combine(dir, path);
+                p = p.Trim().Trim('"');
+                p = p.Replace("/", "\\");
+                while (p.StartsWith(".\\", StringComparison.Ordinal) || p.StartsWith("./", StringComparison.Ordinal))
+                    p = p.Substring(2);
+                return p;
             }
 
-            textureList[i] = _texturePathCache.GetOrAdd(path, MakeTextureAction);
+            string normalized = Normalize(rawPath);
+            if (string.IsNullOrWhiteSpace(normalized))
+                return rawPath;
+
+            // 1) If rooted, try it directly.
+            if (Path.IsPathRooted(normalized))
+            {
+                if (!File.Exists(normalized) && _missingTexturePathWarnings.TryAdd(normalized, true))
+                    Debug.LogWarning($"[ModelImporter] Texture path not found (rooted): '{normalized}' (from '{rawPath}')");
+                return normalized;
+            }
+
+            string? modelDir = Path.GetDirectoryName(modelFilePath);
+            if (string.IsNullOrWhiteSpace(modelDir))
+                return normalized;
+
+            // 2) Relative to model file.
+            string candidate = Path.Combine(modelDir, normalized);
+            if (File.Exists(candidate))
+                return candidate;
+
+            // 3) Common OBJ/MTL pattern: everything lives under a "textures" folder.
+            string fileName = Path.GetFileName(normalized);
+            if (!string.IsNullOrWhiteSpace(fileName))
+            {
+                string texturesDirCandidate = Path.Combine(modelDir, "textures", fileName);
+                if (File.Exists(texturesDirCandidate))
+                    return texturesDirCandidate;
+
+                string modelDirCandidate = Path.Combine(modelDir, fileName);
+                if (File.Exists(modelDirCandidate))
+                    return modelDirCandidate;
+            }
+
+            if (_missingTexturePathWarnings.TryAdd(candidate, true))
+            {
+                Debug.LogWarning($"[ModelImporter] Texture path not found: '{candidate}' (from '{rawPath}', model='{modelFilePath}')");
+                if (!string.IsNullOrWhiteSpace(fileName))
+                    Debug.Out($"[ModelImporter] Tried fallbacks: '{Path.Combine(modelDir, "textures", fileName)}', '{Path.Combine(modelDir, fileName)}'");
+            }
+
+            return candidate;
         }
 
         public Func<string, XRTexture2D> MakeTextureAction { get; set; } = TextureFactoryInternal;
 
         private static XRTexture2D TextureFactoryInternal(string path)
         {
+            Debug.Out($"[TextureFactory] Creating placeholder for: {path}");
+            Debug.Out($"[TextureFactory] File exists: {File.Exists(path)}");
+
             string textureName = Path.GetFileNameWithoutExtension(path);
             XRTexture2D placeholder = new()
             {
@@ -205,13 +276,13 @@ namespace XREngine
                 AlphaAsTransparency = true,
                 AutoGenerateMipmaps = true,
                 Resizable = true,
+                FilePath = path
             };
-
-            placeholder.FilePath = path;
 
             try
             {
                 placeholder.Mipmaps = [new Mipmap2D(new MagickImage(XRTexture2D.FillerImage))];
+                Debug.Out($"[TextureFactory] Assigned filler texture to placeholder for: {textureName}");
             }
             catch (Exception ex)
             {
@@ -231,9 +302,12 @@ namespace XREngine
                     tex.AutoGenerateMipmaps = true;
                     tex.Resizable = false;
                     tex.SizedInternalFormat = ESizedInternalFormat.Rgba8;
-                    Debug.Out($"Loaded texture: {path}");
+                    var mipmaps = tex.Mipmaps;
+                    uint w = mipmaps?.Length > 0 ? mipmaps[0].Width : 0;
+                    uint h = mipmaps?.Length > 0 ? mipmaps[0].Height : 0;
+                    Debug.Out($"[TextureFactory] LOADED texture: {path} ({w}x{h})");
                 },
-                onError: ex => Debug.LogException(ex, $"Texture import job failed for '{path}'."));
+                onError: ex => Debug.LogException(ex, $"[TextureFactory] Texture import job FAILED for '{path}'."));
 
             return placeholder;
         }
@@ -254,12 +328,17 @@ namespace XREngine
 
         private readonly DelMaterialFactory _materialFactory;
 
-        private readonly ConcurrentDictionary<string, TextureSlot> _textureInfoCache = [];
+        private readonly ConcurrentDictionary<(TextureType type, string pathLower), TextureSlot> _textureInfoCache = [];
         private readonly ConcurrentDictionary<string, MagickImage?> _textureCache = new();
         private readonly Dictionary<string, List<SceneNode>> _nodeCache = [];
 
         private readonly ConcurrentBag<XRMesh> _meshes = [];
         private readonly ConcurrentBag<XRMaterial> _materials = [];
+
+        /// <summary>
+        /// The layer index to assign to all imported SceneNodes (e.g., DefaultLayers.StaticIndex for static meshes).
+        /// </summary>
+        private int _importLayer = DefaultLayers.DynamicIndex;
 
         // Class to track original node transforms for later normalization
         private class NodeTransformInfo(Node assimpNode, SceneNode sceneNode, Vector3 scale, List<int> meshIndices)
@@ -287,7 +366,7 @@ namespace XREngine
             materials = importer._materials;
             meshes = importer._meshes;
             if (parent != null && node != null)
-                parent.Transform.AddChild(node.Transform, false, true);
+                parent.Transform.AddChild(node.Transform, false, EParentAssignmentMode.Immediate);
             return node;
         }
 
@@ -318,7 +397,8 @@ namespace XREngine
                 parent: parent,
                 scaleConversion: scaleConversion,
                 zUp: zUp,
-                materialFactory: materialFactory);
+                materialFactory: materialFactory,
+                makeMaterialAction: null);
 
             return tcs.Task;
         }
@@ -331,19 +411,345 @@ namespace XREngine
             bool zUp,
             Action<ModelImporterResult>? onFinished,
             DelMaterialFactory? materialFactory,
+            DelMakeMaterialAction? makeMaterialAction,
             Action<float>? onProgress,
-            CancellationToken cancellationToken)
+            CancellationToken cancellationToken,
+            int layer = DefaultLayers.DynamicIndex)
         {
+            Debug.Out($"[ModelImporter] ImportInternal started on thread: {Environment.CurrentManagedThreadId}");
+            Debug.Out($"[ModelImporter] Path: {path}, Parent: {parent?.Name ?? "NULL"}");
+
             using var importer = new ModelImporter(path, onCompleted: null, materialFactory);
+            if (makeMaterialAction is not null)
+                importer.MakeMaterialAction = makeMaterialAction;
+            importer._importLayer = layer;
+            Debug.Out($"[ModelImporter] Created importer, calling Import()...");
+
+            // Process meshes synchronously within this job thread.
+            // The job system already runs this on a worker thread, so we don't need nested async.
+            // This ensures _materials and _meshes are populated before we return.
             var node = importer.Import(options, true, true, scaleConversion, zUp, true, false, cancellationToken, onProgress);
+            Debug.Out($"[ModelImporter] Import() returned, node: {node?.Name ?? "NULL"}");
+            Debug.Out($"[ModelImporter] Meshes loaded: {importer._meshes.Count}, Materials loaded: {importer._materials.Count}");
+
             cancellationToken.ThrowIfCancellationRequested();
 
-            var result = new ModelImporterResult(node, importer._materials, importer._meshes);
+            // Add to parent using deferred mode - this queues the assignment to be processed
+            // during PostUpdate, avoiding any blocking on the render thread
             if (parent != null && node != null)
-                parent.Transform.AddChild(node.Transform, false, true);
+            {
+                Debug.Out($"[ModelImporter] Queueing AddChild (deferred): parent='{parent.Name}', child='{node.Name}'");
+                parent.Transform.AddChild(node.Transform, false, EParentAssignmentMode.Deferred);
+                Debug.Out($"[ModelImporter] AddChild queued for PostUpdate processing");
+            }
+            else
+            {
+                Debug.Out($"[ModelImporter] Skipping AddChild: parent={parent != null}, node={node != null}");
+            }
 
+            var result = new ModelImporterResult(node, importer._materials, importer._meshes);
+            Debug.Out($"[ModelImporter] Invoking onFinished callback with {result.Meshes.Count} meshes, {result.Materials.Count} materials");
             onFinished?.Invoke(result);
+            Debug.Out($"[ModelImporter] ImportInternal completed");
             return result;
+        }
+
+        private static readonly ConcurrentDictionary<(string path, string samplerName), XRTexture2D> _uberSamplerTextureCache = new();
+
+        private static XRTexture2D GetOrCreateUberSamplerTexture(string filePath, string samplerName)
+        {
+            return _uberSamplerTextureCache.GetOrAdd((filePath, samplerName), static key =>
+            {
+                var tex = new XRTexture2D
+                {
+                    FilePath = key.path,
+                    Name = Path.GetFileNameWithoutExtension(key.path),
+                    SamplerName = key.samplerName,
+                    MagFilter = ETexMagFilter.Linear,
+                    MinFilter = ETexMinFilter.Linear,
+                    UWrap = ETexWrapMode.Repeat,
+                    VWrap = ETexWrapMode.Repeat,
+                    AlphaAsTransparency = true,
+                    AutoGenerateMipmaps = true,
+                    Resizable = true,
+                };
+
+                try
+                {
+                    tex.Mipmaps = [new Mipmap2D(new MagickImage(XRTexture2D.FillerImage))];
+                }
+                catch (Exception ex)
+                {
+                    Debug.LogWarning($"Failed to assign filler texture for '{key.path}'. {ex.Message}");
+                }
+
+                XRTexture2D.ScheduleLoadJob(
+                    key.path,
+                    tex,
+                    onFinished: _ =>
+                    {
+                        tex.MagFilter = ETexMagFilter.Linear;
+                        tex.MinFilter = ETexMinFilter.Linear;
+                        tex.UWrap = ETexWrapMode.Repeat;
+                        tex.VWrap = ETexWrapMode.Repeat;
+                        tex.AlphaAsTransparency = true;
+                        tex.AutoGenerateMipmaps = true;
+                        tex.Resizable = false;
+                        tex.SizedInternalFormat = ESizedInternalFormat.Rgba8;
+                    },
+                    onError: ex => Debug.LogException(ex, $"Uber sampler texture import job failed for '{key.path}'."));
+
+                return tex;
+            });
+        }
+
+        public static void MakeMaterialDeferred(XRMaterial mat, XRTexture[] textureList, List<TextureSlot> textures, string name)
+        {
+            Debug.Out($"[MakeMaterialDeferred] Material '{name}' has {textures.Count} texture slots, {textureList.Length} textures loaded");
+            for (int i = 0; i < textures.Count; i++)
+            {
+                var slot = textures[i];
+                var tex = i < textureList.Length ? textureList[i] : null;
+                Debug.Out($"[MakeMaterialDeferred]   Slot[{i}]: Type={slot.TextureType}, Path='{slot.FilePath}', Loaded={(tex != null ? tex.Name : "NULL")}");
+            }
+
+            bool transp = textures.Any(x => (x.Flags & 0x2) != 0 || x.TextureType == TextureType.Opacity);
+            bool hasNormal = textures.Any(x => x.TextureType == TextureType.Normals || x.TextureType == TextureType.Height);
+            bool hasAnyTexture = textureList.Length > 0;
+
+            int diffuseIndex = textures.FindIndex(x => x.TextureType == TextureType.Diffuse || x.TextureType == TextureType.BaseColor);
+            Debug.Out($"[MakeMaterialDeferred] Initial diffuseIndex from Diffuse/BaseColor search: {diffuseIndex}");
+            if (diffuseIndex < 0)
+            {
+                diffuseIndex = Array.FindIndex(textureList, t => t is not null);
+                Debug.Out($"[MakeMaterialDeferred] Fallback diffuseIndex (first non-null): {diffuseIndex}");
+            }
+            if (diffuseIndex < 0)
+                diffuseIndex = 0;
+
+            int normalIndex = textures.FindIndex(x => x.TextureType == TextureType.Normals || x.TextureType == TextureType.Height);
+            Debug.Out($"[MakeMaterialDeferred] normalIndex: {normalIndex}");
+
+            XRTexture? diffuse = diffuseIndex >= 0 && diffuseIndex < textureList.Length ? textureList[diffuseIndex] : null;
+            XRTexture? normal = normalIndex >= 0 && normalIndex < textureList.Length ? textureList[normalIndex] : null;
+            Debug.Out($"[MakeMaterialDeferred] Selected diffuse: {diffuse?.Name ?? "NULL"} (index {diffuseIndex}), normal: {normal?.Name ?? "NULL"} (index {normalIndex})");
+
+            mat.Shaders.Clear();
+
+            if (hasAnyTexture)
+            {
+                if (transp || textureList.Any(x => x is not null && x.HasAlphaChannel))
+                {
+                    transp = true;
+                    // Ensure Texture0 is the expected albedo for forward sampling.
+                    mat.Textures = [diffuse];
+                    mat.Shaders.Add(ShaderHelper.UnlitTextureFragForward()!);
+                    mat.RenderPass = (int)EDefaultRenderPass.TransparentForward;
+                }
+                else
+                {
+                    if (hasNormal && normal is not null)
+                    {
+                        // Deferred normal shader expects Texture0=albedo, Texture1=normal.
+                        mat.Textures = [diffuse, normal];
+                        mat.Shaders.Add(ShaderHelper.LitTextureNormalFragDeferred());
+                    }
+                    else
+                    {
+                        mat.Textures = [diffuse];
+                        mat.Shaders.Add(ShaderHelper.LitTextureFragDeferred()!);
+                    }
+                    mat.Parameters =
+                    [
+                        new ShaderFloat(1.0f, "Opacity"),
+                        new ShaderFloat(1.0f, "Specular"),
+                        new ShaderFloat(0.9f, "Roughness"),
+                        new ShaderFloat(0.0f, "Metallic"),
+                        new ShaderFloat(1.0f, "IndexOfRefraction"),
+                    ];
+                    mat.RenderPass = (int)EDefaultRenderPass.OpaqueDeferred;
+                }
+            }
+            else
+            {
+                mat.Shaders.Add(ShaderHelper.LitColorFragDeferred()!);
+                mat.Textures = [];
+                mat.Parameters =
+                [
+                    new ShaderVector3(ColorF3.Magenta, "BaseColor"),
+                    new ShaderFloat(1.0f, "Opacity"),
+                    new ShaderFloat(1.0f, "Specular"),
+                    new ShaderFloat(1.0f, "Roughness"),
+                    new ShaderFloat(0.0f, "Metallic"),
+                    new ShaderFloat(1.0f, "IndexOfRefraction"),
+                ];
+                mat.RenderPass = (int)EDefaultRenderPass.OpaqueDeferred;
+            }
+
+            mat.Name = name;
+            mat.RenderOptions = new RenderingParameters()
+            {
+                CullMode = ECullMode.Back,
+                DepthTest = new DepthTest()
+                {
+                    UpdateDepth = true,
+                    Enabled = ERenderParamUsage.Enabled,
+                    Function = EComparison.Less,
+                },
+                BlendModeAllDrawBuffers = transp ? BlendMode.EnabledTransparent() : BlendMode.Disabled(),
+            };
+        }
+
+        public static void MakeMaterialForwardPlusTextured(XRMaterial mat, XRTexture[] textureList, List<TextureSlot> textures, string name)
+        {
+            bool transp = textures.Any(x => (x.Flags & 0x2) != 0 || x.TextureType == TextureType.Opacity);
+
+            int diffuseIndex = textures.FindIndex(x => x.TextureType == TextureType.Diffuse || x.TextureType == TextureType.BaseColor);
+            if (diffuseIndex < 0)
+                diffuseIndex = Array.FindIndex(textureList, t => t is not null);
+            if (diffuseIndex < 0)
+                diffuseIndex = 0;
+
+            int normalIndex = textures.FindIndex(x => x.TextureType == TextureType.Normals || x.TextureType == TextureType.Height);
+
+            XRTexture? diffuse = diffuseIndex >= 0 && diffuseIndex < textureList.Length ? textureList[diffuseIndex] : null;
+            XRTexture? normal = normalIndex >= 0 && normalIndex < textureList.Length ? textureList[normalIndex] : null;
+
+            // Force a deterministic texture layout for the shader:
+            // Texture0 = diffuse, Texture1 = normal (optional).
+            if (normal is not null)
+                mat.Textures = [diffuse, normal];
+            else
+                mat.Textures = [diffuse];
+
+            mat.Shaders.Clear();
+
+            if (diffuse is not null)
+            {
+                mat.Shaders.Add(normal is not null ? ShaderHelper.LitTextureNormalFragForward() : ShaderHelper.LitTextureFragForward());
+                mat.Parameters =
+                [
+                    new ShaderFloat(1.0f, "MatSpecularIntensity"),
+                    new ShaderFloat(32.0f, "MatShininess"),
+                ];
+                if (transp || diffuse.HasAlphaChannel)
+                {
+                    transp = true;
+                    mat.RenderPass = (int)EDefaultRenderPass.TransparentForward;
+                }
+                else
+                {
+                    mat.RenderPass = (int)EDefaultRenderPass.OpaqueForward;
+                }
+            }
+            else
+            {
+                mat.Shaders.Add(ShaderHelper.LitColorFragForward());
+                mat.Parameters =
+                [
+                    new ShaderVector4(new Vector4(1, 0, 1, 1), "MatColor"),
+                    new ShaderFloat(1.0f, "MatSpecularIntensity"),
+                    new ShaderFloat(32.0f, "MatShininess"),
+                ];
+                mat.RenderPass = (int)EDefaultRenderPass.OpaqueForward;
+            }
+
+            mat.Name = name;
+            mat.RenderOptions = new RenderingParameters()
+            {
+                CullMode = ECullMode.Back,
+                DepthTest = new DepthTest()
+                {
+                    UpdateDepth = true,
+                    Enabled = ERenderParamUsage.Enabled,
+                    Function = EComparison.Less,
+                },
+                BlendModeAllDrawBuffers = transp ? BlendMode.EnabledTransparent() : BlendMode.Disabled(),
+                RequiredEngineUniforms = EUniformRequirements.Camera | EUniformRequirements.Lights,
+            };
+        }
+
+        public static void MakeMaterialForwardPlusUberShader(XRMaterial mat, XRTexture[] textureList, List<TextureSlot> textures, string name)
+        {
+            int diffuseIndex = textures.FindIndex(x => x.TextureType == TextureType.Diffuse || x.TextureType == TextureType.BaseColor);
+            if (diffuseIndex < 0)
+                diffuseIndex = Array.FindIndex(textureList, t => t is not null);
+            if (diffuseIndex < 0)
+                diffuseIndex = 0;
+
+            int normalIndex = textures.FindIndex(x => x.TextureType == TextureType.Normals || x.TextureType == TextureType.Height);
+
+            XRTexture? diffuseSrc = diffuseIndex >= 0 && diffuseIndex < textureList.Length ? textureList[diffuseIndex] : null;
+            XRTexture? normalSrc = normalIndex >= 0 && normalIndex < textureList.Length ? textureList[normalIndex] : null;
+
+            string? diffusePath = (diffuseSrc as XRTexture2D)?.FilePath;
+            string? normalPath = (normalSrc as XRTexture2D)?.FilePath;
+
+            // Always bind something for both samplers so the Uber shader has valid bindings.
+            XRTexture2D? main = diffusePath is not null ? GetOrCreateUberSamplerTexture(diffusePath, "_MainTex") : null;
+            XRTexture2D? bump = null;
+            float bumpScale = 0.0f;
+            if (normalPath is not null)
+            {
+                bump = GetOrCreateUberSamplerTexture(normalPath, "_BumpMap");
+                bumpScale = 1.0f;
+            }
+            else if (diffusePath is not null)
+            {
+                bump = GetOrCreateUberSamplerTexture(diffusePath, "_BumpMap");
+            }
+
+            mat.Textures = [main, bump];
+
+            XRShader vert = ShaderHelper.LoadEngineShader(Path.Combine("Uber", "UberShader.vert"));
+            XRShader frag = ShaderHelper.LoadEngineShader(Path.Combine("Uber", "UberShader.frag"));
+
+            mat.Shaders.Clear();
+            mat.Shaders.Add(vert);
+            mat.Shaders.Add(frag);
+
+            mat.Parameters =
+            [
+                new ShaderVector4(new Vector4(1, 1, 1, 1), "_Color"),
+                new ShaderVector4(new Vector4(1, 1, 0, 0), "_MainTex_ST"),
+                new ShaderVector2(Vector2.Zero, "_MainTexPan"),
+                new ShaderInt(0, "_MainTexUV"),
+
+                new ShaderVector4(new Vector4(1, 1, 0, 0), "_BumpMap_ST"),
+                new ShaderVector2(Vector2.Zero, "_BumpMapPan"),
+                new ShaderInt(0, "_BumpMapUV"),
+                new ShaderFloat(bumpScale, "_BumpScale"),
+
+                new ShaderFloat(1.0f, "_ShadingEnabled"),
+                new ShaderInt(6, "_LightingMode"),
+                new ShaderVector3(new Vector3(1, 1, 1), "_LightingShadowColor"),
+                new ShaderFloat(1.0f, "_ShadowStrength"),
+                new ShaderFloat(0.0f, "_LightingMinLightBrightness"),
+                new ShaderFloat(0.0f, "_LightingMonochromatic"),
+                new ShaderFloat(0.0f, "_LightingCapEnabled"),
+                new ShaderFloat(10.0f, "_LightingCap"),
+
+                new ShaderInt(0, "_MainAlphaMaskMode"),
+                new ShaderFloat(0.0f, "_AlphaMod"),
+                new ShaderFloat(1.0f, "_AlphaForceOpaque"),
+                new ShaderFloat(0.5f, "_Cutoff"),
+                new ShaderInt(0, "_Mode"),
+            ];
+
+            mat.RenderPass = (int)EDefaultRenderPass.OpaqueForward;
+            mat.Name = name;
+            mat.RenderOptions = new RenderingParameters()
+            {
+                CullMode = ECullMode.Back,
+                DepthTest = new DepthTest()
+                {
+                    UpdateDepth = true,
+                    Enabled = ERenderParamUsage.Enabled,
+                    Function = EComparison.Less,
+                },
+                BlendModeAllDrawBuffers = BlendMode.Disabled(),
+                RequiredEngineUniforms = EUniformRequirements.Camera | EUniformRequirements.Lights,
+            };
         }
 
         private readonly List<Func<IEnumerable>> _meshProcessRoutines = [];
@@ -361,32 +767,49 @@ namespace XREngine
             CancellationToken cancellationToken = default,
             Action<float>? onProgress = null)
         {
+            Debug.Out($"[ModelImporter.Import] Starting import of: {SourceFilePath}");
+            Debug.Out($"[ModelImporter.Import] processMeshesAsynchronously param: {processMeshesAsynchronously}");
+
             SetAssimpConfig(preservePivots, scaleConversion, zUp, multiThread);
 
             AScene scene;
             using (Engine.Profiler.Start($"Assimp ImportFile: {SourceFilePath} with options: {options}"))
+            {
+                Debug.Out($"[ModelImporter.Import] Calling Assimp ImportFile...");
                 scene = _assimp.ImportFile(SourceFilePath, options);
+            }
 
             if (scene is null || scene.SceneFlags == SceneFlags.Incomplete || scene.RootNode is null)
+            {
+                Debug.Out($"[ModelImporter.Import] Assimp returned null/incomplete scene! scene={scene != null}, flags={scene?.SceneFlags}, rootNode={scene?.RootNode != null}");
                 return null;
+            }
+
+            Debug.Out($"[ModelImporter.Import] Assimp loaded: {scene.MeshCount} meshes, {scene.MaterialCount} materials, {scene.RootNode.ChildCount} root children");
 
             cancellationToken.ThrowIfCancellationRequested();
 
             _meshProcessRoutines.Clear();
             _meshFinalizeActions.Clear();
             bool processMeshesAsync = processMeshesAsynchronously ?? Engine.Rendering.Settings.ProcessMeshImportsAsynchronously;
+            Debug.Out($"[ModelImporter.Import] processMeshesAsync resolved to: {processMeshesAsync}");
 
             SceneNode rootNode;
             using (Engine.Profiler.Start($"Assemble model hierarchy"))
             {
-                rootNode = new(Path.GetFileNameWithoutExtension(SourceFilePath));
+                Debug.Out($"[ModelImporter.Import] Creating scene node hierarchy...");
+                rootNode = new(Path.GetFileNameWithoutExtension(SourceFilePath)) { Layer = _importLayer };
                 _nodeTransforms.Clear();
                 ProcessNode(true, scene.RootNode, scene, rootNode, null, Matrix4x4.Identity, removeAssimpFBXNodes, null, cancellationToken);
+                Debug.Out($"[ModelImporter.Import] ProcessNode complete, {_nodeTransforms.Count} nodes processed");
                 NormalizeNodeScales(scene, rootNode, cancellationToken, processMeshesAsync);
+                Debug.Out($"[ModelImporter.Import] NormalizeNodeScales complete, {_meshProcessRoutines.Count} mesh routines queued");
             }
 
+            Debug.Out($"[ModelImporter.Import] Starting mesh processing (async={processMeshesAsync})...");
             void meshProcessAction() => ProcessMeshesOnJobThread(onProgress, cancellationToken);
             RunMeshProcessing(meshProcessAction, processMeshesAsync, cancellationToken);
+            Debug.Out($"[ModelImporter.Import] RunMeshProcessing returned, returning rootNode: '{rootNode.Name}'");
 
             return rootNode;
         }
@@ -423,9 +846,13 @@ namespace XREngine
 
         private void RunMeshProcessing(Action meshProcessAction, bool processAsynchronously, CancellationToken cancellationToken)
         {
+            Debug.Out($"[ModelImporter] RunMeshProcessing: async={processAsynchronously}, routines={_meshProcessRoutines.Count}");
+
             if (!processAsynchronously)
             {
+                Debug.Out($"[ModelImporter] Running mesh processing synchronously...");
                 meshProcessAction();
+                Debug.Out($"[ModelImporter] Sync mesh processing complete, invoking _onCompleted");
                 _onCompleted?.Invoke();
                 return;
             }
@@ -435,9 +862,11 @@ namespace XREngine
             int total = _meshProcessRoutines.Count;
             if (total <= 0)
             {
+                Debug.Out($"[ModelImporter] No mesh routines to process, invoking _onCompleted");
                 _onCompleted?.Invoke();
                 return;
             }
+            Debug.Out($"[ModelImporter] Scheduling {total} mesh jobs asynchronously...");
 
             int remaining = total;
             int faulted = 0;
@@ -660,6 +1089,7 @@ namespace XREngine
                 localTransform *= fbxMatrixParent.Value;
 
             SceneNode sceneNode = new(parentSceneNode, name);
+            sceneNode.Layer = _importLayer;
             var tfm = sceneNode.GetTransformAs<Transform>(true)!;
             tfm.DeriveLocalMatrix(localTransform);
             tfm.RecalculateMatrices(true, false);
@@ -716,7 +1146,9 @@ namespace XREngine
             {
                 cancellationToken.ThrowIfCancellationRequested();
 
+                Debug.Out($"[ModelImporter] MeshRoutine started for mesh index {meshIndex}");
                 Mesh mesh = scene.Meshes[meshIndex];
+                Debug.Out($"[ModelImporter] Processing mesh: '{mesh.Name}' (verts={mesh.VertexCount}, faces={mesh.FaceCount})");
                 (XRMesh xrMesh, XRMaterial xrMaterial) = ProcessSubMesh(mesh, scene, dataTransform, cancellationToken);
                 _meshes.Add(xrMesh);
                 _materials.Add(xrMaterial);
@@ -728,10 +1160,17 @@ namespace XREngine
                 };
 
                 if (pending != null)
+                {
+                    Debug.Out($"[ModelImporter] Adding mesh '{mesh.Name}' to pending dict (deferred add)");
                     pending[meshIndex] = subMesh;
+                }
                 else
+                {
+                    Debug.Out($"[ModelImporter] Adding mesh '{mesh.Name}' directly to model");
                     model.Meshes.Add(subMesh);
+                }
 
+                Debug.Out($"[ModelImporter] MeshRoutine completed for '{mesh.Name}'");
                 yield break;
             }
         }
@@ -834,20 +1273,16 @@ namespace XREngine
                     continue;
 
                 string path = slot.FilePath;
-                bool skip = false;
-                foreach (var pair in _textureInfoCache)
+                string keyPath = path?.ToLowerInvariant() ?? string.Empty;
+                var key = (type, keyPath);
+                if (_textureInfoCache.TryGetValue(key, out var cached))
                 {
-                    if (!string.Equals(pair.Key, path, StringComparison.OrdinalIgnoreCase))
-                        continue;
-
-                    textures.Add(pair.Value);
-                    skip = true;
-                    break;
+                    textures.Add(cached);
                 }
-                if (!skip)
+                else
                 {
                     textures.Add(slot);
-                    _textureInfoCache.TryAdd(path, slot);
+                    _textureInfoCache.TryAdd(key, slot);
                 }
             }
             return textures;

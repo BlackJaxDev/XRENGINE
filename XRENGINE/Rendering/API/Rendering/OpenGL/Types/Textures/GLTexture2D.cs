@@ -104,7 +104,8 @@ namespace XREngine.Rendering.OpenGL
                     // Guard against 0-sized textures which cause GL_INVALID_VALUE
                     uint w = Math.Max(1u, Data.Width);
                     uint h = Math.Max(1u, Data.Height);
-                    uint levels = (uint)Math.Max(1, Data.SmallestMipmapLevel);
+                    // SmallestMipmapLevel is the smallest mip *index* (0..N), so storage needs N+1 levels.
+                    uint levels = (uint)Math.Max(1, Data.SmallestMipmapLevel + 1);
                     
                     if (Data.MultiSample)
                         Api.TextureStorage2DMultisample(BindingId, Data.MultiSampleCount, ToGLEnum(Data.SizedInternalFormat), w, h, Data.FixedSampleLocations);

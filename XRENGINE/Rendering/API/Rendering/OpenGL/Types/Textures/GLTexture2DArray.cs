@@ -296,7 +296,7 @@ namespace XREngine.Rendering.OpenGL
                 var desiredInternalFormat = Data.SizedInternalFormat;
                 if (desiredInternalFormat != firstSource.SizedInternalFormat)
                 {
-                    Debug.LogWarning($"Adjusting texture array internal format from {desiredInternalFormat} to {firstSource.SizedInternalFormat} to match source textures.");
+                    Debug.Out($"Adjusting texture array '{Data.Name}' internal format from {desiredInternalFormat} to {firstSource.SizedInternalFormat} to match source textures.");
                     desiredInternalFormat = firstSource.SizedInternalFormat;
                     Data.SizedInternalFormat = desiredInternalFormat;
                 }
@@ -350,22 +350,24 @@ namespace XREngine.Rendering.OpenGL
                         break;
                     }
 
-                            if (tex.SizedInternalFormat != Data.SizedInternalFormat)
-                            {
-                                Debug.LogWarning($"Skipping copy into texture array layer {layer} because source internal format {tex.SizedInternalFormat} != target {Data.SizedInternalFormat}.");
-                                continue;
-                            }
+                    if (tex.SizedInternalFormat != Data.SizedInternalFormat)
+                    {
+                        Debug.LogWarning($"Skipping copy into texture array layer {layer} because source internal format {tex.SizedInternalFormat} != target {Data.SizedInternalFormat}.");
+                        continue;
+                    }
 
-                            if (tex.Width != targetWidth || tex.Height != targetHeight)
-                            {
-                                Debug.LogWarning($"Skipping copy into texture array layer {layer} because source size {tex.Width}x{tex.Height} != target {targetWidth}x{targetHeight}.");
-                                continue;
-                            }
+                    if (tex.Width != targetWidth || tex.Height != targetHeight)
+                    {
+                        Debug.LogWarning($"Skipping copy into texture array layer {layer} because source size {tex.Width}x{tex.Height} != target {targetWidth}x{targetHeight}.");
+                        continue;
+                    }
+
                     if (srcId == InvalidBindingId)
                         continue;
 
                     // Copy all mip levels from the source 2D texture to this layer of the array
                     int numMips = Math.Max(1, tex.SmallestMipmapLevel + 1);
+                    numMips = Math.Min(numMips, (int)targetLevels);
                     for (int mip = 0; mip < numMips; ++mip)
                     {
                         uint mipWidth = Math.Max(1u, tex.Width >> mip);

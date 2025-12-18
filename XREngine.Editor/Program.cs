@@ -137,7 +137,7 @@ internal class Program
             {
                 TargetFramesPerSecond = renderHz,
                 VSync = EVSyncMode.Off,
-                UseDebugOpaquePipeline = UnitTestingWorld.Toggles.ForceDebugOpaquePipeline,
+                UseDebugOpaquePipeline = ResolveDebugOpaquePipelineSetting(),
                 GPURenderDispatch = UnitTestingWorld.Toggles.GPURenderDispatch,
             },
             TargetUpdatesPerSecond = updateHz,
@@ -167,5 +167,28 @@ internal class Program
             }
         }
         return settings;
+    }
+
+    private static bool ResolveDebugOpaquePipelineSetting()
+    {
+        bool useDebug = UnitTestingWorld.Toggles.ForceDebugOpaquePipeline;
+
+        // The debug opaque pipeline is forward-only and does not execute the default deferred/forward+ pass chain.
+        // If the unit test is requesting static model material modes that rely on DefaultRenderPipeline passes,
+        // force the default pipeline so results are visible and comparable.
+        if (UnitTestingWorld.Toggles.ImportStaticModel)
+        {
+            var mode = UnitTestingWorld.Toggles.StaticModelMaterialMode;
+            if (mode == UnitTestingWorld.StaticModelMaterialMode.Deferred ||
+                mode == UnitTestingWorld.StaticModelMaterialMode.ForwardPlusTextured ||
+                mode == UnitTestingWorld.StaticModelMaterialMode.ForwardPlusUberShader)
+            {
+                if (useDebug)
+                    Debug.Out($"[UnitTestingWorld] ForceDebugOpaquePipeline disabled because StaticModelMaterialMode={mode} requires DefaultRenderPipeline.");
+                useDebug = false;
+            }
+        }
+
+        return useDebug;
     }
 }

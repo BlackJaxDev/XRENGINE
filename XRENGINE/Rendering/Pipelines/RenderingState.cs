@@ -213,6 +213,29 @@ public sealed partial class XRRenderPipelineInstance
             }
         }
 
+        /// <summary>
+        /// When true, shader pipeline mode is forced regardless of global AllowShaderPipelines setting.
+        /// This ensures that material overrides (like motion vectors material) work correctly even when
+        /// the global setting disables shader pipelines, since combined shader mode ignores overrides.
+        /// </summary>
+        public bool ForceShaderPipelines { get; private set; }
+        private int _forceShaderPipelinesDepth;
+        public StateObject PushForceShaderPipelines()
+        {
+            _forceShaderPipelinesDepth++;
+            ForceShaderPipelines = true;
+            return StateObject.New(PopForceShaderPipelines);
+        }
+        private void PopForceShaderPipelines()
+        {
+            _forceShaderPipelinesDepth--;
+            if (_forceShaderPipelinesDepth <= 0)
+            {
+                _forceShaderPipelinesDepth = 0;
+                ForceShaderPipelines = false;
+            }
+        }
+
         public IReadOnlyCollection<XRViewport?> ViewportStack => _renderingViewports;
 
         public XRViewport? RenderingViewport

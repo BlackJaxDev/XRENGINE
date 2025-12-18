@@ -20,6 +20,7 @@ using XREngine.Rendering.Commands;
 using XREngine.Rendering.Info;
 using XREngine.Rendering.Picking;
 using XREngine.Rendering.Physics.Physx;
+using XREngine.Rendering.Models.Materials;
 using XREngine.Scene;
 using XREngine.Scene.Transforms;
 using System.ComponentModel;
@@ -51,10 +52,21 @@ public partial class EditorFlyingCameraPawnComponent : FlyingCameraPawnComponent
     {
         _postRenderRC = new((int)EDefaultRenderPass.PostRender, PostRender);
         _renderHighlightRC = new((int)EDefaultRenderPass.OpaqueForward, RenderHighlight);
+
+        _hoverStencilWriteRC = new RenderCommandMesh3D((int)EDefaultRenderPass.OnTopForward)
+        {
+            Enabled = false,
+            MaterialOverride = GetOrCreateHoverStencilWriteMaterial(),
+            WorldMatrix = Matrix4x4.Identity,
+            WorldMatrixIsModelMatrix = true,
+            Instances = 1,
+        };
+
         RenderedObjects =
         [
             RenderInfo3D.New(this, _postRenderRC),
-            RenderInfo3D.New(this, _renderHighlightRC)
+            RenderInfo3D.New(this, _renderHighlightRC),
+            RenderInfo3D.New(this, _hoverStencilWriteRC)
         ];
         Selection.SelectionChanged += Selection_SelectionChanged;
     }
@@ -285,6 +297,58 @@ public partial class EditorFlyingCameraPawnComponent : FlyingCameraPawnComponent
 
     private readonly RenderCommandMethod3D _postRenderRC;
     private readonly RenderCommandMethod3D _renderHighlightRC;
+    private readonly RenderCommandMesh3D _hoverStencilWriteRC;
+
+    private static XRMaterial? s_hoverStencilWriteMaterial;
+
+    private static XRMaterial GetOrCreateHoverStencilWriteMaterial()
+    {
+        if (s_hoverStencilWriteMaterial is not null)
+            return s_hoverStencilWriteMaterial;
+
+        // Writes highlight bit (bit 0) into the shared depth-stencil buffer.
+        // The scene post-process shader (Build/CommonAssets/Shaders/Scene3D/PostProcess.fs)
+        // samples StencilView and draws the outline.
+        XRMaterial mat = XRMaterial.CreateUnlitColorMaterialForward(ColorF4.Black);
+        mat.RenderPass = (int)EDefaultRenderPass.OnTopForward;
+
+        var options = new RenderingParameters();
+        options.RequiredEngineUniforms = EUniformRequirements.Camera;
+
+        // No color output; we only want to write to stencil.
+        options.WriteRed = false;
+        options.WriteGreen = false;
+        options.WriteBlue = false;
+        options.WriteAlpha = false;
+
+        // Respect scene depth so we only highlight visible surfaces.
+        options.DepthTest.Enabled = ERenderParamUsage.Enabled;
+        options.DepthTest.UpdateDepth = false;
+        options.DepthTest.Function = EComparison.Lequal;
+
+        options.StencilTest.Enabled = ERenderParamUsage.Enabled;
+        options.StencilTest.FrontFace.Function = EComparison.Always;
+        options.StencilTest.FrontFace.Reference = 1;
+        options.StencilTest.FrontFace.ReadMask = 0xFF;
+        options.StencilTest.FrontFace.WriteMask = 0xFF;
+        options.StencilTest.FrontFace.BothFailOp = EStencilOp.Keep;
+        // If depth fails (e.g. due to depth-preload or ordering), still mark stencil so outline is visible.
+        options.StencilTest.FrontFace.StencilPassDepthFailOp = EStencilOp.Replace;
+        options.StencilTest.FrontFace.BothPassOp = EStencilOp.Replace;
+
+        options.StencilTest.BackFace.Function = EComparison.Always;
+        options.StencilTest.BackFace.Reference = 1;
+        options.StencilTest.BackFace.ReadMask = 0xFF;
+        options.StencilTest.BackFace.WriteMask = 0xFF;
+        options.StencilTest.BackFace.BothFailOp = EStencilOp.Keep;
+        options.StencilTest.BackFace.StencilPassDepthFailOp = EStencilOp.Replace;
+        options.StencilTest.BackFace.BothPassOp = EStencilOp.Replace;
+
+        mat.RenderOptions = options;
+
+        s_hoverStencilWriteMaterial = mat;
+        return mat;
+    }
 
     [Browsable(false)]
     public RenderInfo[] RenderedObjects { get; }
@@ -367,6 +431,48 @@ public partial class EditorFlyingCameraPawnComponent : FlyingCameraPawnComponent
     {
         base.Tick();
         ApplyInput(Viewport);
+        UpdateHoverStencilCommand();
+    }
+
+    private static int _debugStencilLogBudget = 50;
+
+    private void UpdateHoverStencilCommand()
+    {
+        // Only write hover stencil when picking is active and the cursor is over the viewport (not UI).
+        if (!AllowWorldPicking || IsHoveringUI())
+        {
+            _hoverStencilWriteRC.Enabled = false;
+            _hoverStencilWriteRC.Mesh = null;
+            return;
+        }
+
+        MeshPickResult? pick;
+        using (_raycastLock.EnterScope())
+            pick = _meshPickResult;
+
+        if (pick is null)
+        {
+            _hoverStencilWriteRC.Enabled = false;
+            _hoverStencilWriteRC.Mesh = null;
+            return;
+        }
+
+        var renderableMesh = pick.Value.Mesh;
+        var renderer = renderableMesh.CurrentLODRenderer;
+        if (renderer is null)
+        {
+            _hoverStencilWriteRC.Enabled = false;
+            _hoverStencilWriteRC.Mesh = null;
+            return;
+        }
+
+        _hoverStencilWriteRC.Mesh = renderer;
+        _hoverStencilWriteRC.WorldMatrix = renderableMesh.IsSkinned ? Matrix4x4.Identity : pick.Value.Component.Transform.RenderMatrix;
+        _hoverStencilWriteRC.MaterialOverride = GetOrCreateHoverStencilWriteMaterial();
+        _hoverStencilWriteRC.Enabled = true;
+
+        if (_debugStencilLogBudget-- > 0)
+            Debug.Out($"[HoverOutline] Enabled stencil write for mesh: {renderer.Mesh?.Name ?? "unknown"}, WorldMatrix: {_hoverStencilWriteRC.WorldMatrix.Translation}");
     }
 
     private void PostRender()
@@ -483,15 +589,25 @@ public partial class EditorFlyingCameraPawnComponent : FlyingCameraPawnComponent
 
     private void UpdateMeshHitVisualization(SortedDictionary<float, List<(RenderInfo3D item, object? data)>>? source = null)
     {
-        _facePickResult = null;
-        _meshHitPoint = null;
-        _edgePickResult = null;
-        _vertexPickResult = null;
-        _meshPickResult = null;
+        Triangle? facePickResult = null;
+        Vector3? meshHitPoint = null;
+        MeshEdgePickResult? edgePickResult = null;
+        MeshVertexPickResult? vertexPickResult = null;
+        MeshPickResult? meshPickResult = null;
 
         var results = source ?? _lastOctreePickResults;
-        if (results.Count ==0)
+        if (results.Count == 0)
+        {
+            using (_raycastLock.EnterScope())
+            {
+                _facePickResult = null;
+                _meshHitPoint = null;
+                _edgePickResult = null;
+                _vertexPickResult = null;
+                _meshPickResult = null;
+            }
             return;
+        }
 
         //We can be racing the async population of the dictionary. Acquire lock and copy the first list into a reusable buffer.
         //If modification sneaks in between enumerator creation and MoveNext, catch and bail (will be correct next frame).
@@ -533,29 +649,39 @@ public partial class EditorFlyingCameraPawnComponent : FlyingCameraPawnComponent
             switch (data)
             {
                 case MeshPickResult meshHit:
-                    _facePickResult = meshHit.WorldTriangle;
-                    _meshHitPoint = meshHit.HitPoint;
-                    _meshPickResult = meshHit;
-                    return;
+                    facePickResult = meshHit.WorldTriangle;
+                    meshHitPoint = meshHit.HitPoint;
+                    meshPickResult = meshHit;
+                    goto Done;
                 case MeshEdgePickResult edgeHit:
-                    _facePickResult = edgeHit.WorldTriangle;
-                    _meshHitPoint = edgeHit.ClosestPoint;
-                    _edgePickResult = edgeHit;
-                    _meshPickResult = edgeHit.FaceHit;
-                    return;
+                    facePickResult = edgeHit.WorldTriangle;
+                    meshHitPoint = edgeHit.ClosestPoint;
+                    edgePickResult = edgeHit;
+                    meshPickResult = edgeHit.FaceHit;
+                    goto Done;
                 case MeshVertexPickResult vertexHit:
-                    _facePickResult = vertexHit.WorldTriangle;
-                    _meshHitPoint = vertexHit.Position;
-                    _vertexPickResult = vertexHit;
-                    _meshPickResult = vertexHit.FaceHit;
-                    return;
+                    facePickResult = vertexHit.WorldTriangle;
+                    meshHitPoint = vertexHit.Position;
+                    vertexPickResult = vertexHit;
+                    meshPickResult = vertexHit.FaceHit;
+                    goto Done;
                 case Vector3 point:
-                    _meshHitPoint = point;
-                    return;
+                    meshHitPoint = point;
+                    goto Done;
                 case Triangle triangle:
-                    _facePickResult = triangle;
-                    return;
+                    facePickResult = triangle;
+                    goto Done;
             }
+        }
+
+    Done:
+        using (_raycastLock.EnterScope())
+        {
+            _facePickResult = facePickResult;
+            _meshHitPoint = meshHitPoint;
+            _edgePickResult = edgePickResult;
+            _vertexPickResult = vertexPickResult;
+            _meshPickResult = meshPickResult;
         }
     }
 

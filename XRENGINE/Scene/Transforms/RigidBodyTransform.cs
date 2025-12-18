@@ -259,7 +259,6 @@ namespace XREngine.Scene.Transforms
             private set => SetField(ref _lastRotation, value);
         }
 
-        private int _steppedLogCount = 0;
         public void OnPhysicsStepped()
         {
             if (RigidBody is null)
