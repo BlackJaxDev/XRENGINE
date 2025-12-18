@@ -124,7 +124,8 @@ namespace XREngine.Rendering.Pipelines.Commands
             _computeProgram!.Uniform("lightCount", lightCount);
 
             // Dispatch per-tile.
-            _computeProgram!.DispatchCompute((uint)tileCountX, (uint)tileCountY, 1);
+            // The forward pass reads these SSBOs immediately after, so we need a barrier.
+            _computeProgram!.DispatchCompute((uint)tileCountX, (uint)tileCountY, 1, EMemoryBarrierMask.ShaderStorage);
 
             // Publish state so forward materials can bind buffers for shading.
             Engine.Rendering.State.ForwardPlusLocalLightsBuffer = _localLightsBuffer;

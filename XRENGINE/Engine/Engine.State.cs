@@ -25,15 +25,45 @@ namespace XREngine
         /// </summary>
         public static bool IsPlaying => PlayMode.IsPlaying;
         
-        public static JobManager Jobs { get; private set; } = new JobManager();
+        private static JobManager? _jobs;
+        private static bool _jobsConfigured;
+        private static bool _jobsCreatedImplicitly;
+
+        public static JobManager Jobs
+        {
+            get
+            {
+                if (_jobs != null)
+                    return _jobs;
+
+                // If something touches Engine.Jobs before Engine.Initialize(), we still need
+                // a functional job system. Create the default instance, but we will avoid
+                // later recreation to keep a single instance alive.
+                _jobsCreatedImplicitly = true;
+                _jobsConfigured = false;
+                _jobs = new JobManager();
+                // NOTE: Don't call Debug.LogWarning here - it can trigger circular static init.
+                // The warning will be logged later in ConfigureJobManager if needed.
+                return _jobs;
+            }
+            private set => _jobs = value;
+        }
         public static int? JobThreadId { get; internal set; }
 
         internal static void ConfigureJobManager(GameStartupSettings startupSettings)
         {
-            var previous = Jobs;
+            if (_jobsConfigured)
+                return;
 
-            // Always recreate to apply new configuration; shut down old workers cleanly.
-            previous?.Shutdown();
+            // If the job manager was created implicitly (accessed before Initialize), we
+            // keep the single instance to honor "create once". Applying startup settings
+            // would require tearing down worker threads, which is exactly what we avoid.
+            if (_jobsCreatedImplicitly && _jobs != null)
+            {
+                Debug.LogWarning("JobManager was created before configuration; skipping reconfiguration to avoid recreation. Startup job settings will be ignored for this run.");
+                _jobsConfigured = true;
+                return;
+            }
 
             JobThreadId = null;
             Jobs = new JobManager(
@@ -41,6 +71,8 @@ namespace XREngine
                 startupSettings?.JobQueueLimit,
                 startupSettings?.JobQueueWarningThreshold,
                 startupSettings?.JobWorkerCap);
+
+            _jobsConfigured = true;
         }
 
         public static GameState LoadOrGenerateGameState(

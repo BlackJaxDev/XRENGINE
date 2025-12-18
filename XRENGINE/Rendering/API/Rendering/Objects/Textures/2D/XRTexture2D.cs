@@ -73,30 +73,67 @@ namespace XREngine.Rendering
             if (string.IsNullOrWhiteSpace(target.Name))
                 target.Name = Path.GetFileNameWithoutExtension(filePath);
 
+            // IMPORTANT: Do not rely on Engine.Jobs to *start* the disk load.
+            // The engine may recreate the JobManager during startup (ConfigureJobManager),
+            // which can cancel or drop queued jobs. We kick off the IO immediately on the
+            // thread pool and only use the job system as an optional tracker.
+            Task loadTask = Task.Run(() =>
+            {
+                try
+                {
+                    if (cancellationToken.IsCancellationRequested)
+                    {
+                        onCanceled?.Invoke();
+                        return;
+                    }
+
+                    Debug.Out($"[TextureLoadJob] Loading texture from disk: {filePath}");
+                    bool loadSuccess = target.Load3rdParty(filePath);
+                    Debug.Out($"[TextureLoadJob] Load3rdParty returned {loadSuccess} for: {filePath}");
+                    onProgress?.Invoke(0.5f);
+
+                    if (cancellationToken.IsCancellationRequested)
+                    {
+                        onCanceled?.Invoke();
+                        return;
+                    }
+
+                    // Schedule GPU upload but don't block on it - swap tasks may not run yet.
+                    ScheduleGpuUpload(target, cancellationToken, () =>
+                    {
+                        if (cancellationToken.IsCancellationRequested)
+                        {
+                            onCanceled?.Invoke();
+                            return;
+                        }
+
+                        onProgress?.Invoke(1.0f);
+                        onFinished?.Invoke(target);
+                    });
+                }
+                catch (OperationCanceledException)
+                {
+                    onCanceled?.Invoke();
+                }
+                catch (Exception ex)
+                {
+                    onError?.Invoke(ex);
+                }
+            }, cancellationToken);
+
             IEnumerable Routine()
             {
-                if (cancellationToken.IsCancellationRequested)
-                    yield break;
-
-                cancellationToken.ThrowIfCancellationRequested();
-                bool _ = target.Load3rdParty(filePath);
-                yield return new JobProgress(0.5f);
-
-                cancellationToken.ThrowIfCancellationRequested();
-                yield return UploadMipmapsViaPboAsync(target, cancellationToken);
-
-                if (!cancellationToken.IsCancellationRequested)
-                    onFinished?.Invoke(target);
+                yield return loadTask;
             }
 
             return Engine.Jobs.Schedule(
                 Routine(),
-                progress: onProgress,
+                progress: null,
                 completed: null,
-                error: onError,
-                canceled: onCanceled,
+                error: null,
+                canceled: null,
                 progressWithPayload: null,
-                cancellationToken: cancellationToken);
+                cancellationToken: CancellationToken.None);
         }
 
         public static EnumeratorJob SchedulePreviewJob(
@@ -117,13 +154,16 @@ namespace XREngine.Rendering
             if (string.IsNullOrWhiteSpace(target.Name))
                 target.Name = Path.GetFileNameWithoutExtension(filePath);
 
-            IEnumerable Routine()
+            Task previewTask = Task.Run(() =>
             {
-                if (cancellationToken.IsCancellationRequested)
-                    yield break;
-
-                Task previewTask = Task.Run(() =>
+                try
                 {
+                    if (cancellationToken.IsCancellationRequested)
+                    {
+                        onCanceled?.Invoke();
+                        return;
+                    }
+
                     bool hasPreview = false;
                     bool isAssetFile = HasAssetExtension(filePath);
                     bool looksLikeTextureAsset = isAssetFile && LooksLikeTextureAssetFile(filePath);
@@ -143,87 +183,104 @@ namespace XREngine.Rendering
                             AssignPlaceholderPreview(target);
                         }
                     }
-                }, cancellationToken);
 
-                yield return previewTask;
+                    onProgress?.Invoke(0.5f);
 
-                if (previewTask.IsCanceled || cancellationToken.IsCancellationRequested)
+                    if (cancellationToken.IsCancellationRequested)
+                    {
+                        onCanceled?.Invoke();
+                        return;
+                    }
+
+                    ScheduleGpuUpload(target, cancellationToken, () =>
+                    {
+                        if (cancellationToken.IsCancellationRequested)
+                        {
+                            onCanceled?.Invoke();
+                            return;
+                        }
+
+                        onProgress?.Invoke(1.0f);
+                        onFinished?.Invoke(target);
+                    });
+                }
+                catch (OperationCanceledException)
                 {
                     onCanceled?.Invoke();
-                    yield break;
                 }
-
-                if (previewTask.IsFaulted)
+                catch (Exception ex)
                 {
-                    Exception? exception = previewTask.Exception?.InnerException;
-                    exception ??= previewTask.Exception;
-                    exception ??= new InvalidOperationException($"Failed to load preview for '{filePath}'.");
-                    throw exception;
+                    onError?.Invoke(ex);
                 }
+            }, cancellationToken);
 
-                yield return new JobProgress(0.5f);
-
-                yield return UploadMipmapsViaPboAsync(target, cancellationToken);
-
-                if (!cancellationToken.IsCancellationRequested)
-                    onFinished?.Invoke(target);
+            IEnumerable Routine()
+            {
+                yield return previewTask;
             }
 
             return Engine.Jobs.Schedule(
                 Routine(),
-                progress: onProgress,
+                progress: null,
                 completed: null,
-                error: onError,
-                canceled: onCanceled,
+                error: null,
+                canceled: null,
                 progressWithPayload: null,
-                cancellationToken: cancellationToken);
+                cancellationToken: CancellationToken.None);
         }
 
-        private static Task UploadMipmapsViaPboAsync(XRTexture2D texture, CancellationToken cancellationToken)
+        /// <summary>
+        /// Schedules a GPU upload for the texture. The upload will happen on a GL-safe thread
+        /// (either immediately if on the render thread, or at the next swap point).
+        /// This does NOT block - the onCompleted callback is invoked when the upload finishes.
+        /// </summary>
+        private static void ScheduleGpuUpload(XRTexture2D texture, CancellationToken cancellationToken, Action? onCompleted = null)
         {
-            TaskCompletionSource<bool> tcs = new(TaskCreationOptions.RunContinuationsAsynchronously);
-
             void UploadAction()
             {
                 if (cancellationToken.IsCancellationRequested)
-                {
-                    tcs.TrySetCanceled(cancellationToken);
                     return;
-                }
 
                 try
                 {
                     texture.ShouldLoadDataFromInternalPBO = true;
 
                     var mipmaps = texture.Mipmaps;
+                    uint w = mipmaps?.Length > 0 ? mipmaps[0].Width : 0;
+                    uint h = mipmaps?.Length > 0 ? mipmaps[0].Height : 0;
+                    Debug.Out($"[UploadMipmaps] Starting upload for '{texture.Name}' ({w}x{h}), {mipmaps?.Length ?? 0} mipmaps, IsRenderThread={Engine.IsRenderThread}");
+
                     if (mipmaps is not null && mipmaps.Length > 0)
                     {
                         for (int i = 0; i < mipmaps.Length; ++i)
                         {
                             if (cancellationToken.IsCancellationRequested)
-                            {
-                                tcs.TrySetCanceled(cancellationToken);
                                 return;
-                            }
                             texture.LoadFromPBO(i);
                         }
                     }
 
                     texture.Generate();
                     texture.PushData();
+                    Debug.Out($"[UploadMipmaps] Completed upload for '{texture.Name}'");
 
-                    tcs.TrySetResult(true);
+                    onCompleted?.Invoke();
                 }
                 catch (Exception ex)
                 {
-                    tcs.TrySetException(ex);
+                    Debug.LogWarning($"[UploadMipmaps] Exception during upload for '{texture.Name}': {ex.Message}");
                 }
             }
 
-            if (!Engine.InvokeOnMainThread(UploadAction))
+            // GPU upload must happen on a thread that owns an active graphics context.
+            if (Engine.IsRenderThread)
+            {
                 UploadAction();
-
-            return tcs.Task;
+            }
+            else
+            {
+                Engine.EnqueueMainThreadTask(UploadAction);
+            }
         }
 
         private static bool HasAssetExtension(string filePath)
@@ -825,7 +882,12 @@ namespace XREngine.Rendering
                 {
                     if (_pbo == null)
                     {
-                        _pbo = new XRDataBuffer(EBufferTarget.PixelUnpackBuffer, true);
+                        _pbo = new XRDataBuffer(EBufferTarget.PixelUnpackBuffer, true)
+                        {
+                            // Must specify Write access for mapping to copy mipmap data to GPU
+                            RangeFlags = EBufferMapRangeFlags.Write,
+                            Usage = EBufferUsage.StreamDraw
+                        };
                         _pbo.Generate();
                     }
                 }
@@ -864,8 +926,12 @@ namespace XREngine.Rendering
 
             var mip = Mipmaps[mipIndex];
             var data = mip.Data;
-            if (data is null)
+            if (data is null || data.Length == 0)
                 return;
+
+            // Allocate the PBO to the size of the mipmap data before mapping
+            _pbo.Allocate((uint)data.Length, 1);
+            _pbo.PushData();
 
             _pbo.MapBufferData();
             _pbo.SetDataPointer(data.Address);
@@ -1030,6 +1096,8 @@ namespace XREngine.Rendering
             Mipmaps = ReadMipmaps(reader);
         }
 
+        [RequiresUnreferencedCode("Calls XREngine.Core.Files.CookedBinaryWriter.WriteValue(Object)")]
+        [RequiresDynamicCode("Calls XREngine.Core.Files.CookedBinaryWriter.WriteValue(Object)")]
         private static void WriteMipmaps(CookedBinaryWriter writer, Mipmap2D[] mipmaps)
         {
             writer.WriteValue(mipmaps?.Length ?? 0);
@@ -1047,11 +1115,13 @@ namespace XREngine.Rendering
             }
         }
 
+        [RequiresUnreferencedCode("Calls XREngine.Core.Files.CookedBinaryReader.ReadValue<T>()")]
+        [RequiresDynamicCode("Calls XREngine.Core.Files.CookedBinaryReader.ReadValue<T>()")]
         private static Mipmap2D[] ReadMipmaps(CookedBinaryReader reader)
         {
             int mipCount = ReadStructOrDefault(reader, 0);
             if (mipCount <= 0)
-                return Array.Empty<Mipmap2D>();
+                return [];
 
             Mipmap2D[] mipmaps = new Mipmap2D[mipCount];
             for (int i = 0; i < mipCount; i++)
@@ -1078,6 +1148,8 @@ namespace XREngine.Rendering
             return mipmaps;
         }
 
+        [RequiresUnreferencedCode("Calls XREngine.Core.Files.CookedBinaryWriter.WriteValue(Object)")]
+        [RequiresDynamicCode("Calls XREngine.Core.Files.CookedBinaryWriter.WriteValue(Object)")]
         private static void WriteGrabPass(CookedBinaryWriter writer, GrabPassInfo? grabPass)
         {
             writer.WriteValue(grabPass is not null);
@@ -1093,6 +1165,8 @@ namespace XREngine.Rendering
             writer.WriteValue(grabPass.ResizeScale);
         }
 
+        [RequiresUnreferencedCode("Calls XREngine.Rendering.XRTexture2D.ReadStructOrDefault<T>(CookedBinaryReader, T)")]
+        [RequiresDynamicCode("Calls XREngine.Rendering.XRTexture2D.ReadStructOrDefault<T>(CookedBinaryReader, T)")]
         private static GrabPassInfo? ReadGrabPass(CookedBinaryReader reader, XRTexture2D owner)
         {
             bool hasGrabPass = ReadStructOrDefault(reader, false);
@@ -1110,12 +1184,16 @@ namespace XREngine.Rendering
             return new GrabPassInfo(owner, readBuffer, colorBit, depthBit, stencilBit, linearFilter, resizeToFit, resizeScale);
         }
 
+        [RequiresUnreferencedCode("Calls XREngine.Core.Files.CookedBinaryReader.ReadValue<T>()")]
+        [RequiresDynamicCode("Calls XREngine.Core.Files.CookedBinaryReader.ReadValue<T>()")]
         private static T ReadStructOrDefault<T>(CookedBinaryReader reader, T fallback) where T : struct
         {
             T? value = reader.ReadValue<T?>();
             return value ?? fallback;
         }
 
+        [RequiresUnreferencedCode("Calls XREngine.Core.Files.CookedBinarySerializer.CalculateSize(Object, CookedBinarySerializationCallbacks)")]
+        [RequiresDynamicCode("Calls XREngine.Core.Files.CookedBinarySerializer.CalculateSize(Object, CookedBinarySerializationCallbacks)")]
         private static long CalculateGrabPassSize(GrabPassInfo? grabPass)
         {
             long size = CookedBinarySerializer.CalculateSize(grabPass is not null);
@@ -1132,6 +1210,8 @@ namespace XREngine.Rendering
             return size;
         }
 
+        [RequiresUnreferencedCode("Calls XREngine.Core.Files.CookedBinarySerializer.CalculateSize(Object, CookedBinarySerializationCallbacks)")]
+        [RequiresDynamicCode("Calls XREngine.Core.Files.CookedBinarySerializer.CalculateSize(Object, CookedBinarySerializationCallbacks)")]
         private static long CalculateMipmapSize(Mipmap2D[] mipmaps)
         {
             long size = CookedBinarySerializer.CalculateSize(mipmaps?.Length ?? 0);

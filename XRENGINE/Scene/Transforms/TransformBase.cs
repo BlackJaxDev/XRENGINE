@@ -1,5 +1,6 @@
 ﻿using Extensions;
 using MemoryPack;
+using System.Collections.Concurrent;
 using System.Buffers;
 using System.ComponentModel;
 using System.Diagnostics.CodeAnalysis;
@@ -16,6 +17,24 @@ using static XREngine.Engine.Rendering;
 
 namespace XREngine.Scene.Transforms
 {
+    /// <summary>
+    /// Specifies how parent assignment should be performed.
+    /// </summary>
+    public enum EParentAssignmentMode
+    {
+        /// <summary>
+        /// Performs the parent assignment immediately on the calling thread with locking.
+        /// Use this when you need the hierarchy to be updated synchronously and can tolerate blocking.
+        /// </summary>
+        Immediate,
+        
+        /// <summary>
+        /// Queues the parent assignment to be processed during PostUpdate.
+        /// This is the safest option for multi-threaded scenarios as it doesn't block the render thread.
+        /// </summary>
+        Deferred,
+    }
+
     /// <summary>
     /// Represents the basis for transforming a scene node in the hierarchy.
     /// Inherit from this class to create custom transformation implementations, or use the Transform class for default functionality.
@@ -43,7 +62,13 @@ namespace XREngine.Scene.Transforms
 
         #region Static Members
 
-        private static readonly Queue<(TransformBase child, TransformBase? newParent, bool preserveWorldTransform)> _parentsToReassign = [];
+        private readonly record struct ParentReassignRequest(
+            TransformBase? Child,
+            TransformBase? NewParent,
+            bool PreserveWorldTransform,
+            Action<TransformBase, TransformBase?>? OnApplied);
+
+        private static readonly ConcurrentQueue<ParentReassignRequest> _parentsToReassign = new();
 
         [UnconditionalSuppressMessage("Trimming", "IL2026:Members annotated with 'RequiresUnreferencedCodeAttribute' require dynamic access otherwise can break functionality when trimming application code", Justification = "<Pending>")]
         public static Type[] TransformTypes { get; } = GetAllTransformTypes();
@@ -66,9 +91,26 @@ namespace XREngine.Scene.Transforms
 
         internal static void ProcessParentReassignments()
         {
-            while (_parentsToReassign.TryDequeue(out (TransformBase child, TransformBase? newParent, bool preserveWorldTransform) t))
-                if (t.child is not null && t.child.Parent != t.newParent)
-                    t.child.SetParent(t.newParent, t.preserveWorldTransform, true);
+            while (_parentsToReassign.TryDequeue(out ParentReassignRequest req))
+            {
+                if (req.Child is null)
+                    continue;
+
+                if (req.Child.Parent != req.NewParent)
+                    req.Child.SetParent(req.NewParent, req.PreserveWorldTransform, EParentAssignmentMode.Immediate);
+
+                if (req.OnApplied is not null)
+                {
+                    try
+                    {
+                        req.OnApplied(req.Child, req.NewParent);
+                    }
+                    catch (Exception ex)
+                    {
+                        Debug.LogException(ex, "Deferred parent reassignment callback threw.");
+                    }
+                }
+            }
         }
 
         public static TransformBase? FindCommonAncestor(TransformBase? a, TransformBase? b)
@@ -573,7 +615,7 @@ namespace XREngine.Scene.Transforms
             RenderedObjects = GetDebugRenderInfo();
             DebugRender = Engine.Rendering.Settings.RenderTransformDebugInfo;
 
-            SetParent(parent, false, true);
+            SetParent(parent, false, EParentAssignmentMode.Immediate);
         }
 
         #endregion
@@ -621,37 +663,104 @@ namespace XREngine.Scene.Transforms
 
         #region Hierarchy Methods
 
-        public void AddChild(TransformBase child, bool childPreservesWorldTransform, bool now)
+        /// <summary>
+        /// Adds a child transform to this transform.
+        /// </summary>
+        /// <param name="child">The transform to add as a child.</param>
+        /// <param name="childPreservesWorldTransform">If true, the child's world matrix will be preserved.</param>
+        /// <param name="mode">How the parent assignment should be performed.</param>
+        public void AddChild(
+            TransformBase child,
+            bool childPreservesWorldTransform,
+            EParentAssignmentMode mode,
+            Action<TransformBase, TransformBase?>? onApplied = null)
         {
             if (child is null || child.Parent == this)
                 return;
-            child.SetParent(this, childPreservesWorldTransform, now);
+            child.SetParent(this, childPreservesWorldTransform, mode, onApplied);
         }
 
-        public void RemoveChild(TransformBase child, bool now)
+        /// <summary>
+        /// Adds a child transform to this transform.
+        /// </summary>
+        /// <param name="child">The transform to add as a child.</param>
+        /// <param name="childPreservesWorldTransform">If true, the child's world matrix will be preserved.</param>
+        /// <param name="now">If true, performs immediately; if false, defers to PostUpdate.</param>
+        [Obsolete("Use AddChild(child, preserveWorld, EParentAssignmentMode) instead")]
+        public void AddChild(TransformBase child, bool childPreservesWorldTransform, bool now)
+            => AddChild(child, childPreservesWorldTransform, now ? EParentAssignmentMode.Immediate : EParentAssignmentMode.Deferred);
+
+        /// <summary>
+        /// Removes a child transform from this transform.
+        /// </summary>
+        /// <param name="child">The transform to remove.</param>
+        /// <param name="mode">How the parent assignment should be performed.</param>
+        public void RemoveChild(
+            TransformBase child,
+            EParentAssignmentMode mode,
+            Action<TransformBase, TransformBase?>? onApplied = null)
         {
             if (child is null || child.Parent != this)
                 return;
-            child.SetParent(null, false, now);
+            child.SetParent(null, false, mode, onApplied);
         }
 
-        //TODO: multi-threaded deferred parent set doesn't work
-        public void SetParent(TransformBase? newParent, bool preserveWorldTransform, bool now = false)
+        /// <summary>
+        /// Removes a child transform from this transform.
+        /// </summary>
+        /// <param name="child">The transform to remove.</param>
+        /// <param name="now">If true, performs immediately; if false, defers to PostUpdate.</param>
+        [Obsolete("Use RemoveChild(child, EParentAssignmentMode) instead")]
+        public void RemoveChild(TransformBase child, bool now)
+            => RemoveChild(child, now ? EParentAssignmentMode.Immediate : EParentAssignmentMode.Deferred);
+
+        /// <summary>
+        /// Sets the parent of this transform.
+        /// </summary>
+        /// <param name="newParent">The new parent transform, or null to detach.</param>
+        /// <param name="preserveWorldTransform">If true, the world matrix will be preserved after reparenting.</param>
+        /// <param name="mode">How the parent assignment should be performed:
+        /// <list type="bullet">
+        /// <item><see cref="EParentAssignmentMode.Immediate"/>: Performs immediately with locking (may block)</item>
+        /// <item><see cref="EParentAssignmentMode.Deferred"/>: Queues for PostUpdate processing (non-blocking, render-safe)</item>
+        /// </list>
+        /// </param>
+        public void SetParent(
+            TransformBase? newParent,
+            bool preserveWorldTransform,
+            EParentAssignmentMode mode,
+            Action<TransformBase, TransformBase?>? onApplied = null)
         {
-            if (now)
+            switch (mode)
             {
-                if (preserveWorldTransform)
-                {
-                    var worldMatrix = WorldMatrix;
-                    Parent = newParent;
-                    DeriveWorldMatrix(worldMatrix);
-                }
-                else
-                    Parent = newParent;
+                case EParentAssignmentMode.Immediate:
+                    if (preserveWorldTransform)
+                    {
+                        var worldMatrix = WorldMatrix;
+                        Parent = newParent;
+                        DeriveWorldMatrix(worldMatrix);
+                    }
+                    else
+                        Parent = newParent;
+
+                    onApplied?.Invoke(this, newParent);
+                    break;
+                    
+                case EParentAssignmentMode.Deferred:
+                    _parentsToReassign.Enqueue(new ParentReassignRequest(this, newParent, preserveWorldTransform, onApplied));
+                    break;
             }
-            else
-                _parentsToReassign.Enqueue((this, newParent, preserveWorldTransform));
         }
+
+        /// <summary>
+        /// Sets the parent of this transform.
+        /// </summary>
+        /// <param name="newParent">The new parent transform, or null to detach.</param>
+        /// <param name="preserveWorldTransform">If true, the world matrix will be preserved after reparenting.</param>
+        /// <param name="now">If true, performs immediately; if false, defers to PostUpdate.</param>
+        [Obsolete("Use SetParent(newParent, preserveWorld, EParentAssignmentMode) instead")]
+        public void SetParent(TransformBase? newParent, bool preserveWorldTransform, bool now = false)
+            => SetParent(newParent, preserveWorldTransform, now ? EParentAssignmentMode.Immediate : EParentAssignmentMode.Deferred);
 
         #endregion
 

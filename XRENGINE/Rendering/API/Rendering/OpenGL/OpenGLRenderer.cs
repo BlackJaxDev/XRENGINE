@@ -2749,6 +2749,8 @@ void main()
             {
                 case ERenderParamUsage.Enabled:
                     {
+                        Api.Enable(EnableCap.StencilTest);
+
                         StencilTest st = r.StencilTest;
                         StencilTestFace b = st.BackFace;
                         StencilTestFace f = st.FrontFace;
@@ -2775,7 +2777,7 @@ void main()
                     }
 
                 case ERenderParamUsage.Disabled:
-                    //GL.Disable(EnableCap.StencilTest);
+                    Api.Disable(EnableCap.StencilTest);
                     Api.StencilMask(0);
                     Api.StencilOp(GLEnum.Keep, GLEnum.Keep, GLEnum.Keep);
                     Api.StencilFunc(StencilFunction.Always, 0, 0);

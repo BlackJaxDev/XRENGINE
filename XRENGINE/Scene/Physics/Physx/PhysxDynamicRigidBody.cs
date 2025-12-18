@@ -20,7 +20,23 @@ namespace XREngine.Rendering.Physics.Physx
 
         public override Vector3 AngularVelocity => _obj->GetAngularVelocity();
         public override Vector3 LinearVelocity => _obj->GetLinearVelocity();
-        public override bool IsSleeping => _obj->IsSleeping();
+
+        private bool _cachedIsSleeping = true;
+        /// <summary>
+        /// Returns the cached sleeping state. This is cached because PhysX does not allow
+        /// calling IsSleeping() while simulation is running. The cache is updated after
+        /// FetchResults via <see cref="RefreshCachedState"/>.
+        /// </summary>
+        public override bool IsSleeping => _cachedIsSleeping;
+
+        /// <summary>
+        /// Refreshes cached state from PhysX. Call this only when simulation is NOT running
+        /// (i.e., after FetchResults).
+        /// </summary>
+        public void RefreshCachedState()
+        {
+            _cachedIsSleeping = _obj->IsSleeping();
+        }
 
         public void SetAngularVelocity(Vector3 value, bool wake = true)
         {

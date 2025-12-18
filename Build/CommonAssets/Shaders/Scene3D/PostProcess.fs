@@ -12,7 +12,7 @@ uniform usampler2D StencilView; //Stencil
 uniform sampler2D AutoExposureTex;
 uniform bool UseGpuAutoExposure;
 
-uniform vec3 HighlightColor = vec3(0.92f, 1.0f, 0.086f);
+uniform vec3 HighlightColor = vec3(1.0f, 0.0f, 1.0f); // Bright magenta for visibility
 uniform bool OutputHDR;
 
 struct VignetteStruct
@@ -96,7 +96,7 @@ float rand(vec2 coord)
 }
 float GetStencilHighlightIntensity(vec2 uv)
 {
-    int outlineSize = 1;
+    int outlineSize = 3; // Increased from 1 to make outline more visible
     ivec2 texSize = textureSize(HDRSceneTex, 0);
     vec2 texelSize = 1.0f / texSize;
     vec2 texelX = vec2(texelSize.x, 0.0f);
@@ -326,6 +326,10 @@ void main()
   //Apply highlight color to selected objects
   float highlight = GetStencilHighlightIntensity(uv);
 	sceneColor = mix(sceneColor, HighlightColor, highlight);
+
+  // DEBUG: Visualize raw stencil value - uncomment to see stencil data
+  // uint rawStencil = texture(StencilView, uv).r;
+  // if ((rawStencil & 1) != 0) sceneColor = vec3(1.0, 0.0, 0.0); // Red where stencil bit 0 is set
 
 	//Vignette
   //vec2 center = vec2(0.5f);

@@ -6,6 +6,13 @@ public static partial class UnitTestingWorld
 {
     public static Settings Toggles { get; set; } = new();
 
+    public enum StaticModelMaterialMode
+    {
+        Deferred,
+        ForwardPlusTextured,
+        ForwardPlusUberShader,
+    }
+
     public enum UnitTestWorldKind
     {
         Default,
@@ -66,6 +73,7 @@ public static partial class UnitTestingWorld
 
         //Models
         public bool ImportStaticModel = true; //Imports a scene model to be rendered.
+        public StaticModelMaterialMode StaticModelMaterialMode { get; set; } = StaticModelMaterialMode.Deferred;
         public bool ImportAnimatedModel = false; //Imports a character model to be animated.
         public float AnimatedModelScale = 1.0f; //The scale of the model when imported.
         public bool AnimatedModelZUp = false; //If true, the model will be rotated 90 degrees around the X axis.

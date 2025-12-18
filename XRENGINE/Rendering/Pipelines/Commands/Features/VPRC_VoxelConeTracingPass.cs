@@ -74,6 +74,9 @@ namespace XREngine.Rendering.Pipelines.Commands
             try
             {
                 using var overrideTicket = ActivePipelineInstance.RenderState.PushOverrideMaterial(voxelizationMaterial);
+                // Force shader pipeline mode so the override material is actually used.
+                // In combined shader mode, material overrides are ignored and meshes render with their original shaders.
+                using var pipelineTicket = ActivePipelineInstance.RenderState.PushForceShaderPipelines();
                 
                 foreach (int renderPass in RenderPasses)
                 {

@@ -167,6 +167,10 @@ namespace XREngine.Rendering.OpenGL
                 List<string?> resolvedPaths = [];
                 string? src = ResolveIncludesRecursive(SourceText, resolvedPaths) ?? SourceText;
 
+                // Resolve engine snippets (#pragma snippet "name")
+                if (src != null)
+                    src = Shaders.ShaderSnippets.ResolveSnippets(src);
+
                 if (resolvedPaths.Count > 0)
                     Debug.Out($"Resolved {resolvedPaths.Count} includes:{Environment.NewLine}{src}");
                 

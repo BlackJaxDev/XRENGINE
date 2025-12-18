@@ -99,7 +99,7 @@ namespace XREngine.Rendering.OpenGL
 
                 if (reqs.HasFlag(EUniformRequirements.Lights))
                 {
-                    //AbstractRenderer.Current3DScene.Lights.SetUniforms(program);
+                    Engine.Rendering.State.RenderingWorld?.Lights?.SetForwardLightingUniforms(program.Data);
                 }
 
                 if (reqs.HasFlag(EUniformRequirements.RenderTime))

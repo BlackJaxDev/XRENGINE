@@ -427,6 +427,8 @@ namespace XREngine.Rendering.Physics.Physx
             switch (actor)
             {
                 case PhysxDynamicRigidBody dynamicActor:
+                    // Refresh cached sleeping state while simulation is NOT running (safe after FetchResults)
+                    dynamicActor.RefreshCachedState();
                     dynamicActor.OwningComponent?.RigidBodyTransform.OnPhysicsStepped();
                     break;
                 case PhysxStaticRigidBody staticActor:

@@ -66,14 +66,21 @@ namespace XREngine.Rendering.OpenGL
 
             /// <summary>
             /// Get the appropriate vertex/material programs based on engine settings.
+            /// When ForceShaderPipelines is enabled (e.g., during motion vectors pass with material override),
+            /// pipeline mode is used regardless of global settings to ensure override materials work correctly.
             /// </summary>
             private bool GetPrograms(
                 GLMaterial material,
                 [MaybeNullWhen(false)] out GLRenderProgram? vertexProgram,
                 [MaybeNullWhen(false)] out GLRenderProgram? materialProgram)
-                => Engine.Rendering.Settings.AllowShaderPipelines && Data.AllowShaderPipelines
+            {
+                bool forceShaderPipelines = Engine.Rendering.State.RenderingPipelineState?.ForceShaderPipelines ?? false;
+                bool usePipelines = (Engine.Rendering.Settings.AllowShaderPipelines && Data.AllowShaderPipelines) || forceShaderPipelines;
+                
+                return usePipelines
                     ? GetPipelinePrograms(material, out vertexProgram, out materialProgram)
                     : GetCombinedProgram(out vertexProgram, out materialProgram);
+            }
 
             /// <summary>
             /// Get the combined program when pipeline mode is disabled.
