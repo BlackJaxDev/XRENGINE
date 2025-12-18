@@ -80,10 +80,19 @@ namespace XREngine.Components.Capture.Lights.Types
 
             _viewport.CollectVisible(false);
         }
+
+        private static bool _loggedShadowRenderOnce = false;
+
         public override void RenderShadowMap(bool collectVisibleNow = false)
         {
             if (!CastsShadows || ShadowMap is null)
                 return;
+
+            if (!_loggedShadowRenderOnce)
+            {
+                _loggedShadowRenderOnce = true;
+                Debug.Out($"[ShadowRender] RenderShadowMap called. ShadowMap FBO exists, rendering...");
+            }
 
             if (collectVisibleNow)
             {

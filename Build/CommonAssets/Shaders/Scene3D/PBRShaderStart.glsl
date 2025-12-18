@@ -26,7 +26,7 @@ uniform mat4 ProjMatrix;
 uniform mat4 InvProjMatrix;
 
 uniform float MinFade = 500.0f;
-uniform float MaxFade = 1000.0f;
+uniform float MaxFade = 10000.0f;
 uniform float ShadowBase = 2.0f;
 uniform float ShadowMult = 3.0f;
 uniform float ShadowBiasMin = 0.00001f;

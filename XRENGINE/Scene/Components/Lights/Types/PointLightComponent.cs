@@ -181,21 +181,26 @@ namespace XREngine.Components.Capture.Lights.Types
         {
             base.SetUniforms(program, targetStructName);
 
-            targetStructName = $"{targetStructName ?? Engine.Rendering.Constants.LightsStructName}.";
+            string prefix = targetStructName ?? Engine.Rendering.Constants.LightsStructName;
+            string flatPrefix = $"{prefix}.";
+            string basePrefix = $"{prefix}.Base.";
 
-            program.Uniform($"{targetStructName}Color", _color);
-            program.Uniform($"{targetStructName}DiffuseIntensity", _diffuseIntensity);
-            program.Uniform($"{targetStructName}Position", _influenceVolume.Center);
-            program.Uniform($"{targetStructName}Radius", _influenceVolume.Radius);
-            program.Uniform($"{targetStructName}Brightness", _brightness);
+            // Legacy flat uniforms.
+            program.Uniform($"{flatPrefix}Color", _color);
+            program.Uniform($"{flatPrefix}DiffuseIntensity", _diffuseIntensity);
+            program.Uniform($"{flatPrefix}Position", _influenceVolume.Center);
+            program.Uniform($"{flatPrefix}Radius", _influenceVolume.Radius);
+            program.Uniform($"{flatPrefix}Brightness", _brightness);
 
-            var mat = ShadowMap?.Material;
-            if (mat is null || mat.Textures.Count < 2)
-                return;
-            
-            var tex = mat.Textures[1];
-            if (tex is not null)
-                program.Sampler("ShadowMap", tex, 4);
+            // Structured Base.* uniforms for ForwardLighting snippet compatibility.
+            program.Uniform($"{basePrefix}Color", _color);
+            program.Uniform($"{basePrefix}DiffuseIntensity", _diffuseIntensity);
+            program.Uniform($"{basePrefix}AmbientIntensity", 0.0f);
+            program.Uniform($"{prefix}.Position", _influenceVolume.Center);
+            program.Uniform($"{prefix}.Radius", _influenceVolume.Radius);
+            program.Uniform($"{prefix}.Brightness", _brightness);
+            // Note: Shadow map sampler and LightHasShadowMap are bound by the caller (deferred pass)
+            // to avoid overwriting material texture units.
         }
 
         /// <summary>

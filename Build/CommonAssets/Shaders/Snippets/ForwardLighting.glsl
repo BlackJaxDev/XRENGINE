@@ -7,7 +7,6 @@ struct BaseLight
     float DiffuseIntensity;
     float AmbientIntensity;
     mat4 WorldToLightSpaceProjMatrix;
-    sampler2D ShadowMap;
 };
 
 struct DirLight
@@ -34,6 +33,12 @@ struct SpotLight
 };
 
 uniform vec3 GlobalAmbient;
+
+// Primary directional light shadow map (bound separately, not in struct)
+// Use explicit binding at unit 15 to avoid collision with material textures (which use 0..N).
+// The layout(binding) ensures the sampler defaults to unit 15 even if runtime binding fails.
+layout(binding = 15) uniform sampler2D ShadowMap;
+uniform bool ShadowMapEnabled;
 
 uniform int DirLightCount; 
 uniform DirLight DirectionalLights[2];
@@ -74,21 +79,32 @@ float XRENGINE_Attenuate(float dist, float radius)
     return pow(clamp(1.0 - pow(dist / radius, 4.0), 0.0, 1.0), 2.0) / (dist * dist + 1.0);
 }
 
-float XRENGINE_ReadShadowMap(vec3 fragPos, vec3 normal, float diffuseFactor, BaseLight light)
+// Shadow map reading for primary directional light (uses standalone ShadowMap sampler)
+float XRENGINE_ReadShadowMapDir(vec3 fragPos, vec3 normal, float diffuseFactor, mat4 lightSpaceMatrix)
 {
+    if (!ShadowMapEnabled)
+        return 1.0;
+
     float maxBias = 0.04;
     float minBias = 0.001;
 
-    vec4 fragPosLightSpace = light.WorldToLightSpaceProjMatrix * vec4(fragPos, 1.0);
+    vec4 fragPosLightSpace = lightSpaceMatrix * vec4(fragPos, 1.0);
     vec3 fragCoord = fragPosLightSpace.xyz / fragPosLightSpace.w;
     fragCoord = fragCoord * 0.5 + 0.5;
-    float bias = max(maxBias * -diffuseFactor, minBias);
 
-    float depth = texture(light.ShadowMap, fragCoord.xy).r;
+    // Outside shadow map bounds: treat as fully lit
+    if (fragCoord.x < 0.0 || fragCoord.x > 1.0 ||
+        fragCoord.y < 0.0 || fragCoord.y > 1.0 ||
+        fragCoord.z < 0.0 || fragCoord.z > 1.0)
+        return 1.0;
+
+    float bias = max(maxBias * (1.0 - max(diffuseFactor, 0.0)), minBias);
+
+    float depth = texture(ShadowMap, fragCoord.xy).r;
     return (fragCoord.z - bias) > depth ? 0.0 : 1.0;
 }
 
-vec3 XRENGINE_CalcLightColor(BaseLight light, vec3 lightDirection, vec3 normal, vec3 fragPos, vec3 albedo, float spec, float ambientOcclusion)
+vec3 XRENGINE_CalcLightColor(BaseLight light, vec3 lightDirection, vec3 normal, vec3 fragPos, vec3 albedo, float spec, float ambientOcclusion, bool useShadow)
 {
     vec3 AmbientColor = light.Color * light.AmbientIntensity;
     vec3 DiffuseColor = vec3(0.0);
@@ -106,19 +122,19 @@ vec3 XRENGINE_CalcLightColor(BaseLight light, vec3 lightDirection, vec3 normal, 
             SpecularColor = light.Color * spec * pow(SpecularFactor, 64.0);
     }
 
-    float shadow = XRENGINE_ReadShadowMap(fragPos, normal, DiffuseFactor, light);
+    float shadow = useShadow ? XRENGINE_ReadShadowMapDir(fragPos, normal, DiffuseFactor, light.WorldToLightSpaceProjMatrix) : 1.0;
     return (AmbientColor + (DiffuseColor + SpecularColor) * shadow) * ambientOcclusion;
 }
 
-vec3 XRENGINE_CalcDirLight(DirLight light, vec3 normal, vec3 fragPos, vec3 albedo, float spec, float ambientOcclusion)
+vec3 XRENGINE_CalcDirLight(DirLight light, vec3 normal, vec3 fragPos, vec3 albedo, float spec, float ambientOcclusion, bool useShadow)
 {
-    return XRENGINE_CalcLightColor(light.Base, light.Direction, normal, fragPos, albedo, spec, ambientOcclusion);
+    return XRENGINE_CalcLightColor(light.Base, light.Direction, normal, fragPos, albedo, spec, ambientOcclusion, useShadow);
 }
 
 vec3 XRENGINE_CalcPointLight(PointLight light, vec3 normal, vec3 fragPos, vec3 albedo, float spec, float ambientOcclusion)
 {
     vec3 lightToPos = fragPos - light.Position;
-    return XRENGINE_Attenuate(length(lightToPos), light.Radius) * XRENGINE_CalcLightColor(light.Base, normalize(lightToPos), normal, fragPos, albedo, spec, ambientOcclusion);
+    return XRENGINE_Attenuate(length(lightToPos), light.Radius) * XRENGINE_CalcLightColor(light.Base, normalize(lightToPos), normal, fragPos, albedo, spec, ambientOcclusion, false);
 }
 
 vec3 XRENGINE_CalcSpotLight(SpotLight light, vec3 normal, vec3 fragPos, vec3 albedo, float spec, float ambientOcclusion)
@@ -130,7 +146,7 @@ vec3 XRENGINE_CalcSpotLight(SpotLight light, vec3 normal, vec3 fragPos, vec3 alb
     vec3 lightToPosUn = fragPos - light.Base.Position;
     float spotAttn = pow(clampedCosine, light.Exponent);
     float distAttn = XRENGINE_Attenuate(length(lightToPosUn) / light.Base.Brightness, light.Base.Radius);
-    vec3 color = XRENGINE_CalcLightColor(light.Base.Base, normalize(lightToPosUn), normal, fragPos, albedo, spec, ambientOcclusion);
+    vec3 color = XRENGINE_CalcLightColor(light.Base.Base, normalize(lightToPosUn), normal, fragPos, albedo, spec, ambientOcclusion, false);
     return spotEffect * spotAttn * distAttn * color;
 }
 
@@ -182,9 +198,13 @@ vec3 XRENGINE_CalculateForwardLighting(vec3 normal, vec3 fragPos, vec3 albedo, f
 {
     vec3 totalLight = GlobalAmbient;
 
-    // Directional lights (always processed)
+    // Directional lights (first one uses shadow map if available)
     for (int i = 0; i < DirLightCount; ++i)
-        totalLight += XRENGINE_CalcDirLight(DirectionalLights[i], normal, fragPos, albedo, specularIntensity, ambientOcclusion);
+    {
+        // Only the first directional light uses the bound shadow map
+        bool useShadow = (i == 0);
+        totalLight += XRENGINE_CalcDirLight(DirectionalLights[i], normal, fragPos, albedo, specularIntensity, ambientOcclusion, useShadow);
+    }
 
     // Local lights: use Forward+ if available, otherwise brute-force
     if (ForwardPlusEnabled)

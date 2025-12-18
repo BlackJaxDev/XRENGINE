@@ -99,7 +99,12 @@ namespace XREngine.Rendering.OpenGL
 
                 if (reqs.HasFlag(EUniformRequirements.Lights))
                 {
-                    Engine.Rendering.State.RenderingWorld?.Lights?.SetForwardLightingUniforms(program.Data);
+                    var world = Engine.Rendering.State.RenderingWorld;
+                    var lights = world?.Lights;
+                    if (lights != null)
+                        lights.SetForwardLightingUniforms(program.Data);
+                    else
+                        Debug.Out($"[ForwardLighting] Skipped: RenderingWorld={world != null}, Lights={lights != null}");
                 }
 
                 if (reqs.HasFlag(EUniformRequirements.RenderTime))

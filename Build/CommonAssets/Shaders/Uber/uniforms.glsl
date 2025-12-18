@@ -31,6 +31,13 @@ layout(std140) uniform LightUBO {
 };
 
 // ============================================
+// Shadow Map (Directional light shadow)
+// ============================================
+layout(binding = 15) uniform sampler2D ShadowMap;
+uniform bool ShadowMapEnabled;
+uniform mat4 u_LightSpaceMatrix;    // World to light-space projection matrix
+
+// ============================================
 // Main Texture Properties
 // ============================================
 uniform sampler2D _MainTex;

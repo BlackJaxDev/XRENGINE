@@ -829,9 +829,14 @@ public partial class EditorFlyingCameraPawnComponent : FlyingCameraPawnComponent
         if (tfm is null)
             return;
 
-        var scroll = _lastScrollDelta; _lastScrollDelta = null;
-        var trans = _lastMouseTranslationDelta; _lastMouseTranslationDelta = null;
-        var rot = _lastRotateDelta; _lastRotateDelta = null;
+        var scroll = _lastScrollDelta;
+        _lastScrollDelta = null;
+
+        var trans = _lastMouseTranslationDelta;
+        _lastMouseTranslationDelta = null;
+
+        var rot = _lastRotateDelta;
+        _lastRotateDelta = null;
 
         bool hasInput = scroll.HasValue || trans.HasValue || rot.HasValue;
         if (_cameraFocusLerp.HasValue)

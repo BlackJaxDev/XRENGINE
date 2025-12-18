@@ -19,6 +19,7 @@ using XREngine.Scene.Transforms;
 using XREngine.Rendering.Commands;
 using YamlDotNet.Serialization;
 using MIConvexHull;
+using XREngine.Data.Colors;
 
 namespace XREngine.Scene
 {
@@ -34,6 +35,13 @@ namespace XREngine.Scene
         public Octree<LightProbeCell> LightProbeTree { get; } = new(new AABB());
         
         public XRWorldInstance World { get; } = world;
+
+        /// <summary>
+        /// A 1x1 white texture used as a fallback shadow map when shadows are disabled.
+        /// This prevents sampling from stale texture unit state.
+        /// </summary>
+        private static XRTexture2D? _dummyShadowMap;
+        private static XRTexture2D DummyShadowMap => _dummyShadowMap ??= new XRTexture2D(1, 1, ColorF4.White);
 
         /// <summary>
         /// All spotlights that are not baked and need to be rendered.
@@ -84,8 +92,24 @@ namespace XREngine.Scene
 
         public bool RenderingShadowMaps { get; private set; } = false;
 
+        private static bool _loggedForwardLightingOnce = false;
+        private static bool _loggedShadowMapEnabledOnce = false;
+
         internal void SetForwardLightingUniforms(XRRenderProgram program)
         {
+            // Debug: log that we're being called
+            if (!_loggedForwardLightingOnce)
+            {
+                _loggedForwardLightingOnce = true;
+                Debug.Out($"[ForwardLighting] SetForwardLightingUniforms called. DirLights={DynamicDirectionalLights.Count}, PointLights={DynamicPointLights.Count}, SpotLights={DynamicSpotLights.Count}");
+            }
+
+            // Global ambient light - required by ForwardLighting snippet
+            program.Uniform("GlobalAmbient", new Vector3(0.1f, 0.1f, 0.1f));
+
+            // Camera position for specular calculations
+            program.Uniform("CameraPosition", Engine.Rendering.State.RenderingCamera?.Transform.RenderTranslation ?? Vector3.Zero);
+
             program.Uniform("DirLightCount", DynamicDirectionalLights.Count);
             program.Uniform("PointLightCount", DynamicPointLights.Count);
             program.Uniform("SpotLightCount", DynamicSpotLights.Count);
@@ -105,16 +129,87 @@ namespace XREngine.Scene
 
             // Support both legacy uniform names (DirLightData/PointLightData/SpotLightData)
             // and dynamically generated forward shader names (DirectionalLights/PointLights/SpotLights).
-            string dirArray = program.HasUniform("DirectionalLights") ? "DirectionalLights" : "DirLightData";
-            string spotArray = program.HasUniform("SpotLights") ? "SpotLights" : "SpotLightData";
-            string pointArray = program.HasUniform("PointLights") ? "PointLights" : "PointLightData";
+            // NOTE: We intentionally do not rely on program.HasUniform(...) here because uniforms may come
+            // from #pragma snippet includes (resolved later), and HasUniform() operates on raw source text.
+            const string dirArrayGenerated = "DirectionalLights";
+            const string spotArrayGenerated = "SpotLights";
+            const string pointArrayGenerated = "PointLights";
+
+            const string dirArrayLegacy = "DirLightData";
+            const string spotArrayLegacy = "SpotLightData";
+            const string pointArrayLegacy = "PointLightData";
+
+            // Forward materials bind their own textures at units [0..N) where N is the texture index.
+            // Using a low fixed unit (like 4) for the shadow map collides with multi-texture materials
+            // (e.g., Sponza) and manifests as "shadow" sampling a regular color texture.
+            // Pick a dedicated high unit for forward shadow sampling.
+            const int forwardShadowMapUnit = 15;
+            XRTexture? forwardShadowTex = null;
+            if (DynamicDirectionalLights.Count > 0)
+            {
+                var firstDirLight = DynamicDirectionalLights[0];
+                if (firstDirLight.CastsShadows && firstDirLight.ShadowMap?.Material?.Textures.Count > 0)
+                    forwardShadowTex = firstDirLight.ShadowMap.Material.Textures[0];
+                else
+                {
+                    // Debug: log why shadow map isn't available
+                    string reason = !firstDirLight.CastsShadows ? "CastsShadows=false" :
+                                    firstDirLight.ShadowMap is null ? "ShadowMap=null" :
+                                    firstDirLight.ShadowMap.Material is null ? "ShadowMap.Material=null" :
+                                    $"Textures.Count={firstDirLight.ShadowMap.Material.Textures.Count}";
+                    Debug.Out($"[ForwardShadow] No shadow tex: {reason}");
+                }
+            }
+            bool shadowEnabled = forwardShadowTex != null;
+            program.Uniform("ShadowMapEnabled", shadowEnabled);
+            if (!_loggedShadowMapEnabledOnce)
+            {
+                _loggedShadowMapEnabledOnce = true;
+                Debug.Out($"[ForwardShadow] ShadowMapEnabled={shadowEnabled}, forwardShadowTex={forwardShadowTex?.GetType().Name ?? "null"}");
+            }
+
+            // Set light space matrix for UberShader shadow mapping
+            // This is set separately from the struct array uniforms for simpler UberShader integration
+            if (DynamicDirectionalLights.Count > 0)
+            {
+                var firstDirLight = DynamicDirectionalLights[0];
+                var shadowCam = firstDirLight.ShadowCamera;
+                if (shadowCam != null)
+                {
+                    Matrix4x4 lightView = shadowCam.Transform.InverseRenderMatrix;
+                    Matrix4x4 lightProj = shadowCam.ProjectionMatrix;
+                    // Use View * Proj order for correct GLSL interpretation (see DirectionalLightComponent.SetUniforms)
+                    Matrix4x4 lightViewProj = lightView * lightProj;
+                    program.Uniform("u_LightSpaceMatrix", lightViewProj);
+                }
+            }
+
+            // ALWAYS set the ShadowMap sampler to point to unit 15, even when shadows are disabled.
+            // This prevents stale state from deferred passes (which use unit 4) from leaking through.
+            // The shader's layout(binding=15) should handle this, but we force it to be safe against
+            // cached shader binaries that might not have the layout qualifier.
+            program.Uniform("ShadowMap", forwardShadowMapUnit);
 
             for (int i = 0; i < DynamicDirectionalLights.Count; ++i)
-                DynamicDirectionalLights[i].SetUniforms(program, $"{dirArray}[{i}]");
+            {
+                DynamicDirectionalLights[i].SetUniforms(program, $"{dirArrayGenerated}[{i}]");
+                DynamicDirectionalLights[i].SetUniforms(program, $"{dirArrayLegacy}[{i}]");
+            }
             for (int i = 0; i < DynamicSpotLights.Count; ++i)
-                DynamicSpotLights[i].SetUniforms(program, $"{spotArray}[{i}]");
+            {
+                DynamicSpotLights[i].SetUniforms(program, $"{spotArrayGenerated}[{i}]");
+                DynamicSpotLights[i].SetUniforms(program, $"{spotArrayLegacy}[{i}]");
+            }
             for (int i = 0; i < DynamicPointLights.Count; ++i)
-                DynamicPointLights[i].SetUniforms(program, $"{pointArray}[{i}]");
+            {
+                DynamicPointLights[i].SetUniforms(program, $"{pointArrayGenerated}[{i}]");
+                DynamicPointLights[i].SetUniforms(program, $"{pointArrayLegacy}[{i}]");
+            }
+
+            // Bind the actual shadow texture after per-light SetUniforms.
+            // ALWAYS bind a texture to unit 15 - if no shadow map, use a 1x1 white dummy.
+            // This prevents OpenGL from sampling stale texture state.
+            program.Sampler("ShadowMap", forwardShadowTex ?? DummyShadowMap, forwardShadowMapUnit);
         }
 
         public bool CollectingVisibleShadowMaps { get; private set; } = false;

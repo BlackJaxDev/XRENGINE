@@ -18,7 +18,7 @@ uniform mat4 InverseViewMatrix;
 uniform mat4 ProjMatrix;
 
 uniform float MinFade = 500.0f;
-uniform float MaxFade = 1000.0f;
+uniform float MaxFade = 10000.0f;
 uniform float ShadowBase = 1.0f;
 uniform float ShadowMult = 2.5f;
 uniform float ShadowBiasMin = 0.05f;

@@ -1285,21 +1285,22 @@ namespace XREngine.Rendering.OpenGL
 
             public void Sampler(string name, XRTexture texture, int textureUnit)
             {
-                if (!HasUniform(name))
-                    return;
-
                 int location = GetUniformLocation(name);
+
+                // If the uniform is optimized out (e.g., layout(binding=) samplers), still bind the texture to the unit
+                // so fixed-binding samplers can sample correctly. Log once when the uniform is missing.
                 if (location < 0 && Engine.Rendering.Settings.LogMissingShaderSamplers)
                 {
-                    // Only log once per mismatch
                     string key = $"{Data.Name ?? BindingId.ToString()}:{name}:{textureUnit}";
                     if (_loggedUniformMismatches.TryAdd(key, 1))
                     {
                         Debug.LogWarning($"[Shader Texture Binding] Sampler '{name}' not found in program '{Data.Name ?? BindingId.ToString()}' for texture unit {textureUnit}. " +
                             $"Texture: '{texture.Name}', SamplerName: '{texture.SamplerName}'. " +
-                            $"Ensure the shader declares a sampler2D uniform with this exact name.");
+                            $"Binding anyway due to fixed sampler binding.");
                     }
                 }
+
+                // Always bind to the requested unit; Uniform() will be a no-op if location < 0.
                 Sampler(location, texture, textureUnit);
             }
 
@@ -1309,13 +1310,10 @@ namespace XREngine.Rendering.OpenGL
             /// </summary>
             public void Sampler(string name, IGLTexture texture, int textureUnit)
             {
-                if (!HasUniform(name))
-                    return;
-
                 int location = GetUniformLocation(name);
+
                 if (location < 0 && Engine.Rendering.Settings.LogMissingShaderSamplers)
                 {
-                    // Only log once per mismatch
                     string key = $"{Data.Name ?? BindingId.ToString()}:{name}:{textureUnit}";
                     if (_loggedUniformMismatches.TryAdd(key, 1))
                     {
@@ -1323,9 +1321,10 @@ namespace XREngine.Rendering.OpenGL
                         string samplerName = (texture.Data as XRTexture)?.SamplerName ?? "null";
                         Debug.LogWarning($"[Shader Texture Binding] Sampler '{name}' not found in program '{Data.Name ?? BindingId.ToString()}' for texture unit {textureUnit}. " +
                             $"Texture: '{texName}', SamplerName: '{samplerName}'. " +
-                            $"Ensure the shader declares a sampler uniform with this exact name.");
+                            $"Binding anyway due to fixed sampler binding.");
                     }
                 }
+
                 Sampler(location, texture, textureUnit);
             }
 
@@ -1334,20 +1333,21 @@ namespace XREngine.Rendering.OpenGL
             /// </summary>
             public void Sampler(int location, IGLTexture texture, int textureUnit)
             {
-                if (!MarkSamplerBinding(location))
-                    return;
+                // Even if the uniform location is invalid (-1), we still want the GL state
+                // to have the texture bound at the requested unit for layout(binding=) samplers.
+                bool canBindUniform = MarkSamplerBinding(location);
 
                 texture.PreSampling();
-                Renderer.SetActiveTexture(textureUnit);
-                Uniform(location, textureUnit);
+                Renderer.SetActiveTextureUnit(textureUnit);
+
+                if (canBindUniform && location >= 0)
+                    Uniform(location, textureUnit);
+
                 texture.Bind();
                 texture.PostSampling();
             }
             #endregion
         }
-
-        private void SetActiveTexture(int textureUnit)
-            => Api.ActiveTexture(GLEnum.Texture0 + textureUnit);
     }
 
     internal record struct BinaryProgram(byte[] Binary, GLEnum Format, uint Length)

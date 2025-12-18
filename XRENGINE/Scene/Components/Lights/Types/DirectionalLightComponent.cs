@@ -31,7 +31,7 @@ namespace XREngine.Components.Lights
 
         private Vector3 _scale = Vector3.One;
         private int _cascadeCount = 4;
-        private float[] _cascadePercentages = new float[] { 0.1f, 0.2f, 0.3f, 0.4f };
+        private float[] _cascadePercentages = [0.1f, 0.2f, 0.3f, 0.4f];
         private float _cascadeOverlapPercent = 0.1f;
         private readonly List<CascadedShadowAabb> _cascadeAabbs = new(4);
         /// <summary>
@@ -81,7 +81,7 @@ namespace XREngine.Components.Lights
         [DisplayName("Cascade Percentages")]
         public float[] CascadePercentages
         {
-            get => _cascadePercentages.ToArray();
+            get => [.. _cascadePercentages];
             set => SetCascadePercentages(value);
         }
 
@@ -98,7 +98,7 @@ namespace XREngine.Components.Lights
         private static float[] CreateUniformPercentages(int count)
         {
             if (count <= 0)
-                return Array.Empty<float>();
+                return [];
 
             float uniform = 1.0f / count;
             float[] result = new float[count];
@@ -116,7 +116,7 @@ namespace XREngine.Components.Lights
             }
             else
             {
-                next = value.ToArray();
+                next = [.. value];
             }
 
             if (next.Length != _cascadeCount)
@@ -203,13 +203,14 @@ namespace XREngine.Components.Lights
             float[] percentages = GetEffectiveCascadePercentages();
             float overlap = _cascadeOverlapPercent;
 
+            Span<Vector3> cornersWS = stackalloc Vector3[8];
+            Span<Vector3> cornersLS = stackalloc Vector3[8];
             foreach (var intersection in CameraIntersections)
             {
                 Vector3 min = intersection.Min;
                 Vector3 max = intersection.Max;
 
                 // Build 8 corners of intersection AABB.
-                Span<Vector3> cornersWS = stackalloc Vector3[8];
                 cornersWS[0] = new Vector3(min.X, min.Y, min.Z);
                 cornersWS[1] = new Vector3(min.X, min.Y, max.Z);
                 cornersWS[2] = new Vector3(min.X, max.Y, min.Z);
@@ -220,7 +221,6 @@ namespace XREngine.Components.Lights
                 cornersWS[7] = new Vector3(max.X, max.Y, max.Z);
 
                 // Transform corners to light space.
-                Span<Vector3> cornersLS = stackalloc Vector3[8];
                 for (int i = 0; i < cornersWS.Length; i++)
                     cornersLS[i] = Vector3.Transform(cornersWS[i], worldToLight);
 
@@ -348,24 +348,57 @@ namespace XREngine.Components.Lights
             base.OnComponentDeactivated();
         }
 
+        private static bool _loggedShadowCameraOnce = false;
+
         public override void SetUniforms(XRRenderProgram program, string? targetStructName = null)
         {
             base.SetUniforms(program, targetStructName);
 
-            targetStructName = $"{targetStructName ?? Engine.Rendering.Constants.LightsStructName}.";
+            string prefix = targetStructName ?? Engine.Rendering.Constants.LightsStructName;
+            string flatPrefix = $"{prefix}.";
+            string basePrefix = $"{prefix}.Base.";
 
-            program.Uniform($"{targetStructName}Direction", Transform.WorldForward);
-            program.Uniform($"{targetStructName}Color", _color);
-            program.Uniform($"{targetStructName}DiffuseIntensity", _diffuseIntensity);
-            program.Uniform($"{targetStructName}WorldToLightProjMatrix", ShadowCamera?.ProjectionMatrix ?? Matrix4x4.Identity);
-            program.Uniform($"{targetStructName}WorldToLightInvViewMatrix", ShadowCamera?.Transform.WorldMatrix ?? Matrix4x4.Identity);
+            // Populate both legacy flat uniforms and structured Base.* uniforms expected by the ForwardLighting snippet.
+            program.Uniform($"{flatPrefix}Direction", Transform.WorldForward);
+            program.Uniform($"{flatPrefix}Color", _color);
+            program.Uniform($"{flatPrefix}DiffuseIntensity", _diffuseIntensity);
+            Matrix4x4 lightView = ShadowCamera?.Transform.InverseRenderMatrix ?? Matrix4x4.Identity;
+            Matrix4x4 lightProj = ShadowCamera?.ProjectionMatrix ?? Matrix4x4.Identity;
+            // C# Matrix4x4 is row-major but OpenGL expects column-major.
+            // When uploading with transpose=false, the matrix gets transposed.
+            // For GLSL's (mat * vec) convention to work, we need to reverse the multiplication order:
+            // CPU: View * Proj (which becomes (Proj * View)^T when uploaded)
+            // GLSL then computes: ((Proj * View)^T) * v = v^T * (Proj * View) = same result
+            Matrix4x4 lightViewProj = lightView * lightProj;
 
-            if (ShadowMap?.Material is null)
-                return;
+            // Debug shadow camera setup
+            if (!_loggedShadowCameraOnce)
+            {
+                _loggedShadowCameraOnce = true;
+                bool camNull = ShadowCamera is null;
+                Debug.Out($"[DirLightShadow] ShadowCamera null={camNull}, CastsShadows={CastsShadows}, Scale={Scale}");
+                if (!camNull)
+                {
+                    Debug.Out($"[DirLightShadow] lightProj diagonal: [{lightProj.M11:E3}, {lightProj.M22:E3}, {lightProj.M33:E3}, {lightProj.M44:E3}]");
+                    Debug.Out($"[DirLightShadow] lightView diagonal: [{lightView.M11:E3}, {lightView.M22:E3}, {lightView.M33:E3}, {lightView.M44:E3}]");
+                    Debug.Out($"[DirLightShadow] lightViewProj row0: [{lightViewProj.M11:E3}, {lightViewProj.M12:E3}, {lightViewProj.M13:E3}, {lightViewProj.M14:E3}]");
+                    Debug.Out($"[DirLightShadow] lightViewProj row1: [{lightViewProj.M21:E3}, {lightViewProj.M22:E3}, {lightViewProj.M23:E3}, {lightViewProj.M24:E3}]");
+                    Debug.Out($"[DirLightShadow] lightViewProj row2: [{lightViewProj.M31:E3}, {lightViewProj.M32:E3}, {lightViewProj.M33:E3}, {lightViewProj.M34:E3}]");
+                    Debug.Out($"[DirLightShadow] lightViewProj row3: [{lightViewProj.M41:E3}, {lightViewProj.M42:E3}, {lightViewProj.M43:E3}, {lightViewProj.M44:E3}]");
+                    if (ShadowCamera?.Parameters is XROrthographicCameraParameters ortho)
+                        Debug.Out($"[DirLightShadow] OrthoParams: W={ortho.Width}, H={ortho.Height}, NearZ={ortho.NearZ}, FarZ={ortho.FarZ}");
+                }
+            }
 
-            var shadowMap = ShadowMap.Material.Textures[0];
-            if (shadowMap != null)
-                program.Sampler("ShadowMap", shadowMap, 4);
+            program.Uniform($"{flatPrefix}WorldToLightProjMatrix", lightProj);
+            program.Uniform($"{flatPrefix}WorldToLightInvViewMatrix", ShadowCamera?.Transform.WorldMatrix ?? Matrix4x4.Identity);
+
+            program.Uniform($"{basePrefix}Color", _color);
+            program.Uniform($"{basePrefix}DiffuseIntensity", _diffuseIntensity);
+            program.Uniform($"{basePrefix}AmbientIntensity", 0.05f);
+            program.Uniform($"{basePrefix}WorldToLightSpaceProjMatrix", lightViewProj);
+            // Note: Shadow map sampler is bound by the caller (deferred pass or forward lighting collection)
+            // to avoid overwriting material texture units.
         }
 
         public override XRMaterial GetShadowMapMaterial(uint width, uint height, EDepthPrecision precision = EDepthPrecision.Int24)
@@ -398,8 +431,7 @@ namespace XREngine.Components.Lights
             switch (propName)
             {
                 case nameof(Transform):
-                    if (_shadowCameraTransform is not null)
-                        _shadowCameraTransform.Parent = Transform;
+                    _shadowCameraTransform?.Parent = Transform;
                     break;
                 case nameof(Scale):
                     MeshCenterAdjustMatrix = Matrix4x4.CreateScale(Scale);

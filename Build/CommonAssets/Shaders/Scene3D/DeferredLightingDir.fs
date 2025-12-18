@@ -18,7 +18,7 @@ uniform mat4 InverseViewMatrix;
 uniform mat4 ProjMatrix;
 
 uniform float MinFade = 500.0f;
-uniform float MaxFade = 1000.0f;
+uniform float MaxFade = 10000.0f;
 uniform float ShadowBase = 1.0f;
 uniform float ShadowMult = 1.0f;
 uniform float ShadowBiasMin = 0.00001f;
@@ -29,7 +29,7 @@ struct DirLight
 	vec3 Color;
 	float DiffuseIntensity;
 	mat4 WorldToLightInvViewMatrix;
-		mat4 WorldToLightProjMatrix;
+	mat4 WorldToLightProjMatrix;
 	vec3 Direction;
 };
 uniform DirLight LightData;

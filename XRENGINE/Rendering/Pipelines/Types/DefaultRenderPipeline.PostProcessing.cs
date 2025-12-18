@@ -95,7 +95,7 @@ public partial class DefaultRenderPipeline
         stage.AddParameter(
             nameof(ColorGradingSettings.AutoExposureScale),
             PostProcessParameterKind.Float,
-            0.3f,
+            0.1f,
             displayName: "Exposure Scale",
             min: 0.1f,
             max: 5.0f,
@@ -115,7 +115,7 @@ public partial class DefaultRenderPipeline
         stage.AddParameter(
             nameof(ColorGradingSettings.MaxExposure),
             PostProcessParameterKind.Float,
-            500.0f,
+            100.0f,
             displayName: "Max Exposure",
             min: 0.0f,
             max: 1000.0f,
@@ -135,7 +135,7 @@ public partial class DefaultRenderPipeline
         stage.AddParameter(
             nameof(ColorGradingSettings.ExposureTransitionSpeed),
             PostProcessParameterKind.Float,
-            0.7f,
+            0.5f,
             displayName: "Transition Speed",
             min: 0.0f,
             max: 1.0f,

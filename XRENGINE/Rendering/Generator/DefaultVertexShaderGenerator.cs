@@ -649,6 +649,7 @@ namespace XREngine.Rendering.Shaders.Generator
                     $"{EEngineUniform.RightEyeProjMatrix}{VertexUniformSuffix}",
                     1);
 
+                AssignFragPosOut(localInputPosName);
                 Assign_GL_Position(finalPosLeftName);
                 Assign_GL_SecondaryPositionNV(finalPosRightName);
             }
@@ -672,7 +673,7 @@ namespace XREngine.Rendering.Shaders.Generator
                     projMatrixName,
                     0);
 
-                AssignFragPosOut(finalPosName);
+                AssignFragPosOut(localInputPosName);
                 Assign_GL_Position(finalPosName);
             }
         }
@@ -776,22 +777,15 @@ namespace XREngine.Rendering.Shaders.Generator
         }
 
         /// <summary>
-        /// Assigns fragment position out to the final position.
-        /// Performs perspective divide here if not in VR.
+        /// Assigns fragment position out to world-space position.
+        /// Forward lighting shaders expect FragPos in world space for specular/shadow calculations.
         /// </summary>
-        /// <param name="finalPositionName"></param>
-        private void AssignFragPosOut(string finalPositionName)
+        /// <param name="localInputPositionName">The local/model-space position variable.</param>
+        private void AssignFragPosOut(string localInputPositionName)
         {
-            void PerspDivide()
-                => Line($"{FragPosName} = {finalPositionName}.xyz / {finalPositionName}.w;");
-
-            void NoPerspDivide()
-                => Line($"{FragPosName} = {finalPositionName}.xyz;");
-
-            if (UseOVRMultiView || UseNVStereo)
-                PerspDivide();
-            else //No perspective divide in VR shaders - done in geometry shader
-                IfElse(EEngineUniform.VRMode.ToString(), NoPerspDivide, PerspDivide);
+            // Always output world-space position for FragPos - required by forward lighting shaders.
+            // gl_Position still gets clip-space position for rasterization.
+            Line($"{FragPosName} = ({EEngineUniform.ModelMatrix} * {localInputPositionName}).xyz;");
         }
 
         /// <summary>
