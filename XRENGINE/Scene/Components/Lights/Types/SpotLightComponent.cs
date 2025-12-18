@@ -95,29 +95,43 @@ namespace XREngine.Components.Capture.Lights.Types
         {
             base.SetUniforms(program, targetStructName);
 
-            targetStructName = $"{targetStructName ?? Engine.Rendering.Constants.LightsStructName}.";
+            string prefix = targetStructName ?? Engine.Rendering.Constants.LightsStructName;
+            string flatPrefix = $"{prefix}.";
+            string pointBasePrefix = $"{prefix}.Base.";
+            string lightBasePrefix = $"{prefix}.Base.Base.";
 
-            program.Uniform($"{targetStructName}Color", _color);
-            program.Uniform($"{targetStructName}DiffuseIntensity", _diffuseIntensity);
-            program.Uniform($"{targetStructName}WorldToLightProjMatrix", ShadowCamera?.ProjectionMatrix ?? Matrix4x4.Identity);
-            program.Uniform($"{targetStructName}WorldToLightInvViewMatrix", ShadowCamera?.Transform.RenderMatrix ?? Matrix4x4.Identity);
+            // Legacy flat uniforms.
+            program.Uniform($"{flatPrefix}Color", _color);
+            program.Uniform($"{flatPrefix}DiffuseIntensity", _diffuseIntensity);
+            Matrix4x4 lightView = ShadowCamera?.Transform.InverseRenderMatrix ?? Matrix4x4.Identity;
+            Matrix4x4 lightProj = ShadowCamera?.ProjectionMatrix ?? Matrix4x4.Identity;
+            // Note: C# uses Proj * View order (same as GLSL column-major convention for M * v)
+            Matrix4x4 lightViewProj = lightProj * lightView;
 
-            program.Uniform($"{targetStructName}Position", Transform.RenderTranslation);
-            program.Uniform($"{targetStructName}Direction", Transform.RenderForward);
-            program.Uniform($"{targetStructName}Radius", Distance);
-            program.Uniform($"{targetStructName}Brightness", Brightness);
-            program.Uniform($"{targetStructName}Exponent", Exponent);
+            program.Uniform($"{flatPrefix}WorldToLightProjMatrix", lightProj);
+            program.Uniform($"{flatPrefix}WorldToLightInvViewMatrix", ShadowCamera?.Transform.RenderMatrix ?? Matrix4x4.Identity);
+            program.Uniform($"{flatPrefix}Position", Transform.RenderTranslation);
+            program.Uniform($"{flatPrefix}Direction", Transform.RenderForward);
+            program.Uniform($"{flatPrefix}Radius", Distance);
+            program.Uniform($"{flatPrefix}Brightness", Brightness);
+            program.Uniform($"{flatPrefix}Exponent", Exponent);
+            program.Uniform($"{flatPrefix}InnerCutoff", _innerCutoff);
+            program.Uniform($"{flatPrefix}OuterCutoff", _outerCutoff);
 
-            program.Uniform($"{targetStructName}InnerCutoff", _innerCutoff);
-            program.Uniform($"{targetStructName}OuterCutoff", _outerCutoff);
-
-            var mat = ShadowMap?.Material;
-            if (mat is null || mat.Textures.Count < 2)
-                return;
-            
-            var tex = mat.Textures[1];
-            if (tex is not null)
-                program.Sampler("ShadowMap", tex, 4);
+            // Structured Base.* uniforms for ForwardLighting snippet compatibility.
+            program.Uniform($"{lightBasePrefix}Color", _color);
+            program.Uniform($"{lightBasePrefix}DiffuseIntensity", _diffuseIntensity);
+            program.Uniform($"{lightBasePrefix}AmbientIntensity", 0.05f);
+            program.Uniform($"{lightBasePrefix}WorldToLightSpaceProjMatrix", lightViewProj);
+            program.Uniform($"{pointBasePrefix}Position", Transform.RenderTranslation);
+            program.Uniform($"{pointBasePrefix}Radius", Distance);
+            program.Uniform($"{pointBasePrefix}Brightness", Brightness);
+            program.Uniform($"{prefix}.Direction", Transform.RenderForward);
+            program.Uniform($"{prefix}.InnerCutoff", _innerCutoff);
+            program.Uniform($"{prefix}.OuterCutoff", _outerCutoff);
+            program.Uniform($"{prefix}.Exponent", Exponent);
+            // Note: Shadow map sampler is bound by the caller (deferred pass or forward lighting collection)
+            // to avoid overwriting material texture units.
         }
 
         public override void SetShadowMapResolution(uint width, uint height)

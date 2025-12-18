@@ -59,6 +59,22 @@ public static class ShaderHelper
         => LoadEngineShader(Path.Combine("Common", "LitTexturedNormalForward.fs"));
 
     /// <summary>
+    /// Lit textured forward shader with normal map (Texture1), specular map (Texture2), and alpha mask (Texture3).
+    /// Supports Forward+ lighting with specular intensity modulation and alpha cutoff.
+    /// Texture layout: Texture0=Albedo, Texture1=Normal, Texture2=Specular, Texture3=AlphaMask.
+    /// </summary>
+    public static XRShader LitTextureNormalSpecAlphaFragForward()
+        => LoadEngineShader(Path.Combine("Common", "LitTexturedNormalSpecAlphaForward.fs"));
+
+    /// <summary>
+    /// Lit textured forward shader with specular map (Texture1) and alpha mask (Texture2).
+    /// Supports Forward+ lighting with specular intensity modulation and alpha cutoff.
+    /// Texture layout: Texture0=Albedo, Texture1=Specular, Texture2=AlphaMask.
+    /// </summary>
+    public static XRShader LitTextureSpecAlphaFragForward()
+        => LoadEngineShader(Path.Combine("Common", "LitTexturedSpecAlphaForward.fs"));
+
+    /// <summary>
     /// Basic lit colored (no texture) forward shader with Forward+ lighting support.
     /// Uses ForwardLighting snippet.
     /// </summary>
@@ -132,7 +148,7 @@ public static class ShaderHelper
     /// Empty fragment shader source that does nothing.
     /// Use with: new XRShader(EShaderType.Fragment, ShaderHelper.Frag_Nothing)
     /// </summary>
-    public static readonly string Frag_Nothing = @"#version 100
+    public static readonly string Frag_Nothing = @"#version 450
 void main() { }";
 
     /// <summary>

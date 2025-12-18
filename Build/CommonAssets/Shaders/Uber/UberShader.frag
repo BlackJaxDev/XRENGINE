@@ -256,6 +256,32 @@ ToonLight calculateLighting(ToonMesh mesh, vec3 normal) {
 }
 
 // ============================================
+// Shadow Map Sampling
+// ============================================
+float sampleShadowMap(vec3 worldPos, vec3 normal, float nDotL) {
+    if (!ShadowMapEnabled)
+        return 1.0;
+
+    float maxBias = 0.04;
+    float minBias = 0.001;
+
+    vec4 fragPosLightSpace = u_LightSpaceMatrix * vec4(worldPos, 1.0);
+    vec3 fragCoord = fragPosLightSpace.xyz / fragPosLightSpace.w;
+    fragCoord = fragCoord * 0.5 + 0.5;
+
+    // Outside shadow map bounds: treat as fully lit
+    if (fragCoord.x < 0.0 || fragCoord.x > 1.0 ||
+        fragCoord.y < 0.0 || fragCoord.y > 1.0 ||
+        fragCoord.z < 0.0 || fragCoord.z > 1.0)
+        return 1.0;
+
+    float bias = max(maxBias * (1.0 - max(nDotL, 0.0)), minBias);
+
+    float depth = texture(ShadowMap, fragCoord.xy).r;
+    return (fragCoord.z - bias) > depth ? 0.0 : 1.0;
+}
+
+// ============================================
 // Shading Modes
 // ============================================
 vec3 applyShading(vec3 baseColor, ToonLight light, ToonMesh mesh) {
@@ -263,6 +289,9 @@ vec3 applyShading(vec3 baseColor, ToonLight light, ToonMesh mesh) {
         // No shading - just apply light color
         return baseColor * (light.color + light.indirectColor);
     }
+    
+    // Sample directional light shadow map
+    float shadowMapFactor = sampleShadowMap(mesh.worldPos, mesh.worldNormal, light.nDotL);
     
     vec3 finalLight;
     float shadow = 1.0;
@@ -326,6 +355,9 @@ vec3 applyShading(vec3 baseColor, ToonLight light, ToonMesh mesh) {
             break;
         }
     }
+    
+    // Apply shadow map factor from directional light
+    shadow *= shadowMapFactor;
     
     // Apply shadow strength
     shadow = mix(1.0, shadow, _ShadowStrength);

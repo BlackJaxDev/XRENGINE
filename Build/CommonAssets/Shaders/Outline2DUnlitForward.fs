@@ -2,7 +2,7 @@
 
 layout (location = 0) out vec4 OutColor;
 layout (location = 0) in vec3 FragPos;
-layout (location = 6) in vec2 FragUV0;
+layout (location = 4) in vec2 FragUV0;
 
 uniform vec3 Color = vec3(1.0f);
 uniform vec2 Size;

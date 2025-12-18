@@ -245,7 +245,20 @@ namespace XREngine.Rendering
             }
             else
             {
-                return text.Contains($"uniform {uniformName}", StringComparison.InvariantCultureIgnoreCase);
+                // Check for "uniform <type> <name>" pattern - the name follows the type
+                // Match patterns like "uniform vec3 CameraPosition" or "uniform DirLight DirectionalLights[2]"
+                bool found = text.Contains($"uniform {uniformName}", StringComparison.InvariantCultureIgnoreCase);
+                if (!found)
+                {
+                    // Also check for the uniform name appearing after "uniform <type> "
+                    // This handles "uniform SomeType uniformName" declarations
+                    found = System.Text.RegularExpressions.Regex.IsMatch(
+                        text, 
+                        $@"uniform\s+\w+\s+{System.Text.RegularExpressions.Regex.Escape(uniformName)}\s*[;\[=]",
+                        System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+                }
+                _existingUniforms[uniformName] = found;
+                return found;
             }
         }
     }

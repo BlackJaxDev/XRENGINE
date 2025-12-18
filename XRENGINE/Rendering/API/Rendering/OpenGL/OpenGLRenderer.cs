@@ -1137,7 +1137,7 @@ void main()
             if (sourceTex is XRTexture2DArray)
                 glProgram.Uniform("LayerCount", layerCount);
 
-            Api.ActiveTexture(GLEnum.Texture0);
+            SetActiveTextureUnit(0);
             Api.BindTexture((TextureTarget)bindTarget, sourceBindingId);
             glProgram.Uniform("SourceTex", 0);
 
@@ -1490,7 +1490,7 @@ void main()
             glProgram.Uniform("textureSize", new Data.Vectors.IVector2((int)w, (int)h));
             glProgram.Uniform("luminanceWeights", luminance);
 
-            Api.ActiveTexture(GLEnum.Texture0);
+            SetActiveTextureUnit(0);
             Api.BindTexture(TextureTarget.Texture2D, _luminanceFrontTex);
             glProgram.Uniform("inputTexture", 0);
 
@@ -2708,7 +2708,37 @@ void main()
             return Api.IsExtensionPresent("GL_ARB_indirect_parameters");
         }
 
-        public IGLTexture? BoundTexture { get; set; }
+        /// <summary>
+        /// Tracks the currently active texture unit for accurate per-unit binding optimization.
+        /// </summary>
+        public int ActiveTextureUnit { get; private set; } = 0;
+
+        /// <summary>
+        /// Tracks which texture is bound to each texture unit, keyed by unit index.
+        /// This allows proper optimization when the same texture is bound to different units.
+        /// </summary>
+        private readonly Dictionary<int, IGLTexture?> _boundTexturesPerUnit = new();
+
+        /// <summary>
+        /// Gets or sets the texture bound to the currently active texture unit.
+        /// This property maintains backward compatibility while enabling per-unit tracking.
+        /// </summary>
+        public IGLTexture? BoundTexture
+        {
+            get => _boundTexturesPerUnit.TryGetValue(ActiveTextureUnit, out var tex) ? tex : null;
+            set => _boundTexturesPerUnit[ActiveTextureUnit] = value;
+        }
+
+        /// <summary>
+        /// Sets the active texture unit and updates internal tracking.
+        /// Should be called instead of directly calling Api.ActiveTexture.
+        /// </summary>
+        /// <param name="unit">The texture unit to activate (0-based index).</param>
+        public void SetActiveTextureUnit(int unit)
+        {
+            ActiveTextureUnit = unit;
+            Api.ActiveTexture(GLEnum.Texture0 + unit);
+        }
 
         /// <summary>
         /// Modifies the rendering API's state to adhere to the given material's settings.

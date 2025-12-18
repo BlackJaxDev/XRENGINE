@@ -4,10 +4,10 @@ layout(line_strip, max_vertices=6) out;
 
 layout (location = 0) in vec3 FragPosIn[];
 layout (location = 1) in vec3 FragNormIn[];
-layout (location = 6) in vec2 FragUV0In[];
+layout (location = 4) in vec2 FragUV0In[];
 layout (location = 0) out vec3 FragPosOut;
 layout (location = 1) out vec3 FragNormOut;
-layout (location = 6) out vec2 FragUV0Out;
+layout (location = 4) out vec2 FragUV0Out;
 
 uniform float Magnitude = 0.5f;
 uniform mat4 WorldToCameraSpaceMatrix;

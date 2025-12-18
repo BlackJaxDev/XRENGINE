@@ -611,13 +611,26 @@ namespace XREngine
                 diffuseIndex = 0;
 
             int normalIndex = textures.FindIndex(x => x.TextureType == TextureType.Normals || x.TextureType == TextureType.Height);
+            int specularIndex = textures.FindIndex(x => x.TextureType == TextureType.Specular || x.TextureType == TextureType.Shininess);
+            int alphaMaskIndex = textures.FindIndex(x => x.TextureType == TextureType.Opacity);
 
             XRTexture? diffuse = diffuseIndex >= 0 && diffuseIndex < textureList.Length ? textureList[diffuseIndex] : null;
             XRTexture? normal = normalIndex >= 0 && normalIndex < textureList.Length ? textureList[normalIndex] : null;
+            XRTexture? specular = specularIndex >= 0 && specularIndex < textureList.Length ? textureList[specularIndex] : null;
+            XRTexture? alphaMask = alphaMaskIndex >= 0 && alphaMaskIndex < textureList.Length ? textureList[alphaMaskIndex] : null;
 
-            // Force a deterministic texture layout for the shader:
-            // Texture0 = diffuse, Texture1 = normal (optional).
-            if (normal is not null)
+            bool hasNormal = normal is not null;
+            bool hasSpecular = specular is not null;
+            bool hasAlphaMask = alphaMask is not null;
+
+            // Force a deterministic texture layout for the shader based on available maps:
+            // With normal: Texture0=Albedo, Texture1=Normal, Texture2=Specular, Texture3=AlphaMask
+            // Without normal: Texture0=Albedo, Texture1=Specular, Texture2=AlphaMask
+            if (hasNormal && (hasSpecular || hasAlphaMask))
+                mat.Textures = [diffuse, normal, specular, alphaMask];
+            else if (!hasNormal && (hasSpecular || hasAlphaMask))
+                mat.Textures = [diffuse, specular, alphaMask];
+            else if (hasNormal)
                 mat.Textures = [diffuse, normal];
             else
                 mat.Textures = [diffuse];
@@ -626,13 +639,26 @@ namespace XREngine
 
             if (diffuse is not null)
             {
-                mat.Shaders.Add(normal is not null ? ShaderHelper.LitTextureNormalFragForward() : ShaderHelper.LitTextureFragForward());
+                // Select the appropriate shader based on available maps
+                XRShader shader;
+                if (hasNormal && (hasSpecular || hasAlphaMask))
+                    shader = ShaderHelper.LitTextureNormalSpecAlphaFragForward();
+                else if (!hasNormal && (hasSpecular || hasAlphaMask))
+                    shader = ShaderHelper.LitTextureSpecAlphaFragForward();
+                else if (hasNormal)
+                    shader = ShaderHelper.LitTextureNormalFragForward();
+                else
+                    shader = ShaderHelper.LitTextureFragForward();
+
+                mat.Shaders.Add(shader);
                 mat.Parameters =
                 [
                     new ShaderFloat(1.0f, "MatSpecularIntensity"),
                     new ShaderFloat(32.0f, "MatShininess"),
+                    new ShaderFloat(0.5f, "AlphaCutoff"), // Default alpha cutoff threshold
                 ];
-                if (transp || diffuse.HasAlphaChannel)
+
+                if (transp || diffuse.HasAlphaChannel || hasAlphaMask)
                 {
                     transp = true;
                     mat.RenderPass = (int)EDefaultRenderPass.TransparentForward;
@@ -650,6 +676,7 @@ namespace XREngine
                     new ShaderVector4(new Vector4(1, 0, 1, 1), "MatColor"),
                     new ShaderFloat(1.0f, "MatSpecularIntensity"),
                     new ShaderFloat(32.0f, "MatShininess"),
+                    new ShaderFloat(0.5f, "AlphaCutoff"),
                 ];
                 mat.RenderPass = (int)EDefaultRenderPass.OpaqueForward;
             }
