@@ -1,6 +1,7 @@
 ﻿using Extensions;
 using System.Numerics;
 using XREngine.Components;
+using XREngine.Components.Physics;
 using XREngine.Data.Core;
 using XREngine.Scene.Physics;
 using YamlDotNet.Serialization;
@@ -49,38 +50,64 @@ namespace XREngine.Scene.Transforms
         private Vector3 _position;
         /// <summary>
         /// The position of this transform in *world* space.
-        /// Set by the physics engine.
+        /// Set by the physics engine during play mode, or manually in edit mode.
         /// </summary>
         public Vector3 Position
         {
             get => _position;
-            private set
+            set
             {
-                SetField(ref _position, value);
+                if (!SetField(ref _position, value))
+                    return;
+                    
                 MarkWorldModified();
             }
         }
 
-        private Quaternion _rotation;
+        private Quaternion _rotation = Quaternion.Identity;
         /// <summary>
         /// The rotation of this transform in *world* space.
-        /// Set by the physics engine.
+        /// Set by the physics engine during play mode, or manually in edit mode.
         /// </summary>
         public Quaternion Rotation
         {
             get => _rotation;
-            private set
+            set
             {
-                SetField(ref _rotation, value);
+                if (!SetField(ref _rotation, value))
+                    return;
+                    
                 MarkWorldModified();
             }
         }
 
         public void SetPositionAndRotation(Vector3 position, Quaternion rotation)
         {
-            SetField(ref _position, position, nameof(Position));
-            SetField(ref _rotation, rotation, nameof(Rotation));
+            bool posChanged = SetField(ref _position, position, nameof(Position));
+            bool rotChanged = SetField(ref _rotation, rotation, nameof(Rotation));
+            
+            if (!posChanged && !rotChanged)
+                return;
+                
             MarkWorldModified();
+        }
+
+        /// <summary>
+        /// Sets the world translation of this transform.
+        /// In edit mode, this also updates the rigid body component's initial position.
+        /// </summary>
+        public void SetWorldTranslation(Vector3 translation)
+        {
+            Position = translation;
+        }
+
+        /// <summary>
+        /// Sets the world rotation of this transform.
+        /// In edit mode, this also updates the rigid body component's initial rotation.
+        /// </summary>
+        public void SetWorldRotation(Quaternion rotation)
+        {
+            Rotation = rotation;
         }
 
         private Quaternion _preRotationOffset = Quaternion.Identity;
@@ -95,7 +122,7 @@ namespace XREngine.Scene.Transforms
         }
 
         //TODO: why does physx init 90 degrees on Z?
-        private Quaternion _postRotationOffset = Quaternion.CreateFromAxisAngle(Globals.Backward, XRMath.DegToRad(-90.0f));
+        private Quaternion _postRotationOffset = Quaternion.CreateFromAxisAngle(Globals.Backward, XRMath.DegToRad(0.0f));
         /// <summary>
         /// The rotation offset to apply to the rotation of this transform *after* the physics engine sets it.
         /// </summary>
@@ -134,10 +161,11 @@ namespace XREngine.Scene.Transforms
             base.OnPropertyChanged(propName, prev, field);
             switch (propName)
             {
-                //case nameof(Position):
-                //case nameof(Rotation):
-                //    MarkWorldModified();
-                //    break;
+                case nameof(Position):
+                case nameof(Rotation):
+                    if (Engine.PlayMode.IsEditing)
+                        RecalculateMatrices(true, false);
+                    break;
                 case nameof(RigidBody):
                     if (RigidBody is not null)
                         OnPhysicsStepped();
@@ -264,9 +292,18 @@ namespace XREngine.Scene.Transforms
             if (RigidBody is null)
                 return;
 
-            LastPhysicsTransform = RigidBody.Transform;
-            LastPhysicsLinearVelocity = RigidBody.LinearVelocity;
-            LastPhysicsAngularVelocity = RigidBody.AngularVelocity;
+            if (Engine.PlayMode.IsEditing)
+            {
+                LastPhysicsTransform = (Position, Rotation);
+                LastPhysicsLinearVelocity = Vector3.Zero;
+                LastPhysicsAngularVelocity = Vector3.Zero;
+            }
+            else
+            {
+                LastPhysicsTransform = RigidBody.Transform;
+                LastPhysicsLinearVelocity = RigidBody.LinearVelocity;
+                LastPhysicsAngularVelocity = RigidBody.AngularVelocity;
+            }
 
             LastPosition = Position;
             LastRotation = Rotation;

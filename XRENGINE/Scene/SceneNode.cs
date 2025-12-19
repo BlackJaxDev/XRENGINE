@@ -154,8 +154,7 @@ namespace XREngine.Scene
                 {
                     IsActiveSelf = true;
                     var parent = Parent;
-                    if (parent != null)
-                        parent.IsActiveInHierarchy = true;
+                    parent?.IsActiveInHierarchy = true;
                 }
             }
         }
@@ -202,8 +201,7 @@ namespace XREngine.Scene
                     }
                     break;
                 case nameof(Name):
-                    if (_transform != null)
-                        _transform.Name = Name;
+                    _transform?.Name = Name;
                     break;
                 case nameof(Layer):
                     ApplyLayerToAllComponents();
@@ -425,11 +423,7 @@ namespace XREngine.Scene
         public SceneNode? Parent
         {
             get => _transform?.Parent?.SceneNode;
-            set
-            {
-                if (_transform is not null)
-                    _transform.Parent = value?.Transform;
-            }
+            set => _transform?.Parent = value?.Transform;
         }
 
         private SceneNodePrefabLink? _prefab;
@@ -460,8 +454,7 @@ namespace XREngine.Scene
                     return;
 
                 foreach (var child in value)
-                    if (child is not null)
-                        child.Parent = this;
+                    child?.Parent = this;
             }
         }
 
@@ -515,12 +508,15 @@ namespace XREngine.Scene
         {
             var comp1 = AddComponent<T1>();
             var comp2 = AddComponent<T2>();
-            if (names.Length > 0)
+            for (int i = 0; i < names.Length; i++)
             {
-                if (comp1 is not null)
-                    comp1.Name = names[0];
-                if (names.Length > 1 && comp2 is not null)
-                    comp2.Name = names[1];
+                XRComponent? comp = i switch
+                {
+                    0 => comp1,
+                    1 => comp2,
+                    _ => null,
+                };
+                comp?.Name = names[i];
             }
             return (comp1, comp2);
         }
@@ -530,14 +526,16 @@ namespace XREngine.Scene
             var comp1 = AddComponent<T1>();
             var comp2 = AddComponent<T2>();
             var comp3 = AddComponent<T3>();
-            if (names.Length > 0)
+            for (int i = 0; i < names.Length; i++)
             {
-                if (comp1 is not null)
-                    comp1.Name = names[0];
-                if (names.Length > 1 && comp2 is not null)
-                    comp2.Name = names[1];
-                if (names.Length > 2 && comp3 is not null)
-                    comp3.Name = names[2];
+                XRComponent? comp = i switch
+                {
+                    0 => comp1,
+                    1 => comp2,
+                    2 => comp3,
+                    _ => null,
+                };
+                comp?.Name = names[i];
             }
             return (comp1, comp2, comp3);
         }
@@ -548,16 +546,17 @@ namespace XREngine.Scene
             var comp2 = AddComponent<T2>();
             var comp3 = AddComponent<T3>();
             var comp4 = AddComponent<T4>();
-            if (names.Length > 0)
+            for (int i = 0; i < names.Length; i++)
             {
-                if (comp1 is not null)
-                    comp1.Name = names[0];
-                if (names.Length > 1 && comp2 is not null)
-                    comp2.Name = names[1];
-                if (names.Length > 2 && comp3 is not null)
-                    comp3.Name = names[2];
-                if (names.Length > 3 && comp4 is not null)
-                    comp4.Name = names[3];
+                XRComponent? comp = i switch
+                {
+                    0 => comp1,
+                    1 => comp2,
+                    2 => comp3,
+                    3 => comp4,
+                    _ => null,
+                };
+                comp?.Name = names[i];
             }
             return (comp1, comp2, comp3, comp4);
         }
@@ -569,18 +568,18 @@ namespace XREngine.Scene
             var comp3 = AddComponent<T3>();
             var comp4 = AddComponent<T4>();
             var comp5 = AddComponent<T5>();
-            if (names.Length > 0)
+            for (int i = 0; i < names.Length; i++)
             {
-                if (comp1 is not null)
-                    comp1.Name = names[0];
-                if (names.Length > 1 && comp2 is not null)
-                    comp2.Name = names[1];
-                if (names.Length > 2 && comp3 is not null)
-                    comp3.Name = names[2];
-                if (names.Length > 3 && comp4 is not null)
-                    comp4.Name = names[3];
-                if (names.Length > 4 && comp5 is not null)
-                    comp5.Name = names[4];
+                XRComponent? comp = i switch
+                {
+                    0 => comp1,
+                    1 => comp2,
+                    2 => comp3,
+                    3 => comp4,
+                    4 => comp5,
+                    _ => null,
+                };
+                comp?.Name = names[i];
             }
             return (comp1, comp2, comp3, comp4, comp5);
         }
@@ -593,20 +592,19 @@ namespace XREngine.Scene
             var comp4 = AddComponent<T4>();
             var comp5 = AddComponent<T5>();
             var comp6 = AddComponent<T6>();
-            if (names.Length > 0)
+            for (int i = 0; i < names.Length; i++)
             {
-                if (comp1 is not null)
-                    comp1.Name = names[0];
-                if (names.Length > 1 && comp2 is not null)
-                    comp2.Name = names[1];
-                if (names.Length > 2 && comp3 is not null)
-                    comp3.Name = names[2];
-                if (names.Length > 3 && comp4 is not null)
-                    comp4.Name = names[3];
-                if (names.Length > 4 && comp5 is not null)
-                    comp5.Name = names[4];
-                if (names.Length > 5 && comp6 is not null)
-                    comp6.Name = names[5];
+                XRComponent? comp = i switch
+                {
+                    0 => comp1,
+                    1 => comp2,
+                    2 => comp3,
+                    3 => comp4,
+                    4 => comp5,
+                    5 => comp6,
+                    _ => null,
+                };
+                comp?.Name = names[i];
             }
             return (comp1, comp2, comp3, comp4, comp5, comp6);
         }
@@ -1404,8 +1402,29 @@ namespace XREngine.Scene
         protected override void OnDestroying()
         {
             OnDeactivated();
+            OnEndPlay();
+
+            //Unsubscribe from component list events
+            ComponentsInternal.PostAnythingAdded -= OnComponentAdded;
+            ComponentsInternal.PostAnythingRemoved -= OnComponentRemoved;
+
+            //Destroy all components
+            lock (Components)
+            {
+                foreach (var component in ComponentsInternal.ToArray())
+                    component.Destroy();
+                ComponentsInternal.Clear();
+            }
+            
+            //Remove from parent
             Parent = null;
+
+            //Destroy transform
+            _transform?.Destroy();
+
+            //Detach from world
             World = null;
+            
             base.OnDestroying();
         }
 

@@ -71,10 +71,97 @@ public sealed class CameraComponentEditor : IXRComponentEditor
         ComponentEditorLayout.DrawActivePreviewDialog();
     }
 
+    private static void DrawUsageStatus(CameraComponent component)
+    {
+        bool isActive = component.IsActivelyRendering;
+        var player = component.GetUsingLocalPlayer();
+        var pawn = component.GetUsingPawn();
+
+        // Status indicator with color
+        Vector4 statusColor = isActive 
+            ? new Vector4(0.2f, 0.8f, 0.2f, 1.0f)  // Green for active
+            : new Vector4(0.6f, 0.6f, 0.6f, 1.0f); // Gray for inactive
+        
+        string statusIcon = isActive ? "[ACTIVE]" : "[INACTIVE]";
+        ImGui.TextColored(statusColor, statusIcon);
+        ImGui.SameLine();
+        ImGui.Text("Rendering Status");
+
+        if (ImGui.IsItemHovered())
+            ImGui.SetTooltip(component.GetUsageDescription());
+
+        ImGui.Indent();
+
+        // Local Player info
+        if (player is not null)
+        {
+            ImGui.TextColored(new Vector4(0.4f, 0.8f, 1.0f, 1.0f), $"Local Player: {(int)player.LocalPlayerIndex + 1}");
+            if (ImGui.IsItemHovered())
+                ImGui.SetTooltip($"This camera is being used by Local Player {(int)player.LocalPlayerIndex + 1}'s viewport.");
+        }
+        else
+        {
+            ImGui.TextDisabled("Local Player: None");
+        }
+
+        // Pawn info
+        if (pawn is not null)
+        {
+            string pawnName = pawn.SceneNode?.Name ?? pawn.GetType().Name;
+            string pawnType = pawn.GetType().Name;
+            ImGui.TextColored(new Vector4(0.4f, 1.0f, 0.6f, 1.0f), $"Pawn: {pawnName}");
+            if (ImGui.IsItemHovered())
+                ImGui.SetTooltip($"Type: {pawnType}\nThis camera is provided by this pawn component.");
+        }
+        else
+        {
+            ImGui.TextDisabled("Pawn: None");
+        }
+
+        // Viewport count
+        int viewportCount = component.Camera.Viewports.Count;
+        if (viewportCount > 0)
+        {
+            ImGui.TextColored(new Vector4(1.0f, 0.8f, 0.4f, 1.0f), $"Viewports: {viewportCount}");
+            if (ImGui.IsItemHovered())
+            {
+                string tooltip = "Bound viewports:\n";
+                for (int i = 0; i < component.Camera.Viewports.Count; i++)
+                {
+                    var vp = component.Camera.Viewports[i];
+                    tooltip += $"  [{i}] {vp.Region.Width}x{vp.Region.Height}";
+                    if (vp.Window is not null)
+                        tooltip += $" (Window: {vp.Window.Window.Title ?? "untitled"})";
+                    tooltip += "\n";
+                }
+                ImGui.SetTooltip(tooltip.TrimEnd());
+            }
+        }
+        else
+        {
+            ImGui.TextDisabled("Viewports: 0");
+        }
+
+        // Warning if not in use
+        if (!isActive)
+        {
+            ImGui.Spacing();
+            ImGui.TextColored(new Vector4(1.0f, 0.7f, 0.2f, 1.0f), "⚠ Camera is not rendering");
+            if (ImGui.IsItemHovered())
+                ImGui.SetTooltip("This camera is not bound to any viewport or render target.\nIt will not consume rendering resources.");
+        }
+
+        ImGui.Unindent();
+    }
+
     private static void DrawCameraSettings(CameraComponent component)
     {
         if (!ImGui.CollapsingHeader("Camera Settings", ImGuiTreeNodeFlags.DefaultOpen))
             return;
+
+        // Usage Status Section
+        DrawUsageStatus(component);
+        ImGui.Separator();
 
         bool cullWithFrustum = component.CullWithFrustum;
         if (ImGui.Checkbox("Cull With Frustum", ref cullWithFrustum))
@@ -126,14 +213,6 @@ public sealed class CameraComponentEditor : IXRComponentEditor
             ?? component.GetUserInterfaceOverlay()?.GetType().Name
             ?? "<none>";
         ImGui.TextDisabled($"UI Overlay: {uiOverlay}");
-
-        string renderTargetLabel = component.DefaultRenderTarget?.Name ?? "<none>";
-        ImGui.TextDisabled($"Default Render Target: {renderTargetLabel}");
-        if (component.DefaultRenderTarget is null && ImGui.IsItemHovered())
-            ImGui.SetTooltip("Camera renders directly to its viewport.");
-
-        int viewportCount = component.Camera.Viewports.Count;
-        ImGui.TextDisabled($"Bound Viewports: {viewportCount}");
 
         ImGui.Separator();
         ImGui.TextDisabled("Render Pipeline Asset");

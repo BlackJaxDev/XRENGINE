@@ -30,6 +30,14 @@ namespace XREngine.Scene.Physics.Jolt
             }
         }
 
+        public void SetTransform(Vector3 position, Quaternion rotation, Activation activation = Activation.Activate)
+        {
+            if (Scene?.PhysicsSystem is null)
+                return;
+
+            Scene.PhysicsSystem.BodyInterface.SetRPositionAndRotation(BodyID, position, rotation, activation);
+        }
+
         public override Vector3 LinearVelocity
         {
             get

@@ -9,6 +9,7 @@ using XREngine.Components.Scene.Mesh;
 using XREngine.Components.Scene.Transforms;
 using XREngine.Components.Scene.Volumes;
 using XREngine.Core;
+using XREngine.Data;
 using XREngine.Data.Colors;
 using XREngine.Data.Core;
 using XREngine.Data.Geometry;
@@ -25,6 +26,7 @@ using XREngine.Scene;
 using XREngine.Scene.Transforms;
 using System.ComponentModel;
 using XREngine.Scene.Components.Editing;
+using XREngine.Core.Attributes;
 
 namespace XREngine.Editor;
 
@@ -151,6 +153,110 @@ public partial class EditorFlyingCameraPawnComponent : FlyingCameraPawnComponent
         set => SetField(ref _renderFrustum, value);
     }
 
+    #region Debug Camera Mode
+
+    private bool _debugCameraMode = false;
+    /// <summary>
+    /// When enabled, switches control to a debug camera that performs no culling,
+    /// allowing visualization of the actual editor camera's frustum and culling behavior.
+    /// </summary>
+    [Category("Debug Camera")]
+    [DisplayName("Debug Camera Mode")]
+    [Description("When enabled, control switches to a debug camera with no culling to visualize the editor camera's frustum.")]
+    public bool DebugCameraMode
+    {
+        get => _debugCameraMode;
+        set
+        {
+            if (_debugCameraMode != value)
+            {
+                SetField(ref _debugCameraMode, value);
+                OnDebugCameraModeChanged(value);
+            }
+        }
+    }
+
+    private ColorF4 _debugFrustumColor = ColorF4.Cyan;
+    /// <summary>
+    /// The color used to render the editor camera's frustum in debug mode.
+    /// </summary>
+    [Category("Debug Camera")]
+    [DisplayName("Frustum Color")]
+    [Description("Color used to render the editor camera's frustum wireframe.")]
+    public ColorF4 DebugFrustumColor
+    {
+        get => _debugFrustumColor;
+        set => SetField(ref _debugFrustumColor, value);
+    }
+
+    private ColorF4 _debugFrustumNearPlaneColor = ColorF4.Green;
+    /// <summary>
+    /// The color used to render the near plane of the editor camera's frustum.
+    /// </summary>
+    [Category("Debug Camera")]
+    [DisplayName("Near Plane Color")]
+    [Description("Color used to render the near plane of the frustum.")]
+    public ColorF4 DebugFrustumNearPlaneColor
+    {
+        get => _debugFrustumNearPlaneColor;
+        set => SetField(ref _debugFrustumNearPlaneColor, value);
+    }
+
+    private ColorF4 _debugFrustumFarPlaneColor = ColorF4.Red;
+    /// <summary>
+    /// The color used to render the far plane of the editor camera's frustum.
+    /// </summary>
+    [Category("Debug Camera")]
+    [DisplayName("Far Plane Color")]
+    [Description("Color used to render the far plane of the frustum.")]
+    public ColorF4 DebugFrustumFarPlaneColor
+    {
+        get => _debugFrustumFarPlaneColor;
+        set => SetField(ref _debugFrustumFarPlaneColor, value);
+    }
+
+    private bool _renderFrustumPlanes = true;
+    /// <summary>
+    /// When true, renders semi-transparent near and far planes of the frustum.
+    /// </summary>
+    [Category("Debug Camera")]
+    [DisplayName("Render Frustum Planes")]
+    [Description("When enabled, renders semi-transparent near and far planes of the stored frustum.")]
+    public bool RenderFrustumPlanes
+    {
+        get => _renderFrustumPlanes;
+        set => SetField(ref _renderFrustumPlanes, value);
+    }
+
+    private bool _renderCameraPositionGizmo = true;
+    /// <summary>
+    /// When true, renders a gizmo at the editor camera's position in debug mode.
+    /// </summary>
+    [Category("Debug Camera")]
+    [DisplayName("Render Camera Gizmo")]
+    [Description("Shows a visual representation of the editor camera's position and orientation.")]
+    public bool RenderCameraPositionGizmo
+    {
+        get => _renderCameraPositionGizmo;
+        set => SetField(ref _renderCameraPositionGizmo, value);
+    }
+
+    // Store the editor camera's transform when entering debug mode
+    private Vector3 _storedEditorCameraPosition;
+    private Quaternion _storedEditorCameraRotation;
+
+    // Debug camera component created for visualization
+    private SceneNode? _debugCameraNode = null;
+    private CameraComponent? _debugCameraComponent = null;
+
+    /// <summary>
+    /// Gets the stored frustum of the editor camera for visualization purposes.
+    /// </summary>
+    [Browsable(false)]
+    public Frustum? StoredEditorCameraFrustum { get; private set; }
+
+    #endregion
+
     private bool _renderRaycast = false;
     /// <summary>
     /// If true, renders debug information for raycast hits.
@@ -198,6 +304,12 @@ public partial class EditorFlyingCameraPawnComponent : FlyingCameraPawnComponent
 
     private readonly ConcurrentQueue<SortedDictionary<float, List<(RenderInfo3D item, object? data)>>> _octreePickResultPool = new();
     private readonly ConcurrentQueue<SortedDictionary<float, List<(XRComponent? item, object? data)>>> _physicsPickResultPool = new();
+
+    /// <summary>
+    /// Tracks if an octree pick is pending (dispatched but callback not yet received).
+    /// Used to prevent flooding the octree raycast queue.
+    /// </summary>
+    private volatile bool _octreePickPending = false;
 
     private SortedDictionary<float, List<(RenderInfo3D item, object? data)>> GetOctreePickResultDict()
     {
@@ -371,12 +483,16 @@ public partial class EditorFlyingCameraPawnComponent : FlyingCameraPawnComponent
             Engine.Rendering.Debug.RenderSphere(pos, (Viewport.Camera?.DistanceFromWorldPosition(pos) ?? 1.0f) * 0.05f, false, ColorF4.Yellow);
         }
 
-        if (RenderFrustum)
+        if (RenderFrustum && !DebugCameraMode)
         {
             var cam = GetCamera();
             if (cam is not null)
                 Engine.Rendering.Debug.RenderFrustum(cam.Camera.WorldFrustum(), ColorF4.Red);
         }
+
+        // Render debug camera visualization when in debug mode
+        if (DebugCameraMode)
+            RenderDebugCameraVisualization();
     }
 
     private void RenderPickModeOverlay()
@@ -397,6 +513,287 @@ public partial class EditorFlyingCameraPawnComponent : FlyingCameraPawnComponent
                 break;
         }
     }
+
+    #region Debug Camera Mode Implementation
+
+    /// <summary>
+    /// Called when debug camera mode is toggled on or off.
+    /// </summary>
+    private void OnDebugCameraModeChanged(bool enabled)
+    {
+        if (enabled)
+            EnterDebugCameraMode();
+        else
+            ExitDebugCameraMode();
+    }
+
+    /// <summary>
+    /// Enters debug camera mode - stores the current camera state and enables visualization.
+    /// </summary>
+    private void EnterDebugCameraMode()
+    {
+        var editorCamera = GetCamera();
+        if (editorCamera is null)
+            return;
+
+        // Store the current camera's transform for visualization
+        _storedEditorCameraPosition = Transform.WorldTranslation;
+        _storedEditorCameraRotation = Transform.WorldRotation;
+
+        // Store the frustum for visualization
+        StoredEditorCameraFrustum = editorCamera.Camera.WorldFrustum();
+
+        // Store the original culling camera override and set a new one that uses the stored frustum
+        // Culling remains enabled - objects are actually culled based on the stored frustum
+        _originalCullingCameraOverride = editorCamera.CullingCameraOverride;
+        
+        // Create the debug camera node immediately so we have a valid camera to return
+        EnsureDebugCameraNode();
+        if (_debugCameraComponent is not null)
+            editorCamera.CullingCameraOverride = GetStoredFrustumCamera;
+
+        Debug.Out("[DebugCamera] Entered debug camera mode. Press F9 to exit.");
+    }
+
+    /// <summary>
+    /// Exits debug camera mode - restores the original camera state.
+    /// </summary>
+    private void ExitDebugCameraMode()
+    {
+        var editorCamera = GetCamera();
+        if (editorCamera is null)
+            return;
+
+        // Restore the original culling camera override
+        editorCamera.CullingCameraOverride = _originalCullingCameraOverride;
+        _originalCullingCameraOverride = null;
+
+        // Clear stored frustum
+        StoredEditorCameraFrustum = null;
+
+        // Clean up debug camera node if created
+        CleanupDebugCameraNode();
+
+        Debug.Out("[DebugCamera] Exited debug camera mode.");
+    }
+
+    private Func<XRCamera>? _originalCullingCameraOverride = null;
+
+    /// <summary>
+    /// Returns a camera configured with the stored frustum for culling visualization.
+    /// This method should only be called when _debugCameraComponent is guaranteed to exist.
+    /// </summary>
+    private XRCamera GetStoredFrustumCamera()
+    {
+        // This will only be called after EnsureDebugCameraNode creates the camera
+        return _debugCameraComponent!.Camera;
+    }
+
+    /// <summary>
+    /// Creates the debug camera node if it doesn't exist.
+    /// </summary>
+    private void EnsureDebugCameraNode()
+    {
+        if (_debugCameraNode is not null)
+            return;
+
+        var editorCamera = GetCamera();
+        if (editorCamera is null)
+            return;
+
+        // Create a temporary node for the debug camera
+        _debugCameraNode = SceneNode.Parent is not null 
+            ? SceneNode.Parent.NewChild("DebugCameraVisualization")
+            : SceneNode.World?.RootNodes.NewRootNode("DebugCameraVisualization");
+        if (_debugCameraNode is null)
+            return;
+            
+        var debugTransform = _debugCameraNode.SetTransform<Transform>();
+        debugTransform.Translation = _storedEditorCameraPosition;
+        debugTransform.Rotation = _storedEditorCameraRotation;
+        debugTransform.RecalculateMatrices();
+
+        // Add camera component with same parameters as editor camera
+        _debugCameraComponent = _debugCameraNode.AddComponent<CameraComponent>();
+        if (_debugCameraComponent is not null && editorCamera.Camera.Parameters is XRPerspectiveCameraParameters editorParams)
+        {
+            var debugParams = _debugCameraComponent.Camera.Parameters as XRPerspectiveCameraParameters;
+            if (debugParams is not null)
+            {
+                debugParams.VerticalFieldOfView = editorParams.VerticalFieldOfView;
+                debugParams.NearZ = editorParams.NearZ;
+                debugParams.FarZ = editorParams.FarZ;
+            }
+        }
+    }
+
+    /// <summary>
+    /// Cleans up the debug camera node.
+    /// </summary>
+    private void CleanupDebugCameraNode()
+    {
+        if (_debugCameraNode is not null)
+        {
+            _debugCameraNode.Destroy();
+            _debugCameraNode = null;
+            _debugCameraComponent = null;
+        }
+    }
+
+    /// <summary>
+    /// Updates the stored frustum when the user wants to recapture it.
+    /// </summary>
+    public void UpdateStoredFrustum()
+    {
+        if (!DebugCameraMode)
+            return;
+
+        var editorCamera = GetCamera();
+        if (editorCamera is null)
+            return;
+
+        // Update stored position and rotation
+        _storedEditorCameraPosition = Transform.WorldTranslation;
+        _storedEditorCameraRotation = Transform.WorldRotation;
+
+        // Temporarily enable culling to get the correct frustum
+        bool wasCulling = editorCamera.CullWithFrustum;
+        editorCamera.CullWithFrustum = true;
+        StoredEditorCameraFrustum = editorCamera.Camera.WorldFrustum();
+        editorCamera.CullWithFrustum = wasCulling;
+
+        // Update debug camera position
+        if (_debugCameraNode?.Transform is Transform debugTransform)
+        {
+            debugTransform.Translation = _storedEditorCameraPosition;
+            debugTransform.Rotation = _storedEditorCameraRotation;
+        }
+
+        Debug.Out("[DebugCamera] Updated stored frustum position.");
+    }
+
+    /// <summary>
+    /// Renders the debug camera visualization including frustum and camera gizmo.
+    /// </summary>
+    private void RenderDebugCameraVisualization()
+    {
+        if (!DebugCameraMode || !StoredEditorCameraFrustum.HasValue)
+            return;
+
+        var frustum = StoredEditorCameraFrustum.Value;
+
+        // Render the frustum wireframe
+        RenderFrustumWireframe(frustum);
+
+        // Render the near and far planes with different colors
+        if (RenderFrustumPlanes)
+            RenderFrustumPlanesVisualization(frustum);
+
+        // Render camera position gizmo
+        if (RenderCameraPositionGizmo)
+            RenderCameraGizmo();
+    }
+
+    /// <summary>
+    /// Renders the frustum as a wireframe.
+    /// </summary>
+    private void RenderFrustumWireframe(Frustum frustum)
+    {
+        // Near plane edges
+        Engine.Rendering.Debug.RenderLine(frustum.LeftTopNear, frustum.RightTopNear, DebugFrustumNearPlaneColor);
+        Engine.Rendering.Debug.RenderLine(frustum.RightTopNear, frustum.RightBottomNear, DebugFrustumNearPlaneColor);
+        Engine.Rendering.Debug.RenderLine(frustum.RightBottomNear, frustum.LeftBottomNear, DebugFrustumNearPlaneColor);
+        Engine.Rendering.Debug.RenderLine(frustum.LeftBottomNear, frustum.LeftTopNear, DebugFrustumNearPlaneColor);
+
+        // Far plane edges
+        Engine.Rendering.Debug.RenderLine(frustum.LeftTopFar, frustum.RightTopFar, DebugFrustumFarPlaneColor);
+        Engine.Rendering.Debug.RenderLine(frustum.RightTopFar, frustum.RightBottomFar, DebugFrustumFarPlaneColor);
+        Engine.Rendering.Debug.RenderLine(frustum.RightBottomFar, frustum.LeftBottomFar, DebugFrustumFarPlaneColor);
+        Engine.Rendering.Debug.RenderLine(frustum.LeftBottomFar, frustum.LeftTopFar, DebugFrustumFarPlaneColor);
+
+        // Connecting edges (frustum sides)
+        Engine.Rendering.Debug.RenderLine(frustum.LeftTopNear, frustum.LeftTopFar, DebugFrustumColor);
+        Engine.Rendering.Debug.RenderLine(frustum.RightTopNear, frustum.RightTopFar, DebugFrustumColor);
+        Engine.Rendering.Debug.RenderLine(frustum.RightBottomNear, frustum.RightBottomFar, DebugFrustumColor);
+        Engine.Rendering.Debug.RenderLine(frustum.LeftBottomNear, frustum.LeftBottomFar, DebugFrustumColor);
+    }
+
+    /// <summary>
+    /// Renders semi-transparent planes for the near and far frustum planes.
+    /// </summary>
+    private void RenderFrustumPlanesVisualization(Frustum frustum)
+    {
+        // Render near plane as filled quad
+        var nearPlaneColor = new ColorF4(DebugFrustumNearPlaneColor.R, DebugFrustumNearPlaneColor.G, DebugFrustumNearPlaneColor.B, 0.15f);
+        Engine.Rendering.Debug.RenderTriangle(
+            new Triangle(frustum.LeftTopNear, frustum.RightTopNear, frustum.RightBottomNear),
+            nearPlaneColor, true);
+        Engine.Rendering.Debug.RenderTriangle(
+            new Triangle(frustum.LeftTopNear, frustum.RightBottomNear, frustum.LeftBottomNear),
+            nearPlaneColor, true);
+
+        // Render far plane as filled quad
+        var farPlaneColor = new ColorF4(DebugFrustumFarPlaneColor.R, DebugFrustumFarPlaneColor.G, DebugFrustumFarPlaneColor.B, 0.1f);
+        Engine.Rendering.Debug.RenderTriangle(
+            new Triangle(frustum.LeftTopFar, frustum.RightBottomFar, frustum.RightTopFar),
+            farPlaneColor, true);
+        Engine.Rendering.Debug.RenderTriangle(
+            new Triangle(frustum.LeftTopFar, frustum.LeftBottomFar, frustum.RightBottomFar),
+            farPlaneColor, true);
+    }
+
+    /// <summary>
+    /// Renders a visual gizmo at the stored camera position.
+    /// </summary>
+    private void RenderCameraGizmo()
+    {
+        const float gizmoSize = 0.5f;
+        const float axisLength = 1.5f;
+
+        // Calculate axes from rotation
+        var forward = Vector3.Transform(Globals.Forward, _storedEditorCameraRotation);
+        var right = Vector3.Transform(Globals.Right, _storedEditorCameraRotation);
+        var up = Vector3.Transform(Globals.Up, _storedEditorCameraRotation);
+
+        // Render camera position sphere
+        Engine.Rendering.Debug.RenderSphere(_storedEditorCameraPosition, gizmoSize * 0.3f, false, ColorF4.White);
+
+        // Render camera axes
+        Engine.Rendering.Debug.RenderLine(_storedEditorCameraPosition, _storedEditorCameraPosition + forward * axisLength, ColorF4.Blue);
+        Engine.Rendering.Debug.RenderLine(_storedEditorCameraPosition, _storedEditorCameraPosition + right * axisLength * 0.5f, ColorF4.Red);
+        Engine.Rendering.Debug.RenderLine(_storedEditorCameraPosition, _storedEditorCameraPosition + up * axisLength * 0.5f, ColorF4.Green);
+
+        // Render a small pyramid to indicate the camera direction
+        var pyramidTip = _storedEditorCameraPosition + forward * gizmoSize;
+        var pyramidBase = _storedEditorCameraPosition;
+        float baseSize = gizmoSize * 0.3f;
+
+        var baseCorners = new[]
+        {
+            pyramidBase + right * baseSize + up * baseSize,
+            pyramidBase + right * baseSize - up * baseSize,
+            pyramidBase - right * baseSize - up * baseSize,
+            pyramidBase - right * baseSize + up * baseSize
+        };
+
+        // Draw pyramid edges
+        foreach (var corner in baseCorners)
+            Engine.Rendering.Debug.RenderLine(pyramidTip, corner, ColorF4.Yellow);
+
+        // Draw base edges
+        for (int i = 0; i < 4; i++)
+            Engine.Rendering.Debug.RenderLine(baseCorners[i], baseCorners[(i + 1) % 4], ColorF4.Yellow);
+    }
+
+    /// <summary>
+    /// Toggles the debug camera mode on/off.
+    /// </summary>
+    public void ToggleDebugCameraMode()
+    {
+        DebugCameraMode = !DebugCameraMode;
+    }
+
+    #endregion
 
     static void ScreenshotCallback(MagickImage img, int index)
     {
@@ -434,7 +831,9 @@ public partial class EditorFlyingCameraPawnComponent : FlyingCameraPawnComponent
         UpdateHoverStencilCommand();
     }
 
-    private static int _debugStencilLogBudget = 50;
+    private static int _debugStencilLogBudget = 100;
+    private static int _debugStencilPickBudget = 100;
+    private static int _debugMeshHitLogBudget = 50;
 
     private void UpdateHoverStencilCommand()
     {
@@ -443,6 +842,8 @@ public partial class EditorFlyingCameraPawnComponent : FlyingCameraPawnComponent
         {
             _hoverStencilWriteRC.Enabled = false;
             _hoverStencilWriteRC.Mesh = null;
+            if (_debugStencilLogBudget-- > 0)
+                Debug.Out("[HoverOutline] Disabled: UI hover or picking not allowed");
             return;
         }
 
@@ -454,6 +855,8 @@ public partial class EditorFlyingCameraPawnComponent : FlyingCameraPawnComponent
         {
             _hoverStencilWriteRC.Enabled = false;
             _hoverStencilWriteRC.Mesh = null;
+            if (_debugStencilLogBudget-- > 0)
+                Debug.Out("[HoverOutline] Disabled: no pick result");
             return;
         }
 
@@ -463,6 +866,8 @@ public partial class EditorFlyingCameraPawnComponent : FlyingCameraPawnComponent
         {
             _hoverStencilWriteRC.Enabled = false;
             _hoverStencilWriteRC.Mesh = null;
+            if (_debugStencilLogBudget-- > 0)
+                Debug.Out("[HoverOutline] Disabled: pick has no renderer");
             return;
         }
 
@@ -520,11 +925,15 @@ public partial class EditorFlyingCameraPawnComponent : FlyingCameraPawnComponent
         if (tfmTool is not null && tfmTool.TryGetComponent<TransformTool3D>(out var comp))
             comp?.MouseMove(_lastRaycastSegment, cam.Camera, LeftClickPressed);
 
-        if (AllowWorldPicking && !IsHoveringUI())
+        if (AllowWorldPicking && !IsHoveringUI() && !_octreePickPending)
         {
+            _octreePickPending = true;
             var octreeResults = GetOctreePickResultDict();
             var physicsResults = GetPhysicsPickResultDict();
             vp.PickSceneAsync(p, false, true, true, _layerMask, _physxQueryFilter, octreeResults, physicsResults, OctreeRaycastCallback, PhysicsRaycastCallback, RaycastMode);
+
+            if (_debugStencilPickBudget-- > 0)
+                Debug.Out($"[HoverOutline] Dispatched PickSceneAsync at {p}");
         }
 
         ApplyTransformations(vp);
@@ -553,6 +962,17 @@ public partial class EditorFlyingCameraPawnComponent : FlyingCameraPawnComponent
 
     private void OctreeRaycastCallback(SortedDictionary<float, List<(RenderInfo3D item, object? data)>> dictionary)
     {
+        // Clear pending flag so we can dispatch another pick
+        _octreePickPending = false;
+
+        if (_debugStencilPickBudget-- > 0)
+        {
+            int totalHits = 0;
+            foreach (var kv in dictionary)
+                totalHits += kv.Value?.Count ?? 0;
+            Debug.Out($"[HoverOutline] OctreeRaycastCallback count={dictionary.Count}, totalHits={totalHits}");
+        }
+
         UpdateMeshHitVisualization(dictionary);
 
         if (RenderRaycast)
@@ -606,6 +1026,8 @@ public partial class EditorFlyingCameraPawnComponent : FlyingCameraPawnComponent
                 _vertexPickResult = null;
                 _meshPickResult = null;
             }
+            if (_debugStencilLogBudget-- > 0)
+                Debug.Out("[HoverOutline] Octree results empty; cleared pick");
             return;
         }
 
@@ -640,7 +1062,25 @@ public partial class EditorFlyingCameraPawnComponent : FlyingCameraPawnComponent
         catch (InvalidOperationException)
         {
             //Dictionary modified during enumeration; skip this frame.
+            if (_debugStencilLogBudget-- > 0)
+                Debug.Out("[HoverOutline] Octree results modified concurrently; skip frame");
             return;
+        }
+
+        if (_firstHitBuffer.Count == 0)
+        {
+            if (_debugMeshHitLogBudget-- > 0)
+                Debug.Out("[HoverOutline] No valid hits after filtering (volumes removed)");
+            return;
+        }
+
+        if (_debugMeshHitLogBudget-- > 0)
+        {
+            for (int i = 0; i < _firstHitBuffer.Count; i++)
+            {
+                var (item, data) = _firstHitBuffer[i];
+                Debug.Out($"[HoverOutline] Hit[{i}] owner={item.Owner?.GetType().Name ?? "null"}, data={data?.GetType().Name ?? "null"}");
+            }
         }
 
         for (int i = 0; i < _firstHitBuffer.Count; i++)
@@ -682,6 +1122,12 @@ public partial class EditorFlyingCameraPawnComponent : FlyingCameraPawnComponent
             _edgePickResult = edgePickResult;
             _vertexPickResult = vertexPickResult;
             _meshPickResult = meshPickResult;
+        }
+
+        if (_debugMeshHitLogBudget-- > 0)
+        {
+            var pickedName = meshPickResult?.Mesh?.CurrentLODMesh?.Name ?? "none";
+            Debug.Out($"[HoverOutline] Picked mesh set to: {pickedName}");
         }
     }
 
@@ -755,7 +1201,17 @@ public partial class EditorFlyingCameraPawnComponent : FlyingCameraPawnComponent
         => vp.GetWorldSegment(GetNormalizedCursorPosition(vp));
 
     private Vector2 GetNormalizedCursorPosition(XRViewport vp)
-        => vp.NormalizeInternalCoordinate(GetCursorInternalCoordinatePosition(vp));
+    {
+        // Clamp to viewport bounds to avoid dispatching picks with UVs outside [0,1],
+        // which can happen with multi-monitor/HiDPI coordinate drift and results in
+        // empty pick results (hover outline never enabled).
+        var uv = vp.NormalizeInternalCoordinate(GetCursorInternalCoordinatePosition(vp));
+        // Clamp to just inside the viewport to avoid rays on the exact 1.0 edge
+        // being treated as out-of-bounds by the picker.
+        const float epsilon = 1e-4f;
+        uv = Vector2.Clamp(uv, Vector2.Zero, Vector2.One - new Vector2(epsilon));
+        return uv;
+    }
 
     private Vector2 GetCursorInternalCoordinatePosition(XRViewport vp)
     {
@@ -1113,6 +1569,10 @@ public partial class EditorFlyingCameraPawnComponent : FlyingCameraPawnComponent
         input.RegisterKeyEvent(EKey.F5, EButtonInputType.Pressed, SetPickModeFaces);
         input.RegisterKeyEvent(EKey.F6, EButtonInputType.Pressed, SetPickModeLines);
         input.RegisterKeyEvent(EKey.F7, EButtonInputType.Pressed, SetPickModePoints);
+        
+        // Debug camera mode controls
+        input.RegisterKeyEvent(EKey.F9, EButtonInputType.Pressed, ToggleDebugCameraMode);
+        input.RegisterKeyEvent(EKey.F10, EButtonInputType.Pressed, UpdateStoredFrustum);
     }
 
     private void SetTransformModeParent() => TransformTool3D.TransformSpace = ETransformSpace.Parent;

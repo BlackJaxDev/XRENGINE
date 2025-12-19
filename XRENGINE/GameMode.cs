@@ -62,6 +62,12 @@ namespace XREngine
         public Dictionary<PawnComponent, Queue<ELocalPlayerIndex>> PossessionQueue { get; } = [];
 
         /// <summary>
+        /// Tracks pawns that were auto-spawned by this GameMode, keyed by player index.
+        /// These pawns will be destroyed when play mode ends.
+        /// </summary>
+        private Dictionary<ELocalPlayerIndex, PawnComponent> AutoSpawnedPawns { get; } = [];
+
+        /// <summary>
         /// Whether this GameMode is currently active (in play mode).
         /// </summary>
         public bool IsActive { get; private set; }
@@ -106,6 +112,17 @@ namespace XREngine
                     player.ControlledPawn.Controller = null;
                 }
             }
+
+            // Destroy all auto-spawned pawns
+            foreach (var (playerIndex, pawn) in AutoSpawnedPawns)
+            {
+                if (pawn is not null && !pawn.IsDestroyed && pawn.SceneNode is not null)
+                {
+                    Debug.Out($"Destroying auto-spawned pawn for player {playerIndex}: {pawn.Name}");
+                    pawn.SceneNode.Destroy();
+                }
+            }
+            AutoSpawnedPawns.Clear();
 
             IsActive = false;
 
@@ -165,6 +182,14 @@ namespace XREngine
             }
 
             WorldInstance.RootNodes.Add(pawnNode);
+
+            // If the world is already playing, manually run begin-play/activation so late-spawned pawns are fully initialized.
+            if (WorldInstance.PlayState == XRWorldInstance.EPlayState.Playing)
+            {
+                pawnNode.OnBeginPlay();
+                if (pawnNode.IsActiveSelf)
+                    pawnNode.OnActivated();
+            }
             return pawnComponent;
         }
 
@@ -182,6 +207,7 @@ namespace XREngine
 
         /// <summary>
         /// Spawns and possesses the default pawn for a player.
+        /// The spawned pawn is tracked and will be destroyed when play mode ends.
         /// </summary>
         /// <param name="playerIndex">The player index to spawn for.</param>
         /// <returns>The spawned pawn, or null if spawning failed.</returns>
@@ -192,6 +218,9 @@ namespace XREngine
             var pawn = CreateDefaultPawn(playerIndex);
             if (pawn is not null)
             {
+                // Track the auto-spawned pawn for cleanup when play ends
+                AutoSpawnedPawns[playerIndex] = pawn;
+
                 // Apply spawn transform
                 var (position, rotation) = GetSpawnPoint(playerIndex);
                 if (pawn.SceneNode?.GetTransformAs<Transform>(false) is Transform transform)
@@ -219,9 +248,14 @@ namespace XREngine
         /// <param name="possessor">The player index that will possess the pawn.</param>
         public void ForcePossession(PawnComponent pawnComponent, ELocalPlayerIndex possessor)
         {
+            Debug.Out($"[GameMode] ForcePossession called: pawn={pawnComponent?.Name}, player={possessor}");
             var localPlayer = Engine.State.GetOrCreateLocalPlayer(possessor);
             if (localPlayer != null)
+            {
+                Debug.Out($"[GameMode] LocalPlayer found, viewport={localPlayer.Viewport?.GetHashCode()}, current pawn={localPlayer.ControlledPawn?.Name}");
                 localPlayer.ControlledPawn = pawnComponent;
+                Debug.Out($"[GameMode] After possession: ControlledPawn={localPlayer.ControlledPawn?.Name}, Controller={pawnComponent?.Controller?.GetType().Name}");
+            }
             else
                 Debug.LogWarning($"Failed to possess pawn: could not resolve local player for index {possessor}");
         }

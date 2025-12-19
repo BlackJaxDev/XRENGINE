@@ -2,6 +2,7 @@
 using System.Numerics;
 using XREngine.Data.Core;
 using XREngine.Data.Geometry;
+using XREngine.Input;
 using XREngine.Rendering;
 using XREngine.Rendering.UI;
 
@@ -32,12 +33,77 @@ namespace XREngine.Components
             set => SetField(ref _defaultRenderTarget, value);
         }
 
-        //private ELocalPlayerIndex? _localPlayerIndex = null;
-        //public ELocalPlayerIndex? LocalPlayerIndex
-        //{
-        //    get => _localPlayerIndex;
-        //    set => SetField(ref _localPlayerIndex, value);
-        //}
+        /// <summary>
+        /// Returns true if this camera is actively being used for rendering by any viewport or local player.
+        /// </summary>
+        [Browsable(false)]
+        public bool IsActivelyRendering => Camera.Viewports.Count > 0 || DefaultRenderTarget is not null;
+
+        /// <summary>
+        /// Finds the local player controller that is using this camera for rendering, if any.
+        /// </summary>
+        /// <returns>The local player controller using this camera, or null if not in use by any local player.</returns>
+        public LocalPlayerController? GetUsingLocalPlayer()
+        {
+            foreach (var player in Engine.State.LocalPlayers)
+            {
+                if (player is null)
+                    continue;
+
+                if (player.Viewport?.CameraComponent == this)
+                    return player;
+            }
+            return null;
+        }
+
+        /// <summary>
+        /// Finds the pawn component that provides this camera to a local player, if any.
+        /// </summary>
+        /// <returns>The pawn component using this camera, or null if not in use by any pawn.</returns>
+        public PawnComponent? GetUsingPawn()
+        {
+            var player = GetUsingLocalPlayer();
+            if (player?.ControlledPawn?.GetCamera() == this)
+                return player.ControlledPawn;
+
+            // Also check if a sibling pawn is using this camera
+            if (SceneNode?.TryGetComponent<PawnComponent>(out var siblingPawn) == true && siblingPawn is not null)
+            {
+                if (siblingPawn.CameraComponent == this || siblingPawn.GetCamera() == this)
+                    return siblingPawn;
+            }
+
+            return null;
+        }
+
+        /// <summary>
+        /// Gets usage information as a descriptive string for debugging/editor purposes.
+        /// </summary>
+        /// <returns>A string describing how this camera is being used.</returns>
+        public string GetUsageDescription()
+        {
+            var player = GetUsingLocalPlayer();
+            var pawn = GetUsingPawn();
+            
+            var parts = new List<string>();
+
+            if (player is not null)
+                parts.Add($"Player {(int)player.LocalPlayerIndex + 1}");
+            
+            if (pawn is not null)
+            {
+                string pawnName = pawn.SceneNode?.Name ?? pawn.GetType().Name;
+                parts.Add($"Pawn: {pawnName}");
+            }
+
+            if (Camera.Viewports.Count > 0)
+                parts.Add($"{Camera.Viewports.Count} viewport(s)");
+
+            if (DefaultRenderTarget is not null)
+                parts.Add($"FBO: {DefaultRenderTarget.Name ?? "unnamed"}");
+
+            return parts.Count > 0 ? string.Join(", ", parts) : "Not in use";
+        }
 
         public UICanvasComponent? _userInterface;
         /// <summary>

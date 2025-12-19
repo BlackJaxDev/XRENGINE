@@ -41,8 +41,8 @@ namespace XREngine.Components.Physics
         private Vector3 _shapeOffsetTranslation = Vector3.Zero;
         private Quaternion _shapeOffsetRotation = Quaternion.Identity;
         private float _density = DefaultDensity;
-        private Vector3? _initialPosition;
-        private Quaternion? _initialRotation;
+        private Vector3 _initialPosition = Vector3.Zero;
+        private Quaternion _initialRotation = Quaternion.Identity;
         private PhysicsRigidBodyFlags _bodyFlags = PhysicsRigidBodyFlags.None;
         private PhysicsLockFlags _lockFlags = PhysicsLockFlags.None;
         private float _linearDamping = DefaultLinearDamping;
@@ -142,23 +142,27 @@ namespace XREngine.Components.Physics
             set => SetField(ref _density, value);
         }
 
+/*
+        [Browsable(false)]
         [Category("Initialization")]
         [DisplayName("Initial Position")]
         [Description("Override spawn position for the rigid body.")]
-        public Vector3? InitialPosition
+        internal Vector3 InitialPosition
         {
             get => _initialPosition;
             set => SetField(ref _initialPosition, value);
         }
 
+        [Browsable(false)]
         [Category("Initialization")]
         [DisplayName("Initial Rotation")]
         [Description("Override spawn rotation for the rigid body.")]
-        public Quaternion? InitialRotation
+        internal Quaternion InitialRotation
         {
             get => _initialRotation;
             set => SetField(ref _initialRotation, value);
         }
+        */
 
         [Category("Forces")]
         [DisplayName("Gravity Enabled")]
@@ -655,6 +659,43 @@ namespace XREngine.Components.Physics
             TryRegisterRigidBodyWithScene();
         }
 
+        /// <summary>
+        /// Called when play mode begins. Resets the rigid body to its initial pose and clears velocities,
+        /// but only if InitialPosition or InitialRotation were explicitly set.
+        /// </summary>
+        protected internal override void OnBeginPlay()
+        {
+            base.OnBeginPlay();
+            ResetToInitialPose();
+        }
+
+        /// <summary>
+        /// Resets the rigid body to its initial position/rotation and clears velocities.
+        /// </summary>
+        public void ResetToInitialPose()
+        {
+            if (RigidBody is null)
+                return;
+
+            var (position, rotation) = GetSpawnPose();
+            switch (RigidBody)
+            {
+                case PhysxDynamicRigidBody physx:
+                    physx.SetTransform(position, rotation);
+                    physx.SetLinearVelocity(Vector3.Zero);
+                    physx.SetAngularVelocity(Vector3.Zero);
+                    // Wake the body so it can respond to physics immediately
+                    if (!physx.Flags.HasFlag(PxRigidBodyFlags.Kinematic))
+                        physx.WakeUp();
+                    break;
+                case JoltDynamicRigidBody jolt when jolt.Scene?.PhysicsSystem is not null:
+                    jolt.SetTransform(position, rotation);
+                    jolt.SetLinearVelocity(Vector3.Zero);
+                    jolt.SetAngularVelocity(Vector3.Zero);
+                    break;
+            }
+        }
+
         protected internal override void OnComponentDeactivated()
         {
             base.OnComponentDeactivated();
@@ -712,9 +753,10 @@ namespace XREngine.Components.Physics
 
         private (Vector3 position, Quaternion rotation) GetSpawnPose()
         {
-            if (InitialPosition.HasValue || InitialRotation.HasValue)
-                return (InitialPosition ?? Transform.WorldTranslation, InitialRotation ?? Transform.WorldRotation);
-            
+            /*
+            if (InitialPosition != Vector3.Zero || InitialRotation != Quaternion.Identity)
+                return (InitialPosition != Vector3.Zero ? InitialPosition : Transform.WorldTranslation, InitialRotation != Quaternion.Identity ? InitialRotation : Transform.WorldRotation);
+            */
             var matrix = Transform.WorldMatrix;
             Matrix4x4.Decompose(matrix, out _, out Quaternion rotation, out Vector3 translation);
             return (translation, rotation);
@@ -755,7 +797,25 @@ namespace XREngine.Components.Physics
             if ((propName == nameof(ShapeOffsetTranslation) || propName == nameof(ShapeOffsetRotation)) && RigidBody is not null)
                 ApplyShapeOffsets(RigidBody);
         }
+/*
+        /// <summary>
+        /// Sets the initial position from the transform without triggering property change events
+        /// that could cause sync loops. Called by RigidBodyTransform.UpdateComponentInitialPose.
+        /// </summary>
+        internal void SetInitialPositionFromTransform(Vector3 position)
+        {
+            SetField(ref _initialPosition, position, nameof(InitialPosition));
+        }
 
+        /// <summary>
+        /// Sets the initial rotation from the transform without triggering property change events
+        /// that could cause sync loops. Called by RigidBodyTransform.UpdateComponentInitialPose.
+        /// </summary>
+        internal void SetInitialRotationFromTransform(Quaternion rotation)
+        {
+            SetField(ref _initialRotation, rotation, nameof(InitialRotation));
+        }
+*/
         private void ApplyAllCachedProperties()
         {
             if (RigidBody is null)

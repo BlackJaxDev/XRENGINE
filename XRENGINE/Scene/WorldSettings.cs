@@ -27,15 +27,15 @@ namespace XREngine.Scene
         /// The gravity vector applied to all physics objects in the world.
         /// Default is Earth-like gravity pointing downward (-9.81 m/s²).
         /// </summary>
- [Category("Physics")]
+        [Category("Physics")]
         [Description("The gravity vector applied to all physics objects in the world.")]
         public Vector3 Gravity
-   {
+        {
             get => _gravity;
-   set => SetField(ref _gravity, value);
-  }
+            set => SetField(ref _gravity, value);
+        }
 
-        private float _physicsResetMinYDist = 0.0f;
+        private float _physicsResetMinYDist = 100.0f;
         /// <summary>
         /// If greater than zero, dynamic physics bodies will be reset to their initial poses when any body
         /// passes a gravity-aligned plane this far away along the gravity direction.
@@ -46,37 +46,37 @@ namespace XREngine.Scene
         [Description("If > 0, resets dynamic physics bodies to their initial poses when any body falls past a gravity-aligned plane this distance away.")]
         public float PhysicsResetMinYDist
         {
-          get => _physicsResetMinYDist;
-          set => SetField(ref _physicsResetMinYDist, MathF.Max(0.0f, value));
+            get => _physicsResetMinYDist;
+            set => SetField(ref _physicsResetMinYDist, MathF.Max(0.0f, value));
         }
 
-  private float _physicsTimestep = 1.0f / 60.0f;
-   /// <summary>
+        private float _physicsTimestep = 1.0f / 60.0f;
+        /// <summary>
         /// The fixed timestep for physics simulation in seconds.
         /// Smaller values provide more accurate simulation but require more CPU.
         /// </summary>
         [Category("Physics")]
         [Description("The fixed timestep for physics simulation in seconds.")]
-     public float PhysicsTimestep
+        public float PhysicsTimestep
         {
-     get => _physicsTimestep;
-   set => SetField(ref _physicsTimestep, Math.Max(0.001f, value));
+            get => _physicsTimestep;
+            set => SetField(ref _physicsTimestep, Math.Max(0.001f, value));
         }
 
-      private int _physicsSubsteps = 1;
+        private int _physicsSubsteps = 1;
         /// <summary>
-     /// Number of physics sub-steps per frame for improved stability.
+        /// Number of physics sub-steps per frame for improved stability.
         /// Higher values provide better collision detection but cost more CPU.
-/// </summary>
+        /// </summary>
         [Category("Physics")]
         [Description("Number of physics sub-steps per frame for improved stability.")]
         public int PhysicsSubsteps
         {
-   get => _physicsSubsteps;
-  set => SetField(ref _physicsSubsteps, Math.Max(1, value));
-    }
+            get => _physicsSubsteps;
+            set => SetField(ref _physicsSubsteps, Math.Max(1, value));
+        }
 
-    private float _defaultLinearDamping = 0.0f;
+        private float _defaultLinearDamping = 0.0f;
         /// <summary>
         /// Default linear damping applied to new rigid bodies.
         /// Higher values slow down linear movement over time.

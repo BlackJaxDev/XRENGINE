@@ -22,6 +22,17 @@ namespace XREngine.Rendering.OpenGL
             {
                 Data.PropertyChanged += Data_PropertyChanged;
                 OnSourceChanged();
+                // Set the include directory path from the source file's directory
+                UpdateLocalIncludeDirectory();
+            }
+
+            private void UpdateLocalIncludeDirectory()
+            {
+                string? filePath = Data.Source?.FilePath;
+                if (!string.IsNullOrEmpty(filePath))
+                {
+                    LocalIncludeDirectoryPath = Path.GetDirectoryName(filePath);
+                }
             }
 
             private void Data_PropertyChanged(object? sender, IXRPropertyChangedEventArgs e)
@@ -72,6 +83,7 @@ namespace XREngine.Rendering.OpenGL
             private void OnSourceChanged()
             {
                 IsCompiled = false;
+                UpdateLocalIncludeDirectory();
                 if (IsGenerated)
                     PushSource();
                 SourceChanged?.Invoke();
@@ -172,7 +184,7 @@ namespace XREngine.Rendering.OpenGL
                     src = Shaders.ShaderSnippets.ResolveSnippets(src);
 
                 if (resolvedPaths.Count > 0)
-                    Debug.Out($"Resolved {resolvedPaths.Count} includes:{Environment.NewLine}{src}");
+                    Debug.Out($"Resolved {resolvedPaths.Count} includes:{Environment.NewLine}{string.Join(Environment.NewLine, resolvedPaths.Select(x => $" - {x}"))}");
                 
                 return src;
             }

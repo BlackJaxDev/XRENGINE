@@ -827,18 +827,26 @@ namespace XREngine.Scene.Components.Editing
 
             if (_targetSocket is Transform t)
                 t.Rotation = newRotationLocal;
-            else if (_targetSocket is RigidBodyTransform)
+            else if (_targetSocket is RigidBodyTransform rbt)
             {
-                if (_linkRB is not null)
-                {
-                    Matrix4x4 localMatrix =
-                         Matrix4x4.CreateFromQuaternion(newRotationLocal) *
-                        Matrix4x4.CreateTranslation(_localTranslationDragStart);
+                Matrix4x4 localMatrix =
+                     Matrix4x4.CreateFromQuaternion(newRotationLocal) *
+                    Matrix4x4.CreateTranslation(_localTranslationDragStart);
 
-                    var parentMtx = _targetSocket.ParentWorldMatrix;
-                    Matrix4x4 worldMtx = localMatrix * parentMtx;
-                    if (Matrix4x4.Decompose(worldMtx, out _, out Quaternion rotation, out Vector3 translation))
+                var parentMtx = _targetSocket.ParentWorldMatrix;
+                Matrix4x4 worldMtx = localMatrix * parentMtx;
+                if (Matrix4x4.Decompose(worldMtx, out _, out Quaternion rotation, out Vector3 translation))
+                {
+                    // In edit mode (physics not running), set transform directly
+                    // This triggers UpdateComponentInitialPose to sync initial pose
+                    if (Engine.PlayMode.IsEditing)
+                    {
+                        rbt.SetPositionAndRotation(translation, rotation);
+                    }
+                    else if (_linkRB is not null)
+                    {
                         _linkRB.KinematicTarget = (translation, rotation);
+                    }
                 }
             }
             else
@@ -865,18 +873,26 @@ namespace XREngine.Scene.Components.Editing
 
             if (_targetSocket is Transform t) //Set directly for regular transforms
                 t.Translation = localDragPoint;
-            else if (_targetSocket is RigidBodyTransform)
+            else if (_targetSocket is RigidBodyTransform rbt)
             {
-                if (_linkRB is not null)
-                {
-                    Matrix4x4 localMatrix =
-                        Matrix4x4.CreateFromQuaternion(_localRotationDragStart) *
-                        Matrix4x4.CreateTranslation(localDragPoint);
+                Matrix4x4 localMatrix =
+                    Matrix4x4.CreateFromQuaternion(_localRotationDragStart) *
+                    Matrix4x4.CreateTranslation(localDragPoint);
 
-                    var parentMtx = _targetSocket.ParentWorldMatrix;
-                    Matrix4x4 worldMtx = localMatrix * parentMtx;
-                    if (Matrix4x4.Decompose(worldMtx, out _, out Quaternion rotation, out Vector3 translation))
+                var parentMtx = _targetSocket.ParentWorldMatrix;
+                Matrix4x4 worldMtx = localMatrix * parentMtx;
+                if (Matrix4x4.Decompose(worldMtx, out _, out Quaternion rotation, out Vector3 translation))
+                {
+                    // In edit mode (physics not running), set transform directly
+                    // This triggers UpdateComponentInitialPose to sync initial pose
+                    if (Engine.PlayMode.IsEditing)
+                    {
+                        rbt.SetPositionAndRotation(translation, rotation);
+                    }
+                    else if (_linkRB is not null)
+                    {
                         _linkRB.KinematicTarget = (translation, rotation);
+                    }
                 }
             }
             else //Other transform types have to handle this themselves

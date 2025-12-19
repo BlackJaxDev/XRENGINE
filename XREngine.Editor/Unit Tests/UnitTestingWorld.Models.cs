@@ -71,7 +71,7 @@ public static partial class UnitTestingWorld
                 Debug.Out($"[StaticModel] ImportStaticModel is enabled, creating parent node...");
                 var importedModelsNode = new SceneNode(rootNode) { Name = "Static Model Root", Layer = DefaultLayers.StaticIndex };
                 Debug.Out($"[StaticModel] Created 'Static Model Root' node, parent is '{rootNode.Name}'");
-                string path = Path.Combine(Engine.Assets.EngineAssetsPath, "Models", "Sponza", "sponza.obj");
+                string path = Path.Combine(Engine.Assets.EngineAssetsPath, "Models", "Sponza2", "sponza.obj");
                 Debug.Out($"[StaticModel] Model path: {path}");
 
                 if (!File.Exists(path))

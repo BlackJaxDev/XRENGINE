@@ -19,6 +19,13 @@ namespace XREngine.Rendering
 
             public int Count => _rootNodes.Count;
 
+            public SceneNode NewRootNode(string name = "RootNode")
+            {
+                var node = new SceneNode(name);
+                Add(node);
+                return node;
+            }
+
             public void Remove(SceneNode node)
             {
                 if (node is null)

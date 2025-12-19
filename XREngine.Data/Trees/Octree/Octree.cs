@@ -1,6 +1,7 @@
 ﻿using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
+using System.Diagnostics;
 using XREngine.Data.Geometry;
 using XREngine.Data.Rendering;
 
@@ -65,6 +66,10 @@ namespace XREngine.Data.Trees
         /// </summary>
         public void Swap()
         {
+            // Debug: track if Swap is being called and if there are pending raycast commands
+            if (!RaycastCommands.IsEmpty)
+                Trace.WriteLine($"[Octree.Swap] Swap called, RaycastCommands.Count={RaycastCommands.Count}");
+            
             if (IRenderTree.ProfilingHook is not null)
             {
                 using var sample = IRenderTree.ProfilingHook("Octree.Swap");
@@ -94,8 +99,13 @@ namespace XREngine.Data.Trees
                 ConsumeRaycastCommandsInternal();
         }
 
+        private const long MaxRaycastTicksPerFrame = TimeSpan.TicksPerMillisecond; // 1ms
+
+        private static int _raycastDebugBudget = 20;
         private void ConsumeRaycastCommandsInternal()
         {
+            int processedCount = 0;
+            long startTicks = DateTime.UtcNow.Ticks;
             while (RaycastCommands.TryDequeue(out (
                 Segment segment,
                 SortedDictionary<float, List<(T item, object? data)>> items,
@@ -103,8 +113,25 @@ namespace XREngine.Data.Trees
                 Action<SortedDictionary<float, List<(T item, object? data)>>> finishedCallback
             ) command))
             {
+                int itemCountBefore = command.items.Count;
                 _head.Raycast(command.segment, command.items, command.directTest);
+                int itemCountAfter = command.items.Count;
+                processedCount++;
+                
+                if (_raycastDebugBudget-- > 0)
+                    Trace.WriteLine($"[Octree.Raycast] Processed command #{processedCount}: segment={command.segment}, hitsBefore={itemCountBefore}, hitsAfter={itemCountAfter}");
+                
                 command.finishedCallback(command.items);
+
+                if (DateTime.UtcNow.Ticks - startTicks > MaxRaycastTicksPerFrame)
+                {
+                    // Time limit exceeded, discard remaining commands
+                    int discarded = 0;
+                    while (RaycastCommands.TryDequeue(out _)) { discarded++; }
+                    if (_raycastDebugBudget > 0)
+                        Trace.WriteLine($"[Octree.Raycast] Time limit exceeded after {processedCount} commands, discarded {discarded}");
+                    break;
+                }
             }
         }
 
@@ -325,12 +352,25 @@ namespace XREngine.Data.Trees
             return list;
         }
 
+        private const int MaxRaycastCommands = 10;
+        private static int _raycastEnqueueDebugBudget = 20;
+
         public void RaycastAsync(
             Segment segment,
             SortedDictionary<float, List<(T item, object? data)>> items,
             Func<T, Segment, (float? distance, object? data)> directTest,
             Action<SortedDictionary<float, List<(T item, object? data)>>> finishedCallback)
-            => RaycastCommands.Enqueue((segment, items, directTest, finishedCallback));
+        {
+            if (RaycastCommands.Count >= MaxRaycastCommands)
+            {
+                if (_raycastEnqueueDebugBudget-- > 0)
+                    Trace.WriteLine($"[Octree.RaycastAsync] Queue full ({RaycastCommands.Count}), dropping command");
+                return;
+            }
+            RaycastCommands.Enqueue((segment, items, directTest, finishedCallback));
+            if (_raycastEnqueueDebugBudget-- > 0)
+                Trace.WriteLine($"[Octree.RaycastAsync] Enqueued command. QueueCount={RaycastCommands.Count}");
+        }
 
         public void Raycast(
             Segment segment,

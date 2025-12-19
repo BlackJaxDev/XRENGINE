@@ -586,7 +586,7 @@ namespace XREngine.Components.Movement
             if (material is null)
                 return;
 
-            Vector3 pos = InitialPosition ?? Transform.WorldTranslation;
+            Vector3 pos = Transform.WorldTranslation;
             Vector3 up = Globals.Up;
             Controller = manager.CreateCapsuleController(
                 pos,

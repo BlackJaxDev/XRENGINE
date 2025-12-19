@@ -101,17 +101,27 @@ namespace XREngine.Components
                 case nameof(Controller):
                     PrePossess();
                     if (Controller is LocalPlayerController localPlayerController)
+                    {
+                        Debug.Out($"[PawnComponent] Possessed by LocalPlayerController, registering tick. Input={localPlayerController.Input?.GetType().Name}");
                         RegisterTick(ETickGroup.Normal, ETickOrder.Input, TickInput);
+                    }
                     PostPossess();
                     break;
             }
         }
 
+        private static int _tickInputLogCounter = 0;
         private void TickInput()
         {
             if (Controller is not LocalPlayerController localPlayerController ||
                 localPlayerController.Input is not LocalInputInterface localInput)
                 return;
+
+            // Log once every 100 ticks to avoid spam
+            if (++_tickInputLogCounter % 100 == 1)
+            {
+                Debug.Out($"[PawnComponent.TickInput] Ticking input for {Name}, UIInputCaptured={Engine.Input.IsUIInputCaptured}, Keyboard={localInput.Keyboard != null}, Mouse={localInput.Mouse != null}");
+            }
 
             if (Engine.Input.IsUIInputCaptured)
             {

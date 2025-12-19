@@ -34,10 +34,29 @@ uniform float _OutlineLit;
 uniform float _OutlineTextureTint;
 uniform float _OutlineVertexColorTint;
 
-// Lighting (for lit outlines)
-uniform vec3 u_LightDirection;
-uniform vec3 u_LightColor;
-uniform vec3 u_AmbientColor;
+// Lighting (for lit outlines) - using ForwardLighting snippet structures
+struct BaseLight
+{
+    vec3 Color;
+    float DiffuseIntensity;
+    float AmbientIntensity;
+    mat4 WorldToLightSpaceProjMatrix;
+};
+
+struct DirLight
+{
+    BaseLight Base;
+    vec3 Direction;
+};
+
+uniform vec3 GlobalAmbient;
+uniform int DirLightCount; 
+uniform DirLight DirectionalLights[2];
+
+// Compatibility macros
+#define u_LightDirection (DirLightCount > 0 ? DirectionalLights[0].Direction : vec3(0.0, -1.0, 0.0))
+#define u_LightColor (DirLightCount > 0 ? DirectionalLights[0].Base.Color : vec3(1.0))
+#define u_AmbientColor GlobalAmbient
 
 // ============================================
 // Main
