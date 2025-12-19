@@ -81,12 +81,11 @@ public static partial class UnitTestingWorld
     private static void AddDynamicBox(SceneNode rootNode, string name, Vector3 halfExtents, Vector3 position, float density = 1.0f)
     {
         var node = new SceneNode(rootNode) { Name = name };
-        node.SetTransform<RigidBodyTransform>();
+        var tfm = node.SetTransform<RigidBodyTransform>();
+        tfm.SetPositionAndRotation(position, Quaternion.Identity);
 
         var body = node.AddComponent<DynamicRigidBodyComponent>()!;
         body.Geometry = new IPhysicsGeometry.Box(halfExtents);
-        body.InitialPosition = position;
-        body.InitialRotation = Quaternion.Identity;
         body.Density = density;
         body.BodyFlags |= PhysicsRigidBodyFlags.EnableCcd | PhysicsRigidBodyFlags.EnableSpeculativeCcd;
 

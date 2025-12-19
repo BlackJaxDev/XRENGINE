@@ -148,7 +148,14 @@ namespace XREngine
 
                 try
                 {
+                    // Ensure the engine loop is running before we flip into play so updates/physics/input advance
+                    if (!Time.Timer.IsRunning)
+                        Time.Timer.RunGameLoop();
+
                     State = EPlayModeState.EnteringPlay;
+
+                    // Ensure the timer is unpaused so update/fixed threads run when play starts
+                    Time.Timer.Paused = false;
                     PreEnterPlay?.Invoke();
 
                     // Step 1: Capture world state for restoration
@@ -218,6 +225,9 @@ namespace XREngine
                 {
                     State = EPlayModeState.ExitingPlay;
                     PreExitPlay?.Invoke();
+
+                    // Make sure we leave the editor with the timer unpaused
+                    Time.Timer.Paused = false;
 
                     // Step 1: Call GameMode.OnEndPlay
                     _activeGameMode?.OnEndPlay();

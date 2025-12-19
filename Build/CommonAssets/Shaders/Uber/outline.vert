@@ -13,17 +13,23 @@ layout(location = 4) in vec2 a_TexCoord1;
 layout(location = 5) in vec4 a_Color;
 
 // ============================================
-// Uniforms
+// Uniforms (using engine-standard names)
 // ============================================
-// Transform matrices
-uniform mat4 u_ModelMatrix;
-uniform mat4 u_ViewMatrix;
-uniform mat4 u_ProjectionMatrix;
-uniform mat4 u_MVPMatrix;
-uniform mat3 u_NormalMatrix;
+// Transform matrices (engine provides these)
+uniform mat4 ModelMatrix;
+uniform mat4 ViewMatrix;
+uniform mat4 ProjMatrix;
+
+// Convenience macros for compatibility
+#define u_ModelMatrix ModelMatrix
+#define u_ViewMatrix ViewMatrix
+#define u_ProjectionMatrix ProjMatrix
+#define u_MVPMatrix (ProjMatrix * ViewMatrix * ModelMatrix)
+#define u_NormalMatrix mat3(transpose(inverse(ModelMatrix)))
 
 // Camera data
-uniform vec3 u_CameraPosition;
+uniform vec3 CameraPosition;
+#define u_CameraPosition CameraPosition
 
 // Outline parameters
 uniform float _OutlineWidth;

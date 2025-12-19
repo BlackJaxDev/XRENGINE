@@ -54,53 +54,19 @@ namespace XREngine.Rendering
         protected RootNodeCollection _rootNodes = [];
         public RootNodeCollection RootNodes => _rootNodes;
         public Lights3DCollection Lights { get; }
-
         public LightmapBakeManager LightmapBaking { get; }
 
         // Physics raycasts must run on the fixed-update (physics) thread.
         private readonly ConcurrentQueue<PhysicsRaycastRequest> _pendingPhysicsRaycasts = new();
         private readonly ConcurrentQueue<PhysicsRaycastRequest> _physicsRaycastRequestPool = new();
 
-        private sealed class PhysicsRaycastRequest
-        {
-            public Segment Segment;
-            public LayerMask LayerMask;
-            public AbstractPhysicsScene.IAbstractQueryFilter? Filter;
-            public SortedDictionary<float, List<(XRComponent? item, object? data)>> Results = null!;
-            public Action<SortedDictionary<float, List<(XRComponent? item, object? data)>>>? FinishedCallback;
-
-            [MethodImpl(MethodImplOptions.AggressiveInlining)]
-            public void Set(
-                Segment segment,
-                LayerMask layerMask,
-                AbstractPhysicsScene.IAbstractQueryFilter? filter,
-                SortedDictionary<float, List<(XRComponent? item, object? data)>> results,
-                Action<SortedDictionary<float, List<(XRComponent? item, object? data)>>>? finishedCallback)
-            {
-                Segment = segment;
-                LayerMask = layerMask;
-                Filter = filter;
-                Results = results;
-                FinishedCallback = finishedCallback;
-            }
-
-            [MethodImpl(MethodImplOptions.AggressiveInlining)]
-            public void Clear()
-            {
-                Results = null!;
-                Filter = null;
-                FinishedCallback = null;
-                Segment = default;
-                LayerMask = default;
-            }
-        }
-
         #region Prefab instancing
 
-        public SceneNode InstantiatePrefab(XRPrefabSource prefab,
-                                           SceneNode? parent = null,
-                                           bool maintainWorldTransform = false,
-                                           bool addToWorldRootWhenNoParent = true)
+        public SceneNode InstantiatePrefab(
+            XRPrefabSource prefab,
+            SceneNode? parent = null,
+            bool maintainWorldTransform = false,
+            bool addToWorldRootWhenNoParent = true)
         {
             ArgumentNullException.ThrowIfNull(prefab);
             var instance = SceneNodePrefabService.Instantiate(prefab, this, parent, maintainWorldTransform);
@@ -243,6 +209,7 @@ namespace XREngine.Rendering
             {
                 if (_physicsEnabled == value)
                     return;
+                Debug.Out($"[XRWorldInstance] PhysicsEnabled changing from {_physicsEnabled} to {value}");
                 _physicsEnabled = value;
                 PhysicsEnabledChanged?.Invoke(value);
             }
@@ -258,13 +225,16 @@ namespace XREngine.Rendering
             TickGroup(ETickGroup.PrePhysics);
             // Only step physics if enabled (typically only during play mode)
             if (PhysicsEnabled)
+            {
                 PhysicsScene.StepSimulation();
 
-            // Apply any per-body min-Y reset requests after stepping physics.
-            // This is intentionally per-body (not global) so only bodies that cross the plane are reset.
-            ProcessPhysicsMinYPlaneResetRequests();
+                // Apply any per-body min-Y reset requests after stepping physics.
+                // This is intentionally per-body (not global) so only bodies that cross the plane are reset.
+                ProcessPhysicsMinYPlaneResetRequests();
 
-            ProcessQueuedPhysicsRaycasts();
+                // Process queued physics raycasts only when physics is running
+                ProcessQueuedPhysicsRaycasts();
+            }
             TickGroup(ETickGroup.DuringPhysics);
             TickGroup(ETickGroup.PostPhysics);
         }
@@ -724,10 +694,14 @@ namespace XREngine.Rendering
                 case nameof(PlayState):
                     if (field is EPlayState newState)
                     {
+                        Debug.Out($"[XRWorldInstance] PlayState changed to {newState}, Engine.PlayMode.State={Engine.PlayMode.State}, SimulatePhysics={Engine.PlayMode.Configuration.SimulatePhysics}");
                         switch (newState)
                         {
                             case EPlayState.Playing:
-                                PhysicsEnabled = true;
+                                // Keep physics enabled as soon as the world starts playing, even while play mode is still transitioning
+                                bool playModeActive = Engine.PlayMode.State is EPlayModeState.Play or EPlayModeState.EnteringPlay;
+                                Debug.Out($"[XRWorldInstance] PlayState=Playing, playModeActive={playModeActive}");
+                                PhysicsEnabled = playModeActive && Engine.PlayMode.Configuration.SimulatePhysics;
                                 break;
                             case EPlayState.Stopped:
                                 PhysicsEnabled = false;

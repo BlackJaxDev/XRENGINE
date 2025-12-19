@@ -321,6 +321,18 @@ namespace XREngine.Components
         protected override void OnDestroying()
         {
             base.OnDestroying();
+
+            //Unsubscribe from scene node events
+            if (_sceneNode is not null)
+            {
+                _sceneNode.PropertyChanging -= SceneNodePropertyChanging;
+                _sceneNode.PropertyChanged -= SceneNodePropertyChanged;
+            }
+
+            //Unsubscribe from transform events
+            if (_sceneNode is not null && !_sceneNode.IsTransformNull)
+                OnTransformChanging();
+
             ComponentDestroyed?.Invoke(this);
         }
 

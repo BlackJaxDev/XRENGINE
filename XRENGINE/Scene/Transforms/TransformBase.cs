@@ -1112,6 +1112,40 @@ namespace XREngine.Scene.Transforms
         private void ChildRemoved(TransformBase e)
             => e.Parent = null;
 
+        protected override void OnDestroying()
+        {
+            //Unsubscribe from children events
+            _children.PostAnythingAdded -= ChildAdded;
+            _children.PostAnythingRemoved -= ChildRemoved;
+
+            //Detach all children (don't destroy them - they may be reused)
+            lock (_children)
+            {
+                foreach (var child in _children.ToArray())
+                    if (child is not null)
+                        child.Parent = null;
+                _children.Clear();
+            }
+
+            //Detach from parent
+            Parent = null;
+
+            //Clear scene node reference
+            SceneNode = null;
+
+            //Detach from world
+            World = null;
+
+            //Clear event handlers to prevent memory leaks
+            LocalMatrixChanged = null;
+            InverseLocalMatrixChanged = null;
+            WorldMatrixChanged = null;
+            InverseWorldMatrixChanged = null;
+            RenderMatrixChanged = null;
+
+            base.OnDestroying();
+        }
+
         #endregion
 
         #region Scene Node Lifecycle

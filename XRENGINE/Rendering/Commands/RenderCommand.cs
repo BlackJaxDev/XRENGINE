@@ -25,11 +25,34 @@ namespace XREngine.Rendering.Commands
         }
 
         private bool _enabled = true;
+        private bool _renderEnabled = true;
+        private bool _hasSwappedBuffers = false;
+
+        /// <summary>
+        /// Whether this command should be collected for rendering.
+        /// Updated during Tick/Update, swapped to RenderEnabled during SwapBuffers.
+        /// Before the first SwapBuffers call, RenderEnabled is synced immediately to avoid race conditions on startup.
+        /// </summary>
         public bool Enabled
         {
             get => _enabled;
-            set => SetField(ref _enabled, value);
+            set
+            {
+                if (SetField(ref _enabled, value))
+                {
+                    // Before the first SwapBuffers, sync RenderEnabled immediately
+                    // to ensure correct initial state
+                    if (!_hasSwappedBuffers)
+                        _renderEnabled = value;
+                }
+            }
         }
+
+        /// <summary>
+        /// The enabled state that was active during the last SwapBuffers.
+        /// Used by the render thread to determine if the command should actually render.
+        /// </summary>
+        public bool RenderEnabled => _renderEnabled;
 
         public abstract int CompareTo(RenderCommand? other);
         public int CompareTo(object? obj) => CompareTo(obj as RenderCommand);
@@ -67,6 +90,10 @@ namespace XREngine.Rendering.Commands
         /// </summary>
         /// <param name="shadowPass"></param>
         public virtual void SwapBuffers()
-            => OnSwapBuffers?.Invoke(this);
+        {
+            _hasSwappedBuffers = true;
+            _renderEnabled = _enabled;
+            OnSwapBuffers?.Invoke(this);
+        }
     }
 }

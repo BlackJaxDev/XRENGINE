@@ -28,8 +28,7 @@ namespace XREngine.Scene.Transforms
                 switch (propName)
                 {
                     case nameof(Source):
-                        if (Source is not null)
-                            Source.WorldMatrixChanged -= OnSourceMatrixChanged;
+                        Source?.WorldMatrixChanged -= OnSourceMatrixChanged;
                         break;
                 }
             }

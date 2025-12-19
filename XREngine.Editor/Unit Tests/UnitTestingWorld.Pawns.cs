@@ -206,7 +206,7 @@ public static partial class UnitTestingWorld
         private static void InitMovement(CharacterMovement3DComponent movementComp)
         {
             movementComp.StandingHeight = 1.89f;
-            movementComp.InitialPosition = new Vector3(0.0f, 10.0f, 0.0f);
+            //movementComp.InitialPosition = new Vector3(0.0f, 10.0f, 0.0f);
             movementComp.Velocity = new Vector3(0.0f, 0.0f, 0.0f);
             //movementComp.JumpHoldForce = 1.0f;
             //movementComp.GravityOverride = new Vector3(0.0f, -1.0f, 0.0f);

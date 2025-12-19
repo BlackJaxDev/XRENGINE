@@ -133,8 +133,11 @@ public static partial class UnitTestingWorld
             var ballComp = ball.AddComponent<DynamicRigidBodyComponent>()!;
             ballComp.Material = ballPhysMat;
             ballComp.Geometry = new IPhysicsGeometry.Sphere(ballRadius);
+            ballTfm.SetPositionAndRotation(spawnPosition, Quaternion.Identity);
+            /*
             ballComp.InitialPosition = spawnPosition;
             ballComp.InitialRotation = Quaternion.Identity;
+            */
             ballComp.Density = 1.0f;
             ballComp.LinearDamping = 0.0f;
             ballComp.AngularDamping = 0.0f;

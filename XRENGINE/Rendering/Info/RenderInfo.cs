@@ -127,6 +127,9 @@ namespace XREngine.Rendering.Info
             for (int i = 0; i < RenderCommands.Count; i++)
             {
                 RenderCommand cmd = RenderCommands[i];
+                // Use the live Enabled flag so hover stencil responds immediately.
+                // This keeps CPU-rendered debug overlays responsive even if it means
+                // a small risk of cross-thread visibility lag.
                 if (!cmd.Enabled)
                     continue;
 

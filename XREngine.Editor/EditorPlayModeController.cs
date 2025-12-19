@@ -1,3 +1,5 @@
+using XREngine.Components;
+using XREngine.Input;
 using XREngine.Input.Devices;
 using XREngine.Rendering;
 using XREngine.Scene;
@@ -10,12 +12,19 @@ namespace XREngine.Editor;
 /// - Editor tool state (disable gizmos during play)
 /// - Keyboard shortcuts (F5 to play, Shift+F5 to stop)
 /// - Visual indicators for play mode
+/// - Editor pawn possession tracking and restoration
 /// </summary>
 public static class EditorPlayModeController
 {
     private static WorldStateSnapshot? _editModeSnapshot;
     private static bool _initialized;
     private static readonly Dictionary<LocalInputInterface, ShortcutHandlers> _shortcutHandlers = new(ReferenceEqualityComparer.Instance);
+    
+    /// <summary>
+    /// Stores the editor pawn possessions for each local player before entering play mode.
+    /// Key is the local player index, value is the pawn that was controlled.
+    /// </summary>
+    private static readonly Dictionary<ELocalPlayerIndex, PawnComponent?> _editorPawnSnapshot = [];
 
     private record ShortcutHandlers(Action PlayPause, Action Stop, Action StepFrame);
 
@@ -70,6 +79,9 @@ public static class EditorPlayModeController
         // Disable undo recording during play
         // Undo.SuppressRecording(); // TODO: Implement in Undo class
 
+        // Save current editor pawn possessions for restoration when exiting play mode
+        SaveEditorPawnSnapshot();
+
         // Save current world state if using SerializeAndRestore mode
         if (Engine.PlayMode.Configuration.StateRestorationMode == EStateRestorationMode.SerializeAndRestore)
         {
@@ -122,6 +134,9 @@ public static class EditorPlayModeController
 
         // Clear undo history from play session
         Undo.ClearHistory();
+
+        // Restore editor pawn possessions
+        RestoreEditorPawnSnapshot();
 
         // Notify UI to update
         PlayModeUIChanged?.Invoke(false);
@@ -233,6 +248,53 @@ public static class EditorPlayModeController
         // First try the first window's target world
         var window = Engine.Windows.FirstOrDefault();
         return window?.TargetWorldInstance?.TargetWorld;
+    }
+
+    /// <summary>
+    /// Saves the current editor pawn possessions for all local players.
+    /// Called before entering play mode to allow restoration when exiting.
+    /// </summary>
+    private static void SaveEditorPawnSnapshot()
+    {
+        _editorPawnSnapshot.Clear();
+        
+        foreach (var player in Engine.State.LocalPlayers)
+        {
+            if (player is LocalPlayerController localPlayer)
+            {
+                _editorPawnSnapshot[localPlayer.LocalPlayerIndex] = localPlayer.ControlledPawn;
+                Debug.Out($"Saved editor pawn for player {localPlayer.LocalPlayerIndex}: {localPlayer.ControlledPawn?.Name ?? "null"}");
+            }
+        }
+    }
+
+    /// <summary>
+    /// Restores the editor pawn possessions that were saved before entering play mode.
+    /// Called after exiting play mode.
+    /// </summary>
+    private static void RestoreEditorPawnSnapshot()
+    {
+        foreach (var (playerIndex, editorPawn) in _editorPawnSnapshot)
+        {
+            if (editorPawn is null)
+                continue;
+
+            // Check if the editor pawn still exists (wasn't destroyed during play)
+            if (editorPawn.SceneNode is null || editorPawn.IsDestroyed)
+            {
+                Debug.Out($"Editor pawn for player {playerIndex} was destroyed during play, cannot restore");
+                continue;
+            }
+
+            var localPlayer = Engine.State.GetOrCreateLocalPlayer(playerIndex);
+            if (localPlayer is not null)
+            {
+                localPlayer.ControlledPawn = editorPawn;
+                Debug.Out($"Restored editor pawn for player {playerIndex}: {editorPawn.Name}");
+            }
+        }
+        
+        _editorPawnSnapshot.Clear();
     }
 
     #endregion

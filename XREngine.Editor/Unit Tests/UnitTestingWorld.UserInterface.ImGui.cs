@@ -371,7 +371,10 @@ public static partial class UnitTestingWorld
         {
             using var profilerScope = Engine.Profiler.Start("UI.DrawDearImGuiTest");
             var io = ImGui.GetIO();
-            Engine.Input.SetUIInputCaptured(io.WantCaptureMouse || io.WantCaptureKeyboard || io.WantTextInput);
+            // In play mode, don't let ImGui capture keyboard input - let the game pawn receive it
+            bool inPlayMode = Engine.PlayMode.State == EPlayModeState.Play || Engine.PlayMode.State == EPlayModeState.EnteringPlay;
+            bool captureKeyboard = !inPlayMode && (io.WantCaptureKeyboard || io.WantTextInput);
+            Engine.Input.SetUIInputCaptured(io.WantCaptureMouse || captureKeyboard);
             ImGuiUndoHelper.BeginFrame();
             bool showSettings = Toggles.DearImGuiUI;
             bool showProfiler = Toggles.DearImGuiProfiler;

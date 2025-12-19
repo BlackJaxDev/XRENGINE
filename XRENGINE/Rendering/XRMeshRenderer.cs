@@ -9,6 +9,7 @@ using XREngine.Data;
 using XREngine.Data.Colors;
 using XREngine.Data.Core;
 using XREngine.Data.Rendering;
+using XREngine.Data.Vectors;
 using XREngine.Rendering.Models.Materials;
 using XREngine.Rendering.Models.Materials.Shaders.Parameters;
 using XREngine.Rendering.Shaders.Generator;
@@ -17,6 +18,28 @@ using static XREngine.Rendering.XRMesh;
 
 namespace XREngine.Rendering
 {
+    /// <summary>
+    /// Represents a vertex influence from a deformer mesh.
+    /// </summary>
+    public struct MeshDeformInfluence
+    {
+        /// <summary>
+        /// Index of the vertex in the deformer mesh.
+        /// </summary>
+        public int VertexIndex;
+        
+        /// <summary>
+        /// Weight of this influence (0 to 1).
+        /// </summary>
+        public float Weight;
+
+        public MeshDeformInfluence(int vertexIndex, float weight)
+        {
+            VertexIndex = vertexIndex;
+            Weight = weight;
+        }
+    }
+
     /// <summary>
     /// A mesh renderer is in charge of rendering one or more meshes with one or more materials.
     /// The API driver will optimize the rendering of these meshes as much as possible depending on how it's set up.
@@ -123,15 +146,31 @@ namespace XREngine.Rendering
         private BaseVersion GetVersion(bool forceNoStereo = false)
         {
             bool stereoPass = !forceNoStereo && Engine.Rendering.State.IsStereoPass;
+            bool useMeshDeform = DeformMeshRenderer is not null && _meshDeformInfluences is not null;
 
             BaseVersion ver;
             bool preferNV = Engine.Rendering.Settings.PreferNVStereo;
-            if (stereoPass && preferNV && Engine.Rendering.State.IsNVIDIA)
-                ver = GetNVStereoVersion();
-            else if (stereoPass && Engine.Rendering.State.HasOvrMultiViewExtension)
-                ver = GetOVRMultiViewVersion();
+            
+            if (useMeshDeform)
+            {
+                // Use mesh deform versions
+                if (stereoPass && preferNV && Engine.Rendering.State.IsNVIDIA)
+                    ver = GetMeshDeformNVStereoVersion();
+                else if (stereoPass && Engine.Rendering.State.HasOvrMultiViewExtension)
+                    ver = GetMeshDeformOVRMultiViewVersion();
+                else
+                    ver = GetMeshDeformDefaultVersion();
+            }
             else
-                ver = GetDefaultVersion(); //Default version can still do VR - VRMode is set to 1 and uses VR geometry duplication shader during stereo pass
+            {
+                // Use standard versions
+                if (stereoPass && preferNV && Engine.Rendering.State.IsNVIDIA)
+                    ver = GetNVStereoVersion();
+                else if (stereoPass && Engine.Rendering.State.HasOvrMultiViewExtension)
+                    ver = GetOVRMultiViewVersion();
+                else
+                    ver = GetDefaultVersion();
+            }
 
             return ver;
         }
@@ -139,6 +178,10 @@ namespace XREngine.Rendering
         public BaseVersion GetDefaultVersion() => GeneratedVertexShaderVersions[0];
         public BaseVersion GetOVRMultiViewVersion() => GeneratedVertexShaderVersions[1];
         public BaseVersion GetNVStereoVersion() => GeneratedVertexShaderVersions[2];
+        
+        public BaseVersion GetMeshDeformDefaultVersion() => GeneratedVertexShaderVersions[3];
+        public BaseVersion GetMeshDeformOVRMultiViewVersion() => GeneratedVertexShaderVersions[4];
+        public BaseVersion GetMeshDeformNVStereoVersion() => GeneratedVertexShaderVersions[5];
 
         private static bool HasNVStereoViewRendering(XRShader x)
             => x.HasExtension(GLShader.EXT_GL_NV_STEREO_VIEW_RENDERING, XRShader.EExtensionBehavior.Require);
@@ -171,6 +214,43 @@ namespace XREngine.Rendering
             GeneratedVertexShaderVersions.Add(0, new Version<DefaultVertexShaderGenerator>(this, NoSpecialExtensions, true));
             GeneratedVertexShaderVersions.Add(1, new Version<OVRMultiViewVertexShaderGenerator>(this, HasOvrMultiView2, false));
             GeneratedVertexShaderVersions.Add(2, new Version<NVStereoVertexShaderGenerator>(this, HasNVStereoViewRendering, false));
+            
+            // Mesh deform versions (used when DeformMeshRenderer is set)
+            GeneratedVertexShaderVersions.Add(3, new MeshDeformVersion(this, NoSpecialExtensions, true));
+            GeneratedVertexShaderVersions.Add(4, new MeshDeformVersion(this, HasOvrMultiView2, false) { UseOVRMultiView = true });
+            GeneratedVertexShaderVersions.Add(5, new MeshDeformVersion(this, HasNVStereoViewRendering, false) { UseNVStereo = true });
+        }
+
+        /// <summary>
+        /// Specialized version for mesh deformation that passes deform parameters to the generator.
+        /// </summary>
+        public class MeshDeformVersion : BaseVersion
+        {
+            public bool UseOVRMultiView { get; set; }
+            public bool UseNVStereo { get; set; }
+
+            public MeshDeformVersion(XRMeshRenderer parent, Func<XRShader, bool> vertexShaderSelector, bool allowShaderPipelines)
+                : base(parent, vertexShaderSelector, allowShaderPipelines) { }
+
+            protected override string? GenerateVertexShaderSource()
+            {
+                var m = Parent?.Mesh;
+                if (m is null)
+                    return null;
+
+                int maxInfluences = Parent.MaxMeshDeformInfluences;
+                bool optimizeToVec4 = Parent.OptimizeMeshDeformToVec4;
+
+                ShaderGeneratorBase generator;
+                if (UseOVRMultiView)
+                    generator = new OVRMultiViewMeshDeformVertexShaderGenerator(m, maxInfluences, optimizeToVec4);
+                else if (UseNVStereo)
+                    generator = new NVStereoMeshDeformVertexShaderGenerator(m, maxInfluences, optimizeToVec4);
+                else
+                    generator = new MeshDeformVertexShaderGenerator(m, maxInfluences, optimizeToVec4);
+
+                return generator.Generate();
+            }
         }
 
         private bool _generateAsync = false;
@@ -269,6 +349,86 @@ namespace XREngine.Rendering
         private RenderBone[]? _bones;
         [MemoryPackIgnore]
         public RenderBone[]? Bones => _bones;
+
+        #region Mesh Deformation
+
+        private XRMeshRenderer? _deformMeshRenderer;
+        /// <summary>
+        /// The mesh renderer that provides deformation data.
+        /// When set, vertices of this mesh will be deformed based on vertex positions from the deformer mesh.
+        /// </summary>
+        [MemoryPackIgnore]
+        public XRMeshRenderer? DeformMeshRenderer
+        {
+            get => _deformMeshRenderer;
+            set => SetField(ref _deformMeshRenderer, value);
+        }
+
+        private MeshDeformInfluence[][]? _meshDeformInfluences;
+        /// <summary>
+        /// Per-vertex array of deformation influences.
+        /// Each vertex can have multiple influences from deformer mesh vertices.
+        /// Outer array index = vertex index in this mesh.
+        /// Inner array = influences affecting that vertex.
+        /// </summary>
+        [MemoryPackIgnore]
+        public MeshDeformInfluence[][]? MeshDeformInfluences
+        {
+            get => _meshDeformInfluences;
+            set
+            {
+                if (SetField(ref _meshDeformInfluences, value))
+                    RebuildMeshDeformBuffers();
+            }
+        }
+
+        private int _maxMeshDeformInfluences = 8;
+        /// <summary>
+        /// Maximum number of deformer mesh vertices that can influence each vertex.
+        /// Default is 8. Lower values use more efficient vec4 packing when ≤ 4.
+        /// </summary>
+        public int MaxMeshDeformInfluences
+        {
+            get => _maxMeshDeformInfluences;
+            set
+            {
+                if (SetField(ref _maxMeshDeformInfluences, Math.Max(1, value)))
+                {
+                    ResetMeshDeformVersionShaders();
+                    RebuildMeshDeformBuffers();
+                }
+            }
+        }
+
+        private bool _optimizeMeshDeformToVec4 = true;
+        /// <summary>
+        /// If true and MaxMeshDeformInfluences ≤ 4, packs indices and weights into vec4 attributes for better performance.
+        /// </summary>
+        public bool OptimizeMeshDeformToVec4
+        {
+            get => _optimizeMeshDeformToVec4;
+            set
+            {
+                if (SetField(ref _optimizeMeshDeformToVec4, value))
+                {
+                    ResetMeshDeformVersionShaders();
+                    RebuildMeshDeformBuffers();
+                }
+            }
+        }
+
+        private void ResetMeshDeformVersionShaders()
+        {
+            // Reset the mesh deform version shader sources so they regenerate with new parameters
+            if (GeneratedVertexShaderVersions.TryGetValue(3, out var v3))
+                v3.ResetVertexShaderSource();
+            if (GeneratedVertexShaderVersions.TryGetValue(4, out var v4))
+                v4.ResetVertexShaderSource();
+            if (GeneratedVertexShaderVersions.TryGetValue(5, out var v5))
+                v5.ResetVertexShaderSource();
+        }
+
+        #endregion
 
         protected override void OnPropertyChanged<T>(string? propName, T prev, T field)
         {
@@ -574,6 +734,41 @@ namespace XREngine.Rendering
 
             BlendshapeWeights?.Destroy();
             BlendshapeWeights = null;
+
+            ResetMeshDeformBuffers();
+        }
+
+        private void ResetMeshDeformBuffers()
+        {
+            DeformerPositionsBuffer?.Destroy();
+            DeformerPositionsBuffer = null;
+
+            DeformerRestPositionsBuffer?.Destroy();
+            DeformerRestPositionsBuffer = null;
+
+            DeformerNormalsBuffer?.Destroy();
+            DeformerNormalsBuffer = null;
+
+            DeformerTangentsBuffer?.Destroy();
+            DeformerTangentsBuffer = null;
+
+            MeshDeformIndicesBuffer?.Destroy();
+            MeshDeformIndicesBuffer = null;
+
+            MeshDeformWeightsBuffer?.Destroy();
+            MeshDeformWeightsBuffer = null;
+
+            MeshDeformVertexIndicesBuffer?.Destroy();
+            MeshDeformVertexIndicesBuffer = null;
+
+            MeshDeformVertexWeightsBuffer?.Destroy();
+            MeshDeformVertexWeightsBuffer = null;
+
+            MeshDeformVertexOffsetBuffer?.Destroy();
+            MeshDeformVertexOffsetBuffer = null;
+
+            MeshDeformVertexCountBuffer?.Destroy();
+            MeshDeformVertexCountBuffer = null;
         }
 
         [MemoryPackIgnore]
@@ -631,6 +826,76 @@ namespace XREngine.Rendering
         /// </summary>
         [MemoryPackIgnore]
         public XRDataBuffer? SkinnedInterleavedBuffer { get; internal set; }
+
+        #region Mesh Deform Buffers
+
+        /// <summary>
+        /// Current positions of deformer mesh vertices (SSBO).
+        /// Updated each frame from DeformMeshRenderer.
+        /// </summary>
+        [MemoryPackIgnore]
+        public XRDataBuffer? DeformerPositionsBuffer { get; private set; }
+
+        /// <summary>
+        /// Rest positions of deformer mesh vertices (SSBO).
+        /// Static buffer containing original bind pose positions.
+        /// </summary>
+        [MemoryPackIgnore]
+        public XRDataBuffer? DeformerRestPositionsBuffer { get; private set; }
+
+        /// <summary>
+        /// Current normals of deformer mesh vertices (SSBO).
+        /// Updated each frame from DeformMeshRenderer.
+        /// </summary>
+        [MemoryPackIgnore]
+        public XRDataBuffer? DeformerNormalsBuffer { get; private set; }
+
+        /// <summary>
+        /// Current tangents of deformer mesh vertices (SSBO).
+        /// Updated each frame from DeformMeshRenderer.
+        /// </summary>
+        [MemoryPackIgnore]
+        public XRDataBuffer? DeformerTangentsBuffer { get; private set; }
+
+        /// <summary>
+        /// SSBO containing all deformer vertex indices for all vertices (SSBO mode only).
+        /// </summary>
+        [MemoryPackIgnore]
+        public XRDataBuffer? MeshDeformIndicesBuffer { get; private set; }
+
+        /// <summary>
+        /// SSBO containing all deformer weights for all vertices (SSBO mode only).
+        /// </summary>
+        [MemoryPackIgnore]
+        public XRDataBuffer? MeshDeformWeightsBuffer { get; private set; }
+
+        /// <summary>
+        /// Per-vertex vec4 containing up to 4 deformer vertex indices (vec4 optimized mode).
+        /// </summary>
+        [MemoryPackIgnore]
+        public XRDataBuffer? MeshDeformVertexIndicesBuffer { get; private set; }
+
+        /// <summary>
+        /// Per-vertex vec4 containing up to 4 deformer weights (vec4 optimized mode).
+        /// </summary>
+        [MemoryPackIgnore]
+        public XRDataBuffer? MeshDeformVertexWeightsBuffer { get; private set; }
+
+        /// <summary>
+        /// Per-vertex offset into MeshDeformIndicesBuffer/MeshDeformWeightsBuffer (SSBO mode).
+        /// </summary>
+        [MemoryPackIgnore]
+        public XRDataBuffer? MeshDeformVertexOffsetBuffer { get; private set; }
+
+        /// <summary>
+        /// Per-vertex count of influences (SSBO mode).
+        /// </summary>
+        [MemoryPackIgnore]
+        public XRDataBuffer? MeshDeformVertexCountBuffer { get; private set; }
+
+        private bool _meshDeformInvalidated = false;
+
+        #endregion
 
         private void PopulateBoneMatrixBuffers()
         {
@@ -721,6 +986,422 @@ namespace XREngine.Rendering
             _blendshapesInvalidated = false;
             BlendshapeWeights.PushSubData();
         }
+
+        #region Mesh Deformation Methods
+
+        /// <summary>
+        /// Rebuilds the mesh deform buffers when influences or settings change.
+        /// </summary>
+        private void RebuildMeshDeformBuffers()
+        {
+            ResetMeshDeformBuffers();
+
+            if (_meshDeformInfluences is null || DeformMeshRenderer?.Mesh is null || Mesh is null)
+                return;
+
+            PopulateMeshDeformBuffers();
+        }
+
+        /// <summary>
+        /// Sets up mesh deformation with the specified deformer mesh and influence data.
+        /// </summary>
+        /// <param name="deformerRenderer">The mesh renderer providing deformation data.</param>
+        /// <param name="influences">Per-vertex influence data. Array index = vertex index in this mesh.</param>
+        public void SetupMeshDeformation(XRMeshRenderer deformerRenderer, MeshDeformInfluence[][] influences)
+        {
+            _deformMeshRenderer = deformerRenderer;
+            _meshDeformInfluences = influences;
+            RebuildMeshDeformBuffers();
+        }
+
+        /// <summary>
+        /// Clears mesh deformation, reverting to standard rendering.
+        /// </summary>
+        public void ClearMeshDeformation()
+        {
+            _deformMeshRenderer = null;
+            _meshDeformInfluences = null;
+            ResetMeshDeformBuffers();
+        }
+
+        private void PopulateMeshDeformBuffers()
+        {
+            if (_meshDeformInfluences is null || DeformMeshRenderer?.Mesh is null || Mesh is null)
+                return;
+
+            var deformerMesh = DeformMeshRenderer.Mesh;
+            uint deformerVertexCount = (uint)deformerMesh.VertexCount;
+            uint vertexCount = (uint)Mesh.VertexCount;
+
+            // Create deformer position buffers
+            DeformerPositionsBuffer = new XRDataBuffer(
+                $"{MeshDeformVertexShaderGenerator.DeformerPositionsBufferName}Buffer",
+                EBufferTarget.ShaderStorageBuffer,
+                deformerVertexCount,
+                EComponentType.Float,
+                4, // vec4
+                false,
+                false)
+            {
+                Usage = EBufferUsage.StreamDraw,
+                DisposeOnPush = false
+            };
+
+            DeformerRestPositionsBuffer = new XRDataBuffer(
+                $"{MeshDeformVertexShaderGenerator.DeformerRestPositionsBufferName}Buffer",
+                EBufferTarget.ShaderStorageBuffer,
+                deformerVertexCount,
+                EComponentType.Float,
+                4, // vec4
+                false,
+                false)
+            {
+                Usage = EBufferUsage.StaticCopy,
+                DisposeOnPush = false
+            };
+
+            // Initialize deformer positions from deformer mesh
+            for (uint i = 0; i < deformerVertexCount; i++)
+            {
+                var pos = deformerMesh.GetPosition(i);
+                DeformerPositionsBuffer.SetVector4(i, new Vector4(pos, 1.0f));
+                DeformerRestPositionsBuffer.SetVector4(i, new Vector4(pos, 1.0f));
+            }
+
+            Buffers.Add(DeformerPositionsBuffer.AttributeName, DeformerPositionsBuffer);
+            Buffers.Add(DeformerRestPositionsBuffer.AttributeName, DeformerRestPositionsBuffer);
+
+            // Create deformer normal buffer if mesh has normals
+            if (Mesh.HasNormals && deformerMesh.HasNormals)
+            {
+                DeformerNormalsBuffer = new XRDataBuffer(
+                    $"{MeshDeformVertexShaderGenerator.DeformerNormalsBufferName}Buffer",
+                    EBufferTarget.ShaderStorageBuffer,
+                    deformerVertexCount,
+                    EComponentType.Float,
+                    4, // vec4
+                    false,
+                    false)
+                {
+                    Usage = EBufferUsage.StreamDraw,
+                    DisposeOnPush = false
+                };
+
+                for (uint i = 0; i < deformerVertexCount; i++)
+                {
+                    var nrm = deformerMesh.GetNormal(i);
+                    DeformerNormalsBuffer.SetVector4(i, new Vector4(nrm, 0.0f));
+                }
+
+                Buffers.Add(DeformerNormalsBuffer.AttributeName, DeformerNormalsBuffer);
+            }
+
+            // Create deformer tangent buffer if mesh has tangents
+            if (Mesh.HasTangents && deformerMesh.HasTangents)
+            {
+                DeformerTangentsBuffer = new XRDataBuffer(
+                    $"{MeshDeformVertexShaderGenerator.DeformerTangentsBufferName}Buffer",
+                    EBufferTarget.ShaderStorageBuffer,
+                    deformerVertexCount,
+                    EComponentType.Float,
+                    4, // vec4
+                    false,
+                    false)
+                {
+                    Usage = EBufferUsage.StreamDraw,
+                    DisposeOnPush = false
+                };
+
+                for (uint i = 0; i < deformerVertexCount; i++)
+                {
+                    var tan = deformerMesh.GetTangent(i);
+                    DeformerTangentsBuffer.SetVector4(i, new Vector4(tan, 0.0f));
+                }
+
+                Buffers.Add(DeformerTangentsBuffer.AttributeName, DeformerTangentsBuffer);
+            }
+
+            // Create per-vertex influence buffers
+            bool useVec4Optimization = OptimizeMeshDeformToVec4 && MaxMeshDeformInfluences <= 4;
+
+            if (useVec4Optimization)
+            {
+                PopulateMeshDeformVec4Buffers(vertexCount);
+            }
+            else
+            {
+                PopulateMeshDeformSSBOBuffers(vertexCount);
+            }
+
+            _meshDeformInvalidated = true;
+        }
+
+        private void PopulateMeshDeformVec4Buffers(uint vertexCount)
+        {
+            // Create per-vertex vec4 buffers for indices and weights
+            MeshDeformVertexIndicesBuffer = new XRDataBuffer(
+                MeshDeformVertexShaderGenerator.MeshDeformVertexIndicesAttrName,
+                EBufferTarget.ArrayBuffer,
+                vertexCount,
+                Engine.Rendering.Settings.UseIntegerUniformsInShaders ? EComponentType.Int : EComponentType.Float,
+                4, // ivec4 or vec4
+                false,
+                false)
+            {
+                Usage = EBufferUsage.StaticDraw,
+                DisposeOnPush = false
+            };
+
+            MeshDeformVertexWeightsBuffer = new XRDataBuffer(
+                MeshDeformVertexShaderGenerator.MeshDeformVertexWeightsAttrName,
+                EBufferTarget.ArrayBuffer,
+                vertexCount,
+                EComponentType.Float,
+                4, // vec4
+                false,
+                false)
+            {
+                Usage = EBufferUsage.StaticDraw,
+                DisposeOnPush = false
+            };
+
+            // Fill per-vertex data
+            for (uint v = 0; v < vertexCount; v++)
+            {
+                var influences = v < _meshDeformInfluences!.Length ? _meshDeformInfluences[v] : null;
+                
+                Vector4 indices = new(-1, -1, -1, -1);
+                Vector4 weights = Vector4.Zero;
+
+                if (influences is not null)
+                {
+                    int count = Math.Min(influences.Length, 4);
+                    for (int i = 0; i < count; i++)
+                    {
+                        switch (i)
+                        {
+                            case 0:
+                                indices.X = influences[i].VertexIndex;
+                                weights.X = influences[i].Weight;
+                                break;
+                            case 1:
+                                indices.Y = influences[i].VertexIndex;
+                                weights.Y = influences[i].Weight;
+                                break;
+                            case 2:
+                                indices.Z = influences[i].VertexIndex;
+                                weights.Z = influences[i].Weight;
+                                break;
+                            case 3:
+                                indices.W = influences[i].VertexIndex;
+                                weights.W = influences[i].Weight;
+                                break;
+                        }
+                    }
+                }
+
+                if (Engine.Rendering.Settings.UseIntegerUniformsInShaders)
+                {
+                    MeshDeformVertexIndicesBuffer.SetDataRawAtIndex(v, new IVector4((int)indices.X, (int)indices.Y, (int)indices.Z, (int)indices.W));
+                }
+                else
+                {
+                    MeshDeformVertexIndicesBuffer.SetDataRawAtIndex(v, indices);
+                }
+                MeshDeformVertexWeightsBuffer.SetDataRawAtIndex(v, weights);
+            }
+
+            Buffers.Add(MeshDeformVertexIndicesBuffer.AttributeName, MeshDeformVertexIndicesBuffer);
+            Buffers.Add(MeshDeformVertexWeightsBuffer.AttributeName, MeshDeformVertexWeightsBuffer);
+        }
+
+        private void PopulateMeshDeformSSBOBuffers(uint vertexCount)
+        {
+            // Calculate total influence count
+            uint totalInfluences = 0;
+            for (int v = 0; v < _meshDeformInfluences!.Length; v++)
+            {
+                var influences = _meshDeformInfluences[v];
+                totalInfluences += (uint)(influences?.Length ?? 0);
+            }
+
+            // Create SSBO buffers for indices and weights
+            MeshDeformIndicesBuffer = new XRDataBuffer(
+                $"{MeshDeformVertexShaderGenerator.MeshDeformIndicesBufferName}Buffer",
+                EBufferTarget.ShaderStorageBuffer,
+                Math.Max(1, totalInfluences),
+                EComponentType.Int,
+                1,
+                false,
+                false)
+            {
+                Usage = EBufferUsage.StaticDraw,
+                DisposeOnPush = false
+            };
+
+            MeshDeformWeightsBuffer = new XRDataBuffer(
+                $"{MeshDeformVertexShaderGenerator.MeshDeformWeightsBufferName}Buffer",
+                EBufferTarget.ShaderStorageBuffer,
+                Math.Max(1, totalInfluences),
+                EComponentType.Float,
+                1,
+                false,
+                false)
+            {
+                Usage = EBufferUsage.StaticDraw,
+                DisposeOnPush = false
+            };
+
+            // Create per-vertex offset and count attribute buffers
+            MeshDeformVertexOffsetBuffer = new XRDataBuffer(
+                MeshDeformVertexShaderGenerator.MeshDeformVertexOffsetAttrName,
+                EBufferTarget.ArrayBuffer,
+                vertexCount,
+                Engine.Rendering.Settings.UseIntegerUniformsInShaders ? EComponentType.Int : EComponentType.Float,
+                1,
+                false,
+                false)
+            {
+                Usage = EBufferUsage.StaticDraw,
+                DisposeOnPush = false
+            };
+
+            MeshDeformVertexCountBuffer = new XRDataBuffer(
+                MeshDeformVertexShaderGenerator.MeshDeformVertexCountAttrName,
+                EBufferTarget.ArrayBuffer,
+                vertexCount,
+                Engine.Rendering.Settings.UseIntegerUniformsInShaders ? EComponentType.Int : EComponentType.Float,
+                1,
+                false,
+                false)
+            {
+                Usage = EBufferUsage.StaticDraw,
+                DisposeOnPush = false
+            };
+
+            // Fill buffers
+            uint currentOffset = 0;
+            for (uint v = 0; v < vertexCount; v++)
+            {
+                var influences = v < _meshDeformInfluences!.Length ? _meshDeformInfluences[v] : null;
+                int count = influences?.Length ?? 0;
+
+                if (Engine.Rendering.Settings.UseIntegerUniformsInShaders)
+                {
+                    MeshDeformVertexOffsetBuffer.Set(v, (int)currentOffset);
+                    MeshDeformVertexCountBuffer.Set(v, count);
+                }
+                else
+                {
+                    MeshDeformVertexOffsetBuffer.Set(v, (float)currentOffset);
+                    MeshDeformVertexCountBuffer.Set(v, (float)count);
+                }
+
+                if (influences is not null)
+                {
+                    for (int i = 0; i < count; i++)
+                    {
+                        MeshDeformIndicesBuffer.Set(currentOffset + (uint)i, influences[i].VertexIndex);
+                        MeshDeformWeightsBuffer.Set(currentOffset + (uint)i, influences[i].Weight);
+                    }
+                }
+
+                currentOffset += (uint)count;
+            }
+
+            Buffers.Add(MeshDeformIndicesBuffer.AttributeName, MeshDeformIndicesBuffer);
+            Buffers.Add(MeshDeformWeightsBuffer.AttributeName, MeshDeformWeightsBuffer);
+            Buffers.Add(MeshDeformVertexOffsetBuffer.AttributeName, MeshDeformVertexOffsetBuffer);
+            Buffers.Add(MeshDeformVertexCountBuffer.AttributeName, MeshDeformVertexCountBuffer);
+        }
+
+        /// <summary>
+        /// Updates the deformer positions buffer from the deformer mesh's current vertex positions.
+        /// Call this each frame when the deformer mesh is animated.
+        /// </summary>
+        public void UpdateDeformerPositions()
+        {
+            if (DeformerPositionsBuffer is null || DeformMeshRenderer?.Mesh is null)
+                return;
+
+            var deformerMesh = DeformMeshRenderer.Mesh;
+            
+            // If deformer has skinned positions buffer, use that (already transformed)
+            if (DeformMeshRenderer.SkinnedPositionsBuffer is not null)
+            {
+                // Copy from skinned buffer - they should have the same format
+                // Mark as invalidated to push on next render
+                _meshDeformInvalidated = true;
+                return;
+            }
+
+            // Otherwise, get positions from mesh data
+            uint count = DeformerPositionsBuffer.ElementCount;
+            for (uint i = 0; i < count; i++)
+            {
+                var pos = deformerMesh.GetPosition(i);
+                DeformerPositionsBuffer.SetVector4(i, new Vector4(pos, 1.0f));
+            }
+
+            _meshDeformInvalidated = true;
+        }
+
+        /// <summary>
+        /// Updates the deformer normals buffer from the deformer mesh's current vertex normals.
+        /// </summary>
+        public void UpdateDeformerNormals()
+        {
+            if (DeformerNormalsBuffer is null || DeformMeshRenderer?.Mesh is null)
+                return;
+
+            var deformerMesh = DeformMeshRenderer.Mesh;
+
+            uint count = DeformerNormalsBuffer.ElementCount;
+            for (uint i = 0; i < count; i++)
+            {
+                var nrm = deformerMesh.GetNormal(i);
+                DeformerNormalsBuffer.SetVector4(i, new Vector4(nrm, 0.0f));
+            }
+
+            _meshDeformInvalidated = true;
+        }
+
+        /// <summary>
+        /// Updates the deformer tangents buffer from the deformer mesh's current vertex tangents.
+        /// </summary>
+        public void UpdateDeformerTangents()
+        {
+            if (DeformerTangentsBuffer is null || DeformMeshRenderer?.Mesh is null)
+                return;
+
+            var deformerMesh = DeformMeshRenderer.Mesh;
+
+            uint count = DeformerTangentsBuffer.ElementCount;
+            for (uint i = 0; i < count; i++)
+            {
+                var tan = deformerMesh.GetTangent(i);
+                DeformerTangentsBuffer.SetVector4(i, new Vector4(tan, 0.0f));
+            }
+
+            _meshDeformInvalidated = true;
+        }
+
+        /// <summary>
+        /// Pushes mesh deform buffers to GPU if they have been invalidated.
+        /// </summary>
+        public void PushMeshDeformBuffersToGPU()
+        {
+            if (!_meshDeformInvalidated)
+                return;
+
+            _meshDeformInvalidated = false;
+
+            DeformerPositionsBuffer?.PushSubData();
+            DeformerNormalsBuffer?.PushSubData();
+            DeformerTangentsBuffer?.PushSubData();
+        }
+
+        #endregion
 
         public T? Parameter<T>(int index) where T : ShaderVar 
             => Material?.Parameter<T>(index);

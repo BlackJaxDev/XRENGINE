@@ -21,7 +21,7 @@ namespace XREngine.Data.Geometry
         /// right top far
         /// </summary>
         private readonly Vector3[] _corners = new Vector3[8];
-        public IReadOnlyList<Vector3> Corners => _corners;
+        public IReadOnlyList<Vector3> Corners => _corners ?? [];
 
         private void ComputeCorners(Matrix4x4 mvp)
         {
@@ -53,7 +53,7 @@ namespace XREngine.Data.Geometry
         }
 
         private readonly Plane[] _planes = new Plane[6];
-        public IReadOnlyList<Plane> Planes => _planes;
+        public IReadOnlyList<Plane> Planes => _planes ?? [];
 
         private void ExtractPlanes(Matrix4x4 mvp)
         {
@@ -402,6 +402,9 @@ namespace XREngine.Data.Geometry
 
         public bool Intersects(AABB boundingBox)
         {
+            if (_planes is null)
+                return false;
+
             for (int i = 0; i < 6; i++)
             {
                 Plane plane = _planes[i];
@@ -492,8 +495,8 @@ namespace XREngine.Data.Geometry
             bottomRight.Left = GetBetweenLeftAndRight(false);
         }
 
-        public IEnumerator<Plane> GetEnumerator() => ((IEnumerable<Plane>)_planes).GetEnumerator();
-        IEnumerator IEnumerable.GetEnumerator() => _planes.GetEnumerator();
+        public IEnumerator<Plane> GetEnumerator() => _planes is null ? Enumerable.Empty<Plane>().GetEnumerator() : ((IEnumerable<Plane>)_planes).GetEnumerator();
+        IEnumerator IEnumerable.GetEnumerator() => _planes?.GetEnumerator() ?? Enumerable.Empty<Plane>().GetEnumerator();
 
         public EContainment Contains(Box box)
             => GeoUtil.FrustumContainsBox1(this, box.LocalHalfExtents, box.Transform);
@@ -519,6 +522,9 @@ namespace XREngine.Data.Geometry
 
         public bool ContainsPoint(Vector3 point, float tolerance = float.Epsilon)
         {
+            if (_planes is null)
+                return false;
+
             for (int i = 0; i < 6; i++)
                 if (DistanceFromPointToPlane(point, _planes[i]) < 0)
                     return false;
@@ -528,6 +534,9 @@ namespace XREngine.Data.Geometry
 
         public bool ContainedWithin(AABB boundingBox)
         {
+            if (_corners is null)
+                return false;
+
             for (int i = 0; i < 8; i++)
                 if (!boundingBox.ContainsPoint(_corners[i]))
                     return false;
