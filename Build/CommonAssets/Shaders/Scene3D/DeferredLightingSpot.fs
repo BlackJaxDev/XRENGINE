@@ -31,6 +31,7 @@ struct SpotLight
     float DiffuseIntensity;
     mat4 WorldToLightInvViewMatrix;
 	mat4 WorldToLightProjMatrix;
+	mat4 WorldToLightSpaceMatrix;  // Pre-computed View * Proj for shadow mapping
 
     vec3 Position;
     vec3 Direction;
@@ -207,7 +208,7 @@ in vec3 F0)
 
 	float lit = ReadShadowMap2D(
 		fragPosWS, N, NoL,
-		LightData.WorldToLightProjMatrix * inverse(LightData.WorldToLightInvViewMatrix));
+		LightData.WorldToLightSpaceMatrix);
 
 	return color * lit;
 }

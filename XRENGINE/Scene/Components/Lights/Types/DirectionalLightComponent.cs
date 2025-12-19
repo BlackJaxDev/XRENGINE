@@ -392,6 +392,7 @@ namespace XREngine.Components.Lights
 
             program.Uniform($"{flatPrefix}WorldToLightProjMatrix", lightProj);
             program.Uniform($"{flatPrefix}WorldToLightInvViewMatrix", ShadowCamera?.Transform.WorldMatrix ?? Matrix4x4.Identity);
+            program.Uniform($"{flatPrefix}WorldToLightSpaceMatrix", lightViewProj);  // Pre-computed for deferred shadow mapping
 
             program.Uniform($"{basePrefix}Color", _color);
             program.Uniform($"{basePrefix}DiffuseIntensity", _diffuseIntensity);

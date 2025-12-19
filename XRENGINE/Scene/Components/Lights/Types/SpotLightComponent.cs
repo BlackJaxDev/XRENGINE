@@ -105,11 +105,15 @@ namespace XREngine.Components.Capture.Lights.Types
             program.Uniform($"{flatPrefix}DiffuseIntensity", _diffuseIntensity);
             Matrix4x4 lightView = ShadowCamera?.Transform.InverseRenderMatrix ?? Matrix4x4.Identity;
             Matrix4x4 lightProj = ShadowCamera?.ProjectionMatrix ?? Matrix4x4.Identity;
-            // Note: C# uses Proj * View order (same as GLSL column-major convention for M * v)
-            Matrix4x4 lightViewProj = lightProj * lightView;
+            // C# Matrix4x4 is row-major but OpenGL expects column-major.
+            // When uploading with transpose=false, the matrix gets transposed.
+            // For GLSL's (mat * vec) convention to work, we need to reverse the multiplication order:
+            // CPU: View * Proj (which becomes (Proj * View)^T when uploaded)
+            Matrix4x4 lightViewProj = lightView * lightProj;
 
             program.Uniform($"{flatPrefix}WorldToLightProjMatrix", lightProj);
             program.Uniform($"{flatPrefix}WorldToLightInvViewMatrix", ShadowCamera?.Transform.RenderMatrix ?? Matrix4x4.Identity);
+            program.Uniform($"{flatPrefix}WorldToLightSpaceMatrix", lightViewProj);  // Pre-computed for deferred shadow mapping
             program.Uniform($"{flatPrefix}Position", Transform.RenderTranslation);
             program.Uniform($"{flatPrefix}Direction", Transform.RenderForward);
             program.Uniform($"{flatPrefix}Radius", Distance);
