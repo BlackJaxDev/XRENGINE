@@ -51,12 +51,13 @@ namespace XREngine.Rendering.Pipelines.Commands
 
         private void RenderGPU()
         {
+            ActivePipelineInstance.MeshRenderCommands.RenderCPU(_renderPass, true);
             ActivePipelineInstance.MeshRenderCommands.RenderGPU(_renderPass);
         }
 
         private void RenderCPU()
         {
-            ActivePipelineInstance.MeshRenderCommands.RenderCPU(_renderPass);
+            ActivePipelineInstance.MeshRenderCommands.RenderCPU(_renderPass, false);
         }
 
         internal override void DescribeRenderPass(RenderGraphDescribeContext context)

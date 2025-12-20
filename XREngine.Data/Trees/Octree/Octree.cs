@@ -99,12 +99,10 @@ namespace XREngine.Data.Trees
                 ConsumeRaycastCommandsInternal();
         }
 
-        private const long MaxRaycastTicksPerFrame = TimeSpan.TicksPerMillisecond; // 1ms
+        private const long MaxRaycastTicksPerFrame = 3 * TimeSpan.TicksPerMillisecond; // 3ms
 
-        private static int _raycastDebugBudget = 20;
         private void ConsumeRaycastCommandsInternal()
         {
-            int processedCount = 0;
             long startTicks = DateTime.UtcNow.Ticks;
             while (RaycastCommands.TryDequeue(out (
                 Segment segment,
@@ -113,23 +111,13 @@ namespace XREngine.Data.Trees
                 Action<SortedDictionary<float, List<(T item, object? data)>>> finishedCallback
             ) command))
             {
-                int itemCountBefore = command.items.Count;
                 _head.Raycast(command.segment, command.items, command.directTest);
-                int itemCountAfter = command.items.Count;
-                processedCount++;
-                
-                if (_raycastDebugBudget-- > 0)
-                    Trace.WriteLine($"[Octree.Raycast] Processed command #{processedCount}: segment={command.segment}, hitsBefore={itemCountBefore}, hitsAfter={itemCountAfter}");
-                
+
                 command.finishedCallback(command.items);
 
                 if (DateTime.UtcNow.Ticks - startTicks > MaxRaycastTicksPerFrame)
                 {
-                    // Time limit exceeded, discard remaining commands
-                    int discarded = 0;
-                    while (RaycastCommands.TryDequeue(out _)) { discarded++; }
-                    if (_raycastDebugBudget > 0)
-                        Trace.WriteLine($"[Octree.Raycast] Time limit exceeded after {processedCount} commands, discarded {discarded}");
+                    while (RaycastCommands.TryDequeue(out _)) { }
                     break;
                 }
             }
