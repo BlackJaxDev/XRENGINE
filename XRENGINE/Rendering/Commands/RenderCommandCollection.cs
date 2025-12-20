@@ -89,14 +89,20 @@ namespace XREngine.Rendering.Commands
             return added;
         }
 
-        public void RenderCPU(int renderPass)
+        public void RenderCPU(int renderPass, bool skipGpuCommands = false)
         {
             if (!_renderingPasses.TryGetValue(renderPass, out ICollection<RenderCommand>? list))
             {
                 //Debug.Out($"No CPU render pass {renderPass} found.");
                 return;
             }
-            list.ForEach(x => x?.Render());
+
+            foreach (var cmd in list)
+            {
+                if (skipGpuCommands && cmd is IRenderCommandMesh)
+                    continue;
+                cmd?.Render();
+            }
         }
         public void RenderGPU( int renderPass)
         {

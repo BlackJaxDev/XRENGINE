@@ -7,7 +7,6 @@ using XREngine.Components.Capture.Lights.Types;
 using XREngine.Components.Lights;
 using XREngine.Data;
 using XREngine.Data.Core;
-using XREngine.Data.Colors;
 using XREngine.Data.Geometry;
 using XREngine.Data.Rendering;
 using XREngine.Data.Trees;
@@ -68,8 +67,6 @@ namespace XREngine.Scene
         private ConcurrentBag<SceneCaptureComponentBase> _captureBagUpdating = [];
         private ConcurrentBag<SceneCaptureComponentBase> _captureBagRendering = [];
         private readonly Stopwatch _captureBudgetStopwatch = new();
-
-        private readonly List<(Frustum Frustum, Vector3 Position, float MaxDistance)> _cameraFrustumScratch = new(4);
 
         /// <summary>
         /// Budget in milliseconds for processing capture work (collect + render) per frame on the main thread.
@@ -220,8 +217,7 @@ namespace XREngine.Scene
 
             if (Engine.Rendering.Settings.CullShadowCollectionByCameraFrusta)
             {
-                _cameraFrustumScratch.Clear();
-
+                List<(Frustum Frustum, Vector3 Position, float MaxDistance)> cameraFrustumScratch = new(4);
                 foreach (XRWindow window in Engine.Windows)
                 {
                     if (!ReferenceEquals(window.TargetWorldInstance, World))
@@ -242,18 +238,18 @@ namespace XREngine.Scene
                         else
                             maxDist = camera.FarZ;
 
-                        _cameraFrustumScratch.Add((camera.WorldFrustum(), camera.Transform.WorldTranslation, maxDist));
+                        cameraFrustumScratch.Add((camera.WorldFrustum(), camera.Transform.WorldTranslation, maxDist));
                     }
                 }
 
-                if (_cameraFrustumScratch.Count > 0)
+                if (cameraFrustumScratch.Count > 0)
                 {
                     foreach (DirectionalLightComponent l in DynamicDirectionalLights)
                     {
                         if (!l.IsActiveInHierarchy || !l.CastsShadows || l.ShadowMap is null)
                             continue;
 
-                        if (IsLightShadowRelevant(l, _cameraFrustumScratch))
+                        if (IsLightShadowRelevant(l, cameraFrustumScratch))
                             l.CollectVisibleItems();
                     }
 
@@ -262,7 +258,7 @@ namespace XREngine.Scene
                         if (!l.IsActiveInHierarchy || !l.CastsShadows || l.ShadowMap is null)
                             continue;
 
-                        if (IsLightShadowRelevant(l, _cameraFrustumScratch))
+                        if (IsLightShadowRelevant(l, cameraFrustumScratch))
                             l.CollectVisibleItems();
                     }
 
@@ -271,7 +267,7 @@ namespace XREngine.Scene
                         if (!l.IsActiveInHierarchy || !l.CastsShadows || l.ShadowMap is null)
                             continue;
 
-                        if (IsLightShadowRelevant(l, _cameraFrustumScratch))
+                        if (IsLightShadowRelevant(l, cameraFrustumScratch))
                             l.CollectVisibleItems();
                     }
                 }
@@ -792,9 +788,8 @@ namespace XREngine.Scene
                 {
 
                 };
-                //RenderInfo = RenderInfo3D.New(this);
-                //RenderInfo.LocalCullingVolume = this;
-                RenderedObjects = [];
+                RenderInfo = RenderInfo3D.New(this, _rc);
+                RenderedObjects = [RenderInfo];
             }
 
             private RenderCommandMesh3D _rc;
@@ -806,7 +801,7 @@ namespace XREngine.Scene
             public bool ShouldRender { get; } = true;
             AABB? IOctreeItem.LocalCullingVolume { get; }
             public Matrix4x4 CullingOffsetMatrix { get; }
-            public IRenderableBase Owner { get; }
+            public IRenderableBase Owner => this;
 
             public bool Intersects(IVolume cullingVolume, bool containsOnly)
             {

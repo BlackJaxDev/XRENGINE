@@ -106,7 +106,26 @@ namespace XREngine.Components.Scene.Mesh
             Model.Meshes.PostAnythingAdded += AddMesh;
             Model.Meshes.PostAnythingRemoved += RemoveMesh;
 
+            BuildMeshBVHs();
+
             ModelChanged?.Invoke();
+        }
+
+        private void BuildMeshBVHs()
+        {
+            foreach (RenderableMesh renderable in Meshes)
+                WarmupMeshBVH(renderable);
+        }
+
+        private static void WarmupMeshBVH(RenderableMesh renderable)
+        {
+            // Prime static BVH for each LOD mesh
+            foreach (var lod in renderable.LODs)
+                lod.Renderer.Mesh?.GenerateBVH();
+
+            // Kick skinned BVH build so hit-tests have data ready
+            if (renderable.IsSkinned)
+                _ = renderable.GetSkinnedBvh();
         }
 
         private void AddMesh(SubMesh item)
@@ -117,6 +136,8 @@ namespace XREngine.Components.Scene.Mesh
             };
             Meshes.Add(mesh);
             _meshLinks.TryAdd(item, mesh);
+
+            WarmupMeshBVH(mesh);
         }
         private void RemoveMesh(SubMesh item)
         {

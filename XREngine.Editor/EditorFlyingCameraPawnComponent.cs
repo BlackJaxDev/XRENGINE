@@ -22,6 +22,7 @@ using XREngine.Rendering.Info;
 using XREngine.Rendering.Picking;
 using XREngine.Rendering.Physics.Physx;
 using XREngine.Rendering.Models.Materials;
+using XREngine.Rendering.Pipelines;
 using XREngine.Scene;
 using XREngine.Scene.Transforms;
 using System.ComponentModel;
@@ -55,20 +56,10 @@ public partial class EditorFlyingCameraPawnComponent : FlyingCameraPawnComponent
         _postRenderRC = new((int)EDefaultRenderPass.PostRender, PostRender);
         _renderHighlightRC = new((int)EDefaultRenderPass.OpaqueForward, RenderHighlight);
 
-        _hoverStencilWriteRC = new RenderCommandMesh3D((int)EDefaultRenderPass.OnTopForward)
-        {
-            Enabled = false,
-            MaterialOverride = GetOrCreateHoverStencilWriteMaterial(),
-            WorldMatrix = Matrix4x4.Identity,
-            WorldMatrixIsModelMatrix = true,
-            Instances = 1,
-        };
-
         RenderedObjects =
         [
             RenderInfo3D.New(this, _postRenderRC),
-            RenderInfo3D.New(this, _renderHighlightRC),
-            RenderInfo3D.New(this, _hoverStencilWriteRC)
+            RenderInfo3D.New(this, _renderHighlightRC)
         ];
         Selection.SelectionChanged += Selection_SelectionChanged;
     }
@@ -257,7 +248,7 @@ public partial class EditorFlyingCameraPawnComponent : FlyingCameraPawnComponent
 
     #endregion
 
-    private bool _renderRaycast = false;
+    private bool _renderRaycast = true;
     /// <summary>
     /// If true, renders debug information for raycast hits.
     /// </summary>
@@ -267,6 +258,28 @@ public partial class EditorFlyingCameraPawnComponent : FlyingCameraPawnComponent
         get => _renderRaycast;
         set => SetField(ref _renderRaycast, value);
     }
+
+    private bool _hoverOutlineEnabled = true;
+    /// <summary>
+    /// If true, renders an outline around the mesh currently under the cursor using stencil buffer.
+    /// </summary>
+    [Category("Raycasting")]
+    [DisplayName("Hover Outline")]
+    [Description("When enabled, renders an outline around the mesh under the cursor.")]
+    public bool HoverOutlineEnabled
+    {
+        get => _hoverOutlineEnabled;
+        set
+        {
+            if (SetField(ref _hoverOutlineEnabled, value) && !value)
+                ClearHoverHighlight();
+        }
+    }
+
+    /// <summary>
+    /// The material currently highlighted for hover outline.
+    /// </summary>
+    private XRMaterial? _currentHoverHighlightMaterial = null;
 
     private PhysxScene.PhysxQueryFilter _physxQueryFilter = new();
     [Category("Raycasting")]
@@ -304,12 +317,6 @@ public partial class EditorFlyingCameraPawnComponent : FlyingCameraPawnComponent
 
     private readonly ConcurrentQueue<SortedDictionary<float, List<(RenderInfo3D item, object? data)>>> _octreePickResultPool = new();
     private readonly ConcurrentQueue<SortedDictionary<float, List<(XRComponent? item, object? data)>>> _physicsPickResultPool = new();
-
-    /// <summary>
-    /// Tracks if an octree pick is pending (dispatched but callback not yet received).
-    /// Used to prevent flooding the octree raycast queue.
-    /// </summary>
-    private volatile bool _octreePickPending = false;
 
     private SortedDictionary<float, List<(RenderInfo3D item, object? data)>> GetOctreePickResultDict()
     {
@@ -409,58 +416,6 @@ public partial class EditorFlyingCameraPawnComponent : FlyingCameraPawnComponent
 
     private readonly RenderCommandMethod3D _postRenderRC;
     private readonly RenderCommandMethod3D _renderHighlightRC;
-    private readonly RenderCommandMesh3D _hoverStencilWriteRC;
-
-    private static XRMaterial? s_hoverStencilWriteMaterial;
-
-    private static XRMaterial GetOrCreateHoverStencilWriteMaterial()
-    {
-        if (s_hoverStencilWriteMaterial is not null)
-            return s_hoverStencilWriteMaterial;
-
-        // Writes highlight bit (bit 0) into the shared depth-stencil buffer.
-        // The scene post-process shader (Build/CommonAssets/Shaders/Scene3D/PostProcess.fs)
-        // samples StencilView and draws the outline.
-        XRMaterial mat = XRMaterial.CreateUnlitColorMaterialForward(ColorF4.Black);
-        mat.RenderPass = (int)EDefaultRenderPass.OnTopForward;
-
-        var options = new RenderingParameters();
-        options.RequiredEngineUniforms = EUniformRequirements.Camera;
-
-        // No color output; we only want to write to stencil.
-        options.WriteRed = false;
-        options.WriteGreen = false;
-        options.WriteBlue = false;
-        options.WriteAlpha = false;
-
-        // Respect scene depth so we only highlight visible surfaces.
-        options.DepthTest.Enabled = ERenderParamUsage.Enabled;
-        options.DepthTest.UpdateDepth = false;
-        options.DepthTest.Function = EComparison.Lequal;
-
-        options.StencilTest.Enabled = ERenderParamUsage.Enabled;
-        options.StencilTest.FrontFace.Function = EComparison.Always;
-        options.StencilTest.FrontFace.Reference = 1;
-        options.StencilTest.FrontFace.ReadMask = 0xFF;
-        options.StencilTest.FrontFace.WriteMask = 0xFF;
-        options.StencilTest.FrontFace.BothFailOp = EStencilOp.Keep;
-        // If depth fails (e.g. due to depth-preload or ordering), still mark stencil so outline is visible.
-        options.StencilTest.FrontFace.StencilPassDepthFailOp = EStencilOp.Replace;
-        options.StencilTest.FrontFace.BothPassOp = EStencilOp.Replace;
-
-        options.StencilTest.BackFace.Function = EComparison.Always;
-        options.StencilTest.BackFace.Reference = 1;
-        options.StencilTest.BackFace.ReadMask = 0xFF;
-        options.StencilTest.BackFace.WriteMask = 0xFF;
-        options.StencilTest.BackFace.BothFailOp = EStencilOp.Keep;
-        options.StencilTest.BackFace.StencilPassDepthFailOp = EStencilOp.Replace;
-        options.StencilTest.BackFace.BothPassOp = EStencilOp.Replace;
-
-        mat.RenderOptions = options;
-
-        s_hoverStencilWriteMaterial = mat;
-        return mat;
-    }
 
     [Browsable(false)]
     public RenderInfo[] RenderedObjects { get; }
@@ -828,56 +783,6 @@ public partial class EditorFlyingCameraPawnComponent : FlyingCameraPawnComponent
     {
         base.Tick();
         ApplyInput(Viewport);
-        UpdateHoverStencilCommand();
-    }
-
-    private static int _debugStencilLogBudget = 100;
-    private static int _debugStencilPickBudget = 100;
-    private static int _debugMeshHitLogBudget = 50;
-
-    private void UpdateHoverStencilCommand()
-    {
-        // Only write hover stencil when picking is active and the cursor is over the viewport (not UI).
-        if (!AllowWorldPicking || IsHoveringUI())
-        {
-            _hoverStencilWriteRC.Enabled = false;
-            _hoverStencilWriteRC.Mesh = null;
-            if (_debugStencilLogBudget-- > 0)
-                Debug.Out("[HoverOutline] Disabled: UI hover or picking not allowed");
-            return;
-        }
-
-        MeshPickResult? pick;
-        using (_raycastLock.EnterScope())
-            pick = _meshPickResult;
-
-        if (pick is null)
-        {
-            _hoverStencilWriteRC.Enabled = false;
-            _hoverStencilWriteRC.Mesh = null;
-            if (_debugStencilLogBudget-- > 0)
-                Debug.Out("[HoverOutline] Disabled: no pick result");
-            return;
-        }
-
-        var renderableMesh = pick.Value.Mesh;
-        var renderer = renderableMesh.CurrentLODRenderer;
-        if (renderer is null)
-        {
-            _hoverStencilWriteRC.Enabled = false;
-            _hoverStencilWriteRC.Mesh = null;
-            if (_debugStencilLogBudget-- > 0)
-                Debug.Out("[HoverOutline] Disabled: pick has no renderer");
-            return;
-        }
-
-        _hoverStencilWriteRC.Mesh = renderer;
-        _hoverStencilWriteRC.WorldMatrix = renderableMesh.IsSkinned ? Matrix4x4.Identity : pick.Value.Component.Transform.RenderMatrix;
-        _hoverStencilWriteRC.MaterialOverride = GetOrCreateHoverStencilWriteMaterial();
-        _hoverStencilWriteRC.Enabled = true;
-
-        if (_debugStencilLogBudget-- > 0)
-            Debug.Out($"[HoverOutline] Enabled stencil write for mesh: {renderer.Mesh?.Name ?? "unknown"}, WorldMatrix: {_hoverStencilWriteRC.WorldMatrix.Translation}");
     }
 
     private void PostRender()
@@ -925,15 +830,11 @@ public partial class EditorFlyingCameraPawnComponent : FlyingCameraPawnComponent
         if (tfmTool is not null && tfmTool.TryGetComponent<TransformTool3D>(out var comp))
             comp?.MouseMove(_lastRaycastSegment, cam.Camera, LeftClickPressed);
 
-        if (AllowWorldPicking && !IsHoveringUI() && !_octreePickPending)
+        if (AllowWorldPicking)
         {
-            _octreePickPending = true;
             var octreeResults = GetOctreePickResultDict();
             var physicsResults = GetPhysicsPickResultDict();
             vp.PickSceneAsync(p, false, true, true, _layerMask, _physxQueryFilter, octreeResults, physicsResults, OctreeRaycastCallback, PhysicsRaycastCallback, RaycastMode);
-
-            if (_debugStencilPickBudget-- > 0)
-                Debug.Out($"[HoverOutline] Dispatched PickSceneAsync at {p}");
         }
 
         ApplyTransformations(vp);
@@ -962,17 +863,6 @@ public partial class EditorFlyingCameraPawnComponent : FlyingCameraPawnComponent
 
     private void OctreeRaycastCallback(SortedDictionary<float, List<(RenderInfo3D item, object? data)>> dictionary)
     {
-        // Clear pending flag so we can dispatch another pick
-        _octreePickPending = false;
-
-        if (_debugStencilPickBudget-- > 0)
-        {
-            int totalHits = 0;
-            foreach (var kv in dictionary)
-                totalHits += kv.Value?.Count ?? 0;
-            Debug.Out($"[HoverOutline] OctreeRaycastCallback count={dictionary.Count}, totalHits={totalHits}");
-        }
-
         UpdateMeshHitVisualization(dictionary);
 
         if (RenderRaycast)
@@ -989,13 +879,19 @@ public partial class EditorFlyingCameraPawnComponent : FlyingCameraPawnComponent
     private void TryRenderFirstRaycastResult(SortedDictionary<float, List<(RenderInfo3D item, object? data)>> dict)
     {
         if (dict.Count == 0)
+        {
+            ClearHoverHighlight();
             return;
+        }
         try
         {
             //Enumerator may throw if modified concurrently; catch and skip frame.
             var e = dict.GetEnumerator();
             if (!e.MoveNext())
+            {
+                ClearHoverHighlight();
                 return;
+            }
             RenderRaycastResult(e.Current);
         }
         catch (InvalidOperationException)
@@ -1026,8 +922,6 @@ public partial class EditorFlyingCameraPawnComponent : FlyingCameraPawnComponent
                 _vertexPickResult = null;
                 _meshPickResult = null;
             }
-            if (_debugStencilLogBudget-- > 0)
-                Debug.Out("[HoverOutline] Octree results empty; cleared pick");
             return;
         }
 
@@ -1062,26 +956,11 @@ public partial class EditorFlyingCameraPawnComponent : FlyingCameraPawnComponent
         catch (InvalidOperationException)
         {
             //Dictionary modified during enumeration; skip this frame.
-            if (_debugStencilLogBudget-- > 0)
-                Debug.Out("[HoverOutline] Octree results modified concurrently; skip frame");
             return;
         }
 
         if (_firstHitBuffer.Count == 0)
-        {
-            if (_debugMeshHitLogBudget-- > 0)
-                Debug.Out("[HoverOutline] No valid hits after filtering (volumes removed)");
             return;
-        }
-
-        if (_debugMeshHitLogBudget-- > 0)
-        {
-            for (int i = 0; i < _firstHitBuffer.Count; i++)
-            {
-                var (item, data) = _firstHitBuffer[i];
-                Debug.Out($"[HoverOutline] Hit[{i}] owner={item.Owner?.GetType().Name ?? "null"}, data={data?.GetType().Name ?? "null"}");
-            }
-        }
 
         for (int i = 0; i < _firstHitBuffer.Count; i++)
         {
@@ -1124,18 +1003,18 @@ public partial class EditorFlyingCameraPawnComponent : FlyingCameraPawnComponent
             _meshPickResult = meshPickResult;
         }
 
-        if (_debugMeshHitLogBudget-- > 0)
-        {
-            var pickedName = meshPickResult?.Mesh?.CurrentLODMesh?.Name ?? "none";
-            Debug.Out($"[HoverOutline] Picked mesh set to: {pickedName}");
-        }
     }
 
-    private static void RenderRaycastResult(KeyValuePair<float, List<(RenderInfo3D item, object? data)>> result)
+    private void RenderRaycastResult(KeyValuePair<float, List<(RenderInfo3D item, object? data)>> result)
     {
         var list = result.Value;
         if (list is null || list.Count == 0)
+        {
+            ClearHoverHighlight();
             return;
+        }
+
+        XRMaterial? firstHitMaterial = null;
 
         //Capture stable snapshot to avoid modifications mid-iteration.
         for (int i = 0; i < list.Count; i++)
@@ -1150,6 +1029,18 @@ public partial class EditorFlyingCameraPawnComponent : FlyingCameraPawnComponent
                 _ => null
             };
 
+            // Get the material from the first mesh hit for hover outline
+            if (firstHitMaterial is null && HoverOutlineEnabled)
+            {
+                firstHitMaterial = data switch
+                {
+                    MeshPickResult meshHit => meshHit.Mesh?.CurrentLODRenderer?.Material,
+                    MeshEdgePickResult edgeHit => edgeHit.FaceHit.Mesh?.CurrentLODRenderer?.Material,
+                    MeshVertexPickResult vertexHit => vertexHit.FaceHit.Mesh?.CurrentLODRenderer?.Material,
+                    _ => null
+                };
+            }
+
             if (point is null)
                 continue;
 
@@ -1163,6 +1054,40 @@ public partial class EditorFlyingCameraPawnComponent : FlyingCameraPawnComponent
             if (name is not null)
                 Engine.Rendering.Debug.RenderText(point.Value, name, ColorF4.Black);
             //Engine.Rendering.Debug.RenderPoint(point.Value, ColorF4.Red);
+        }
+
+        // Update hover highlight
+        UpdateHoverHighlight(firstHitMaterial);
+    }
+
+    /// <summary>
+    /// Updates the hover highlight, enabling stencil on the new material and disabling on the previous.
+    /// </summary>
+    private void UpdateHoverHighlight(XRMaterial? newMaterial)
+    {
+        if (_currentHoverHighlightMaterial == newMaterial)
+            return;
+
+        // Disable highlight on previous material
+        if (_currentHoverHighlightMaterial is not null)
+            DefaultRenderPipeline.SetHighlighted(_currentHoverHighlightMaterial, false);
+
+        // Enable highlight on new material
+        if (newMaterial is not null && HoverOutlineEnabled)
+            DefaultRenderPipeline.SetHighlighted(newMaterial, true);
+
+        _currentHoverHighlightMaterial = newMaterial;
+    }
+
+    /// <summary>
+    /// Clears any current hover highlight.
+    /// </summary>
+    private void ClearHoverHighlight()
+    {
+        if (_currentHoverHighlightMaterial is not null)
+        {
+            DefaultRenderPipeline.SetHighlighted(_currentHoverHighlightMaterial, false);
+            _currentHoverHighlightMaterial = null;
         }
     }
 
@@ -1550,7 +1475,7 @@ public partial class EditorFlyingCameraPawnComponent : FlyingCameraPawnComponent
 
     private bool HasContinuousMovementInput()
     {
-        const float threshold =0.0001f;
+        const float threshold = 0.0001f;
         return MathF.Abs(_incRight) > threshold || MathF.Abs(_incForward) > threshold || MathF.Abs(_incUp) > threshold || MathF.Abs(_incPitch) > threshold || MathF.Abs(_incYaw) > threshold;
     }
 
@@ -1588,7 +1513,7 @@ public partial class EditorFlyingCameraPawnComponent : FlyingCameraPawnComponent
 
     private void Select()
     {
-        if (TransformTool3D.GetActiveInstance(out var tfmComp) && tfmComp is not null && tfmComp.Highlighted || IsHoveringUI())
+        if (TransformTool3D.GetActiveInstance(out var tfmComp) && tfmComp is not null && tfmComp.Highlighted)
             return;
         List<SceneNode> currentHits = [];
         if (!TryCollectModelComponentHits(currentHits))

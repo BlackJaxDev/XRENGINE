@@ -191,12 +191,19 @@ namespace XREngine.Rendering.OpenGL
 
         public void Clear(ColorF4 color, int level = 0)
         {
+            // Ensure the texture exists and has storage before clearing.
+            // Some passes clear render-target textures before they've ever been bound/pushed.
+            var previous = Renderer.BoundTexture;
+            Bind();
+
             var id = BindingId;
-            if (id != 0)
-            {
-                //Api.BindTexture(ToGLEnum(TextureTarget), id);
+            if (id != InvalidBindingId && Api.IsTexture(id))
                 Renderer.ClearTexImage(id, level, color);
-            }
+
+            if (previous is null || ReferenceEquals(previous, this))
+                Unbind();
+            else
+                previous.Bind();
         }
 
         public void GenerateMipmaps()
