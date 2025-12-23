@@ -711,6 +711,7 @@ namespace XREngine.Components.Physics
             RigidBody = World.PhysicsScene switch
             {
                 PhysxScene => CreatePhysxDynamicRigidBody(),
+                JoltScene joltScene => CreateJoltDynamicRigidBody(joltScene),
                 _ => null
             };
         }
@@ -737,6 +738,31 @@ namespace XREngine.Components.Physics
             }
 
             var body = new PhysxDynamicRigidBody(position, rotation);
+            ApplyAllCachedProperties(body);
+            return body;
+        }
+
+        private JoltDynamicRigidBody? CreateJoltDynamicRigidBody(JoltScene scene)
+        {
+            var geometry = Geometry;
+            if (geometry is null)
+                return null;
+
+            var pose = GetSpawnPose();
+            LayerMask layerMask = CollisionGroup == 0
+                ? new LayerMask(1)
+                : new LayerMask(1 << CollisionGroup);
+
+            var body = scene.CreateDynamicRigidBody(
+                geometry,
+                pose,
+                ShapeOffsetTranslation,
+                ShapeOffsetRotation,
+                layerMask);
+
+            if (body is null)
+                return null;
+
             ApplyAllCachedProperties(body);
             return body;
         }

@@ -3,6 +3,7 @@ using JoltPhysicsSharp;
 using System.Numerics;
 using XREngine.Components;
 using XREngine.Data.Geometry;
+using XREngine.Scene;
 using XREngine.Rendering.Physics.Physx;
 using Ray = JoltPhysicsSharp.Ray;
 
@@ -31,6 +32,72 @@ namespace XREngine.Scene.Physics.Jolt
 
         public PhysicsSystem? PhysicsSystem => _physicsSystem;
         public JobSystem? JobSystem => _jobSystem;
+
+        public JoltStaticRigidBody? CreateStaticRigidBody(
+            IPhysicsGeometry geometry,
+            (Vector3 position, Quaternion rotation) pose,
+            Vector3 shapeOffsetTranslation,
+            Quaternion shapeOffsetRotation,
+            LayerMask layerMask)
+        {
+            if (_physicsSystem is null)
+                return null;
+
+            var shape = geometry.AsJoltShape();
+            if (shape is null)
+                return null;
+
+            pose = ApplyShapeOffsetToPose(pose, shapeOffsetTranslation, shapeOffsetRotation);
+
+            BodyCreationSettings bodySettings = new(
+                shape,
+                pose.position,
+                pose.rotation,
+                MotionType.Static,
+                layerMask.AsJoltObjectLayer());
+
+            BodyID bodyId = _physicsSystem.BodyInterface.CreateBody(bodySettings);
+            var body = new JoltStaticRigidBody
+            {
+                BodyID = bodyId,
+            };
+
+            AddActor(body);
+            return body;
+        }
+
+        public JoltDynamicRigidBody? CreateDynamicRigidBody(
+            IPhysicsGeometry geometry,
+            (Vector3 position, Quaternion rotation) pose,
+            Vector3 shapeOffsetTranslation,
+            Quaternion shapeOffsetRotation,
+            LayerMask layerMask)
+        {
+            if (_physicsSystem is null)
+                return null;
+
+            var shape = geometry.AsJoltShape();
+            if (shape is null)
+                return null;
+
+            pose = ApplyShapeOffsetToPose(pose, shapeOffsetTranslation, shapeOffsetRotation);
+
+            BodyCreationSettings bodySettings = new(
+                shape,
+                pose.position,
+                pose.rotation,
+                MotionType.Dynamic,
+                layerMask.AsJoltObjectLayer());
+
+            BodyID bodyId = _physicsSystem.BodyInterface.CreateBody(bodySettings);
+            var body = new JoltDynamicRigidBody
+            {
+                BodyID = bodyId,
+            };
+
+            AddActor(body);
+            return body;
+        }
 
         public override void AddActor(IAbstractPhysicsActor actor)
         {
@@ -593,11 +660,24 @@ namespace XREngine.Scene.Physics.Jolt
         
         public JoltRigidActor? GetRigidActor(BodyID bodyID)
             => _rigidActors.TryGetValue(bodyID, out var actor) ? actor : null;
-        
+
         public JoltStaticRigidBody? GetStaticBody(BodyID bodyID)
             => _staticBodies.TryGetValue(bodyID, out var body) ? body : null;
-        
+
         public JoltDynamicRigidBody? GetDynamicBody(BodyID bodyID)
             => _dynamicBodies.TryGetValue(bodyID, out var body) ? body : null;
+
+        private static (Vector3 position, Quaternion rotation) ApplyShapeOffsetToPose(
+            (Vector3 position, Quaternion rotation) pose,
+            Vector3 offsetTranslation,
+            Quaternion offsetRotation)
+        {
+            if (offsetTranslation == Vector3.Zero && offsetRotation == Quaternion.Identity)
+                return pose;
+
+            var adjustedRotation = pose.rotation * offsetRotation;
+            var adjustedPosition = pose.position + Vector3.Transform(offsetTranslation, pose.rotation);
+            return (adjustedPosition, adjustedRotation);
+        }
     }
 }
