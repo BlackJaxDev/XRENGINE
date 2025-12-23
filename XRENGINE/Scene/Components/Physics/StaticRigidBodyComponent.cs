@@ -4,6 +4,7 @@ using MagicPhysX;
 using XREngine.Core.Attributes;
 using XREngine.Rendering.Physics.Physx;
 using XREngine.Scene;
+using XREngine.Scene.Physics.Jolt;
 using XREngine.Scene.Transforms;
 using XREngine;
 
@@ -283,6 +284,7 @@ namespace XREngine.Components.Physics
             RigidBody = World.PhysicsScene switch
             {
                 PhysxScene => CreatePhysxStaticRigidBody(),
+                JoltScene joltScene => CreateJoltStaticRigidBody(joltScene),
                 _ => null
             };
         }
@@ -308,6 +310,31 @@ namespace XREngine.Components.Physics
             }
 
             var body = new PhysxStaticRigidBody(position, rotation);
+            ApplyCachedProperties(body);
+            return body;
+        }
+
+        private IAbstractStaticRigidBody? CreateJoltStaticRigidBody(JoltScene scene)
+        {
+            var geometry = Geometry;
+            if (geometry is null)
+                return null;
+
+            var pose = GetSpawnPose();
+            LayerMask layerMask = CollisionGroup == 0
+                ? new LayerMask(1)
+                : new LayerMask(1 << CollisionGroup);
+
+            var body = scene.CreateStaticRigidBody(
+                geometry,
+                pose,
+                ShapeOffsetTranslation,
+                ShapeOffsetRotation,
+                layerMask);
+
+            if (body is null)
+                return null;
+
             ApplyCachedProperties(body);
             return body;
         }
@@ -366,7 +393,12 @@ namespace XREngine.Components.Physics
 
         private void ApplyCachedProperties()
         {
-            if (RigidBody is not PhysxActor actor)
+            ApplyCachedProperties(RigidBody);
+        }
+
+        private void ApplyCachedProperties(IAbstractStaticRigidBody? body)
+        {
+            if (body is not PhysxActor actor)
                 return;
 
             ApplyCachedProperties(actor);
