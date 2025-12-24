@@ -177,7 +177,7 @@ namespace XREngine.Rendering.Commands
             if (!_verbose)
                 return;
 
-            if (!(Engine.UserSettings?.EnableGpuIndirectDebugLogging ?? false))
+            if (!(Engine.EffectiveSettings.EnableGpuIndirectDebugLogging))
                 return;
 
             bool enabled;

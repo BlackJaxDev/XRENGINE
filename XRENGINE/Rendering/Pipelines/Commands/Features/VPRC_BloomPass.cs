@@ -1,4 +1,4 @@
-﻿using XREngine.Data.Geometry;
+using XREngine.Data.Geometry;
 using XREngine.Data.Rendering;
 using XREngine.Rendering.Models.Materials;
 

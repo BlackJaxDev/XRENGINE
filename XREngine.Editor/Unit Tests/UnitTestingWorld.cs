@@ -1,4 +1,4 @@
-﻿using System.Numerics;
+using System.Numerics;
 using XREngine.Animation;
 using XREngine.Components;
 using XREngine.Components.Lights;
@@ -58,7 +58,7 @@ public static partial class UnitTestingWorld
         if (Toggles.VisualizeOctree)
             rootNode.AddComponent<DebugVisualizeOctreeComponent>();
 
-        SceneNode characterPawnModelParentNode = Pawns.CreatePlayerPawn(setUI, isServer, rootNode);
+        SceneNode? characterPawnModelParentNode = Pawns.CreatePlayerPawn(setUI, isServer, rootNode);
 
         if (Toggles.DirLight)
             Lighting.AddDirLight(rootNode);

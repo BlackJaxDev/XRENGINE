@@ -1,4 +1,4 @@
-﻿using Extensions;
+using Extensions;
 using Silk.NET.OpenGL;
 using XREngine.Data;
 using XREngine.Data.Core;
@@ -22,6 +22,11 @@ namespace XREngine.Rendering.OpenGL
             get => _storageSet;
             private set => SetField(ref _storageSet, value);
         }
+
+        /// <summary>
+        /// Tracks the currently allocated GPU memory size for this texture in bytes.
+        /// </summary>
+        private long _allocatedVRAMBytes = 0;
 
         protected override void DataPropertyChanged(object? sender, IXRPropertyChangedEventArgs e)
         {
@@ -101,6 +106,13 @@ namespace XREngine.Rendering.OpenGL
                 EPixelInternalFormat? internalFormatForce = null;
                 if (!Data.Resizable && !StorageSet)
                 {
+                    // Track VRAM deallocation of previous texture if any
+                    if (_allocatedVRAMBytes > 0)
+                    {
+                        Engine.Rendering.Stats.RemoveTextureAllocation(_allocatedVRAMBytes);
+                        _allocatedVRAMBytes = 0;
+                    }
+
                     // Guard against 0-sized textures which cause GL_INVALID_VALUE
                     uint w = Math.Max(1u, Data.Width);
                     uint h = Math.Max(1u, Data.Height);
@@ -113,6 +125,10 @@ namespace XREngine.Rendering.OpenGL
                         Api.TextureStorage2D(BindingId, levels, ToGLEnum(Data.SizedInternalFormat), w, h);
                     internalFormatForce = ToBaseInternalFormat(Data.SizedInternalFormat);
                     StorageSet = true;
+
+                    // Track VRAM allocation - calculate size with mipmaps
+                    _allocatedVRAMBytes = CalculateTextureVRAMSize(w, h, levels, Data.SizedInternalFormat, Data.MultiSample ? Data.MultiSampleCount : 1u);
+                    Engine.Rendering.Stats.AddTextureAllocation(_allocatedVRAMBytes);
                 }
 
                 if (Mipmaps is null || Mipmaps.Length == 0)
@@ -316,8 +332,99 @@ namespace XREngine.Rendering.OpenGL
         }
         protected internal override void PostDeleted()
         {
+            // Track VRAM deallocation
+            if (_allocatedVRAMBytes > 0)
+            {
+                Engine.Rendering.Stats.RemoveTextureAllocation(_allocatedVRAMBytes);
+                _allocatedVRAMBytes = 0;
+            }
             StorageSet = false;
             base.PostDeleted();
+        }
+
+        /// <summary>
+        /// Calculates the approximate VRAM size for a 2D texture including all mipmap levels.
+        /// </summary>
+        private static long CalculateTextureVRAMSize(uint width, uint height, uint mipLevels, ESizedInternalFormat format, uint sampleCount)
+        {
+            long totalSize = 0;
+            uint bpp = GetBytesPerPixel(format);
+            
+            for (uint mip = 0; mip < mipLevels; mip++)
+            {
+                uint mipWidth = Math.Max(1u, width >> (int)mip);
+                uint mipHeight = Math.Max(1u, height >> (int)mip);
+                totalSize += mipWidth * mipHeight * bpp * sampleCount;
+            }
+            
+            return totalSize;
+        }
+
+        /// <summary>
+        /// Returns the bytes per pixel for a given sized internal format.
+        /// </summary>
+        private static uint GetBytesPerPixel(ESizedInternalFormat format)
+        {
+            return format switch
+            {
+                ESizedInternalFormat.R8 => 1,
+                ESizedInternalFormat.R8Snorm => 1,
+                ESizedInternalFormat.R16 => 2,
+                ESizedInternalFormat.R16Snorm => 2,
+                ESizedInternalFormat.Rg8 => 2,
+                ESizedInternalFormat.Rg8Snorm => 2,
+                ESizedInternalFormat.Rg16 => 4,
+                ESizedInternalFormat.Rg16Snorm => 4,
+                ESizedInternalFormat.Rgb8 => 3,
+                ESizedInternalFormat.Rgb8Snorm => 3,
+                ESizedInternalFormat.Rgb16Snorm => 6,
+                ESizedInternalFormat.Rgba8 => 4,
+                ESizedInternalFormat.Rgba8Snorm => 4,
+                ESizedInternalFormat.Rgba16 => 8,
+                ESizedInternalFormat.Srgb8 => 3,
+                ESizedInternalFormat.Srgb8Alpha8 => 4,
+                ESizedInternalFormat.R16f => 2,
+                ESizedInternalFormat.Rg16f => 4,
+                ESizedInternalFormat.Rgb16f => 6,
+                ESizedInternalFormat.Rgba16f => 8,
+                ESizedInternalFormat.R32f => 4,
+                ESizedInternalFormat.Rg32f => 8,
+                ESizedInternalFormat.Rgb32f => 12,
+                ESizedInternalFormat.Rgba32f => 16,
+                ESizedInternalFormat.R11fG11fB10f => 4,
+                ESizedInternalFormat.Rgb9E5 => 4,
+                ESizedInternalFormat.R8i => 1,
+                ESizedInternalFormat.R8ui => 1,
+                ESizedInternalFormat.R16i => 2,
+                ESizedInternalFormat.R16ui => 2,
+                ESizedInternalFormat.R32i => 4,
+                ESizedInternalFormat.R32ui => 4,
+                ESizedInternalFormat.Rg8i => 2,
+                ESizedInternalFormat.Rg8ui => 2,
+                ESizedInternalFormat.Rg16i => 4,
+                ESizedInternalFormat.Rg16ui => 4,
+                ESizedInternalFormat.Rg32i => 8,
+                ESizedInternalFormat.Rg32ui => 8,
+                ESizedInternalFormat.Rgb8i => 3,
+                ESizedInternalFormat.Rgb8ui => 3,
+                ESizedInternalFormat.Rgb16i => 6,
+                ESizedInternalFormat.Rgb16ui => 6,
+                ESizedInternalFormat.Rgb32i => 12,
+                ESizedInternalFormat.Rgb32ui => 12,
+                ESizedInternalFormat.Rgba8i => 4,
+                ESizedInternalFormat.Rgba8ui => 4,
+                ESizedInternalFormat.Rgba16i => 8,
+                ESizedInternalFormat.Rgba16ui => 8,
+                ESizedInternalFormat.Rgba32i => 16,
+                ESizedInternalFormat.Rgba32ui => 16,
+                ESizedInternalFormat.DepthComponent16 => 2,
+                ESizedInternalFormat.DepthComponent24 => 3,
+                ESizedInternalFormat.DepthComponent32f => 4,
+                ESizedInternalFormat.Depth24Stencil8 => 4,
+                ESizedInternalFormat.Depth32fStencil8 => 5,
+                ESizedInternalFormat.StencilIndex8 => 1,
+                _ => 4, // Default assumption for unknown/other formats
+            };
         }
     }
 }

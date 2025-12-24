@@ -33,6 +33,13 @@ namespace XREngine.Components.Physics
                 World.PhysicsScene.RemoveActor(PhysicsActor);
         }
 
+        protected (Vector3 position, Quaternion rotation) GetSpawnPose()
+        {
+            var matrix = Transform.WorldMatrix;
+            Matrix4x4.Decompose(matrix, out _, out Quaternion rotation, out Vector3 translation);
+            return (translation, rotation);
+        }
+
         private static readonly IConvexDecompositionRunner s_defaultRunner = new CoAcdRunner();
 
         protected virtual IConvexDecompositionRunner ConvexDecompositionRunner => s_defaultRunner;

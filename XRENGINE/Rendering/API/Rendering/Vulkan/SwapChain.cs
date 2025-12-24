@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using Silk.NET.Maths;
 using Silk.NET.Vulkan;
 using Silk.NET.Vulkan.Extensions.KHR;

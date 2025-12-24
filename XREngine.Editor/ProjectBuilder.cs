@@ -146,6 +146,13 @@ internal static class ProjectBuilder
         string configuration = ResolveConfiguration(settings.Configuration);
         string platform = ResolvePlatform(settings.Platform);
 
+        if (settings.PublishLauncherAsNativeAot && !settings.BuildLauncherExecutable)
+            throw new InvalidOperationException("PublishLauncherAsNativeAot requires BuildLauncherExecutable to be enabled.");
+
+        bool isFinalBuild = settings.PublishLauncherAsNativeAot;
+        bool cookContent = settings.CookContent || isFinalBuild;
+        bool generateConfigArchive = settings.GenerateConfigArchive || isFinalBuild;
+
         if (settings.SaveSettingsBeforeBuild)
         {
             steps.Add(new BuildStep("Saving project settings", Engine.SaveProjectSettings));
@@ -153,12 +160,12 @@ internal static class ProjectBuilder
 
         steps.Add(new BuildStep("Preparing output directories", () => PrepareOutputDirectories(context, settings.CleanOutputDirectory)));
 
-        if (settings.CookContent)
+        if (cookContent)
         {
             steps.Add(new BuildStep("Cooking content", () => CookContent(context)));
         }
 
-        bool needConfigArchive = settings.GenerateConfigArchive || settings.BuildLauncherExecutable;
+        bool needConfigArchive = generateConfigArchive || settings.BuildLauncherExecutable;
         if (needConfigArchive)
         {
             steps.Add(new BuildStep("Generating config archive", () => GenerateConfigArchive(context)));

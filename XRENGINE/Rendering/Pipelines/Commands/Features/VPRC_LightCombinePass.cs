@@ -1,4 +1,4 @@
-﻿using XREngine.Data.Rendering;
+using XREngine.Data.Rendering;
 using XREngine.Rendering.Models.Materials;
 using XREngine.Components.Capture.Lights.Types;
 using XREngine.Components.Lights;

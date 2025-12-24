@@ -1,4 +1,4 @@
-﻿using XREngine.Components;
+using XREngine.Components;
 using XREngine.Rendering;
 
 namespace XREngine.Editor;

@@ -1,4 +1,4 @@
-﻿namespace XREngine.Rendering.Commands
+namespace XREngine.Rendering.Commands
 {
     public abstract class RenderCommand2D : RenderCommand, IRenderCommand
     {

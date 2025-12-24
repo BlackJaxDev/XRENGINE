@@ -1,4 +1,4 @@
-﻿using Extensions;
+using Extensions;
 using XREngine.Data.Core;
 using XREngine.Rendering;
 using XREngine.Rendering.RenderGraph;

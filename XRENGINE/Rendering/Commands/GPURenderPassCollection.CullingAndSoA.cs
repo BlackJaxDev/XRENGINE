@@ -261,7 +261,7 @@ namespace XREngine.Rendering.Commands
                 AbstractRenderer.Current?.MemoryBarrier(EMemoryBarrierMask.ClientMappedBuffer | EMemoryBarrierMask.Command);
             }
 
-            if (IndirectDebug.LogCountBufferWrites && (Engine.UserSettings?.EnableGpuIndirectDebugLogging ?? false))
+            if (IndirectDebug.LogCountBufferWrites && (Engine.EffectiveSettings.EnableGpuIndirectDebugLogging))
             {
                 string label = buf.AttributeName ?? buf.Target.ToString();
                 Debug.Out($"{FormatDebugPrefix("Indirect")} [Indirect/Count] {label} <= {value}");
@@ -300,7 +300,7 @@ namespace XREngine.Rendering.Commands
 
         private unsafe void DumpPassFilterDebug(uint sampleCount)
         {
-            if (! (Engine.UserSettings?.EnableGpuIndirectDebugLogging ?? false))
+            if (! (Engine.EffectiveSettings.EnableGpuIndirectDebugLogging))
                 return;
 
             if (_passFilterDebugBuffer is null || sampleCount == 0)
@@ -394,7 +394,7 @@ namespace XREngine.Rendering.Commands
                 return;
             }
 
-            if (Engine.UserSettings?.EnableGpuIndirectDebugLogging ?? false)
+            if (Engine.EffectiveSettings.EnableGpuIndirectDebugLogging)
                 Debug.Out($"GPURenderPassCollection.Cull: {numCommands} input commands -> {VisibleCommandCount} visible commands in CulledSceneToRenderBuffer");
         }
 
@@ -473,7 +473,7 @@ namespace XREngine.Rendering.Commands
                 return;
             }
 
-            bool debugLoggingEnabled = Engine.UserSettings?.EnableGpuIndirectDebugLogging ?? false;
+            bool debugLoggingEnabled = Engine.EffectiveSettings.EnableGpuIndirectDebugLogging;
 
             if (IndirectDebug.ProbeSourceCommandsBeforeCopy)
                 DumpSourceCommandProbe(scene, copyCount);
@@ -542,7 +542,7 @@ namespace XREngine.Rendering.Commands
                 Debug.Out($"{FormatDebugPrefix("Culling")} Copy shader reported filteredCount={filteredCount} (copyCount={copyCount})");
                 _filteredCountLogBudget--;
             }
-            bool allowCpuFallback = Engine.UserSettings?.EnableGpuIndirectCpuFallback ?? false;
+            bool allowCpuFallback = Engine.EffectiveSettings.EnableGpuIndirectCpuFallback;
             if (!allowCpuFallback && debugLoggingEnabled)
             {
                 // allowCpuFallback = true;
@@ -574,10 +574,10 @@ namespace XREngine.Rendering.Commands
                 {
                     if (_passthroughFallbackLogBudget > 0)
                     {
-                        Debug.LogWarning($"{FormatDebugPrefix("Culling")} GPU pass filter returned 0 for pass {RenderPass}; CPU fallback disabled (set UserSettings.EnableGpuIndirectCpuFallback to true to allow recovery).");
+                        Debug.LogWarning($"{FormatDebugPrefix("Culling")} GPU pass filter returned 0 for pass {RenderPass}; CPU fallback disabled (set Engine.Rendering.Settings.EnableGpuIndirectCpuFallback to true to allow recovery).");
                         _passthroughFallbackLogBudget--;
                     }
-                    if (Engine.UserSettings?.EnableGpuIndirectDebugLogging ?? false)
+                    if (Engine.EffectiveSettings.EnableGpuIndirectDebugLogging)
                         LogCommandPassSample(scene, copyCount);
                 }
             }
@@ -886,7 +886,7 @@ namespace XREngine.Rendering.Commands
                     byte* src = basePtr + (i * elementSize);
                     GPUIndirectRenderCommand cmd = Unsafe.ReadUnaligned<GPUIndirectRenderCommand>(src);
 
-                    if ((Engine.UserSettings?.EnableGpuIndirectDebugLogging ?? false) && _sanitizerSampleLogBudget > 0)
+                    if ((Engine.EffectiveSettings.EnableGpuIndirectDebugLogging) && _sanitizerSampleLogBudget > 0)
                     {
                         if (Interlocked.Decrement(ref _sanitizerSampleLogBudget) >= 0)
                         {
@@ -1059,7 +1059,7 @@ namespace XREngine.Rendering.Commands
 
         private void LogMaterialSnapshot(GPUScene scene, IReadOnlyCollection<uint> missingMaterialIds)
         {
-            if (!(Engine.UserSettings?.EnableGpuIndirectDebugLogging ?? false))
+            if (!(Engine.EffectiveSettings.EnableGpuIndirectDebugLogging))
                 return;
 
             const long SnapshotCooldownMs = 1_500;
@@ -1244,3 +1244,4 @@ namespace XREngine.Rendering.Commands
         }
     }
 }
+

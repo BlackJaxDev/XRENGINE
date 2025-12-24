@@ -173,8 +173,8 @@ public sealed class VPRC_TemporalAccumulationPass : ViewportRenderCommand
     private static bool ShouldUseTemporalJitter()
     {
         var mode = Engine.Rendering.Settings.AntiAliasingMode;
-        return mode == Engine.Rendering.EAntiAliasingMode.Taa
-            || mode == Engine.Rendering.EAntiAliasingMode.Tsr;
+        return mode == EAntiAliasingMode.Taa
+            || mode == EAntiAliasingMode.Tsr;
     }
 
     private static void SetHistoryExposureReady(bool ready)

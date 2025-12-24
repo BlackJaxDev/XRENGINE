@@ -11,6 +11,22 @@ namespace XREngine.Scene.Physics.Jolt
 {
     public class JoltScene : AbstractPhysicsScene
     {
+        private readonly HashSet<IJoltCharacterController> _characterControllers = new();
+
+        internal void RegisterCharacterController(IJoltCharacterController controller)
+        {
+            if (controller is null)
+                return;
+            _characterControllers.Add(controller);
+        }
+
+        internal void UnregisterCharacterController(IJoltCharacterController controller)
+        {
+            if (controller is null)
+                return;
+            _characterControllers.Remove(controller);
+        }
+
         public override Vector3 Gravity
         {
             get => _physicsSystem?.Gravity ?? Vector3.Zero;
@@ -43,9 +59,22 @@ namespace XREngine.Scene.Physics.Jolt
             if (_physicsSystem is null)
                 return null;
 
-            var shape = geometry.AsJoltShape();
-            if (shape is null)
+            Shape? shape;
+            try
+            {
+                shape = geometry.AsJoltShape();
+            }
+            catch (NotImplementedException)
+            {
+                System.Diagnostics.Debug.WriteLine($"[JoltScene] CreateStaticRigidBody failed - geometry type {geometry.GetType().Name} not implemented for Jolt");
                 return null;
+            }
+            
+            if (shape is null)
+            {
+                System.Diagnostics.Debug.WriteLine("[JoltScene] CreateStaticRigidBody failed - shape is null");
+                return null;
+            }
 
             pose = ApplyShapeOffsetToPose(pose, shapeOffsetTranslation, shapeOffsetRotation);
 
@@ -56,14 +85,20 @@ namespace XREngine.Scene.Physics.Jolt
                 MotionType.Static,
                 layerMask.AsJoltObjectLayer());
 
-            BodyID bodyId = _physicsSystem.BodyInterface.CreateBody(bodySettings);
-            var body = new JoltStaticRigidBody
+            Body body = _physicsSystem.BodyInterface.CreateBody(bodySettings);
+            BodyID bodyId = body.ID;
+            
+            // Check if body creation succeeded
+            if (bodyId.IsInvalid)
             {
-                BodyID = bodyId,
-            };
+                System.Diagnostics.Debug.WriteLine("[JoltScene] CreateStaticRigidBody failed - body ID is invalid (max bodies reached?)");
+                return null;
+            }
+            
+            var joltBody = new JoltStaticRigidBody(bodyId);
 
-            AddActor(body);
-            return body;
+            AddActor(joltBody);
+            return joltBody;
         }
 
         public JoltDynamicRigidBody? CreateDynamicRigidBody(
@@ -76,9 +111,22 @@ namespace XREngine.Scene.Physics.Jolt
             if (_physicsSystem is null)
                 return null;
 
-            var shape = geometry.AsJoltShape();
-            if (shape is null)
+            Shape? shape;
+            try
+            {
+                shape = geometry.AsJoltShape();
+            }
+            catch (NotImplementedException)
+            {
+                System.Diagnostics.Debug.WriteLine($"[JoltScene] CreateDynamicRigidBody failed - geometry type {geometry.GetType().Name} not implemented for Jolt");
                 return null;
+            }
+            
+            if (shape is null)
+            {
+                System.Diagnostics.Debug.WriteLine("[JoltScene] CreateDynamicRigidBody failed - shape is null");
+                return null;
+            }
 
             pose = ApplyShapeOffsetToPose(pose, shapeOffsetTranslation, shapeOffsetRotation);
 
@@ -89,14 +137,20 @@ namespace XREngine.Scene.Physics.Jolt
                 MotionType.Dynamic,
                 layerMask.AsJoltObjectLayer());
 
-            BodyID bodyId = _physicsSystem.BodyInterface.CreateBody(bodySettings);
-            var body = new JoltDynamicRigidBody
+            Body body = _physicsSystem.BodyInterface.CreateBody(bodySettings);
+            BodyID bodyId = body.ID;
+            
+            // Check if body creation succeeded
+            if (bodyId.IsInvalid)
             {
-                BodyID = bodyId,
-            };
+                System.Diagnostics.Debug.WriteLine("[JoltScene] CreateDynamicRigidBody failed - body ID is invalid (max bodies reached?)");
+                return null;
+            }
+            
+            var joltBody = new JoltDynamicRigidBody(bodyId);
 
-            AddActor(body);
-            return body;
+            AddActor(joltBody);
+            return joltBody;
         }
 
         public override void AddActor(IAbstractPhysicsActor actor)
@@ -106,6 +160,13 @@ namespace XREngine.Scene.Physics.Jolt
             
             if (_physicsSystem is null)
                 return;
+
+            // Validate body ID before adding
+            if (joltActor.BodyID.IsInvalid)
+            {
+                System.Diagnostics.Debug.WriteLine("[JoltScene] AddActor failed - body ID is invalid");
+                return;
+            }
 
             _physicsSystem.BodyInterface.AddBody(joltActor.BodyID, Activation.Activate);
             _actors[joltActor.BodyID] = joltActor;
@@ -137,30 +198,71 @@ namespace XREngine.Scene.Physics.Jolt
             _staticBodies.Clear();
             _dynamicBodies.Clear();
 
+            (_physicsSystem as IDisposable)?.Dispose();
             _physicsSystem = null;
+
+            (_jobSystem as IDisposable)?.Dispose();
             _jobSystem = null;
         }
 
+        // Collision layers - matching the official JoltPhysicsSharp samples
+        private const int NumLayers = 2;
+        private ObjectLayerPairFilterTable? _objectLayerPairFilter;
+        private BroadPhaseLayerInterfaceTable? _broadPhaseLayerInterface;
+        private ObjectVsBroadPhaseLayerFilterTable? _objectVsBroadPhaseLayerFilter;
+
         public override void Initialize()
         {
-            JobSystemThreadPoolConfig jobConfig = new()
+            var logPath = System.IO.Path.Combine(System.IO.Path.GetTempPath(), "jolt_init.log");
+            
+            try
             {
-                maxBarriers = 256,
-                maxJobs = 512,
-                numThreads = 4,
-            };
-            _jobSystem = new JobSystemThreadPool(jobConfig);
-            PhysicsSystemSettings settings = new()
-            {
-                MaxBodies = 1024,
-                NumBodyMutexes = 0,
-                MaxBodyPairs = 1024,
-                MaxContactConstraints = 1024
-            };
-            PhysicsSystem system = new(settings)
-            {
-                Gravity = new Vector3(0, -9.81f, 0),
-                Settings = new PhysicsSettings
+                Console.WriteLine("[JoltScene] Initialize() starting...");
+                try { System.IO.File.AppendAllText(logPath, $"[{DateTime.Now:O}] JoltScene.Initialize() starting...{Environment.NewLine}"); } catch { }
+                
+                JoltBootstrap.EnsureInitialized();
+                Console.WriteLine("[JoltScene] JoltBootstrap.EnsureInitialized() completed.");
+                try { System.IO.File.AppendAllText(logPath, $"[{DateTime.Now:O}] JoltBootstrap.EnsureInitialized() completed.{Environment.NewLine}"); } catch { }
+
+                // Create job system with default config (simpler, less likely to fail)
+                Console.WriteLine("[JoltScene] Creating JobSystemThreadPool...");
+                try { System.IO.File.AppendAllText(logPath, $"[{DateTime.Now:O}] Creating JobSystemThreadPool...{Environment.NewLine}"); } catch { }
+                
+                _jobSystem = new JobSystemThreadPool();
+                
+                Console.WriteLine("[JoltScene] JobSystemThreadPool created successfully.");
+                try { System.IO.File.AppendAllText(logPath, $"[{DateTime.Now:O}] JobSystemThreadPool created successfully.{Environment.NewLine}"); } catch { }
+
+                // Set up collision filtering (required by PhysicsSystem)
+                // Layer 0 = NonMoving (static), Layer 1 = Moving (dynamic)
+                _objectLayerPairFilter = new ObjectLayerPairFilterTable(NumLayers);
+                _objectLayerPairFilter.EnableCollision(0, 1); // NonMoving vs Moving
+                _objectLayerPairFilter.EnableCollision(1, 1); // Moving vs Moving
+
+                // BroadPhase: 0 = NonMoving, 1 = Moving
+                _broadPhaseLayerInterface = new BroadPhaseLayerInterfaceTable(NumLayers, NumLayers);
+                _broadPhaseLayerInterface.MapObjectToBroadPhaseLayer(0, 0); // ObjectLayer 0 -> BroadPhaseLayer 0
+                _broadPhaseLayerInterface.MapObjectToBroadPhaseLayer(1, 1); // ObjectLayer 1 -> BroadPhaseLayer 1
+
+                _objectVsBroadPhaseLayerFilter = new ObjectVsBroadPhaseLayerFilterTable(_broadPhaseLayerInterface, NumLayers, _objectLayerPairFilter, NumLayers);
+
+                PhysicsSystemSettings settings = new()
+                {
+                    MaxBodies = 1024,
+                    NumBodyMutexes = 0,
+                    MaxBodyPairs = 1024,
+                    MaxContactConstraints = 1024,
+                    ObjectLayerPairFilter = _objectLayerPairFilter,
+                    BroadPhaseLayerInterface = _broadPhaseLayerInterface,
+                    ObjectVsBroadPhaseLayerFilter = _objectVsBroadPhaseLayerFilter,
+                };
+
+                System.Diagnostics.Debug.WriteLine("[JoltScene] Creating PhysicsSystem...");
+                PhysicsSystem system = new(settings);
+                System.Diagnostics.Debug.WriteLine("[JoltScene] PhysicsSystem created successfully.");
+
+                system.Gravity = new Vector3(0, -9.81f, 0);
+                system.Settings = new PhysicsSettings
                 {
                     DeterministicSimulation = true,
                     NumPositionSteps = 1,
@@ -188,9 +290,16 @@ namespace XREngine.Scene.Physics.Jolt
                     UseLargeIslandSplitter = true,
                     UseBodyPairContactCache = true,
                     UseManifoldReduction = true,
-                },
-            };
-            _physicsSystem = system;
+                };
+                _physicsSystem = system;
+                System.Diagnostics.Debug.WriteLine("[JoltScene] Initialize() completed successfully.");
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"[JoltScene] Initialize() FAILED: {ex.GetType().Name}: {ex.Message}");
+                System.Diagnostics.Debug.WriteLine($"[JoltScene] Stack trace: {ex.StackTrace}");
+                throw;
+            }
         }
 
         public override void NotifyShapeChanged(IAbstractPhysicsActor actor)
@@ -219,41 +328,32 @@ namespace XREngine.Scene.Physics.Jolt
             if (shape is null)
                 return false;
 
-            // Create a temporary body for the query
-            var bodySettings = new BodyCreationSettings(shape, pose.position, pose.rotation, MotionType.Static, layerMask.AsJoltObjectLayer());
-            var bodyID = _physicsSystem.BodyInterface.CreateAndAddBody(bodySettings, Activation.Activate);
-            
-            try
+            // Create world transform matrix from pose
+            var worldTransform = Matrix4x4.CreateFromQuaternion(pose.rotation) * Matrix4x4.CreateTranslation(pose.position);
+
+            // Perform overlap query using CollideShape with zero-length cast
+            var collideResults = new List<CollideShapeResult>();
+            _physicsSystem.NarrowPhaseQuery.CollideShape(shape, Vector3.One, worldTransform, pose.position, CollisionCollectorType.AnyHit, collideResults);
+
+            bool hasHit = false;
+            foreach (CollideShapeResult result in collideResults)
             {
-                // Perform overlap query
-                var overlapResults = new List<ShapeCastResult>();
-                _physicsSystem.NarrowPhaseQuery.CastShape(shape, Matrix4x4.Identity, Vector3.Zero, Vector3.Zero, CollisionCollectorType.AnyHit, overlapResults);
-                
-                bool hasHit = false;
-                foreach (ShapeCastResult result in overlapResults)
-                {
-                    var hitBodyID = result.BodyID2;
-                    if (!_actors.TryGetValue(hitBodyID, out var hitActor))
-                        continue;
+                var hitBodyID = result.BodyID2;
+                if (!_actors.TryGetValue(hitBodyID, out var hitActor))
+                    continue;
 
-                    var component = hitActor.GetOwningComponent();
-                    if (component is null)
-                        continue;
-                    
-                    if (!results.TryGetValue(0.0f, out var list))
-                        results.Add(0.0f, list = []);
+                var component = hitActor.GetOwningComponent();
+                if (component is null)
+                    continue;
 
-                    list.Add((component, new OverlapHit { FaceIndex = 0 }));
-                    hasHit = true;
-                }
+                if (!results.TryGetValue(0.0f, out var list))
+                    results.Add(0.0f, list = []);
 
-                return hasHit;
+                list.Add((component, new OverlapHit { FaceIndex = 0 }));
+                hasHit = true;
             }
-            finally
-            {
-                // Clean up temporary body
-                _physicsSystem.BodyInterface.DestroyBody(bodyID);
-            }
+
+            return hasHit;
         }
 
         public override bool OverlapMultiple(
@@ -271,41 +371,32 @@ namespace XREngine.Scene.Physics.Jolt
             if (shape is null)
                 return false;
 
-            // Create a temporary body for the query
-            var bodySettings = new BodyCreationSettings(shape, pose.position, pose.rotation, MotionType.Static, layerMask.AsJoltObjectLayer());
-            var bodyID = _physicsSystem.BodyInterface.CreateAndAddBody(bodySettings, Activation.Activate);
-            
-            try
+            // Create world transform matrix from pose
+            var worldTransform = Matrix4x4.CreateFromQuaternion(pose.rotation) * Matrix4x4.CreateTranslation(pose.position);
+
+            // Perform overlap query using CollideShape
+            var collideResults = new List<CollideShapeResult>();
+            _physicsSystem.NarrowPhaseQuery.CollideShape(shape, Vector3.One, worldTransform, pose.position, CollisionCollectorType.AllHit, collideResults);
+
+            bool hasHit = false;
+            foreach (CollideShapeResult result in collideResults)
             {
-                // Perform overlap query
-                var overlapResults = new List<ShapeCastResult>();
-                _physicsSystem.NarrowPhaseQuery.CastShape(shape, Matrix4x4.Identity, Vector3.Zero, Vector3.Zero, CollisionCollectorType.AllHit, overlapResults);
+                var hitBodyID = result.BodyID2;
+                if (!_actors.TryGetValue(hitBodyID, out var hitActor))
+                    continue;
 
-                bool hasHit = false;
-                foreach (ShapeCastResult result in overlapResults)
-                {
-                    var hitBodyID = result.BodyID2;
-                    if (!_actors.TryGetValue(hitBodyID, out var hitActor))
-                        continue;
+                var component = hitActor.GetOwningComponent();
+                if (component is null)
+                    continue;
 
-                    var component = hitActor.GetOwningComponent();
-                    if (component is null)
-                        continue;
-                    
-                    if (!results.TryGetValue(0.0f, out var list))
-                        results.Add(0.0f, list = []);
+                if (!results.TryGetValue(0.0f, out var list))
+                    results.Add(0.0f, list = []);
 
-                    list.Add((component, new OverlapHit { FaceIndex = 0 }));
-                    hasHit = true;
-                }
-
-                return hasHit;
+                list.Add((component, new OverlapHit { FaceIndex = 0 }));
+                hasHit = true;
             }
-            finally
-            {
-                // Clean up temporary body
-                _physicsSystem.BodyInterface.DestroyBody(bodyID);
-            }
+
+            return hasHit;
         }
 
         public override bool RaycastAny(
@@ -467,6 +558,15 @@ namespace XREngine.Scene.Physics.Jolt
             if (_physicsSystem is null || _jobSystem is null)
                 return;
 
+            // Mirror PhysX behavior: consume queued character controller movement on the fixed step
+            // so movement + collision resolution happen deterministically with the physics update.
+            float dt = Engine.Time.Timer.FixedUpdateDelta;
+            if (dt > 0.0f && _characterControllers.Count > 0)
+            {
+                foreach (var controller in _characterControllers)
+                    controller.ConsumeInputBuffer(dt);
+            }
+
             _physicsSystem.Update(Engine.FixedDelta, 3, _jobSystem);
             
             //// Update transforms for all active bodies
@@ -499,35 +599,41 @@ namespace XREngine.Scene.Physics.Jolt
             if (shape is null)
                 return false;
 
-            // Create a temporary body for the query
-            var bodySettings = new BodyCreationSettings(shape, pose.position, pose.rotation, MotionType.Static, layerMask.AsJoltObjectLayer());
-            var bodyID = _physicsSystem.BodyInterface.CreateAndAddBody(bodySettings, Activation.Activate);
-            
-            try
+            // Parse query flags from PhysX filter for compatibility
+            bool includeStatic = true;
+            bool includeDynamic = true;
+            if (filter is PhysxScene.PhysxQueryFilter physxFilter)
             {
-                // Perform sweep query
-                var sweepResults = new List<ShapeCastResult>();
-                _physicsSystem.NarrowPhaseQuery.CastShape(shape, Matrix4x4.Identity, unitDir * distance, Vector3.Zero, CollisionCollectorType.AnyHit, sweepResults);
+                includeStatic = (physxFilter.Flags & MagicPhysX.PxQueryFlags.Static) != 0;
+                includeDynamic = (physxFilter.Flags & MagicPhysX.PxQueryFlags.Dynamic) != 0;
+            }
 
-                // For sweep, we need to check if any bodies are in the sweep path
-                // This is a simplified implementation
-                foreach (ShapeCastResult result in sweepResults)
-                {
-                    var hitBodyID = result.BodyID2;
-                    if (_actors.TryGetValue(hitBodyID, out var hitActor))
-                    {
-                        hitFaceIndex = 0;
-                        return true;
-                    }
-                }
-                
-                return false;
-            }
-            finally
+            // Create world transform matrix from pose (positions shape at starting location)
+            var worldTransform = Matrix4x4.CreateFromQuaternion(pose.rotation) * Matrix4x4.CreateTranslation(pose.position);
+
+            // Perform sweep query - direction is normalized, multiply by distance to get full sweep length
+            var sweepResults = new List<ShapeCastResult>();
+            _physicsSystem.NarrowPhaseQuery.CastShape(shape, worldTransform, unitDir * distance, pose.position, CollisionCollectorType.AnyHit, sweepResults);
+
+            // Check if any bodies are in the sweep path
+            foreach (ShapeCastResult result in sweepResults)
             {
-                // Clean up temporary body
-                _physicsSystem.BodyInterface.DestroyBody(bodyID);
+                var hitBodyID = result.BodyID2;
+                if (!_actors.TryGetValue(hitBodyID, out var hitActor))
+                    continue;
+
+                // Filter by motion type to match PhysX query flags behavior
+                var motionType = _physicsSystem.BodyInterface.GetMotionType(hitBodyID);
+                if (motionType == MotionType.Static && !includeStatic)
+                    continue;
+                if (motionType != MotionType.Static && !includeDynamic)
+                    continue;
+
+                hitFaceIndex = (uint)result.SubShapeID2;
+                return true;
             }
+            
+            return false;
         }
 
         public override bool SweepMultiple(
@@ -547,48 +653,58 @@ namespace XREngine.Scene.Physics.Jolt
             if (shape is null)
                 return false;
 
-            // Create a temporary body for the query
-            var bodySettings = new BodyCreationSettings(shape, pose.position, pose.rotation, MotionType.Static, layerMask.AsJoltObjectLayer());
-            var bodyID = _physicsSystem.BodyInterface.CreateAndAddBody(bodySettings, Activation.Activate);
-            
-            try
+            // Parse query flags from PhysX filter for compatibility
+            bool includeStatic = true;
+            bool includeDynamic = true;
+            if (filter is PhysxScene.PhysxQueryFilter physxFilter)
             {
-                // Perform sweep query
-                var sweepResults = new List<ShapeCastResult>();
-                _physicsSystem.NarrowPhaseQuery.CastShape(shape, Matrix4x4.Identity, unitDir * distance, Vector3.Zero, CollisionCollectorType.AllHit, sweepResults);
+                includeStatic = (physxFilter.Flags & MagicPhysX.PxQueryFlags.Static) != 0;
+                includeDynamic = (physxFilter.Flags & MagicPhysX.PxQueryFlags.Dynamic) != 0;
+            }
 
-                bool hasHit = false;
-                foreach (ShapeCastResult result in sweepResults)
+            // Create world transform matrix from pose (positions shape at starting location)
+            var worldTransform = Matrix4x4.CreateFromQuaternion(pose.rotation) * Matrix4x4.CreateTranslation(pose.position);
+
+            // Perform sweep query - direction is normalized, multiply by distance to get full sweep length
+            var sweepResults = new List<ShapeCastResult>();
+            _physicsSystem.NarrowPhaseQuery.CastShape(shape, worldTransform, unitDir * distance, pose.position, CollisionCollectorType.AllHit, sweepResults);
+
+            bool hasHit = false;
+            foreach (ShapeCastResult result in sweepResults)
+            {
+                var hitBodyID = result.BodyID2;
+                if (!_actors.TryGetValue(hitBodyID, out var hitActor))
+                    continue;
+
+                // Filter by motion type to match PhysX query flags behavior
+                var motionType = _physicsSystem.BodyInterface.GetMotionType(hitBodyID);
+                if (motionType == MotionType.Static && !includeStatic)
+                    continue;
+                if (motionType != MotionType.Static && !includeDynamic)
+                    continue;
+
+                var component = hitActor.GetOwningComponent();
+                if (component is null)
+                    continue;
+
+                // Calculate actual hit distance using fraction
+                float hitDistance = result.Fraction * distance;
+                
+                if (!results.TryGetValue(hitDistance, out var list))
+                    results.Add(hitDistance, list = []);
+
+                list.Add((component, new SweepHit
                 {
-                    var hitBodyID = result.BodyID2;
-                    if (!_actors.TryGetValue(hitBodyID, out var hitActor))
-                        continue;
-                    
-                    var component = hitActor.GetOwningComponent();
-                    if (component is null)
-                        continue;
-                    
-                    if (!results.TryGetValue(0.0f, out var list))
-                        results.Add(0.0f, list = []);
+                    Position = result.ContactPointOn2,
+                    Normal = Vector3.Normalize(result.PenetrationAxis),
+                    Distance = hitDistance,
+                    FaceIndex = (uint)result.SubShapeID2
+                }));
 
-                    list.Add((component, new SweepHit
-                    {
-                        Position = pose.position,
-                        Normal = Globals.Up,
-                        Distance = 0.0f,
-                        FaceIndex = 0
-                    }));
-
-                    hasHit = true;
-                }
-
-                return hasHit;
+                hasHit = true;
             }
-            finally
-            {
-                // Clean up temporary body
-                _physicsSystem.BodyInterface.DestroyBody(bodyID);
-            }
+
+            return hasHit;
         }
 
         public override bool SweepSingle(
@@ -608,47 +724,58 @@ namespace XREngine.Scene.Physics.Jolt
             if (shape is null)
                 return false;
 
-            // Create a temporary body for the query
-            var bodySettings = new BodyCreationSettings(shape, pose.position, pose.rotation, MotionType.Static, layerMask.AsJoltObjectLayer());
-            var bodyID = _physicsSystem.BodyInterface.CreateAndAddBody(bodySettings, Activation.Activate);
-            
-            try
+            // Parse query flags from PhysX filter for compatibility
+            bool includeStatic = true;
+            bool includeDynamic = true;
+            if (filter is PhysxScene.PhysxQueryFilter physxFilter)
             {
-                // Perform sweep query
-                var sweepResults = new List<ShapeCastResult>();
-                _physicsSystem.NarrowPhaseQuery.CastShape(shape, Matrix4x4.Identity, unitDir * distance, Vector3.Zero, CollisionCollectorType.ClosestHit, sweepResults);
+                includeStatic = (physxFilter.Flags & MagicPhysX.PxQueryFlags.Static) != 0;
+                includeDynamic = (physxFilter.Flags & MagicPhysX.PxQueryFlags.Dynamic) != 0;
+            }
 
-                foreach (ShapeCastResult result in sweepResults)
+            // Create world transform matrix from pose (positions shape at starting location)
+            var worldTransform = Matrix4x4.CreateFromQuaternion(pose.rotation) * Matrix4x4.CreateTranslation(pose.position);
+
+            // Perform sweep query - direction is normalized, multiply by distance to get full sweep length
+            // Use AllHit to get multiple results so we can filter by motion type
+            var sweepResults = new List<ShapeCastResult>();
+            _physicsSystem.NarrowPhaseQuery.CastShape(shape, worldTransform, unitDir * distance, pose.position, CollisionCollectorType.AllHitSorted, sweepResults);
+
+            foreach (ShapeCastResult result in sweepResults)
+            {
+                var hitBodyID = result.BodyID2;
+                if (!_actors.TryGetValue(hitBodyID, out var hitActor))
+                    continue;
+
+                // Filter by motion type to match PhysX query flags behavior
+                var motionType = _physicsSystem.BodyInterface.GetMotionType(hitBodyID);
+                if (motionType == MotionType.Static && !includeStatic)
+                    continue;
+                if (motionType != MotionType.Static && !includeDynamic)
+                    continue;
+
+                var component = hitActor.GetOwningComponent();
+                if (component is null)
+                    continue;
+
+                // Calculate actual hit distance using fraction
+                float hitDistance = result.Fraction * distance;
+                
+                if (!items.TryGetValue(hitDistance, out var list))
+                    items.Add(hitDistance, list = []);
+
+                list.Add((component, new SweepHit
                 {
-                    var hitBodyID = result.BodyID2;
-                    if (!_actors.TryGetValue(hitBodyID, out var hitActor))
-                        continue;
-                    
-                    var component = hitActor.GetOwningComponent();
-                    if (component is null)
-                        continue;
-                    
-                    if (!items.TryGetValue(0.0f, out var list))
-                        items.Add(0.0f, list = []);
+                    Position = result.ContactPointOn2,
+                    Normal = Vector3.Normalize(result.PenetrationAxis),
+                    Distance = hitDistance,
+                    FaceIndex = (uint)result.SubShapeID2
+                }));
 
-                    list.Add((component, new SweepHit
-                    {
-                        Position = pose.position,
-                        Normal = Globals.Up,
-                        Distance = 0.0f,
-                        FaceIndex = 0
-                    }));
-
-                    return true;
-                }
-
-                return false;
+                return true;
             }
-            finally
-            {
-                // Clean up temporary body
-                _physicsSystem.BodyInterface.DestroyBody(bodyID);
-            }
+
+            return false;
         }
 
         // Helper methods for actor management

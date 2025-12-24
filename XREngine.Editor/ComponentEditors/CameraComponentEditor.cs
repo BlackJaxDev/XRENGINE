@@ -50,7 +50,7 @@ public sealed class CameraComponentEditor : IXRComponentEditor
     {
         if (component is not CameraComponent cameraComponent)
         {
-            UnitTestingWorld.UserInterface.DrawDefaultComponentInspector(component, visited);
+            EditorImGuiUI.DrawDefaultComponentInspector(component, visited);
             ComponentEditorLayout.DrawActivePreviewDialog();
             return;
         }
@@ -257,7 +257,7 @@ public sealed class CameraComponentEditor : IXRComponentEditor
         }
 
         ImGui.Spacing();
-        UnitTestingWorld.UserInterface.DrawRuntimeObjectInspector("Projection Object", parameters, visited, defaultOpen: false);
+        EditorImGuiUI.DrawRuntimeObjectInspector("Projection Object", parameters, visited, defaultOpen: false);
     }
 
     private static void DrawParameterTypeSwitcher(XRCamera camera, XRCameraParameters current)
@@ -845,7 +845,7 @@ public sealed class CameraComponentEditor : IXRComponentEditor
         }
 
         ImGui.TextDisabled("Full object view (experimental)");
-        UnitTestingWorld.UserInterface.DrawRuntimeObjectInspector("Post Processing State", state, visited, defaultOpen: false);
+        EditorImGuiUI.DrawRuntimeObjectInspector("Post Processing State", state, visited, defaultOpen: false);
     }
 
     private static bool IsColorAttachment(EFrameBufferAttachment attachment)

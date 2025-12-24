@@ -1,4 +1,4 @@
-﻿using System.Drawing.Drawing2D;
+using System.Drawing.Drawing2D;
 using System.Numerics;
 using XREngine.Data.Rendering;
 using XREngine.Data.Transforms.Rotations;

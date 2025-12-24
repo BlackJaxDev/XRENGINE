@@ -10,7 +10,7 @@ public sealed class SpotLightComponentEditor : IXRComponentEditor
     {
         if (component is not SpotLightComponent light)
         {
-            UnitTestingWorld.UserInterface.DrawDefaultComponentInspector(component, visited);
+            EditorImGuiUI.DrawDefaultComponentInspector(component, visited);
             ComponentEditorLayout.DrawActivePreviewDialog();
             return;
         }

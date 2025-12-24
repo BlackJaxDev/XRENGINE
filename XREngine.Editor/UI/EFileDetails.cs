@@ -1,4 +1,4 @@
-﻿[Flags]
+[Flags]
 public enum EFileDetails
 {
     Name = 0x1,

@@ -67,7 +67,7 @@ namespace XREngine.Rendering.Commands
         private int _commandRoundtripMismatchLogBudget = 4;
 
         private static bool IsGpuSceneLoggingEnabled()
-            => Engine.UserSettings?.EnableGpuIndirectDebugLogging ?? false;
+            => Engine.EffectiveSettings.EnableGpuIndirectDebugLogging;
 
         private static void SceneLog(string message, params object[] args)
         {

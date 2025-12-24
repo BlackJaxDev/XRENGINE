@@ -219,8 +219,8 @@ namespace XREngine
                 return;
             }
 
-            GameStartupSettings settings = Engine.GameSettings;
-            if (verbosity > settings.OutputVerbosity)
+            var renderSettings = Engine.Rendering.Settings;
+            if (verbosity > Engine.EffectiveSettings.OutputVerbosity)
             {
                 Suppressed(message);
                 return;
@@ -231,7 +231,7 @@ namespace XREngine
 
             DateTime now = DateTime.Now;
 
-            double recentness = Engine.UserSettings.DebugOutputRecencySeconds;
+            double recentness = renderSettings.DebugOutputRecencySeconds;
             if (recentness > 0.0)
             {
                 List<string> removeKeys = [];
@@ -248,7 +248,7 @@ namespace XREngine
                 RecentMessageCache.TryAdd(message, now);
             }
 
-            bool logToFile = settings.LogOutputToFile;
+            bool logToFile = Engine.GameSettings.LogOutputToFile;
             WriteLogMessage(message, logToFile, category);
 #endif
         }
@@ -275,8 +275,9 @@ namespace XREngine
             }
 
             GameStartupSettings settings = Engine.GameSettings;
+            var renderSettings = Engine.Rendering.Settings;
 
-            if (verbosity > settings.OutputVerbosity)
+            if (verbosity > Engine.EffectiveSettings.OutputVerbosity)
             {
                 Suppressed(message);
                 return;
@@ -290,7 +291,7 @@ namespace XREngine
 
             DateTime now = DateTime.Now;
 
-            double recentness = Engine.UserSettings.DebugOutputRecencySeconds;
+            double recentness = renderSettings.DebugOutputRecencySeconds;
             if (recentness > 0.0)
             {
                 List<string> removeKeys = [];

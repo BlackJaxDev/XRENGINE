@@ -1,4 +1,4 @@
-ï»¿using System.ComponentModel;
+using System.ComponentModel;
 using System.Numerics;
 using XREngine.Core.Files;
 using XREngine.Data.Colors;
@@ -332,23 +332,23 @@ namespace XREngine.Rendering
         public enum EOpaque
         {
             /// <summary>
-            ///  (the default): Takes the transparency information from the colorâ€™s
+            ///  (the default): Takes the transparency information from the color’s
             ///  alpha channel, where the value 1.0 is opaque.
             /// </summary>
             A_ONE,
             /// <summary>
-            /// Takes the transparency information from the colorâ€™s red, green,
+            /// Takes the transparency information from the color’s red, green,
             /// and blue channels, where the value 0.0 is opaque, with each channel 
             /// modulated independently.
             /// </summary>
             RGB_ZERO,
             /// <summary>
-            /// Takes the transparency information from the colorâ€™s
+            /// Takes the transparency information from the color’s
             /// alpha channel, where the value 0.0 is opaque.
             /// </summary>
             A_ZERO,
             /// <summary>
-            ///  Takes the transparency information from the colorâ€™s red, green,
+            ///  Takes the transparency information from the color’s red, green,
             ///  and blue channels, where the value 1.0 is opaque, with each channel 
             ///  modulated independently.
             /// </summary>
@@ -372,12 +372,12 @@ namespace XREngine.Rendering
         {
             // color = emission + ambient * al + diffuse * max(N * L, 0) + specular * max(H * N, 0) ^ shininess
             // where:
-            // â€¢ al â€“ A constant amount of ambient light contribution coming from the scene.In the COMMON
+            // • al – A constant amount of ambient light contribution coming from the scene.In the COMMON
             // profile, this is the sum of all the <light><technique_common><ambient> values in the <visual_scene>.
-            // â€¢ N â€“ Normal vector (normalized)
-            // â€¢ L â€“ Light vector (normalized)
-            // â€¢ I â€“ Eye vector (normalized)
-            // â€¢ H â€“ Half-angle vector, calculated as halfway between the unit Eye and Light vectors, using the equation H = normalize(I + L)
+            // • N – Normal vector (normalized)
+            // • L – Light vector (normalized)
+            // • I – Eye vector (normalized)
+            // • H – Half-angle vector, calculated as halfway between the unit Eye and Light vectors, using the equation H = normalize(I + L)
 
             int count = 0;
             if (emission.HasValue) ++count;

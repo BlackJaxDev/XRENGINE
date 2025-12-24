@@ -53,7 +53,7 @@ internal static class ComponentEditorLayout
 
         if (!useCustom)
         {
-            UnitTestingWorld.UserInterface.DrawDefaultComponentInspector(component, visited);
+            EditorImGuiUI.DrawDefaultComponentInspector(component, visited);
             return false;
         }
 

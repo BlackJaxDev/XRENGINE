@@ -1,4 +1,4 @@
-﻿using MemoryPack;
+using MemoryPack;
 using XREngine.Data.Core;
 using XREngine.Data.Rendering;
 

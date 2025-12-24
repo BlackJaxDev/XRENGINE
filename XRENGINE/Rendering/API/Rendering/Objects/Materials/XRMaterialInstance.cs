@@ -1,4 +1,4 @@
-﻿namespace XREngine.Rendering
+namespace XREngine.Rendering
 {
     /// <summary>
     /// A material instance that inherits from another material.

@@ -1,4 +1,4 @@
-﻿using MemoryPack;
+using MemoryPack;
 using XREngine.Data.Rendering;
 
 namespace XREngine.Rendering

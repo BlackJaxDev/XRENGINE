@@ -1,4 +1,4 @@
-﻿using Silk.NET.OpenGL;
+using Silk.NET.OpenGL;
 using XREngine.Data.Rendering;
 using static XREngine.Rendering.OpenGL.OpenGLRenderer;
 
@@ -7,6 +7,11 @@ namespace XREngine.Rendering.OpenGL
     public class GLRenderBuffer(OpenGLRenderer renderer, XRRenderBuffer data) : GLObject<XRRenderBuffer>(renderer, data)
     {
         public override EGLObjectType Type => EGLObjectType.Renderbuffer;
+
+        /// <summary>
+        /// Tracks the currently allocated GPU memory size for this render buffer in bytes.
+        /// </summary>
+        private long _allocatedVRAMBytes = 0;
 
         protected override void LinkData()
         {
@@ -34,10 +39,22 @@ namespace XREngine.Rendering.OpenGL
             if (Invalidated)
             {
                 Invalidated = false;
+
+                // Track VRAM deallocation of previous buffer if any
+                if (_allocatedVRAMBytes > 0)
+                {
+                    Engine.Rendering.Stats.RemoveRenderBufferAllocation(_allocatedVRAMBytes);
+                    _allocatedVRAMBytes = 0;
+                }
+
                 if (Data.IsMultisample)
                     Api.NamedRenderbufferStorageMultisample(BindingId, Data.MultisampleCount, ToGLEnum(Data.Type), Data.Width, Data.Height);
                 else
                     Api.NamedRenderbufferStorage(BindingId, ToGLEnum(Data.Type), Data.Width, Data.Height);
+
+                // Track VRAM allocation
+                _allocatedVRAMBytes = CalculateRenderBufferVRAMSize(Data.Width, Data.Height, Data.Type, Data.IsMultisample ? Data.MultisampleCount : 1u);
+                Engine.Rendering.Stats.AddRenderBufferAllocation(_allocatedVRAMBytes);
             }
         }
         public void Unbind()
@@ -45,6 +62,93 @@ namespace XREngine.Rendering.OpenGL
 
         private void Allocate()
             => Invalidated = true;
+
+        protected internal override void PreDeleted()
+        {
+            // Track VRAM deallocation
+            if (_allocatedVRAMBytes > 0)
+            {
+                Engine.Rendering.Stats.RemoveRenderBufferAllocation(_allocatedVRAMBytes);
+                _allocatedVRAMBytes = 0;
+            }
+            base.PreDeleted();
+        }
+
+        /// <summary>
+        /// Calculates the approximate VRAM size for a render buffer.
+        /// </summary>
+        private static long CalculateRenderBufferVRAMSize(uint width, uint height, ERenderBufferStorage type, uint sampleCount)
+        {
+            uint bpp = GetBytesPerPixel(type);
+            return (long)width * height * bpp * sampleCount;
+        }
+
+        /// <summary>
+        /// Returns the bytes per pixel for a given render buffer storage type.
+        /// </summary>
+        private static uint GetBytesPerPixel(ERenderBufferStorage type)
+        {
+            return type switch
+            {
+                ERenderBufferStorage.DepthComponent => 3,
+                ERenderBufferStorage.R3G3B2 => 1,
+                ERenderBufferStorage.Rgb4 => 2,
+                ERenderBufferStorage.Rgb5 => 2,
+                ERenderBufferStorage.Rgb8 => 3,
+                ERenderBufferStorage.Rgb10 => 4,
+                ERenderBufferStorage.Rgb12 => 5,
+                ERenderBufferStorage.Rgb16 => 6,
+                ERenderBufferStorage.Rgba2 => 1,
+                ERenderBufferStorage.Rgba4 => 2,
+                ERenderBufferStorage.Rgba8 => 4,
+                ERenderBufferStorage.Rgb10A2 => 4,
+                ERenderBufferStorage.Rgba12 => 6,
+                ERenderBufferStorage.Rgba16 => 8,
+                ERenderBufferStorage.DepthComponent16 => 2,
+                ERenderBufferStorage.DepthComponent24 => 3,
+                ERenderBufferStorage.DepthComponent32 => 4,
+                ERenderBufferStorage.R8 => 1,
+                ERenderBufferStorage.R16 => 2,
+                ERenderBufferStorage.R16f => 2,
+                ERenderBufferStorage.R32f => 4,
+                ERenderBufferStorage.R8i => 1,
+                ERenderBufferStorage.R8ui => 1,
+                ERenderBufferStorage.R16i => 2,
+                ERenderBufferStorage.R16ui => 2,
+                ERenderBufferStorage.R32i => 4,
+                ERenderBufferStorage.R32ui => 4,
+                ERenderBufferStorage.DepthStencil => 4,
+                ERenderBufferStorage.Rgba32f => 16,
+                ERenderBufferStorage.Rgb32f => 12,
+                ERenderBufferStorage.Rgba16f => 8,
+                ERenderBufferStorage.Rgb16f => 6,
+                ERenderBufferStorage.Depth24Stencil8 => 4,
+                ERenderBufferStorage.R11fG11fB10f => 4,
+                ERenderBufferStorage.Rgb9E5 => 4,
+                ERenderBufferStorage.Srgb8 => 3,
+                ERenderBufferStorage.Srgb8Alpha8 => 4,
+                ERenderBufferStorage.DepthComponent32f => 4,
+                ERenderBufferStorage.Depth32fStencil8 => 5,
+                ERenderBufferStorage.StencilIndex1 => 1,
+                ERenderBufferStorage.StencilIndex4 => 1,
+                ERenderBufferStorage.StencilIndex8 => 1,
+                ERenderBufferStorage.StencilIndex16 => 2,
+                ERenderBufferStorage.Rgba32ui => 16,
+                ERenderBufferStorage.Rgb32ui => 12,
+                ERenderBufferStorage.Rgba16ui => 8,
+                ERenderBufferStorage.Rgb16ui => 6,
+                ERenderBufferStorage.Rgba8ui => 4,
+                ERenderBufferStorage.Rgb8ui => 3,
+                ERenderBufferStorage.Rgba32i => 16,
+                ERenderBufferStorage.Rgb32i => 12,
+                ERenderBufferStorage.Rgba16i => 8,
+                ERenderBufferStorage.Rgb16i => 6,
+                ERenderBufferStorage.Rgba8i => 4,
+                ERenderBufferStorage.Rgb8i => 3,
+                ERenderBufferStorage.Rgb10A2ui => 4,
+                _ => 4, // Default assumption
+            };
+        }
 
         public void AttachToFBO(XRFrameBuffer target, EFrameBufferAttachment attachment, int mipLevel)
             => Api.NamedFramebufferRenderbuffer(Renderer.GenericToAPI<GLFrameBuffer>(target)!.BindingId, ToGLEnum(attachment), GLEnum.Renderbuffer, BindingId);

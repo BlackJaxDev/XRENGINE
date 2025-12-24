@@ -1,4 +1,4 @@
-﻿using Extensions;
+using Extensions;
 using Silk.NET.OpenGL;
 using System.Collections;
 using System.Collections.Concurrent;

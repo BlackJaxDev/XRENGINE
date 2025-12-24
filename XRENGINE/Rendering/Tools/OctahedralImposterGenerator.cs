@@ -1,4 +1,4 @@
-ï»¿using System;
+using System;
 using System.Collections.Generic;
 using System.Numerics;
 using System.Threading;
@@ -309,8 +309,8 @@ public sealed class OctahedralImposterGenerator
             // Ordering matters: keep in sync with Build/CommonAssets/Shaders/Tools/OctahedralImposterBlend.fs.
             // The runtime shader relies on this exact layout when selecting sampler bindings.
             // 1. World axes (6)
-            // 2. Mid-axes (12) â€“ 45Â° between the primary axes
-            // 3. Elevated diagonals (8) â€“ 45Â° above/below the edge directions
+            // 2. Mid-axes (12) – 45° between the primary axes
+            // 3. Elevated diagonals (8) – 45° above/below the edge directions
 
             Vector3.UnitX,
             -Vector3.UnitX,

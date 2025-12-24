@@ -1,4 +1,4 @@
-﻿using MagicPhysX;
+using MagicPhysX;
 using System.Numerics;
 using XREngine;
 using XREngine.Components.Physics;
@@ -55,8 +55,7 @@ public static partial class UnitTestingWorld
             Vector3 floorHalfExtents = new(5000.0f, 0.5f, 5000.0f);
             floorComp.Material = floorPhysMat;
             floorComp.Geometry = new IPhysicsGeometry.Box(floorHalfExtents);
-            floorComp.InitialPosition = new Vector3(0.0f, -floorHalfExtents.Y, 0.0f);
-            floorComp.InitialRotation = Quaternion.Identity;
+            floorTfm.SetPositionAndRotation(new Vector3(0.0f, -floorHalfExtents.Y, 0.0f), Quaternion.Identity);
             floorComp.CollisionGroup = CollisionGroup;
             floorComp.GroupsMask = CollisionMask;
 
@@ -154,6 +153,8 @@ public static partial class UnitTestingWorld
 
             void ApplyInitialVelocities()
             {
+                ballComp.AngularVelocity = angularVelocity;
+                ballComp.LinearVelocity = linearVelocity;
                 if (ballComp.RigidBody is PhysxDynamicRigidBody physxBody)
                 {
                     physxBody.SetAngularVelocity(angularVelocity);
@@ -337,8 +338,8 @@ public static partial class UnitTestingWorld
                 return;
             }
 
-            Vector3 position = floorComp.InitialPosition ?? floorNode.Transform.WorldTranslation;
-            Quaternion rotation = floorComp.InitialRotation ?? floorNode.Transform.WorldRotation;
+            Vector3 position = floorNode.Transform.WorldTranslation;
+            Quaternion rotation = floorNode.Transform.WorldRotation;
             var pose = (position: position, rotation: rotation);
 
             var hits = physxScene.OverlapMultiple(

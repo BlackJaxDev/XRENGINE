@@ -1,4 +1,4 @@
-﻿using MemoryPack;
+using MemoryPack;
 using System;
 using System.Numerics;
 using XREngine.Data;

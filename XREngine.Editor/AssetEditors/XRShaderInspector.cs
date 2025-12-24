@@ -18,7 +18,7 @@ public sealed class XRShaderInspector : IXRAssetInspector
     {
         if (asset is not XRShader shader)
         {
-            UnitTestingWorld.UserInterface.DrawDefaultAssetInspector(asset, visitedObjects);
+            EditorImGuiUI.DrawDefaultAssetInspector(asset, visitedObjects);
             return;
         }
 
@@ -120,7 +120,7 @@ public sealed class XRShaderInspector : IXRAssetInspector
             return;
 
         ImGui.PushID("XRShaderRawProperties");
-        UnitTestingWorld.UserInterface.DrawDefaultAssetInspector(shader, visitedObjects);
+        EditorImGuiUI.DrawDefaultAssetInspector(shader, visitedObjects);
         ImGui.PopID();
     }
 }

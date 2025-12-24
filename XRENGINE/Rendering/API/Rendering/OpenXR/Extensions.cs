@@ -1,4 +1,4 @@
-﻿using Silk.NET.OpenXR.Extensions.HTC;
+using Silk.NET.OpenXR.Extensions.HTC;
 using Silk.NET.OpenXR.Extensions.HTCX;
 using Silk.NET.OpenXR.Extensions.KHR;
 using Silk.NET.Vulkan.Extensions.EXT;

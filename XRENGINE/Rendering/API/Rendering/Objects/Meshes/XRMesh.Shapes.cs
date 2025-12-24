@@ -1,4 +1,4 @@
-﻿using Extensions;
+using Extensions;
 using System.Numerics;
 using XREngine.Data.Core;
 using XREngine.Data.Geometry;

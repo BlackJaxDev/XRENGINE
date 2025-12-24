@@ -1,4 +1,4 @@
-﻿using XREngine.Components;
+using XREngine.Components;
 using XREngine.Core.Attributes;
 using XREngine.Data.Colors;
 using XREngine.Data.Rendering;

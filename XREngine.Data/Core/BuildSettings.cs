@@ -32,6 +32,7 @@ namespace XREngine
         private bool _copyEngineBinaries = true;
         private bool _includePdbFiles = false;
         private bool _buildLauncherExecutable = true;
+        private bool _publishLauncherAsNativeAot = false;
         private bool _generateConfigArchive = true;
         private bool _saveSettingsBeforeBuild = true;
         private string _contentArchiveName = "GameContent.pak";
@@ -109,6 +110,14 @@ namespace XREngine
         {
             get => _buildLauncherExecutable;
             set => SetField(ref _buildLauncherExecutable, value);
+        }
+
+        [Category("Build Steps")]
+        [Description("When enabled, the launcher EXE is produced via MSBuild Publish with PublishAot=true (NativeAOT). This is intended for shipping/cooked builds; keep disabled for editor/dev hot-reload workflows.")]
+        public bool PublishLauncherAsNativeAot
+        {
+            get => _publishLauncherAsNativeAot;
+            set => SetField(ref _publishLauncherAsNativeAot, value);
         }
 
         [Category("Build Steps")]

@@ -540,4 +540,58 @@ public partial class DefaultRenderPipeline
         fbo.SettingUniforms += LightVolumeCompositeFBO_SettingUniforms;
         return fbo;
     }
+
+    private XRFrameBuffer CreateRadianceCascadeCompositeFBO()
+    {
+        XRTexture giTexture = GetTexture<XRTexture>(RadianceCascadeGITextureName)!;
+        XRTexture depthTexture = GetTexture<XRTexture>(DepthViewTextureName)!;
+        XRTexture normalTexture = GetTexture<XRTexture>(NormalTextureName)!;
+        XRShader compositeShader = XRShader.EngineShader(Path.Combine(SceneShaderPath, "RadianceCascadeComposite.fs"), EShaderType.Fragment);
+        BlendMode additiveBlend = new()
+        {
+            Enabled = ERenderParamUsage.Enabled,
+            RgbSrcFactor = EBlendingFactor.One,
+            AlphaSrcFactor = EBlendingFactor.One,
+            RgbDstFactor = EBlendingFactor.One,
+            AlphaDstFactor = EBlendingFactor.One,
+            RgbEquation = EBlendEquationMode.FuncAdd,
+            AlphaEquation = EBlendEquationMode.FuncAdd
+        };
+
+        XRMaterial material = new([giTexture, depthTexture, normalTexture], compositeShader)
+        {
+            RenderOptions = new RenderingParameters()
+            {
+                DepthTest = new DepthTest()
+                {
+                    Enabled = ERenderParamUsage.Unchanged,
+                    Function = EComparison.Always,
+                    UpdateDepth = false,
+                },
+                BlendModeAllDrawBuffers = additiveBlend,
+                //RequiredEngineUniforms = EUniformRequirements.Camera
+            }
+        };
+
+        var fbo = new XRQuadFrameBuffer(material) { Name = RadianceCascadeCompositeFBOName };
+        fbo.SettingUniforms += RadianceCascadeCompositeFBO_SettingUniforms;
+        return fbo;
+    }
+
+    private void RadianceCascadeCompositeFBO_SettingUniforms(XRRenderProgram program)
+    {
+        XRTexture? radianceCascadeGI = GetTexture<XRTexture>(RadianceCascadeGITextureName);
+        XRTexture? depthView = GetTexture<XRTexture>(DepthViewTextureName);
+        XRTexture? normalView = GetTexture<XRTexture>(NormalTextureName);
+        if (radianceCascadeGI is null || depthView is null || normalView is null)
+        {
+            Debug.LogWarning("Radiance Cascade Composite FBO: One or more required textures are missing; skipping uniform setup.");
+            return;
+        }
+        program.Sampler("RadianceCascadeGITexture", radianceCascadeGI, 0);
+        program.Sampler("DepthView", depthView, 1);
+        program.Sampler("Normal", normalView, 2);
+        program.Uniform("ScreenWidth", (float)InternalWidth);
+        program.Uniform("ScreenHeight", (float)InternalHeight);
+    }
 }

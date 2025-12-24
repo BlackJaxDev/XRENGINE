@@ -1,4 +1,4 @@
-﻿using Extensions;
+using Extensions;
 using Newtonsoft.Json;
 using Silk.NET.Input;
 using Silk.NET.Maths;
@@ -77,7 +77,11 @@ namespace XREngine.Rendering
             if (world is null)
                 return null;
 
-            var rootNodes = world.RootNodes.Select(EncodeNode).ToArray();
+            // Filter out editor-only nodes (nodes in the hidden editor scene)
+            var rootNodes = world.RootNodes
+                .Where(node => !world.IsInEditorScene(node))
+                .Select(EncodeNode)
+                .ToArray();
             return new WorldHierarchy
             {
                 GameModeFullTypeDef = world.GameMode?.GetType().FullName,

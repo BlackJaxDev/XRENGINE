@@ -95,6 +95,12 @@ public partial class PhysicsChainComponent : XRComponent, IRenderable
         for (int i = 0; i < _particleTrees.Count; ++i)
         {
             ParticleTree pt = _particleTrees[i];
+
+            // Ensure we sample the current (post-InitTransforms / post-animation) pose.
+            // Without this, we can end up using stale world matrices from the prior frame,
+            // effectively allowing the simulated pose to slowly become the new "rest".
+            pt.Root.RecalculateMatrixHeirarchy(forceWorldRecalc: true, setRenderMatrixNow: false, childRecalcType: ELoopType.Sequential).Wait();
+
             pt.RestGravity = pt.Root.TransformDirection(pt.LocalGravity);
 
             for (int j = 0; j < pt.Particles.Count; ++j)
@@ -157,7 +163,7 @@ public partial class PhysicsChainComponent : XRComponent, IRenderable
             return;
 
         rt.RecalculateMatrices();
-        float d2 = (rt.WorldTranslation - Transform.LocalTranslation).LengthSquared();
+        float d2 = (rt.WorldTranslation - Transform.WorldTranslation).LengthSquared();
         bool disable = d2 > DistanceToObject * DistanceToObject;
         if (disable == _distantDisabled)
             return;

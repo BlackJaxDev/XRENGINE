@@ -6,15 +6,8 @@ using XREngine.Rendering;
 
 namespace XREngine.Rendering.DLSS
 {
-    public enum EDlssQualityMode
-    {
-        UltraPerformance,
-        Performance,
-        Balanced,
-        Quality,
-        UltraQuality,
-        Custom
-    }
+    // Note: EDlssQualityMode is now defined in XREngine namespace (XREngine.Data project)
+    // for use in the cascading settings system.
 
     /// <summary>
     /// Lightweight helper that wires engine viewport resolution to NVIDIA DLSS expectations.

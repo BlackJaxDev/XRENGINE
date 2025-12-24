@@ -1,4 +1,4 @@
-﻿namespace XREngine.Rendering
+namespace XREngine.Rendering
 {
     /// <summary>
     /// Determines how vertices should rotate and scale in relation to the camera.

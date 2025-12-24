@@ -1,4 +1,4 @@
-﻿using FFmpeg.AutoGen;
+using FFmpeg.AutoGen;
 using System.Numerics;
 using XREngine.Components;
 using XREngine.Data.Colors;

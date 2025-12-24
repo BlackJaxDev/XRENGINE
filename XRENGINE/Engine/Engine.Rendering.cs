@@ -5,6 +5,7 @@ using XREngine.Rendering.DLSS;
 using XREngine.Rendering.Physics.Physx;
 using XREngine.Rendering.Pipelines.Commands;
 using XREngine.Scene;
+using XREngine.Scene.Physics.Jolt;
 
 namespace XREngine
 {
@@ -61,19 +62,23 @@ namespace XREngine
             }
 
             public static AbstractPhysicsScene NewPhysicsScene()
-                => new PhysxScene();
+                => UserSettings.PhysicsLibrary switch
+                {
+                    EPhysicsLibrary.Jolt => new JoltScene(),
+                    _ => new PhysxScene(),
+                };
 
             public static VisualScene3D NewVisualScene()
                 => new();
 
             public static RenderPipeline NewRenderPipeline()
-                => Engine.UserSettings.UseDebugOpaquePipeline
+                => Rendering.Settings.UseDebugOpaquePipeline
                     ? new DebugOpaqueRenderPipeline()
                     : new DefaultRenderPipeline();
 
             public static void ApplyRenderPipelinePreference()
             {
-                bool preferDebug = Engine.UserSettings.UseDebugOpaquePipeline;
+                bool preferDebug = Rendering.Settings.UseDebugOpaquePipeline;
 
                 foreach (XRWindow window in Engine.Windows)
                 {
@@ -116,7 +121,7 @@ namespace XREngine
 
             public static void ApplyGpuRenderDispatchPreference()
             {
-                bool useGpu = Engine.UserSettings.GPURenderDispatch;
+                bool useGpu = Engine.EffectiveSettings.GPURenderDispatch;
 
                 void Apply()
                 {

@@ -1,4 +1,4 @@
-﻿namespace XREngine.Data.Rendering
+namespace XREngine.Data.Rendering
 {
     public class VertexTriangleStrip(params Vertex[] vertices) : VertexPolygon(vertices)
     {

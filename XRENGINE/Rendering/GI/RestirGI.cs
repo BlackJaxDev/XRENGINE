@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Numerics;
 using System.Runtime.InteropServices;
 using XREngine;
@@ -190,7 +190,7 @@ public static class RestirGI
     public unsafe struct Reservoir
     {
         public Vector3 Li;              // sampled radiance
-        public float Pdf;               // sample’s PDF
+        public float Pdf;               // sample�s PDF
 
         public Vector3 SampleDir;       // sampled direction in world space
         public float W;                 // reservoir weight sum

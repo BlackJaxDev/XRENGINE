@@ -1,4 +1,4 @@
-﻿namespace XREngine.Data.Rendering
+namespace XREngine.Data.Rendering
 {
     /// <summary>
     ///    2

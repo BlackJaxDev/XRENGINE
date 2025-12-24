@@ -1,4 +1,4 @@
-﻿using MagicPhysX;
+using MagicPhysX;
 using Silk.NET.OpenAL;
 using System.Numerics;
 using XREngine.Components;
@@ -22,7 +22,7 @@ public static partial class UnitTestingWorld
 {
     public static class Pawns
     {
-        public static SceneNode CreatePlayerPawn(bool setUI, bool isServer, SceneNode rootNode)
+        public static SceneNode? CreatePlayerPawn(bool setUI, bool isServer, SceneNode rootNode)
         {
             SceneNode? characterPawnModelParentNode = null;
             if (Toggles.VRPawn)
@@ -275,7 +275,7 @@ public static partial class UnitTestingWorld
             return vrHeadsetNode;
         }
 
-        private static void AddVRFirstPersonDesktopView(ref PawnComponent pawn, SceneNode parentNode)
+        private static void AddVRFirstPersonDesktopView(ref PawnComponent? pawn, SceneNode parentNode)
         {
             SceneNode firstPersonViewNode = new(parentNode) { Name = "FirstPersonViewNode" };
             var firstPersonViewTfm = firstPersonViewNode.SetTransform<SmoothedParentConstraintTransform>();

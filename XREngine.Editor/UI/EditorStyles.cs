@@ -1,4 +1,4 @@
-﻿using XREngine.Data.Colors;
+using XREngine.Data.Colors;
 using XREngine.Rendering.UI;
 
 namespace XREngine.Editor.UI

@@ -1,31 +1,26 @@
 ﻿using System.Numerics;
-using XREngine.Components.Scene.Shapes;
 using XREngine.Data.Transforms.Rotations;
-using XREngine.Physics;
+using XREngine.Components.Physics;
+using XREngine.Rendering.Physics.Physx;
+using System.ComponentModel;
 
 namespace XREngine.Components.Scene.Volumes
 {
-    public class BlockingVolumeComponent : BoxComponent
+    /// <summary>
+    /// A volume that blocks all dynamic rigid bodies from passing through it.
+    /// </summary>
+    [Description("A volume that blocks all dynamic rigid bodies from passing through it.")]
+    public class BlockingVolumeComponent : StaticRigidBodyComponent
     {
         public BlockingVolumeComponent()
-            : this(new Vector3(0.5f), Vector3.Zero, Rotator.GetZero(), 0, 0) { }
-        public BlockingVolumeComponent(Vector3 halfExtents, Vector3 translation, Rotator rotation, ushort collisionGroup, ushort collidesWith)
-            : base(halfExtents, new RigidBodyConstructionInfo()
-            {
-                Mass = 0.0f,
-                CollisionEnabled = true,
-                SimulatePhysics = false,
-                CollisionGroup = collisionGroup,
-                CollidesWith = collidesWith,
-            })
+            : this(new Vector3(0.5f), 0, 0) { }
+        public BlockingVolumeComponent(Vector3 halfExtents, ushort collisionGroup, ushort collidesWith)
         {
-            RenderInfo.CastsShadows = false;
-            RenderInfo.ReceivesShadows = false;
-            RenderCommand.RenderPass = 0;
-            //RenderParams.DepthTest.Enabled = false;
-
-            //Transform.Translation.Value = translation;
-            //Transform.Rotation.Value = rotation.ToQuaternion();
+            Geometry = new IPhysicsGeometry.Box(halfExtents);
+            CollisionGroup = collisionGroup;
+            GroupsMask = new PhysicsGroupsMask(collidesWith, 0, 0, 0);
+            GravityEnabled = false;
+            SimulationEnabled = true;
         }
     }
 }

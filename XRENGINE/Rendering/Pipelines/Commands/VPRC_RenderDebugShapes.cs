@@ -1,4 +1,4 @@
-﻿namespace XREngine.Rendering.Pipelines.Commands
+namespace XREngine.Rendering.Pipelines.Commands
 {
     public class VPRC_RenderDebugShapes : ViewportRenderCommand
     {

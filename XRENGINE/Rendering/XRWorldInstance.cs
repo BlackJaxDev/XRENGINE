@@ -56,6 +56,83 @@ namespace XREngine.Rendering
         public Lights3DCollection Lights { get; }
         public LightmapBakeManager LightmapBaking { get; }
 
+        #region Editor-Only Hidden Scene
+
+        private XRScene? _editorScene;
+        /// <summary>
+        /// A hidden scene used for editor-only content such as gizmos, transform tools, and UI.
+        /// This scene is not saved with the world and is not displayed in the hierarchy panel.
+        /// </summary>
+        public XRScene EditorScene
+        {
+            get
+            {
+                if (_editorScene is null)
+                {
+                    _editorScene = new XRScene("__EditorScene__")
+                    {
+                        IsEditorOnly = true,
+                        IsVisible = true
+                    };
+                    LoadScene(_editorScene);
+                }
+                return _editorScene;
+            }
+        }
+
+        /// <summary>
+        /// Adds a scene node to the hidden editor scene.
+        /// Use this for editor-only content like gizmos, transform tools, and debug visualization.
+        /// </summary>
+        /// <param name="node">The node to add to the editor scene.</param>
+        public void AddToEditorScene(SceneNode node)
+        {
+            if (node is null)
+                return;
+
+            var editorScene = EditorScene;
+            if (!editorScene.RootNodes.Contains(node))
+            {
+                editorScene.RootNodes.Add(node);
+                node.World = this;
+                RootNodes.Add(node);
+            }
+        }
+
+        /// <summary>
+        /// Removes a scene node from the hidden editor scene.
+        /// </summary>
+        /// <param name="node">The node to remove from the editor scene.</param>
+        public void RemoveFromEditorScene(SceneNode node)
+        {
+            if (node is null || _editorScene is null)
+                return;
+
+            _editorScene.RootNodes.Remove(node);
+            RootNodes.Remove(node);
+            node.World = null;
+        }
+
+        /// <summary>
+        /// Checks if a node belongs to the hidden editor scene.
+        /// </summary>
+        /// <param name="node">The node to check.</param>
+        /// <returns>True if the node is in the editor scene.</returns>
+        public bool IsInEditorScene(SceneNode? node)
+        {
+            if (node is null || _editorScene is null)
+                return false;
+
+            // Walk up to find the root node
+            SceneNode? root = node;
+            while (root?.Transform?.Parent?.SceneNode is SceneNode parent)
+                root = parent;
+
+            return root is not null && _editorScene.RootNodes.Contains(root);
+        }
+
+        #endregion
+
         // Physics raycasts must run on the fixed-update (physics) thread.
         private readonly ConcurrentQueue<PhysicsRaycastRequest> _pendingPhysicsRaycasts = new();
         private readonly ConcurrentQueue<PhysicsRaycastRequest> _physicsRaycastRequestPool = new();
@@ -571,8 +648,8 @@ namespace XREngine.Rendering
             var loopType = Engine.Rendering.Settings.RecalcChildMatricesLoopType;
             Func<IEnumerable<TransformBase>, Task> recalcDepth = loopType switch
             {
-                Engine.Rendering.ELoopType.Asynchronous => RecalcTransformDepthAsync,
-                Engine.Rendering.ELoopType.Parallel => RecalcTransformDepthParallel,
+                ELoopType.Asynchronous => RecalcTransformDepthAsync,
+                ELoopType.Parallel => RecalcTransformDepthParallel,
                 _ => RecalcTransformDepthSequential,
             };
 
@@ -596,7 +673,7 @@ namespace XREngine.Rendering
         private static async Task RecalcTransformDepthSequential(IEnumerable<TransformBase> bag)
         {
             foreach (var transform in bag)
-                await transform.RecalculateMatrixHeirarchy(true, false, Engine.Rendering.ELoopType.Sequential);
+                await transform.RecalculateMatrixHeirarchy(true, false, ELoopType.Sequential);
         }
 
         /// <summary>
@@ -609,7 +686,7 @@ namespace XREngine.Rendering
             => Task.WhenAll(bag.Select(tfm => tfm.RecalculateMatrixHeirarchy(
                 forceWorldRecalc: true,
                 setRenderMatrixNow: false,
-                childRecalcType: Engine.Rendering.ELoopType.Asynchronous)));
+                childRecalcType: ELoopType.Asynchronous)));
 
         private static Task RecalcTransformDepthParallel(IEnumerable<TransformBase> bag)
         {
@@ -620,7 +697,7 @@ namespace XREngine.Rendering
                 tfm.RecalculateMatrixHeirarchy(
                     forceWorldRecalc: true,
                     setRenderMatrixNow: false,
-                    childRecalcType: Engine.Rendering.ELoopType.Parallel)
+                    childRecalcType: ELoopType.Parallel)
                 .GetAwaiter().GetResult()));
         }
 

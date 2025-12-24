@@ -5,7 +5,7 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
     <AllowUnsafeBlocks>True</AllowUnsafeBlocks>
-    <PublishAot>true</PublishAot>
+    <PublishAot>false</PublishAot>
     <Platforms>AnyCPU;x64</Platforms>
     <BaseOutputPath>$(SolutionDir)Build\Engine\$(Configuration)\$(Platform)</BaseOutputPath>
   </PropertyGroup>
@@ -91,7 +91,7 @@
     <PackageReference Include="GraphQL" Version="8.8.0" />
     <PackageReference Include="ImmediateReflection" Version="2.0.0" />
     <PackageReference Include="Jitter2" Version="2.7.5" />
-    <PackageReference Include="JoltPhysicsSharp" Version="2.19.4" />
+    <PackageReference Include="JoltPhysicsSharp" Version="2.19.5" />
     <PackageReference Include="LZMA-SDK" Version="22.1.1" />
     <PackageReference Include="Magick.NET.Core" Version="14.10.0" />
     <PackageReference Include="Magick.NET.SystemDrawing" Version="8.0.12" />

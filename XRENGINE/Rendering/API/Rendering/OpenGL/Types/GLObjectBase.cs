@@ -1,4 +1,4 @@
-﻿using Extensions;
+using Extensions;
 using Silk.NET.OpenGL;
 using XREngine.Data.Rendering;
 

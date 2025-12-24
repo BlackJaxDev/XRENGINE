@@ -1,4 +1,4 @@
-﻿//using MemoryPack;
+//using MemoryPack;
 //using XREngine.Core.Files;
 
 //namespace XREngine.Rendering

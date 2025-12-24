@@ -1,4 +1,4 @@
-﻿namespace XREngine.Rendering.Pipelines.Commands
+namespace XREngine.Rendering.Pipelines.Commands
 {
     /// <summary>
     /// Render's the camera's screen space UI to the current viewport.

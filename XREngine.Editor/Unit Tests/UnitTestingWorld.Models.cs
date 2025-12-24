@@ -1,4 +1,4 @@
-﻿using Assimp;
+using Assimp;
 using Extensions;
 using System.Numerics;
 using XREngine;

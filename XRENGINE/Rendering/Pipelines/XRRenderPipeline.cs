@@ -1,4 +1,4 @@
-﻿using MemoryPack;
+using MemoryPack;
 using System;
 using System.ComponentModel;
 using XREngine.Core.Files;

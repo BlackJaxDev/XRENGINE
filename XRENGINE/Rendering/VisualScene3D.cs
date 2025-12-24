@@ -1,4 +1,4 @@
-﻿using System.Collections.Concurrent;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Drawing;
 using System.Numerics;
@@ -22,7 +22,7 @@ namespace XREngine.Scene
         public Octree<RenderInfo3D> RenderTree { get; } = new Octree<RenderInfo3D>(new AABB());
         private AABB _sceneBounds;
         private bool _hasSceneBounds = false;
-        private bool _isGpuDispatchActive = Engine.UserSettings?.GPURenderDispatch ?? false;
+        private bool _isGpuDispatchActive = Engine.EffectiveSettings.GPURenderDispatch;
 
         public void SetBounds(AABB bounds)
         {

@@ -88,27 +88,170 @@ namespace XREngine
             {
                 SettingsChanged?.Invoke();
             }
-            public enum ELoopType
-            {
-                Sequential,
-                Asynchronous,
-                Parallel
-            }
-
-            public enum EAntiAliasingMode
-            {
-                None,
-                Msaa,
-                Fxaa,
-                Taa,
-                Tsr
-            }
+            
+            // Note: ELoopType and EAntiAliasingMode are now defined in XREngine.Data as top-level enums
+            // for use in the cascading settings system. The aliases below maintain API compatibility.
+            
             /// <summary>
             /// Contains global rendering settings.
             /// </summary>
             [MemoryPackable(GenerateType.NoGenerate)]
             public partial class EngineSettings : XRAsset
             {
+                #region Debug/Logging Settings (moved from UserSettings)
+
+                private bool _enableFrameLogging = true;
+                private float _debugOutputMinElapsedMs = 1.0f;
+                private double _debugOutputRecencySeconds = 0.0;
+                private bool _enableGpuIndirectDebugLogging = true;
+                private bool _enableGpuIndirectCpuFallback = false;
+                private bool _useDebugOpaquePipeline = false;
+
+                /// <summary>
+                /// Whether to enable frame logging for performance profiling.
+                /// </summary>
+                [Category("Debug")]
+                [Description("Whether to enable frame logging for performance profiling.")]
+                public bool EnableFrameLogging
+                {
+                    get => _enableFrameLogging;
+                    set => SetField(ref _enableFrameLogging, value);
+                }
+
+                /// <summary>
+                /// Minimum elapsed milliseconds for debug output to be displayed.
+                /// </summary>
+                [Category("Debug")]
+                [Description("Minimum elapsed milliseconds for debug output to be displayed.")]
+                public float DebugOutputMinElapsedMs
+                {
+                    get => _debugOutputMinElapsedMs;
+                    set => SetField(ref _debugOutputMinElapsedMs, value);
+                }
+
+                /// <summary>
+                /// How recent (in seconds) debug output must be to be displayed.
+                /// </summary>
+                [Category("Debug")]
+                [Description("How recent (in seconds) debug output must be to be displayed.")]
+                public double DebugOutputRecencySeconds
+                {
+                    get => _debugOutputRecencySeconds;
+                    set => SetField(ref _debugOutputRecencySeconds, value);
+                }
+
+                /// <summary>
+                /// Whether to enable GPU indirect rendering debug logging.
+                /// </summary>
+                [Category("Debug")]
+                [Description("Whether to enable GPU indirect rendering debug logging.")]
+                public bool EnableGpuIndirectDebugLogging
+                {
+                    get => _enableGpuIndirectDebugLogging;
+                    set => SetField(ref _enableGpuIndirectDebugLogging, value);
+                }
+
+                /// <summary>
+                /// Whether to enable CPU fallback for GPU indirect rendering when errors occur.
+                /// </summary>
+                [Category("Debug")]
+                [Description("Whether to enable CPU fallback for GPU indirect rendering when errors occur.")]
+                public bool EnableGpuIndirectCpuFallback
+                {
+                    get => _enableGpuIndirectCpuFallback;
+                    set => SetField(ref _enableGpuIndirectCpuFallback, value);
+                }
+
+                /// <summary>
+                /// Whether to use the debug opaque render pipeline for debugging purposes.
+                /// </summary>
+                [Category("Debug")]
+                [Description("Whether to use the debug opaque render pipeline for debugging purposes.")]
+                public bool UseDebugOpaquePipeline
+                {
+                    get => _useDebugOpaquePipeline;
+                    set => SetField(ref _useDebugOpaquePipeline, value);
+                }
+
+                #endregion
+
+                #region Job Manager Settings (moved from GameStartupSettings)
+
+                private int? _jobWorkers = null;
+                private int? _jobWorkerCap = null;
+                private int? _jobQueueLimit = null;
+                private int? _jobQueueWarningThreshold = null;
+                private EOutputVerbosity _outputVerbosity = EOutputVerbosity.Verbose;
+                private bool _useIntegerWeightingIds = true;
+
+                /// <summary>
+                /// Optional override for the number of job worker threads. If null, defaults are used.
+                /// </summary>
+                [Category("Threading")]
+                [Description("Optional override for the number of job worker threads. If null, defaults are used.")]
+                public int? JobWorkers
+                {
+                    get => _jobWorkers;
+                    set => SetField(ref _jobWorkers, value);
+                }
+
+                /// <summary>
+                /// Optional cap for the maximum number of job worker threads.
+                /// </summary>
+                [Category("Threading")]
+                [Description("Optional cap for the maximum number of job worker threads.")]
+                public int? JobWorkerCap
+                {
+                    get => _jobWorkerCap;
+                    set => SetField(ref _jobWorkerCap, value);
+                }
+
+                /// <summary>
+                /// Optional limit on queued jobs; if null, the JobManager default or environment override is used.
+                /// </summary>
+                [Category("Threading")]
+                [Description("Optional limit on queued jobs; if null, the JobManager default or environment override is used.")]
+                public int? JobQueueLimit
+                {
+                    get => _jobQueueLimit;
+                    set => SetField(ref _jobQueueLimit, value);
+                }
+
+                /// <summary>
+                /// Optional threshold at which queue length warnings are emitted.
+                /// </summary>
+                [Category("Threading")]
+                [Description("Optional threshold at which queue length warnings are emitted.")]
+                public int? JobQueueWarningThreshold
+                {
+                    get => _jobQueueWarningThreshold;
+                    set => SetField(ref _jobQueueWarningThreshold, value);
+                }
+
+                /// <summary>
+                /// The verbosity level for engine output messages.
+                /// </summary>
+                [Category("Debug")]
+                [Description("The verbosity level for engine output messages.")]
+                public EOutputVerbosity OutputVerbosity
+                {
+                    get => _outputVerbosity;
+                    set => SetField(ref _outputVerbosity, value);
+                }
+
+                /// <summary>
+                /// When true, integer IDs are used for bone weighting instead of floats.
+                /// </summary>
+                [Category("Performance")]
+                [Description("When true, integer IDs are used for bone weighting instead of floats.")]
+                public bool UseIntegerWeightingIds
+                {
+                    get => _useIntegerWeightingIds;
+                    set => SetField(ref _useIntegerWeightingIds, value);
+                }
+
+                #endregion
+
                 private Vector3 _defaultLuminance = new(0.299f, 0.587f, 0.114f);
                 private bool _outputHDR = false;
                 private EAntiAliasingMode _antiAliasingMode = EAntiAliasingMode.Fxaa;

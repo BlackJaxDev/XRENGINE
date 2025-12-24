@@ -3,6 +3,7 @@
     public enum EPhysicsLibrary
     {
         PhysX,
-        Bullet,
+        Jolt,
+        Jitter,
     }
 }

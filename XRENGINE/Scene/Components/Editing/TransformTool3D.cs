@@ -114,7 +114,9 @@ namespace XREngine.Scene.Components.Editing
             if (_instanceNode?.World != world)
             {
                 _instanceNode?.Destroy();
-                _instanceNode = new SceneNode(world);
+                _instanceNode = new SceneNode("TransformTool3D");
+                // Add the transform tool to the hidden editor scene so it's not saved or shown in hierarchy
+                world.AddToEditorScene(_instanceNode);
             }
 
             TransformTool3D instance = _instanceNode.GetOrAddComponent<TransformTool3D>(out _)!;

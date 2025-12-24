@@ -781,4 +781,38 @@ public partial class DefaultRenderPipeline
         texture.Name = FxaaOutputTextureName;
         return texture;
     }
+
+    private XRTexture CreateRadianceCascadeGITexture()
+    {
+        if (Stereo)
+        {
+            var t = XRTexture2DArray.CreateFrameBufferTexture(
+                2,
+                InternalWidth, InternalHeight,
+                EPixelInternalFormat.Rgba16f,
+                EPixelFormat.Rgba,
+                EPixelType.HalfFloat);
+            t.OVRMultiViewParameters = new(0, 2u);
+            t.Resizable = false;
+            t.SizedInternalFormat = ESizedInternalFormat.Rgba16f;
+            t.MinFilter = ETexMinFilter.Nearest;
+            t.MagFilter = ETexMagFilter.Nearest;
+            t.SamplerName = RadianceCascadeGITextureName;
+            t.Name = RadianceCascadeGITextureName;
+            return t;
+        }
+        else
+        {
+            var t = XRTexture2D.CreateFrameBufferTexture(
+                InternalWidth, InternalHeight,
+                EPixelInternalFormat.Rgba16f,
+                EPixelFormat.Rgba,
+                EPixelType.HalfFloat);
+            t.MinFilter = ETexMinFilter.Nearest;
+            t.MagFilter = ETexMagFilter.Nearest;
+            t.SamplerName = RadianceCascadeGITextureName;
+            t.Name = RadianceCascadeGITextureName;
+            return t;
+        }
+    }
 }

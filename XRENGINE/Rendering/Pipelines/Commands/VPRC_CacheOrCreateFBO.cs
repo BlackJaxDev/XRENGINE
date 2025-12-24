@@ -1,4 +1,4 @@
-﻿using System.Reflection;
+using System.Reflection;
 using XREngine.Rendering.Resources;
 
 namespace XREngine.Rendering.Pipelines.Commands

@@ -1,4 +1,4 @@
-﻿using Assimp;
+using Assimp;
 
 namespace XREngine.Editor;
 
@@ -37,8 +37,7 @@ public static partial class UnitTestingWorld
         public bool VideoStreaming = false; //Adds a video streaming component to the scene for testing video streaming.
         public bool VideoStreamingAudio = false; //Adds a video streaming audio component to the scene for testing video streaming audio.
         public bool DearImGuiUI = false; //Adds a Dear ImGui overlay to the scene for testing immediate-mode UI.
-        public bool DearImGuiProfiler = true; //Renders the engine profiler overlay within Dear ImGui.
-        public bool EnableProfilerLogging = false; //Enables Engine.Profiler frame logging even without Dear ImGui.
+        public bool EnableProfilerLogging = true; //Enables Engine.Profiler frame logging even without Dear ImGui.
         public bool RiveUI = false; //Adds a Rive UI component to the scene for testing Rive animations.
         public bool GPURenderDispatch = false; //Uses GPU render dispatch for rendering instead of CPU culling and issuing draw calls.
 
@@ -129,7 +128,8 @@ public static partial class UnitTestingWorld
         public bool RenderMeshBounds = true;
 
         public ERenderLibrary RenderAPI = ERenderLibrary.OpenGL;
-        public Engine.Rendering.ELoopType RecalcChildMatricesType = Engine.Rendering.ELoopType.Asynchronous;
+        public EPhysicsLibrary PhysicsAPI = EPhysicsLibrary.PhysX;
+        public ELoopType RecalcChildMatricesType = ELoopType.Asynchronous;
         public bool TickGroupedItemsInParallel = true;
         public bool SinglePassStereoVR = false;
         public bool RenderPhysicsDebug = false;

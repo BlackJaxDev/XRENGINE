@@ -1,4 +1,4 @@
-﻿using Extensions;
+using Extensions;
 using System.Numerics;
 using System.Runtime.CompilerServices;
 using XREngine.Data;

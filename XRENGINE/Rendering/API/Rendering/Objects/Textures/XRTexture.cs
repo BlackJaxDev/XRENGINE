@@ -1,4 +1,4 @@
-﻿using ImageMagick;
+using ImageMagick;
 using MemoryPack;
 using System.Numerics;
 using XREngine.Data.Colors;

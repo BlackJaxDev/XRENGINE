@@ -1,4 +1,4 @@
-﻿using XREngine.Data.Rendering;
+using XREngine.Data.Rendering;
 
 namespace XREngine.Rendering
 {

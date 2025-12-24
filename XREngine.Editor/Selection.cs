@@ -1,4 +1,4 @@
-﻿using XREngine.Scene;
+using XREngine.Scene;
 
 namespace XREngine.Editor;
 

@@ -510,7 +510,7 @@ namespace XREngine.Rendering.Commands
 
             if (IndirectDebug.ValidateLiveHandles && !remapPending)
             {
-                bool logBuffers = Engine.UserSettings?.EnableGpuIndirectDebugLogging ?? false;
+                bool logBuffers = Engine.EffectiveSettings.EnableGpuIndirectDebugLogging;
                 if (!logBuffers)
                     return;
 

@@ -11,7 +11,7 @@ public sealed class DirectionalLightComponentEditor : IXRComponentEditor
     {
         if (component is not DirectionalLightComponent light)
         {
-            UnitTestingWorld.UserInterface.DrawDefaultComponentInspector(component, visited);
+            EditorImGuiUI.DrawDefaultComponentInspector(component, visited);
             ComponentEditorLayout.DrawActivePreviewDialog();
             return;
         }

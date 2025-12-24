@@ -126,8 +126,7 @@ namespace XREngine
                 if (ReferenceEquals(_userSettings, value) && value is not null)
                     return;
 
-                if (_userSettings is not null)
-                    _userSettings.PropertyChanged -= HandleUserSettingsChanged;
+                _userSettings?.PropertyChanged -= HandleUserSettingsChanged;
                 _userSettings = value ?? new UserSettings();
                 _userSettings.PropertyChanged += HandleUserSettingsChanged;
                 
@@ -157,11 +156,7 @@ namespace XREngine
 
         private static void OnUserSettingsChanged()
         {
-            Profiler.EnableFrameLogging = _userSettings.EnableFrameLogging;
-            Profiler.DebugOutputMinElapsedMs = _userSettings.DebugOutputMinElapsedMs;
-            Rendering.ApplyRenderPipelinePreference();
             Rendering.ApplyGlobalIlluminationModePreference();
-            Rendering.ApplyGpuRenderDispatchPreference();
             UserSettingsChanged?.Invoke(_userSettings);
         }
 
@@ -169,28 +164,12 @@ namespace XREngine
         {
             switch (e.PropertyName)
             {
-                case nameof(UserSettings.UseDebugOpaquePipeline):
-                    Rendering.ApplyRenderPipelinePreference();
-                    break;
                 case nameof(UserSettings.GlobalIlluminationMode):
                     Rendering.ApplyGlobalIlluminationModePreference();
                     break;
-                case nameof(UserSettings.EnableFrameLogging):
-                    Profiler.EnableFrameLogging = UserSettings.EnableFrameLogging;
-                    break;
-                case nameof(UserSettings.DebugOutputMinElapsedMs):
-                    Profiler.DebugOutputMinElapsedMs = UserSettings.DebugOutputMinElapsedMs;
-                    break;
-                case nameof(UserSettings.GPURenderDispatch):
-                    Rendering.ApplyGpuRenderDispatchPreference();
-                    break;
                 case null:
                 case "":
-                    Rendering.ApplyRenderPipelinePreference();
                     Rendering.ApplyGlobalIlluminationModePreference();
-                    Profiler.EnableFrameLogging = UserSettings.EnableFrameLogging;
-                    Profiler.DebugOutputMinElapsedMs = UserSettings.DebugOutputMinElapsedMs;
-                    Rendering.ApplyGpuRenderDispatchPreference();
                     break;
             }
         }

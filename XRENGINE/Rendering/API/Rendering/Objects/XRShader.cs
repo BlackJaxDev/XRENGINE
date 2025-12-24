@@ -1,4 +1,4 @@
-﻿
+
 using System.Collections.Concurrent;
 using System.IO;
 using XREngine.Core.Files;
@@ -193,7 +193,7 @@ namespace XREngine.Rendering
 
             string line = text[index..end];
 
-            //#extension extension_name​ : behavior​
+            //#extension extension_name? : behavior?
             string[] parts = line.Split(' ', StringSplitOptions.RemoveEmptyEntries);
             if (parts.Length < 4)
                 return false;

@@ -1,4 +1,4 @@
-﻿using System.Drawing.Drawing2D;
+using System.Drawing.Drawing2D;
 using System.Numerics;
 using XREngine;
 using XREngine.Data.Rendering;

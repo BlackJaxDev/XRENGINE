@@ -1,5 +1,6 @@
 ﻿using Extensions;
 using System.Numerics;
+using XREngine.Components.Physics;
 using XREngine.Data;
 using XREngine.Rendering.Physics.Physx;
 using XREngine.Scene;
@@ -83,19 +84,6 @@ namespace XREngine.Components.Scene.Transforms
         protected override Matrix4x4 CreateLocalMatrix()
             => Matrix4x4.CreateTranslation(0.0f, 0.0f, _currentLength);
 
-        protected internal override void OnSceneNodeActivated()
-        {
-            base.OnSceneNodeActivated();
-            RegisterTick(ETickGroup.Late, (int)ETickOrder.Scene, Tick);
-        }
-        //protected internal override void OnSceneNodeDeactivated()
-        //{
-        //    base.OnSceneNodeDeactivated();
-        //    UnregisterTick(ETickGroup.PostPhysics, (int)ETickOrder.Scene, Tick);
-        //}
-
-        private readonly SortedDictionary<float, List<(XRComponent? item, object? data)>> _traceOutput = [];
-
         private PhysxScene.PhysxQueryFilter _queryFilter = new()
         {
             Flags = MagicPhysX.PxQueryFlags.Static,
@@ -113,6 +101,27 @@ namespace XREngine.Components.Scene.Transforms
             set => SetField(ref _layerMask, value);
         }
 
+        private readonly HashSet<XRComponent> _ignoredComponents = [];
+        /// <summary>
+        /// Components whose physics bodies should be ignored during the boom trace.
+        /// Use this for explicit filtering when QueryFilter flags aren't sufficient.
+        /// By default, QueryFilter.Flags = PxQueryFlags.Static ensures only static geometry is hit.
+        /// </summary>
+        public HashSet<XRComponent> IgnoredComponents => _ignoredComponents;
+
+        protected internal override void OnSceneNodeActivated()
+        {
+            base.OnSceneNodeActivated();
+            RegisterTick(ETickGroup.Late, (int)ETickOrder.Scene, Tick);
+        }
+        //protected internal override void OnSceneNodeDeactivated()
+        //{
+        //    base.OnSceneNodeDeactivated();
+        //    UnregisterTick(ETickGroup.PostPhysics, (int)ETickOrder.Scene, Tick);
+        //}
+
+        private readonly SortedDictionary<float, List<(XRComponent? item, object? data)>> _traceOutput = [];
+
         private void Tick()
         {
             float newLength;
@@ -127,6 +136,18 @@ namespace XREngine.Components.Scene.Transforms
                     _layerMask,
                     _queryFilter,
                     _traceOutput);
+                
+                // Filter out ignored components from results
+                if (_ignoredComponents.Count > 0)
+                {
+                    foreach (var kvp in _traceOutput.ToArray())
+                    {
+                        kvp.Value.RemoveAll(hit => hit.item != null && _ignoredComponents.Contains(hit.item));
+                        if (kvp.Value.Count == 0)
+                            _traceOutput.Remove(kvp.Key);
+                    }
+                }
+                
                 if (_traceOutput.Count == 0)
                     newLength = MaxLength;
                 else

@@ -1,4 +1,4 @@
-﻿using Extensions;
+using Extensions;
 using XREngine.Data.Rendering;
 
 namespace XREngine.Rendering
@@ -257,7 +257,37 @@ namespace XREngine.Rendering
         public void BindForWriting()
         {
             _writeStack.Push(this);
+            TrackFBOBandwidth();
             OnBindForWrite();
+        }
+
+        /// <summary>
+        /// Calculates and tracks the FBO render bandwidth based on all attached render targets.
+        /// </summary>
+        private void TrackFBOBandwidth()
+        {
+            if (Targets == null || Targets.Length == 0)
+                return;
+
+            long totalBytes = 0;
+            foreach (var (target, _, _, _) in Targets)
+            {
+                if (target == null)
+                    continue;
+
+                long attachmentBytes = target switch
+                {
+                    XRTexture2D tex2D => (long)tex2D.Width * tex2D.Height * Engine.Rendering.Stats.GetBytesPerPixel(tex2D.SizedInternalFormat),
+                    XRTexture2DArray tex2DArray => (long)tex2DArray.Width * tex2DArray.Height * tex2DArray.Depth * Engine.Rendering.Stats.GetBytesPerPixel(tex2DArray.SizedInternalFormat),
+                    XRTexture2DArrayView tex2DArrayView => (long)tex2DArrayView.Width * tex2DArrayView.Height * Engine.Rendering.Stats.GetBytesPerPixel(tex2DArrayView.ViewedTexture.SizedInternalFormat),
+                    XRRenderBuffer renderBuffer => (long)renderBuffer.Width * renderBuffer.Height * Engine.Rendering.Stats.GetBytesPerPixel(renderBuffer.Type),
+                    _ => (long)target.Width * target.Height * 4 // Default estimate of 4 bytes per pixel
+                };
+
+                totalBytes += attachmentBytes;
+            }
+
+            Engine.Rendering.Stats.AddFBOBandwidth(totalBytes);
         }
 
         private void OnBindForWrite()

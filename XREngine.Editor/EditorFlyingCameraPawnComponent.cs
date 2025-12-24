@@ -1,7 +1,8 @@
-﻿using Extensions;
+using Extensions;
 using ImageMagick;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
+using System.IO;
 using System.Linq;
 using System.Numerics;
 using XREngine.Components;
@@ -75,6 +76,39 @@ public partial class EditorFlyingCameraPawnComponent : FlyingCameraPawnComponent
         {
             var tool = TransformTool3D.GetInstance(selection[0].Transform);
             TransformToolUndoAdapter.Attach(tool);
+        }
+        UpdateSelectionHighlight();
+    }
+
+    /// <summary>
+    /// Updates the selection highlight, enabling stencil on selected meshes and disabling on deselected ones.
+    /// </summary>
+    private void UpdateSelectionHighlight()
+    {
+        // Clear previous selection highlights
+        foreach (var material in _currentSelectionHighlightMaterials)
+            DefaultRenderPipeline.SetHighlighted(material, false);
+        _currentSelectionHighlightMaterials.Clear();
+
+        if (!SelectionOutlineEnabled)
+            return;
+
+        // Highlight materials of selected nodes
+        foreach (var node in Selection.SceneNodes)
+        {
+            var modelComponent = node.GetComponent<ModelComponent>();
+            if (modelComponent is null)
+                continue;
+
+            foreach (var mesh in modelComponent.Meshes)
+            {
+                foreach (var lod in mesh.LODs)
+                {
+                    var material = lod.Renderer.Material;
+                    if (material is not null && _currentSelectionHighlightMaterials.Add(material))
+                        DefaultRenderPipeline.SetHighlighted(material, true, isSelection: true);
+                }
+            }
         }
     }
 
@@ -248,16 +282,74 @@ public partial class EditorFlyingCameraPawnComponent : FlyingCameraPawnComponent
 
     #endregion
 
-    private bool _renderRaycast = true;
+    private bool _renderHoveredPrimitive = true;
     /// <summary>
-    /// If true, renders debug information for raycast hits.
+    /// If true, renders the currently hovered primitive (face, edge, or vertex) based on RaycastMode.
     /// </summary>
     [Category("Raycasting")]
-    public bool RenderRaycast
+    [DisplayName("Render Hovered Primitive")]
+    [Description("When enabled, renders the hovered face, edge, or vertex depending on the raycast mode.")]
+    public bool RenderHoveredPrimitive
     {
-        get => _renderRaycast;
-        set => SetField(ref _renderRaycast, value);
+        get => _renderHoveredPrimitive;
+        set => SetField(ref _renderHoveredPrimitive, value);
     }
+
+    private ColorF4 _hoveredFaceFillColor = new(1.0f, 0.9f, 0.0f, 0.4f);
+    /// <summary>
+    /// The fill color for hovered faces (with stipple pattern).
+    /// </summary>
+    [Category("Raycasting")]
+    [DisplayName("Hovered Face Fill Color")]
+    [Description("The fill color for hovered faces with diagonal stipple pattern.")]
+    public ColorF4 HoveredFaceFillColor
+    {
+        get => _hoveredFaceFillColor;
+        set => SetField(ref _hoveredFaceFillColor, value);
+    }
+
+    private ColorF4 _hoveredFaceEdgeColor = ColorF4.Yellow;
+    /// <summary>
+    /// The edge/outline color for hovered faces.
+    /// </summary>
+    [Category("Raycasting")]
+    [DisplayName("Hovered Face Edge Color")]
+    [Description("The color of the edges around hovered faces.")]
+    public ColorF4 HoveredFaceEdgeColor
+    {
+        get => _hoveredFaceEdgeColor;
+        set => SetField(ref _hoveredFaceEdgeColor, value);
+    }
+
+    private float _stippleScale = 8.0f;
+    /// <summary>
+    /// The scale of the diagonal stipple pattern in pixels.
+    /// </summary>
+    [Category("Raycasting")]
+    [DisplayName("Stipple Scale")]
+    [Description("The scale of the diagonal stipple pattern in screen pixels.")]
+    public float StippleScale
+    {
+        get => _stippleScale;
+        set => SetField(ref _stippleScale, value);
+    }
+
+    private float _stippleThickness = 2.0f;
+    /// <summary>
+    /// The thickness of the stipple lines.
+    /// </summary>
+    [Category("Raycasting")]
+    [DisplayName("Stipple Thickness")]
+    [Description("The thickness of the stipple lines in the pattern.")]
+    public float StippleThickness
+    {
+        get => _stippleThickness;
+        set => SetField(ref _stippleThickness, value);
+    }
+
+    // Stippled triangle renderer components
+    private XRMeshRenderer? _stippledTriangleRenderer;
+    private XRMesh? _stippledTriangleMesh;
 
     private bool _hoverOutlineEnabled = true;
     /// <summary>
@@ -276,10 +368,45 @@ public partial class EditorFlyingCameraPawnComponent : FlyingCameraPawnComponent
         }
     }
 
+    private bool _renderHoveredNodeName = true;
+    /// <summary>
+    /// If true, renders the name of the hovered scene node as debug text.
+    /// </summary>
+    [Category("Raycasting")]
+    [DisplayName("Render Hovered Node Name")]
+    [Description("When enabled, displays the scene node name at the hit point.")]
+    public bool RenderHoveredNodeName
+    {
+        get => _renderHoveredNodeName;
+        set => SetField(ref _renderHoveredNodeName, value);
+    }
+
+    private bool _selectionOutlineEnabled = true;
+    /// <summary>
+    /// If true, renders an outline around selected meshes using stencil buffer.
+    /// </summary>
+    [Category("Selection")]
+    [DisplayName("Selection Outline")]
+    [Description("When enabled, renders an outline around selected meshes.")]
+    public bool SelectionOutlineEnabled
+    {
+        get => _selectionOutlineEnabled;
+        set
+        {
+            if (SetField(ref _selectionOutlineEnabled, value))
+                UpdateSelectionHighlight();
+        }
+    }
+
     /// <summary>
     /// The material currently highlighted for hover outline.
     /// </summary>
     private XRMaterial? _currentHoverHighlightMaterial = null;
+
+    /// <summary>
+    /// The materials currently highlighted for selection outline.
+    /// </summary>
+    private readonly HashSet<XRMaterial> _currentSelectionHighlightMaterials = [];
 
     private PhysxScene.PhysxQueryFilter _physxQueryFilter = new();
     [Category("Raycasting")]
@@ -425,7 +552,7 @@ public partial class EditorFlyingCameraPawnComponent : FlyingCameraPawnComponent
         if (Engine.Rendering.State.IsShadowPass)
             return;
 
-        if (RenderRaycast)
+        if (RenderHoveredPrimitive)
             RenderPickModeOverlay();
         
         if (RenderWorldDragPoint && (WorldDragPoint.HasValue || DepthHitNormalizedViewportPoint.HasValue) && Viewport is not null)
@@ -457,7 +584,7 @@ public partial class EditorFlyingCameraPawnComponent : FlyingCameraPawnComponent
         switch (RaycastMode)
         {
             case ERaycastHitMode.Faces when _facePickResult is Triangle hit:
-                Engine.Rendering.Debug.RenderTriangle(hit, ColorF4.Yellow, true);
+                RenderStippledTriangle(hit);
                 break;
             case ERaycastHitMode.Lines when _edgePickResult is MeshEdgePickResult edgeHit:
                 Engine.Rendering.Debug.RenderLine(edgeHit.EdgeStart, edgeHit.EdgeEnd, ColorF4.Cyan);
@@ -467,6 +594,81 @@ public partial class EditorFlyingCameraPawnComponent : FlyingCameraPawnComponent
                 Engine.Rendering.Debug.RenderPoint(vertexHit.Position, ColorF4.Yellow);
                 break;
         }
+    }
+
+    /// <summary>
+    /// Renders a triangle with stippled fill and solid edge lines.
+    /// </summary>
+    private void RenderStippledTriangle(Triangle triangle)
+    {
+        // Render edge lines
+        Engine.Rendering.Debug.RenderLine(triangle.A, triangle.B, HoveredFaceEdgeColor);
+        Engine.Rendering.Debug.RenderLine(triangle.B, triangle.C, HoveredFaceEdgeColor);
+        Engine.Rendering.Debug.RenderLine(triangle.C, triangle.A, HoveredFaceEdgeColor);
+
+        // Render stippled fill
+        EnsureStippledTriangleRenderer();
+        if (_stippledTriangleRenderer is null || _stippledTriangleMesh is null)
+            return;
+
+        // Update mesh vertices to match the triangle
+        UpdateStippledTriangleMesh(triangle);
+
+        // Update material uniforms
+        var mat = _stippledTriangleRenderer.Material;
+        if (mat is not null)
+        {
+            mat.SetVector4("FillColor", HoveredFaceFillColor);
+            mat.SetFloat("StippleScale", StippleScale);
+            mat.SetFloat("StippleThickness", StippleThickness);
+        }
+
+        // Render the stippled triangle
+        _stippledTriangleRenderer.Render(Matrix4x4.Identity, Matrix4x4.Identity);
+    }
+
+    /// <summary>
+    /// Ensures the stippled triangle renderer is initialized.
+    /// </summary>
+    private void EnsureStippledTriangleRenderer()
+    {
+        if (_stippledTriangleRenderer is not null)
+            return;
+
+        // Create the mesh with placeholder vertices
+        _stippledTriangleMesh = XRMesh.CreateTriangles(Vector3.Zero, Vector3.UnitX, Vector3.UnitY);
+
+        // Create the material with stippled shader
+        var fragShader = ShaderHelper.LoadEngineShader(Path.Combine("Common", "Debug", "StippledTriangle.fs"), EShaderType.Fragment);
+        ShaderVar[] vars =
+        [
+            new ShaderVector4(HoveredFaceFillColor, "FillColor"),
+            new ShaderFloat(StippleScale, "StippleScale"),
+            new ShaderFloat(StippleThickness, "StippleThickness"),
+        ];
+        var mat = new XRMaterial(vars, fragShader);
+        mat.RenderOptions.CullMode = ECullMode.None;
+        mat.RenderOptions.DepthTest.Enabled = ERenderParamUsage.Enabled;
+        mat.RenderOptions.DepthTest.UpdateDepth = false;
+        mat.EnableTransparency();
+        mat.RenderPass = (int)EDefaultRenderPass.TransparentForward;
+
+        _stippledTriangleRenderer = new XRMeshRenderer(_stippledTriangleMesh, mat);
+    }
+
+    /// <summary>
+    /// Updates the stippled triangle mesh with new vertex positions.
+    /// </summary>
+    private void UpdateStippledTriangleMesh(Triangle triangle)
+    {
+        if (_stippledTriangleMesh is null)
+            return;
+
+        // Update the position buffer directly
+        _stippledTriangleMesh.SetPosition(0, triangle.A);
+        _stippledTriangleMesh.SetPosition(1, triangle.B);
+        _stippledTriangleMesh.SetPosition(2, triangle.C);
+        _stippledTriangleMesh.PositionsBuffer?.PushSubData();
     }
 
     #region Debug Camera Mode Implementation
@@ -852,9 +1054,6 @@ public partial class EditorFlyingCameraPawnComponent : FlyingCameraPawnComponent
             }
         }
 
-        if (!RenderRaycast)
-            return;
-
         //foreach (var x in _lastPhysicsPickResults.Values)
         //    foreach (var (c2, _) in x)
         //        if (c2?.SceneNode is not null)
@@ -865,8 +1064,10 @@ public partial class EditorFlyingCameraPawnComponent : FlyingCameraPawnComponent
     {
         UpdateMeshHitVisualization(dictionary);
 
-        if (RenderRaycast)
+        if (HoverOutlineEnabled || RenderHoveredNodeName)
             TryRenderFirstRaycastResult(dictionary);
+        else
+            ClearHoverHighlight();
 
         using (_raycastLock.EnterScope())
         {
@@ -1039,20 +1240,26 @@ public partial class EditorFlyingCameraPawnComponent : FlyingCameraPawnComponent
                     MeshVertexPickResult vertexHit => vertexHit.FaceHit.Mesh?.CurrentLODRenderer?.Material,
                     _ => null
                 };
+                // Skip materials that are already highlighted for selection
+                if (firstHitMaterial is not null && _currentSelectionHighlightMaterials.Contains(firstHitMaterial))
+                    firstHitMaterial = null;
             }
 
             if (point is null)
                 continue;
 
-            string? name = info.Owner switch
+            if (RenderHoveredNodeName)
             {
-                XRComponent component when component.SceneNode?.Name is string nodeName => nodeName,
-                TransformBase transform when transform.Name is not null => transform.Name,
-                _ => null
-            };
+                string? name = info.Owner switch
+                {
+                    XRComponent component when component.SceneNode?.Name is string nodeName => nodeName,
+                    TransformBase transform when transform.Name is not null => transform.Name,
+                    _ => null
+                };
 
-            if (name is not null)
-                Engine.Rendering.Debug.RenderText(point.Value, name, ColorF4.Black);
+                if (name is not null)
+                    Engine.Rendering.Debug.RenderText(point.Value, name, ColorF4.Black);
+            }
             //Engine.Rendering.Debug.RenderPoint(point.Value, ColorF4.Red);
         }
 

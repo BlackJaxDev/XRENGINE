@@ -7,7 +7,7 @@ using XREngine.Components.Animation;
 using XREngine.Editor;
 using XREngine.Scene;
 using XREngine.Scene.Transforms;
-using static XREngine.Editor.UnitTestingWorld.UserInterface;
+using static XREngine.Editor.EditorImGuiUI;
 
 namespace XREngine.Editor.ComponentEditors;
 

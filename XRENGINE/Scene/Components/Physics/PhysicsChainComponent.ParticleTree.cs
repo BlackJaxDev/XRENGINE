@@ -9,7 +9,7 @@ public partial class PhysicsChainComponent
     class ParticleTree(Transform root) : XRBase
     {
         public Transform Root { get; } = root;
-        public Matrix4x4 RootWorldToLocalMatrix { get; } = root.InverseWorldMatrix;
+        public Matrix4x4 RootWorldToLocalMatrix => Root.InverseWorldMatrix;
 
         private Vector3 _localGravity;
         public Vector3 LocalGravity
