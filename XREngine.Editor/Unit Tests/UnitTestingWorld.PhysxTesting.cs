@@ -100,12 +100,11 @@ public static partial class UnitTestingWorld
     private static void AddStaticBox(SceneNode rootNode, string name, Vector3 halfExtents, Vector3 position, Quaternion rotation)
     {
         var node = new SceneNode(rootNode) { Name = name };
-        node.SetTransform<RigidBodyTransform>();
+        var tfm = node.SetTransform<RigidBodyTransform>();
+        tfm.SetPositionAndRotation(position, rotation);
 
         var body = node.AddComponent<StaticRigidBodyComponent>()!;
         body.Geometry = new IPhysicsGeometry.Box(halfExtents);
-        body.InitialPosition = position;
-        body.InitialRotation = rotation;
 
         var model = node.AddComponent<ModelComponent>()!;
         var mat = XRMaterial.CreateLitColorMaterial(ColorF4.DarkGray);

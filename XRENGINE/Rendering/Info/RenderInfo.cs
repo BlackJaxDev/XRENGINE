@@ -1,4 +1,4 @@
-﻿using XREngine.Components;
+using XREngine.Components;
 using XREngine.Data.Core;
 using XREngine.Data.Rendering;
 using XREngine.Data.Trees;

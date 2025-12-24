@@ -1,4 +1,4 @@
-﻿namespace XREngine.Data.Rendering
+namespace XREngine.Data.Rendering
 {
     //public class VertexAttribInfo(EBufferType type, uint index = 0)
     //{

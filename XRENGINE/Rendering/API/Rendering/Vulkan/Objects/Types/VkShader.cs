@@ -1,4 +1,4 @@
-﻿using System.Collections.Generic;
+using System.Collections.Generic;
 using Silk.NET.Core.Native;
 using Silk.NET.Vulkan;
 using XREngine;

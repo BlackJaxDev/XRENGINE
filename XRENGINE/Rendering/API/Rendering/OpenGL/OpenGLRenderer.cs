@@ -1,4 +1,4 @@
-﻿using Extensions;
+using Extensions;
 using ImageMagick;
 using Silk.NET.OpenGL;
 using Silk.NET.OpenGL.Extensions.ARB;

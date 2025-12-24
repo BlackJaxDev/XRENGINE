@@ -1,4 +1,4 @@
-﻿using Newtonsoft.Json;
+using Newtonsoft.Json;
 using Newtonsoft.Json.Converters;
 using System;
 using System.Numerics;
@@ -46,7 +46,6 @@ internal class Program
             opts.SkipIndirectTailClear = false;
             opts.DisableCountDrawPath = false;
         });
-        Engine.UserSettings.RenderLibrary = UnitTestingWorld.Toggles.RenderAPI;
         Engine.Run(/*Engine.LoadOrGenerateGameSettings(() => */GetEngineSettings(UnitTestingWorld.CreateSelectedWorld(true, false)/*), "startup", false*/), Engine.LoadOrGenerateGameState());
     }
 
@@ -132,18 +131,22 @@ internal class Program
                     Height = h,
                 }
             ],
-            OutputVerbosity = EOutputVerbosity.Verbose,
             DefaultUserSettings = new UserSettings()
             {
                 TargetFramesPerSecond = renderHz,
                 VSync = EVSyncMode.Off,
-                UseDebugOpaquePipeline = ResolveDebugOpaquePipelineSetting(),
-                GPURenderDispatch = UnitTestingWorld.Toggles.GPURenderDispatch,
+                RenderLibrary = UnitTestingWorld.Toggles.RenderAPI,
+                PhysicsLibrary = UnitTestingWorld.Toggles.PhysicsAPI,
             },
+            GPURenderDispatch = UnitTestingWorld.Toggles.GPURenderDispatch,
             TargetUpdatesPerSecond = updateHz,
             FixedFramesPerSecond = fixedHz,
             NetworkingType = GameStartupSettings.ENetworkingType.Client,
         };
+
+        // Apply engine settings
+        Engine.Rendering.Settings.UseDebugOpaquePipeline = ResolveDebugOpaquePipelineSetting();
+        Engine.Rendering.Settings.OutputVerbosity = EOutputVerbosity.Verbose;
 
         // Allow overriding networking mode via env var for quick local testing.
         string? netOverride = Environment.GetEnvironmentVariable("XRE_NET_MODE");

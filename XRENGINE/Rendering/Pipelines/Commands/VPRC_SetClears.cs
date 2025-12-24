@@ -1,4 +1,4 @@
-﻿using XREngine.Data.Colors;
+using XREngine.Data.Colors;
 
 namespace XREngine.Rendering.Pipelines.Commands
 {

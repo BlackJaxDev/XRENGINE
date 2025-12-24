@@ -1,4 +1,4 @@
-﻿namespace XREngine.Rendering.Shaders.Generator
+namespace XREngine.Rendering.Shaders.Generator
 {
     public class VarNameGen
     {

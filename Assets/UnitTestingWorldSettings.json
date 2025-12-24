@@ -9,7 +9,7 @@
   "VideoStreamingAudio": false,
   "DearImGuiUI": false,
   "DearImGuiProfiler": true,
-  "EnableProfilerLogging": false,
+  "EnableProfilerLogging": true,
   "RiveUI": false,
   "GPURenderDispatch": false,
   "Skybox": true,

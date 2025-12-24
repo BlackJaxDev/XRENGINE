@@ -1,4 +1,4 @@
-﻿using Silk.NET.OpenXR;
+using Silk.NET.OpenXR;
 using Silk.NET.OpenXR.Extensions.EXT;
 using System.Runtime.InteropServices;
 

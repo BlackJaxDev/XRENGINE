@@ -1,4 +1,4 @@
-﻿using System.Numerics;
+using System.Numerics;
 using XREngine.Components.Lights;
 using XREngine.Data;
 using XREngine.Data.Colors;

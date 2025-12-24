@@ -1,4 +1,4 @@
-﻿//using Extensions;
+//using Extensions;
 //using System.Collections.Concurrent;
 //using System.ComponentModel;
 //using XREngine.Data.Core;

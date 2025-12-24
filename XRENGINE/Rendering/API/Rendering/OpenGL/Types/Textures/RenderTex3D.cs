@@ -1,4 +1,4 @@
-﻿//using System;
+//using System;
 //using XREngine.Core.Maths;
 //using XREngine.Data.Rendering;
 

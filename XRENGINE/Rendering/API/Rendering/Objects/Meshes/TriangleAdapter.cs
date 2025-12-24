@@ -1,4 +1,4 @@
-﻿using SimpleScene.Util.ssBVH;
+using SimpleScene.Util.ssBVH;
 using System.Numerics;
 using Triangle = XREngine.Data.Geometry.Triangle;
 

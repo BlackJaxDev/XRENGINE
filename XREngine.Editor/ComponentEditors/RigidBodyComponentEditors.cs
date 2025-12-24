@@ -304,7 +304,7 @@ public sealed class DynamicRigidBodyComponentEditor : IXRComponentEditor
     {
         if (component is not DynamicRigidBodyComponent rigidBodyComponent)
         {
-            UnitTestingWorld.UserInterface.DrawDefaultComponentInspector(component, visited);
+            EditorImGuiUI.DrawDefaultComponentInspector(component, visited);
             ComponentEditorLayout.DrawActivePreviewDialog();
             return;
         }
@@ -572,7 +572,7 @@ public sealed class StaticRigidBodyComponentEditor : IXRComponentEditor
     {
         if (component is not StaticRigidBodyComponent rigidBodyComponent)
         {
-            UnitTestingWorld.UserInterface.DrawDefaultComponentInspector(component, visited);
+            EditorImGuiUI.DrawDefaultComponentInspector(component, visited);
             ComponentEditorLayout.DrawActivePreviewDialog();
             return;
         }
@@ -627,32 +627,6 @@ public sealed class StaticRigidBodyComponentEditor : IXRComponentEditor
         Vector4 rotation = RigidBodyEditorShared.QuaternionToVector4(component.ShapeOffsetRotation);
         if (ImGui.DragFloat4("Shape Rotation (xyzw)", ref rotation, 0.01f))
             component.ShapeOffsetRotation = RigidBodyEditorShared.Vector4ToQuaternion(rotation);
-
-        bool overridePose = component.InitialPosition.HasValue || component.InitialRotation.HasValue;
-        if (ImGui.Checkbox("Override initial pose", ref overridePose))
-        {
-            if (!overridePose)
-            {
-                component.InitialPosition = null;
-                component.InitialRotation = null;
-            }
-            else
-            {
-                component.InitialPosition = component.Transform.WorldTranslation;
-                component.InitialRotation = component.Transform.WorldRotation;
-            }
-        }
-
-        if (overridePose)
-        {
-            Vector3 initialPos = component.InitialPosition ?? component.Transform.WorldTranslation;
-            if (ImGui.DragFloat3("Initial Position", ref initialPos, 0.01f))
-                component.InitialPosition = initialPos;
-
-            Vector4 initialRot = RigidBodyEditorShared.QuaternionToVector4(component.InitialRotation ?? component.Transform.WorldRotation);
-            if (ImGui.DragFloat4("Initial Rotation (xyzw)", ref initialRot, 0.01f))
-                component.InitialRotation = RigidBodyEditorShared.Vector4ToQuaternion(initialRot);
-        }
     }
 
     private static void DrawActorSettings(StaticRigidBodyComponent component)

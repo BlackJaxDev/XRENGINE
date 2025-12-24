@@ -8,7 +8,7 @@ using XREngine.Rendering.Physics.Physx;
 using XREngine.Scene;
 using XREngine.Scene.Transforms;
 using XREngine.Editor;
-using static XREngine.Editor.UnitTestingWorld.UserInterface;
+using static XREngine.Editor.EditorImGuiUI;
 
 namespace XREngine.Editor.TransformEditors;
 

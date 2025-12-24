@@ -777,17 +777,6 @@ namespace XREngine.Components.Physics
             return created;
         }
 
-        private (Vector3 position, Quaternion rotation) GetSpawnPose()
-        {
-            /*
-            if (InitialPosition != Vector3.Zero || InitialRotation != Quaternion.Identity)
-                return (InitialPosition != Vector3.Zero ? InitialPosition : Transform.WorldTranslation, InitialRotation != Quaternion.Identity ? InitialRotation : Transform.WorldRotation);
-            */
-            var matrix = Transform.WorldMatrix;
-            Matrix4x4.Decompose(matrix, out _, out Quaternion rotation, out Vector3 translation);
-            return (translation, rotation);
-        }
-
         protected override bool OnPropertyChanging<T>(string? propName, T field, T @new)
         {
             bool change = base.OnPropertyChanging(propName, field, @new);

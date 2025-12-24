@@ -8,6 +8,11 @@ namespace XREngine.Scene.Physics.Jolt
     // Jolt Static Rigid Body
     public class JoltStaticRigidBody : JoltRigidActor, IAbstractStaticRigidBody
     {
+        internal JoltStaticRigidBody(BodyID bodyId)
+        {
+            BodyID = bodyId;
+        }
+
         private StaticRigidBodyComponent? _owningComponent;
         public StaticRigidBodyComponent? OwningComponent
         {

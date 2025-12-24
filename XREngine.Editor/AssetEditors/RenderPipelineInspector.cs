@@ -36,7 +36,7 @@ public sealed class RenderPipelineInspector : IXRAssetInspector
     {
         if (asset is not RenderPipeline pipeline)
         {
-            UnitTestingWorld.UserInterface.DrawDefaultAssetInspector(asset, visitedObjects);
+            EditorImGuiUI.DrawDefaultAssetInspector(asset, visitedObjects);
             return;
         }
 
@@ -536,7 +536,7 @@ public sealed class RenderPipelineInspector : IXRAssetInspector
             ImGui.TextDisabled($"Collect Visible Hook: {selected.NeedsCollecVisible}");
 
             ImGui.Separator();
-            UnitTestingWorld.UserInterface.DrawRuntimeObjectInspector("Command Properties", selected, visited, defaultOpen: true);
+            EditorImGuiUI.DrawRuntimeObjectInspector("Command Properties", selected, visited, defaultOpen: true);
         }
     }
 
@@ -550,7 +550,7 @@ public sealed class RenderPipelineInspector : IXRAssetInspector
             return;
 
         ImGui.PushID("RenderPipelineRawInspector");
-        UnitTestingWorld.UserInterface.DrawDefaultAssetInspector(pipeline, visited);
+        EditorImGuiUI.DrawDefaultAssetInspector(pipeline, visited);
         ImGui.PopID();
     }
 

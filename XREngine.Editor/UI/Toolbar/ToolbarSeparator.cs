@@ -1,4 +1,4 @@
-﻿using XREngine.Rendering.UI;
+using XREngine.Rendering.UI;
 
 namespace XREngine.Editor.UI.Toolbar;
 

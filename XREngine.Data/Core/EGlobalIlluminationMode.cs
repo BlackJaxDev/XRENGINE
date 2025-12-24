@@ -10,5 +10,6 @@ namespace XREngine
         Restir = 2,
         VoxelConeTracing = 3,
         LightVolumes = 4,
+        RadianceCascades = 5,
     }
 }

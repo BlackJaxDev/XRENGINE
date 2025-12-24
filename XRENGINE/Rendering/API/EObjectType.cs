@@ -1,4 +1,4 @@
-﻿namespace XREngine.Rendering
+namespace XREngine.Rendering
 {
     /// <summary>
     /// The type of render object that is handled by the renderer.

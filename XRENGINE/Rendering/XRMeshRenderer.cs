@@ -1,4 +1,4 @@
-﻿using Extensions;
+using Extensions;
 using MemoryPack;
 using System.Diagnostics.CodeAnalysis;
 using System.Numerics;
@@ -385,7 +385,7 @@ namespace XREngine.Rendering
         private int _maxMeshDeformInfluences = 8;
         /// <summary>
         /// Maximum number of deformer mesh vertices that can influence each vertex.
-        /// Default is 8. Lower values use more efficient vec4 packing when ≤ 4.
+        /// Default is 8. Lower values use more efficient vec4 packing when = 4.
         /// </summary>
         public int MaxMeshDeformInfluences
         {
@@ -402,7 +402,7 @@ namespace XREngine.Rendering
 
         private bool _optimizeMeshDeformToVec4 = true;
         /// <summary>
-        /// If true and MaxMeshDeformInfluences ≤ 4, packs indices and weights into vec4 attributes for better performance.
+        /// If true and MaxMeshDeformInfluences = 4, packs indices and weights into vec4 attributes for better performance.
         /// </summary>
         public bool OptimizeMeshDeformToVec4
         {

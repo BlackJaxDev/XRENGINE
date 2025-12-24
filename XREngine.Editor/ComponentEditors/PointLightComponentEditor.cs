@@ -10,7 +10,7 @@ public sealed class PointLightComponentEditor : IXRComponentEditor
     {
         if (component is not PointLightComponent light)
         {
-            UnitTestingWorld.UserInterface.DrawDefaultComponentInspector(component, visited);
+            EditorImGuiUI.DrawDefaultComponentInspector(component, visited);
             ComponentEditorLayout.DrawActivePreviewDialog();
             return;
         }

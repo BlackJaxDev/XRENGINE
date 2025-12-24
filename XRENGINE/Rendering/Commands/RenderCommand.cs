@@ -1,4 +1,4 @@
-﻿using XREngine.Data.Core;
+using XREngine.Data.Core;
 using XREngine.Data.Rendering;
 
 namespace XREngine.Rendering.Commands

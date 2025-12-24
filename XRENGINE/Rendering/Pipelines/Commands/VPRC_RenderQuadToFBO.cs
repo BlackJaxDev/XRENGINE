@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using XREngine.Rendering.RenderGraph;
 
 namespace XREngine.Rendering.Pipelines.Commands

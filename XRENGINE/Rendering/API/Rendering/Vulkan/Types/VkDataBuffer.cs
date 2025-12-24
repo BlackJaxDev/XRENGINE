@@ -19,6 +19,11 @@ namespace XREngine.Rendering.Vulkan
             private DeviceMemory? _vkMemory;
             private ulong _bufferSize = 0;
 
+            /// <summary>
+            /// Tracks the currently allocated GPU memory size for this buffer in bytes.
+            /// </summary>
+            private long _allocatedVRAMBytes = 0;
+
             // For dynamic/multi-frame: per-frame buffers (optional, not fully implemented)
             // private VulkanBuffer[]? _perFrameBuffers;
             // private VulkanDeviceMemory[]? _perFrameMemories;
@@ -99,7 +104,7 @@ namespace XREngine.Rendering.Vulkan
                     _lastMemProps == memProps)
                     return;
 
-                // Destroy previous buffer if exists
+                // Destroy previous buffer if exists (this will also track VRAM deallocation)
                 Destroy();
                 _bufferSize = Data.Length;
                 _lastUsageFlags = usage;
@@ -130,6 +135,10 @@ namespace XREngine.Rendering.Vulkan
                     // Host-visible buffer for dynamic/stream
                     (_vkBuffer, _vkMemory) = Renderer.CreateBuffer(_bufferSize, usage, memProps, Data.TryGetAddress(out var address) ? address : null);
                 }
+
+                // Track VRAM allocation
+                _allocatedVRAMBytes = (long)_bufferSize;
+                Engine.Rendering.Stats.AddBufferAllocation(_allocatedVRAMBytes);
 
                 if (Data.DisposeOnPush)
                     Data.Dispose();
@@ -336,6 +345,13 @@ namespace XREngine.Rendering.Vulkan
 
             protected override void DeleteObjectInternal()
             {
+                // Track VRAM deallocation
+                if (_allocatedVRAMBytes > 0)
+                {
+                    Engine.Rendering.Stats.RemoveBufferAllocation(_allocatedVRAMBytes);
+                    _allocatedVRAMBytes = 0;
+                }
+
                 // Clean up Vulkan resources
                 if (_vkBuffer.HasValue)
                 {

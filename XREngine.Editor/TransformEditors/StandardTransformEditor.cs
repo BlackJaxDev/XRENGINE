@@ -5,7 +5,7 @@ using ImGuiNET;
 using XREngine.Animation;
 using XREngine.Scene.Transforms;
 using XREngine.Editor;
-using static XREngine.Editor.UnitTestingWorld.UserInterface;
+using static XREngine.Editor.EditorImGuiUI;
 
 namespace XREngine.Editor.TransformEditors;
 

@@ -83,7 +83,7 @@ public sealed class ModelComponentEditor : IXRComponentEditor
     {
         if (component is not ModelComponent modelComponent)
         {
-            UnitTestingWorld.UserInterface.DrawDefaultComponentInspector(component, visited);
+            EditorImGuiUI.DrawDefaultComponentInspector(component, visited);
             ComponentEditorLayout.DrawActivePreviewDialog();
             return;
         }

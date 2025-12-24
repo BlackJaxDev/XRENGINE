@@ -1,4 +1,4 @@
-﻿namespace XREngine.Data.Rendering
+namespace XREngine.Data.Rendering
 {
     public class VertexLine(Vertex v0, Vertex v1) : VertexPrimitive(v0, v1)
     {

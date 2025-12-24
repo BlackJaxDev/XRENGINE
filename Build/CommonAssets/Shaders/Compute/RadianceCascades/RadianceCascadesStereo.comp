@@ -1,0 +1,238 @@
+#version 450
+
+layout(local_size_x = 16, local_size_y = 16, local_size_z = 1) in;
+
+layout(binding = 0) uniform sampler2DArray gDepth;
+layout(binding = 1) uniform sampler2DArray gNormal;
+layout(binding = 2, rgba16f) uniform image2DArray gOutput; // read-write for temporal accumulation
+layout(binding = 7) uniform sampler2DArray gHistory; // previous frame GI for temporal accumulation
+
+layout(binding = 3) uniform sampler3D RadianceCascade0;
+layout(binding = 4) uniform sampler3D RadianceCascade1;
+layout(binding = 5) uniform sampler3D RadianceCascade2;
+layout(binding = 6) uniform sampler3D RadianceCascade3;
+
+uniform mat4 leftInvProjMatrix;
+uniform mat4 leftCameraToWorldMatrix;
+uniform mat4 rightInvProjMatrix;
+uniform mat4 rightCameraToWorldMatrix;
+
+uniform ivec2 resolution;
+uniform uint frameIndex;
+uniform mat4 volumeWorldToLocal;
+uniform vec4 volumeTintIntensity;
+
+uniform vec4 cascadeHalfExtents0;
+uniform vec4 cascadeHalfExtents1;
+uniform vec4 cascadeHalfExtents2;
+uniform vec4 cascadeHalfExtents3;
+uniform int cascadeCount;
+
+// New uniforms for improvements
+uniform float temporalBlendFactor; // 0.0 = no temporal, 0.9 = heavy temporal smoothing
+uniform float normalOffsetScale;   // Scale for normal-based sampling offset (reduces self-shadowing)
+uniform int debugMode;             // 0 = off, 1 = show cascade index, 2 = show blend weights
+
+const float CascadeBlendWidth = 0.1;
+const float CascadePriorityBias = 0.15;
+
+vec4 GetCascadeData(int idx)
+{
+    if (idx == 0) return cascadeHalfExtents0;
+    if (idx == 1) return cascadeHalfExtents1;
+    if (idx == 2) return cascadeHalfExtents2;
+    return cascadeHalfExtents3;
+}
+
+vec3 SampleCascadeTexture(int idx, vec3 uvw)
+{
+    if (idx == 0) return texture(RadianceCascade0, uvw).rgb;
+    if (idx == 1) return texture(RadianceCascade1, uvw).rgb;
+    if (idx == 2) return texture(RadianceCascade2, uvw).rgb;
+    return texture(RadianceCascade3, uvw).rgb;
+}
+
+// Sample with trilinear filtering and normal-oriented offset to reduce light leaking
+vec3 SampleCascadeWithOffset(int idx, vec3 uvw, vec3 normalLocal, vec3 halfExtents)
+{
+    vec3 texelSize = 1.0 / vec3(textureSize(RadianceCascade0, 0));
+    vec3 offset = normalLocal * texelSize * normalOffsetScale * halfExtents;
+    vec3 offsetUvw = clamp(uvw + offset * 0.5, vec3(0.001), vec3(0.999));
+    return SampleCascadeTexture(idx, offsetUvw);
+}
+
+vec3 ReconstructWorldPosition(vec2 uv, float depth, mat4 invProj, mat4 camToWorld)
+{
+    vec4 clip = vec4(uv * 2.0 - 1.0, depth * 2.0 - 1.0, 1.0);
+    vec4 view = invProj * clip;
+    view /= max(view.w, 1e-6);
+    vec4 world = camToWorld * view;
+    return world.xyz;
+}
+
+vec3 DecodeNormal(vec3 encoded, mat4 camToWorld)
+{
+    vec3 n = normalize(encoded * 2.0 - 1.0);
+    vec3 worldN = normalize((camToWorld * vec4(n, 0.0)).xyz);
+    return worldN;
+}
+
+bool ComputeUVW(int idx, vec3 localPos, out vec3 uvw, out float cascadeIntensity, out float blendWeight, out float priority)
+{
+    vec4 data = GetCascadeData(idx);
+    vec3 halfExtents = max(data.xyz, vec3(1e-4));
+    uvw = (localPos / halfExtents) * 0.5 + 0.5;
+    cascadeIntensity = data.w;
+    vec3 normalizedAbs = abs(localPos) / halfExtents;
+    float maxAxis = max(max(normalizedAbs.x, normalizedAbs.y), normalizedAbs.z);
+    blendWeight = 1.0 - smoothstep(1.0 - CascadeBlendWidth, 1.0, maxAxis);
+    priority = blendWeight + CascadePriorityBias * float(cascadeCount - idx) / float(max(cascadeCount, 1));
+    return maxAxis <= 1.0 + 1e-4;
+}
+
+vec3 GetCascadeDebugColor(int idx)
+{
+    if (idx == 0) return vec3(1.0, 0.2, 0.2);
+    if (idx == 1) return vec3(0.2, 1.0, 0.2);
+    if (idx == 2) return vec3(0.2, 0.2, 1.0);
+    return vec3(1.0, 1.0, 0.2);
+}
+
+void ProcessEye(ivec2 pix, int eye)
+{
+    vec2 uv = (vec2(pix) + 0.5) / vec2(resolution);
+    float depth = texture(gDepth, vec3(uv, float(eye))).r;
+
+    if (depth <= 0.0 || cascadeCount <= 0)
+    {
+        imageStore(gOutput, ivec3(pix, eye), vec4(0.0));
+        return;
+    }
+
+    mat4 invProj = (eye == 0) ? leftInvProjMatrix : rightInvProjMatrix;
+    mat4 camToWorld = (eye == 0) ? leftCameraToWorldMatrix : rightCameraToWorldMatrix;
+
+    vec3 worldPos = ReconstructWorldPosition(uv, depth, invProj, camToWorld);
+    vec3 normalWS = DecodeNormal(texture(gNormal, vec3(uv, float(eye))).rgb, camToWorld);
+
+    vec4 localPos4 = volumeWorldToLocal * vec4(worldPos, 1.0);
+    vec3 localPos = localPos4.xyz;
+    
+    mat3 worldToLocalRot = mat3(volumeWorldToLocal);
+    vec3 normalLocal = normalize(worldToLocalRot * normalWS);
+
+    int primaryIdx = -1;
+    int secondaryIdx = -1;
+    vec3 primaryUVW = vec3(0.5);
+    vec3 secondaryUVW = vec3(0.5);
+    vec3 primaryHalfExtents = vec3(1.0);
+    vec3 secondaryHalfExtents = vec3(1.0);
+    float primaryIntensity = 0.0;
+    float secondaryIntensity = 0.0;
+    float primaryPriority = -1.0;
+    float secondaryPriority = -1.0;
+    float primaryWeight = 0.0;
+    float secondaryWeight = 0.0;
+    vec3 lastUVW = vec3(0.5);
+    float lastIntensity = 0.0;
+
+    for (int i = 0; i < cascadeCount; ++i)
+    {
+        float intensity;
+        vec3 uvw;
+        float weight;
+        float priority;
+        bool inside = ComputeUVW(i, localPos, uvw, intensity, weight, priority);
+        lastUVW = uvw;
+        lastIntensity = intensity;
+        if (inside && weight > 0.0)
+        {
+            if (priority > primaryPriority)
+            {
+                secondaryIdx = primaryIdx;
+                secondaryUVW = primaryUVW;
+                secondaryHalfExtents = primaryHalfExtents;
+                secondaryIntensity = primaryIntensity;
+                secondaryPriority = primaryPriority;
+                secondaryWeight = primaryWeight;
+
+                primaryIdx = i;
+                primaryUVW = uvw;
+                primaryHalfExtents = GetCascadeData(i).xyz;
+                primaryIntensity = intensity;
+                primaryPriority = priority;
+                primaryWeight = weight;
+            }
+            else if (priority > secondaryPriority)
+            {
+                secondaryIdx = i;
+                secondaryUVW = uvw;
+                secondaryHalfExtents = GetCascadeData(i).xyz;
+                secondaryIntensity = intensity;
+                secondaryPriority = priority;
+                secondaryWeight = weight;
+            }
+        }
+    }
+
+    if (primaryIdx < 0)
+    {
+        primaryIdx = cascadeCount - 1;
+        primaryUVW = clamp(lastUVW, 0.0, 1.0);
+        primaryHalfExtents = GetCascadeData(primaryIdx).xyz;
+        primaryIntensity = lastIntensity;
+        primaryWeight = 1.0;
+        secondaryWeight = 0.0;
+    }
+
+    vec3 radiance = SampleCascadeWithOffset(primaryIdx, primaryUVW, normalLocal, primaryHalfExtents) 
+                    * primaryIntensity * primaryWeight;
+
+    if (secondaryIdx >= 0 && secondaryWeight > 0.0)
+    {
+        vec3 secondaryRadiance = SampleCascadeWithOffset(secondaryIdx, secondaryUVW, normalLocal, secondaryHalfExtents) 
+                                 * secondaryIntensity * secondaryWeight;
+        radiance += secondaryRadiance;
+        float totalWeight = primaryWeight + secondaryWeight;
+        if (totalWeight > 1e-4)
+            radiance /= totalWeight;
+    }
+
+    float hemisphereScale = max(0.0, normalWS.y * 0.35 + 0.65);
+    vec3 gi = radiance * volumeTintIntensity.rgb * volumeTintIntensity.a * hemisphereScale;
+
+    // Debug visualization modes
+    if (debugMode == 1)
+    {
+        gi = GetCascadeDebugColor(primaryIdx) * 0.5;
+        if (secondaryIdx >= 0)
+            gi = mix(gi, GetCascadeDebugColor(secondaryIdx) * 0.5, secondaryWeight / max(primaryWeight + secondaryWeight, 1e-4));
+    }
+    else if (debugMode == 2)
+    {
+        gi = vec3(primaryWeight);
+    }
+
+    // Temporal accumulation
+    if (temporalBlendFactor > 0.0)
+    {
+        vec3 history = texture(gHistory, vec3(uv, float(eye))).rgb;
+        float effectiveBlend = temporalBlendFactor;
+        vec3 minBound = gi - vec3(0.5);
+        vec3 maxBound = gi + vec3(0.5);
+        vec3 clampedHistory = clamp(history, minBound, maxBound);
+        gi = mix(gi, clampedHistory, effectiveBlend);
+    }
+
+    imageStore(gOutput, ivec3(pix, eye), vec4(gi, 1.0));
+}
+
+void main()
+{
+    ivec2 pix = ivec2(gl_GlobalInvocationID.xy);
+    if (pix.x >= resolution.x || pix.y >= resolution.y)
+        return;
+
+    ProcessEye(pix, 0);
+    ProcessEye(pix, 1);
+}

@@ -1,4 +1,4 @@
-﻿using XREngine.Core.Files;
+using XREngine.Core.Files;
 using static XREngine.Rendering.XRRenderProgram;
 
 namespace XREngine.Rendering.Pipelines.Commands

@@ -58,7 +58,7 @@ public sealed class GPULandscapeComponentEditor : IXRComponentEditor
     {
         if (component is not LandscapeComponent landscape)
         {
-            UnitTestingWorld.UserInterface.DrawDefaultComponentInspector(component, visited);
+            EditorImGuiUI.DrawDefaultComponentInspector(component, visited);
             ComponentEditorLayout.DrawActivePreviewDialog();
             return;
         }

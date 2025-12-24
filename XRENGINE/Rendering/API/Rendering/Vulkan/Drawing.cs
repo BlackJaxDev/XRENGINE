@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using ImageMagick;
 using Silk.NET.Vulkan;
 using System.Numerics;

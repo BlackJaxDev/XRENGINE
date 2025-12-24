@@ -1,4 +1,4 @@
-﻿namespace XREngine.Editor;
+namespace XREngine.Editor;
 
 public enum EVRGameAction
 {

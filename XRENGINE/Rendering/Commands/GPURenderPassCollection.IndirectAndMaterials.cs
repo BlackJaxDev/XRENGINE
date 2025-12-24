@@ -80,7 +80,7 @@ namespace XREngine.Rendering.Commands
                 uint frustumRej = values[3];
                 uint distRej = values[4];
 
-                if (Engine.UserSettings?.EnableGpuIndirectDebugLogging ?? false)
+                if (Engine.EffectiveSettings.EnableGpuIndirectDebugLogging)
                     Debug.Out($"{FormatDebugPrefix("Stats")} [GPU Stats] In={input} CulledOut={culled} Draws={drawn} RejFrustum={frustumRej} RejDist={distRej}");
                 Dbg($"Stats in={input} culled={culled} draws={drawn} frustumRej={frustumRej} distRej={distRej}", "Stats");
             }
@@ -200,7 +200,7 @@ namespace XREngine.Rendering.Commands
                 .AppendLine($"  CountBufferMapped={(_drawCountBuffer?.ActivelyMapping.Count > 0)} CulledBufferMapped={(_culledCountBuffer?.ActivelyMapping.Count > 0)}")
                 .AppendLine($"  SampleCount={sampleCount}");
 
-            if (Engine.UserSettings?.EnableGpuIndirectDebugLogging ?? false)
+            if (Engine.EffectiveSettings.EnableGpuIndirectDebugLogging)
                 Debug.Out(message.ToString());
         }
 

@@ -1,4 +1,4 @@
-﻿using XREngine.Data.Geometry;
+using XREngine.Data.Geometry;
 
 namespace XREngine.Rendering.Pipelines.Commands
 {

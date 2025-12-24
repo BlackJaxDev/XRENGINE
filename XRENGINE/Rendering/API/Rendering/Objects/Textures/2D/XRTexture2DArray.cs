@@ -1,4 +1,4 @@
-﻿using ImageMagick;
+using ImageMagick;
 using MemoryPack;
 using System.Numerics;
 using XREngine.Data;
@@ -73,11 +73,20 @@ namespace XREngine.Rendering
         [MemoryPackable]
         public partial class OVRMultiView(int offset, uint numViews)
         {
+            /// <summary>
+            /// Number of views in the multi-view texture.
+            /// </summary>
             public uint NumViews = numViews;
+            /// <summary>
+            /// Offset layer to start from when attaching to a framebuffer.
+            /// </summary>
             public int Offset = offset;
         }
 
         private OVRMultiView? _ovrMultiViewParameters;
+        /// <summary>
+        /// OVR Multi-View parameters for attaching this texture to an OVR multi-view extension enabled framebuffer.
+        /// </summary>
         public OVRMultiView? OVRMultiViewParameters
         {
             get => _ovrMultiViewParameters;

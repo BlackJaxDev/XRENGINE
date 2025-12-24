@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using Silk.NET.Input;
 using System.Collections.Generic;
 using System.Linq;
@@ -91,7 +91,7 @@ public static partial class UnitTestingWorld
             canvasTfm.Height = 1080.0f;
             canvasTfm.Padding = new Vector4(0.0f);
 
-            if (Toggles.RiveUI || Toggles.DearImGuiUI || Toggles.DearImGuiProfiler || Toggles.AddEditorUI)
+            if (Toggles.RiveUI || Toggles.DearImGuiUI || Toggles.AddEditorUI)
             {
                 var inputComponent = rootCanvasNode.AddComponent<UICanvasInputComponent>();
                 if (inputComponent is not null)
@@ -141,7 +141,7 @@ public static partial class UnitTestingWorld
                 }
             }
 
-            bool addDearImGui = UnitTestingWorld.Toggles.DearImGuiUI || UnitTestingWorld.Toggles.DearImGuiProfiler;
+            bool addDearImGui = UnitTestingWorld.Toggles.DearImGuiUI;
             if (addDearImGui)
             {
                 SceneNode dearImGuiNode = new(rootCanvasNode) { Name = "Dear ImGui Node" };
@@ -153,16 +153,7 @@ public static partial class UnitTestingWorld
                 tfm.Height = null;
 
                 var dearImGuiComponent = dearImGuiNode.AddComponent<DearImGuiComponent>();
-                if (dearImGuiComponent is null)
-                {
-                    Toggles.DearImGuiUI = false;
-                    Toggles.DearImGuiProfiler = false;
-                    dearImGuiNode.Parent = null;
-                }
-                else
-                {
-                    dearImGuiComponent.Draw += DrawDearImGuiTest;
-                }
+                dearImGuiComponent?.Draw += EditorImGuiUI.RenderEditor;
             }
             
             if (Toggles.AddEditorUI)
@@ -268,7 +259,7 @@ public static partial class UnitTestingWorld
         }
 
         //Draws the new project dialog if visible.
-        private static void DrawNewProjectDialog()
+        public static void DrawNewProjectDialog()
         {
             // Draw any active file browser dialogs
             ImGuiFileBrowser.DrawDialogs();
@@ -395,7 +386,7 @@ public static partial class UnitTestingWorld
             }
         }
 
-        private static string GetAssetDisplayName(XRAsset asset)
+        public static string GetAssetDisplayName(XRAsset asset)
         {
             if (!string.IsNullOrWhiteSpace(asset.Name))
                 return asset.Name;
@@ -404,7 +395,7 @@ public static partial class UnitTestingWorld
             return $"{asset.GetType().Name} ({asset.ID.ToString()[..8]})";
         }
 
-        private static async void SaveSingleAsset(XRAsset asset)
+        public static async void SaveSingleAsset(XRAsset asset)
         {
             var assets = Engine.Assets;
             if (assets is null)
@@ -547,7 +538,7 @@ public static partial class UnitTestingWorld
             }
         }
 
-        private static void UndoMultiple(int targetIndex)
+        public static void UndoMultiple(int targetIndex)
         {
             for (int i = 0; i <= targetIndex; i++)
             {
@@ -556,7 +547,7 @@ public static partial class UnitTestingWorld
             }
         }
 
-        private static void RedoMultiple(int targetIndex)
+        public static void RedoMultiple(int targetIndex)
         {
             for (int i = 0; i <= targetIndex; i++)
             {

@@ -1,4 +1,4 @@
-﻿using System.Numerics;
+using System.Numerics;
 using XREngine.Components;
 using XREngine.Data.Geometry;
 using XREngine.Rendering.Commands;

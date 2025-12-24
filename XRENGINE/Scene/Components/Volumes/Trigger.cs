@@ -1,48 +1,45 @@
-﻿using Extensions;
-using System.Drawing;
-using XREngine.Components.Scene.Shapes;
+﻿using System.ComponentModel;
+using System.Numerics;
 using XREngine.Data.Core;
-using XREngine.Physics;
-using XREngine.Physics.ContactTesting;
+using XREngine.Rendering.Physics.Physx;
+using XREngine.Scene;
 
 namespace XREngine.Components.Scene.Volumes
 {
-    public delegate void DelOnOverlapEnter(XRCollisionObject actor);
-    public delegate void DelOnOverlapLeave(XRCollisionObject actor);
-    public class TriggerVolumeComponent : BoxComponent
+    public delegate void DelOnOverlapEnter(XRComponent component);
+    public delegate void DelOnOverlapLeave(XRComponent component);
+
+    /// <summary>
+    /// A volume that triggers events when other components enter or leave it.
+    /// </summary>
+    [Description("A volume that triggers events when other components enter or leave it.")]
+    public class TriggerVolumeComponent : XRComponent
     {
-        public DelOnOverlapEnter Entered;
-        public DelOnOverlapLeave Left;
+        public event DelOnOverlapEnter? Entered;
+        public event DelOnOverlapLeave? Left;
 
-        public bool TrackContacts { get; set; } = false;
-
-        protected virtual void OnEntered(XRCollisionObject obj) => Entered?.Invoke(obj);
-        protected virtual void OnLeft(XRCollisionObject obj) => Left?.Invoke(obj);
-
-        public class TriggerContactInfo : XRBase
+        private Vector3 _halfExtents = new(0.5f);
+        public Vector3 HalfExtents
         {
-            public TriggerContactInfo() { }
-            public TriggerContactInfo(XRContactInfo contact, bool isB)
-            {
-                Contact = contact;
-                IsObjectB = isB;
-            }
-
-            public XRContactInfo Contact { get; set; }
-            public bool IsObjectB { get; set; }
+            get => _halfExtents;
+            set => SetField(ref _halfExtents, value);
         }
 
-        public Dictionary<XRCollisionObject, TriggerContactInfo?> Contacts { get; } = [];
+        private LayerMask _overlapMask = LayerMask.Everything;
+        public LayerMask OverlapMask
+        {
+            get => _overlapMask;
+            set => SetField(ref _overlapMask, value);
+        }
 
-        //public TriggerVolumeComponent() : this(1.0f) { }
-        //public TriggerVolumeComponent(Vector3 halfExtents)
-        //    : base(halfExtents, new TGhostBodyConstructionInfo()
-        //    {
-        //        CollidesWith = (ushort)ECollisionGroup.DynamicWorld,
-        //        CollisionGroup = (ushort)ECollisionGroup.StaticWorld,
-        //        CollisionEnabled = false,
-        //        SimulatePhysics = false,
-        //    }) { }
+        public bool TrackContacts { get; set; } = true;
+
+        protected virtual void OnEntered(XRComponent component)
+            => Entered?.Invoke(component);
+        protected virtual void OnLeft(XRComponent component)
+            => Left?.Invoke(component);
+
+        public HashSet<XRComponent> OverlappingComponents { get; } = [];
 
         protected internal override void OnComponentActivated()
         {
@@ -55,121 +52,68 @@ namespace XREngine.Components.Scene.Volumes
             base.OnComponentDeactivated();
         }
 
-        private readonly ContactTestMulti _test = new(null, 0, 0);
+        private readonly SortedDictionary<float, List<(XRComponent? item, object? data)>> _overlapResults = [];
         private void Tick()
         {
-            //if (CollisionObject is not TGhostBody ghost)
-            //    return;
-
-            if (TrackContacts)
-            {
-                ushort group = CollisionObject.CollisionGroup;
-                ushort with = CollisionObject.CollidesWith;
-
-                _test.Object = CollisionObject;
-                _test.CollisionGroup = group;
-                _test.CollidesWith = with;
-                _test.Test(World);
-
-                List<XRCollisionObject> remove = new List<XRCollisionObject>(Contacts.Count);
-                foreach (var kv in Contacts)
-                {
-                    int matchIndex = _test.Results.FindIndex(x => x.CollisionObject == kv.Key);
-                    if (_test.Results.IndexInRange(matchIndex))
-                    {
-                        var match = _test.Results[matchIndex];
-                        _test.Results.RemoveAt(matchIndex);
-
-                        kv.Value.Contact = match.Contact;
-                        kv.Value.IsObjectB = match.IsObjectB;
-                    }
-                    else
-                    {
-                        remove.Add(kv.Key);
-                    }
-                }
-                foreach (var obj in remove)
-                {
-                    Contacts.Remove(obj);
-                    OnLeft(obj);
-                    Debug.Out($"TRIGGER OBJECT LEFT: {Contacts.Count} contacts total");
-                }
-                foreach (var result in _test.Results)
-                {
-                    var info = new TriggerContactInfo(result.Contact, result.IsObjectB);
-                    var obj = result.CollisionObject;
-
-                    if (!Contacts.TryAdd(obj, info))
-                        Contacts[obj] = info;
-                    else
-                    {
-                        OnEntered(obj);
-                        Debug.Out($"TRIGGER OBJECT ENTERED: {Contacts.Count} contacts total");
-                    }
-                    //RigidBodyCollision.OnOverlapped(result.CollisionObject, result.Contact, result.IsObjectB);
-                    //result.CollisionObject.OnOverlapped(RigidBodyCollision, result.Contact, !result.IsObjectB);
-                }
-            }
-            else
-            {
-                //var list = ghost.CollectOverlappingPairs();
-                //List<XRCollisionObject> remove = new List<XRCollisionObject>(Contacts.Count);
-                //foreach (var kv in Contacts)
-                //{
-                //    int matchIndex = list.IndexOf(kv.Key);
-                //    if (list.IndexInRange(matchIndex))
-                //    {
-                //        var match = list[matchIndex];
-                //        list.RemoveAt(matchIndex);
-                //    }
-                //    else
-                //    {
-                //        remove.Add(kv.Key);
-                //    }
-                //}
-                //foreach (var obj in remove)
-                //{
-                //    Contacts.Remove(obj);
-                //    OnLeft(obj);
-                //    Debug.Out($"TRIGGER OBJECT LEFT: {Contacts.Count} contacts total");
-                //}
-                //foreach (var obj in list)
-                //{
-                //    if (Contacts.ContainsKey(obj))
-                //        Contacts[obj] = null;
-                //    else
-                //    {
-                //        Contacts.Add(obj, null);
-                //        OnEntered(obj);
-                //        Debug.Out($"TRIGGER OBJECT ENTERED: {Contacts.Count} contacts total");
-                //    }
-                //    //RigidBodyCollision.OnOverlapped(result.CollisionObject, result.Contact, result.IsObjectB);
-                //    //result.CollisionObject.OnOverlapped(RigidBodyCollision, result.Contact, !result.IsObjectB);
-                //}
-            }
-        }
-
-        protected override void Render()
-        {
-            base.Render();
-
             if (!TrackContacts)
                 return;
 
-            var contacts = Contacts.ToList();
-            foreach (var contact in contacts)
+            var scene = World?.PhysicsScene;
+            if (scene is null)
+                return;
+
+            _overlapResults.Clear();
+            var geometry = new IPhysicsGeometry.Box(HalfExtents);
+            var pose = GetWorldPose();
+            scene.OverlapMultiple(geometry, pose, OverlapMask, filter: null, _overlapResults);
+
+            HashSet<XRComponent> newOverlaps = [];
+            foreach (var kvp in _overlapResults)
             {
-                var contactInfo = contact.Value;
-                if (contactInfo is null || contact.Value is null)
-                    continue;
-
-                var aPos = contact.Value.Contact.PositionWorldOnA;
-                var bPos = contact.Value.Contact.PositionWorldOnB;
-
-                Engine.Rendering.Debug.RenderPoint(aPos, Color.Red);
-                Engine.Rendering.Debug.RenderPoint(bPos, Color.Green);
-                Engine.Rendering.Debug.RenderLine(aPos, bPos, Color.Magenta);
+                var list = kvp.Value;
+                for (int i = 0; i < list.Count; i++)
+                {
+                    var item = list[i].item;
+                    if (item is null || item == this)
+                        continue;
+                    newOverlaps.Add(item);
+                }
             }
+
+            if (newOverlaps.Count == 0 && OverlappingComponents.Count == 0)
+                return;
+
+            // Leave events
+            if (OverlappingComponents.Count > 0)
+            {
+                List<XRComponent> toRemove = [];
+                foreach (var existing in OverlappingComponents)
+                {
+                    if (!newOverlaps.Contains(existing))
+                        toRemove.Add(existing);
+                }
+
+                for (int i = 0; i < toRemove.Count; i++)
+                {
+                    var comp = toRemove[i];
+                    OverlappingComponents.Remove(comp);
+                    OnLeft(comp);
+                }
+            }
+
+            // Enter events
+            foreach (var comp in newOverlaps)
+            {
+                if (OverlappingComponents.Add(comp))
+                    OnEntered(comp);
+            }
+        }
+
+        private (Vector3 position, Quaternion rotation) GetWorldPose()
+        {
+            var matrix = Transform.WorldMatrix;
+            Matrix4x4.Decompose(matrix, out _, out Quaternion rotation, out Vector3 translation);
+            return (translation, rotation);
         }
     }
 }

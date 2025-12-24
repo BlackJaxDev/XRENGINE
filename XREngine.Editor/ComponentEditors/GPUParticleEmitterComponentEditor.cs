@@ -48,7 +48,7 @@ public sealed class GPUParticleEmitterComponentEditor : IXRComponentEditor
     {
         if (component is not ParticleEmitterComponent emitter)
         {
-            UnitTestingWorld.UserInterface.DrawDefaultComponentInspector(component, visited);
+            EditorImGuiUI.DrawDefaultComponentInspector(component, visited);
             ComponentEditorLayout.DrawActivePreviewDialog();
             return;
         }

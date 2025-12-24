@@ -37,8 +37,6 @@ namespace XREngine.Components.Physics
         private IPhysicsGeometry? _geometry;
         private Vector3 _shapeOffsetTranslation = Vector3.Zero;
         private Quaternion _shapeOffsetRotation = Quaternion.Identity;
-        private Vector3? _initialPosition;
-        private Quaternion? _initialRotation;
 
         [Browsable(false)]
         public IAbstractStaticRigidBody? RigidBody
@@ -103,24 +101,6 @@ namespace XREngine.Components.Physics
         {
             get => _shapeOffsetRotation;
             set => SetField(ref _shapeOffsetRotation, value);
-        }
-
-        [Category("Initialization")]
-        [DisplayName("Initial Position")]
-        [Description("Override spawn position for the rigid body.")]
-        public Vector3? InitialPosition
-        {
-            get => _initialPosition;
-            set => SetField(ref _initialPosition, value);
-        }
-
-        [Category("Initialization")]
-        [DisplayName("Initial Rotation")]
-        [Description("Override spawn rotation for the rigid body.")]
-        public Quaternion? InitialRotation
-        {
-            get => _initialRotation;
-            set => SetField(ref _initialRotation, value);
         }
 
         [Category("Forces")]
@@ -289,7 +269,7 @@ namespace XREngine.Components.Physics
             };
         }
 
-        private IAbstractStaticRigidBody? CreatePhysxStaticRigidBody()
+        private PhysxStaticRigidBody? CreatePhysxStaticRigidBody()
         {
             var (position, rotation) = GetSpawnPose();
             var geometry = Geometry;
@@ -305,16 +285,16 @@ namespace XREngine.Components.Physics
                     rotation,
                     ShapeOffsetTranslation,
                     ShapeOffsetRotation);
-                ApplyCachedProperties(created);
+                ApplyCachedProperties((PhysxActor)created);
                 return created;
             }
 
             var body = new PhysxStaticRigidBody(position, rotation);
-            ApplyCachedProperties(body);
+            ApplyCachedProperties((PhysxActor)body);
             return body;
         }
 
-        private IAbstractStaticRigidBody? CreateJoltStaticRigidBody(JoltScene scene)
+        private JoltStaticRigidBody? CreateJoltStaticRigidBody(JoltScene scene)
         {
             var geometry = Geometry;
             if (geometry is null)
@@ -347,16 +327,6 @@ namespace XREngine.Components.Physics
             var created = new PhysxMaterial(0.5f, 0.5f, 0.1f);
             Material = created;
             return created;
-        }
-
-        private (Vector3 position, Quaternion rotation) GetSpawnPose()
-        {
-            if (InitialPosition.HasValue || InitialRotation.HasValue)
-                return (InitialPosition ?? Transform.WorldTranslation, InitialRotation ?? Transform.WorldRotation);
-
-            var matrix = Transform.WorldMatrix;
-            Matrix4x4.Decompose(matrix, out _, out Quaternion rotation, out Vector3 translation);
-            return (translation, rotation);
         }
 
         protected override bool OnPropertyChanging<T>(string? propName, T field, T @new)

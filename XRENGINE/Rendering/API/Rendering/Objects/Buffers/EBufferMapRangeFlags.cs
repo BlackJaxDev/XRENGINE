@@ -1,4 +1,4 @@
-﻿namespace XREngine.Rendering
+namespace XREngine.Rendering
 {
     public enum EBufferMapRangeFlags
     {

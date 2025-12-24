@@ -1,4 +1,4 @@
-﻿using XREngine.Core.Attributes;
+using XREngine.Core.Attributes;
 using XREngine.Rendering.UI;
 using XREngine.Scene;
 

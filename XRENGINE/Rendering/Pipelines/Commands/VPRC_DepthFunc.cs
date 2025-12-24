@@ -1,4 +1,4 @@
-﻿using XREngine.Rendering.Models.Materials;
+using XREngine.Rendering.Models.Materials;
 
 namespace XREngine.Rendering.Pipelines.Commands
 {

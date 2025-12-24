@@ -1,4 +1,4 @@
-﻿using System.Globalization;
+using System.Globalization;
 using System.Numerics;
 using XREngine.Rendering.Models.Materials;
 
@@ -356,7 +356,7 @@ namespace XREngine.Rendering.Shaders.Generator
             gl_Position, //vec4
             /// <summary>
             /// The pixel width/height of the point being rasterized.
-            /// It only has a meaning when rendering point primitives, which in a TES requires using the point_mode​ input layout qualifier.
+            /// It only has a meaning when rendering point primitives, which in a TES requires using the point_mode? input layout qualifier.
             /// </summary>
             gl_PointSize, //float
             /// <summary>
@@ -396,7 +396,7 @@ namespace XREngine.Rendering.Shaders.Generator
             /// <summary>
             /// The gl_WorkGroupSize variable is a constant that contains the local work-group size of the shader, in 3 dimensions. It is defined by the layout qualifiers local_size_x/y/z. This is a compile-time constant. 
             /// </summary>
-            gl_WorkGroupSize, //const uvec3 - GLSL ≥ 4.30
+            gl_WorkGroupSize, //const uvec3 - GLSL = 4.30
         }
         public enum EGeometryShaderInputPerVertex //in gl_PerVertex
         {

@@ -1,4 +1,4 @@
-﻿using XREngine.Data.Colors;
+using XREngine.Data.Colors;
 using XREngine.Data.Rendering;
 using XREngine.Rendering.Commands;
 using XREngine.Rendering.Models.Materials;

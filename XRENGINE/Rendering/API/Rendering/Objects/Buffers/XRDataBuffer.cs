@@ -1,4 +1,4 @@
-﻿using Extensions;
+using Extensions;
 using MemoryPack;
 using System.Diagnostics.CodeAnalysis;
 using System.Numerics;

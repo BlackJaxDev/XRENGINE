@@ -1,4 +1,4 @@
-﻿using ImageMagick;
+using ImageMagick;
 using System.Collections.Generic;
 using System.Numerics;
 using XREngine.Components;

@@ -30,7 +30,7 @@ public sealed class TextFileInspector : IXRAssetInspector
     {
         if (asset is not TextFile textFile)
         {
-            UnitTestingWorld.UserInterface.DrawDefaultAssetInspector(asset, visitedObjects);
+            EditorImGuiUI.DrawDefaultAssetInspector(asset, visitedObjects);
             return;
         }
 
@@ -159,7 +159,7 @@ public sealed class TextFileInspector : IXRAssetInspector
             return;
 
         ImGui.PushID("TextFileDefaultInspector");
-        UnitTestingWorld.UserInterface.DrawDefaultAssetInspector(textFile, visited);
+        EditorImGuiUI.DrawDefaultAssetInspector(textFile, visited);
         ImGui.PopID();
     }
 

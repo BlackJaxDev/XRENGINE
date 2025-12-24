@@ -1,4 +1,4 @@
-﻿using MemoryPack;
+using MemoryPack;
 using System.Numerics;
 using XREngine.Data.Rendering;
 using XREngine.Rendering.Models.Materials.Textures;

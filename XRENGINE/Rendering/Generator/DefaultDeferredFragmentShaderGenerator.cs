@@ -1,4 +1,4 @@
-﻿using Extensions;
+using Extensions;
 using XREngine.Rendering.Models.Materials;
 
 namespace XREngine.Rendering.Shaders.Generator

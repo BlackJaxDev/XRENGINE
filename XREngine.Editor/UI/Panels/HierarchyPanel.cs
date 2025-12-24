@@ -1,4 +1,4 @@
-﻿using System.Collections.Generic;
+using System.Collections.Generic;
 using System.Numerics;
 using XREngine;
 using XREngine.Data.Colors;
@@ -6,7 +6,7 @@ using XREngine.Editor.UI;
 using XREngine.Rendering;
 using XREngine.Rendering.UI;
 using XREngine.Scene;
-using static XREngine.Editor.UnitTestingWorld.UserInterface;
+using static XREngine.Editor.EditorImGuiUI;
 
 namespace XREngine.Editor;
 
@@ -292,7 +292,7 @@ public partial class HierarchyPanel : EditorPanel
         if (string.IsNullOrWhiteSpace(label))
             label = FormatUnnamedNode(draggedNode);
 
-        preview.Text = $"→ {label}";
+        preview.Text = $"? {label}";
         preview.Color = new ColorF4(1.0f, 1.0f, 1.0f, 0.75f);
     }
 

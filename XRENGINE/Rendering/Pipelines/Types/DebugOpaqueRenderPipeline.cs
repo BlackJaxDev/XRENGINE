@@ -19,7 +19,7 @@ public sealed class DebugOpaqueRenderPipeline : RenderPipeline
 {
     private readonly NearToFarRenderCommandSorter _nearToFarSorter = new();
 
-    private bool _gpuRenderDispatch = Engine.UserSettings.GPURenderDispatch;
+    private bool _gpuRenderDispatch = Engine.EffectiveSettings.GPURenderDispatch;
 
     /// <summary>
     /// When true, the pipeline dispatches opaque passes using GPU-driven rendering.

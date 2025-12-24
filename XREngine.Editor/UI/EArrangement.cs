@@ -1,4 +1,4 @@
-﻿public enum EArrangement
+public enum EArrangement
 {
     List,
     Grid,

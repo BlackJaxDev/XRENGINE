@@ -1,4 +1,4 @@
-﻿using System.Numerics;
+using System.Numerics;
 using XREngine.Core.Attributes;
 using XREngine.Data.Colors;
 using XREngine.Editor.UI.Toolbar;

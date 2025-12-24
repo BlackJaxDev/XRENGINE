@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using Silk.NET.Core.Native;
 using Silk.NET.Vulkan;
@@ -31,6 +31,11 @@ public unsafe partial class VulkanRenderer
         private uint? _arrayLayersOverride;
         private uint? _mipLevelsOverride;
         protected ImageLayout _currentImageLayout = ImageLayout.Undefined;
+
+        /// <summary>
+        /// Tracks the currently allocated GPU memory size for this texture in bytes.
+        /// </summary>
+        private long _allocatedVRAMBytes = 0;
 
         public override bool IsGenerated { get; }
 
@@ -99,6 +104,13 @@ public unsafe partial class VulkanRenderer
 
             if (_ownsImageMemory)
             {
+                // Track VRAM deallocation
+                if (_allocatedVRAMBytes > 0)
+                {
+                    Engine.Rendering.Stats.RemoveTextureAllocation(_allocatedVRAMBytes);
+                    _allocatedVRAMBytes = 0;
+                }
+
                 if (_image.Handle != 0)
                     Api!.DestroyImage(Device, _image, null);
                 if (_memory.Handle != 0)
@@ -203,6 +215,10 @@ public unsafe partial class VulkanRenderer
 
             if (Api!.BindImageMemory(Device, _image, _memory, 0) != Result.Success)
                 throw new Exception("Failed to bind memory for texture image.");
+
+            // Track VRAM allocation
+            _allocatedVRAMBytes = (long)memRequirements.Size;
+            Engine.Rendering.Stats.AddTextureAllocation(_allocatedVRAMBytes);
         }
 
         private void CreateImageView(AttachmentViewKey key)

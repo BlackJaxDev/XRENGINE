@@ -1,4 +1,4 @@
-﻿using Extensions;
+using Extensions;
 using Silk.NET.OpenGL;
 using XREngine;
 using XREngine.Data;
@@ -13,6 +13,12 @@ namespace XREngine.Rendering.OpenGL
         public class GLDataBuffer(OpenGLRenderer renderer, XRDataBuffer buffer) : GLObject<XRDataBuffer>(renderer, buffer), IApiDataBuffer
         {
             private static readonly ConcurrentDictionary<string, byte> _missingInterleavedLogs = new();
+
+            /// <summary>
+            /// Tracks the currently allocated GPU memory size for this buffer in bytes.
+            /// </summary>
+            private long _allocatedVRAMBytes = 0;
+
             protected override void UnlinkData()
             {
                 Data.PushDataRequested -= PushData;
@@ -28,7 +34,7 @@ namespace XREngine.Rendering.OpenGL
                 Data.BindSSBORequested -= BindSSBO;
             }
             private static bool IsGpuBufferLoggingEnabled()
-                => Engine.UserSettings?.EnableGpuIndirectDebugLogging ?? false;
+                => Engine.EffectiveSettings.EnableGpuIndirectDebugLogging;
 
             protected override void LinkData()
             {
@@ -58,7 +64,7 @@ namespace XREngine.Rendering.OpenGL
                 else if (rend is null && Data.Target == EBufferTarget.ArrayBuffer && IsGpuBufferLoggingEnabled())
                 {
                     // Suppress noisy warning; atlas / generic buffers can legitimately be created before a renderer binds them.
-                    Debug.Out($"{GetDescribingName()} generated (no active mesh renderer yet) – delaying attribute binding.");
+                    Debug.Out($"{GetDescribingName()} generated (no active mesh renderer yet) � delaying attribute binding.");
                 }
 
                 if (Data.Resizable)
@@ -236,9 +242,21 @@ namespace XREngine.Rendering.OpenGL
                 if (Engine.InvokeOnMainThread(PushData))
                     return;
 
+                // Track VRAM deallocation of previous buffer if any
+                if (_allocatedVRAMBytes > 0)
+                {
+                    Engine.Rendering.Stats.RemoveBufferAllocation(_allocatedVRAMBytes);
+                    _allocatedVRAMBytes = 0;
+                }
+
                 void* addr = (Data.TryGetAddress(out var address) ? address : VoidPtr.Zero).Pointer;
                 Api.NamedBufferData(BindingId, Data.Length, addr, ToGLEnum(Data.Usage));
                 _lastPushedLength = Data.Length;
+
+                // Track VRAM allocation
+                _allocatedVRAMBytes = Data.Length;
+                Engine.Rendering.Stats.AddBufferAllocation(_allocatedVRAMBytes);
+
                 if (Data.DisposeOnPush)
                     Data.Dispose();
             }
@@ -386,6 +404,13 @@ namespace XREngine.Rendering.OpenGL
 
             private void AllocateImmutable()
             {
+                // Track VRAM deallocation of previous buffer if any
+                if (_allocatedVRAMBytes > 0)
+                {
+                    Engine.Rendering.Stats.RemoveBufferAllocation(_allocatedVRAMBytes);
+                    _allocatedVRAMBytes = 0;
+                }
+
                 uint id = BindingId;
                 uint length;
                 var existingSource = Data.ClientSideSource;
@@ -396,6 +421,10 @@ namespace XREngine.Rendering.OpenGL
                     Api.NamedBufferStorage(id, length = existingSource.Length, existingSource.Address.Pointer, glStorage);
                 else
                     Api.NamedBufferStorage(id, length = Data.Length, null, glStorage);
+
+                // Track VRAM allocation
+                _allocatedVRAMBytes = length;
+                Engine.Rendering.Stats.AddBufferAllocation(_allocatedVRAMBytes);
             }
             // ------------------------------------------------------
 
@@ -493,7 +522,16 @@ namespace XREngine.Rendering.OpenGL
             }
 
             protected internal override void PreDeleted()
-                => UnmapBufferData();
+            {
+                UnmapBufferData();
+
+                // Track VRAM deallocation
+                if (_allocatedVRAMBytes > 0)
+                {
+                    Engine.Rendering.Stats.RemoveBufferAllocation(_allocatedVRAMBytes);
+                    _allocatedVRAMBytes = 0;
+                }
+            }
 
             public void Bind()
             {

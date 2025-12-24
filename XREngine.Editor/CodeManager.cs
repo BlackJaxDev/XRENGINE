@@ -1,4 +1,4 @@
-﻿using Microsoft.Build.Evaluation;
+using Microsoft.Build.Evaluation;
 using Microsoft.Build.Execution;
 using Microsoft.Build.Framework;
 using Microsoft.Build.Logging;
@@ -402,6 +402,8 @@ internal partial class CodeManager : XRSingleton<CodeManager>
         string launcherRoot = Path.Combine(Engine.Assets.LibrariesPath, projectName, "Launcher");
         Directory.CreateDirectory(launcherRoot);
 
+        string gameProjectPath = Path.Combine(Engine.Assets.LibrariesPath, projectName, $"{projectName}.csproj");
+
         string programPath = Path.Combine(launcherRoot, "Program.cs");
         string launcherAssemblyName = $"{projectName}.Launcher";
         string launcherProjectPath = Path.Combine(launcherRoot, $"{launcherAssemblyName}.csproj");
@@ -418,20 +420,49 @@ internal partial class CodeManager : XRSingleton<CodeManager>
             programPath,
             launcherAssemblyName,
             platform,
-            GetEngineAssemblyPaths());
+            GetEngineAssemblyPaths(),
+            includeGameProject: settings.PublishLauncherAsNativeAot ? gameProjectPath : null);
 
-        if (!BuildProjectFile(launcherProjectPath, configuration, platform, out string? buildLog))
+        if (settings.PublishLauncherAsNativeAot)
         {
-            Debug.Out(buildLog ?? "Failed to build launcher project.");
-            throw new InvalidOperationException("Failed to build launcher executable. Check build output for details.");
+            string publishDirectory = Path.Combine(launcherRoot, "Publish", configuration, platform, TargetFramework);
+            Directory.CreateDirectory(publishDirectory);
+
+            var extraProps = new Dictionary<string, string?>
+            {
+                ["PublishDir"] = EnsureTrailingSlash(publishDirectory),
+                ["PublishAot"] = "true",
+                ["SelfContained"] = "true",
+                ["RuntimeIdentifier"] = "win-x64"
+            };
+
+            if (!BuildProjectFile(launcherProjectPath, configuration, platform, ["Publish"], extraProps, out string? publishLog))
+            {
+                Debug.Out(publishLog ?? "Failed to publish launcher project.");
+                throw new InvalidOperationException("Failed to publish launcher executable. Check build output for details.");
+            }
+
+            string launcherExePath = Path.Combine(publishDirectory, $"{launcherAssemblyName}.exe");
+            if (!File.Exists(launcherExePath))
+                throw new FileNotFoundException("Launcher executable was not produced by publish.", launcherExePath);
+
+            return launcherExePath;
         }
+        else
+        {
+            if (!BuildProjectFile(launcherProjectPath, configuration, platform, out string? buildLog))
+            {
+                Debug.Out(buildLog ?? "Failed to build launcher project.");
+                throw new InvalidOperationException("Failed to build launcher executable. Check build output for details.");
+            }
 
-        string outputDirectory = Path.Combine(launcherRoot, "Build", configuration, platform, TargetFramework);
-        string launcherExePath = Path.Combine(outputDirectory, $"{launcherAssemblyName}.exe");
-        if (!File.Exists(launcherExePath))
-            throw new FileNotFoundException("Launcher executable was not produced by the build.", launcherExePath);
+            string outputDirectory = Path.Combine(launcherRoot, "Build", configuration, platform, TargetFramework);
+            string launcherExePath = Path.Combine(outputDirectory, $"{launcherAssemblyName}.exe");
+            if (!File.Exists(launcherExePath))
+                throw new FileNotFoundException("Launcher executable was not produced by the build.", launcherExePath);
 
-        return launcherExePath;
+            return launcherExePath;
+        }
     }
 
     /// <summary>
@@ -472,7 +503,8 @@ internal partial class CodeManager : XRSingleton<CodeManager>
         string programFilePath,
         string assemblyName,
         string platform,
-        IReadOnlyCollection<string> engineAssemblyPaths)
+        IReadOnlyCollection<string> engineAssemblyPaths,
+        string? includeGameProject)
     {
         string projectDirectory = Path.GetDirectoryName(projectFilePath) ?? AppContext.BaseDirectory;
         Directory.CreateDirectory(projectDirectory);
@@ -508,6 +540,14 @@ internal partial class CodeManager : XRSingleton<CodeManager>
                     new XElement("Compile", new XAttribute("Include", relativeProgramPath)))
             ));
 
+        if (!string.IsNullOrWhiteSpace(includeGameProject))
+        {
+            string relativeGameProjectPath = Path.GetRelativePath(projectDirectory, includeGameProject);
+            project.Root?.Add(
+                new XElement("ItemGroup",
+                    new XElement("ProjectReference", new XAttribute("Include", relativeGameProjectPath))));
+        }
+
         if (referenceElements.Count > 0)
             project.Root?.Add(new XElement("ItemGroup", referenceElements));
 
@@ -533,6 +573,51 @@ internal partial class CodeManager : XRSingleton<CodeManager>
         BuildResult result = BuildManager.DefaultBuildManager.Build(buildParameters, request);
         log = stringLogger.GetFullLog();
         return result.OverallResult == BuildResultCode.Success;
+    }
+
+    private static bool BuildProjectFile(
+        string projectFilePath,
+        string configuration,
+        string platform,
+        string[] targets,
+        IReadOnlyDictionary<string, string?>? extraProperties,
+        out string? log)
+    {
+        var stringLogger = new StringLogger(LoggerVerbosity.Minimal);
+        var projectCollection = new ProjectCollection();
+        var buildParameters = new BuildParameters(projectCollection)
+        {
+            Loggers = [new ConsoleLogger(LoggerVerbosity.Minimal), stringLogger]
+        };
+
+        Dictionary<string, string?> props = new()
+        {
+            ["Configuration"] = configuration,
+            ["Platform"] = platform
+        };
+
+        if (extraProperties is not null)
+        {
+            foreach (var kvp in extraProperties)
+                props[kvp.Key] = kvp.Value;
+        }
+
+        var request = new BuildRequestData(projectFilePath, props, null, targets, null);
+        BuildResult result = BuildManager.DefaultBuildManager.Build(buildParameters, request);
+        log = stringLogger.GetFullLog();
+        return result.OverallResult == BuildResultCode.Success;
+    }
+
+    private static string EnsureTrailingSlash(string path)
+    {
+        if (string.IsNullOrWhiteSpace(path))
+            return path;
+
+        char last = path[^1];
+        if (last == Path.DirectorySeparatorChar || last == Path.AltDirectorySeparatorChar)
+            return path;
+
+        return path + Path.DirectorySeparatorChar;
     }
 
     private static string BuildLauncherProgramSource(

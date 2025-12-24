@@ -1,4 +1,4 @@
-﻿using Extensions;
+using Extensions;
 using ImageMagick;
 using XREngine.Data.Core;
 using XREngine.Data.Rendering;

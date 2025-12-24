@@ -1,4 +1,4 @@
-﻿using Silk.NET.Input;
+using Silk.NET.Input;
 using XREngine.Data.Core;
 using XREngine.Rendering.UI;
 

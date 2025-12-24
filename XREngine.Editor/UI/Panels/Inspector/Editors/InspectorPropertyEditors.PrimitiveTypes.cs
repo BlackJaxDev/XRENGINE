@@ -1,4 +1,4 @@
-﻿using System.Numerics;
+using System.Numerics;
 using System.Reflection;
 using XREngine.Data.Colors;
 using XREngine.Rendering.UI;
@@ -191,8 +191,8 @@ public static partial class InspectorPropertyEditors
                 {
                     textComp.Text = state switch
                     {
-                        ECurrentState.True => "✔",
-                        ECurrentState.Intermediate => "■",
+                        ECurrentState.True => "?",
+                        ECurrentState.Intermediate => "�",
                         _ => "",
                     };
                 }

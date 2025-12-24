@@ -1,4 +1,4 @@
-﻿using System.Numerics;
+using System.Numerics;
 using XREngine.Data.Core;
 using XREngine.Data.Geometry;
 using XRBase = XREngine.Data.Core.XRBase;

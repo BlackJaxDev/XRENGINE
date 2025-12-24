@@ -1,4 +1,4 @@
-﻿using MemoryPack;
+using MemoryPack;
 using XREngine.Core.Files;
 using XREngine.Rendering;
 
@@ -24,6 +24,18 @@ namespace XREngine.Scene
         {
             get => _isVisible;
             set => SetField(ref _isVisible, value);
+        }
+
+        private bool _isEditorOnly = false;
+        /// <summary>
+        /// If true, this scene is used for editor-only content (gizmos, UI, tools) and will not be 
+        /// saved to the world file or shown in the hierarchy panel.
+        /// </summary>
+        [MemoryPackIgnore]
+        public bool IsEditorOnly
+        {
+            get => _isEditorOnly;
+            set => SetField(ref _isEditorOnly, value);
         }
 
         private List<SceneNode> _rootObjects = [];

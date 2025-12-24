@@ -66,11 +66,12 @@ namespace XREngine
             }
 
             JobThreadId = null;
+            // Use EffectiveSettings to resolve User > Project > Engine cascade
             Jobs = new JobManager(
-                startupSettings?.JobWorkers,
-                startupSettings?.JobQueueLimit,
-                startupSettings?.JobQueueWarningThreshold,
-                startupSettings?.JobWorkerCap);
+                EffectiveSettings.JobWorkers,
+                EffectiveSettings.JobQueueLimit,
+                EffectiveSettings.JobQueueWarningThreshold,
+                EffectiveSettings.JobWorkerCap);
 
             _jobsConfigured = true;
         }
@@ -153,7 +154,6 @@ namespace XREngine
                         Height = h,
                     }
                 ],
-                OutputVerbosity = EOutputVerbosity.Verbose,
                 DefaultUserSettings = new UserSettings()
                 {
                     TargetFramesPerSecond = renderHz,
@@ -161,10 +161,6 @@ namespace XREngine
                 },
                 TargetUpdatesPerSecond = updateHz,
                 FixedFramesPerSecond = fixedHz,
-                JobWorkers = defaultWorkers,
-                JobWorkerCap = defaultWorkerCap,
-                JobQueueLimit = defaultQueueLimit,
-                JobQueueWarningThreshold = defaultQueueWarn,
             };
         }
 

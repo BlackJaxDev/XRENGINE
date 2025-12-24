@@ -41,7 +41,7 @@ namespace XREngine.Rendering
     private static GPURenderPassCollection.IndirectDebugSettings DebugSettings => GPURenderPassCollection.IndirectDebug;
     private static readonly HashSet<uint> _warnedMultiVertexMaterials = [];
     private static bool IsGpuIndirectLoggingEnabled()
-        => Engine.UserSettings?.EnableGpuIndirectDebugLogging ?? false;
+        => Engine.EffectiveSettings.EnableGpuIndirectDebugLogging;
 
     private static void GpuDebug(string message, params object[] args)
     {

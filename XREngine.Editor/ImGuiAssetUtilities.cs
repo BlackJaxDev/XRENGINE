@@ -722,10 +722,10 @@ internal static class ImGuiAssetUtilities
             ImGui.Separator();
 
             using var contextScope = RequiresExternalAssetContext(asset)
-                ? UnitTestingWorld.UserInterface.PushInspectorAssetContext(asset.SourceAsset ?? asset)
+                ? EditorImGuiUI.PushInspectorAssetContext(asset.SourceAsset ?? asset)
                 : null;
 
-            UnitTestingWorld.UserInterface.DrawAssetInspectorInline(asset);
+            EditorImGuiUI.DrawAssetInspectorInline(asset);
         }
         ImGui.PopID();
     }

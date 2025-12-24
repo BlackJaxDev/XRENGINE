@@ -1,4 +1,4 @@
-﻿namespace XREngine.Data.Rendering
+namespace XREngine.Data.Rendering
 {
     public class VertexLineStrip(bool closedLoop, params Vertex[] vertices) : VertexLinePrimitive(vertices)
     {

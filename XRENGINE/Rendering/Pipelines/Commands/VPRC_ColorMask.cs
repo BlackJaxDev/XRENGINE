@@ -1,4 +1,4 @@
-﻿
+
 namespace XREngine.Rendering.Pipelines.Commands
 {
     public class VPRC_ColorMask : ViewportRenderCommand

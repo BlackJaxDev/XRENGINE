@@ -1,4 +1,4 @@
-﻿using ImageMagick;
+using ImageMagick;
 using ImGuiNET;
 using Silk.NET.Core.Attributes;
 using Silk.NET.Core.Native;

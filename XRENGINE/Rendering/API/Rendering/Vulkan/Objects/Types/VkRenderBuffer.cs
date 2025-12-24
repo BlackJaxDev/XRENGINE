@@ -17,6 +17,11 @@ public unsafe partial class VulkanRenderer
         private ImageAspectFlags? _aspectOverride;
         private SampleCountFlags? _samplesOverride;
 
+        /// <summary>
+        /// Tracks the currently allocated GPU memory size for this render buffer in bytes.
+        /// </summary>
+        private long _allocatedVRAMBytes = 0;
+
         internal Image Image => _image;
 
         public override VkObjectType Type => VkObjectType.Renderbuffer;
@@ -44,6 +49,13 @@ public unsafe partial class VulkanRenderer
 
             if (_ownsImage)
             {
+                // Track VRAM deallocation
+                if (_allocatedVRAMBytes > 0)
+                {
+                    Engine.Rendering.Stats.RemoveRenderBufferAllocation(_allocatedVRAMBytes);
+                    _allocatedVRAMBytes = 0;
+                }
+
                 if (_image.Handle != 0)
                     Api!.DestroyImage(Device, _image, null);
                 if (_memory.Handle != 0)
@@ -121,6 +133,10 @@ public unsafe partial class VulkanRenderer
 
             if (Api!.BindImageMemory(Device, _image, _memory, 0) != Result.Success)
                 throw new Exception("Failed to bind memory for render buffer image.");
+
+            // Track VRAM allocation
+            _allocatedVRAMBytes = (long)requirements.Size;
+            Engine.Rendering.Stats.AddRenderBufferAllocation(_allocatedVRAMBytes);
         }
 
         private void CreateImageView()

@@ -1,4 +1,4 @@
-﻿using ImageMagick;
+using ImageMagick;
 using MemoryPack;
 using SixLabors.ImageSharp;
 using SixLabors.ImageSharp.PixelFormats;

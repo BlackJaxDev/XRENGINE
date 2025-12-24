@@ -1,0 +1,255 @@
+#version 450
+
+layout(local_size_x = 16, local_size_y = 16, local_size_z = 1) in;
+
+layout(binding = 0) uniform sampler2D gDepth;
+layout(binding = 1) uniform sampler2D gNormal;
+layout(binding = 2, rgba16f) uniform image2D gOutput; // read-write for temporal accumulation
+layout(binding = 7) uniform sampler2D gHistory; // previous frame GI for temporal accumulation
+
+layout(binding = 3) uniform sampler3D RadianceCascade0;
+layout(binding = 4) uniform sampler3D RadianceCascade1;
+layout(binding = 5) uniform sampler3D RadianceCascade2;
+layout(binding = 6) uniform sampler3D RadianceCascade3;
+
+uniform mat4 invProjMatrix;
+uniform mat4 cameraToWorldMatrix;
+uniform ivec2 resolution;
+uniform uint frameIndex;
+uniform mat4 volumeWorldToLocal;
+uniform vec4 volumeTintIntensity; // rgb = tint, a = global intensity
+
+uniform vec4 cascadeHalfExtents0; // xyz = half extents, w = intensity
+uniform vec4 cascadeHalfExtents1;
+uniform vec4 cascadeHalfExtents2;
+uniform vec4 cascadeHalfExtents3;
+uniform int cascadeCount;
+
+// New uniforms for improvements
+uniform float temporalBlendFactor; // 0.0 = no temporal, 0.9 = heavy temporal smoothing
+uniform float normalOffsetScale;   // Scale for normal-based sampling offset (reduces self-shadowing)
+uniform int debugMode;             // 0 = off, 1 = show cascade index, 2 = show blend weights
+
+const float CascadeBlendWidth = 0.1; // blend region near cascade edges (as fraction of half extents)
+const float CascadePriorityBias = 0.15; // bias towards higher-resolution (lower index) cascades
+
+vec4 GetCascadeData(int idx)
+{
+    if (idx == 0) return cascadeHalfExtents0;
+    if (idx == 1) return cascadeHalfExtents1;
+    if (idx == 2) return cascadeHalfExtents2;
+    return cascadeHalfExtents3;
+}
+
+vec3 SampleCascadeTexture(int idx, vec3 uvw)
+{
+    if (idx == 0) return texture(RadianceCascade0, uvw).rgb;
+    if (idx == 1) return texture(RadianceCascade1, uvw).rgb;
+    if (idx == 2) return texture(RadianceCascade2, uvw).rgb;
+    return texture(RadianceCascade3, uvw).rgb;
+}
+
+// Sample with trilinear filtering and normal-oriented offset to reduce light leaking
+vec3 SampleCascadeWithOffset(int idx, vec3 uvw, vec3 normalLocal, vec3 halfExtents)
+{
+    // Offset sample position along the normal to reduce self-occlusion/light leaking
+    vec3 texelSize = 1.0 / vec3(textureSize(RadianceCascade0, 0)); // Assume all cascades have similar resolution
+    vec3 offset = normalLocal * texelSize * normalOffsetScale * halfExtents;
+    vec3 offsetUvw = clamp(uvw + offset * 0.5, vec3(0.001), vec3(0.999));
+    
+    return SampleCascadeTexture(idx, offsetUvw);
+}
+
+vec3 ReconstructWorldPosition(vec2 uv, float depth)
+{
+    vec4 clip = vec4(uv * 2.0 - 1.0, depth * 2.0 - 1.0, 1.0);
+    vec4 view = invProjMatrix * clip;
+    view /= max(view.w, 1e-6);
+    vec4 world = cameraToWorldMatrix * view;
+    return world.xyz;
+}
+
+vec3 DecodeNormal(vec3 encoded)
+{
+    vec3 n = normalize(encoded * 2.0 - 1.0);
+    vec3 worldN = normalize((cameraToWorldMatrix * vec4(n, 0.0)).xyz);
+    return worldN;
+}
+
+// Improved cascade selection: prioritize higher resolution cascades when inside multiple
+bool ComputeUVW(int idx, vec3 localPos, out vec3 uvw, out float cascadeIntensity, out float blendWeight, out float priority)
+{
+    vec4 data = GetCascadeData(idx);
+    vec3 halfExtents = max(data.xyz, vec3(1e-4));
+    uvw = (localPos / halfExtents) * 0.5 + 0.5;
+    cascadeIntensity = data.w;
+    
+    vec3 normalizedAbs = abs(localPos) / halfExtents;
+    float maxAxis = max(max(normalizedAbs.x, normalizedAbs.y), normalizedAbs.z);
+    
+    // Blend weight based on distance from edge
+    blendWeight = 1.0 - smoothstep(1.0 - CascadeBlendWidth, 1.0, maxAxis);
+    
+    // Priority: prefer lower indices (higher resolution) with a bias
+    // Lower index cascades get higher priority even if they have slightly lower blend weight
+    priority = blendWeight + CascadePriorityBias * float(cascadeCount - idx) / float(max(cascadeCount, 1));
+    
+    return maxAxis <= 1.0 + 1e-4;
+}
+
+// Debug visualization colors
+vec3 GetCascadeDebugColor(int idx)
+{
+    if (idx == 0) return vec3(1.0, 0.2, 0.2); // Red - highest res
+    if (idx == 1) return vec3(0.2, 1.0, 0.2); // Green
+    if (idx == 2) return vec3(0.2, 0.2, 1.0); // Blue
+    return vec3(1.0, 1.0, 0.2);               // Yellow - lowest res
+}
+
+void main()
+{
+    ivec2 pix = ivec2(gl_GlobalInvocationID.xy);
+    if (pix.x >= resolution.x || pix.y >= resolution.y)
+        return;
+
+    vec2 uv = (vec2(pix) + 0.5) / vec2(resolution);
+    float depth = texture(gDepth, uv).r;
+    
+    if (depth <= 0.0 || cascadeCount <= 0)
+    {
+        imageStore(gOutput, pix, vec4(0.0));
+        return;
+    }
+
+    vec3 worldPos = ReconstructWorldPosition(uv, depth);
+    vec3 normalWS = DecodeNormal(texture(gNormal, uv).rgb);
+
+    vec4 localPos4 = volumeWorldToLocal * vec4(worldPos, 1.0);
+    vec3 localPos = localPos4.xyz;
+    
+    // Transform normal to local space for offset calculation
+    mat3 worldToLocalRot = mat3(volumeWorldToLocal);
+    vec3 normalLocal = normalize(worldToLocalRot * normalWS);
+
+    int primaryIdx = -1;
+    int secondaryIdx = -1;
+    vec3 primaryUVW = vec3(0.5);
+    vec3 secondaryUVW = vec3(0.5);
+    vec3 primaryHalfExtents = vec3(1.0);
+    vec3 secondaryHalfExtents = vec3(1.0);
+    float primaryIntensity = 0.0;
+    float secondaryIntensity = 0.0;
+    float primaryPriority = -1.0;
+    float secondaryPriority = -1.0;
+    float primaryWeight = 0.0;
+    float secondaryWeight = 0.0;
+    vec3 lastUVW = vec3(0.5);
+    float lastIntensity = 0.0;
+
+    // Find the two best cascades using priority-based selection
+    for (int i = 0; i < cascadeCount; ++i)
+    {
+        float intensity;
+        vec3 uvw;
+        float weight;
+        float priority;
+        bool inside = ComputeUVW(i, localPos, uvw, intensity, weight, priority);
+        lastUVW = uvw;
+        lastIntensity = intensity;
+        
+        if (inside && weight > 0.0)
+        {
+            if (priority > primaryPriority)
+            {
+                // Demote current primary to secondary
+                secondaryIdx = primaryIdx;
+                secondaryUVW = primaryUVW;
+                secondaryHalfExtents = primaryHalfExtents;
+                secondaryIntensity = primaryIntensity;
+                secondaryPriority = primaryPriority;
+                secondaryWeight = primaryWeight;
+
+                // New primary
+                primaryIdx = i;
+                primaryUVW = uvw;
+                primaryHalfExtents = GetCascadeData(i).xyz;
+                primaryIntensity = intensity;
+                primaryPriority = priority;
+                primaryWeight = weight;
+            }
+            else if (priority > secondaryPriority)
+            {
+                secondaryIdx = i;
+                secondaryUVW = uvw;
+                secondaryHalfExtents = GetCascadeData(i).xyz;
+                secondaryIntensity = intensity;
+                secondaryPriority = priority;
+                secondaryWeight = weight;
+            }
+        }
+    }
+
+    // Fallback to last cascade if nothing found
+    if (primaryIdx < 0)
+    {
+        primaryIdx = cascadeCount - 1;
+        primaryUVW = clamp(lastUVW, 0.0, 1.0);
+        primaryHalfExtents = GetCascadeData(primaryIdx).xyz;
+        primaryIntensity = lastIntensity;
+        primaryWeight = 1.0;
+        secondaryWeight = 0.0;
+    }
+
+    // Sample with normal-based offset for reduced light leaking
+    vec3 radiance = SampleCascadeWithOffset(primaryIdx, primaryUVW, normalLocal, primaryHalfExtents) 
+                    * primaryIntensity * primaryWeight;
+
+    if (secondaryIdx >= 0 && secondaryWeight > 0.0)
+    {
+        vec3 secondaryRadiance = SampleCascadeWithOffset(secondaryIdx, secondaryUVW, normalLocal, secondaryHalfExtents) 
+                                 * secondaryIntensity * secondaryWeight;
+        radiance += secondaryRadiance;
+        float totalWeight = primaryWeight + secondaryWeight;
+        if (totalWeight > 1e-4)
+            radiance /= totalWeight;
+    }
+
+    // Apply hemisphere visibility based on surface normal
+    // Uses a softer falloff that considers the full hemisphere, not just vertical
+    float hemisphereScale = max(0.0, normalWS.y * 0.35 + 0.65); // Softer falloff, minimum 0.3 contribution
+
+    vec3 gi = radiance * volumeTintIntensity.rgb * volumeTintIntensity.a * hemisphereScale;
+
+    // Debug visualization modes
+    if (debugMode == 1)
+    {
+        // Show cascade index as color
+        gi = GetCascadeDebugColor(primaryIdx) * 0.5;
+        if (secondaryIdx >= 0)
+            gi = mix(gi, GetCascadeDebugColor(secondaryIdx) * 0.5, secondaryWeight / max(primaryWeight + secondaryWeight, 1e-4));
+    }
+    else if (debugMode == 2)
+    {
+        // Show blend weights as grayscale
+        gi = vec3(primaryWeight);
+    }
+
+    // Temporal accumulation for stability
+    if (temporalBlendFactor > 0.0)
+    {
+        vec3 history = texture(gHistory, uv).rgb;
+        
+        // Reduce temporal weight for high-motion areas or first few frames
+        float motionFactor = 1.0; // Could be driven by velocity buffer
+        float effectiveBlend = temporalBlendFactor * motionFactor;
+        
+        // Clamp history to prevent ghosting from large changes
+        vec3 minBound = gi - vec3(0.5);
+        vec3 maxBound = gi + vec3(0.5);
+        vec3 clampedHistory = clamp(history, minBound, maxBound);
+        
+        gi = mix(gi, clampedHistory, effectiveBlend);
+    }
+
+    imageStore(gOutput, pix, vec4(gi, 1.0));
+}

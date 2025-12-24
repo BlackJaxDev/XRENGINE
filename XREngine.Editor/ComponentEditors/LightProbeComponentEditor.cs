@@ -23,7 +23,7 @@ public sealed class LightProbeComponentEditor : IXRComponentEditor
     {
         if (component is not LightProbeComponent lightProbe)
         {
-            UnitTestingWorld.UserInterface.DrawDefaultComponentInspector(component, visited);
+            EditorImGuiUI.DrawDefaultComponentInspector(component, visited);
             ComponentEditorLayout.DrawActivePreviewDialog();
             return;
         }
