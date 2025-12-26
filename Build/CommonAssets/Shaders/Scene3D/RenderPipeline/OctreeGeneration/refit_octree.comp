@@ -1,0 +1,54 @@
+#version 460
+
+#define MAX_OBJECTS 1024
+
+struct OctreeNode
+{
+    vec3 minBounds;
+    vec3 maxBounds;
+    int  childIndices[8];
+    uint parentIndex;
+    uint objectStartIndex;
+    uint objectCount;
+    uint _pad0;
+};
+
+layout(std430, binding = 0) buffer AABBs
+{
+    vec3 aabbMin[MAX_OBJECTS];
+    vec3 aabbMax[MAX_OBJECTS];
+};
+
+layout(std430, binding = 2) buffer OctreeNodes
+{
+    uint numNodes;
+    uint rootIndex;
+    OctreeNode nodes[];
+};
+
+uniform uint numObjects;
+uniform uint debugValidation;
+
+layout (local_size_x = 256, local_size_y = 1, local_size_z = 1) in;
+
+void main()
+{
+    uint gid = gl_GlobalInvocationID.x;
+    if (gid >= numObjects)
+        return;
+
+    if (debugValidation != 0u && gid >= numNodes)
+        return;
+
+    uint nodeIndex = gid;
+    OctreeNode node = nodes[nodeIndex];
+    if (node.objectCount == 0u)
+        return;
+
+    if (debugValidation != 0u && node.objectStartIndex >= numObjects)
+        return;
+
+    uint objectIndex = node.objectStartIndex;
+    nodes[nodeIndex].minBounds = aabbMin[objectIndex];
+    nodes[nodeIndex].maxBounds = aabbMax[objectIndex];
+}
