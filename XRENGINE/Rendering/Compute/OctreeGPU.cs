@@ -2,16 +2,25 @@ using System;
 using System.Collections.Generic;
 using System.Numerics;
 using System.Runtime.CompilerServices;
+using System.Text.RegularExpressions;
 using System.Threading;
+using XREngine.Core.Files;
 using XREngine.Data;
 using XREngine.Data.Core;
 using XREngine.Data.Geometry;
 using XREngine.Data.Rendering;
 using XREngine.Rendering;
 using XREngine.Rendering.Models.Materials;
+using XREngine.Rendering.Compute;
 
 namespace XREngine.Data.Trees
 {
+	public enum BvhBuildMode
+	{
+		MortonOnly = 0,
+		MortonPlusSah = 1
+	}
+
 	/// <summary>
 	/// GPU-managed octree that keeps a flat node buffer updated through compute shaders without a CPU mirror.
 	/// </summary>
@@ -40,6 +49,9 @@ namespace XREngine.Data.Trees
 		private XRDataBuffer? _nodeBuffer;
 		private XRDataBuffer? _queueBuffer;
 		private XRDataBuffer? _objectIdBuffer;
+		private XRDataBuffer? _bvhNodeBuffer;
+		private XRDataBuffer? _bvhRangeBuffer;
+		private uint _lastBvhNodeCount;
 
 		private XRShader? _mortonShader;
 		private XRShader? _smallSortShader;
@@ -49,6 +61,8 @@ namespace XREngine.Data.Trees
 		private XRShader? _buildShader;
 		private XRShader? _propagateShader;
 		private XRShader? _initQueueShader;
+		private XRShader? _bvhBuildShader;
+		private XRShader? _bvhRefineShader;
 
 		private XRRenderProgram? _mortonProgram;
 		private XRRenderProgram? _smallSortProgram;
@@ -58,6 +72,8 @@ namespace XREngine.Data.Trees
 		private XRRenderProgram? _buildProgram;
 		private XRRenderProgram? _propagateProgram;
 		private XRRenderProgram? _initQueueProgram;
+		private XRRenderProgram? _bvhBuildProgram;
+		private XRRenderProgram? _bvhRefineProgram;
 
 		private bool _gpuDirty = true;
 		private bool _hasUserBounds;
@@ -65,6 +81,9 @@ namespace XREngine.Data.Trees
 		private AABB _activeBounds;
 		private Func<T, uint?>? _itemIdSelector;
 		private uint _nextGeneratedId;
+		private bool _useBvh = true;
+		private BvhBuildMode _bvhMode = BvhBuildMode.MortonOnly;
+		private uint _maxLeafPrimitives = 1u;
 
 		public OctreeGPU()
 		{
@@ -107,6 +126,57 @@ namespace XREngine.Data.Trees
 		public XRDataBuffer? NodesBuffer => _nodeBuffer;
 
 		public XRDataBuffer? NodeItemIndexBuffer => _objectIdBuffer;
+
+		public XRDataBuffer? BvhNodesBuffer => _bvhNodeBuffer;
+
+		public XRDataBuffer? BvhRangeBuffer => _bvhRangeBuffer;
+
+		public bool UseBvh
+		{
+			get => _useBvh;
+			set
+			{
+				if (_useBvh == value)
+					return;
+				_useBvh = value;
+				MarkDirty();
+			}
+		}
+
+		public BvhBuildMode BvhMode
+		{
+			get => _bvhMode;
+			set
+			{
+				if (_bvhMode == value)
+					return;
+				_bvhMode = value;
+				ResetBvhPrograms();
+				MarkDirty();
+			}
+		}
+
+		public uint MaxLeafPrimitives
+		{
+			get => _maxLeafPrimitives;
+			set
+			{
+				uint clamped = Math.Max(1u, value);
+				if (_maxLeafPrimitives == clamped)
+					return;
+				_maxLeafPrimitives = clamped;
+				ResetBvhPrograms();
+				MarkDirty();
+			}
+		}
+
+		private void ResetBvhPrograms()
+		{
+			_bvhBuildProgram = null;
+			_bvhRefineProgram = null;
+			_bvhBuildShader = null;
+			_bvhRefineShader = null;
+		}
 
 		public bool EnsureGpuBuffers(bool force = false)
 		{
@@ -424,6 +494,22 @@ namespace XREngine.Data.Trees
 				ClearClientBuffer(_queueBuffer);
 				_queueBuffer.PushSubData();
 			}
+
+			if (_useBvh)
+			{
+				EnsureBvhBuffers(0);
+				if (_bvhNodeBuffer is not null)
+				{
+					ClearClientBuffer(_bvhNodeBuffer);
+					_bvhNodeBuffer.PushSubData();
+				}
+
+				if (_bvhRangeBuffer is not null)
+				{
+					ClearClientBuffer(_bvhRangeBuffer);
+					_bvhRangeBuffer.PushSubData();
+				}
+			}
 		}
 
 		private void RunComputePipeline(uint objectCount, AABB bounds)
@@ -431,6 +517,7 @@ namespace XREngine.Data.Trees
 			EnsureNodeBufferCapacity(objectCount);
 			EnsureQueueBuffer();
 			EnsureMortonBufferCapacity(objectCount);
+			EnsureBvhBuffers(objectCount);
 
 			Vector3 sceneMin = bounds.Min;
 			Vector3 sceneMax = bounds.Max;
@@ -442,6 +529,8 @@ namespace XREngine.Data.Trees
 
 			DispatchMorton(objectCount, sceneMin, sceneMax);
 			SortMortonCodes(objectCount);
+			DispatchBuildBvh(objectCount);
+			DispatchRefineBvh();
 			DispatchBuildOctree(objectCount, sceneMin, sceneMax);
 			DispatchPropagate();
 			DispatchInitQueue();
@@ -459,6 +548,43 @@ namespace XREngine.Data.Trees
 			program.Uniform("numObjects", objectCount);
 			uint groups = ComputeGroups(objectCount, 256u);
 			program.DispatchCompute(groups, 1u, 1u, EMemoryBarrierMask.ShaderStorage);
+		}
+
+		private void DispatchBuildBvh(uint objectCount)
+		{
+			if (!_useBvh || objectCount == 0)
+				return;
+
+			if (_bvhBuildProgram is null || _bvhNodeBuffer is null || _bvhRangeBuffer is null)
+				return;
+
+			uint leafCount = (objectCount + _maxLeafPrimitives - 1u) / _maxLeafPrimitives;
+			uint internalCount = leafCount > 0 ? leafCount - 1u : 0u;
+			uint workItems = Math.Max(leafCount, internalCount);
+
+			var program = _bvhBuildProgram;
+			program.BindBuffer(_aabbBuffer!, 0);
+			program.BindBuffer(_mortonBuffer!, 1);
+			program.BindBuffer(_bvhNodeBuffer, 2);
+			program.BindBuffer(_bvhRangeBuffer, 3);
+			program.Uniform("numPrimitives", objectCount);
+			program.DispatchCompute(ComputeGroups(Math.Max(workItems, 1u), 256u), 1u, 1u, EMemoryBarrierMask.ShaderStorage);
+		}
+
+		private void DispatchRefineBvh()
+		{
+			if (!_useBvh || _bvhRefineProgram is null || _bvhNodeBuffer is null || _bvhRangeBuffer is null)
+				return;
+
+			if (_bvhMode != BvhBuildMode.MortonPlusSah || _lastBvhNodeCount == 0)
+				return;
+
+			var program = _bvhRefineProgram;
+			program.BindBuffer(_aabbBuffer!, 0);
+			program.BindBuffer(_mortonBuffer!, 1);
+			program.BindBuffer(_bvhNodeBuffer, 2);
+			program.BindBuffer(_bvhRangeBuffer, 3);
+			program.DispatchCompute(ComputeGroups(_lastBvhNodeCount, 128u), 1u, 1u, EMemoryBarrierMask.ShaderStorage);
 		}
 
 		private void SortMortonCodes(uint objectCount)
@@ -542,6 +668,14 @@ namespace XREngine.Data.Trees
 			_buildProgram ??= CreateProgram(ref _buildShader, "Scene3D/RenderPipeline/OctreeGeneration/build_octree.comp");
 			_propagateProgram ??= CreateProgram(ref _propagateShader, "Scene3D/RenderPipeline/OctreeGeneration/propagate_aabbs.comp");
 			_initQueueProgram ??= CreateProgram(ref _initQueueShader, "Scene3D/RenderPipeline/OctreeGeneration/init_queue.comp");
+			if (_useBvh)
+				EnsureBvhPrograms();
+		}
+
+		private void EnsureBvhPrograms()
+		{
+			_bvhBuildProgram ??= CreateProgram(ref _bvhBuildShader, "Scene3D/RenderPipeline/bvh_build.comp", true);
+			_bvhRefineProgram ??= CreateProgram(ref _bvhRefineShader, "Scene3D/RenderPipeline/bvh_sah_refine.comp", true);
 		}
 
 		private void EnsureMortonBufferCapacity(uint objectCount)
@@ -556,6 +690,39 @@ namespace XREngine.Data.Trees
 			else if (_mortonBuffer.ElementCount < elements * 2u)
 			{
 				_mortonBuffer.Resize(elements * 2u, false, true);
+			}
+		}
+
+		private void EnsureBvhBuffers(uint objectCount)
+		{
+			if (!_useBvh)
+				return;
+
+			uint leafCount = objectCount == 0 ? 0u : ((objectCount + _maxLeafPrimitives - 1u) / _maxLeafPrimitives);
+			uint nodeCount = leafCount == 0 ? 0u : (leafCount * 2u) - 1u;
+			_lastBvhNodeCount = nodeCount;
+
+			uint nodeScalars = GpuBvhLayout.NodeScalarCapacity(Math.Max(nodeCount, 1u));
+			uint rangeScalars = GpuBvhLayout.RangeScalarCapacity(Math.Max(nodeCount, 1u));
+
+			if (_bvhNodeBuffer is null)
+			{
+				_bvhNodeBuffer = CreateBvhBuffer("GPUOctree.BvhNodes", nodeScalars);
+				_bvhNodeBuffer.SetBlockIndex(6);
+			}
+			else if (_bvhNodeBuffer.ElementCount < nodeScalars)
+			{
+				_bvhNodeBuffer.Resize(nodeScalars, false, true);
+			}
+
+			if (_bvhRangeBuffer is null)
+			{
+				_bvhRangeBuffer = CreateBvhBuffer("GPUOctree.BvhRanges", rangeScalars);
+				_bvhRangeBuffer.SetBlockIndex(7);
+			}
+			else if (_bvhRangeBuffer.ElementCount < rangeScalars)
+			{
+				_bvhRangeBuffer.Resize(rangeScalars, false, true);
 			}
 		}
 
@@ -600,10 +767,48 @@ namespace XREngine.Data.Trees
 			}
 		}
 
-		private static XRRenderProgram CreateProgram(ref XRShader? shader, string path)
+		private XRRenderProgram CreateProgram(ref XRShader? shader, string path, bool applyBvhSpecialization = false)
 		{
-			shader ??= ShaderHelper.LoadEngineShader(path, EShaderType.Compute);
+			shader ??= applyBvhSpecialization
+				? LoadBvhShaderWithConstants(path)
+				: ShaderHelper.LoadEngineShader(path, EShaderType.Compute);
 			return new XRRenderProgram(true, false, shader);
+		}
+
+		private XRShader LoadBvhShaderWithConstants(string path)
+		{
+			XRShader baseShader = ShaderHelper.LoadEngineShader(path, EShaderType.Compute);
+			string? source = baseShader.Source?.Text;
+			if (source is null)
+				return baseShader;
+
+			string patched = PatchBvhSpecializationConstants(source, _maxLeafPrimitives, _bvhMode);
+			if (string.Equals(patched, source, StringComparison.Ordinal))
+				return baseShader;
+
+			TextFile cloneText = new(baseShader.Source?.FilePath ?? string.Empty)
+			{
+				Text = patched
+			};
+
+			return new XRShader(EShaderType.Compute, cloneText);
+		}
+
+		private static string PatchBvhSpecializationConstants(string source, uint maxLeafPrimitives, BvhBuildMode mode)
+		{
+			string patched = Regex.Replace(
+				source,
+				@"const\s+uint\s+MAX_LEAF_PRIMITIVES\s*=\s*[0-9]+u?\s*;",
+				$"const uint MAX_LEAF_PRIMITIVES = {maxLeafPrimitives}u;",
+				RegexOptions.CultureInvariant);
+
+			patched = Regex.Replace(
+				patched,
+				@"const\s+uint\s+BVH_MODE\s*=\s*[0-9]+u?\s*;",
+				$"const uint BVH_MODE = {(mode == BvhBuildMode.MortonPlusSah ? 1u : 0u)}u;",
+				RegexOptions.CultureInvariant);
+
+			return patched;
 		}
 
 		private static XRDataBuffer CreateBuffer(string name, bool integral)
@@ -613,6 +818,16 @@ namespace XREngine.Data.Trees
 				Resizable = true,
 				DisposeOnPush = false,
 				PadEndingToVec4 = true
+			};
+
+		private static XRDataBuffer CreateBvhBuffer(string name, uint scalarCount)
+			=> new(name, EBufferTarget.ShaderStorageBuffer, scalarCount, EComponentType.UInt, 1, false, true)
+			{
+				Usage = EBufferUsage.DynamicDraw,
+				Resizable = true,
+				DisposeOnPush = false,
+				PadEndingToVec4 = true,
+				ShouldMap = true
 			};
 
 		private static unsafe void ClearClientBuffer(XRDataBuffer buffer)
@@ -688,4 +903,3 @@ namespace XREngine.Data.Trees
 		}
 	}
 }
-
