@@ -44,6 +44,8 @@ layout(std430, binding = 3) buffer PrimitiveRanges
     uvec2 ranges[];
 };
 
+uniform uint debugValidation;
+
 vec3 combineMin(vec3 a, vec3 b) { return min(a, b); }
 vec3 combineMax(vec3 a, vec3 b) { return max(a, b); }
 
@@ -57,6 +59,22 @@ void main()
 
     BvhNode node = nodes[nodeIndex];
     uvec2 range = ranges[nodeIndex];
+
+    if (debugValidation != 0u)
+    {
+        if (range.x + range.y > mortonObjects.length())
+            return;
+        if ((node.flags & BVH_FLAG_LEAF) != 0u)
+        {
+            if (range.y == 0u)
+                return;
+        }
+        else
+        {
+            if ((node.leftChild != uint(-1) && node.leftChild >= nodeCount) || (node.rightChild != uint(-1) && node.rightChild >= nodeCount))
+                return;
+        }
+    }
 
     if ((node.flags & BVH_FLAG_LEAF) != 0u)
     {

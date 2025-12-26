@@ -21,6 +21,13 @@ namespace XREngine.Data.Trees
 		MortonPlusSah = 1
 	}
 
+	public enum SwapUpdateMode
+	{
+		Manual = 0,
+		RefitOnly = 1,
+		AlwaysRebuild = 2
+	}
+
 	/// <summary>
 	/// GPU-managed octree that keeps a flat node buffer updated through compute shaders without a CPU mirror.
 	/// </summary>
@@ -33,6 +40,29 @@ namespace XREngine.Data.Trees
 
 		private static readonly Vector4 ZeroVec4 = Vector4.Zero;
 		private static readonly Matrix4x4 IdentityMatrix = Matrix4x4.Identity;
+
+		private enum TreeDirtyState
+		{
+			None = 0,
+			Refit = 1,
+			Rebuild = 2
+		}
+
+		private readonly struct ItemState
+		{
+			public ItemState(int objectIndex, AABB? bounds, Matrix4x4 offset, bool shouldRender)
+			{
+				ObjectIndex = objectIndex;
+				Bounds = bounds;
+				Offset = offset;
+				ShouldRender = shouldRender;
+			}
+
+			public int ObjectIndex { get; }
+			public AABB? Bounds { get; }
+			public Matrix4x4 Offset { get; }
+			public bool ShouldRender { get; }
+		}
 
 		private readonly object _syncRoot = new();
 		private readonly List<T> _items = new();
@@ -64,6 +94,7 @@ namespace XREngine.Data.Trees
 		private XRShader? _bvhBuildShader;
 		private XRShader? _bvhRefineShader;
 		private XRShader? _bvhRefitShader;
+		private XRShader? _refitOctreeShader;
 
 		private XRRenderProgram? _mortonProgram;
 		private XRRenderProgram? _smallSortProgram;
@@ -76,8 +107,10 @@ namespace XREngine.Data.Trees
 		private XRRenderProgram? _bvhBuildProgram;
 		private XRRenderProgram? _bvhRefineProgram;
 		private XRRenderProgram? _bvhRefitProgram;
+		private XRRenderProgram? _refitOctreeProgram;
 
 		private bool _gpuDirty = true;
+		private TreeDirtyState _dirtyState = TreeDirtyState.Rebuild;
 		private bool _hasUserBounds;
 		private AABB _requestedBounds;
 		private AABB _activeBounds;
@@ -86,6 +119,17 @@ namespace XREngine.Data.Trees
 		private bool _useBvh = true;
 		private BvhBuildMode _bvhMode = BvhBuildMode.MortonOnly;
 		private uint _maxLeafPrimitives = 1u;
+		private int _lastObjectCount;
+		private SwapUpdateMode _swapMode = SwapUpdateMode.AlwaysRebuild;
+
+		private readonly HashSet<T> _dirtyItems = new(ReferenceEqualityComparer<T>.Instance);
+		private readonly Dictionary<T, ItemState> _lastItemStates = new(ReferenceEqualityComparer<T>.Instance);
+
+#if DEBUG
+		public bool EnableValidation { get; set; } = true;
+#else
+		public bool EnableValidation { get; set; } = false;
+#endif
 
 		public OctreeGPU()
 		{
@@ -112,14 +156,29 @@ namespace XREngine.Data.Trees
 				_itemIdSelector = value;
 				if (value is not null)
 					ClearGeneratedIds();
-				MarkDirty();
+				MarkDirty(TreeDirtyState.Rebuild);
 			}
 		}
 
 		/// <summary>
 		/// When true (default), GPU buffers rebuild after every swap to guarantee item/node residency stays accurate.
 		/// </summary>
-		public bool AlwaysRebuildOnSwap { get; set; } = true;
+		public bool AlwaysRebuildOnSwap
+		{
+			get => _swapMode == SwapUpdateMode.AlwaysRebuild;
+			set => _swapMode = value ? SwapUpdateMode.AlwaysRebuild : SwapUpdateMode.Manual;
+		}
+
+		public SwapUpdateMode SwapMode
+		{
+			get => _swapMode;
+			set
+			{
+				if (_swapMode == value)
+					return;
+				_swapMode = value;
+			}
+		}
 
 		public AABB Bounds => _activeBounds;
 
@@ -133,6 +192,8 @@ namespace XREngine.Data.Trees
 
 		public XRDataBuffer? BvhRangeBuffer => _bvhRangeBuffer;
 
+		public IReadOnlyCollection<T> DirtyItems => _dirtyItems;
+
 		public bool UseBvh
 		{
 			get => _useBvh;
@@ -141,7 +202,7 @@ namespace XREngine.Data.Trees
 				if (_useBvh == value)
 					return;
 				_useBvh = value;
-				MarkDirty();
+				MarkDirty(TreeDirtyState.Rebuild);
 			}
 		}
 
@@ -154,7 +215,7 @@ namespace XREngine.Data.Trees
 					return;
 				_bvhMode = value;
 				ResetBvhPrograms();
-				MarkDirty();
+				MarkDirty(TreeDirtyState.Rebuild);
 			}
 		}
 
@@ -168,7 +229,7 @@ namespace XREngine.Data.Trees
 					return;
 				_maxLeafPrimitives = clamped;
 				ResetBvhPrograms();
-				MarkDirty();
+				MarkDirty(TreeDirtyState.Rebuild);
 			}
 		}
 
@@ -228,7 +289,7 @@ namespace XREngine.Data.Trees
 				if (_itemSet.Add(value))
 				{
 					_items.Add(value);
-					MarkDirty();
+					MarkDirty(TreeDirtyState.Rebuild);
 				}
 			}
 		}
@@ -281,7 +342,7 @@ namespace XREngine.Data.Trees
 			_requestedBounds = newBounds;
 			_activeBounds = newBounds;
 			_hasUserBounds = true;
-			MarkDirty();
+			MarkDirty(TreeDirtyState.Rebuild);
 		}
 
 		public void Remake()
@@ -289,7 +350,7 @@ namespace XREngine.Data.Trees
 			_requestedBounds = default;
 			_activeBounds = default;
 			_hasUserBounds = false;
-			MarkDirty();
+			MarkDirty(TreeDirtyState.Rebuild);
 		}
 
 		public void Remove(T value)
@@ -304,7 +365,7 @@ namespace XREngine.Data.Trees
 
 				_items.Remove(value);
 				RemoveGeneratedId(value);
-				MarkDirty();
+				MarkDirty(TreeDirtyState.Rebuild);
 			}
 		}
 
@@ -335,8 +396,17 @@ namespace XREngine.Data.Trees
 
 		public void Swap()
 		{
-			if (AlwaysRebuildOnSwap)
-				MarkDirty();
+			if (_swapMode == SwapUpdateMode.AlwaysRebuild)
+			{
+				MarkDirty(TreeDirtyState.Rebuild);
+			}
+			else if (_swapMode == SwapUpdateMode.RefitOnly && _dirtyState == TreeDirtyState.None)
+			{
+				if (_items.Count == _lastObjectCount)
+					MarkDirty(TreeDirtyState.Refit);
+				else
+					MarkDirty(TreeDirtyState.Rebuild);
+			}
 			EnsureGpuBuffers();
 		}
 
@@ -347,29 +417,46 @@ namespace XREngine.Data.Trees
 
 			lock (_syncRoot)
 			{
-				if (!_gpuDirty)
+				if (!_gpuDirty && _dirtyState == TreeDirtyState.None)
 					return false;
 
 				EnsurePrograms();
-				BuildAndUploadItemData(out int objectCount, out AABB boundsUsed);
+				BuildAndUploadItemData(out int objectCount, out AABB boundsUsed, out Dictionary<T, ItemState> newStates);
 				_activeBounds = boundsUsed;
+				bool countsStable = objectCount == _lastObjectCount;
+				bool ranRefit = false;
 
-				if (objectCount > 0)
-					RunComputePipeline((uint)objectCount, boundsUsed);
-				else
-					UploadEmptyBuffers();
+				if (_dirtyState != TreeDirtyState.Rebuild && _swapMode == SwapUpdateMode.RefitOnly && countsStable && _nodeBuffer is not null)
+					ranRefit = RunRefitPipeline((uint)objectCount);
+
+				if (!ranRefit)
+				{
+					if (objectCount > 0)
+						RunComputePipeline((uint)objectCount, boundsUsed);
+					else
+						UploadEmptyBuffers();
+				}
 
 				_gpuDirty = false;
+				_dirtyState = TreeDirtyState.None;
+				_dirtyItems.Clear();
+				_lastItemStates.Clear();
+				foreach (var kvp in newStates)
+					_lastItemStates[kvp.Key] = kvp.Value;
+				_lastObjectCount = objectCount;
 				return true;
 			}
 		}
 
-		private void BuildAndUploadItemData(out int objectCount, out AABB boundsUsed)
+		private void BuildAndUploadItemData(out int objectCount, out AABB boundsUsed, out Dictionary<T, ItemState> newStates)
 		{
 			_aabbMins.Clear();
 			_aabbMaxs.Clear();
 			_transformScratch.Clear();
 			_objectIdScratch.Clear();
+			_dirtyItems.Clear();
+			newStates = new Dictionary<T, ItemState>(ReferenceEqualityComparer<T>.Instance);
+			HashSet<T> seenItems = new(ReferenceEqualityComparer<T>.Instance);
 
 			bool truncated = false;
 			bool hasBounds = _hasUserBounds;
@@ -377,8 +464,13 @@ namespace XREngine.Data.Trees
 
 			foreach (var item in _items)
 			{
-				if (!item.ShouldRender)
+				bool shouldRender = item.ShouldRender;
+				if (!shouldRender)
+				{
+					if (_lastItemStates.ContainsKey(item))
+						MarkDirty(TreeDirtyState.Rebuild);
 					continue;
+				}
 				if (_aabbMins.Count >= MaxObjects)
 				{
 					truncated = true;
@@ -387,9 +479,18 @@ namespace XREngine.Data.Trees
 
 				Box? worldVolume = item.WorldCullingVolume;
 				if (worldVolume is null)
+				{
+					if (_lastItemStates.ContainsKey(item))
+						MarkDirty(TreeDirtyState.Rebuild);
 					continue;
+				}
 
 				AABB bounds = worldVolume.Value.GetAABB(true);
+				if (EnableValidation && !bounds.IsValid)
+				{
+					Debug.LogWarning($"OctreeGPU encountered invalid bounds for item {item} and skipped it.");
+					continue;
+				}
 				uint? id = ResolveItemId(item);
 				if (id is null)
 					continue;
@@ -398,6 +499,31 @@ namespace XREngine.Data.Trees
 				_aabbMaxs.Add(new Vector4(bounds.Max, 1f));
 				_transformScratch.Add(item.CullingOffsetMatrix);
 				_objectIdScratch.Add(id.Value);
+				int objectIndex = _aabbMins.Count - 1;
+
+				bool requiresRebuild = false;
+				if (_lastItemStates.TryGetValue(item, out ItemState previous))
+				{
+					if (previous.ObjectIndex != objectIndex || previous.ShouldRender != shouldRender)
+					{
+						requiresRebuild = true;
+					}
+					else if (!previous.Bounds.HasValue || !AreBoundsEqual(previous.Bounds.Value, bounds) || previous.Offset != item.CullingOffsetMatrix)
+					{
+						MarkDirty(TreeDirtyState.Refit);
+						_dirtyItems.Add(item);
+					}
+				}
+				else
+				{
+					requiresRebuild = true;
+				}
+
+				if (requiresRebuild)
+					MarkDirty(TreeDirtyState.Rebuild);
+
+				newStates[item] = new ItemState(objectIndex, bounds, item.CullingOffsetMatrix, shouldRender);
+				seenItems.Add(item);
 
 				if (!hasBounds)
 				{
@@ -405,6 +531,12 @@ namespace XREngine.Data.Trees
 						? bounds
 						: dynamicBounds.ExpandedToInclude(bounds);
 				}
+			}
+
+			foreach (var kvp in _lastItemStates)
+			{
+				if (!seenItems.Contains(kvp.Key))
+					MarkDirty(TreeDirtyState.Rebuild);
 			}
 
 			if (truncated)
@@ -470,6 +602,7 @@ namespace XREngine.Data.Trees
 
 		private void UploadEmptyBuffers()
 		{
+			_lastBvhNodeCount = 0;
 			_aabbBuffer ??= CreateBuffer("GPUOctree.AABBs", false);
 			_aabbBuffer.SetDataRaw(new[] { ZeroVec4, ZeroVec4 }, 2);
 			_aabbBuffer.SetBlockIndex(0);
@@ -618,8 +751,43 @@ namespace XREngine.Data.Trees
 			program.BindBuffer(_mortonBuffer!, 1);
 			program.BindBuffer(_bvhNodeBuffer, 2);
 			program.BindBuffer(_bvhRangeBuffer, 3);
+			program.Uniform("debugValidation", EnableValidation ? 1u : 0u);
 			program.DispatchCompute(ComputeGroups(_lastBvhNodeCount, 256u), 1u, 1u, EMemoryBarrierMask.ShaderStorage);
 			return true;
+		}
+
+		private bool RunRefitPipeline(uint objectCount)
+		{
+			if (_nodeBuffer is null)
+				return false;
+
+			if (objectCount == 0)
+			{
+				UploadEmptyBuffers();
+				return true;
+			}
+
+			DispatchRefitOctree(objectCount);
+			DispatchPropagate();
+			if (_useBvh)
+				DispatchRefitBvh();
+			DispatchInitQueue();
+
+			_transformBuffer?.SetBlockIndex(1);
+			return true;
+		}
+
+		private void DispatchRefitOctree(uint objectCount)
+		{
+			var program = _refitOctreeProgram;
+			if (program is null)
+				return;
+
+			program.BindBuffer(_aabbBuffer!, 0);
+			program.BindBuffer(_nodeBuffer!, 2);
+			program.Uniform("numObjects", objectCount);
+			program.Uniform("debugValidation", EnableValidation ? 1u : 0u);
+			program.DispatchCompute(ComputeGroups(objectCount, 256u), 1u, 1u, EMemoryBarrierMask.ShaderStorage);
 		}
 
 		private void SortMortonCodes(uint objectCount)
@@ -703,6 +871,7 @@ namespace XREngine.Data.Trees
 			_buildProgram ??= CreateProgram(ref _buildShader, "Scene3D/RenderPipeline/OctreeGeneration/build_octree.comp");
 			_propagateProgram ??= CreateProgram(ref _propagateShader, "Scene3D/RenderPipeline/OctreeGeneration/propagate_aabbs.comp");
 			_initQueueProgram ??= CreateProgram(ref _initQueueShader, "Scene3D/RenderPipeline/OctreeGeneration/init_queue.comp");
+			EnsureRefitPrograms();
 			if (_useBvh)
 				EnsureBvhPrograms();
 		}
@@ -712,6 +881,11 @@ namespace XREngine.Data.Trees
 			_bvhBuildProgram ??= CreateProgram(ref _bvhBuildShader, "Scene3D/RenderPipeline/bvh_build.comp", true);
 			_bvhRefineProgram ??= CreateProgram(ref _bvhRefineShader, "Scene3D/RenderPipeline/bvh_sah_refine.comp", true);
 			_bvhRefitProgram ??= CreateProgram(ref _bvhRefitShader, "Scene3D/RenderPipeline/bvh_refit.comp", true);
+		}
+
+		private void EnsureRefitPrograms()
+		{
+			_refitOctreeProgram ??= CreateProgram(ref _refitOctreeShader, "Scene3D/RenderPipeline/OctreeGeneration/refit_octree.comp");
 		}
 
 		private void EnsureMortonBufferCapacity(uint objectCount)
@@ -732,7 +906,10 @@ namespace XREngine.Data.Trees
 		private void EnsureBvhBuffers(uint objectCount)
 		{
 			if (!_useBvh)
+			{
+				_lastBvhNodeCount = 0;
 				return;
+			}
 
 			uint leafCount = objectCount == 0 ? 0u : ((objectCount + _maxLeafPrimitives - 1u) / _maxLeafPrimitives);
 			uint nodeCount = leafCount == 0 ? 0u : (leafCount * 2u) - 1u;
@@ -877,8 +1054,16 @@ namespace XREngine.Data.Trees
 		private static uint ComputeGroups(uint workItems, uint localSize)
 			=> Math.Max(1u, (workItems + localSize - 1u) / localSize);
 
-		private void MarkDirty()
-			=> _gpuDirty = true;
+		private static bool AreBoundsEqual(AABB a, AABB b, float epsilon = 0.0001f)
+			=> Vector3.DistanceSquared(a.Min, b.Min) <= epsilon * epsilon
+			&& Vector3.DistanceSquared(a.Max, b.Max) <= epsilon * epsilon;
+
+		private void MarkDirty(TreeDirtyState reason = TreeDirtyState.Rebuild)
+		{
+			if (reason > _dirtyState)
+				_dirtyState = reason;
+			_gpuDirty = true;
+		}
 
 		private uint? ResolveItemId(T item)
 		{
