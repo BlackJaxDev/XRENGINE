@@ -36,7 +36,7 @@ namespace XREngine.Server.Instances
             if (_instances.TryGetValue(id, out var existing))
                 return existing;
 
-            XRWorld world = _worldDownloader.FetchWorldAsync(locator, cancellationToken).GetAwaiter().GetResult();
+            XRWorld world = _worldDownloader.FetchWorldAsync(locator, id, cancellationToken).GetAwaiter().GetResult();
             XRWorldInstance worldInstance = XRWorldInstance.GetOrInitWorld(world);
 
             // Disable rendering by default unless explicitly requested for development.
