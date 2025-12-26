@@ -1,0 +1,27 @@
+#ifndef XR_BVH_NODES_GLSL
+#define XR_BVH_NODES_GLSL
+
+// Shared BVH node description used across build/refine/refit passes.
+// Matches the GPU-facing C# structs in XREngine.Rendering.Compute.GpuBvhNode.
+// Stride is rounded to 20 uint scalars (80 bytes) to maintain 16-byte alignment
+// for std430 layouts and SSBO consumers.
+#define BVH_NODE_STRIDE_SCALARS 20u
+#define BVH_RANGE_STRIDE_SCALARS 2u
+#define BVH_FLAG_LEAF 1u
+
+struct BvhNode
+{
+    // xyz = min bounds, implicit padding to 16B
+    vec3 minBounds;
+    uint leftChild;
+    // xyz = max bounds, implicit padding to 16B
+    vec3 maxBounds;
+    uint rightChild;
+    // primitive start + count
+    uvec2 primitiveRange;
+    // parent index + flags (bit0 = leaf)
+    uint parentIndex;
+    uint flags;
+};
+
+#endif // XR_BVH_NODES_GLSL
