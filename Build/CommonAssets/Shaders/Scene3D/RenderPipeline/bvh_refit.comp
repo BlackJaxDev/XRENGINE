@@ -6,8 +6,7 @@
 layout (constant_id = 0) const uint MAX_LEAF_PRIMITIVES = 1u;
 layout (constant_id = 1) const uint BVH_MODE = 0u;
 
-#define BVH_NODE_STRIDE_SCALARS 20u
-#define BVH_RANGE_STRIDE_SCALARS 2u
+#include "bvh_nodes.glslinc"
 
 struct MortonObject
 {
@@ -29,17 +28,6 @@ layout(std430, binding = 0) buffer AABBs
 layout(std430, binding = 1) buffer MortonCodes
 {
     MortonObject mortonObjects[];
-};
-
-struct BvhNode
-{
-    vec3 minBounds;
-    uint leftChild;
-    vec3 maxBounds;
-    uint rightChild;
-    uvec2 primitiveRange; // start, count
-    uint parentIndex;
-    uint flags; // bit0 = leaf
 };
 
 layout(std430, binding = 2) buffer BvhNodes
@@ -70,7 +58,7 @@ void main()
     BvhNode node = nodes[nodeIndex];
     uvec2 range = ranges[nodeIndex];
 
-    if ((node.flags & 1u) != 0u)
+    if ((node.flags & BVH_FLAG_LEAF) != 0u)
     {
         // Leaf: recompute bounds from primitives in the range.
         if (range.y == 0u)
