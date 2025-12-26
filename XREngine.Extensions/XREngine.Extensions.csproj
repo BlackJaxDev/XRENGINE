@@ -6,29 +6,24 @@
     <Nullable>enable</Nullable>
     <AllowUnsafeBlocks>True</AllowUnsafeBlocks>
     <Platforms>AnyCPU;x64</Platforms>
+    <IsTrimmable>false</IsTrimmable>
+    <IsAotCompatible>false</IsAotCompatible>
+    <NoWarn>CA2022;IL2067;IL2070;IL2075;IL2091;IL3050</NoWarn>
   </PropertyGroup>
 
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|AnyCPU'">
-    <IsTrimmable>True</IsTrimmable>
-    <IsAotCompatible>True</IsAotCompatible>
     <DebugType>embedded</DebugType>
   </PropertyGroup>
 
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
-    <IsTrimmable>True</IsTrimmable>
-    <IsAotCompatible>True</IsAotCompatible>
     <DebugType>embedded</DebugType>
   </PropertyGroup>
 
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|AnyCPU'">
-    <IsTrimmable>True</IsTrimmable>
-    <IsAotCompatible>True</IsAotCompatible>
     <DebugType>embedded</DebugType>
   </PropertyGroup>
 
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
-    <IsTrimmable>True</IsTrimmable>
-    <IsAotCompatible>True</IsAotCompatible>
     <DebugType>embedded</DebugType>
   </PropertyGroup>
 
