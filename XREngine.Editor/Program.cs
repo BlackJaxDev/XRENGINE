@@ -25,6 +25,9 @@ internal class Program
     [STAThread]
     private static void Main(string[] args)
     {
+        if (TryHandleCommandLine(args))
+            return;
+
         //ConsoleHelper.EnsureConsoleAttached();
         Undo.Initialize();
         Debug.Out("XREngine Editor starting...");
@@ -193,5 +196,86 @@ internal class Program
         }
 
         return useDebug;
+    }
+
+    private static bool TryHandleCommandLine(string[] args)
+    {
+        if (!TryParseProjectInitArgs(args, out var projectDirectory, out var projectName, out bool initFlagSeen, out string? error))
+        {
+            if (initFlagSeen)
+            {
+                Console.Error.WriteLine(error ?? "Invalid project initialization arguments.");
+                Environment.ExitCode = 1;
+                return true;
+            }
+            return false;
+        }
+
+        if (string.IsNullOrWhiteSpace(projectDirectory))
+            return false;
+
+        bool success = EditorProjectInitializer.InitializeNewProject(projectDirectory, projectName!, Console.Out, Console.Error);
+        Environment.ExitCode = success ? 0 : 1;
+        return true;
+    }
+
+    private static bool TryParseProjectInitArgs(
+        string[] args,
+        out string? projectDirectory,
+        out string? projectName,
+        out bool initFlagSeen,
+        out string? error)
+    {
+        projectDirectory = null;
+        projectName = null;
+        error = null;
+        initFlagSeen = false;
+
+        for (int i = 0; i < args.Length; i++)
+        {
+            string arg = args[i];
+            switch (arg.ToLowerInvariant())
+            {
+                case "--init-project":
+                case "--create-project":
+                case "-initproject":
+                case "-createproject":
+                    initFlagSeen = true;
+                    if (i + 1 >= args.Length)
+                    {
+                        error = "Missing project directory after --init-project.";
+                        return false;
+                    }
+                    projectDirectory = args[++i];
+                    break;
+                case "--project-name":
+                case "--name":
+                    if (i + 1 >= args.Length)
+                    {
+                        error = "Missing project name after --project-name.";
+                        return false;
+                    }
+                    projectName = args[++i];
+                    break;
+            }
+        }
+
+        if (!initFlagSeen)
+            return false;
+
+        if (string.IsNullOrWhiteSpace(projectDirectory))
+        {
+            error = "A project directory must be provided after --init-project.";
+            return false;
+        }
+
+        projectName ??= Path.GetFileName(Path.GetFullPath(projectDirectory.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar)));
+        if (string.IsNullOrWhiteSpace(projectName))
+        {
+            error = "A project name could not be determined. Use --project-name to specify one explicitly.";
+            return false;
+        }
+
+        return true;
     }
 }
