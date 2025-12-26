@@ -1,0 +1,74 @@
+name: CI
+
+on:
+  push:
+    branches-ignore:
+      - nightly
+      - beta
+      - release
+  pull_request:
+    branches:
+      - nightly
+      - beta
+      - release
+
+permissions:
+  contents: read
+
+env:
+  DOTNET_NOLOGO: true
+  DOTNET_CLI_TELEMETRY_OPTOUT: true
+  DOTNET_SKIP_FIRST_TIME_EXPERIENCE: true
+  DOTNET_WARNASERROR: true
+
+jobs:
+  build:
+    name: Build & Test (${{ matrix.app }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - app: editor
+            os: windows-latest
+          - app: server
+            os: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Cache NuGet
+        uses: actions/cache@v4
+        with:
+          path: ~/.nuget/packages
+          key: nuget-${{ runner.os }}-${{ hashFiles('**/*.csproj', '**/global.json', 'version/version.json') }}
+          restore-keys: |
+            nuget-${{ runner.os }}-
+
+      - name: Compute version
+        id: version
+        shell: bash
+        run: echo "value=$(bash Tools/versioning/get-version.sh --run-number ${{ github.run_number }} --branch ${{ github.ref_name }})" >> "$GITHUB_OUTPUT"
+
+      - name: Restore
+        run: dotnet restore XRENGINE.sln
+
+      - name: Build
+        run: dotnet build XRENGINE.sln --no-restore -c Release /p:Version=${{ steps.version.outputs.value }} /p:TreatWarningsAsErrors=true /warnaserror
+
+      - name: Test
+        run: dotnet test XREngine.UnitTests/XREngine.UnitTests.csproj --no-build -c Release --logger "trx;LogFileName=${{ matrix.app }}.trx" --results-directory ./TestResults
+
+      - name: Upload test results
+        if: always() && hashFiles('TestResults/*.trx') != ''
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.app }}-test-results
+          path: TestResults
+          if-no-files-found: ignore

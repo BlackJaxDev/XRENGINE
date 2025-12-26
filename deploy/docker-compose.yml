@@ -1,0 +1,42 @@
+version: "3.9"
+
+x-server-environment: &server-environment
+  env_file:
+    - ${ENV_FILE:-.env}
+  environment:
+    ASPNETCORE_ENVIRONMENT: ${ASPNETCORE_ENVIRONMENT:-Production}
+    PUBLIC_BASEURL: ${PUBLIC_BASEURL:-http://localhost}
+  restart: unless-stopped
+  networks:
+    - xrengine
+
+services:
+  server_a:
+    <<: *server-environment
+    image: ${SERVER_IMAGE:?SERVER_IMAGE must be set}
+    container_name: xrengine-server-a
+    ports:
+      - "${SERVER_A_PORT:-5001}:5000"
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost:5000/healthz || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  server_b:
+    <<: *server-environment
+    image: ${SERVER_IMAGE:?SERVER_IMAGE must be set}
+    container_name: xrengine-server-b
+    ports:
+      - "${SERVER_B_PORT:-5002}:5000"
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost:5000/healthz || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+networks:
+  xrengine:
+    name: xrengine
