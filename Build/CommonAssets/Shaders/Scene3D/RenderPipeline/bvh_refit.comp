@@ -1,0 +1,113 @@
+#version 460
+
+// Bottom-up BVH refit. Recomputes leaf bounds from updated primitive AABBs
+// then propagates bounds to internal nodes.
+
+layout (constant_id = 0) const uint MAX_LEAF_PRIMITIVES = 1u;
+layout (constant_id = 1) const uint BVH_MODE = 0u;
+
+#define BVH_NODE_STRIDE_SCALARS 20u
+#define BVH_RANGE_STRIDE_SCALARS 2u
+
+struct MortonObject
+{
+    uint mortonCode;
+    uint objectId;
+};
+
+struct Aabb
+{
+    vec4 minBounds;
+    vec4 maxBounds;
+};
+
+layout(std430, binding = 0) buffer AABBs
+{
+    Aabb aabbs[];
+};
+
+layout(std430, binding = 1) buffer MortonCodes
+{
+    MortonObject mortonObjects[];
+};
+
+struct BvhNode
+{
+    vec3 minBounds;
+    uint leftChild;
+    vec3 maxBounds;
+    uint rightChild;
+    uvec2 primitiveRange; // start, count
+    uint parentIndex;
+    uint flags; // bit0 = leaf
+};
+
+layout(std430, binding = 2) buffer BvhNodes
+{
+    uint nodeCount;
+    uint rootIndex;
+    uint nodeStrideScalars;
+    uint maxLeafPrimitives;
+    BvhNode nodes[];
+};
+
+layout(std430, binding = 3) buffer PrimitiveRanges
+{
+    uvec2 ranges[];
+};
+
+vec3 combineMin(vec3 a, vec3 b) { return min(a, b); }
+vec3 combineMax(vec3 a, vec3 b) { return max(a, b); }
+
+layout (local_size_x = 256, local_size_y = 1, local_size_z = 1) in;
+
+void main()
+{
+    uint nodeIndex = gl_GlobalInvocationID.x;
+    if (nodeIndex >= nodeCount)
+        return;
+
+    BvhNode node = nodes[nodeIndex];
+    uvec2 range = ranges[nodeIndex];
+
+    if ((node.flags & 1u) != 0u)
+    {
+        // Leaf: recompute bounds from primitives in the range.
+        if (range.y == 0u)
+            return;
+
+        vec3 minB = vec3(1e30);
+        vec3 maxB = vec3(-1e30);
+        for (uint i = 0u; i < range.y; ++i)
+        {
+            uint primIndex = mortonObjects[range.x + i].objectId;
+            minB = combineMin(minB, aabbs[primIndex].minBounds.xyz);
+            maxB = combineMax(maxB, aabbs[primIndex].maxBounds.xyz);
+        }
+        nodes[nodeIndex].minBounds = minB;
+        nodes[nodeIndex].maxBounds = maxB;
+    }
+    else
+    {
+        // Internal: merge children.
+        uint left = node.leftChild;
+        uint right = node.rightChild;
+
+        vec3 minB = vec3(1e30);
+        vec3 maxB = vec3(-1e30);
+
+        if (left != uint(-1))
+        {
+            minB = combineMin(minB, nodes[left].minBounds);
+            maxB = combineMax(maxB, nodes[left].maxBounds);
+        }
+        if (right != uint(-1))
+        {
+            minB = combineMin(minB, nodes[right].minBounds);
+            maxB = combineMax(maxB, nodes[right].maxBounds);
+        }
+
+        nodes[nodeIndex].minBounds = minB;
+        nodes[nodeIndex].maxBounds = maxB;
+    }
+}
