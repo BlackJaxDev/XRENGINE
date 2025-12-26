@@ -23,6 +23,7 @@ namespace XREngine.Scene
         private AABB _sceneBounds;
         private bool _hasSceneBounds = false;
         private bool _isGpuDispatchActive = Engine.EffectiveSettings.GPURenderDispatch;
+        public BvhRaycastDispatcher BvhRaycasts { get; } = new();
 
         public void SetBounds(AABB bounds)
         {
@@ -103,9 +104,16 @@ namespace XREngine.Scene
         {
             base.GlobalPreRender();
             ProcessPendingRenderableOperations();
+            BvhRaycasts.ProcessDispatches();
 
             if (Engine.Rendering.Settings.CalculateSkinningInComputeShader || Engine.Rendering.Settings.CalculateBlendshapesInComputeShader)
                 RunSkinningPrepass();
+        }
+
+        public override void GlobalPostRender()
+        {
+            base.GlobalPostRender();
+            BvhRaycasts.ProcessCompletions();
         }
 
         private void RunSkinningPrepass()
