@@ -2,6 +2,11 @@
 using Microsoft.AspNetCore.ResponseCompression;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
+using System.Linq;
+using XREngine.Networking.LoadBalance;
+using XREngine.Networking.LoadBalance.Balancers;
+
+#if WINDOWS
 using Silk.NET.OpenAL;
 using System.Numerics;
 using XREngine.Components;
@@ -15,11 +20,8 @@ using XREngine.Rendering.Models.Materials;
 using XREngine.Rendering.UI;
 using XREngine.Scene;
 using XREngine.Scene.Transforms;
-using XREngine.Networking.LoadBalance;
-using XREngine.Networking.LoadBalance.Balancers;
 using static XREngine.GameStartupSettings;
-
-using System.Linq;
+#endif
 namespace XREngine.Networking
 {
     /// <summary>
@@ -50,10 +52,12 @@ namespace XREngine.Networking
 
         public static Task? WebAppTask { get; private set; }
 
-        private static void Main(string[] args)
+        public static void Main(string[] args)
         {
             WebAppTask = BuildWebApi();
-            bool loadBalancerOnly = args.Any(a => string.Equals(a, "--load-balancer-only", StringComparison.OrdinalIgnoreCase));
+
+#if WINDOWS
+            bool loadBalancerOnly = IsLoadBalancerOnly(args);
             if (loadBalancerOnly)
             {
                 WebAppTask?.GetAwaiter().GetResult();
@@ -62,7 +66,13 @@ namespace XREngine.Networking
             var unitTestWorld = UnitTestingWorld.CreateUnitTestWorld(false, true);
             CreateConsoleUI(unitTestWorld.Scenes[0].RootNodes[0]);
             Engine.Run(/*Engine.LoadOrGenerateGameSettings(() => */GetEngineSettings(unitTestWorld)/*, "startup", false)*/, Engine.LoadOrGenerateGameState());
+#else
+            WebAppTask?.GetAwaiter().GetResult();
+#endif
         }
+
+        private static bool IsLoadBalancerOnly(string[] args) =>
+            args.Any(a => string.Equals(a, "--load-balancer-only", StringComparison.OrdinalIgnoreCase));
 
         private static Task BuildWebApi()
         {
@@ -100,6 +110,7 @@ namespace XREngine.Networking
             return app.RunAsync();
         }
 
+#if WINDOWS
         static XRWorld CreateServerDebugWorld()
         {
             string desktopDir = Environment.GetFolderPath(Environment.SpecialFolder.DesktopDirectory);
@@ -302,5 +313,6 @@ namespace XREngine.Networking
                 FixedFramesPerSecond = fixedHz,
             };
         }
+#endif
     }
 }

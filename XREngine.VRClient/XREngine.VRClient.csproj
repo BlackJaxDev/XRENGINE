@@ -25,8 +25,11 @@
     <PackageReference Include="Magick.NET-Q16-HDRI-AnyCPU" Version="14.10.0" />
     <PackageReference Include="NDILibDotNetCoreBase" Version="2024.7.22.1" />
     <PackageReference Include="SixLabors.ImageSharp" Version="3.1.12" />
-    <PackageReference Include="System.Text.Json" Version="10.0.0" />
   </ItemGroup>
+
+  <PropertyGroup>
+    <EnableWindowsTargeting>true</EnableWindowsTargeting>
+  </PropertyGroup>
 
   <ItemGroup>
     <ProjectReference Include="..\XREngine.Animation\XREngine.Animation.csproj" />
@@ -34,7 +37,7 @@
     <ProjectReference Include="..\XREngine.Data\XREngine.Data.csproj" />
     <ProjectReference Include="..\XREngine.Extensions\XREngine.Extensions.csproj" />
     <ProjectReference Include="..\XREngine.Input\XREngine.Input.csproj" />
-    <ProjectReference Include="..\XREngine\XREngine.csproj" />
+    <ProjectReference Include="..\XRENGINE\XREngine.csproj" />
   </ItemGroup>
 
   <ItemGroup>

@@ -1,0 +1,147 @@
+name: Nightly
+
+on:
+  schedule:
+    - cron: '0 8 * * *' # 03:00 America/New_York
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  packages: write
+  id-token: write
+
+env:
+  DOTNET_NOLOGO: true
+  DOTNET_CLI_TELEMETRY_OPTOUT: true
+  DOTNET_SKIP_FIRST_TIME_EXPERIENCE: true
+  DOTNET_WARNASERROR: true
+
+concurrency:
+  group: nightly-staging
+  cancel-in-progress: false
+
+jobs:
+  version:
+    runs-on: ubuntu-latest
+    outputs:
+      value: ${{ steps.version.outputs.value }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: version
+        shell: bash
+        run: echo "value=$(bash Tools/versioning/get-version.sh --channel nightly --run-number ${{ github.run_number }})" >> "$GITHUB_OUTPUT"
+
+  editor:
+    name: Build Editor
+    runs-on: windows-latest
+    needs: version
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+      - uses: actions/cache@v4
+        with:
+          path: ~/.nuget/packages
+          key: nuget-${{ runner.os }}-${{ hashFiles('**/*.csproj', '**/global.json', 'version/version.json') }}
+          restore-keys: |
+            nuget-${{ runner.os }}-
+      - name: Restore
+        run: dotnet restore XRENGINE.sln
+      - name: Build Editor
+        run: dotnet build XRENGINE.sln --no-restore -c Release /p:Version=${{ needs.version.outputs.value }} /p:TreatWarningsAsErrors=true /warnaserror
+      - name: Publish Editor (win-x64)
+        run: dotnet publish XREngine.Editor/XREngine.Editor.csproj -c Release -r win-x64 --self-contained false /p:Version=${{ needs.version.outputs.value }} /p:TreatWarningsAsErrors=true /warnaserror /p:PublishSingleFile=false /p:IncludeNativeLibrariesForSelfExtract=false -o ${{ runner.temp }}/editor
+      - name: Upload Editor Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: editor-nightly-win-x64
+          path: ${{ runner.temp }}/editor
+
+  server:
+    name: Build & Test Server
+    runs-on: ubuntu-latest
+    needs: version
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+      - uses: actions/cache@v4
+        with:
+          path: ~/.nuget/packages
+          key: nuget-${{ runner.os }}-${{ hashFiles('**/*.csproj', '**/global.json', 'version/version.json') }}
+          restore-keys: |
+            nuget-${{ runner.os }}-
+      - name: Restore
+        run: dotnet restore XRENGINE.sln
+      - name: Build
+        run: dotnet build XRENGINE.sln --no-restore -c Release /p:Version=${{ needs.version.outputs.value }} /p:TreatWarningsAsErrors=true /warnaserror
+      - name: Test
+        run: dotnet test XREngine.UnitTests/XREngine.UnitTests.csproj --no-build -c Release --logger "trx;LogFileName=server.trx" --results-directory ./TestResults
+      - name: Upload test results
+        if: always() && hashFiles('TestResults/*.trx') != ''
+        uses: actions/upload-artifact@v4
+        with:
+          name: server-nightly-test-results
+          path: TestResults
+          if-no-files-found: ignore
+
+  docker:
+    name: Build & Push Docker
+    runs-on: ubuntu-latest
+    needs: [version, server]
+    env:
+      IMAGE_NAME: ghcr.io/${{ github.repository }}/server
+    steps:
+      - uses: actions/checkout@v4
+      - name: Login to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Build & Push
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: XREngine.Server/Dockerfile
+          push: true
+          build-args: |
+            VERSION=${{ needs.version.outputs.value }}
+          tags: |
+            ${{ env.IMAGE_NAME }}:${{ needs.version.outputs.value }}
+            ${{ env.IMAGE_NAME }}:nightly-latest
+
+  deploy:
+    name: Deploy to Staging
+    runs-on: ubuntu-latest
+    environment: staging
+    needs: [docker, editor]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Copy deployment assets
+        uses: appleboy/scp-action@v0.1.4
+        with:
+          host: ${{ secrets.DEPLOY_HOST_STAGING }}
+          username: ${{ secrets.DEPLOY_USER }}
+          key: ${{ secrets.DEPLOY_SSH_KEY }}
+          port: ${{ secrets.DEPLOY_SSH_PORT != '' && secrets.DEPLOY_SSH_PORT || 22 }}
+          source: "deploy/*"
+          target: "/opt/xrengine"
+      - name: Run remote deploy
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.DEPLOY_HOST_STAGING }}
+          username: ${{ secrets.DEPLOY_USER }}
+          key: ${{ secrets.DEPLOY_SSH_KEY }}
+          port: ${{ secrets.DEPLOY_SSH_PORT != '' && secrets.DEPLOY_SSH_PORT || 22 }}
+          script: |
+            set -euo pipefail
+            sudo mkdir -p /opt/xrengine
+            sudo chmod +x /opt/xrengine/deploy.sh
+            sudo cp /opt/xrengine/nginx/nginx.conf /etc/nginx/conf.d/xrengine.conf
+            APP_IMAGE=ghcr.io/${{ github.repository }}/server:${{ needs.version.outputs.value }} \
+            ENVIRONMENT=staging \
+            PUBLIC_BASEURL=${{ secrets.PUBLIC_BASEURL_STAGING }} \
+            bash /opt/xrengine/deploy.sh

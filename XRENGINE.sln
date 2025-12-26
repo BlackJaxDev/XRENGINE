@@ -7,7 +7,7 @@ Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "XREngine.Editor", "XREngine
 EndProject
 Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "XREngine.Extensions", "XREngine.Extensions\XREngine.Extensions.csproj", "{3334FAD6-A39F-4E1A-905F-7828761E7EC8}"
 EndProject
-Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "XREngine", "XREngine\XREngine.csproj", "{EB756E52-9DB0-44C9-9891-9B3C1656F03B}"
+Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "XREngine", "XRENGINE\XREngine.csproj", "{EB756E52-9DB0-44C9-9891-9B3C1656F03B}"
 EndProject
 Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "XREngine.Data", "XREngine.Data\XREngine.Data.csproj", "{3984224C-BC42-4C45-9413-FA68B9B64212}"
 EndProject

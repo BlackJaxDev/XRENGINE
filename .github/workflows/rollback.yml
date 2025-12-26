@@ -1,0 +1,62 @@
+name: Rollback
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Image version/tag to deploy (without registry prefix)"
+        required: true
+        type: string
+      environment:
+        description: "Target environment"
+        required: true
+        type: choice
+        options:
+          - staging
+          - production
+
+permissions:
+  contents: read
+
+env:
+  DOTNET_NOLOGO: true
+  DOTNET_CLI_TELEMETRY_OPTOUT: true
+  DOTNET_SKIP_FIRST_TIME_EXPERIENCE: true
+  DOTNET_WARNASERROR: true
+
+jobs:
+  deploy:
+    name: Rollback deploy
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.environment == 'production' && 'production' || 'staging' }}
+    env:
+      HOST: ${{ inputs.environment == 'production' && secrets.DEPLOY_HOST_PROD || secrets.DEPLOY_HOST_STAGING }}
+      PUBLIC_BASEURL: ${{ inputs.environment == 'production' && secrets.PUBLIC_BASEURL_PROD || secrets.PUBLIC_BASEURL_STAGING }}
+      SSH_PORT: ${{ secrets.DEPLOY_SSH_PORT != '' && secrets.DEPLOY_SSH_PORT || 22 }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Copy deployment assets
+        uses: appleboy/scp-action@v0.1.4
+        with:
+          host: ${{ env.HOST }}
+          username: ${{ secrets.DEPLOY_USER }}
+          key: ${{ secrets.DEPLOY_SSH_KEY }}
+          port: ${{ env.SSH_PORT }}
+          source: "deploy/*"
+          target: "/opt/xrengine"
+      - name: Run remote deploy
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ env.HOST }}
+          username: ${{ secrets.DEPLOY_USER }}
+          key: ${{ secrets.DEPLOY_SSH_KEY }}
+          port: ${{ env.SSH_PORT }}
+          script: |
+            set -euo pipefail
+            sudo mkdir -p /opt/xrengine
+            sudo chmod +x /opt/xrengine/deploy.sh
+            sudo cp /opt/xrengine/nginx/nginx.conf /etc/nginx/conf.d/xrengine.conf
+            APP_IMAGE=ghcr.io/${{ github.repository }}/server:${{ inputs.version }} \
+            ENVIRONMENT=${{ inputs.environment }} \
+            PUBLIC_BASEURL=${{ env.PUBLIC_BASEURL }} \
+            bash /opt/xrengine/deploy.sh

@@ -1,4 +1,5 @@
-﻿using Extensions;
+﻿#if WINDOWS
+using Extensions;
 using System.Diagnostics;
 using System.Numerics;
 using System.Text;
@@ -224,3 +225,4 @@ namespace XREngine.Networking
         }
     }
 }
+#endif
