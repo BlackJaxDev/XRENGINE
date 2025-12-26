@@ -1,0 +1,216 @@
+#version 460
+
+// LBVH build from pre-sorted Morton keys.
+// Emits leaves (up to MAX_LEAF_PRIMITIVES each), generates internal connectivity,
+// and writes primitive ranges for downstream refinement/refit passes.
+
+layout (constant_id = 0) const uint MAX_LEAF_PRIMITIVES = 1u; // number of primitives per leaf
+layout (constant_id = 1) const uint BVH_MODE = 0u; // 0 = Morton-only, 1 = Morton + SAH refinement
+
+#define BVH_NODE_STRIDE_SCALARS 20u
+#define BVH_RANGE_STRIDE_SCALARS 2u
+
+struct MortonObject
+{
+    uint mortonCode;
+    uint objectId;
+};
+
+struct Aabb
+{
+    vec4 minBounds;
+    vec4 maxBounds;
+};
+
+layout(std430, binding = 0) buffer AABBs
+{
+    Aabb aabbs[];
+};
+
+layout(std430, binding = 1) buffer MortonCodes
+{
+    MortonObject mortonObjects[];
+};
+
+struct BvhNode
+{
+    vec3 minBounds;
+    uint leftChild;
+    vec3 maxBounds;
+    uint rightChild;
+    uvec2 primitiveRange; // start, count
+    uint parentIndex;
+    uint flags; // bit0 = leaf
+};
+
+layout(std430, binding = 2) buffer BvhNodes
+{
+    uint nodeCount;
+    uint rootIndex;
+    uint nodeStrideScalars; // for host alignment
+    uint maxLeafPrimitives; // echoed constant for the host
+    BvhNode nodes[];
+};
+
+layout(std430, binding = 3) buffer PrimitiveRanges
+{
+    uvec2 ranges[];
+};
+
+uniform uint numPrimitives;
+
+// --- Morton helpers over leaf blocks ---
+uint leafFirstPrimitive(uint leafIndex)
+{
+    return min(numPrimitives - 1u, leafIndex * MAX_LEAF_PRIMITIVES);
+}
+
+uint mortonForLeaf(uint leafIndex)
+{
+    return mortonObjects[leafFirstPrimitive(leafIndex)].mortonCode;
+}
+
+int clz(uint x)
+{
+    if (x == 0u)
+        return 32;
+
+    int n = 0;
+    if (x <= 0x0000FFFFu) { n += 16; x <<= 16; }
+    if (x <= 0x00FFFFFFu) { n += 8;  x <<= 8;  }
+    if (x <= 0x0FFFFFFFu) { n += 4;  x <<= 4;  }
+    if (x <= 0x3FFFFFFFu) { n += 2;  x <<= 2;  }
+    if (x <= 0x7FFFFFFFu) { n += 1; }
+    return n;
+}
+
+int lcp_leaf(int i, int j, uint leafCount)
+{
+    if (j < 0 || j >= int(leafCount))
+        return -1;
+    uint a = mortonForLeaf(uint(i));
+    uint b = mortonForLeaf(uint(j));
+    if (a == b)
+        return 32 + int(clz(uint(i) ^ uint(j)));
+    return int(clz(a ^ b));
+}
+
+ivec2 determineRange(int i, uint leafCount)
+{
+    int lcpL = lcp_leaf(i, i - 1, leafCount);
+    int lcpR = lcp_leaf(i, i + 1, leafCount);
+    int d = (lcpR > lcpL) ? 1 : -1;
+    int lMax = 2;
+    while (lcp_leaf(i, i + lMax * d, leafCount) > lcp_leaf(i, i + d, leafCount))
+        lMax *= 2;
+
+    int l = 0;
+    for (int t = lMax; t > 1; t = (t + 1) >> 1)
+    {
+        if (lcp_leaf(i, i + (l + t) * d, leafCount) > lcp_leaf(i, i + d, leafCount))
+            l += t;
+    }
+    int j = i + l * d;
+    int first = min(i, j);
+    int last  = max(i, j);
+    return ivec2(first, last);
+}
+
+int findSplit(int first, int last, uint leafCount)
+{
+    int commonPrefix = lcp_leaf(first, last, leafCount);
+    int split = first;
+    int step = last - first;
+    do
+    {
+        step = (step + 1) >> 1;
+        int newSplit = split + step;
+        if (newSplit < last)
+        {
+            int prefix = lcp_leaf(first, newSplit, leafCount);
+            if (prefix > commonPrefix)
+                split = newSplit;
+        }
+    } while (step > 1);
+    return split;
+}
+
+layout (local_size_x = 256, local_size_y = 1, local_size_z = 1) in;
+
+void main()
+{
+    uint gid = gl_GlobalInvocationID.x;
+
+    uint leafCount = (numPrimitives + MAX_LEAF_PRIMITIVES - 1u) / MAX_LEAF_PRIMITIVES;
+    uint internalCount = (leafCount > 0u) ? (leafCount - 1u) : 0u;
+    uint totalNodes = leafCount + internalCount;
+
+    if (gid == 0u)
+    {
+        nodeCount = totalNodes;
+        rootIndex = (totalNodes > 0u) ? (totalNodes - 1u) : uint(-1);
+        nodeStrideScalars = BVH_NODE_STRIDE_SCALARS;
+        maxLeafPrimitives = MAX_LEAF_PRIMITIVES;
+    }
+
+    // Emit leaves with contiguous primitive ranges.
+    if (gid < leafCount)
+    {
+        uint start = gid * MAX_LEAF_PRIMITIVES;
+        uint count = min(MAX_LEAF_PRIMITIVES, numPrimitives - start);
+
+        vec3 minB = vec3(1e30);
+        vec3 maxB = vec3(-1e30);
+        for (uint i = 0u; i < count; ++i)
+        {
+            uint primIndex = mortonObjects[start + i].objectId;
+            minB = min(minB, aabbs[primIndex].minBounds.xyz);
+            maxB = max(maxB, aabbs[primIndex].maxBounds.xyz);
+        }
+
+        BvhNode leaf;
+        leaf.minBounds = minB;
+        leaf.maxBounds = maxB;
+        leaf.leftChild = uint(-1);
+        leaf.rightChild = uint(-1);
+        leaf.primitiveRange = uvec2(start, count);
+        leaf.parentIndex = uint(-1);
+        leaf.flags = 1u;
+        nodes[gid] = leaf;
+        ranges[gid] = uvec2(start, count);
+    }
+
+    // Build internal connectivity (LBVH).
+    if (gid < internalCount)
+    {
+        int i = int(gid);
+        ivec2 range = determineRange(i, leafCount);
+        int first = range.x;
+        int last  = range.y;
+        int split = findSplit(first, last, leafCount);
+
+        uint leftIndex  = (split == first)     ? uint(split)      : (leafCount + uint(split));
+        uint rightIndex = (split + 1 == last)  ? uint(split + 1)  : (leafCount + uint(split + 1));
+        uint nodeIndex = leafCount + gid;
+
+        BvhNode n;
+        n.minBounds = vec3(1e30);
+        n.maxBounds = vec3(-1e30);
+        n.leftChild = leftIndex;
+        n.rightChild = rightIndex;
+
+        uint startPrim = uint(first) * MAX_LEAF_PRIMITIVES;
+        uint endPrim = min(numPrimitives, (uint(last) * MAX_LEAF_PRIMITIVES) + MAX_LEAF_PRIMITIVES);
+        uvec2 combined = uvec2(startPrim, endPrim - startPrim);
+
+        n.primitiveRange = combined;
+        n.parentIndex = uint(-1);
+        n.flags = 0u; // internal
+
+        nodes[nodeIndex] = n;
+        ranges[nodeIndex] = combined;
+
+        nodes[leftIndex].parentIndex = nodeIndex;
+        nodes[rightIndex].parentIndex = nodeIndex;
+    }
+}

@@ -1,0 +1,173 @@
+#version 460
+
+// Optional SAH refinement: sweep across primitive ranges to pick a better split
+// for shallow nodes (leaf children) and rewrite their ranges/bounds.
+
+layout (constant_id = 0) const uint MAX_LEAF_PRIMITIVES = 1u;
+layout (constant_id = 1) const uint BVH_MODE = 0u; // 0 = Morton-only, 1 = Morton + SAH
+
+#define BVH_NODE_STRIDE_SCALARS 20u
+#define BVH_RANGE_STRIDE_SCALARS 2u
+#define MAX_SWEEP_PRIMS 1024u
+
+struct MortonObject
+{
+    uint mortonCode;
+    uint objectId;
+};
+
+struct Aabb
+{
+    vec4 minBounds;
+    vec4 maxBounds;
+};
+
+layout(std430, binding = 0) buffer AABBs
+{
+    Aabb aabbs[];
+};
+
+layout(std430, binding = 1) buffer MortonCodes
+{
+    MortonObject mortonObjects[];
+};
+
+struct BvhNode
+{
+    vec3 minBounds;
+    uint leftChild;
+    vec3 maxBounds;
+    uint rightChild;
+    uvec2 primitiveRange; // start, count
+    uint parentIndex;
+    uint flags; // bit0 = leaf
+};
+
+layout(std430, binding = 2) buffer BvhNodes
+{
+    uint nodeCount;
+    uint rootIndex;
+    uint nodeStrideScalars;
+    uint maxLeafPrimitives;
+    BvhNode nodes[];
+};
+
+layout(std430, binding = 3) buffer PrimitiveRanges
+{
+    uvec2 ranges[];
+};
+
+float surfaceArea(vec3 mn, vec3 mx)
+{
+    vec3 e = max(mx - mn, vec3(0.0));
+    return 2.0 * (e.x * e.y + e.y * e.z + e.z * e.x);
+}
+
+layout (local_size_x = 128, local_size_y = 1, local_size_z = 1) in;
+
+void main()
+{
+    if (BVH_MODE == 0u)
+        return;
+
+    uint nodeIndex = gl_GlobalInvocationID.x;
+    if (nodeIndex >= nodeCount)
+        return;
+
+    BvhNode node = nodes[nodeIndex];
+    if ((node.flags & 1u) != 0u)
+        return; // skip leaves
+
+    uint leftChild = node.leftChild;
+    uint rightChild = node.rightChild;
+    if (leftChild == uint(-1) || rightChild == uint(-1))
+        return;
+
+    // Only refine shallow nodes with leaf children to avoid rewriting deep topology.
+    if (((nodes[leftChild].flags & 1u) == 0u) || ((nodes[rightChild].flags & 1u) == 0u))
+        return;
+
+    uvec2 nodeRange = ranges[nodeIndex];
+    uint count = nodeRange.y;
+    if (count < 2u || count > MAX_SWEEP_PRIMS)
+        return;
+
+    vec3 prefixMin[MAX_SWEEP_PRIMS];
+    vec3 prefixMax[MAX_SWEEP_PRIMS];
+
+    for (uint i = 0u; i < count; ++i)
+    {
+        uint primIndex = mortonObjects[nodeRange.x + i].objectId;
+        vec3 mn = aabbs[primIndex].minBounds.xyz;
+        vec3 mx = aabbs[primIndex].maxBounds.xyz;
+        if (i == 0u)
+        {
+            prefixMin[i] = mn;
+            prefixMax[i] = mx;
+        }
+        else
+        {
+            prefixMin[i] = min(prefixMin[i - 1u], mn);
+            prefixMax[i] = max(prefixMax[i - 1u], mx);
+        }
+    }
+
+    vec3 suffixMin = vec3(1e30);
+    vec3 suffixMax = vec3(-1e30);
+    float bestCost = 3.402823466e+38; // FLT_MAX
+    uint bestSplit = 1u;
+    vec3 bestLeftMin = prefixMin[0];
+    vec3 bestLeftMax = prefixMax[0];
+    vec3 bestRightMin = vec3(1e30);
+    vec3 bestRightMax = vec3(-1e30);
+
+    for (uint i = count - 1u; i > 0u; --i)
+    {
+        uint primIndex = mortonObjects[nodeRange.x + i].objectId;
+        vec3 mn = aabbs[primIndex].minBounds.xyz;
+        vec3 mx = aabbs[primIndex].maxBounds.xyz;
+        suffixMin = min(suffixMin, mn);
+        suffixMax = max(suffixMax, mx);
+
+        vec3 leftMin = prefixMin[i - 1u];
+        vec3 leftMax = prefixMax[i - 1u];
+
+        float leftArea = surfaceArea(leftMin, leftMax);
+        float rightArea = surfaceArea(suffixMin, suffixMax);
+        float cost = leftArea * float(i) + rightArea * float(count - i);
+
+        if (cost < bestCost)
+        {
+            bestCost = cost;
+            bestSplit = i;
+            bestLeftMin = leftMin;
+            bestLeftMax = leftMax;
+            bestRightMin = suffixMin;
+            bestRightMax = suffixMax;
+        }
+    }
+
+    uvec2 leftRange = uvec2(nodeRange.x, bestSplit);
+    uvec2 rightRange = uvec2(nodeRange.x + bestSplit, nodeRange.y - bestSplit);
+
+    ranges[leftChild] = leftRange;
+    ranges[rightChild] = rightRange;
+
+    nodes[leftChild].minBounds = bestLeftMin;
+    nodes[leftChild].maxBounds = bestLeftMax;
+    nodes[rightChild].minBounds = bestRightMin;
+    nodes[rightChild].maxBounds = bestRightMax;
+
+    nodes[leftChild].flags = (leftRange.y <= MAX_LEAF_PRIMITIVES) ? 1u : 0u;
+    nodes[rightChild].flags = (rightRange.y <= MAX_LEAF_PRIMITIVES) ? 1u : 0u;
+    if ((nodes[leftChild].flags & 1u) != 0u)
+    {
+        nodes[leftChild].leftChild = uint(-1);
+        nodes[leftChild].rightChild = uint(-1);
+    }
+    if ((nodes[rightChild].flags & 1u) != 0u)
+    {
+        nodes[rightChild].leftChild = uint(-1);
+        nodes[rightChild].rightChild = uint(-1);
+    }
+}
