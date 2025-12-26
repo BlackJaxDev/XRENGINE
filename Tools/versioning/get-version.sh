@@ -3,7 +3,7 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
+REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 VERSION_FILE="${REPO_ROOT}/version/version.json"
 PYTHON_BIN="${PYTHON_BIN:-python3}"
 
@@ -69,13 +69,13 @@ if [[ ! -f "$VERSION_FILE" ]]; then
   exit 1
 fi
 
-BASE_VERSION="$("$PYTHON_BIN" - <<'PY'
+BASE_VERSION="$("$PYTHON_BIN" - "$VERSION_FILE" <<'PY'
 import json, pathlib, sys
 version_path = pathlib.Path(sys.argv[1])
 data = json.loads(version_path.read_text())
 print(f"{data['major']}.{data['minor']}.{data['patch']}")
 PY
-"$VERSION_FILE")"
+)"
 
 if [[ -z "$BASE_VERSION" ]]; then
   echo "Failed to compute base version" >&2
