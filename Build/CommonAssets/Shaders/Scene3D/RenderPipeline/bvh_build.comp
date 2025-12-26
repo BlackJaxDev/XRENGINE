@@ -46,6 +46,7 @@ layout(std430, binding = 3) buffer PrimitiveRanges
 };
 
 uniform uint numPrimitives;
+uniform uint buildStage; // 0 = emit leaves + header, 1 = generate internal nodes
 
 // --- Morton helpers over leaf blocks ---
 uint leafFirstPrimitive(uint leafIndex)
@@ -133,7 +134,7 @@ void main()
     uint internalCount = (leafCount > 0u) ? (leafCount - 1u) : 0u;
     uint totalNodes = leafCount + internalCount;
 
-    if (gid == 0u)
+    if (buildStage == 0u && gid == 0u)
     {
         nodeCount = totalNodes;
         rootIndex = (totalNodes > 0u) ? (totalNodes - 1u) : uint(-1);
@@ -142,7 +143,7 @@ void main()
     }
 
     // Emit leaves with contiguous primitive ranges.
-    if (gid < leafCount)
+    if (buildStage == 0u && gid < leafCount)
     {
         uint start = gid * MAX_LEAF_PRIMITIVES;
         uint count = min(MAX_LEAF_PRIMITIVES, numPrimitives - start);
@@ -169,7 +170,7 @@ void main()
     }
 
     // Build internal connectivity (LBVH).
-    if (gid < internalCount)
+    if (buildStage == 1u && gid < internalCount)
     {
         int i = int(gid);
         ivec2 range = determineRange(i, leafCount);
