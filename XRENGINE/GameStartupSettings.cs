@@ -111,7 +111,7 @@ namespace XREngine
             get => _udpMulticastPort;
             set => SetField(ref _udpMulticastPort, value);
         }
-        private int _udpClientReceivePort = 0;
+        private int _udpClientReceivePort = 5001;
         public int UdpClientRecievePort
         {
             get => _udpClientReceivePort;
