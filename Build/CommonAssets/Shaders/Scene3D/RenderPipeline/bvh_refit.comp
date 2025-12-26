@@ -45,18 +45,25 @@ layout(std430, binding = 3) buffer PrimitiveRanges
 };
 
 uniform uint debugValidation;
+layout(std430, binding = 4) buffer Transforms
+{
+    mat4 transforms[];
+};
+
+uniform uint refitStage; // 0 = update leaves, 1 = propagate internal nodes
 
 vec3 combineMin(vec3 a, vec3 b) { return min(a, b); }
 vec3 combineMax(vec3 a, vec3 b) { return max(a, b); }
 
+vec3 transformPoint(mat4 m, vec3 p)
+{
+    return (m * vec4(p, 1.0)).xyz;
+}
+
 layout (local_size_x = 256, local_size_y = 1, local_size_z = 1) in;
 
-void main()
+void refitLeaf(uint nodeIndex)
 {
-    uint nodeIndex = gl_GlobalInvocationID.x;
-    if (nodeIndex >= nodeCount)
-        return;
-
     BvhNode node = nodes[nodeIndex];
     uvec2 range = ranges[nodeIndex];
 
@@ -87,20 +94,46 @@ void main()
         for (uint i = 0u; i < range.y; ++i)
         {
             uint primIndex = mortonObjects[range.x + i].objectId;
-            minB = combineMin(minB, aabbs[primIndex].minBounds.xyz);
-            maxB = combineMax(maxB, aabbs[primIndex].maxBounds.xyz);
+            vec3 localMin = aabbs[primIndex].minBounds.xyz;
+            vec3 localMax = aabbs[primIndex].maxBounds.xyz;
+            mat4 transform = transforms[primIndex];
+
+            vec3 corners[8];
+            corners[0] = vec3(localMin.x, localMin.y, localMin.z);
+            corners[1] = vec3(localMax.x, localMin.y, localMin.z);
+            corners[2] = vec3(localMin.x, localMax.y, localMin.z);
+            corners[3] = vec3(localMax.x, localMax.y, localMin.z);
+            corners[4] = vec3(localMin.x, localMin.y, localMax.z);
+            corners[5] = vec3(localMax.x, localMin.y, localMax.z);
+            corners[6] = vec3(localMin.x, localMax.y, localMax.z);
+            corners[7] = vec3(localMax.x, localMax.y, localMax.z);
+
+            for (int c = 0; c < 8; ++c)
+            {
+                vec3 transformed = transformPoint(transform, corners[c]);
+                minB = combineMin(minB, transformed);
+                maxB = combineMax(maxB, transformed);
+            }
         }
         nodes[nodeIndex].minBounds = minB;
         nodes[nodeIndex].maxBounds = maxB;
     }
-    else
-    {
-        // Internal: merge children.
-        uint left = node.leftChild;
-        uint right = node.rightChild;
+}
 
+void propagateInternal()
+{
+    if (nodeCount == 0u)
+        return;
+
+    uint leafCount = (nodeCount + 1u) >> 1u;
+    for (uint nodeIndex = leafCount; nodeIndex < nodeCount; ++nodeIndex)
+    {
+        BvhNode node = nodes[nodeIndex];
         vec3 minB = vec3(1e30);
         vec3 maxB = vec3(-1e30);
+
+        uint left = node.leftChild;
+        uint right = node.rightChild;
 
         if (left != uint(-1))
         {
@@ -116,4 +149,18 @@ void main()
         nodes[nodeIndex].minBounds = minB;
         nodes[nodeIndex].maxBounds = maxB;
     }
+}
+
+void main()
+{
+    if (refitStage == 0u)
+    {
+        uint nodeIndex = gl_GlobalInvocationID.x;
+        if (nodeIndex < nodeCount)
+            refitLeaf(nodeIndex);
+        return;
+    }
+
+    if (gl_GlobalInvocationID.x == 0u)
+        propagateInternal();
 }

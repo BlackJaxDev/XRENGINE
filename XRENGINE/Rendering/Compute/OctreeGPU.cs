@@ -82,6 +82,8 @@ namespace XREngine.Data.Trees
 		private XRDataBuffer? _bvhNodeBuffer;
 		private XRDataBuffer? _bvhRangeBuffer;
 		private uint _lastBvhNodeCount;
+		private uint _lastObjectCount;
+		private bool _transformsDirty = true;
 
 		private XRShader? _mortonShader;
 		private XRShader? _smallSortShader;
@@ -245,7 +247,7 @@ namespace XREngine.Data.Trees
 
 		public bool EnsureGpuBuffers(bool force = false)
 		{
-			if (!force && !_gpuDirty)
+			if (!force && !_gpuDirty && !_transformsDirty)
 				return false;
 
 			if (Engine.IsRenderThread)
@@ -396,7 +398,7 @@ namespace XREngine.Data.Trees
 
 		public void Swap()
 		{
-			if (_swapMode == SwapUpdateMode.AlwaysRebuild)
+			if (_swapMode == SwapUpdateMode.AlwaysRebuild || AlwaysRebuildOnSwap)
 			{
 				MarkDirty(TreeDirtyState.Rebuild);
 			}
@@ -407,6 +409,7 @@ namespace XREngine.Data.Trees
 				else
 					MarkDirty(TreeDirtyState.Rebuild);
 			}
+			_transformsDirty = true;
 			EnsureGpuBuffers();
 		}
 
@@ -417,7 +420,7 @@ namespace XREngine.Data.Trees
 
 			lock (_syncRoot)
 			{
-				if (!_gpuDirty && _dirtyState == TreeDirtyState.None)
+				if (!_gpuDirty && !_transformsDirty && _dirtyState == TreeDirtyState.None
 					return false;
 
 				EnsurePrograms();
@@ -425,18 +428,28 @@ namespace XREngine.Data.Trees
 				_activeBounds = boundsUsed;
 				bool countsStable = objectCount == _lastObjectCount;
 				bool ranRefit = false;
-
+        
+        bool countChanged = _lastObjectCount != (uint)objectCount;
+				if (countChanged)
+					_gpuDirty = true;
+        
 				if (_dirtyState != TreeDirtyState.Rebuild && _swapMode == SwapUpdateMode.RefitOnly && countsStable && _nodeBuffer is not null)
 					ranRefit = RunRefitPipeline((uint)objectCount);
 
 				if (!ranRefit)
 				{
 					if (objectCount > 0)
-						RunComputePipeline((uint)objectCount, boundsUsed);
+          {
+            if (_gpuDirty)
+              RunComputePipeline((uint)objectCount, boundsUsed);
+            else
+              RunRefitOnly((uint)objectCount);
+          }
 					else
 						UploadEmptyBuffers();
 				}
 
+				_lastObjectCount = (uint)objectCount;
 				_gpuDirty = false;
 				_dirtyState = TreeDirtyState.None;
 				_dirtyItems.Clear();
@@ -444,6 +457,7 @@ namespace XREngine.Data.Trees
 				foreach (var kvp in newStates)
 					_lastItemStates[kvp.Key] = kvp.Value;
 				_lastObjectCount = objectCount;
+				_transformsDirty = false;
 				return true;
 			}
 		}
@@ -679,6 +693,17 @@ namespace XREngine.Data.Trees
 			_transformBuffer?.SetBlockIndex(1);
 		}
 
+		private void RunRefitOnly(uint objectCount)
+		{
+			if (_useBvh)
+			{
+				EnsureBvhBuffers(objectCount);
+				DispatchRefitBvh();
+			}
+
+			_transformBuffer?.SetBlockIndex(1);
+		}
+
 		private void DispatchMorton(uint objectCount, Vector3 sceneMin, Vector3 sceneMax)
 		{
 			var program = _mortonProgram!;
@@ -740,7 +765,7 @@ namespace XREngine.Data.Trees
 
 		private bool DispatchRefitBvh()
 		{
-			if (!_useBvh || _bvhRefitProgram is null || _bvhNodeBuffer is null || _bvhRangeBuffer is null)
+			if (!_useBvh || _bvhRefitProgram is null || _bvhNodeBuffer is null || _bvhRangeBuffer is null || _transformBuffer is null)
 				return false;
 
 			if (_lastBvhNodeCount == 0)
@@ -752,7 +777,11 @@ namespace XREngine.Data.Trees
 			program.BindBuffer(_bvhNodeBuffer, 2);
 			program.BindBuffer(_bvhRangeBuffer, 3);
 			program.Uniform("debugValidation", EnableValidation ? 1u : 0u);
+			program.BindBuffer(_transformBuffer, 4);
+			program.Uniform("refitStage", 0u);
 			program.DispatchCompute(ComputeGroups(_lastBvhNodeCount, 256u), 1u, 1u, EMemoryBarrierMask.ShaderStorage);
+			program.Uniform("refitStage", 1u);
+			program.DispatchCompute(1u, 1u, 1u, EMemoryBarrierMask.ShaderStorage);
 			return true;
 		}
 
@@ -1063,6 +1092,7 @@ namespace XREngine.Data.Trees
 			if (reason > _dirtyState)
 				_dirtyState = reason;
 			_gpuDirty = true;
+			_transformsDirty = true;
 		}
 
 		private uint? ResolveItemId(T item)
