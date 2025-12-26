@@ -1,6 +1,7 @@
 using System;
 using System.IO;
 using System.Net.Http;
+using System.Security.Cryptography;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
@@ -25,11 +26,11 @@ namespace XREngine.Server.Instances
             Directory.CreateDirectory(_cacheRoot);
         }
 
-        public async Task<XRWorld> FetchWorldAsync(WorldLocator locator, CancellationToken cancellationToken)
+        public async Task<XRWorld> FetchWorldAsync(WorldLocator locator, Guid? instanceId = null, CancellationToken cancellationToken = default)
         {
             ArgumentNullException.ThrowIfNull(locator);
 
-            string cachePath = GetCachePath(locator);
+            string cachePath = GetCachePath(locator, instanceId);
             if (!File.Exists(cachePath))
             {
                 Uri downloadUri = ResolveUri(locator);
@@ -74,10 +75,32 @@ namespace XREngine.Server.Instances
             return world;
         }
 
-        private string GetCachePath(WorldLocator locator)
+        private string GetCachePath(WorldLocator locator, Guid? instanceId)
         {
-            string fileName = $"{locator.WorldId:N}.bin";
+            string cacheKey = locator.WorldId != Guid.Empty
+                ? locator.WorldId.ToString("N")
+                : instanceId.HasValue && instanceId.Value != Guid.Empty
+                    ? instanceId.Value.ToString("N")
+                    : ResolveCacheKeyFromUri(locator);
+
+            string fileName = $"{cacheKey}.bin";
             return Path.Combine(_cacheRoot, fileName);
+        }
+
+        private static string ResolveCacheKeyFromUri(WorldLocator locator)
+        {
+            if (!string.IsNullOrWhiteSpace(locator.DownloadUri))
+                return HashString(locator.DownloadUri);
+
+            var uri = ResolveUri(locator);
+            return HashString(uri.AbsoluteUri);
+        }
+
+        private static string HashString(string value)
+        {
+            using var sha256 = SHA256.Create();
+            byte[] hash = sha256.ComputeHash(Encoding.UTF8.GetBytes(value));
+            return Convert.ToHexString(hash).ToLowerInvariant();
         }
 
         private static Uri ResolveUri(WorldLocator locator)
