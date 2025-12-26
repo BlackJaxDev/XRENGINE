@@ -5,6 +5,11 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 VERSION_FILE="${REPO_ROOT}/version/version.json"
+PYTHON_BIN="${PYTHON_BIN:-python3}"
+
+if ! command -v "$PYTHON_BIN" >/dev/null 2>&1; then
+  PYTHON_BIN="python"
+fi
 
 usage() {
   cat <<'USAGE'
@@ -64,13 +69,18 @@ if [[ ! -f "$VERSION_FILE" ]]; then
   exit 1
 fi
 
-BASE_VERSION="$(python3 - <<'PY'
+BASE_VERSION="$("$PYTHON_BIN" - <<'PY'
 import json, pathlib, sys
 version_path = pathlib.Path(sys.argv[1])
 data = json.loads(version_path.read_text())
 print(f"{data['major']}.{data['minor']}.{data['patch']}")
 PY
 "$VERSION_FILE")"
+
+if [[ -z "$BASE_VERSION" ]]; then
+  echo "Failed to compute base version" >&2
+  exit 1
+fi
 
 if [[ -z "$CHANNEL" ]]; then
   case "$BRANCH_NAME" in
@@ -99,5 +109,10 @@ case "$CHANNEL" in
     exit 1
     ;;
 esac
+
+if [[ -z "$VERSION" ]]; then
+  echo "Failed to compute version" >&2
+  exit 1
+fi
 
 echo "$VERSION"
