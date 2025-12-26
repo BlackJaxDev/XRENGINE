@@ -63,6 +63,7 @@ namespace XREngine.Data.Trees
 		private XRShader? _initQueueShader;
 		private XRShader? _bvhBuildShader;
 		private XRShader? _bvhRefineShader;
+		private XRShader? _bvhRefitShader;
 
 		private XRRenderProgram? _mortonProgram;
 		private XRRenderProgram? _smallSortProgram;
@@ -74,6 +75,7 @@ namespace XREngine.Data.Trees
 		private XRRenderProgram? _initQueueProgram;
 		private XRRenderProgram? _bvhBuildProgram;
 		private XRRenderProgram? _bvhRefineProgram;
+		private XRRenderProgram? _bvhRefitProgram;
 
 		private bool _gpuDirty = true;
 		private bool _hasUserBounds;
@@ -176,6 +178,8 @@ namespace XREngine.Data.Trees
 			_bvhRefineProgram = null;
 			_bvhBuildShader = null;
 			_bvhRefineShader = null;
+			_bvhRefitProgram = null;
+			_bvhRefitShader = null;
 		}
 
 		public bool EnsureGpuBuffers(bool force = false)
@@ -529,8 +533,12 @@ namespace XREngine.Data.Trees
 
 			DispatchMorton(objectCount, sceneMin, sceneMax);
 			SortMortonCodes(objectCount);
-			DispatchBuildBvh(objectCount);
-			DispatchRefineBvh();
+			bool builtBvh = DispatchBuildBvh(objectCount);
+			if (builtBvh)
+				DispatchRefitBvh();
+			bool refinedBvh = DispatchRefineBvh();
+			if (refinedBvh)
+				DispatchRefitBvh();
 			DispatchBuildOctree(objectCount, sceneMin, sceneMax);
 			DispatchPropagate();
 			DispatchInitQueue();
@@ -550,17 +558,18 @@ namespace XREngine.Data.Trees
 			program.DispatchCompute(groups, 1u, 1u, EMemoryBarrierMask.ShaderStorage);
 		}
 
-		private void DispatchBuildBvh(uint objectCount)
+		private bool DispatchBuildBvh(uint objectCount)
 		{
 			if (!_useBvh || objectCount == 0)
-				return;
+				return false;
 
 			if (_bvhBuildProgram is null || _bvhNodeBuffer is null || _bvhRangeBuffer is null)
-				return;
+				return false;
 
 			uint leafCount = (objectCount + _maxLeafPrimitives - 1u) / _maxLeafPrimitives;
 			uint internalCount = leafCount > 0 ? leafCount - 1u : 0u;
-			uint workItems = Math.Max(leafCount, internalCount);
+			if (leafCount == 0)
+				return false;
 
 			var program = _bvhBuildProgram;
 			program.BindBuffer(_aabbBuffer!, 0);
@@ -568,16 +577,24 @@ namespace XREngine.Data.Trees
 			program.BindBuffer(_bvhNodeBuffer, 2);
 			program.BindBuffer(_bvhRangeBuffer, 3);
 			program.Uniform("numPrimitives", objectCount);
-			program.DispatchCompute(ComputeGroups(Math.Max(workItems, 1u), 256u), 1u, 1u, EMemoryBarrierMask.ShaderStorage);
+			program.Uniform("buildStage", 0u);
+			program.DispatchCompute(ComputeGroups(Math.Max(leafCount, 1u), 256u), 1u, 1u, EMemoryBarrierMask.ShaderStorage);
+			if (internalCount > 0)
+			{
+				program.Uniform("buildStage", 1u);
+				program.DispatchCompute(ComputeGroups(internalCount, 256u), 1u, 1u, EMemoryBarrierMask.ShaderStorage);
+			}
+
+			return true;
 		}
 
-		private void DispatchRefineBvh()
+		private bool DispatchRefineBvh()
 		{
 			if (!_useBvh || _bvhRefineProgram is null || _bvhNodeBuffer is null || _bvhRangeBuffer is null)
-				return;
+				return false;
 
 			if (_bvhMode != BvhBuildMode.MortonPlusSah || _lastBvhNodeCount == 0)
-				return;
+				return false;
 
 			var program = _bvhRefineProgram;
 			program.BindBuffer(_aabbBuffer!, 0);
@@ -585,6 +602,24 @@ namespace XREngine.Data.Trees
 			program.BindBuffer(_bvhNodeBuffer, 2);
 			program.BindBuffer(_bvhRangeBuffer, 3);
 			program.DispatchCompute(ComputeGroups(_lastBvhNodeCount, 128u), 1u, 1u, EMemoryBarrierMask.ShaderStorage);
+			return true;
+		}
+
+		private bool DispatchRefitBvh()
+		{
+			if (!_useBvh || _bvhRefitProgram is null || _bvhNodeBuffer is null || _bvhRangeBuffer is null)
+				return false;
+
+			if (_lastBvhNodeCount == 0)
+				return false;
+
+			var program = _bvhRefitProgram;
+			program.BindBuffer(_aabbBuffer!, 0);
+			program.BindBuffer(_mortonBuffer!, 1);
+			program.BindBuffer(_bvhNodeBuffer, 2);
+			program.BindBuffer(_bvhRangeBuffer, 3);
+			program.DispatchCompute(ComputeGroups(_lastBvhNodeCount, 256u), 1u, 1u, EMemoryBarrierMask.ShaderStorage);
+			return true;
 		}
 
 		private void SortMortonCodes(uint objectCount)
@@ -676,6 +711,7 @@ namespace XREngine.Data.Trees
 		{
 			_bvhBuildProgram ??= CreateProgram(ref _bvhBuildShader, "Scene3D/RenderPipeline/bvh_build.comp", true);
 			_bvhRefineProgram ??= CreateProgram(ref _bvhRefineShader, "Scene3D/RenderPipeline/bvh_sah_refine.comp", true);
+			_bvhRefitProgram ??= CreateProgram(ref _bvhRefitShader, "Scene3D/RenderPipeline/bvh_refit.comp", true);
 		}
 
 		private void EnsureMortonBufferCapacity(uint objectCount)
