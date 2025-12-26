@@ -1,0 +1,65 @@
+#version 450
+
+// Forces any-hit traversal regardless of runtime uniform.
+#define XR_FORCE_ANY_HIT 1u
+#define XR_FORCE_CLOSEST_HIT 0u
+
+layout(local_size_x = 32, local_size_y = 1, local_size_z = 1) in;
+
+layout(std430, binding = 0) readonly buffer Rays
+{
+    RayInput gRays[];
+};
+
+layout(std430, binding = 1) readonly buffer Nodes
+{
+    BvhNode gNodes[];
+};
+
+layout(std430, binding = 2) readonly buffer Triangles
+{
+    PackedTriangle gTriangles[];
+};
+
+layout(std430, binding = 3) writeonly buffer Hits
+{
+    HitRecord gHits[];
+};
+
+uniform uint uRayCount;
+uniform uint uRootIndex;
+uniform uint uPacketWidth;
+uniform uint uUsePacketMode;
+uniform uint uAnyHitMode;
+uniform uint uMaxStackDepth;
+
+#pragma snippet "BvhRaycastCore"
+
+uint ResolveRayIndex()
+{
+    if (uUsePacketMode == 0u)
+        return gl_GlobalInvocationID.x;
+
+    if (uPacketWidth == 0u)
+        return uRayCount; // Treat as out-of-range
+
+    uint packetBase = gl_WorkGroupID.x * uPacketWidth;
+    return packetBase + gl_LocalInvocationID.x;
+}
+
+void main()
+{
+    uint rayIndex = ResolveRayIndex();
+    if (rayIndex >= uRayCount)
+        return;
+
+    Ray ray = DecodeRay(gRays[rayIndex]);
+    ray.tMin = max(ray.tMin, 0.0);
+    ray.tMax = ray.tMax <= 0.0 ? 1e30 : ray.tMax;
+
+    uint stackLimit = clamp(uMaxStackDepth, 1u, XR_BVH_STACK_MAX);
+    bool anyHit = true;
+
+    HitRecord hit = TraceRay(ray, uRootIndex, stackLimit, anyHit);
+    gHits[rayIndex] = hit;
+}
