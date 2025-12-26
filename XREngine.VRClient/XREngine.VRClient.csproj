@@ -34,7 +34,7 @@
     <ProjectReference Include="..\XREngine.Data\XREngine.Data.csproj" />
     <ProjectReference Include="..\XREngine.Extensions\XREngine.Extensions.csproj" />
     <ProjectReference Include="..\XREngine.Input\XREngine.Input.csproj" />
-    <ProjectReference Include="..\XREngine\XREngine.csproj" />
+    <ProjectReference Include="..\XRENGINE\XREngine.csproj" />
   </ItemGroup>
 
   <ItemGroup>
