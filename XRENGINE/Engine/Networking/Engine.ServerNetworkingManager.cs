@@ -6,6 +6,8 @@ using System.Net.Sockets;
 using XREngine.Networking;
 using XREngine.Rendering;
 using XREngine.Scene;
+using XREngine.Components;
+using XREngine.Scene.Transforms;
 
 namespace XREngine
 {
@@ -101,6 +103,7 @@ namespace XREngine
 
                 NetworkPlayerConnection connection;
                 bool isNewPlayer = false;
+                ServerInstanceContext? resolvedInstance = null;
 
                 lock (_playerLock)
                 {
@@ -116,6 +119,19 @@ namespace XREngine
                         isNewPlayer = true;
                     }
 
+                    resolvedInstance = ServerInstanceResolver?.Invoke(request);
+                    connection.InstanceId = resolvedInstance?.InstanceId
+                        ?? request.InstanceId
+                        ?? (connection.InstanceId != Guid.Empty ? connection.InstanceId : Guid.NewGuid());
+                    connection.WorldInstance = resolvedInstance?.WorldInstance ?? ResolvePrimaryWorldInstance();
+                    if (connection.WorldInstance is null)
+                    {
+                        SendErrorToClient(request.ClientId, 500, "No World", "Server could not resolve a world instance for this connection.", null, fatal: true);
+                        return;
+                    }
+
+                    EnsureServerPawn(connection, request.DisplayName);
+
                     connection.JoinRequest = request;
                     connection.LastEndpoint = sender;
                     connection.LastHeardUtc = DateTime.UtcNow;
@@ -124,17 +140,58 @@ namespace XREngine
                 var assignment = new PlayerAssignment
                 {
                     ServerPlayerIndex = connection.ServerPlayerIndex,
-                    PawnId = Guid.Empty,
-                    TransformId = Guid.Empty,
+                    PawnId = connection.Pawn?.ID ?? Guid.Empty,
+                    TransformId = connection.TransformId,
                     ClientId = connection.ClientId,
                     DisplayName = request.DisplayName,
-                    World = BuildWorldDescriptor()
+                    World = BuildWorldDescriptor(connection.WorldInstance),
+                    InstanceId = connection.InstanceId,
+                    IsAuthoritative = true
                 };
 
                 BroadcastStateChange(EStateChangeType.PlayerAssignment, assignment, compress: true);
 
                 if (isNewPlayer)
                     BroadcastExistingTransforms();
+            }
+
+            private void EnsureServerPawn(NetworkPlayerConnection connection, string? displayName)
+            {
+                if (connection.WorldInstance is null)
+                    return;
+
+                if (connection.Pawn is { IsDestroyed: false })
+                {
+                    connection.TransformId = connection.TransformId == Guid.Empty
+                        ? connection.Pawn.SceneNode?.Transform?.ID ?? Guid.Empty
+                        : connection.TransformId;
+                    return;
+                }
+
+                var worldInstance = connection.WorldInstance;
+                worldInstance.GameMode ??= new GameMode { WorldInstance = worldInstance };
+
+                connection.Pawn = worldInstance.GameMode.CreateDefaultPawn(ELocalPlayerIndex.One)
+                    ?? CreateFallbackPawn(worldInstance, connection.ServerPlayerIndex, displayName);
+
+                if (connection.Pawn is not null)
+                {
+                    connection.TransformId = connection.Pawn.SceneNode?.Transform?.ID ?? Guid.Empty;
+                    var controller = new RemotePlayerController(connection.ServerPlayerIndex)
+                    {
+                        ControlledPawn = connection.Pawn
+                    };
+                    connection.Pawn.Controller = controller;
+                    if (!State.RemotePlayers.Contains(controller))
+                        State.RemotePlayers.Add(controller);
+                }
+            }
+
+            private static PawnComponent? CreateFallbackPawn(XRWorldInstance worldInstance, int serverPlayerIndex, string? displayName)
+            {
+                var nodeName = string.IsNullOrWhiteSpace(displayName) ? $"ServerPlayer_{serverPlayerIndex}" : displayName!;
+                var node = new SceneNode(worldInstance, nodeName);
+                return node.AddComponent<FlyingCameraPawnComponent>();
             }
 
             private void HandlePlayerInputSnapshot(PlayerInputSnapshot snapshot)
@@ -144,6 +201,10 @@ namespace XREngine
                     if (!_playersByIndex.TryGetValue(snapshot.ServerPlayerIndex, out var connection))
                         return;
 
+                    if (connection.InstanceId != Guid.Empty && snapshot.InstanceId != Guid.Empty && snapshot.InstanceId != connection.InstanceId)
+                        return;
+
+                    snapshot.InstanceId = connection.InstanceId;
                     connection.LastInput = snapshot;
                     connection.LastHeardUtc = DateTime.UtcNow;
                 }
@@ -151,14 +212,25 @@ namespace XREngine
 
             private void HandlePlayerTransformUpdate(PlayerTransformUpdate transform)
             {
+                NetworkPlayerConnection? connection;
                 lock (_playerLock)
                 {
-                    if (!_playersByIndex.TryGetValue(transform.ServerPlayerIndex, out var connection))
+                    if (!_playersByIndex.TryGetValue(transform.ServerPlayerIndex, out connection))
+                        return;
+
+                    if (connection.InstanceId != Guid.Empty && transform.InstanceId != Guid.Empty && transform.InstanceId != connection.InstanceId)
                         return;
 
                     connection.LastTransform = transform;
                     connection.LastHeardUtc = DateTime.UtcNow;
                 }
+
+                if (connection is null)
+                    return;
+
+                transform.InstanceId = transform.InstanceId == Guid.Empty ? connection.InstanceId : transform.InstanceId;
+                if (connection.Pawn?.Controller is RemotePlayerController remoteController)
+                    remoteController.ApplyNetworkTransform(transform);
 
                 BroadcastStateChange(EStateChangeType.PlayerTransformUpdate, transform, compress: false);
             }
@@ -169,6 +241,9 @@ namespace XREngine
                 {
                     if (_playersByIndex.TryGetValue(hb.ServerPlayerIndex, out var connection))
                     {
+                        if (connection.InstanceId != Guid.Empty && hb.InstanceId.HasValue && hb.InstanceId.Value != connection.InstanceId)
+                            return;
+
                         connection.LastHeardUtc = DateTime.UtcNow;
                         connection.LastEndpoint = sender;
                         return;
@@ -176,6 +251,9 @@ namespace XREngine
 
                     if (_playersByClientId.TryGetValue(hb.ClientId, out connection))
                     {
+                        if (connection.InstanceId != Guid.Empty && hb.InstanceId.HasValue && hb.InstanceId.Value != connection.InstanceId)
+                            return;
+
                         connection.LastHeardUtc = DateTime.UtcNow;
                         connection.LastEndpoint = sender;
                     }
@@ -189,7 +267,12 @@ namespace XREngine
                 {
                     pending = _playersByIndex.Values
                         .Where(p => p.LastTransform is not null)
-                        .Select(p => p.LastTransform!)
+                        .Select(p =>
+                        {
+                            var clone = p.LastTransform!;
+                            clone.InstanceId = p.InstanceId;
+                            return clone;
+                        })
                         .ToList();
                 }
 
@@ -203,6 +286,9 @@ namespace XREngine
                 lock (_playerLock)
                 {
                     if (!_playersByIndex.TryGetValue(leave.ServerPlayerIndex, out connection))
+                        return;
+
+                    if (connection.InstanceId != Guid.Empty && leave.InstanceId != Guid.Empty && connection.InstanceId != leave.InstanceId)
                         return;
 
                     _playersByIndex.Remove(leave.ServerPlayerIndex);
@@ -239,17 +325,17 @@ namespace XREngine
                 SendErrorToClient(connection.ClientId, 403, "Kicked", reason, connection.ServerPlayerIndex, fatal: true);
             }
 
-            private WorldSyncDescriptor BuildWorldDescriptor()
+            private WorldSyncDescriptor BuildWorldDescriptor(XRWorldInstance? worldInstance)
             {
-                XRWorldInstance? worldInstance = ResolvePrimaryWorldInstance();
-                if (worldInstance is null)
+                XRWorldInstance? targetInstance = worldInstance ?? ResolvePrimaryWorldInstance();
+                if (targetInstance is null)
                     return new WorldSyncDescriptor();
 
-                XRWorld? world = worldInstance.TargetWorld;
+                XRWorld? world = targetInstance.TargetWorld;
                 return new WorldSyncDescriptor
                 {
                     WorldName = world?.Name,
-                    GameModeType = worldInstance.GameMode?.GetType().FullName,
+                    GameModeType = targetInstance.GameMode?.GetType().FullName,
                     SceneNames = world?.Scenes.Select(s => s.Name ?? string.Empty).Where(static n => !string.IsNullOrWhiteSpace(n)).ToArray() ?? Array.Empty<string>()
                 };
             }
@@ -269,6 +355,10 @@ namespace XREngine
             {
                 public required int ServerPlayerIndex { get; init; }
                 public required string ClientId { get; init; }
+                public Guid InstanceId { get; set; }
+                public XRWorldInstance? WorldInstance { get; set; }
+                public PawnComponent? Pawn { get; set; }
+                public Guid TransformId { get; set; }
                 public PlayerJoinRequest? JoinRequest { get; set; }
                 public PlayerInputSnapshot? LastInput { get; set; }
                 public PlayerTransformUpdate? LastTransform { get; set; }
@@ -309,7 +399,8 @@ namespace XREngine
                 {
                     ServerPlayerIndex = connection.ServerPlayerIndex,
                     ClientId = connection.ClientId,
-                    Reason = reason
+                    Reason = reason,
+                    InstanceId = connection.InstanceId
                 };
 
                 BroadcastStateChange(EStateChangeType.PlayerLeave, leave, compress: false);

@@ -30,6 +30,7 @@ namespace XREngine
             private double _lastTransformSyncTime;
             private double _lastJoinRequestTime;
             private double _lastHeartbeatTime;
+            private Guid _activeInstanceId = Guid.Empty;
             private const double InputSyncIntervalSeconds = 1.0 / 60.0;
             private const double TransformSyncIntervalSeconds = 1.0 / 20.0;
             private const double JoinRetrySeconds = 3.0;
@@ -184,7 +185,8 @@ namespace XREngine
                     ClientId = _clientId,
                     DisplayName = Environment.UserName,
                     BuildVersion = CurrentProtocolVersion,
-                    WorldName = ResolvePrimaryWorldInstance()?.TargetWorld?.Name
+                    WorldName = ResolvePrimaryWorldInstance()?.TargetWorld?.Name,
+                    InstanceId = _activeInstanceId == Guid.Empty ? null : _activeInstanceId
                 };
 
                 BroadcastStateChange(EStateChangeType.PlayerJoin, request, compress: true);
@@ -207,7 +209,8 @@ namespace XREngine
                     {
                         ServerPlayerIndex = serverIndex,
                         ClientId = _clientId,
-                        TimestampUtc = GetUtcSeconds()
+                        TimestampUtc = GetUtcSeconds(),
+                        InstanceId = _activeInstanceId == Guid.Empty ? null : _activeInstanceId
                     };
 
                     BroadcastStateChange(EStateChangeType.Heartbeat, heartbeat, compress: false);
@@ -232,7 +235,8 @@ namespace XREngine
                     {
                         ServerPlayerIndex = serverIndex,
                         Input = player.ControlledPawn.CaptureNetworkInputState(),
-                        TimestampUtc = GetUtcSeconds()
+                        TimestampUtc = GetUtcSeconds(),
+                        InstanceId = player.PlayerInfo.InstanceId
                     };
 
                     BroadcastStateChange(EStateChangeType.PlayerInputSnapshot, snapshot, compress: true);
@@ -254,14 +258,15 @@ namespace XREngine
                     if (transform is null)
                         continue;
 
-                    PlayerTransformUpdate update = new()
-                    {
-                        ServerPlayerIndex = serverIndex,
-                        TransformId = transform.ID,
-                        Translation = transform.Translation,
-                        Rotation = transform.Rotation,
-                        Velocity = Vector3.Zero
-                    };
+                PlayerTransformUpdate update = new()
+                {
+                    ServerPlayerIndex = serverIndex,
+                    TransformId = transform.ID,
+                    Translation = transform.Translation,
+                    Rotation = transform.Rotation,
+                    Velocity = Vector3.Zero,
+                    InstanceId = player.PlayerInfo.InstanceId
+                };
 
                     BroadcastStateChange(EStateChangeType.PlayerTransformUpdate, update, compress: false);
                 }
@@ -282,7 +287,8 @@ namespace XREngine
                     {
                         ServerPlayerIndex = serverIndex,
                         ClientId = _clientId,
-                        Reason = reason
+                        Reason = reason,
+                        InstanceId = player.PlayerInfo.InstanceId
                     };
 
                     BroadcastStateChange(EStateChangeType.PlayerLeave, leave, compress: false);
@@ -299,6 +305,9 @@ namespace XREngine
 
                 if (assignment.World is not null)
                     ApplyWorldDescriptor(assignment.World);
+
+                if (!isLocal && _activeInstanceId != Guid.Empty && assignment.InstanceId != _activeInstanceId)
+                    return;
 
                 if (isLocal)
                 {
@@ -323,6 +332,8 @@ namespace XREngine
                     {
                         player.PlayerInfo.ServerIndex = assignment.ServerPlayerIndex;
                         player.PlayerInfo.LocalIndex ??= player.LocalPlayerIndex;
+                        player.PlayerInfo.InstanceId = assignment.InstanceId;
+                        _activeInstanceId = assignment.InstanceId;
                         _localServerIndices.Add(assignment.ServerPlayerIndex);
                         RemoveRemotePlayer(assignment.ServerPlayerIndex);
                         return;
@@ -424,6 +435,9 @@ namespace XREngine
 
             private void HandlePlayerLeave(PlayerLeaveNotice leave)
             {
+                if (_activeInstanceId != Guid.Empty && leave.InstanceId != _activeInstanceId)
+                    return;
+
                 // If this leave refers to a local player, clear the server index
                 foreach (var player in State.LocalPlayers)
                 {
@@ -464,11 +478,15 @@ namespace XREngine
                     _localServerIndices.Clear();
                     ClearRemotePlayers();
                     _assignmentReceived = false;
+                    _activeInstanceId = Guid.Empty;
                 }
             }
 
             private void HandleRemoteTransform(PlayerTransformUpdate update)
             {
+                if (_activeInstanceId != Guid.Empty && update.InstanceId != _activeInstanceId)
+                    return;
+
                 if (_localServerIndices.Contains(update.ServerPlayerIndex))
                     return;
 

@@ -1,4 +1,5 @@
-﻿using XREngine.Data.Core;
+﻿using System;
+using XREngine.Data.Core;
 
 namespace XREngine.Players
 {
@@ -12,5 +13,9 @@ namespace XREngine.Players
         /// If the player is a local player, this is the index of the player on the local machine.
         /// </summary>
         public ELocalPlayerIndex? LocalIndex { get; set; } = null;
+        /// <summary>
+        /// The instance this player is attached to.
+        /// </summary>
+        public Guid InstanceId { get; set; } = Guid.Empty;
     }
 }

@@ -6,6 +6,8 @@ using Silk.NET.OpenAL;
 using System.Numerics;
 using XREngine.Components;
 using XREngine.Components.Scene;
+using XREngine.Server.Instances;
+using XREngine;
 using XREngine.Data.Colors;
 using XREngine.Data.Rendering;
 using XREngine.Editor;
@@ -49,19 +51,33 @@ namespace XREngine.Networking
         //}
 
         public static Task? WebAppTask { get; private set; }
+        private static LoadBalancerService? _loadBalancerService;
+        private static readonly Guid _serverId = Guid.NewGuid();
+        private static ServerInstanceManager? _instanceManager;
+        private static WorldDownloadService? _worldDownloader;
 
         private static void Main(string[] args)
         {
             WebAppTask = BuildWebApi();
             bool loadBalancerOnly = args.Any(a => string.Equals(a, "--load-balancer-only", StringComparison.OrdinalIgnoreCase));
+            bool enableDevRendering = args.Any(a => string.Equals(a, "--dev-render", StringComparison.OrdinalIgnoreCase));
             if (loadBalancerOnly)
             {
                 WebAppTask?.GetAwaiter().GetResult();
                 return;
             }
-            var unitTestWorld = UnitTestingWorld.CreateUnitTestWorld(false, true);
-            CreateConsoleUI(unitTestWorld.Scenes[0].RootNodes[0]);
-            Engine.Run(/*Engine.LoadOrGenerateGameSettings(() => */GetEngineSettings(unitTestWorld)/*, "startup", false)*/, Engine.LoadOrGenerateGameState());
+            _worldDownloader = new WorldDownloadService();
+            _instanceManager = new ServerInstanceManager(_worldDownloader);
+            Engine.ServerInstanceResolver = ResolveServerInstance;
+
+            XRWorld initialWorld = enableDevRendering
+                ? UnitTestingWorld.CreateUnitTestWorld(false, true)
+                : new XRWorld("Headless Server World");
+
+            if (enableDevRendering)
+                CreateConsoleUI(initialWorld.Scenes[0].RootNodes[0]);
+
+            Engine.Run(/*Engine.LoadOrGenerateGameSettings(() => */GetEngineSettings(initialWorld, enableDevRendering)/*, "startup", false)*/, Engine.LoadOrGenerateGameState());
         }
 
         private static Task BuildWebApi()
@@ -72,7 +88,8 @@ namespace XREngine.Networking
             builder.Services.AddSingleton(sp =>
             {
                 var strategy = new RoundRobinLeastLoadBalancer(Array.Empty<Server>());
-                return new LoadBalancerService(strategy, TimeSpan.FromSeconds(60));
+                _loadBalancerService = new LoadBalancerService(strategy, TimeSpan.FromSeconds(60));
+                return _loadBalancerService;
             });
             builder.Services.AddResponseCompression(opts =>
             {
@@ -98,6 +115,45 @@ namespace XREngine.Networking
             app.MapControllers();
 
             return app.RunAsync();
+        }
+
+        private static ServerInstanceContext? ResolveServerInstance(PlayerJoinRequest request)
+        {
+            if (_instanceManager is null)
+                return null;
+
+            var locator = request.WorldLocator ?? new WorldLocator
+            {
+                WorldId = request.InstanceId ?? Guid.NewGuid(),
+                Name = request.WorldName ?? "RemoteWorld",
+                Provider = request.WorldLocator?.Provider ?? "direct",
+                ContainerOrBucket = request.WorldLocator?.ContainerOrBucket,
+                ObjectPath = request.WorldLocator?.ObjectPath,
+                DownloadUri = request.WorldLocator?.DownloadUri,
+                AccessToken = request.WorldLocator?.AccessToken
+            };
+
+            var instance = _instanceManager.GetOrCreateInstance(request.InstanceId, locator, request.EnableDevRendering);
+            RegisterOrUpdateBalancer(_instanceManager.Instances.Select(i => i.InstanceId));
+            return new ServerInstanceContext(instance.InstanceId, instance.WorldInstance);
+        }
+
+        private static void RegisterOrUpdateBalancer(IEnumerable<Guid> instances)
+        {
+            if (_loadBalancerService is null)
+                return;
+
+            var server = new Server
+            {
+                Id = _serverId,
+                IP = Environment.GetEnvironmentVariable("XRE_SERVER_IP") ?? "127.0.0.1",
+                Port = Engine.GameSettings?.UdpServerSendPort ?? 5000,
+                MaxPlayers = 128,
+                CurrentLoad = _instanceManager?.Instances.Sum(i => i.Players.Count) ?? 0,
+                Instances = instances.Distinct().ToList()
+            };
+
+            _loadBalancerService.RegisterOrUpdate(server);
         }
 
         static XRWorld CreateServerDebugWorld()
@@ -264,7 +320,7 @@ namespace XREngine.Networking
             return floorMat;
         }
 
-        static GameStartupSettings GetEngineSettings(XRWorld? targetWorld = null)
+        static GameStartupSettings GetEngineSettings(XRWorld? targetWorld = null, bool enableDevRendering = true)
         {
             int w = 1920;
             int h = 1080;
@@ -276,14 +332,14 @@ namespace XREngine.Networking
             int primaryY = NativeMethods.GetSystemMetrics(1);
 
             return new GameStartupSettings()
-            {
-                StartupWindows =
-                [
-                    new()
-                    {
+                {
+                    StartupWindows =
+                    [
+                        new()
+                        {
                         WindowTitle = "XRE Server",
                         TargetWorld = targetWorld ?? new XRWorld(),
-                        WindowState = EWindowState.Windowed,
+                        WindowState = enableDevRendering ? EWindowState.Windowed : EWindowState.Hidden,
                         X = primaryX / 2 - w / 2,
                         Y = primaryY / 2 - h / 2,
                         Width = w,
@@ -291,6 +347,9 @@ namespace XREngine.Networking
                     }
                 ],
                 OutputVerbosity = EOutputVerbosity.Verbose,
+                UdpClientRecievePort = 5001,
+                UdpServerSendPort = 5000,
+                UdpMulticastPort = 5000,
                 NetworkingType = ENetworkingType.Server,
                 DefaultUserSettings = new UserSettings()
                 {
