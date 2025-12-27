@@ -262,6 +262,11 @@ namespace XREngine
                 private float _dlssSharpness = 0.2f;
                 private bool _dlssEnableFrameSmoothing = true;
                 private float _dlssFrameSmoothingStrength = 0.15f;
+                private bool _enableIntelXess = false;
+                private EXessQualityMode _xessQuality = EXessQualityMode.Quality;
+                private float _xessCustomScale = 0.77f;
+                private float _xessSharpness = 0.2f;
+                private bool _enableIntelXessFrameGeneration = false;
                 private uint _msaaSampleCount = 4u;
                 private bool _allowShaderPipelines = true;
                 private bool _useIntegerUniformsInShaders = true;
@@ -509,6 +514,61 @@ namespace XREngine
                 {
                     get => _dlssFrameSmoothingStrength;
                     set => SetField(ref _dlssFrameSmoothingStrength, Math.Clamp(value, 0.0f, 1.0f));
+                }
+
+                /// <summary>
+                /// Enables Intel XeSS frame upscaling when supported hardware and drivers are present. Requires Vulkan.
+                /// </summary>
+                [Category("Upscaling")]
+                [Description("Enables Intel XeSS frame upscaling when supported hardware and drivers are present. Requires Vulkan.")]
+                public bool EnableIntelXess
+                {
+                    get => _enableIntelXess;
+                    set => SetField(ref _enableIntelXess, value);
+                }
+
+                /// <summary>
+                /// XeSS quality/performance trade-off. Custom allows explicit scaling control.
+                /// </summary>
+                [Category("Upscaling")]
+                [Description("XeSS quality/performance trade-off. Custom allows explicit scaling control.")]
+                public EXessQualityMode XessQuality
+                {
+                    get => _xessQuality;
+                    set => SetField(ref _xessQuality, value);
+                }
+
+                /// <summary>
+                /// Custom render scale when XessQuality is set to Custom. Values are clamped to 25%-100%.
+                /// </summary>
+                [Category("Upscaling")]
+                [Description("Custom render scale when XessQuality is set to Custom. Values are clamped to 25%-100%.")]
+                public float XessCustomScale
+                {
+                    get => _xessCustomScale;
+                    set => SetField(ref _xessCustomScale, Math.Clamp(value, 0.25f, 1.0f));
+                }
+
+                /// <summary>
+                /// XeSS sharpening amount forwarded to the runtime when available.
+                /// </summary>
+                [Category("Upscaling")]
+                [Description("XeSS sharpening amount forwarded to the runtime when available.")]
+                public float XessSharpness
+                {
+                    get => _xessSharpness;
+                    set => SetField(ref _xessSharpness, Math.Clamp(value, 0.0f, 1.0f));
+                }
+
+                /// <summary>
+                /// Enables XeSS frame generation when supported. Requires Windows with the XeSS-FG runtime (DirectX 12 swap chain path).
+                /// </summary>
+                [Category("Upscaling")]
+                [Description("Enables XeSS frame generation when supported. Requires Windows with the XeSS-FG runtime (DirectX 12 swap chain path).")]
+                public bool EnableIntelXessFrameGeneration
+                {
+                    get => _enableIntelXessFrameGeneration;
+                    set => SetField(ref _enableIntelXessFrameGeneration, value);
                 }
 
                 /// <summary>

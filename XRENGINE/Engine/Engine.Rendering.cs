@@ -4,6 +4,7 @@ using XREngine.Rendering;
 using XREngine.Rendering.DLSS;
 using XREngine.Rendering.Physics.Physx;
 using XREngine.Rendering.Pipelines.Commands;
+using XREngine.Rendering.XeSS;
 using XREngine.Scene;
 using XREngine.Scene.Physics.Jolt;
 
@@ -159,6 +160,25 @@ namespace XREngine
                                 NvidiaDlssManager.ResetViewport(viewport);
                             else
                                 NvidiaDlssManager.ApplyToViewport(viewport, Settings);
+                        }
+                    }
+                }
+
+                Engine.InvokeOnMainThread(() => Apply(), true);
+            }
+
+            public static void ApplyIntelXessPreference()
+            {
+                void Apply()
+                {
+                    foreach (XRWindow window in Engine.Windows)
+                    {
+                        foreach (XRViewport viewport in window.Viewports)
+                        {
+                            if (!IntelXessManager.IsSupported || !EffectiveSettings.EnableIntelXess)
+                                IntelXessManager.ResetViewport(viewport);
+                            else
+                                IntelXessManager.ApplyToViewport(viewport, Settings);
                         }
                     }
                 }

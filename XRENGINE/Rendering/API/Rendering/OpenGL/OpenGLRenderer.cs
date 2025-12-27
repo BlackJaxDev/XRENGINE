@@ -126,11 +126,11 @@ namespace XREngine.Rendering.OpenGL
 
         private static void InitGL(GL api)
         {
-            string version;
-            unsafe
-            {
-                version = new((sbyte*)api.GetString(StringName.Version));
-                string vendor = new((sbyte*)api.GetString(StringName.Vendor));
+                string version;
+                unsafe
+                {
+                    version = new((sbyte*)api.GetString(StringName.Version));
+                    string vendor = new((sbyte*)api.GetString(StringName.Vendor));
                 string renderer = new((sbyte*)api.GetString(StringName.Renderer));
                 string shadingLanguageVersion = new((sbyte*)api.GetString(StringName.ShadingLanguageVersion));
                 Debug.Out($"OpenGL Version: {version}");
@@ -139,6 +139,8 @@ namespace XREngine.Rendering.OpenGL
                 Debug.Out($"OpenGL Shading Language Version: {shadingLanguageVersion}");
 
                 Engine.Rendering.State.IsNVIDIA = vendor.Contains("NVIDIA");
+                Engine.Rendering.State.IsIntel = vendor.Contains("Intel");
+                Engine.Rendering.State.IsVulkan = false;
 
                 // Probe for GL_NV_ray_tracing support early so features can decide whether to attempt the RT path.
                 bool hasNvRayTracing = false;

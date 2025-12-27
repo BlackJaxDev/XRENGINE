@@ -224,6 +224,8 @@ namespace XREngine
         private OverrideableSetting<bool> _tickGroupedItemsInParallelOverride = new();
         private OverrideableSetting<bool> _enableNvidiaDlssOverride = new();
         private OverrideableSetting<EDlssQualityMode> _dlssQualityOverride = new();
+        private OverrideableSetting<bool> _enableIntelXessOverride = new();
+        private OverrideableSetting<EXessQualityMode> _xessQualityOverride = new();
 
         // Project > Engine only (technical, not user-facing)
         private OverrideableSetting<bool> _allowShaderPipelinesOverride = new();
@@ -472,6 +474,32 @@ namespace XREngine
         {
             get => _dlssQualityOverride;
             set => SetField(ref _dlssQualityOverride, value ?? new());
+        }
+
+        /// <summary>
+        /// Project override for Intel XeSS.
+        /// Takes precedence over engine defaults when HasOverride is true.
+        /// Can be further overridden by user settings.
+        /// </summary>
+        [Category("Quality Overrides")]
+        [Description("Project override for Intel XeSS.")]
+        public OverrideableSetting<bool> EnableIntelXessOverride
+        {
+            get => _enableIntelXessOverride;
+            set => SetField(ref _enableIntelXessOverride, value ?? new());
+        }
+
+        /// <summary>
+        /// Project override for XeSS quality mode.
+        /// Takes precedence over engine defaults when HasOverride is true.
+        /// Can be further overridden by user settings.
+        /// </summary>
+        [Category("Quality Overrides")]
+        [Description("Project override for XeSS quality mode.")]
+        public OverrideableSetting<EXessQualityMode> XessQualityOverride
+        {
+            get => _xessQualityOverride;
+            set => SetField(ref _xessQualityOverride, value ?? new());
         }
 
         /// <summary>
