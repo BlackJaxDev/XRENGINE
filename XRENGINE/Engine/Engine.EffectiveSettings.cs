@@ -220,6 +220,26 @@ namespace XREngine
                     GameSettings?.DlssQualityOverride,
                     UserSettings?.DlssQualityOverride);
 
+            /// <summary>
+            /// Gets the effective Intel XeSS setting.
+            /// Resolved from: User Override > Project Override > Engine Default
+            /// </summary>
+            public static bool EnableIntelXess
+                => OverrideableSettingExtensions.ResolveCascade(
+                    Rendering.Settings.EnableIntelXess,
+                    GameSettings?.EnableIntelXessOverride,
+                    UserSettings?.EnableIntelXessOverride);
+
+            /// <summary>
+            /// Gets the effective XeSS quality mode.
+            /// Resolved from: User Override > Project Override > Engine Default
+            /// </summary>
+            public static EXessQualityMode XessQuality
+                => OverrideableSettingExtensions.ResolveCascade(
+                    Rendering.Settings.XessQuality,
+                    GameSettings?.XessQualityOverride,
+                    UserSettings?.XessQualityOverride);
+
             #endregion
 
             #region Performance Settings

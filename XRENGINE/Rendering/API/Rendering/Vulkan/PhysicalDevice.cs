@@ -36,6 +36,9 @@ public unsafe partial class VulkanRenderer
         Api!.GetPhysicalDeviceProperties(_physicalDevice, out var properties);
         // NVIDIA PCI vendor ID.
         Engine.Rendering.State.IsNVIDIA = properties.VendorID == 0x10DE;
+        // Intel PCI vendor ID.
+        Engine.Rendering.State.IsIntel = properties.VendorID == 0x8086;
+        Engine.Rendering.State.IsVulkan = true;
     }
 
     private bool IsDeviceSuitable(PhysicalDevice device, out QueueFamilyIndices indices)
