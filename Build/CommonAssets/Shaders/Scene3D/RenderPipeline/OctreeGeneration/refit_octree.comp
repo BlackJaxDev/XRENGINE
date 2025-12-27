@@ -13,10 +13,16 @@ struct OctreeNode
     uint _pad0;
 };
 
+// Interleaved min/max pairs for consistency with bvh_refit.comp
+struct Aabb
+{
+    vec4 minBounds;
+    vec4 maxBounds;
+};
+
 layout(std430, binding = 0) buffer AABBs
 {
-    vec3 aabbMin[MAX_OBJECTS];
-    vec3 aabbMax[MAX_OBJECTS];
+    Aabb aabbs[];
 };
 
 layout(std430, binding = 2) buffer OctreeNodes
@@ -49,6 +55,6 @@ void main()
         return;
 
     uint objectIndex = node.objectStartIndex;
-    nodes[nodeIndex].minBounds = aabbMin[objectIndex];
-    nodes[nodeIndex].maxBounds = aabbMax[objectIndex];
+    nodes[nodeIndex].minBounds = aabbs[objectIndex].minBounds.xyz;
+    nodes[nodeIndex].maxBounds = aabbs[objectIndex].maxBounds.xyz;
 }

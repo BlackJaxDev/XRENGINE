@@ -3,11 +3,16 @@
 #define MAX_OBJECTS 1024
 #define MAX_OCTREE_NODES (MAX_OBJECTS * 2 - 1)
 
-// Input: Object AABBs
+// Input: Object AABBs (interleaved min/max pairs)
+struct Aabb
+{
+    vec4 minBounds;
+    vec4 maxBounds;
+};
+
 layout(std430, binding = 0) buffer AABBs
 {
-    vec3 aabbMin[MAX_OBJECTS]; // Min bounds of AABBs
-    vec3 aabbMax[MAX_OBJECTS]; // Max bounds of AABBs
+    Aabb aabbs[];
 };
 
 // Output: Morton codes and corresponding object IDs
@@ -61,7 +66,7 @@ void main()
     }
 
     // Calculate object center
-    vec3 center = (aabbMin[gid] + aabbMax[gid]) * 0.5;
+    vec3 center = (aabbs[gid].minBounds.xyz + aabbs[gid].maxBounds.xyz) * 0.5;
 
     // Normalize position within the scene bounds to [0, 1]
     vec3 range = sceneMax - sceneMin;
