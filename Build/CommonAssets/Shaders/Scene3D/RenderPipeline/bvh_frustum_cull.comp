@@ -1,0 +1,284 @@
+#version 460 core
+
+// BVH-based frustum/cluster culling for GPU render dispatch.
+// Traverses leaf-to-root using an explicit stack to reject whole branches,
+// then appends surviving draw commands into the visible-command SSBO used by
+// GPURenderPassCollection. The output layout matches GPURenderCulling.comp
+// (48-float command struct + atomic counters/overflow flags).
+
+layout (local_size_x = 256, local_size_y = 1, local_size_z = 1) in;
+
+// Optional comparison path (CPU vs GPU result verification).
+layout (constant_id = 0) const uint ENABLE_CPU_GPU_COMPARE = 0u;
+
+#define PLANES_PER_FRUSTUM 6u
+#define INVALID_INDEX 0xFFFFFFFFu
+const uint COMMAND_FLOATS = 48u;
+
+// BVH node definition (stride/flags match GpuBvhNode in C#).
+#include "bvh_nodes.glslinc"
+
+struct MortonObject
+{
+    uint mortonCode;
+    uint objectId;
+};
+
+// === GPU dispatch SSBOs (mirrors GPURenderCulling.comp) ===
+layout(std430, binding = 0) readonly buffer InputCommandsBuffer { float inCommands[]; };
+layout(std430, binding = 1) writeonly buffer CulledCommandsBuffer { float outCommands[]; };
+layout(std430, binding = 2) buffer CulledCountBuffer { uint CulledCount; };
+layout(std430, binding = 3) buffer OverflowFlagBuffer { uint CullingOverflowFlag; };
+
+// BVH inputs (bindings aligned with OctreeGPU BVH stages for reuse).
+layout(std430, binding = 4) readonly buffer BvhNodes
+{
+    uint nodeCount;
+    uint rootIndex;
+    uint nodeStrideScalars;
+    uint maxLeafPrimitives;
+    BvhNode nodes[];
+};
+
+layout(std430, binding = 5) readonly buffer PrimitiveRanges { uvec2 ranges[]; };
+layout(std430, binding = 6) readonly buffer MortonCodes { MortonObject mortonObjects[]; };
+
+// Overflow debug / logging (first entry captures the offending command+1).
+layout(std430, binding = 7) buffer OverflowDebugBuffer { uint OverflowDebug[]; };
+
+// Optional shared stats buffer (matches other GPU culling/indirect stages).
+layout(std430, binding = 8) buffer StatsBuffer
+{
+    uint StatsInputCount;       // 0
+    uint StatsCulledCount;      // 1
+    uint StatsDrawCount;        // 2 (indirect stage)
+    uint StatsRejectedFrustum;  // 3
+    uint StatsRejectedDistance; // 4
+};
+
+// Optional comparison buffer: stores GPU-visible command indices for CPU parity checks.
+layout(std430, binding = 9) buffer CompareBuffer { uint CompareVisible[]; };
+
+// Optional packed cluster plane buffer (vec4 planes, same packing as clustered lighting).
+layout(std430, binding = 10) readonly buffer ClusterPlaneBuffer { vec4 ClusterPlaneData[]; };
+
+// === Uniforms ===
+uniform vec4 FrustumPlanes[PLANES_PER_FRUSTUM];       // Camera frustum planes (xyz = normal, w = d)
+uniform vec4 ClusterPlanes[PLANES_PER_FRUSTUM];       // Optional cluster-local frustum planes
+uniform uint UseClusterPlanes;                         // 1 = use ClusterPlanes uniform instead of FrustumPlanes
+uniform uint UseClusterPlaneBuffer;                    // 1 = read ClusterPlaneData starting at ClusterPlaneOffset
+uniform uint ClusterPlaneOffset;                       // Base index (in vec4s) into ClusterPlaneData
+uniform uint ClusterPlaneStride;                       // Planes per cluster entry (defaults to 6 if zero)
+uniform float MaxRenderDistance;                       // Render distance threshold (squared distance)
+uniform uint CameraLayerMask;                          // Active camera layer mask
+uniform int CurrentRenderPass;                         // -1 = accept all passes
+uniform int InputCommandCount;                         // Number of source commands
+uniform int MaxCulledCommands;                         // Capacity (in commands) of outCommands buffer
+uniform uint DisabledFlagsMask;                        // Bitmask of disallowed flags
+uniform vec3 CameraPosition;                           // World-space camera position
+uniform uint StatsEnabled;                             // 1 when stats buffer is bound
+uniform uint OverflowDebugEnabled;                     // 1 when OverflowDebug buffer is bound
+
+// Flag bit layout (matches GPUIndirectRenderFlags)
+#define FLAG_TRANSPARENT    (1u<<0)
+#define FLAG_CAST_SHADOW    (1u<<1)
+#define FLAG_SKINNED        (1u<<2)
+#define FLAG_DYNAMIC        (1u<<3)
+#define FLAG_DOUBLE_SIDED   (1u<<4)
+
+// -----------------------------------------------------------------------------
+uint ResolvePlaneStride()
+{
+    return ClusterPlaneStride == 0u ? PLANES_PER_FRUSTUM : ClusterPlaneStride;
+}
+
+vec4 GetPlane(uint idx)
+{
+    // Prefer SSBO-packed cluster planes when enabled and in range
+    if (UseClusterPlaneBuffer != 0u)
+    {
+        uint stride = ResolvePlaneStride();
+        uint base = ClusterPlaneOffset;
+        uint fetchIndex = base + idx;
+        if (stride > 0u && fetchIndex < ClusterPlaneData.length())
+            return ClusterPlaneData[fetchIndex];
+    }
+
+    // Uniform cluster planes override camera planes when requested
+    if (UseClusterPlanes != 0u)
+        return ClusterPlanes[idx];
+
+    return FrustumPlanes[idx];
+}
+
+bool AabbVisible(vec3 minB, vec3 maxB)
+{
+    // Slab test against packed planes (xyz = n, w = d)
+    for (uint i = 0u; i < PLANES_PER_FRUSTUM; ++i)
+    {
+        vec4 plane = GetPlane(i);
+        vec3 positive = vec3(
+            plane.x >= 0.0 ? maxB.x : minB.x,
+            plane.y >= 0.0 ? maxB.y : minB.y,
+            plane.z >= 0.0 ? maxB.z : minB.z);
+
+        if (dot(plane.xyz, positive) + plane.w < 0.0)
+            return false;
+    }
+    return true;
+}
+
+bool SphereVisible(vec3 center, float radius)
+{
+    for (uint i = 0u; i < PLANES_PER_FRUSTUM; ++i)
+    {
+        vec4 plane = GetPlane(i);
+        float dist = dot(plane.xyz, center) + plane.w;
+        if (dist < -radius)
+            return false;
+    }
+    return true;
+}
+
+void LogOverflow(uint marker)
+{
+    if (OverflowDebugEnabled == 0u)
+        return;
+
+    if (OverflowDebug.length() == 0)
+        return;
+
+    // Record first offender (copy shader uses +1 convention)
+    atomicCompSwap(OverflowDebug[0], 0u, marker);
+}
+
+void AppendVisible(uint cmdIndex, float renderDistance)
+{
+    uint outIndex = atomicAdd(CulledCount, 1u);
+    if (outIndex >= uint(MaxCulledCommands))
+    {
+        atomicExchange(CullingOverflowFlag, 1u);
+        LogOverflow(cmdIndex + 1u);
+        return;
+    }
+
+    int inBase = int(cmdIndex) * int(COMMAND_FLOATS);
+    int outBase = int(outIndex) * int(COMMAND_FLOATS);
+
+    // Bounds safety
+    if (inBase + int(COMMAND_FLOATS) > inCommands.length() || outBase + int(COMMAND_FLOATS) > outCommands.length())
+        return;
+
+    // Copy full command payload
+    for (uint i = 0u; i < COMMAND_FLOATS; ++i)
+        outCommands[outBase + int(i)] = inCommands[inBase + int(i)];
+
+    // Override render distance field
+    outCommands[outBase + 42] = renderDistance;
+
+    if (StatsEnabled != 0u)
+        atomicAdd(StatsCulledCount, 1u);
+
+    if (ENABLE_CPU_GPU_COMPARE != 0u && CompareVisible.length() > 0)
+    {
+        if (outIndex < CompareVisible.length())
+            CompareVisible[outIndex] = cmdIndex;
+    }
+}
+
+void main()
+{
+    uint gid = gl_GlobalInvocationID.x;
+
+    if (StatsEnabled != 0u && gid == 0u)
+        StatsInputCount = uint(InputCommandCount);
+
+    // Derive leaf count from nodeCount (leaves first, then internal nodes)
+    if (nodeCount == 0u)
+        return;
+
+    uint leafCount = (nodeCount + 1u) >> 1u;
+    if (gid >= leafCount)
+        return;
+
+    uint nodeIndex = gid; // leaves occupy [0, leafCount)
+    if (nodeIndex >= nodeCount)
+        return;
+
+    // Ascend using a small stack to reject whole subtrees quickly
+    uint stack[32];
+    uint sp = 0u;
+    stack[sp++] = nodeIndex;
+
+    while (sp > 0u)
+    {
+        uint idx = stack[--sp];
+        if (idx >= nodeCount)
+            continue;
+
+        BvhNode node = nodes[idx];
+        if (!AabbVisible(node.minBounds, node.maxBounds))
+            return; // subtree culled
+
+        if (node.parentIndex != INVALID_INDEX && sp < stack.length())
+            stack[sp++] = node.parentIndex;
+    }
+
+    // Process primitives in the visible leaf
+    uvec2 range = ranges[nodeIndex];
+    if (range.y == 0u)
+        return;
+
+    for (uint i = 0u; i < range.y; ++i)
+    {
+        uint mortonIndex = range.x + i;
+        if (mortonIndex >= mortonObjects.length())
+            break;
+
+        uint cmdIndex = mortonObjects[mortonIndex].objectId;
+        if (cmdIndex >= uint(InputCommandCount))
+            continue;
+
+        int base = int(cmdIndex) * int(COMMAND_FLOATS);
+        if (base + int(COMMAND_FLOATS) > inCommands.length())
+            continue;
+
+        vec3 center = vec3(
+            inCommands[base + 32],
+            inCommands[base + 33],
+            inCommands[base + 34]);
+        float radius = inCommands[base + 35];
+        uint layerMask = floatBitsToUint(inCommands[base + 43]);
+        uint renderPass = floatBitsToUint(inCommands[base + 40]);
+        uint instanceCount = floatBitsToUint(inCommands[base + 39]);
+        uint flags = floatBitsToUint(inCommands[base + 45]);
+
+        if (instanceCount == 0u)
+            continue;
+        if ((layerMask & CameraLayerMask) == 0u)
+            continue;
+        if (DisabledFlagsMask != 0u && (flags & DisabledFlagsMask) != 0u)
+            continue;
+        if (CurrentRenderPass >= 0 && renderPass != uint(CurrentRenderPass))
+            continue;
+
+        vec3 toCenter = center - CameraPosition;
+        float renderDistance = dot(toCenter, toCenter);
+        if (renderDistance > MaxRenderDistance)
+        {
+            if (StatsEnabled != 0u)
+                atomicAdd(StatsRejectedDistance, 1u);
+            continue;
+        }
+
+        if (!SphereVisible(center, radius))
+        {
+            if (StatsEnabled != 0u)
+                atomicAdd(StatsRejectedFrustum, 1u);
+            continue;
+        }
+
+        AppendVisible(cmdIndex, renderDistance);
+    }
+}
+
