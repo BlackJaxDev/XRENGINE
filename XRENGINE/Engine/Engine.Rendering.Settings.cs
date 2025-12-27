@@ -276,6 +276,11 @@ namespace XREngine
                 private bool _calculateBlendshapesInComputeShader = false;
                 private bool _calculateSkinningInComputeShader = false;
                 private int _shaderConfigVersion = 0;
+                private bool _useGpuBvh = false;
+                private uint _bvhLeafMaxPrims = 4u;
+                private EBvhMode _bvhMode = EBvhMode.Morton;
+                private bool _bvhRefitOnlyWhenStable = true;
+                private uint _raycastBufferSize = 1024u;
 
                 private void BumpShaderConfigVersion()
                     => Interlocked.Increment(ref _shaderConfigVersion);
@@ -734,6 +739,62 @@ namespace XREngine
                 {
                     get => _calculateSkinnedBoundsInComputeShader;
                     set => SetField(ref _calculateSkinnedBoundsInComputeShader, value);
+                }
+
+                /// <summary>
+                /// If true, BVH construction and refits will prefer GPU compute paths when supported.
+                /// Disabled by default for CPU-friendly behavior.
+                /// </summary>
+                [Category("BVH")]
+                [Description("If true, BVH construction and refits will prefer GPU compute paths when supported. Disabled by default for CPU-friendly behavior.")]
+                public bool UseGpuBvh
+                {
+                    get => _useGpuBvh;
+                    set => SetField(ref _useGpuBvh, value);
+                }
+
+                /// <summary>
+                /// Maximum number of primitives allowed in a BVH leaf node when using GPU builds.
+                /// </summary>
+                [Category("BVH")]
+                [Description("Maximum number of primitives allowed in a BVH leaf node when using GPU builds.")]
+                public uint BvhLeafMaxPrims
+                {
+                    get => _bvhLeafMaxPrims;
+                    set => SetField(ref _bvhLeafMaxPrims, Math.Max(1u, value));
+                }
+
+                /// <summary>
+                /// Controls which BVH build strategy to use for GPU construction.
+                /// </summary>
+                [Category("BVH")]
+                [Description("Controls which BVH build strategy to use for GPU construction.")]
+                public EBvhMode BvhMode
+                {
+                    get => _bvhMode;
+                    set => SetField(ref _bvhMode, value);
+                }
+
+                /// <summary>
+                /// When enabled, BVH updates will prefer refit-only passes if the object count is stable.
+                /// </summary>
+                [Category("BVH")]
+                [Description("When enabled, BVH updates will prefer refit-only passes if the object count is stable.")]
+                public bool BvhRefitOnlyWhenStable
+                {
+                    get => _bvhRefitOnlyWhenStable;
+                    set => SetField(ref _bvhRefitOnlyWhenStable, value);
+                }
+
+                /// <summary>
+                /// Size in bytes of the GPU BVH raycast readback buffer.
+                /// </summary>
+                [Category("BVH")]
+                [Description("Size in bytes of the GPU BVH raycast readback buffer.")]
+                public uint RaycastBufferSize
+                {
+                    get => _raycastBufferSize;
+                    set => SetField(ref _raycastBufferSize, Math.Max(1u, value));
                 }
 
                 /// <summary>
