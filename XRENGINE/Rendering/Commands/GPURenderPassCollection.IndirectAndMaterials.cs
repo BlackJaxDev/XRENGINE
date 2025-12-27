@@ -4,6 +4,7 @@ using System.Text;
 using System.Threading;
 using XREngine.Data;
 using XREngine.Data.Lists.Unsafe;
+using XREngine.Scene;
 
 namespace XREngine.Rendering.Commands
 {
@@ -31,6 +32,9 @@ namespace XREngine.Rendering.Commands
                 Dbg("Render abort - no camera", "Lifecycle");
                 return;
             }
+
+            if (Engine.Rendering.State.CurrentRenderingPipeline?.RenderState?.RenderingScene is VisualScene3D visualScene)
+                visualScene.PrepareGpuCulling();
 
             ResetCounters();
 

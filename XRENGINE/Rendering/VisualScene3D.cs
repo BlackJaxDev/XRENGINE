@@ -2,6 +2,7 @@ using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Drawing;
 using System.Numerics;
+using XREngine.Components.Scene.Mesh;
 using XREngine.Data.Geometry;
 using XREngine.Data.Rendering;
 using XREngine.Data.Trees;
@@ -86,13 +87,18 @@ namespace XREngine.Scene
                     renderable.CollectCommands(commands, camera);
             }
 
-            RenderTree.CollectVisible(collectionVolume, false, AddRenderCommands, IntersectionTest);
+            if (IsGpuCulling)
+                CollectRenderedItemsGpu(commands, collectionVolume, camera, collectMirrors);
+            else
+                RenderTree.CollectVisible(collectionVolume, false, AddRenderCommands, IntersectionTest);
         }
 
         public IReadOnlyList<RenderInfo3D> Renderables => _renderables;
         private readonly List<RenderInfo3D> _renderables = [];
         private readonly HashSet<RenderInfo3D> _renderableSet = [];
         private readonly ConcurrentQueue<(RenderInfo3D renderable, bool add)> _pendingRenderableOperations = new(); // staged until GlobalPreRender runs on the render thread
+        private bool IsGpuCulling => _isGpuDispatchActive;
+        private readonly HashSet<RenderableMesh> _skinnedMeshes = new();
 
         public void AddRenderable(RenderInfo3D renderable)
             => _pendingRenderableOperations.Enqueue((renderable, true));
@@ -181,6 +187,7 @@ namespace XREngine.Scene
                     if (_renderableSet.Add(operation.renderable))
                     {
                         _renderables.Add(operation.renderable);
+                        TrackRenderable(operation.renderable);
 
                         if (_isGpuDispatchActive)
                             GPUCommands.Add(operation.renderable);
@@ -190,6 +197,8 @@ namespace XREngine.Scene
                 }
                 else if (_renderableSet.Remove(operation.renderable))
                 {
+                    UntrackRenderable(operation.renderable);
+
                     if (_isGpuDispatchActive)
                         GPUCommands.Remove(operation.renderable);
                     else
@@ -198,6 +207,63 @@ namespace XREngine.Scene
                     _renderables.Remove(operation.renderable);
                 }
             }
+        }
+
+        /// <summary>
+        /// Ensure mesh BVHs are available before GPU culling/dispatch executes.
+        /// </summary>
+        internal void PrepareGpuCulling()
+        {
+            if (!IsGpuCulling)
+                return;
+
+            foreach (var mesh in _skinnedMeshes)
+            {
+                // Kick skinned BVH scheduling; call-through schedules async if required.
+                _ = mesh.GetSkinnedBvh();
+            }
+        }
+
+        private void CollectRenderedItemsGpu(RenderCommandCollection commands, IVolume? collectionVolume, XRCamera? camera, bool collectMirrors)
+        {
+            foreach (var renderable in _renderables)
+            {
+                if (renderable.AllowRender(collectionVolume, commands, camera, false, collectMirrors))
+                    renderable.CollectCommands(commands, camera);
+            }
+        }
+
+        private void TrackRenderable(RenderInfo3D renderable)
+        {
+            if (renderable.Owner is not RenderableMesh mesh)
+                return;
+
+            if (mesh.IsSkinned)
+            {
+                _skinnedMeshes.Add(mesh);
+            }
+            else
+            {
+                EnsureStaticMeshBvh(mesh);
+            }
+        }
+
+        private void UntrackRenderable(RenderInfo3D renderable)
+        {
+            if (renderable.Owner is not RenderableMesh mesh)
+                return;
+
+            _skinnedMeshes.Remove(mesh);
+        }
+
+        private static void EnsureStaticMeshBvh(RenderableMesh mesh)
+        {
+            var xrMesh = mesh.CurrentLODRenderer?.Mesh;
+            if (xrMesh is null)
+                return;
+
+            if (xrMesh.BVHTree is null)
+                _ = xrMesh.BVHTree;
         }
     }
 }
