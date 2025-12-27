@@ -91,6 +91,56 @@ namespace XREngine
             }
 
             /// <summary>
+            /// Gets the effective GPU BVH usage toggle.
+            /// Resolved from: User Override > Project Override > Engine Default
+            /// </summary>
+            public static bool UseGpuBvh
+                => OverrideableSettingExtensions.ResolveCascade(
+                    Rendering.Settings.UseGpuBvh,
+                    GameSettings?.UseGpuBvhOverride,
+                    null);
+
+            /// <summary>
+            /// Gets the effective BVH leaf primitive budget for GPU builds.
+            /// Resolved from: User Override > Project Override > Engine Default
+            /// </summary>
+            public static uint BvhLeafMaxPrims
+                => OverrideableSettingExtensions.ResolveCascade(
+                    Rendering.Settings.BvhLeafMaxPrims,
+                    GameSettings?.BvhLeafMaxPrimsOverride,
+                    null);
+
+            /// <summary>
+            /// Gets the effective GPU BVH build mode.
+            /// Resolved from: User Override > Project Override > Engine Default
+            /// </summary>
+            public static EBvhMode BvhMode
+                => OverrideableSettingExtensions.ResolveCascade(
+                    Rendering.Settings.BvhMode,
+                    GameSettings?.BvhModeOverride,
+                    null);
+
+            /// <summary>
+            /// Gets whether GPU BVH updates should prefer refits when counts are stable.
+            /// Resolved from: User Override > Project Override > Engine Default
+            /// </summary>
+            public static bool BvhRefitOnlyWhenStable
+                => OverrideableSettingExtensions.ResolveCascade(
+                    Rendering.Settings.BvhRefitOnlyWhenStable,
+                    GameSettings?.BvhRefitOnlyWhenStableOverride,
+                    null);
+
+            /// <summary>
+            /// Gets the effective GPU BVH raycast buffer size in bytes.
+            /// Resolved from: User Override > Project Override > Engine Default
+            /// </summary>
+            public static uint RaycastBufferSize
+                => OverrideableSettingExtensions.ResolveCascade(
+                    Rendering.Settings.RaycastBufferSize,
+                    GameSettings?.RaycastBufferSizeOverride,
+                    null);
+
+            /// <summary>
             /// Gets the effective GPU indirect debug logging setting.
             /// Resolved from: User Override > Project Override > Engine Default
             /// </summary>
