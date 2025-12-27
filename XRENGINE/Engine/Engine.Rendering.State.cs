@@ -95,6 +95,18 @@ namespace XREngine
                 /// </summary>
                 public static bool IsNVIDIA { get; internal set; }
                 /// <summary>
+                /// If true, the current GPU is an Intel GPU.
+                /// </summary>
+                public static bool IsIntel { get; internal set; }
+                /// <summary>
+                /// If true, the active renderer is using Vulkan. XeSS and DLSS integrations rely on this.
+                /// </summary>
+                public static bool IsVulkan { get; internal set; }
+                /// <summary>
+                /// If true, the current GPU is an Intel GPU.
+                /// </summary>
+                public static bool IsIntel { get; internal set; }
+                /// <summary>
                 /// True when GL_NV_ray_tracing is reported by the current OpenGL context.
                 /// </summary>
                 public static bool HasNvRayTracing { get; internal set; }
