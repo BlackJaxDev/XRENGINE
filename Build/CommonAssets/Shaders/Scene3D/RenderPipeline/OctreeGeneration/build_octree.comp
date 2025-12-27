@@ -15,11 +15,16 @@ layout(std430, binding = 1) buffer MortonCodes
     MortonObject mortonObjects[];
 };
 
-// Input: Original AABBs for all objects
+// Input: Original AABBs for all objects (interleaved min/max pairs)
+struct Aabb
+{
+    vec4 minBounds;
+    vec4 maxBounds;
+};
+
 layout(std430, binding = 0) buffer AABBs
 {
-    vec3 aabbMin[MAX_OBJECTS];
-    vec3 aabbMax[MAX_OBJECTS];
+    Aabb aabbs[];
 };
 
 // Output: The constructed octree (leaf nodes first, internal nodes appended by a separate pass)
@@ -137,8 +142,8 @@ void main()
     {
         uint objectId = mortonObjects[gid].objectId;
         OctreeNode leaf;
-        leaf.minBounds = aabbMin[objectId];
-        leaf.maxBounds = aabbMax[objectId];
+        leaf.minBounds = aabbs[objectId].minBounds.xyz;
+        leaf.maxBounds = aabbs[objectId].maxBounds.xyz;
         for (int c = 0; c < 8; ++c) leaf.childIndices[c] = -1;
         leaf.parentIndex = uint(-1);
         leaf.objectStartIndex = objectId;

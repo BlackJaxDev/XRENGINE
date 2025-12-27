@@ -1,6 +1,7 @@
 using System;
 using XREngine.Scene;
 using XREngine.Networking;
+using XREngine.Rendering;
 
 namespace XREngine
 {

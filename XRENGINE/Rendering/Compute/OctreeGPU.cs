@@ -31,9 +31,20 @@ namespace XREngine.Data.Trees
 	/// <summary>
 	/// GPU-managed octree that keeps a flat node buffer updated through compute shaders without a CPU mirror.
 	/// </summary>
-	public class OctreeGPU<T> : OctreeBase, I3DRenderTree<T> where T : class, IOctreeItem
+	public class OctreeGPU<T> : OctreeBase, I3DRenderTree<T>, IDisposable where T : class, IOctreeItem
 	{
-		private const uint MaxObjects = 1024;
+		private bool _disposed;
+
+		/// <summary>
+		/// Maximum number of objects supported by the GPU octree.
+		/// IMPORTANT: This value must match MAX_OBJECTS in the compute shaders:
+		/// - morton_codes.comp
+		/// - build_octree.comp
+		/// - refit_octree.comp
+		/// - propagate_aabbs.comp
+		/// </summary>
+		public const uint MaxObjects = 1024;
+
 		private const uint MaxQueueSize = 1024;
 		private const uint NodeStrideScalars = 20;
 		private const uint HeaderScalarCount = 2;
@@ -121,7 +132,6 @@ namespace XREngine.Data.Trees
 		private bool _useBvh = true;
 		private BvhBuildMode _bvhMode = BvhBuildMode.MortonOnly;
 		private uint _maxLeafPrimitives = 1u;
-		private int _lastObjectCount;
 		private SwapUpdateMode _swapMode = SwapUpdateMode.AlwaysRebuild;
 
 		private readonly HashSet<T> _dirtyItems = new(ReferenceEqualityComparer<T>.Instance);
@@ -345,6 +355,7 @@ namespace XREngine.Data.Trees
 			_activeBounds = newBounds;
 			_hasUserBounds = true;
 			MarkDirty(TreeDirtyState.Rebuild);
+			EnsureGpuBuffers();
 		}
 
 		public void Remake()
@@ -353,6 +364,7 @@ namespace XREngine.Data.Trees
 			_activeBounds = default;
 			_hasUserBounds = false;
 			MarkDirty(TreeDirtyState.Rebuild);
+			EnsureGpuBuffers();
 		}
 
 		public void Remove(T value)
@@ -420,17 +432,19 @@ namespace XREngine.Data.Trees
 
 			lock (_syncRoot)
 			{
-				if (!_gpuDirty && !_transformsDirty && _dirtyState == TreeDirtyState.None
+				if (!_gpuDirty && !_transformsDirty && _dirtyState == TreeDirtyState.None)
 					return false;
 
 				EnsurePrograms();
-				BuildAndUploadItemData(out int objectCount, out AABB boundsUsed, out Dictionary<T, ItemState> newStates);
+				BuildAndUploadItemData(out uint objectCount, out AABB boundsUsed, out Dictionary<T, ItemState> newStates);
 				_activeBounds = boundsUsed;
-				bool countsStable = objectCount == _lastObjectCount;
+				// On first run, _nodeBuffer is null and _lastObjectCount is 0, so always rebuild
+				bool isFirstRun = _nodeBuffer is null;
+				bool countsStable = !isFirstRun && objectCount == _lastObjectCount;
 				bool ranRefit = false;
         
-        bool countChanged = _lastObjectCount != (uint)objectCount;
-				if (countChanged)
+        		bool countChanged = _lastObjectCount != (uint)objectCount;
+				if (countChanged || isFirstRun)
 					_gpuDirty = true;
         
 				if (_dirtyState != TreeDirtyState.Rebuild && _swapMode == SwapUpdateMode.RefitOnly && countsStable && _nodeBuffer is not null)
@@ -439,30 +453,29 @@ namespace XREngine.Data.Trees
 				if (!ranRefit)
 				{
 					if (objectCount > 0)
-          {
-            if (_gpuDirty)
-              RunComputePipeline((uint)objectCount, boundsUsed);
-            else
-              RunRefitOnly((uint)objectCount);
-          }
+					{
+						if (_gpuDirty)
+							RunComputePipeline((uint)objectCount, boundsUsed);
+						else
+							RunRefitOnly((uint)objectCount);
+					}
 					else
 						UploadEmptyBuffers();
 				}
 
-				_lastObjectCount = (uint)objectCount;
+				_lastObjectCount = objectCount;
 				_gpuDirty = false;
 				_dirtyState = TreeDirtyState.None;
 				_dirtyItems.Clear();
 				_lastItemStates.Clear();
 				foreach (var kvp in newStates)
 					_lastItemStates[kvp.Key] = kvp.Value;
-				_lastObjectCount = objectCount;
 				_transformsDirty = false;
 				return true;
 			}
 		}
 
-		private void BuildAndUploadItemData(out int objectCount, out AABB boundsUsed, out Dictionary<T, ItemState> newStates)
+		private void BuildAndUploadItemData(out uint objectCount, out AABB boundsUsed, out Dictionary<T, ItemState> newStates)
 		{
 			_aabbMins.Clear();
 			_aabbMaxs.Clear();
@@ -564,7 +577,7 @@ namespace XREngine.Data.Trees
 			UploadTransformData();
 			UploadObjectIdData();
 
-			objectCount = _aabbMins.Count;
+			objectCount = (uint)_aabbMins.Count;
 		}
 
 		private void UploadAabbData()
@@ -572,10 +585,12 @@ namespace XREngine.Data.Trees
 			int count = _aabbMins.Count;
 			int total = count * 2;
 			Vector4[] combined = new Vector4[total];
+			// Interleave min/max pairs for bvh_refit.comp compatibility:
+			// struct Aabb { vec4 minBounds; vec4 maxBounds; }; Aabb aabbs[];
 			for (int i = 0; i < count; ++i)
 			{
-				combined[i] = _aabbMins[i];
-				combined[count + i] = _aabbMaxs[i];
+				combined[i * 2] = _aabbMins[i];
+				combined[i * 2 + 1] = _aabbMaxs[i];
 			}
 
 			_aabbBuffer ??= CreateBuffer("GPUOctree.AABBs", false);
@@ -778,10 +793,20 @@ namespace XREngine.Data.Trees
 			program.BindBuffer(_bvhRangeBuffer, 3);
 			program.Uniform("debugValidation", EnableValidation ? 1u : 0u);
 			program.BindBuffer(_transformBuffer, 4);
+
+			// Stage 0: Refit leaf nodes
 			program.Uniform("refitStage", 0u);
 			program.DispatchCompute(ComputeGroups(_lastBvhNodeCount, 256u), 1u, 1u, EMemoryBarrierMask.ShaderStorage);
-			program.Uniform("refitStage", 1u);
-			program.DispatchCompute(1u, 1u, 1u, EMemoryBarrierMask.ShaderStorage);
+
+			// Stage 1: Propagate internal nodes in parallel
+			// Internal nodes count = total nodes - leaf nodes = nodeCount - ((nodeCount + 1) / 2)
+			uint leafCount = (_lastBvhNodeCount + 1u) >> 1;
+			uint internalCount = _lastBvhNodeCount > leafCount ? _lastBvhNodeCount - leafCount : 0u;
+			if (internalCount > 0)
+			{
+				program.Uniform("refitStage", 1u);
+				program.DispatchCompute(ComputeGroups(internalCount, 256u), 1u, 1u, EMemoryBarrierMask.ShaderStorage);
+			}
 			return true;
 		}
 
@@ -940,10 +965,18 @@ namespace XREngine.Data.Trees
 				return;
 			}
 
-			uint leafCount = objectCount == 0 ? 0u : ((objectCount + _maxLeafPrimitives - 1u) / _maxLeafPrimitives);
-			uint nodeCount = leafCount == 0 ? 0u : (leafCount * 2u) - 1u;
+			// Skip buffer allocation entirely when there are no objects
+			if (objectCount == 0)
+			{
+				_lastBvhNodeCount = 0;
+				return;
+			}
+
+			uint leafCount = (objectCount + _maxLeafPrimitives - 1u) / _maxLeafPrimitives;
+			uint nodeCount = leafCount > 0 ? (leafCount * 2u) - 1u : 0u;
 			_lastBvhNodeCount = nodeCount;
 
+			// Ensure at least 1 node capacity for buffer sizing
 			uint nodeScalars = GpuBvhLayout.NodeScalarCapacity(Math.Max(nodeCount, 1u));
 			uint rangeScalars = GpuBvhLayout.RangeScalarCapacity(Math.Max(nodeCount, 1u));
 
@@ -1038,15 +1071,17 @@ namespace XREngine.Data.Trees
 
 		private static string PatchBvhSpecializationConstants(string source, uint maxLeafPrimitives, BvhBuildMode mode)
 		{
+			// Match both plain const declarations and GLSL specialization constants
+			// e.g., "const uint MAX_LEAF_PRIMITIVES = 1u;" or "layout (constant_id = 0) const uint MAX_LEAF_PRIMITIVES = 1u;"
 			string patched = Regex.Replace(
 				source,
-				@"const\s+uint\s+MAX_LEAF_PRIMITIVES\s*=\s*[0-9]+u?\s*;",
+				@"(layout\s*\(\s*constant_id\s*=\s*\d+\s*\)\s*)?const\s+uint\s+MAX_LEAF_PRIMITIVES\s*=\s*[0-9]+u?\s*;",
 				$"const uint MAX_LEAF_PRIMITIVES = {maxLeafPrimitives}u;",
 				RegexOptions.CultureInvariant);
 
 			patched = Regex.Replace(
 				patched,
-				@"const\s+uint\s+BVH_MODE\s*=\s*[0-9]+u?\s*;",
+				@"(layout\s*\(\s*constant_id\s*=\s*\d+\s*\)\s*)?const\s+uint\s+BVH_MODE\s*=\s*[0-9]+u?\s*;",
 				$"const uint BVH_MODE = {(mode == BvhBuildMode.MortonPlusSah ? 1u : 0u)}u;",
 				RegexOptions.CultureInvariant);
 
@@ -1087,12 +1122,18 @@ namespace XREngine.Data.Trees
 			=> Vector3.DistanceSquared(a.Min, b.Min) <= epsilon * epsilon
 			&& Vector3.DistanceSquared(a.Max, b.Max) <= epsilon * epsilon;
 
+		/// <summary>
+		/// Marks the tree as requiring rebuild or refit. Thread-safe.
+		/// </summary>
 		private void MarkDirty(TreeDirtyState reason = TreeDirtyState.Rebuild)
 		{
-			if (reason > _dirtyState)
-				_dirtyState = reason;
-			_gpuDirty = true;
-			_transformsDirty = true;
+			lock (_syncRoot)
+			{
+				if (reason > _dirtyState)
+					_dirtyState = reason;
+				_gpuDirty = true;
+				_transformsDirty = true;
+			}
 		}
 
 		private uint? ResolveItemId(T item)
@@ -1130,6 +1171,64 @@ namespace XREngine.Data.Trees
 
 			public int GetHashCode(TRef obj)
 				=> RuntimeHelpers.GetHashCode(obj);
+		}
+
+		public void Dispose()
+		{
+			Dispose(true);
+			GC.SuppressFinalize(this);
+		}
+
+		protected virtual void Dispose(bool disposing)
+		{
+			if (_disposed)
+				return;
+
+			if (disposing)
+			{
+				_aabbBuffer?.Dispose();
+				_transformBuffer?.Dispose();
+				_mortonBuffer?.Dispose();
+				_nodeBuffer?.Dispose();
+				_queueBuffer?.Dispose();
+				_objectIdBuffer?.Dispose();
+				_bvhNodeBuffer?.Dispose();
+				_bvhRangeBuffer?.Dispose();
+
+				// XRShader and XRRenderProgram inherit from GenericRenderObject which uses Destroy() instead of Dispose()
+				_mortonShader?.Destroy();
+				_smallSortShader?.Destroy();
+				_padShader?.Destroy();
+				_tileSortShader?.Destroy();
+				_mergeShader?.Destroy();
+				_buildShader?.Destroy();
+				_propagateShader?.Destroy();
+				_initQueueShader?.Destroy();
+				_bvhBuildShader?.Destroy();
+				_bvhRefineShader?.Destroy();
+				_bvhRefitShader?.Destroy();
+				_refitOctreeShader?.Destroy();
+
+				_mortonProgram?.Destroy();
+				_smallSortProgram?.Destroy();
+				_padProgram?.Destroy();
+				_tileSortProgram?.Destroy();
+				_mergeProgram?.Destroy();
+				_buildProgram?.Destroy();
+				_propagateProgram?.Destroy();
+				_initQueueProgram?.Destroy();
+				_bvhBuildProgram?.Destroy();
+				_bvhRefineProgram?.Destroy();
+				_bvhRefitProgram?.Destroy();
+				_refitOctreeProgram?.Destroy();
+			}
+
+			_disposed = true;
+		}
+
+		~OctreeGPU()
+		{
+			Dispose(false);
 		}
 
 		private sealed class DebugOctreeNode(AABB bounds) : OctreeNodeBase(bounds, 0, 0)
