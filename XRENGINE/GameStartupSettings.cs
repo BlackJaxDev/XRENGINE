@@ -210,6 +210,11 @@ namespace XREngine
         private OverrideableSetting<EOutputVerbosity> _outputVerbosityOverride = new();
         private OverrideableSetting<bool> _enableGpuIndirectDebugLoggingOverride = new();
         private OverrideableSetting<bool> _enableGpuIndirectCpuFallbackOverride = new();
+        private OverrideableSetting<bool> _useGpuBvhOverride = new();
+        private OverrideableSetting<uint> _bvhLeafMaxPrimsOverride = new();
+        private OverrideableSetting<EBvhMode> _bvhModeOverride = new();
+        private OverrideableSetting<bool> _bvhRefitOnlyWhenStableOverride = new();
+        private OverrideableSetting<uint> _raycastBufferSizeOverride = new();
 
         // Full cascade settings (Project > Engine, user can override)
         private OverrideableSetting<EAntiAliasingMode> _antiAliasingModeOverride = new();
@@ -316,6 +321,66 @@ namespace XREngine
         {
             get => _enableGpuIndirectCpuFallbackOverride;
             set => SetField(ref _enableGpuIndirectCpuFallbackOverride, value ?? new());
+        }
+
+        /// <summary>
+        /// Project override for GPU BVH usage.
+        /// Takes precedence over engine defaults when HasOverride is true. Can be further overridden by user settings.
+        /// </summary>
+        [Category("BVH Overrides")]
+        [Description("Project override for GPU BVH usage.")]
+        public OverrideableSetting<bool> UseGpuBvhOverride
+        {
+            get => _useGpuBvhOverride;
+            set => SetField(ref _useGpuBvhOverride, value ?? new());
+        }
+
+        /// <summary>
+        /// Project override for the BVH leaf primitive budget.
+        /// Takes precedence over engine defaults when HasOverride is true. Can be further overridden by user settings.
+        /// </summary>
+        [Category("BVH Overrides")]
+        [Description("Project override for the BVH leaf primitive budget.")]
+        public OverrideableSetting<uint> BvhLeafMaxPrimsOverride
+        {
+            get => _bvhLeafMaxPrimsOverride;
+            set => SetField(ref _bvhLeafMaxPrimsOverride, value ?? new());
+        }
+
+        /// <summary>
+        /// Project override for the BVH build strategy.
+        /// Takes precedence over engine defaults when HasOverride is true. Can be further overridden by user settings.
+        /// </summary>
+        [Category("BVH Overrides")]
+        [Description("Project override for the BVH build strategy.")]
+        public OverrideableSetting<EBvhMode> BvhModeOverride
+        {
+            get => _bvhModeOverride;
+            set => SetField(ref _bvhModeOverride, value ?? new());
+        }
+
+        /// <summary>
+        /// Project override for preferring BVH refits only when object counts are stable.
+        /// Takes precedence over engine defaults when HasOverride is true. Can be further overridden by user settings.
+        /// </summary>
+        [Category("BVH Overrides")]
+        [Description("Project override for preferring BVH refits only when object counts are stable.")]
+        public OverrideableSetting<bool> BvhRefitOnlyWhenStableOverride
+        {
+            get => _bvhRefitOnlyWhenStableOverride;
+            set => SetField(ref _bvhRefitOnlyWhenStableOverride, value ?? new());
+        }
+
+        /// <summary>
+        /// Project override for the GPU BVH raycast readback buffer size (bytes).
+        /// Takes precedence over engine defaults when HasOverride is true. Can be further overridden by user settings.
+        /// </summary>
+        [Category("BVH Overrides")]
+        [Description("Project override for the GPU BVH raycast readback buffer size (bytes).")]
+        public OverrideableSetting<uint> RaycastBufferSizeOverride
+        {
+            get => _raycastBufferSizeOverride;
+            set => SetField(ref _raycastBufferSizeOverride, value ?? new());
         }
 
         /// <summary>
