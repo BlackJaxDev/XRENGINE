@@ -202,8 +202,8 @@ public partial class DefaultRenderPipeline : RenderPipeline
 
     private void ApplyAntiAliasingResolutionHint()
     {
-        // Avoid fighting other upscalers when DLSS is enabled.
-        if (Engine.Rendering.Settings.EnableNvidiaDlss)
+        // Avoid fighting other upscalers when DLSS or XeSS is enabled.
+        if (Engine.Rendering.Settings.EnableNvidiaDlss || Engine.Rendering.Settings.EnableIntelXess)
         {
             RequestedInternalResolution = null;
             return;
@@ -558,11 +558,11 @@ public partial class DefaultRenderPipeline : RenderPipeline
             using (c.AddUsing<VPRC_BindOutputFBO>())
             {
                 //c.Add<VPRC_ClearByBoundFBO>();
-                var dlssBlit = c.Add<VPRC_StreamlineDlssUpscale>();
+                var vendorBlit = c.Add<VPRC_VendorUpscale>();
                 // When FXAA is enabled, use the FXAA output FBO; otherwise use post-process output.
-                dlssBlit.FrameBufferName = EnableFxaa ? FxaaFBOName : PostProcessFBOName;
-                dlssBlit.DepthTextureName = DepthViewTextureName;
-                dlssBlit.MotionTextureName = VelocityTextureName;
+                vendorBlit.FrameBufferName = EnableFxaa ? FxaaFBOName : PostProcessFBOName;
+                vendorBlit.DepthTextureName = DepthViewTextureName;
+                vendorBlit.MotionTextureName = VelocityTextureName;
             }
         }
 
