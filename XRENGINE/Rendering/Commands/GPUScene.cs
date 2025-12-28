@@ -476,6 +476,10 @@ namespace XREngine.Rendering.Commands
         /// </summary>
         public const uint MinCommandCount = 8;
         public const int CommandFloatCount = 48; // Updated: command with PrevWorldMatrix (192 bytes)
+        public const uint VisibleCountComponents = 3; // [visible draws, visible instances, overflow marker]
+        public const uint VisibleCountDrawIndex = 0;
+        public const uint VisibleCountInstanceIndex = 1;
+        public const uint VisibleCountOverflowIndex = 2;
 
         private readonly ConcurrentDictionary<XRMesh, uint> _meshIDMap = new();
         private uint _nextMeshID = 1;
