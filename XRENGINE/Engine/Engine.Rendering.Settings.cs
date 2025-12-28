@@ -105,6 +105,7 @@ namespace XREngine
                 private double _debugOutputRecencySeconds = 0.0;
                 private bool _enableGpuIndirectDebugLogging = true;
                 private bool _enableGpuIndirectCpuFallback = false;
+                private bool _enableGpuIndirectValidationLogging = false;
                 private bool _useDebugOpaquePipeline = false;
 
                 /// <summary>
@@ -160,6 +161,17 @@ namespace XREngine
                 {
                     get => _enableGpuIndirectCpuFallback;
                     set => SetField(ref _enableGpuIndirectCpuFallback, value);
+                }
+
+                /// <summary>
+                /// Whether to run extra GPU indirect validation (CPU comparison and overflow logging).
+                /// </summary>
+                [Category("Debug")]
+                [Description("Whether to run extra GPU indirect validation (CPU comparison and overflow logging).")]
+                public bool EnableGpuIndirectValidationLogging
+                {
+                    get => _enableGpuIndirectValidationLogging;
+                    set => SetField(ref _enableGpuIndirectValidationLogging, value);
                 }
 
                 /// <summary>
