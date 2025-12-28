@@ -137,8 +137,16 @@ void main()
     uint outIndex = atomicAdd(CulledCount, 1u);
     if (outIndex >= uint(MaxCulledCommands))
     {
-        atomicExchange(CullingOverflowFlag, 1u); // signal overflow
-        atomicCompSwap(CulledOverflow, 0u, outIndex + 1u);
+        // Track how many commands overflow the visible buffer and leave a sentinel for CPU-side inspection.
+        atomicAdd(CullingOverflowFlag, 1u);
+        if (MaxCulledCommands > 0)
+        {
+            uint sentinelIndex = uint(MaxCulledCommands - 1);
+            int sentinelBase = int(sentinelIndex) * COMMAND_FLOATS;
+            outCommands[sentinelBase + 36] = uintBitsToFloat(0xFFFFFFFFu); // MeshID sentinel
+            outCommands[sentinelBase + 38] = uintBitsToFloat(0xFFFFFFFFu); // MaterialID sentinel
+            outCommands[sentinelBase + 39] = uintBitsToFloat(0u);          // InstanceCount = 0
+        }
         return;
     }
 

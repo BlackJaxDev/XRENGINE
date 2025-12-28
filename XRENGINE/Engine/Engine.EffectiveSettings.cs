@@ -161,6 +161,16 @@ namespace XREngine
                     UserSettings?.EnableGpuIndirectDebugLoggingOverride);
 
             /// <summary>
+            /// Gets the effective GPU indirect validation logging setting.
+            /// Resolved from: User Override > Project Override > Engine Default
+            /// </summary>
+            public static bool EnableGpuIndirectValidationLogging
+                => OverrideableSettingExtensions.ResolveCascade(
+                    Rendering.Settings.EnableGpuIndirectValidationLogging,
+                    GameSettings?.EnableGpuIndirectValidationLoggingOverride,
+                    UserSettings?.EnableGpuIndirectValidationLoggingOverride);
+
+            /// <summary>
             /// Gets the effective GPU indirect CPU fallback setting.
             /// Resolved from: User Override > Project Override > Engine Default
             /// </summary>

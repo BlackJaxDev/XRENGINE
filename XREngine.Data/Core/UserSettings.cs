@@ -113,6 +113,7 @@ namespace XREngine
         private OverrideableSetting<EOutputVerbosity> _outputVerbosityOverride = new();
         private OverrideableSetting<bool> _enableGpuIndirectDebugLoggingOverride = new();
         private OverrideableSetting<bool> _enableGpuIndirectCpuFallbackOverride = new();
+        private OverrideableSetting<bool> _enableGpuIndirectValidationLoggingOverride = new();
 
         // Full cascade settings (User > Project > Engine)
         private OverrideableSetting<EAntiAliasingMode> _antiAliasingModeOverride = new();
@@ -223,6 +224,18 @@ namespace XREngine
         {
             get => _enableGpuIndirectCpuFallbackOverride;
             set => SetField(ref _enableGpuIndirectCpuFallbackOverride, value ?? new());
+        }
+
+        /// <summary>
+        /// User override for GPU indirect validation logging.
+        /// Takes precedence over project and engine defaults when HasOverride is true.
+        /// </summary>
+        [Category("Debug Overrides")]
+        [Description("User override for GPU indirect validation logging.")]
+        public OverrideableSetting<bool> EnableGpuIndirectValidationLoggingOverride
+        {
+            get => _enableGpuIndirectValidationLoggingOverride;
+            set => SetField(ref _enableGpuIndirectValidationLoggingOverride, value ?? new());
         }
 
         /// <summary>

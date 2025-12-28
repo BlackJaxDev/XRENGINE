@@ -32,6 +32,7 @@ namespace XREngine.Rendering.Commands
         private bool _skipGpuSubmissionThisPass;
         private string? _skipGpuSubmissionReason;
         private long _lastMaterialSnapshotTick = -1;
+        private const int ValidationSignatureLogLimit = 256;
 
         private const uint PassFilterDebugComponentsPerSample = 4;
         private const uint PassFilterDebugMaxSamples = 32;
@@ -622,7 +623,9 @@ namespace XREngine.Rendering.Commands
             }
 
             VisibleCommandCount = Math.Min(filteredCount, copyCount);
+          
             Dbg($"Cull passthrough visible={VisibleCommandCount} instances={VisibleInstanceCount} (input={copyCount})", "Culling");
+            RunGpuCpuValidation(scene, copyCount, VisibleCommandCount);
 
             if (_statsBuffer is not null)
             {
@@ -1017,6 +1020,100 @@ namespace XREngine.Rendering.Commands
 
         private static string FormatCommandSnapshot(in GPUIndirectRenderCommand cmd)
             => $"mesh={cmd.MeshID} material={cmd.MaterialID} pass={cmd.RenderPass} instances={cmd.InstanceCount}";
+
+        private static (uint MeshId, uint MaterialId, uint Pass) BuildVisibilitySignature(in GPUIndirectRenderCommand cmd)
+            => (cmd.MeshID, cmd.MaterialID, cmd.RenderPass);
+
+        private List<(uint MeshId, uint MaterialId, uint Pass)> BuildCpuVisibilitySignatures(GPUScene scene, uint copyCount, out uint cpuVisibleCount)
+        {
+            bool matchAll = RenderPass < 0;
+            uint targetPass = unchecked((uint)RenderPass);
+            XRDataBuffer src = scene.AllLoadedCommandsBuffer;
+
+            cpuVisibleCount = 0;
+            var signatures = new List<(uint MeshId, uint MaterialId, uint Pass)>(Math.Min((int)copyCount, ValidationSignatureLogLimit));
+
+            for (uint i = 0; i < copyCount; ++i)
+            {
+                GPUIndirectRenderCommand cmd = src.GetDataRawAtIndex<GPUIndirectRenderCommand>(i);
+                if (!TryPrepareCpuFallbackCommand(scene, matchAll, targetPass, ref cmd, out _))
+                    continue;
+
+                cpuVisibleCount++;
+                if (signatures.Count < ValidationSignatureLogLimit)
+                    signatures.Add(BuildVisibilitySignature(cmd));
+            }
+
+            return signatures;
+        }
+
+        private List<(uint MeshId, uint MaterialId, uint Pass)> BuildGpuVisibilitySignatures(uint gpuVisibleCount)
+        {
+            var signatures = new List<(uint MeshId, uint MaterialId, uint Pass)>(Math.Min((int)gpuVisibleCount, ValidationSignatureLogLimit));
+
+            if (_culledSceneToRenderBuffer is null || gpuVisibleCount == 0)
+                return signatures;
+
+            uint sampleCount = Math.Min(gpuVisibleCount, (uint)ValidationSignatureLogLimit);
+            for (uint i = 0; i < sampleCount; ++i)
+            {
+                GPUIndirectRenderCommand cmd = _culledSceneToRenderBuffer.GetDataRawAtIndex<GPUIndirectRenderCommand>(i);
+                signatures.Add(BuildVisibilitySignature(cmd));
+            }
+
+            return signatures;
+        }
+
+        private void RunGpuCpuValidation(GPUScene scene, uint copyCount, uint gpuVisibleCount)
+        {
+            if (!Engine.EffectiveSettings.EnableGpuIndirectValidationLogging)
+                return;
+
+            uint cpuVisibleCount;
+            List<(uint MeshId, uint MaterialId, uint Pass)> cpu = BuildCpuVisibilitySignatures(scene, copyCount, out cpuVisibleCount);
+            List<(uint MeshId, uint MaterialId, uint Pass)> gpu = BuildGpuVisibilitySignatures(gpuVisibleCount);
+
+            if (cpuVisibleCount != gpuVisibleCount)
+            {
+                Debug.LogWarning($"{FormatDebugPrefix(\"Validation\")} GPU/CPU visible count mismatch: gpu={gpuVisibleCount} cpu={cpuVisibleCount} (copyCount={copyCount}, pass={RenderPass})");
+            }
+
+            var cpuSet = new HashSet<(uint MeshId, uint MaterialId, uint Pass)>(cpu);
+            var gpuSet = new HashSet<(uint MeshId, uint MaterialId, uint Pass)>(gpu);
+
+            var missingOnGpu = cpuSet.Except(gpuSet).Take(ValidationSignatureLogLimit).ToList();
+            var extraOnGpu = gpuSet.Except(cpuSet).Take(ValidationSignatureLogLimit).ToList();
+
+            bool logDebug = Engine.EffectiveSettings.EnableGpuIndirectDebugLogging;
+
+            if (missingOnGpu.Count > 0 && logDebug)
+            {
+                var sb = new StringBuilder();
+                sb.Append("GPU validation missing signatures: ");
+                AppendSignatureList(sb, missingOnGpu);
+                Dbg(sb.ToString(), "Validation");
+            }
+
+            if (extraOnGpu.Count > 0 && logDebug)
+            {
+                var sb = new StringBuilder();
+                sb.Append("GPU validation extra signatures: ");
+                AppendSignatureList(sb, extraOnGpu);
+                Dbg(sb.ToString(), "Validation");
+            }
+        }
+
+        private static void AppendSignatureList(StringBuilder sb, IEnumerable<(uint MeshId, uint MaterialId, uint Pass)> signatures)
+        {
+            bool first = true;
+            foreach (var sig in signatures)
+            {
+                if (!first)
+                    sb.Append(" | ");
+                sb.Append($"mesh={sig.MeshId} mat={sig.MaterialId} pass={sig.Pass}");
+                first = false;
+            }
+        }
 
         private bool IsCulledCommandValid(GPUScene scene, in GPUIndirectRenderCommand cmd, ISet<uint> missingMaterialIds, out string? reason)
         {
