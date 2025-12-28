@@ -3,6 +3,11 @@
 // LBVH build from pre-sorted Morton keys.
 // Emits leaves (up to MAX_LEAF_PRIMITIVES each), generates internal connectivity,
 // and writes primitive ranges for downstream refinement/refit passes.
+#define MAX_OBJECTS 1024u
+#define OVERFLOW_MORTON 1u
+#define OVERFLOW_NODE 2u
+#define OVERFLOW_QUEUE 4u
+#define OVERFLOW_BVH 8u
 
 layout (constant_id = 0) const uint MAX_LEAF_PRIMITIVES = 1u; // number of primitives per leaf
 layout (constant_id = 1) const uint BVH_MODE = 0u; // 0 = Morton-only, 1 = Morton + SAH refinement
@@ -45,8 +50,16 @@ layout(std430, binding = 3) buffer PrimitiveRanges
     uvec2 ranges[];
 };
 
+layout(std430, binding = 8) buffer OverflowFlags
+{
+    uint overflowFlags;
+};
+
 uniform uint numPrimitives;
 uniform uint buildStage; // 0 = emit leaves + header, 1 = generate internal nodes
+uniform uint nodeScalarCapacity;
+uniform uint rangeScalarCapacity;
+uniform uint mortonCapacity;
 
 // --- Morton helpers over leaf blocks ---
 uint leafFirstPrimitive(uint leafIndex)
@@ -133,6 +146,19 @@ void main()
     uint leafCount = (numPrimitives + MAX_LEAF_PRIMITIVES - 1u) / MAX_LEAF_PRIMITIVES;
     uint internalCount = (leafCount > 0u) ? (leafCount - 1u) : 0u;
     uint totalNodes = leafCount + internalCount;
+    uint mortonCap = (mortonCapacity == 0u) ? MAX_OBJECTS : mortonCapacity;
+    uint maxNodesByBuffer = (nodeScalarCapacity > BVH_NODE_STRIDE_SCALARS)
+        ? (nodeScalarCapacity - 4u) / BVH_NODE_STRIDE_SCALARS
+        : 0u;
+    uint maxRangesByBuffer = (rangeScalarCapacity > 0u)
+        ? (rangeScalarCapacity / BVH_RANGE_STRIDE_SCALARS)
+        : 0u;
+
+    if (gid == 0u && (numPrimitives > mortonCap || numPrimitives > MAX_OBJECTS || totalNodes > maxNodesByBuffer || totalNodes > maxRangesByBuffer))
+        atomicOr(overflowFlags, OVERFLOW_BVH);
+
+    if (numPrimitives > mortonCap || numPrimitives > MAX_OBJECTS || totalNodes > maxNodesByBuffer || totalNodes > maxRangesByBuffer)
+        return;
 
     if (buildStage == 0u && gid == 0u)
     {
