@@ -1,6 +1,11 @@
 #version 460
 
 #define MAX_OBJECTS 1024
+#define NODE_SCALAR_STRIDE 20u
+#define OVERFLOW_MORTON 1u
+#define OVERFLOW_NODE 2u
+#define OVERFLOW_QUEUE 4u
+#define OVERFLOW_BVH 8u
 
 // Input: Morton codes and original object IDs (pre-sorted by a GPU pass)
 struct MortonObject
@@ -46,12 +51,19 @@ layout(std430, binding = 2) buffer Octree
     OctreeNode nodes[];
 };
 
+layout(std430, binding = 8) buffer OverflowFlags
+{
+    uint overflowFlags;
+};
+
 // Atomic counter for allocating internal nodes (optional; may be used by a follow-up pass)
 // No counters needed; we deterministically assign internal nodes at indices [numObjects .. numObjects+numObjects-2]
 
 uniform uint numObjects;
 uniform vec3 sceneMin;
 uniform vec3 sceneMax;
+uniform uint nodeScalarCapacity;
+uniform uint mortonCapacity;
 
 // LCP using 32-bit morton codes (with guard values at ends)
 int clz(uint x)
@@ -130,6 +142,15 @@ layout (local_size_x = 256, local_size_y = 1, local_size_z = 1) in;
 void main()
 {
     uint gid = gl_GlobalInvocationID.x;
+    uint mortonCap = (mortonCapacity == 0u) ? MAX_OBJECTS : mortonCapacity;
+    uint nodeCap = (nodeScalarCapacity > 2u) ? (nodeScalarCapacity - 2u) / NODE_SCALAR_STRIDE : 0u;
+    uint requiredNodes = (numObjects > 0u) ? (2u * numObjects - 1u) : 0u;
+
+    if (gid == 0u && (numObjects > MAX_OBJECTS || numObjects > mortonCap || requiredNodes > nodeCap))
+        atomicOr(overflowFlags, OVERFLOW_NODE);
+
+    if (numObjects == 0u || numObjects > MAX_OBJECTS || numObjects > mortonCap || requiredNodes > nodeCap)
+        return;
 
     // Thread 0: set numNodes (leaves + internal)
     if (gid == 0u) {

@@ -12,6 +12,7 @@ using XREngine.Data.Rendering;
 using XREngine.Rendering;
 using XREngine.Rendering.Models.Materials;
 using XREngine.Rendering.Compute;
+using XREngine.Scene;
 
 namespace XREngine.Data.Trees
 {
@@ -48,6 +49,12 @@ namespace XREngine.Data.Trees
 		private const uint MaxQueueSize = 1024;
 		private const uint NodeStrideScalars = 20;
 		private const uint HeaderScalarCount = 2;
+		internal static uint QueueCapacity => MaxQueueSize;
+		private const uint OverflowMortonBit = 1u;
+		private const uint OverflowNodeBit = 1u << 1;
+		private const uint OverflowQueueBit = 1u << 2;
+		private const uint OverflowBvhBit = 1u << 3;
+		private const uint OverflowFlagBinding = 8u;
 
 		private static readonly Vector4 ZeroVec4 = Vector4.Zero;
 		private static readonly Matrix4x4 IdentityMatrix = Matrix4x4.Identity;
@@ -95,6 +102,10 @@ namespace XREngine.Data.Trees
 		private uint _lastBvhNodeCount;
 		private uint _lastObjectCount;
 		private bool _transformsDirty = true;
+		private XRDataBuffer? _overflowFlagBuffer;
+		private bool _overflowed;
+		private bool _overflowWarningIssued;
+		private string? _overflowReason;
 
 		private XRShader? _mortonShader;
 		private XRShader? _smallSortShader;
@@ -437,6 +448,18 @@ namespace XREngine.Data.Trees
 
 				EnsurePrograms();
 				BuildAndUploadItemData(out uint objectCount, out AABB boundsUsed, out Dictionary<T, ItemState> newStates);
+				uint nodeCount = objectCount == 0 ? 0 : (objectCount * 2u) - 1u;
+				TryRecoverFromOverflow(objectCount, nodeCount);
+				if (!EnsureCapacityForCounts(objectCount, nodeCount, out string? overflowReason))
+				{
+					HandleOverflow(overflowReason ?? "GPU octree overflow detected before dispatch.");
+					return true;
+				}
+				if (_overflowed)
+				{
+					UploadEmptyBuffers();
+					return true;
+				}
 				_activeBounds = boundsUsed;
 				// On first run, _nodeBuffer is null and _lastObjectCount is 0, so always rebuild
 				bool isFirstRun = _nodeBuffer is null;
@@ -462,6 +485,8 @@ namespace XREngine.Data.Trees
 					else
 						UploadEmptyBuffers();
 				}
+
+				ConsumeOverflowFlag((uint)objectCount, nodeCount);
 
 				_lastObjectCount = objectCount;
 				_gpuDirty = false;
@@ -567,7 +592,18 @@ namespace XREngine.Data.Trees
 			}
 
 			if (truncated)
-				Debug.LogWarning($"OctreeGPU clamped item count to {MaxObjects}.");
+			{
+				HandleOverflow($"OctreeGPU item count exceeded shader capacity of {MaxObjects}.");
+				_aabbMins.Clear();
+				_aabbMaxs.Clear();
+				_transformScratch.Clear();
+				_objectIdScratch.Clear();
+				newStates.Clear();
+				objectCount = 0;
+				boundsUsed = _hasUserBounds ? _requestedBounds : dynamicBounds;
+				UploadEmptyBuffers();
+				return;
+			}
 
 			boundsUsed = _hasUserBounds ? _requestedBounds : dynamicBounds;
 			if (_aabbMins.Count == 0 && !_hasUserBounds)
@@ -632,6 +668,7 @@ namespace XREngine.Data.Trees
 		private void UploadEmptyBuffers()
 		{
 			_lastBvhNodeCount = 0;
+			ResetOverflowFlagBuffer();
 			_aabbBuffer ??= CreateBuffer("GPUOctree.AABBs", false);
 			_aabbBuffer.SetDataRaw(new[] { ZeroVec4, ZeroVec4 }, 2);
 			_aabbBuffer.SetBlockIndex(0);
@@ -647,14 +684,14 @@ namespace XREngine.Data.Trees
 			_objectIdBuffer.SetBlockIndex(5);
 			_objectIdBuffer.PushSubData();
 
-			EnsureNodeBufferCapacity(1);
+			EnsureNodeBufferCapacity(1, out _);
 			if (_nodeBuffer is not null)
 			{
 				ClearClientBuffer(_nodeBuffer);
 				_nodeBuffer.PushSubData();
 			}
 
-			EnsureQueueBuffer();
+			EnsureQueueBuffer(out _);
 			if (_queueBuffer is not null)
 			{
 				ClearClientBuffer(_queueBuffer);
@@ -663,7 +700,7 @@ namespace XREngine.Data.Trees
 
 			if (_useBvh)
 			{
-				EnsureBvhBuffers(0);
+				EnsureBvhBuffers(0, out _);
 				if (_bvhNodeBuffer is not null)
 				{
 					ClearClientBuffer(_bvhNodeBuffer);
@@ -680,10 +717,14 @@ namespace XREngine.Data.Trees
 
 		private void RunComputePipeline(uint objectCount, AABB bounds)
 		{
-			EnsureNodeBufferCapacity(objectCount);
-			EnsureQueueBuffer();
-			EnsureMortonBufferCapacity(objectCount);
-			EnsureBvhBuffers(objectCount);
+			if (!EnsureNodeBufferCapacity(objectCount, out string? overflowReason) ||
+				!EnsureMortonBufferCapacity(objectCount, out overflowReason) ||
+				!EnsureQueueBuffer(out overflowReason) ||
+				!EnsureBvhBuffers(objectCount, out overflowReason))
+			{
+				HandleOverflow(overflowReason ?? "GPU octree buffer overflow during compute pipeline setup.");
+				return;
+			}
 
 			Vector3 sceneMin = bounds.Min;
 			Vector3 sceneMax = bounds.Max;
@@ -712,7 +753,11 @@ namespace XREngine.Data.Trees
 		{
 			if (_useBvh)
 			{
-				EnsureBvhBuffers(objectCount);
+				if (!EnsureBvhBuffers(objectCount, out string? overflowReason))
+				{
+					HandleOverflow(overflowReason ?? "GPU BVH buffer overflow during refit-only path.");
+					return;
+				}
 				DispatchRefitBvh();
 			}
 
@@ -727,6 +772,9 @@ namespace XREngine.Data.Trees
 			program.Uniform("sceneMin", sceneMin);
 			program.Uniform("sceneMax", sceneMax);
 			program.Uniform("numObjects", objectCount);
+			program.Uniform("mortonCapacity", GetMortonCapacity());
+			if (_overflowFlagBuffer is not null)
+				program.BindBuffer(_overflowFlagBuffer, OverflowFlagBinding);
 			uint groups = ComputeGroups(objectCount, 256u);
 			program.DispatchCompute(groups, 1u, 1u, EMemoryBarrierMask.ShaderStorage);
 		}
@@ -750,6 +798,11 @@ namespace XREngine.Data.Trees
 			program.BindBuffer(_bvhNodeBuffer, 2);
 			program.BindBuffer(_bvhRangeBuffer, 3);
 			program.Uniform("numPrimitives", objectCount);
+			program.Uniform("nodeScalarCapacity", _bvhNodeBuffer.ElementCount);
+			program.Uniform("rangeScalarCapacity", _bvhRangeBuffer.ElementCount);
+			program.Uniform("mortonCapacity", GetMortonCapacity());
+			if (_overflowFlagBuffer is not null)
+				program.BindBuffer(_overflowFlagBuffer, OverflowFlagBinding);
 			program.Uniform("buildStage", 0u);
 			program.DispatchCompute(ComputeGroups(Math.Max(leafCount, 1u), 256u), 1u, 1u, EMemoryBarrierMask.ShaderStorage);
 			if (internalCount > 0)
@@ -774,6 +827,8 @@ namespace XREngine.Data.Trees
 			program.BindBuffer(_mortonBuffer!, 1);
 			program.BindBuffer(_bvhNodeBuffer, 2);
 			program.BindBuffer(_bvhRangeBuffer, 3);
+			if (_overflowFlagBuffer is not null)
+				program.BindBuffer(_overflowFlagBuffer, OverflowFlagBinding);
 			program.DispatchCompute(ComputeGroups(_lastBvhNodeCount, 128u), 1u, 1u, EMemoryBarrierMask.ShaderStorage);
 			return true;
 		}
@@ -793,6 +848,8 @@ namespace XREngine.Data.Trees
 			program.BindBuffer(_bvhRangeBuffer, 3);
 			program.Uniform("debugValidation", EnableValidation ? 1u : 0u);
 			program.BindBuffer(_transformBuffer, 4);
+			if (_overflowFlagBuffer is not null)
+				program.BindBuffer(_overflowFlagBuffer, OverflowFlagBinding);
 
 			// Stage 0: Refit leaf nodes
 			program.Uniform("refitStage", 0u);
@@ -841,6 +898,10 @@ namespace XREngine.Data.Trees
 			program.BindBuffer(_nodeBuffer!, 2);
 			program.Uniform("numObjects", objectCount);
 			program.Uniform("debugValidation", EnableValidation ? 1u : 0u);
+			program.Uniform("nodeScalarCapacity", _nodeBuffer!.ElementCount);
+			program.Uniform("mortonCapacity", GetMortonCapacity());
+			if (_overflowFlagBuffer is not null)
+				program.BindBuffer(_overflowFlagBuffer, OverflowFlagBinding);
 			program.DispatchCompute(ComputeGroups(objectCount, 256u), 1u, 1u, EMemoryBarrierMask.ShaderStorage);
 		}
 
@@ -893,6 +954,10 @@ namespace XREngine.Data.Trees
 			program.Uniform("numObjects", objectCount);
 			program.Uniform("sceneMin", sceneMin);
 			program.Uniform("sceneMax", sceneMax);
+			program.Uniform("nodeScalarCapacity", _nodeBuffer!.ElementCount);
+			program.Uniform("mortonCapacity", GetMortonCapacity());
+			if (_overflowFlagBuffer is not null)
+				program.BindBuffer(_overflowFlagBuffer, OverflowFlagBinding);
 			uint groups = ComputeGroups(Math.Max(objectCount, 1u), 256u);
 			program.DispatchCompute(groups, 1u, 1u, EMemoryBarrierMask.ShaderStorage);
 		}
@@ -912,6 +977,13 @@ namespace XREngine.Data.Trees
 			var program = _initQueueProgram!;
 			program.BindBuffer(_nodeBuffer!, 2);
 			program.BindBuffer(_queueBuffer!, 4);
+			program.Uniform("totalNodes", ReadNodeCount());
+			uint queueCapacity = _queueBuffer is null
+				? 0u
+				: (_queueBuffer.ElementCount > 3u ? _queueBuffer.ElementCount - 3u : 0u);
+			program.Uniform("queueCapacity", queueCapacity);
+			if (_overflowFlagBuffer is not null)
+				program.BindBuffer(_overflowFlagBuffer, OverflowFlagBinding);
 			program.DispatchCompute(1u, 1u, 1u, EMemoryBarrierMask.ShaderStorage);
 		}
 
@@ -942,34 +1014,35 @@ namespace XREngine.Data.Trees
 			_refitOctreeProgram ??= CreateProgram(ref _refitOctreeShader, "Scene3D/RenderPipeline/OctreeGeneration/refit_octree.comp");
 		}
 
-		private void EnsureMortonBufferCapacity(uint objectCount)
+		private bool EnsureMortonBufferCapacity(uint objectCount, out string? overflowReason)
 		{
+			overflowReason = null;
 			uint padded = Math.Max(1u, XRMath.NextPowerOfTwo(Math.Max(1u, objectCount)));
-			uint elements = Math.Max(padded, 1u);
+			uint required = Math.Max(padded, 1u) * 2u;
 			if (_mortonBuffer is null)
 			{
 				_mortonBuffer = CreateBuffer("GPUOctree.Morton", true);
-				_mortonBuffer.SetDataRaw(new uint[elements * 2], (int)(elements * 2));
+				_mortonBuffer.SetDataRaw(new uint[required], (int)required);
+				return true;
 			}
-			else if (_mortonBuffer.ElementCount < elements * 2u)
-			{
-				_mortonBuffer.Resize(elements * 2u, false, true);
-			}
+
+			return TryEnsureBufferCapacity(_mortonBuffer, required, "Morton buffer", true, out overflowReason);
 		}
 
-		private void EnsureBvhBuffers(uint objectCount)
+		private bool EnsureBvhBuffers(uint objectCount, out string? overflowReason)
 		{
+			overflowReason = null;
 			if (!_useBvh)
 			{
 				_lastBvhNodeCount = 0;
-				return;
+				return true;
 			}
 
 			// Skip buffer allocation entirely when there are no objects
 			if (objectCount == 0)
 			{
 				_lastBvhNodeCount = 0;
-				return;
+				return true;
 			}
 
 			uint leafCount = (objectCount + _maxLeafPrimitives - 1u) / _maxLeafPrimitives;
@@ -985,24 +1058,23 @@ namespace XREngine.Data.Trees
 				_bvhNodeBuffer = CreateBvhBuffer("GPUOctree.BvhNodes", nodeScalars);
 				_bvhNodeBuffer.SetBlockIndex(6);
 			}
-			else if (_bvhNodeBuffer.ElementCount < nodeScalars)
-			{
-				_bvhNodeBuffer.Resize(nodeScalars, false, true);
-			}
+			else if (!TryEnsureBufferCapacity(_bvhNodeBuffer, nodeScalars, "BVH node buffer", true, out overflowReason))
+				return false;
 
 			if (_bvhRangeBuffer is null)
 			{
 				_bvhRangeBuffer = CreateBvhBuffer("GPUOctree.BvhRanges", rangeScalars);
 				_bvhRangeBuffer.SetBlockIndex(7);
 			}
-			else if (_bvhRangeBuffer.ElementCount < rangeScalars)
-			{
-				_bvhRangeBuffer.Resize(rangeScalars, false, true);
-			}
+			else if (!TryEnsureBufferCapacity(_bvhRangeBuffer, rangeScalars, "BVH range buffer", true, out overflowReason))
+				return false;
+
+			return true;
 		}
 
-		private void EnsureNodeBufferCapacity(uint objectCount)
+		private bool EnsureNodeBufferCapacity(uint objectCount, out string? overflowReason)
 		{
+			overflowReason = null;
 			uint nodeCount = objectCount == 0 ? 0 : (objectCount * 2u) - 1u;
 			uint required = HeaderScalarCount + nodeCount * NodeStrideScalars;
 			if (_nodeBuffer is null)
@@ -1011,25 +1083,26 @@ namespace XREngine.Data.Trees
 				_nodeBuffer.SetBlockIndex(2);
 				_nodeBuffer.SetDataRaw(new uint[required == 0 ? HeaderScalarCount : required], (int)(required == 0 ? HeaderScalarCount : required));
 			}
-			else if (_nodeBuffer.ElementCount < required)
-			{
-				_nodeBuffer.Resize(required, false, true);
-			}
+			else if (!TryEnsureBufferCapacity(_nodeBuffer, required, "Octree node buffer", true, out overflowReason))
+				return false;
+
+			return true;
 		}
 
-		private void EnsureQueueBuffer()
+		private bool EnsureQueueBuffer(out string? overflowReason)
 		{
 			uint length = MaxQueueSize + 3u;
+			overflowReason = null;
 			if (_queueBuffer is null)
 			{
 				_queueBuffer = CreateBuffer("GPUOctree.Queue", true);
 				_queueBuffer.SetBlockIndex(4);
 				_queueBuffer.SetDataRaw(new uint[length], (int)length);
 			}
-			else if (_queueBuffer.ElementCount < length)
-			{
-				_queueBuffer.Resize(length, false, true);
-			}
+			else if (!TryEnsureBufferCapacity(_queueBuffer, length, "Octree queue buffer", false, out overflowReason))
+				return false;
+
+			return true;
 		}
 
 		private uint ReadNodeCount()
@@ -1106,6 +1179,191 @@ namespace XREngine.Data.Trees
 				PadEndingToVec4 = true,
 				ShouldMap = true
 			};
+
+		private uint GetMortonCapacity()
+			=> _mortonBuffer is null ? 0u : _mortonBuffer.ElementCount / 2u;
+
+		private void EnsureOverflowFlagBuffer()
+		{
+			if (_overflowFlagBuffer is not null)
+				return;
+
+			_overflowFlagBuffer = CreateBuffer("GPUOctree.OverflowFlag", true);
+			_overflowFlagBuffer.SetBlockIndex(OverflowFlagBinding);
+			_overflowFlagBuffer.SetDataRaw(new uint[] { 0u }, 1);
+		}
+
+		private void ResetOverflowFlagBuffer()
+		{
+			EnsureOverflowFlagBuffer();
+			if (_overflowFlagBuffer is null)
+				return;
+
+			if (_overflowFlagBuffer.ClientSideSource is null)
+				_overflowFlagBuffer.SetDataRaw(new uint[] { 0u }, 1);
+			else
+				_overflowFlagBuffer.SetDataRawAtIndex(0, 0u);
+
+			_overflowFlagBuffer.PushSubData();
+		}
+
+		private void ConsumeOverflowFlag(uint objectCount, uint nodeCount)
+		{
+			if (_overflowed)
+				return;
+
+			uint flags = ReadFirstUint(_overflowFlagBuffer);
+			if (flags == 0)
+				return;
+
+			HandleOverflow(DescribeOverflow(flags, objectCount, nodeCount));
+		}
+
+		private string DescribeOverflow(uint flags, uint objectCount, uint nodeCount)
+		{
+			List<string> reasons = new();
+			if ((flags & OverflowMortonBit) != 0)
+				reasons.Add($"morton buffer capacity exceeded for {objectCount} objects");
+			if ((flags & OverflowNodeBit) != 0)
+				reasons.Add($"octree node buffer capacity exceeded for {nodeCount} nodes");
+			if ((flags & OverflowQueueBit) != 0)
+				reasons.Add($"queue capacity {MaxQueueSize} exceeded for {nodeCount} nodes");
+			if ((flags & OverflowBvhBit) != 0)
+				reasons.Add("BVH buffer capacity exceeded");
+
+			return reasons.Count == 0
+				? "GPU octree overflow sentinel flagged an unknown condition."
+				: $"GPU octree overflow detected ({string.Join(", ", reasons)}).";
+		}
+
+		private void HandleOverflow(string reason)
+		{
+			_overflowed = true;
+			_overflowReason = reason;
+			if (!_overflowWarningIssued)
+			{
+				Debug.LogWarning($"[OctreeGPU] {reason} Falling back to CPU render tree.");
+				_overflowWarningIssued = true;
+			}
+
+			_gpuDirty = true;
+			_dirtyState = TreeDirtyState.Rebuild;
+			_transformsDirty = true;
+			UploadEmptyBuffers();
+			RouteToCpuRender();
+		}
+
+		private void RouteToCpuRender()
+		{
+			if (Engine.Rendering.State.CurrentRenderingPipeline?.RenderState?.RenderingScene is VisualScene3D scene)
+				scene.ApplyRenderDispatchPreference(false);
+		}
+
+		private void TryRecoverFromOverflow(uint objectCount, uint nodeCount)
+		{
+			if (!_overflowed)
+				return;
+
+			if (_items.Count > MaxObjects)
+				return;
+
+			if (EnsureCapacityForCounts(objectCount, nodeCount, out _))
+			{
+				_overflowed = false;
+				_overflowReason = null;
+				_overflowWarningIssued = false;
+				ResetOverflowFlagBuffer();
+			}
+		}
+
+		private bool EnsureCapacityForCounts(uint objectCount, uint nodeCount, out string? overflowReason)
+		{
+			EnsureOverflowFlagBuffer();
+			overflowReason = null;
+
+			if (_items.Count > MaxObjects)
+			{
+				overflowReason = $"Object count {_items.Count} exceeds shader MAX_OBJECTS={MaxObjects}.";
+				return false;
+			}
+
+			if (objectCount > MaxObjects)
+			{
+				overflowReason = $"Object count {objectCount} exceeds shader MAX_OBJECTS={MaxObjects}.";
+				return false;
+			}
+
+			if (nodeCount > MaxQueueSize)
+			{
+				uint queueCapacity = _queueBuffer is null
+					? MaxQueueSize
+					: Math.Min(MaxQueueSize, _queueBuffer.ElementCount > 3u ? _queueBuffer.ElementCount - 3u : 0u);
+				overflowReason = $"Octree node count {nodeCount} exceeds queue capacity {queueCapacity}.";
+				return false;
+			}
+
+			if (!EnsureMortonBufferCapacity(objectCount, out overflowReason))
+				return false;
+
+			if (!EnsureNodeBufferCapacity(objectCount, out overflowReason))
+				return false;
+
+			if (!EnsureQueueBuffer(out overflowReason))
+				return false;
+
+			if (_useBvh && !EnsureBvhBuffers(objectCount, out overflowReason))
+				return false;
+
+			ResetOverflowFlagBuffer();
+			return true;
+		}
+
+		internal bool TryValidateCapacityForTests(uint objectCount, uint nodeCount, out string? overflowReason)
+			=> EnsureCapacityForCounts(objectCount, nodeCount, out overflowReason);
+
+		private static uint GetSafeElementSize(XRDataBuffer buffer)
+			=> buffer.ElementSize == 0 ? sizeof(uint) : buffer.ElementSize;
+
+		private static bool TryEnsureBufferCapacity(XRDataBuffer buffer, uint requiredElements, string label, bool alignToPowerOfTwo, out string? overflowReason)
+		{
+			overflowReason = null;
+			uint stride = GetSafeElementSize(buffer);
+			ulong requiredBytes = (ulong)requiredElements * stride;
+			if (requiredBytes > int.MaxValue)
+			{
+				overflowReason = $"{label} requires {requiredBytes} bytes which exceeds supported allocation limits.";
+				return false;
+			}
+
+			if (buffer.ElementCount >= requiredElements)
+				return true;
+
+			if (!buffer.Resizable)
+			{
+				overflowReason = $"{label} is not resizable (capacity={buffer.ElementCount}, required={requiredElements}).";
+				return false;
+			}
+
+			buffer.Resize(requiredElements, false, alignToPowerOfTwo);
+			if (buffer.ElementCount < requiredElements)
+			{
+				overflowReason = $"{label} could not be resized to {requiredElements} elements.";
+				return false;
+			}
+
+			return true;
+		}
+
+		private static uint ReadFirstUint(XRDataBuffer? buffer)
+		{
+			if (buffer?.ClientSideSource is null)
+				return 0u;
+
+			unsafe
+			{
+				return ((uint*)buffer.Address.Pointer)[0];
+			}
+		}
 
 		private static unsafe void ClearClientBuffer(XRDataBuffer buffer)
 		{
@@ -1194,6 +1452,7 @@ namespace XREngine.Data.Trees
 				_objectIdBuffer?.Dispose();
 				_bvhNodeBuffer?.Dispose();
 				_bvhRangeBuffer?.Dispose();
+				_overflowFlagBuffer?.Dispose();
 
 				// XRShader and XRRenderProgram inherit from GenericRenderObject which uses Destroy() instead of Dispose()
 				_mortonShader?.Destroy();
