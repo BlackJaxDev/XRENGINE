@@ -297,7 +297,7 @@ namespace XREngine.Rendering.Commands
 
             // Track remap needs per-buffer
             bool indirectDrawRecreated = EnsureIndirectDrawBuffer(capacity);
-            _culledCountNeedsMap = EnsureParameterBuffer(ref _culledCountBuffer, "CulledCount");
+            _culledCountNeedsMap = EnsureParameterBuffer(ref _culledCountBuffer, "CulledCount", GPUScene.VisibleCountComponents);
             _drawCountNeedsMap = EnsureParameterBuffer(ref _drawCountBuffer, "DrawCount");
             _cullingOverflowNeedsMap = EnsureFlagBuffer(ref _cullingOverflowFlagBuffer, "CullingOverflowFlag");
             _indirectOverflowNeedsMap = EnsureFlagBuffer(ref _indirectOverflowFlagBuffer, "IndirectOverflowFlag");
@@ -381,13 +381,13 @@ namespace XREngine.Rendering.Commands
             return recreated;
         }
 
-        private bool EnsureParameterBuffer(ref XRDataBuffer? buffer, string name)
+        private bool EnsureParameterBuffer(ref XRDataBuffer? buffer, string name, uint elementCount = 1, uint componentCount = 1)
         {
             bool requiresMapping = false;
 
             if (buffer is not null)
             {
-                bool invalidLayout = buffer.ElementCount != 1 || buffer.ComponentType != EComponentType.UInt;
+                bool invalidLayout = buffer.ElementCount != elementCount || buffer.ComponentType != EComponentType.UInt || buffer.ComponentCount != componentCount;
                 bool missingStorage = (buffer.StorageFlags & (EBufferMapStorageFlags.DynamicStorage | EBufferMapStorageFlags.Read)) != (EBufferMapStorageFlags.DynamicStorage | EBufferMapStorageFlags.Read);
                 bool missingRange = !buffer.RangeFlags.HasFlag(EBufferMapRangeFlags.Read);
 
@@ -402,7 +402,7 @@ namespace XREngine.Rendering.Commands
 
             if (buffer is null)
             {
-                buffer = new XRDataBuffer(name, EBufferTarget.ParameterBuffer, 1, EComponentType.UInt, 1, false, true)
+                buffer = new XRDataBuffer(name, EBufferTarget.ParameterBuffer, elementCount, EComponentType.UInt, componentCount, false, true)
                 {
                     Usage = EBufferUsage.DynamicCopy,
                     DisposeOnPush = false,
@@ -413,7 +413,8 @@ namespace XREngine.Rendering.Commands
                 };
 
                 buffer.Generate();
-                buffer.SetDataRawAtIndex(0, 0u);
+                for (uint i = 0; i < elementCount; ++i)
+                    buffer.SetDataRawAtIndex(i, 0u);
                 buffer.PushSubData();
                 requiresMapping = true;
             }
@@ -506,6 +507,11 @@ namespace XREngine.Rendering.Commands
             if (_culledCountBuffer is not null && _culledCountBuffer.ElementSize < sizeof(uint))
             {
                 Debug.LogWarning($"{FormatDebugPrefix("Buffers")} Culled count buffer is undersized ({_culledCountBuffer.ElementSize} bytes); expected at least {sizeof(uint)}.");
+            }
+
+            if (_culledCountBuffer is not null && _culledCountBuffer.ElementCount < GPUScene.VisibleCountComponents)
+            {
+                Debug.LogWarning($"{FormatDebugPrefix("Buffers")} Culled count buffer has insufficient elements (buffer={_culledCountBuffer.ElementCount}, expected>={GPUScene.VisibleCountComponents}).");
             }
 
             if (IndirectDebug.ValidateLiveHandles && !remapPending)
