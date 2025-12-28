@@ -215,6 +215,7 @@ namespace XREngine
         private OverrideableSetting<EBvhMode> _bvhModeOverride = new();
         private OverrideableSetting<bool> _bvhRefitOnlyWhenStableOverride = new();
         private OverrideableSetting<uint> _raycastBufferSizeOverride = new();
+        private OverrideableSetting<bool> _enableGpuBvhTimingQueriesOverride = new();
 
         // Full cascade settings (Project > Engine, user can override)
         private OverrideableSetting<EAntiAliasingMode> _antiAliasingModeOverride = new();
@@ -383,6 +384,18 @@ namespace XREngine
         {
             get => _raycastBufferSizeOverride;
             set => SetField(ref _raycastBufferSizeOverride, value ?? new());
+        }
+
+        /// <summary>
+        /// Project override for enabling GPU BVH timestamp queries.
+        /// Takes precedence over engine defaults when HasOverride is true. Can be further overridden by user settings.
+        /// </summary>
+        [Category("BVH Overrides")]
+        [Description("Project override for enabling GPU BVH timestamp queries.")]
+        public OverrideableSetting<bool> EnableGpuBvhTimingQueriesOverride
+        {
+            get => _enableGpuBvhTimingQueriesOverride;
+            set => SetField(ref _enableGpuBvhTimingQueriesOverride, value ?? new());
         }
 
         /// <summary>

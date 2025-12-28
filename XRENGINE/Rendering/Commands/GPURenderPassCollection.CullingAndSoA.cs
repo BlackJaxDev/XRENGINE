@@ -9,6 +9,7 @@ using XREngine;
 using XREngine.Data;
 using XREngine.Data.Rendering;
 using XREngine.Rendering;
+using XREngine.Rendering.Compute;
 using XREngine.Rendering.OpenGL;
 using static XREngine.Rendering.OpenGL.OpenGLRenderer;
 
@@ -547,7 +548,10 @@ namespace XREngine.Rendering.Commands
                 _copyCommandsProgram?.BindBuffer(_cullingOverflowFlagBuffer, 4);
 
             (uint x, uint y, uint z) = ComputeDispatch.ForCommands(copyCount);
-            _copyCommandsProgram?.DispatchCompute(x, y, z, EMemoryBarrierMask.ShaderStorage | EMemoryBarrierMask.Command);
+            {
+                using var cullTiming = BvhGpuProfiler.Instance.Scope(BvhGpuProfiler.Stage.Cull, copyCount);
+                _copyCommandsProgram?.DispatchCompute(x, y, z, EMemoryBarrierMask.ShaderStorage | EMemoryBarrierMask.Command);
+            }
 
             AbstractRenderer.Current?.MemoryBarrier(EMemoryBarrierMask.ShaderStorage | EMemoryBarrierMask.Command);
 
@@ -617,11 +621,21 @@ namespace XREngine.Rendering.Commands
                 }
             }
 
-            UpdateVisibleCountersFromBuffer();
-            if (VisibleCommandCount == 0 && filteredCount > 0)
-                VisibleCommandCount = Math.Min(filteredCount, copyCount);
-
+            VisibleCommandCount = Math.Min(filteredCount, copyCount);
             Dbg($"Cull passthrough visible={VisibleCommandCount} instances={VisibleInstanceCount} (input={copyCount})", "Culling");
+
+            if (_statsBuffer is not null)
+            {
+                ReadOnlySpan<uint> statSeed = stackalloc uint[]
+                {
+                    copyCount,
+                    VisibleCommandCount,
+                    0u,
+                    0u,
+                    0u
+                };
+                WriteUints(_statsBuffer, statSeed);
+            }
         }
 
         private uint CpuCopyCommandsForPass(GPUScene scene, uint copyCount, bool commit, out uint instanceCount)

@@ -43,6 +43,18 @@ layout(std430, binding = 8) buffer StatsBuffer {
     uint StatsDrawCount;         // 2 (written in indirect stage)
     uint StatsRejectedFrustum;   // 3
     uint StatsRejectedDistance;  // 4
+    uint StatsBvhBuildCount;     // 5
+    uint StatsBvhRefitCount;     // 6
+    uint StatsBvhCullCount;      // 7
+    uint StatsBvhRayCount;       // 8
+    uint StatsBvhBuildTimeLo;    // 9
+    uint StatsBvhBuildTimeHi;    // 10
+    uint StatsBvhRefitTimeLo;    // 11
+    uint StatsBvhRefitTimeHi;    // 12
+    uint StatsBvhCullTimeLo;     // 13
+    uint StatsBvhCullTimeHi;     // 14
+    uint StatsBvhRayTimeLo;      // 15
+    uint StatsBvhRayTimeHi;      // 16
 };
 
 // === Uniforms ===

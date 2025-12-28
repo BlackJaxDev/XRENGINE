@@ -141,6 +141,16 @@ namespace XREngine
                     null);
 
             /// <summary>
+            /// Gets whether GPU BVH timestamp queries are enabled for profiling.
+            /// Resolved from: User Override > Project Override > Engine Default
+            /// </summary>
+            public static bool EnableGpuBvhTimingQueries
+                => OverrideableSettingExtensions.ResolveCascade(
+                    Rendering.Settings.EnableGpuBvhTimingQueries,
+                    GameSettings?.EnableGpuBvhTimingQueriesOverride,
+                    null);
+
+            /// <summary>
             /// Gets the effective GPU indirect debug logging setting.
             /// Resolved from: User Override > Project Override > Engine Default
             /// </summary>

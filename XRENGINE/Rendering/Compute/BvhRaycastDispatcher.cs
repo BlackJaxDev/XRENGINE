@@ -157,7 +157,8 @@ public sealed class BvhRaycastDispatcher
         program.Uniform("uAnyHitMode", request.AnyHit ? 1 : 0);
         program.Uniform("uMaxStackDepth", (int)(request.MaxStackDepth ?? DefaultStackLimit));
 
-        program.DispatchCompute(groupsX, 1u, 1u, EMemoryBarrierMask.ShaderStorage);
+        using (BvhGpuProfiler.Instance.Scope(BvhGpuProfiler.Stage.Raycast, request.RayCount))
+            program.DispatchCompute(groupsX, 1u, 1u, EMemoryBarrierMask.ShaderStorage);
 
         IntPtr fence = IntPtr.Zero;
         if (glRenderer is not null)

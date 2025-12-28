@@ -12,7 +12,25 @@ layout(std430, binding = 3) buffer CulledCountBuffer
     uint CulledOverflow;
 };
 layout(std430, binding = 4) buffer OverflowFlagBuffer { uint CullingOverflowFlag; };
-layout(std430, binding = 8) buffer StatsBuffer { uint StatsInputCount; uint StatsCulledCount; uint StatsDrawCount; uint StatsRejectedFrustum; uint StatsRejectedDistance; };
+layout(std430, binding = 8) buffer StatsBuffer {
+    uint StatsInputCount;
+    uint StatsCulledCount;
+    uint StatsDrawCount;
+    uint StatsRejectedFrustum;
+    uint StatsRejectedDistance;
+    uint StatsBvhBuildCount;
+    uint StatsBvhRefitCount;
+    uint StatsBvhCullCount;
+    uint StatsBvhRayCount;
+    uint StatsBvhBuildTimeLo;
+    uint StatsBvhBuildTimeHi;
+    uint StatsBvhRefitTimeLo;
+    uint StatsBvhRefitTimeHi;
+    uint StatsBvhCullTimeLo;
+    uint StatsBvhCullTimeHi;
+    uint StatsBvhRayTimeLo;
+    uint StatsBvhRayTimeHi;
+};
 
 uniform vec4 FrustumPlanes[6];
 uniform vec3 CameraPosition;
