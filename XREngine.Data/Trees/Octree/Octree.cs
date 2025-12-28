@@ -67,8 +67,8 @@ namespace XREngine.Data.Trees
         public void Swap()
         {
             // Debug: track if Swap is being called and if there are pending raycast commands
-            if (!RaycastCommands.IsEmpty)
-                Trace.WriteLine($"[Octree.Swap] Swap called, RaycastCommands.Count={RaycastCommands.Count}");
+            //if (!RaycastCommands.IsEmpty)
+            //    Trace.WriteLine($"[Octree.Swap] Swap called, RaycastCommands.Count={RaycastCommands.Count}");
             
             if (IRenderTree.ProfilingHook is not null)
             {
