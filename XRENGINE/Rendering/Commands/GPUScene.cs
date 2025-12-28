@@ -65,6 +65,7 @@ namespace XREngine.Rendering.Commands
         private int _commandBuildLogBudget = 12;
         private int _commandRoundtripLogBudget = 8;
         private int _commandRoundtripMismatchLogBudget = 4;
+        private bool _useGpuBvh = Engine.EffectiveSettings.UseGpuBvh;
 
         private static bool IsGpuSceneLoggingEnabled()
             => Engine.EffectiveSettings.EnableGpuIndirectDebugLogging;
@@ -105,6 +106,22 @@ namespace XREngine.Rendering.Commands
         /// </summary>
         private void MarkAtlasDirty()
             => _atlasDirty = true;
+
+        /// <summary>
+        /// Indicates whether the GPU BVH traversal path should be used when available.
+        /// </summary>
+        public bool UseGpuBvh
+        {
+            get => _useGpuBvh;
+            set
+            {
+                if (!SetField(ref _useGpuBvh, value))
+                    return;
+
+                string path = value ? "GPU BVH" : "GPU octree";
+                Debug.Out($"[GPUScene] Active traversal path set to {path}.");
+            }
+        }
 
         /// <summary>
         /// Ensure atlas buffers exist (minimal allocation on first use).
@@ -476,6 +493,10 @@ namespace XREngine.Rendering.Commands
         /// </summary>
         public const uint MinCommandCount = 8;
         public const int CommandFloatCount = 48; // Updated: command with PrevWorldMatrix (192 bytes)
+        public const uint VisibleCountComponents = 3; // [visible draws, visible instances, overflow marker]
+        public const uint VisibleCountDrawIndex = 0;
+        public const uint VisibleCountInstanceIndex = 1;
+        public const uint VisibleCountOverflowIndex = 2;
 
         private readonly ConcurrentDictionary<XRMesh, uint> _meshIDMap = new();
         private uint _nextMeshID = 1;

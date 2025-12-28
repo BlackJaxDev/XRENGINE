@@ -5,7 +5,12 @@ layout(local_size_x = 256) in;
 // Culled commands buffer (float[48] per command)
 layout(std430, binding = 0) buffer CulledCommands { float culled[]; };
 // Culled count
-layout(std430, binding = 1) buffer CulledCountBuffer { uint CulledCount; };
+layout(std430, binding = 1) buffer CulledCountBuffer
+{
+    uint CulledCount;
+    uint CulledInstanceCount;
+    uint CulledOverflow;
+};
 // Output key-index pairs (uint2 flattened)
 layout(std430, binding = 2) buffer KeyIndexOut { uint keyIndexOut[]; };
 // Optional material-major mode: high bits = MaterialID, low bits = quantized depth bucket

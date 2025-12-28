@@ -9,6 +9,7 @@ using XREngine;
 using XREngine.Data;
 using XREngine.Data.Rendering;
 using XREngine.Rendering;
+using XREngine.Rendering.Compute;
 using XREngine.Rendering.OpenGL;
 using static XREngine.Rendering.OpenGL.OpenGLRenderer;
 
@@ -271,6 +272,41 @@ namespace XREngine.Rendering.Commands
             return value;
         }
 
+        private void ResetVisibleCounters()
+        {
+            VisibleCommandCount = 0;
+            VisibleInstanceCount = 0;
+            if (_culledCountBuffer is null)
+                return;
+
+            WriteUints(_culledCountBuffer, 0u, 0u, 0u);
+        }
+
+        private void UpdateVisibleCountersFromBuffer()
+        {
+            if (_culledCountBuffer is null)
+            {
+                VisibleCommandCount = 0;
+                VisibleInstanceCount = 0;
+                return;
+            }
+
+            uint draws = ReadUIntAt(_culledCountBuffer, GPUScene.VisibleCountDrawIndex);
+            uint instances = ReadUIntAt(_culledCountBuffer, GPUScene.VisibleCountInstanceIndex);
+            VisibleCommandCount = draws;
+            VisibleInstanceCount = instances;
+        }
+
+        private void WriteVisibleCounters(uint draws, uint instances, uint overflow = 0)
+        {
+            VisibleCommandCount = draws;
+            VisibleInstanceCount = instances;
+            if (_culledCountBuffer is null)
+                return;
+
+            WriteUints(_culledCountBuffer, draws, instances, overflow);
+        }
+
         private void EnsurePassFilterDebugBuffer(uint sampleCount)
         {
             if (sampleCount == 0)
@@ -369,6 +405,7 @@ namespace XREngine.Rendering.Commands
             if (numCommands == 0)
             {
                 VisibleCommandCount = 0;
+                VisibleInstanceCount = 0;
                 Dbg("Cull: no commands","Culling");
                 return;
             }
@@ -385,10 +422,7 @@ namespace XREngine.Rendering.Commands
 
             if (_skipGpuSubmissionThisPass || !sanitizerOk)
             {
-                if (_culledCountBuffer is not null)
-                    WriteUInt(_culledCountBuffer, 0u);
-
-                VisibleCommandCount = 0;
+                ResetVisibleCounters();
 
                 string reason = _skipGpuSubmissionReason ?? "command corruption detected";
                 Debug.LogWarning($"{FormatDebugPrefix("Culling")} Skipping GPU submission: {reason}");
@@ -396,7 +430,7 @@ namespace XREngine.Rendering.Commands
             }
 
             if (Engine.EffectiveSettings.EnableGpuIndirectDebugLogging)
-                Debug.Out($"GPURenderPassCollection.Cull: {numCommands} input commands -> {VisibleCommandCount} visible commands in CulledSceneToRenderBuffer");
+                Debug.Out($"GPURenderPassCollection.Cull: {numCommands} input commands -> {VisibleCommandCount} visible commands ({VisibleInstanceCount} instances) in CulledSceneToRenderBuffer");
         }
 
         //private void Cull(GPUScene gpuCommands, XRCamera? camera, uint numCommands)
@@ -456,7 +490,10 @@ namespace XREngine.Rendering.Commands
             _skipGpuSubmissionReason = null;
 
             if (CulledSceneToRenderBuffer is null || _copyCommandsProgram is null || _culledCountBuffer is null)
+            {
+                ResetVisibleCounters();
                 return;
+            }
             
             //TODO: use compute shader to avoid CPU roundtripping
             XRDataBuffer src = scene.AllLoadedCommandsBuffer;
@@ -467,9 +504,7 @@ namespace XREngine.Rendering.Commands
 
             if (copyCount == 0)
             {
-                VisibleCommandCount = 0;
-                if (_culledCountBuffer is not null)
-                    WriteUInt(_culledCountBuffer, 0u);
+                ResetVisibleCounters();
                 Dbg("Cull passthrough no commands", "Culling");
                 return;
             }
@@ -480,7 +515,7 @@ namespace XREngine.Rendering.Commands
                 DumpSourceCommandProbe(scene, copyCount);
 
             // Copy commands
-            WriteUInt(_culledCountBuffer, 0u);
+            ResetVisibleCounters();
             if (_cullingOverflowFlagBuffer is not null)
                 WriteUInt(_cullingOverflowFlagBuffer, 0u);
 
@@ -514,7 +549,10 @@ namespace XREngine.Rendering.Commands
                 _copyCommandsProgram?.BindBuffer(_cullingOverflowFlagBuffer, 4);
 
             (uint x, uint y, uint z) = ComputeDispatch.ForCommands(copyCount);
-            _copyCommandsProgram?.DispatchCompute(x, y, z, EMemoryBarrierMask.ShaderStorage | EMemoryBarrierMask.Command);
+            {
+                using var cullTiming = BvhGpuProfiler.Instance.Scope(BvhGpuProfiler.Stage.Cull, copyCount);
+                _copyCommandsProgram?.DispatchCompute(x, y, z, EMemoryBarrierMask.ShaderStorage | EMemoryBarrierMask.Command);
+            }
 
             AbstractRenderer.Current?.MemoryBarrier(EMemoryBarrierMask.ShaderStorage | EMemoryBarrierMask.Command);
 
@@ -537,7 +575,8 @@ namespace XREngine.Rendering.Commands
                 }
             }
 
-            uint filteredCount = ReadUInt(_culledCountBuffer);
+            UpdateVisibleCountersFromBuffer();
+            uint filteredCount = VisibleCommandCount;
             if (_filteredCountLogBudget > 0)
             {
                 Debug.Out($"{FormatDebugPrefix("Culling")} Copy shader reported filteredCount={filteredCount} (copyCount={copyCount})");
@@ -558,11 +597,11 @@ namespace XREngine.Rendering.Commands
             {
                 if (allowCpuFallback)
                 {
-                    uint cpuRecovered = CpuCopyCommandsForPass(scene, copyCount, commit: true);
+                    uint cpuRecovered = CpuCopyCommandsForPass(scene, copyCount, commit: true, out uint cpuInstanceCount);
                     if (cpuRecovered > 0)
                     {
                         filteredCount = cpuRecovered;
-                        WriteUInt(_culledCountBuffer, cpuRecovered);
+                        WriteVisibleCounters(cpuRecovered, cpuInstanceCount);
                         if (_passthroughFallbackLogBudget > 0)
                         {
                             Debug.LogWarning($"{FormatDebugPrefix("Culling")} GPU pass filter returned 0; CPU fallback restored {cpuRecovered} commands for pass {RenderPass}.");
@@ -584,13 +623,27 @@ namespace XREngine.Rendering.Commands
             }
 
             VisibleCommandCount = Math.Min(filteredCount, copyCount);
-            Dbg($"Cull passthrough visible={VisibleCommandCount} (input={copyCount})", "Culling");
-
+          
+            Dbg($"Cull passthrough visible={VisibleCommandCount} instances={VisibleInstanceCount} (input={copyCount})", "Culling");
             RunGpuCpuValidation(scene, copyCount, VisibleCommandCount);
+
+            if (_statsBuffer is not null)
+            {
+                ReadOnlySpan<uint> statSeed = stackalloc uint[]
+                {
+                    copyCount,
+                    VisibleCommandCount,
+                    0u,
+                    0u,
+                    0u
+                };
+                WriteUints(_statsBuffer, statSeed);
+            }
         }
 
-        private uint CpuCopyCommandsForPass(GPUScene scene, uint copyCount, bool commit)
+        private uint CpuCopyCommandsForPass(GPUScene scene, uint copyCount, bool commit, out uint instanceCount)
         {
+            instanceCount = 0;
             if (CulledSceneToRenderBuffer is null)
                 return 0;
 
@@ -607,6 +660,7 @@ namespace XREngine.Rendering.Commands
             uint outIndex = 0;
             uint rejected = 0;
             uint fatalRejected = 0;
+            ulong instanceAccumulator = 0;
             string? firstFatalRejection = null;
             for (uint i = 0; i < copyCount; ++i)
             {
@@ -633,6 +687,7 @@ namespace XREngine.Rendering.Commands
                 if (commit)
                     dst.SetDataRawAtIndex(outIndex, cmd);
                 outIndex++;
+                instanceAccumulator += cmd.InstanceCount;
             }
 
             if (fatalRejected > 0)
@@ -661,6 +716,7 @@ namespace XREngine.Rendering.Commands
                 dst.PushSubData(0, byteCount);
             }
 
+            instanceCount = (uint)Math.Min(instanceAccumulator, uint.MaxValue);
             return outIndex;
         }
 
@@ -845,16 +901,23 @@ namespace XREngine.Rendering.Commands
         private unsafe bool SanitizeCulledCommands(GPUScene scene)
         {
             if (_culledSceneToRenderBuffer is null || _culledCountBuffer is null)
+            {
+                ResetVisibleCounters();
                 return true;
+            }
 
             uint visible = VisibleCommandCount;
             if (visible == 0)
+            {
+                VisibleInstanceCount = 0;
                 return true;
+            }
 
             var invalidCommands = new List<(uint index, GPUIndirectRenderCommand command, string reason)>();
             var softIssues = new Dictionary<string, SoftIssueInfo>(StringComparer.OrdinalIgnoreCase);
             var missingMaterialIds = new HashSet<uint>();
             uint writeIndex = 0u;
+            ulong instanceTotal = 0u;
 
             bool mappedLocally = false;
             VoidPtr mappedPtr = default;
@@ -906,6 +969,7 @@ namespace XREngine.Rendering.Commands
                     {
                         _culledSceneToRenderBuffer.SetDataRawAtIndex(writeIndex, cmd);
                         writeIndex++;
+                        instanceTotal += cmd.InstanceCount;
                     }
                     else
                     {
@@ -918,6 +982,10 @@ namespace XREngine.Rendering.Commands
 
                 bool hasSoftIssues = softIssues.Count > 0;
 
+                uint newVisible = writeIndex;
+                uint instanceCount = (uint)Math.Min(instanceTotal, uint.MaxValue);
+                WriteVisibleCounters(newVisible, instanceCount);
+
                 if (invalidCommands.Count == 0)
                 {
                     if (hasSoftIssues && _culledSanitizerLogBudget > 0)
@@ -928,10 +996,6 @@ namespace XREngine.Rendering.Commands
                     }
                     return true;
                 }
-
-                uint newVisible = writeIndex;
-                VisibleCommandCount = newVisible;
-                WriteUInt(_culledCountBuffer, newVisible);
 
                 if (_culledSanitizerLogBudget > 0)
                 {
@@ -1281,9 +1345,9 @@ namespace XREngine.Rendering.Commands
             uint groups = (count + groupSize - 1) / groupSize;
             shader.DispatchCompute(groups, 1, 1, EMemoryBarrierMask.ShaderStorage);
 
-            VisibleCommandCount = ReadUInt(_culledCountBuffer);
+            UpdateVisibleCountersFromBuffer();
 
-            Dbg($"SoACull visible={VisibleCommandCount}","SoA");
+            Dbg($"SoACull visible={VisibleCommandCount} instances={VisibleInstanceCount}","SoA");
         }
 
         //private void GatherCulled(GPUScene scene)

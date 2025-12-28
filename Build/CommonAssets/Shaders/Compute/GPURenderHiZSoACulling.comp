@@ -5,9 +5,32 @@ layout(local_size_x = 256) in;
 layout(std430, binding = 0) buffer InBoundingSpheres { vec4 inSpheres[]; };
 layout(std430, binding = 1) buffer InMetadata { uvec4 inMeta[]; }; // (InstanceCount, RenderPass, LayerMask, Flags)
 layout(std430, binding = 2) buffer OutIndices { uint outIndices[]; }; // index 0 holds count
-layout(std430, binding = 3) buffer CulledCountBuffer { uint CulledCount; };
+layout(std430, binding = 3) buffer CulledCountBuffer
+{
+    uint CulledCount;
+    uint CulledInstanceCount;
+    uint CulledOverflow;
+};
 layout(std430, binding = 4) buffer OverflowFlagBuffer { uint CullingOverflowFlag; };
-layout(std430, binding = 8) buffer StatsBuffer { uint StatsInputCount; uint StatsCulledCount; uint StatsDrawCount; uint StatsRejectedFrustum; uint StatsRejectedDistance; };
+layout(std430, binding = 8) buffer StatsBuffer {
+    uint StatsInputCount;
+    uint StatsCulledCount;
+    uint StatsDrawCount;
+    uint StatsRejectedFrustum;
+    uint StatsRejectedDistance;
+    uint StatsBvhBuildCount;
+    uint StatsBvhRefitCount;
+    uint StatsBvhCullCount;
+    uint StatsBvhRayCount;
+    uint StatsBvhBuildTimeLo;
+    uint StatsBvhBuildTimeHi;
+    uint StatsBvhRefitTimeLo;
+    uint StatsBvhRefitTimeHi;
+    uint StatsBvhCullTimeLo;
+    uint StatsBvhCullTimeHi;
+    uint StatsBvhRayTimeLo;
+    uint StatsBvhRayTimeHi;
+};
 
 uniform vec4 FrustumPlanes[6];
 uniform vec3 CameraPosition;
@@ -67,7 +90,8 @@ void main(){
     if(HiZOccluded(center, radius)) { atomicAdd(StatsRejectedFrustum,1u); return; }
     if(!FrustumSphereVisible(center,radius)){ atomicAdd(StatsRejectedFrustum,1u); return; }
     uint outIndex = atomicAdd(CulledCount,1u);
-    if(outIndex >= 0xFFFFFFFEu){ atomicExchange(CullingOverflowFlag,1u); return; }
+    if(outIndex >= 0xFFFFFFFEu){ atomicExchange(CullingOverflowFlag,1u); atomicCompSwap(CulledOverflow,0u,outIndex+1u); return; }
     outIndices[outIndex+1u] = idx; // store source index
+    atomicAdd(CulledInstanceCount, instanceCount);
     atomicAdd(StatsCulledCount,1u);
 }

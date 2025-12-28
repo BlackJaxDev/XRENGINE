@@ -16,7 +16,12 @@ const int DRAW_COMMAND_UINTS = 5;   // count, instanceCount, firstIndex, baseVer
 layout(std430, binding = 0) buffer CulledCommandsBuffer { float culled[]; };
 layout(std430, binding = 1) buffer IndirectDrawBuffer { uint indirectDraws[]; };
 layout(std430, binding = 2) buffer SubmeshDataBuffer { uint submeshData[]; }; // uint4 per submesh: indexCount, firstIndex, baseVertex, baseInstance
-layout(std430, binding = 3) buffer CulledCountBuffer { uint CulledCount; };
+layout(std430, binding = 3) buffer CulledCountBuffer
+{
+    uint CulledCount;
+    uint CulledInstanceCount;
+    uint CulledOverflow;
+};
 layout(std430, binding = 4) buffer DrawCountBuffer { uint DrawCount; };
 
 // Overflow flag specific to indirect build (distinct from culling overflow)
@@ -36,6 +41,18 @@ layout(std430, binding = 8) buffer StatsBuffer
     uint StatsDrawCount;
     uint StatsRejectedFrustum;
     uint StatsRejectedDistance;
+    uint StatsBvhBuildCount;
+    uint StatsBvhRefitCount;
+    uint StatsBvhCullCount;
+    uint StatsBvhRayCount;
+    uint StatsBvhBuildTimeLo;
+    uint StatsBvhBuildTimeHi;
+    uint StatsBvhRefitTimeLo;
+    uint StatsBvhRefitTimeHi;
+    uint StatsBvhCullTimeLo;
+    uint StatsBvhCullTimeHi;
+    uint StatsBvhRayTimeLo;
+    uint StatsBvhRayTimeHi;
 };
 
 // === Uniforms ===
