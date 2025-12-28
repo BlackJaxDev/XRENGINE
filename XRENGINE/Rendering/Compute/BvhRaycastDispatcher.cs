@@ -21,6 +21,8 @@ public sealed class BvhRaycastDispatcher
     private const uint LocalSizeX = 32u;
     private const uint DefaultStackLimit = 64u;
 
+    private bool _enabled = true;
+
     private readonly ConcurrentQueue<BvhRaycastRequest> _pendingRequests = new();
     private readonly ConcurrentQueue<BvhRaycastResult> _completedResults = new();
     private readonly ConcurrentQueue<Action> _completedCallbacks = new();
@@ -40,6 +42,9 @@ public sealed class BvhRaycastDispatcher
     {
         ArgumentNullException.ThrowIfNull(request);
 
+        if (!_enabled)
+            return;
+
         if (request.RayCount == 0 || request.HitBuffer is null || request.RayBuffer is null || request.NodeBuffer is null || request.TriangleBuffer is null)
             return;
 
@@ -58,6 +63,9 @@ public sealed class BvhRaycastDispatcher
     /// </summary>
     public void ProcessDispatches()
     {
+        if (!_enabled)
+            return;
+
         var renderer = AbstractRenderer.Current;
         if (renderer is null)
             return;
@@ -83,6 +91,9 @@ public sealed class BvhRaycastDispatcher
     /// </summary>
     public void ProcessCompletions()
     {
+        if (!_enabled)
+            return;
+
         var glRenderer = AbstractRenderer.Current as OpenGLRenderer;
         for (int i = _inFlight.Count - 1; i >= 0; --i)
         {
@@ -111,6 +122,48 @@ public sealed class BvhRaycastDispatcher
 
         while (_completedCallbacks.TryDequeue(out var callback))
             callback();
+    }
+
+    public void SetEnabled(bool enabled, string? reason = null)
+    {
+        if (_enabled == enabled)
+            return;
+
+        _enabled = enabled;
+        if (!_enabled)
+        {
+            Reset(reason);
+        }
+        else
+        {
+            WarmShaders();
+        }
+    }
+
+    public void WarmShaders()
+    {
+        ResolveProgram(BvhRaycastVariant.Default);
+        ResolveProgram(BvhRaycastVariant.AnyHit);
+        ResolveProgram(BvhRaycastVariant.ClosestHit);
+    }
+
+    public void Reset(string? reason = null)
+    {
+        var glRenderer = AbstractRenderer.Current as OpenGLRenderer;
+        foreach (var entry in _inFlight)
+        {
+            if (glRenderer is not null && entry.Fence != IntPtr.Zero)
+                glRenderer.Api.DeleteSync(entry.Fence);
+        }
+
+        _inFlight.Clear();
+
+        while (_pendingRequests.TryDequeue(out _)) { }
+        while (_completedResults.TryDequeue(out _)) { }
+        while (_completedCallbacks.TryDequeue(out _)) { }
+
+        if (!string.IsNullOrWhiteSpace(reason))
+            Debug.LogWarning($"[BvhRaycastDispatcher] Cleared GPU BVH raycasts ({reason}).");
     }
 
     private static bool DependenciesReady(BvhRaycastRequest request, OpenGLRenderer? glRenderer)
