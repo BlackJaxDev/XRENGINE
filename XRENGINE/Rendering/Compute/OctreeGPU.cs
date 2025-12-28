@@ -691,33 +691,62 @@ namespace XREngine.Data.Trees
 			{
 				sceneMin -= new Vector3(0.5f);
 				sceneMax += new Vector3(0.5f);
-			}
+            }
 
-			DispatchMorton(objectCount, sceneMin, sceneMax);
-			SortMortonCodes(objectCount);
-			bool builtBvh = DispatchBuildBvh(objectCount);
-			if (builtBvh)
-				DispatchRefitBvh();
-			bool refinedBvh = DispatchRefineBvh();
-			if (refinedBvh)
-				DispatchRefitBvh();
-			DispatchBuildOctree(objectCount, sceneMin, sceneMax);
-			DispatchPropagate();
-			DispatchInitQueue();
+            DispatchMorton(objectCount, sceneMin, sceneMax);
+            SortMortonCodes(objectCount);
+            bool builtBvh = false;
+            bool refinedBvh = false;
+            if (_useBvh && objectCount > 0)
+            {
+                using (BvhGpuProfiler.Instance.Scope(BvhGpuProfiler.Stage.Build, objectCount))
+                {
+                    builtBvh = DispatchBuildBvh(objectCount);
+                    refinedBvh = DispatchRefineBvh();
+                }
 
-			_transformBuffer?.SetBlockIndex(1);
+                if (builtBvh)
+                {
+                    using (BvhGpuProfiler.Instance.Scope(BvhGpuProfiler.Stage.Refit, objectCount))
+                        DispatchRefitBvh();
+                }
+
+                if (refinedBvh)
+                {
+                    using (BvhGpuProfiler.Instance.Scope(BvhGpuProfiler.Stage.Refit, objectCount))
+                        DispatchRefitBvh();
+                }
+            }
+            else
+            {
+                builtBvh = DispatchBuildBvh(objectCount);
+                if (builtBvh)
+                    DispatchRefitBvh();
+                refinedBvh = DispatchRefineBvh();
+                if (refinedBvh)
+                    DispatchRefitBvh();
+            }
+            DispatchBuildOctree(objectCount, sceneMin, sceneMax);
+            DispatchPropagate();
+            DispatchInitQueue();
+
+            _transformBuffer?.SetBlockIndex(1);
 		}
 
-		private void RunRefitOnly(uint objectCount)
-		{
-			if (_useBvh)
-			{
-				EnsureBvhBuffers(objectCount);
-				DispatchRefitBvh();
-			}
+        private void RunRefitOnly(uint objectCount)
+        {
+            if (_useBvh)
+            {
+                EnsureBvhBuffers(objectCount);
+                if (_lastBvhNodeCount > 0)
+                {
+                    using (BvhGpuProfiler.Instance.Scope(BvhGpuProfiler.Stage.Refit, objectCount))
+                        DispatchRefitBvh();
+                }
+            }
 
-			_transformBuffer?.SetBlockIndex(1);
-		}
+            _transformBuffer?.SetBlockIndex(1);
+        }
 
 		private void DispatchMorton(uint objectCount, Vector3 sceneMin, Vector3 sceneMax)
 		{
@@ -821,11 +850,14 @@ namespace XREngine.Data.Trees
 				return true;
 			}
 
-			DispatchRefitOctree(objectCount);
-			DispatchPropagate();
-			if (_useBvh)
-				DispatchRefitBvh();
-			DispatchInitQueue();
+            DispatchRefitOctree(objectCount);
+            DispatchPropagate();
+            if (_useBvh && _lastBvhNodeCount > 0)
+            {
+                using (BvhGpuProfiler.Instance.Scope(BvhGpuProfiler.Stage.Refit, objectCount))
+                    DispatchRefitBvh();
+            }
+            DispatchInitQueue();
 
 			_transformBuffer?.SetBlockIndex(1);
 			return true;

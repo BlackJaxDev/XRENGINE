@@ -17,7 +17,25 @@ uniform int InputCommandCount;
 // Stats / overflow
 layout(std430, binding = 3) buffer CulledCountBuffer { uint CulledCount; };
 layout(std430, binding = 4) buffer OverflowFlagBuffer { uint CullingOverflowFlag; };
-layout(std430, binding = 8) buffer StatsBuffer { uint StatsInputCount; uint StatsCulledCount; uint StatsDrawCount; uint StatsRejectedFrustum; uint StatsRejectedDistance; };
+layout(std430, binding = 8) buffer StatsBuffer {
+    uint StatsInputCount;
+    uint StatsCulledCount;
+    uint StatsDrawCount;
+    uint StatsRejectedFrustum;
+    uint StatsRejectedDistance;
+    uint StatsBvhBuildCount;
+    uint StatsBvhRefitCount;
+    uint StatsBvhCullCount;
+    uint StatsBvhRayCount;
+    uint StatsBvhBuildTimeLo;
+    uint StatsBvhBuildTimeHi;
+    uint StatsBvhRefitTimeLo;
+    uint StatsBvhRefitTimeHi;
+    uint StatsBvhCullTimeLo;
+    uint StatsBvhCullTimeHi;
+    uint StatsBvhRayTimeLo;
+    uint StatsBvhRayTimeHi;
+};
 
 bool FrustumSphereVisible(vec3 center, float radius){
     for(int i=0;i<6;++i){

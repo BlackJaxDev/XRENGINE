@@ -4,6 +4,8 @@ using System.Text;
 using System.Threading;
 using XREngine.Data;
 using XREngine.Data.Lists.Unsafe;
+using XREngine.Rendering;
+using XREngine.Rendering.Compute;
 using XREngine.Scene;
 
 namespace XREngine.Rendering.Commands
@@ -60,6 +62,8 @@ namespace XREngine.Rendering.Commands
 
             _useBufferAForRender = !_useBufferAForRender; // swap
 
+            _ = BvhGpuProfiler.Instance.ResolveAndPublish(Engine.Time.Timer.Render.LastTimestamp, _statsBuffer);
+
             if (_cullingOverflowFlagBuffer != null && _indirectOverflowFlagBuffer != null && _truncationFlagBuffer != null)
             {
                 uint cullOv = ReadUInt(_cullingOverflowFlagBuffer);
@@ -75,17 +79,35 @@ namespace XREngine.Rendering.Commands
 
             if (_statsBuffer != null)
             {
-                Span<uint> values = stackalloc uint[5];
+                Span<uint> values = stackalloc uint[(int)GpuStatsLayout.FieldCount];
                 ReadUints(_statsBuffer, values);
 
-                uint input = values[0];
-                uint culled = values[1];
-                uint drawn = values[2];
-                uint frustumRej = values[3];
-                uint distRej = values[4];
+                uint input = values[(int)GpuStatsLayout.StatsInputCount];
+                uint culled = values[(int)GpuStatsLayout.StatsCulledCount];
+                uint drawn = values[(int)GpuStatsLayout.StatsDrawCount];
+                uint frustumRej = values[(int)GpuStatsLayout.StatsRejectedFrustum];
+                uint distRej = values[(int)GpuStatsLayout.StatsRejectedDistance];
+                uint bvhBuildCount = values[(int)GpuStatsLayout.BvhBuildCount];
+                uint bvhRefitCount = values[(int)GpuStatsLayout.BvhRefitCount];
+                uint bvhCullCount = values[(int)GpuStatsLayout.BvhCullCount];
+                uint bvhRayCount = values[(int)GpuStatsLayout.BvhRayCount];
+
+                static double ToMs(uint lo, uint hi)
+                    => ((double)((ulong)hi << 32 | lo)) / 1_000_000.0;
+
+                double buildMs = ToMs(values[(int)GpuStatsLayout.BvhBuildTimeLo], values[(int)GpuStatsLayout.BvhBuildTimeHi]);
+                double refitMs = ToMs(values[(int)GpuStatsLayout.BvhRefitTimeLo], values[(int)GpuStatsLayout.BvhRefitTimeHi]);
+                double cullMs = ToMs(values[(int)GpuStatsLayout.BvhCullTimeLo], values[(int)GpuStatsLayout.BvhCullTimeHi]);
+                double rayMs = ToMs(values[(int)GpuStatsLayout.BvhRayTimeLo], values[(int)GpuStatsLayout.BvhRayTimeHi]);
 
                 if (Engine.EffectiveSettings.EnableGpuIndirectDebugLogging)
+                {
                     Debug.Out($"{FormatDebugPrefix("Stats")} [GPU Stats] In={input} CulledOut={culled} Draws={drawn} RejFrustum={frustumRej} RejDist={distRej}");
+                    if (bvhBuildCount + bvhRefitCount + bvhCullCount + bvhRayCount > 0)
+                    {
+                        Debug.Out($"{FormatDebugPrefix("Stats")} [BVH] Build={bvhBuildCount} ({buildMs:F3} ms) Refit={bvhRefitCount} ({refitMs:F3} ms) Cull={bvhCullCount} ({cullMs:F3} ms) Ray={bvhRayCount} ({rayMs:F3} ms)");
+                    }
+                }
                 Dbg($"Stats in={input} culled={culled} draws={drawn} frustumRej={frustumRej} distRej={distRej}", "Stats");
             }
             Dbg("Render end", "Lifecycle");
