@@ -93,6 +93,8 @@ namespace XREngine.Rendering.Commands
 
         private void ResetCounters()
         {
+            ResetVisibleCounters();
+
             if (_resetCountersComputeShader is null ||
                 _culledCountBuffer is null ||
                 _drawCountBuffer is null)
@@ -124,6 +126,8 @@ namespace XREngine.Rendering.Commands
                 Dbg("BuildIndirect abort - shaders or draw buffer null", "Indirect");
                 return;
             }
+
+            UpdateVisibleCountersFromBuffer();
 
             _indirectRenderTaskShader.Uniform("CurrentRenderPass", RenderPass);
             _indirectRenderTaskShader.Uniform("MaxIndirectDraws", (int)_indirectDrawBuffer.ElementCount);

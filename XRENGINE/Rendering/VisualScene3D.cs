@@ -99,6 +99,16 @@ namespace XREngine.Scene
         private readonly ConcurrentQueue<(RenderInfo3D renderable, bool add)> _pendingRenderableOperations = new(); // staged until GlobalPreRender runs on the render thread
         private bool IsGpuCulling => _isGpuDispatchActive;
         private readonly HashSet<RenderableMesh> _skinnedMeshes = new();
+        private uint _lastGpuVisibleDraws;
+        private uint _lastGpuVisibleInstances;
+
+        public (uint Draws, uint Instances) LastGpuVisibility => (_lastGpuVisibleDraws, _lastGpuVisibleInstances);
+
+        internal void RecordGpuVisibility(uint draws, uint instances)
+        {
+            _lastGpuVisibleDraws = draws;
+            _lastGpuVisibleInstances = instances;
+        }
 
         public void AddRenderable(RenderInfo3D renderable)
             => _pendingRenderableOperations.Enqueue((renderable, true));
