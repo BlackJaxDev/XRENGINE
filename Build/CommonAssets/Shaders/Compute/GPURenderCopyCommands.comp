@@ -13,25 +13,24 @@ uniform int DebugInstanceStride;
 uniform uint OutputCapacity;
 uniform int BoundsCheckEnabled;
 
-// Number of commands is equal to the number of dispatched invocations.
-// No explicit CopyCount uniform is required.
-
-// Input command buffer: tightly packed float[32] per command
+// Input command buffer: tightly packed float[48] per command (GPUIndirectRenderCommand)
 layout(std430, binding = 0) readonly buffer InCommands
 {
     float InData[];
 };
 
-// Output command buffer: tightly packed float[32] per command
+// Output command buffer: tightly packed float[48] per command
 layout(std430, binding = 1) writeonly buffer OutCommands
 {
     float OutData[];
 };
 
-// Optional count buffer to mirror visible count on GPU
-layout(std430, binding = 2) writeonly buffer VisibleCount
+// Optional count buffer to mirror visible draw + instance counts on GPU
+layout(std430, binding = 2) buffer VisibleCount
 {
-    uint OutCount[];
+    uint VisibleDrawCount;
+    uint VisibleInstanceCount;
+    uint VisibleOverflow;
 };
 
 layout(std430, binding = 3) writeonly buffer DebugSamples
@@ -44,8 +43,9 @@ layout(std430, binding = 4) buffer OverflowFlag
     uint OverflowData[];
 };
 
-const uint CommandStride = 32u;
-const uint RenderPassIndex = 24u;
+const uint CommandStride = 48u;
+const uint RenderPassIndex = 40u;
+const uint InstanceCountIndex = 39u;
 
 void main()
 {
@@ -94,17 +94,21 @@ void main()
     if (!passMatches)
         return;
 
-    uint outIndex = atomicAdd(OutCount[0], 1u);
+    uint instanceCount = floatBitsToUint(InData[inBase + InstanceCountIndex]);
+    uint outIndex = atomicAdd(VisibleDrawCount, 1u);
 
     if (BoundsCheckEnabled == 1)
     {
         if (outIndex >= OutputCapacity)
         {
-            atomicMin(OutCount[0], OutputCapacity);
+            atomicMin(VisibleDrawCount, OutputCapacity);
             atomicCompSwap(OverflowData[0], 0u, cmdIndex + 1u);
+            atomicCompSwap(VisibleOverflow, 0u, cmdIndex + 1u);
             return;
         }
     }
+
+    atomicAdd(VisibleInstanceCount, instanceCount);
     uint outBase = outIndex * CommandStride;
 
     // Unrolled copy for better performance on some drivers

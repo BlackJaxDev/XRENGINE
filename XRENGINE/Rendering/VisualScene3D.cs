@@ -1,3 +1,4 @@
+using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Drawing;
@@ -19,6 +20,8 @@ namespace XREngine.Scene
     /// </summary>
     public class VisualScene3D : VisualScene
     {
+        internal static Action<VisualScene3D>? SwapBuffersHook { get; set; }
+
         [YamlIgnore]
         public Octree<RenderInfo3D> RenderTree { get; } = new Octree<RenderInfo3D>(new AABB());
         private AABB _sceneBounds;
@@ -99,6 +102,16 @@ namespace XREngine.Scene
         private readonly ConcurrentQueue<(RenderInfo3D renderable, bool add)> _pendingRenderableOperations = new(); // staged until GlobalPreRender runs on the render thread
         private bool IsGpuCulling => _isGpuDispatchActive;
         private readonly HashSet<RenderableMesh> _skinnedMeshes = new();
+        private uint _lastGpuVisibleDraws;
+        private uint _lastGpuVisibleInstances;
+
+        public (uint Draws, uint Instances) LastGpuVisibility => (_lastGpuVisibleDraws, _lastGpuVisibleInstances);
+
+        internal void RecordGpuVisibility(uint draws, uint instances)
+        {
+            _lastGpuVisibleDraws = draws;
+            _lastGpuVisibleInstances = instances;
+        }
 
         public void AddRenderable(RenderInfo3D renderable)
             => _pendingRenderableOperations.Enqueue((renderable, true));
@@ -120,6 +133,12 @@ namespace XREngine.Scene
         {
             base.GlobalPostRender();
             BvhRaycasts.ProcessCompletions();
+        }
+
+        public override void GlobalSwapBuffers()
+        {
+            base.GlobalSwapBuffers();
+            SwapBuffersHook?.Invoke(this);
         }
 
         private void RunSkinningPrepass()

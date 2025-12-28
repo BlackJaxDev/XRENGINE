@@ -1,6 +1,11 @@
 #version 460
 
 #define MAX_OBJECTS 1024
+#define NODE_SCALAR_STRIDE 20u
+#define OVERFLOW_MORTON 1u
+#define OVERFLOW_NODE 2u
+#define OVERFLOW_QUEUE 4u
+#define OVERFLOW_BVH 8u
 
 struct OctreeNode
 {
@@ -32,15 +37,28 @@ layout(std430, binding = 2) buffer OctreeNodes
     OctreeNode nodes[];
 };
 
+layout(std430, binding = 8) buffer OverflowFlags
+{
+    uint overflowFlags;
+};
+
 uniform uint numObjects;
 uniform uint debugValidation;
+uniform uint nodeScalarCapacity;
+uniform uint mortonCapacity;
 
 layout (local_size_x = 256, local_size_y = 1, local_size_z = 1) in;
 
 void main()
 {
     uint gid = gl_GlobalInvocationID.x;
-    if (gid >= numObjects)
+    uint mortonCap = (mortonCapacity == 0u) ? MAX_OBJECTS : mortonCapacity;
+    uint nodeCap = (nodeScalarCapacity > 2u) ? (nodeScalarCapacity - 2u) / NODE_SCALAR_STRIDE : 0u;
+
+    if (gid == 0u && (numObjects > mortonCap || numObjects > MAX_OBJECTS || numNodes > nodeCap))
+        atomicOr(overflowFlags, OVERFLOW_NODE);
+
+    if (gid >= numObjects || numObjects > mortonCap || numObjects > MAX_OBJECTS || numNodes > nodeCap)
         return;
 
     if (debugValidation != 0u && gid >= numNodes)
