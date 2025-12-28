@@ -214,6 +214,8 @@ namespace XREngine.Data.Trees
 				if (_useBvh == value)
 					return;
 				_useBvh = value;
+				if (!_useBvh)
+					ReleaseBvhResources();
 				MarkDirty(TreeDirtyState.Rebuild);
 			}
 		}
@@ -926,8 +928,7 @@ namespace XREngine.Data.Trees
 			_propagateProgram ??= CreateProgram(ref _propagateShader, "Scene3D/RenderPipeline/OctreeGeneration/propagate_aabbs.comp");
 			_initQueueProgram ??= CreateProgram(ref _initQueueShader, "Scene3D/RenderPipeline/OctreeGeneration/init_queue.comp");
 			EnsureRefitPrograms();
-			if (_useBvh)
-				EnsureBvhPrograms();
+			EnsureBvhPrograms();
 		}
 
 		private void EnsureBvhPrograms()
@@ -935,6 +936,18 @@ namespace XREngine.Data.Trees
 			_bvhBuildProgram ??= CreateProgram(ref _bvhBuildShader, "Scene3D/RenderPipeline/bvh_build.comp", true);
 			_bvhRefineProgram ??= CreateProgram(ref _bvhRefineShader, "Scene3D/RenderPipeline/bvh_sah_refine.comp", true);
 			_bvhRefitProgram ??= CreateProgram(ref _bvhRefitShader, "Scene3D/RenderPipeline/bvh_refit.comp", true);
+		}
+
+		public void ReleaseBvhResources()
+		{
+			lock (_syncRoot)
+			{
+				_lastBvhNodeCount = 0;
+				_bvhNodeBuffer?.Dispose();
+				_bvhRangeBuffer?.Dispose();
+				_bvhNodeBuffer = null;
+				_bvhRangeBuffer = null;
+			}
 		}
 
 		private void EnsureRefitPrograms()

@@ -24,7 +24,17 @@ namespace XREngine.Scene
         private AABB _sceneBounds;
         private bool _hasSceneBounds = false;
         private bool _isGpuDispatchActive = Engine.EffectiveSettings.GPURenderDispatch;
+        private bool _useGpuBvhActive = Engine.EffectiveSettings.UseGpuBvh;
         public BvhRaycastDispatcher BvhRaycasts { get; } = new();
+
+        public VisualScene3D()
+        {
+            GPUCommands.UseGpuBvh = _useGpuBvhActive;
+            if (_useGpuBvhActive)
+                BvhRaycasts.WarmShaders();
+            else
+                BvhRaycasts.SetEnabled(false, "initial settings disabled");
+        }
 
         public void SetBounds(AABB bounds)
         {
@@ -110,7 +120,8 @@ namespace XREngine.Scene
         {
             base.GlobalPreRender();
             ProcessPendingRenderableOperations();
-            BvhRaycasts.ProcessDispatches();
+            if (_useGpuBvhActive)
+                BvhRaycasts.ProcessDispatches();
 
             if (Engine.Rendering.Settings.CalculateSkinningInComputeShader || Engine.Rendering.Settings.CalculateBlendshapesInComputeShader)
                 RunSkinningPrepass();
@@ -119,7 +130,8 @@ namespace XREngine.Scene
         public override void GlobalPostRender()
         {
             base.GlobalPostRender();
-            BvhRaycasts.ProcessCompletions();
+            if (_useGpuBvhActive)
+                BvhRaycasts.ProcessCompletions();
         }
 
         private void RunSkinningPrepass()
@@ -170,6 +182,27 @@ namespace XREngine.Scene
             }
 
             _isGpuDispatchActive = useGpu;
+        }
+
+        public void ApplyGpuBvhPreference(bool useGpuBvh)
+        {
+            if (_useGpuBvhActive == useGpuBvh)
+                return;
+
+            _useGpuBvhActive = useGpuBvh;
+            GPUCommands.UseGpuBvh = useGpuBvh;
+
+            if (useGpuBvh)
+            {
+                Debug.Out("[VisualScene3D] GPU BVH enabled; warming shaders and rebuilding GPU buffers for traversal.");
+                BvhRaycasts.SetEnabled(true, "settings toggled on");
+                BvhRaycasts.WarmShaders();
+            }
+            else
+            {
+                Debug.LogWarning("[VisualScene3D] GPU BVH disabled; falling back to CPU octree traversal.");
+                BvhRaycasts.SetEnabled(false, "disabled by settings");
+            }
         }
 
         public override IEnumerator<RenderInfo> GetEnumerator()
