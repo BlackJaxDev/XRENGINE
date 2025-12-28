@@ -19,6 +19,7 @@ using XREngine.Rendering.Info;
 using XREngine.Rendering.Lightmapping;
 using XREngine.Rendering.Picking;
 using XREngine.Scene;
+using XREngine.Scene;
 using XREngine.Scene.Physics;
 using XREngine.Scene.Prefabs;
 using XREngine.Scene.Transforms;
@@ -631,6 +632,12 @@ namespace XREngine.Rendering
         internal void ApplyRenderDispatchPreference(bool useGpu)
         {
             VisualScene?.ApplyRenderDispatchPreference(useGpu);
+        }
+
+        internal void ApplyGpuBvhPreference(bool useGpuBvh)
+        {
+            if (VisualScene is VisualScene3D scene3D)
+                scene3D.ApplyGpuBvhPreference(useGpuBvh);
         }
 
         private void PreUpdate()

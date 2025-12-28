@@ -148,6 +148,19 @@ namespace XREngine
                 Engine.InvokeOnMainThread(() => Apply(), true);
             }
 
+            public static void ApplyGpuBvhPreference()
+            {
+                bool useGpuBvh = Engine.EffectiveSettings.UseGpuBvh;
+
+                void Apply()
+                {
+                    foreach (var worldInstance in Engine.WorldInstances)
+                        worldInstance?.ApplyGpuBvhPreference(useGpuBvh);
+                }
+
+                Engine.InvokeOnMainThread(() => Apply(), true);
+            }
+
             public static void ApplyNvidiaDlssPreference()
             {
                 void Apply()
