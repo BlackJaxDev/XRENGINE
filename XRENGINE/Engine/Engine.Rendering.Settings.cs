@@ -811,7 +811,7 @@ namespace XREngine
                 public bool UseGpuBvh
                 {
                     get => _useGpuBvh;
-                    set => SetField(ref _useGpuBvh, value);
+                    set => SetField(ref _useGpuBvh, value, null, _ => Rendering.ApplyGpuBvhPreference());
                 }
 
                 /// <summary>
@@ -1206,6 +1206,9 @@ namespace XREngine
 
                 if (applyAll || propertyName == nameof(EngineSettings.RenderTransformDebugInfo))
                     ApplyTransformDebugSetting();
+
+                if (applyAll || propertyName == nameof(EngineSettings.UseGpuBvh))
+                    Engine.Rendering.ApplyGpuBvhPreference();
 
                 //if (applyAll || propertyName == nameof(EngineSettings.EnableNvidiaDlss)
                 //    || propertyName == nameof(EngineSettings.DlssQuality)
