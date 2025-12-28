@@ -11,8 +11,26 @@ layout(std430, binding = 1) buffer DrawCountBuffer { uint DrawCount; };
 layout(std430, binding = 2) buffer CullingOverflowFlagBuffer { uint CullingOverflowFlag; };
 layout(std430, binding = 3) buffer IndirectOverflowFlagBuffer { uint IndirectOverflowFlag; };
 layout(std430, binding = 4) buffer TruncationFlagBuffer { uint TruncationFlag; };
-// Optional stats buffer (binding = 8) if bound: Input, Culled, Draw, RejectedFrustum, RejectedDistance
-layout(std430, binding = 8) buffer StatsBuffer { uint StatsInputCount; uint StatsCulledCount; uint StatsDrawCount; uint StatsRejectedFrustum; uint StatsRejectedDistance; };
+// Optional stats buffer (binding = 8) if bound. Layout must match GpuStatsLayout in C#.
+layout(std430, binding = 8) buffer StatsBuffer {
+    uint StatsInputCount;        // 0
+    uint StatsCulledCount;       // 1
+    uint StatsDrawCount;         // 2
+    uint StatsRejectedFrustum;   // 3
+    uint StatsRejectedDistance;  // 4
+    uint StatsBvhBuildCount;     // 5
+    uint StatsBvhRefitCount;     // 6
+    uint StatsBvhCullCount;      // 7
+    uint StatsBvhRayCount;       // 8
+    uint StatsBvhBuildTimeLo;    // 9
+    uint StatsBvhBuildTimeHi;    // 10
+    uint StatsBvhRefitTimeLo;    // 11
+    uint StatsBvhRefitTimeHi;    // 12
+    uint StatsBvhCullTimeLo;     // 13
+    uint StatsBvhCullTimeHi;     // 14
+    uint StatsBvhRayTimeLo;      // 15
+    uint StatsBvhRayTimeHi;      // 16
+};
 
 void main() {
     CulledCount = 0u;
@@ -28,4 +46,16 @@ void main() {
     StatsDrawCount = 0u;
     StatsRejectedFrustum = 0u;
     StatsRejectedDistance = 0u;
+    StatsBvhBuildCount = 0u;
+    StatsBvhRefitCount = 0u;
+    StatsBvhCullCount = 0u;
+    StatsBvhRayCount = 0u;
+    StatsBvhBuildTimeLo = 0u;
+    StatsBvhBuildTimeHi = 0u;
+    StatsBvhRefitTimeLo = 0u;
+    StatsBvhRefitTimeHi = 0u;
+    StatsBvhCullTimeLo = 0u;
+    StatsBvhCullTimeHi = 0u;
+    StatsBvhRayTimeLo = 0u;
+    StatsBvhRayTimeHi = 0u;
 }

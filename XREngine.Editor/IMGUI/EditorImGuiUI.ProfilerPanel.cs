@@ -124,6 +124,19 @@ public static partial class EditorImGuiUI
                 ImGui.Text($"  FBO Binds: {fboBindCount:N0}");
             }
 
+            if (ImGui.CollapsingHeader("BVH GPU Metrics", ImGuiTreeNodeFlags.DefaultOpen))
+            {
+                bool enableTiming = Engine.Rendering.Settings.EnableGpuBvhTimingQueries;
+                if (ImGui.Checkbox("Enable GPU BVH timing queries", ref enableTiming))
+                    Engine.Rendering.Settings.EnableGpuBvhTimingQueries = enableTiming;
+
+                var bvhMetrics = Engine.Rendering.BvhStats.Latest;
+                ImGui.Text($"Build: {bvhMetrics.BuildCount:N0} items, {bvhMetrics.BuildMilliseconds:F3} ms");
+                ImGui.Text($"Refit: {bvhMetrics.RefitCount:N0} nodes, {bvhMetrics.RefitMilliseconds:F3} ms");
+                ImGui.Text($"Cull: {bvhMetrics.CullCount:N0} entries, {bvhMetrics.CullMilliseconds:F3} ms");
+                ImGui.Text($"Raycasts: {bvhMetrics.RaycastCount:N0} rays, {bvhMetrics.RaycastMilliseconds:F3} ms");
+            }
+
             if (ImGui.CollapsingHeader("Job System", ImGuiTreeNodeFlags.DefaultOpen))
             {
                 var jobs = Engine.Jobs;
