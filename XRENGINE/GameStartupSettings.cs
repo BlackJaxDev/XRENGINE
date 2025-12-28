@@ -210,6 +210,7 @@ namespace XREngine
         private OverrideableSetting<EOutputVerbosity> _outputVerbosityOverride = new();
         private OverrideableSetting<bool> _enableGpuIndirectDebugLoggingOverride = new();
         private OverrideableSetting<bool> _enableGpuIndirectCpuFallbackOverride = new();
+        private OverrideableSetting<bool> _enableGpuIndirectValidationLoggingOverride = new();
         private OverrideableSetting<bool> _useGpuBvhOverride = new();
         private OverrideableSetting<uint> _bvhLeafMaxPrimsOverride = new();
         private OverrideableSetting<EBvhMode> _bvhModeOverride = new();
@@ -324,6 +325,19 @@ namespace XREngine
         {
             get => _enableGpuIndirectCpuFallbackOverride;
             set => SetField(ref _enableGpuIndirectCpuFallbackOverride, value ?? new());
+        }
+
+        /// <summary>
+        /// Project override for GPU indirect validation logging.
+        /// Takes precedence over engine defaults when HasOverride is true.
+        /// Can be further overridden by user settings.
+        /// </summary>
+        [Category("Debug Overrides")]
+        [Description("Project override for GPU indirect validation logging.")]
+        public OverrideableSetting<bool> EnableGpuIndirectValidationLoggingOverride
+        {
+            get => _enableGpuIndirectValidationLoggingOverride;
+            set => SetField(ref _enableGpuIndirectValidationLoggingOverride, value ?? new());
         }
 
         /// <summary>

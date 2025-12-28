@@ -77,6 +77,21 @@ namespace XREngine.Rendering.Commands
                     Debug.LogWarning($"{FormatDebugPrefix("Stats")} GPU Render Overflow: Culling={cullOv} Indirect={indOv} Trunc={trunc}");
                     Dbg($"Overflow flags cull={cullOv} indirect={indOv} trunc={trunc}", "Stats");
                 }
+
+                if (Engine.EffectiveSettings.EnableGpuIndirectValidationLogging && _culledSceneToRenderBuffer is not null)
+                {
+                    if (cullOv > 0 && Engine.EffectiveSettings.EnableGpuIndirectDebugLogging)
+                        Debug.Out($"{FormatDebugPrefix("Validation")} Culling overflow count={cullOv} (capacity={_culledSceneToRenderBuffer.ElementCount}, visible={VisibleCommandCount})");
+
+                    if (_culledSceneToRenderBuffer.ElementCount > 0)
+                    {
+                        GPUIndirectRenderCommand tail = _culledSceneToRenderBuffer.GetDataRawAtIndex<GPUIndirectRenderCommand>(_culledSceneToRenderBuffer.ElementCount - 1);
+                        if (tail.MeshID == uint.MaxValue || tail.MaterialID == uint.MaxValue)
+                        {
+                            Debug.Out($"{FormatDebugPrefix("Validation")} Overflow sentinel detected at tail of culled buffer (mesh={tail.MeshID} material={tail.MaterialID})");
+                        }
+                    }
+                }
             }
 
             if (_statsBuffer != null)
