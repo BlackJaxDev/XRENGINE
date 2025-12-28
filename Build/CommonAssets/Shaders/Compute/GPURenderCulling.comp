@@ -27,9 +27,14 @@ layout(local_size_x = 256) in;
 layout(std430, binding = 0) buffer InputCommandsBuffer { float inCommands[]; };
 // Output culled commands (densely packed). Uses atomic counter to append.
 layout(std430, binding = 1) buffer CulledCommandsBuffer { float outCommands[]; };
-// Atomic counter (single uint) storing number of written culled commands.
-layout(std430, binding = 2) buffer CulledCountBuffer { uint CulledCount; };
-// Overflow / debug flag (0 = ok, 1 = overflow / truncated) for culling stage.
+// Atomic counters storing number of written culled commands and total instances, plus overflow marker.
+layout(std430, binding = 2) buffer CulledCountBuffer
+{
+    uint CulledCount;
+    uint CulledInstanceCount;
+    uint CulledOverflow;
+};
+// Overflow / debug flag (0 = ok, 1 = overflow / truncated) for culling stage (legacy path).
 layout(std430, binding = 3) buffer OverflowFlagBuffer { uint CullingOverflowFlag; };
 // Optional statistics buffer (binding = 8) shared across stages
 layout(std430, binding = 8) buffer StatsBuffer {
@@ -121,6 +126,7 @@ void main()
     if (outIndex >= uint(MaxCulledCommands))
     {
         atomicExchange(CullingOverflowFlag, 1u); // signal overflow
+        atomicCompSwap(CulledOverflow, 0u, outIndex + 1u);
         return;
     }
 
@@ -131,5 +137,6 @@ void main()
     // Overwrite computed distance metric at slot 42
     outCommands[outBase + 42] = renderDistance;
 
+    atomicAdd(CulledInstanceCount, instanceCount);
     atomicAdd(StatsCulledCount, 1u);
 }

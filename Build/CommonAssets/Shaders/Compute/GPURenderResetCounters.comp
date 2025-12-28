@@ -6,7 +6,7 @@
 layout(local_size_x = 1) in;
 
 // Buffers (same bindings as stage usage for simplicity)
-layout(std430, binding = 0) buffer CulledCountBuffer { uint CulledCount; };
+layout(std430, binding = 0) buffer CulledCountBuffer { uint CulledCount; uint CulledInstanceCount; uint CulledOverflow; };
 layout(std430, binding = 1) buffer DrawCountBuffer { uint DrawCount; };
 layout(std430, binding = 2) buffer CullingOverflowFlagBuffer { uint CullingOverflowFlag; };
 layout(std430, binding = 3) buffer IndirectOverflowFlagBuffer { uint IndirectOverflowFlag; };
@@ -16,6 +16,8 @@ layout(std430, binding = 8) buffer StatsBuffer { uint StatsInputCount; uint Stat
 
 void main() {
     CulledCount = 0u;
+    CulledInstanceCount = 0u;
+    CulledOverflow = 0u;
     DrawCount = 0u;
     CullingOverflowFlag = 0u;
     IndirectOverflowFlag = 0u;
