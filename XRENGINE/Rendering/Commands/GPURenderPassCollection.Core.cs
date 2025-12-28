@@ -285,6 +285,12 @@ namespace XREngine.Rendering.Commands
             get => _visibleCommandCount;
             private set => SetField(ref _visibleCommandCount, value);
         }
+        private uint _visibleInstanceCount = 0;
+        public uint VisibleInstanceCount
+        {
+            get => _visibleInstanceCount;
+            private set => SetField(ref _visibleInstanceCount, value);
+        }
 
         // SoA double buffers & related
         private XRDataBuffer? _soaBoundingSpheresA;
@@ -330,6 +336,20 @@ namespace XREngine.Rendering.Commands
         {
             RenderPass = renderPass;
             //Dbg($"Ctor renderPass={renderPass}","Lifecycle");
+        }
+
+        public void GetVisibleCounts(out uint drawCount, out uint instanceCount, out uint overflowMarker)
+        {
+            drawCount = VisibleCommandCount;
+            instanceCount = VisibleInstanceCount;
+            overflowMarker = 0u;
+
+            if (_culledCountBuffer is null)
+                return;
+
+            drawCount = ReadUIntAt(_culledCountBuffer, GPUScene.VisibleCountDrawIndex);
+            instanceCount = ReadUIntAt(_culledCountBuffer, GPUScene.VisibleCountInstanceIndex);
+            overflowMarker = ReadUIntAt(_culledCountBuffer, GPUScene.VisibleCountOverflowIndex);
         }
 
         public void SetMaterialTable(GPUMaterialTable table) => _materialTable = table;

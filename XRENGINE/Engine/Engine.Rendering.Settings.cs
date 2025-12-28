@@ -298,6 +298,7 @@ namespace XREngine
                 private EBvhMode _bvhMode = EBvhMode.Morton;
                 private bool _bvhRefitOnlyWhenStable = true;
                 private uint _raycastBufferSize = 1024u;
+                private bool _enableGpuBvhTimingQueries = false;
 
                 private void BumpShaderConfigVersion()
                     => Interlocked.Increment(ref _shaderConfigVersion);
@@ -822,7 +823,7 @@ namespace XREngine
                 public bool UseGpuBvh
                 {
                     get => _useGpuBvh;
-                    set => SetField(ref _useGpuBvh, value);
+                    set => SetField(ref _useGpuBvh, value, null, _ => Rendering.ApplyGpuBvhPreference());
                 }
 
                 /// <summary>
@@ -867,6 +868,18 @@ namespace XREngine
                 {
                     get => _raycastBufferSize;
                     set => SetField(ref _raycastBufferSize, Math.Max(1u, value));
+                }
+
+                /// <summary>
+                /// Enables GPU timestamp queries around BVH build/refit/cull/raycast compute dispatches for profiling.
+                /// Disable to remove query overhead when not profiling.
+                /// </summary>
+                [Category("BVH")]
+                [Description("Enables GPU timestamp queries around BVH compute dispatches for profiling. Disable to avoid query overhead when not inspecting timings.")]
+                public bool EnableGpuBvhTimingQueries
+                {
+                    get => _enableGpuBvhTimingQueries;
+                    set => SetField(ref _enableGpuBvhTimingQueries, value);
                 }
 
                 /// <summary>
@@ -1205,6 +1218,9 @@ namespace XREngine
 
                 if (applyAll || propertyName == nameof(EngineSettings.RenderTransformDebugInfo))
                     ApplyTransformDebugSetting();
+
+                if (applyAll || propertyName == nameof(EngineSettings.UseGpuBvh))
+                    Engine.Rendering.ApplyGpuBvhPreference();
 
                 //if (applyAll || propertyName == nameof(EngineSettings.EnableNvidiaDlss)
                 //    || propertyName == nameof(EngineSettings.DlssQuality)

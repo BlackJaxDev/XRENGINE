@@ -2,6 +2,7 @@ using Extensions;
 using XREngine.Data.Core;
 using XREngine.Rendering;
 using XREngine.Rendering.RenderGraph;
+using XREngine.Scene;
 
 namespace XREngine.Rendering.Commands
 {
@@ -122,6 +123,12 @@ namespace XREngine.Rendering.Commands
                 return;
 
             gpuPass.Render(scene.GPUCommands);
+
+            if (scene is VisualScene3D visualScene)
+            {
+                gpuPass.GetVisibleCounts(out uint draws, out uint instances, out _);
+                visualScene.RecordGpuVisibility(draws, instances);
+            }
         }
 
         public void SwapBuffers()
