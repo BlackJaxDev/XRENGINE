@@ -1,6 +1,7 @@
 using XREngine;
 using XREngine.Data;
 using XREngine.Data.Rendering;
+using XREngine.Rendering;
 using XREngine.Rendering.Models.Materials;
 using XREngine.Rendering.OpenGL;
 using static XREngine.Rendering.OpenGL.OpenGLRenderer;
@@ -325,6 +326,7 @@ namespace XREngine.Rendering.Commands
 
             // Ensure material IDs buffer exists for batching keys
             EnsureMaterialIDs(capacity);
+            _statsNeedsMap |= EnsureStatsBuffer();
 
             // Aggregate whether any buffer mapping is pending
             bool anyRemapPending = _culledCountNeedsMap || _drawCountNeedsMap || _cullingOverflowNeedsMap || _indirectOverflowNeedsMap || _statsNeedsMap || _truncationNeedsMap;
@@ -477,6 +479,45 @@ namespace XREngine.Rendering.Commands
             }
 
             // Do not toggle a global mapping state here; just return the per-buffer requirement
+            return requiresMapping;
+        }
+
+        private bool EnsureStatsBuffer()
+        {
+            bool requiresMapping = false;
+            uint requiredElements = GpuStatsLayout.FieldCount;
+
+            if (_statsBuffer is not null)
+            {
+                bool layoutMismatch = _statsBuffer.ElementCount < requiredElements ||
+                                      _statsBuffer.ComponentType != EComponentType.UInt ||
+                                      _statsBuffer.ComponentCount != 1;
+                if (layoutMismatch)
+                {
+                    Debug.LogWarning($"{FormatDebugPrefix("Buffers")} Stats buffer layout mismatch; recreating.");
+                    _statsBuffer.Destroy();
+                    _statsBuffer = null;
+                    requiresMapping = true;
+                }
+            }
+
+            if (_statsBuffer is null)
+            {
+                _statsBuffer = new XRDataBuffer("RenderStats", EBufferTarget.ShaderStorageBuffer, requiredElements, EComponentType.UInt, 1, false, true)
+                {
+                    Usage = EBufferUsage.DynamicCopy,
+                    DisposeOnPush = false,
+                    Resizable = false,
+                    PadEndingToVec4 = true,
+                    StorageFlags = EBufferMapStorageFlags.DynamicStorage | EBufferMapStorageFlags.Read | EBufferMapStorageFlags.Persistent | EBufferMapStorageFlags.Coherent,
+                    RangeFlags = EBufferMapRangeFlags.Read | EBufferMapRangeFlags.Persistent | EBufferMapRangeFlags.Coherent,
+                };
+                _statsBuffer.Generate();
+                _statsBuffer.SetDataRaw(new uint[requiredElements], (int)requiredElements);
+                _statsBuffer.PushSubData();
+                requiresMapping = true;
+            }
+
             return requiresMapping;
         }
 

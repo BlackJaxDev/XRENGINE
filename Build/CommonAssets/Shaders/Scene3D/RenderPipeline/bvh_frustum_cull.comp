@@ -54,6 +54,18 @@ layout(std430, binding = 8) buffer StatsBuffer
     uint StatsDrawCount;        // 2 (indirect stage)
     uint StatsRejectedFrustum;  // 3
     uint StatsRejectedDistance; // 4
+    uint StatsBvhBuildCount;    // 5
+    uint StatsBvhRefitCount;    // 6
+    uint StatsBvhCullCount;     // 7
+    uint StatsBvhRayCount;      // 8
+    uint StatsBvhBuildTimeLo;   // 9
+    uint StatsBvhBuildTimeHi;   // 10
+    uint StatsBvhRefitTimeLo;   // 11
+    uint StatsBvhRefitTimeHi;   // 12
+    uint StatsBvhCullTimeLo;    // 13
+    uint StatsBvhCullTimeHi;    // 14
+    uint StatsBvhRayTimeLo;     // 15
+    uint StatsBvhRayTimeHi;     // 16
 };
 
 // Optional comparison buffer: stores GPU-visible command indices for CPU parity checks.
@@ -191,7 +203,10 @@ void main()
     uint gid = gl_GlobalInvocationID.x;
 
     if (StatsEnabled != 0u && gid == 0u)
+    {
         StatsInputCount = uint(InputCommandCount);
+        StatsBvhCullCount = uint(InputCommandCount);
+    }
 
     // Derive leaf count from nodeCount (leaves first, then internal nodes)
     if (nodeCount == 0u)
@@ -281,4 +296,3 @@ void main()
         AppendVisible(cmdIndex, renderDistance);
     }
 }
-
