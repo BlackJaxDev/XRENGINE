@@ -12,6 +12,8 @@ namespace XREngine.Rendering.Commands
 {
     public sealed partial class GPURenderPassCollection
     {
+        internal static Action? ResetCountersHook { get; set; }
+
         /// <summary>
         /// Renders this pass using indirect rendering fully on-GPU.
         /// </summary>
@@ -115,6 +117,8 @@ namespace XREngine.Rendering.Commands
 
         private void ResetCounters()
         {
+            ResetVisibleCounters();
+
             if (_resetCountersComputeShader is null ||
                 _culledCountBuffer is null ||
                 _drawCountBuffer is null)
@@ -135,6 +139,7 @@ namespace XREngine.Rendering.Commands
                 _resetCountersComputeShader.BindBuffer(_statsBuffer, 8);
 
             _resetCountersComputeShader.DispatchCompute(1, 1, 1, EMemoryBarrierMask.ShaderStorage | EMemoryBarrierMask.Command);
+            ResetCountersHook?.Invoke();
         }
 
         private void BuildIndirectCommandBuffer(GPUScene scene)
@@ -146,6 +151,8 @@ namespace XREngine.Rendering.Commands
                 Dbg("BuildIndirect abort - shaders or draw buffer null", "Indirect");
                 return;
             }
+
+            UpdateVisibleCountersFromBuffer();
 
             _indirectRenderTaskShader.Uniform("CurrentRenderPass", RenderPass);
             _indirectRenderTaskShader.Uniform("MaxIndirectDraws", (int)_indirectDrawBuffer.ElementCount);

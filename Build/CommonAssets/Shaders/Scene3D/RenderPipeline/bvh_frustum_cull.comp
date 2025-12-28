@@ -27,7 +27,12 @@ struct MortonObject
 // === GPU dispatch SSBOs (mirrors GPURenderCulling.comp) ===
 layout(std430, binding = 0) readonly buffer InputCommandsBuffer { float inCommands[]; };
 layout(std430, binding = 1) writeonly buffer CulledCommandsBuffer { float outCommands[]; };
-layout(std430, binding = 2) buffer CulledCountBuffer { uint CulledCount; };
+layout(std430, binding = 2) buffer CulledCountBuffer
+{
+    uint CulledCount;
+    uint CulledInstanceCount;
+    uint CulledOverflow;
+};
 layout(std430, binding = 3) buffer OverflowFlagBuffer { uint CullingOverflowFlag; };
 
 // BVH inputs (bindings aligned with OctreeGPU BVH stages for reuse).
@@ -164,12 +169,13 @@ void LogOverflow(uint marker)
     atomicCompSwap(OverflowDebug[0], 0u, marker);
 }
 
-void AppendVisible(uint cmdIndex, float renderDistance)
+void AppendVisible(uint cmdIndex, float renderDistance, uint instanceCount)
 {
     uint outIndex = atomicAdd(CulledCount, 1u);
     if (outIndex >= uint(MaxCulledCommands))
     {
         atomicExchange(CullingOverflowFlag, 1u);
+        atomicCompSwap(CulledOverflow, 0u, cmdIndex + 1u);
         LogOverflow(cmdIndex + 1u);
         return;
     }
@@ -190,6 +196,8 @@ void AppendVisible(uint cmdIndex, float renderDistance)
 
     if (StatsEnabled != 0u)
         atomicAdd(StatsCulledCount, 1u);
+
+    atomicAdd(CulledInstanceCount, instanceCount);
 
     if (ENABLE_CPU_GPU_COMPARE != 0u && CompareVisible.length() > 0)
     {
@@ -293,6 +301,6 @@ void main()
             continue;
         }
 
-        AppendVisible(cmdIndex, renderDistance);
+        AppendVisible(cmdIndex, renderDistance, instanceCount);
     }
 }

@@ -15,7 +15,12 @@ uniform uint DisabledFlagsMask;
 uniform int InputCommandCount;
 
 // Stats / overflow
-layout(std430, binding = 3) buffer CulledCountBuffer { uint CulledCount; };
+layout(std430, binding = 3) buffer CulledCountBuffer
+{
+    uint CulledCount;
+    uint CulledInstanceCount;
+    uint CulledOverflow;
+};
 layout(std430, binding = 4) buffer OverflowFlagBuffer { uint CullingOverflowFlag; };
 layout(std430, binding = 8) buffer StatsBuffer {
     uint StatsInputCount;
@@ -65,7 +70,8 @@ void main(){
     if(dist2 > MaxRenderDistance){ atomicAdd(StatsRejectedDistance,1u); return; }
     if(!FrustumSphereVisible(sphere.xyz, sphere.w)){ atomicAdd(StatsRejectedFrustum,1u); return; }
     uint outIndex = atomicAdd(CulledCount, 1u);
-    if(outIndex >= 0xFFFFFFFEu){ atomicExchange(CullingOverflowFlag,1u); return; }
+    if(outIndex >= 0xFFFFFFFEu){ atomicExchange(CullingOverflowFlag,1u); atomicCompSwap(CulledOverflow,0u,outIndex+1u); return; }
     outIndices[outIndex+1u] = idx; // +1 skip counter slot
+    atomicAdd(CulledInstanceCount, instanceCount);
     atomicAdd(StatsCulledCount,1u);
 }
