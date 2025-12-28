@@ -55,8 +55,8 @@ public class IndirectMultiDrawTests
                            IsTrue(NUnit.Framework.TestContext.Parameters.Get("ShowWindowNoBlock", "false"));
             if (noBlock) return false;
 
-            // default true unless explicitly disabled
-            bool blockParam = IsTrue(NUnit.Framework.TestContext.Parameters.Get("ShowWindowBlock", "true"));
+            // default false - only block if explicitly requested
+            bool blockParam = IsTrue(NUnit.Framework.TestContext.Parameters.Get("ShowWindowBlock", "false"));
             bool blockEnv = IsTrue(Environment.GetEnvironmentVariable("XR_SHOW_TEST_BLOCK"));
             return blockParam || blockEnv;
         }
@@ -68,8 +68,8 @@ public class IndirectMultiDrawTests
         {
             var env = Environment.GetEnvironmentVariable("XR_SHOW_TEST_WINDOW_MS")
                       ?? Environment.GetEnvironmentVariable("XR_SHOW_GL_TEST_MS");
-            var param = NUnit.Framework.TestContext.Parameters.Get("ShowWindowMs", "1000");
-            return int.TryParse(env, out var msEnv) ? msEnv : (int.TryParse(param, out var msParam) ? msParam : 1000);
+            var param = NUnit.Framework.TestContext.Parameters.Get("ShowWindowMs", "10000");
+            return int.TryParse(env, out var msEnv) ? msEnv : (int.TryParse(param, out var msParam) ? msParam : 10000);
         }
     }
 

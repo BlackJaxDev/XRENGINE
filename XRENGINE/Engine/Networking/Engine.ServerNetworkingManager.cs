@@ -8,6 +8,7 @@ using XREngine.Rendering;
 using XREngine.Scene;
 using XREngine.Components;
 using XREngine.Scene.Transforms;
+using XREngine.Input;
 
 namespace XREngine
 {

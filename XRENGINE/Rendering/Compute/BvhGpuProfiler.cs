@@ -21,36 +21,24 @@ namespace XREngine.Rendering.Compute
             Raycast = 3
         }
 
-        public readonly struct Metrics
+        public readonly struct Metrics(
+            ulong buildNs,
+            ulong refitNs,
+            ulong cullNs,
+            ulong raycastNs,
+            uint buildCount,
+            uint refitCount,
+            uint cullCount,
+            uint raycastCount)
         {
-            public readonly ulong BuildNanoseconds;
-            public readonly ulong RefitNanoseconds;
-            public readonly ulong CullNanoseconds;
-            public readonly ulong RaycastNanoseconds;
-            public readonly uint BuildCount;
-            public readonly uint RefitCount;
-            public readonly uint CullCount;
-            public readonly uint RaycastCount;
-
-            public Metrics(
-                ulong buildNs,
-                ulong refitNs,
-                ulong cullNs,
-                ulong raycastNs,
-                uint buildCount,
-                uint refitCount,
-                uint cullCount,
-                uint raycastCount)
-            {
-                BuildNanoseconds = buildNs;
-                RefitNanoseconds = refitNs;
-                CullNanoseconds = cullNs;
-                RaycastNanoseconds = raycastNs;
-                BuildCount = buildCount;
-                RefitCount = refitCount;
-                CullCount = cullCount;
-                RaycastCount = raycastCount;
-            }
+            public readonly ulong BuildNanoseconds = buildNs;
+            public readonly ulong RefitNanoseconds = refitNs;
+            public readonly ulong CullNanoseconds = cullNs;
+            public readonly ulong RaycastNanoseconds = raycastNs;
+            public readonly uint BuildCount = buildCount;
+            public readonly uint RefitCount = refitCount;
+            public readonly uint CullCount = cullCount;
+            public readonly uint RaycastCount = raycastCount;
 
             public double BuildMilliseconds => BuildNanoseconds / 1_000_000.0;
             public double RefitMilliseconds => RefitNanoseconds / 1_000_000.0;
@@ -78,36 +66,20 @@ namespace XREngine.Rendering.Compute
             }
         }
 
-        private readonly struct TimingHandle
+        public readonly struct TimingHandle(BvhGpuProfiler.Stage stage, uint workCount, GLRenderQuery startQuery, OpenGLRenderer renderer)
         {
-            public TimingHandle(Stage stage, uint workCount, GLRenderQuery startQuery, OpenGLRenderer renderer)
-            {
-                Stage = stage;
-                WorkCount = workCount;
-                StartQuery = startQuery;
-                Renderer = renderer;
-            }
-
-            public Stage Stage { get; }
-            public uint WorkCount { get; }
-            public GLRenderQuery StartQuery { get; }
-            public OpenGLRenderer Renderer { get; }
+            public Stage Stage { get; } = stage;
+            public uint WorkCount { get; } = workCount;
+            public GLRenderQuery StartQuery { get; } = startQuery;
+            public OpenGLRenderer Renderer { get; } = renderer;
         }
 
-        private readonly struct PendingQuery
+        private readonly struct PendingQuery(BvhGpuProfiler.Stage stage, uint workCount, GLRenderQuery start, GLRenderQuery end)
         {
-            public PendingQuery(Stage stage, uint workCount, GLRenderQuery start, GLRenderQuery end)
-            {
-                Stage = stage;
-                WorkCount = workCount;
-                Start = start;
-                End = end;
-            }
-
-            public Stage Stage { get; }
-            public uint WorkCount { get; }
-            public GLRenderQuery Start { get; }
-            public GLRenderQuery End { get; }
+            public Stage Stage { get; } = stage;
+            public uint WorkCount { get; } = workCount;
+            public GLRenderQuery Start { get; } = start;
+            public GLRenderQuery End { get; } = end;
         }
 
         private struct Accumulator
@@ -162,7 +134,7 @@ namespace XREngine.Rendering.Compute
 
         private readonly object _lock = new();
         private readonly Queue<XRRenderQuery> _queryPool = new();
-        private readonly List<PendingQuery> _pending = new();
+        private readonly List<PendingQuery> _pending = [];
         private Accumulator _frameAccumulator;
         private Metrics _latest = Metrics.Empty;
         private float _currentFrameTimestamp;

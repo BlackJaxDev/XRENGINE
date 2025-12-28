@@ -115,7 +115,7 @@ public sealed class BvhRaycastDispatcher
                 _completedCallbacks.Enqueue(() => entry.Request.Completed!(result));
 
             if (glRenderer is not null && entry.Fence != IntPtr.Zero)
-                glRenderer.Api.DeleteSync(entry.Fence);
+                glRenderer.RawGL.DeleteSync(entry.Fence);
 
             _inFlight.RemoveAt(i);
         }
@@ -153,7 +153,7 @@ public sealed class BvhRaycastDispatcher
         foreach (var entry in _inFlight)
         {
             if (glRenderer is not null && entry.Fence != IntPtr.Zero)
-                glRenderer.Api.DeleteSync(entry.Fence);
+                glRenderer.RawGL.DeleteSync(entry.Fence);
         }
 
         _inFlight.Clear();
@@ -179,7 +179,7 @@ public sealed class BvhRaycastDispatcher
             if (fence == IntPtr.Zero)
                 continue;
 
-            var status = glRenderer.Api.ClientWaitSync(fence, 0u, 0u);
+            var status = glRenderer.RawGL.ClientWaitSync(fence, 0u, 0u);
             if (status != GLEnum.AlreadySignaled && status != GLEnum.ConditionSatisfied)
                 return false;
         }
@@ -215,7 +215,7 @@ public sealed class BvhRaycastDispatcher
 
         IntPtr fence = IntPtr.Zero;
         if (glRenderer is not null)
-            fence = glRenderer.Api.FenceSync(GLEnum.SyncGpuCommandsComplete, 0u);
+            fence = glRenderer.RawGL.FenceSync(GLEnum.SyncGpuCommandsComplete, 0u);
 
         uint stride = request.HitStrideBytes ?? (uint)Unsafe.SizeOf<GpuRaycastHit>();
         ulong requestedBytes = request.BytesToRead ?? ((ulong)stride * request.RayCount);
@@ -239,7 +239,7 @@ public sealed class BvhRaycastDispatcher
         if (fence == IntPtr.Zero || glRenderer is null)
             return true;
 
-        var status = glRenderer.Api.ClientWaitSync(fence, 0u, 0u);
+        var status = glRenderer.RawGL.ClientWaitSync(fence, 0u, 0u);
         return status == GLEnum.AlreadySignaled || status == GLEnum.ConditionSatisfied;
     }
 

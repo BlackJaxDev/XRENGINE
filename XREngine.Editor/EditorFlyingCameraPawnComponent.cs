@@ -1,16 +1,13 @@
 using Extensions;
 using ImageMagick;
 using System.Collections.Concurrent;
-using System.Collections.Generic;
-using System.IO;
-using System.Linq;
+using System.ComponentModel;
 using System.Numerics;
 using XREngine.Components;
 using XREngine.Components.Scene.Mesh;
 using XREngine.Components.Scene.Transforms;
 using XREngine.Components.Scene.Volumes;
 using XREngine.Core;
-using XREngine.Data;
 using XREngine.Data.Colors;
 using XREngine.Data.Core;
 using XREngine.Data.Geometry;
@@ -20,15 +17,12 @@ using XREngine.Input.Devices;
 using XREngine.Rendering;
 using XREngine.Rendering.Commands;
 using XREngine.Rendering.Info;
-using XREngine.Rendering.Picking;
-using XREngine.Rendering.Physics.Physx;
 using XREngine.Rendering.Models.Materials;
-using XREngine.Rendering.Pipelines;
+using XREngine.Rendering.Physics.Physx;
+using XREngine.Rendering.Picking;
 using XREngine.Scene;
-using XREngine.Scene.Transforms;
-using System.ComponentModel;
 using XREngine.Scene.Components.Editing;
-using XREngine.Core.Attributes;
+using XREngine.Scene.Transforms;
 
 namespace XREngine.Editor;
 

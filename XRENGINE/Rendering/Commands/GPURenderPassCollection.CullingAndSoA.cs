@@ -1069,15 +1069,12 @@ namespace XREngine.Rendering.Commands
             if (!Engine.EffectiveSettings.EnableGpuIndirectValidationLogging)
                 return;
 
-            uint cpuVisibleCount;
-            List<(uint MeshId, uint MaterialId, uint Pass)> cpu = BuildCpuVisibilitySignatures(scene, copyCount, out cpuVisibleCount);
+            List<(uint MeshId, uint MaterialId, uint Pass)> cpu = BuildCpuVisibilitySignatures(scene, copyCount, out uint cpuVisibleCount);
             List<(uint MeshId, uint MaterialId, uint Pass)> gpu = BuildGpuVisibilitySignatures(gpuVisibleCount);
 
             if (cpuVisibleCount != gpuVisibleCount)
-            {
-                Debug.LogWarning($"{FormatDebugPrefix(\"Validation\")} GPU/CPU visible count mismatch: gpu={gpuVisibleCount} cpu={cpuVisibleCount} (copyCount={copyCount}, pass={RenderPass})");
-            }
-
+                Debug.LogWarning($"{FormatDebugPrefix("Validation")} GPU/CPU visible count mismatch: gpu={gpuVisibleCount} cpu={cpuVisibleCount} (copyCount={copyCount}, pass={RenderPass})");
+            
             var cpuSet = new HashSet<(uint MeshId, uint MaterialId, uint Pass)>(cpu);
             var gpuSet = new HashSet<(uint MeshId, uint MaterialId, uint Pass)>(gpu);
 
@@ -1106,16 +1103,16 @@ namespace XREngine.Rendering.Commands
         private static void AppendSignatureList(StringBuilder sb, IEnumerable<(uint MeshId, uint MaterialId, uint Pass)> signatures)
         {
             bool first = true;
-            foreach (var sig in signatures)
+            foreach (var (MeshId, MaterialId, Pass) in signatures)
             {
                 if (!first)
                     sb.Append(" | ");
-                sb.Append($"mesh={sig.MeshId} mat={sig.MaterialId} pass={sig.Pass}");
+                sb.Append($"mesh={MeshId} mat={MaterialId} pass={Pass}");
                 first = false;
             }
         }
 
-        private bool IsCulledCommandValid(GPUScene scene, in GPUIndirectRenderCommand cmd, ISet<uint> missingMaterialIds, out string? reason)
+        private static bool IsCulledCommandValid(GPUScene scene, in GPUIndirectRenderCommand cmd, ISet<uint> missingMaterialIds, out string? reason)
         {
             if (cmd.MaterialID == 0u || cmd.MaterialID == uint.MaxValue)
             {
@@ -1148,9 +1145,9 @@ namespace XREngine.Rendering.Commands
             if (invalidCommands.Count > 0)
             {
                 var reasonCounts = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
-                foreach (var entry in invalidCommands)
+                foreach (var (index, command, reason) in invalidCommands)
                 {
-                    string key = entry.reason;
+                    string key = reason;
                     if (reasonCounts.TryGetValue(key, out int existing))
                         reasonCounts[key] = existing + 1;
                     else

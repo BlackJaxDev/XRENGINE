@@ -24,8 +24,8 @@
     <PackageReference Include="AssimpNetter" Version="6.0.2.1" />
     <PackageReference Include="Magick.NET-Q16-HDRI-AnyCPU" Version="14.10.0" />
     <PackageReference Include="NDILibDotNetCoreBase" Version="2024.7.22.1" />
+    <PackageReference Include="SharpFont.Dependencies" Version="2.6.0" />
     <PackageReference Include="SixLabors.ImageSharp" Version="3.1.12" />
-    <PackageReference Include="System.Text.Json" Version="10.0.0" />
   </ItemGroup>
 
   <ItemGroup>

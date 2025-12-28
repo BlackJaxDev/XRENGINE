@@ -431,7 +431,7 @@ namespace XREngine
         {
             _isJobWorkerThread = true;
             if (!Engine.JobThreadId.HasValue)
-                Engine.JobThreadId = Thread.CurrentThread.ManagedThreadId;
+                Engine.JobThreadId = Environment.CurrentManagedThreadId;
 
             var token = _cts.Token;
             while (!token.IsCancellationRequested)
