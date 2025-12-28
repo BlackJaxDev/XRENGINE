@@ -2,6 +2,10 @@
 
 #define MAX_OBJECTS 1024
 #define MAX_OCTREE_NODES (MAX_OBJECTS * 2 - 1)
+#define OVERFLOW_MORTON 1u
+#define OVERFLOW_NODE 2u
+#define OVERFLOW_QUEUE 4u
+#define OVERFLOW_BVH 8u
 
 // Input: Object AABBs (interleaved min/max pairs)
 struct Aabb
@@ -27,10 +31,16 @@ layout(std430, binding = 1) buffer MortonCodes
     MortonObject mortonObjects[MAX_OBJECTS];
 };
 
+layout(std430, binding = 8) buffer OverflowFlags
+{
+    uint overflowFlags;
+};
+
 // Uniforms for scene bounds
 uniform vec3 sceneMin;
 uniform vec3 sceneMax;
 uniform uint numObjects;
+uniform uint mortonCapacity;
 
 // Helper function to expand bits for Morton code calculation.
 // This interleaves the bits of a 10-bit integer into a 30-bit integer.
@@ -60,7 +70,12 @@ layout (local_size_x = 256, local_size_y = 1, local_size_z = 1) in;
 void main()
 {
     uint gid = gl_GlobalInvocationID.x;
-    if (gid >= numObjects)
+    uint capacity = (mortonCapacity == 0u) ? MAX_OBJECTS : mortonCapacity;
+
+    if (gid == 0u && (numObjects > MAX_OBJECTS || numObjects > capacity))
+        atomicOr(overflowFlags, OVERFLOW_MORTON);
+
+    if (gid >= numObjects || gid >= capacity || numObjects == 0u || numObjects > MAX_OBJECTS)
     {
         return;
     }

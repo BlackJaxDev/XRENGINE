@@ -1,6 +1,10 @@
 #version 460
 
 // Initializes the traversal queue from the octree header
+#define OVERFLOW_MORTON 1u
+#define OVERFLOW_NODE 2u
+#define OVERFLOW_QUEUE 4u
+#define OVERFLOW_BVH 8u
 
 // Octree header
 struct OctreeNode
@@ -31,9 +35,29 @@ layout(std430, binding = 4) buffer Queue
     uint queueTail;
 };
 
+layout(std430, binding = 8) buffer OverflowFlags
+{
+    uint overflowFlags;
+};
+
+uniform uint totalNodes;
+uniform uint queueCapacity;
+
 layout (local_size_x = 1, local_size_y = 1, local_size_z = 1) in;
 
 void main() {
+    uint usableCapacity = min(queueCapacity, MAX_QUEUE_SIZE);
+    uint requiredNodes = (rootIndex == uint(-1)) ? 0u : totalNodes;
+    if (requiredNodes > usableCapacity)
+    {
+        nodeCount = 0u;
+        queueHead = 0u;
+        queueTail = 0u;
+        if (gl_GlobalInvocationID.x == 0u)
+            atomicOr(overflowFlags, OVERFLOW_QUEUE);
+        return;
+    }
+
     nodeCount = (rootIndex == uint(-1)) ? 0u : 1u;
     queueHead = 0u;
     queueTail = nodeCount;

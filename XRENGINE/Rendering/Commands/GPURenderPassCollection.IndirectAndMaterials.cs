@@ -10,6 +10,8 @@ namespace XREngine.Rendering.Commands
 {
     public sealed partial class GPURenderPassCollection
     {
+        internal static Action? ResetCountersHook { get; set; }
+
         /// <summary>
         /// Renders this pass using indirect rendering fully on-GPU.
         /// </summary>
@@ -113,6 +115,7 @@ namespace XREngine.Rendering.Commands
                 _resetCountersComputeShader.BindBuffer(_statsBuffer, 8);
 
             _resetCountersComputeShader.DispatchCompute(1, 1, 1, EMemoryBarrierMask.ShaderStorage | EMemoryBarrierMask.Command);
+            ResetCountersHook?.Invoke();
         }
 
         private void BuildIndirectCommandBuffer(GPUScene scene)
