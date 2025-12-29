@@ -115,6 +115,10 @@ namespace XREngine
             /// Server-to-client error/status message (HTTP-like codes).
             /// </summary>
             ServerError,
+            /// <summary>
+            /// High-density VR humanoid pose packet (baseline or delta).
+            /// </summary>
+            HumanoidPoseFrame,
         }
 
         [MemoryPackable]
@@ -147,6 +151,7 @@ namespace XREngine
             public event Func<RemoteJobRequest, Task<RemoteJobResponse?>>? RemoteJobRequestReceived;
             public event Action<RemoteJobResponse>? RemoteJobResponseReceived;
             public event Action<ServerErrorMessage>? ServerErrorReceived;
+            public event Action<HumanoidPoseFrame>? HumanoidPoseFrameReceived;
 
             private readonly CancellationTokenSource _consumeCts = new();
             private Task _consumeTask = Task.CompletedTask;
@@ -595,6 +600,13 @@ namespace XREngine
                 ReplicateStateChange(new StateChangeInfo(EStateChangeType.ServerError, serialized), compress, resendOnFailedAck);
             }
 
+            public void BroadcastHumanoidPoseFrame(HumanoidPoseFrame frame, bool compress = false, bool resendOnFailedAck = false)
+            {
+                ArgumentNullException.ThrowIfNull(frame);
+                string serialized = StateChangePayloadSerializer.Serialize(frame);
+                ReplicateStateChange(new StateChangeInfo(EStateChangeType.HumanoidPoseFrame, serialized), compress, resendOnFailedAck);
+            }
+
             protected void BroadcastStateChange<TPayload>(EStateChangeType type, TPayload payload, bool compress = true, bool resendOnFailedAck = false)
             {
                 string serialized = StateChangePayloadSerializer.Serialize(payload);
@@ -1019,6 +1031,13 @@ namespace XREngine
 
             protected virtual void HandleStateChange(StateChangeInfo change, IPEndPoint? sender)
             {
+                if (change.Type == EStateChangeType.HumanoidPoseFrame)
+                {
+                    if (StateChangePayloadSerializer.TryDeserialize<HumanoidPoseFrame>(change.Data, out var frame) && frame is not null)
+                        HumanoidPoseFrameReceived?.Invoke(frame);
+                    return;
+                }
+
                 if (change.Type == EStateChangeType.RemoteJobRequest)
                 {
                     if (StateChangePayloadSerializer.TryDeserialize<RemoteJobRequest>(change.Data, out var request) && request is not null)
