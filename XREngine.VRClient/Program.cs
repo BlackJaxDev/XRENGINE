@@ -153,8 +153,8 @@ namespace XREngine.VRClient
                         Height = h,
                     }
                 ],
-                OutputVerbosity = EOutputVerbosity.Verbose,
-                UseIntegerWeightingIds = true,
+                OutputVerbosityOverride = new XREngine.Data.Core.OverrideableSetting<EOutputVerbosity>(EOutputVerbosity.Verbose, true),
+                UseIntegerWeightingIdsOverride = new XREngine.Data.Core.OverrideableSetting<bool>(true, true),
                 DefaultUserSettings = new UserSettings()
                 {
                     TargetFramesPerSecond = render,
@@ -166,6 +166,12 @@ namespace XREngine.VRClient
                     Actions = GetActions<TActionCategory, TGameAction>(),
                 },
             };
+
+            // Allow pairing the VRClient with a specific running game process (e.g., XREngine.Editor).
+            string? gameNameOverride = Environment.GetEnvironmentVariable("XRE_VRCLIENT_GAMENAME");
+            if (!string.IsNullOrWhiteSpace(gameNameOverride))
+                settings.GameName = gameNameOverride;
+
             return settings;
         }
 

@@ -388,3 +388,4 @@ docs/docfx/api/**
 docs/docfx/.cache/
 docs/docfx/obj/
 docs/docfx/manifest.json
+XREngine.Server/imgui.ini

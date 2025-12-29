@@ -45,6 +45,12 @@ namespace XREngine
         private static readonly ConcurrentDictionary<string, DateTime> RecentMessageCache = new();
         public static Queue<(string, DateTime)> Output { get; } = new Queue<(string, DateTime)>();
         public static bool AllowOutput { get; set; } = true;
+
+        /// <summary>
+        /// Raised when a new log entry is added to the in-engine console buffer.
+        /// This fires regardless of whether output is also written to file/console.
+        /// </summary>
+        public static event Action<LogEntry>? ConsoleEntryAdded;
         private const int MaxRunDirectoryCount = 3;
         private const int MaxConsoleEntries = 5000;
         private static readonly object LogWriterLock = new();
@@ -94,6 +100,7 @@ namespace XREngine
 
         private static void AddConsoleEntry(string message, ELogCategory category)
         {
+            LogEntry? addedEntry = null;
             lock (ConsoleEntriesLock)
             {
                 // Check if this message is the same as the last one (collapse repeats)
@@ -109,8 +116,11 @@ namespace XREngine
 
                 if (_consoleEntries.Count >= MaxConsoleEntries)
                     _consoleEntries.RemoveAt(0);
-                _consoleEntries.Add(new LogEntry(message, category, DateTime.Now));
+                addedEntry = new LogEntry(message, category, DateTime.Now);
+                _consoleEntries.Add(addedEntry);
             }
+
+            ConsoleEntryAdded?.Invoke(addedEntry);
         }
 
         private static string? _logSessionId;
@@ -417,8 +427,7 @@ namespace XREngine
                 return null;
             }
 
-            if (_logSessionId is null)
-                _logSessionId = DateTime.Now.ToString("yyyyMMdd_HHmmss");
+            _logSessionId ??= $"{DateTime.Now:yyyyMMdd_HHmmss}_{Environment.ProcessId}";
 
             if (LogWriters[category] is null)
             {
@@ -546,7 +555,7 @@ namespace XREngine
                 runsRoot = rootDirectory;
 
             if (_logSessionId is null)
-                _logSessionId = DateTime.Now.ToString("yyyyMMdd_HHmmss");
+                _logSessionId = $"{DateTime.Now:yyyyMMdd_HHmmss}_{Environment.ProcessId}";
 
             string runDirectory = Path.Combine(runsRoot, _logSessionId);
             if (!TryCreateDirectory(runDirectory))

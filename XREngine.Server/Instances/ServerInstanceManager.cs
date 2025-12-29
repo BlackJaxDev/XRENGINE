@@ -60,12 +60,8 @@ namespace XREngine.Server.Instances
             if (worldInstance?.TargetWorld is null)
                 return;
 
-            foreach (var scene in worldInstance.TargetWorld.Scenes)
-            {
-                if (scene.VisualScene?.Renderer is null)
-                    continue;
-                scene.VisualScene.Renderer.Enabled = false;
-            }
+            // Rendering is controlled by whether startup windows are created.
+            // Server instances that run without dev rendering should simply avoid creating any windows.
         }
     }
 

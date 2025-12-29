@@ -110,7 +110,7 @@ namespace XREngine.Components
             }
         }
 
-        private static int _tickInputLogCounter = 0;
+        //private static int _tickInputLogCounter = 0;
         private void TickInput()
         {
             if (Controller is not LocalPlayerController localPlayerController ||
@@ -118,10 +118,10 @@ namespace XREngine.Components
                 return;
 
             // Log once every 100 ticks to avoid spam
-            if (++_tickInputLogCounter % 100 == 1)
-            {
-                Debug.Out($"[PawnComponent.TickInput] Ticking input for {Name}, UIInputCaptured={Engine.Input.IsUIInputCaptured}, Keyboard={localInput.Keyboard != null}, Mouse={localInput.Mouse != null}");
-            }
+            //if (++_tickInputLogCounter % 100 == 1)
+            //{
+            //    Debug.Out($"[PawnComponent.TickInput] Ticking input for {Name}, UIInputCaptured={Engine.Input.IsUIInputCaptured}, Keyboard={localInput.Keyboard != null}, Mouse={localInput.Mouse != null}");
+            //}
 
             if (Engine.Input.IsUIInputCaptured)
             {

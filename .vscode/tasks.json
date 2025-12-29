@@ -18,6 +18,53 @@
             "problemMatcher": "$msCompile"
         },
         {
+            "label": "build-server",
+            "command": "dotnet",
+            "type": "shell",
+            "args": [
+                "build",
+                "${workspaceFolder}/XREngine.Server/XREngine.Server.csproj",
+                "/property:GenerateFullPaths=true",
+                "/consoleloggerparameters:NoSummary"
+            ],
+            "group": "build",
+            "presentation": {
+                "reveal": "silent"
+            },
+            "problemMatcher": "$msCompile"
+        },
+        {
+            "label": "build-vrclient",
+            "command": "dotnet",
+            "type": "shell",
+            "args": [
+                "build",
+                "${workspaceFolder}/XREngine.VRClient/XREngine.VRClient.csproj",
+                "/property:GenerateFullPaths=true",
+                "/consoleloggerparameters:NoSummary"
+            ],
+            "group": "build",
+            "presentation": {
+                "reveal": "silent"
+            },
+            "problemMatcher": "$msCompile"
+        },
+        {
+            "label": "start-editor-no-debug",
+            "type": "shell",
+            "command": "cmd",
+            "args": [
+                "/d",
+                "/c",
+                "set XRE_WINDOW_TITLE=XRE Editor (Separate) && start \"\" /D \"${workspaceFolder}\\XREngine.Editor\" \"${workspaceFolder}\\Build\\Editor\\Debug\\AnyCPU\\Debug\\net10.0-windows7.0\\XREngine.Editor.exe\""
+            ],
+            "dependsOn": "build",
+            "presentation": {
+                "reveal": "silent"
+            },
+            "problemMatcher": []
+        },
+        {
             "label": "start-server-no-debug",
             "type": "shell",
             "command": "cmd",
@@ -39,9 +86,177 @@
             "args": [
                 "/d",
                 "/c",
-                "set XRE_NET_MODE=Client && start \"\" /D \"${workspaceFolder}\\XREngine.Editor\" \"${workspaceFolder}\\Build\\Editor\\Debug\\AnyCPU\\Debug\\net10.0-windows7.0\\XREngine.Editor.exe\""
+                "set XRE_NET_MODE=Client && set XRE_UDP_CLIENT_RECEIVE_PORT=5001 && set XRE_WINDOW_TITLE=XRE Editor (Client 1) && start \"\" /D \"${workspaceFolder}\\XREngine.Editor\" \"${workspaceFolder}\\Build\\Editor\\Debug\\AnyCPU\\Debug\\net10.0-windows7.0\\XREngine.Editor.exe\""
             ],
             "dependsOn": "build",
+            "presentation": {
+                "reveal": "silent"
+            },
+            "problemMatcher": []
+        },
+        {
+            "label": "start-client2-no-debug",
+            "type": "shell",
+            "command": "cmd",
+            "args": [
+                "/d",
+                "/c",
+                "set XRE_NET_MODE=Client && set XRE_UDP_CLIENT_RECEIVE_PORT=5002 && set XRE_WINDOW_TITLE=XRE Editor (Client 2) && start \"\" /D \"${workspaceFolder}\\XREngine.Editor\" \"${workspaceFolder}\\Build\\Editor\\Debug\\AnyCPU\\Debug\\net10.0-windows7.0\\XREngine.Editor.exe\""
+            ],
+            "dependsOn": "build",
+            "presentation": {
+                "reveal": "silent"
+            },
+            "problemMatcher": []
+        },
+        {
+            "label": "start-2-clients-no-debug",
+            "type": "shell",
+            "command": "cmd",
+            "args": [
+                "/d",
+                "/c",
+                "set XRE_NET_MODE=Client && set XRE_UDP_CLIENT_RECEIVE_PORT=5001 && set XRE_WINDOW_TITLE=XRE Editor (Client 1) && start \"\" /D \"${workspaceFolder}\\XREngine.Editor\" \"${workspaceFolder}\\Build\\Editor\\Debug\\AnyCPU\\Debug\\net10.0-windows7.0\\XREngine.Editor.exe\" && timeout /t 1 /nobreak > nul && set XRE_UDP_CLIENT_RECEIVE_PORT=5002 && set XRE_WINDOW_TITLE=XRE Editor (Client 2) && start \"\" /D \"${workspaceFolder}\\XREngine.Editor\" \"${workspaceFolder}\\Build\\Editor\\Debug\\AnyCPU\\Debug\\net10.0-windows7.0\\XREngine.Editor.exe\""
+            ],
+            "dependsOn": "build",
+            "presentation": {
+                "reveal": "silent"
+            },
+            "problemMatcher": []
+        },
+        {
+            "label": "start-dedicated-server-no-debug",
+            "type": "shell",
+            "command": "cmd",
+            "args": [
+                "/d",
+                "/c",
+                "start \"\" /D \"${workspaceFolder}\\XREngine.Server\" \"${workspaceFolder}\\XREngine.Server\\bin\\Debug\\net10.0-windows10.0.26100.0\\XREngine.Server.exe\""
+            ],
+            "dependsOn": "build-server",
+            "presentation": {
+                "reveal": "silent"
+            },
+            "problemMatcher": []
+        },
+        {
+            "label": "start-p2p-peer-no-debug",
+            "type": "shell",
+            "command": "cmd",
+            "args": [
+                "/d",
+                "/c",
+                "set XRE_NET_MODE=P2PClient && set XRE_UDP_CLIENT_RECEIVE_PORT=5001 && set XRE_WINDOW_TITLE=XRE Editor (P2P Peer 1) && start \"\" /D \"${workspaceFolder}\\XREngine.Editor\" \"${workspaceFolder}\\Build\\Editor\\Debug\\AnyCPU\\Debug\\net10.0-windows7.0\\XREngine.Editor.exe\""
+            ],
+            "dependsOn": "build",
+            "presentation": {
+                "reveal": "silent"
+            },
+            "problemMatcher": []
+        },
+        {
+            "label": "start-p2p-peer2-no-debug",
+            "type": "shell",
+            "command": "cmd",
+            "args": [
+                "/d",
+                "/c",
+                "set XRE_NET_MODE=P2PClient && set XRE_UDP_CLIENT_RECEIVE_PORT=5002 && set XRE_WINDOW_TITLE=XRE Editor (P2P Peer 2) && start \"\" /D \"${workspaceFolder}\\XREngine.Editor\" \"${workspaceFolder}\\Build\\Editor\\Debug\\AnyCPU\\Debug\\net10.0-windows7.0\\XREngine.Editor.exe\""
+            ],
+            "dependsOn": "build",
+            "presentation": {
+                "reveal": "silent"
+            },
+            "problemMatcher": []
+        },
+        {
+            "label": "prep-debug-server-with-2-clients",
+            "type": "shell",
+            "command": "cmd",
+            "args": [
+                "/d",
+                "/c",
+                "echo Preparing dedicated server debug session..."
+            ],
+            "dependsOn": [
+                "build-server",
+                "start-2-clients-no-debug"
+            ],
+            "dependsOrder": "sequence",
+            "presentation": {
+                "reveal": "silent"
+            },
+            "problemMatcher": []
+        },
+        {
+            "label": "prep-debug-server-only",
+            "type": "shell",
+            "command": "cmd",
+            "args": [
+                "/d",
+                "/c",
+                "echo Preparing dedicated server debug session (server only)..."
+            ],
+            "dependsOn": [
+                "build-server"
+            ],
+            "dependsOrder": "sequence",
+            "presentation": {
+                "reveal": "silent"
+            },
+            "problemMatcher": []
+        },
+        {
+            "label": "prep-debug-client-with-server-and-client",
+            "type": "shell",
+            "command": "cmd",
+            "args": [
+                "/d",
+                "/c",
+                "echo Preparing client debug session (server + extra client)..."
+            ],
+            "dependsOn": [
+                "start-dedicated-server-no-debug",
+                "start-client2-no-debug"
+            ],
+            "dependsOrder": "sequence",
+            "presentation": {
+                "reveal": "silent"
+            },
+            "problemMatcher": []
+        },
+        {
+            "label": "prep-debug-p2p-client-with-peer",
+            "type": "shell",
+            "command": "cmd",
+            "args": [
+                "/d",
+                "/c",
+                "echo Preparing P2P client debug session (peer client only)..."
+            ],
+            "dependsOn": [
+                "start-p2p-peer2-no-debug"
+            ],
+            "dependsOrder": "sequence",
+            "presentation": {
+                "reveal": "silent"
+            },
+            "problemMatcher": []
+        },
+        {
+            "label": "prep-debug-vrclient-with-editor",
+            "type": "shell",
+            "command": "cmd",
+            "args": [
+                "/d",
+                "/c",
+                "echo Preparing VRClient debug session (editor runs separately)..."
+            ],
+            "dependsOn": [
+                "start-editor-no-debug",
+                "build-vrclient"
+            ],
+            "dependsOrder": "sequence",
             "presentation": {
                 "reveal": "silent"
             },
