@@ -109,7 +109,7 @@ namespace XREngine
 
             protected override void HandleStateChange(StateChangeInfo change, IPEndPoint? sender)
             {
-                if (change.Type is EStateChangeType.RemoteJobRequest or EStateChangeType.RemoteJobResponse)
+                if (change.Type is EStateChangeType.RemoteJobRequest or EStateChangeType.RemoteJobResponse or EStateChangeType.HumanoidPoseFrame)
                 {
                     base.HandleStateChange(change, sender);
                     return;
