@@ -7,6 +7,7 @@ using XREngine.Components;
 using XREngine.Components.Scene;
 using XREngine.Components.Scripting;
 using XREngine.Core.Files;
+using XREngine.Data.Core;
 using XREngine.Editor.UI;
 using XREngine.Editor.UI.Components;
 using XREngine.Editor.UI.Toolbar;
@@ -83,14 +84,38 @@ public static partial class UnitTestingWorld
         //The full editor UI - includes a toolbar, inspector, viewport and scene hierarchy.
         public static UICanvasComponent CreateEditorUI(SceneNode parent, CameraComponent? screenSpaceCamera, PawnComponent? pawnForInput = null)
         {
-            var rootCanvasNode = new SceneNode(parent) { Name = "TestUINode" };
-            rootCanvasNode.IsEditorOnly = true;
+            // Create as a root/editor node (not parented under gameplay nodes).
+            // Editor-only migration in the world instance only applies to root nodes.
+            var rootCanvasNode = new SceneNode(parent.World, "TestUINode") { IsEditorOnly = true };
             var canvas = rootCanvasNode.AddComponent<UICanvasComponent>()!;
             var canvasTfm = canvas.CanvasTransform;
             canvasTfm.DrawSpace = ECanvasDrawSpace.Screen;
             canvasTfm.Width = 1920.0f;
             canvasTfm.Height = 1080.0f;
             canvasTfm.Padding = new Vector4(0.0f);
+
+            // Ensure it's attached to the hidden editor scene (so it doesn't show in the hierarchy panel)
+            // while still being part of the world instance for rendering/ticking.
+            if (parent.World is not null)
+            {
+                parent.World.AddToEditorScene(rootCanvasNode);
+            }
+            else
+            {
+                void OnParentWorldAssigned(object? _, IXRPropertyChangedEventArgs e)
+                {
+                    if (e.PropertyName != nameof(SceneNode.World))
+                        return;
+
+                    if (parent.World is not null)
+                    {
+                        parent.World.AddToEditorScene(rootCanvasNode);
+                        parent.PropertyChanged -= OnParentWorldAssigned;
+                    }
+                }
+
+                parent.PropertyChanged += OnParentWorldAssigned;
+            }
 
             if (Toggles.RiveUI || Toggles.DearImGuiUI || Toggles.AddEditorUI)
             {

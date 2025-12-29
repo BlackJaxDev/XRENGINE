@@ -41,7 +41,7 @@
   "RecalcChildMatricesType": "Asynchronous",
   "RenderAPI": "OpenGL",
   "PhysicsAPI": "Physx",
-  "RenderFPS": 60.0,
+  "RenderFPS": 0.0,
   "RenderMeshBounds": false,
   "RenderPhysicsDebug": false,
   "RenderTransformCapsules": false,
