@@ -22,18 +22,14 @@
             "type": "shell",
             "command": "cmd",
             "args": [
+                "/d",
                 "/c",
-                "start",
-                "\"XRE Server\"",
-                "cmd",
-                "/c",
-                "cd /d \"${workspaceFolder}\\XREngine.Editor\" && set XRE_NET_MODE=Server && \"${workspaceFolder}\\Build\\Editor\\Debug\\AnyCPU\\Debug\\net10.0-windows7.0\\XREngine.Editor.exe\""
+                "set XRE_NET_MODE=Server && start \"\" /D \"${workspaceFolder}\\XREngine.Editor\" \"${workspaceFolder}\\Build\\Editor\\Debug\\AnyCPU\\Debug\\net10.0-windows7.0\\XREngine.Editor.exe\""
             ],
             "dependsOn": "build",
             "presentation": {
                 "reveal": "silent"
             },
-            "isBackground": true,
             "problemMatcher": []
         },
         {
@@ -41,18 +37,14 @@
             "type": "shell",
             "command": "cmd",
             "args": [
+                "/d",
                 "/c",
-                "start",
-                "\"XRE Client\"",
-                "cmd",
-                "/c",
-                "cd /d \"${workspaceFolder}\\XREngine.Editor\" && set XRE_NET_MODE=Client && \"${workspaceFolder}\\Build\\Editor\\Debug\\AnyCPU\\Debug\\net10.0-windows7.0\\XREngine.Editor.exe\""
+                "set XRE_NET_MODE=Client && start \"\" /D \"${workspaceFolder}\\XREngine.Editor\" \"${workspaceFolder}\\Build\\Editor\\Debug\\AnyCPU\\Debug\\net10.0-windows7.0\\XREngine.Editor.exe\""
             ],
             "dependsOn": "build",
             "presentation": {
                 "reveal": "silent"
             },
-            "isBackground": true,
             "problemMatcher": []
         }
     ]

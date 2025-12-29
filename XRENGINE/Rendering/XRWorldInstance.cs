@@ -94,13 +94,30 @@ namespace XREngine.Rendering
                 return;
 
             var editorScene = EditorScene;
-            if (!editorScene.RootNodes.Contains(node))
+
+            void AddAsEditorRoot()
             {
-                node.Parent = null;
-                editorScene.RootNodes.Add(node);
+                if (!editorScene.RootNodes.Contains(node))
+                    editorScene.RootNodes.Add(node);
+
                 node.World = this;
+
                 if (!RootNodes.Any(existing => ReferenceEquals(existing, node)))
                     RootNodes.Add(node);
+            }
+
+            // Detaching a node by directly setting Parent can conflict with transform child list
+            // enumeration (EventList uses ReaderWriterLockSlim). Defer the detachment to the
+            // engine's post-update parent reassignment queue and only add to the editor scene
+            // once the node is actually detached.
+            if (node.Transform?.Parent is not null)
+            {
+                node.Transform.SetParent(null, preserveWorldTransform: false, EParentAssignmentMode.Deferred,
+                    onApplied: (_, __) => AddAsEditorRoot());
+            }
+            else
+            {
+                AddAsEditorRoot();
             }
         }
 
@@ -843,27 +860,17 @@ namespace XREngine.Rendering
                 if (node is null)
                     continue;
 
-                // Collect editor-only nodes (including this node if flagged) before we attach anything to the
-                // visible root list so they don't get cached/ticked as part of the visible hierarchy.
-                var nodesToMove = new List<SceneNode>();
-                node.IterateHierarchy(n =>
-                {
-                    if (n.IsEditorOnly)
-                        nodesToMove.Add(n);
-                });
-
-                foreach (var editorOnly in nodesToMove)
-                {
-                    if (IsInEditorScene(editorOnly))
-                        continue;
-
-                    editorOnly.Parent = null;
-                    moved.Add(editorOnly);
-                    AddToEditorScene(editorOnly);
-                }
-
+                // If this root node is marked editor-only, move the entire subtree into the hidden
+                // editor scene instead of the visible world root list.
                 if (node.IsEditorOnly)
+                {
+                    if (!IsInEditorScene(node))
+                    {
+                        moved.Add(node);
+                        AddToEditorScene(node);
+                    }
                     continue;
+                }
 
                 node.World = this;
                 RootNodes.Add(node);
