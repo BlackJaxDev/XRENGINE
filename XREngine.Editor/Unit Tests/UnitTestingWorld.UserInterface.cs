@@ -84,6 +84,7 @@ public static partial class UnitTestingWorld
         public static UICanvasComponent CreateEditorUI(SceneNode parent, CameraComponent? screenSpaceCamera, PawnComponent? pawnForInput = null)
         {
             var rootCanvasNode = new SceneNode(parent) { Name = "TestUINode" };
+            rootCanvasNode.IsEditorOnly = true;
             var canvas = rootCanvasNode.AddComponent<UICanvasComponent>()!;
             var canvasTfm = canvas.CanvasTransform;
             canvasTfm.DrawSpace = ECanvasDrawSpace.Screen;

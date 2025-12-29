@@ -38,6 +38,8 @@ namespace XREngine.Rendering
 
         public static Dictionary<XRWorld, XRWorldInstance> WorldInstances { get; } = [];
 
+        private readonly Dictionary<XRScene, HashSet<SceneNode>> _editorOnlyNodesByScene = [];
+
         public EventList<ListenerContext> Listeners { get; private set; } = [];
         
         public XREventGroup<GameMode> CurrentGameModeChanged;
@@ -94,9 +96,11 @@ namespace XREngine.Rendering
             var editorScene = EditorScene;
             if (!editorScene.RootNodes.Contains(node))
             {
+                node.Parent = null;
                 editorScene.RootNodes.Add(node);
                 node.World = this;
-                RootNodes.Add(node);
+                if (!RootNodes.Any(existing => ReferenceEquals(existing, node)))
+                    RootNodes.Add(node);
             }
         }
 
@@ -832,19 +836,62 @@ namespace XREngine.Rendering
 
         private void LoadVisibleScene(XRScene scene)
         {
+            var moved = new HashSet<SceneNode>(System.Collections.Generic.ReferenceEqualityComparer.Instance);
+
             foreach (var node in scene.RootNodes)
             {
+                if (node is null)
+                    continue;
+
+                // Collect editor-only nodes (including this node if flagged) before we attach anything to the
+                // visible root list so they don't get cached/ticked as part of the visible hierarchy.
+                var nodesToMove = new List<SceneNode>();
+                node.IterateHierarchy(n =>
+                {
+                    if (n.IsEditorOnly)
+                        nodesToMove.Add(n);
+                });
+
+                foreach (var editorOnly in nodesToMove)
+                {
+                    if (IsInEditorScene(editorOnly))
+                        continue;
+
+                    editorOnly.Parent = null;
+                    moved.Add(editorOnly);
+                    AddToEditorScene(editorOnly);
+                }
+
+                if (node.IsEditorOnly)
+                    continue;
+
                 node.World = this;
                 RootNodes.Add(node);
             }
+
+            if (moved.Count > 0)
+                _editorOnlyNodesByScene[scene] = moved;
         }
 
         private void UnloadVisibleScene(XRScene scene)
         {
             foreach (var node in scene.RootNodes)
             {
-                RootNodes.Remove(node);
-                node.World = null;
+                if (node is null)
+                    continue;
+
+                if (!node.IsEditorOnly)
+                {
+                    RootNodes.Remove(node);
+                    node.World = null;
+                }
+            }
+
+            if (_editorOnlyNodesByScene.TryGetValue(scene, out var moved))
+            {
+                foreach (var editorOnly in moved)
+                    RemoveFromEditorScene(editorOnly);
+                _editorOnlyNodesByScene.Remove(scene);
             }
         }
 
@@ -1348,9 +1395,12 @@ namespace XREngine.Rendering
         public static XRWorldInstance GetOrInitWorld(XRWorld targetWorld)
         {
             if (!WorldInstances.TryGetValue(targetWorld, out var instance))
-     WorldInstances.Add(targetWorld, instance = new(targetWorld));
+            {
+                instance = new XRWorldInstance(targetWorld);
+                WorldInstances.Add(targetWorld, instance);
+            }
             return instance;
- }
+        }
 
         #region World Settings
 

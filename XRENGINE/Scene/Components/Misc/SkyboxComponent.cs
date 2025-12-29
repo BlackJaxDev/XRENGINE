@@ -41,6 +41,27 @@ namespace XREngine.Components.Scene.Mesh
     }
 
     /// <summary>
+    /// Specifies how the skybox is rendered.
+    /// </summary>
+    public enum ESkyboxMode
+    {
+        /// <summary>
+        /// Renders the skybox by sampling the provided texture using the selected projection.
+        /// </summary>
+        Texture,
+
+        /// <summary>
+        /// Renders a Y-aligned world-space gradient using two colors.
+        /// </summary>
+        Gradient,
+
+        /// <summary>
+        /// Renders a solid color skybox.
+        /// </summary>
+        SolidColor,
+    }
+
+    /// <summary>
     /// Renders a skybox background as a fullscreen quad that samples the environment texture
     /// using the camera's view direction and frustum. Supports equirectangular, octahedral,
     /// cubemap, and cubemap array textures.
@@ -62,12 +83,15 @@ namespace XREngine.Components.Scene.Mesh
         private bool _loggedCollected;
         private bool _loggedRendered;
 
+        private ESkyboxMode _mode = ESkyboxMode.Texture;
         private ESkyboxProjection _projection = ESkyboxProjection.Equirectangular;
         private XRTexture? _texture;
         private float _intensity = 1.0f;
         private float _rotation = 0.0f;
         private int _cubemapArrayLayer = 0;
-        private bool _debugSolidColor = false;
+
+        private Vector3 _topColor = new(0.52f, 0.74f, 1.0f);
+        private Vector3 _bottomColor = new(0.05f, 0.06f, 0.08f);
 
         // Cached shaders
         private static XRShader? s_vertexShader;
@@ -75,7 +99,7 @@ namespace XREngine.Components.Scene.Mesh
         private static XRShader? s_octahedralShader;
         private static XRShader? s_cubemapShader;
         private static XRShader? s_cubemapArrayShader;
-        private static XRShader? s_debugShader;
+        private static XRShader? s_gradientShader;
 
         /// <summary>
         /// Creates a new skybox component with default settings.
@@ -85,6 +109,18 @@ namespace XREngine.Components.Scene.Mesh
             _renderCommand = new RenderCommandMesh3D(EDefaultRenderPass.Background);
             _renderInfo = RenderInfo3D.New(this, _renderCommand);
             RenderedObjects = [_renderInfo];
+        }
+
+        /// <summary>
+        /// Controls how the skybox is rendered (texture, gradient, or solid color).
+        /// </summary>
+        [Category("Skybox")]
+        [DisplayName("Mode")]
+        [Description("Controls how the skybox is rendered (texture, gradient, or solid color).")]
+        public ESkyboxMode Mode
+        {
+            get => _mode;
+            set => SetField(ref _mode, value);
         }
 
         /// <summary>
@@ -110,6 +146,30 @@ namespace XREngine.Components.Scene.Mesh
         {
             get => _texture;
             set => SetField(ref _texture, value);
+        }
+
+        /// <summary>
+        /// Top color used when <see cref="Mode"/> is <see cref="ESkyboxMode.Gradient"/> or <see cref="ESkyboxMode.SolidColor"/>.
+        /// </summary>
+        [Category("Skybox")]
+        [DisplayName("Top Color")]
+        [Description("Top color used for Gradient/SolidColor modes.")]
+        public Vector3 TopColor
+        {
+            get => _topColor;
+            set => SetField(ref _topColor, value);
+        }
+
+        /// <summary>
+        /// Bottom color used when <see cref="Mode"/> is <see cref="ESkyboxMode.Gradient"/>.
+        /// </summary>
+        [Category("Skybox")]
+        [DisplayName("Bottom Color")]
+        [Description("Bottom color used for Gradient mode.")]
+        public Vector3 BottomColor
+        {
+            get => _bottomColor;
+            set => SetField(ref _bottomColor, value);
         }
 
         /// <summary>
@@ -149,18 +209,6 @@ namespace XREngine.Components.Scene.Mesh
         }
 
         /// <summary>
-        /// Debug mode: renders a simple gradient (no texture sampling) to verify the fullscreen triangle is drawing.
-        /// </summary>
-        [Category("Skybox")]
-        [DisplayName("Debug Solid Color")]
-        [Description("When enabled, the skybox draws a debug gradient instead of sampling the texture.")]
-        public bool DebugSolidColor
-        {
-            get => _debugSolidColor;
-            set => SetField(ref _debugSolidColor, value);
-        }
-
-        /// <summary>
         /// The material used to render the skybox.
         /// </summary>
         public XRMaterial? Material => _material;
@@ -172,14 +220,16 @@ namespace XREngine.Components.Scene.Mesh
             base.OnPropertyChanged(propName, prev, field);
             switch (propName)
             {
+                case nameof(Mode):
                 case nameof(Projection):
                 case nameof(Texture):
-                case nameof(DebugSolidColor):
                     RebuildMaterial();
                     break;
                 case nameof(Intensity):
                 case nameof(Rotation):
                 case nameof(CubemapArrayLayer):
+                case nameof(TopColor):
+                case nameof(BottomColor):
                     // These are set via uniforms, no rebuild needed
                     break;
             }
@@ -193,7 +243,7 @@ namespace XREngine.Components.Scene.Mesh
             if (!_loggedActivated)
             {
                 _loggedActivated = true;
-                Debug.Out(EOutputVerbosity.Normal, "[Skybox] Activated. DebugSolidColor={0} Pass={1}", _debugSolidColor, _renderCommand?.RenderPass ?? -1);
+                Debug.Out(EOutputVerbosity.Normal, "[Skybox] Activated. Mode={0} Pass={1}", _mode, _renderCommand?.RenderPass ?? -1);
             }
 
             RebuildAll();
@@ -277,7 +327,9 @@ namespace XREngine.Components.Scene.Mesh
         private void RebuildMaterial()
         {
             XRShader? vertexShader = GetVertexShader();
-            XRShader? fragmentShader = _debugSolidColor ? GetDebugShader() : GetFragmentShaderForProjection(_projection);
+            XRShader? fragmentShader = _mode == ESkyboxMode.Texture
+                ? GetFragmentShaderForProjection(_projection)
+                : GetGradientShader();
             
             if (vertexShader is null || fragmentShader is null)
             {
@@ -285,7 +337,7 @@ namespace XREngine.Components.Scene.Mesh
                 return;
             }
 
-            XRTexture? tex = _debugSolidColor ? null : (_texture ?? CreateDefaultTexture(_projection));
+            XRTexture? tex = _mode == ESkyboxMode.Texture ? (_texture ?? CreateDefaultTexture(_projection)) : null;
 
             RenderingParameters renderParams = new()
             {
@@ -294,8 +346,7 @@ namespace XREngine.Components.Scene.Mesh
                 {
                     Enabled = ERenderParamUsage.Enabled,
                     UpdateDepth = false,
-                    // In normal mode we want the sky behind geometry; in debug mode we want a definitive signal.
-                    Function = _debugSolidColor ? EComparison.Always : EComparison.Lequal,
+                    Function = EComparison.Lequal,
                 },
                 // Skybox fragment shaders reconstruct view rays, so they require camera matrices.
                 RequiredEngineUniforms = EUniformRequirements.Camera,
@@ -303,7 +354,7 @@ namespace XREngine.Components.Scene.Mesh
 
             _material = new XRMaterial(tex is not null ? [tex] : [], vertexShader, fragmentShader)
             {
-                RenderPass = _debugSolidColor ? (int)EDefaultRenderPass.OpaqueForward : (int)EDefaultRenderPass.Background,
+                RenderPass = (int)EDefaultRenderPass.Background,
                 RenderOptions = renderParams,
             };
 
@@ -329,6 +380,14 @@ namespace XREngine.Components.Scene.Mesh
         {
             program.Uniform("SkyboxIntensity", _intensity);
             program.Uniform("SkyboxRotation", _rotation * MathF.PI / 180.0f);
+
+            if (_mode != ESkyboxMode.Texture)
+            {
+                Vector3 top = _topColor;
+                Vector3 bottom = _mode == ESkyboxMode.SolidColor ? _topColor : _bottomColor;
+                program.Uniform("SkyboxTopColor", top);
+                program.Uniform("SkyboxBottomColor", bottom);
+            }
             
             if (_projection == ESkyboxProjection.CubemapArray)
                 program.Uniform("CubemapLayer", _cubemapArrayLayer);
@@ -381,17 +440,17 @@ namespace XREngine.Components.Scene.Mesh
             return s_vertexShader;
         }
 
-        private static XRShader GetDebugShader()
+        private static XRShader GetGradientShader()
         {
-            if (s_debugShader is not null)
-                return s_debugShader;
-            
-            s_debugShader = Engine.Assets.LoadEngineAsset<XRShader>(
+            if (s_gradientShader is not null)
+                return s_gradientShader;
+
+            s_gradientShader = Engine.Assets.LoadEngineAsset<XRShader>(
                 JobPriority.Highest,
-                "Shaders", "Scene3D", "SkyboxDebug.fs");
+                "Shaders", "Scene3D", "SkyboxGradient.fs");
 
             // Inline fallback shader
-            return s_debugShader ??= new XRShader(EShaderType.Fragment, DebugShaderSource);
+            return s_gradientShader ??= new XRShader(EShaderType.Fragment, GradientShaderSource);
         }
 
         private static XRShader GetEquirectShader()
@@ -668,17 +727,35 @@ void main()
 }
 ";
 
-        private const string DebugShaderSource = @"
+        private const string GradientShaderSource = @"
 #version 450
 
 layout (location = 0) out vec3 OutColor;
 layout (location = 0) in vec3 FragClipPos;
 
+uniform float SkyboxIntensity = 1.0;
+uniform vec3 SkyboxTopColor = vec3(0.52, 0.74, 1.0);
+uniform vec3 SkyboxBottomColor = vec3(0.05, 0.06, 0.08);
+
+// Camera matrices
+uniform mat4 InverseViewMatrix;
+uniform mat4 ProjMatrix;
+
+vec3 GetWorldDirection(vec3 clipPos)
+{
+    mat4 invProj = inverse(ProjMatrix);
+    vec4 viewPos = invProj * vec4(clipPos.xy, 1.0, 1.0);
+    vec3 viewDir = normalize(viewPos.xyz / viewPos.w);
+    mat3 camRotation = mat3(InverseViewMatrix);
+    return normalize(camRotation * viewDir);
+}
+
 void main()
 {
-    float x = clamp(FragClipPos.x * 0.25 + 0.5, 0.0, 1.0);
-    float y = clamp(FragClipPos.y * 0.25 + 0.5, 0.0, 1.0);
-    OutColor = vec3(x, y, 1.0);
+    vec3 dir = GetWorldDirection(FragClipPos);
+    float t = clamp(dir.y * 0.5 + 0.5, 0.0, 1.0);
+    vec3 col = mix(SkyboxBottomColor, SkyboxTopColor, t);
+    OutColor = col * SkyboxIntensity;
 }
 ";
 

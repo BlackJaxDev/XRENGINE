@@ -356,8 +356,8 @@ namespace XREngine.Data.Trees
                 return;
             }
             RaycastCommands.Enqueue((segment, items, directTest, finishedCallback));
-            if (_raycastEnqueueDebugBudget-- > 0)
-                Trace.WriteLine($"[Octree.RaycastAsync] Enqueued command. QueueCount={RaycastCommands.Count}");
+            //if (_raycastEnqueueDebugBudget-- > 0)
+            //    Trace.WriteLine($"[Octree.RaycastAsync] Enqueued command. QueueCount={RaycastCommands.Count}");
         }
 
         public void Raycast(

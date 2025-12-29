@@ -16,6 +16,44 @@
                 "reveal": "silent"
             },
             "problemMatcher": "$msCompile"
+        },
+        {
+            "label": "start-server-no-debug",
+            "type": "shell",
+            "command": "cmd",
+            "args": [
+                "/c",
+                "start",
+                "\"XRE Server\"",
+                "cmd",
+                "/c",
+                "cd /d \"${workspaceFolder}\\XREngine.Editor\" && set XRE_NET_MODE=Server && \"${workspaceFolder}\\Build\\Editor\\Debug\\AnyCPU\\Debug\\net10.0-windows7.0\\XREngine.Editor.exe\""
+            ],
+            "dependsOn": "build",
+            "presentation": {
+                "reveal": "silent"
+            },
+            "isBackground": true,
+            "problemMatcher": []
+        },
+        {
+            "label": "start-client-no-debug",
+            "type": "shell",
+            "command": "cmd",
+            "args": [
+                "/c",
+                "start",
+                "\"XRE Client\"",
+                "cmd",
+                "/c",
+                "cd /d \"${workspaceFolder}\\XREngine.Editor\" && set XRE_NET_MODE=Client && \"${workspaceFolder}\\Build\\Editor\\Debug\\AnyCPU\\Debug\\net10.0-windows7.0\\XREngine.Editor.exe\""
+            ],
+            "dependsOn": "build",
+            "presentation": {
+                "reveal": "silent"
+            },
+            "isBackground": true,
+            "problemMatcher": []
         }
     ]
 }

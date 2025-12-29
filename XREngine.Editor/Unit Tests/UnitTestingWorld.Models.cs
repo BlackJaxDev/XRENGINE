@@ -1,4 +1,4 @@
-using Assimp;
+﻿using Assimp;
 using Extensions;
 using System.Numerics;
 using XREngine;
@@ -133,16 +133,25 @@ public static partial class UnitTestingWorld
             }
         }
 
-        public static void AddSkybox(SceneNode rootNode, XRTexture2D skyEquirect)
+        public static void AddSkybox(SceneNode rootNode, XRTexture2D? skyEquirect)
         {
             var skybox = new SceneNode(rootNode) { Name = "TestSkyboxNode" };
             if (!skybox.TryAddComponent<SkyboxComponent>(out var skyboxComp))
                 return;
 
             skyboxComp!.Name = "TestSkybox";
-            skyboxComp.Projection = ESkyboxProjection.Equirectangular;
-            skyboxComp.Texture = skyEquirect;
             skyboxComp.Intensity = 1.0f;
+
+            if (skyEquirect is null)
+            {
+                skyboxComp.Mode = ESkyboxMode.Gradient;
+            }
+            else
+            {
+                skyboxComp.Mode = ESkyboxMode.Texture;
+                skyboxComp.Projection = ESkyboxProjection.Equirectangular;
+                skyboxComp.Texture = skyEquirect;
+            }
         }
 
         private static void OnFinishedAvatarAsync(Task<(SceneNode? rootNode, IReadOnlyCollection<XRMaterial> materials, IReadOnlyCollection<XRMesh> meshes)> task)
