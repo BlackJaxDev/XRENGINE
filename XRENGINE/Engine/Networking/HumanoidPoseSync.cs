@@ -402,12 +402,13 @@ namespace XREngine.Networking
                 short ly = root.LocalY;
                 short lz = root.LocalZ;
                 ushort yaw = root.Yaw;
+                short dx = 0, dy = 0, dz = 0;
 
-                if ((rootMask & 1) != 0 && !TryReadDeltaValue(reader, settings.PositionSmallThreshold, settings.SmallDeltaBits, forceFull: flags.HasFlag(HumanoidPoseFlags.ForceResend), out short dx))
+                if ((rootMask & 1) != 0 && !TryReadDeltaValue(reader, settings.PositionSmallThreshold, settings.SmallDeltaBits, forceFull: flags.HasFlag(HumanoidPoseFlags.ForceResend), out dx))
                     return false;
-                if ((rootMask & (1 << 1)) != 0 && !TryReadDeltaValue(reader, settings.PositionSmallThreshold, settings.SmallDeltaBits, forceFull: flags.HasFlag(HumanoidPoseFlags.ForceResend), out short dy))
+                if ((rootMask & (1 << 1)) != 0 && !TryReadDeltaValue(reader, settings.PositionSmallThreshold, settings.SmallDeltaBits, forceFull: flags.HasFlag(HumanoidPoseFlags.ForceResend), out dy))
                     return false;
-                if ((rootMask & (1 << 2)) != 0 && !TryReadDeltaValue(reader, settings.PositionSmallThreshold, settings.SmallDeltaBits, forceFull: flags.HasFlag(HumanoidPoseFlags.ForceResend), out short dz))
+                if ((rootMask & (1 << 2)) != 0 && !TryReadDeltaValue(reader, settings.PositionSmallThreshold, settings.SmallDeltaBits, forceFull: flags.HasFlag(HumanoidPoseFlags.ForceResend), out dz))
                     return false;
                 if ((rootMask & (1 << 3)) != 0 && !TryReadYawDelta(reader, root.Yaw, settings.YawSmallThreshold, settings.SmallDeltaBits, flags.HasFlag(HumanoidPoseFlags.ForceResend), out yaw))
                     return false;

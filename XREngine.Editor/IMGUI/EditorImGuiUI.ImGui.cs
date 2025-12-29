@@ -688,7 +688,7 @@ public static partial class EditorImGuiUI
             string label;
             bool sandboxMode = Engine.CurrentProject is null;
             if (sandboxMode)
-                label = "Sandbox mode (engine-global; cannot build)";
+                label = "Sandbox mode";
             else
                 label = $"Project: {Engine.CurrentProject!.ProjectName}";
 

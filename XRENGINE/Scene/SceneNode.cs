@@ -129,6 +129,18 @@ namespace XREngine.Scene
             set => SetField(ref _isActiveSelf, value);
         }
 
+        private bool _isEditorOnly;
+        /// <summary>
+        /// If true, this node is editor-only (gizmos, tools, editor UI) and should not be loaded into
+        /// the normal visible scene graph at runtime. The world instance may automatically attach it
+        /// to its hidden editor scene instead.
+        /// </summary>
+        public bool IsEditorOnly
+        {
+            get => _isEditorOnly;
+            set => SetField(ref _isEditorOnly, value);
+        }
+
         /// <summary>
         /// If the scene node is active in the scene hierarchy. Dependent on the IsActiveSelf property of this scene node and all of its ancestors. 
         /// If any ancestor is inactive, this will return false. 

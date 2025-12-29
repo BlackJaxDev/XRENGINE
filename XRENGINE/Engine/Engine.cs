@@ -612,10 +612,10 @@ namespace XREngine
 
         private static void ProcessPendingMainThreadWork()
         {
-            using var scope = Engine.Profiler.Start();
+            //using var scope = Engine.Profiler.Start();
 
             // Execute main-thread-affinity jobs scheduled via the job system
-            Jobs.ProcessMainThreadJobs();
+            //Jobs.ProcessMainThreadJobs();
         }
 
         public static void CreateWindows(List<GameWindowStartupSettings> windows)

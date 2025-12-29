@@ -265,16 +265,16 @@ namespace XREngine.Timers
             // Wait for the collect-visible thread to finish swapping buffers.
             while (!_swapDone.Wait(0))
             {
-                Engine.ProcessMainThreadTasks();
-                Thread.Yield();
+                //Engine.ProcessMainThreadTasks();
+                //Thread.Yield();
             }
             _swapDone.Reset();
 
             // Suspend this thread until a render is dispatched, draining queued work between polls.
             while (!DispatchRender())
             {
-                Engine.ProcessMainThreadTasks();
-                Thread.Yield();
+                //Engine.ProcessMainThreadTasks();
+                //Thread.Yield();
             }
 
             // Inform the update thread that the render is done
@@ -334,6 +334,7 @@ namespace XREngine.Timers
                 if (dispatch)
                 {
                     //Debug.Out("Dispatching render.");
+                    using var sample = Engine.Profiler.Start("EngineTimer.DispatchRender");
 
                     Render.Delta = elapsed;
                     Render.LastTimestamp = timestamp;
@@ -379,7 +380,10 @@ namespace XREngine.Timers
         }
 
         private void DispatchFixedUpdate()
-            => FixedUpdate?.Invoke();
+        {
+            using var sample = Engine.Profiler.Start("EngineTimer.DispatchFixedUpdate");
+            FixedUpdate?.Invoke();
+        }
 
         public void DispatchUpdate()
         {

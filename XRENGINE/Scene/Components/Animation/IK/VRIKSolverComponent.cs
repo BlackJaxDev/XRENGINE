@@ -213,9 +213,11 @@ namespace XREngine.Components.Animation
             }
             else
             {
-                tfm.TargetTranslation = position;
-                if (rotation.HasValue)
-                    tfm.TargetRotation = rotation.Value;
+                // TransformBase doesn't have TargetTranslation/TargetRotation, set via world matrix
+                Matrix4x4 matrix = rotation.HasValue
+                    ? Matrix4x4.CreateFromQuaternion(rotation.Value) * Matrix4x4.CreateTranslation(position)
+                    : Matrix4x4.CreateTranslation(position);
+                tfm.DeriveWorldMatrix(matrix);
             }
         }
 
@@ -251,13 +253,13 @@ namespace XREngine.Components.Animation
                 if (payload.Length - offset < 6)
                     break;
 
-                HumanoidPoseFlags flags = (HumanoidPoseFlags)BitConverter.ToUInt16(payload[offset + 2..]);
+                HumanoidPoseFlags flags = (HumanoidPoseFlags)BitConverter.ToUInt16(payload[(offset + 2)..]);
                 bool isBaseline = flags.HasFlag(HumanoidPoseFlags.Baseline);
 
                 bool parsed;
-                QuantizedHumanoidPose pose;
-                HumanoidPoseAvatarHeader header;
-                int consumed;
+                QuantizedHumanoidPose pose = default;
+                HumanoidPoseAvatarHeader header = default;
+                int consumed = 0;
 
                 if (isBaseline)
                     parsed = HumanoidPoseCodec.TryReadBaselineAvatar(payload[offset..], out header, out pose, out consumed);

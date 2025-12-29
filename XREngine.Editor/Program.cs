@@ -3,6 +3,11 @@ using Newtonsoft.Json.Converters;
 using System;
 using System.Numerics;
 using XREngine;
+using XREngine.Components;
+using XREngine.Components.Lights;
+using XREngine.Components.Scene.Mesh;
+using XREngine.Data.Colors;
+using XREngine.Data.Core;
 using XREngine.Editor;
 using XREngine.Native;
 using XREngine.Rendering;
@@ -16,6 +21,21 @@ using static XREngine.Rendering.XRWorldInstance;
 internal class Program
 {
     private const string UnitTestingWorldSettingsFileName = "UnitTestingWorldSettings.json";
+
+    /// <summary>
+    /// Determines which world to load on startup.
+    /// </summary>
+    public enum EWorldMode
+    {
+        /// <summary>
+        /// Load a default empty world (default behavior).
+        /// </summary>
+        Default,
+        /// <summary>
+        /// Load the unit testing world using the JSON config file.
+        /// </summary>
+        UnitTesting,
+    }
 
     /// <summary>
     /// This project serves as a hardcoded game client for development purposes.
@@ -36,7 +56,27 @@ internal class Program
         RenderInfo3D.ConstructorOverride = RenderInfo3DConstructor;
         CodeManager.Instance.CompileOnChange = false;
         JsonConvert.DefaultSettings = DefaultJsonSettings;
+
+        // Determine world mode from command line or environment variable
+        EWorldMode worldMode = ResolveWorldMode(args);
+
+        // Note: engine startup settings (render API, update rates, etc.) are sourced from UnitTestingWorld.Toggles
+        // via GetEngineSettings(). Load the JSON settings for both Default and UnitTesting modes so defaults don't
+        // accidentally pick unsupported/undesired values and render a black screen.
         LoadUnitTestingSettings(false);
+        XRWorld targetWorld;
+
+        if (worldMode == EWorldMode.UnitTesting)
+        {
+            targetWorld = UnitTestingWorld.CreateSelectedWorld(true, false);
+            Debug.Out("Loading Unit Testing World...");
+        }
+        else
+        {
+            targetWorld = CreateDefaultEmptyWorld();
+            Debug.Out("Loading Default Empty World...");
+        }
+
         GPURenderPassCollection.ConfigureIndirectDebug(opts =>
         {
             //opts.DisableCountDrawPath = true;
@@ -49,7 +89,91 @@ internal class Program
             opts.SkipIndirectTailClear = false;
             opts.DisableCountDrawPath = false;
         });
-        Engine.Run(/*Engine.LoadOrGenerateGameSettings(() => */GetEngineSettings(UnitTestingWorld.CreateSelectedWorld(true, false)/*), "startup", false*/), Engine.LoadOrGenerateGameState());
+        Engine.Run(GetEngineSettings(targetWorld), Engine.LoadOrGenerateGameState());
+    }
+
+    /// <summary>
+    /// Resolves the world mode from command line arguments or environment variables.
+    /// </summary>
+    private static EWorldMode ResolveWorldMode(string[] args)
+    {
+        // Check command line arguments first
+        foreach (string arg in args)
+        {
+            string lower = arg.ToLowerInvariant();
+            if (lower == "--unit-testing" || lower == "-unittest" || lower == "--unittest")
+                return EWorldMode.UnitTesting;
+            if (lower == "--default" || lower == "-default")
+                return EWorldMode.Default;
+        }
+
+        // Check environment variable
+        string? worldModeEnv = Environment.GetEnvironmentVariable("XRE_WORLD_MODE");
+        if (!string.IsNullOrWhiteSpace(worldModeEnv) &&
+            Enum.TryParse<EWorldMode>(worldModeEnv, true, out var mode))
+        {
+            Debug.Out($"World mode set to {mode} via XRE_WORLD_MODE environment variable.");
+            return mode;
+        }
+
+        // Default to empty world
+        return EWorldMode.Default;
+    }
+
+    /// <summary>
+    /// Creates a default empty world with basic lighting and a camera.
+    /// </summary>
+    private static XRWorld CreateDefaultEmptyWorld()
+    {
+        UnitTestingWorld.ApplyRenderSettingsFromToggles();
+
+        var scene = new XRScene("Main Scene");
+        var rootNode = new SceneNode("Root Node");
+        scene.RootNodes.Add(rootNode);
+
+        UnitTestingWorld.Toggles.VRPawn = false;
+        UnitTestingWorld.Toggles.Locomotion = false;
+
+        SceneNode? characterPawnModelParentNode = UnitTestingWorld.Pawns.CreatePlayerPawn(true, false, rootNode);
+
+        UnitTestingWorld.Lighting.AddDirLight(rootNode);
+        UnitTestingWorld.Lighting.AddLightProbes(rootNode, 1, 1, 1, 10, 10, 10, new Vector3(0.0f, 50.0f, 0.0f));
+        UnitTestingWorld.Models.AddSkybox(rootNode, null);
+
+        AddDefaultGridFloor(rootNode);
+
+        var world = new XRWorld("Default World", scene);
+        Undo.TrackWorld(world);
+        return world;
+    }
+
+    private static void AddDefaultGridFloor(SceneNode rootNode)
+    {
+        var gridNode = rootNode.NewChild("GridFloor");
+        var debug = gridNode.AddComponent<DebugDrawComponent>()!;
+
+        const float extent = 50.0f;
+        const float step = 1.0f;
+        const int majorEvery = 10;
+        const float y = 0.0f;
+
+        for (float x = -extent; x <= extent; x += step)
+        {
+            int xi = (int)MathF.Round(x);
+            bool isAxis = xi == 0;
+            bool isMajor = (xi % majorEvery) == 0;
+            var color = isAxis ? ColorF4.White : isMajor ? ColorF4.Gray : ColorF4.DarkGray;
+            debug.AddLine(new Vector3(x, y, -extent), new Vector3(x, y, extent), color);
+        }
+
+        for (float z = -extent; z <= extent; z += step)
+        {
+            int zi = (int)MathF.Round(z);
+            bool isAxis = zi == 0;
+            bool isMajor = (zi % majorEvery) == 0;
+            var color = isAxis ? ColorF4.White : isMajor ? ColorF4.Gray : ColorF4.DarkGray;
+            debug.AddLine(new Vector3(-extent, y, z), new Vector3(extent, y, z), color);
+        }
     }
 
     private static void TargetWorldInstance_AnyTransformWorldMatrixChanged(XRWorldInstance instance, TransformBase tfm, Matrix4x4 mtx)

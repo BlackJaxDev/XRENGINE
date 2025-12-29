@@ -14,7 +14,7 @@ namespace XREngine.Editor;
 
 public static partial class UnitTestingWorld
 {
-    private static void ApplyRenderSettingsFromToggles()
+    internal static void ApplyRenderSettingsFromToggles()
     {
         var s = Engine.Rendering.Settings;
         s.RenderMesh3DBounds = Toggles.RenderMeshBounds;
