@@ -5,6 +5,12 @@ using XREngine.Components;
 
 namespace XREngine.Networking
 {
+    public enum HumanoidPosePacketKind : byte
+    {
+        Baseline,
+        Delta
+    }
+
     [MemoryPackable]
     public sealed partial class PlayerJoinRequest
     {
@@ -156,5 +162,26 @@ namespace XREngine.Networking
         /// Optional SAS/presigned token appended when constructing provider-specific URLs.
         /// </summary>
         public string? AccessToken { get; set; }
+    }
+
+    [MemoryPackable]
+    public sealed partial class HumanoidPoseFrame
+    {
+        /// <summary>
+        /// Type of frame being transmitted. Baseline frames carry full poses, delta frames carry compact deltas.
+        /// </summary>
+        public HumanoidPosePacketKind Kind { get; set; }
+        /// <summary>
+        /// Identifier for the baseline keyframe this delta references. For baseline frames, this is the new baseline sequence value.
+        /// </summary>
+        public ushort BaselineSequence { get; set; }
+        /// <summary>
+        /// Number of avatars packed into <see cref="Payload"/>.
+        /// </summary>
+        public int AvatarCount { get; set; }
+        /// <summary>
+        /// Bit-packed avatar payload produced by <c>HumanoidPoseCodec</c>.
+        /// </summary>
+        public byte[] Payload { get; set; } = Array.Empty<byte>();
     }
 }
