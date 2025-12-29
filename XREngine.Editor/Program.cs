@@ -131,6 +131,10 @@ internal class Program
         var rootNode = new SceneNode("Root Node");
         scene.RootNodes.Add(rootNode);
 
+        // Enable LAN discovery in the default world.
+        // This component auto-starts listening when activated.
+        rootNode.AddComponent<NetworkDiscoveryComponent>("Network Discovery");
+
         UnitTestingWorld.Toggles.VRPawn = false;
         UnitTestingWorld.Toggles.Locomotion = false;
 
@@ -271,6 +275,15 @@ internal class Program
             NetworkingType = GameStartupSettings.ENetworkingType.Client,
         };
 
+        // Allow overriding the window title for multi-instance local testing.
+        // Example: launch a 2nd client with XRE_WINDOW_TITLE="XRE Editor (Client 2)".
+        string? windowTitleOverride = Environment.GetEnvironmentVariable("XRE_WINDOW_TITLE");
+        if (!string.IsNullOrWhiteSpace(windowTitleOverride) && settings.StartupWindows.Count > 0)
+        {
+            settings.StartupWindows[0].WindowTitle = windowTitleOverride;
+            Debug.Out($"Window title overridden to '{windowTitleOverride}' via XRE_WINDOW_TITLE.");
+        }
+
         // Apply engine settings
         Engine.Rendering.Settings.UseDebugOpaquePipeline = ResolveDebugOpaquePipelineSetting();
         Engine.Rendering.Settings.OutputVerbosity = EOutputVerbosity.Verbose;
@@ -283,6 +296,25 @@ internal class Program
             settings.NetworkingType = mode;
             Debug.Out($"Networking mode overridden to {mode} via XRE_NET_MODE.");
         }
+
+        // Allow overriding UDP ports to support multi-instance local testing.
+        // Example: launch a 2nd client with XRE_UDP_CLIENT_RECEIVE_PORT=5002.
+        if (TryGetIntEnv("XRE_UDP_CLIENT_RECEIVE_PORT", out int udpClientReceivePort))
+        {
+            settings.UdpClientRecievePort = udpClientReceivePort;
+            Debug.Out($"UDP client receive port overridden to {udpClientReceivePort} via XRE_UDP_CLIENT_RECEIVE_PORT.");
+        }
+        if (TryGetIntEnv("XRE_UDP_SERVER_SEND_PORT", out int udpServerSendPort))
+        {
+            settings.UdpServerSendPort = udpServerSendPort;
+            Debug.Out($"UDP server send port overridden to {udpServerSendPort} via XRE_UDP_SERVER_SEND_PORT.");
+        }
+        if (TryGetIntEnv("XRE_UDP_MULTICAST_PORT", out int udpMulticastPort))
+        {
+            settings.UdpMulticastPort = udpMulticastPort;
+            Debug.Out($"UDP multicast port overridden to {udpMulticastPort} via XRE_UDP_MULTICAST_PORT.");
+        }
+
         if (UnitTestingWorld.Toggles.VRPawn && !UnitTestingWorld.Toggles.EmulatedVRPawn)
         {
             if (UnitTestingWorld.Toggles.UseOpenXR)
@@ -297,6 +329,13 @@ internal class Program
             }
         }
         return settings;
+    }
+
+    private static bool TryGetIntEnv(string name, out int value)
+    {
+        value = default;
+        string? raw = Environment.GetEnvironmentVariable(name);
+        return !string.IsNullOrWhiteSpace(raw) && int.TryParse(raw, out value);
     }
 
     private static bool ResolveDebugOpaquePipelineSetting()

@@ -27,31 +27,71 @@
             }
         },
         {
-            "name": "Debug Client (Server runs separately)",
+            "name": "Debug Client (Server & other client run separately)",
             "type": "coreclr",
             "request": "launch",
-            "preLaunchTask": "start-server-no-debug",
+            "preLaunchTask": "prep-debug-client-with-server-and-client",
             "program": "${workspaceFolder}/Build/Editor/Debug/AnyCPU/Debug/net10.0-windows7.0/XREngine.Editor.exe",
             "args": [],
             "cwd": "${workspaceFolder}/XREngine.Editor",
             "console": "internalConsole",
             "stopAtEntry": false,
             "env": {
-                "XRE_NET_MODE": "Client"
+                "XRE_NET_MODE": "Client",
+                "XRE_UDP_CLIENT_RECEIVE_PORT": "5001",
+                "XRE_WINDOW_TITLE": "XRE Editor (Client - Debug)"
             }
         },
         {
-            "name": "Debug Server (Client runs separately)",
+            "name": "Debug Server (Clients runs separately)",
             "type": "coreclr",
             "request": "launch",
-            "preLaunchTask": "start-client-no-debug",
+            "preLaunchTask": "prep-debug-server-with-2-clients",
+            "program": "${workspaceFolder}/XREngine.Server/bin/Debug/net10.0-windows10.0.26100.0/XREngine.Server.exe",
+            "args": [],
+            "cwd": "${workspaceFolder}/XREngine.Server",
+            "console": "integratedTerminal",
+            "stopAtEntry": false
+        },
+        {
+            "name": "Debug Server (Server only)",
+            "type": "coreclr",
+            "request": "launch",
+            "preLaunchTask": "prep-debug-server-only",
+            "program": "${workspaceFolder}/XREngine.Server/bin/Debug/net10.0-windows10.0.26100.0/XREngine.Server.exe",
+            "args": [],
+            "cwd": "${workspaceFolder}/XREngine.Server",
+            "console": "integratedTerminal",
+            "stopAtEntry": false
+        },
+        {
+            "name": "Debug P2P Client (Peer client separate, no server)",
+            "type": "coreclr",
+            "request": "launch",
+            "preLaunchTask": "prep-debug-p2p-client-with-peer",
             "program": "${workspaceFolder}/Build/Editor/Debug/AnyCPU/Debug/net10.0-windows7.0/XREngine.Editor.exe",
             "args": [],
             "cwd": "${workspaceFolder}/XREngine.Editor",
             "console": "internalConsole",
             "stopAtEntry": false,
             "env": {
-                "XRE_NET_MODE": "Server"
+                "XRE_NET_MODE": "P2PClient",
+                "XRE_UDP_CLIENT_RECEIVE_PORT": "5001",
+                "XRE_WINDOW_TITLE": "XRE Editor (P2P - Debug)"
+            }
+        },
+        {
+            "name": "Debug VRClient (Editor runs separately)",
+            "type": "coreclr",
+            "request": "launch",
+            "preLaunchTask": "prep-debug-vrclient-with-editor",
+            "program": "${workspaceFolder}/XREngine.VRClient/bin/Debug/net10.0-windows7.0/XREngine.VRClient.exe",
+            "args": [],
+            "cwd": "${workspaceFolder}/XREngine.VRClient",
+            "console": "integratedTerminal",
+            "stopAtEntry": false,
+            "env": {
+                "XRE_VRCLIENT_GAMENAME": "XREngine.Editor"
             }
         }
     ]

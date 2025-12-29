@@ -1,4 +1,5 @@
 ﻿using Extensions;
+using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Numerics;
 using System.Text;
@@ -8,11 +9,33 @@ namespace XREngine.Networking
 {
     public class VirtualizedConsoleUIComponent : UITextComponent
     {
+        private const int MaxFlushPerFrame = 200;
+        private readonly ConcurrentQueue<string> _pendingLines = new();
+        private bool _tickRegistered;
+        private bool _engineDebugHooked;
+
+        public bool HookEngineDebugOutput { get; set; } = true;
+
         public class ConsoleWriter(VirtualizedConsoleUIComponent comp) : TextWriter
         {
             public VirtualizedConsoleUIComponent Component { get; } = comp;
 
             public override Encoding Encoding { get; } = Encoding.UTF8;
+
+            public override void Write(string? value)
+            {
+                if (string.IsNullOrEmpty(value))
+                    return;
+
+                var lines = value.Split('\n');
+                if (lines.Length == 0)
+                    return;
+
+                Component.AddToLastItem(lines[0]);
+                for (int i = 1; i < lines.Length; i++)
+                    Component.AddItem(lines[i]);
+            }
+
             public override void Write(char value)
             {
                 bool newLine = value == '\n';
@@ -21,6 +44,9 @@ namespace XREngine.Networking
                 else
                     Component.AddToLastItem(value.ToString());
             }
+
+            public override void WriteLine(string? value)
+                => Write($"{value}\n");
         }
         public class TraceWriter(VirtualizedConsoleUIComponent comp) : System.Diagnostics.TraceListener
         {
@@ -75,6 +101,76 @@ namespace XREngine.Networking
             => (int)MathF.Ceiling(BoundableTransform.ActualHeight / FontHeight);
 
         public VirtualizedConsoleUIComponent() { }
+
+        protected override void OnBeginPlay()
+        {
+            base.OnBeginPlay();
+
+            if (HookEngineDebugOutput && !_engineDebugHooked)
+            {
+                foreach (var entry in XREngine.Debug.GetConsoleEntries())
+                    _pendingLines.Enqueue(entry.Message);
+
+                XREngine.Debug.ConsoleEntryAdded += OnEngineConsoleEntryAdded;
+                _engineDebugHooked = true;
+            }
+
+            RegisterTick();
+        }
+
+        protected override void OnEndPlay()
+        {
+            base.OnEndPlay();
+            UnhookEngineDebug();
+            UnregisterTick();
+        }
+
+        protected override void OnDestroying()
+        {
+            UnhookEngineDebug();
+            UnregisterTick();
+            base.OnDestroying();
+        }
+
+        private void OnEngineConsoleEntryAdded(LogEntry entry)
+            => _pendingLines.Enqueue(entry.Message);
+
+        private void UnhookEngineDebug()
+        {
+            if (!_engineDebugHooked)
+                return;
+
+            XREngine.Debug.ConsoleEntryAdded -= OnEngineConsoleEntryAdded;
+            _engineDebugHooked = false;
+        }
+
+        private void RegisterTick()
+        {
+            if (_tickRegistered)
+                return;
+
+            Engine.Time.Timer.UpdateFrame += FlushPending;
+            _tickRegistered = true;
+        }
+
+        private void UnregisterTick()
+        {
+            if (!_tickRegistered)
+                return;
+
+            Engine.Time.Timer.UpdateFrame -= FlushPending;
+            _tickRegistered = false;
+        }
+
+        private void FlushPending()
+        {
+            int flushed = 0;
+            while (flushed < MaxFlushPerFrame && _pendingLines.TryDequeue(out string? line))
+            {
+                AddItem(line);
+                flushed++;
+            }
+        }
 
         //protected override void OnTransformChanged()
         //{

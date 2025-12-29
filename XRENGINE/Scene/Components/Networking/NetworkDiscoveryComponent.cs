@@ -316,11 +316,22 @@ namespace XREngine.Components
         private async Task ListenLoopAsync(CancellationToken token)
         {
             using UdpClient client = new(AddressFamily.InterNetwork);
-            client.Client.SetSocketOption(SocketOptionLevel.Socket, SocketOptionName.ReuseAddress, true);
-            client.Client.Bind(new IPEndPoint(IPAddress.Any, _discoveryPort));
+            try
+            {
+                // Multiple local instances need to share the discovery port.
+                // On Windows this requires ReuseAddress + ExclusiveAddressUse=false before binding.
+                client.ExclusiveAddressUse = false;
+                client.Client.SetSocketOption(SocketOptionLevel.Socket, SocketOptionName.ReuseAddress, true);
+                client.Client.Bind(new IPEndPoint(IPAddress.Any, _discoveryPort));
 
-            if (IPAddress.TryParse(_multicastAddress, out IPAddress? multicast) && multicast.AddressFamily == AddressFamily.InterNetwork)
-                client.JoinMulticastGroup(multicast);
+                if (IPAddress.TryParse(_multicastAddress, out IPAddress? multicast) && multicast.AddressFamily == AddressFamily.InterNetwork)
+                    client.JoinMulticastGroup(multicast);
+            }
+            catch (Exception ex)
+            {
+                Debug.LogWarning($"[Discovery] Listener init error: {ex.Message}");
+                return;
+            }
 
             while (!token.IsCancellationRequested)
             {

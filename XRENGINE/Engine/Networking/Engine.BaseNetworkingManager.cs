@@ -314,9 +314,15 @@ namespace XREngine
             /// <param name="upMulticastServerPort"></param>
             protected void StartUdpMulticastReceiver(IPAddress serverIP, IPAddress udpMulticastServerIP, int upMulticastServerPort)
             {
-                UdpClient udpClient = new(upMulticastServerPort) { /*ExclusiveAddressUse = false,*/ MulticastLoopback = false };
-                //udpClient.Connect(serverIP, upMulticastServerPort);
-                //udpClient.Client.SetSocketOption(SocketOptionLevel.Socket, SocketOptionName.ReuseAddress, true);
+                // Multiple local clients need to share the same multicast port.
+                // On Windows this requires ReuseAddress + ExclusiveAddressUse=false before binding.
+                UdpClient udpClient = new(AddressFamily.InterNetwork)
+                {
+                    MulticastLoopback = false,
+                    ExclusiveAddressUse = false,
+                };
+                udpClient.Client.SetSocketOption(SocketOptionLevel.Socket, SocketOptionName.ReuseAddress, true);
+                udpClient.Client.Bind(new IPEndPoint(IPAddress.Any, upMulticastServerPort));
                 udpClient.JoinMulticastGroup(udpMulticastServerIP);
                 UdpReceiver = udpClient;
             }

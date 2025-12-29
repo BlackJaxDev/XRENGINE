@@ -2,6 +2,8 @@
 using Microsoft.AspNetCore.ResponseCompression;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
+using Newtonsoft.Json;
+using Newtonsoft.Json.Converters;
 using Silk.NET.OpenAL;
 using System.Numerics;
 using XREngine.Components;
@@ -19,9 +21,11 @@ using XREngine.Scene;
 using XREngine.Scene.Transforms;
 using XREngine.Networking.LoadBalance;
 using XREngine.Networking.LoadBalance.Balancers;
+using XREngine.Server;
 using static XREngine.GameStartupSettings;
 
 using System.Linq;
+using System.IO;
 namespace XREngine.Networking
 {
     /// <summary>
@@ -30,6 +34,8 @@ namespace XREngine.Networking
     /// </summary>
     public class Program
     {
+        private const string UnitTestingWorldSettingsFileName = "UnitTestingWorldSettings.json";
+
         //private static readonly CommandServer _loadBalancer;
 
         //static Program()
@@ -66,18 +72,46 @@ namespace XREngine.Networking
                 WebAppTask?.GetAwaiter().GetResult();
                 return;
             }
+
+            // Apply engine settings
+            Engine.Rendering.Settings.OutputVerbosity = EOutputVerbosity.Verbose;
+            Engine.Rendering.Settings.UseDebugOpaquePipeline = false;
+
             _worldDownloader = new WorldDownloadService();
             _instanceManager = new ServerInstanceManager(_worldDownloader);
             Engine.ServerInstanceResolver = ResolveServerInstance;
 
-            XRWorld initialWorld = enableDevRendering
-                ? UnitTestingWorld.CreateUnitTestWorld(false, true)
-                : new XRWorld("Headless Server World");
+            //JsonConvert.DefaultSettings = DefaultJsonSettings;
 
-            if (enableDevRendering)
-                CreateConsoleUI(initialWorld.Scenes[0].RootNodes[0]);
+            // Determine world mode from command line or environment variable
+            //EWorldMode worldMode = ResolveWorldMode(args);
 
-            Engine.Run(/*Engine.LoadOrGenerateGameSettings(() => */GetEngineSettings(initialWorld, enableDevRendering)/*, "startup", false)*/, Engine.LoadOrGenerateGameState());
+            // Note: engine startup settings (render API, update rates, etc.) are sourced from UnitTestingWorld.Toggles
+            // via GetEngineSettings(). Load the JSON settings for both Default and UnitTesting modes so defaults don't
+            // accidentally pick unsupported/undesired values and render a black screen.
+            LoadUnitTestingSettings(false);
+            XRWorld targetWorld = CreateWorld();
+
+            Engine.Run(GetEngineSettings(targetWorld), Engine.LoadOrGenerateGameState());
+        }
+
+        private static void LoadUnitTestingSettings(bool writeBackAfterRead)
+        {
+            string dir = Environment.CurrentDirectory;
+            string fileName = UnitTestingWorldSettingsFileName;
+            string filePath = Path.Combine(dir, "Assets", fileName);
+            if (!File.Exists(filePath))
+                File.WriteAllText(filePath, JsonConvert.SerializeObject(UnitTestingWorld.Toggles, Formatting.Indented));
+            else
+            {
+                string? content = File.ReadAllText(filePath);
+                if (content is not null)
+                {
+                    UnitTestingWorld.Toggles = JsonConvert.DeserializeObject<UnitTestingWorld.Settings>(content) ?? new UnitTestingWorld.Settings();
+                    if (writeBackAfterRead)
+                        File.WriteAllText(filePath, JsonConvert.SerializeObject(UnitTestingWorld.Toggles, Formatting.Indented));
+                }
+            }
         }
 
         private static Task BuildWebApi()
@@ -156,19 +190,77 @@ namespace XREngine.Networking
             _loadBalancerService.RegisterOrUpdate(server);
         }
 
+        /// <summary>
+        /// Creates a test world with a variety of objects for testing purposes.
+        /// </summary>
+        /// <returns></returns>
+        public static XRWorld CreateWorld()
+        {
+            UnitTestingWorld.ApplyRenderSettingsFromToggles();
+
+            var scene = new XRScene("Main Scene");
+            var rootNode = new SceneNode("Root Node");
+            scene.RootNodes.Add(rootNode);
+
+            SceneNode? characterPawnModelParentNode = UnitTestingWorld.Pawns.CreatePlayerPawn(false, true, rootNode);
+
+            UnitTestingWorld.Lighting.AddDirLight(rootNode);
+            UnitTestingWorld.Lighting.AddLightProbes(rootNode, 1, 1, 1, 10, 10, 10, new Vector3(0.0f, 50.0f, 0.0f));
+            UnitTestingWorld.Models.AddSkybox(rootNode, null);
+            CreateConsoleUI(rootNode);
+            
+            var world = new XRWorld("Default World", scene);
+            return world;
+        }
+
         static XRWorld CreateServerDebugWorld()
         {
-            string desktopDir = Environment.GetFolderPath(Environment.SpecialFolder.DesktopDirectory);
-
             var scene = new XRScene("Server Console Scene");
             var rootNode = new SceneNode("Root Node");
             scene.RootNodes.Add(rootNode);
 
+            // Add simple 3D debug geometry (no assets) so we can visually confirm the
+            // camera + viewport + render pipeline are working even if UI is disabled.
+            AddDefaultGridFloor(rootNode);
+
             SceneNode cameraNode = CreateCamera(rootNode, out var camComp);
-            var pawn = CreateDesktopViewerPawn(cameraNode);
-            CreateConsoleUI(rootNode, camComp!, pawn);
+            var pawn = CreateDesktopViewerPawn(cameraNode, camComp);
+
+            // Create UI canvas as a root scene node (like Editor does) for proper screen-space rendering
+            var uiRootNode = new SceneNode("Server UI Root");
+            scene.RootNodes.Add(uiRootNode);
+            CreateConsoleUI(uiRootNode, camComp!, pawn);
 
             return new XRWorld("Server World", scene);
+        }
+
+        private static void AddDefaultGridFloor(SceneNode rootNode)
+        {
+            var gridNode = rootNode.NewChild("GridFloor");
+            var debug = gridNode.AddComponent<DebugDrawComponent>()!;
+
+            const float extent = 50.0f;
+            const float step = 1.0f;
+            const int majorEvery = 10;
+            const float y = 0.0f;
+
+            for (float x = -extent; x <= extent; x += step)
+            {
+                int xi = (int)MathF.Round(x);
+                bool isAxis = xi == 0;
+                bool isMajor = (xi % majorEvery) == 0;
+                var color = isAxis ? ColorF4.White : isMajor ? ColorF4.Gray : ColorF4.DarkGray;
+                debug.AddLine(new Vector3(x, y, -extent), new Vector3(x, y, extent), color);
+            }
+
+            for (float z = -extent; z <= extent; z += step)
+            {
+                int zi = (int)MathF.Round(z);
+                bool isAxis = zi == 0;
+                bool isMajor = (zi % majorEvery) == 0;
+                var color = isAxis ? ColorF4.White : isMajor ? ColorF4.Gray : ColorF4.DarkGray;
+                debug.AddLine(new Vector3(-extent, y, z), new Vector3(extent, y, z), color);
+            }
         }
 
         private static SceneNode CreateCamera(SceneNode parentNode, out CameraComponent? camComp, bool smoothed = true)
@@ -191,7 +283,7 @@ namespace XREngine.Networking
             return cameraNode;
         }
 
-        private static EditorFlyingCameraPawnComponent CreateDesktopViewerPawn(SceneNode cameraNode)
+        private static EditorFlyingCameraPawnComponent CreateDesktopViewerPawn(SceneNode cameraNode, CameraComponent? camera)
         {
             var pawnComp = cameraNode.AddComponent<EditorFlyingCameraPawnComponent>();
             var listener = cameraNode.AddComponent<AudioListenerComponent>()!;
@@ -201,14 +293,20 @@ namespace XREngine.Networking
             listener.SpeedOfSound = 343.3f;
 
             pawnComp!.Name = "TestPawn";
-            pawnComp.EnqueuePossessionByLocalPlayer(ELocalPlayerIndex.One);
+            // Ensure GetCamera() resolves to the intended camera component before possession.
+            if (camera is not null)
+                pawnComp.CameraComponent = camera;
+
+            // Use direct possession (not queued) so the viewport camera wiring is deterministic.
+            pawnComp.PossessByLocalPlayer(ELocalPlayerIndex.One);
             return pawnComp;
         }
 
-        private static void CreateConsoleUI(SceneNode rootNode, out UICanvasComponent uiCanvas, out UICanvasInputComponent input)
+        private static void CreateConsoleUI(SceneNode uiRootNode, out UICanvasComponent uiCanvas, out UICanvasInputComponent input)
         {
-            var rootCanvasNode = new SceneNode(rootNode) { Name = "Root Server UI Node" };
-            uiCanvas = rootCanvasNode.AddComponent<UICanvasComponent>("Console Canvas")!;
+            // Add the canvas component directly to the root node (matching Editor pattern)
+            uiCanvas = uiRootNode.AddComponent<UICanvasComponent>("Console Canvas")!;
+            uiCanvas.IsActive = true;
             var canvasTfm = uiCanvas.CanvasTransform;
             canvasTfm.DrawSpace = ECanvasDrawSpace.Screen;
             canvasTfm.Width = 1920.0f;
@@ -216,20 +314,26 @@ namespace XREngine.Networking
             canvasTfm.CameraDrawSpaceDistance = 10.0f;
             canvasTfm.Padding = new Vector4(0.0f);
 
-            AddFPSText(null, rootCanvasNode);
+            // Large obvious test label in center to verify text rendering works
+            //AddTestLabel(uiRootNode);
+
+            AddFPSText(null, uiRootNode);
 
             //Add input handler
-            input = rootCanvasNode.AddComponent<UICanvasInputComponent>()!;
-            var outputLogNode = rootCanvasNode.NewChild(out UIMaterialComponent outputLogBackground);
-            outputLogBackground.Material = BackgroundMaterial;
+            input = uiRootNode.AddComponent<UICanvasInputComponent>()!;
+            input.IsActive = true;
+            //var outputLogNode = uiRootNode.NewChild(out UIMaterialComponent outputLogBackground);
+            //outputLogBackground.Material = BackgroundMaterial;
+            //outputLogBackground.IsActive = true;
 
-            var logTextNode = outputLogNode.NewChild(out VirtualizedConsoleUIComponent outputLogComp);
+            var logTextNode = uiRootNode.NewChild(out VirtualizedConsoleUIComponent outputLogComp);
             outputLogComp.HorizontalAlignment = EHorizontalAlignment.Left;
             outputLogComp.VerticalAlignment = EVerticalAlignment.Top;
             outputLogComp.WrapMode = FontGlyphSet.EWrapMode.None;
-            outputLogComp.Color = new ColorF4(0.0f, 0.0f, 0.0f, 1.0f);
+            outputLogComp.Color = ColorF4.White;
             outputLogComp.FontSize = 16;
             outputLogComp.SetAsConsoleOut();
+            outputLogComp.IsActive = true;
             var logTfm = outputLogComp.BoundableTransform;
             logTfm.MinAnchor = new Vector2(0.0f, 0.0f);
             logTfm.MaxAnchor = new Vector2(1.0f, 1.0f);
@@ -243,11 +347,9 @@ namespace XREngine.Networking
         private static void CreateConsoleUI(SceneNode rootNode)
         {
             CreateConsoleUI(rootNode, out UICanvasComponent uiCanvas, out UICanvasInputComponent input);
-
             var pawnForInput = Engine.State.MainPlayer.ControlledPawn;
             var pawnCam = pawnForInput?.GetSiblingComponent<CameraComponent>(false);
-            if (pawnCam is not null)
-                pawnCam.UserInterface = uiCanvas;
+            pawnCam?.UserInterface = uiCanvas;
             input.OwningPawn = pawnForInput;
         }
 
@@ -260,9 +362,7 @@ namespace XREngine.Networking
         private static void CreateConsoleUI(SceneNode rootNode, CameraComponent camComp, PawnComponent? pawnForInput = null)
         {
             CreateConsoleUI(rootNode, out UICanvasComponent uiCanvas, out UICanvasInputComponent input);
-
-            if (camComp is not null)
-                camComp.UserInterface = uiCanvas;
+            camComp?.UserInterface = uiCanvas;
             input.OwningPawn = pawnForInput;
         }
 
@@ -271,9 +371,10 @@ namespace XREngine.Networking
         {
             SceneNode textNode = new(parentNode) { Name = "TestTextNode" };
             UITextComponent text = textNode.AddComponent<UITextComponent>()!;
+            text.IsActive = true;
             text.Font = font;
             text.FontSize = 22;
-            text.Color = new ColorF4(0.0f, 0.0f, 0.0f, 1.0f);
+            text.Color = ColorF4.White;
             text.WrapMode = FontGlyphSet.EWrapMode.None;
             text.RegisterAnimationTick<UITextComponent>(TickFPS);
             var textTransform = textNode.GetTransformAs<UIBoundableTransform>(true)!;
@@ -294,6 +395,32 @@ namespace XREngine.Networking
             if (_fpsAvg.Count > 60)
                 _fpsAvg.Dequeue();
             t.Text = $"Update: {MathF.Round(_fpsAvg.Sum() / _fpsAvg.Count)}hz";
+        }
+
+        /// <summary>
+        /// Adds a large, obvious static test label in the center of the screen
+        /// to verify that text rendering works at all on the server.
+        /// </summary>
+        private static UITextComponent AddTestLabel(SceneNode parentNode)
+        {
+            SceneNode labelNode = new(parentNode) { Name = "ServerTestLabel" };
+            UITextComponent label = labelNode.AddComponent<UITextComponent>()!;
+            label.IsActive = true;
+            label.FontSize = 48;
+            label.Color = ColorF4.Yellow;
+            label.Text = "=== XRE SERVER RUNNING ===";
+            label.WrapMode = FontGlyphSet.EWrapMode.None;
+            label.HorizontalAlignment = EHorizontalAlignment.Center;
+            label.VerticalAlignment = EVerticalAlignment.Center;
+
+            var tfm = labelNode.GetTransformAs<UIBoundableTransform>(true)!;
+            // Center anchors
+            tfm.MinAnchor = new Vector2(0.5f, 0.5f);
+            tfm.MaxAnchor = new Vector2(0.5f, 0.5f);
+            tfm.NormalizedPivot = new Vector2(0.5f, 0.5f);
+            tfm.Width = null;
+            tfm.Height = null;
+            return label;
         }
 
         private static XRMaterial? _backgroundMaterial;
@@ -324,7 +451,7 @@ namespace XREngine.Networking
         {
             int w = 1920;
             int h = 1080;
-            float updateHz = 0.0f;
+            float updateHz = 60.0f;
             float renderHz = 30.0f;
             float fixedHz = 30.0f;
 
@@ -332,30 +459,37 @@ namespace XREngine.Networking
             int primaryY = NativeMethods.GetSystemMetrics(1);
 
             return new GameStartupSettings()
-                {
-                    StartupWindows =
-                    [
-                        new()
-                        {
+            {
+                // Always create a visible window so it's obvious the server launched.
+                // Dev rendering may add extra UI, but a window should exist in all modes.
+                StartupWindows =
+                [
+                    new()
+                    {
                         WindowTitle = "XRE Server",
                         TargetWorld = targetWorld ?? new XRWorld(),
-                        WindowState = enableDevRendering ? EWindowState.Windowed : EWindowState.Hidden,
+                        // Ensure at least one viewport exists so the window actually renders.
+                        // Rendering is gated by: Viewports.Count > 0 && TargetWorldInstance != null.
+                        LocalPlayers = ELocalPlayerIndexMask.One,
+                        WindowState = EWindowState.Windowed,
                         X = primaryX / 2 - w / 2,
                         Y = primaryY / 2 - h / 2,
                         Width = w,
                         Height = h,
                     }
                 ],
-                OutputVerbosity = EOutputVerbosity.Verbose,
+                OutputVerbosityOverride = new XREngine.Data.Core.OverrideableSetting<EOutputVerbosity>(EOutputVerbosity.Verbose, true),
                 UdpClientRecievePort = 5001,
                 UdpServerSendPort = 5000,
                 UdpMulticastPort = 5000,
                 NetworkingType = ENetworkingType.Server,
+                GPURenderDispatch = UnitTestingWorld.Toggles.GPURenderDispatch,
                 DefaultUserSettings = new UserSettings()
                 {
                     TargetFramesPerSecond = renderHz,
                     VSync = EVSyncMode.Off,
-                    UseDebugOpaquePipeline = UnitTestingWorld.Toggles.ForceDebugOpaquePipeline,
+                    RenderLibrary = UnitTestingWorld.Toggles.RenderAPI,
+                    PhysicsLibrary = UnitTestingWorld.Toggles.PhysicsAPI,
                 },
                 TargetUpdatesPerSecond = updateHz,
                 FixedFramesPerSecond = fixedHz,
