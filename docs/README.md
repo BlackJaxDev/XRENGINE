@@ -22,10 +22,10 @@ A map of the XRENGINE docs. Start here to explore architecture overviews, API gu
 - [Prefab Workflow](api/prefab-workflow.md)
 
 ## Rendering
-- [CoACD Integration](rendering/CoACD.md)
-- [GPU Render Pass Pipeline](rendering/gpu-render-pass-pipeline.md)
-- [Light Volumes](rendering/light-volumes.md)
-- [Secondary GPU Context](rendering/secondary-gpu-context.md)
+- [CoACD Integration](architecture/CoACD.md)
+- [GPU Render Pass Pipeline](work/design/gpu-render-pass-pipeline.md)
+- [Light Volumes](features/light-volumes.md)
+- [Secondary GPU Context](architecture/secondary-gpu-context.md)
 
 ## Physics and Simulation
 - [GPU Physics Chain Compatibility](work/design/gpu-physics-chain-compatibility.md)

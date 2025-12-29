@@ -13,10 +13,13 @@ XRENGINE is an experimental C# engine for virtual, augmented, and mixed reality.
 - `XREngine` – core runtime, scene graph, rendering backends, and XR subsystems.
 - `XREngine.Editor` – desktop editor that boots into the unit testing world used to validate features.
 - `XREngine.Animation`, `XREngine.Audio`, `XREngine.Extensions` – supporting modules for animation, audio, and common utilities.
-- `Build/Submodules` – third-party dependencies (OpenXR, OpenVR, PhysX bindings, tooling assets).
+- `XREngine.Data`, `XREngine.Input`, `XREngine.Modeling` – data structures, input handling, and 3D modeling utilities.
+- `XREngine.Server`, `XREngine.VRClient` – networking server and standalone VR client.
+- `XREngine.UnitTests` – automated tests for engine subsystems.
+- `Build/Submodules` – third-party dependencies (OpenVR.NET, MagicPhysX, CoACD, Flyleaf, OscCore, rive-sharp).
 
 ## Prerequisites
-- .NET 8 SDK
+- .NET 10 SDK
 - Windows 10/11 with a GPU capable of OpenGL 4.6
 - Optional: OpenXR-compatible headset or SteamVR setup for XR testing
 
@@ -43,13 +46,13 @@ Running the editor launches the Unit Testing World, a collection of scenes that 
 Start with the docs index at `docs/README.md` for a structured map of architecture notes, API guides, and rendering deep dives. Highlights:
 - `docs/architecture/README.md` – runtime flow, threading, project layout.
 - `docs/api/*.md` – system-level API guides (scene, components, transforms, animation, physics, rendering, VR, engine API).
-- `docs/rendering/*.md` – rendering notes including CoACD integration and GPU pipeline details.
+- Rendering notes live alongside other docs (for example `docs/architecture/CoACD.md`, `docs/work/design/gpu-render-pass-pipeline.md`, and `docs/features/light-volumes.md`).
 - `docs/work/README.md` – working docs (TODOs, checklists, Vulkan and indirect rendering design workstreams).
 
 ## Contributing
-Review `CONTRIBUTING.md` for coding standards, pull request expectations, and issue reporting. Active areas of contribution include rendering backends, XR tooling, editor UX, and automated testing.
+There is no dedicated `CONTRIBUTING.md` in this repo yet. If you want to help out, open an issue or discussion first, then submit a PR. Active areas of contribution include rendering backends, XR tooling, editor UX, and automated testing.
 
 ## License and Support
-- License: `LICENSE.txt`
+- License: `LICENSE`
 - Issues: https://github.com/BlackJaxDev/XRENGINE/issues
 - Discussions: https://github.com/BlackJaxDev/XRENGINE/discussions
