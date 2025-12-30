@@ -10,7 +10,7 @@ using XREngine.Data.Vectors;
 namespace XREngine.Rendering
 {
     [MemoryPackable]
-    [XR3rdPartyExtensions("otf", "ttf")]
+    [XR3rdPartyExtensions(typeof(XREngine.Data.XRDefault3rdPartyImportOptions), "otf", "ttf")]
     public partial class FontGlyphSet : XRAsset
     {
         static partial void StaticConstructor()

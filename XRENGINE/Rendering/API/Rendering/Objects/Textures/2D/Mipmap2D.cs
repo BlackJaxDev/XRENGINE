@@ -5,6 +5,7 @@ using SixLabors.ImageSharp.PixelFormats;
 using XREngine.Data;
 using XREngine.Data.Core;
 using XREngine.Data.Rendering;
+using YamlDotNet.Serialization;
 
 namespace XREngine.Rendering
 {
@@ -79,6 +80,7 @@ namespace XREngine.Rendering
         }
 
         [MemoryPackInclude]
+        [YamlIgnore]
         public byte[]? DataBytes
         {
             get => _bytes?.GetBytes();

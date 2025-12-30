@@ -226,10 +226,132 @@ public static partial class EditorImGuiUI
 
         private static void DrawStandaloneInspectorContent(object target, HashSet<object> visited)
         {
-            if (target is XRAsset asset && TryDrawAssetInspector(asset, visited))
+            if (target is ThirdPartyImportSelection thirdParty)
+            {
+                DrawThirdPartyImportSettings(thirdParty.SourcePath, thirdParty.AssetType, visited);
                 return;
+            }
+
+            if (target is XRAsset asset)
+            {
+                DrawThirdPartyImportSettings(asset, visited);
+                if (TryDrawAssetInspector(asset, visited))
+                    return;
+            }
 
             DrawInspectableObject(target, "StandaloneInspectorProperties", visited);
+        }
+
+        private static void DrawThirdPartyImportSettings(XRAsset asset, HashSet<object> visited)
+        {
+            if (asset.FilePath is null)
+                return;
+
+            // Only show for the original 3rd-party file selection (not for native .asset files).
+            if (string.Equals(Path.GetExtension(asset.FilePath), $".{AssetManager.AssetExtension}", StringComparison.OrdinalIgnoreCase))
+                return;
+
+            var assets = Engine.Assets;
+            if (assets is null)
+                return;
+
+            if (!assets.TryGetThirdPartyImportContext(asset.FilePath, asset.GetType(), out var importOptions, out var optionsPath, out var generatedAssetPath))
+                return;
+
+            if (!ImGui.CollapsingHeader("Import Settings", ImGuiTreeNodeFlags.DefaultOpen))
+                return;
+
+            ImGui.PushID("ThirdPartyImportSettings");
+
+            ImGui.TextDisabled("Source");
+            ImGui.PushTextWrapPos();
+            ImGui.TextUnformatted(asset.FilePath);
+            ImGui.PopTextWrapPos();
+
+            ImGui.TextDisabled("Generated Asset");
+            ImGui.PushTextWrapPos();
+            ImGui.TextUnformatted(generatedAssetPath);
+            ImGui.PopTextWrapPos();
+
+            ImGui.TextDisabled("Options Cache");
+            ImGui.PushTextWrapPos();
+            ImGui.TextUnformatted(optionsPath);
+            ImGui.PopTextWrapPos();
+
+            ImGui.Separator();
+
+            DrawInspectableObject(importOptions!, "ThirdPartyImportOptions", visited);
+
+            ImGui.Spacing();
+            if (ImGui.Button("Save & Reimport"))
+            {
+                bool saved = assets.SaveThirdPartyImportOptions(asset.FilePath, asset.GetType(), importOptions!);
+                _ = assets.ReimportThirdPartyFileAsync(asset.FilePath).ContinueWith(t =>
+                {
+                    bool reimported = t.Status == TaskStatus.RanToCompletion && t.Result;
+                    Debug.Out($"[ImportSettings] Saved={saved}, Reimported={reimported} for '{asset.FilePath}'.");
+                });
+            }
+
+            ImGui.PopID();
+
+            ImGui.Separator();
+        }
+
+        private static void DrawThirdPartyImportSettings(string sourcePath, Type assetType, HashSet<object> visited)
+        {
+            if (string.IsNullOrWhiteSpace(sourcePath) || assetType is null)
+                return;
+
+            // Only show for the original 3rd-party file selection (not for native .asset files).
+            if (string.Equals(Path.GetExtension(sourcePath), $".{AssetManager.AssetExtension}", StringComparison.OrdinalIgnoreCase))
+                return;
+
+            var assets = Engine.Assets;
+            if (assets is null)
+                return;
+
+            if (!assets.TryGetThirdPartyImportContext(sourcePath, assetType, out var importOptions, out var optionsPath, out var generatedAssetPath))
+                return;
+
+            if (!ImGui.CollapsingHeader("Import Settings", ImGuiTreeNodeFlags.DefaultOpen))
+                return;
+
+            ImGui.PushID("ThirdPartyImportSettings");
+
+            ImGui.TextDisabled("Source");
+            ImGui.PushTextWrapPos();
+            ImGui.TextUnformatted(sourcePath);
+            ImGui.PopTextWrapPos();
+
+            ImGui.TextDisabled("Generated Asset");
+            ImGui.PushTextWrapPos();
+            ImGui.TextUnformatted(generatedAssetPath);
+            ImGui.PopTextWrapPos();
+
+            ImGui.TextDisabled("Options Cache");
+            ImGui.PushTextWrapPos();
+            ImGui.TextUnformatted(optionsPath);
+            ImGui.PopTextWrapPos();
+
+            ImGui.Separator();
+
+            DrawInspectableObject(importOptions!, "ThirdPartyImportOptions", visited);
+
+            ImGui.Spacing();
+            if (ImGui.Button("Save && Reimport"))
+            {
+                bool saved = assets.SaveThirdPartyImportOptions(sourcePath, assetType, importOptions!);
+                _ = assets.ReimportThirdPartyFileAsync(sourcePath).ContinueWith(t =>
+                {
+                    bool reimported = t.Status == TaskStatus.RanToCompletion && t.Result;
+                    Debug.Out($"[ImportSettings] Saved={saved}, Reimported={reimported} for '{sourcePath}'.");
+                });
+            }
+
+            ImGui.PopID();
+
+            ImGui.Separator();
         }
 
         private static void DrawStandaloneInspectorTarget(object target)

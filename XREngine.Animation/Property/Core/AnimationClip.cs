@@ -10,7 +10,7 @@ namespace XREngine.Animation
     /// <summary>
     /// Represents a single animation clip that can be played with an AnimationClipComponent or an AnimStateMachineComponent.
     /// </summary>
-    [XR3rdPartyExtensions("vmd")]
+    [XR3rdPartyExtensions(typeof(XREngine.Data.XRDefault3rdPartyImportOptions), "vmd")]
     [MemoryPackable]
     public partial class AnimationClip : MotionBase
     {

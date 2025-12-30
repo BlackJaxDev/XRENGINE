@@ -2,7 +2,9 @@
 using MemoryPack;
 using System;
 using System.ComponentModel;
+using System.IO;
 using System.IO.MemoryMappedFiles;
+using System.Text;
 using System.Text.Json.Serialization;
 using XREngine.Data.Core;
 using YamlDotNet.Serialization;
@@ -134,11 +136,22 @@ namespace XREngine.Core.Files
             return false;
         }
 
+        /// <summary>
+        /// Called when importing a 3rd-party file into an engine-native asset. The default
+        /// behavior ignores importOptions and defers to <see cref="Load3rdParty(string)"/>.
+        /// Override this to apply custom import options.
+        /// </summary>
+        public virtual bool Import3rdParty(string filePath, object? importOptions)
+            => Load3rdParty(filePath);
+
         public virtual async Task<bool> Load3rdPartyAsync(string filePath)
         {
             //Run the synchronous version of the method async by default
             return await Task.Run(() => Load3rdParty(filePath));
         }
+
+        public virtual async Task<bool> Import3rdPartyAsync(string filePath, object? importOptions)
+            => await Task.Run(() => Import3rdParty(filePath, importOptions));
 
         [Browsable(false)]
         [MemoryPackIgnore]
@@ -208,7 +221,12 @@ namespace XREngine.Core.Files
         /// <param name="filePath"></param>
         /// <param name="defaultSerializer"></param>
         public virtual void SerializeTo(string filePath, ISerializer defaultSerializer)
-            => File.WriteAllText(filePath, defaultSerializer.Serialize(this));
+        {
+            // Ensure we serialize the *concrete runtime type*.
+            // If callers serialize as XRAsset, derived members (e.g., Model meshes/materials) are omitted.
+            using var writer = new StreamWriter(filePath, append: false, Encoding.UTF8);
+            defaultSerializer.Serialize(writer, this, GetType());
+        }
 
         /// <summary>
         /// This is the main method to serialize the asset to a file using the provided serializer asynchronously.
@@ -218,7 +236,11 @@ namespace XREngine.Core.Files
         /// <param name="defaultSerializer"></param>
         /// <returns></returns>
         public virtual async Task SerializeToAsync(string filePath, ISerializer defaultSerializer)
-            => await File.WriteAllTextAsync(filePath, defaultSerializer.Serialize(this));
+        {
+            // Serializer isn't async; serialize first, then write asynchronously.
+            string yaml = defaultSerializer.Serialize(this, GetType());
+            await File.WriteAllTextAsync(filePath, yaml, Encoding.UTF8).ConfigureAwait(false);
+        }
 
         protected override void OnPropertyChanged<T>(string? propName, T prev, T field)
         {

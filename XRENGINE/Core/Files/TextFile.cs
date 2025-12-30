@@ -13,7 +13,7 @@ namespace XREngine.Core.Files
     /// Overrides default serialization to save the raw text content instead of the object structure.
     /// </summary>
     [XRAssetInspector("XREngine.Editor.AssetEditors.TextFileInspector")]
-    [XR3rdPartyExtensions("txt")]
+    [XR3rdPartyExtensions(typeof(XREngine.Data.XRDefault3rdPartyImportOptions), "txt")]
     [MemoryPackable]
     public partial class TextFile : XRAsset
     {

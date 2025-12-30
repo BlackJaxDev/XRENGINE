@@ -36,9 +36,9 @@ namespace XREngine
             IReadOnlyCollection<XRMaterial> Materials,
             IReadOnlyCollection<XRMesh> Meshes);
 
-        public delegate void DelMakeMaterialAction(XRMaterial mat, XRTexture[] textureList, List<TextureSlot> textures, string name);
+        public delegate XRMaterial DelMakeMaterialAction(List<TextureSlot> textures, string name);
 
-        public DelMakeMaterialAction MakeMaterialAction { get; set; } = MakeMaterial;
+        public DelMakeMaterialAction MakeMaterialAction { get; set; } = MakeMaterialDefault;
 
         public ModelImporter(string path, Action? onCompleted, DelMaterialFactory? materialFactory)
         {
@@ -99,31 +99,23 @@ namespace XREngine
 
         private readonly ConcurrentDictionary<string, XRTexture2D> _texturePathCache = new();
 
-        private void MakeMaterialInternal(XRMaterial mat, XRTexture[] textureList, List<TextureSlot> textures, string name)
+        private XRMaterial MakeMaterialInternal(List<TextureSlot> textures, string name)
         {
-            FillTextures(mat, textureList);
-            MakeMaterialAction(mat, textureList, textures, name);
+            return MakeMaterialAction(textures, name);
         }
 
-        private static void FillTextures(XRMaterial mat, XRTexture[] textureList)
-        {
-            for (int i = 0; i < textureList.Length; i++)
-            {
-                XRTexture? tex = textureList[i];
-                if (tex is not null)
-                    mat.Textures[i] = tex;
-            }
-        }
-
-        public static void MakeMaterial(XRMaterial mat, XRTexture[] textureList, List<TextureSlot> textures, string name)
+        public static XRMaterial MakeMaterialDefault(List<TextureSlot> textures, string name)
         {
             bool transp = textures.Any(x => (x.Flags & 0x2) != 0 || x.TextureType == TextureType.Opacity);
-            bool normal = textures.Any(x => x.TextureType == TextureType.Normals);
-            if (textureList.Length > 0)
+
+            // Default material allocates the same number of texture slots as were discovered.
+            // Texture loading/binding is handled elsewhere.
+            var mat = new XRMaterial(new XRTexture?[textures.Count]);
+
+            if (textures.Count > 0)
             {
-                if (transp || textureList.Any(x => x is not null && x.HasAlphaChannel))
+                if (transp)
                 {
-                    transp = true;
                     mat.Shaders.Add(ShaderHelper.UnlitTextureFragForward()!);
                 }
                 else
@@ -132,26 +124,26 @@ namespace XREngine
                     mat.Parameters =
                     [
                         new ShaderFloat(1.0f, "Opacity"),
-                                new ShaderFloat(1.0f, "Specular"),
-                                new ShaderFloat(0.9f, "Roughness"),
-                                new ShaderFloat(0.0f, "Metallic"),
-                                new ShaderFloat(1.0f, "IndexOfRefraction"),
-                            ];
+                        new ShaderFloat(1.0f, "Specular"),
+                        new ShaderFloat(0.9f, "Roughness"),
+                        new ShaderFloat(0.0f, "Metallic"),
+                        new ShaderFloat(1.0f, "IndexOfRefraction"),
+                    ];
                 }
             }
             else
             {
-                //Show the material as magenta if no textures are present
+                // Show the material as magenta if no textures are present.
                 mat.Shaders.Add(ShaderHelper.LitColorFragDeferred()!);
                 mat.Parameters =
                 [
                     new ShaderVector3(ColorF3.Magenta, "BaseColor"),
-                        new ShaderFloat(1.0f, "Opacity"),
-                        new ShaderFloat(1.0f, "Specular"),
-                        new ShaderFloat(1.0f, "Roughness"),
-                        new ShaderFloat(0.0f, "Metallic"),
-                        new ShaderFloat(1.0f, "IndexOfRefraction"),
-                    ];
+                    new ShaderFloat(1.0f, "Opacity"),
+                    new ShaderFloat(1.0f, "Specular"),
+                    new ShaderFloat(1.0f, "Roughness"),
+                    new ShaderFloat(0.0f, "Metallic"),
+                    new ShaderFloat(1.0f, "IndexOfRefraction"),
+                ];
             }
 
             mat.RenderPass = transp ? (int)EDefaultRenderPass.TransparentForward : (int)EDefaultRenderPass.OpaqueDeferred;
@@ -168,6 +160,8 @@ namespace XREngine
                 //LineWidth = 5.0f,
                 BlendModeAllDrawBuffers = transp ? BlendMode.EnabledTransparent() : BlendMode.Disabled(),
             };
+
+            return mat;
         }
 
         public XRMaterial MaterialFactory(
@@ -178,20 +172,28 @@ namespace XREngine
             ShadingMode mode,
             Dictionary<string, List<MaterialProperty>> properties)
         {
-            XRTexture[] textureList = new XRTexture[textures.Count];
-            XRMaterial mat = new(textureList);
-            
-            for (int i = 0; i < textures.Count; i++)
-                LoadTexture(modelFilePath, textures, textureList, i);
-            
-            // Set up the material with the loaded textures - must complete before returning
-            // to avoid race conditions where the mesh renders before the shader is set
-            MakeMaterialInternal(mat, textureList, textures, name);
-            
-            return mat;
+            return MakeMaterialInternal(textures, name);
         }
 
-        public void LoadTexture(string modelFilePath, List<TextureSlot> textures, XRTexture[] textureList, int i)
+        public XRTexture[] LoadTextures(string modelFilePath, List<TextureSlot> textures)
+        {
+            XRTexture[] textureList = new XRTexture[textures.Count];
+            for (int i = 0; i < textures.Count; i++)
+                LoadTexture(modelFilePath, textures, textureList, i);
+            return textureList;
+        }
+
+        public static void FillTextures(XRMaterial mat, XRTexture[] textureList)
+        {
+            for (int i = 0; i < textureList.Length; i++)
+            {
+                XRTexture? tex = textureList[i];
+                if (tex is not null)
+                    mat.Textures[i] = tex;
+            }
+        }
+
+        private void LoadTexture(string modelFilePath, List<TextureSlot> textures, XRTexture[] textureList, int i)
         {
             string path = textures[i].FilePath;
             if (string.IsNullOrWhiteSpace(path))
@@ -210,7 +212,7 @@ namespace XREngine
                 p = p.Trim().Trim('"');
                 p = p.Replace("/", "\\");
                 while (p.StartsWith(".\\", StringComparison.Ordinal) || p.StartsWith("./", StringComparison.Ordinal))
-                    p = p.Substring(2);
+                    p = p[2..];
                 return p;
             }
 

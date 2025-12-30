@@ -1117,23 +1117,37 @@ public static partial class EditorImGuiUI
             }
 
             Debug.Out($"[AssetExplorer] ResolveAssetTypeForPath returned descriptor: {descriptor.FullName}");
-            XRAsset? asset = LoadAssetForInspector(descriptor, path);
-            if (asset is null)
+            bool isNativeAsset = string.Equals(Path.GetExtension(path), $".{AssetManager.AssetExtension}", StringComparison.OrdinalIgnoreCase);
+            object inspectorTarget;
+            string displayTitle;
+            if (!isNativeAsset)
             {
-                Debug.Out($"[AssetExplorer] LoadAssetForInspector returned null for path='{path}'");
-                return false;
+                // Avoid importing large 3rd-party assets (e.g. models) on click; we only need the
+                // resolved XRAsset type to show/edit import settings.
+                inspectorTarget = new ThirdPartyImportSelection(path, descriptor.Type);
+                displayTitle = descriptor.DisplayName;
             }
+            else
+            {
+                XRAsset? asset = LoadAssetForInspector(descriptor, path);
+                if (asset is null)
+                {
+                    Debug.Out($"[AssetExplorer] LoadAssetForInspector returned null for path='{path}'");
+                    return false;
+                }
 
-            Debug.Out($"[AssetExplorer] LoadAssetForInspector succeeded: {asset.GetType().Name}");
-            string displayTitle = string.IsNullOrWhiteSpace(asset.Name)
-                ? descriptor.DisplayName
-                : asset.Name!;
+                Debug.Out($"[AssetExplorer] LoadAssetForInspector succeeded: {asset.GetType().Name}");
+                inspectorTarget = asset;
+                displayTitle = string.IsNullOrWhiteSpace(asset.Name)
+                    ? descriptor.DisplayName
+                    : asset.Name!;
+            }
 
             string fileLabel = Path.GetFileName(path);
             if (!string.IsNullOrEmpty(fileLabel))
                 displayTitle = string.Concat(displayTitle, " [", fileLabel, "]");
 
-            SetInspectorStandaloneTarget(asset, displayTitle, null);
+            SetInspectorStandaloneTarget(inspectorTarget, displayTitle, null);
             return true;
         }
 

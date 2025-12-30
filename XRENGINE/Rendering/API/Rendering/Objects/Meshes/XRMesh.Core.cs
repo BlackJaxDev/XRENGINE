@@ -55,6 +55,7 @@ public partial class XRMesh : XRAsset
 
     private Vertex[] _vertices = [];
     [Browsable(false)]
+    [YamlIgnore]
     public Vertex[] Vertices { get => _vertices; private set => SetField(ref _vertices, value); }
 
     // Primitive index storage
@@ -62,6 +63,7 @@ public partial class XRMesh : XRAsset
     private List<IndexLine>? _lines;
     private List<IndexTriangle>? _triangles;
     [MemoryPackIgnore]
+    [YamlIgnore]
     internal Dictionary<Triangle, (IndexTriangle Indices, int FaceIndex)>? TriangleLookup { get; set; }
     private EPrimitiveType _type = EPrimitiveType.Triangles;
 
@@ -80,6 +82,7 @@ public partial class XRMesh : XRAsset
     }
 
     [Browsable(false)]
+    [YamlIgnore]
     public List<IndexTriangle>? Triangles
     {
         get => _triangles;
@@ -162,7 +165,18 @@ public partial class XRMesh : XRAsset
     public XRDataBuffer? BlendshapeIndices { get; private set; }
 
     [MemoryPackIgnore]
-    public BufferCollection Buffers { get; internal set; } = [];
+    private BufferCollection _buffers = [];
+
+    [MemoryPackIgnore]
+    public BufferCollection Buffers
+    {
+        get => _buffers;
+        internal set
+        {
+            _buffers = value ?? [];
+            OnBuffersAssigned();
+        }
+    }
 
     // Weight stats
     private int _maxWeightCount;
@@ -203,4 +217,114 @@ public partial class XRMesh : XRAsset
 
     protected override void OnDestroying()
         => Buffers?.ForEach(x => x.Value.Dispose());
+
+    private void OnBuffersAssigned()
+    {
+        // After YAML deserialization, we want to ensure the convenience buffer references
+        // are hydrated from the serialized buffer collection.
+        PositionsBuffer = Buffers.GetValueOrDefault(ECommonBufferType.Position.ToString());
+        NormalsBuffer = Buffers.GetValueOrDefault(ECommonBufferType.Normal.ToString());
+        TangentsBuffer = Buffers.GetValueOrDefault(ECommonBufferType.Tangent.ToString());
+        InterleavedVertexBuffer = Buffers.GetValueOrDefault(ECommonBufferType.InterleavedVertex.ToString());
+
+        if (ColorCount > 0)
+        {
+            ColorBuffers = new XRDataBuffer[ColorCount];
+            for (int i = 0; i < ColorBuffers.Length; i++)
+                ColorBuffers[i] = Buffers.GetValueOrDefault($"{ECommonBufferType.Color}{i}");
+        }
+        else
+        {
+            ColorBuffers = [];
+        }
+
+        if (TexCoordCount > 0)
+        {
+            TexCoordBuffers = new XRDataBuffer[TexCoordCount];
+            for (int i = 0; i < TexCoordBuffers.Length; i++)
+                TexCoordBuffers[i] = Buffers.GetValueOrDefault($"{ECommonBufferType.TexCoord}{i}");
+        }
+        else
+        {
+            TexCoordBuffers = [];
+        }
+
+        if (HasSkinning)
+        {
+            BoneWeightOffsets = Buffers.GetValueOrDefault(ECommonBufferType.BoneMatrixOffset.ToString());
+            BoneWeightCounts = Buffers.GetValueOrDefault(ECommonBufferType.BoneMatrixCount.ToString());
+            BoneWeightIndices = Buffers.GetValueOrDefault($"{ECommonBufferType.BoneMatrixIndices}Buffer");
+            BoneWeightValues = Buffers.GetValueOrDefault($"{ECommonBufferType.BoneMatrixWeights}Buffer");
+        }
+
+        if (HasBlendshapes)
+        {
+            BlendshapeCounts = Buffers.GetValueOrDefault(ECommonBufferType.BlendshapeCount.ToString());
+            BlendshapeIndices = Buffers.GetValueOrDefault($"{ECommonBufferType.BlendshapeIndices}Buffer");
+            BlendshapeDeltas = Buffers.GetValueOrDefault($"{ECommonBufferType.BlendshapeDeltas}Buffer");
+        }
+
+        // Rebuild Vertices from buffers if they weren't loaded (we omit them from YAML to reduce file size).
+        if ((_vertices is null || _vertices.Length == 0 || _vertices.Length != VertexCount) && VertexCount > 0)
+        {
+            if (Interleaved)
+            {
+                if (InterleavedVertexBuffer?.ClientSideSource is null)
+                    return;
+            }
+            else
+            {
+                if (PositionsBuffer?.ClientSideSource is null)
+                    return;
+            }
+
+            Vertex[] rebuilt = new Vertex[VertexCount];
+            for (uint i = 0; i < (uint)VertexCount; i++)
+            {
+                Vertex v = new()
+                {
+                    Position = GetPosition(i),
+                };
+
+                if (HasNormals)
+                    v.Normal = GetNormal(i);
+                if (HasTangents)
+                    v.Tangent = GetTangent(i);
+
+                if (TexCoordCount > 0)
+                {
+                    v.TextureCoordinateSets = new List<Vector2>((int)TexCoordCount);
+                    for (uint t = 0; t < TexCoordCount; t++)
+                        v.TextureCoordinateSets.Add(GetTexCoord(i, t));
+                }
+
+                if (ColorCount > 0)
+                {
+                    v.ColorSets = new List<Vector4>((int)ColorCount);
+                    for (uint c = 0; c < ColorCount; c++)
+                        v.ColorSets.Add(GetColor(i, c));
+                }
+
+                rebuilt[i] = v;
+            }
+
+            _vertices = rebuilt;
+        }
+
+        // Rebuild Triangles from vertex order if they weren't loaded (we omit them from YAML to reduce file size).
+        // This assumes the mesh is stored as a de-indexed triangle list (3 vertices per triangle, sequential indices).
+        if (_type == EPrimitiveType.Triangles && (_triangles is null || _triangles.Count == 0) && VertexCount > 0)
+        {
+            int triangleCount = VertexCount / 3;
+            if (triangleCount > 0)
+            {
+                _triangles = new List<IndexTriangle>(triangleCount);
+                int idx = 0;
+                for (int i = 0; i < triangleCount; i++)
+                {
+                    _triangles.Add(new IndexTriangle(idx++, idx++, idx++));
+                }
+            }
+        }
+    }
 }

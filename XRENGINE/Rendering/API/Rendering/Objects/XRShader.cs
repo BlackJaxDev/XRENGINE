@@ -10,7 +10,7 @@ namespace XREngine.Rendering
     [XRAssetInspector("XREngine.Editor.AssetEditors.XRShaderInspector")]
     [XRAssetContextMenu("Optimize Shader...", "XREngine.Editor.UI.Tools.ShaderAssetMenuActions", "OpenInShaderLockingTool")]
     [XRAssetContextMenu("Analyze Shader...", "XREngine.Editor.UI.Tools.ShaderAssetMenuActions", "OpenInShaderAnalyzer")]
-    [XR3rdPartyExtensions(
+    [XR3rdPartyExtensions(typeof(XREngine.Data.XRShaderImportOptions),
         "glsl", "shader",
         "frag", "vert", "geom", "tesc", "tese", "comp", "task", "mesh",
         "fs", "vs", "gs", "tcs", "tes", "cs", "ts", "ms")]
@@ -111,6 +111,18 @@ namespace XREngine.Rendering
             TextFile file = new();
             file.LoadText(filePath);
             Source = file;
+            return true;
+        }
+
+        public override bool Import3rdParty(string filePath, object? importOptions)
+        {
+            bool ok = Load3rdParty(filePath);
+            if (!ok)
+                return false;
+
+            if (importOptions is XREngine.Data.XRShaderImportOptions options)
+                GenerateAsync = options.GenerateAsync;
+
             return true;
         }
         public override async Task<bool> Load3rdPartyAsync(string filePath)

@@ -7,7 +7,7 @@ using XREngine.Core.Files;
 namespace XREngine.Data
 {
     [MemoryPackable]
-    [XR3rdPartyExtensions("wav", "ogg", "mp3", "flac")]
+    [XR3rdPartyExtensions(typeof(XRDefault3rdPartyImportOptions), "wav", "ogg", "mp3", "flac")]
     public partial class AudioData : XRAsset, IPoolable
     {
         private DataSource? _data;

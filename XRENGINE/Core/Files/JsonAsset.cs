@@ -7,7 +7,7 @@ namespace XREngine.Core.Files
     /// Automatically serializes and deserializes a class to and from JSON format.
     /// </summary>
     /// <typeparam name="T"></typeparam>
-    [XR3rdPartyExtensions("json")]
+    [XR3rdPartyExtensions(typeof(XREngine.Data.XRDefault3rdPartyImportOptions), "json")]
     public class JsonAsset<T> : TextFile where T : class, new()
     {
         public JsonAsset()

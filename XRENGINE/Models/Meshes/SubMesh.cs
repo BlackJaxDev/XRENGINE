@@ -11,7 +11,21 @@ namespace XREngine.Rendering.Models
     [MemoryPackable(GenerateType.NoGenerate)]
     public partial class SubMesh : XRAsset
     {
-        public SortedSet<SubMeshLOD> LODs { get; } = new(new LODSorter());
+        private SortedSet<SubMeshLOD> _lods = new(new LODSorter());
+
+        public SortedSet<SubMeshLOD> LODs
+        {
+            get => _lods;
+            set
+            {
+                _lods = new SortedSet<SubMeshLOD>(new LODSorter());
+                if (value is not null)
+                {
+                    foreach (var lod in value)
+                        _lods.Add(lod);
+                }
+            }
+        }
 
         private AABB _bounds;
         private AABB? _cullingVolumeOverride;

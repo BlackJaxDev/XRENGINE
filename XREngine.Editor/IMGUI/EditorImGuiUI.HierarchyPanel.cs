@@ -5,7 +5,9 @@ using System.Linq;
 using System.Numerics;
 using System.Text;
 using XREngine;
+using XREngine.Components.Scene.Mesh;
 using XREngine.Data.Core;
+using XREngine.Rendering.Models;
 using XREngine.Scene;
 using XREngine.Scene.Transforms;
 using XREngine.Rendering;
@@ -24,8 +26,32 @@ public static partial class EditorImGuiUI
                 ImGui.End();
                 return;
             }
+
+            var world = TryGetActiveWorldInstance();
+            if (world is not null)
+                HandleHierarchyModelAssetDrop(world);
+
             DrawWorldHierarchyTab();
             ImGui.End();
+        }
+
+        private static void HandleHierarchyModelAssetDrop(XRWorldInstance world)
+        {
+            if (!ImGui.BeginDragDropTarget())
+                return;
+
+            var payload = ImGui.AcceptDragDropPayload(ImGuiAssetUtilities.AssetPayloadType);
+            if (payload.Data != IntPtr.Zero && payload.DataSize > 0)
+            {
+                string? path = ImGuiAssetUtilities.GetPathFromPayload(payload);
+                if (!string.IsNullOrWhiteSpace(path) && TryLoadModelAsset(path, out var model))
+                {
+                    SceneNode? parent = Selection.SceneNode;
+                    EnqueueSceneEdit(() => SpawnModelNode(world, parent, model!, path));
+                }
+            }
+
+            ImGui.EndDragDropTarget();
         }
 
         private static void DrawWorldHierarchyTab()

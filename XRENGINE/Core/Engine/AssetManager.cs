@@ -41,6 +41,7 @@ namespace XREngine
     public class AssetManager
     {
         public const string AssetExtension = "asset";
+        private const string ImportOptionsFileExtension = "import.yaml";
 
         private static bool IsOnJobThread
             => JobManager.IsJobWorkerThread;
@@ -119,7 +120,19 @@ namespace XREngine
 
             EngineAssetsPath = resolvedEngineAssetsPath;
 
+            // In sandbox mode (no project loaded), the editor commonly runs with
+            // Environment.CurrentDirectory pointing at the repo/project root.
+            // Prefer an existing '<cwd>/Assets' over '<exe>/Assets' to avoid writing
+            // import options/cache next to the build output.
+            string cwdAssets = Path.Combine(Environment.CurrentDirectory, "Assets");
+            if (!Directory.Exists(GameAssetsPath) && Directory.Exists(cwdAssets))
+                GameAssetsPath = cwdAssets;
+
             VerifyDirectoryExists(GameAssetsPath);
+
+            // Best-effort defaults for sandbox mode. Project load will overwrite these.
+            EnsureGameMetadataPathInitialized();
+            EnsureGameCachePathInitialized();
             if (!Directory.Exists(EngineAssetsPath))
                 throw new DirectoryNotFoundException($"Could not find the engine assets directory at '{EngineAssetsPath}'.");
 
@@ -196,6 +209,68 @@ namespace XREngine
             return fullPath;
         }
 
+        private void EnsureGameCachePathInitialized()
+        {
+            if (!string.IsNullOrWhiteSpace(_gameCachePath))
+                return;
+
+            if (string.IsNullOrWhiteSpace(GameAssetsPath))
+                return;
+
+            if (!TryInferProjectRootFromGameAssetsPath(out string? projectRoot) || string.IsNullOrWhiteSpace(projectRoot))
+                return;
+
+            // Default to '<ProjectRoot>/Cache' which matches the project's structure.
+            GameCachePath = Path.Combine(projectRoot, "Cache");
+        }
+
+        private void EnsureGameMetadataPathInitialized()
+        {
+            if (!string.IsNullOrWhiteSpace(_gameMetadataPath))
+                return;
+
+            if (!TryInferProjectRootFromGameAssetsPath(out string? projectRoot) || string.IsNullOrWhiteSpace(projectRoot))
+                return;
+
+            // Default to '<ProjectRoot>/Metadata' which matches XRProject structure.
+            GameMetadataPath = Path.Combine(projectRoot, "Metadata");
+        }
+
+        private bool TryInferProjectRootFromGameAssetsPath([NotNullWhen(true)] out string? projectRoot)
+        {
+            projectRoot = null;
+
+            if (string.IsNullOrWhiteSpace(GameAssetsPath))
+                return false;
+
+            try
+            {
+                string assetsPath = Path.GetFullPath(GameAssetsPath);
+
+                // Common case: GameAssetsPath points at '<ProjectRoot>/Assets'.
+                if (string.Equals(Path.GetFileName(assetsPath), "Assets", StringComparison.OrdinalIgnoreCase))
+                {
+                    projectRoot = Path.GetDirectoryName(assetsPath);
+                    return !string.IsNullOrWhiteSpace(projectRoot);
+                }
+
+                // If GameAssetsPath is actually the project root, prefer it when it contains an Assets folder.
+                if (Directory.Exists(Path.Combine(assetsPath, "Assets")))
+                {
+                    projectRoot = assetsPath;
+                    return true;
+                }
+
+                // Fallback: use the parent directory of the provided assets path.
+                projectRoot = Path.GetDirectoryName(assetsPath);
+                return !string.IsNullOrWhiteSpace(projectRoot);
+            }
+            catch
+            {
+                return false;
+            }
+        }
+
         private static string? NormalizeOptionalDirectoryPath(string? path, string argumentName)
         {
             if (string.IsNullOrWhiteSpace(path))
@@ -233,6 +308,7 @@ namespace XREngine
         {
             OnFileCreated(args);
             HandleMetadataCreated(args.FullPath);
+            TryQueueAutoImportForThirdPartyFile(args.FullPath, reason: "created");
             GameFileCreated?.Invoke(args);
         }
         private static void OnFileCreated(FileSystemEventArgs args)
@@ -249,6 +325,7 @@ namespace XREngine
         {
             await OnFileChanged(args);
             HandleMetadataChanged(args.FullPath);
+            TryQueueAutoImportForThirdPartyFile(args.FullPath, reason: "changed");
             GameFileChanged?.Invoke(args);
         }
         private async Task OnFileChanged(FileSystemEventArgs args)
@@ -279,6 +356,7 @@ namespace XREngine
         {
             OnFileDeleted(args);
             HandleMetadataDeleted(args.FullPath);
+            HandleThirdPartyImportOptionsDeleted(args.FullPath);
             GameFileDeleted?.Invoke(args);
         }
         private static void OnFileDeleted(FileSystemEventArgs args)
@@ -310,6 +388,8 @@ namespace XREngine
         {
             OnFileRenamed(args);
             HandleMetadataRenamed(args.OldFullPath, args.FullPath);
+            HandleThirdPartyImportOptionsRenamed(args.OldFullPath, args.FullPath);
+            TryQueueAutoImportForThirdPartyFile(args.FullPath, reason: "renamed");
             GameFileRenamed?.Invoke(args);
         }
         void OnEngineFileRenamed(object sender, RenamedEventArgs args)
@@ -387,12 +467,24 @@ namespace XREngine
 
         private bool IsPathUnderGameAssets(string path)
         {
-            if (string.IsNullOrWhiteSpace(GameAssetsPath) || string.IsNullOrWhiteSpace(GameMetadataPath) || string.IsNullOrWhiteSpace(path))
+            if (string.IsNullOrWhiteSpace(GameAssetsPath) || string.IsNullOrWhiteSpace(path))
                 return false;
 
-            string normalizedAssets = Path.GetFullPath(GameAssetsPath);
-            string normalizedPath = Path.GetFullPath(path);
-            return normalizedPath.StartsWith(normalizedAssets, StringComparison.OrdinalIgnoreCase);
+            try
+            {
+                string normalizedAssets = Path.GetFullPath(GameAssetsPath);
+                string normalizedPath = Path.GetFullPath(path);
+
+                string relative = Path.GetRelativePath(normalizedAssets, normalizedPath);
+                if (relative.StartsWith("..", StringComparison.Ordinal) || Path.IsPathRooted(relative))
+                    return false;
+
+                return true;
+            }
+            catch
+            {
+                return false;
+            }
         }
 
         private static bool SafeIsDirectory(string path)
@@ -651,6 +743,403 @@ namespace XREngine
             return map;
         }
 
+        private static bool HasNativeAssetExtension(string filePath)
+            => string.Equals(Path.GetExtension(filePath), $".{AssetExtension}", StringComparison.OrdinalIgnoreCase);
+
+        private static bool TryGetThirdPartyExtension(string filePath, [NotNullWhen(true)] out string? normalizedExtension)
+        {
+            normalizedExtension = null;
+            if (string.IsNullOrWhiteSpace(filePath))
+                return false;
+
+            // Handle multi-dot extensions first (Path.GetExtension only returns the last segment).
+            if (filePath.EndsWith(".mesh.xml", StringComparison.OrdinalIgnoreCase))
+            {
+                normalizedExtension = "mesh.xml";
+                return true;
+            }
+
+            string ext = Path.GetExtension(filePath);
+            if (string.IsNullOrWhiteSpace(ext) || ext.Length <= 1)
+                return false;
+
+            normalizedExtension = ext[1..].ToLowerInvariant();
+            if (string.Equals(normalizedExtension, AssetExtension, StringComparison.OrdinalIgnoreCase))
+                return false;
+
+            return true;
+        }
+
+        private bool TryResolveGeneratedAssetPathForThirdPartySource(string sourcePath, out string generatedAssetPath)
+        {
+            generatedAssetPath = string.Empty;
+            if (string.IsNullOrWhiteSpace(sourcePath))
+                return false;
+
+            if (!IsPathUnderGameAssets(sourcePath))
+                return false;
+
+            if (HasNativeAssetExtension(sourcePath))
+                return false;
+
+            string? directory = Path.GetDirectoryName(sourcePath);
+            if (string.IsNullOrWhiteSpace(directory))
+                return false;
+
+            string name = Path.GetFileNameWithoutExtension(sourcePath);
+            if (string.IsNullOrWhiteSpace(name))
+                return false;
+
+            generatedAssetPath = Path.Combine(directory, $"{name}.{AssetExtension}");
+            return true;
+        }
+
+        private static Type ResolveImportOptionsType(Type assetType)
+        {
+            var attr = assetType.GetCustomAttribute<XR3rdPartyExtensionsAttribute>();
+            var optionsType = attr?.ImportOptionsType;
+            return optionsType ?? typeof(XREngine.Data.XRDefault3rdPartyImportOptions);
+        }
+
+        private bool TryResolveImportOptionsPath(string sourcePath, Type assetType, out string importOptionsPath)
+        {
+            importOptionsPath = string.Empty;
+
+            EnsureGameMetadataPathInitialized();
+            EnsureGameCachePathInitialized();
+            if (string.IsNullOrWhiteSpace(GameCachePath) || string.IsNullOrWhiteSpace(GameAssetsPath))
+                return false;
+
+            string normalizedAssets = Path.GetFullPath(GameAssetsPath);
+            string normalizedSource = Path.GetFullPath(sourcePath);
+            string relativePath = Path.GetRelativePath(normalizedAssets, normalizedSource);
+            if (relativePath.StartsWith("..", StringComparison.Ordinal) || Path.IsPathRooted(relativePath))
+                return false;
+
+            string? relativeDirectory = Path.GetDirectoryName(relativePath);
+            string originalFileName = Path.GetFileName(relativePath);
+            string typeSuffix = assetType.FullName ?? assetType.Name;
+            string fileName = $"{originalFileName}.{typeSuffix}.{ImportOptionsFileExtension}";
+
+            importOptionsPath = string.IsNullOrWhiteSpace(relativeDirectory)
+                ? Path.Combine(GameCachePath!, fileName)
+                : Path.Combine(GameCachePath!, relativeDirectory, fileName);
+            return true;
+        }
+
+        public bool TryGetThirdPartyImportContext(string sourcePath, Type assetType, [NotNullWhen(true)] out object? importOptions, out string importOptionsPath, out string generatedAssetPath)
+        {
+            importOptions = null;
+            importOptionsPath = string.Empty;
+            generatedAssetPath = string.Empty;
+
+            if (string.IsNullOrWhiteSpace(sourcePath) || assetType is null)
+                return false;
+
+            if (!TryResolveGeneratedAssetPathForThirdPartySource(sourcePath, out generatedAssetPath))
+                return false;
+
+            if (!TryResolveImportOptionsPath(sourcePath, assetType, out importOptionsPath))
+                return false;
+
+            importOptions = GetOrCreateThirdPartyImportOptions(sourcePath, assetType);
+            return importOptions is not null;
+        }
+
+        public object? GetOrCreateThirdPartyImportOptions(string sourcePath, Type assetType)
+        {
+            if (string.IsNullOrWhiteSpace(sourcePath) || assetType is null)
+                return null;
+
+            Type optionsType = ResolveImportOptionsType(assetType);
+            if (!TryResolveImportOptionsPath(sourcePath, assetType, out string optionsPath))
+                return Activator.CreateInstance(optionsType);
+
+            if (_thirdPartyImportOptionsCache.TryGetValue(optionsPath, out object? cached))
+                return cached;
+
+            try
+            {
+                if (File.Exists(optionsPath))
+                {
+                    string yaml = File.ReadAllText(optionsPath);
+                    var loaded = Deserializer.Deserialize(yaml, optionsType);
+                    if (loaded is not null)
+                    {
+                        _thirdPartyImportOptionsCache[optionsPath] = loaded;
+                        return loaded;
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                Debug.LogWarning($"Failed to read import options '{optionsPath}'. {ex.Message}");
+            }
+
+            object? created = null;
+            try
+            {
+                created = Activator.CreateInstance(optionsType);
+            }
+            catch (Exception ex)
+            {
+                Debug.LogWarning($"Failed to create import options of type '{optionsType.FullName}'. {ex.Message}");
+                return null;
+            }
+
+            try
+            {
+                string? directory = Path.GetDirectoryName(optionsPath);
+                if (!string.IsNullOrWhiteSpace(directory))
+                    Directory.CreateDirectory(directory);
+
+                string yaml = Serializer.Serialize(created);
+                File.WriteAllText(optionsPath, yaml, Encoding.UTF8);
+            }
+            catch (Exception ex)
+            {
+                Debug.LogWarning($"Failed to write default import options '{optionsPath}'. {ex.Message}");
+            }
+
+            if (created is not null)
+                _thirdPartyImportOptionsCache[optionsPath] = created;
+
+            return created;
+        }
+
+        public bool SaveThirdPartyImportOptions(string sourcePath, Type assetType, object importOptions)
+        {
+            if (string.IsNullOrWhiteSpace(sourcePath) || assetType is null || importOptions is null)
+                return false;
+
+            if (!TryResolveImportOptionsPath(sourcePath, assetType, out string optionsPath))
+                return false;
+
+            try
+            {
+                string? directory = Path.GetDirectoryName(optionsPath);
+                if (!string.IsNullOrWhiteSpace(directory))
+                    Directory.CreateDirectory(directory);
+
+                string yaml = Serializer.Serialize(importOptions);
+                File.WriteAllText(optionsPath, yaml, Encoding.UTF8);
+                _thirdPartyImportOptionsCache[optionsPath] = importOptions;
+                return true;
+            }
+            catch (Exception ex)
+            {
+                Debug.LogWarning($"Failed to save import options '{optionsPath}'. {ex.Message}");
+                return false;
+            }
+        }
+
+        public bool ReimportThirdPartyFile(string sourcePath)
+            => RunOnJobThreadBlocking(() => ImportThirdPartyToNativeAssetCore(sourcePath, forceOverwrite: true), JobPriority.Normal, bypassJobThread: false);
+
+        public Task<bool> ReimportThirdPartyFileAsync(string sourcePath)
+            => RunOnJobThreadAsync(() => ImportThirdPartyToNativeAssetCore(sourcePath, forceOverwrite: true), JobPriority.Normal, bypassJobThread: false);
+
+        private void TryQueueAutoImportForThirdPartyFile(string path, string reason)
+        {
+            if (string.IsNullOrWhiteSpace(path))
+                return;
+
+            // Skip native assets, directories, and anything outside the project's Assets root.
+            if (HasNativeAssetExtension(path) || Directory.Exists(path) || !IsPathUnderGameAssets(path))
+                return;
+
+            if (!TryGetThirdPartyExtension(path, out var normalizedExtension))
+                return;
+
+            var map = ThirdPartyExtensionMap.Value;
+            if (!map.TryGetValue(normalizedExtension, out var assetType))
+                return;
+
+            // Schedule on the job system so file watcher threads stay lightweight.
+            _ = RunOnJobThreadAsync(() =>
+            {
+                try
+                {
+                    ImportThirdPartyToNativeAssetCore(path, forceOverwrite: false);
+                }
+                catch (Exception ex)
+                {
+                    Debug.LogWarning($"Auto-import failed for '{path}' ({reason}). {ex.Message}");
+                }
+                return true;
+            }, JobPriority.Low, bypassJobThread: false);
+        }
+
+        private bool ImportThirdPartyToNativeAssetCore(string sourcePath, bool forceOverwrite)
+        {
+            if (string.IsNullOrWhiteSpace(sourcePath))
+            {
+                Debug.LogWarning("Source path is null or empty.");
+                return false;
+            }
+
+            if (HasNativeAssetExtension(sourcePath))
+            {
+                Debug.LogWarning($"Source path '{sourcePath}' has native asset extension; skipping third-party import.");
+                return false;
+            }
+
+            if (!File.Exists(sourcePath))
+            {
+                Debug.LogWarning($"Source file '{sourcePath}' does not exist.");
+                return false;
+            }
+
+            if (!TryGetThirdPartyExtension(sourcePath, out var normalizedExtension))
+            {
+                Debug.LogWarning($"Source file '{sourcePath}' does not have a recognized third-party extension.");
+                return false;
+            }
+
+            var map = ThirdPartyExtensionMap.Value;
+            if (!map.TryGetValue(normalizedExtension, out var assetType))
+            {
+                Debug.LogWarning($"No asset type registered for third-party extension '{normalizedExtension}'.");
+                return false;
+            }
+
+            if (!TryResolveGeneratedAssetPathForThirdPartySource(sourcePath, out string generatedAssetPath))
+            {
+                Debug.LogWarning($"Failed to resolve generated asset path for source '{sourcePath}'.");
+                return false;
+            }
+
+            // If the target asset already exists, only overwrite when it's linked to this source.
+            if (File.Exists(generatedAssetPath))
+            {
+                bool linked = false;
+                try
+                {
+                    var existing = DeserializeAssetFile(generatedAssetPath, assetType);
+                    if (existing is not null && string.Equals(existing.OriginalPath, sourcePath, StringComparison.OrdinalIgnoreCase))
+                    {
+                        // Only re-import if source is newer, unless forced.
+                        var sourceTime = SafeGetLastWriteTimeUtc(sourcePath);
+                        if (forceOverwrite)
+                            linked = true;
+                        else if (sourceTime is not null && (existing.OriginalLastWriteTimeUtc is null || existing.OriginalLastWriteTimeUtc.Value < sourceTime.Value))
+                            linked = true;
+                    }
+                    else
+                    {
+                        // Debug.LogWarning($"Existing asset '{generatedAssetPath}' is not linked to source '{sourcePath}'.");
+                    }
+                }
+                catch
+                {
+                    linked = false;
+                    Debug.LogWarning($"Failed to deserialize existing asset '{generatedAssetPath}'.");
+                }
+
+                if (!linked)
+                {
+                    // If this is not a forced reimport, do nothing.
+                    if (!forceOverwrite)
+                        return false;
+
+                    Debug.LogWarning($"Refusing to overwrite existing asset '{generatedAssetPath}' because it is not linked to source '{sourcePath}'.");
+                    return false;
+                }
+            }
+
+            object? importOptions = GetOrCreateThirdPartyImportOptions(sourcePath, assetType);
+
+            if (Activator.CreateInstance(assetType) is not XRAsset asset)
+            {
+                Debug.LogWarning($"Failed to create asset instance for '{assetType.FullName}'.");
+                return false;
+            }
+
+            asset.Name = Path.GetFileNameWithoutExtension(sourcePath);
+            asset.OriginalPath = sourcePath;
+            asset.OriginalLastWriteTimeUtc = SafeGetLastWriteTimeUtc(sourcePath);
+
+            bool ok = asset.Import3rdParty(sourcePath, importOptions);
+            if (!ok)
+                return false;
+
+            asset.FilePath = generatedAssetPath;
+
+            string? directory = Path.GetDirectoryName(generatedAssetPath);
+            if (!string.IsNullOrWhiteSpace(directory))
+                Directory.CreateDirectory(directory);
+
+            asset.SerializeTo(generatedAssetPath, Serializer);
+
+            _recentlySavedPaths[generatedAssetPath] = DateTime.UtcNow;
+            return true;
+        }
+
+        private void HandleThirdPartyImportOptionsRenamed(string oldPath, string newPath)
+        {
+            if (!IsPathUnderGameAssets(oldPath) || !IsPathUnderGameAssets(newPath))
+                return;
+
+            if (HasNativeAssetExtension(oldPath) || HasNativeAssetExtension(newPath))
+                return;
+
+            if (!TryGetThirdPartyExtension(newPath, out var newExt))
+                return;
+
+            var map = ThirdPartyExtensionMap.Value;
+            if (!map.TryGetValue(newExt, out var assetType))
+                return;
+
+            if (!TryResolveImportOptionsPath(oldPath, assetType, out string oldOptionsPath))
+                return;
+            if (!TryResolveImportOptionsPath(newPath, assetType, out string newOptionsPath))
+                return;
+
+            try
+            {
+                if (!File.Exists(oldOptionsPath))
+                    return;
+
+                string? newDir = Path.GetDirectoryName(newOptionsPath);
+                if (!string.IsNullOrWhiteSpace(newDir))
+                    Directory.CreateDirectory(newDir);
+
+                File.Move(oldOptionsPath, newOptionsPath, overwrite: true);
+            }
+            catch (Exception ex)
+            {
+                Debug.LogWarning($"Failed to move import options '{oldOptionsPath}' -> '{newOptionsPath}'. {ex.Message}");
+            }
+        }
+
+        private void HandleThirdPartyImportOptionsDeleted(string sourcePath)
+        {
+            if (!IsPathUnderGameAssets(sourcePath))
+                return;
+            if (HasNativeAssetExtension(sourcePath))
+                return;
+
+            if (!TryGetThirdPartyExtension(sourcePath, out var ext))
+                return;
+
+            var map = ThirdPartyExtensionMap.Value;
+            if (!map.TryGetValue(ext, out var assetType))
+                return;
+
+            if (!TryResolveImportOptionsPath(sourcePath, assetType, out string optionsPath))
+                return;
+
+            try
+            {
+                if (File.Exists(optionsPath))
+                    File.Delete(optionsPath);
+            }
+            catch
+            {
+                // best-effort cleanup.
+            }
+        }
+
         private void TryPruneEmptyMetadataDirectories(string? directory)
         {
             if (string.IsNullOrWhiteSpace(directory) || string.IsNullOrWhiteSpace(GameMetadataPath))
@@ -797,6 +1286,7 @@ namespace XREngine
         private readonly ConcurrentDictionary<string, DateTime> _recentlySavedPaths = new(StringComparer.OrdinalIgnoreCase);
         private readonly object _metadataLock = new();
         private static readonly Lazy<Dictionary<string, Type>> ThirdPartyExtensionMap = new(CreateThirdPartyExtensionMap);
+        private readonly ConcurrentDictionary<string, object> _thirdPartyImportOptionsCache = new(StringComparer.OrdinalIgnoreCase);
 
         public XRAsset? GetAssetByID(Guid id)
             => LoadedAssetsByIDInternal.TryGetValue(id, out XRAsset? asset) ? asset : null;
@@ -1561,6 +2051,7 @@ namespace XREngine
                 //.IgnoreFields()
                 .EnablePrivateConstructors() //TODO: probably avoid using this
                 .EnsureRoundtrip()
+                .WithEmissionPhaseObjectGraphVisitor(args => new PolymorphicTypeGraphVisitor(args.InnerVisitor))
                 .WithEventEmitter(nextEmitter => new DepthTrackingEventEmitter(nextEmitter))
                 //.WithTypeConverter(new XRAssetYamlConverter())
                 .IncludeNonPublicProperties()
@@ -1595,6 +2086,9 @@ namespace XREngine
                 builder.WithTypeConverter(converter);
 
             builder.WithNodeDeserializer(new XRAssetDeserializer(), w => w.OnTop());
+
+            // Must run after XRAssetDeserializer is registered (XRAssetDeserializer ignores non-XRAsset types).
+            builder.WithNodeDeserializer(new PolymorphicYamlNodeDeserializer(), w => w.OnTop());
 
             return builder.Build();
         }

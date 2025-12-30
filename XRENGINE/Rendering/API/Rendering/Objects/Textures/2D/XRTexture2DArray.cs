@@ -7,7 +7,7 @@ using XREngine.Data.Vectors;
 
 namespace XREngine.Rendering
 {
-    [XR3rdPartyExtensions("gif")]
+    [XR3rdPartyExtensions(typeof(XREngine.Data.XRTexture2DImportOptions), "gif")]
     [MemoryPackable]
     public partial class XRTexture2DArray : XRTexture, IFrameBufferAttachement
     {
