@@ -22,6 +22,9 @@ public static partial class EditorImGuiUI
         private static string? _openGlXrTypeFilter;
         private static OpenGlApiGroupMode _openGlGroupMode = OpenGlApiGroupMode.ApiType;
 
+        private static string[]? _openGlExtensionsSource;
+        private static string[] _openGlExtensionsSorted = Array.Empty<string>();
+
         private readonly struct OpenGLApiObjectRow
         {
             public OpenGLApiObjectRow(
@@ -427,6 +430,10 @@ public static partial class EditorImGuiUI
 
         private static void DrawOpenGLDebugTabContent()
         {
+            DrawOpenGLExtensionsSection();
+
+            ImGui.Separator();
+
             var errors = OpenGLRenderer.GetTrackedOpenGLErrors();
             if (errors.Count == 0)
             {
@@ -500,6 +507,65 @@ public static partial class EditorImGuiUI
 
                 ImGui.EndTable();
             }
+        }
+
+        private static void DrawOpenGLExtensionsSection()
+        {
+            string[] extensions = GetSortedOpenGLExtensions();
+
+            if (!ImGui.CollapsingHeader($"OpenGL Extensions ({extensions.Length})", ImGuiTreeNodeFlags.DefaultOpen))
+                return;
+
+            Vector2 contentAvail = ImGui.GetContentRegionAvail();
+            float listHeight = MathF.Max(160.0f, MathF.Min(320.0f, contentAvail.Y * 0.5f));
+
+            if (ImGui.BeginChild("OpenGLExtensionsList", new Vector2(-1.0f, listHeight), ImGuiChildFlags.Border))
+            {
+                if (extensions.Length == 0)
+                {
+                    ImGui.TextDisabled("No extensions are cached (not using OpenGL, or enumeration failed).");
+                }
+                else
+                {
+                    unsafe
+                    {
+                        var clipper = new ImGuiListClipper();
+                        ImGuiNative.ImGuiListClipper_Begin(&clipper, extensions.Length, ImGui.GetTextLineHeightWithSpacing());
+                        while (ImGuiNative.ImGuiListClipper_Step(&clipper) != 0)
+                        {
+                            for (int i = clipper.DisplayStart; i < clipper.DisplayEnd; i++)
+                                ImGui.TextUnformatted(extensions[i]);
+                        }
+                        ImGuiNative.ImGuiListClipper_End(&clipper);
+                    }
+                }
+
+                ImGui.EndChild();
+            }
+        }
+
+        private static string[] GetSortedOpenGLExtensions()
+        {
+            // Cache the sorted list so we don't allocate/sort every frame.
+            string[] source = Engine.Rendering.State.OpenGLExtensions;
+            if (ReferenceEquals(_openGlExtensionsSource, source))
+                return _openGlExtensionsSorted;
+
+            _openGlExtensionsSource = source;
+            if (source is null || source.Length == 0)
+            {
+                _openGlExtensionsSorted = Array.Empty<string>();
+                return _openGlExtensionsSorted;
+            }
+
+            // Sort for scanability in the UI.
+            var copy = source.Where(static s => !string.IsNullOrWhiteSpace(s))
+                .Distinct(StringComparer.Ordinal)
+                .OrderBy(static s => s, StringComparer.Ordinal)
+                .ToArray();
+
+            _openGlExtensionsSorted = copy;
+            return _openGlExtensionsSorted;
         }
 
         private static IEnumerable<(string? Header, List<OpenGLApiObjectRow> Rows)> EnumerateOpenGlGroups(List<OpenGLApiObjectRow> rows)

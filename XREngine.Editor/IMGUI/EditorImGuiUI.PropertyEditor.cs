@@ -15,6 +15,47 @@ namespace XREngine.Editor;
 
 public static partial class EditorImGuiUI
 {
+        private static string FormatFlagsEnumPreview(Type enumType, Array values, ulong bits)
+        {
+            if (bits == 0)
+                return "None";
+
+            var names = new List<string>();
+            for (int i = 0; i < values.Length; i++)
+            {
+                object raw = values.GetValue(i)!;
+                ulong flag;
+                try
+                {
+                    flag = Convert.ToUInt64(raw, CultureInfo.InvariantCulture);
+                }
+                catch
+                {
+                    continue;
+                }
+
+                if (flag == 0)
+                    continue;
+
+                if ((bits & flag) == flag)
+                {
+                    string name = Enum.GetName(enumType, raw) ?? raw.ToString() ?? $"0x{flag:X}";
+                    names.Add(name);
+                }
+            }
+
+            if (names.Count == 0)
+                return bits == 0 ? "None" : "Custom";
+
+            // Avoid overly long preview strings.
+            const int maxPreviewChars = 64;
+            string joined = string.Join(", ", names);
+            if (joined.Length <= maxPreviewChars)
+                return joined;
+
+            return $"{names.Count} flags";
+        }
+
         // Property Type Picker state
         private static readonly Dictionary<Type, List<CollectionTypeDescriptor>> _propertyTypeDescriptorCache = new();
         private static readonly Dictionary<string, string> _propertyTypePickerSearch = new(StringComparer.Ordinal);
@@ -160,6 +201,10 @@ public static partial class EditorImGuiUI
                     string tableId = $"Properties_{obj.GetHashCode():X8}_{group.Key?.GetHashCode() ?? 0:X8}";
                     if (ImGui.BeginTable(tableId, 2, ImGuiTableFlags.SizingStretchProp | ImGuiTableFlags.RowBg))
                     {
+                        // Prevent the name column from collapsing to a few pixels.
+                        // Without this, long value widgets can steal all width and labels get clipped to 1-2 chars.
+                        ImGui.TableSetupColumn("Property", ImGuiTableColumnFlags.WidthFixed, 280.0f);
+                        ImGui.TableSetupColumn("Value", ImGuiTableColumnFlags.WidthStretch);
                         foreach (var info in simpleProps)
                             DrawSimplePropertyRow(obj, info.Property, info.Value, info.DisplayName, info.Description, info.ValueRetrievalFailed);
                         ImGui.EndTable();
@@ -2338,25 +2383,107 @@ public static partial class EditorImGuiUI
             }
             else if (effectiveType.IsEnum)
             {
-                string[] enumNames = Enum.GetNames(effectiveType);
-                int currentIndex = currentValue is null ? -1 : Array.IndexOf(enumNames, Enum.GetName(effectiveType, currentValue));
-                if (currentIndex < 0)
-                    currentIndex = 0;
-
-                int selectedIndex = currentIndex;
-                using (new ImGuiDisabledScope(!canWrite || enumNames.Length == 0))
+                // Support [Flags] enums (e.g. Assimp.PostProcessSteps) as a multi-select.
+                if (effectiveType.IsDefined(typeof(FlagsAttribute), inherit: false))
                 {
-                    if (enumNames.Length > 0 && ImGui.Combo("##Value", ref selectedIndex, enumNames, enumNames.Length) && canWrite && selectedIndex >= 0 && selectedIndex < enumNames.Length)
+                    ulong bits = 0;
+                    try
                     {
-                        object newValue = Enum.Parse(effectiveType, enumNames[selectedIndex]);
-                        if (TryApplyInspectorValue(owner, property, currentValue, newValue))
+                        if (currentValue is not null)
+                            bits = Convert.ToUInt64(currentValue, CultureInfo.InvariantCulture);
+                    }
+                    catch
+                    {
+                        bits = 0;
+                    }
+
+                    Array values = Enum.GetValues(effectiveType);
+                    string preview = FormatFlagsEnumPreview(effectiveType, values, bits);
+
+                    using (new ImGuiDisabledScope(!canWrite))
+                    {
+                        ImGui.SetNextItemWidth(-1f);
+                        // Combo popup inherits the combo width by default, which can be quite narrow in tables.
+                        // Give it a more usable minimum width so flag names/checkboxes are readable.
+                        ImGui.SetNextWindowSizeConstraints(new Vector2(420.0f, 0.0f), new Vector2(float.MaxValue, float.MaxValue));
+                        if (ImGui.BeginCombo("##Value", preview, ImGuiComboFlags.HeightLarge))
                         {
-                            currentValue = newValue;
-                            isCurrentlyNull = false;
+                            if (ImGui.SmallButton("Clear"))
+                            {
+                                ulong newBits = 0;
+                                object newValue = Enum.ToObject(effectiveType, newBits);
+                                if (TryApplyInspectorValue(owner, property, currentValue, newValue))
+                                {
+                                    currentValue = newValue;
+                                    isCurrentlyNull = false;
+                                    bits = newBits;
+                                }
+                            }
+
+                            ImGui.Separator();
+
+                            for (int i = 0; i < values.Length; i++)
+                            {
+                                object raw = values.GetValue(i)!;
+                                ulong flag;
+                                try
+                                {
+                                    flag = Convert.ToUInt64(raw, CultureInfo.InvariantCulture);
+                                }
+                                catch
+                                {
+                                    continue;
+                                }
+
+                                // Skip 0-value in the list; use Clear instead.
+                                if (flag == 0)
+                                    continue;
+
+                                bool isSet = (bits & flag) == flag;
+                                string name = Enum.GetName(effectiveType, raw) ?? raw.ToString() ?? $"0x{flag:X}";
+
+                                bool checkedNow = isSet;
+                                if (ImGui.Checkbox(name, ref checkedNow))
+                                {
+                                    ulong newBits = checkedNow ? (bits | flag) : (bits & ~flag);
+                                    object newValue = Enum.ToObject(effectiveType, newBits);
+                                    if (TryApplyInspectorValue(owner, property, currentValue, newValue))
+                                    {
+                                        currentValue = newValue;
+                                        isCurrentlyNull = false;
+                                        bits = newBits;
+                                    }
+                                }
+                            }
+
+                            ImGui.EndCombo();
                         }
                     }
+
+                    handled = true;
                 }
-                handled = true;
+                else
+                {
+                    string[] enumNames = Enum.GetNames(effectiveType);
+                    int currentIndex = currentValue is null ? -1 : Array.IndexOf(enumNames, Enum.GetName(effectiveType, currentValue));
+                    if (currentIndex < 0)
+                        currentIndex = 0;
+
+                    int selectedIndex = currentIndex;
+                    using (new ImGuiDisabledScope(!canWrite || enumNames.Length == 0))
+                    {
+                        if (enumNames.Length > 0 && ImGui.Combo("##Value", ref selectedIndex, enumNames, enumNames.Length) && canWrite && selectedIndex >= 0 && selectedIndex < enumNames.Length)
+                        {
+                            object newValue = Enum.Parse(effectiveType, enumNames[selectedIndex]);
+                            if (TryApplyInspectorValue(owner, property, currentValue, newValue))
+                            {
+                                currentValue = newValue;
+                                isCurrentlyNull = false;
+                            }
+                        }
+                    }
+                    handled = true;
+                }
             }
             else if (effectiveType == typeof(string))
             {

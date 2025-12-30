@@ -368,6 +368,7 @@ public static partial class EditorImGuiUI
         private static bool _dockingLayoutInitialized;
         private const string MainDockSpaceId = "MainDockSpace";
         private const string HierarchyWindowId = "Hierarchy";
+        private const string ViewportWindowId = "Viewport";
         private const string InspectorWindowId = "Inspector";
         private const string AssetsWindowId = "Assets";
         private const string ConsoleWindowId = "Console";
@@ -449,6 +450,7 @@ public static partial class EditorImGuiUI
             DrawBuildSettingsPanel();
             DrawNetworkingPanel();
             DrawHierarchyPanel();
+            DrawViewportPanel();
             DrawInspectorPanel();
             DrawAssetExplorerPanel();
 
@@ -500,6 +502,7 @@ public static partial class EditorImGuiUI
             // Dock windows
             ImGuiDockBuilderNative.DockWindow(HierarchyWindowId, leftDockId);
             ImGuiDockBuilderNative.DockWindow(InspectorWindowId, rightDockId);
+            ImGuiDockBuilderNative.DockWindow(ViewportWindowId, centerDockId);
             ImGuiDockBuilderNative.DockWindow(AssetsWindowId, bottomDockId);
             ImGuiDockBuilderNative.DockWindow(ConsoleWindowId, bottomDockId); // Same dock as Assets (tabbed)
 
@@ -535,6 +538,7 @@ public static partial class EditorImGuiUI
             // Dock windows
             ImGuiDockBuilderNative.DockWindow(HierarchyWindowId, leftDockId);
             ImGuiDockBuilderNative.DockWindow(InspectorWindowId, rightDockId);
+            ImGuiDockBuilderNative.DockWindow(ViewportWindowId, centerDockId);
             ImGuiDockBuilderNative.DockWindow(AssetsWindowId, bottomDockId);
             ImGuiDockBuilderNative.DockWindow(ConsoleWindowId, bottomDockId);
 

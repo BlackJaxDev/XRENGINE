@@ -8,7 +8,7 @@ using YamlDotNet.Serialization;
 namespace Unity
 {
     [MemoryPackable(GenerateType.NoGenerate)]
-    [XR3rdPartyExtensions("anim:static")]
+    [XR3rdPartyExtensions(typeof(XREngine.Data.XRDefault3rdPartyImportOptions), "anim:static")]
     public partial class UnityAnimationClip : XRAsset
     {
         public class Wrapper

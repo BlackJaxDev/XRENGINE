@@ -22,7 +22,7 @@ using YamlDotNet.RepresentationModel;
 
 namespace XREngine.Rendering
 {
-    [XR3rdPartyExtensions("png", "jpg", "jpeg", "tif", "tiff", "tga", "exr", "hdr")]
+    [XR3rdPartyExtensions(typeof(XREngine.Data.XRTexture2DImportOptions), "png", "jpg", "jpeg", "tif", "tiff", "tga", "exr", "hdr")]
     [MemoryPackable]
     public partial class XRTexture2D : XRTexture, IFrameBufferAttachement, ICookedBinarySerializable
     {
@@ -54,6 +54,21 @@ namespace XREngine.Rendering
                 Debug.LogWarning($"Failed to load texture from '{filePath}'. Falling back to filler texture. {ex.Message}");
                 return AssignFillerTexture(filePath);
             }
+        }
+
+        public override bool Import3rdParty(string filePath, object? importOptions)
+        {
+            bool ok = Load3rdParty(filePath);
+            if (!ok)
+                return false;
+
+            if (importOptions is XREngine.Data.XRTexture2DImportOptions options)
+            {
+                AutoGenerateMipmaps = options.AutoGenerateMipmaps;
+                Resizable = options.Resizable;
+            }
+
+            return true;
         }
 
         public static EnumeratorJob ScheduleLoadJob(

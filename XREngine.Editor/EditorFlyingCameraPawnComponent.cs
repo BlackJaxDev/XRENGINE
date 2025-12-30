@@ -341,6 +341,20 @@ public partial class EditorFlyingCameraPawnComponent : FlyingCameraPawnComponent
         set => SetField(ref _stippleThickness, value);
     }
 
+    private float _stippleDepthOffset = 0.00005f;
+    /// <summary>
+    /// Depth offset applied to the hovered face stippled overlay to prevent z-fighting.
+    /// Higher values push the overlay closer to the camera.
+    /// </summary>
+    [Category("Raycasting")]
+    [DisplayName("Stipple Depth Offset")]
+    [Description("Depth offset applied to the stippled face overlay to render on top of the underlying triangle.")]
+    public float StippleDepthOffset
+    {
+        get => _stippleDepthOffset;
+        set => SetField(ref _stippleDepthOffset, value);
+    }
+
     // Stippled triangle renderer components
     private XRMeshRenderer? _stippledTriangleRenderer;
     private XRMesh? _stippledTriangleMesh;
@@ -615,6 +629,7 @@ public partial class EditorFlyingCameraPawnComponent : FlyingCameraPawnComponent
             mat.SetVector4("FillColor", HoveredFaceFillColor);
             mat.SetFloat("StippleScale", StippleScale);
             mat.SetFloat("StippleThickness", StippleThickness);
+            mat.SetFloat("DepthOffset", StippleDepthOffset);
         }
 
         // Render the stippled triangle
@@ -639,6 +654,7 @@ public partial class EditorFlyingCameraPawnComponent : FlyingCameraPawnComponent
             new ShaderVector4(HoveredFaceFillColor, "FillColor"),
             new ShaderFloat(StippleScale, "StippleScale"),
             new ShaderFloat(StippleThickness, "StippleThickness"),
+            new ShaderFloat(_stippleDepthOffset, "DepthOffset"),
         ];
         var mat = new XRMaterial(vars, fragShader);
         mat.RenderOptions.CullMode = ECullMode.None;

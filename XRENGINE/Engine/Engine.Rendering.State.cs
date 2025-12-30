@@ -1,4 +1,5 @@
-﻿using System.Numerics;
+﻿using System;
+using System.Numerics;
 using XREngine.Data.Colors;
 using XREngine.Data.Geometry;
 using XREngine.Data.Rendering;
@@ -106,6 +107,12 @@ namespace XREngine
                 /// True when GL_NV_ray_tracing is reported by the current OpenGL context.
                 /// </summary>
                 public static bool HasNvRayTracing { get; internal set; }
+
+                /// <summary>
+                /// All OpenGL extensions reported by the current OpenGL context (via GL_NUM_EXTENSIONS + glGetStringi).
+                /// Empty when not using OpenGL or if enumeration failed.
+                /// </summary>
+                public static string[] OpenGLExtensions { get; internal set; } = Array.Empty<string>();
                 /// <summary>
                 /// If true, the current render is a light probe pass - only what's needed for light probes is rendered.
                 /// All light probe passes contain a scene capture pass.

@@ -1,4 +1,4 @@
-using Extensions;
+﻿using Extensions;
 using ImageMagick;
 using Silk.NET.OpenGL;
 using Silk.NET.OpenGL.Extensions.ARB;
@@ -107,6 +107,9 @@ namespace XREngine.Rendering.OpenGL
 
             controller = new ImGuiController(Api, XRWindow.Window, input);
             ImGuiContextTracker.Register(controller.Context);
+
+            ImGuiControllerUtilities.TryUseLatoAsDefaultFont(controller);
+
             _imguiController = controller;
             _imguiBackend = null;
             return controller;
@@ -126,11 +129,11 @@ namespace XREngine.Rendering.OpenGL
 
         private static void InitGL(GL api)
         {
-                string version;
-                unsafe
-                {
-                    version = new((sbyte*)api.GetString(StringName.Version));
-                    string vendor = new((sbyte*)api.GetString(StringName.Vendor));
+            string version;
+            unsafe
+            {
+                version = new((sbyte*)api.GetString(StringName.Version));
+                string vendor = new((sbyte*)api.GetString(StringName.Vendor));
                 string renderer = new((sbyte*)api.GetString(StringName.Renderer));
                 string shadingLanguageVersion = new((sbyte*)api.GetString(StringName.ShadingLanguageVersion));
                 Debug.Out($"OpenGL Version: {version}");
@@ -142,19 +145,18 @@ namespace XREngine.Rendering.OpenGL
                 Engine.Rendering.State.IsIntel = vendor.Contains("Intel");
                 Engine.Rendering.State.IsVulkan = false;
 
-                // Probe for GL_NV_ray_tracing support early so features can decide whether to attempt the RT path.
-                bool hasNvRayTracing = false;
+                // Cache full extension list once so ImGui/debug panels can display it without re-enumerating each frame.
+                // Also probe for GL_NV_ray_tracing support early so features can decide whether to attempt the RT path.
+                string[] extensions = [];
                 try
                 {
                     int extCount = api.GetInteger(GLEnum.NumExtensions);
-                    for (uint i = 0; i < extCount; i++)
+                    if (extCount > 0)
                     {
-                        string ext = new((sbyte*)api.GetString(StringName.Extensions, i));
-                        if (ext == "GL_NV_ray_tracing")
-                        {
-                            hasNvRayTracing = true;
-                            break;
-                        }
+                        var list = new string[extCount];
+                        for (uint i = 0; i < extCount; i++)
+                            list[i] = new((sbyte*)api.GetString(StringName.Extensions, i));
+                        extensions = list;
                     }
                 }
                 catch (Exception ex)
@@ -162,6 +164,8 @@ namespace XREngine.Rendering.OpenGL
                     Debug.LogWarning($"Failed to query GL extensions for NV ray tracing: {ex.Message}");
                 }
 
+                Engine.Rendering.State.OpenGLExtensions = extensions;
+                bool hasNvRayTracing = extensions.Any(static e => string.Equals(e, "GL_NV_ray_tracing", StringComparison.Ordinal));
                 Engine.Rendering.State.HasNvRayTracing = hasNvRayTracing;
                 Debug.Out(EOutputVerbosity.Normal, false, hasNvRayTracing
                     ? "GL_NV_ray_tracing: available"

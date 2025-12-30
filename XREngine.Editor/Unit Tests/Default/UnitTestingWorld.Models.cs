@@ -56,7 +56,7 @@ public static partial class UnitTestingWorld
                         return null;
                     }
                     using var importer = new ModelImporter(fbxPathDesktop, null, null);
-                    importer.MakeMaterialAction = CreateHardcodedMaterial;
+                    importer.MakeMaterialAction = ModelImporter.MakeMaterialDefault;
                     importer.MakeTextureAction = CreateHardcodedTexture;
                     var node = importer.Import(Toggles.AnimatedModelImportFlags, true, true, Toggles.AnimatedModelScale, Toggles.AnimatedModelZUp, true);
                     if (characterParentNode != null && node != null)
@@ -84,10 +84,10 @@ public static partial class UnitTestingWorld
 
                     ModelImporter.DelMakeMaterialAction makeMaterialAction = Toggles.StaticModelMaterialMode switch
                     {
-                        StaticModelMaterialMode.Deferred => ModelImporter.MakeMaterialDeferred,
-                        StaticModelMaterialMode.ForwardPlusTextured => ModelImporter.MakeMaterialForwardPlusTextured,
-                        StaticModelMaterialMode.ForwardPlusUberShader => ModelImporter.MakeMaterialForwardPlusUberShader,
-                        _ => ModelImporter.MakeMaterialDeferred,
+                        StaticModelMaterialMode.Deferred => ModelImporter.MakeMaterialDefault,
+                        StaticModelMaterialMode.ForwardPlusTextured => ModelImporter.MakeMaterialDefault,
+                        StaticModelMaterialMode.ForwardPlusUberShader => ModelImporter.MakeMaterialDefault,
+                        _ => ModelImporter.MakeMaterialDefault,
                     };
 
                     // Use the job system for streaming mesh import.
