@@ -124,8 +124,8 @@ public sealed class LightmapBakeManager : XRBase
 
     internal void Update()
     {
-        ProcessDynamicCachedAutoBake();
-        ProcessManualRequests();
+        //ProcessDynamicCachedAutoBake();
+        //ProcessManualRequests();
     }
 
     private void ProcessDynamicCachedAutoBake()

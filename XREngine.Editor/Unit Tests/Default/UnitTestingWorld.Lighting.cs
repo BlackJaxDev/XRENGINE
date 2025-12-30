@@ -57,7 +57,7 @@ public static partial class UnitTestingWorld
             var dirLightTransform = dirLightNode.SetTransform<Transform>();
             dirLightTransform.Translation = new Vector3(0.0f, 0.0f, 0.0f);
             //Face the light directly down
-            dirLightTransform.Rotation = Quaternion.CreateFromAxisAngle(Vector3.UnitX, XRMath.DegToRad(-70.0f));
+            dirLightTransform.Rotation = Quaternion.CreateFromYawPitchRoll(-120, 95, 0);// Quaternion.CreateFromAxisAngle(Vector3.UnitX, XRMath.DegToRad(-70.0f));
             //dirLightTransform.RegisterAnimationTick<Transform>(t => t.Rotation *= Quaternion.CreateFromAxisAngle(Globals.Backward, Engine.DilatedDelta));
             if (!dirLightNode.TryAddComponent<DirectionalLightComponent>(out var dirLightComp))
                 return;
@@ -65,9 +65,9 @@ public static partial class UnitTestingWorld
             dirLightComp!.Name = "TestDirectionalLight";
             dirLightComp.Color = new Vector3(1, 1, 1);
             dirLightComp.DiffuseIntensity = 1.0f;
-            dirLightComp.Scale = new Vector3(10000.0f, 10000.0f, 10000.0f);
+            dirLightComp.Scale = new Vector3(100.0f, 100.0f, 900.0f);
             dirLightComp.CastsShadows = true;
-            dirLightComp.SetShadowMapResolution(4096, 4096);
+            dirLightComp.SetShadowMapResolution(2048, 2048);
         }
 
         public static void AddDirLight2(SceneNode rootNode)

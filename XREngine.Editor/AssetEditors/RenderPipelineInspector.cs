@@ -28,6 +28,8 @@ public sealed class RenderPipelineInspector : IXRAssetInspector
 
     private readonly ConditionalWeakTable<RenderPipeline, EditorState> _stateCache = new();
 
+    private static XRTexture2D? _autoExposureSmallestMipCopyTex;
+
     #endregion
 
     #region Public API
@@ -206,6 +208,12 @@ public sealed class RenderPipelineInspector : IXRAssetInspector
         }
 
         var selectedInstance = instances[state.SelectedInstanceIndex];
+
+        bool flipPreview = state.FlipPreview;
+
+        DrawAutoExposureSmallestMipPreview(selectedInstance, flipPreview);
+        ImGui.Separator();
+
         var fboRecords = selectedInstance.Resources.FrameBufferRecords
             .Where(pair => pair.Value.Instance is not null)
             .OrderBy(pair => pair.Key, StringComparer.OrdinalIgnoreCase)
@@ -238,7 +246,6 @@ public sealed class RenderPipelineInspector : IXRAssetInspector
             ImGui.EndCombo();
         }
 
-        bool flipPreview = state.FlipPreview;
         ImGui.Checkbox("Flip Preview Vertically", ref state.FlipPreview);
 
         var selectedRecord = fboRecords.First(pair => pair.Key.Equals(state.SelectedFboName, StringComparison.OrdinalIgnoreCase));
@@ -263,6 +270,271 @@ public sealed class RenderPipelineInspector : IXRAssetInspector
             DrawFboOutputs(fbo, flipPreview);
 
             ImGui.EndTable();
+        }
+    }
+
+    private static void DrawAutoExposureSmallestMipPreview(XRRenderPipelineInstance instance, bool flipPreview)
+    {
+        ImGui.TextUnformatted("Auto Exposure (Smallest Mip Preview)");
+
+        if (!instance.Resources.TryGetTexture(DefaultRenderPipeline.HDRSceneTextureName, out XRTexture? hdrTex) || hdrTex is null)
+        {
+            ImGui.TextDisabled($"Texture '{DefaultRenderPipeline.HDRSceneTextureName}' not found on this instance.");
+            return;
+        }
+
+        XRTexture? previewTex = null;
+        int smallestMip = 0;
+        string details;
+
+        // Read back the smallest mip directly from the source texture.
+        // (GL texture views require immutable storage; HDRSceneTex is typically resizable/mutable.)
+        bool hasReadback = false;
+        Vector4 smallestMipRgba = Vector4.Zero;
+        string readbackFailure = string.Empty;
+
+        switch (hdrTex)
+        {
+            case XRTexture2D tex2D:
+                smallestMip = XRTexture.GetSmallestMipmapLevel(tex2D.Width, tex2D.Height, tex2D.SmallestAllowedMipmapLevel);
+                // Avoid GL texture views here: HDRSceneTex is typically mutable/resizable, and GL texture views require immutable storage.
+                previewTex = TryCopyMipTo1x1Texture(tex2D, smallestMip, 0, out string copyFailure)
+                    ? _autoExposureSmallestMipCopyTex
+                    : tex2D;
+                details = $"Source: {tex2D.Width}x{tex2D.Height} | Mip {smallestMip}";
+                hasReadback = TryReadBackRgbaFloat(tex2D, smallestMip, 0, out smallestMipRgba, out readbackFailure);
+                if (!string.IsNullOrWhiteSpace(copyFailure))
+                    ImGui.TextDisabled(copyFailure);
+                break;
+
+            case XRTexture2DArray tex2DArray:
+                smallestMip = XRTexture.GetSmallestMipmapLevel(tex2DArray.Width, tex2DArray.Height, tex2DArray.SmallestAllowedMipmapLevel);
+                previewTex = TryCopyMipTo1x1Texture(tex2DArray, smallestMip, 0, out string copyFailureArray)
+                    ? _autoExposureSmallestMipCopyTex
+                    : tex2DArray;
+                details = $"Source: {tex2DArray.Width}x{tex2DArray.Height} | Mip {smallestMip} | Layer 0";
+                hasReadback = TryReadBackRgbaFloat(tex2DArray, smallestMip, 0, out smallestMipRgba, out readbackFailure);
+                if (!string.IsNullOrWhiteSpace(copyFailureArray))
+                    ImGui.TextDisabled(copyFailureArray);
+                break;
+
+            default:
+                ImGui.TextDisabled($"Unsupported HDR scene texture type: {hdrTex.GetType().Name}");
+                return;
+        }
+
+        // Show a UI-friendly swatch of the 1x1 value even if the raw HDR image draw looks black.
+        if (hasReadback)
+        {
+            ImGui.TextDisabled($"RGBA (float): {smallestMipRgba.X:0.####}, {smallestMipRgba.Y:0.####}, {smallestMipRgba.Z:0.####}, {smallestMipRgba.W:0.####}");
+            Vector3 tonemapped = TonemapReinhard(new Vector3(smallestMipRgba.X, smallestMipRgba.Y, smallestMipRgba.Z));
+            var swatch = new Vector4(tonemapped, 1f);
+            ImGui.ColorButton("##AutoExposureSmallestMipSwatch", swatch, ImGuiColorEditFlags.NoTooltip, new Vector2(160f, 160f));
+        }
+        else
+        {
+            ImGui.TextDisabled(readbackFailure);
+        }
+
+        var previewState = new TexturePreviewState { Channel = TextureChannelView.RGBA, Layer = 0, Mip = 0 };
+        if (TryGetTexturePreviewHandle(previewTex, 320f, previewState, out nint handle, out Vector2 displaySize, out Vector2 pixelSize, out string failure))
+        {
+            Vector2 uv0 = flipPreview ? new Vector2(0f, 1f) : Vector2.Zero;
+            Vector2 uv1 = flipPreview ? new Vector2(1f, 0f) : Vector2.One;
+
+            // A 1x1 smallest mip is useful but invisible at native size.
+            // Scale up tiny mips in this dedicated panel only.
+            const float minPreviewEdge = 96f;
+            const float maxPreviewEdge = 320f;
+            float largestPixelEdge = MathF.Max(1f, MathF.Max(pixelSize.X, pixelSize.Y));
+            float scaleUp = MathF.Max(1f, minPreviewEdge / largestPixelEdge);
+            scaleUp = MathF.Min(scaleUp, maxPreviewEdge / largestPixelEdge);
+            Vector2 scaledDisplaySize = scaleUp > 1f
+                ? new Vector2(pixelSize.X * scaleUp, pixelSize.Y * scaleUp)
+                : displaySize;
+
+            ImGui.Image(handle, scaledDisplaySize, uv0, uv1);
+
+            string mipSize = $"{pixelSize.X} x {pixelSize.Y}";
+            ImGui.TextDisabled($"{details} | Mip Size: {mipSize}");
+        }
+        else
+        {
+            ImGui.TextDisabled(failure);
+        }
+    }
+
+    private static bool TryCopyMipTo1x1Texture(XRTexture texture, int mipLevel, int layerIndex, out string failure)
+    {
+        failure = string.Empty;
+
+        if (!Engine.IsRenderThread)
+        {
+            failure = "Preview copy unavailable off render thread";
+            return false;
+        }
+
+        if (AbstractRenderer.Current is not OpenGLRenderer renderer)
+        {
+            failure = "Preview copy requires OpenGL renderer";
+            return false;
+        }
+
+        if (texture is XRTexture2D t2d && t2d.MultiSample)
+        {
+            failure = "Cannot preview multisampled HDRSceneTex";
+            return false;
+        }
+        if (texture is XRTexture2DArray t2da && t2da.MultiSample)
+        {
+            failure = "Cannot preview multisampled HDRSceneTex";
+            return false;
+        }
+
+        // Allocate a cached immutable 1x1 RGBA16f texture for display.
+        _autoExposureSmallestMipCopyTex ??= CreateAutoExposureSmallestMipCopyTexture();
+
+        var srcObj = renderer.GetOrCreateAPIRenderObject(texture) as OpenGLRenderer.GLObjectBase;
+        var dstObj = renderer.GetOrCreateAPIRenderObject(_autoExposureSmallestMipCopyTex) as OpenGLRenderer.GLObjectBase;
+        if (srcObj is null || dstObj is null)
+        {
+            failure = "Preview copy: texture not uploaded";
+            return false;
+        }
+
+        uint srcId = srcObj.BindingId;
+        uint dstId = dstObj.BindingId;
+        if (srcId == 0 || dstId == 0 || srcId == OpenGLRenderer.GLObjectBase.InvalidBindingId || dstId == OpenGLRenderer.GLObjectBase.InvalidBindingId)
+        {
+            failure = "Preview copy: GL texture not ready";
+            return false;
+        }
+
+        var gl = renderer.RawGL;
+
+        // CopyImageSubData works across compatible formats. We copy one texel from the chosen mip.
+        if (texture is XRTexture2DArray array)
+        {
+            int clampedLayer = Math.Clamp(layerIndex, 0, Math.Max(0, (int)array.Depth - 1));
+            gl.CopyImageSubData(
+                srcId, GLEnum.Texture2DArray, mipLevel, 0, 0, clampedLayer,
+                dstId, GLEnum.Texture2D, 0, 0, 0, 0,
+                1, 1, 1);
+        }
+        else
+        {
+            gl.CopyImageSubData(
+                srcId, GLEnum.Texture2D, mipLevel, 0, 0, 0,
+                dstId, GLEnum.Texture2D, 0, 0, 0, 0,
+                1, 1, 1);
+        }
+
+        return true;
+    }
+
+    private static XRTexture2D CreateAutoExposureSmallestMipCopyTexture()
+    {
+        var t = XRTexture2D.CreateFrameBufferTexture(
+            1u,
+            1u,
+            EPixelInternalFormat.Rgba16f,
+            EPixelFormat.Rgba,
+            EPixelType.HalfFloat);
+        t.Resizable = false;
+        t.SizedInternalFormat = ESizedInternalFormat.Rgba16f;
+        t.MinFilter = ETexMinFilter.Nearest;
+        t.MagFilter = ETexMagFilter.Nearest;
+        t.UWrap = ETexWrapMode.ClampToEdge;
+        t.VWrap = ETexWrapMode.ClampToEdge;
+        t.Name = "AutoExposureSmallestMipCopy";
+        t.SamplerName = "AutoExposureSmallestMipCopy";
+        t.AutoGenerateMipmaps = false;
+        return t;
+    }
+
+    private static Vector3 TonemapReinhard(Vector3 hdr)
+    {
+        static float Saturate(float v) => Math.Clamp(v, 0f, 1f);
+
+        Vector3 safe = new(
+            float.IsFinite(hdr.X) ? MathF.Max(0f, hdr.X) : 0f,
+            float.IsFinite(hdr.Y) ? MathF.Max(0f, hdr.Y) : 0f,
+            float.IsFinite(hdr.Z) ? MathF.Max(0f, hdr.Z) : 0f);
+
+        // Simple Reinhard + gamma 2.2 for a UI-friendly swatch.
+        Vector3 mapped = safe / (Vector3.One + safe);
+        const float invGamma = 1f / 2.2f;
+        mapped = new Vector3(
+            MathF.Pow(mapped.X, invGamma),
+            MathF.Pow(mapped.Y, invGamma),
+            MathF.Pow(mapped.Z, invGamma));
+        return new Vector3(Saturate(mapped.X), Saturate(mapped.Y), Saturate(mapped.Z));
+    }
+
+    private static unsafe bool TryReadBackRgbaFloat(XRTexture texture, int mipLevel, int layerIndex, out Vector4 rgba, out string failure)
+    {
+        rgba = Vector4.Zero;
+        failure = string.Empty;
+
+        if (!Engine.IsRenderThread)
+        {
+            failure = "Readback unavailable off render thread";
+            return false;
+        }
+
+        if (AbstractRenderer.Current is not OpenGLRenderer renderer)
+        {
+            failure = "Readback requires OpenGL renderer";
+            return false;
+        }
+
+        if (texture is XRTexture2D tex2D && tex2D.MultiSample)
+        {
+            failure = "Multisample textures do not support mip readback";
+            return false;
+        }
+        if (texture is XRTexture2DArray tex2DArray && tex2DArray.MultiSample)
+        {
+            failure = "Multisample textures do not support mip readback";
+            return false;
+        }
+
+        var apiRenderObject = renderer.GetOrCreateAPIRenderObject(texture);
+        if (apiRenderObject is not OpenGLRenderer.GLObjectBase apiObject)
+        {
+            failure = "Texture not uploaded";
+            return false;
+        }
+
+        uint binding = apiObject.BindingId;
+        if (binding == OpenGLRenderer.GLObjectBase.InvalidBindingId || binding == 0)
+        {
+            failure = "Texture not ready";
+            return false;
+        }
+
+        var gl = renderer.RawGL;
+
+        // Read from the requested mip level. For array textures, GetTextureImage returns all layers;
+        // we read layer 0 by taking the first texel.
+        if (texture is XRTexture2DArray array)
+        {
+            int layers = Math.Max(1, (int)array.Depth);
+            int floats = 4 * layers;
+            float* tmp = stackalloc float[floats];
+            gl.GetTextureImage(binding, mipLevel, GLEnum.Rgba, GLEnum.Float, (uint)(sizeof(float) * floats), tmp);
+
+            int clampedLayer = Math.Clamp(layerIndex, 0, layers - 1);
+            int o = clampedLayer * 4;
+            rgba = new Vector4(tmp[o + 0], tmp[o + 1], tmp[o + 2], tmp[o + 3]);
+            return true;
+        }
+        else
+        {
+            Vector4 tmp = Vector4.Zero;
+            gl.GetTextureImage(binding, mipLevel, GLEnum.Rgba, GLEnum.Float, (uint)sizeof(Vector4), &tmp);
+            rgba = tmp;
+            return true;
         }
     }
 
@@ -975,6 +1247,8 @@ public sealed class RenderPipelineInspector : IXRAssetInspector
         bool previewUsesView = previewTexture is XRTextureViewBase;
         if (previewUsesView || previewState.Channel != TextureChannelView.RGBA)
             ApplyChannelSwizzle(renderer, binding, previewState.Channel);
+        if (previewUsesView)
+            ApplyPreviewSamplingState(renderer, binding);
         handle = (nint)binding;
         return true;
     }
@@ -1184,9 +1458,30 @@ public sealed class RenderPipelineInspector : IXRAssetInspector
         {
             XRTexture2D tex2D => new Vector2(Shifted(tex2D.Width, mipLevel), Shifted(tex2D.Height, mipLevel)),
             XRTexture2DArray array => new Vector2(Shifted(array.Width, mipLevel), Shifted(array.Height, mipLevel)),
-            XRTextureViewBase view => new Vector2(Shifted((uint)view.WidthHeightDepth.X, mipLevel), Shifted((uint)view.WidthHeightDepth.Y, mipLevel)),
+            // Views report the *source* dimensions; account for the view's base mip.
+            XRTextureViewBase view => new Vector2(
+                Shifted((uint)view.WidthHeightDepth.X, mipLevel + (int)view.MinLevel),
+                Shifted((uint)view.WidthHeightDepth.Y, mipLevel + (int)view.MinLevel)),
             _ => new Vector2(1f, 1f),
         };
+    }
+
+    private static void ApplyPreviewSamplingState(OpenGLRenderer renderer, uint binding)
+    {
+        // Texture views often have only 1 mip level; using a mipmap min filter makes them incomplete and they sample as black.
+        var gl = renderer.RawGL;
+
+        int linear = (int)GLEnum.Linear;
+        int baseLevel = 0;
+        int maxLevel = 0;
+        int clamp = (int)GLEnum.ClampToEdge;
+
+        gl.TextureParameterI(binding, GLEnum.TextureMinFilter, in linear);
+        gl.TextureParameterI(binding, GLEnum.TextureMagFilter, in linear);
+        gl.TextureParameterI(binding, GLEnum.TextureBaseLevel, in baseLevel);
+        gl.TextureParameterI(binding, GLEnum.TextureMaxLevel, in maxLevel);
+        gl.TextureParameterI(binding, GLEnum.TextureWrapS, in clamp);
+        gl.TextureParameterI(binding, GLEnum.TextureWrapT, in clamp);
     }
 
     private static void ApplyChannelSwizzle(OpenGLRenderer renderer, uint binding, TextureChannelView channel)

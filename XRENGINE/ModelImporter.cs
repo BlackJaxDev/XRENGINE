@@ -172,7 +172,19 @@ namespace XREngine
             ShadingMode mode,
             Dictionary<string, List<MaterialProperty>> properties)
         {
-            return MakeMaterialInternal(textures, name);
+            // Create the material (shaders/params/etc.)
+            XRMaterial mat = MakeMaterialInternal(textures, name);
+
+            // Load textures immediately (placeholders + scheduled async decode) and bind them.
+            // This ensures the default import path produces textured materials without requiring
+            // callers to manually invoke LoadTextures/FillTextures.
+            if (textures.Count > 0)
+            {
+                XRTexture[] textureList = LoadTextures(modelFilePath, textures);
+                FillTextures(mat, textureList);
+            }
+
+            return mat;
         }
 
         public XRTexture[] LoadTextures(string modelFilePath, List<TextureSlot> textures)
@@ -185,6 +197,13 @@ namespace XREngine
 
         public static void FillTextures(XRMaterial mat, XRTexture[] textureList)
         {
+            if (textureList is null || textureList.Length == 0)
+                return;
+
+            // Ensure the material has enough texture slots to assign into.
+            while (mat.Textures.Count < textureList.Length)
+                mat.Textures.Add(null);
+
             for (int i = 0; i < textureList.Length; i++)
             {
                 XRTexture? tex = textureList[i];

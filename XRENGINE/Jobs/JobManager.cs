@@ -76,10 +76,15 @@ namespace XREngine
 
         private readonly SemaphoreSlim _readySignal = new(0);
         private readonly SemaphoreSlim _remoteReadySignal = new(0);
+        private readonly SemaphoreSlim _deferredReadySignal = new(0);
+        private readonly ConcurrentQueue<Job> _deferredBySlot = new();
         private readonly CancellationTokenSource _cts = new();
         private readonly Thread[] _workers;
         private readonly object _remoteWorkerLock = new();
         private Task? _remoteWorkerTask;
+
+        private readonly object _deferredWorkerLock = new();
+        private Task? _deferredWorkerTask;
 
         public int WorkerCount => _workers.Length;
         public IRemoteJobTransport? RemoteTransport { get; set; }
@@ -191,10 +196,98 @@ namespace XREngine
 
             var completionSource = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
             job.AttachCompletionSource(completionSource);
-            job.UsesQueueSlot = true;
 
-            Enqueue(job, countAgainstSlots: true);
+            // Non-blocking scheduling: never wait for bounded queue capacity on the calling thread.
+            // If the bounded queue is saturated, we defer slot acquisition to a background enqueuer.
+            if (_queueSlots is null)
+            {
+                Enqueue(job, countAgainstSlots: false);
+                return job.Handle;
+            }
+
+            bool acquired = false;
+            try
+            {
+                acquired = _queueSlots.Wait(0);
+            }
+            catch (ObjectDisposedException)
+            {
+                acquired = false;
+            }
+
+            if (acquired)
+            {
+                job.UsesQueueSlot = true;
+                Enqueue(job, countAgainstSlots: false);
+                return job.Handle;
+            }
+
+            DeferEnqueue(job);
             return job.Handle;
+        }
+
+        private void DeferEnqueue(Job job)
+        {
+            _deferredBySlot.Enqueue(job);
+            EnsureDeferredWorker();
+            try
+            {
+                _deferredReadySignal.Release();
+            }
+            catch (ObjectDisposedException)
+            {
+                // Shutting down.
+            }
+        }
+
+        private void EnsureDeferredWorker()
+        {
+            lock (_deferredWorkerLock)
+            {
+                if (_deferredWorkerTask is { IsCompleted: false })
+                    return;
+
+                _deferredWorkerTask = Task.Factory.StartNew(
+                    DeferredEnqueueLoop,
+                    CancellationToken.None,
+                    TaskCreationOptions.LongRunning,
+                    TaskScheduler.Default);
+            }
+        }
+
+        private void DeferredEnqueueLoop()
+        {
+            try
+            {
+                while (!_cts.IsCancellationRequested)
+                {
+                    _deferredReadySignal.Wait(_cts.Token);
+
+                    while (_deferredBySlot.TryDequeue(out var job))
+                    {
+                        if (_cts.IsCancellationRequested)
+                            return;
+
+                        // Wait for a bounded queue slot on this background thread.
+                        // Use the manager token so canceled jobs still get enqueued and can complete promptly.
+                        AcquireQueueSlot(_cts.Token);
+
+                        if (_cts.IsCancellationRequested)
+                            return;
+
+                        job.UsesQueueSlot = _queueSlots != null;
+                        Enqueue(job, countAgainstSlots: false);
+                    }
+                }
+            }
+            catch (OperationCanceledException)
+            {
+                // Shutdown.
+            }
+            catch (ObjectDisposedException)
+            {
+                // Shutdown.
+            }
         }
 
         public EnumeratorJob Schedule(
@@ -341,7 +434,8 @@ namespace XREngine
                 if (_cts.IsCancellationRequested)
                     return;
 
-                cancellationToken.ThrowIfCancellationRequested();
+                if (cancellationToken.IsCancellationRequested)
+                    return;
 
                 if (_queueSlots.Wait(QueueAcquireWaitMs, cancellationToken))
                     return;
@@ -783,6 +877,17 @@ namespace XREngine
                 // Ignore if the signal is already disposed
             }
 
+            try
+            {
+                _deferredReadySignal.Release();
+            }
+            catch (OperationCanceledException)
+            {
+            }
+            catch (ObjectDisposedException)
+            {
+            }
+
             foreach (var worker in _workers)
                 if (worker.IsAlive)
                     worker.Join();
@@ -793,8 +898,15 @@ namespace XREngine
                 catch (AggregateException) { /* ignore; cancellation or shutdown exceptions */ }
             }
 
+            if (_deferredWorkerTask is { IsCompleted: false } deferred)
+            {
+                try { deferred.Wait(); }
+                catch (AggregateException) { }
+            }
+
             _readySignal.Dispose();
             _remoteReadySignal.Dispose();
+            _deferredReadySignal.Dispose();
             _cts.Dispose();
             _queueSlots?.Dispose();
         }

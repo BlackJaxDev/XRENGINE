@@ -264,7 +264,8 @@ namespace XREngine.Rendering
                 if (maxDim == 0)
                     return 0;
 
-                int smallest = (int)Math.Floor(Math.Log2(maxDim));
+                // Exact floor(log2(maxDim)) with no floating-point rounding issues.
+                int smallest = BitOperations.Log2(maxDim);
                 return Math.Min(smallest, SmallestAllowedMipmapLevel);
             }
         }
@@ -276,7 +277,8 @@ namespace XREngine.Rendering
             if (maxDim == 0)
                 return 0;
 
-            int smallest = (int)Math.Floor(Math.Log10(maxDim) * 3.321928f);
+            // Exact floor(log2(maxDim)) with no floating-point rounding issues.
+            int smallest = BitOperations.Log2(maxDim);
             return Math.Min(smallest, smallestAllowedMipmapLevel);
         }
 

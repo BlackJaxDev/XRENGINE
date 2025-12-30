@@ -332,7 +332,7 @@ public static partial class UnitTestingWorld
                 listener.SpeedOfSound = 343.3f;
             }
 
-            if (!(Toggles.VRPawn && Toggles.AllowEditingInVR) && Toggles.Microphone && !(Toggles.ImportAnimatedModel && Toggles.AttachMicToAnimatedModel))
+            if (!(Toggles.VRPawn && Toggles.AllowEditingInVR) && Toggles.Microphone && !(Toggles.HasAnimatedModelsToImport && Toggles.AttachMicToAnimatedModel))
                 Audio.AttachMicTo(cameraNode, out _, out _, out _);
 
             PawnComponent pawnComp;

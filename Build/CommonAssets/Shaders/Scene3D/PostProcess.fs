@@ -42,11 +42,8 @@ float GetExposure()
   if (UseGpuAutoExposure)
   {
     float e = texelFetch(AutoExposureTex, ivec2(0, 0), 0).r;
-    // DEBUG: Multiply by 10 to make auto-exposure changes more visible for testing
-    // The computed value (~1.14) is very close to 1.0, making changes subtle
-    // Remove the * 10.0 after confirming the system works
     if (!(isnan(e) || isinf(e)) && e > 0.0)
-      return e * 10.0; // DEBUG: amplify to see if texture is being read
+      return e;
   }
   return ColorGrade.Exposure;
 }
@@ -313,14 +310,16 @@ void main()
 
 	//Color grading
 	sceneColor *= ColorGrade.Tint;
-  //if (ColorGrade.Hue != 1.0f || ColorGrade.Saturation != 1.0f || ColorGrade.Brightness != 1.0f)
-  //{
-  //    vec3 hsv = RGBtoHSV(ldrSceneColor);
-  //    hsv.x *= ColorGrade.Hue;
-  //    hsv.y *= ColorGrade.Saturation;
-  //    hsv.z *= ColorGrade.Brightness;
-  //    ldrSceneColor = HSVtoRGB(hsv);
-  //}
+
+  // Hue/Saturation/Brightness grading is only well-defined in the LDR path.
+  if (!OutputHDR && (ColorGrade.Hue != 1.0f || ColorGrade.Saturation != 1.0f || ColorGrade.Brightness != 1.0f))
+  {
+      vec3 hsv = RGBtoHSV(clamp(sceneColor, vec3(0.0f), vec3(1.0f)));
+      hsv.x = fract(hsv.x * ColorGrade.Hue);
+      hsv.y = clamp(hsv.y * ColorGrade.Saturation, 0.0f, 1.0f);
+      hsv.z = max(hsv.z * ColorGrade.Brightness, 0.0f);
+      sceneColor = HSVtoRGB(hsv);
+  }
 	sceneColor = (sceneColor - 0.5f) * ColorGrade.Contrast + 0.5f;
 
   //Apply highlight color to selected objects

@@ -45,92 +45,104 @@ public static partial class UnitTestingWorld
                 }]);
             }
 
-            if (Toggles.ImportAnimatedModel)
+            if (!Toggles.HasAnyModelsToImport)
+                return;
+
+            SceneNode? importedStaticModelsRootNode = null;
+
+            foreach (var model in Toggles.ModelsToImport)
             {
-                SceneNode? ImportAnimated()
+                if (model is null || !model.Enabled || string.IsNullOrWhiteSpace(model.Path))
+                    continue;
+
+                string resolvedPath = ResolveModelPath(desktopDir, model.Path);
+                if (!File.Exists(resolvedPath))
                 {
-                    string fbxPathDesktop = Path.Combine(desktopDir, Toggles.AnimatedModelDesktopPath);
-                    if (!File.Exists(fbxPathDesktop))
+                    Debug.LogWarning($"[UnitTestingWorld] Model file not found at '{resolvedPath}' (raw='{model.Path}')");
+                    continue;
+                }
+
+                switch (model.Kind)
+                {
+                    case UnitTestModelImportKind.Animated:
                     {
-                        Debug.LogWarning($"Animated model file not found at {fbxPathDesktop}");
-                        return null;
+                        SceneNode? ImportAnimated()
+                        {
+                            using var importer = new ModelImporter(resolvedPath, null, null);
+                            importer.MakeMaterialAction = ModelImporter.MakeMaterialDefault;
+                            importer.MakeTextureAction = CreateHardcodedTexture;
+                            var node = importer.Import(model.ImportFlags, true, true, model.Scale, model.ZUp, true);
+                            if (characterParentNode != null && node != null)
+                                characterParentNode.Transform.AddChild(node.Transform, false, true);
+                            return node;
+                        }
+
+                        Task.Run(ImportAnimated).ContinueWith(nodeTask => OnFinishedImportingAvatar(nodeTask.Result, characterParentNode));
+                        break;
                     }
-                    using var importer = new ModelImporter(fbxPathDesktop, null, null);
-                    importer.MakeMaterialAction = ModelImporter.MakeMaterialDefault;
-                    importer.MakeTextureAction = CreateHardcodedTexture;
-                    var node = importer.Import(Toggles.AnimatedModelImportFlags, true, true, Toggles.AnimatedModelScale, Toggles.AnimatedModelZUp, true);
-                    if (characterParentNode != null && node != null)
-                        characterParentNode.Transform.AddChild(node.Transform, false, true);
-                    return node;
-                }
-                Task.Run(ImportAnimated).ContinueWith(nodeTask => OnFinishedImportingAvatar(nodeTask.Result, characterParentNode));
-                //ModelImporter.ImportAsync(fbxPathDesktop, animFlags, null, null, characterParentNode, ModelScale, ModelZUp).ContinueWith(OnFinishedAvatarAsync);
-            }
-            if (Toggles.ImportStaticModel)
-            {
-                Debug.Out($"[StaticModel] ImportStaticModel is enabled, creating parent node...");
-                var importedModelsNode = new SceneNode(rootNode) { Name = "Static Model Root", Layer = DefaultLayers.StaticIndex };
-                Debug.Out($"[StaticModel] Created 'Static Model Root' node, parent is '{rootNode.Name}'");
-                string path = Path.Combine(Engine.Assets.EngineAssetsPath, "Models", "Sponza", "sponza.obj");
-                Debug.Out($"[StaticModel] Model path: {path}");
-
-                if (!File.Exists(path))
-                {
-                    Debug.LogWarning($"[StaticModel] Static model file not found at {path}");
-                }
-                else
-                {
-                    Debug.Out($"[StaticModel] File exists, scheduling import job...");
-
-                    ModelImporter.DelMakeMaterialAction makeMaterialAction = Toggles.StaticModelMaterialMode switch
+                    case UnitTestModelImportKind.Static:
+                    default:
                     {
-                        StaticModelMaterialMode.Deferred => ModelImporter.MakeMaterialDefault,
-                        StaticModelMaterialMode.ForwardPlusTextured => ModelImporter.MakeMaterialDefault,
-                        StaticModelMaterialMode.ForwardPlusUberShader => ModelImporter.MakeMaterialDefault,
-                        _ => ModelImporter.MakeMaterialDefault,
-                    };
+                        importedStaticModelsRootNode ??= new SceneNode(rootNode) { Name = "Static Model Root", Layer = DefaultLayers.StaticIndex };
 
-                    // Use the job system for streaming mesh import.
-                    // The scene node tree is created first, then meshes are added one-by-one as they complete.
-                    var job = ModelImporter.ScheduleImportJob(
-                        path,
-                        Toggles.StaticModelImportFlags,
-                        onFinished: result =>
+                        ModelImporter.DelMakeMaterialAction makeMaterialAction = Toggles.StaticModelMaterialMode switch
                         {
-                            Debug.Out($"[StaticModel] onFinished callback invoked");
-                            // Scene node tree is already built and parented by this point.
-                            // Meshes have been streaming in as they complete.
-                            if (result.RootNode != null)
+                            StaticModelMaterialMode.Deferred => ModelImporter.MakeMaterialDefault,
+                            StaticModelMaterialMode.ForwardPlusTextured => ModelImporter.MakeMaterialDefault,
+                            StaticModelMaterialMode.ForwardPlusUberShader => ModelImporter.MakeMaterialDefault,
+                            _ => ModelImporter.MakeMaterialDefault,
+                        };
+
+                        _ = ModelImporter.ScheduleImportJob(
+                            resolvedPath,
+                            model.ImportFlags,
+                            onFinished: result =>
                             {
-                                Debug.Out($"[StaticModel] RootNode is not null: '{result.RootNode.Name}'");
-                                Debug.Out($"[StaticModel] RootNode parent: '{result.RootNode.Parent?.Name ?? "NULL"}'");
-                                Debug.Out($"[StaticModel] RootNode transform parent: '{result.RootNode.Transform.Parent?.SceneNode?.Name ?? "NULL"}'");
-                                Debug.Out($"[StaticModel] RootNode world position: {result.RootNode.Transform.WorldTranslation}");
-                                result.RootNode.GetTransformAs<Transform>()?.ApplyScale(new Vector3(0.01f));
-                                Debug.Out($"[StaticModel] Applied scale, new world position: {result.RootNode.Transform.WorldTranslation}");
-                                Debug.Out($"[StaticModel] Import completed: {result.Meshes.Count} meshes, {result.Materials.Count} materials");
-                            }
-                            else
-                            {
-                                Debug.LogWarning($"[StaticModel] onFinished: result.RootNode is NULL!");
-                            }
-                        },
-                        onError: ex =>
-                        {
-                            Debug.LogException(ex, $"[StaticModel] Failed to import static model: {path}");
-                        },
-                        onCanceled: () => Debug.LogWarning($"[StaticModel] Import was canceled: {path}"),
-                        onProgress: progress => Debug.Out($"[StaticModel] Progress: {progress:P0}"),
-                        cancellationToken: default,
-                        parent: importedModelsNode,
-                        scaleConversion: 1.0f,
-                        zUp: false,
-                        materialFactory: null,
-                        makeMaterialAction: makeMaterialAction,
-                        layer: DefaultLayers.StaticIndex);
-                    Debug.Out($"[StaticModel] Import job scheduled, job ID: {job?.GetHashCode()}");
+                                if (result.RootNode is null)
+                                    Debug.LogWarning($"[StaticModel] Import finished but RootNode is null: {resolvedPath}");
+                                else
+                                    Debug.Out($"[StaticModel] Import completed: {resolvedPath} ({result.Meshes.Count} meshes, {result.Materials.Count} materials)");
+                            },
+                            onError: ex => Debug.LogException(ex, $"[StaticModel] Failed to import static model: {resolvedPath}"),
+                            onCanceled: () => Debug.LogWarning($"[StaticModel] Import was canceled: {resolvedPath}"),
+                            onProgress: progress => Debug.Out($"[StaticModel] Progress ({Path.GetFileName(resolvedPath)}): {progress:P0}"),
+                            cancellationToken: default,
+                            parent: importedStaticModelsRootNode,
+                            scaleConversion: model.Scale,
+                            zUp: model.ZUp,
+                            materialFactory: null,
+                            makeMaterialAction: makeMaterialAction,
+                            layer: DefaultLayers.StaticIndex);
+
+                        break;
+                    }
                 }
             }
+        }
+
+        private static string ResolveModelPath(string desktopDir, string rawPath)
+        {
+            if (Path.IsPathRooted(rawPath))
+                return rawPath;
+
+            string candidate = Path.Combine(desktopDir, rawPath);
+            if (File.Exists(candidate))
+                return candidate;
+
+            candidate = Path.Combine(Engine.Assets.EngineAssetsPath, rawPath);
+            if (File.Exists(candidate))
+                return candidate;
+
+            // Convenience for the common "Models/..." layout under engine assets.
+            if (!rawPath.StartsWith("Models\\", StringComparison.OrdinalIgnoreCase) &&
+                !rawPath.StartsWith("Models/", StringComparison.OrdinalIgnoreCase))
+            {
+                candidate = Path.Combine(Engine.Assets.EngineAssetsPath, "Models", rawPath);
+                if (File.Exists(candidate))
+                    return candidate;
+            }
+
+            return candidate;
         }
 
         public static void AddSkybox(SceneNode rootNode, XRTexture2D? skyEquirect)

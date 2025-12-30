@@ -1,10 +1,19 @@
 using Assimp;
+using Newtonsoft.Json;
+using System.Collections.Generic;
+using System.Linq;
 
 namespace XREngine.Editor;
 
 public static partial class UnitTestingWorld
 {
     public static Settings Toggles { get; set; } = new();
+
+    public enum UnitTestModelImportKind
+    {
+        Static,
+        Animated,
+    }
 
     public enum StaticModelMaterialMode
     {
@@ -71,11 +80,40 @@ public static partial class UnitTestingWorld
         public int PhysicsBallCount = 10; //The number of physics balls to add to the scene.
 
         //Models
-        public bool ImportStaticModel = true; //Imports a scene model to be rendered.
         public StaticModelMaterialMode StaticModelMaterialMode { get; set; } = StaticModelMaterialMode.Deferred;
-        public bool ImportAnimatedModel = false; //Imports a character model to be animated.
-        public float AnimatedModelScale = 1.0f; //The scale of the model when imported.
-        public bool AnimatedModelZUp = false; //If true, the model will be rotated 90 degrees around the X axis.
+
+        public class ModelImportSettings
+        {
+            public bool Enabled { get; set; } = true;
+            public UnitTestModelImportKind Kind { get; set; } = UnitTestModelImportKind.Static;
+            public string Path { get; set; } = string.Empty;
+            public PostProcessSteps ImportFlags { get; set; } = PostProcessSteps.None;
+            public float Scale { get; set; } = 1.0f;
+            public bool ZUp { get; set; } = false;
+        }
+
+        public List<ModelImportSettings> ModelsToImport { get; set; } =
+        [
+            new()
+            {
+                Kind = UnitTestModelImportKind.Static,
+                Path = "Models\\Sponza\\sponza.obj",
+                ImportFlags =
+                    PostProcessSteps.SplitLargeMeshes |
+                    PostProcessSteps.Triangulate |
+                    PostProcessSteps.GenerateNormals |
+                    PostProcessSteps.CalculateTangentSpace |
+                    PostProcessSteps.JoinIdenticalVertices |
+                    PostProcessSteps.OptimizeGraph |
+                    PostProcessSteps.OptimizeMeshes |
+                    PostProcessSteps.SortByPrimitiveType |
+                    PostProcessSteps.ImproveCacheLocality |
+                    PostProcessSteps.GenerateBoundingBoxes |
+                    PostProcessSteps.FlipUVs,
+                Scale = 0.01f,
+                ZUp = false,
+            }
+        ];
 
         //Audio
         public bool SoundNode = false;
@@ -93,32 +131,14 @@ public static partial class UnitTestingWorld
         public bool IKTest = false; //Adds an simple IK test tree to the scene.
         public bool TestAnimation = false; //Adds test animations to the character pawn.
 
-        public PostProcessSteps AnimatedModelImportFlags =
-            PostProcessSteps.Triangulate |
-            PostProcessSteps.JoinIdenticalVertices |
-            PostProcessSteps.GenerateNormals |
-            PostProcessSteps.CalculateTangentSpace |
-            PostProcessSteps.OptimizeGraph |
-            PostProcessSteps.OptimizeMeshes |
-            PostProcessSteps.SortByPrimitiveType |
-            PostProcessSteps.ImproveCacheLocality |
-            PostProcessSteps.GenerateBoundingBoxes |
-            //PostProcessSteps.RemoveRedundantMaterials |
-            PostProcessSteps.FlipUVs;
+        [JsonIgnore]
+        public bool HasAnyModelsToImport => ModelsToImport?.Any(m => m?.Enabled ?? false) ?? false;
 
-        public PostProcessSteps StaticModelImportFlags =
-            PostProcessSteps.SplitLargeMeshes |
-            //PostProcessSteps.PreTransformVertices |
-            PostProcessSteps.Triangulate |
-            PostProcessSteps.GenerateNormals |
-            PostProcessSteps.CalculateTangentSpace |
-            PostProcessSteps.JoinIdenticalVertices |
-            PostProcessSteps.OptimizeGraph |
-            PostProcessSteps.OptimizeMeshes |
-            PostProcessSteps.SortByPrimitiveType |
-            PostProcessSteps.ImproveCacheLocality |
-            PostProcessSteps.GenerateBoundingBoxes |
-            PostProcessSteps.FlipUVs;
+        [JsonIgnore]
+        public bool HasAnimatedModelsToImport => ModelsToImport?.Any(m => (m?.Enabled ?? false) && m.Kind == UnitTestModelImportKind.Animated) ?? false;
+
+        [JsonIgnore]
+        public bool HasStaticModelsToImport => ModelsToImport?.Any(m => (m?.Enabled ?? false) && m.Kind == UnitTestModelImportKind.Static) ?? false;
 
         /// <summary>
         /// Indicates if the engine should use shader pipelines to mix and match shader stages.
@@ -142,7 +162,6 @@ public static partial class UnitTestingWorld
         public bool BackgroundShader = false;
         public bool AddCharacterIK = false;
 
-        public string AnimatedModelDesktopPath { get; set; } = "misc\\mitsuki.fbx";
         /// <summary>
         /// If true, creates a 1x1x1 box at the origin.
         /// </summary>

@@ -11,6 +11,33 @@ namespace XREngine.Rendering
     {
         public const string ColorGradeUniformName = "ColorGrade";
 
+        public enum AutoExposureMeteringMode
+        {
+            /// <summary>
+            /// Current behavior: sample the 1x1 (smallest) mip.
+            /// Fast but can be dominated by bright sky/highlights.
+            /// </summary>
+            Average = 0,
+
+            /// <summary>
+            /// Samples a small mip and computes geometric-mean luminance.
+            /// More stable across bright highlights.
+            /// </summary>
+            LogAverage = 1,
+
+            /// <summary>
+            /// Samples a small mip and weights toward the screen center.
+            /// Useful when skybox dominates the edges.
+            /// </summary>
+            CenterWeighted = 2,
+
+            /// <summary>
+            /// Samples a small mip and ignores the brightest X% of samples.
+            /// Helps avoid a small bright region forcing the whole scene dark.
+            /// </summary>
+            IgnoreTopPercent = 3,
+        }
+
         public ColorGradingSettings()
         {
             Contrast = 1.0f;
@@ -18,14 +45,21 @@ namespace XREngine.Rendering
 
         private float _contrast = 0.0f;
         private float _contrastUniformValue;
-        private float _exposureTransitionSpeed = 0.01f;
+        private float _exposureTransitionSpeed = 0.5f;
         private ColorF3 _tint = new(1.0f, 1.0f, 1.0f);
         private bool _autoExposure = true;
         private float _autoExposureBias = 0.0f;
-        private float _autoExposureScale = 0.5f;
-        private float _exposureDividend = 0.1f;
-        private float _minExposure = 0.0001f;
+        private float _autoExposureScale = 1.0f;
+        private float _exposureDividend = 0.18f;
+        private float _minExposure = 0.01f;
         private float _maxExposure = 500.0f;
+
+        private AutoExposureMeteringMode _autoExposureMetering = AutoExposureMeteringMode.Average;
+        private int _autoExposureMeteringTargetSize = 16;
+        private float _autoExposureIgnoreTopPercent = 0.02f;
+        private float _autoExposureCenterWeightStrength = 1.0f;
+        private float _autoExposureCenterWeightPower = 2.0f;
+
         private float _exposure = 1.0f;
         private float _gamma = 2.2f;
         private float _hue = 1.0f;
@@ -66,6 +100,50 @@ namespace XREngine.Rendering
         {
             get => _maxExposure;
             set => SetField(ref _maxExposure, value);
+        }
+
+        public AutoExposureMeteringMode AutoExposureMetering
+        {
+            get => _autoExposureMetering;
+            set => SetField(ref _autoExposureMetering, value);
+        }
+
+        /// <summary>
+        /// Target maximum dimension (in texels) for the mip used by advanced metering modes.
+        /// Clamped to [1, 64].
+        /// </summary>
+        public int AutoExposureMeteringTargetSize
+        {
+            get => _autoExposureMeteringTargetSize;
+            set => SetField(ref _autoExposureMeteringTargetSize, Math.Clamp(value, 1, 64));
+        }
+
+        /// <summary>
+        /// For IgnoreTopPercent metering: fraction of brightest samples to drop.
+        /// Clamped to [0, 0.5].
+        /// </summary>
+        public float AutoExposureIgnoreTopPercent
+        {
+            get => _autoExposureIgnoreTopPercent;
+            set => SetField(ref _autoExposureIgnoreTopPercent, value.Clamp(0.0f, 0.5f));
+        }
+
+        /// <summary>
+        /// For CenterWeighted metering: 0 = uniform, 1 = fully center-weighted.
+        /// </summary>
+        public float AutoExposureCenterWeightStrength
+        {
+            get => _autoExposureCenterWeightStrength;
+            set => SetField(ref _autoExposureCenterWeightStrength, value.Clamp(0.0f, 1.0f));
+        }
+
+        /// <summary>
+        /// For CenterWeighted metering: power of the radial falloff curve.
+        /// </summary>
+        public float AutoExposureCenterWeightPower
+        {
+            get => _autoExposureCenterWeightPower;
+            set => SetField(ref _autoExposureCenterWeightPower, MathF.Max(0.1f, value));
         }
         public float ExposureTransitionSpeed
         {
@@ -273,6 +351,12 @@ uniform ColorGradeStruct ColorGrade;";
             AutoExposureBias = Interp.Lerp(source.AutoExposureBias, dest.AutoExposureBias, time);
             AutoExposureScale = Interp.Lerp(source.AutoExposureScale, dest.AutoExposureScale, time);
             ExposureTransitionSpeed = Interp.Lerp(source.ExposureTransitionSpeed, dest.ExposureTransitionSpeed, time);
+
+            AutoExposureMetering = time < 0.5f ? source.AutoExposureMetering : dest.AutoExposureMetering;
+            AutoExposureMeteringTargetSize = time < 0.5f ? source.AutoExposureMeteringTargetSize : dest.AutoExposureMeteringTargetSize;
+            AutoExposureIgnoreTopPercent = Interp.Lerp(source.AutoExposureIgnoreTopPercent, dest.AutoExposureIgnoreTopPercent, time);
+            AutoExposureCenterWeightStrength = Interp.Lerp(source.AutoExposureCenterWeightStrength, dest.AutoExposureCenterWeightStrength, time);
+            AutoExposureCenterWeightPower = Interp.Lerp(source.AutoExposureCenterWeightPower, dest.AutoExposureCenterWeightPower, time);
         }
     }
 }
