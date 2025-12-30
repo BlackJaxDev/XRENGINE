@@ -7,10 +7,24 @@
   "AddPhysics": true,
   "AllowEditingInVR": false,
   "AllowShaderPipelines": false,
-  "AnimatedModelDesktopPath": "misc\\Mitsuki.fbx",
-  "AnimatedModelImportFlags": "Triangulate, FlipUVs",
-  "AnimatedModelScale": 1.0,
-  "AnimatedModelZUp": false,
+  "ModelsToImport": [
+    {
+      "Enabled": true,
+      "Kind": "Animated",
+      "Path": "misc\\Mitsuki.fbx",
+      "ImportFlags": "Triangulate, FlipUVs",
+      "Scale": 1.0,
+      "ZUp": false
+    },
+    {
+      "Enabled": true,
+      "Kind": "Static",
+      "Path": "Models\\Sponza2\\Sponza.obj",
+      "ImportFlags": "CalculateTangentSpace, JoinIdenticalVertices, Triangulate, GenerateNormals, SplitLargeMeshes, ImproveCacheLocality, OptimizeGraph, OptimizeMeshes, SortByPrimitiveType, FlipUVs",
+      "Scale": 0.01,
+      "ZUp": false
+    }
+  ],
   "AnimationClipVMD": false,
   "AttachMicToAnimatedModel": true,
   "BackgroundShader": false,
@@ -26,8 +40,6 @@
   "GPURenderDispatch": false,
   "FixedFPS": 30.0,
   "IKTest": false,
-  "ImportAnimatedModel": true,
-  "ImportStaticModel": true,
   "StaticModelMaterialMode": "ForwardPlusTextured",
   "LightProbe": true,
   "LightProbeCaptureMs": 1000.0,
@@ -57,7 +69,6 @@
   "SoundNode": false,
   "SpotLight": false,
   "Spline": false,
-  "StaticModelImportFlags": "CalculateTangentSpace, JoinIdenticalVertices, Triangulate, GenerateNormals, SplitLargeMeshes, ImproveCacheLocality, OptimizeGraph, OptimizeMeshes, SortByPrimitiveType, FlipUVs",
   "StopRealtimeCaptureSec": 5.0,
   "TestAnimation": false,
   "ThirdPersonPawn": true,

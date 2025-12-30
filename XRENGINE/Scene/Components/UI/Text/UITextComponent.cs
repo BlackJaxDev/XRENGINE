@@ -1,4 +1,8 @@
-﻿using System.Numerics;
+﻿using System;
+using System.Collections.Generic;
+using System.IO;
+using System.Linq;
+using System.Numerics;
 using XREngine.Data.Colors;
 using XREngine.Data.Core;
 using XREngine.Data.Rendering;
@@ -6,12 +10,19 @@ using XREngine.Rendering.Models.Materials;
 
 namespace XREngine.Rendering.UI
 {
+    /// <summary>
+    /// Vertical alignment modes for <see cref="UITextComponent"/> within its <see cref="UIBoundableTransform"/>.
+    /// </summary>
     public enum EVerticalAlignment
     {
         Top,
         Center,
         Bottom
     }
+
+    /// <summary>
+    /// Horizontal alignment modes for <see cref="UITextComponent"/> within its <see cref="UIBoundableTransform"/>.
+    /// </summary>
     public enum EHorizontalAlignment
     {
         Left,
@@ -19,28 +30,61 @@ namespace XREngine.Rendering.UI
         Right
     }
 
+    /// <summary>
+    /// Renders 2D UI text by generating instanced quad glyphs from a <see cref="FontGlyphSet"/> atlas.
+    /// </summary>
+    /// <remarks>
+    /// - Glyph quad transforms/UVs are written to shader storage buffers and pushed to the GPU on demand.
+    /// - When <see cref="AnimatableTransforms"/> is enabled, per-glyph translation/scale/rotation can be applied via <see cref="GlyphRelativeTransforms"/>.
+    /// - Auto sizing is supported through <see cref="UIBoundableTransform.CalcAutoWidthCallback"/> and <see cref="UIBoundableTransform.CalcAutoHeightCallback"/>.
+    /// </remarks>
     public class UITextComponent : UIRenderableComponent
     {
+        #region Construction
         public UITextComponent()
         {
             RenderPass = (int)EDefaultRenderPass.TransparentForward;
         }
 
+        #endregion
+
+        #region Constants
+
         private const string TextColorUniformName = "TextColor";
+
+        #endregion
+
+        #region Glyph State / Buffers
 
         private readonly List<(Vector4 transform, Vector4 uvs)> _glyphs = [];
         private XRDataBuffer? _uvsBuffer;
         private XRDataBuffer? _transformsBuffer;
         private XRDataBuffer? _rotationsBuffer;
         private readonly Lock _glyphLock = new();
-        public bool _pushFull = false;
-        public bool _dataChanged = false;
+
+        /// <summary>
+        /// When true, the next render will push full buffer contents (e.g., after a resize).
+        /// </summary>
+        private bool _pushFull = false;
+
+        /// <summary>
+        /// When true, glyph/buffer data needs to be pushed before rendering.
+        /// </summary>
+        private bool _dataChanged = false;
         private uint _allocatedGlyphCount = 20;
+
+        #endregion
+
+        #region Public API (Layout / Content)
 
         private Dictionary<int, (Vector2 translation, Vector2 scale, float rotation)> _glyphRelativeTransforms = [];
         /// <summary>
-        /// If AnimatableTransforms is true, this dictionary can be used to update the position, scale, and rotation of individual glyphs.
+        /// Optional per-glyph adjustments applied on top of the font-provided layout.
         /// </summary>
+        /// <remarks>
+        /// This is only applied when <see cref="AnimatableTransforms"/> is true.
+        /// If you mutate the dictionary in-place (instead of replacing it), call <see cref="MarkGlyphTransformsChanged"/>.
+        /// </remarks>
         public Dictionary<int, (Vector2 translation, Vector2 scale, float rotation)> GlyphRelativeTransforms
         {
             get => _glyphRelativeTransforms;
@@ -83,7 +127,7 @@ namespace XREngine.Rendering.UI
 
         private bool _animatableTransforms = false;
         /// <summary>
-        /// If true, individual text character positions can be updated.
+        /// When true, per-glyph adjustments from <see cref="GlyphRelativeTransforms"/> are applied during buffer writes.
         /// </summary>
         public bool AnimatableTransforms
         {
@@ -93,7 +137,7 @@ namespace XREngine.Rendering.UI
 
         private FontGlyphSet.EWrapMode _wordWrap = FontGlyphSet.EWrapMode.None;
         /// <summary>
-        /// If true, the text will wrap to the next line when it reaches the width of the text box.
+        /// Controls how glyphs wrap when reaching the available bounds.
         /// </summary>
         public FontGlyphSet.EWrapMode WrapMode
         {
@@ -114,16 +158,73 @@ namespace XREngine.Rendering.UI
 
         private bool _hideOverflow = true;
         /// <summary>
-        /// If true, text that overflows the bounds of the text box will be hidden.
-        /// WordWrap can cause vertical overflow, but otherwise overflow is horizontal.
+        /// Controls whether overflow should be clipped to the bounds.
         /// </summary>
+        /// <remarks>
+        /// This flag is currently not enforced directly by <see cref="UITextComponent"/> (no scissor/clipping is applied here).
+        /// It is kept as part of the public UI configuration surface for callers.
+        /// </remarks>
         public bool HideOverflow
         {
             get => _hideOverflow;
             set => SetField(ref _hideOverflow, value);
         }
 
-        override protected void OnTransformChanging()
+        #endregion
+
+        #region Render Configuration
+
+        private RenderingParameters _renderParameters = new()
+        {
+            CullMode = ECullMode.None,
+            DepthTest = new()
+            {
+                Enabled = ERenderParamUsage.Disabled,
+                Function = EComparison.Always
+            },
+            BlendModeAllDrawBuffers = BlendMode.EnabledTransparent(),
+        };
+
+        /// <summary>
+        /// Render state options for the underlying material/renderer.
+        /// </summary>
+        public RenderingParameters RenderParameters
+        {
+            get => _renderParameters;
+            set => SetField(ref _renderParameters, value);
+        }
+
+        private XRShader[]? _nonVertexShadersOverride;
+
+        /// <summary>
+        /// Optional override for all non-vertex shaders for the text material.
+        /// </summary>
+        /// <remarks>
+        /// When null, the default text fragment shader is used.
+        /// </remarks>
+        public XRShader[]? NonVertexShadersOverride
+        {
+            get => _nonVertexShadersOverride;
+            set => SetField(ref _nonVertexShadersOverride, value);
+        }
+
+        private ColorF4 _color = new(0.0f, 0.0f, 0.0f, 1.0f);
+
+        /// <summary>
+        /// Tint color applied to the text shader.
+        /// </summary>
+        public ColorF4 Color
+        {
+            get => _color;
+            set => SetField(ref _color, value);
+        }
+
+        #endregion
+
+        #region Transform Wiring / Layout
+
+        /// <inheritdoc />
+        protected override void OnTransformChanging()
         {
             base.OnTransformChanging();
 
@@ -133,6 +234,8 @@ namespace XREngine.Rendering.UI
             tfm.CalcAutoHeightCallback = null;
             tfm.CalcAutoWidthCallback = null;
         }
+
+        /// <inheritdoc />
         protected override void OnTransformChanged()
         {
             base.OnTransformChanged();
@@ -144,6 +247,7 @@ namespace XREngine.Rendering.UI
             tfm.CalcAutoWidthCallback = CalcAutoWidth;
         }
 
+        /// <inheritdoc />
         protected override void UITransformPropertyChanged(object? sender, IXRPropertyChangedEventArgs e)
         {
             base.UITransformPropertyChanged(sender, e);
@@ -155,6 +259,10 @@ namespace XREngine.Rendering.UI
                     break;
             }
         }
+
+        #endregion
+
+        #region Measurement
 
         public static float MeasureWidth(string name, FontGlyphSet font, float fontSize)
         {
@@ -196,6 +304,10 @@ namespace XREngine.Rendering.UI
                 return max - min;
             }
         }
+
+        #endregion
+
+        #region Property Change Handling
 
         protected override void OnPropertyChanged<T>(string? propName, T prev, T field)
         {
@@ -242,6 +354,10 @@ namespace XREngine.Rendering.UI
                     break;
             }
         }
+
+        #endregion
+
+        #region Text Layout + Mesh/Material Creation
 
         /// <summary>
         /// Retrieves glyph data from the font and resizes SSBOs if necessary.
@@ -322,7 +438,7 @@ namespace XREngine.Rendering.UI
         private void VerifyCreated(bool forceRemake, XRTexture2D? atlas)
         {
             var mesh = Mesh;
-            if (!forceRemake && mesh is not null || atlas is null)
+            if ((!forceRemake && mesh is not null) || atlas is null)
                 return;
 
             if (mesh is not null)
@@ -338,40 +454,6 @@ namespace XREngine.Rendering.UI
             rend.SettingUniforms += MeshRend_SettingUniforms;
             CreateSSBOs(rend);
             Mesh = rend;
-        }
-
-        private RenderingParameters _renderParameters = new()
-        {
-            CullMode = ECullMode.None,
-            DepthTest = new()
-            {
-                Enabled = ERenderParamUsage.Disabled,
-                Function = EComparison.Always
-            },
-            BlendModeAllDrawBuffers = BlendMode.EnabledTransparent(),
-        };
-        public RenderingParameters RenderParameters
-        {
-            get => _renderParameters;
-            set => SetField(ref _renderParameters, value);
-        }
-
-        private XRShader[]? _nonVertexShadersOverride;
-        /// <summary>
-        /// Override property for all non-vertex shaders for the text material.
-        /// When null, the default fragment shader for text is used.
-        /// </summary>
-        public XRShader[]? NonVertexShadersOverride
-        {
-            get => _nonVertexShadersOverride;
-            set => SetField(ref _nonVertexShadersOverride, value);
-        }
-
-        private ColorF4 _color = new(0.0f, 0.0f, 0.0f, 1.0f);
-        public ColorF4 Color
-        {
-            get => _color;
-            set => SetField(ref _color, value);
         }
 
         /// <summary>
@@ -390,6 +472,10 @@ namespace XREngine.Rendering.UI
                 RenderOptions = RenderParameters
             };
         }
+
+        #endregion
+
+        #region Buffer Updates / Rendering Hook
 
         /// <summary>
         /// If data has changed, this method will update the SSBOs with the new glyph data and push it to the GPU.
@@ -518,6 +604,10 @@ namespace XREngine.Rendering.UI
         public void MarkGlyphTransformsChanged()
             => _dataChanged = true;
 
+        #endregion
+
+        #region SSBO Write / Push
+
         /// <summary>
         /// Writes the glyph data to the SSBOs.
         /// </summary>
@@ -583,5 +673,7 @@ namespace XREngine.Rendering.UI
             _uvsBuffer?.PushData();
             _rotationsBuffer?.PushData();
         }
+
+        #endregion
     }
 }

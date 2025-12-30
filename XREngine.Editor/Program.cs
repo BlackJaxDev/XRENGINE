@@ -345,7 +345,7 @@ internal class Program
         // The debug opaque pipeline is forward-only and does not execute the default deferred/forward+ pass chain.
         // If the unit test is requesting static model material modes that rely on DefaultRenderPipeline passes,
         // force the default pipeline so results are visible and comparable.
-        if (UnitTestingWorld.Toggles.ImportStaticModel)
+        if (UnitTestingWorld.Toggles.HasStaticModelsToImport)
         {
             var mode = UnitTestingWorld.Toggles.StaticModelMaterialMode;
             if (mode == UnitTestingWorld.StaticModelMaterialMode.Deferred ||

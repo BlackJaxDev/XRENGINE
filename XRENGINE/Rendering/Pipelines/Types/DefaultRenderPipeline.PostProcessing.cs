@@ -71,6 +71,15 @@ public partial class DefaultRenderPipeline
 
         bool IsAutoExposure(object o) => ((ColorGradingSettings)o).AutoExposure;
         bool IsManualExposure(object o) => !((ColorGradingSettings)o).AutoExposure;
+        bool IsIgnoreTopPercent(object o)
+            => ((ColorGradingSettings)o).AutoExposure
+            && ((ColorGradingSettings)o).AutoExposureMetering == ColorGradingSettings.AutoExposureMeteringMode.IgnoreTopPercent;
+        bool IsCenterWeighted(object o)
+            => ((ColorGradingSettings)o).AutoExposure
+            && ((ColorGradingSettings)o).AutoExposureMetering == ColorGradingSettings.AutoExposureMeteringMode.CenterWeighted;
+        bool IsAdvancedMetering(object o)
+            => ((ColorGradingSettings)o).AutoExposure
+            && ((ColorGradingSettings)o).AutoExposureMetering != ColorGradingSettings.AutoExposureMeteringMode.Average;
 
         stage.AddParameter(
             nameof(ColorGradingSettings.Exposure),
@@ -95,7 +104,7 @@ public partial class DefaultRenderPipeline
         stage.AddParameter(
             nameof(ColorGradingSettings.AutoExposureScale),
             PostProcessParameterKind.Float,
-            0.1f,
+            1.0f,
             displayName: "Exposure Scale",
             min: 0.1f,
             max: 5.0f,
@@ -141,6 +150,54 @@ public partial class DefaultRenderPipeline
             max: 1.0f,
             step: 0.01f,
             visibilityCondition: IsAutoExposure);
+
+        stage.AddParameter(
+            nameof(ColorGradingSettings.AutoExposureMetering),
+            PostProcessParameterKind.Int,
+            (int)ColorGradingSettings.AutoExposureMeteringMode.LogAverage,
+            displayName: "Metering Mode",
+            enumOptions: BuildEnumOptions<ColorGradingSettings.AutoExposureMeteringMode>(),
+            visibilityCondition: IsAutoExposure);
+
+        stage.AddParameter(
+            nameof(ColorGradingSettings.AutoExposureMeteringTargetSize),
+            PostProcessParameterKind.Int,
+            16,
+            displayName: "Metering Target Size",
+            min: 1,
+            max: 64,
+            step: 1,
+            visibilityCondition: IsAdvancedMetering);
+
+        stage.AddParameter(
+            nameof(ColorGradingSettings.AutoExposureIgnoreTopPercent),
+            PostProcessParameterKind.Float,
+            0.02f,
+            displayName: "Ignore Brightest %",
+            min: 0.0f,
+            max: 0.5f,
+            step: 0.005f,
+            visibilityCondition: IsIgnoreTopPercent);
+
+        stage.AddParameter(
+            nameof(ColorGradingSettings.AutoExposureCenterWeightStrength),
+            PostProcessParameterKind.Float,
+            1.0f,
+            displayName: "Center Weight Strength",
+            min: 0.0f,
+            max: 1.0f,
+            step: 0.01f,
+            visibilityCondition: IsCenterWeighted);
+
+        stage.AddParameter(
+            nameof(ColorGradingSettings.AutoExposureCenterWeightPower),
+            PostProcessParameterKind.Float,
+            2.0f,
+            displayName: "Center Weight Power",
+            min: 0.1f,
+            max: 8.0f,
+            step: 0.1f,
+            visibilityCondition: IsCenterWeighted);
 
         stage.AddParameter(
             nameof(ColorGradingSettings.Contrast),

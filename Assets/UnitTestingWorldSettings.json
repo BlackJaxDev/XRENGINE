@@ -32,10 +32,16 @@
   "PhysicsChain": true,
   "AddPhysics": true,
   "PhysicsBallCount": 10,
-  "ImportStaticModel": true,
-  "ImportAnimatedModel": false,
-  "AnimatedModelScale": 1.0,
-  "AnimatedModelZUp": false,
+  "ModelsToImport": [
+    {
+      "Enabled": true,
+      "Kind": "Static",
+      "Path": "Models\\Sponza\\sponza.obj",
+      "ImportFlags": "CalculateTangentSpace, JoinIdenticalVertices, Triangulate, GenerateNormals, SplitLargeMeshes, ImproveCacheLocality, SortByPrimitiveType, OptimizeMeshes, OptimizeGraph, FlipUVs, GenerateBoundingBoxes",
+      "Scale": 0.01,
+      "ZUp": false
+    }
+  ],
   "SoundNode": false,
   "Microphone": false,
   "AttachMicToAnimatedModel": true,
@@ -46,8 +52,7 @@
   "AnimationClipVMD": false,
   "IKTest": false,
   "TestAnimation": false,
-  "AnimatedModelImportFlags": "CalculateTangentSpace, JoinIdenticalVertices, Triangulate, GenerateNormals, ImproveCacheLocality, SortByPrimitiveType, OptimizeMeshes, OptimizeGraph, FlipUVs, GenerateBoundingBoxes",
-  "StaticModelImportFlags": "CalculateTangentSpace, JoinIdenticalVertices, Triangulate, GenerateNormals, SplitLargeMeshes, ImproveCacheLocality, SortByPrimitiveType, OptimizeMeshes, OptimizeGraph, FlipUVs, GenerateBoundingBoxes",
+  
   "AllowShaderPipelines": false,
   "RenderMeshBounds": true,
   "RenderAPI": "OpenGL",
@@ -66,6 +71,6 @@
   "UpdateFPS": 60.0,
   "FixedFPS": 30.0,
   "WorldKind": "Default",
-  "AnimatedModelDesktopPath": "misc\\mitsuki.fbx",
+  
   "CreateUnitBox": true
 }

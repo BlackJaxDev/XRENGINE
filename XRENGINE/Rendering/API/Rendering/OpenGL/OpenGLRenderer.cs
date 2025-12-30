@@ -789,7 +789,7 @@ namespace XREngine.Rendering.OpenGL
             if (genMipmapsNow)
                 glTex.GenerateMipmaps();
 
-            int mipLevel = XRTexture.GetSmallestMipmapLevel(texture.Width, texture.Height);
+            int mipLevel = XRTexture.GetSmallestMipmapLevel(texture.Width, texture.Height, texture.SmallestAllowedMipmapLevel);
             int layerCount = (int)texture.Depth;
             if (layerCount <= 0)
             {
@@ -938,17 +938,145 @@ uniform float MinExposure;
 uniform float MaxExposure;
 uniform float ExposureTransitionSpeed;
 
+uniform int MeteringMode;
+uniform int MeteringMip;
+uniform float IgnoreTopPercent;
+uniform float CenterWeightStrength;
+uniform float CenterWeightPower;
+
+const int MAX_METERING_SAMPLES = 256;
+
+vec3 SafeRgb(vec3 rgb)
+{
+    rgb = max(rgb, vec3(0.0));
+    if (any(isnan(rgb)) || any(isinf(rgb)))
+        rgb = vec3(0.0);
+    return rgb;
+}
+
+float SafeLum(vec3 rgb)
+{
+    rgb = SafeRgb(rgb);
+    return dot(rgb, LuminanceWeights);
+}
+
+vec3 FetchRgbAt(ivec2 coord, int mip)
+{
+    return SafeRgb(texelFetch(SourceTex, coord, mip).rgb);
+}
+
+float ComputeMeteredLuminance()
+{
+    if (MeteringMode == 0)
+    {
+        // Current behavior: 1x1 smallest mip.
+        return SafeLum(FetchRgbAt(ivec2(0, 0), SmallestMip));
+    }
+
+    int mip = clamp(MeteringMip, 0, SmallestMip);
+    ivec2 ts = textureSize(SourceTex, mip);
+    int w = max(1, ts.x);
+    int h = max(1, ts.y);
+    int total = w * h;
+    int sampleCount = min(MAX_METERING_SAMPLES, total);
+    int stride = max(1, total / sampleCount);
+
+    if (MeteringMode == 1)
+    {
+        // Log-average (geometric mean) luminance.
+        float sumLog = 0.0;
+        for (int i = 0; i < sampleCount; ++i)
+        {
+            int idx = i * stride;
+            int x = idx % w;
+            int y = idx / w;
+            float lum = SafeLum(FetchRgbAt(ivec2(x, y), mip));
+            sumLog += log(max(lum, 1e-6));
+        }
+        return exp(sumLog / float(max(sampleCount, 1)));
+    }
+
+    if (MeteringMode == 2)
+    {
+        // Center-weighted luminance.
+        float sum = 0.0;
+        float weightSum = 0.0;
+        float invW = 1.0 / float(w);
+        float invH = 1.0 / float(h);
+        float strength = clamp(CenterWeightStrength, 0.0, 1.0);
+        float power = max(CenterWeightPower, 0.1);
+
+        for (int i = 0; i < sampleCount; ++i)
+        {
+            int idx = i * stride;
+            int x = idx % w;
+            int y = idx / w;
+            float lum = SafeLum(FetchRgbAt(ivec2(x, y), mip));
+
+            float u = (float(x) + 0.5) * invW;
+            float v = (float(y) + 0.5) * invH;
+            float dx = u - 0.5;
+            float dy = v - 0.5;
+            float r = sqrt(dx * dx + dy * dy) / 0.70710678;
+            float center = pow(clamp(1.0 - r, 0.0, 1.0), power);
+            float wgt = mix(1.0, center, strength);
+
+            sum += lum * wgt;
+            weightSum += wgt;
+        }
+
+        return sum / max(weightSum, 1e-6);
+    }
+
+    // Ignore-top-percent luminance (approx, sorted samples).
+    float lums[MAX_METERING_SAMPLES];
+    for (int i = 0; i < sampleCount; ++i)
+    {
+        int idx = i * stride;
+        int x = idx % w;
+        int y = idx / w;
+        lums[i] = SafeLum(FetchRgbAt(ivec2(x, y), mip));
+    }
+
+    for (int i = 1; i < sampleCount; ++i)
+    {
+        float key = lums[i];
+        int j = i - 1;
+        while (j >= 0 && lums[j] > key)
+        {
+            lums[j + 1] = lums[j];
+            j--;
+        }
+        lums[j + 1] = key;
+    }
+
+    float drop = clamp(IgnoreTopPercent, 0.0, 0.5);
+    int keep = int(floor((1.0 - drop) * float(sampleCount)));
+    keep = clamp(keep, 1, sampleCount);
+
+    float sum = 0.0;
+    for (int i = 0; i < keep; ++i)
+        sum += lums[i];
+    return sum / float(keep);
+}
+
 void main()
 {
-    vec3 rgb = texelFetch(SourceTex, ivec2(0, 0), SmallestMip).rgb;
-    float lumDot = dot(rgb, LuminanceWeights);
+    float lumDot = ComputeMeteredLuminance();
+
+    // Clamp extremely bright outliers so they can't force exposure to MinExposure.
+    // Solve for lumDot such that target == MinExposure:
+    // MinExposure = Bias + Scale * (Dividend / lumDot)  =>  lumDot = (Dividend * Scale) / max(MinExposure - Bias, eps)
+    float denom = max(MinExposure - AutoExposureBias, 1e-6);
+    float maxLumForMinExposure = (ExposureDividend * max(AutoExposureScale, 0.0)) / denom;
+    lumDot = min(lumDot, maxLumForMinExposure);
 
     float current = imageLoad(ExposureOut, ivec2(0, 0)).r;
     if (isnan(current) || isinf(current))
-        current = 0.0;
+        current = 1.0;
     float clampedCurrent = clamp(current, MinExposure, MaxExposure);
 
-    if (lumDot <= 0.0)
+    if (!(lumDot > 0.0) || isnan(lumDot) || isinf(lumDot))
     {
         imageStore(ExposureOut, ivec2(0, 0), vec4(clampedCurrent, 0.0, 0.0, 0.0));
         return;
@@ -957,6 +1085,12 @@ void main()
     float target = ExposureDividend / lumDot;
     target = AutoExposureBias + AutoExposureScale * target;
     target = clamp(target, MinExposure, MaxExposure);
+
+    if (isnan(target) || isinf(target))
+    {
+        imageStore(ExposureOut, ivec2(0, 0), vec4(clampedCurrent, 0.0, 0.0, 0.0));
+        return;
+    }
 
     float outExposure = (current < MinExposure || current > MaxExposure)
         ? target
@@ -984,23 +1118,145 @@ uniform float MinExposure;
 uniform float MaxExposure;
 uniform float ExposureTransitionSpeed;
 
-void main()
+uniform int MeteringMode;
+uniform int MeteringMip;
+uniform float IgnoreTopPercent;
+uniform float CenterWeightStrength;
+uniform float CenterWeightPower;
+
+const int MAX_METERING_SAMPLES = 256;
+
+vec3 SafeRgb(vec3 rgb)
 {
-    vec3 rgb = texelFetch(SourceTex, ivec3(0, 0, 0), SmallestMip).rgb;
+    rgb = max(rgb, vec3(0.0));
+    if (any(isnan(rgb)) || any(isinf(rgb)))
+        rgb = vec3(0.0);
+    return rgb;
+}
+
+float SafeLum(vec3 rgb)
+{
+    rgb = SafeRgb(rgb);
+    return dot(rgb, LuminanceWeights);
+}
+
+vec3 FetchRgbAt(ivec2 coord, int mip)
+{
+    vec3 rgb = SafeRgb(texelFetch(SourceTex, ivec3(coord, 0), mip).rgb);
     if (LayerCount > 1)
     {
-        vec3 rgb1 = texelFetch(SourceTex, ivec3(0, 0, 1), SmallestMip).rgb;
+        vec3 rgb1 = SafeRgb(texelFetch(SourceTex, ivec3(coord, 1), mip).rgb);
         rgb = 0.5 * (rgb + rgb1);
     }
+    return rgb;
+}
 
-    float lumDot = dot(rgb, LuminanceWeights);
+float ComputeMeteredLuminance()
+{
+    if (MeteringMode == 0)
+    {
+        return SafeLum(FetchRgbAt(ivec2(0, 0), SmallestMip));
+    }
+
+    int mip = clamp(MeteringMip, 0, SmallestMip);
+    ivec3 ts3 = textureSize(SourceTex, mip);
+    int w = max(1, ts3.x);
+    int h = max(1, ts3.y);
+    int total = w * h;
+    int sampleCount = min(MAX_METERING_SAMPLES, total);
+    int stride = max(1, total / sampleCount);
+
+    if (MeteringMode == 1)
+    {
+        float sumLog = 0.0;
+        for (int i = 0; i < sampleCount; ++i)
+        {
+            int idx = i * stride;
+            int x = idx % w;
+            int y = idx / w;
+            float lum = SafeLum(FetchRgbAt(ivec2(x, y), mip));
+            sumLog += log(max(lum, 1e-6));
+        }
+        return exp(sumLog / float(max(sampleCount, 1)));
+    }
+
+    if (MeteringMode == 2)
+    {
+        float sum = 0.0;
+        float weightSum = 0.0;
+        float invW = 1.0 / float(w);
+        float invH = 1.0 / float(h);
+        float strength = clamp(CenterWeightStrength, 0.0, 1.0);
+        float power = max(CenterWeightPower, 0.1);
+
+        for (int i = 0; i < sampleCount; ++i)
+        {
+            int idx = i * stride;
+            int x = idx % w;
+            int y = idx / w;
+            float lum = SafeLum(FetchRgbAt(ivec2(x, y), mip));
+
+            float u = (float(x) + 0.5) * invW;
+            float v = (float(y) + 0.5) * invH;
+            float dx = u - 0.5;
+            float dy = v - 0.5;
+            float r = sqrt(dx * dx + dy * dy) / 0.70710678;
+            float center = pow(clamp(1.0 - r, 0.0, 1.0), power);
+            float wgt = mix(1.0, center, strength);
+
+            sum += lum * wgt;
+            weightSum += wgt;
+        }
+
+        return sum / max(weightSum, 1e-6);
+    }
+
+    float lums[MAX_METERING_SAMPLES];
+    for (int i = 0; i < sampleCount; ++i)
+    {
+        int idx = i * stride;
+        int x = idx % w;
+        int y = idx / w;
+        lums[i] = SafeLum(FetchRgbAt(ivec2(x, y), mip));
+    }
+
+    for (int i = 1; i < sampleCount; ++i)
+    {
+        float key = lums[i];
+        int j = i - 1;
+        while (j >= 0 && lums[j] > key)
+        {
+            lums[j + 1] = lums[j];
+            j--;
+        }
+        lums[j + 1] = key;
+    }
+
+    float drop = clamp(IgnoreTopPercent, 0.0, 0.5);
+    int keep = int(floor((1.0 - drop) * float(sampleCount)));
+    keep = clamp(keep, 1, sampleCount);
+
+    float sum = 0.0;
+    for (int i = 0; i < keep; ++i)
+        sum += lums[i];
+    return sum / float(keep);
+}
+
+void main()
+{
+    float lumDot = ComputeMeteredLuminance();
+
+    // Clamp extremely bright outliers so they can't force exposure to MinExposure.
+    float denom = max(MinExposure - AutoExposureBias, 1e-6);
+    float maxLumForMinExposure = (ExposureDividend * max(AutoExposureScale, 0.0)) / denom;
+    lumDot = min(lumDot, maxLumForMinExposure);
 
     float current = imageLoad(ExposureOut, ivec2(0, 0)).r;
     if (isnan(current) || isinf(current))
-        current = 0.0;
+        current = 1.0;
     float clampedCurrent = clamp(current, MinExposure, MaxExposure);
 
-    if (lumDot <= 0.0)
+    if (!(lumDot > 0.0) || isnan(lumDot) || isinf(lumDot))
     {
         imageStore(ExposureOut, ivec2(0, 0), vec4(clampedCurrent, 0.0, 0.0, 0.0));
         return;
@@ -1009,6 +1265,12 @@ void main()
     float target = ExposureDividend / lumDot;
     target = AutoExposureBias + AutoExposureScale * target;
     target = clamp(target, MinExposure, MaxExposure);
+
+    if (isnan(target) || isinf(target))
+    {
+        imageStore(ExposureOut, ivec2(0, 0), vec4(clampedCurrent, 0.0, 0.0, 0.0));
+        return;
+    }
 
     float outExposure = (current < MinExposure || current > MaxExposure)
         ? target
@@ -1097,7 +1359,7 @@ void main()
                 if (generateMipmapsNow)
                     glSource.GenerateMipmaps();
 
-                smallestMip = XRTexture.GetSmallestMipmapLevel(source2D.Width, source2D.Height);
+                smallestMip = XRTexture.GetSmallestMipmapLevel(source2D.Width, source2D.Height, source2D.SmallestAllowedMipmapLevel);
                 glProgram = GenericToAPI<GLRenderProgram>(_autoExposureComputeProgram2D);
                 bindTarget = (uint)TextureTarget.Texture2D;
                 sourceBindingId = glSource.BindingId;
@@ -1111,7 +1373,7 @@ void main()
                 if (generateMipmapsNow)
                     glSource.GenerateMipmaps();
 
-                smallestMip = XRTexture.GetSmallestMipmapLevel(source2DArray.Width, source2DArray.Height);
+                smallestMip = XRTexture.GetSmallestMipmapLevel(source2DArray.Width, source2DArray.Height, source2DArray.SmallestAllowedMipmapLevel);
                 layerCount = (int)source2DArray.Depth;
                 glProgram = GenericToAPI<GLRenderProgram>(_autoExposureComputeProgram2DArray);
                 bindTarget = (uint)TextureTarget.Texture2DArray;
@@ -1127,6 +1389,15 @@ void main()
 
             Api.UseProgram(glProgram.BindingId);
 
+            int meteringMip = smallestMip;
+            if (settings.AutoExposureMetering != ColorGradingSettings.AutoExposureMeteringMode.Average)
+            {
+                int targetSize = Math.Clamp(settings.AutoExposureMeteringTargetSize, 1, 64);
+                uint pow2 = 1u << BitOperations.Log2((uint)targetSize);
+                int offset = BitOperations.Log2(pow2);
+                meteringMip = Math.Clamp(smallestMip - offset, 0, smallestMip);
+            }
+
             glProgram.Uniform("SmallestMip", smallestMip);
             glProgram.Uniform("LuminanceWeights", Engine.Rendering.Settings.DefaultLuminance);
             glProgram.Uniform("AutoExposureBias", settings.AutoExposureBias);
@@ -1134,6 +1405,12 @@ void main()
             glProgram.Uniform("ExposureDividend", settings.ExposureDividend);
             glProgram.Uniform("MinExposure", settings.MinExposure);
             glProgram.Uniform("MaxExposure", settings.MaxExposure);
+
+            glProgram.Uniform("MeteringMode", (int)settings.AutoExposureMetering);
+            glProgram.Uniform("MeteringMip", meteringMip);
+            glProgram.Uniform("IgnoreTopPercent", settings.AutoExposureIgnoreTopPercent);
+            glProgram.Uniform("CenterWeightStrength", settings.AutoExposureCenterWeightStrength);
+            glProgram.Uniform("CenterWeightPower", settings.AutoExposureCenterWeightPower);
 
             // Calculate time-based lerp factor
             // alpha = 1 - exp(-speed * dt)
@@ -1179,7 +1456,7 @@ void main()
             if (genMipmapsNow)
                 glTex.GenerateMipmaps();
 
-            int mipLevel = XRTexture.GetSmallestMipmapLevel(texture.Width, texture.Height);
+            int mipLevel = XRTexture.GetSmallestMipmapLevel(texture.Width, texture.Height, texture.SmallestAllowedMipmapLevel);
 
             uint byteSize = (uint)sizeof(Vector4);
             uint pbo = Api.GenBuffer();
@@ -1248,7 +1525,7 @@ void main()
                 ? stackalloc Vector4[layerCount]
                 : new Vector4[layerCount];
 
-            int mipLevel = XRTexture.GetSmallestMipmapLevel(texture.Width, texture.Height);
+            int mipLevel = XRTexture.GetSmallestMipmapLevel(texture.Width, texture.Height, texture.SmallestAllowedMipmapLevel);
 
             fixed (Vector4* ptr = samples)
             {
@@ -1289,7 +1566,7 @@ void main()
             if (genMipmapsNow)
                 glTex.GenerateMipmaps();
             
-            int mipLevel = XRTexture.GetSmallestMipmapLevel(texture.Width, texture.Height);
+            int mipLevel = XRTexture.GetSmallestMipmapLevel(texture.Width, texture.Height, texture.SmallestAllowedMipmapLevel);
 
             //Get the average color from the scene texture
             Vector4 rgb = Vector4.Zero;
