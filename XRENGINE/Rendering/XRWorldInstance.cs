@@ -19,7 +19,6 @@ using XREngine.Rendering.Info;
 using XREngine.Rendering.Lightmapping;
 using XREngine.Rendering.Picking;
 using XREngine.Scene;
-using XREngine.Scene;
 using XREngine.Scene.Physics;
 using XREngine.Scene.Prefabs;
 using XREngine.Scene.Transforms;
@@ -57,7 +56,6 @@ namespace XREngine.Rendering
         protected RootNodeCollection _rootNodes = [];
         public RootNodeCollection RootNodes => _rootNodes;
         public Lights3DCollection Lights { get; }
-        public LightmapBakeManager LightmapBaking { get; }
 
         #region Editor-Only Hidden Scene
 
@@ -279,7 +277,6 @@ namespace XREngine.Rendering
             _visualScene = visualScene;
             _physicsScene = physicsScene;
             Lights = new Lights3DCollection(this);
-            LightmapBaking = new LightmapBakeManager(this);
 
             TickLists = [];
             TickLists.Add(ETickGroup.Normal, []);
@@ -619,11 +616,6 @@ namespace XREngine.Rendering
             using (Engine.Profiler.Start("WorldInstance.GlobalSwapBuffers.Lights"))
             {
                 Lights.SwapBuffers();
-            }
-
-            using (Engine.Profiler.Start("WorldInstance.GlobalSwapBuffers.LightmapBaking"))
-            {
-                LightmapBaking.Update();
             }
         }
 

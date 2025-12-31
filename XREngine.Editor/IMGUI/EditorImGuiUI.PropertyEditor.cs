@@ -8,6 +8,7 @@ using System.Runtime.CompilerServices;
 using XREngine.Core.Files;
 using XREngine.Data.Colors;
 using XREngine.Editor.ComponentEditors;
+using XREngine.Rendering;
 using XREngine.Rendering.OpenGL;
 using XREngine.Scene;
 
@@ -68,6 +69,14 @@ public static partial class EditorImGuiUI
             {
                 ImGui.TextUnformatted($"{label}: <circular reference>");
                 return;
+            }
+
+            if (obj is XRRenderPipelineInstance instance && instance.Pipeline is not null)
+            {
+                if (ImGui.SmallButton($"Open Pipeline Graph##{label}"))
+                    OpenRenderPipelineGraph(instance.Pipeline);
+                ImGui.SameLine();
+                ImGui.TextDisabled(instance.DebugDescriptor);
             }
 
             string id = idOverride ?? label;

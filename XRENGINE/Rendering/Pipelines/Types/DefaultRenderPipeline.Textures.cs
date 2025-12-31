@@ -730,7 +730,8 @@ public partial class DefaultRenderPipeline
 
     private XRTexture CreatePostProcessOutputTexture()
     {
-        var (width, height) = GetDesiredFBOSizeFull();
+        // Use internal resolution - FXAA pass will upscale to full resolution
+        var (width, height) = GetDesiredFBOSizeInternal();
         bool outputHdr = Engine.Rendering.Settings.OutputHDR;
 
         EPixelInternalFormat internalFormat = outputHdr ? EPixelInternalFormat.Rgba16f : EPixelInternalFormat.Rgba8;

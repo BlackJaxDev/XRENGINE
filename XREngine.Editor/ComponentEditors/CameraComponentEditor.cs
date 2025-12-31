@@ -215,6 +215,11 @@ public sealed class CameraComponentEditor : IXRComponentEditor
         ImGui.TextDisabled($"UI Overlay: {uiOverlay}");
 
         ImGui.Separator();
+
+        // Internal Resolution Settings
+        DrawInternalResolutionSettings(component);
+
+        ImGui.Separator();
         ImGui.TextDisabled("Render Pipeline Asset");
         var pipeline = component.Camera.RenderPipeline;
         ImGuiAssetUtilities.DrawAssetField<RenderPipeline>("CameraRenderPipeline", pipeline, asset =>
@@ -227,6 +232,109 @@ public sealed class CameraComponentEditor : IXRComponentEditor
         {
             component.DefaultRenderTarget = asset;
         });
+    }
+
+    private static readonly string[] InternalResolutionModeNames = 
+    [
+        "Full Resolution",
+        "Scale",
+        "Manual"
+    ];
+
+    private static void DrawInternalResolutionSettings(CameraComponent component)
+    {
+        ImGui.Text("Internal Resolution");
+        if (ImGui.IsItemHovered())
+            ImGui.SetTooltip("Controls the rendering resolution used by the camera.\nLower resolutions improve performance but reduce quality.");
+
+        // Mode selector
+        int modeIndex = (int)component.InternalResolutionMode;
+        ImGui.SetNextItemWidth(150f);
+        if (ImGui.Combo("Mode##InternalResMode", ref modeIndex, InternalResolutionModeNames, InternalResolutionModeNames.Length))
+        {
+            component.InternalResolutionMode = (EInternalResolutionMode)modeIndex;
+        }
+
+        // Show relevant controls based on mode
+        switch (component.InternalResolutionMode)
+        {
+            case EInternalResolutionMode.FullResolution:
+                ImGui.TextDisabled("Renders at viewport's native resolution.");
+                break;
+
+            case EInternalResolutionMode.Scale:
+                float scale = component.InternalResolutionScale;
+                ImGui.SetNextItemWidth(150f);
+                if (ImGui.SliderFloat("Scale##InternalResScale", ref scale, 0.1f, 2.0f, "%.2fx"))
+                {
+                    component.InternalResolutionScale = scale;
+                }
+                if (ImGui.IsItemHovered())
+                    ImGui.SetTooltip("1.0 = native resolution\n0.5 = half resolution (faster)\n2.0 = supersampling (slower, higher quality)");
+
+                // Quick preset buttons
+                ImGui.SameLine();
+                if (ImGui.SmallButton("0.5x"))
+                    component.InternalResolutionScale = 0.5f;
+                ImGui.SameLine();
+                if (ImGui.SmallButton("1x"))
+                    component.InternalResolutionScale = 1.0f;
+                ImGui.SameLine();
+                if (ImGui.SmallButton("1.5x"))
+                    component.InternalResolutionScale = 1.5f;
+                break;
+
+            case EInternalResolutionMode.Manual:
+                int width = component.ManualInternalWidth;
+                int height = component.ManualInternalHeight;
+
+                ImGui.SetNextItemWidth(100f);
+                if (ImGui.InputInt("Width##InternalResWidth", ref width, 1, 100))
+                {
+                    component.ManualInternalWidth = Math.Max(1, width);
+                }
+                ImGui.SameLine();
+                ImGui.SetNextItemWidth(100f);
+                if (ImGui.InputInt("Height##InternalResHeight", ref height, 1, 100))
+                {
+                    component.ManualInternalHeight = Math.Max(1, height);
+                }
+
+                // Common resolution presets
+                ImGui.Text("Presets:");
+                ImGui.SameLine();
+                if (ImGui.SmallButton("720p"))
+                {
+                    component.ManualInternalWidth = 1280;
+                    component.ManualInternalHeight = 720;
+                }
+                ImGui.SameLine();
+                if (ImGui.SmallButton("1080p"))
+                {
+                    component.ManualInternalWidth = 1920;
+                    component.ManualInternalHeight = 1080;
+                }
+                ImGui.SameLine();
+                if (ImGui.SmallButton("1440p"))
+                {
+                    component.ManualInternalWidth = 2560;
+                    component.ManualInternalHeight = 1440;
+                }
+                ImGui.SameLine();
+                if (ImGui.SmallButton("4K"))
+                {
+                    component.ManualInternalWidth = 3840;
+                    component.ManualInternalHeight = 2160;
+                }
+                break;
+        }
+
+        // Show current effective resolution if camera has viewports
+        if (component.Camera.Viewports.Count > 0)
+        {
+            var viewport = component.Camera.Viewports[0];
+            ImGui.TextDisabled($"Effective: {viewport.InternalWidth}x{viewport.InternalHeight} → {viewport.Width}x{viewport.Height}");
+        }
     }
 
     private static void DrawParameterSection(CameraComponent component, HashSet<object> visited)

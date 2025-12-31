@@ -26,7 +26,7 @@ public sealed class BvhRaycastDispatcher
     private readonly ConcurrentQueue<BvhRaycastRequest> _pendingRequests = new();
     private readonly ConcurrentQueue<BvhRaycastResult> _completedResults = new();
     private readonly ConcurrentQueue<Action> _completedCallbacks = new();
-    private readonly List<InFlightRaycast> _inFlight = new();
+    private readonly List<InFlightRaycast> _inFlight = [];
 
     private XRShader? _raycastShader;
     private XRShader? _anyHitShader;
@@ -55,7 +55,16 @@ public sealed class BvhRaycastDispatcher
     /// Attempts to dequeue a completed result without blocking.
     /// </summary>
     public bool TryDequeueResult(out BvhRaycastResult result)
-        => _completedResults.TryDequeue(out result);
+    {
+        if (_completedResults.TryDequeue(out var dequeued))
+        {
+            result = dequeued;
+            return true;
+        }
+
+        result = default!;
+        return false;
+    }
 
     /// <summary>
     /// Dispatch pending raycasts whose dependencies have been satisfied.
@@ -189,6 +198,9 @@ public sealed class BvhRaycastDispatcher
 
     private void Dispatch(BvhRaycastRequest request, OpenGLRenderer? glRenderer)
     {
+        if (request.HitBuffer is null || request.RayBuffer is null || request.NodeBuffer is null || request.TriangleBuffer is null)
+            return;
+
         XRRenderProgram program = ResolveProgram(request.Variant);
 
         EnsureReadbackMapping(request.HitBuffer);

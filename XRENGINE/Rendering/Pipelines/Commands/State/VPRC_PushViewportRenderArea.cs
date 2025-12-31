@@ -1,3 +1,5 @@
+using XREngine.Data.Geometry;
+
 namespace XREngine.Rendering.Pipelines.Commands
 {
     public class VPRC_PushViewportRenderArea : ViewportStateRenderCommand<VPRC_PopRenderArea>
@@ -18,9 +20,17 @@ namespace XREngine.Rendering.Pipelines.Commands
                 return;
             }
 
-            var res = UseInternalResolution
-                ? vp.InternalResolutionRegion
-                : vp.Region;
+            BoundingRectangle res;
+            if (UseInternalResolution)
+            {
+                res = vp.InternalResolutionRegion;
+            }
+            else
+            {
+                // For the final output pass, apply the viewport panel offset if available.
+                // The viewport's Region already contains the offset from ApplyViewportPanelRegion.
+                res = vp.Region;
+            }
 
             ActivePipelineInstance.RenderState.PushRenderArea(res);
             ActivePipelineInstance.RenderState.PushCropArea(res);

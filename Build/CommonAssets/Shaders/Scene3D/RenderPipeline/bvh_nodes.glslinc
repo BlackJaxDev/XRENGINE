@@ -22,6 +22,12 @@ struct BvhNode
     // parent index + flags (bit0 = leaf)
     uint parentIndex;
     uint flags;
+
+    // Pad struct to BVH_NODE_STRIDE_SCALARS (20 uint scalars / 80 bytes).
+    // Without explicit padding, std430 would pack this struct to 48 bytes, which
+    // would not match the engine-side GpuBvhNode layout.
+    uvec4 _pad0;
+    uvec4 _pad1;
 };
 
 #endif // XR_BVH_NODES_GLSL

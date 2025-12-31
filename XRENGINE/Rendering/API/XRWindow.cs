@@ -5,6 +5,8 @@ using Silk.NET.Maths;
 using Silk.NET.Windowing;
 using XREngine.Core;
 using XREngine.Data.Core;
+using XREngine.Data.Geometry;
+using XREngine.Data.Rendering;
 using XREngine.Input;
 using XREngine.Rendering.OpenGL;
 using XREngine.Rendering.Vulkan;
@@ -234,6 +236,67 @@ namespace XREngine.Rendering
 
         public event Action? RenderViewportsCallback;
 
+        private bool _viewportPanelSizingActive;
+        private int _lastViewportPanelX;
+        private int _lastViewportPanelY;
+        private int _lastViewportPanelWidth;
+        private int _lastViewportPanelHeight;
+
+        // FBO for viewport panel mode - renders scene to texture for ImGui display
+        private XRTexture2D? _viewportPanelTexture;
+        private XRFrameBuffer? _viewportPanelFBO;
+
+        /// <summary>
+        /// Gets the texture containing the rendered scene for viewport panel mode.
+        /// Returns null if not in viewport panel mode or if the FBO hasn't been created yet.
+        /// </summary>
+        public XRTexture2D? ViewportPanelTexture => _viewportPanelTexture;
+
+        /// <summary>
+        /// Gets the FBO used for rendering in viewport panel mode.
+        /// </summary>
+        public XRFrameBuffer? ViewportPanelFBO => _viewportPanelFBO;
+
+        private void EnsureViewportPanelFBO(int width, int height)
+        {
+            if (width <= 0 || height <= 0)
+                return;
+
+            bool needsResize = _viewportPanelTexture is not null &&
+                (_viewportPanelTexture.Width != (uint)width || _viewportPanelTexture.Height != (uint)height);
+
+            if (_viewportPanelFBO is null || needsResize)
+            {
+                // Create or recreate texture with the correct size
+                _viewportPanelTexture = XRTexture2D.CreateFrameBufferTexture(
+                    (uint)width,
+                    (uint)height,
+                    EPixelInternalFormat.Rgba8,
+                    EPixelFormat.Rgba,
+                    EPixelType.UnsignedByte,
+                    EFrameBufferAttachment.ColorAttachment0);
+                _viewportPanelTexture.Resizable = true;
+                _viewportPanelTexture.MinFilter = ETexMinFilter.Linear;
+                _viewportPanelTexture.MagFilter = ETexMagFilter.Linear;
+                _viewportPanelTexture.UWrap = ETexWrapMode.ClampToEdge;
+                _viewportPanelTexture.VWrap = ETexWrapMode.ClampToEdge;
+                _viewportPanelTexture.Name = "ViewportPanelTexture";
+
+                _viewportPanelFBO = new XRFrameBuffer((_viewportPanelTexture, EFrameBufferAttachment.ColorAttachment0, 0, -1))
+                {
+                    Name = "ViewportPanelFBO"
+                };
+            }
+        }
+
+        private void DestroyViewportPanelFBO()
+        {
+            _viewportPanelFBO?.Destroy();
+            _viewportPanelFBO = null;
+            _viewportPanelTexture?.Destroy();
+            _viewportPanelTexture = null;
+        }
+
         //private float _lastFrameTime = 0.0f;
         private void RenderCallback(double delta)
         {
@@ -255,9 +318,48 @@ namespace XREngine.Rendering
                 {
                     RenderViewportsCallback?.Invoke();
                 }
-                if (!Engine.VRState.IsInVR || Engine.Rendering.Settings.RenderWindowsWhileInVR)
+                bool useViewportPanelMode =
+                    Engine.IsEditor &&
+                    Engine.Rendering.Settings.ViewportPresentationMode == Engine.Rendering.EngineSettings.EViewportPresentationMode.UseViewportPanel;
+
+                bool canRenderWindowViewports = !Engine.VRState.IsInVR || Engine.Rendering.Settings.RenderWindowsWhileInVR;
+                if (canRenderWindowViewports)
                 {
-                    RenderViewports();
+                    if (useViewportPanelMode)
+                    {
+                        BoundingRectangle? viewportPanelRegion = Engine.Rendering.ViewportPanelRenderRegionProvider?.Invoke(this);
+                        if (viewportPanelRegion.HasValue && viewportPanelRegion.Value.Width > 0 && viewportPanelRegion.Value.Height > 0)
+                        {
+                            // ImGui rendering typically leaves scissor/cropping enabled.
+                            // Ensure world rendering starts from a clean state so clears and passes aren't clipped/offset.
+                            Renderer.SetCroppingEnabled(false);
+
+                            // Ensure FBO exists and is the correct size
+                            EnsureViewportPanelFBO(viewportPanelRegion.Value.Width, viewportPanelRegion.Value.Height);
+
+                            // Apply viewport sizing (but not position - we render at 0,0 in the FBO)
+                            ApplyViewportPanelRegionForFBO(viewportPanelRegion.Value);
+
+                            // Render viewports to the FBO
+                            RenderViewportsToFBO(_viewportPanelFBO);
+                        }
+                        else
+                        {
+                            RestoreViewportPanelSizingIfNeeded();
+                            DestroyViewportPanelFBO();
+                        }
+                    }
+                    else
+                    {
+                        RestoreViewportPanelSizingIfNeeded();
+                        DestroyViewportPanelFBO();
+                        RenderViewports();
+                    }
+                }
+                else
+                {
+                    RestoreViewportPanelSizingIfNeeded();
+                    DestroyViewportPanelFBO();
                 }
                 using (var postRenderSample = Engine.Profiler.Start("XRWindow.GlobalPostRender"))
                 {
@@ -289,6 +391,111 @@ namespace XREngine.Rendering
             //timer.DispatchRender();
         }
 
+        private void ApplyViewportPanelRegion(BoundingRectangle region)
+        {
+            if (Viewports.Count == 0)
+                return;
+
+            bool sizeChanged =
+                !_viewportPanelSizingActive ||
+                region.Width != _lastViewportPanelWidth ||
+                region.Height != _lastViewportPanelHeight;
+
+            // Always resize viewports to match the panel size.
+            // Resize() sets X=0, Y=0 from percentage fields; we then set the actual offset.
+            if (sizeChanged)
+            {
+                Viewports.ForEach(vp => vp.Resize((uint)region.Width, (uint)region.Height, setInternalResolution: true));
+            }
+
+            // Set viewport position to match the panel bounds.
+            // This affects Region which is used by VPRC_PushViewportRenderArea(UseInternalResolution=false)
+            // for the final output pass only. Internal passes use InternalResolutionRegion (always 0,0).
+            foreach (var vp in Viewports)
+            {
+                vp.X = region.X;
+                vp.Y = region.Y;
+            }
+
+            _viewportPanelSizingActive = true;
+            _lastViewportPanelX = region.X;
+            _lastViewportPanelY = region.Y;
+            _lastViewportPanelWidth = region.Width;
+            _lastViewportPanelHeight = region.Height;
+        }
+
+        /// <summary>
+        /// Applies viewport sizing for FBO mode. Unlike ApplyViewportPanelRegion, this sets
+        /// viewport position to (0,0) since we're rendering to an FBO that will be displayed by ImGui.
+        /// </summary>
+        private void ApplyViewportPanelRegionForFBO(BoundingRectangle region)
+        {
+            if (Viewports.Count == 0)
+                return;
+
+            bool sizeChanged =
+                !_viewportPanelSizingActive ||
+                region.Width != _lastViewportPanelWidth ||
+                region.Height != _lastViewportPanelHeight;
+
+            // Always resize viewports to match the panel size.
+            if (sizeChanged)
+            {
+                Viewports.ForEach(vp => vp.Resize((uint)region.Width, (uint)region.Height, setInternalResolution: true));
+            }
+
+            // For FBO mode, viewport position is always (0,0) since the FBO is the same size as the content area.
+            // ImGui will position the rendered image at the correct location.
+            foreach (var vp in Viewports)
+            {
+                vp.X = 0;
+                vp.Y = 0;
+            }
+
+            _viewportPanelSizingActive = true;
+            _lastViewportPanelX = 0;
+            _lastViewportPanelY = 0;
+            _lastViewportPanelWidth = region.Width;
+            _lastViewportPanelHeight = region.Height;
+        }
+
+        /// <summary>
+        /// Renders all viewports to the specified FBO instead of the window framebuffer.
+        /// </summary>
+        public void RenderViewportsToFBO(XRFrameBuffer? targetFBO)
+        {
+            if (targetFBO is null)
+            {
+                RenderViewports();
+                return;
+            }
+
+            using var sample = Engine.Profiler.Start("XRWindow.RenderViewportsToFBO");
+            foreach (var viewport in Viewports)
+            {
+                using var viewportSample = Engine.Profiler.Start($"XRViewport.RenderToFBO[{viewport.Index}]");
+                viewport.Render(targetFBO);
+            }
+        }
+
+        private void RestoreViewportPanelSizingIfNeeded()
+        {
+            if (!_viewportPanelSizingActive)
+                return;
+
+            var fb = Window.FramebufferSize;
+            if (fb.X > 0 && fb.Y > 0)
+            {
+                Viewports.ForEach(vp => vp.Resize((uint)fb.X, (uint)fb.Y, setInternalResolution: true));
+            }
+
+            _viewportPanelSizingActive = false;
+            _lastViewportPanelX = 0;
+            _lastViewportPanelY = 0;
+            _lastViewportPanelWidth = 0;
+            _lastViewportPanelHeight = 0;
+        }
+
         public XRViewport GetOrAddViewportForPlayer(LocalPlayerController controller, bool autoSizeAllViewports)
             => controller.Viewport ??= AddViewportForPlayer(controller, autoSizeAllViewports);
 
@@ -315,7 +522,11 @@ namespace XREngine.Rendering
         {
             using var sample = Engine.Profiler.Start("XRWindow.ResizeAllViewportsAccordingToPlayers");
 
-            LocalPlayerController[] players = [.. Viewports.Select(x => x.AssociatedPlayer).Where(x => x is not null).Distinct().OrderBy(x => (int)x!.LocalPlayerIndex)];
+            LocalPlayerController[] players = [.. Viewports
+                .Select(x => x.AssociatedPlayer)
+                .OfType<LocalPlayerController>()
+                .Distinct()
+                .OrderBy(x => (int)x.LocalPlayerIndex)];
             foreach (var viewport in Viewports)
                 viewport.Destroy();
             Viewports.Clear();

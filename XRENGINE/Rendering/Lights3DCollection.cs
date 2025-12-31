@@ -19,6 +19,7 @@ using XREngine.Rendering.Commands;
 using YamlDotNet.Serialization;
 using MIConvexHull;
 using XREngine.Data.Colors;
+using XREngine.Rendering.Lightmapping;
 
 namespace XREngine.Scene
 {
@@ -32,7 +33,8 @@ namespace XREngine.Scene
 
         [YamlIgnore]
         public Octree<LightProbeCell> LightProbeTree { get; } = new(new AABB());
-        
+        public LightmapBakeManager LightmapBaking { get; } = new LightmapBakeManager(world);
+
         public XRWorldInstance World { get; } = world;
 
         /// <summary>
@@ -417,19 +419,24 @@ namespace XREngine.Scene
             using (Engine.Profiler.Start("Lights3DCollection.SwapBuffers.DirectionalLights"))
             {
                 foreach (DirectionalLightComponent l in DynamicDirectionalLights)
-                    l.SwapBuffers();
+                    l.SwapBuffers(LightmapBaking);
             }
 
             using (Engine.Profiler.Start("Lights3DCollection.SwapBuffers.SpotLights"))
             {
                 foreach (SpotLightComponent l in DynamicSpotLights)
-                    l.SwapBuffers();
+                    l.SwapBuffers(LightmapBaking);
             }
 
             using (Engine.Profiler.Start("Lights3DCollection.SwapBuffers.PointLights"))
             {
                 foreach (PointLightComponent l in DynamicPointLights)
-                    l.SwapBuffers();
+                    l.SwapBuffers(LightmapBaking);
+            }
+
+            using (Engine.Profiler.Start("WorldInstance.GlobalSwapBuffers.LightmapBaking"))
+            {
+                LightmapBaking.ProcessManualRequests();
             }
 
             using (Engine.Profiler.Start("Lights3DCollection.SwapBuffers.SceneCaptures"))

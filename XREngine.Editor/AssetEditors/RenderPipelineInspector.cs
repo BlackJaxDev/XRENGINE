@@ -72,6 +72,10 @@ public sealed class RenderPipelineInspector : IXRAssetInspector
         string displayName = GetDisplayName(pipeline);
         ImGui.TextUnformatted(displayName);
 
+        ImGui.SameLine();
+        if (ImGui.SmallButton("Open Graph##RenderPipeline"))
+            EditorImGuiUI.OpenRenderPipelineGraph(pipeline);
+
         string path = pipeline.FilePath ?? "<unsaved asset>";
         ImGui.TextDisabled(path);
         if (!string.IsNullOrWhiteSpace(pipeline.FilePath))
@@ -127,7 +131,7 @@ public sealed class RenderPipelineInspector : IXRAssetInspector
             ImGui.TableSetupColumn("#", ImGuiTableColumnFlags.WidthFixed, 26f);
             ImGui.TableSetupColumn("Descriptor");
             ImGui.TableSetupColumn("Resources", ImGuiTableColumnFlags.WidthFixed, 180f);
-            ImGui.TableSetupColumn("Actions", ImGuiTableColumnFlags.WidthFixed, 140f);
+            ImGui.TableSetupColumn("Actions", ImGuiTableColumnFlags.WidthFixed, 210f);
             ImGui.TableHeadersRow();
 
             var activeInstance = Engine.Rendering.State.CurrentRenderingPipeline;
@@ -156,6 +160,9 @@ public sealed class RenderPipelineInspector : IXRAssetInspector
                 ImGui.TableSetColumnIndex(3);
                 if (ImGui.SmallButton($"Purge##RPInstance{instance.GetHashCode():X8}"))
                     instance.DestroyCache();
+                ImGui.SameLine();
+                if (ImGui.SmallButton($"Graph##RPInstanceGraph{instance.GetHashCode():X8}"))
+                    EditorImGuiUI.OpenRenderPipelineGraph(pipeline);
                 ImGui.SameLine();
                 if (ImGui.SmallButton($"Copy##RPInstanceCopy{instance.GetHashCode():X8}"))
                     ImGui.SetClipboardText(descriptor);

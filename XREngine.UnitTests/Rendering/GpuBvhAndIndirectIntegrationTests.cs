@@ -202,6 +202,312 @@ public class GpuBvhAndIndirectIntegrationTests
         }
     }
 
+    [Test]
+    public unsafe void BvhBuildAndRefit_ProducesExpectedRootBounds()
+    {
+        var (gl, window) = CreateGLContext();
+        if (gl == null || window == null)
+        {
+            Assert.Inconclusive("Could not create OpenGL context");
+            return;
+        }
+
+        try
+        {
+            string buildPath = Path.Combine(ShaderBasePath, "Scene3D", "RenderPipeline", "bvh_build.comp");
+            string refitPath = Path.Combine(ShaderBasePath, "Scene3D", "RenderPipeline", "bvh_refit.comp");
+            if (!File.Exists(buildPath) || !File.Exists(refitPath))
+            {
+                Assert.Inconclusive($"BVH shader(s) not found: {buildPath} / {refitPath}");
+                return;
+            }
+
+            string buildSrc = File.ReadAllText(buildPath);
+            buildSrc = ResolveIncludes(buildSrc, Path.GetDirectoryName(buildPath)!);
+            buildSrc = StripVulkanSpecializationConstants(buildSrc, maxLeafPrimitives: 1, bvhMode: 0);
+
+            string refitSrc = File.ReadAllText(refitPath);
+            refitSrc = ResolveIncludes(refitSrc, Path.GetDirectoryName(refitPath)!);
+            refitSrc = StripVulkanSpecializationConstants(refitSrc, maxLeafPrimitives: 1, bvhMode: 0);
+
+            uint buildShader = CompileComputeShader(gl, buildSrc);
+            uint buildProgram = CreateComputeProgram(gl, buildShader);
+            uint refitShader = CompileComputeShader(gl, refitSrc);
+            uint refitProgram = CreateComputeProgram(gl, refitShader);
+
+            buildProgram.ShouldBeGreaterThan(0u);
+            refitProgram.ShouldBeGreaterThan(0u);
+
+            const uint numPrimitives = 4u;
+            const uint maxLeafPrims = 1u;
+            uint leafCount = (numPrimitives + maxLeafPrims - 1u) / maxLeafPrims; // = 4
+            uint internalCount = leafCount > 0u ? (leafCount - 1u) : 0u;
+            uint nodeCount = leafCount > 0u ? (leafCount * 2u - 1u) : 0u;         // = 7
+
+            // === Buffers ===
+            // AABBs: struct Aabb { vec4 minBounds; vec4 maxBounds; } interleaved
+            Vector4[] aabbs =
+            [
+                new Vector4(0, 0, 0, 1), new Vector4(1, 1, 1, 1),
+                new Vector4(2, 0, 0, 1), new Vector4(3, 1, 1, 1),
+                new Vector4(0, 2, 0, 1), new Vector4(1, 3, 1, 1),
+                new Vector4(-1, -1, -1, 1), new Vector4(0, 0, 0, 1),
+            ];
+
+            // Morton codes: sorted already; objectId maps directly to primitive index.
+            uint[] morton =
+            [
+                0u, 0u,
+                1u, 1u,
+                2u, 2u,
+                3u, 3u,
+            ];
+
+            // BVH nodes buffer: header(4 uints) + nodes(nodeCount * 20 uints)
+            uint nodeStrideScalars = 20u;
+            uint nodeHeaderScalars = 4u;
+            uint nodeScalars = nodeHeaderScalars + nodeCount * nodeStrideScalars;
+            uint[] nodeData = new uint[nodeScalars];
+
+            // Primitive ranges buffer: nodeCount * 2 uints
+            uint[] ranges = new uint[nodeCount * 2u];
+
+            // Overflow flag buffer: single uint
+            uint[] overflow = [0u];
+
+            // Refit counters: nodeCount uints
+            uint[] counters = new uint[nodeCount];
+
+            // Transforms: mat4 per primitive (identity)
+            float[] transforms = new float[numPrimitives * 16u];
+            for (int i = 0; i < (int)numPrimitives; i++)
+            {
+                int baseIdx = i * 16;
+                transforms[baseIdx + 0] = 1f;
+                transforms[baseIdx + 5] = 1f;
+                transforms[baseIdx + 10] = 1f;
+                transforms[baseIdx + 15] = 1f;
+            }
+
+            uint aabbBuf = gl.GenBuffer();
+            uint mortonBuf = gl.GenBuffer();
+            uint nodeBuf = gl.GenBuffer();
+            uint rangeBuf = gl.GenBuffer();
+            uint overflowBuf = gl.GenBuffer();
+            uint transformBuf = gl.GenBuffer();
+            uint counterBuf = gl.GenBuffer();
+
+            // Upload and bind buffers for build
+            gl.BindBuffer(BufferTargetARB.ShaderStorageBuffer, aabbBuf);
+            gl.BufferData<Vector4>(BufferTargetARB.ShaderStorageBuffer, aabbs.AsSpan(), BufferUsageARB.DynamicCopy);
+            gl.BindBufferBase(BufferTargetARB.ShaderStorageBuffer, 0, aabbBuf);
+
+            gl.BindBuffer(BufferTargetARB.ShaderStorageBuffer, mortonBuf);
+            gl.BufferData<uint>(BufferTargetARB.ShaderStorageBuffer, morton.AsSpan(), BufferUsageARB.DynamicCopy);
+            gl.BindBufferBase(BufferTargetARB.ShaderStorageBuffer, 1, mortonBuf);
+
+            gl.BindBuffer(BufferTargetARB.ShaderStorageBuffer, nodeBuf);
+            gl.BufferData<uint>(BufferTargetARB.ShaderStorageBuffer, nodeData.AsSpan(), BufferUsageARB.DynamicCopy);
+            gl.BindBufferBase(BufferTargetARB.ShaderStorageBuffer, 2, nodeBuf);
+
+            gl.BindBuffer(BufferTargetARB.ShaderStorageBuffer, rangeBuf);
+            gl.BufferData<uint>(BufferTargetARB.ShaderStorageBuffer, ranges.AsSpan(), BufferUsageARB.DynamicCopy);
+            gl.BindBufferBase(BufferTargetARB.ShaderStorageBuffer, 3, rangeBuf);
+
+            gl.BindBuffer(BufferTargetARB.ShaderStorageBuffer, overflowBuf);
+            gl.BufferData<uint>(BufferTargetARB.ShaderStorageBuffer, overflow.AsSpan(), BufferUsageARB.DynamicCopy);
+            gl.BindBufferBase(BufferTargetARB.ShaderStorageBuffer, 8, overflowBuf);
+
+            // Build stage 0 + 1
+            gl.UseProgram(buildProgram);
+            gl.Uniform1(gl.GetUniformLocation(buildProgram, "numPrimitives"), numPrimitives);
+            gl.Uniform1(gl.GetUniformLocation(buildProgram, "nodeScalarCapacity"), nodeScalars);
+            gl.Uniform1(gl.GetUniformLocation(buildProgram, "rangeScalarCapacity"), (uint)ranges.Length);
+            gl.Uniform1(gl.GetUniformLocation(buildProgram, "mortonCapacity"), numPrimitives);
+
+            gl.Uniform1(gl.GetUniformLocation(buildProgram, "buildStage"), 0u);
+            gl.DispatchCompute((leafCount + 255u) / 256u, 1, 1);
+            gl.MemoryBarrier(MemoryBarrierMask.ShaderStorageBarrierBit);
+            gl.Finish();
+
+            gl.Uniform1(gl.GetUniformLocation(buildProgram, "buildStage"), 1u);
+            gl.DispatchCompute((internalCount + 255u) / 256u, 1, 1);
+            gl.MemoryBarrier(MemoryBarrierMask.ShaderStorageBarrierBit);
+            gl.Finish();
+
+            gl.Uniform1(gl.GetUniformLocation(buildProgram, "buildStage"), 2u);
+            gl.DispatchCompute((internalCount + 255u) / 256u, 1, 1);
+            gl.MemoryBarrier(MemoryBarrierMask.ShaderStorageBarrierBit);
+            gl.Finish();
+
+            gl.Uniform1(gl.GetUniformLocation(buildProgram, "buildStage"), 3u);
+            gl.DispatchCompute(1, 1, 1);
+            gl.MemoryBarrier(MemoryBarrierMask.ShaderStorageBarrierBit);
+            gl.Finish();
+
+            // Sanity check: parent indices + connectivity should be valid after stage 2.
+            gl.BindBuffer(BufferTargetARB.ShaderStorageBuffer, nodeBuf);
+            uint* afterBuildPtr = (uint*)gl.MapBuffer(BufferTargetARB.ShaderStorageBuffer, BufferAccessARB.ReadOnly);
+            Assert.That((nint)afterBuildPtr, Is.Not.EqualTo(nint.Zero));
+
+            uint readNodeCountAfterBuild = afterBuildPtr[0];
+            uint readRootAfterBuild = afterBuildPtr[1];
+            readNodeCountAfterBuild.ShouldBe(nodeCount);
+            readRootAfterBuild.ShouldBeLessThan(nodeCount);
+
+            for (uint i = 0; i < nodeCount; i++)
+            {
+                uint nodeBaseScalar = nodeHeaderScalars + i * nodeStrideScalars;
+                uint leftChild = afterBuildPtr[nodeBaseScalar + 3u];
+                uint rightChild = afterBuildPtr[nodeBaseScalar + 7u];
+                uint rangeStart = afterBuildPtr[nodeBaseScalar + 8u];
+                uint rangeCount = afterBuildPtr[nodeBaseScalar + 9u];
+                uint parentIndex = afterBuildPtr[nodeBaseScalar + 10u];
+                uint flags = afterBuildPtr[nodeBaseScalar + 11u];
+
+                if (i == readRootAfterBuild)
+                {
+                    parentIndex.ShouldBe(uint.MaxValue);
+                }
+                else
+                {
+                    if (parentIndex == uint.MaxValue)
+                    {
+                        Assert.Fail($"Node {i} has parentIndex=UINT_MAX but rootIndex={readRootAfterBuild}. flags=0x{flags:X8} left={leftChild} right={rightChild} range=({rangeStart},{rangeCount}). This suggests the LBVH build produced a disconnected component (extra root).");
+                    }
+                }
+
+                bool isLeaf = (flags & 1u) != 0u;
+                if (isLeaf)
+                {
+                    leftChild.ShouldBe(uint.MaxValue);
+                    rightChild.ShouldBe(uint.MaxValue);
+                }
+                else
+                {
+                    leftChild.ShouldNotBe(uint.MaxValue);
+                    rightChild.ShouldNotBe(uint.MaxValue);
+                    leftChild.ShouldBeLessThan(nodeCount);
+                    rightChild.ShouldBeLessThan(nodeCount);
+                }
+            }
+
+            uint leaf0Base = nodeHeaderScalars + 0u * nodeStrideScalars;
+            uint leaf0Parent = afterBuildPtr[leaf0Base + 10u];
+            gl.UnmapBuffer(BufferTargetARB.ShaderStorageBuffer);
+            leaf0Parent.ShouldNotBe(uint.MaxValue);
+
+            // Upload and bind extra buffers for refit
+            gl.BindBuffer(BufferTargetARB.ShaderStorageBuffer, transformBuf);
+            gl.BufferData<float>(BufferTargetARB.ShaderStorageBuffer, transforms.AsSpan(), BufferUsageARB.DynamicCopy);
+            gl.BindBufferBase(BufferTargetARB.ShaderStorageBuffer, 4, transformBuf);
+
+            gl.BindBuffer(BufferTargetARB.ShaderStorageBuffer, counterBuf);
+            gl.BufferData<uint>(BufferTargetARB.ShaderStorageBuffer, counters.AsSpan(), BufferUsageARB.DynamicCopy);
+            gl.BindBufferBase(BufferTargetARB.ShaderStorageBuffer, 11, counterBuf);
+
+            // Refit stage 0 (clear counters) then stage 1 (leaf refit + propagate)
+            gl.UseProgram(refitProgram);
+            // Avoid driver quirks around SSBO runtime-sized array .length() for struct arrays.
+            gl.Uniform1(gl.GetUniformLocation(refitProgram, "debugValidation"), 0u);
+
+            gl.Uniform1(gl.GetUniformLocation(refitProgram, "refitStage"), 0u);
+            gl.DispatchCompute((nodeCount + 255u) / 256u, 1, 1);
+            gl.MemoryBarrier(MemoryBarrierMask.ShaderStorageBarrierBit);
+            gl.Finish();
+
+            gl.Uniform1(gl.GetUniformLocation(refitProgram, "refitStage"), 1u);
+            gl.DispatchCompute((nodeCount + 255u) / 256u, 1, 1);
+            gl.MemoryBarrier(MemoryBarrierMask.ShaderStorageBarrierBit);
+            gl.Finish();
+
+            // Read back root bounds
+            gl.BindBuffer(BufferTargetARB.ShaderStorageBuffer, nodeBuf);
+            uint* nodePtr = (uint*)gl.MapBuffer(BufferTargetARB.ShaderStorageBuffer, BufferAccessARB.ReadOnly);
+            Assert.That((nint)nodePtr, Is.Not.EqualTo(nint.Zero));
+
+            uint readNodeCount = nodePtr[0];
+            uint rootIndex = nodePtr[1];
+            uint strideScalars = nodePtr[2];
+            uint readMaxLeaf = nodePtr[3];
+
+            readNodeCount.ShouldBe(nodeCount);
+            rootIndex.ShouldBeLessThan(nodeCount);
+            strideScalars.ShouldBe(nodeStrideScalars);
+            readMaxLeaf.ShouldBe(maxLeafPrims);
+
+            // Also sample a leaf to ensure refit actually ran.
+            uint leaf0Scalar = nodeHeaderScalars + 0u * nodeStrideScalars;
+            float leafMinX = BitConverter.UInt32BitsToSingle(nodePtr[leaf0Scalar + 0]);
+            float leafMinY = BitConverter.UInt32BitsToSingle(nodePtr[leaf0Scalar + 1]);
+            float leafMinZ = BitConverter.UInt32BitsToSingle(nodePtr[leaf0Scalar + 2]);
+            float leafMaxX = BitConverter.UInt32BitsToSingle(nodePtr[leaf0Scalar + 4]);
+            float leafMaxY = BitConverter.UInt32BitsToSingle(nodePtr[leaf0Scalar + 5]);
+            float leafMaxZ = BitConverter.UInt32BitsToSingle(nodePtr[leaf0Scalar + 6]);
+
+            uint baseScalar = nodeHeaderScalars + rootIndex * nodeStrideScalars;
+            float minX = BitConverter.UInt32BitsToSingle(nodePtr[baseScalar + 0]);
+            float minY = BitConverter.UInt32BitsToSingle(nodePtr[baseScalar + 1]);
+            float minZ = BitConverter.UInt32BitsToSingle(nodePtr[baseScalar + 2]);
+            float maxX = BitConverter.UInt32BitsToSingle(nodePtr[baseScalar + 4]);
+            float maxY = BitConverter.UInt32BitsToSingle(nodePtr[baseScalar + 5]);
+            float maxZ = BitConverter.UInt32BitsToSingle(nodePtr[baseScalar + 6]);
+
+            gl.UnmapBuffer(BufferTargetARB.ShaderStorageBuffer);
+
+            // Leaf0 should match its primitive AABB under identity transform.
+            leafMinX.ShouldBe(0f, 0.001f);
+            leafMinY.ShouldBe(0f, 0.001f);
+            leafMinZ.ShouldBe(0f, 0.001f);
+            leafMaxX.ShouldBe(1f, 0.001f);
+            leafMaxY.ShouldBe(1f, 0.001f);
+            leafMaxZ.ShouldBe(1f, 0.001f);
+
+            // Read counters to ensure propagation triggered.
+            gl.BindBuffer(BufferTargetARB.ShaderStorageBuffer, counterBuf);
+            uint* counterPtr = (uint*)gl.MapBuffer(BufferTargetARB.ShaderStorageBuffer, BufferAccessARB.ReadOnly);
+            Assert.That((nint)counterPtr, Is.Not.EqualTo(nint.Zero));
+            uint rootCounter = counterPtr[rootIndex];
+            gl.UnmapBuffer(BufferTargetARB.ShaderStorageBuffer);
+            // Root should be processed by the second child arrival.
+            rootCounter.ShouldBe(2u);
+
+            // Expected union of primitive AABBs (identity transforms)
+            minX.ShouldBe(-1f, 0.001f);
+            minY.ShouldBe(-1f, 0.001f);
+            minZ.ShouldBe(-1f, 0.001f);
+            maxX.ShouldBe(3f, 0.001f);
+            maxY.ShouldBe(3f, 0.001f);
+            maxZ.ShouldBe(1f, 0.001f);
+
+            // Ensure overflow flag not set
+            gl.BindBuffer(BufferTargetARB.ShaderStorageBuffer, overflowBuf);
+            uint* overflowPtr = (uint*)gl.MapBuffer(BufferTargetARB.ShaderStorageBuffer, BufferAccessARB.ReadOnly);
+            Assert.That((nint)overflowPtr, Is.Not.EqualTo(nint.Zero));
+            uint overflowFlags = *overflowPtr;
+            gl.UnmapBuffer(BufferTargetARB.ShaderStorageBuffer);
+            overflowFlags.ShouldBe(0u);
+
+            // Cleanup
+            gl.DeleteBuffer(counterBuf);
+            gl.DeleteBuffer(transformBuf);
+            gl.DeleteBuffer(overflowBuf);
+            gl.DeleteBuffer(rangeBuf);
+            gl.DeleteBuffer(nodeBuf);
+            gl.DeleteBuffer(mortonBuf);
+            gl.DeleteBuffer(aabbBuf);
+            gl.DeleteProgram(refitProgram);
+            gl.DeleteShader(refitShader);
+            gl.DeleteProgram(buildProgram);
+            gl.DeleteShader(buildShader);
+        }
+        finally
+        {
+            window.Close();
+            window.Dispose();
+        }
+    }
+
     #endregion
 
     #region GPU Indirect Command Generation Tests

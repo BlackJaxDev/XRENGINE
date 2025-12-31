@@ -105,7 +105,7 @@ namespace XREngine.Rendering.Compute
                 RaycastCount = 0;
             }
 
-            public Metrics ToMetrics()
+            public readonly Metrics ToMetrics()
                 => new(BuildTime, RefitTime, CullTime, RaycastTime, BuildCount, RefitCount, CullCount, RaycastCount);
 
             public void Add(Stage stage, ulong ns, uint workCount)
@@ -185,8 +185,7 @@ namespace XREngine.Rendering.Compute
                 return null;
             }
 
-            var gl = AbstractRenderer.Current as OpenGLRenderer;
-            if (gl is null)
+            if (AbstractRenderer.Current is not OpenGLRenderer gl)
             {
                 lock (_lock)
                     _frameAccumulator.Add(stage, 0, workCount);
@@ -220,9 +219,7 @@ namespace XREngine.Rendering.Compute
                 PendingQuery pending = _pending[i];
                 if (!TryReadTimestamp(pending.Start, out ulong start) ||
                     !TryReadTimestamp(pending.End, out ulong end))
-                {
                     continue;
-                }
 
                 ulong duration = end > start ? end - start : 0;
                 _frameAccumulator.Add(pending.Stage, duration, pending.WorkCount);
@@ -242,10 +239,8 @@ namespace XREngine.Rendering.Compute
             query.CurrentQuery = EQueryTarget.Timestamp;
             query.Generate();
 
-            GLRenderQuery? glQuery = renderer.GenericToAPI<GLRenderQuery>(query);
-            if (glQuery is null)
-                throw new InvalidOperationException("Failed to acquire GLRenderQuery wrapper.");
-
+            GLRenderQuery? glQuery = renderer.GenericToAPI<GLRenderQuery>(query)
+                ?? throw new InvalidOperationException("Failed to acquire GLRenderQuery wrapper.");
             glQuery.Data.CurrentQuery = EQueryTarget.Timestamp;
             return glQuery;
         }

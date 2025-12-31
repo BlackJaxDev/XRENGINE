@@ -529,7 +529,7 @@ public partial class DefaultRenderPipeline : RenderPipeline
                 c.Add<VPRC_CacheOrCreateFBO>().SetOptions(
                     PostProcessOutputFBOName,
                     CreatePostProcessOutputFBO,
-                    GetDesiredFBOSizeFull);
+                    GetDesiredFBOSizeInternal);
 
                 c.Add<VPRC_CacheOrCreateFBO>().SetOptions(
                     FxaaFBOName,
@@ -543,18 +543,26 @@ public partial class DefaultRenderPipeline : RenderPipeline
             //    GetDesiredFBOSizeInternal);
 
         }
-        using (c.AddUsing<VPRC_PushViewportRenderArea>(t => t.UseInternalResolution = false))
+
+        // FXAA chain: first blit at internal resolution, then FXAA upscales to full resolution.
+        if (EnableFxaa)
         {
-            if (EnableFxaa)
+            // First pass: PostProcess quad renders to PostProcessOutputTexture at internal resolution
+            using (c.AddUsing<VPRC_PushViewportRenderArea>(t => t.UseInternalResolution = true))
             {
                 c.Add<VPRC_RenderQuadToFBO>().SetTargets(PostProcessFBOName, PostProcessOutputFBOName);
-                c.Add<VPRC_RenderQuadToFBO>().SetTargets(PostProcessOutputFBOName, FxaaFBOName);
-            }
-            else
-            {
-                c.Add<VPRC_RenderQuadToFBO>().SourceQuadFBOName = PostProcessFBOName;
             }
 
+            // Second pass: FXAA reads from internal-res PostProcessOutputTexture and upscales to full-res FxaaOutputTexture
+            using (c.AddUsing<VPRC_PushViewportRenderArea>(t => t.UseInternalResolution = false))
+            {
+                c.Add<VPRC_RenderQuadToFBO>().SetTargets(FxaaFBOName, FxaaFBOName);
+            }
+        }
+
+        // Final output to screen uses the full viewport region (with panel offset if applicable).
+        using (c.AddUsing<VPRC_PushViewportRenderArea>(t => t.UseInternalResolution = false))
+        {
             using (c.AddUsing<VPRC_BindOutputFBO>())
             {
                 //c.Add<VPRC_ClearByBoundFBO>();
@@ -703,12 +711,14 @@ public partial class DefaultRenderPipeline : RenderPipeline
 
         if (EnableFxaa)
         {
+            // PostProcessOutput is intermediate before FXAA - use internal resolution
             c.Add<VPRC_CacheOrCreateTexture>().SetOptions(
                 PostProcessOutputTextureName,
                 CreatePostProcessOutputTexture,
-                NeedsRecreateTextureFullSize,
-                ResizeTextureFullSize);
+                NeedsRecreateTextureInternalSize,
+                ResizeTextureInternalSize);
 
+            // FXAA output is full resolution (FXAA performs the upscale)
             c.Add<VPRC_CacheOrCreateTexture>().SetOptions(
                 FxaaOutputTextureName,
                 CreateFxaaOutputTexture,

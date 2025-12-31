@@ -16,6 +16,7 @@ using XREngine.Components;
 using XREngine.Animation;
 using XREngine.Data;
 using XREngine.Data.Colors;
+using XREngine.Data.Rendering;
 using XREngine.Rendering;
 using XREngine.Rendering.OpenGL;
 using XREngine.Core.Files;
@@ -57,6 +58,7 @@ public static partial class EditorImGuiUI
         private static bool _showUserSettings;
         private static bool _showBuildSettings;
         private static bool _showStatePanel;
+        private static bool _showRenderPipelineGraph;
         private static int _probePreviewLayer;
         private static bool _showHierarchy = true;
         private static bool _showInspector = true;
@@ -69,6 +71,9 @@ public static partial class EditorImGuiUI
 
         private static bool _renameInputFocusRequested;
         private static bool _imguiStyleInitialized;
+        private static Vector4? _imguiBaseWindowBg;
+        private static Vector4? _imguiBaseChildBg;
+        private static Vector4? _imguiBaseDockingEmptyBg;
         private static bool _componentTypeCacheDirty = true;
         private static float _lastProfilerCaptureTime;
 
@@ -208,7 +213,72 @@ public static partial class EditorImGuiUI
                 _transformEditorCache.Clear();
             };
             Engine.Time.Timer.UpdateFrame += ProcessQueuedSceneEdits;
+            Engine.Time.Timer.UpdateFrame += EnsureViewportPanelWindowHooked;
             Selection.SelectionChanged += HandleSceneSelectionChanged;
+        }
+
+        private static XRWindow? _viewportPanelHookedWindow;
+        private static XRViewport? _viewportPanelImGuiViewport;
+
+        private static void EnsureViewportPanelWindowHooked()
+        {
+            if (_viewportPanelHookedWindow is not null)
+                return;
+
+            if (!Engine.IsEditor)
+                return;
+
+            if (Engine.Windows.Count <= 0)
+                return;
+
+            var window = Engine.Windows[0];
+            if (window is null)
+                return;
+
+            _viewportPanelHookedWindow = window;
+            window.RenderViewportsCallback += RenderEditorViewportPanelMode;
+        }
+
+        private static void RenderEditorViewportPanelMode()
+        {
+            if (Engine.Rendering.Settings.ViewportPresentationMode != Engine.Rendering.EngineSettings.EViewportPresentationMode.UseViewportPanel)
+                return;
+
+            if (AbstractRenderer.Current is not { } renderer)
+                return;
+
+            XRWindow? window = _viewportPanelHookedWindow;
+            XRViewport? viewport = window?.Viewports.FirstOrDefault();
+            if (viewport is null)
+                return;
+
+            // IMPORTANT: In viewport-panel mode the real window viewports are resized/offset to the panel bounds.
+            // If we render ImGui using those viewports, ImGui's coordinate space inherits that offset and the
+            // computed panel bounds get offset again ("double padding" / drifting render origin).
+            // Render ImGui using a dedicated full-window viewport that is NOT part of the window's viewport list.
+            var fbSize = window!.Window.FramebufferSize;
+            if (fbSize.X <= 0 || fbSize.Y <= 0)
+                return;
+
+            _viewportPanelImGuiViewport ??= new XRViewport(window);
+            _viewportPanelImGuiViewport.Window = window;
+            _viewportPanelImGuiViewport.Resize((uint)fbSize.X, (uint)fbSize.Y, setInternalResolution: false);
+
+            // Clear the backbuffer since we won't be rendering the world to it in this mode.
+            try
+            {
+                var fbSize2 = window!.Window.FramebufferSize;
+                renderer.BindFrameBuffer(EFramebufferTarget.Framebuffer, null);
+                renderer.SetRenderArea(new XREngine.Data.Geometry.BoundingRectangle(0, 0, fbSize2.X, fbSize2.Y));
+                renderer.ClearColor(new XREngine.Data.Colors.ColorF4(0f, 0f, 0f, 1f));
+                renderer.Clear(color: true, depth: true, stencil: false);
+            }
+            catch
+            {
+                // Best-effort clear; don't fail the frame.
+            }
+
+            renderer.TryRenderImGui(_viewportPanelImGuiViewport, canvas: null, camera: viewport.ActiveCamera, draw: RenderEditor);
         }
 
         private static partial void BeginAddComponentForHierarchyNode(SceneNode node);
@@ -384,14 +454,17 @@ public static partial class EditorImGuiUI
 
             var io = ImGui.GetIO();
             bool captureKeyboard = !inPlayMode && (io.WantCaptureKeyboard || io.WantTextInput);
-            Engine.Input.SetUIInputCaptured(io.WantCaptureMouse || captureKeyboard);
             ImGuiUndoHelper.BeginFrame();
             
             bool showSettings = UnitTestingWorld.Toggles.DearImGuiUI;
             if (!showSettings)
+            {
+                Engine.Input.SetUIInputCaptured(false);
                 return;
+            }
 
             EnsureProfessionalImGuiStyling();
+            ApplyViewportModeImGuiBackgroundAlpha();
 
             // Draw menu bar and toolbar first
             DrawMainMenuBar();
@@ -449,6 +522,7 @@ public static partial class EditorImGuiUI
             DrawUserSettingsPanel();
             DrawBuildSettingsPanel();
             DrawNetworkingPanel();
+            DrawRenderPipelineGraphPanel();
             DrawHierarchyPanel();
             DrawViewportPanel();
             DrawInspectorPanel();
@@ -458,6 +532,13 @@ public static partial class EditorImGuiUI
             UI.Tools.ShaderLockingWindow.Instance.Render();
             UI.Tools.ShaderLockingWindow.Instance.RenderDialogs();
             UI.Tools.ShaderAnalyzerWindow.Instance.Render();
+
+            bool uiWantsCapture = io.WantCaptureMouse || captureKeyboard;
+            bool allowEngineInputThroughViewportPanel =
+                Engine.Rendering.Settings.ViewportPresentationMode == Engine.Rendering.EngineSettings.EViewportPresentationMode.UseViewportPanel &&
+                _viewportPanelInteracting;
+
+            Engine.Input.SetUIInputCaptured(uiWantsCapture && !allowEngineInputThroughViewportPanel);
         }
 
         /// <summary>
@@ -634,6 +715,16 @@ public static partial class EditorImGuiUI
                     ImGui.EndMenu();
                 }
 
+                ImGui.Separator();
+                if (ImGui.MenuItem("Engine Settings"))
+                    OpenSettingsInInspector(Engine.Rendering.Settings, "Engine Settings");
+
+                if (ImGui.MenuItem("User Settings"))
+                    OpenSettingsInInspector(Engine.UserSettings, "User Settings");
+
+                if (ImGui.MenuItem("Game Settings"))
+                    OpenSettingsInInspector(Engine.GameSettings, "Game Settings");
+
                 ImGui.EndMenu();
             }
 
@@ -644,22 +735,13 @@ public static partial class EditorImGuiUI
                 ImGui.MenuItem("Asset Explorer", null, ref _showAssetExplorer);
                 ImGui.Separator();
                 ImGui.MenuItem("Console", null, ref _showConsole);
+                ImGui.MenuItem("Render Pipeline Graph", null, ref _showRenderPipelineGraph);
                 ImGui.MenuItem("Engine State", null, ref _showStatePanel);
                 ImGui.MenuItem("Profiler", null, ref _showProfiler);
                 ImGui.MenuItem("OpenGL API Objects", null, ref _showOpenGLApiObjects);
                 ImGui.MenuItem("OpenGL Errors", null, ref _showOpenGLErrors);
                 ImGui.MenuItem("Missing Assets", null, ref _showMissingAssets);
                 ImGui.MenuItem("Networking", null, ref _showNetworking);
-                ImGui.Separator();
-                if (ImGui.MenuItem("Engine Settings"))
-                    OpenSettingsInInspector(Engine.Rendering.Settings, "Engine Settings");
-
-                if (ImGui.MenuItem("User Settings"))
-                    OpenSettingsInInspector(Engine.UserSettings, "User Settings");
-
-                if (ImGui.MenuItem("Game Settings"))
-                    OpenSettingsInInspector(Engine.GameSettings, "Game Settings");
-                
                 ImGui.Separator();
                 if (ImGui.MenuItem("Reset Layout"))
                     ResetDockingLayout();
@@ -921,7 +1003,42 @@ public static partial class EditorImGuiUI
                 colors[(int)ImGuiCol.WindowBg].W = 1.0f;
             }
 
+            _imguiBaseWindowBg = colors[(int)ImGuiCol.WindowBg];
+            _imguiBaseChildBg = colors[(int)ImGuiCol.ChildBg];
+            _imguiBaseDockingEmptyBg = colors[(int)ImGuiCol.DockingEmptyBg];
+
             _imguiStyleInitialized = true;
+        }
+
+        private static void ApplyViewportModeImGuiBackgroundAlpha()
+        {
+            if (!_imguiStyleInitialized || !_imguiBaseWindowBg.HasValue || !_imguiBaseChildBg.HasValue || !_imguiBaseDockingEmptyBg.HasValue)
+                return;
+
+            var colors = ImGui.GetStyle().Colors;
+            var mode = Engine.Rendering.Settings.ViewportPresentationMode;
+
+            if (mode == Engine.Rendering.EngineSettings.EViewportPresentationMode.FullViewportBehindImGuiUI)
+            {
+                var windowBg = _imguiBaseWindowBg.Value;
+                windowBg.W = MathF.Min(windowBg.W, 0.70f);
+                colors[(int)ImGuiCol.WindowBg] = windowBg;
+
+                var childBg = _imguiBaseChildBg.Value;
+                childBg.W = MathF.Min(childBg.W, 0.55f);
+                colors[(int)ImGuiCol.ChildBg] = childBg;
+
+                ImGui.MenuItem("Render Pipeline Graph", null, ref _showRenderPipelineGraph);
+                var dockingBg = _imguiBaseDockingEmptyBg.Value;
+                dockingBg.W = MathF.Min(dockingBg.W, 0.35f);
+                colors[(int)ImGuiCol.DockingEmptyBg] = dockingBg;
+            }
+            else
+            {
+                colors[(int)ImGuiCol.WindowBg] = _imguiBaseWindowBg.Value;
+                colors[(int)ImGuiCol.ChildBg] = _imguiBaseChildBg.Value;
+                colors[(int)ImGuiCol.DockingEmptyBg] = _imguiBaseDockingEmptyBg.Value;
+            }
         }
 
         private static XRWorldInstance? TryGetActiveWorldInstance()

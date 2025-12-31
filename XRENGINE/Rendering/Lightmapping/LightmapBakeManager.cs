@@ -18,9 +18,9 @@ using XREngine.Scene.Transforms;
 
 namespace XREngine.Rendering.Lightmapping;
 
-public sealed class LightmapBakeManager : XRBase
+public sealed class LightmapBakeManager(XRWorldInstance world) : XRBase
 {
-    private readonly XRWorldInstance _world;
+    private readonly XRWorldInstance _world = world;
 
     private XRTexture? _currentBakeShadowMap;
 
@@ -29,8 +29,8 @@ public sealed class LightmapBakeManager : XRBase
 
     private readonly Dictionary<RenderableMesh, BakedLightmapInfo> _bakedLightmaps = new(System.Collections.Generic.ReferenceEqualityComparer.Instance);
     private readonly List<XRTexture2D> _bakedAtlases = [];
-    private readonly Dictionary<uint, XRMaterial> _bakeMaterialsByUvChannel = new();
-    private readonly Dictionary<uint, XRMaterial> _previewMaterialsByUvChannel = new();
+    private readonly Dictionary<uint, XRMaterial> _bakeMaterialsByUvChannel = [];
+    private readonly Dictionary<uint, XRMaterial> _previewMaterialsByUvChannel = [];
 
     private const string ParamLightKind = "LightKind";
     private const string ParamLightColor = "LightColor";
@@ -53,11 +53,6 @@ public sealed class LightmapBakeManager : XRBase
     private const string ParamShadowMult = "ShadowMult";
     private const string ParamShadowBiasMin = "ShadowBiasMin";
     private const string ParamShadowBiasMax = "ShadowBiasMax";
-
-    public LightmapBakeManager(XRWorldInstance world)
-    {
-        _world = world;
-    }
 
     /// <summary>
     /// When a DynamicCached light has been stationary for at least this long, a bake will be requested.
@@ -122,32 +117,24 @@ public sealed class LightmapBakeManager : XRBase
         _manualBakeRequests.Enqueue(light);
     }
 
-    internal void Update()
+    public void ProcessDynamicCachedAutoBake(LightComponent light)
     {
-        //ProcessDynamicCachedAutoBake();
-        //ProcessManualRequests();
+        if (light.Type != ELightType.DynamicCached)
+            return;
+
+        if (light.TimeSinceLastMovement < DynamicCachedStationarySeconds)
+            return;
+
+        uint lastBaked = _lastBakedMovementVersion.TryGetValue(light, out var v) ? v : 0u;
+        if (lastBaked == light.MovementVersion)
+            return;
+
+        _lastBakedMovementVersion[light] = light.MovementVersion;
+        _manualBakeRequests.Enqueue(light);
+    
     }
 
-    private void ProcessDynamicCachedAutoBake()
-    {
-        foreach (var light in EnumerateLights(_world))
-        {
-            if (light.Type != ELightType.DynamicCached)
-                continue;
-
-            if (light.TimeSinceLastMovement < DynamicCachedStationarySeconds)
-                continue;
-
-            uint lastBaked = _lastBakedMovementVersion.TryGetValue(light, out var v) ? v : 0u;
-            if (lastBaked == light.MovementVersion)
-                continue;
-
-            _lastBakedMovementVersion[light] = light.MovementVersion;
-            _manualBakeRequests.Enqueue(light);
-        }
-    }
-
-    private void ProcessManualRequests()
+    public void ProcessManualRequests()
     {
         while (_manualBakeRequests.TryDequeue(out var light))
         {
@@ -391,7 +378,7 @@ public sealed class LightmapBakeManager : XRBase
         {
             if (tiles.Count > 0)
                 pages.Add(new AtlasPage(atlasSize, tiles));
-            tiles = new List<AtlasTile>();
+            tiles = [];
             cursorX = 0;
             cursorY = 0;
             shelfHeight = outerSize;
@@ -616,10 +603,11 @@ void main()
         mat = new XRMaterial(
             parameters,
             new XRShader(EShaderType.Geometry, geom),
-            new XRShader(EShaderType.Fragment, frag));
-
-        mat.Name = $"LightmapBake_UV{uvChannel}";
-        mat.RenderPass = (int)EDefaultRenderPass.OpaqueForward;
+            new XRShader(EShaderType.Fragment, frag))
+        {
+            Name = $"LightmapBake_UV{uvChannel}",
+            RenderPass = (int)EDefaultRenderPass.OpaqueForward
+        };
         mat.RenderOptions.CullMode = ECullMode.None;
         mat.RenderOptions.DepthTest.Enabled = ERenderParamUsage.Disabled;
         mat.RenderOptions.RequiredEngineUniforms = EUniformRequirements.None;
@@ -673,9 +661,11 @@ void main()
             new ShaderVector2(Vector2.Zero, ParamLightmapOffset),
         ];
 
-        mat = new XRMaterial(parameters, new XRShader(EShaderType.Fragment, frag));
-        mat.Name = $"LightmapPreview_UV{uvChannel}";
-        mat.RenderPass = (int)EDefaultRenderPass.OpaqueForward;
+        mat = new XRMaterial(parameters, new XRShader(EShaderType.Fragment, frag))
+        {
+            Name = $"LightmapPreview_UV{uvChannel}",
+            RenderPass = (int)EDefaultRenderPass.OpaqueForward
+        };
         mat.RenderOptions.CullMode = ECullMode.Back;
         mat.RenderOptions.RequiredEngineUniforms = EUniformRequirements.None;
         _previewMaterialsByUvChannel[uvChannel] = mat;
@@ -832,12 +822,19 @@ void main()
 
     private static IEnumerable<LightComponent> EnumerateLights(XRWorldInstance world)
     {
-        foreach (var root in world.RootNodes)
+        //Use world.Lights to get all lights in the world without iterating the scene graph.
+        
+        foreach (var light in world.Lights.DynamicDirectionalLights)
         {
-            List<LightComponent> lights = [];
-            root.IterateComponents<LightComponent>(l => lights.Add(l), iterateChildHierarchy: true);
-            foreach (var l in lights)
-                yield return l;
+            yield return light;
+        }
+        foreach (var light in world.Lights.DynamicPointLights)
+        {
+            yield return light;
+        }
+        foreach (var light in world.Lights.DynamicSpotLights)
+        {
+            yield return light;
         }
     }
 }

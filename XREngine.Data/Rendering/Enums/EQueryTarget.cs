@@ -20,7 +20,7 @@
         /// </summary>
         PrimitivesGenerated = 35975,
         /// <summary>
-        /// 
+        /// Result returns how many vertices were written to the transform feedback buffers.
         /// </summary>
         TransformFeedbackPrimitivesWritten = 35976,
         /// <summary>
