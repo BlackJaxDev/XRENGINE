@@ -56,7 +56,7 @@ layout(std430, binding = 8) buffer OverflowFlags
 };
 
 uniform uint numPrimitives;
-uniform uint buildStage; // 0 = emit leaves + header, 1 = generate internal nodes
+uniform uint buildStage; // 0 = emit leaves + header, 1 = generate internal nodes, 2 = assign parent indices, 3 = compute root index
 uniform uint nodeScalarCapacity;
 uniform uint rangeScalarCapacity;
 uniform uint mortonCapacity;
@@ -101,21 +101,25 @@ ivec2 determineRange(int i, uint leafCount)
 {
     int lcpL = lcp_leaf(i, i - 1, leafCount);
     int lcpR = lcp_leaf(i, i + 1, leafCount);
-    int d = (lcpR > lcpL) ? 1 : -1;
+    int d = ((lcpR - lcpL) >= 0) ? 1 : -1;
+
+    // Baseline must be the LCP in the opposite direction (Karras LBVH).
+    // Using lcp(i, i+d) here breaks endpoint ranges and can leave components disconnected.
+    int deltaMin = lcp_leaf(i, i - d, leafCount);
+
     int lMax = 2;
-    while (lcp_leaf(i, i + lMax * d, leafCount) > lcp_leaf(i, i + d, leafCount))
+    while (lcp_leaf(i, i + lMax * d, leafCount) > deltaMin)
         lMax *= 2;
 
     int l = 0;
-    for (int t = lMax; t > 1; t = (t + 1) >> 1)
+    for (int t = lMax / 2; t >= 1; t /= 2)
     {
-        if (lcp_leaf(i, i + (l + t) * d, leafCount) > lcp_leaf(i, i + d, leafCount))
+        if (lcp_leaf(i, i + (l + t) * d, leafCount) > deltaMin)
             l += t;
     }
+
     int j = i + l * d;
-    int first = min(i, j);
-    int last  = max(i, j);
-    return ivec2(first, last);
+    return ivec2(min(i, j), max(i, j));
 }
 
 int findSplit(int first, int last, uint leafCount)
@@ -163,7 +167,8 @@ void main()
     if (buildStage == 0u && gid == 0u)
     {
         nodeCount = totalNodes;
-        rootIndex = (totalNodes > 0u) ? (totalNodes - 1u) : uint(-1);
+        // Root is computed after parent assignment (stage 3).
+        rootIndex = (totalNodes > 0u) ? 0u : uint(-1);
         nodeStrideScalars = BVH_NODE_STRIDE_SCALARS;
         maxLeafPrimitives = MAX_LEAF_PRIMITIVES;
     }
@@ -196,6 +201,8 @@ void main()
     }
 
     // Build internal connectivity (LBVH).
+    // Note: parent indices are assigned in a separate stage to avoid data races
+    // where an internal node write would overwrite a parentIndex written by another thread.
     if (buildStage == 1u && gid < internalCount)
     {
         int i = int(gid);
@@ -224,8 +231,37 @@ void main()
 
         nodes[nodeIndex] = n;
         ranges[nodeIndex] = combined;
+    }
 
-        nodes[leftIndex].parentIndex = nodeIndex;
-        nodes[rightIndex].parentIndex = nodeIndex;
+    // Stage 2: assign parent indices (run after stage 1 has finished).
+    if (buildStage == 2u && gid < internalCount)
+    {
+        uint nodeIndex = leafCount + gid;
+        uint leftIndex = nodes[nodeIndex].leftChild;
+        uint rightIndex = nodes[nodeIndex].rightChild;
+        if (leftIndex != uint(-1))
+            nodes[leftIndex].parentIndex = nodeIndex;
+        if (rightIndex != uint(-1))
+            nodes[rightIndex].parentIndex = nodeIndex;
+    }
+
+    // Stage 3: compute root index by following parent pointers from leaf 0.
+    // This avoids relying on internal-node index ordering.
+    if (buildStage == 3u && gid == 0u)
+    {
+        if (totalNodes == 0u)
+        {
+            rootIndex = uint(-1);
+            return;
+        }
+
+        uint current = 0u;
+        uint parent = nodes[current].parentIndex;
+        while (parent != uint(-1))
+        {
+            current = parent;
+            parent = nodes[current].parentIndex;
+        }
+        rootIndex = current;
     }
 }

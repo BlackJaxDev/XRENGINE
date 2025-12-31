@@ -260,7 +260,7 @@ namespace XREngine.Components.Capture.Lights.Types
 
         public abstract XRMaterial GetShadowMapMaterial(uint width, uint height, EDepthPrecision precision = EDepthPrecision.Flt32);
 
-        public abstract void SwapBuffers();
+        public abstract void SwapBuffers(Rendering.Lightmapping.LightmapBakeManager lightmapBaking);
         public abstract void CollectVisibleItems();
         public abstract void RenderShadowMap(bool collectVisibleNow = false);
 

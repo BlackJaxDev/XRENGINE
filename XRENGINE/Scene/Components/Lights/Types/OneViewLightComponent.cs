@@ -39,7 +39,7 @@ namespace XREngine.Components.Capture.Lights.Types
             _viewport.WorldInstanceOverride = World;
             XRCamera cam = new(GetShadowCameraParentTransform(), GetCameraParameters());
             var colorStage = cam.GetPostProcessStageState<ColorGradingSettings>();
-            if (colorStage?.TryGetBacking(out ColorGradingSettings? grading) == true)
+            if (colorStage?.TryGetBacking(out ColorGradingSettings? grading) == true && grading is not null)
             {
                 grading.AutoExposure = false;
                 grading.Exposure = 1.0f;
@@ -66,12 +66,13 @@ namespace XREngine.Components.Capture.Lights.Types
             base.OnComponentDeactivated();
         }
 
-        public override void SwapBuffers()
+        public override void SwapBuffers(Rendering.Lightmapping.LightmapBakeManager? lightmapBaker = null)
         {
             if (!CastsShadows || ShadowMap is null)
                 return;
 
             _viewport.SwapBuffers();
+            lightmapBaker?.ProcessDynamicCachedAutoBake(this);
         }
         public override void CollectVisibleItems()
         {

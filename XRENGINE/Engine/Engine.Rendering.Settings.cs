@@ -10,6 +10,7 @@ using XREngine.Components.Scene.Mesh;
 using XREngine.Core.Files;
 using XREngine.Data.Colors;
 using XREngine.Data.Core;
+using XREngine.Data.Geometry;
 using XREngine.Rendering.DLSS;
 using XREngine.Scene;
 
@@ -21,6 +22,14 @@ namespace XREngine
         {
             public static event Action? SettingsChanged;
 
+            /// <summary>
+            /// When the editor is using an ImGui viewport panel presentation mode, this optional callback
+            /// can provide the framebuffer-space render bounds (in window coordinates) that all viewports
+            /// should render into for that frame.
+            /// </summary>
+            public static Func<global::XREngine.Rendering.XRWindow, global::XREngine.Data.Geometry.BoundingRectangle?>? ViewportPanelRenderRegionProvider { get; set; }
+
+            /// <summary>
             private static EngineSettings _settings = new();
             static Rendering()
             {
@@ -98,6 +107,12 @@ namespace XREngine
             [MemoryPackable(GenerateType.NoGenerate)]
             public partial class EngineSettings : XRAsset
             {
+                public enum EViewportPresentationMode
+                {
+                    FullViewportBehindImGuiUI,
+                    UseViewportPanel,
+                }
+
                 #region Debug/Logging Settings (moved from UserSettings)
 
                 private bool _enableFrameLogging = true;
@@ -183,6 +198,25 @@ namespace XREngine
                 {
                     get => _useDebugOpaquePipeline;
                     set => SetField(ref _useDebugOpaquePipeline, value);
+                }
+
+                #endregion
+
+                #region Editor / Viewport Presentation
+
+                private EViewportPresentationMode _viewportPresentationMode = EViewportPresentationMode.FullViewportBehindImGuiUI;
+
+                /// <summary>
+                /// Controls how the main world viewport is presented when Dear ImGui is active.
+                /// - FullViewportBehindImGuiUI: renders the world full-screen behind ImGui.
+                /// - UseViewportPanel: shows a dockable "Viewport" panel and constrains scene rendering to that panel.
+                /// </summary>
+                [Category("Editor")]
+                [Description("Controls whether the world renders full-screen behind ImGui UI, or is constrained to the docked Viewport panel.")]
+                public EViewportPresentationMode ViewportPresentationMode
+                {
+                    get => _viewportPresentationMode;
+                    set => SetField(ref _viewportPresentationMode, value);
                 }
 
                 #endregion

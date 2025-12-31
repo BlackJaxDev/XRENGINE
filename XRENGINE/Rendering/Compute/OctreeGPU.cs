@@ -99,6 +99,8 @@ namespace XREngine.Data.Trees
 		private XRDataBuffer? _objectIdBuffer;
 		private XRDataBuffer? _bvhNodeBuffer;
 		private XRDataBuffer? _bvhRangeBuffer;
+				private XRDataBuffer? _bvhCounterBuffer;
+				private const uint BvhCounterBinding = 11u;
 		private uint _lastBvhNodeCount;
 		private uint _lastObjectCount;
 		private bool _transformsDirty = true;
@@ -214,6 +216,7 @@ namespace XREngine.Data.Trees
 		public XRDataBuffer? BvhNodesBuffer => _bvhNodeBuffer;
 
 		public XRDataBuffer? BvhRangeBuffer => _bvhRangeBuffer;
+		public XRDataBuffer? BvhCounterBuffer => _bvhCounterBuffer;
 
 		public IReadOnlyCollection<T> DirtyItems => _dirtyItems;
 
@@ -836,7 +839,13 @@ namespace XREngine.Data.Trees
 			{
 				program.Uniform("buildStage", 1u);
 				program.DispatchCompute(ComputeGroups(internalCount, 256u), 1u, 1u, EMemoryBarrierMask.ShaderStorage);
+				program.Uniform("buildStage", 2u);
+				program.DispatchCompute(ComputeGroups(internalCount, 256u), 1u, 1u, EMemoryBarrierMask.ShaderStorage);
 			}
+
+			// Compute root index after parent assignment.
+			program.Uniform("buildStage", 3u);
+			program.DispatchCompute(1u, 1u, 1u, EMemoryBarrierMask.ShaderStorage);
 
 			return true;
 		}
@@ -868,6 +877,9 @@ namespace XREngine.Data.Trees
 			if (_lastBvhNodeCount == 0)
 				return false;
 
+			if (_bvhCounterBuffer is null)
+				return false;
+
 			var program = _bvhRefitProgram;
 			program.BindBuffer(_aabbBuffer!, 0);
 			program.BindBuffer(_mortonBuffer!, 1);
@@ -875,22 +887,17 @@ namespace XREngine.Data.Trees
 			program.BindBuffer(_bvhRangeBuffer, 3);
 			program.Uniform("debugValidation", EnableValidation ? 1u : 0u);
 			program.BindBuffer(_transformBuffer, 4);
+			program.BindBuffer(_bvhCounterBuffer, BvhCounterBinding);
 			if (_overflowFlagBuffer is not null)
 				program.BindBuffer(_overflowFlagBuffer, OverflowFlagBinding);
 
-			// Stage 0: Refit leaf nodes
+			// Stage 0: Clear counters
 			program.Uniform("refitStage", 0u);
 			program.DispatchCompute(ComputeGroups(_lastBvhNodeCount, 256u), 1u, 1u, EMemoryBarrierMask.ShaderStorage);
 
-			// Stage 1: Propagate internal nodes in parallel
-			// Internal nodes count = total nodes - leaf nodes = nodeCount - ((nodeCount + 1) / 2)
-			uint leafCount = (_lastBvhNodeCount + 1u) >> 1;
-			uint internalCount = _lastBvhNodeCount > leafCount ? _lastBvhNodeCount - leafCount : 0u;
-			if (internalCount > 0)
-			{
-				program.Uniform("refitStage", 1u);
-				program.DispatchCompute(ComputeGroups(internalCount, 256u), 1u, 1u, EMemoryBarrierMask.ShaderStorage);
-			}
+			// Stage 1: Refit leaves and propagate bounds to root (kernel early-outs for non-leaves).
+			program.Uniform("refitStage", 1u);
+			program.DispatchCompute(ComputeGroups(_lastBvhNodeCount, 256u), 1u, 1u, EMemoryBarrierMask.ShaderStorage);
 			return true;
 		}
 
@@ -1108,6 +1115,17 @@ namespace XREngine.Data.Trees
 				_bvhRangeBuffer.SetBlockIndex(7);
 			}
 			else if (!TryEnsureBufferCapacity(_bvhRangeBuffer, rangeScalars, "BVH range buffer", true, out overflowReason))
+							// Scratch counters for bottom-up refit propagation (one uint per node).
+							if (_bvhCounterBuffer is null)
+							{
+								_bvhCounterBuffer = CreateBuffer("GPUOctree.BvhCounters", true);
+								_bvhCounterBuffer.SetBlockIndex(BvhCounterBinding);
+								_bvhCounterBuffer.SetDataRaw(new uint[Math.Max(nodeCount, 1u)], (int)Math.Max(nodeCount, 1u));
+							}
+							else if (_bvhCounterBuffer.ElementCount < Math.Max(nodeCount, 1u))
+							{
+								_bvhCounterBuffer.Resize(Math.Max(nodeCount, 1u), false, true);
+							}
 				return false;
 
 			return true;
@@ -1360,7 +1378,31 @@ namespace XREngine.Data.Trees
 		}
 
 		internal bool TryValidateCapacityForTests(uint objectCount, uint nodeCount, out string? overflowReason)
-			=> EnsureCapacityForCounts(objectCount, nodeCount, out overflowReason);
+		{
+			overflowReason = null;
+
+			// Unit tests should be able to validate capacity without requiring a GL context
+			// or allocating XRDataBuffer instances.
+			if (_items.Count > MaxObjects)
+			{
+				overflowReason = $"Object count {_items.Count} exceeds shader MAX_OBJECTS={MaxObjects}.";
+				return false;
+			}
+
+			if (objectCount > MaxObjects)
+			{
+				overflowReason = $"Object count {objectCount} exceeds shader MAX_OBJECTS={MaxObjects}.";
+				return false;
+			}
+
+			if (nodeCount > MaxQueueSize)
+			{
+				overflowReason = $"Octree node count {nodeCount} exceeds queue capacity {MaxQueueSize}.";
+				return false;
+			}
+
+			return true;
+		}
 
 		private static uint GetSafeElementSize(XRDataBuffer buffer)
 			=> buffer.ElementSize == 0 ? sizeof(uint) : buffer.ElementSize;

@@ -44,13 +44,19 @@ layout(std430, binding = 3) buffer PrimitiveRanges
     uvec2 ranges[];
 };
 
+// Scratch counters for bottom-up propagation. Must be zeroed before refit.
+layout(std430, binding = 11) buffer RefitCounters
+{
+    uint counters[];
+};
+
 uniform uint debugValidation;
 layout(std430, binding = 4) buffer Transforms
 {
     mat4 transforms[];
 };
 
-uniform uint refitStage; // 0 = update leaves, 1 = propagate internal nodes
+uniform uint refitStage; // 0 = clear counters, 1 = update leaves + propagate to root
 
 vec3 combineMin(vec3 a, vec3 b) { return min(a, b); }
 vec3 combineMax(vec3 a, vec3 b) { return max(a, b); }
@@ -117,68 +123,70 @@ void refitLeaf(uint nodeIndex)
         }
         nodes[nodeIndex].minBounds = minB;
         nodes[nodeIndex].maxBounds = maxB;
+
+        // Ensure leaf bounds are visible before propagating.
+        memoryBarrierBuffer();
+
+        // Bottom-up propagation using per-node counters.
+        // Each internal node is processed exactly once, by the second child that arrives.
+        uint parent = node.parentIndex;
+        while (parent != uint(-1))
+        {
+            uint prior = atomicAdd(counters[parent], 1u);
+            if (prior == 1u)
+            {
+                // Ensure we see the other child's bounds writes.
+                memoryBarrierBuffer();
+
+                uint left = nodes[parent].leftChild;
+                uint right = nodes[parent].rightChild;
+
+                // Defensive bounds checks when validation is enabled.
+                if (debugValidation != 0u)
+                {
+                    if ((left != uint(-1) && left >= nodeCount) || (right != uint(-1) && right >= nodeCount))
+                        return;
+                }
+
+                vec3 minP = vec3(1e30);
+                vec3 maxP = vec3(-1e30);
+                if (left != uint(-1))
+                {
+                    minP = combineMin(minP, nodes[left].minBounds);
+                    maxP = combineMax(maxP, nodes[left].maxBounds);
+                }
+                if (right != uint(-1))
+                {
+                    minP = combineMin(minP, nodes[right].minBounds);
+                    maxP = combineMax(maxP, nodes[right].maxBounds);
+                }
+
+                nodes[parent].minBounds = minP;
+                nodes[parent].maxBounds = maxP;
+                memoryBarrierBuffer();
+
+                parent = nodes[parent].parentIndex;
+                continue;
+            }
+
+            // First child to arrive stops here.
+            break;
+        }
     }
-}
-
-// Parallel bottom-up propagation using atomic counters
-// Each internal node waits for both children to be processed before updating
-shared uint processedCount[256];
-
-void propagateInternalParallel(uint nodeIndex)
-{
-    if (nodeIndex >= nodeCount)
-        return;
-
-    BvhNode node = nodes[nodeIndex];
-    
-    // Skip leaf nodes - they were already processed in refitLeaf
-    if ((node.flags & BVH_FLAG_LEAF) != 0u)
-        return;
-
-    vec3 minB = vec3(1e30);
-    vec3 maxB = vec3(-1e30);
-
-    uint left = node.leftChild;
-    uint right = node.rightChild;
-
-    if (left != uint(-1) && left < nodeCount)
-    {
-        minB = combineMin(minB, nodes[left].minBounds);
-        maxB = combineMax(maxB, nodes[left].maxBounds);
-    }
-    if (right != uint(-1) && right < nodeCount)
-    {
-        minB = combineMin(minB, nodes[right].minBounds);
-        maxB = combineMax(maxB, nodes[right].maxBounds);
-    }
-
-    nodes[nodeIndex].minBounds = minB;
-    nodes[nodeIndex].maxBounds = maxB;
 }
 
 void main()
 {
     if (refitStage == 0u)
     {
-        uint nodeIndex = gl_GlobalInvocationID.x;
-        if (nodeIndex < nodeCount)
-            refitLeaf(nodeIndex);
+        uint gid = gl_GlobalInvocationID.x;
+        if (gid < nodeCount)
+            counters[gid] = 0u;
         return;
     }
 
-    // Stage 1: Propagate internal nodes in parallel
-    // Process from leaves toward root - internal nodes are stored after leaves
-    // Each thread processes one internal node
-    uint leafCount = (nodeCount + 1u) >> 1u;
-    uint internalCount = nodeCount > 0u ? nodeCount - leafCount : 0u;
-    uint gid = gl_GlobalInvocationID.x;
-    
-    if (gid < internalCount)
-    {
-        // Internal nodes are at indices [leafCount, nodeCount)
-        // Process in reverse order (bottom-up) to ensure children are processed first
-        // This works because the BVH is built with parents having higher indices than children
-        uint nodeIndex = leafCount + gid;
-        propagateInternalParallel(nodeIndex);
-    }
+    // Stage 1: Refit leaves and propagate to root.
+    uint nodeIndex = gl_GlobalInvocationID.x;
+    if (nodeIndex < nodeCount)
+        refitLeaf(nodeIndex);
 }

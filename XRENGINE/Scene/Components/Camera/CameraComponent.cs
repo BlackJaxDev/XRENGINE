@@ -9,6 +9,31 @@ using XREngine.Rendering.UI;
 namespace XREngine.Components
 {
     /// <summary>
+    /// Defines how the camera's internal rendering resolution is determined.
+    /// </summary>
+    public enum EInternalResolutionMode
+    {
+        /// <summary>
+        /// Internal resolution matches the viewport's full resolution (no scaling).
+        /// </summary>
+        [Description("Internal resolution matches the viewport's full resolution.")]
+        FullResolution,
+
+        /// <summary>
+        /// Internal resolution is scaled by a factor relative to the viewport size.
+        /// For example, 0.5 renders at half resolution and upscales.
+        /// </summary>
+        [Description("Internal resolution is scaled by a factor (e.g., 0.5 = half resolution).")]
+        Scale,
+
+        /// <summary>
+        /// Internal resolution is manually specified in pixels.
+        /// </summary>
+        [Description("Internal resolution is manually specified in pixels.")]
+        Manual
+    }
+
+    /// <summary>
     /// This component wraps a camera object.
     /// </summary>
     [Category("Rendering")]
@@ -31,6 +56,78 @@ namespace XREngine.Components
         {
             get => _defaultRenderTarget;
             set => SetField(ref _defaultRenderTarget, value);
+        }
+
+        private EInternalResolutionMode _internalResolutionMode = EInternalResolutionMode.FullResolution;
+        /// <summary>
+        /// Determines how the camera's internal rendering resolution is calculated.
+        /// </summary>
+        [Category("Rendering")]
+        [DisplayName("Internal Resolution Mode")]
+        [Description("How the camera's internal rendering resolution is determined.")]
+        public EInternalResolutionMode InternalResolutionMode
+        {
+            get => _internalResolutionMode;
+            set => SetField(ref _internalResolutionMode, value);
+        }
+
+        private float _internalResolutionScale = 1.0f;
+        /// <summary>
+        /// Scale factor for internal resolution when using Scale mode.
+        /// 1.0 = full resolution, 0.5 = half resolution, 2.0 = double resolution.
+        /// </summary>
+        [Category("Rendering")]
+        [DisplayName("Resolution Scale")]
+        [Description("Scale factor for internal resolution (1.0 = full, 0.5 = half, 2.0 = double).")]
+        public float InternalResolutionScale
+        {
+            get => _internalResolutionScale;
+            set => SetField(ref _internalResolutionScale, Math.Clamp(value, 0.1f, 4.0f));
+        }
+
+        private int _manualInternalWidth = 1920;
+        /// <summary>
+        /// Manual internal resolution width in pixels when using Manual mode.
+        /// </summary>
+        [Category("Rendering")]
+        [DisplayName("Manual Width")]
+        [Description("Manual internal resolution width in pixels.")]
+        public int ManualInternalWidth
+        {
+            get => _manualInternalWidth;
+            set => SetField(ref _manualInternalWidth, Math.Max(1, value));
+        }
+
+        private int _manualInternalHeight = 1080;
+        /// <summary>
+        /// Manual internal resolution height in pixels when using Manual mode.
+        /// </summary>
+        [Category("Rendering")]
+        [DisplayName("Manual Height")]
+        [Description("Manual internal resolution height in pixels.")]
+        public int ManualInternalHeight
+        {
+            get => _manualInternalHeight;
+            set => SetField(ref _manualInternalHeight, Math.Max(1, value));
+        }
+
+        /// <summary>
+        /// Applies the internal resolution settings to the given viewport.
+        /// </summary>
+        public void ApplyInternalResolutionToViewport(XRViewport viewport)
+        {
+            switch (_internalResolutionMode)
+            {
+                case EInternalResolutionMode.FullResolution:
+                    viewport.SetInternalResolution(viewport.Width, viewport.Height, true);
+                    break;
+                case EInternalResolutionMode.Scale:
+                    viewport.SetInternalResolutionPercentage(_internalResolutionScale, _internalResolutionScale);
+                    break;
+                case EInternalResolutionMode.Manual:
+                    viewport.SetInternalResolution(_manualInternalWidth, _manualInternalHeight, true);
+                    break;
+            }
         }
 
         /// <summary>
@@ -281,7 +378,25 @@ namespace XREngine.Components
                         UserInterface.CanvasTransform.CameraSpaceCamera = Camera;
                     }
                     break;
+                case nameof(InternalResolutionMode):
+                case nameof(InternalResolutionScale):
+                case nameof(ManualInternalWidth):
+                case nameof(ManualInternalHeight):
+                    ApplyInternalResolutionToAllViewports();
+                    break;
             }
+        }
+
+        /// <summary>
+        /// Applies the internal resolution settings to all viewports using this camera.
+        /// </summary>
+        private void ApplyInternalResolutionToAllViewports()
+        {
+            if (!_camera.IsValueCreated)
+                return;
+
+            foreach (var viewport in Camera.Viewports)
+                ApplyInternalResolutionToViewport(viewport);
         }
 
         private void CameraParameterPropertyChanged(object? sender, IXRPropertyChangedEventArgs e)
@@ -304,12 +419,17 @@ namespace XREngine.Components
         private void ViewportAdded(XRCamera camera, XRViewport viewport)
         {
             viewport.Resized += ViewportResized;
+            // Apply initial internal resolution settings to the new viewport
+            ApplyInternalResolutionToViewport(viewport);
         }
 
         private void ViewportResized(XRViewport viewport)
         {
             if (UserInterface is not null && UserInterface.CanvasTransform.DrawSpace == ECanvasDrawSpace.Screen)
                 UserInterface.CanvasTransform.SetSize(viewport.Region.Size);
+
+            // Reapply internal resolution settings after viewport resize
+            ApplyInternalResolutionToViewport(viewport);
         }
         private void CameraResized(XRCameraParameters parameters)
         {
