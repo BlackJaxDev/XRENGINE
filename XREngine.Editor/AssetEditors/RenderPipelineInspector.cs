@@ -1,4 +1,5 @@
 using System;
+using System.Buffers;
 using System.Collections;
 using System.Collections.Generic;
 using System.Linq;
@@ -27,8 +28,6 @@ public sealed class RenderPipelineInspector : IXRAssetInspector
     private static readonly Vector4 WarningColor = new(0.95f, 0.45f, 0.45f, 1f);
 
     private readonly ConditionalWeakTable<RenderPipeline, EditorState> _stateCache = new();
-
-    private static XRTexture2D? _autoExposureSmallestMipCopyTex;
 
     #endregion
 
@@ -218,7 +217,7 @@ public sealed class RenderPipelineInspector : IXRAssetInspector
 
         bool flipPreview = state.FlipPreview;
 
-        DrawAutoExposureSmallestMipPreview(selectedInstance, flipPreview);
+        DrawAutoExposureMeteringPreview(selectedInstance);
         ImGui.Separator();
 
         var fboRecords = selectedInstance.Resources.FrameBufferRecords
@@ -280,9 +279,9 @@ public sealed class RenderPipelineInspector : IXRAssetInspector
         }
     }
 
-    private static void DrawAutoExposureSmallestMipPreview(XRRenderPipelineInstance instance, bool flipPreview)
+    private static void DrawAutoExposureMeteringPreview(XRRenderPipelineInstance instance)
     {
-        ImGui.TextUnformatted("Auto Exposure (Smallest Mip Preview)");
+        ImGui.TextUnformatted("Auto Exposure (Metering Preview)");
 
         if (!instance.Resources.TryGetTexture(DefaultRenderPipeline.HDRSceneTextureName, out XRTexture? hdrTex) || hdrTex is null)
         {
@@ -290,173 +289,427 @@ public sealed class RenderPipelineInspector : IXRAssetInspector
             return;
         }
 
-        XRTexture? previewTex = null;
-        int smallestMip = 0;
-        string details;
+        if (!TryGetColorGradingSettings(instance, out ColorGradingSettings? grading))
+            grading = null;
 
-        // Read back the smallest mip directly from the source texture.
-        // (GL texture views require immutable storage; HDRSceneTex is typically resizable/mutable.)
-        bool hasReadback = false;
-        Vector4 smallestMipRgba = Vector4.Zero;
-        string readbackFailure = string.Empty;
+        var mode = grading?.AutoExposureMetering ?? ColorGradingSettings.AutoExposureMeteringMode.Average;
+        int targetSize = grading?.AutoExposureMeteringTargetSize ?? 16;
+        float ignoreTopPercent = grading?.AutoExposureIgnoreTopPercent ?? 0.02f;
+        float centerStrength = grading?.AutoExposureCenterWeightStrength ?? 1.0f;
+        float centerPower = grading?.AutoExposureCenterWeightPower ?? 2.0f;
+        Vector3 luminanceWeights = grading?.AutoExposureLuminanceWeights ?? Engine.Rendering.Settings.DefaultLuminance;
 
-        switch (hdrTex)
+        if (!TryGetTextureBaseDimensions(hdrTex, out int baseWidth, out int baseHeight, out int smallestAllowedMip))
         {
-            case XRTexture2D tex2D:
-                smallestMip = XRTexture.GetSmallestMipmapLevel(tex2D.Width, tex2D.Height, tex2D.SmallestAllowedMipmapLevel);
-                // Avoid GL texture views here: HDRSceneTex is typically mutable/resizable, and GL texture views require immutable storage.
-                previewTex = TryCopyMipTo1x1Texture(tex2D, smallestMip, 0, out string copyFailure)
-                    ? _autoExposureSmallestMipCopyTex
-                    : tex2D;
-                details = $"Source: {tex2D.Width}x{tex2D.Height} | Mip {smallestMip}";
-                hasReadback = TryReadBackRgbaFloat(tex2D, smallestMip, 0, out smallestMipRgba, out readbackFailure);
-                if (!string.IsNullOrWhiteSpace(copyFailure))
-                    ImGui.TextDisabled(copyFailure);
-                break;
-
-            case XRTexture2DArray tex2DArray:
-                smallestMip = XRTexture.GetSmallestMipmapLevel(tex2DArray.Width, tex2DArray.Height, tex2DArray.SmallestAllowedMipmapLevel);
-                previewTex = TryCopyMipTo1x1Texture(tex2DArray, smallestMip, 0, out string copyFailureArray)
-                    ? _autoExposureSmallestMipCopyTex
-                    : tex2DArray;
-                details = $"Source: {tex2DArray.Width}x{tex2DArray.Height} | Mip {smallestMip} | Layer 0";
-                hasReadback = TryReadBackRgbaFloat(tex2DArray, smallestMip, 0, out smallestMipRgba, out readbackFailure);
-                if (!string.IsNullOrWhiteSpace(copyFailureArray))
-                    ImGui.TextDisabled(copyFailureArray);
-                break;
-
-            default:
-                ImGui.TextDisabled($"Unsupported HDR scene texture type: {hdrTex.GetType().Name}");
-                return;
+            ImGui.TextDisabled($"Unsupported HDR scene texture type: {hdrTex.GetType().Name}");
+            return;
         }
 
-        // Show a UI-friendly swatch of the 1x1 value even if the raw HDR image draw looks black.
-        if (hasReadback)
+        int smallestMip = XRTexture.GetSmallestMipmapLevel((uint)baseWidth, (uint)baseHeight, smallestAllowedMip);
+        int meteringMip = mode == ColorGradingSettings.AutoExposureMeteringMode.Average
+            ? smallestMip
+            : ComputeMeteringMip(baseWidth, baseHeight, targetSize, smallestMip);
+
+        GetMipDimensions(baseWidth, baseHeight, meteringMip, out int mipW, out int mipH);
+        ImGui.TextDisabled($"Mode: {mode} | Metering Mip: {meteringMip} ({mipW}x{mipH}) | Smallest Mip: {smallestMip}");
+
+        // This panel intentionally avoids ImGui.Image for HDR mip previews (it tends to appear black and is redundant).
+        // Instead, we compute mode-specific swatches from the same sample strategy as the GPU auto-exposure shader.
+        if (mode == ColorGradingSettings.AutoExposureMeteringMode.Average)
         {
-            ImGui.TextDisabled($"RGBA (float): {smallestMipRgba.X:0.####}, {smallestMipRgba.Y:0.####}, {smallestMipRgba.Z:0.####}, {smallestMipRgba.W:0.####}");
-            Vector3 tonemapped = TonemapReinhard(new Vector3(smallestMipRgba.X, smallestMipRgba.Y, smallestMipRgba.Z));
-            var swatch = new Vector4(tonemapped, 1f);
-            ImGui.ColorButton("##AutoExposureSmallestMipSwatch", swatch, ImGuiColorEditFlags.NoTooltip, new Vector2(160f, 160f));
+            if (TryReadBackRgbaFloat(hdrTex, smallestMip, 0, out Vector4 rgba, out string failure))
+            {
+                ImGui.TextDisabled($"Smallest mip RGBA (float): {rgba.X:0.####}, {rgba.Y:0.####}, {rgba.Z:0.####}, {rgba.W:0.####}");
+                DrawTonemappedSwatch("##AutoExposure_AverageSwatch", new Vector3(rgba.X, rgba.Y, rgba.Z), new Vector2(160f, 160f));
+            }
+            else
+            {
+                ImGui.TextDisabled(failure);
+            }
+            return;
         }
-        else
+
+        if (!TryReadBackMipRgbaFloat(hdrTex, meteringMip, 0, out float[]? rgbaFloats, out int width, out int height, out string readbackFailure))
         {
             ImGui.TextDisabled(readbackFailure);
+            return;
         }
 
-        var previewState = new TexturePreviewState { Channel = TextureChannelView.RGBA, Layer = 0, Mip = 0 };
-        if (TryGetTexturePreviewHandle(previewTex, 320f, previewState, out nint handle, out Vector2 displaySize, out Vector2 pixelSize, out string failure))
+        float[] rgbaBuffer = rgbaFloats!;
+
+        try
         {
-            Vector2 uv0 = flipPreview ? new Vector2(0f, 1f) : Vector2.Zero;
-            Vector2 uv1 = flipPreview ? new Vector2(1f, 0f) : Vector2.One;
+            int total = Math.Max(1, width * height);
+            int sampleCount = Math.Min(256, total);
+            int stride = Math.Max(1, total / sampleCount);
 
-            // A 1x1 smallest mip is useful but invisible at native size.
-            // Scale up tiny mips in this dedicated panel only.
-            const float minPreviewEdge = 96f;
-            const float maxPreviewEdge = 320f;
-            float largestPixelEdge = MathF.Max(1f, MathF.Max(pixelSize.X, pixelSize.Y));
-            float scaleUp = MathF.Max(1f, minPreviewEdge / largestPixelEdge);
-            scaleUp = MathF.Min(scaleUp, maxPreviewEdge / largestPixelEdge);
-            Vector2 scaledDisplaySize = scaleUp > 1f
-                ? new Vector2(pixelSize.X * scaleUp, pixelSize.Y * scaleUp)
-                : displaySize;
+            Vector3 meanRgb = Vector3.Zero;
+            float meanLum = 0.0f;
 
-            ImGui.Image(handle, scaledDisplaySize, uv0, uv1);
+            // For sorting-based metering.
+            float[]? lums = mode == ColorGradingSettings.AutoExposureMeteringMode.IgnoreTopPercent
+                ? ArrayPool<float>.Shared.Rent(sampleCount)
+                : null;
+            Vector3[]? rgbs = mode == ColorGradingSettings.AutoExposureMeteringMode.IgnoreTopPercent
+                ? ArrayPool<Vector3>.Shared.Rent(sampleCount)
+                : null;
 
-            string mipSize = $"{pixelSize.X} x {pixelSize.Y}";
-            ImGui.TextDisabled($"{details} | Mip Size: {mipSize}");
+            float sumLogLum = 0.0f;
+            float weightedLumSum = 0.0f;
+            float weightSum = 0.0f;
+            Vector3 weightedRgbSum = Vector3.Zero;
+
+            float invW = 1.0f / Math.Max(1.0f, width);
+            float invH = 1.0f / Math.Max(1.0f, height);
+
+            for (int i = 0; i < sampleCount; i++)
+            {
+                int idx = i * stride;
+                int x = idx % width;
+                int y = idx / width;
+                if (y >= height)
+                    y = height - 1;
+
+                Vector3 rgb = FetchRgbFromRgbaFloatBuffer(rgbaBuffer, width, x, y);
+                float lum = ComputeLuminance(rgb, luminanceWeights);
+
+                meanRgb += rgb;
+                meanLum += lum;
+
+                if (mode == ColorGradingSettings.AutoExposureMeteringMode.LogAverage)
+                {
+                    sumLogLum += MathF.Log(MathF.Max(lum, 1e-6f));
+                }
+                else if (mode == ColorGradingSettings.AutoExposureMeteringMode.CenterWeighted)
+                {
+                    float u = (x + 0.5f) * invW;
+                    float v = (y + 0.5f) * invH;
+                    float dx = u - 0.5f;
+                    float dy = v - 0.5f;
+                    float r = MathF.Sqrt(dx * dx + dy * dy) / 0.70710678f;
+                    float center = MathF.Pow(Math.Clamp(1.0f - r, 0.0f, 1.0f), MathF.Max(0.1f, centerPower));
+                    float wgt = Lerp(1.0f, center, Math.Clamp(centerStrength, 0.0f, 1.0f));
+                    weightedLumSum += lum * wgt;
+                    weightedRgbSum += rgb * wgt;
+                    weightSum += wgt;
+                }
+                else if (mode == ColorGradingSettings.AutoExposureMeteringMode.IgnoreTopPercent)
+                {
+                    lums![i] = lum;
+                    rgbs![i] = rgb;
+                }
+            }
+
+            meanRgb /= Math.Max(1, sampleCount);
+            meanLum /= Math.Max(1, sampleCount);
+
+            Vector3 meteredRgb;
+            float meteredLum;
+            string meteredLabel;
+
+            switch (mode)
+            {
+                case ColorGradingSettings.AutoExposureMeteringMode.LogAverage:
+                    meteredLum = MathF.Exp(sumLogLum / Math.Max(1, sampleCount));
+                    meteredRgb = meanRgb;
+                    meteredLabel = $"LogAvg lum: {meteredLum:0.####} | Mean lum: {meanLum:0.####}";
+                    break;
+
+                case ColorGradingSettings.AutoExposureMeteringMode.CenterWeighted:
+                    meteredLum = weightedLumSum / MathF.Max(weightSum, 1e-6f);
+                    meteredRgb = weightedRgbSum / MathF.Max(weightSum, 1e-6f);
+                    meteredLabel = $"Center-weighted lum: {meteredLum:0.####} | Mean lum: {meanLum:0.####}";
+                    break;
+
+                case ColorGradingSettings.AutoExposureMeteringMode.IgnoreTopPercent:
+                    {
+                        int dropCount = (int)MathF.Floor(Math.Clamp(ignoreTopPercent, 0.0f, 0.5f) * sampleCount);
+
+                        // Sort samples by luminance (ascending) and drop the brightest tail.
+                        // Simple insertion sort is fine at <= 256.
+                        for (int i = 1; i < sampleCount; i++)
+                        {
+                            float lumKey = lums![i];
+                            Vector3 rgbKey = rgbs![i];
+                            int j = i - 1;
+                            while (j >= 0 && lums[j] > lumKey)
+                            {
+                                lums[j + 1] = lums[j];
+                                rgbs[j + 1] = rgbs[j];
+                                j--;
+                            }
+                            lums[j + 1] = lumKey;
+                            rgbs[j + 1] = rgbKey;
+                        }
+
+                        int keep = Math.Clamp(sampleCount - dropCount, 1, sampleCount);
+                        float sumLum = 0.0f;
+                        Vector3 sumRgb = Vector3.Zero;
+                        for (int i = 0; i < keep; i++)
+                        {
+                            sumLum += lums![i];
+                            sumRgb += rgbs![i];
+                        }
+
+                        meteredLum = sumLum / keep;
+                        meteredRgb = sumRgb / keep;
+                        meteredLabel = $"Ignore top {ignoreTopPercent:P1} → kept {keep}/{sampleCount} | Lum: {meteredLum:0.####} | Mean lum: {meanLum:0.####}";
+                        break;
+                    }
+
+                default:
+                    meteredLum = meanLum;
+                    meteredRgb = meanRgb;
+                    meteredLabel = $"Mean lum: {meteredLum:0.####}";
+                    break;
+            }
+
+            ImGui.TextDisabled(meteredLabel);
+
+            // Stack the swatches so it's clear which one is top vs bottom.
+            ImGui.BeginGroup();
+            DrawLabeledTonemappedSwatch(
+                "##AutoExposure_MeteredColor",
+                "Metered Color",
+                meteredRgb,
+                new Vector2(180f, 90f));
+            ImGui.Dummy(new Vector2(0f, 6f));
+            DrawLabeledTonemappedSwatch(
+                "##AutoExposure_MeteredLum",
+                "Metered Luminance",
+                new Vector3(meteredLum, meteredLum, meteredLum),
+                new Vector2(180f, 90f));
+            ImGui.EndGroup();
         }
-        else
+        finally
         {
-            ImGui.TextDisabled(failure);
+            ArrayPool<float>.Shared.Return(rgbaBuffer);
         }
     }
 
-    private static bool TryCopyMipTo1x1Texture(XRTexture texture, int mipLevel, int layerIndex, out string failure)
+    private static bool TryGetColorGradingSettings(XRRenderPipelineInstance instance, out ColorGradingSettings? grading)
     {
+        grading = null;
+
+        // RenderPipelineInstance.RenderState.SceneCamera is only set during the render pass scope
+        // (RenderState.PushMainAttributes). When the inspector draws, this is often null.
+        // Fall back to the global render-state camera / viewport active camera.
+        XRCamera? camera =
+            instance.RenderState.SceneCamera
+            ?? instance.RenderState.RenderingCamera
+            ?? instance.LastSceneCamera
+            ?? instance.LastRenderingCamera
+            ?? Engine.Rendering.State.RenderingPipelineState?.SceneCamera
+            ?? Engine.Rendering.State.CurrentRenderingPipeline?.RenderState.SceneCamera
+            ?? Engine.Rendering.State.CurrentRenderingPipeline?.RenderState.RenderingCamera
+            ?? Engine.Rendering.State.RenderingPipelineState?.WindowViewport?.ActiveCamera
+            ?? Engine.State.MainPlayer?.Viewport?.ActiveCamera;
+
+        var stage = camera?.GetPostProcessStageState<ColorGradingSettings>();
+        if (stage?.TryGetBacking(out ColorGradingSettings? g) != true)
+            return false;
+
+        grading = g;
+        return true;
+    }
+
+    private static bool TryGetTextureBaseDimensions(XRTexture texture, out int width, out int height, out int smallestAllowedMip)
+    {
+        switch (texture)
+        {
+            case XRTexture2D t2d:
+                width = (int)t2d.Width;
+                height = (int)t2d.Height;
+                smallestAllowedMip = t2d.SmallestAllowedMipmapLevel;
+                return true;
+            case XRTexture2DArray t2da:
+                width = (int)t2da.Width;
+                height = (int)t2da.Height;
+                smallestAllowedMip = t2da.SmallestAllowedMipmapLevel;
+                return true;
+            default:
+                width = 0;
+                height = 0;
+                smallestAllowedMip = 0;
+                return false;
+        }
+    }
+
+    private static int ComputeMeteringMip(int width, int height, int targetMaxDim, int smallestMip)
+    {
+        targetMaxDim = Math.Clamp(targetMaxDim, 1, 64);
+        int mip = 0;
+        while (mip < smallestMip)
+        {
+            GetMipDimensions(width, height, mip, out int mw, out int mh);
+            if (Math.Max(mw, mh) <= targetMaxDim)
+                break;
+            mip++;
+        }
+        return Math.Clamp(mip, 0, smallestMip);
+    }
+
+    private static void GetMipDimensions(int width, int height, int mip, out int mipWidth, out int mipHeight)
+    {
+        mipWidth = Math.Max(1, width >> mip);
+        mipHeight = Math.Max(1, height >> mip);
+    }
+
+    private static Vector3 FetchRgbFromRgbaFloatBuffer(float[] rgbaFloats, int width, int x, int y)
+    {
+        int baseIndex = (y * width + x) * 4;
+        if ((uint)(baseIndex + 2) >= (uint)rgbaFloats.Length)
+            return Vector3.Zero;
+
+        float r = rgbaFloats[baseIndex + 0];
+        float g = rgbaFloats[baseIndex + 1];
+        float b = rgbaFloats[baseIndex + 2];
+        if (!float.IsFinite(r)) r = 0f;
+        if (!float.IsFinite(g)) g = 0f;
+        if (!float.IsFinite(b)) b = 0f;
+        return new Vector3(MathF.Max(0f, r), MathF.Max(0f, g), MathF.Max(0f, b));
+    }
+
+    private static float ComputeLuminance(Vector3 rgb, Vector3 weights)
+    {
+        static float Sanitize(float v) => float.IsFinite(v) ? MathF.Max(0.0f, v) : 0.0f;
+
+        rgb = new Vector3(Sanitize(rgb.X), Sanitize(rgb.Y), Sanitize(rgb.Z));
+        weights = new Vector3(Sanitize(weights.X), Sanitize(weights.Y), Sanitize(weights.Z));
+        float sum = weights.X + weights.Y + weights.Z;
+        if (!(sum > 0.0f) || float.IsNaN(sum) || float.IsInfinity(sum))
+            weights = Engine.Rendering.Settings.DefaultLuminance;
+        else
+            weights /= sum;
+
+        return Vector3.Dot(rgb, weights);
+    }
+
+    private static float Lerp(float a, float b, float t) => a + (b - a) * t;
+
+    private static void DrawTonemappedSwatch(string id, Vector3 hdrRgb, Vector2 size)
+    {
+        Vector3 tonemapped = TonemapReinhard(hdrRgb);
+        ImGui.ColorButton(id, new Vector4(tonemapped, 1f), ImGuiColorEditFlags.NoTooltip, size);
+    }
+
+    private static void DrawLabeledTonemappedSwatch(string id, string overlayText, Vector3 hdrRgb, Vector2 size)
+    {
+        DrawTonemappedSwatch(id, hdrRgb, size);
+
+        // Overlay label text onto the swatch (theme-driven colors).
+        var drawList = ImGui.GetWindowDrawList();
+        Vector2 min = ImGui.GetItemRectMin();
+
+        // Padding inside the swatch.
+        Vector2 pos = new(min.X + 6f, min.Y + 6f);
+
+        uint shadow = ImGui.GetColorU32(ImGuiCol.TextDisabled);
+        uint text = ImGui.GetColorU32(ImGuiCol.Text);
+
+        // Simple drop-shadow for readability without hard-coded colors.
+        drawList.AddText(new Vector2(pos.X + 1f, pos.Y + 1f), shadow, overlayText);
+        drawList.AddText(pos, text, overlayText);
+    }
+
+    private static bool TryReadBackMipRgbaFloat(
+        XRTexture texture,
+        int mipLevel,
+        int layerIndex,
+        out float[]? rgbaFloats,
+        out int width,
+        out int height,
+        out string failure)
+    {
+        rgbaFloats = null;
+        width = 0;
+        height = 0;
         failure = string.Empty;
 
         if (!Engine.IsRenderThread)
         {
-            failure = "Preview copy unavailable off render thread";
+            failure = "Readback unavailable off render thread";
             return false;
         }
 
         if (AbstractRenderer.Current is not OpenGLRenderer renderer)
         {
-            failure = "Preview copy requires OpenGL renderer";
+            failure = "Readback requires OpenGL renderer";
             return false;
         }
 
-        if (texture is XRTexture2D t2d && t2d.MultiSample)
+        if (texture is XRTexture2D tex2D && tex2D.MultiSample)
         {
-            failure = "Cannot preview multisampled HDRSceneTex";
+            failure = "Multisample textures do not support mip readback";
             return false;
         }
-        if (texture is XRTexture2DArray t2da && t2da.MultiSample)
+        if (texture is XRTexture2DArray tex2DArray && tex2DArray.MultiSample)
         {
-            failure = "Cannot preview multisampled HDRSceneTex";
-            return false;
-        }
-
-        // Allocate a cached immutable 1x1 RGBA16f texture for display.
-        _autoExposureSmallestMipCopyTex ??= CreateAutoExposureSmallestMipCopyTexture();
-
-        var srcObj = renderer.GetOrCreateAPIRenderObject(texture) as OpenGLRenderer.GLObjectBase;
-        var dstObj = renderer.GetOrCreateAPIRenderObject(_autoExposureSmallestMipCopyTex) as OpenGLRenderer.GLObjectBase;
-        if (srcObj is null || dstObj is null)
-        {
-            failure = "Preview copy: texture not uploaded";
+            failure = "Multisample textures do not support mip readback";
             return false;
         }
 
-        uint srcId = srcObj.BindingId;
-        uint dstId = dstObj.BindingId;
-        if (srcId == 0 || dstId == 0 || srcId == OpenGLRenderer.GLObjectBase.InvalidBindingId || dstId == OpenGLRenderer.GLObjectBase.InvalidBindingId)
+        var apiRenderObject = renderer.GetOrCreateAPIRenderObject(texture);
+        if (apiRenderObject is not OpenGLRenderer.GLObjectBase apiObject)
         {
-            failure = "Preview copy: GL texture not ready";
+            failure = "Texture not uploaded";
             return false;
         }
+
+        uint binding = apiObject.BindingId;
+        if (binding == OpenGLRenderer.GLObjectBase.InvalidBindingId || binding == 0)
+        {
+            failure = "Texture not ready";
+            return false;
+        }
+
+        if (!TryGetTextureBaseDimensions(texture, out int baseW, out int baseH, out _))
+        {
+            failure = "Unsupported texture type";
+            return false;
+        }
+
+        GetMipDimensions(baseW, baseH, mipLevel, out width, out height);
 
         var gl = renderer.RawGL;
 
-        // CopyImageSubData works across compatible formats. We copy one texel from the chosen mip.
         if (texture is XRTexture2DArray array)
         {
-            int clampedLayer = Math.Clamp(layerIndex, 0, Math.Max(0, (int)array.Depth - 1));
-            gl.CopyImageSubData(
-                srcId, GLEnum.Texture2DArray, mipLevel, 0, 0, clampedLayer,
-                dstId, GLEnum.Texture2D, 0, 0, 0, 0,
-                1, 1, 1);
+            int layers = Math.Max(1, (int)array.Depth);
+            int clampedLayer = Math.Clamp(layerIndex, 0, layers - 1);
+            int floatCountAll = width * height * 4 * layers;
+            rgbaFloats = ArrayPool<float>.Shared.Rent(floatCountAll);
+
+            unsafe
+            {
+                fixed (float* ptr = rgbaFloats)
+                {
+                    gl.GetTextureImage(binding, mipLevel, GLEnum.Rgba, GLEnum.Float, (uint)(sizeof(float) * floatCountAll), ptr);
+                }
+            }
+
+            // Slice to requested layer by moving the window start.
+            // Caller expects a buffer for just one layer, so copy out.
+            int floatCountLayer = width * height * 4;
+            float[] layerBuf = ArrayPool<float>.Shared.Rent(floatCountLayer);
+            Array.Copy(rgbaFloats, clampedLayer * floatCountLayer, layerBuf, 0, floatCountLayer);
+            ArrayPool<float>.Shared.Return(rgbaFloats);
+            rgbaFloats = layerBuf;
+            return true;
         }
         else
         {
-            gl.CopyImageSubData(
-                srcId, GLEnum.Texture2D, mipLevel, 0, 0, 0,
-                dstId, GLEnum.Texture2D, 0, 0, 0, 0,
-                1, 1, 1);
+            int floatCount = width * height * 4;
+            rgbaFloats = ArrayPool<float>.Shared.Rent(floatCount);
+            unsafe
+            {
+                fixed (float* ptr = rgbaFloats)
+                {
+                    gl.GetTextureImage(binding, mipLevel, GLEnum.Rgba, GLEnum.Float, (uint)(sizeof(float) * floatCount), ptr);
+                }
+            }
+            return true;
         }
-
-        return true;
-    }
-
-    private static XRTexture2D CreateAutoExposureSmallestMipCopyTexture()
-    {
-        var t = XRTexture2D.CreateFrameBufferTexture(
-            1u,
-            1u,
-            EPixelInternalFormat.Rgba16f,
-            EPixelFormat.Rgba,
-            EPixelType.HalfFloat);
-        t.Resizable = false;
-        t.SizedInternalFormat = ESizedInternalFormat.Rgba16f;
-        t.MinFilter = ETexMinFilter.Nearest;
-        t.MagFilter = ETexMagFilter.Nearest;
-        t.UWrap = ETexWrapMode.ClampToEdge;
-        t.VWrap = ETexWrapMode.ClampToEdge;
-        t.Name = "AutoExposureSmallestMipCopy";
-        t.SamplerName = "AutoExposureSmallestMipCopy";
-        t.AutoGenerateMipmaps = false;
-        return t;
     }
 
     private static Vector3 TonemapReinhard(Vector3 hdr)
@@ -1225,7 +1478,7 @@ public sealed class RenderPipelineInspector : IXRAssetInspector
             return false;
         }
 
-        XRTexture previewTexture = GetPreviewTexture(texture, previewState, out int mipLevel, out _, out string previewError);
+        XRTexture? previewTexture = GetPreviewTexture(texture, previewState, out int mipLevel, out _, out string previewError);
         if (previewTexture is null)
         {
             failure = previewError;

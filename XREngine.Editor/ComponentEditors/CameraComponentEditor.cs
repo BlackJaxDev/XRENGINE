@@ -693,12 +693,65 @@ public sealed class CameraComponentEditor : IXRComponentEditor
         Vector3 fallback = ExtractDefault(param, Vector3.Zero);
         Vector3 value = state.GetValue(param.Name, fallback);
 
+        if (param.Name == nameof(ColorGradingSettings.AutoExposureLuminanceWeights))
+        {
+            bool changed2 = ImGui.DragFloat3(param.DisplayName, ref value, param.Step ?? 0.001f);
+            if (changed2)
+            {
+                value = NormalizeLuminanceWeights(value, Engine.Rendering.Settings.DefaultLuminance);
+                state.SetValue(param.Name, value);
+            }
+
+            ImGui.SameLine();
+            if (ImGui.SmallButton("Default"))
+            {
+                value = NormalizeLuminanceWeights(Engine.Rendering.Settings.DefaultLuminance, Engine.Rendering.Settings.DefaultLuminance);
+                state.SetValue(param.Name, value);
+            }
+
+            ImGui.SameLine();
+            if (ImGui.SmallButton("Rec.709"))
+            {
+                value = NormalizeLuminanceWeights(new Vector3(0.2126f, 0.7152f, 0.0722f), Engine.Rendering.Settings.DefaultLuminance);
+                state.SetValue(param.Name, value);
+            }
+
+            ImGui.SameLine();
+            if (ImGui.SmallButton("Rec.601"))
+            {
+                value = NormalizeLuminanceWeights(new Vector3(0.299f, 0.587f, 0.114f), Engine.Rendering.Settings.DefaultLuminance);
+                state.SetValue(param.Name, value);
+            }
+
+            ImGui.SameLine();
+            if (ImGui.SmallButton("Equal"))
+            {
+                value = NormalizeLuminanceWeights(new Vector3(1.0f, 1.0f, 1.0f), Engine.Rendering.Settings.DefaultLuminance);
+                state.SetValue(param.Name, value);
+            }
+
+            float sum = value.X + value.Y + value.Z;
+            ImGui.TextDisabled($"Normalized (sum={sum:0.###})");
+            return;
+        }
+
         bool changed = param.IsColor
             ? ImGui.ColorEdit3(param.DisplayName, ref value)
             : ImGui.DragFloat3(param.DisplayName, ref value, param.Step ?? 0.01f);
 
         if (changed)
             state.SetValue(param.Name, value);
+    }
+
+    private static Vector3 NormalizeLuminanceWeights(Vector3 w, Vector3 fallback)
+    {
+        static float Sanitize(float v) => float.IsFinite(v) ? MathF.Max(0.0f, v) : 0.0f;
+
+        w = new Vector3(Sanitize(w.X), Sanitize(w.Y), Sanitize(w.Z));
+        float sum = w.X + w.Y + w.Z;
+        if (!(sum > 0.0f) || float.IsNaN(sum) || float.IsInfinity(sum))
+            return NormalizeLuminanceWeights(fallback, fallback);
+        return w / sum;
     }
 
     private static void DrawVector4Parameter(PostProcessParameterDescriptor param, PostProcessStageState state)

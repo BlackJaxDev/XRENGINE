@@ -1399,7 +1399,7 @@ void main()
             }
 
             glProgram.Uniform("SmallestMip", smallestMip);
-            glProgram.Uniform("LuminanceWeights", Engine.Rendering.Settings.DefaultLuminance);
+            glProgram.Uniform("LuminanceWeights", settings.AutoExposureLuminanceWeights);
             glProgram.Uniform("AutoExposureBias", settings.AutoExposureBias);
             glProgram.Uniform("AutoExposureScale", settings.AutoExposureScale);
             glProgram.Uniform("ExposureDividend", settings.ExposureDividend);

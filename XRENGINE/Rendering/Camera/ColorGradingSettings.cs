@@ -1,4 +1,5 @@
 using Extensions;
+using System.Numerics;
 using System.ComponentModel;
 using System.Runtime.Intrinsics.X86;
 using XREngine.Data;
@@ -59,6 +60,8 @@ namespace XREngine.Rendering
         private float _autoExposureIgnoreTopPercent = 0.02f;
         private float _autoExposureCenterWeightStrength = 1.0f;
         private float _autoExposureCenterWeightPower = 2.0f;
+
+        private Vector3 _autoExposureLuminanceWeights = NormalizeLuminanceWeights(Engine.Rendering.Settings.DefaultLuminance);
 
         private float _exposure = 1.0f;
         private float _gamma = 2.2f;
@@ -144,6 +147,16 @@ namespace XREngine.Rendering
         {
             get => _autoExposureCenterWeightPower;
             set => SetField(ref _autoExposureCenterWeightPower, MathF.Max(0.1f, value));
+        }
+
+        /// <summary>
+        /// Luminance weights used by auto exposure (dot(rgb, weights)).
+        /// Values are sanitized to be finite, non-negative, and normalized to sum to 1.
+        /// </summary>
+        public Vector3 AutoExposureLuminanceWeights
+        {
+            get => _autoExposureLuminanceWeights;
+            set => SetField(ref _autoExposureLuminanceWeights, NormalizeLuminanceWeights(value));
         }
         public float ExposureTransitionSpeed
         {
@@ -257,7 +270,7 @@ uniform ColorGradeStruct ColorGrade;";
                 LerpExposure(success, dot);
             }
 
-            Engine.Rendering.State.CalculateFrontBufferDotLuminanceAsync(rect, false, OnResult);
+            Engine.Rendering.State.CalculateFrontBufferDotLuminanceAsync(rect, false, AutoExposureLuminanceWeights, OnResult);
         }
 
         public void UpdateExposure(XRTexture tex, bool generateMipmapsNow)
@@ -280,10 +293,10 @@ uniform ColorGradeStruct ColorGrade;";
             switch (tex)
             {
                 case XRTexture2D t2d:
-                    Engine.Rendering.State.CalculateDotLuminanceAsync(t2d, generateMipmapsNow, OnResult);
+                    Engine.Rendering.State.CalculateDotLuminanceAsync(t2d, generateMipmapsNow, AutoExposureLuminanceWeights, OnResult);
                     break;
                 case XRTexture2DArray t2da:
-                    Engine.Rendering.State.CalculateDotLuminanceAsync(t2da, generateMipmapsNow, OnResult);
+                    Engine.Rendering.State.CalculateDotLuminanceAsync(t2da, generateMipmapsNow, AutoExposureLuminanceWeights, OnResult);
                     break;
             }
         }
@@ -357,6 +370,19 @@ uniform ColorGradeStruct ColorGrade;";
             AutoExposureIgnoreTopPercent = Interp.Lerp(source.AutoExposureIgnoreTopPercent, dest.AutoExposureIgnoreTopPercent, time);
             AutoExposureCenterWeightStrength = Interp.Lerp(source.AutoExposureCenterWeightStrength, dest.AutoExposureCenterWeightStrength, time);
             AutoExposureCenterWeightPower = Interp.Lerp(source.AutoExposureCenterWeightPower, dest.AutoExposureCenterWeightPower, time);
+
+            AutoExposureLuminanceWeights = Vector3.Lerp(source.AutoExposureLuminanceWeights, dest.AutoExposureLuminanceWeights, time);
+        }
+
+        private static Vector3 NormalizeLuminanceWeights(Vector3 w)
+        {
+            static float Sanitize(float v) => float.IsFinite(v) ? MathF.Max(0.0f, v) : 0.0f;
+
+            w = new Vector3(Sanitize(w.X), Sanitize(w.Y), Sanitize(w.Z));
+            float sum = w.X + w.Y + w.Z;
+            if (!(sum > 0.0f) || float.IsNaN(sum) || float.IsInfinity(sum))
+                return NormalizeLuminanceWeights(Engine.Rendering.Settings.DefaultLuminance);
+            return w / sum;
         }
     }
 }
