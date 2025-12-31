@@ -466,6 +466,8 @@ public static partial class EditorImGuiUI
             EnsureProfessionalImGuiStyling();
             ApplyViewportModeImGuiBackgroundAlpha();
 
+            SuppressUnexpectedImGuiDebugWindows();
+
             // Draw menu bar and toolbar first
             DrawMainMenuBar();
             DrawToolbar();
@@ -539,6 +541,76 @@ public static partial class EditorImGuiUI
                 _viewportPanelInteracting;
 
             Engine.Input.SetUIInputCaptured(uiWantsCapture && !allowEngineInputThroughViewportPanel);
+        }
+
+        private static void SuppressUnexpectedImGuiDebugWindows()
+        {
+            // Some ImGui backends/sample layers can create an always-on "Debug" window.
+            // We don't want that in the editor UI.
+            //
+            // We use reflection so this remains tolerant of ImGui.NET version differences.
+            TryHideImGuiWindowByName("Debug");
+            TryHideImGuiWindowByName("Debug##Default");
+        }
+
+        private static void TryHideImGuiWindowByName(string windowName)
+        {
+            try
+            {
+                var imguiType = typeof(ImGui);
+
+                // Prefer collapsing; if the window is undocked this effectively removes it.
+                var setCollapsed = imguiType.GetMethods(BindingFlags.Public | BindingFlags.Static)
+                    .FirstOrDefault(m =>
+                    {
+                        if (!string.Equals(m.Name, "SetWindowCollapsed", StringComparison.Ordinal))
+                            return false;
+                        var p = m.GetParameters();
+                        return p.Length >= 2 && p[0].ParameterType == typeof(string) && p[1].ParameterType == typeof(bool);
+                    });
+
+                if (setCollapsed is not null)
+                {
+                    var parameters = setCollapsed.GetParameters();
+                    object?[] args = parameters.Length switch
+                    {
+                        2 => [windowName, true],
+                        3 => [windowName, true, ImGuiCond.Always],
+                        _ => null
+                    };
+
+                    if (args is not null)
+                        setCollapsed.Invoke(null, args);
+                }
+
+                // Fallback: move it far off-screen (helps if collapsing isn't supported).
+                var setPos = imguiType.GetMethods(BindingFlags.Public | BindingFlags.Static)
+                    .FirstOrDefault(m =>
+                    {
+                        if (!string.Equals(m.Name, "SetWindowPos", StringComparison.Ordinal))
+                            return false;
+                        var p = m.GetParameters();
+                        return p.Length >= 2 && p[0].ParameterType == typeof(string) && p[1].ParameterType == typeof(Vector2);
+                    });
+
+                if (setPos is not null)
+                {
+                    var parameters = setPos.GetParameters();
+                    object?[] args = parameters.Length switch
+                    {
+                        2 => [windowName, new Vector2(-100000f, -100000f)],
+                        3 => [windowName, new Vector2(-100000f, -100000f), ImGuiCond.Always],
+                        _ => null
+                    };
+
+                    if (args is not null)
+                        setPos.Invoke(null, args);
+                }
+            }
+            catch
+            {
+                // If the window isn't present or API differs, ignore.
+            }
         }
 
         /// <summary>

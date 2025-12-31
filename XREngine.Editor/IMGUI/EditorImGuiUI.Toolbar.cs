@@ -57,18 +57,19 @@ public static partial class EditorImGuiUI
             DrawSnapControls();
             
             // Center section: Play mode buttons
-            float playButtonsWidth = (ToolbarButtonSize * 3) + 4f + ToolbarSpacing + 80f; // 3 buttons + spacing + state text
+            float playButtonsWidth = GetPlayControlsEstimatedWidth();
             float currentX = ImGui.GetCursorPosX();
-            float availableWidth = viewport.Size.X - currentX - 8f; // 8f for right padding
-            float centerOffset = (availableWidth - playButtonsWidth) * 0.5f;
-            if (centerOffset > ToolbarSectionSpacing)
-            {
-                ImGui.SameLine(0f, centerOffset);
-            }
-            else
-            {
-                ImGui.SameLine(0f, ToolbarSectionSpacing);
-            }
+
+            float contentMinX = ImGui.GetWindowContentRegionMin().X;
+            float contentMaxX = ImGui.GetWindowContentRegionMax().X;
+            float contentWidth = MathF.Max(0f, contentMaxX - contentMinX);
+            float desiredX = contentMinX + (contentWidth - playButtonsWidth) * 0.5f;
+
+            float minX = currentX + ToolbarSectionSpacing;
+            float targetX = MathF.Max(minX, desiredX);
+
+            ImGui.SameLine(0f, 0f);
+            ImGui.SetCursorPosX(targetX);
             DrawPlayModeButtons();
         }
         ImGui.End();
@@ -84,9 +85,7 @@ public static partial class EditorImGuiUI
         var currentMode = TransformTool3D.TransformMode;
         
         ImGui.BeginGroup();
-        ImGui.AlignTextToFramePadding();
-        ImGui.TextUnformatted("Transform:");
-        ImGui.SameLine(0f, ToolbarSpacing);
+        DrawToolbarSectionLabel("Transform:");
         
         // Translate button
         bool isTranslate = currentMode == ETransformMode.Translate;
@@ -118,9 +117,7 @@ public static partial class EditorImGuiUI
         var currentSpace = TransformTool3D.TransformSpace;
         
         ImGui.BeginGroup();
-        ImGui.AlignTextToFramePadding();
-        ImGui.TextUnformatted("Space:");
-        ImGui.SameLine(0f, ToolbarSpacing);
+        DrawToolbarSectionLabel("Space:");
         
         // World
         bool isWorld = currentSpace == ETransformSpace.World;
@@ -268,7 +265,7 @@ public static partial class EditorImGuiUI
         
         ImGui.EndDisabled(); // isTransitioning
         
-        // Show current state indicator
+        // Show current state indicator (hide "Edit")
         ImGui.SameLine(0f, ToolbarSpacing);
         ImGui.AlignTextToFramePadding();
         
@@ -292,13 +289,55 @@ public static partial class EditorImGuiUI
         }
         else
         {
-            stateColor = new Vector4(0.6f, 0.6f, 0.6f, 1.0f);
-            stateText = "Edit";
+            // In edit mode we don't show a status label to keep the toolbar clean.
+            stateText = string.Empty;
+            stateColor = default;
         }
-        
-        ImGui.TextColored(stateColor, stateText);
+
+        if (!string.IsNullOrEmpty(stateText))
+            ImGui.TextColored(stateColor, stateText);
         
         ImGui.EndGroup();
+    }
+
+    private static float GetPlayControlsEstimatedWidth()
+    {
+        // Buttons: Play/Pause, Stop, Step
+        float buttonRow = (ToolbarButtonSize * 3f) + (2f * 2f);
+
+        // Add status text width if we'll render it.
+        bool isTransitioning = Engine.PlayMode.IsTransitioning;
+        bool isPlaying = Engine.PlayMode.IsPlaying;
+        bool isPaused = Engine.PlayMode.IsPaused;
+
+        string stateText = string.Empty;
+        if (isTransitioning)
+            stateText = Engine.PlayMode.State == EPlayModeState.EnteringPlay ? "Starting..." : "Stopping...";
+        else if (isPlaying)
+            stateText = "Playing";
+        else if (isPaused)
+            stateText = "Paused";
+
+        if (string.IsNullOrEmpty(stateText))
+            return buttonRow;
+
+        float textWidth = ImGui.CalcTextSize(stateText).X;
+        return buttonRow + ToolbarSpacing + textWidth;
+    }
+
+    private static void DrawToolbarSectionLabel(string label)
+    {
+        // Draw centered text without moving the button row vertically.
+        Vector2 start = ImGui.GetCursorScreenPos();
+        Vector2 size = ImGui.CalcTextSize(label);
+        float y = start.Y + (ToolbarButtonSize - size.Y) * 0.5f;
+
+        uint color = ImGui.GetColorU32(ImGuiCol.Text);
+        ImGui.GetWindowDrawList().AddText(new Vector2(start.X, y), color, label);
+
+        // Reserve space for the label so following items layout correctly.
+        ImGui.Dummy(new Vector2(size.X, ToolbarButtonSize));
+        ImGui.SameLine(0f, ToolbarSpacing);
     }
 
     /// <summary>
@@ -335,15 +374,9 @@ public static partial class EditorImGuiUI
         
         bool clicked;
         if (iconName != null && TryGetIconHandle(iconName, out nint handle))
-        {
-            float padding = style.FramePadding.X;
-            float size = ToolbarButtonSize - padding * 2;
-            clicked = ImGui.ImageButton(label, handle, new Vector2(size, size));
-        }
+            clicked = DrawToolbarIconButton(label, handle);
         else
-        {
             clicked = ImGui.Button(label, new Vector2(ToolbarButtonSize, ToolbarButtonSize));
-        }
         
         ImGui.PopStyleColor(4);
         
@@ -377,21 +410,41 @@ public static partial class EditorImGuiUI
         
         bool clicked;
         if (iconName != null && TryGetIconHandle(iconName, out nint handle))
-        {
-            float padding = style.FramePadding.X;
-            float size = ToolbarButtonSize - padding * 2;
-            clicked = ImGui.ImageButton(label, handle, new Vector2(size, size));
-        }
+            clicked = DrawToolbarIconButton(label, handle);
         else
-        {
             clicked = ImGui.Button(label, new Vector2(ToolbarButtonSize, ToolbarButtonSize));
-        }
         
         ImGui.PopStyleColor(3);
         
         if (ImGui.IsItemHovered())
             ImGui.SetTooltip(tooltip);
         
+        return clicked;
+    }
+
+    private static bool DrawToolbarIconButton(string id, nint handle)
+    {
+        var style = ImGui.GetStyle();
+        var buttonSize = new Vector2(ToolbarButtonSize, ToolbarButtonSize);
+
+        // Use a normal button for consistent sizing/alignment, then draw the icon ourselves.
+        // This avoids ImageButton shrinking the icon due to frame padding.
+        Vector2 buttonMin = ImGui.GetCursorScreenPos();
+        bool clicked = ImGui.Button($"##{id}", buttonSize);
+
+        Vector2 buttonMax = buttonMin + buttonSize;
+
+        // Keep a small border so the icon reads well.
+        float padding = MathF.Min(3f, style.FramePadding.X);
+        Vector2 iconMin = buttonMin + new Vector2(padding, padding);
+        Vector2 iconMax = buttonMax - new Vector2(padding, padding);
+
+        // Flip V so SVG textures match other UI usage.
+        Vector2 uv0 = new(0.0f, 1.0f);
+        Vector2 uv1 = new(1.0f, 0.0f);
+        uint tint = ImGui.ColorConvertFloat4ToU32(new Vector4(1f, 1f, 1f, 1f));
+        ImGui.GetWindowDrawList().AddImage((nint)handle, iconMin, iconMax, uv0, uv1, tint);
+
         return clicked;
     }
 

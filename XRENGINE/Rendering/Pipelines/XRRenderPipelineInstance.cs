@@ -24,6 +24,13 @@ public sealed partial class XRRenderPipelineInstance : XRBase
         MeshRenderCommands.SetOwnerPipeline(this);
     }
 
+    // Persist the last render context so editor/inspector code can still attribute
+    // this pipeline instance to a specific camera/viewport outside the render-scope
+    // (RenderState.SceneCamera/WindowViewport are only set inside PushMainAttributes).
+    public XRCamera? LastSceneCamera { get; private set; }
+    public XRCamera? LastRenderingCamera { get; private set; }
+    public XRViewport? LastWindowViewport { get; private set; }
+
     public XRRenderPipelineInstance(RenderPipeline pipeline) : this()
     {
         Pipeline = pipeline;
@@ -56,11 +63,13 @@ public sealed partial class XRRenderPipelineInstance : XRBase
             RenderPipeline? pipeline = _pipeline ?? Pipeline;
             string pipelineName = pipeline?.DebugName ?? "UnknownPipeline";
 
-            string cameraDescription = RenderState.SceneCamera is { } cam
+            XRCamera? cam = RenderState.SceneCamera ?? RenderState.RenderingCamera ?? LastSceneCamera ?? LastRenderingCamera;
+            string cameraDescription = cam is { }
                 ? DescribeCamera(cam)
                 : "Camera=<none>";
 
-            string viewportDescription = RenderState.WindowViewport is { } viewport
+            XRViewport? viewport = RenderState.WindowViewport ?? LastWindowViewport;
+            string viewportDescription = viewport is { }
                 ? DescribeViewport(viewport)
                 : "Viewport=<none>";
 
@@ -256,6 +265,11 @@ public sealed partial class XRRenderPipelineInstance : XRBase
             Debug.LogWarning("No render pipeline is set.");
             return;
         }
+
+        // Capture the last render context for editor tooling.
+        LastSceneCamera = camera;
+        LastRenderingCamera = camera ?? stereoRightEyeCamera;
+        LastWindowViewport = viewport;
 
         // Honor any internal resolution request from the pipeline before executing commands.
         if (viewport is not null)

@@ -77,7 +77,7 @@ public static partial class EditorImGuiUI
             return;
         }
 
-        var passMetadata = pipeline.PassMetadata ?? Array.Empty<RenderPassMetadata>();
+        var passMetadata = pipeline.PassMetadata ?? [];
         var passState = GetOrCreatePassGraphState(pipeline.ID);
         var commandState = GetOrCreateCommandGraphState(pipeline.ID);
 

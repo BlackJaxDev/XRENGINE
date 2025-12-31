@@ -170,6 +170,16 @@ public partial class DefaultRenderPipeline
             visibilityCondition: IsAdvancedMetering);
 
         stage.AddParameter(
+            nameof(ColorGradingSettings.AutoExposureLuminanceWeights),
+            PostProcessParameterKind.Vector3,
+            new Vector3(0.299f, 0.587f, 0.114f),
+            displayName: "Luminance Weights",
+            min: 0.0f,
+            max: 1.0f,
+            step: 0.001f,
+            visibilityCondition: IsAutoExposure);
+
+        stage.AddParameter(
             nameof(ColorGradingSettings.AutoExposureIgnoreTopPercent),
             PostProcessParameterKind.Float,
             0.02f,
