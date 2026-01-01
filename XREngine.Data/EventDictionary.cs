@@ -46,9 +46,16 @@ namespace XREngine
             get => base[key];
             set
             {
-                TValue old = base[key];
-                base[key] = value;
-                Set?.Invoke(key, old, value);
+                if (base.TryGetValue(key, out TValue? old))
+                {
+                    base[key] = value;
+                    Set?.Invoke(key, old, value);
+                }
+                else
+                {
+                    base[key] = value;
+                    Added?.Invoke(key, value);
+                }
                 Changed?.Invoke();
             }
         }

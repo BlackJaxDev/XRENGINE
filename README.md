@@ -1,13 +1,19 @@
 # XRENGINE
 
-XRENGINE is an experimental C# engine for virtual, augmented, and mixed reality. The codebase is under active development; expect breaking changes while rendering, physics, and editor workflows evolve.
+XRENGINE is a Windows-first C# XR engine + editor.
+
+It includes a desktop editor, a dedicated server, and a standalone VR client. This is a dev-focused codebase (expect refactors and occasional breaking changes).
 
 ## Status at a Glance
-- Early stage project with frequent refactors across the runtime, editor, and asset pipeline.
-- Windows 10/11 is the current target platform.
-- OpenGL 4.6 is the supported renderer; Vulkan and DirectX 12 backends are prototypes.
-- OpenXR and SteamVR integrations exist but still require manual setup for most devices.
-- PhysX powers today’s physics path; Jolt and Jitter backends are being brought online.
+- **Maturity**: early-stage; APIs and workflows change.
+- **Platform**: Windows 10/11, .NET 10.
+- **Projects**: `XREngine.Editor`, `XREngine.Server`, `XREngine.VRClient`.
+- **Rendering**: OpenGL 4.6 is the main path; Vulkan/DX12 are WIP.
+- **XR**: OpenXR and SteamVR/OpenVR paths exist - only OpenVR is tested.
+- **Physics**: 
+PhysX is the current default and supports a character controller;
+Jolt is the planned default but only semi-implemented & untested;
+Jitter 2 work is planned for lightweight usage such as for VTubing.
 
 ## Solution Layout
 - `XREngine` – core runtime, scene graph, rendering backends, and XR subsystems.
@@ -24,23 +30,166 @@ XRENGINE is an experimental C# engine for virtual, augmented, and mixed reality.
 - Optional: OpenXR-compatible headset or SteamVR setup for XR testing
 
 ## Quick Start
+### 1) Clone (with submodules)
+
+This repo relies on Git submodules under `Build/Submodules`.
+
+Recommended (one command):
+
 ```powershell
 git clone --recurse-submodules https://github.com/BlackJaxDev/XRENGINE.git
 cd XRENGINE
+```
+
+If you already cloned without submodules:
+
+```powershell
+cd XRENGINE
+git submodule sync --recursive
+git submodule update --init --recursive
+```
+
+Windows convenience script (does the same and prints status):
+
+```powershell
+./init_submodules.bat
+```
+
+### 2) Build
+
+Solution build:
+
+```powershell
 dotnet restore
 dotnet build XRENGINE.sln
-dotnet run --project XREngine.Editor
+```
+
+Or build the Editor only:
+
+```powershell
+dotnet build .\XREngine.Editor\XREngine.Editor.csproj
+```
+
+### 3) Run the Editor (CLI)
+
+```powershell
+dotnet run --project .\XREngine.Editor\XREngine.Editor.csproj
+```
+
+Shortcut script:
+
+```powershell
+./run_editor.bat
 ```
 
 Running the editor launches the Unit Testing World, a collection of scenes that exercise rendering, animation, physics, audio, and XR workflows. Use this environment to verify changes and explore current functionality.
 
-## Native Dependencies
-- `CoACD` – `dotnet build` automatically invokes `Tools/Dependencies/Build-CoACD.ps1` to pull the upstream source and produce `lib_coacd.*` under `XRENGINE/runtimes/<rid>/native`. Use `/p:ForceCoACDBuild=true` or run the script manually when you need to rebuild or retarget a new release. The legacy wheel extractor (`Tools/Dependencies/Get-CoACD.ps1`) remains available if you prefer the vendor-provided binaries.
+## Unit Testing World Settings (JSON)
 
-## Development Notes
-- The engine employs a multi-threaded update loop (update, fixed update, job worker, collect visible, render) to separate gameplay, physics, and rendering work.
-- Asset importers handle common model formats (FBX, OBJ) and feed into the editor-driven content pipeline.
-- Compute-based experimentation exists for animation and physics chains, but these paths are not production ready yet.
+The Unit Testing World is configured by a JSON file and loaded on startup.
+
+- **How it’s selected**: launch the Editor with `--unit-testing` (or set `XRE_WORLD_MODE=UnitTesting`).
+- **Where the JSON is loaded from**: the Editor looks for `Assets/UnitTestingWorldSettings.json` relative to the process **working directory** (`Environment.CurrentDirectory`). In the provided VS Code launch configs, the working directory is set to `XREngine.Editor/`, so the file used is typically `XREngine.Editor/Assets/UnitTestingWorldSettings.json`.
+- **What happens on load**: the JSON is deserialized into `UnitTestingWorld.Toggles` (type `UnitTestingWorld.Settings`). If the file doesn’t exist yet, a default one is written out.
+- **How it affects the world**: `UnitTestingWorld.CreateSelectedWorld(...)` switches on `Toggles.WorldKind` to choose which unit-test world factory to run, and the other toggle values control what gets added (models to import, lighting, physics, UI overlays, etc.).
+- **It also influences engine startup**: the Editor loads these toggles early so render/update settings (render API, tick rates, pipeline choices, etc.) can be applied consistently.
+
+## Launch Options (VS Code)
+
+This repo includes a ready-to-go VS Code setup in `.vscode/`.
+
+### Debug (F5)
+
+Use **Run and Debug** (Ctrl+Shift+D), then pick one of these launch configurations:
+
+- **Editor (Default World)**
+- **Editor (Unit Testing World)** (passes `--unit-testing` and sets `XRE_WORLD_MODE=UnitTesting`)
+- **Debug Client (Server & other client run separately)** (sets `XRE_NET_MODE=Client`, `XRE_UDP_CLIENT_RECEIVE_PORT=5001`)
+- **Debug Server (Clients runs separately)** (dedicated server exe; also launches 2 editor clients separately before attach)
+- **Debug Server (Server only)**
+- **Debug P2P Client (Peer client separate, no server)** (sets `XRE_NET_MODE=P2PClient`)
+- **Debug VRClient (Editor runs separately)** (sets `XRE_VRCLIENT_GAMENAME=XREngine.Editor`)
+
+### No-Debug launchers (Tasks)
+
+Use **Terminal → Run Task…** and run any of these tasks (they build first where needed):
+
+- `start-editor-no-debug`
+- `start-server-no-debug` (Editor-as-server, `XRE_NET_MODE=Server`)
+- `start-client-no-debug` (Editor-as-client, port 5001)
+- `start-client2-no-debug` (Editor-as-client, port 5002)
+- `start-2-clients-no-debug`
+- `start-dedicated-server-no-debug` (runs `XREngine.Server.exe`)
+- `start-p2p-peer-no-debug` (P2P peer 1, port 5001)
+- `start-p2p-peer2-no-debug` (P2P peer 2, port 5002)
+
+There are also “prep” tasks used by the debug configurations:
+
+- `prep-debug-server-with-2-clients`, `prep-debug-server-only`
+- `prep-debug-client-with-server-and-client`
+- `prep-debug-p2p-client-with-peer`
+- `prep-debug-vrclient-with-editor`
+
+## Launch Options (Visual Studio)
+
+Open `XRENGINE.sln`.
+
+### Run / Debug the Editor
+
+- Set startup project to `XREngine.Editor`.
+- Use **Debug → Start Debugging** (F5) or **Start Without Debugging** (Ctrl+F5).
+
+To emulate the same modes as the VS Code profiles, set environment variables in:
+
+- Project → Properties → Debug → **Environment variables**
+
+Common environment variables:
+
+- `XRE_NET_MODE=Server|Client|P2PClient`
+- `XRE_UDP_CLIENT_RECEIVE_PORT=5001` (or `5002` for a second client)
+- `XRE_WINDOW_TITLE=...`
+- `XRE_WORLD_MODE=UnitTesting`
+
+If you want the “Unit Testing World” behavior, also pass `--unit-testing` under Project → Properties → Debug → **Command line arguments**.
+
+### Run / Debug the Dedicated Server
+
+- Set startup project to `XREngine.Server`.
+
+### Run multiple instances (Server + Clients)
+
+Two common approaches:
+
+- **Multiple startup projects**: Solution → Properties → Startup Project → **Multiple startup projects**, set `XREngine.Server` and one (or more) `XREngine.Editor` entries to **Start**.
+- **Start New Instance**: right-click `XREngine.Editor` (or `XREngine.Server`) and choose **Debug → Start new instance**, then vary env vars per instance (e.g., ports 5001/5002) via separate Debug Profiles (VS 2022+) or by editing the project Debug settings before launching each instance.
+
+## Network test helper
+
+For a quick two-instance Editor networking test (server + client), there is a helper script:
+
+```powershell
+./run_network_test.bat
+```
+
+## Native Dependencies
+- `CoACD` – `dotnet build` invokes `Tools/Dependencies/Build-CoACD.ps1` (when needed) to fetch/build CoACD and produce `lib_coacd.*` under `XRENGINE/runtimes/<rid>/native`. Use `/p:ForceCoACDBuild=true` to force a rebuild, or run the script manually. (Requires `git` + `cmake`; on Windows it uses the VS 2022 generator.) The legacy wheel extractor (`Tools/Dependencies/Get-CoACD.ps1`) remains available if you prefer vendor-provided binaries.
+
+- `MagicPhysX` – physics interop uses `libmagicphysx.dll` under `XRENGINE/runtimes/win-x64/native` (copied to output on build). If you change/update the MagicPhysX submodule or native bits, rebuild the related submodule/native output.
+
+- `Rive` (UI) – the managed Rive wrapper is sourced from `Build/Submodules/rive-sharp`, and the engine loads `rive.dll` from `XRENGINE/runtimes/win-x64/native`. If you need to rebuild it (or other submodule binaries), use:
+
+	```powershell
+	./build_submodules.bat Debug x64
+	# or: ./build_submodules.bat Release x64
+	```
+
+	This requires Visual Studio (or Build Tools) with the **Desktop development with C++** workload. The script will fetch `premake5` automatically if missing.
+
+- Video/streaming codecs – the repo ships FFmpeg-family native DLLs (`avcodec`, `avformat`, etc.) under `XRENGINE/runtimes/win-x64/native` and copies them to output as needed (used by the Flyleaf integration).
+
+- NVIDIA features (DLSS / NIS / Reflex / Streamline) – Streamline (`sl.*`) and related NVIDIA DLLs are included under `XRENGINE/runtimes/win-x64/native` alongside license files. These paths only activate when supported by your hardware/driver/config.
+
+- `RestirGI.Native.dll` – the optional ReSTIR GI bridge is built from the native project under `Build/RestirGI/` and copied into the managed output as `RestirGI.Native.dll` when present. If it’s missing, build `Build/RestirGI/RestirGINative.sln` for your configuration/platform and then rebuild the C# projects so the copy step can pick it up.
 
 ## Documentation
 Start with the docs index at `docs/README.md` for a structured map of architecture notes, API guides, and rendering deep dives. Highlights:
