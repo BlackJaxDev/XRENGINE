@@ -175,6 +175,12 @@ namespace XREngine.Rendering.OpenGL
                 SetUniformBoth(EEngineUniform.ModelMatrix, modelMatrix);
                 SetUniformBoth(EEngineUniform.PrevModelMatrix, prevModelMatrix);
 
+                // CPU draw path has gl_BaseInstance==0; provide a per-draw TransformId uniform so
+                // deferred shaders can write stable per-transform IDs into the GBuffer.
+                uint transformId = Engine.Rendering.State.CurrentTransformId;
+                vertexProgram.Uniform("TransformId", transformId);
+                materialProgram?.Uniform("TransformId", transformId);
+
                 vertexProgram.Uniform(EEngineUniform.VRMode, stereoPass);
                 vertexProgram.Uniform(EEngineUniform.BillboardMode, (int)billboardMode);
             }

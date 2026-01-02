@@ -139,6 +139,26 @@ namespace XREngine
                 public static bool ReverseCulling { get; internal set; } = false;
                 public static bool IsMainPass => !IsMirrorPass && !IsSceneCapturePass && !IsLightProbePass;
 
+                private static Stack<uint> TransformIdStack { get; } = new();
+
+                /// <summary>
+                /// Per-draw transform identifier for the CPU render path.
+                /// When present, vertex shaders can use it as a replacement for gl_BaseInstance.
+                /// </summary>
+                public static uint CurrentTransformId => TransformIdStack.TryPeek(out var id) ? id : 0u;
+
+                public static StateObject PushTransformId(uint transformId)
+                {
+                    TransformIdStack.Push(transformId);
+                    return StateObject.New(PopTransformId);
+                }
+
+                public static void PopTransformId()
+                {
+                    if (TransformIdStack.Count > 0)
+                        TransformIdStack.Pop();
+                }
+
                 // Forward+ (tiled light culling) published state.
                 // These are populated by VPRC_ForwardPlusLightCullingPass each frame when available.
                 public static XRDataBuffer? ForwardPlusLocalLightsBuffer { get; internal set; }

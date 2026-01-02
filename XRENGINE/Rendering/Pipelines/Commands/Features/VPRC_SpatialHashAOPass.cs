@@ -40,6 +40,7 @@ namespace XREngine.Rendering.Pipelines.Commands
         public string DepthViewTextureName { get; set; } = "DepthView";
         public string AlbedoTextureName { get; set; } = "AlbedoOpacity";
         public string RMSETextureName { get; set; } = "RMSE";
+        public string TransformIdTextureName { get; set; } = "TransformId";
         public string DepthStencilTextureName { get; set; } = "DepthStencil";
         public IReadOnlyList<string> DependentFboNames { get; set; } = Array.Empty<string>();
 
@@ -82,13 +83,14 @@ namespace XREngine.Rendering.Pipelines.Commands
             Stereo = stereo;
         }
 
-        public void SetGBufferInputTextureNames(string normal, string depthView, string albedo, string rmse, string depthStencil)
+        public void SetGBufferInputTextureNames(string normal, string depthView, string albedo, string rmse, string depthStencil, string transformId = "TransformId")
         {
             NormalTextureName = normal;
             DepthViewTextureName = depthView;
             AlbedoTextureName = albedo;
             RMSETextureName = rmse;
             DepthStencilTextureName = depthStencil;
+            TransformIdTextureName = transformId;
         }
 
         public void SetOutputNames(string intensity, string generationFbo, string blurFbo, string outputFbo)
@@ -108,12 +110,14 @@ namespace XREngine.Rendering.Pipelines.Commands
             XRTexture? depthViewTex = instance.GetTexture<XRTexture>(DepthViewTextureName);
             XRTexture? albedoTex = instance.GetTexture<XRTexture>(AlbedoTextureName);
             XRTexture? rmseTex = instance.GetTexture<XRTexture>(RMSETextureName);
+            XRTexture? transformIdTex = instance.GetTexture<XRTexture>(TransformIdTextureName);
             XRTexture? depthStencilTex = instance.GetTexture<XRTexture>(DepthStencilTextureName);
 
             if (normalTex is null ||
                 depthViewTex is null ||
                 albedoTex is null ||
                 rmseTex is null ||
+                transformIdTex is null ||
                 depthStencilTex is null)
             {
                 Log("Skipping execute; required textures missing");
@@ -164,6 +168,7 @@ namespace XREngine.Rendering.Pipelines.Commands
                     depthViewTex,
                     albedoTex,
                     rmseTex,
+                        transformIdTex,
                     depthStencilTex,
                     width,
                     height);
@@ -200,6 +205,7 @@ namespace XREngine.Rendering.Pipelines.Commands
             XRTexture depthViewTex,
             XRTexture albedoTex,
             XRTexture rmseTex,
+            XRTexture transformIdTex,
             XRTexture depthStencilTex,
             int width,
             int height)
@@ -216,7 +222,7 @@ namespace XREngine.Rendering.Pipelines.Commands
             InvalidateDependentFbos(instance);
 
             EnsureBuffers(state, (uint)width, (uint)height);
-            CreateFbos(instance, state, albedoTex, normalTex, rmseTex, depthStencilTex);
+            CreateFbos(instance, state, albedoTex, normalTex, rmseTex, transformIdTex, depthStencilTex);
         }
 
         private XRTexture CreateAOTexture(int width, int height)
@@ -277,6 +283,7 @@ namespace XREngine.Rendering.Pipelines.Commands
             XRTexture albedoTex,
             XRTexture normalTex,
             XRTexture rmseTex,
+            XRTexture transformIdTex,
             XRTexture depthStencilTex)
         {
             if (state.AoTexture is not IFrameBufferAttachement aoAttach)
@@ -291,6 +298,9 @@ namespace XREngine.Rendering.Pipelines.Commands
             if (rmseTex is not IFrameBufferAttachement rmseAttach)
                 throw new ArgumentException("RMSE texture must be an IFrameBufferAttachement");
 
+            if (transformIdTex is not IFrameBufferAttachement transformIdAttach)
+                throw new ArgumentException("TransformId texture must be an IFrameBufferAttachement");
+
             if (depthStencilTex is not IFrameBufferAttachement depthStencilAttach)
                 throw new ArgumentException("DepthStencil texture must be an IFrameBufferAttachement");
 
@@ -298,6 +308,7 @@ namespace XREngine.Rendering.Pipelines.Commands
                 (albedoAttach, EFrameBufferAttachment.ColorAttachment0, 0, -1),
                 (normalAttach, EFrameBufferAttachment.ColorAttachment1, 0, -1),
                 (rmseAttach, EFrameBufferAttachment.ColorAttachment2, 0, -1),
+                (transformIdAttach, EFrameBufferAttachment.ColorAttachment3, 0, -1),
                 (depthStencilAttach, EFrameBufferAttachment.DepthStencilAttachment, 0, -1))
             {
                 Name = GenerationFBOName

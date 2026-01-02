@@ -1,0 +1,215 @@
+#version 450
+
+layout(local_size_x = 16, local_size_y = 16, local_size_z = 1) in;
+
+layout(binding = 0) uniform sampler2D gDepth;
+layout(binding = 1) uniform sampler2D gNormal;
+layout(binding = 2) uniform sampler2D gAlbedo;
+layout(binding = 3, rgba16f) writeonly uniform image2D gOutput;
+
+// GPU indirect: per-draw command data (float[48]) indexed by TransformId.
+layout(std430, binding = 5) buffer CulledCommandsBuffer { float culled[]; };
+
+uniform bool hasCulledCommands;
+uniform uint culledFloatCount;
+uniform uint culledCommandFloats;
+
+uniform ivec2 resolution;
+uniform mat4 invProjMatrix;
+uniform mat4 cameraToWorldMatrix;
+uniform uint frameIndex;
+uniform uint maxSurfels;
+uniform vec3 gridOrigin;
+uniform float cellSize;
+uniform uvec3 gridDim;
+uniform uint maxPerCell;
+
+struct Surfel
+{
+    // Stored in local/object space for motion-stable correspondence.
+    // World-space is reconstructed via the per-draw matrix buffer using meta.z (TransformId).
+    vec4 posRadius; // xyz=localPos, w=worldRadius
+    vec4 normal;    // xyz=localNormal
+    vec4 albedo;
+    uvec4 meta; // x=lastUsedFrame, y=active
+};
+
+layout(std430, binding = 0) buffer SurfelBuffer
+{
+    Surfel surfels[];
+};
+
+layout(std430, binding = 1) buffer CounterBuffer
+{
+    int stackTop;
+    int pad0;
+    int pad1;
+    int pad2;
+};
+
+layout(std430, binding = 3) buffer GridCounts
+{
+    uint counts[];
+};
+
+layout(std430, binding = 4) buffer GridIndices
+{
+    uint indices[];
+};
+
+vec3 ReconstructWorldPosition(vec2 uv, float depth)
+{
+    vec4 clip = vec4(uv * 2.0 - 1.0, depth * 2.0 - 1.0, 1.0);
+    vec4 view = invProjMatrix * clip;
+    view /= max(view.w, 1e-6);
+    vec4 world = cameraToWorldMatrix * view;
+    return world.xyz;
+}
+
+vec3 DecodeNormal(vec3 encoded)
+{
+    vec3 n = normalize(encoded * 2.0 - 1.0);
+    vec3 worldN = normalize((cameraToWorldMatrix * vec4(n, 0.0)).xyz);
+    return worldN;
+}
+
+uint Hash(uint x)
+{
+    x ^= x >> 16;
+    x *= 0x7feb352du;
+    x ^= x >> 15;
+    x *= 0x846ca68bu;
+    x ^= x >> 16;
+    return x;
+}
+
+uint CellIndex(uvec3 c)
+{
+    return c.x + gridDim.x * (c.y + gridDim.y * c.z);
+}
+
+bool WorldToCell(vec3 p, out uint cell)
+{
+    vec3 rel = (p - gridOrigin) / max(cellSize, 1e-6);
+    ivec3 ci = ivec3(floor(rel));
+    if (any(lessThan(ci, ivec3(0))) || any(greaterThanEqual(ci, ivec3(gridDim))))
+        return false;
+
+    cell = CellIndex(uvec3(ci));
+    return true;
+}
+
+bool TryLoadWorldMatrix(uint commandIndex, out mat4 M)
+{
+    if (!hasCulledCommands)
+        return false;
+
+    uint stride = max(culledCommandFloats, 48u);
+    uint base = commandIndex * stride;
+    if (base + 15u >= culledFloatCount)
+        return false;
+
+    vec4 c0 = vec4(culled[base+0], culled[base+4], culled[base+8],  culled[base+12]);
+    vec4 c1 = vec4(culled[base+1], culled[base+5], culled[base+9],  culled[base+13]);
+    vec4 c2 = vec4(culled[base+2], culled[base+6], culled[base+10], culled[base+14]);
+    vec4 c3 = vec4(culled[base+3], culled[base+7], culled[base+11], culled[base+15]);
+    M = mat4(c0, c1, c2, c3);
+    return true;
+}
+
+void main()
+{
+    ivec2 pix = ivec2(gl_GlobalInvocationID.xy);
+    if (pix.x >= resolution.x || pix.y >= resolution.y)
+        return;
+
+    vec2 uv = (vec2(pix) + 0.5) / vec2(resolution);
+    float depth = texture(gDepth, uv).r;
+    if (depth <= 0.0)
+    {
+        imageStore(gOutput, pix, vec4(0.0));
+        return;
+    }
+
+    vec3 worldPos = ReconstructWorldPosition(uv, depth);
+    vec3 normalWS = DecodeNormal(texture(gNormal, uv).rgb);
+
+    uint cell;
+    if (!WorldToCell(worldPos, cell))
+    {
+        imageStore(gOutput, pix, vec4(0.0));
+        return;
+    }
+
+    uint count = counts[cell];
+    if (count == 0u)
+    {
+        imageStore(gOutput, pix, vec4(0.0));
+        return;
+    }
+
+    // Gather only nearby surfels.
+    uint n = min(count, maxPerCell);
+    vec3 accum = vec3(0.0);
+    float wsum = 0.0;
+
+    // Shuffle start index per-pixel to reduce banding.
+    uint base = Hash(uint(pix.x) * 1973u ^ uint(pix.y) * 9277u ^ frameIndex * 26699u);
+    uint start = (n > 0u) ? (base % n) : 0u;
+
+    for (uint i = 0u; i < n; ++i)
+    {
+        uint slot = (start + i) % n;
+        uint idx = indices[cell * maxPerCell + slot];
+        if (idx >= maxSurfels)
+            continue;
+        if (surfels[idx].meta.y == 0u)
+            continue;
+
+        vec3 sPos = surfels[idx].posRadius.xyz;
+        float sRadius = max(surfels[idx].posRadius.w, 1e-3);
+        vec3 sN = normalize(surfels[idx].normal.xyz);
+        vec3 sAlbedo = surfels[idx].albedo.rgb;
+
+        // Reconstruct to world space if per-draw matrices are available.
+        uint transformId = surfels[idx].meta.z;
+        mat4 model;
+        if (TryLoadWorldMatrix(transformId, model))
+        {
+            sPos = (model * vec4(sPos, 1.0)).xyz;
+            mat3 normalMatrix = transpose(inverse(mat3(model)));
+            sN = normalize(normalMatrix * sN);
+        }
+
+        // The grid is rebuilt before spawning, and spawn can move/reuse surfels.
+        // Indices can become stale/duplicated; filter by current cell to avoid ghosting.
+        uint sCell;
+        if (!WorldToCell(sPos, sCell) || sCell != cell)
+            continue;
+
+        vec3 d = sPos - worldPos;
+        float dist2 = dot(d, d);
+        if (dist2 <= 1e-6)
+            continue;
+
+        vec3 dir = d * inversesqrt(dist2);
+
+        float nl = max(dot(normalWS, dir), 0.0);
+        float ln = max(dot(sN, -dir), 0.0);
+        float falloff = (sRadius * sRadius) / (dist2 + 1e-2);
+        float w = nl * ln * falloff;
+
+        if (w > 0.0)
+            atomicMax(surfels[idx].meta.x, frameIndex);
+
+        accum += sAlbedo * w;
+        wsum += w;
+    }
+
+    vec3 gi = (wsum > 0.0) ? (accum / wsum) : vec3(0.0);
+
+    // Overall energy scale to keep it subtle.
+    gi *= 0.2;
+
+    imageStore(gOutput, pix, vec4(gi, 1.0));
+}

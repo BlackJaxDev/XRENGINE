@@ -122,6 +122,7 @@ namespace XREngine
                 private bool _enableGpuIndirectCpuFallback = false;
                 private bool _enableGpuIndirectValidationLogging = false;
                 private bool _useDebugOpaquePipeline = false;
+                private bool _visualizeTransformId = false;
 
                 /// <summary>
                 /// Whether to enable frame logging for performance profiling.
@@ -198,6 +199,18 @@ namespace XREngine
                 {
                     get => _useDebugOpaquePipeline;
                     set => SetField(ref _useDebugOpaquePipeline, value);
+                }
+
+                /// <summary>
+                /// Visualizes the per-draw TransformId buffer as a false-color output.
+                /// This is intended for debugging render ID stability and correspondence.
+                /// </summary>
+                [Category("Debug")]
+                [Description("Visualizes the per-draw TransformId buffer as a false-color output.")]
+                public bool VisualizeTransformId
+                {
+                    get => _visualizeTransformId;
+                    set => SetField(ref _visualizeTransformId, value);
                 }
 
                 #endregion

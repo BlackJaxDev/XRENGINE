@@ -63,7 +63,7 @@ namespace XREngine.Components.Scene.Mesh
             _renderCommand.PreRender += OnPreRender;
 
             _renderInfo = RenderInfo3D.New(this, _renderCommand);
-            _renderInfos = new[] { _renderInfo };
+            _renderInfos = [_renderInfo];
 
             UpdateCullingVolume();
             RecreateRenderer();

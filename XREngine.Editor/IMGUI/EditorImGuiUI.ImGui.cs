@@ -572,7 +572,7 @@ public static partial class EditorImGuiUI
                 if (setCollapsed is not null)
                 {
                     var parameters = setCollapsed.GetParameters();
-                    object?[] args = parameters.Length switch
+                    object?[]? args = parameters.Length switch
                     {
                         2 => [windowName, true],
                         3 => [windowName, true, ImGuiCond.Always],
@@ -596,7 +596,7 @@ public static partial class EditorImGuiUI
                 if (setPos is not null)
                 {
                     var parameters = setPos.GetParameters();
-                    object?[] args = parameters.Length switch
+                    object?[]? args = parameters.Length switch
                     {
                         2 => [windowName, new Vector2(-100000f, -100000f)],
                         3 => [windowName, new Vector2(-100000f, -100000f), ImGuiCond.Always],
@@ -719,17 +719,6 @@ public static partial class EditorImGuiUI
                 if (ImGui.BeginMenu("Save..."))
                 {
                     DrawDirtyAssetSaveMenuItems();
-                    ImGui.EndMenu();
-                }
-
-                if (ImGui.BeginMenu("Save Settings"))
-                {
-                    if (ImGui.MenuItem("Save Engine Settings"))
-                        Engine.SaveProjectEngineSettings();
-                    if (ImGui.MenuItem("Save User Settings"))
-                        Engine.SaveProjectUserSettings();
-                    if (ImGui.MenuItem("Save All Settings"))
-                        Engine.SaveProjectSettings();
                     ImGui.EndMenu();
                 }
 

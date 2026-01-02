@@ -1,0 +1,50 @@
+#version 450
+
+layout(local_size_x = 256, local_size_y = 1, local_size_z = 1) in;
+
+uniform uint maxSurfels;
+
+struct Surfel
+{
+    vec4 posRadius;
+    vec4 normal;
+    vec4 albedo;
+    uvec4 meta; // x=lastUsedFrame, y=active (1/0)
+};
+
+layout(std430, binding = 0) buffer SurfelBuffer
+{
+    Surfel surfels[];
+};
+
+layout(std430, binding = 1) buffer CounterBuffer
+{
+    int stackTop;
+    int pad0;
+    int pad1;
+    int pad2;
+};
+
+layout(std430, binding = 2) buffer FreeStackBuffer
+{
+    uint freeIds[];
+};
+
+void main()
+{
+    uint id = gl_GlobalInvocationID.x;
+    if (id >= maxSurfels)
+        return;
+
+    freeIds[id] = id;
+
+    // Mark surfels inactive.
+    surfels[id].meta = uvec4(0u, 0u, 0u, 0u);
+    surfels[id].posRadius = vec4(0.0);
+    surfels[id].normal = vec4(0.0);
+    surfels[id].albedo = vec4(0.0);
+
+    // One thread sets the stack counter.
+    if (id == 0u)
+        stackTop = int(maxSurfels);
+}

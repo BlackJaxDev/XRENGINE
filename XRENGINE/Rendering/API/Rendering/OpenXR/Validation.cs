@@ -4,17 +4,30 @@ using System.Runtime.InteropServices;
 
 public unsafe partial class OpenXRAPI
 {
-    private ExtDebugUtils? debugUtils;
-    private DebugUtilsMessengerEXT debugMessenger;
+    private ExtDebugUtils? _debugUtils;
+    private DebugUtilsMessengerEXT _debugMessenger;
 
-    private bool EnableValidationLayers = true;
+    private bool _enableValidationLayers = true;
+    public bool EnableValidationLayers
+    {
+        get => _enableValidationLayers;
+        set
+        {
+            if (_enableValidationLayers != value)
+            {
+                _enableValidationLayers = value;
+                DestroyValidationLayers();
+                SetupDebugMessenger();
+            }
+        }
+    }
 
-    private readonly string[] validationLayers = [];
+    private readonly string[] _validationLayers = [];
 
     private void DestroyValidationLayers()
     {
-        if (EnableValidationLayers)
-            debugUtils!.DestroyDebugUtilsMessenger(debugMessenger);
+        if (_enableValidationLayers)
+            _debugUtils?.DestroyDebugUtilsMessenger(_debugMessenger);
     }
 
     private static void PopulateDebugMessengerCreateInfo(ref DebugUtilsMessengerCreateInfoEXT createInfo)
@@ -35,16 +48,16 @@ public unsafe partial class OpenXRAPI
         if (!EnableValidationLayers)
             return;
 
-        if (Api!.TryGetInstanceExtension(null, _instance, out debugUtils))
+        if (Api!.TryGetInstanceExtension(null, _instance, out _debugUtils))
             return;
 
         DebugUtilsMessengerCreateInfoEXT createInfo = new();
         PopulateDebugMessengerCreateInfo(ref createInfo);
 
         var d = new DebugUtilsMessengerEXT();
-        if (debugUtils!.CreateDebugUtilsMessenger(_instance, &createInfo, &d) != Result.Success)
+        if (_debugUtils!.CreateDebugUtilsMessenger(_instance, &createInfo, &d) != Result.Success)
             throw new Exception("Failed to set up OpenXR debug messenger.");
-        debugMessenger = d;
+        _debugMessenger = d;
     }
     private bool CheckValidationLayerSupport()
     {
@@ -58,7 +71,7 @@ public unsafe partial class OpenXRAPI
 
         var availableLayerNames = availableLayers.Select(layer => Marshal.PtrToStringAnsi((IntPtr)layer.LayerName)).ToHashSet();
 
-        return validationLayers.All(availableLayerNames.Contains);
+        return _validationLayers.All(availableLayerNames.Contains);
     }
     private static uint DebugCallback(DebugUtilsMessageSeverityFlagsEXT messageSeverity, DebugUtilsMessageTypeFlagsEXT messageTypes, DebugUtilsMessengerCallbackDataEXT* pCallbackData, void* pUserData)
     {

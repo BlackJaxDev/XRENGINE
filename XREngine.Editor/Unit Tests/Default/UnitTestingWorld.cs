@@ -14,6 +14,28 @@ namespace XREngine.Editor;
 
 public static partial class UnitTestingWorld
 {
+    private static bool _emulatedVrStereoPreviewHooked;
+
+    private static void EnsureEmulatedVRStereoPreviewRenderingHooked()
+    {
+        if (_emulatedVrStereoPreviewHooked)
+            return;
+
+        if (!(Toggles.VRPawn && Toggles.EmulatedVRPawn && Toggles.PreviewVRStereoViews))
+            return;
+
+        _emulatedVrStereoPreviewHooked = true;
+
+        Engine.Windows.PostAnythingAdded += OnWindowAddedForEmulatedVRStereoPreview;
+        foreach (var window in Engine.Windows)
+            OnWindowAddedForEmulatedVRStereoPreview(window);
+    }
+
+    private static void OnWindowAddedForEmulatedVRStereoPreview(XRWindow window)
+        => Engine.InvokeOnMainThread(
+            () => Engine.VRState.InitRenderEmulated(window),
+            executeNowIfAlreadyMainThread: true);
+
     public static void ApplyRenderSettingsFromToggles()
     {
         var s = Engine.Rendering.Settings;
@@ -32,6 +54,8 @@ public static partial class UnitTestingWorld
             s.PhysicsVisualizeSettings.SetAllTrue();
 
         Engine.Profiler.EnableFrameLogging = Toggles.EnableProfilerLogging;
+
+        EnsureEmulatedVRStereoPreviewRenderingHooked();
     }
 
     /// <summary>

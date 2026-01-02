@@ -9,12 +9,12 @@ public unsafe partial class OpenXRAPI
     private Instance _instance;
 
     private void DestroyInstance()
-        => Api!.DestroyInstance(_instance);
+        => Api?.DestroyInstance(_instance);
 
     private void CreateInstance()
     {
         var appInfo = MakeAppInfo();
-        var createInfo = MakeCreateInfo(appInfo, GetRequiredExtensions(ERenderer.OpenGL), EnableValidationLayers ? validationLayers : null);
+        var createInfo = MakeCreateInfo(appInfo, GetRequiredExtensions(ERenderer.OpenGL), EnableValidationLayers ? _validationLayers : null);
         MakeInstance(createInfo);
         Free(appInfo, createInfo);
     }

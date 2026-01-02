@@ -9,6 +9,7 @@ namespace XREngine
 {
     public static partial class Engine
     {
+        private static ProjectUserSettings? _trackedProjectUserSettings;
         /// <summary>
         /// The currently loaded project, if any.
         /// </summary>
@@ -123,15 +124,35 @@ namespace XREngine
             if (CurrentProject?.UserSettingsPath is null || Assets is null)
                 return;
 
-            if (File.Exists(CurrentProject.UserSettingsPath))
+            string userSettingsPath = CurrentProject.UserSettingsPath;
+
+            if (File.Exists(userSettingsPath))
             {
-                var projectSettings = Assets.Load<ProjectUserSettings>(CurrentProject.UserSettingsPath);
+                var projectSettings = Assets.Load<ProjectUserSettings>(userSettingsPath);
                 if (projectSettings?.Settings is not null)
                 {
+                    projectSettings.Name = "User Settings";
+                    _trackedProjectUserSettings = projectSettings;
                     UserSettings = projectSettings.Settings;
                     Debug.Out("Loaded project user settings.");
                 }
+                return;
             }
+
+            // No file yet: create a tracked settings asset so changes show up in Save/Save All like any other file.
+            var created = new ProjectUserSettings(UserSettings)
+            {
+                FilePath = userSettingsPath,
+                Name = "User Settings"
+            };
+
+            string? settingsDirectory = Path.GetDirectoryName(userSettingsPath);
+            if (!string.IsNullOrWhiteSpace(settingsDirectory))
+                Directory.CreateDirectory(settingsDirectory);
+
+            Assets.EnsureTracked(created);
+            _trackedProjectUserSettings = created;
+            created.MarkDirty();
         }
 
         /// <summary>
@@ -192,11 +213,25 @@ namespace XREngine
                 return;
 
             string userSettingsPath = CurrentProject.UserSettingsPath;
-            var projectSettings = new ProjectUserSettings(UserSettings)
+
+            ProjectUserSettings projectSettings;
+            if (_trackedProjectUserSettings is not null)
             {
-                FilePath = userSettingsPath,
-                Name = "User Settings"
-            };
+                projectSettings = _trackedProjectUserSettings;
+                projectSettings.FilePath = userSettingsPath;
+                projectSettings.Name = "User Settings";
+                if (!ReferenceEquals(projectSettings.Settings, UserSettings))
+                    projectSettings.Settings = UserSettings;
+            }
+            else
+            {
+                projectSettings = Assets.GetAssetByPath(userSettingsPath) as ProjectUserSettings
+                    ?? new ProjectUserSettings(UserSettings);
+                projectSettings.FilePath = userSettingsPath;
+                projectSettings.Name = "User Settings";
+                Assets.EnsureTracked(projectSettings);
+                _trackedProjectUserSettings = projectSettings;
+            }
 
             string? settingsDirectory = Path.GetDirectoryName(userSettingsPath);
             if (!string.IsNullOrWhiteSpace(settingsDirectory))

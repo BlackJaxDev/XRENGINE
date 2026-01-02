@@ -34,7 +34,7 @@ namespace XREngine.Components.Lights
     {
         public const int MaxCascades = 4;
 
-        private readonly ObservableCollection<RadianceCascadeLevel> _cascades = new();
+        private readonly ObservableCollection<RadianceCascadeLevel> _cascades = [];
         private ColorF4 _tint = ColorF4.White;
         private float _intensity = 1.0f;
         private bool _cascadesEnabled = true;
@@ -191,10 +191,12 @@ namespace XREngine.Components.Lights
 
         private void HandleCascadePropertyChanged(object? sender, PropertyChangedEventArgs e)
         {
-            if (e.PropertyName == nameof(RadianceCascadeLevel.RadianceTexture) ||
-                e.PropertyName == nameof(RadianceCascadeLevel.Enabled))
+            switch (e.PropertyName)
             {
-                RefreshRegistration();
+                case nameof(RadianceCascadeLevel.RadianceTexture):
+                case nameof(RadianceCascadeLevel.Enabled):
+                    RefreshRegistration();
+                    break;
             }
         }
 

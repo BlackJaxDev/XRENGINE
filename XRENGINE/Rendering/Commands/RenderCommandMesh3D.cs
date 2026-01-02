@@ -36,6 +36,8 @@ namespace XREngine.Rendering.Commands
         private Matrix4x4 _lastSubmittedModelMatrix = Matrix4x4.Identity;
         private bool _lastSubmittedModelMatrixValid;
 
+        private uint _renderGpuCommandIndex = uint.MaxValue;
+
         [YamlIgnore]
         public XRMeshRenderer? Mesh
         {
@@ -91,6 +93,8 @@ namespace XREngine.Rendering.Commands
                     Debug.Out($"[MotionVectors] Missing prev model; treating as static. WorldIsModel={_renderWorldMatrixIsModelMatrix}, Instances={_renderInstances}");
                 }
 
+                using var _ = Engine.Rendering.State.PushTransformId(_renderGpuCommandIndex == uint.MaxValue ? 0u : _renderGpuCommandIndex);
+
                 mesh.Render(
                     GetModelMatrix(),
                     GetPreviousModelMatrix(),
@@ -121,6 +125,7 @@ namespace XREngine.Rendering.Commands
             _renderMaterialOverride = MaterialOverride;
             _renderInstances = Instances;
             _renderWorldMatrixIsModelMatrix = WorldMatrixIsModelMatrix;
+            _renderGpuCommandIndex = GPUCommandIndex;
             if (_renderWorldMatrixIsModelMatrix)
             {
                 _renderPrevWorldMatrix = _lastSubmittedModelMatrixValid ? _lastSubmittedModelMatrix : _renderWorldMatrix;

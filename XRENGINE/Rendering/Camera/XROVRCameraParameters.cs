@@ -59,6 +59,6 @@ namespace XREngine.Rendering
         }
 
         protected override Frustum CalculateUntransformedFrustum()
-            => new(GetProjectionMatrix().Inverted());
+            => new((_projectionMatrix ?? CalculateProjectionMatrix()).Inverted());
     }
 }

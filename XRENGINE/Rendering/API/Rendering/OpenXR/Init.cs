@@ -23,7 +23,7 @@ public unsafe partial class OpenXRAPI : XRBase
     ~OpenXRAPI()
     {
         CleanUp();
-        Api.Dispose();
+        Api?.Dispose();
     }
 
     /// <summary>

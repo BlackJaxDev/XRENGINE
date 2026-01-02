@@ -284,9 +284,100 @@ namespace XREngine
             private static uint _lastRenderWidth = 0u;
             private static uint _lastRenderHeight = 0u;
 
+            private static bool _openVrRuntimeActiveForRender = false;
+            private static bool _emulatedRenderActive = false;
+            private static XRWindow? _renderWindow = null;
+
+            private static void AttachRenderCallback(XRWindow window)
+            {
+                if (_renderWindow == window)
+                    return;
+
+                if (_renderWindow is not null)
+                    _renderWindow.RenderViewportsCallback -= Render;
+
+                _renderWindow = window;
+                window.RenderViewportsCallback += Render;
+            }
+
+            public static void InitRenderEmulated(XRWindow window)
+            {
+                _openVrRuntimeActiveForRender = false;
+                _emulatedRenderActive = true;
+
+                AttachRenderCallback(window);
+                Renderer = window.Renderer;
+
+                if (!TryGetRenderTargetSize(out uint rW, out uint rH))
+                    return;
+
+                _lastRenderWidth = rW;
+                _lastRenderHeight = rH;
+
+                var left = MakeFBOTexture(rW, rH);
+                var right = MakeFBOTexture(rW, rH);
+
+                if (Stereo)
+                {
+                    if (StereoViewport is not null)
+                        return;
+                    InitSinglePass(window, rW, rH, left, right);
+                }
+                else
+                {
+                    if (LeftEyeViewport is not null && RightEyeViewport is not null)
+                        return;
+                    InitTwoPass(window, rW, rH, left, right);
+                }
+            }
+
+            private static bool TryGetRenderTargetSize(out uint rW, out uint rH)
+            {
+                rW = 0u;
+                rH = 0u;
+
+                if (_openVrRuntimeActiveForRender)
+                {
+                    try
+                    {
+                        Api.CVR.GetRecommendedRenderTargetSize(ref rW, ref rH);
+                    }
+                    catch
+                    {
+                        rW = 0u;
+                        rH = 0u;
+                    }
+                }
+
+                if (rW == 0u || rH == 0u)
+                {
+                    var window = Renderer?.XRWindow;
+                    var fb = window?.Window.FramebufferSize;
+                    if (fb.HasValue && fb.Value.X > 0 && fb.Value.Y > 0)
+                    {
+                        rW = (uint)fb.Value.X;
+                        rH = (uint)fb.Value.Y;
+                        return true;
+                    }
+
+                    var size = window?.Window.Size;
+                    if (size.HasValue && size.Value.X > 0 && size.Value.Y > 0)
+                    {
+                        rW = (uint)size.Value.X;
+                        rH = (uint)size.Value.Y;
+                        return true;
+                    }
+                }
+
+                return rW > 0u && rH > 0u;
+            }
+
             private static void InitRender(XRWindow window)
             {
-                window.RenderViewportsCallback += Render;
+                _openVrRuntimeActiveForRender = true;
+                _emulatedRenderActive = false;
+
+                AttachRenderCallback(window);
                 Renderer = window.Renderer;
 
                 uint rW = 0u, rH = 0u;
@@ -391,12 +482,21 @@ namespace XREngine
                 if (leftCam is null || rightCam is null)
                     return;
 
-                var leftEyeView = leftCam.Transform.LocalMatrix;
-                var leftProj = leftCam.ProjectionMatrix;
-                var rightEyeView = rightCam.Transform.LocalMatrix;
-                var rightProj = rightCam.ProjectionMatrix;
+                try
+                {
+                    var leftEyeView = leftCam.Transform.LocalMatrix;
+                    var leftProj = leftCam.ProjectionMatrix;
+                    var rightEyeView = rightCam.Transform.LocalMatrix;
+                    var rightProj = rightCam.ProjectionMatrix;
 
-                _stereoCullingFrustum = new Frustum((_combinedProjectionMatrix = ProjectionMatrixCombiner.CombineProjectionMatrices(leftProj, rightProj, leftEyeView, rightEyeView)).Inverted());
+                    _stereoCullingFrustum = new Frustum((_combinedProjectionMatrix = ProjectionMatrixCombiner.CombineProjectionMatrices(leftProj, rightProj, leftEyeView, rightEyeView)).Inverted());
+                }
+                catch (Exception ex)
+                {
+                    _stereoCullingFrustum = null;
+                    _combinedProjectionMatrix = Matrix4x4.Identity;
+                    Debug.LogException(ex, "Failed to recalculate stereo culling frustum.");
+                }
             }
 
             private static void CollectVisibleTwoPass()
@@ -453,8 +553,12 @@ namespace XREngine
 
             private static void Render()
             {
-                uint rW = 0u, rH = 0u;
-                Api.CVR.GetRecommendedRenderTargetSize(ref rW, ref rH);
+                if (!_openVrRuntimeActiveForRender && !_emulatedRenderActive)
+                    return;
+
+                if (!TryGetRenderTargetSize(out uint rW, out uint rH))
+                    return;
+
                 if (rW != _lastRenderWidth || rH != _lastRenderHeight)
                 {
                     _lastRenderWidth = rW;
@@ -471,24 +575,26 @@ namespace XREngine
                         var left = MakeFBOTexture(rW, rH);
                         var right = MakeFBOTexture(rW, rH);
                         RemakeTwoPass(Renderer!.XRWindow, rW, rH, left, right);
-                        _twoPassRenderPipeline.DestroyCache();
+                        _twoPassRenderPipeline?.DestroyCache();
                     }
                 }
 
-                //Begin drawing to the headset
-                var drawContext = Api.UpdateDraw(Origin);
+                //Begin drawing to the headset (OpenVR runtime only)
+                if (_openVrRuntimeActiveForRender)
+                    _ = Api.UpdateDraw(Origin);
 
                 //Update VR-related transforms
                 RecalcMatrixOnDraw?.Invoke();
 
-                IsPowerSaving = Api.CVR.ShouldApplicationReduceRenderingWork();
+                if (_openVrRuntimeActiveForRender)
+                    IsPowerSaving = Api.CVR.ShouldApplicationReduceRenderingWork();
 
                 if (Stereo)
                     RenderSinglePass();
                 else
                     RenderTwoPass();
 
-                if (Rendering.Settings.LogVRFrameTimes)
+                if (_openVrRuntimeActiveForRender && Rendering.Settings.LogVRFrameTimes)
                     ReadStats();
             }
 
@@ -513,11 +619,14 @@ namespace XREngine
                 //LeftEyeViewport?.Render(VRLeftEyeRenderTarget);
                 //RightEyeViewport?.Render(VRRightEyeRenderTarget);
 
-                //Submit the rendered frames to the headset
-                nint? leftHandle = VRLeftEyeViewTexture?.APIWrappers?.FirstOrDefault()?.GetHandle();
-                nint? rightHandle = VRRightEyeViewTexture?.APIWrappers?.FirstOrDefault()?.GetHandle();
-                if (leftHandle is not null && rightHandle is not null)
-                    SubmitRenders(leftHandle.Value, rightHandle.Value);
+                if (_openVrRuntimeActiveForRender)
+                {
+                    //Submit the rendered frames to the headset
+                    nint? leftHandle = VRLeftEyeViewTexture?.APIWrappers?.FirstOrDefault()?.GetHandle();
+                    nint? rightHandle = VRRightEyeViewTexture?.APIWrappers?.FirstOrDefault()?.GetHandle();
+                    if (leftHandle is not null && rightHandle is not null)
+                        SubmitRenders(leftHandle.Value, rightHandle.Value);
+                }
             }
 
             private static void RenderSinglePass()
@@ -531,14 +640,17 @@ namespace XREngine
                 //Render the scene to left and right eyes stereoscopically
                 StereoViewport?.RenderStereo(VRStereoRenderTarget, left, right, world);
 
-                //Submit the rendered frames to the headset
-                //if (StereoUseTextureViews)
-                //{
-                nint? leftHandle = StereoLeftViewTexture?.APIWrappers?.FirstOrDefault()?.GetHandle();
-                nint? rightHandle = StereoRightViewTexture?.APIWrappers?.FirstOrDefault()?.GetHandle();
-                if (leftHandle is not null && rightHandle is not null)
-                    SubmitRenders(leftHandle.Value, rightHandle.Value);
-                //}
+                if (_openVrRuntimeActiveForRender)
+                {
+                    //Submit the rendered frames to the headset
+                    //if (StereoUseTextureViews)
+                    //{
+                    nint? leftHandle = StereoLeftViewTexture?.APIWrappers?.FirstOrDefault()?.GetHandle();
+                    nint? rightHandle = StereoRightViewTexture?.APIWrappers?.FirstOrDefault()?.GetHandle();
+                    if (leftHandle is not null && rightHandle is not null)
+                        SubmitRenders(leftHandle.Value, rightHandle.Value);
+                    //}
+                }
                 //else
                 //{
                 //    nint? arrayHandle = VRStereoViewTextureArray?.APIWrappers?.FirstOrDefault()?.GetHandle();
@@ -556,6 +668,9 @@ namespace XREngine
                     if (_powerSaving == value)
                         return;
                     _powerSaving = value;
+                    if (!_openVrRuntimeActiveForRender)
+                        return;
+
                     if (_powerSaving)
                         SetPowerSavingUpdate();
                     else
@@ -565,6 +680,9 @@ namespace XREngine
 
             private static void SetNormalUpdate()
             {
+                if (!_openVrRuntimeActiveForRender)
+                    return;
+
                 ETrackedPropertyError error = ETrackedPropertyError.TrackedProp_Success;
                 float hz = Api.CVR.GetFloatTrackedDeviceProperty(0, ETrackedDeviceProperty.Prop_DisplayFrequency_Float, ref error);
                 if (error != ETrackedPropertyError.TrackedProp_Success || hz <= 0.0f)
@@ -574,6 +692,9 @@ namespace XREngine
             }
             private static void SetPowerSavingUpdate()
             {
+                if (!_openVrRuntimeActiveForRender)
+                    return;
+
                 ETrackedPropertyError error = ETrackedPropertyError.TrackedProp_Success;
                 float hz = Api.CVR.GetFloatTrackedDeviceProperty(0, ETrackedDeviceProperty.Prop_DisplayFrequency_Float, ref error);
                 if (error != ETrackedPropertyError.TrackedProp_Success || hz <= 0.0f)
@@ -861,13 +982,23 @@ namespace XREngine
                         }
                     }
 
-                    RecalculateStereoCullingFrustum();
+                    // ViewInformation can be set before VR rendering has been initialized (e.g., during component activation).
+                    // Only compute the stereo culling frustum once the VR viewports exist; otherwise we can end up querying
+                    // VR projection parameters too early.
+                    if (LeftEyeViewport is not null || RightEyeViewport is not null || StereoViewport is not null)
+                        RecalculateStereoCullingFrustum();
+                    else
+                    {
+                        _stereoCullingFrustum = null;
+                        _combinedProjectionMatrix = Matrix4x4.Identity;
+                    }
                 }
             }
 
             private static void EyeLocalMatrixChanged(TransformBase @base, Matrix4x4 localMatrix)
             {
-                RecalculateStereoCullingFrustum();
+                if (LeftEyeViewport is not null || RightEyeViewport is not null || StereoViewport is not null)
+                    RecalculateStereoCullingFrustum();
             }
 
             private static void ReadStats()

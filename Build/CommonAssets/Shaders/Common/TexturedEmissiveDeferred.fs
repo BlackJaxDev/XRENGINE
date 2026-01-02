@@ -3,9 +3,11 @@
 layout (location = 0) out vec4 AlbedoOpacity;
 layout (location = 1) out vec3 Normal;
 layout (location = 2) out vec4 RMSE;
+layout (location = 3) out uint TransformId;
 
 layout (location = 1) in vec3 FragNorm;
 layout (location = 4) in vec2 FragUV0;
+layout (location = 21) in float FragTransformId;
 
 uniform sampler2D Texture0; //Albedo
 uniform sampler2D Texture1; //Emissive
@@ -19,6 +21,7 @@ uniform float Emission = 0.0f;
 
 void main()
 {
+    TransformId = floatBitsToUint(FragTransformId);
     Normal = normalize(FragNorm);
     AlbedoOpacity = vec4(texture(Texture0, FragUV0).rgb * BaseColor, Opacity);
     float emissive = texture(Texture1, FragUV0).r * Emission;

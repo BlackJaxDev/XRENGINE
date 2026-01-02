@@ -11,5 +11,6 @@ namespace XREngine
         VoxelConeTracing = 3,
         LightVolumes = 4,
         RadianceCascades = 5,
+        SurfelGI = 6,
     }
 }
