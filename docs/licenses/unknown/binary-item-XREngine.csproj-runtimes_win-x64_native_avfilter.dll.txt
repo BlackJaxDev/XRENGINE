@@ -1,0 +1,5 @@
+﻿License file not detected for referenced binary item.
+
+Project: XREngine.csproj
+Path: runtimes\win-x64\native\avfilter.dll
+

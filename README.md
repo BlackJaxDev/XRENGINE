@@ -187,7 +187,7 @@ For a quick two-instance Editor networking test (server + client), there is a he
 
 - Video/streaming codecs – the repo ships FFmpeg-family native DLLs (`avcodec`, `avformat`, etc.) under `XRENGINE/runtimes/win-x64/native` and copies them to output as needed (used by the Flyleaf integration).
 
-- NVIDIA features (DLSS / NIS / Reflex / Streamline) – Streamline (`sl.*`) and related NVIDIA DLLs are included under `XRENGINE/runtimes/win-x64/native` alongside license files. These paths only activate when supported by your hardware/driver/config.
+- NVIDIA features (DLSS / Reflex / Streamline) – **NVIDIA proprietary SDK binaries are not redistributed in this repo.** To enable these features locally, obtain the relevant NVIDIA SDK(s) from NVIDIA and drop the required DLLs into `ThirdParty/NVIDIA/SDK/win-x64/`. The build copies them into the output directory when present. See `ThirdParty/NVIDIA/SDK/README.md`.
 
 - `RestirGI.Native.dll` – the optional ReSTIR GI bridge is built from the native project under `Build/RestirGI/` and copied into the managed output as `RestirGI.Native.dll` when present. If it’s missing, build `Build/RestirGI/RestirGINative.sln` for your configuration/platform and then rebuild the C# projects so the copy step can pick it up.
 
@@ -203,5 +203,21 @@ There is no dedicated `CONTRIBUTING.md` in this repo yet. If you want to help ou
 
 ## License and Support
 - License: `LICENSE`
+
+### Dependency inventory
+
+For a best-effort list of referenced NuGet packages, submodules, and native/managed DLLs (with best-effort owner attribution), see `docs/DEPENDENCIES.md`.
+
+### License summary (non-authoritative)
+
+This project is licensed under the **GNU Affero General Public License v3.0 (AGPLv3)**. This is only a convenience summary; the full terms are in `LICENSE`.
+
+- You can use, modify, and redistribute the code, but **redistribution must remain under AGPLv3** (copyleft).
+- If you **distribute binaries/object code**, you must also provide the **Corresponding Source** under AGPLv3 (including the build/install/run scripts needed to produce and run the binaries).
+- If you **modify the program** and users **interact with it over a network**, your modified version must **prominently offer those users access to the Corresponding Source** of that modified version (AGPL network-use requirement).
+- When conveying copies, you must **keep license/copyright notices intact**, provide a copy of the license, and mark modified versions.
+- The software is provided **“as is” with no warranty**, and there is a **limitation of liability** to the extent permitted by law.
+
+Note: this repo includes third-party submodules/dependencies that may have their own license terms.
 - Issues: https://github.com/BlackJaxDev/XRENGINE/issues
 - Discussions: https://github.com/BlackJaxDev/XRENGINE/discussions

@@ -432,7 +432,9 @@ namespace XREngine.Rendering.Pipelines.Commands
 
             commands.BindTo(program, 5u);
             program.Uniform("hasCulledCommands", true);
-            program.Uniform("culledFloatCount", commands.ElementCount);
+            // Shader interprets the SSBO as a flat float array; bounds checks are in float units.
+            // ElementCount here is the number of commands, not the number of floats.
+            program.Uniform("culledFloatCount", commands.ElementCount * CulledCommandFloats);
             program.Uniform("culledCommandFloats", CulledCommandFloats);
         }
     }

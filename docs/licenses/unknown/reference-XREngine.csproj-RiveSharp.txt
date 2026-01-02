@@ -1,0 +1,6 @@
+﻿License text not detected for assembly reference.
+
+Project: XREngine.csproj
+Reference: RiveSharp
+HintPath: ..\Build\Submodules\rive-sharp\RiveSharp\bin\$(Configuration)\netstandard2.0\RiveSharp.dll
+
