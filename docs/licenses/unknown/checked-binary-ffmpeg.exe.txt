@@ -1,0 +1,5 @@
+﻿License file not detected for checked-in binary.
+
+Path: XRENGINE/ffmpeg.exe
+File: ffmpeg.exe
+

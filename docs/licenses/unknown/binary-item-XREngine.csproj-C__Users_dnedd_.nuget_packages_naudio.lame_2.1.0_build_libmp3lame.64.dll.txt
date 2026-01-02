@@ -1,0 +1,5 @@
+﻿License file not detected for referenced binary item.
+
+Project: XREngine.csproj
+Path: C:\Users\dnedd\.nuget\packages\naudio.lame\2.1.0\build\libmp3lame.64.dll
+

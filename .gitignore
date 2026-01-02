@@ -37,6 +37,11 @@ bld/
 # Visual Studio 2017 auto generated files
 Generated\ Files/
 
+# --- Third-party SDK drop folders (user-provided; do not commit) ---
+/ThirdParty/NVIDIA/SDK/**
+!/ThirdParty/NVIDIA/SDK/README.md
+!/ThirdParty/NVIDIA/SDK/win-x64/.gitkeep
+
 # MSTest test Results
 [Tt]est[Rr]esult*/
 [Bb]uild[Ll]og.*

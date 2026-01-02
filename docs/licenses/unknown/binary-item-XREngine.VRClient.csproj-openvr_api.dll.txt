@@ -1,0 +1,5 @@
+﻿License file not detected for referenced binary item.
+
+Project: XREngine.VRClient.csproj
+Path: openvr_api.dll
+

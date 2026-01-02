@@ -261,6 +261,24 @@
                 "reveal": "silent"
             },
             "problemMatcher": []
+        },
+        {
+            "label": "test-surfelgi",
+            "command": "dotnet",
+            "type": "shell",
+            "args": [
+                "test",
+                "${workspaceFolder}/XREngine.UnitTests/XREngine.UnitTests.csproj",
+                "-c",
+                "Debug",
+                "--filter",
+                "FullyQualifiedName~XREngine.UnitTests.Rendering.SurfelGiComputeIntegrationTests"
+            ],
+            "group": "test",
+            "presentation": {
+                "reveal": "always"
+            },
+            "problemMatcher": "$msCompile"
         }
     ]
 }

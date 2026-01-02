@@ -30,7 +30,7 @@ namespace XREngine
         private bool _disableAudioOnDefocus = false;
         private float _audioDisableFadeSeconds = 0.5f;
         private float? _unfocusedTargetFramesPerSecond = null;
-        private EGlobalIlluminationMode _globalIlluminationMode = EGlobalIlluminationMode.LightProbesAndIbl;
+        private EGlobalIlluminationMode _globalIlluminationMode = EGlobalIlluminationMode.SurfelGI;
 
         public EVSyncMode VSync
         {
