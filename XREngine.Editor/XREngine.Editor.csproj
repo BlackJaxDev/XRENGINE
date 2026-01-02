@@ -155,4 +155,12 @@
     <PackageReference Update="StirlingLabs.assimp.native.win-x64" Version="5.2.5.4" />
   </ItemGroup>
 
+  <ItemGroup>
+    <Content Include="C:\Program Files (x86)\Steam\steamapps\common\SteamVR\bin\win64\openxr_loader.dll"
+             Condition="Exists('C:\Program Files (x86)\Steam\steamapps\common\SteamVR\bin\win64\openxr_loader.dll')">
+      <Link>openxr_loader.dll</Link>
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
+  </ItemGroup>
+
 </Project>

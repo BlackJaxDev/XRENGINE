@@ -406,7 +406,7 @@ namespace XREngine
             category = categoryOverride ?? ClassifyMessage(message);
                 writer = EnsureLogWriterInternal(category, logToFile);
                 if (writer is not null)
-                    writer.WriteLine($"{DateTime.Now:O} {message}");
+                    writer.WriteLine($"{FormatTimestamp(DateTimeOffset.Now)} {message}");
             }
 
             // Add to console entries for in-editor viewing
@@ -446,12 +446,15 @@ namespace XREngine
                 {
                     AutoFlush = true
                 };
-                writer.WriteLine($"Log ({fileSuffix}) started {DateTime.Now:O}");
+                writer.WriteLine($"Log ({fileSuffix}) started {FormatTimestamp(DateTimeOffset.Now)}");
                 LogWriters[category] = writer;
             }
 
             return LogWriters[category];
         }
+
+        private static string FormatTimestamp(DateTimeOffset timestamp)
+            => timestamp.ToString("yyyy-MM-dd HH:mm:ss.fff zzz");
 
         private static ELogCategory ClassifyMessage(string message)
         {

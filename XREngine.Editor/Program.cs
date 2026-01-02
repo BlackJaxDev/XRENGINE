@@ -2,6 +2,7 @@
 using Newtonsoft.Json.Converters;
 using System;
 using System.Numerics;
+using System.Text;
 using XREngine;
 using XREngine.Components;
 using XREngine.Components.Lights;
@@ -45,6 +46,8 @@ internal class Program
     [STAThread]
     private static void Main(string[] args)
     {
+        Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);
+
         if (TryHandleCommandLine(args))
             return;
 

@@ -1,7 +1,7 @@
 using Silk.NET.OpenXR.Extensions.HTC;
 using Silk.NET.OpenXR.Extensions.HTCX;
 using Silk.NET.OpenXR.Extensions.KHR;
-using Silk.NET.Vulkan.Extensions.EXT;
+using OxrExtDebugUtils = global::Silk.NET.OpenXR.Extensions.EXT.ExtDebugUtils;
 
 public unsafe partial class OpenXRAPI
 {
@@ -23,7 +23,7 @@ public unsafe partial class OpenXRAPI
     {
         string[] extensions = [];
         if (EnableValidationLayers)
-            extensions = [.. extensions, ExtDebugUtils.ExtensionName];
+            extensions = [.. extensions, OxrExtDebugUtils.ExtensionName];
         switch (renderer)
         {
             case ERenderer.Vulkan:
