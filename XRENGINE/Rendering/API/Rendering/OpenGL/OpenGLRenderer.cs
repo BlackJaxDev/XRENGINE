@@ -178,6 +178,10 @@ namespace XREngine.Rendering.OpenGL
             api.Enable(EnableCap.TextureCubeMapSeamless);
             api.FrontFace(FrontFaceDirection.Ccw);
 
+            // Avoid debug-layer warnings when clearing integer framebuffers.
+            // Dithering is enabled by default in OpenGL but isn't meaningful for integer attachments.
+            api.Disable(EnableCap.Dither);
+
             api.ClipControl(GLEnum.LowerLeft, GLEnum.NegativeOneToOne);
 
             //Fix gamma manually inside of the post process shader

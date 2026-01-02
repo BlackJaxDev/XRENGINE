@@ -175,6 +175,9 @@ namespace XREngine.Rendering.Shaders.Generator
         {
             UniformNames.Add(EEngineUniform.ModelMatrix.ToString(), (EShaderVarType._mat4, false));
 
+            // Used when gl_BaseInstance is 0 (non-indirect draw path).
+            UniformNames.Add("TransformId", (EShaderVarType._uint, false));
+
             if (UseOVRMultiView || UseNVStereo)
             {
                 UniformNames.Add($"{EEngineUniform.LeftEyeInverseViewMatrix}{VertexUniformSuffix}", (EShaderVarType._mat4, false));
@@ -269,7 +272,6 @@ namespace XREngine.Rendering.Shaders.Generator
                     Line($"{string.Format(FragUVName, i)} = {ECommonBufferType.TexCoord}{i};");
 
             // Default CPU draw path has gl_BaseInstance == 0; GPU-indirect path uses it as the draw/command index.
-            Line("uniform uint TransformId;");
             Line("uint _xreTransformId = uint(gl_BaseInstance);");
             Line("if (_xreTransformId == 0u) _xreTransformId = TransformId;");
             Line($"{FragTransformIdName} = uintBitsToFloat(_xreTransformId);");

@@ -48,7 +48,7 @@ public unsafe partial class OpenXRAPI
         if (!EnableValidationLayers)
             return;
 
-        if (Api!.TryGetInstanceExtension(null, _instance, out _debugUtils))
+        if (!Api!.TryGetInstanceExtension(null, _instance, out _debugUtils) || _debugUtils is null)
             return;
 
         DebugUtilsMessengerCreateInfoEXT createInfo = new();

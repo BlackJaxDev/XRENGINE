@@ -3,6 +3,7 @@
     public enum EAudioLibrary
     {
         OpenAL,
+        SteamAudio,
         //DirectSound,
     }
 }

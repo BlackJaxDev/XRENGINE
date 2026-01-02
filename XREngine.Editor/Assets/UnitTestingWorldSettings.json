@@ -77,7 +77,7 @@
   "TransformTool": false,
   "UpdateFPS": 60.0,
   "VMC": false,
-  "VRPawn": false,
+  "VRPawn": true,
   "UseOpenXR": true,
   "VideoStreaming": false,
   "VideoStreamingAudio": false,
