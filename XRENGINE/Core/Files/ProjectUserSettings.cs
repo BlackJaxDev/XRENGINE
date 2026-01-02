@@ -1,5 +1,6 @@
 using MemoryPack;
 using XREngine.Core.Files;
+using XREngine.Data.Core;
 
 namespace XREngine
 {
@@ -13,11 +14,38 @@ namespace XREngine
         private UserSettings _settings = new();
 
         [MemoryPackConstructor]
-        public ProjectUserSettings() { }
+        public ProjectUserSettings()
+        {
+            AttachSettings(_settings);
+        }
 
         public ProjectUserSettings(UserSettings settings)
         {
             _settings = settings ?? new UserSettings();
+            AttachSettings(_settings);
+        }
+
+        private void AttachSettings(UserSettings settings)
+        {
+            if (settings is null)
+                return;
+
+            settings.PropertyChanged -= HandleSettingsChanged;
+            settings.PropertyChanged += HandleSettingsChanged;
+        }
+
+        private void DetachSettings(UserSettings settings)
+        {
+            if (settings is null)
+                return;
+
+            settings.PropertyChanged -= HandleSettingsChanged;
+        }
+
+        private void HandleSettingsChanged(object? sender, IXRPropertyChangedEventArgs e)
+        {
+            if (!IsDirty)
+                MarkDirty();
         }
 
         /// <summary>
@@ -26,7 +54,17 @@ namespace XREngine
         public UserSettings Settings
         {
             get => _settings;
-            set => SetField(ref _settings, value ?? new UserSettings());
+            set
+            {
+                var next = value ?? new UserSettings();
+                if (ReferenceEquals(_settings, next))
+                    return;
+
+                DetachSettings(_settings);
+                SetField(ref _settings, next);
+                AttachSettings(_settings);
+                MarkDirty();
+            }
         }
     }
 }

@@ -341,7 +341,7 @@ namespace XREngine.Components.Scene.Mesh
                 if (node is null)
                     return;
 
-                if (node.Name.StartsWith("__HLOD_", StringComparison.Ordinal))
+                if (node.Name?.StartsWith("__HLOD_", StringComparison.Ordinal) == true)
                     return;
 
                 if (!IncludeInactiveNodes && !node.IsActiveInHierarchy)

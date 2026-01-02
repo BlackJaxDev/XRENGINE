@@ -5,7 +5,7 @@ using ActionType = OpenVR.NET.Manifest.ActionType;
 
 internal static class EditorVR
 {
-    public static void ApplyVRSettings(VRGameStartupSettings<EVRActionCategory, EVRGameAction> settings)
+    public static void ApplyOpenVRSettings(VRGameStartupSettings<EVRActionCategory, EVRGameAction> settings)
     {
         //https://github.com/ValveSoftware/openvr/wiki/Action-manifest
 
@@ -32,7 +32,6 @@ internal static class EditorVR
             WindowsPath = Environment.ProcessPath,
             WindowsArguments = "",
         };
-        settings.RunVRInPlace = true;
     }
 
     #region VR Actions
@@ -67,15 +66,15 @@ internal static class EditorVR
                 LocalizedNames = new Dictionary<string, string>
                 {
                     { "en_us", "One Handed" },
-                    { "fr", "À une main" },
-                    { "de", "Einhändig" },
+                    { "fr", "ï¿½ une main" },
+                    { "de", "Einhï¿½ndig" },
                     { "es", "De una mano" },
                     { "it", "A una mano" },
                     { "ja", "??" },
                     { "ko", "? ?" },
                     { "nl", "Eenhandig" },
                     { "pl", "Jednoreki" },
-                    { "pt", "De uma mão" },
+                    { "pt", "De uma mï¿½o" },
                     { "ru", "?????????" },
                     { "zh", "??" },
                 },
@@ -88,14 +87,14 @@ internal static class EditorVR
                 {
                     { "en_us", "Quick Menu" },
                     { "fr", "Menu rapide" },
-                    { "de", "Schnellmenü" },
-                    { "es", "Menú rápido" },
+                    { "de", "Schnellmenï¿½" },
+                    { "es", "Menï¿½ rï¿½pido" },
                     { "it", "Menu rapido" },
                     { "ja", "????????" },
                     { "ko", "?? ??" },
                     { "nl", "Snelmenu" },
                     { "pl", "Szybkie menu" },
-                    { "pt", "Menu rápido" },
+                    { "pt", "Menu rï¿½pido" },
                     { "ru", "??????? ????" },
                     { "zh", "????" },
                 },
@@ -108,8 +107,8 @@ internal static class EditorVR
                 {
                     { "en_us", "Menu" },
                     { "fr", "Menu" },
-                    { "de", "Menü" },
-                    { "es", "Menú" },
+                    { "de", "Menï¿½" },
+                    { "es", "Menï¿½" },
                     { "it", "Menu" },
                     { "ja", "????" },
                     { "ko", "??" },
@@ -128,8 +127,8 @@ internal static class EditorVR
                 {
                     { "en_us", "Avatar Menu" },
                     { "fr", "Menu de l'avatar" },
-                    { "de", "Avatar-Menü" },
-                    { "es", "Menú de avatar" },
+                    { "de", "Avatar-Menï¿½" },
+                    { "es", "Menï¿½ de avatar" },
                     { "it", "Menu avatar" },
                     { "ja", "????????" },
                     { "ko", "??? ??" },
@@ -197,7 +196,7 @@ internal static class EditorVR
             LocalizedNames = new Dictionary<string, string>
             {
                 { "en_us", "Toggle Mute" },
-                { "fr", "Activer/Désactiver le son" },
+                { "fr", "Activer/Dï¿½sactiver le son" },
                 { "de", "Stummschaltung umschalten" },
                 { "es", "Activar/Desactivar silencio" },
                 { "it", "Attiva/Disattiva muto" },
@@ -241,7 +240,7 @@ internal static class EditorVR
             LocalizedNames = new Dictionary<string, string>
             {
                 { "en_us", "Playspace Drag Left" },
-                { "fr", "Glisser l'espace de jeu à gauche" },
+                { "fr", "Glisser l'espace de jeu ï¿½ gauche" },
                 { "de", "Playspace nach links ziehen" },
                 { "es", "Arrastrar el espacio de juego a la izquierda" },
                 { "it", "Trascina lo spazio di gioco a sinistra" },
@@ -249,7 +248,7 @@ internal static class EditorVR
                 { "ko", "??? ????? ???? ???" },
                 { "nl", "Playspace naar links slepen" },
                 { "pl", "Przeciagnij obszar gry w lewo" },
-                { "pt", "Arrastar o espaço de jogo para a esquerda" },
+                { "pt", "Arrastar o espaï¿½o de jogo para a esquerda" },
                 { "ru", "?????????? ??????? ???????????? ?????" },
                 { "zh", "?????????" },
             },
@@ -263,7 +262,7 @@ internal static class EditorVR
             LocalizedNames = new Dictionary<string, string>
             {
                 { "en_us", "Playspace Drag Right" },
-                { "fr", "Glisser l'espace de jeu à droite" },
+                { "fr", "Glisser l'espace de jeu ï¿½ droite" },
                 { "de", "Playspace nach rechts ziehen" },
                 { "es", "Arrastrar el espacio de juego a la derecha" },
                 { "it", "Trascina lo spazio di gioco a destra" },
@@ -271,7 +270,7 @@ internal static class EditorVR
                 { "ko", "??? ????? ????? ???" },
                 { "nl", "Playspace naar rechts slepen" },
                 { "pl", "Przeciagnij obszar gry w prawo" },
-                { "pt", "Arrastar o espaço de jogo para a direita" },
+                { "pt", "Arrastar o espaï¿½o de jogo para a direita" },
                 { "ru", "?????????? ??????? ???????????? ??????" },
                 { "zh", "?????????" },
             },
@@ -286,8 +285,8 @@ internal static class EditorVR
             {
                 { "en_us", "Toggle Menu" },
                 { "fr", "Basculer le menu" },
-                { "de", "Menü umschalten" },
-                { "es", "Alternar menú" },
+                { "de", "Menï¿½ umschalten" },
+                { "es", "Alternar menï¿½" },
                 { "it", "Attiva/Disattiva menu" },
                 { "ja", "?????????" },
                 { "ko", "?? ??" },
@@ -308,14 +307,14 @@ internal static class EditorVR
             {
                 { "en_us", "Toggle Quick Menu" },
                 { "fr", "Basculer le menu rapide" },
-                { "de", "Schnellmenü umschalten" },
-                { "es", "Alternar menú rápido" },
+                { "de", "Schnellmenï¿½ umschalten" },
+                { "es", "Alternar menï¿½ rï¿½pido" },
                 { "it", "Attiva/Disattiva menu rapido" },
                 { "ja", "?????????????" },
                 { "ko", "?? ?? ??" },
                 { "nl", "Snelmenu in-/uitschakelen" },
                 { "pl", "Przelacz szybkie menu" },
-                { "pt", "Alternar menu rápido" },
+                { "pt", "Alternar menu rï¿½pido" },
                 { "ru", "??????????? ??????? ????" },
                 { "zh", "??????" },
             },
@@ -330,8 +329,8 @@ internal static class EditorVR
             {
                 { "en_us", "Toggle Avatar Menu" },
                 { "fr", "Basculer le menu de l'avatar" },
-                { "de", "Avatar-Menü umschalten" },
-                { "es", "Alternar menú de avatar" },
+                { "de", "Avatar-Menï¿½ umschalten" },
+                { "es", "Alternar menï¿½ de avatar" },
                 { "it", "Attiva/Disattiva menu avatar" },
                 { "ja", "?????????????" },
                 { "ko", "??? ?? ??" },
@@ -359,7 +358,7 @@ internal static class EditorVR
                 { "ko", "?? ??" },
                 { "nl", "Linkerhandpose" },
                 { "pl", "Pozycja lewej reki" },
-                { "pt", "Pose da mão esquerda" },
+                { "pt", "Pose da mï¿½o esquerda" },
                 { "ru", "???? ????? ????" },
                 { "zh", "????" },
             },
@@ -381,7 +380,7 @@ internal static class EditorVR
                 { "ko", "??? ??" },
                 { "nl", "Rechterhandpose" },
                 { "pl", "Pozycja prawej reki" },
-                { "pt", "Pose da mão direita" },
+                { "pt", "Pose da mï¿½o direita" },
                 { "ru", "???? ?????? ????" },
                 { "zh", "????" },
             },
@@ -395,7 +394,7 @@ internal static class EditorVR
             LocalizedNames = new Dictionary<string, string>
             {
                 { "en_us", "Locomote" },
-                { "fr", "Se déplacer" },
+                { "fr", "Se dï¿½placer" },
                 { "de", "Fortbewegen" },
                 { "es", "Desplazarse" },
                 { "it", "Muoversi" },
@@ -424,7 +423,7 @@ internal static class EditorVR
                 { "ja", "??" },
                 { "ko", "??" },
                 { "nl", "Draaien" },
-                { "pl", "Obrót" },
+                { "pl", "Obrï¿½t" },
                 { "pt", "Girar" },
                 { "ru", "???????" },
                 { "zh", "?" },

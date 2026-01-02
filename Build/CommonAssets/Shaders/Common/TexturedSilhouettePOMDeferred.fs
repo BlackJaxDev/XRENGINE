@@ -3,10 +3,12 @@
 layout (location = 0) out vec4 AlbedoOpacity;
 layout (location = 1) out vec3 Normal;
 layout (location = 2) out vec4 RMSI;
+layout (location = 3) out uint TransformId;
 
 layout (location = 0) in vec3 FragPos;   // view-space position
 layout (location = 1) in vec3 FragNorm;  // view-space normal
 layout (location = 4) in vec2 FragUV0;
+layout (location = 21) in float FragTransformId;
 
 uniform sampler2D Texture0; // Albedo
 uniform sampler2D Texture1; // Height (R)
@@ -139,6 +141,7 @@ vec2 SilhouetteParallaxOcclusionMapping(
 
 void main()
 {
+    TransformId = floatBitsToUint(FragTransformId);
     vec3 n = normalize(FragNorm);
     vec3 v = normalize(-FragPos);
 

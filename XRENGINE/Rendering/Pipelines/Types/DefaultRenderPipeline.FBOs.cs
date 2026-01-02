@@ -77,6 +77,41 @@ public partial class DefaultRenderPipeline
         };
     }
 
+    private XRFrameBuffer CreateTransformIdDebugOutputFBO()
+    {
+        XRTexture outputTexture = GetTexture<XRTexture>(TransformIdDebugOutputTextureName)!;
+        if (outputTexture is not IFrameBufferAttachement attach)
+            throw new InvalidOperationException("TransformId debug output texture must be FBO attachable.");
+
+        return new XRFrameBuffer((attach, EFrameBufferAttachment.ColorAttachment0, 0, -1))
+        {
+            Name = TransformIdDebugOutputFBOName
+        };
+    }
+
+    private XRFrameBuffer CreateTransformIdDebugQuadFBO()
+    {
+        XRTexture transformIdTexture = GetTexture<XRTexture>(TransformIdTextureName)!;
+        XRShader shader = XRShader.EngineShader(Path.Combine(SceneShaderPath, "DebugTransformId.fs"), EShaderType.Fragment);
+        XRMaterial mat = new([transformIdTexture], shader)
+        {
+            RenderOptions = new RenderingParameters()
+            {
+                DepthTest = new DepthTest()
+                {
+                    Enabled = ERenderParamUsage.Disabled,
+                },
+            }
+        };
+
+        var fbo = new XRQuadFrameBuffer(mat)
+        {
+            Name = TransformIdDebugQuadFBOName
+        };
+        fbo.SettingUniforms += TransformIdDebugQuadFBO_SettingUniforms;
+        return fbo;
+    }
+
     private XRFrameBuffer CreateFxaaFBO()
     {
         XRTexture fxaaSource = GetTexture<XRTexture>(PostProcessOutputTextureName)!;
@@ -104,6 +139,17 @@ public partial class DefaultRenderPipeline
         fxaaFbo.SetRenderTargets((fxaaAttach, EFrameBufferAttachment.ColorAttachment0, 0, -1));
         fxaaFbo.SettingUniforms += FxaaFBO_SettingUniforms;
         return fxaaFbo;
+    }
+
+    private void TransformIdDebugQuadFBO_SettingUniforms(XRRenderProgram program)
+    {
+        XRTexture? transformId = GetTexture<XRTexture>(TransformIdTextureName);
+        if (transformId is null)
+            return;
+
+        program.Sampler(TransformIdTextureName, transformId, 0);
+        program.Uniform("ScreenWidth", (float)InternalWidth);
+        program.Uniform("ScreenHeight", (float)InternalHeight);
     }
 
     private XRFrameBuffer CreateForwardPassFBO()
@@ -504,6 +550,40 @@ public partial class DefaultRenderPipeline
         };
         var fbo = new XRQuadFrameBuffer(restirCompositeMaterial) { Name = RestirCompositeFBOName };
         fbo.SettingUniforms += RestirCompositeFBO_SettingUniforms;
+        return fbo;
+    }
+
+    private XRFrameBuffer CreateSurfelGICompositeFBO()
+    {
+        XRTexture giTexture = GetTexture<XRTexture>(SurfelGITextureName)!;
+        XRShader compositeShader = XRShader.EngineShader(Path.Combine(SceneShaderPath, "SurfelGIComposite.fs"), EShaderType.Fragment);
+        BlendMode additiveBlend = new()
+        {
+            Enabled = ERenderParamUsage.Enabled,
+            RgbSrcFactor = EBlendingFactor.One,
+            AlphaSrcFactor = EBlendingFactor.One,
+            RgbDstFactor = EBlendingFactor.One,
+            AlphaDstFactor = EBlendingFactor.One,
+            RgbEquation = EBlendEquationMode.FuncAdd,
+            AlphaEquation = EBlendEquationMode.FuncAdd
+        };
+
+        XRMaterial material = new([giTexture], compositeShader)
+        {
+            RenderOptions = new RenderingParameters()
+            {
+                DepthTest = new DepthTest()
+                {
+                    Enabled = ERenderParamUsage.Unchanged,
+                    Function = EComparison.Always,
+                    UpdateDepth = false,
+                },
+                BlendModeAllDrawBuffers = additiveBlend
+            }
+        };
+
+        var fbo = new XRQuadFrameBuffer(material) { Name = SurfelGICompositeFBOName };
+        fbo.SettingUniforms += SurfelGICompositeFBO_SettingUniforms;
         return fbo;
     }
 

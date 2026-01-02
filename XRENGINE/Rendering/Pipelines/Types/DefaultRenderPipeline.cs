@@ -53,6 +53,7 @@ public partial class DefaultRenderPipeline : RenderPipeline
     public bool UsesLightVolumes => _globalIlluminationMode == EGlobalIlluminationMode.LightVolumes;
     public bool UsesLightProbeGI => _globalIlluminationMode == EGlobalIlluminationMode.LightProbesAndIbl;
     public bool UsesRadianceCascades => _globalIlluminationMode == EGlobalIlluminationMode.RadianceCascades;
+    public bool UsesSurfelGI => _globalIlluminationMode == EGlobalIlluminationMode.SurfelGI;
 
     // Light probe debug accessors (for editor/state panels)
     public XRTexture2DArray? ProbeIrradianceArray => _probeIrradianceArray;
@@ -119,6 +120,9 @@ public partial class DefaultRenderPipeline : RenderPipeline
     public const string PostProcessOutputFBOName = "PostProcessOutputFBO";
     public const string FxaaFBOName = "FxaaFBO";
     public const string UserInterfaceFBOName = "UserInterfaceFBO";
+    public const string TransformIdDebugQuadFBOName = "TransformIdDebugQuadFBO";
+    public const string TransformIdDebugOutputTextureName = "TransformIdDebugOutputTexture";
+    public const string TransformIdDebugOutputFBOName = "TransformIdDebugOutputFBO";
     public const string RestirCompositeFBOName = "RestirCompositeFBO";
     public const string LightVolumeCompositeFBOName = "LightVolumeCompositeFBO";
     public const string VelocityFBOName = "VelocityFBO";
@@ -133,6 +137,7 @@ public partial class DefaultRenderPipeline : RenderPipeline
     public const string DepthPreloadFBOName = "DepthPreloadFBO";
     public const string FxaaOutputTextureName = "FxaaOutputTexture";
     public const string RadianceCascadeCompositeFBOName = "RadianceCascadeCompositeFBO";
+    public const string SurfelGICompositeFBOName = "SurfelGICompositeFBO";
 
     //Textures
     public const string SSAONoiseTextureName = "SSAONoiseTexture";
@@ -142,6 +147,7 @@ public partial class DefaultRenderPipeline : RenderPipeline
     public const string StencilViewTextureName = "StencilView";
     public const string AlbedoOpacityTextureName = "AlbedoOpacity";
     public const string RMSETextureName = "RMSE";
+    public const string TransformIdTextureName = "TransformId";
     public const string DepthStencilTextureName = "DepthStencil";
     public const string DiffuseTextureName = "LightingTexture";
     public const string HDRSceneTextureName = "HDRSceneTex";
@@ -163,6 +169,7 @@ public partial class DefaultRenderPipeline : RenderPipeline
     public const string MotionBlurTextureName = "MotionBlur";
     public const string DepthOfFieldTextureName = "DepthOfField";
     public const string RadianceCascadeGITextureName = "RadianceCascadeGI";
+    public const string SurfelGITextureName = "SurfelGITexture";
 
     private const string TonemappingStageKey = "tonemapping";
     private const string ColorGradingStageKey = "colorGrading";
@@ -188,6 +195,9 @@ public partial class DefaultRenderPipeline : RenderPipeline
         ApplyAntiAliasingResolutionHint();
         CommandChain = GenerateCommandChain();
     }
+
+    private bool EnableTransformIdVisualization
+        => !Stereo && Engine.Rendering.Settings.VisualizeTransformId;
 
     private void HandleRenderingSettingsChanged()
     {
@@ -385,6 +395,11 @@ public partial class DefaultRenderPipeline : RenderPipeline
                 GetDesiredFBOSizeInternal);
 
             c.Add<VPRC_CacheOrCreateFBO>().SetOptions(
+                SurfelGICompositeFBOName,
+                CreateSurfelGICompositeFBO,
+                GetDesiredFBOSizeInternal);
+
+            c.Add<VPRC_CacheOrCreateFBO>().SetOptions(
                 HistoryCaptureFBOName,
                 CreateHistoryCaptureFBO,
                 GetDesiredFBOSizeInternal);
@@ -437,6 +452,7 @@ public partial class DefaultRenderPipeline : RenderPipeline
                 c.Add<VPRC_ReSTIRPass>();
                 c.Add<VPRC_LightVolumesPass>();
                 c.Add<VPRC_RadianceCascadesPass>();
+                c.Add<VPRC_SurfelGIPass>();
 
                 c.Add<VPRC_RenderDebugShapes>();
                 c.Add<VPRC_RenderDebugPhysics>();
@@ -518,6 +534,14 @@ public partial class DefaultRenderPipeline : RenderPipeline
                 CreatePostProcessFBO,
                 GetDesiredFBOSizeInternal);
 
+            if (EnableTransformIdVisualization)
+            {
+                c.Add<VPRC_CacheOrCreateFBO>().SetOptions(
+                    TransformIdDebugQuadFBOName,
+                    CreateTransformIdDebugQuadFBO,
+                    GetDesiredFBOSizeInternal);
+            }
+
             if (EnableFxaa)
             {
                 c.Add<VPRC_CacheOrCreateTexture>().SetOptions(
@@ -566,11 +590,19 @@ public partial class DefaultRenderPipeline : RenderPipeline
             using (c.AddUsing<VPRC_BindOutputFBO>())
             {
                 //c.Add<VPRC_ClearByBoundFBO>();
-                var vendorBlit = c.Add<VPRC_VendorUpscale>();
-                // When FXAA is enabled, use the FXAA output FBO; otherwise use post-process output.
-                vendorBlit.FrameBufferName = EnableFxaa ? FxaaFBOName : PostProcessFBOName;
-                vendorBlit.DepthTextureName = DepthViewTextureName;
-                vendorBlit.MotionTextureName = VelocityTextureName;
+                if (EnableTransformIdVisualization)
+                {
+                    // Debug visualization is produced by a quad shader; present it directly.
+                    c.Add<VPRC_RenderQuadToFBO>().SetTargets(TransformIdDebugQuadFBOName, null);
+                }
+                else
+                {
+                    string finalSource = EnableFxaa ? FxaaFBOName : PostProcessFBOName;
+                    var vendorBlit = c.Add<VPRC_VendorUpscale>();
+                    vendorBlit.FrameBufferName = finalSource;
+                    vendorBlit.DepthTextureName = DepthViewTextureName;
+                    vendorBlit.MotionTextureName = VelocityTextureName;
+                }
             }
         }
 
@@ -582,6 +614,16 @@ public partial class DefaultRenderPipeline : RenderPipeline
 
         c.Add<VPRC_RenderMeshesPass>().SetOptions((int)EDefaultRenderPass.PostRender, false);
         c.Add<VPRC_TemporalAccumulationPass>().Phase = VPRC_TemporalAccumulationPass.EPhase.Commit;
+        return c;
+    }
+
+    private ViewportRenderCommandContainer CreateVendorUpscaleCommands(string sourceFboName)
+    {
+        var c = new ViewportRenderCommandContainer(this);
+        var vendorBlit = c.Add<VPRC_VendorUpscale>();
+        vendorBlit.FrameBufferName = sourceFboName;
+        vendorBlit.DepthTextureName = DepthViewTextureName;
+        vendorBlit.MotionTextureName = VelocityTextureName;
         return c;
     }
 
@@ -652,6 +694,16 @@ public partial class DefaultRenderPipeline : RenderPipeline
             CreateRMSETexture,
             NeedsRecreateTextureInternalSize,
             ResizeTextureInternalSize);
+
+        //Transform ID GBuffer texture
+        //R32UI = per-draw/per-transform identifier
+        c.Add<VPRC_CacheOrCreateTexture>().SetOptions(
+            TransformIdTextureName,
+            CreateTransformIdTexture,
+            NeedsRecreateTextureInternalSize,
+            ResizeTextureInternalSize);
+
+        // TransformId visualization is rendered directly via a debug quad.
 
         //SSAO FBO texture, this is created later by the SSAO command
         //c.Add<VPRC_CacheOrCreateTexture>().SetOptions(
@@ -755,6 +807,12 @@ public partial class DefaultRenderPipeline : RenderPipeline
         c.Add<VPRC_CacheOrCreateTexture>().SetOptions(
             RadianceCascadeGITextureName,
             CreateRadianceCascadeGITexture,
+            NeedsRecreateTextureInternalSize,
+            ResizeTextureInternalSize);
+
+        c.Add<VPRC_CacheOrCreateTexture>().SetOptions(
+            SurfelGITextureName,
+            CreateSurfelGITexture,
             NeedsRecreateTextureInternalSize,
             ResizeTextureInternalSize);
 
@@ -1435,6 +1493,15 @@ public partial class DefaultRenderPipeline : RenderPipeline
     private void RestirCompositeFBO_SettingUniforms(XRRenderProgram program)
     {
     var region = RenderingPipelineState?.CurrentRenderRegion;
+        float width = region?.Width > 0 ? region.Value.Width : InternalWidth;
+        float height = region?.Height > 0 ? region.Value.Height : InternalHeight;
+        program.Uniform("ScreenWidth", width);
+        program.Uniform("ScreenHeight", height);
+    }
+
+    private void SurfelGICompositeFBO_SettingUniforms(XRRenderProgram program)
+    {
+        var region = RenderingPipelineState?.CurrentRenderRegion;
         float width = region?.Width > 0 ? region.Value.Width : InternalWidth;
         float height = region?.Height > 0 ? region.Value.Height : InternalHeight;
         program.Uniform("ScreenWidth", width);

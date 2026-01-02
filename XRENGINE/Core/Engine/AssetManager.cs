@@ -1199,6 +1199,23 @@ namespace XREngine
             asset.PropertyChanged += AssetPropertyChanged;
         }
 
+        /// <summary>
+        /// Ensures an asset instance is tracked by the asset manager (path/id caches, dirty tracking hooks).
+        /// Useful for assets that are created in-memory and assigned a FilePath, without going through Load/SaveTo.
+        /// </summary>
+        public void EnsureTracked(XRAsset asset)
+        {
+            ArgumentNullException.ThrowIfNull(asset);
+
+            if (asset.ID != Guid.Empty && LoadedAssetsByIDInternal.TryGetValue(asset.ID, out var byId) && ReferenceEquals(byId, asset))
+                return;
+
+            if (!string.IsNullOrWhiteSpace(asset.FilePath) && LoadedAssetsByPathInternal.TryGetValue(asset.FilePath, out var byPath) && ReferenceEquals(byPath, asset))
+                return;
+
+            CacheAsset(asset);
+        }
+
         void AssetPropertyChanged(object? s, Data.Core.IXRPropertyChangedEventArgs e)
         {
             switch (e.PropertyName)

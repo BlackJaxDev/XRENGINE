@@ -1304,6 +1304,7 @@ namespace XREngine.Rendering
                 sb.AppendLine($"layout(location={12 + i}) out vec4 {string.Format(DefaultVertexShaderGenerator.FragColorName, i)};");
 
             sb.AppendLine($"layout(location=20) out vec3 {DefaultVertexShaderGenerator.FragPosLocalName};");
+            sb.AppendLine($"layout(location=21) out float {DefaultVertexShaderGenerator.FragTransformIdName};");
             sb.AppendLine();
 
             sb.AppendLine($"uniform mat4 {EEngineUniform.ViewMatrix}{DefaultVertexShaderGenerator.VertexUniformSuffix};");
@@ -1327,6 +1328,7 @@ namespace XREngine.Rendering
             sb.AppendLine("void main()");
             sb.AppendLine("{");
             sb.AppendLine("    mat4 ModelMatrix = LoadWorldMatrix(uint(gl_BaseInstance));");
+            sb.AppendLine($"    {DefaultVertexShaderGenerator.FragTransformIdName} = uintBitsToFloat(uint(gl_BaseInstance));");
             sb.AppendLine("    vec4 localPos = vec4(Position, 1.0);");
             sb.AppendLine($"    {DefaultVertexShaderGenerator.FragPosLocalName} = localPos.xyz;");
             sb.AppendLine($"    mat4 viewMatrix = {EEngineUniform.ViewMatrix}{DefaultVertexShaderGenerator.VertexUniformSuffix};");

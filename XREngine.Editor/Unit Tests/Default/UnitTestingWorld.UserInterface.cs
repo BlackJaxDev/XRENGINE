@@ -3,6 +3,7 @@ using Silk.NET.Input;
 using System.Collections.Generic;
 using System.Linq;
 using System.Numerics;
+using System.IO;
 using XREngine.Components;
 using XREngine.Components.Scene;
 using XREngine.Components.Scripting;
@@ -204,7 +205,113 @@ public static partial class UnitTestingWorld
 
             AddFPSText(null, rootCanvasNode);
 
+            if (Toggles.VRPawn && Toggles.PreviewVRStereoViews)
+                CreateVRStereoPreviewOverlay(rootCanvasNode);
+
             return canvas;
+        }
+
+        private static void CreateVRStereoPreviewOverlay(SceneNode rootCanvasNode)
+        {
+            // This is a screenspace UI overlay; it will only actually render if a screenspace UI canvas is attached
+            // to a camera (handled elsewhere via screenSpaceCamera?.UserInterface = canvas).
+
+            SceneNode previewRoot = new(rootCanvasNode) { Name = "VR Stereo Preview" };
+            var previewTfm = previewRoot.SetTransform<UIBoundableTransform>();
+            previewTfm.MinAnchor = new Vector2(0.0f, 0.0f);
+            previewTfm.MaxAnchor = new Vector2(1.0f, 1.0f);
+            previewTfm.NormalizedPivot = new Vector2(0.0f, 0.0f);
+            previewTfm.Width = null;
+            previewTfm.Height = null;
+
+            SceneNode leftNode = new(previewRoot) { Name = "Left Eye" };
+            var leftTfm = leftNode.SetTransform<UIBoundableTransform>();
+            leftTfm.MinAnchor = new Vector2(0.0f, 0.0f);
+            leftTfm.MaxAnchor = new Vector2(0.5f, 1.0f);
+            leftTfm.NormalizedPivot = new Vector2(0.0f, 0.0f);
+            leftTfm.Width = null;
+            leftTfm.Height = null;
+
+            SceneNode rightNode = new(previewRoot) { Name = "Right Eye" };
+            var rightTfm = rightNode.SetTransform<UIBoundableTransform>();
+            rightTfm.MinAnchor = new Vector2(0.5f, 0.0f);
+            rightTfm.MaxAnchor = new Vector2(1.0f, 1.0f);
+            rightTfm.NormalizedPivot = new Vector2(0.0f, 0.0f);
+            rightTfm.Width = null;
+            rightTfm.Height = null;
+
+            var left = leftNode.AddComponent<UIMaterialComponent>()!;
+            var right = rightNode.AddComponent<UIMaterialComponent>()!;
+
+            bool leftWasArray = false;
+            bool rightWasArray = false;
+
+            XRTexture? lastLeft = null;
+            XRTexture? lastRight = null;
+
+            previewRoot.RegisterAnimationTick<SceneNode>(_ =>
+            {
+                // Hard gate: do not show unless VR pawn is enabled.
+                if (!Toggles.VRPawn || !Toggles.PreviewVRStereoViews)
+                {
+                    previewRoot.IsActiveSelf = false;
+                    return;
+                }
+
+                previewRoot.IsActiveSelf = true;
+                
+                // Prefer the single-pass textures when available.
+                XRTexture? leftTex;
+                XRTexture? rightTex;
+                bool isArray;
+
+                if (Engine.VRState.StereoLeftViewTexture is not null && Engine.VRState.StereoRightViewTexture is not null)
+                {
+                    leftTex = Engine.VRState.StereoLeftViewTexture;
+                    rightTex = Engine.VRState.StereoRightViewTexture;
+                    isArray = true;
+                }
+                else
+                {
+                    leftTex = Engine.VRState.VRLeftEyeViewTexture;
+                    rightTex = Engine.VRState.VRRightEyeViewTexture;
+                    isArray = false;
+                }
+
+                ApplyPreviewTexture(left, leftTex, isArray, ref leftWasArray, ref lastLeft);
+                ApplyPreviewTexture(right, rightTex, isArray, ref rightWasArray, ref lastRight);
+            });
+        }
+
+        private static void ApplyPreviewTexture(
+            UIMaterialComponent target,
+            XRTexture? texture,
+            bool isArray,
+            ref bool wasArray,
+            ref XRTexture? lastTexture)
+        {
+            if (texture is null)
+                return;
+
+            // Only rebuild the material if the texture type (2D vs 2DArray) changed.
+            if (target.Material is null || wasArray != isArray)
+            {
+                XRShader frag = isArray
+                    ? XRShader.EngineShader(Path.Combine("Common", "UnlitTexturedArraySliceForward.fs"), EShaderType.Fragment)
+                    : XRShader.EngineShader(Path.Combine("Common", "UnlitTexturedForward.fs"), EShaderType.Fragment);
+
+                var mat = new XRMaterial([texture], frag);
+                target.Material = mat;
+                wasArray = isArray;
+                lastTexture = texture;
+                return;
+            }
+
+            if (!ReferenceEquals(lastTexture, texture))
+            {
+                target.Material.Textures[0] = texture;
+                lastTexture = texture;
+            }
         }
 
         public static void GameCSProjLoader_OnAssemblyUnloaded(string obj)
@@ -445,11 +552,6 @@ public static partial class UnitTestingWorld
             [
                 _saveMenu,
                 new ToolbarButton("Save All", SaveAll, [Key.ControlLeft, Key.ShiftLeft, Key.S]),
-                new ToolbarButton("Save Settings", [
-                    new ToolbarButton("Save Engine Settings", _ => Engine.SaveProjectEngineSettings()),
-                    new ToolbarButton("Save User Settings", _ => Engine.SaveProjectUserSettings()),
-                    new ToolbarButton("Save All Settings", _ => Engine.SaveProjectSettings()),
-                ]),
                 new ToolbarButton("Open", [
                     new ToolbarButton("Project", OpenProjectDialog),
                 ]),

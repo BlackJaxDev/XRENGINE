@@ -3,11 +3,13 @@
 layout (location = 0) out vec4 AlbedoOpacity;
 layout (location = 1) out vec3 Normal;
 layout (location = 2) out vec4 RMSI;
+layout (location = 3) out uint TransformId;
 
 layout (location = 1) in vec3 FragNorm;
 layout (location = 2) in vec3 FragBinorm;
 layout (location = 3) in vec3 FragTan;
 layout (location = 4) in vec2 FragUV0;
+layout (location = 21) in float FragTransformId;
 
 uniform sampler2D Texture0; // Albedo
 uniform sampler2D Texture2; // Roughness
@@ -21,6 +23,7 @@ uniform float Emission = 0.0f;
 
 void main()
 {
+    TransformId = floatBitsToUint(FragTransformId);
     Normal = normalize(FragNorm);
     AlbedoOpacity = vec4(texture(Texture0, FragUV0).rgb * BaseColor, Opacity);
     float roughnessTex = texture(Texture2, FragUV0).r;

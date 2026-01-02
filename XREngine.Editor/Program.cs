@@ -1,4 +1,4 @@
-using Newtonsoft.Json;
+﻿using Newtonsoft.Json;
 using Newtonsoft.Json.Converters;
 using System;
 using System.Numerics;
@@ -315,18 +315,13 @@ internal class Program
             Debug.Out($"UDP multicast port overridden to {udpMulticastPort} via XRE_UDP_MULTICAST_PORT.");
         }
 
-        if (UnitTestingWorld.Toggles.VRPawn && !UnitTestingWorld.Toggles.EmulatedVRPawn)
+        if (UnitTestingWorld.Toggles.VRPawn && (!UnitTestingWorld.Toggles.EmulatedVRPawn || UnitTestingWorld.Toggles.PreviewVRStereoViews))
         {
-            if (UnitTestingWorld.Toggles.UseOpenXR)
-            {
-                settings.VRRuntime = EVRRuntime.OpenXR;
-                settings.RunVRInPlace = true;
-            }
-            else
-            {
-                settings.VRRuntime = EVRRuntime.OpenVR;
-                EditorVR.ApplyVRSettings(settings);
-            }
+            settings.RunVRInPlace = true;
+            EditorVR.ApplyOpenVRSettings(settings);
+            settings.VRRuntime = UnitTestingWorld.Toggles.UseOpenXR
+                ? EVRRuntime.OpenXR
+                : EVRRuntime.OpenVR;
         }
         return settings;
     }

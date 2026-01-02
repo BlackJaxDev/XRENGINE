@@ -1,0 +1,297 @@
+#version 450
+
+// One invocation per 16x16 tile.
+layout(local_size_x = 1, local_size_y = 1, local_size_z = 1) in;
+
+layout(binding = 0) uniform sampler2D gDepth;
+layout(binding = 1) uniform sampler2D gNormal;
+layout(binding = 2) uniform sampler2D gAlbedo;
+layout(binding = 3) uniform usampler2D gTransformId;
+
+// GPU indirect: per-draw command data (float[48]) indexed by TransformId.
+layout(std430, binding = 5) buffer CulledCommandsBuffer { float culled[]; };
+
+uniform bool hasCulledCommands;
+uniform uint culledFloatCount;
+uniform uint culledCommandFloats;
+
+uniform ivec2 resolution;
+uniform mat4 invProjMatrix;
+uniform mat4 cameraToWorldMatrix;
+uniform uint frameIndex;
+uniform uint maxSurfels;
+uniform vec3 gridOrigin;
+uniform float cellSize;
+uniform uvec3 gridDim;
+uniform uint maxPerCell;
+
+struct Surfel
+{
+    // Stored in local/object space for motion-stable correspondence.
+    // World-space is reconstructed via the per-draw matrix buffer using meta.z (TransformId).
+    vec4 posRadius; // xyz=localPos, w=worldRadius
+    vec4 normal;    // xyz=localNormal
+    vec4 albedo;
+    uvec4 meta; // x=lastUsedFrame, y=active
+};
+
+layout(std430, binding = 0) buffer SurfelBuffer
+{
+    Surfel surfels[];
+};
+
+layout(std430, binding = 1) buffer CounterBuffer
+{
+    int stackTop;
+    int pad0;
+    int pad1;
+    int pad2;
+};
+
+layout(std430, binding = 2) buffer FreeStackBuffer
+{
+    uint freeIds[];
+};
+
+layout(std430, binding = 3) buffer GridCounts
+{
+    uint counts[];
+};
+
+layout(std430, binding = 4) buffer GridIndices
+{
+    uint indices[];
+};
+
+vec3 ReconstructWorldPosition(vec2 uv, float depth)
+{
+    vec4 clip = vec4(uv * 2.0 - 1.0, depth * 2.0 - 1.0, 1.0);
+    vec4 view = invProjMatrix * clip;
+    view /= max(view.w, 1e-6);
+    vec4 world = cameraToWorldMatrix * view;
+    return world.xyz;
+}
+
+vec3 DecodeNormal(vec3 encoded)
+{
+    vec3 n = normalize(encoded * 2.0 - 1.0);
+    vec3 worldN = normalize((cameraToWorldMatrix * vec4(n, 0.0)).xyz);
+    return worldN;
+}
+
+bool TryLoadWorldMatrix(uint commandIndex, out mat4 M)
+{
+    if (!hasCulledCommands)
+        return false;
+
+    uint stride = max(culledCommandFloats, 48u);
+    uint base = commandIndex * stride;
+    if (base + 15u >= culledFloatCount)
+        return false;
+
+    vec4 c0 = vec4(culled[base+0], culled[base+4], culled[base+8],  culled[base+12]);
+    vec4 c1 = vec4(culled[base+1], culled[base+5], culled[base+9],  culled[base+13]);
+    vec4 c2 = vec4(culled[base+2], culled[base+6], culled[base+10], culled[base+14]);
+    vec4 c3 = vec4(culled[base+3], culled[base+7], culled[base+11], culled[base+15]);
+    M = mat4(c0, c1, c2, c3);
+    return true;
+}
+
+uint CellIndex(uvec3 c)
+{
+    return c.x + gridDim.x * (c.y + gridDim.y * c.z);
+}
+
+bool WorldToCell(vec3 p, out uint cell)
+{
+    vec3 rel = (p - gridOrigin) / max(cellSize, 1e-6);
+    ivec3 ci = ivec3(floor(rel));
+    if (any(lessThan(ci, ivec3(0))) || any(greaterThanEqual(ci, ivec3(gridDim))))
+        return false;
+
+    cell = CellIndex(uvec3(ci));
+    return true;
+}
+
+bool WorldToCellCoord(vec3 p, out ivec3 ci)
+{
+    vec3 rel = (p - gridOrigin) / max(cellSize, 1e-6);
+    ci = ivec3(floor(rel));
+    if (any(lessThan(ci, ivec3(0))) || any(greaterThanEqual(ci, ivec3(gridDim))))
+        return false;
+    return true;
+}
+
+bool TryFindReusableSurfel(ivec3 baseCellCoord, uint transformId, vec3 localPos, vec3 localN, float radius, float invScale, out uint surfelIdx)
+{
+    // Search 3x3x3 neighboring cells for surfels with matching TransformId.
+    // Pick the best match so multiple surfels per-transform can coexist.
+    float bestScore = 3.402823466e+38; // FLT_MAX
+    uint bestIdx = 0u;
+    bool found = false;
+
+    for (int dz = -1; dz <= 1; ++dz)
+    {
+        for (int dy = -1; dy <= 1; ++dy)
+        {
+            for (int dx = -1; dx <= 1; ++dx)
+            {
+                ivec3 c = baseCellCoord + ivec3(dx, dy, dz);
+                if (any(lessThan(c, ivec3(0))) || any(greaterThanEqual(c, ivec3(gridDim))))
+                    continue;
+
+                uint cell = CellIndex(uvec3(c));
+                uint count = counts[cell];
+                uint n = min(count, maxPerCell);
+                for (uint i = 0u; i < n; ++i)
+                {
+                    uint idx = indices[cell * maxPerCell + i];
+                    if (idx >= maxSurfels)
+                        continue;
+                    if (surfels[idx].meta.y == 0u)
+                        continue;
+                    if (surfels[idx].meta.z != transformId)
+                        continue;
+
+                    vec3 sPos = surfels[idx].posRadius.xyz;
+                    float sRadius = max(surfels[idx].posRadius.w, 1e-3);
+                    vec3 sN = normalize(surfels[idx].normal.xyz);
+
+                    vec3 d = sPos - localPos;
+                    float dist2 = dot(d, d);
+
+                    // Reject obviously-wrong matches (e.g., other side of object) to avoid snapping.
+                    float matchRadiusLocal = max(radius, sRadius) * 2.0 * invScale;
+                    if (dist2 > matchRadiusLocal * matchRadiusLocal)
+                        continue;
+
+                    float nd = 1.0 - clamp(dot(normalize(localN), sN), -1.0, 1.0); // 0=aligned
+                    float score = dist2 + nd * (matchRadiusLocal * matchRadiusLocal) * 0.25;
+                    if (score < bestScore)
+                    {
+                        bestScore = score;
+                        bestIdx = idx;
+                        found = true;
+                    }
+                }
+            }
+        }
+    }
+
+    surfelIdx = bestIdx;
+    return found;
+}
+
+uint Hash(uint x)
+{
+    x ^= x >> 16;
+    x *= 0x7feb352du;
+    x ^= x >> 15;
+    x *= 0x846ca68bu;
+    x ^= x >> 16;
+    return x;
+}
+
+void main()
+{
+    // Tile coordinate
+    uvec2 tile = uvec2(gl_GlobalInvocationID.xy);
+    uvec2 tileBase = tile * 16u;
+
+    if (tileBase.x >= uint(resolution.x) || tileBase.y >= uint(resolution.y))
+        return;
+
+    // Pick a pseudo-random pixel within the tile to approximate the paper's "least-coverage" selection.
+    uint h = Hash(tile.x * 73856093u ^ tile.y * 19349663u ^ frameIndex * 83492791u);
+    uint ox = h & 15u;
+    uint oy = (h >> 4u) & 15u;
+
+    uvec2 pix = tileBase + uvec2(ox, oy);
+    pix.x = min(pix.x, uint(resolution.x - 1));
+    pix.y = min(pix.y, uint(resolution.y - 1));
+
+    vec2 uv = (vec2(pix) + 0.5) / vec2(resolution);
+    float depth = texture(gDepth, uv).r;
+    if (depth <= 0.0)
+        return;
+
+    vec3 worldPos = ReconstructWorldPosition(uv, depth);
+    vec3 normalWS = DecodeNormal(texture(gNormal, uv).rgb);
+    vec3 albedo = texture(gAlbedo, uv).rgb;
+    uint transformId = texture(gTransformId, uv).r;
+
+    // Convert to object space for motion-stable matching/storage.
+    vec3 localPos = worldPos;
+    vec3 localN = normalWS;
+    float invScale = 1.0;
+
+    mat4 model;
+    if (TryLoadWorldMatrix(transformId, model))
+    {
+        mat4 invModel = inverse(model);
+        localPos = (invModel * vec4(worldPos, 1.0)).xyz;
+        // worldN = normalMatrix * localN; so localN = transpose(mat3(model)) * worldN
+        localN = normalize(transpose(mat3(model)) * normalWS);
+
+        float sx = length(model[0].xyz);
+        float sy = length(model[1].xyz);
+        float sz = length(model[2].xyz);
+        float s = max(max(sx, sy), sz);
+        invScale = 1.0 / max(s, 1e-6);
+    }
+
+    // Rough heuristic radius: small near camera, bigger far away.
+    // (Proper implementation keeps projected size roughly constant; this is a starting point.)
+    float radius = clamp(depth * 0.05, 0.01, 2.0);
+
+    // If we can find an existing surfel belonging to the same transform, update it instead of allocating.
+    ivec3 baseCellCoord;
+    uint reusableIdx;
+    if (WorldToCellCoord(worldPos, baseCellCoord) && TryFindReusableSurfel(baseCellCoord, transformId, localPos, localN, radius, invScale, reusableIdx))
+    {
+        surfels[reusableIdx].posRadius = vec4(localPos, radius);
+        surfels[reusableIdx].normal = vec4(localN, 0.0);
+        surfels[reusableIdx].albedo = vec4(albedo, 1.0);
+        surfels[reusableIdx].meta.x = frameIndex;
+        surfels[reusableIdx].meta.y = 1u;
+        surfels[reusableIdx].meta.z = transformId;
+
+        // Reinsert into the grid for same-frame shading.
+        uint cell;
+        if (WorldToCell(worldPos, cell))
+        {
+            uint slot = atomicAdd(counts[cell], 1u);
+            if (slot < maxPerCell)
+                indices[cell * maxPerCell + slot] = reusableIdx;
+        }
+
+        return;
+    }
+
+    // Pop a surfel id from the free stack.
+    int top = atomicAdd(stackTop, -1);
+    int stackIndex = top - 1;
+    if (stackIndex < 0)
+    {
+        // Out of surfels.
+        return;
+    }
+
+    uint idx = freeIds[uint(stackIndex)];
+    if (idx >= maxSurfels)
+        return;
+
+    surfels[idx].posRadius = vec4(localPos, radius);
+    surfels[idx].normal = vec4(localN, 0.0);
+    surfels[idx].albedo = vec4(albedo, 1.0);
+    surfels[idx].meta = uvec4(frameIndex, 1u, transformId, 0u);
+
+    // Insert into the grid for same-frame shading.
+    uint cell;
+    if (WorldToCell(worldPos, cell))
+    {
+        uint slot = atomicAdd(counts[cell], 1u);
+        if (slot < maxPerCell)
+            indices[cell * maxPerCell + slot] = idx;
+    }
+}

@@ -165,6 +165,10 @@ namespace XREngine.Rendering.Shaders.Generator
                     OutputVars.Add(string.Format(FragColorName, i), (12u + (uint)i, EShaderVarType._vec4));
 
             OutputVars.Add(FragPosLocalName, (20, EShaderVarType._vec3)); //Local position in model space
+
+            // A per-draw identifier used by deferred passes that need object/transform stability.
+            // Stored as float bits to avoid requiring 'flat' interpolation qualifiers for integer varyings.
+            OutputVars.Add(FragTransformIdName, (21, EShaderVarType._float));
         }
 
         private void AddUniforms()
@@ -198,6 +202,7 @@ namespace XREngine.Rendering.Shaders.Generator
 
         //Buffers leaving the vertex shader for each vertex
         public const string FragPosLocalName = "FragPosLocal";
+        public const string FragTransformIdName = "FragTransformId";
         public const string FragPosName = "FragPos";
         public const string FragNormName = "FragNorm";
         public const string FragTanName = "FragTan";
@@ -262,6 +267,12 @@ namespace XREngine.Rendering.Shaders.Generator
             if (_texCoordsUsed != 0)
                 for (int i = 0; i < _texCoordsUsed; ++i)
                     Line($"{string.Format(FragUVName, i)} = {ECommonBufferType.TexCoord}{i};");
+
+            // Default CPU draw path has gl_BaseInstance == 0; GPU-indirect path uses it as the draw/command index.
+            Line("uniform uint TransformId;");
+            Line("uint _xreTransformId = uint(gl_BaseInstance);");
+            Line("if (_xreTransformId == 0u) _xreTransformId = TransformId;");
+            Line($"{FragTransformIdName} = uintBitsToFloat(_xreTransformId);");
         }
 
         protected override void WriteOutputs()

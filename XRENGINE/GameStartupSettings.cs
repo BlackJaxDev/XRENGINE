@@ -25,7 +25,7 @@ namespace XREngine
         private string _texturesFolder = "";
         private float? _targetUpdatesPerSecond = 90.0f;
         private float _fixedFramesPerSecond = 90.0f;
-        private bool _runVRInPlace = false;
+        private bool _runVRInPlace = true;
         private bool _gpuRenderDispatch = false;
 
         private string _udpMulticastGroupIP = "239.0.0.222";

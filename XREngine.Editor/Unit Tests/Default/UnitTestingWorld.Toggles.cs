@@ -43,6 +43,7 @@ public static partial class UnitTestingWorld
         public bool AddEditorUI = false; //Adds the full editor UI to the camera.
         public bool TransformTool = false; //Adds the transform tool to the scene for testing dragging and rotating etc.
         public bool AllowEditingInVR = true; //Allows the user to edit the scene from desktop in VR.
+        public bool PreviewVRStereoViews = false; //Shows the VR left/right eye render targets side-by-side in a screenspace UI (requires VRPawn).
         public bool VideoStreaming = false; //Adds a video streaming component to the scene for testing video streaming.
         public bool VideoStreamingAudio = false; //Adds a video streaming audio component to the scene for testing video streaming audio.
         public bool DearImGuiUI = false; //Adds a Dear ImGui overlay to the scene for testing immediate-mode UI.

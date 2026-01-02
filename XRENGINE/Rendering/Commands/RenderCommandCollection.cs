@@ -131,6 +131,9 @@ namespace XREngine.Rendering.Commands
             }
         }
 
+        public bool TryGetGpuPass(int renderPass, out GPURenderPassCollection gpuPass)
+            => _gpuPasses.TryGetValue(renderPass, out gpuPass!);
+
         public void SwapBuffers()
         {
             using var sample = Engine.Profiler.Start("RenderCommandCollection.SwapBuffers");

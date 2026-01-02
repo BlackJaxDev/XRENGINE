@@ -281,6 +281,40 @@ public partial class DefaultRenderPipeline
         }
     }
 
+    private XRTexture CreateTransformIdTexture()
+    {
+        if (Stereo)
+        {
+            var t = XRTexture2DArray.CreateFrameBufferTexture(
+                2,
+                InternalWidth, InternalHeight,
+                EPixelInternalFormat.R32ui,
+                EPixelFormat.RedInteger,
+                EPixelType.UnsignedInt);
+            t.Resizable = false;
+            t.SizedInternalFormat = ESizedInternalFormat.R32ui;
+            t.OVRMultiViewParameters = new(0, 2u);
+            t.MinFilter = ETexMinFilter.Nearest;
+            t.MagFilter = ETexMagFilter.Nearest;
+            t.Name = TransformIdTextureName;
+            t.SamplerName = TransformIdTextureName;
+            return t;
+        }
+        else
+        {
+            var t = XRTexture2D.CreateFrameBufferTexture(
+                InternalWidth, InternalHeight,
+                EPixelInternalFormat.R32ui,
+                EPixelFormat.RedInteger,
+                EPixelType.UnsignedInt);
+            t.MinFilter = ETexMinFilter.Nearest;
+            t.MagFilter = ETexMagFilter.Nearest;
+            t.Name = TransformIdTextureName;
+            t.SamplerName = TransformIdTextureName;
+            return t;
+        }
+    }
+
     private XRTexture CreateLightingTexture()
     {
         if (Stereo)
@@ -756,6 +790,33 @@ public partial class DefaultRenderPipeline
         return texture;
     }
 
+    private XRTexture CreateTransformIdDebugOutputTexture()
+    {
+        var (width, height) = GetDesiredFBOSizeInternal();
+        bool outputHdr = Engine.Rendering.Settings.OutputHDR;
+
+        EPixelInternalFormat internalFormat = outputHdr ? EPixelInternalFormat.Rgba16f : EPixelInternalFormat.Rgba8;
+        EPixelType pixelType = outputHdr ? EPixelType.HalfFloat : EPixelType.UnsignedByte;
+        ESizedInternalFormat sized = outputHdr ? ESizedInternalFormat.Rgba16f : ESizedInternalFormat.Rgba8;
+
+        XRTexture2D texture = XRTexture2D.CreateFrameBufferTexture(
+            width,
+            height,
+            internalFormat,
+            EPixelFormat.Rgba,
+            pixelType,
+            EFrameBufferAttachment.ColorAttachment0);
+        texture.Resizable = true;
+        texture.SizedInternalFormat = sized;
+        texture.MinFilter = ETexMinFilter.Nearest;
+        texture.MagFilter = ETexMagFilter.Nearest;
+        texture.UWrap = ETexWrapMode.ClampToEdge;
+        texture.VWrap = ETexWrapMode.ClampToEdge;
+        texture.SamplerName = TransformIdDebugOutputTextureName;
+        texture.Name = TransformIdDebugOutputTextureName;
+        return texture;
+    }
+
     private XRTexture CreateFxaaOutputTexture()
     {
         var (width, height) = GetDesiredFBOSizeFull();
@@ -813,6 +874,41 @@ public partial class DefaultRenderPipeline
             t.MagFilter = ETexMagFilter.Nearest;
             t.SamplerName = RadianceCascadeGITextureName;
             t.Name = RadianceCascadeGITextureName;
+            return t;
+        }
+    }
+
+    private XRTexture CreateSurfelGITexture()
+    {
+        // Matches other GI buffers for straightforward blending.
+        if (Stereo)
+        {
+            var t = XRTexture2DArray.CreateFrameBufferTexture(
+                2,
+                InternalWidth, InternalHeight,
+                EPixelInternalFormat.Rgba16f,
+                EPixelFormat.Rgba,
+                EPixelType.HalfFloat);
+            t.OVRMultiViewParameters = new(0, 2u);
+            t.Resizable = false;
+            t.SizedInternalFormat = ESizedInternalFormat.Rgba16f;
+            t.MinFilter = ETexMinFilter.Nearest;
+            t.MagFilter = ETexMagFilter.Nearest;
+            t.SamplerName = SurfelGITextureName;
+            t.Name = SurfelGITextureName;
+            return t;
+        }
+        else
+        {
+            var t = XRTexture2D.CreateFrameBufferTexture(
+                InternalWidth, InternalHeight,
+                EPixelInternalFormat.Rgba16f,
+                EPixelFormat.Rgba,
+                EPixelType.HalfFloat);
+            t.MinFilter = ETexMinFilter.Nearest;
+            t.MagFilter = ETexMagFilter.Nearest;
+            t.SamplerName = SurfelGITextureName;
+            t.Name = SurfelGITextureName;
             return t;
         }
     }

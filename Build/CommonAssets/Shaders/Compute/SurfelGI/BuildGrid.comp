@@ -1,0 +1,101 @@
+#version 450
+
+layout(local_size_x = 256, local_size_y = 1, local_size_z = 1) in;
+
+// GPU indirect: per-draw command data (float[48]) indexed by TransformId.
+layout(std430, binding = 5) buffer CulledCommandsBuffer { float culled[]; };
+
+uniform bool hasCulledCommands;
+uniform uint culledFloatCount;
+uniform uint culledCommandFloats;
+
+uniform uint maxSurfels;
+uniform vec3 gridOrigin;
+uniform float cellSize;
+uniform uvec3 gridDim;
+uniform uint maxPerCell;
+
+struct Surfel
+{
+    // Stored in local/object space for motion-stable correspondence.
+    // World-space is reconstructed via the per-draw matrix buffer using meta.z (TransformId).
+    vec4 posRadius; // xyz=localPos, w=worldRadius
+    vec4 normal;    // xyz=localNormal
+    vec4 albedo;
+    uvec4 meta; // x=lastUsedFrame, y=active
+};
+
+layout(std430, binding = 0) buffer SurfelBuffer
+{
+    Surfel surfels[];
+};
+
+layout(std430, binding = 3) buffer GridCounts
+{
+    uint counts[];
+};
+
+layout(std430, binding = 4) buffer GridIndices
+{
+    uint indices[];
+};
+
+uint CellIndex(uvec3 c)
+{
+    return c.x + gridDim.x * (c.y + gridDim.y * c.z);
+}
+
+bool WorldToCell(vec3 p, out uint cell)
+{
+    vec3 rel = (p - gridOrigin) / max(cellSize, 1e-6);
+    ivec3 ci = ivec3(floor(rel));
+    if (any(lessThan(ci, ivec3(0))) || any(greaterThanEqual(ci, ivec3(gridDim))))
+        return false;
+
+    cell = CellIndex(uvec3(ci));
+    return true;
+}
+
+bool TryLoadWorldMatrix(uint commandIndex, out mat4 M)
+{
+    if (!hasCulledCommands)
+        return false;
+
+    uint stride = max(culledCommandFloats, 48u);
+    uint base = commandIndex * stride;
+    if (base + 15u >= culledFloatCount)
+        return false;
+
+    vec4 c0 = vec4(culled[base+0], culled[base+4], culled[base+8],  culled[base+12]);
+    vec4 c1 = vec4(culled[base+1], culled[base+5], culled[base+9],  culled[base+13]);
+    vec4 c2 = vec4(culled[base+2], culled[base+6], culled[base+10], culled[base+14]);
+    vec4 c3 = vec4(culled[base+3], culled[base+7], culled[base+11], culled[base+15]);
+    M = mat4(c0, c1, c2, c3);
+    return true;
+}
+
+void main()
+{
+    uint id = gl_GlobalInvocationID.x;
+    if (id >= maxSurfels)
+        return;
+
+    if (surfels[id].meta.y == 0u)
+        return;
+
+    vec3 p = surfels[id].posRadius.xyz;
+    uint transformId = surfels[id].meta.z;
+    mat4 model;
+    if (TryLoadWorldMatrix(transformId, model))
+        p = (model * vec4(p, 1.0)).xyz;
+
+    uint cell;
+    if (!WorldToCell(p, cell))
+        return;
+
+    uint slot = atomicAdd(counts[cell], 1u);
+    if (slot >= maxPerCell)
+        return;
+
+    indices[cell * maxPerCell + slot] = id;
+}
