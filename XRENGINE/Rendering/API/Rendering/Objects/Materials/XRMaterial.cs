@@ -4,6 +4,7 @@ using XREngine.Core.Files;
 using XREngine.Data.Colors;
 using XREngine.Data.Rendering;
 using XREngine.Rendering.Models.Materials;
+using YamlDotNet.Serialization;
 using Color = System.Drawing.Color;
 
 namespace XREngine.Rendering
@@ -11,14 +12,19 @@ namespace XREngine.Rendering
     public class XRMaterial : XRMaterialBase
     {
         [Browsable(false)]
+        [YamlIgnore]
         public IReadOnlyList<XRShader> FragmentShaders => _fragmentShaders;
         [Browsable(false)]
+        [YamlIgnore]
         public IReadOnlyList<XRShader> GeometryShaders => _geometryShaders;
         [Browsable(false)]
+        [YamlIgnore]
         public IReadOnlyList<XRShader> TessEvalShaders => _tessEvalShaders;
         [Browsable(false)]
+        [YamlIgnore]
         public IReadOnlyList<XRShader> TessCtrlShaders => _tessCtrlShaders;
         [Browsable(false)]
+        [YamlIgnore]
         public IReadOnlyList<XRShader> VertexShaders => _vertexShaders;
 
         private readonly List<XRShader> _fragmentShaders = [];
@@ -332,23 +338,23 @@ namespace XREngine.Rendering
         public enum EOpaque
         {
             /// <summary>
-            ///  (the default): Takes the transparency information from the color’s
+            ///  (the default): Takes the transparency information from the colorï¿½s
             ///  alpha channel, where the value 1.0 is opaque.
             /// </summary>
             A_ONE,
             /// <summary>
-            /// Takes the transparency information from the color’s red, green,
+            /// Takes the transparency information from the colorï¿½s red, green,
             /// and blue channels, where the value 0.0 is opaque, with each channel 
             /// modulated independently.
             /// </summary>
             RGB_ZERO,
             /// <summary>
-            /// Takes the transparency information from the color’s
+            /// Takes the transparency information from the colorï¿½s
             /// alpha channel, where the value 0.0 is opaque.
             /// </summary>
             A_ZERO,
             /// <summary>
-            ///  Takes the transparency information from the color’s red, green,
+            ///  Takes the transparency information from the colorï¿½s red, green,
             ///  and blue channels, where the value 1.0 is opaque, with each channel 
             ///  modulated independently.
             /// </summary>
@@ -372,12 +378,12 @@ namespace XREngine.Rendering
         {
             // color = emission + ambient * al + diffuse * max(N * L, 0) + specular * max(H * N, 0) ^ shininess
             // where:
-            // • al – A constant amount of ambient light contribution coming from the scene.In the COMMON
+            // ï¿½ al ï¿½ A constant amount of ambient light contribution coming from the scene.In the COMMON
             // profile, this is the sum of all the <light><technique_common><ambient> values in the <visual_scene>.
-            // • N – Normal vector (normalized)
-            // • L – Light vector (normalized)
-            // • I – Eye vector (normalized)
-            // • H – Half-angle vector, calculated as halfway between the unit Eye and Light vectors, using the equation H = normalize(I + L)
+            // ï¿½ N ï¿½ Normal vector (normalized)
+            // ï¿½ L ï¿½ Light vector (normalized)
+            // ï¿½ I ï¿½ Eye vector (normalized)
+            // ï¿½ H ï¿½ Half-angle vector, calculated as halfway between the unit Eye and Light vectors, using the equation H = normalize(I + L)
 
             int count = 0;
             if (emission.HasValue) ++count;

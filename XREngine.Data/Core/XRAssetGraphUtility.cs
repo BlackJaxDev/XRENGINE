@@ -4,6 +4,7 @@ using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Diagnostics.CodeAnalysis;
+using System.IO;
 using System.Reflection;
 using System.Runtime.CompilerServices;
 using XREngine.Data.Core;
@@ -102,6 +103,11 @@ public static class XRAssetGraphUtility
         {
             if (!ReferenceEquals(asset, root))
             {
+                // If this XRAsset is a reference to an external asset file, it should NOT become embedded
+                // in the current root's asset graph.
+                if (IsExternalAssetReference(asset))
+                    return;
+
                 //Trace.WriteLine($"[XRAssetGraphUtility] Found embedded asset: {asset.GetType().Name}, root='{root.FilePath ?? root.GetType().Name}', asset FilePath='{asset.FilePath}'");
                 if (!ReferenceEquals(asset.SourceAsset, root))
                     asset.SourceAsset = root;
@@ -178,6 +184,20 @@ public static class XRAssetGraphUtility
             // Increment depth only for property/field traversal
             TraverseObject(value, root, visited, embedded, depth + 1);
         }
+    }
+
+    private static bool IsExternalAssetReference(XRAsset asset)
+    {
+        // External assets are self-rooted and have a real file backing them.
+        // If they are referenced from another asset, they should serialize as { ID: <guid> } only.
+        if (!ReferenceEquals(asset.SourceAsset, asset))
+            return false;
+
+        string? path = asset.FilePath;
+        if (string.IsNullOrWhiteSpace(path))
+            return false;
+
+        return File.Exists(path);
     }
 
     private static bool IsLeafType(Type type)

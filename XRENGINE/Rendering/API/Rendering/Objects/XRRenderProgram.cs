@@ -8,6 +8,7 @@ using XREngine.Data.Core;
 using XREngine.Data.Rendering;
 using XREngine.Data.Vectors;
 using XREngine.Rendering.Models.Materials;
+using YamlDotNet.Serialization;
 
 namespace XREngine.Rendering
 {
@@ -102,13 +103,17 @@ namespace XREngine.Rendering
             int? ArrayLength,
             string? ArrayLengthExpression);
 
+        [YamlIgnore]
         private IReadOnlyDictionary<string, ShaderUniformBinding> _cachedUniformBindings =
             new Dictionary<string, ShaderUniformBinding>(UniformComparer);
+
+        [YamlIgnore]
         private IReadOnlyDictionary<string, ShaderTextureBinding> _cachedTextureBindings =
             new Dictionary<string, ShaderTextureBinding>(UniformComparer);
 
         private bool _shaderInterfaceDirty = true;
 
+        [YamlIgnore]
         private readonly Dictionary<XRShader, ShaderSubscription> _shaderSourceSubscriptions = new();
 
         public event Action<XRRenderProgram>? ShaderInterfaceChanged;
@@ -118,6 +123,7 @@ namespace XREngine.Rendering
         /// </summary>
         public EventList<XRShader> Shaders { get; } = [];
 
+        [YamlIgnore]
         public IReadOnlyDictionary<string, ShaderUniformBinding> UniformBindings
         {
             get
@@ -127,6 +133,7 @@ namespace XREngine.Rendering
             }
         }
 
+        [YamlIgnore]
         public IReadOnlyDictionary<string, ShaderTextureBinding> TextureBindings
         {
             get

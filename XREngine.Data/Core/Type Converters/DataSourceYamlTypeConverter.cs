@@ -33,7 +33,20 @@ namespace XREngine.Data
             }
             parser.Consume<MappingEnd>();
 
-            return new DataSource(Compression.DecompressFromString(length, byteStr));
+            try
+            {
+                return new DataSource(Compression.DecompressFromString(length, byteStr));
+            }
+            catch (Exception ex) when (ex is FormatException or YamlException)
+            {
+                // The most common cause is a truncated/corrupted hex payload in YAML.
+                // In the editor we prefer to keep the rest of the asset loadable/inspectable,
+                // so fall back to a zero-filled buffer of the declared length.
+                uint fallbackLength = length ?? 0u;
+                System.Diagnostics.Debug.WriteLine(
+                    $"Failed to deserialize DataSource bytes (declared Length={fallbackLength}). {ex.GetType().Name}: {ex.Message}");
+                return new DataSource(fallbackLength, zeroMemory: true);
+            }
         }
 
         public unsafe void WriteYaml(IEmitter emitter, object? value, Type type, ObjectSerializer serializer)

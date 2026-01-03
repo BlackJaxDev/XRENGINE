@@ -48,10 +48,6 @@ public static partial class EditorImGuiUI
         // Display the viewport FBO texture as an ImGui image
         DisplayViewportPanelImage();
 
-        var world = TryGetActiveWorldInstance();
-        if (world is not null)
-            HandleViewportModelAssetDrop(world);
-
         ImGui.End();
     }
 
@@ -88,6 +84,11 @@ public static partial class EditorImGuiUI
         Vector2 uv0 = new(0.0f, 1.0f); // bottom-left
         Vector2 uv1 = new(1.0f, 0.0f); // top-right
         ImGui.Image(handle, contentSize, uv0, uv1);
+
+        // Handle asset drop on the viewport image - must be right after ImGui.Image()
+        XRWorldInstance? world = TryGetActiveWorldInstance();
+        if (world is not null)
+            HandleViewportModelAssetDrop(world);
     }
 
     private static void EnsureViewportPanelRenderRegionProvider()
@@ -178,9 +179,12 @@ public static partial class EditorImGuiUI
         if (payload.Data != IntPtr.Zero && payload.DataSize > 0)
         {
             string? path = ImGuiAssetUtilities.GetPathFromPayload(payload);
-            if (!string.IsNullOrWhiteSpace(path) && TryLoadModelAsset(path, out var model))
+            if (!string.IsNullOrWhiteSpace(path))
             {
-                EnqueueSceneEdit(() => SpawnModelNode(world, parent: null, model!, path));
+                if (TryLoadPrefabAsset(path, out var prefab))
+                    EnqueueSceneEdit(() => SpawnPrefabNode(world, parent: null, prefab!));
+                else if (TryLoadModelAsset(path, out var model))
+                    EnqueueSceneEdit(() => SpawnModelNode(world, parent: null, model!, path));
             }
         }
 

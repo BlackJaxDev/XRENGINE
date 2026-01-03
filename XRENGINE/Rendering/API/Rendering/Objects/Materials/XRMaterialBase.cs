@@ -3,6 +3,7 @@ using System.Numerics;
 using XREngine.Data.Rendering;
 using XREngine.Rendering.Models.Materials;
 using XREngine.Rendering.Models.Materials.Shaders.Parameters;
+using YamlDotNet.Serialization;
 
 namespace XREngine.Rendering
 {
@@ -47,6 +48,7 @@ namespace XREngine.Rendering
         /// May contain all kinds of shaders, including vertex, fragment, geometry, compute, etc.
         /// If it contains a vertex shader, the default generated vertex shader will not be used.
         /// </summary>
+        [YamlIgnore]
         public XRRenderProgram? ShaderPipelineProgram
         {
             get => _shaderPipelineProgram;
@@ -109,6 +111,7 @@ namespace XREngine.Rendering
             return null;
         }
 
+        [YamlIgnore]
         private readonly Dictionary<string, int> _nameIndexCache = [];
 
         public void ResetNameIndexCache()

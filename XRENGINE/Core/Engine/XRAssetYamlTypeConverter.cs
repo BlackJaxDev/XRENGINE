@@ -1,6 +1,7 @@
 ﻿using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Linq;
 using XREngine.Core.Files;
 using YamlDotNet.Core;
 using YamlDotNet.Core.Events;
@@ -105,7 +106,7 @@ namespace XREngine
 
                 // Nested XRAsset - capture the node to check if it's a GUID reference
                 var capturedEvents = CaptureNode(reader);
-                if (TryResolveExternalReference(capturedEvents, out var referencedAsset))
+                if (TryResolveExternalReference(capturedEvents, expectedType, out var referencedAsset))
                 {
                     value = referencedAsset;
                     return true;
@@ -219,7 +220,7 @@ namespace XREngine
             throw new YamlException("Unsupported YAML node encountered while capturing XRAsset data.");
         }
 
-        private static bool TryResolveExternalReference(IReadOnlyList<ParsingEvent> events, out XRAsset? asset)
+        private static bool TryResolveExternalReference(IReadOnlyList<ParsingEvent> events, Type expectedType, out XRAsset? asset)
         {
             asset = null;
             if (events.Count != 4)
@@ -237,8 +238,76 @@ namespace XREngine
             if (!Guid.TryParse(valueScalar.Value, out var guid))
                 return false;
 
-            asset = Engine.Assets.GetAssetByID(guid);
-            return true;
+            // First prefer already-loaded assets.
+            if (Engine.Assets.TryGetAssetByID(guid, out asset) && asset is not null)
+                return true;
+
+            // Otherwise, resolve the backing file via metadata and load it.
+            if (!Engine.Assets.TryResolveAssetPathById(guid, out var assetPath) || string.IsNullOrWhiteSpace(assetPath))
+                return false;
+
+            if (!File.Exists(assetPath))
+                return false;
+
+            Type loadType = expectedType;
+            if (loadType.IsAbstract || loadType.IsInterface)
+            {
+                if (TryResolveConcreteAssetType(assetPath, out var concreteType))
+                    loadType = concreteType;
+                else
+                    return false;
+            }
+
+            asset = Engine.Assets.LoadImmediate(assetPath, loadType);
+            return asset is not null;
+        }
+
+        private static bool TryResolveConcreteAssetType(string assetPath, out Type type)
+        {
+            type = typeof(XRAsset);
+
+            string? hint = null;
+            try
+            {
+                foreach (var line in File.ReadLines(assetPath).Take(128))
+                {
+                    string trimmed = line.Trim();
+                    if (!trimmed.StartsWith("__assetType:", StringComparison.Ordinal))
+                        continue;
+
+                    hint = trimmed.Substring("__assetType:".Length).Trim();
+                    hint = hint.Trim('"', '\'');
+                    break;
+                }
+            }
+            catch
+            {
+                return false;
+            }
+
+            if (string.IsNullOrWhiteSpace(hint))
+                return false;
+
+            // XRAsset.SerializedAssetType writes FullName (no assembly qualifier). Resolve via loaded assemblies.
+            foreach (var assembly in AppDomain.CurrentDomain.GetAssemblies())
+            {
+                var resolved = assembly.GetType(hint, throwOnError: false, ignoreCase: false);
+                if (resolved is not null && typeof(XRAsset).IsAssignableFrom(resolved))
+                {
+                    type = resolved;
+                    return true;
+                }
+            }
+
+            // Last-chance attempt.
+            var direct = Type.GetType(hint, throwOnError: false);
+            if (direct is not null && typeof(XRAsset).IsAssignableFrom(direct))
+            {
+                type = direct;
+                return true;
+            }
+
+            return false;
         }
 
         private sealed class ReplayParser : IParser
@@ -265,6 +334,28 @@ namespace XREngine
 
                 _current = _events.Dequeue();
                 return true;
+            }
+        }
+    }
+
+    public sealed class NotSupportedAnnotatingNodeDeserializer(INodeDeserializer innerDeserializer) : INodeDeserializer
+    {
+        public bool Deserialize(
+            IParser reader,
+            Type expectedType,
+            Func<IParser, Type, object?> nestedObjectDeserializer,
+            out object? value,
+            ObjectDeserializer rootDeserializer)
+        {
+            try
+            {
+                return innerDeserializer.Deserialize(reader, expectedType, nestedObjectDeserializer, out value, rootDeserializer);
+            }
+            catch (NotSupportedException ex)
+            {
+                throw new YamlException(
+                    $"NotSupportedException while deserializing '{expectedType.FullName}'. Depth={DepthTrackingNodeDeserializer.CurrentDepth}.",
+                    ex);
             }
         }
     }
