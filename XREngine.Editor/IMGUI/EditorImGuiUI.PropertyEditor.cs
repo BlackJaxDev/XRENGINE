@@ -5,9 +5,11 @@ using System.Globalization;
 using System.Numerics;
 using System.Reflection;
 using System.Runtime.CompilerServices;
+using System.IO;
 using XREngine.Core.Files;
 using XREngine.Data.Colors;
 using XREngine.Editor.ComponentEditors;
+using XREngine.Editor.UI;
 using XREngine.Rendering;
 using XREngine.Rendering.OpenGL;
 using XREngine.Scene;
@@ -419,7 +421,7 @@ public static partial class EditorImGuiUI
                 {
                     ImGui.TextDisabled("<empty>");
                 }
-                else if (ImGui.BeginTable("CollectionItems", 2, ImGuiTableFlags.SizingStretchProp | ImGuiTableFlags.RowBg))
+                else
                 {
                     for (int i = 0; i < adapter.Count; i++)
                     {
@@ -432,11 +434,7 @@ public static partial class EditorImGuiUI
                         }
                         catch (Exception ex)
                         {
-                            ImGui.TableNextRow();
-                            ImGui.TableSetColumnIndex(0);
-                            ImGui.TextUnformatted($"[{i}]");
-                            ImGui.TableSetColumnIndex(1);
-                            ImGui.TextUnformatted($"<error: {ex.Message}>");
+                            ImGui.TextUnformatted($"[{i}] <error: {ex.Message}>");
                             continue;
                         }
 
@@ -448,10 +446,9 @@ public static partial class EditorImGuiUI
                             ? ShouldUseCollectionTypeSelector(runtimeType)
                             : elementUsesTypeSelector;
 
-                        ImGui.TableNextRow();
                         ImGui.PushID(i);
 
-                        ImGui.TableSetColumnIndex(0);
+                        // Draw index label and action buttons on a header row above the item content.
                         ImGui.TextUnformatted($"[{i}]");
 
                         if (adapter.CanAddRemove)
@@ -495,7 +492,60 @@ public static partial class EditorImGuiUI
                             }
                         }
 
-                        ImGui.TableSetColumnIndex(1);
+                        // Export embedded assets into standalone files.
+                        // Only show for XRAssets that are currently embedded in the root asset being inspected.
+                        if (adapter.CanAddRemove && item is XRAsset embeddedAsset && _inspectorAssetContext is not null)
+                        {
+                            XRAsset inspectorRoot = _inspectorAssetContext;
+                            bool isEmbeddedInInspectorRoot =
+                                !ReferenceEquals(embeddedAsset.SourceAsset, embeddedAsset)
+                                && ReferenceEquals(embeddedAsset.SourceAsset, inspectorRoot);
+
+                            if (isEmbeddedInInspectorRoot)
+                            {
+                                ImGui.SameLine(0f, 6f);
+                                if (ImGui.SmallButton("Export"))
+                                {
+                                    string dialogId = $"ExportEmbeddedAsset_{inspectorRoot.ID}_{property.Name}_{i}";
+                                    string assetsRoot = Engine.Assets.GameAssetsPath;
+
+                                    ImGuiFileBrowser.SelectFolder(
+                                        dialogId,
+                                        "Export Embedded Asset",
+                                        result =>
+                                        {
+                                            if (!result.Success || string.IsNullOrWhiteSpace(result.SelectedPath))
+                                                return;
+
+                                            try
+                                            {
+                                                string selectedDir = Path.GetFullPath(result.SelectedPath);
+                                                string rootDir = Path.GetFullPath(assetsRoot);
+
+                                                if (!IsPathUnderDirectory(selectedDir, rootDir))
+                                                {
+                                                    Debug.LogWarning($"Export folder must be inside the Assets directory. Selected='{selectedDir}', AssetsRoot='{rootDir}'");
+                                                    return;
+                                                }
+
+                                                Engine.Assets.SaveToImmediate(embeddedAsset, selectedDir);
+
+                                                // Rebuild the inspector root's embedded graph so the exported asset is no longer treated as embedded.
+                                                XRAssetGraphUtility.RefreshAssetGraph(inspectorRoot);
+                                                NotifyInspectorValueEdited(inspectorRoot);
+                                            }
+                                            catch (Exception ex)
+                                            {
+                                                Debug.LogException(ex, $"Failed to export embedded asset '{embeddedAsset?.Name ?? embeddedAsset?.GetType().Name ?? "<unknown>"}'.");
+                                            }
+                                        },
+                                        initialDirectory: assetsRoot);
+                                }
+                            }
+                        }
+
+                        // Item content rendered below the header buttons.
+                        ImGui.Indent();
 
                         bool elementCanModify = currentList is Array || !currentList.IsReadOnly;
 
@@ -554,10 +604,10 @@ public static partial class EditorImGuiUI
                             }
                         }
 
+                        ImGui.Unindent();
+                        ImGui.Separator();
                         ImGui.PopID();
                     }
-
-                    ImGui.EndTable();
                 }
 
                 if (adapter.CanAddRemove)
@@ -2921,6 +2971,23 @@ public static partial class EditorImGuiUI
                 value = localValue;
 
             return changed;
+        }
+
+        private static bool IsPathUnderDirectory(string candidatePath, string rootDirectory)
+        {
+            if (string.IsNullOrWhiteSpace(candidatePath) || string.IsNullOrWhiteSpace(rootDirectory))
+                return false;
+
+            // Normalize to ensure consistent prefix checking.
+            string root = Path.GetFullPath(rootDirectory);
+            if (!root.EndsWith(Path.DirectorySeparatorChar))
+                root += Path.DirectorySeparatorChar;
+
+            string candidate = Path.GetFullPath(candidatePath);
+            if (!candidate.EndsWith(Path.DirectorySeparatorChar))
+                candidate += Path.DirectorySeparatorChar;
+
+            return candidate.StartsWith(root, StringComparison.OrdinalIgnoreCase);
         }
 
         private readonly struct ImGuiDisabledScope : IDisposable

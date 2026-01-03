@@ -28,6 +28,7 @@ using YamlDotNet.Core;
 using YamlDotNet.Core.Events;
 using YamlDotNet.Serialization;
 using YamlDotNet.Serialization.NodeDeserializers;
+using YamlDotNet.Serialization.NodeDeserializers;
 
 namespace XREngine
 {
@@ -734,8 +735,20 @@ namespace XREngine
                             continue;
 
                         string normalized = ext.TrimStart('.');
-                        if (!map.ContainsKey(normalized))
+                        if (!map.TryGetValue(normalized, out var existing))
+                        {
                             map.Add(normalized, type);
+                            continue;
+                        }
+
+                        // If multiple asset types claim the same extension, prefer prefab sources.
+                        // This ensures model formats (fbx/obj/etc.) import into scene hierarchies with bones + ModelComponents
+                        // rather than collapsing into a single Model asset.
+                        if (typeof(XREngine.Scene.Prefabs.XRPrefabSource).IsAssignableFrom(type) &&
+                            !typeof(XREngine.Scene.Prefabs.XRPrefabSource).IsAssignableFrom(existing))
+                        {
+                            map[normalized] = type;
+                        }
                     }
                 }
             }
@@ -2096,6 +2109,9 @@ namespace XREngine
                 .WithNodeDeserializer(
                     inner => new DepthTrackingNodeDeserializer(inner),
                     s => s.InsteadOf<ObjectNodeDeserializer>())
+                .WithNodeDeserializer(
+                    inner => new NotSupportedAnnotatingNodeDeserializer(inner),
+                    s => s.InsteadOf<DictionaryNodeDeserializer>())
                 //.WithNodeDeserializer(new XRAssetDeserializer(), w => w.OnTop())
                 ;
 
@@ -2153,29 +2169,41 @@ namespace XREngine
         private static T? DeserializeAssetFile<[DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicMethods)] T>(string filePath) where T : XRAsset, new()
         {
             using var t = Engine.Profiler.Start($"AssetManager.DeserializeAsset {filePath}");
-            string contents = File.ReadAllText(filePath);
-            return Deserializer.Deserialize<T>(contents);
+            using var fs = new FileStream(filePath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
+            using var reader = new StreamReader(fs);
+            return Deserializer.Deserialize<T>(reader);
         }
 
         public static XRAsset? DeserializeAssetFile(string filePath, Type type)
         {
             using var t = Engine.Profiler.Start($"AssetManager.DeserializeAsset {filePath}");
-            string contents = File.ReadAllText(filePath);
-            return Deserializer.Deserialize(contents, type) as XRAsset;
+            using var fs = new FileStream(filePath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
+            using var reader = new StreamReader(fs);
+            return Deserializer.Deserialize(reader, type) as XRAsset;
         }
 
         private static async Task<T?> DeserializeAssetFileAsync<[DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicMethods)] T>(string filePath) where T : XRAsset, new()
         {
             using var t = Engine.Profiler.Start($"AssetManager.DeserializeAssetAsync {filePath}");
-            string contents = await File.ReadAllTextAsync(filePath).ConfigureAwait(false);
-            return Deserializer.Deserialize<T>(contents);
+            // YamlDotNet deserialization is synchronous; keep async signature by doing IO + parse on background thread.
+            return await Task.Run(() =>
+            {
+                using var fs = new FileStream(filePath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
+                using var reader = new StreamReader(fs);
+                return Deserializer.Deserialize<T>(reader);
+            }).ConfigureAwait(false);
         }
 
         public static async Task<XRAsset?> DeserializeAssetFileAsync(string filePath, Type type)
         {
             using var t = Engine.Profiler.Start($"AssetManager.DeserializeAssetAsync {filePath}");
-            string contents = await File.ReadAllTextAsync(filePath).ConfigureAwait(false);
-            return Deserializer.Deserialize(contents, type) as XRAsset;
+            // YamlDotNet deserialization is synchronous; keep async signature by doing IO + parse on background thread.
+            return await Task.Run(() =>
+            {
+                using var fs = new FileStream(filePath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
+                using var reader = new StreamReader(fs);
+                return Deserializer.Deserialize(reader, type) as XRAsset;
+            }).ConfigureAwait(false);
         }
 
         private T? Load3rdPartyWithCache<[DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicMethods)] T>(string filePath, string ext) where T : XRAsset, new()

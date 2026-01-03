@@ -184,6 +184,13 @@ public static partial class EditorImGuiUI
 
         private static readonly ConcurrentQueue<Action> _queuedSceneEdits = new();
 
+        // Manual asset drag tracking used for FullViewportBehindImGuiUI drops.
+        // We intentionally do not rely on ImGui drag/drop targets for the background region
+        // because dockspace passthru + docking drags can make target detection unreliable.
+        private static bool _assetExplorerWindowHovered;
+        private static bool _assetDragInProgress;
+        private static string? _assetDragPath;
+
         private static Engine.CodeProfiler.ProfilerFrameSnapshot? _worstFrameDisplaySnapshot;
         private static Engine.CodeProfiler.ProfilerFrameSnapshot? _worstFrameWindowSnapshot;
         private static float _worstFrameDisplayMs;
@@ -463,6 +470,10 @@ public static partial class EditorImGuiUI
                 return;
             }
 
+            // Reset per-frame UI state; other panels set these during their draw.
+            _assetExplorerWindowHovered = false;
+            _assetDragInProgress = false;
+
             EnsureProfessionalImGuiStyling();
             ApplyViewportModeImGuiBackgroundAlpha();
 
@@ -500,6 +511,7 @@ public static partial class EditorImGuiUI
             ImGui.PopStyleVar(3);
 
             uint dockSpaceId = ImGui.GetID(MainDockSpaceId);
+
             ImGui.DockSpace(dockSpaceId, Vector2.Zero, ImGuiDockNodeFlags.PassthruCentralNode);
             
             // Initialize default docking layout if not yet done
@@ -534,6 +546,49 @@ public static partial class EditorImGuiUI
             UI.Tools.ShaderLockingWindow.Instance.Render();
             UI.Tools.ShaderLockingWindow.Instance.RenderDialogs();
             UI.Tools.ShaderAnalyzerWindow.Instance.Render();
+
+            // Background-mode model spawning on drop.
+            // We track the dragged asset path from the Asset Explorer and spawn when the mouse is
+            // released over the dockspace region (but not while the Assets window is hovered).
+            if (Engine.Rendering.Settings.ViewportPresentationMode == Engine.Rendering.EngineSettings.EViewportPresentationMode.FullViewportBehindImGuiUI)
+            {
+                if (!string.IsNullOrWhiteSpace(_assetDragPath) && ImGui.IsMouseReleased(ImGuiMouseButton.Left))
+                {
+                    // Avoid spawning when releasing over the Assets panel.
+                    if (!_assetExplorerWindowHovered)
+                    {
+                        Vector2 dockMin = new(viewport.Pos.X, viewport.Pos.Y + totalReservedHeight);
+                        Vector2 dockMax = dockMin + new Vector2(viewport.Size.X, viewport.Size.Y - totalReservedHeight);
+
+                        // Avoid ImGui.IsMouseHoveringRect(..., clip: true) here: the clip rect is tied
+                        // to whatever window happened to render last, which can make this always-false.
+                        var mousePos = ImGui.GetMousePos();
+                        bool mouseInDockRect =
+                            mousePos.X >= dockMin.X && mousePos.Y >= dockMin.Y &&
+                            mousePos.X <= dockMax.X && mousePos.Y <= dockMax.Y;
+
+                        if (mouseInDockRect)
+                        {
+                            var world = TryGetActiveWorldInstance();
+                            if (world is not null)
+                            {
+                                string path = _assetDragPath;
+                                if (TryLoadPrefabAsset(path, out var prefab))
+                                    EnqueueSceneEdit(() => SpawnPrefabNode(world, parent: null, prefab!));
+                                else if (TryLoadModelAsset(path, out var model))
+                                    EnqueueSceneEdit(() => SpawnModelNode(world, parent: null, model!, path));
+                            }
+                        }
+                    }
+
+                    // Consume the drag regardless to avoid repeats.
+                    _assetDragPath = null;
+                }
+
+                // Cleanup: if we're not actively dragging anymore, clear lingering state.
+                if (!_assetDragInProgress && !ImGui.IsMouseDown(ImGuiMouseButton.Left))
+                    _assetDragPath = null;
+            }
 
             bool uiWantsCapture = io.WantCaptureMouse || captureKeyboard;
             bool allowEngineInputThroughViewportPanel =

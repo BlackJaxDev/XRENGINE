@@ -34,7 +34,7 @@ public static partial class EditorImGuiUI
         private static bool _assetExplorerExtensionFilterHasWildcard;
         private static readonly Dictionary<string, AssetTypeDescriptor?> _assetExplorerAssetTypeCache = new(StringComparer.OrdinalIgnoreCase);
         private static readonly Dictionary<string, HashSet<string>> _assetExplorerYamlKeyCache = new(StringComparer.OrdinalIgnoreCase);
-        private static MethodInfo? _assetManagerLoadMethod;
+        // (Removed) Reflection-based AssetManager.Load lookup. Use the strongly-typed overload instead.
 
         private static partial void DrawAssetExplorerPanel()
         {
@@ -46,6 +46,8 @@ public static partial class EditorImGuiUI
                 ImGui.End();
                 return;
             }
+
+            _assetExplorerWindowHovered = ImGui.IsWindowHovered(ImGuiHoveredFlags.RootAndChildWindows | ImGuiHoveredFlags.AllowWhenBlockedByActiveItem);
 
             var viewport = ImGui.GetMainViewport();
             const float minHeight = 220.0f;
@@ -577,6 +579,8 @@ public static partial class EditorImGuiUI
 
             if (!entry.IsDirectory && ImGui.BeginDragDropSource(ImGuiDragDropFlags.SourceAllowNullID))
             {
+                _assetDragInProgress = true;
+                _assetDragPath = entry.Path;
                 ImGuiAssetUtilities.SetPathPayload(entry.Path);
                 ImGui.TextUnformatted(entry.Name);
                 ImGui.EndDragDropSource();
@@ -706,6 +710,8 @@ public static partial class EditorImGuiUI
 
             if (!entry.IsDirectory && hovered && ImGui.BeginDragDropSource(ImGuiDragDropFlags.SourceAllowNullID))
             {
+                _assetDragInProgress = true;
+                _assetDragPath = entry.Path;
                 ImGuiAssetUtilities.SetPathPayload(entry.Path);
                 ImGui.TextUnformatted(entry.Name);
                 ImGui.EndDragDropSource();
@@ -1151,6 +1157,8 @@ public static partial class EditorImGuiUI
             return true;
         }
 
+
+
         private static XRAsset? LoadAssetForInspector(AssetTypeDescriptor descriptor, string path)
         {
             var assets = Engine.Assets;
@@ -1169,14 +1177,14 @@ public static partial class EditorImGuiUI
             Debug.Out($"[AssetExplorer] LoadAssetForInspector: Loading asset from disk, path='{path}', type={descriptor.FullName}");
             try
             {
-                MethodInfo loadMethod = GetAssetManagerLoadMethod();
-                MethodInfo generic = loadMethod.MakeGenericMethod(descriptor.Type);
-                if (generic.Invoke(assets, new object[] { path }) is XRAsset loaded)
+                var loaded = assets.Load(path, descriptor.Type);
+                if (loaded is not null)
                 {
                     Debug.Out($"[AssetExplorer] LoadAssetForInspector: Successfully loaded asset");
                     return loaded;
                 }
-                Debug.Out($"[AssetExplorer] LoadAssetForInspector: Load returned null or wrong type");
+
+                Debug.Out($"[AssetExplorer] LoadAssetForInspector: Load returned null");
             }
             catch (Exception ex)
             {
@@ -1185,23 +1193,6 @@ public static partial class EditorImGuiUI
             }
 
             return null;
-        }
-
-        private static MethodInfo GetAssetManagerLoadMethod()
-        {
-            if (_assetManagerLoadMethod is not null)
-                return _assetManagerLoadMethod;
-
-            var method = typeof(AssetManager).GetMethods(BindingFlags.Instance | BindingFlags.Public)
-                .FirstOrDefault(m => m.Name == nameof(AssetManager.Load)
-                                     && m.GetParameters().Length == 1
-                                     && m.GetParameters()[0].ParameterType == typeof(string));
-
-            if (method is null)
-                throw new InvalidOperationException("Unable to locate AssetManager.Load(string) method.");
-
-            _assetManagerLoadMethod = method;
-            return method;
         }
 
         private static AssetTypeDescriptor? ResolveAssetTypeForPath(string path)
@@ -1240,6 +1231,31 @@ public static partial class EditorImGuiUI
                 return _assetExplorerAssetTypeCache[normalized];
             }
 
+            // Native .asset files can be enormous (e.g. imported models). Avoid parsing the entire YAML just to
+            // identify the concrete type: prefer scanning the header for __type/__assetType first.
+            var typeHint = TryReadAssetTypeFromFile(normalized);
+            if (!string.IsNullOrWhiteSpace(typeHint))
+            {
+                var hinted = descriptors.FirstOrDefault(d =>
+                    string.Equals(d.FullName, typeHint, StringComparison.Ordinal) ||
+                    string.Equals(d.Type.Name, typeHint, StringComparison.Ordinal));
+                if (hinted is not null)
+                {
+                    Debug.Out($"[AssetExplorer] Found type via type hint: {hinted.FullName}");
+                    _assetExplorerAssetTypeCache[normalized] = hinted;
+                    return hinted;
+                }
+
+                hinted = TryCreateDescriptorFromTypeName(typeHint);
+                if (hinted is not null)
+                {
+                    Debug.Out($"[AssetExplorer] Built descriptor via type hint resolution: {hinted.FullName}");
+                    _assetTypeDescriptors.Add(hinted);
+                    _assetExplorerAssetTypeCache[normalized] = hinted;
+                    return hinted;
+                }
+            }
+
             if (!TryGetYamlKeys(normalized, out var yamlKeys))
             {
                 // Try to read __assetType directly as fallback
@@ -1255,6 +1271,17 @@ public static partial class EditorImGuiUI
                         _assetExplorerAssetTypeCache[normalized] = descriptor;
                         return descriptor;
                     }
+
+                    // If the type exists but wasn't included in the descriptor cache (e.g. late-loaded assembly),
+                    // build a descriptor on demand so the Inspector can still load the asset.
+                    descriptor = TryCreateDescriptorFromTypeName(assetTypeFromFile);
+                    if (descriptor is not null)
+                    {
+                        Debug.Out($"[AssetExplorer] Built descriptor via __assetType type resolution: {descriptor.FullName}");
+                        _assetTypeDescriptors.Add(descriptor);
+                        _assetExplorerAssetTypeCache[normalized] = descriptor;
+                        return descriptor;
+                    }
                 }
                 Debug.Out($"[AssetExplorer] TryGetYamlKeys failed for path='{normalized}'");
                 _assetExplorerAssetTypeCache[normalized] = null;
@@ -1263,8 +1290,8 @@ public static partial class EditorImGuiUI
 
             Debug.Out($"[AssetExplorer] TryGetYamlKeys succeeded, found {yamlKeys.Count} keys: {string.Join(", ", yamlKeys.Take(10))}");
             
-            // First check if __assetType is in the keys - direct type match
-            if (yamlKeys.Contains("__assetType"))
+            // First check if __type/__assetType is in the keys - direct type match
+            if (yamlKeys.Contains("__type") || yamlKeys.Contains("__assetType"))
             {
                 var assetTypeFromFile = TryReadAssetTypeFromFile(normalized);
                 if (assetTypeFromFile is not null)
@@ -1275,6 +1302,15 @@ public static partial class EditorImGuiUI
                     if (descriptor is not null)
                     {
                         Debug.Out($"[AssetExplorer] Found type via __assetType field: {descriptor.FullName}");
+                        _assetExplorerAssetTypeCache[normalized] = descriptor;
+                        return descriptor;
+                    }
+
+                    descriptor = TryCreateDescriptorFromTypeName(assetTypeFromFile);
+                    if (descriptor is not null)
+                    {
+                        Debug.Out($"[AssetExplorer] Built descriptor via __assetType type resolution: {descriptor.FullName}");
+                        _assetTypeDescriptors.Add(descriptor);
                         _assetExplorerAssetTypeCache[normalized] = descriptor;
                         return descriptor;
                     }
@@ -1351,24 +1387,54 @@ public static partial class EditorImGuiUI
         {
             try
             {
-                // Read first few lines looking for __assetType
+                // Fast-path: scan the beginning of the file for a YAML type hint.
+                // Be resilient to BOM/whitespace and quoted values.
                 using var fs = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
                 using var reader = new StreamReader(fs);
-                for (int i = 0; i < 10 && !reader.EndOfStream; i++)
+
+                const int maxLinesToScan = 200;
+                for (int i = 0; i < maxLinesToScan && !reader.EndOfStream; i++)
                 {
-                    var line = reader.ReadLine();
-                    if (line is null)
+                    var rawLine = reader.ReadLine();
+                    if (rawLine is null)
                         break;
-                    
-                    // Look for __assetType: TypeName pattern
-                    if (line.StartsWith("__assetType:", StringComparison.Ordinal))
+
+                    string line = rawLine.TrimStart();
+                    if (line.Length > 0 && line[0] == '\uFEFF')
+                        line = line.Substring(1);
+
+                    if (!line.StartsWith("__type", StringComparison.Ordinal) && !line.StartsWith("__assetType", StringComparison.Ordinal))
+                        continue;
+
+                    int colon = line.IndexOf(':');
+                    if (colon < 0)
+                        continue;
+
+                    string key = line.Substring(0, colon).Trim();
+                    if (!string.Equals(key, "__type", StringComparison.Ordinal) && !string.Equals(key, "__assetType", StringComparison.Ordinal))
+                        continue;
+
+                    string value = line.Substring(colon + 1).Trim();
+                    if (value.Length == 0)
+                        continue;
+
+                    // Strip surrounding quotes if present.
+                    if ((value.StartsWith("\"", StringComparison.Ordinal) && value.EndsWith("\"", StringComparison.Ordinal))
+                        || (value.StartsWith("'", StringComparison.Ordinal) && value.EndsWith("'", StringComparison.Ordinal)))
                     {
-                        var value = line.Substring("__assetType:".Length).Trim();
-                        if (!string.IsNullOrWhiteSpace(value))
-                        {
-                            Debug.Out($"[AssetExplorer] Found __assetType in file: '{value}'");
-                            return value;
-                        }
+                        if (value.Length >= 2)
+                            value = value.Substring(1, value.Length - 2).Trim();
+                    }
+
+                    // Strip inline YAML comments.
+                    int comment = value.IndexOf('#');
+                    if (comment >= 0)
+                        value = value.Substring(0, comment).Trim();
+
+                    if (!string.IsNullOrWhiteSpace(value))
+                    {
+                        Debug.Out($"[AssetExplorer] Found type hint '{key}' in file: '{value}'");
+                        return value;
                     }
                 }
             }
@@ -1377,6 +1443,70 @@ public static partial class EditorImGuiUI
                 // Ignore errors
             }
             return null;
+        }
+
+        private static AssetTypeDescriptor? TryCreateDescriptorFromTypeName(string typeName)
+        {
+            if (string.IsNullOrWhiteSpace(typeName))
+                return null;
+
+            // XRAsset.SerializedAssetType stores FullName (not assembly-qualified), so resolve manually.
+            Type? resolved = null;
+            foreach (var assembly in AppDomain.CurrentDomain.GetAssemblies())
+            {
+                try
+                {
+                    resolved = assembly.GetType(typeName, throwOnError: false, ignoreCase: false);
+                }
+                catch
+                {
+                    resolved = null;
+                }
+
+                if (resolved is not null)
+                    break;
+            }
+
+            if (resolved is null)
+                return null;
+
+            if (!typeof(XRAsset).IsAssignableFrom(resolved))
+                return null;
+
+            if (resolved.IsAbstract || resolved.IsInterface || resolved.ContainsGenericParameters)
+                return null;
+
+            if (resolved.GetConstructor(Type.EmptyTypes) is null)
+                return null;
+
+            string displayName = resolved.GetCustomAttribute<DisplayNameAttribute>()?.DisplayName ?? resolved.Name;
+            if (string.IsNullOrWhiteSpace(displayName))
+                displayName = resolved.Name;
+
+            string category = resolved.Namespace ?? "General";
+
+            HashSet<string> properties = resolved.GetProperties(BindingFlags.Instance | BindingFlags.Public)
+                .Where(p => p.GetIndexParameters().Length == 0)
+                .Select(p => p.Name)
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+            HashSet<string> extensions = new(StringComparer.OrdinalIgnoreCase) { ".asset" };
+            var thirdParty = resolved.GetCustomAttribute<XR3rdPartyExtensionsAttribute>();
+            if (thirdParty is not null)
+            {
+                foreach (var (ext, _) in thirdParty.Extensions)
+                {
+                    if (string.IsNullOrWhiteSpace(ext))
+                        continue;
+                    string normalized = ext.StartsWith(".", StringComparison.Ordinal) ? ext : "." + ext;
+                    extensions.Add(normalized.ToLowerInvariant());
+                }
+            }
+
+            string? inspectorTypeName = resolved.GetCustomAttribute<XRAssetInspectorAttribute>(true)?.InspectorTypeName;
+            XRAssetContextMenuAttribute[] contextMenus = resolved.GetCustomAttributes<XRAssetContextMenuAttribute>(true).ToArray();
+            return new AssetTypeDescriptor(resolved, displayName, category, properties, extensions, inspectorTypeName, contextMenus);
         }
 
         private static void UpdateAssetExplorerExtensionFilterSet()

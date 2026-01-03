@@ -11,8 +11,105 @@ namespace XREngine.Data
             if (string.IsNullOrEmpty(byteStr))
                 return [];
 
+            // YAML scalars may include newlines/whitespace (folded or literal blocks) for very long strings.
+            // Our compressor emits a contiguous hex string, so strip whitespace before validating/decoding.
+            // Also accept an optional "0x" prefix for debugging convenience.
+            if (byteStr.StartsWith("0x", StringComparison.OrdinalIgnoreCase))
+                byteStr = byteStr[2..];
+
+            bool hasWhitespace = false;
+            for (int i = 0; i < byteStr.Length; i++)
+            {
+                if (char.IsWhiteSpace(byteStr[i]))
+                {
+                    hasWhitespace = true;
+                    break;
+                }
+            }
+
+            if (hasWhitespace)
+            {
+                var sb = new StringBuilder(byteStr.Length);
+                foreach (char c in byteStr)
+                {
+                    if (!char.IsWhiteSpace(c))
+                        sb.Append(c);
+                }
+                byteStr = sb.ToString();
+            }
+
+            static bool TryDecodeAndDecompress(uint? expectedLength, string hex, out byte[] decompressed)
+            {
+                decompressed = [];
+                byte[] compressed;
+                try
+                {
+                    compressed = Convert.FromHexString(hex);
+                }
+                catch
+                {
+                    return false;
+                }
+
+                try
+                {
+                    decompressed = Decompress(compressed, false);
+                    return expectedLength is null || decompressed.Length == expectedLength.Value;
+                }
+                catch
+                {
+                    decompressed = [];
+                    return false;
+                }
+            }
+
             if ((byteStr.Length & 1) != 0)
-                throw new FormatException("Compressed byte string must contain an even number of characters.");
+            {
+                // Best-effort recovery: if a single hex nibble was lost (common when huge YAML scalars
+                // are edited/wrapped), try restoring by padding either the front or end.
+                // If the caller provided an expected decompressed length, validate against it.
+                if (TryDecodeAndDecompress(length, "0" + byteStr, out var recoveredA))
+                    return recoveredA;
+                if (TryDecodeAndDecompress(length, byteStr + "0", out var recoveredB))
+                    return recoveredB;
+
+                // If the string was truncated by exactly 1 character, another plausible repair is to
+                // drop a nibble from either end to re-align to whole bytes.
+                if (byteStr.Length > 1)
+                {
+                    if (TryDecodeAndDecompress(length, byteStr[..^1], out var recoveredC))
+                        return recoveredC;
+                    if (TryDecodeAndDecompress(length, byteStr[1..], out var recoveredD))
+                        return recoveredD;
+                }
+
+                // If no expected length was provided, fall back to accepting the first successful decode+decompress.
+                if (length is null)
+                {
+                    if (TryDecodeAndDecompress(null, "0" + byteStr, out recoveredA))
+                        return recoveredA;
+                    if (TryDecodeAndDecompress(null, byteStr + "0", out recoveredB))
+                        return recoveredB;
+
+                    if (byteStr.Length > 1)
+                    {
+                        if (TryDecodeAndDecompress(null, byteStr[..^1], out var recoveredC))
+                            return recoveredC;
+                        if (TryDecodeAndDecompress(null, byteStr[1..], out var recoveredD))
+                            return recoveredD;
+                    }
+                }
+
+                // Provide a more actionable error: this is almost certainly a corrupted/truncated payload.
+                // Include a small preview to help spot obvious formatting issues.
+                string head = byteStr.Length <= 32 ? byteStr : byteStr[..32];
+                string tail = byteStr.Length <= 32 ? string.Empty : byteStr[^32..];
+                throw new FormatException(
+                    $"Compressed byte string must contain an even number of hex characters (after trimming). Got {byteStr.Length}. " +
+                    $"Tried repairs (pad front/back, drop first/last nibble) but none produced a valid LZMA payload" +
+                    (length is null ? "." : $" matching expected length {length.Value}.") +
+                    $" Head='{head}' Tail='{tail}'.");
+            }
 
             byte[] compressed;
             try
