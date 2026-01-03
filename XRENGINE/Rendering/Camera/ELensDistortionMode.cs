@@ -26,5 +26,10 @@ public enum ELensDistortionMode
     /// Panini projection - preserves vertical lines while compressing horizontal periphery.
     /// Excellent for wide-angle views (90°+). Distance parameter controls compression strength.
     /// </summary>
-    Panini = 3
+    Panini = 3,
+
+    /// <summary>
+    /// Brown-Conrady lens distortion using physical calibration coefficients (k1,k2,k3,p1,p2).
+    /// </summary>
+    BrownConrady = 4
 }

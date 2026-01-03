@@ -8,12 +8,24 @@ uniform sampler2D ColorSource; // Copied scene color
 uniform sampler2D DepthView;   // Depth buffer view
 
 uniform vec2 TexelSize;
+
+// 0 = Artist, 1 = Physical
+uniform int DoFMode;
+
 uniform float FocusDepth;       // depth-buffer value at focus plane
 uniform float FocusRangeDepth;  // depth-buffer delta spanning near/far focus band
 uniform float Aperture;
 uniform float MaxCoC;
 uniform float BokehRadius;
 uniform bool NearBlur;
+
+// Physical DOF inputs
+uniform float CameraNearZ;
+uniform float CameraFarZ;
+uniform float DoFPhysicalFocalLengthMm;
+uniform float DoFPhysicalFocusDistanceMm;
+uniform float DoFPhysicalCoCRefMm;
+uniform float DoFPhysicalPixelsPerMm;
 
 const vec2 Poisson[12] = vec2[](
     vec2( 0.0,  0.0),
@@ -32,13 +44,44 @@ const vec2 Poisson[12] = vec2[](
 
 float ComputeCoC(float depth)
 {
-    float signedDepth = depth - FocusDepth;
-    if (!NearBlur && signedDepth < 0.0)
-        return 0.0;
+    if (DoFMode == 1)
+    {
+        // Convert normalized nonlinear depth to linear distance (matches XRCamera.DepthToDistance)
+        float depthSample = 2.0 * depth - 1.0;
+        float zM = (2.0 * CameraNearZ * CameraFarZ) / (CameraFarZ + CameraNearZ - depthSample * (CameraFarZ - CameraNearZ));
+        float zMm = zM * 1000.0;
 
-    float blur = abs(signedDepth) / max(FocusRangeDepth, 1e-5);
-    float apertureScale = 0.35 + Aperture * 0.15; // map f-stop style to modest scale
-    return clamp(blur * apertureScale, 0.0, 1.0) * MaxCoC;
+        float sMm = max(DoFPhysicalFocusDistanceMm, 0.001);
+        float fMm = max(DoFPhysicalFocalLengthMm, 0.001);
+        float n = max(Aperture, 0.1); // f-number
+
+        // Physical circle of confusion diameter on sensor (mm):
+        // c = | f^2 / (N (s - f)) * (z - s) / z |
+        float denom = max(n * (sMm - fMm), 1e-6);
+        float cMm = abs((fMm * fMm) / denom * ((zMm - sMm) / max(zMm, 1e-6)));
+
+        float cocRef = max(DoFPhysicalCoCRefMm, 1e-6);
+        if (cMm <= cocRef)
+            return 0.0;
+
+        // Optional: disable near blur by comparing to focus distance.
+        if (!NearBlur && zMm < sMm)
+            return 0.0;
+
+        // Convert to pixel radius, capped by MaxCoC (px)
+        float cocPx = (cMm - cocRef) * 0.5 * DoFPhysicalPixelsPerMm;
+        return min(cocPx, MaxCoC);
+    }
+    else
+    {
+        float signedDepth = depth - FocusDepth;
+        if (!NearBlur && signedDepth < 0.0)
+            return 0.0;
+
+        float blur = abs(signedDepth) / max(FocusRangeDepth, 1e-5);
+        float apertureScale = 0.35 + Aperture * 0.15; // map f-stop style to modest scale
+        return clamp(blur * apertureScale, 0.0, 1.0) * MaxCoC;
+    }
 }
 
 bool IsValidUv(vec2 uv)

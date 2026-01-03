@@ -276,7 +276,7 @@ public partial class EditorFlyingCameraPawnComponent : FlyingCameraPawnComponent
 
     #endregion
 
-    private bool _renderHoveredPrimitive = true;
+    private bool _renderHoveredPrimitive = false;
     /// <summary>
     /// If true, renders the currently hovered primitive (face, edge, or vertex) based on RaycastMode.
     /// </summary>
@@ -359,7 +359,7 @@ public partial class EditorFlyingCameraPawnComponent : FlyingCameraPawnComponent
     private XRMeshRenderer? _stippledTriangleRenderer;
     private XRMesh? _stippledTriangleMesh;
 
-    private bool _hoverOutlineEnabled = true;
+    private bool _hoverOutlineEnabled = false;
     /// <summary>
     /// If true, renders an outline around the mesh currently under the cursor using stencil buffer.
     /// </summary>
@@ -376,7 +376,7 @@ public partial class EditorFlyingCameraPawnComponent : FlyingCameraPawnComponent
         }
     }
 
-    private bool _renderHoveredNodeName = true;
+    private bool _renderHoveredNodeName = false;
     /// <summary>
     /// If true, renders the name of the hovered scene node as debug text.
     /// </summary>

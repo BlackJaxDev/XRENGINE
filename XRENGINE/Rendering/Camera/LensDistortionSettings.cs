@@ -7,6 +7,21 @@ namespace XREngine.Rendering
 {
     public class LensDistortionSettings : PostProcessSettings
     {
+        public enum LensDistortionControlMode
+        {
+            Artist = 0,
+            Physical = 1,
+        }
+
+        public static readonly Vector2 DefaultDistortionCenterUv = new(0.5f, 0.5f);
+
+        private LensDistortionControlMode _controlMode = LensDistortionControlMode.Artist;
+        public LensDistortionControlMode ControlMode
+        {
+            get => _controlMode;
+            set => SetField(ref _controlMode, value);
+        }
+
         private ELensDistortionMode _mode = ELensDistortionMode.None;
         /// <summary>
         /// The lens distortion projection mode.
@@ -52,27 +67,70 @@ namespace XREngine.Rendering
             set => SetField(ref _paniniCropToFit, Math.Clamp(value, 0.0f, 1.0f));
         }
 
+        private float _brownConradyK1;
+        private float _brownConradyK2;
+        private float _brownConradyK3;
+        private float _brownConradyP1;
+        private float _brownConradyP2;
+
+        public float BrownConradyK1
+        {
+            get => _brownConradyK1;
+            set => SetField(ref _brownConradyK1, value);
+        }
+        public float BrownConradyK2
+        {
+            get => _brownConradyK2;
+            set => SetField(ref _brownConradyK2, value);
+        }
+        public float BrownConradyK3
+        {
+            get => _brownConradyK3;
+            set => SetField(ref _brownConradyK3, value);
+        }
+        public float BrownConradyP1
+        {
+            get => _brownConradyP1;
+            set => SetField(ref _brownConradyP1, value);
+        }
+        public float BrownConradyP2
+        {
+            get => _brownConradyP2;
+            set => SetField(ref _brownConradyP2, value);
+        }
+
         public override void SetUniforms(XRRenderProgram program)
-            => SetUniforms(program, null, 1.0f);
+            => SetUniforms(program, null, 1.0f, null);
 
         public void SetUniforms(XRRenderProgram program, float? cameraVerticalFovDegrees)
-            => SetUniforms(program, cameraVerticalFovDegrees, 1.0f);
+            => SetUniforms(program, cameraVerticalFovDegrees, 1.0f, null);
 
         public void SetUniforms(XRRenderProgram program, float? cameraVerticalFovDegrees, float aspectRatio)
+            => SetUniforms(program, cameraVerticalFovDegrees, aspectRatio, null);
+
+        public void SetUniforms(XRRenderProgram program, float? cameraVerticalFovDegrees, float aspectRatio, Vector2? distortionCenterUv)
         {
-            program.Uniform("LensDistortionMode", (int)_mode);
+            int mode = (int)_mode;
+            if (_controlMode == LensDistortionControlMode.Physical)
+                mode = (int)ELensDistortionMode.BrownConrady;
+            else if (_mode == ELensDistortionMode.BrownConrady)
+                mode = (int)ELensDistortionMode.None;
+            program.Uniform("LensDistortionMode", mode);
+
+            Vector2 center = distortionCenterUv ?? DefaultDistortionCenterUv;
+            program.Uniform("LensDistortionCenter", center);
 
             // Radial distortion intensity
             float radialIntensity = 0.0f;
-            if (_mode == ELensDistortionMode.Radial)
+            if (_controlMode == LensDistortionControlMode.Artist && _mode == ELensDistortionMode.Radial)
                 radialIntensity = _intensity;
-            else if (_mode == ELensDistortionMode.RadialAutoFromFOV && cameraVerticalFovDegrees.HasValue)
+            else if (_controlMode == LensDistortionControlMode.Artist && _mode == ELensDistortionMode.RadialAutoFromFOV && cameraVerticalFovDegrees.HasValue)
                 radialIntensity = ComputeCorrectionFromFovDegrees(cameraVerticalFovDegrees.Value);
 
             program.Uniform("LensDistortionIntensity", radialIntensity);
 
             // Panini parameters
-            if (_mode == ELensDistortionMode.Panini && cameraVerticalFovDegrees.HasValue)
+            if (_controlMode == LensDistortionControlMode.Artist && _mode == ELensDistortionMode.Panini && cameraVerticalFovDegrees.HasValue)
             {
                 float fovRad = cameraVerticalFovDegrees.Value * MathF.PI / 180.0f;
                 var viewExtents = CalcViewExtents(fovRad, aspectRatio);
@@ -93,6 +151,18 @@ namespace XREngine.Rendering
                 program.Uniform("PaniniDistance", 0.0f);
                 program.Uniform("PaniniCrop", 1.0f);
                 program.Uniform("PaniniViewExtents", new Vector2(1.0f, 1.0f));
+            }
+
+            // Brown-Conrady coefficients (used when LensDistortionMode == BrownConrady)
+            if (_controlMode == LensDistortionControlMode.Physical)
+            {
+                program.Uniform("BrownConradyRadial", new Vector3(_brownConradyK1, _brownConradyK2, _brownConradyK3));
+                program.Uniform("BrownConradyTangential", new Vector2(_brownConradyP1, _brownConradyP2));
+            }
+            else
+            {
+                program.Uniform("BrownConradyRadial", Vector3.Zero);
+                program.Uniform("BrownConradyTangential", Vector2.Zero);
             }
         }
 

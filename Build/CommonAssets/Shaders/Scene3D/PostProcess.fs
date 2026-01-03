@@ -59,12 +59,17 @@ struct DepthFogStruct
 };
 uniform DepthFogStruct DepthFog;
 
-// Lens distortion mode: 0=None, 1=Radial, 2=RadialAutoFromFOV, 3=Panini
+// Lens distortion mode: 0=None, 1=Radial, 2=RadialAutoFromFOV, 3=Panini, 4=BrownConrady
 uniform int LensDistortionMode;
 uniform float LensDistortionIntensity;
+uniform vec2 LensDistortionCenter;
 uniform float PaniniDistance;
 uniform float PaniniCrop;
 uniform vec2 PaniniViewExtents; // tan(fov/2) * aspect, tan(fov/2)
+
+// Brown-Conrady coefficients
+uniform vec3 BrownConradyRadial;     // k1,k2,k3
+uniform vec2 BrownConradyTangential; // p1,p2
 
 // Bloom combine controls
 uniform int BloomStartMip = 0;
@@ -166,13 +171,36 @@ vec3 NeutralTM(vec3 c)
   return (x * (x + 0.0245786f)) / (x * (0.983729f * x + 0.432951f) + 0.238081f);
 }
 
-vec2 ApplyLensDistortion(vec2 uv, float intensity)
+vec2 ApplyLensDistortion(vec2 uv, float intensity, vec2 center)
 {
-    uv -= vec2(0.5);
+  uv -= center;
     float uva = atan(uv.x, uv.y);
     float uvd = sqrt(dot(uv, uv));
     uvd *= 1.0 + intensity * uvd * uvd;
-    return vec2(0.5) + vec2(sin(uva), cos(uva)) * uvd;
+  return center + vec2(sin(uva), cos(uva)) * uvd;
+}
+
+vec2 ApplyBrownConrady(vec2 uvCentered)
+{
+  // Work in normalized coordinates around 0.
+  vec2 x = uvCentered * 2.0 - 1.0;
+  float r2 = dot(x, x);
+  float r4 = r2 * r2;
+  float r6 = r4 * r2;
+
+  float k1 = BrownConradyRadial.x;
+  float k2 = BrownConradyRadial.y;
+  float k3 = BrownConradyRadial.z;
+  float p1 = BrownConradyTangential.x;
+  float p2 = BrownConradyTangential.y;
+
+  float radial = 1.0 + k1 * r2 + k2 * r4 + k3 * r6;
+  vec2 tangential = vec2(
+    2.0 * p1 * x.x * x.y + p2 * (r2 + 2.0 * x.x * x.x),
+    p1 * (r2 + 2.0 * x.y * x.y) + 2.0 * p2 * x.x * x.y);
+
+  vec2 xd = x * radial + tangential;
+  return xd * 0.5 + 0.5;
 }
 
 // Panini projection - preserves vertical lines while compressing horizontal periphery
@@ -199,11 +227,14 @@ vec2 ApplyPaniniProjection(vec2 view_pos, float d)
 
 vec2 ApplyLensDistortionByMode(vec2 uv)
 {
-    // Mode: 0=None, 1=Radial, 2=RadialAutoFromFOV, 3=Panini
+  // Recenter so principal point maps to UV 0.5,0.5 for distortion models.
+  vec2 uvCentered = uv - LensDistortionCenter + vec2(0.5);
+
+    // Mode: 0=None, 1=Radial, 2=RadialAutoFromFOV, 3=Panini, 4=BrownConrady
     if (LensDistortionMode == 1 || LensDistortionMode == 2)
     {
         if (LensDistortionIntensity != 0.0)
-            return ApplyLensDistortion(uv, LensDistortionIntensity);
+      return ApplyLensDistortion(uvCentered, LensDistortionIntensity, vec2(0.5));
     }
     else if (LensDistortionMode == 3)
     {
@@ -212,12 +243,18 @@ vec2 ApplyLensDistortionByMode(vec2 uv)
             // Convert UV [0,1] to view position using view extents
             // PaniniViewExtents contains (tan(fov/2) * aspect, tan(fov/2))
             // PaniniCrop is the scale factor for crop-to-fit
-            vec2 view_pos = (2.0 * uv - 1.0) * PaniniViewExtents * PaniniCrop;
+      vec2 view_pos = (2.0 * uvCentered - 1.0) * PaniniViewExtents * PaniniCrop;
             vec2 proj_pos = ApplyPaniniProjection(view_pos, PaniniDistance);
             // Convert back to UV
             vec2 proj_ndc = proj_pos / PaniniViewExtents;
-            return proj_ndc * 0.5 + 0.5;
+      vec2 outCentered = proj_ndc * 0.5 + 0.5;
+      return outCentered - vec2(0.5) + LensDistortionCenter;
         }
+    }
+    else if (LensDistortionMode == 4)
+    {
+      vec2 outCentered = ApplyBrownConrady(uvCentered);
+      return outCentered - vec2(0.5) + LensDistortionCenter;
     }
     return uv;
 }
@@ -248,7 +285,7 @@ void main()
   if (ChromaticAberrationIntensity > 0.0f)
   {
       // Direction from center of screen
-      vec2 dir = uv - 0.5;
+      vec2 dir = uv - LensDistortionCenter;
       // Scale by intensity directly (0-1 range produces visible offset)
       vec2 off = dir * ChromaticAberrationIntensity * 0.1;
   
