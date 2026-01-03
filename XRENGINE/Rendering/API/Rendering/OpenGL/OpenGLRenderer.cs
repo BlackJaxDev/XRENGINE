@@ -940,6 +940,7 @@ uniform float AutoExposureScale;
 uniform float ExposureDividend;
 uniform float MinExposure;
 uniform float MaxExposure;
+uniform float ExposureBase;
 uniform float ExposureTransitionSpeed;
 
 uniform int MeteringMode;
@@ -1070,8 +1071,10 @@ void main()
 
     // Clamp extremely bright outliers so they can't force exposure to MinExposure.
     // Solve for lumDot such that target == MinExposure:
-    // MinExposure = Bias + Scale * (Dividend / lumDot)  =>  lumDot = (Dividend * Scale) / max(MinExposure - Bias, eps)
-    float denom = max(MinExposure - AutoExposureBias, 1e-6);
+    // MinExposure = (Bias + Scale * (Dividend / lumDot)) * ExposureBase
+    // => Bias + Scale*(Dividend/lumDot) = MinExposure/ExposureBase
+    // => lumDot = (Dividend * Scale) / max(MinExposure/ExposureBase - Bias, eps)
+    float denom = max((MinExposure / max(ExposureBase, 1e-6)) - AutoExposureBias, 1e-6);
     float maxLumForMinExposure = (ExposureDividend * max(AutoExposureScale, 0.0)) / denom;
     lumDot = min(lumDot, maxLumForMinExposure);
 
@@ -1088,6 +1091,7 @@ void main()
 
     float target = ExposureDividend / lumDot;
     target = AutoExposureBias + AutoExposureScale * target;
+    target *= ExposureBase;
     target = clamp(target, MinExposure, MaxExposure);
 
     if (isnan(target) || isinf(target))
@@ -1120,6 +1124,7 @@ uniform float AutoExposureScale;
 uniform float ExposureDividend;
 uniform float MinExposure;
 uniform float MaxExposure;
+uniform float ExposureBase;
 uniform float ExposureTransitionSpeed;
 
 uniform int MeteringMode;
@@ -1251,7 +1256,7 @@ void main()
     float lumDot = ComputeMeteredLuminance();
 
     // Clamp extremely bright outliers so they can't force exposure to MinExposure.
-    float denom = max(MinExposure - AutoExposureBias, 1e-6);
+    float denom = max((MinExposure / max(ExposureBase, 1e-6)) - AutoExposureBias, 1e-6);
     float maxLumForMinExposure = (ExposureDividend * max(AutoExposureScale, 0.0)) / denom;
     lumDot = min(lumDot, maxLumForMinExposure);
 
@@ -1268,6 +1273,7 @@ void main()
 
     float target = ExposureDividend / lumDot;
     target = AutoExposureBias + AutoExposureScale * target;
+    target *= ExposureBase;
     target = clamp(target, MinExposure, MaxExposure);
 
     if (isnan(target) || isinf(target))
@@ -1409,6 +1415,9 @@ void main()
             glProgram.Uniform("ExposureDividend", settings.ExposureDividend);
             glProgram.Uniform("MinExposure", settings.MinExposure);
             glProgram.Uniform("MaxExposure", settings.MaxExposure);
+            glProgram.Uniform("ExposureBase", settings.ExposureMode == ColorGradingSettings.ExposureControlMode.Physical
+                ? settings.ComputePhysicalExposureMultiplier()
+                : 1.0f);
 
             glProgram.Uniform("MeteringMode", (int)settings.AutoExposureMetering);
             glProgram.Uniform("MeteringMip", meteringMip);

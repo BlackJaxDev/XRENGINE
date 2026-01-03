@@ -64,21 +64,31 @@ public partial class DefaultRenderPipeline
             isColor: true);
 
         stage.AddParameter(
+            nameof(ColorGradingSettings.ExposureMode),
+            PostProcessParameterKind.Int,
+            (int)ColorGradingSettings.ExposureControlMode.Artist,
+            displayName: "Exposure Mode",
+            enumOptions: BuildEnumOptions<ColorGradingSettings.ExposureControlMode>());
+
+        bool IsArtistMode(object o) => ((ColorGradingSettings)o).ExposureMode == ColorGradingSettings.ExposureControlMode.Artist;
+        bool IsPhysicalMode(object o) => ((ColorGradingSettings)o).ExposureMode == ColorGradingSettings.ExposureControlMode.Physical;
+
+        stage.AddParameter(
             nameof(ColorGradingSettings.AutoExposure),
             PostProcessParameterKind.Bool,
             true,
             displayName: "Auto Exposure");
 
         bool IsAutoExposure(object o) => ((ColorGradingSettings)o).AutoExposure;
-        bool IsManualExposure(object o) => !((ColorGradingSettings)o).AutoExposure;
+        bool IsManualExposure(object o) => IsArtistMode(o) && !((ColorGradingSettings)o).AutoExposure;
         bool IsIgnoreTopPercent(object o)
-            => ((ColorGradingSettings)o).AutoExposure
+            => IsAutoExposure(o)
             && ((ColorGradingSettings)o).AutoExposureMetering == ColorGradingSettings.AutoExposureMeteringMode.IgnoreTopPercent;
         bool IsCenterWeighted(object o)
-            => ((ColorGradingSettings)o).AutoExposure
+            => IsAutoExposure(o)
             && ((ColorGradingSettings)o).AutoExposureMetering == ColorGradingSettings.AutoExposureMeteringMode.CenterWeighted;
         bool IsAdvancedMetering(object o)
-            => ((ColorGradingSettings)o).AutoExposure
+            => IsAutoExposure(o)
             && ((ColorGradingSettings)o).AutoExposureMetering != ColorGradingSettings.AutoExposureMeteringMode.Average;
 
         stage.AddParameter(
@@ -90,6 +100,56 @@ public partial class DefaultRenderPipeline
             max: 10.0f,
             step: 0.0001f,
             visibilityCondition: IsManualExposure);
+
+        stage.AddParameter(
+            nameof(ColorGradingSettings.PhysicalApertureFNumber),
+            PostProcessParameterKind.Float,
+            2.8f,
+            displayName: "Aperture (f-stop)",
+            min: 0.1f,
+            max: 64.0f,
+            step: 0.1f,
+            visibilityCondition: IsPhysicalMode);
+
+        stage.AddParameter(
+            nameof(ColorGradingSettings.PhysicalShutterSpeedSeconds),
+            PostProcessParameterKind.Float,
+            1.0f / 60.0f,
+            displayName: "Shutter (seconds)",
+            min: 0.00001f,
+            max: 10.0f,
+            step: 0.00001f,
+            visibilityCondition: IsPhysicalMode);
+
+        stage.AddParameter(
+            nameof(ColorGradingSettings.PhysicalISO),
+            PostProcessParameterKind.Float,
+            100.0f,
+            displayName: "ISO",
+            min: 1.0f,
+            max: 51200.0f,
+            step: 1.0f,
+            visibilityCondition: IsPhysicalMode);
+
+        stage.AddParameter(
+            nameof(ColorGradingSettings.PhysicalExposureCompensationEV),
+            PostProcessParameterKind.Float,
+            0.0f,
+            displayName: "Exposure Compensation (EV)",
+            min: -10.0f,
+            max: 10.0f,
+            step: 0.1f,
+            visibilityCondition: IsPhysicalMode);
+
+        stage.AddParameter(
+            nameof(ColorGradingSettings.PhysicalExposureScale),
+            PostProcessParameterKind.Float,
+            1.0f,
+            displayName: "Exposure Scale",
+            min: 0.0f,
+            max: 10.0f,
+            step: 0.01f,
+            visibilityCondition: IsPhysicalMode);
 
         stage.AddParameter(
             nameof(ColorGradingSettings.AutoExposureBias),
@@ -614,6 +674,16 @@ public partial class DefaultRenderPipeline
             displayName: "Enabled");
 
         stage.AddParameter(
+            nameof(DepthOfFieldSettings.Mode),
+            PostProcessParameterKind.Int,
+            (int)DepthOfFieldSettings.DepthOfFieldControlMode.Artist,
+            displayName: "Mode",
+            enumOptions: BuildEnumOptions<DepthOfFieldSettings.DepthOfFieldControlMode>());
+
+        bool IsArtistMode(object o) => ((DepthOfFieldSettings)o).Mode == DepthOfFieldSettings.DepthOfFieldControlMode.Artist;
+        bool IsPhysicalMode(object o) => ((DepthOfFieldSettings)o).Mode == DepthOfFieldSettings.DepthOfFieldControlMode.Physical;
+
+        stage.AddParameter(
             nameof(DepthOfFieldSettings.FocusDistance),
             PostProcessParameterKind.Float,
             5.0f,
@@ -629,7 +699,18 @@ public partial class DefaultRenderPipeline
             displayName: "Focus Range",
             min: 0.05f,
             max: 500.0f,
-            step: 0.05f);
+            step: 0.05f,
+            visibilityCondition: IsArtistMode);
+
+        stage.AddParameter(
+            nameof(DepthOfFieldSettings.PhysicalCircleOfConfusionMm),
+            PostProcessParameterKind.Float,
+            0.03f,
+            displayName: "Physical CoC Ref (mm)",
+            min: 0.001f,
+            max: 0.2f,
+            step: 0.001f,
+            visibilityCondition: IsPhysicalMode);
 
         stage.AddParameter(
             nameof(DepthOfFieldSettings.Aperture),
@@ -668,11 +749,22 @@ public partial class DefaultRenderPipeline
     private static void DescribeLensDistortionStage(RenderPipelinePostProcessSchemaBuilder.PostProcessStageBuilder stage)
     {
         stage.AddParameter(
+            nameof(LensDistortionSettings.ControlMode),
+            PostProcessParameterKind.Int,
+            (int)LensDistortionSettings.LensDistortionControlMode.Artist,
+            displayName: "Control Mode",
+            enumOptions: BuildEnumOptions<LensDistortionSettings.LensDistortionControlMode>());
+
+        bool IsArtistControlMode(object o) => ((LensDistortionSettings)o).ControlMode == LensDistortionSettings.LensDistortionControlMode.Artist;
+        bool IsPhysicalControlMode(object o) => ((LensDistortionSettings)o).ControlMode == LensDistortionSettings.LensDistortionControlMode.Physical;
+
+        stage.AddParameter(
             nameof(LensDistortionSettings.Mode),
             PostProcessParameterKind.Int,
             (int)ELensDistortionMode.None,
             displayName: "Mode",
-            enumOptions: BuildEnumOptions<ELensDistortionMode>());
+            enumOptions: BuildEnumOptions<ELensDistortionMode>(),
+            visibilityCondition: IsArtistControlMode);
 
         bool IsRadialMode(object o) => ((LensDistortionSettings)o).Mode == ELensDistortionMode.Radial;
         bool IsPaniniMode(object o) => ((LensDistortionSettings)o).Mode == ELensDistortionMode.Panini;
@@ -685,7 +777,7 @@ public partial class DefaultRenderPipeline
             min: -1.0f,
             max: 1.0f,
             step: 0.001f,
-            visibilityCondition: IsRadialMode);
+            visibilityCondition: o => IsArtistControlMode(o) && IsRadialMode(o));
 
         stage.AddParameter(
             nameof(LensDistortionSettings.PaniniDistance),
@@ -695,7 +787,7 @@ public partial class DefaultRenderPipeline
             min: 0.0f,
             max: 1.0f,
             step: 0.01f,
-            visibilityCondition: IsPaniniMode);
+            visibilityCondition: o => IsArtistControlMode(o) && IsPaniniMode(o));
 
         stage.AddParameter(
             nameof(LensDistortionSettings.PaniniCropToFit),
@@ -705,7 +797,57 @@ public partial class DefaultRenderPipeline
             min: 0.0f,
             max: 1.0f,
             step: 0.01f,
-            visibilityCondition: IsPaniniMode);
+            visibilityCondition: o => IsArtistControlMode(o) && IsPaniniMode(o));
+
+        stage.AddParameter(
+            nameof(LensDistortionSettings.BrownConradyK1),
+            PostProcessParameterKind.Float,
+            0.0f,
+            displayName: "k1",
+            min: -2.0f,
+            max: 2.0f,
+            step: 0.0001f,
+            visibilityCondition: IsPhysicalControlMode);
+
+        stage.AddParameter(
+            nameof(LensDistortionSettings.BrownConradyK2),
+            PostProcessParameterKind.Float,
+            0.0f,
+            displayName: "k2",
+            min: -2.0f,
+            max: 2.0f,
+            step: 0.0001f,
+            visibilityCondition: IsPhysicalControlMode);
+
+        stage.AddParameter(
+            nameof(LensDistortionSettings.BrownConradyK3),
+            PostProcessParameterKind.Float,
+            0.0f,
+            displayName: "k3",
+            min: -2.0f,
+            max: 2.0f,
+            step: 0.0001f,
+            visibilityCondition: IsPhysicalControlMode);
+
+        stage.AddParameter(
+            nameof(LensDistortionSettings.BrownConradyP1),
+            PostProcessParameterKind.Float,
+            0.0f,
+            displayName: "p1",
+            min: -1.0f,
+            max: 1.0f,
+            step: 0.0001f,
+            visibilityCondition: IsPhysicalControlMode);
+
+        stage.AddParameter(
+            nameof(LensDistortionSettings.BrownConradyP2),
+            PostProcessParameterKind.Float,
+            0.0f,
+            displayName: "p2",
+            min: -1.0f,
+            max: 1.0f,
+            step: 0.0001f,
+            visibilityCondition: IsPhysicalControlMode);
     }
 
     private static void DescribeChromaticAberrationStage(RenderPipelinePostProcessSchemaBuilder.PostProcessStageBuilder stage)
@@ -833,10 +975,33 @@ public partial class DefaultRenderPipeline
         (fog ?? new FogSettings()).SetUniforms(program);
 
         var lens = GetSettings<LensDistortionSettings>(state);
-        var perspParams = RenderingPipelineState?.SceneCamera?.Parameters as XRPerspectiveCameraParameters;
-        float? cameraFov = perspParams?.VerticalFieldOfView;
-        float aspectRatio = perspParams?.AspectRatio ?? ((float)InternalWidth / Math.Max(1, InternalHeight));
-        (lens ?? new LensDistortionSettings()).SetUniforms(program, cameraFov, aspectRatio);
+        float widthPx = Math.Max(1, InternalWidth);
+        float heightPx = Math.Max(1, InternalHeight);
+        float fallbackAspectRatio = (float)widthPx / heightPx;
+        float? cameraFov = null;
+        float aspectRatio = fallbackAspectRatio;
+        Vector2 distortionCenterUv = LensDistortionSettings.DefaultDistortionCenterUv;
+
+        var cameraParams = RenderingPipelineState?.SceneCamera?.Parameters;
+        switch (cameraParams)
+        {
+            case XRPerspectiveCameraParameters perspParams:
+                cameraFov = perspParams.VerticalFieldOfView;
+                aspectRatio = perspParams.InheritAspectRatio ? fallbackAspectRatio : perspParams.AspectRatio;
+                break;
+            case XRPhysicalCameraParameters physicalParams:
+                cameraFov = physicalParams.VerticalFieldOfViewDegrees;
+                aspectRatio = fallbackAspectRatio;
+
+                if (!physicalParams.InheritPrincipalPoint)
+                {
+                    distortionCenterUv = new Vector2(
+                        physicalParams.PrincipalPointPx.X / widthPx,
+                        physicalParams.PrincipalPointPx.Y / heightPx);
+                }
+                break;
+        }
+        (lens ?? new LensDistortionSettings()).SetUniforms(program, cameraFov, aspectRatio, distortionCenterUv);
 
         var bloom = GetSettings<BloomSettings>(state);
         (bloom ?? new BloomSettings()).SetCombineUniforms(program);
@@ -879,8 +1044,9 @@ public partial class DefaultRenderPipeline
         if (settings is null || !settings.Enabled)
         {
             program.Uniform("TexelSize", texelSize);
+            program.Uniform("DoFMode", 0);
             program.Uniform("FocusDepth", 1.0f);
-            program.Uniform("FocusRange", 1.0f);
+            program.Uniform("FocusRangeDepth", 1.0f);
             program.Uniform("Aperture", 0.0f);
             program.Uniform("MaxCoC", 0.0f);
             program.Uniform("BokehRadius", 0.0f);

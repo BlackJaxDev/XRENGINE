@@ -18,6 +18,32 @@ namespace XREngine.Editor;
 
 public static partial class EditorImGuiUI
 {
+        private static readonly NullabilityInfoContext _nullabilityContext = new();
+
+        private static bool IsPropertyNullable(PropertyInfo property)
+        {
+            Type type = property.PropertyType;
+            if (type.IsValueType)
+                return Nullable.GetUnderlyingType(type) is not null;
+
+            try
+            {
+                var info = _nullabilityContext.Create(property);
+                return info.ReadState != NullabilityState.NotNull;
+            }
+            catch
+            {
+                // If nullability metadata isn't available (e.g. legacy assemblies), fall back to the
+                // historical behavior: treat reference types as nullable.
+                return true;
+            }
+        }
+
+        internal static bool HasCreatablePropertyTypes(Type baseType)
+            => GetPropertyTypeDescriptors(baseType).Count > 0;
+
+        internal static void DrawCreatablePropertyTypePickerPopup(string popupId, Type baseType, Action<Type> onSelected)
+            => DrawPropertyTypePickerPopup(popupId, baseType, onSelected);
         private static string FormatFlagsEnumPreview(Type enumType, Array values, ulong bits)
         {
             if (bits == 0)
@@ -741,7 +767,7 @@ public static partial class EditorImGuiUI
                     for (int i = 0; i < keys.Count; i++)
                     {
                         object? key = keys[i];
-                        object? entryValue = DictionaryContainsKey(dictionary, key) ? dictionary[key] : null;
+                        object? entryValue = key is not null && DictionaryContainsKey(dictionary, key) ? dictionary[key] : null;
                         Type? runtimeType = entryValue?.GetType();
                         bool entryIsAsset = runtimeType is not null
                             ? typeof(XRAsset).IsAssignableFrom(runtimeType)
@@ -1032,6 +1058,9 @@ public static partial class EditorImGuiUI
                 if (!DictionaryContainsKey(dictionary, key))
                     return false;
 
+                if (key is null)
+                    return false;
+
                 object? existing = dictionary[key];
                 if (Equals(existing, newValue))
                     return false;
@@ -1222,6 +1251,9 @@ public static partial class EditorImGuiUI
             if (!DictionaryContainsKey(dictionary, key))
                 return false;
 
+            if (key is null)
+                return false;
+
             try
             {
                 dictionary[key] = instance;
@@ -1342,8 +1374,6 @@ public static partial class EditorImGuiUI
             public bool Contains(object? value)
             {
                 var converted = value is T typed ? typed : (T?)ConvertCollectionElement(value, typeof(T));
-                if (value is null)
-                    return _list.Contains(converted);
                 if (converted is null)
                     return false;
                 return _list.Contains(converted);
@@ -1797,11 +1827,8 @@ public static partial class EditorImGuiUI
 
                 ImGui.SameLine();
 
-                var assetTypeDescriptors = GetPropertyTypeDescriptors(effectiveType);
-                Type assetEditorType = assetTypeDescriptors.Count > 0 ? assetTypeDescriptors[0].Type : effectiveType;
-
-                // Draw asset field for null asset
-                if (!DrawAssetFieldForProperty(property.Name, assetEditorType, null, owner, property))
+                // Draw asset field for null asset (use declared type so derived types can be created/selected)
+                if (!DrawAssetFieldForProperty(property.Name, effectiveType, null, owner, property))
                 {
                     ImGui.TextDisabled("<null>");
                 }
@@ -1896,6 +1923,9 @@ public static partial class EditorImGuiUI
         /// </summary>
         private static bool DrawAssetFieldForProperty(string id, Type assetType, XRAsset? currentValue, object owner, PropertyInfo property)
         {
+            bool allowClear = IsPropertyNullable(property);
+            bool allowCreateReplace = property.CanWrite && property.SetMethod?.IsPublic == true;
+
             if (!DrawAssetFieldForCollection(id, assetType, currentValue, selected =>
             {
                 try
@@ -1907,7 +1937,7 @@ public static partial class EditorImGuiUI
                 {
                     Debug.LogException(ex, $"Failed to set asset value for property '{property.Name}'.");
                 }
-            }))
+            }, allowClear: allowClear, allowCreateOrReplace: allowCreateReplace))
             {
                 return false;
             }
@@ -2156,16 +2186,21 @@ public static partial class EditorImGuiUI
             return true;
         }
 
-        private static bool DrawAssetFieldForCollection(string id, Type assetType, XRAsset? current, Action<XRAsset?> assign)
+        private static bool DrawAssetFieldForCollection(
+            string id,
+            Type assetType,
+            XRAsset? current,
+            Action<XRAsset?> assign,
+            bool allowClear = true,
+            bool allowCreateOrReplace = false)
         {
             if (!typeof(XRAsset).IsAssignableFrom(assetType))
                 return false;
-            if (assetType.IsAbstract || assetType.ContainsGenericParameters)
-                return false;
-            if (assetType.GetConstructor(Type.EmptyTypes) is null)
+            if (assetType.ContainsGenericParameters)
                 return false;
 
-            _drawAssetCollectionElementMethod.MakeGenericMethod(assetType).Invoke(null, new object?[] { id, current, assign });
+            _drawAssetCollectionElementMethod.MakeGenericMethod(assetType)
+                .Invoke(null, new object?[] { id, current, assign, allowClear, allowCreateOrReplace });
             return true;
         }
 
@@ -2181,11 +2216,16 @@ public static partial class EditorImGuiUI
             return null;
         }
 
-        private static void DrawAssetCollectionElementGeneric<TAsset>(string id, XRAsset? currentBase, Action<XRAsset?> assign)
-            where TAsset : XRAsset, new()
+        private static void DrawAssetCollectionElementGeneric<TAsset>(
+            string id,
+            XRAsset? currentBase,
+            Action<XRAsset?> assign,
+            bool allowClear,
+            bool allowCreateOrReplace)
+            where TAsset : XRAsset
         {
             TAsset? typedCurrent = currentBase as TAsset;
-            ImGuiAssetUtilities.DrawAssetField<TAsset>(id, typedCurrent, asset => assign(asset));
+            ImGuiAssetUtilities.DrawAssetField<TAsset>(id, typedCurrent, asset => assign(asset), options: null, allowClear: allowClear, allowCreateOrReplace: allowCreateOrReplace);
         }
 
         private static void DrawCollectionSimpleElement(IList list, Type elementType, int index, ref object? currentValue, bool canModifyElements)
@@ -2419,6 +2459,35 @@ public static partial class EditorImGuiUI
             bool isNullable = underlyingType is not null;
             Type effectiveType = underlyingType ?? propertyType;
             bool canWrite = property.CanWrite && property.SetMethod?.IsPublic == true;
+
+            // Asset reference fields: draw as an asset picker with inline inspector.
+            if (typeof(XRAsset).IsAssignableFrom(effectiveType))
+            {
+                XRAsset? currentAsset = value as XRAsset;
+                // Use the declared property type (even if abstract) so the picker + Create/Replace operate
+                // over the correct base type and can create/select derived concrete assets.
+                Type declaredAssetType = effectiveType;
+
+                bool allowClear = canWrite && IsPropertyNullable(property);
+                bool allowCreateReplace = canWrite;
+
+                if (!DrawAssetFieldForCollection(property.Name, declaredAssetType, currentAsset, selected =>
+                {
+                    try
+                    {
+                        property.SetValue(owner, selected);
+                        NotifyInspectorValueEdited(owner);
+                    }
+                    catch (Exception ex)
+                    {
+                        Debug.LogException(ex, $"Failed to set asset value for property '{property.Name}'.");
+                    }
+                }, allowClear: allowClear, allowCreateOrReplace: allowCreateReplace))
+                    ImGui.TextDisabled("Asset editor unavailable for this type.");
+
+                ImGui.PopID();
+                return;
+            }
 
             object? currentValue = value;
             bool isCurrentlyNull = currentValue is null;
@@ -3118,6 +3187,8 @@ public static partial class EditorImGuiUI
         private static bool IsSimpleSettingType(Type type)
         {
             Type effectiveType = Nullable.GetUnderlyingType(type) ?? type;
+            if (typeof(XRAsset).IsAssignableFrom(effectiveType))
+                return true;
             if (effectiveType == typeof(string))
                 return true;
             if (effectiveType.IsPrimitive || effectiveType.IsEnum)

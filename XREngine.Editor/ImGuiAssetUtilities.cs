@@ -26,6 +26,19 @@ internal static class ImGuiAssetUtilities
     private const uint AssetPickerPreviewSize = 256;
     private const float AssetPickerPreviewFallbackEdge = 96.0f;
     private static readonly Dictionary<AssetPickerKey, object> _assetPickerStates = new();
+    private const string AssetCreateReplacePopupId = "AssetCreateReplace";
+
+    [ThreadStatic]
+    private static HashSet<XRAsset>? _inlineInspectorStack;
+
+    private sealed class AssetReferenceEqualityComparer : IEqualityComparer<XRAsset>
+    {
+        public static readonly AssetReferenceEqualityComparer Instance = new();
+
+        public bool Equals(XRAsset? x, XRAsset? y) => ReferenceEquals(x, y);
+
+        public int GetHashCode(XRAsset obj) => RuntimeHelpers.GetHashCode(obj);
+    }
 
     public static void SetPathPayload(string path)
     {
@@ -68,7 +81,13 @@ internal static class ImGuiAssetUtilities
         }
     }
 
-    public static void DrawAssetField<TAsset>(string id, TAsset? current, Action<TAsset?> assign, AssetFieldOptions? options = null)
+    public static void DrawAssetField<TAsset>(
+        string id,
+        TAsset? current,
+        Action<TAsset?> assign,
+        AssetFieldOptions? options = null,
+        bool allowClear = true,
+        bool allowCreateOrReplace = true)
         where TAsset : XRAsset
     {
         options ??= AssetFieldOptions.ForType<TAsset>();
@@ -78,9 +97,23 @@ internal static class ImGuiAssetUtilities
 
         var style = ImGui.GetStyle();
         float availableWidth = ImGui.GetContentRegionAvail().X;
-        float clearWidth = ImGui.CalcTextSize("Clear").X + style.FramePadding.X * 2.0f;
+
+        bool showClear = allowClear && current is not null;
+        float clearWidth = showClear
+            ? ImGui.CalcTextSize("Clear").X + style.FramePadding.X * 2.0f
+            : 0.0f;
+
+        bool canCreateOrReplace = allowCreateOrReplace
+            && !typeof(TAsset).ContainsGenericParameters
+            && EditorImGuiUI.HasCreatablePropertyTypes(typeof(TAsset));
+        string createReplaceLabel = current is null ? "Create..." : "Replace...";
+        float createReplaceWidth = canCreateOrReplace
+            ? ImGui.CalcTextSize(createReplaceLabel).X + style.FramePadding.X * 2.0f
+            : 0.0f;
+
         float browseWidth = ImGui.CalcTextSize("Browse").X + style.FramePadding.X * 2.0f;
-        float fieldWidth = MathF.Max(80.0f, availableWidth - clearWidth - browseWidth - style.ItemSpacing.X * 2.0f);
+        int buttonCount = 1 + (showClear ? 1 : 0) + (canCreateOrReplace ? 1 : 0);
+        float fieldWidth = MathF.Max(80.0f, availableWidth - (clearWidth + createReplaceWidth + browseWidth) - style.ItemSpacing.X * buttonCount);
 
         bool openPopup = false;
         string preview = GetAssetDisplayName(current);
@@ -110,9 +143,34 @@ internal static class ImGuiAssetUtilities
             ImGui.EndDragDropTarget();
         }
 
-        ImGui.SameLine();
-        if (ImGui.SmallButton("Clear"))
-            assign(null);
+        if (showClear)
+        {
+            ImGui.SameLine();
+            if (ImGui.SmallButton("Clear"))
+                assign(null);
+        }
+
+        if (canCreateOrReplace)
+        {
+            ImGui.SameLine();
+            if (ImGui.SmallButton(createReplaceLabel))
+                ImGui.OpenPopup(AssetCreateReplacePopupId);
+
+            EditorImGuiUI.DrawCreatablePropertyTypePickerPopup(AssetCreateReplacePopupId, typeof(TAsset), selectedType =>
+            {
+                try
+                {
+                    if (Activator.CreateInstance(selectedType) is TAsset created)
+                        assign(created);
+                    else
+                        Debug.LogWarning($"Unable to create asset instance of '{selectedType.FullName}'.");
+                }
+                catch (Exception ex)
+                {
+                    Debug.LogException(ex, $"Failed to create asset instance of '{selectedType.FullName}'.");
+                }
+            });
+        }
 
         ImGui.SameLine();
         if (ImGui.SmallButton("Browse"))
@@ -713,21 +771,36 @@ internal static class ImGuiAssetUtilities
 
     private static void DrawInlineAssetInspector(XRAsset asset)
     {
+        _inlineInspectorStack ??= new HashSet<XRAsset>(AssetReferenceEqualityComparer.Instance);
+        if (!_inlineInspectorStack.Add(asset))
+        {
+            ImGui.Spacing();
+            ImGui.TextDisabled("Inspect Asset: <circular reference>");
+            return;
+        }
+
         ImGui.Spacing();
         ImGui.PushID("InlineAssetInspector");
         const ImGuiTreeNodeFlags headerFlags = ImGuiTreeNodeFlags.DefaultOpen | ImGuiTreeNodeFlags.SpanAvailWidth;
-        if (ImGui.CollapsingHeader("Inspect Asset", headerFlags))
+        try
         {
-            DrawAssetInspectorMetadata(asset);
-            ImGui.Separator();
+            if (ImGui.CollapsingHeader("Inspect Asset", headerFlags))
+            {
+                DrawAssetInspectorMetadata(asset);
+                ImGui.Separator();
 
-            using var contextScope = RequiresExternalAssetContext(asset)
-                ? EditorImGuiUI.PushInspectorAssetContext(asset.SourceAsset ?? asset)
-                : null;
+                using var contextScope = RequiresExternalAssetContext(asset)
+                    ? EditorImGuiUI.PushInspectorAssetContext(asset.SourceAsset ?? asset)
+                    : null;
 
-            EditorImGuiUI.DrawAssetInspectorInline(asset);
+                EditorImGuiUI.DrawAssetInspectorInline(asset);
+            }
+            ImGui.PopID();
         }
-        ImGui.PopID();
+        finally
+        {
+            _inlineInspectorStack.Remove(asset);
+        }
     }
 
     private static void DrawAssetInspectorMetadata(XRAsset asset)

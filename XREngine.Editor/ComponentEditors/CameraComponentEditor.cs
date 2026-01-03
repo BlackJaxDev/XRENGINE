@@ -225,7 +225,7 @@ public sealed class CameraComponentEditor : IXRComponentEditor
         ImGuiAssetUtilities.DrawAssetField<RenderPipeline>("CameraRenderPipeline", pipeline, asset =>
         {
             component.Camera.RenderPipeline = asset ?? Engine.Rendering.NewRenderPipeline();
-        });
+        }, allowClear: false, allowCreateOrReplace: true);
 
         ImGui.TextDisabled("Default Render Target Asset");
         ImGuiAssetUtilities.DrawAssetField<XRFrameBuffer>("CameraDefaultRenderTarget", component.DefaultRenderTarget, asset =>

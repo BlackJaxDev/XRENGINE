@@ -23,16 +23,24 @@ namespace XREngine.Rendering.Pipelines.Commands
         private const uint CulledCommandFloats = 48u;
 
         // Keep this moderate to avoid memory spikes; 131072 * 64 bytes ~= 8 MB.
-        private const uint MaxSurfels = 131072u;
+        public const uint MaxSurfelsConst = 131072u;
 
-        private const uint GridDimX = 32u;
-        private const uint GridDimY = 32u;
-        private const uint GridDimZ = 32u;
-        private const uint GridMaxPerCell = 16u;
+        public const uint GridDimXConst = 32u;
+        public const uint GridDimYConst = 32u;
+        public const uint GridDimZConst = 32u;
+        public const uint GridMaxPerCellConst = 16u;
 
         // Coarse world-space grid centered at the camera.
-        private const float GridHalfExtent = 50.0f;
+        public const float GridHalfExtentConst = 50.0f;
         private const uint MaxSurfelAgeFrames = 300u;
+
+        // Aliases for internal use (keep existing code working)
+        private const uint MaxSurfels = MaxSurfelsConst;
+        private const uint GridDimX = GridDimXConst;
+        private const uint GridDimY = GridDimYConst;
+        private const uint GridDimZ = GridDimZConst;
+        private const uint GridMaxPerCell = GridMaxPerCellConst;
+        private const float GridHalfExtent = GridHalfExtentConst;
 
         private XRRenderProgram? _initProgram;
         private XRRenderProgram? _recycleProgram;
@@ -50,6 +58,24 @@ namespace XREngine.Rendering.Pipelines.Commands
         private bool _initialized;
 
         private uint _frameIndex;
+
+        // Expose buffers and parameters for debug visualization
+        public XRDataBuffer? SurfelBuffer => _surfelBuffer;
+        public XRDataBuffer? CounterBuffer => _counterBuffer;
+        public XRDataBuffer? FreeStackBuffer => _freeStackBuffer;
+        public XRDataBuffer? GridCountsBuffer => _gridCountsBuffer;
+        public XRDataBuffer? GridIndicesBuffer => _gridIndicesBuffer;
+
+        /// <summary>
+        /// Current grid origin (world-space position of grid corner).
+        /// Updated each frame when Execute() runs.
+        /// </summary>
+        public Vector3 CurrentGridOrigin { get; private set; }
+
+        /// <summary>
+        /// Current cell size in world units.
+        /// </summary>
+        public float CurrentCellSize { get; private set; }
 
         public string DepthTextureName { get; set; } = DefaultRenderPipeline.DepthViewTextureName;
         public string NormalTextureName { get; set; } = DefaultRenderPipeline.NormalTextureName;
@@ -125,6 +151,10 @@ namespace XREngine.Rendering.Pipelines.Commands
             Vector3 cameraPos = camera.Transform.RenderTranslation;
             Vector3 gridOrigin = cameraPos - new Vector3(GridHalfExtent);
             float cellSize = (GridHalfExtent * 2.0f) / GridDimX;
+
+            // Store for debug visualization access
+            CurrentGridOrigin = gridOrigin;
+            CurrentCellSize = cellSize;
 
             if (!_initialized)
             {

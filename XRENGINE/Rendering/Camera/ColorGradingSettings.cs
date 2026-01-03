@@ -12,6 +12,12 @@ namespace XREngine.Rendering
     {
         public const string ColorGradeUniformName = "ColorGrade";
 
+        public enum ExposureControlMode
+        {
+            Artist = 0,
+            Physical = 1,
+        }
+
         public enum AutoExposureMeteringMode
         {
             /// <summary>
@@ -44,6 +50,13 @@ namespace XREngine.Rendering
             Contrast = 1.0f;
         }
 
+        private ExposureControlMode _exposureMode = ExposureControlMode.Artist;
+        private float _physicalApertureFNumber = 2.8f;
+        private float _physicalShutterSpeedSeconds = 1.0f / 60.0f;
+        private float _physicalIso = 100.0f;
+        private float _physicalExposureCompensationEV = 0.0f;
+        private float _physicalExposureScale = 1.0f;
+
         private float _contrast = 0.0f;
         private float _contrastUniformValue;
         private float _exposureTransitionSpeed = 0.5f;
@@ -68,6 +81,63 @@ namespace XREngine.Rendering
         private float _hue = 1.0f;
         private float _saturation = 1.0f;
         private float _brightness = 1.0f;
+
+        public ExposureControlMode ExposureMode
+        {
+            get => _exposureMode;
+            set => SetField(ref _exposureMode, value);
+        }
+
+        /// <summary>
+        /// Physical aperture in f-stops (e.g. 1.4, 2.8, 5.6).
+        /// Used when <see cref="ExposureMode"/> is <see cref="ExposureControlMode.Physical"/>.
+        /// </summary>
+        public float PhysicalApertureFNumber
+        {
+            get => _physicalApertureFNumber;
+            set => SetField(ref _physicalApertureFNumber, MathF.Max(0.1f, value));
+        }
+
+        /// <summary>
+        /// Physical shutter speed in seconds (e.g. 0.0167 for 1/60s).
+        /// Used when <see cref="ExposureMode"/> is <see cref="ExposureControlMode.Physical"/>.
+        /// </summary>
+        public float PhysicalShutterSpeedSeconds
+        {
+            get => _physicalShutterSpeedSeconds;
+            set => SetField(ref _physicalShutterSpeedSeconds, MathF.Max(0.000001f, value));
+        }
+
+        /// <summary>
+        /// Physical ISO sensitivity (e.g. 100, 400, 1600).
+        /// Used when <see cref="ExposureMode"/> is <see cref="ExposureControlMode.Physical"/>.
+        /// </summary>
+        public float PhysicalISO
+        {
+            get => _physicalIso;
+            set => SetField(ref _physicalIso, MathF.Max(1.0f, value));
+        }
+
+        /// <summary>
+        /// Exposure compensation in EV (positive = brighter).
+        /// Used when <see cref="ExposureMode"/> is <see cref="ExposureControlMode.Physical"/>.
+        /// </summary>
+        public float PhysicalExposureCompensationEV
+        {
+            get => _physicalExposureCompensationEV;
+            set => SetField(ref _physicalExposureCompensationEV, value);
+        }
+
+        /// <summary>
+        /// Scale factor to map the engine's lighting units into a photographic exposure scale.
+        /// This is intentionally left as a tunable parameter.
+        /// Used when <see cref="ExposureMode"/> is <see cref="ExposureControlMode.Physical"/>.
+        /// </summary>
+        public float PhysicalExposureScale
+        {
+            get => _physicalExposureScale;
+            set => SetField(ref _physicalExposureScale, MathF.Max(0.0f, value));
+        }
 
         public ColorF3 Tint
         {
@@ -209,7 +279,30 @@ namespace XREngine.Rendering
         public override void SetUniforms(XRRenderProgram program)
         {
             program.Uniform($"{ColorGradeUniformName}.{nameof(Tint)}", Tint);
-            program.Uniform($"{ColorGradeUniformName}.{nameof(Exposure)}", Exposure);
+
+            float exposure = Exposure;
+            bool useGpuExposure = AutoExposure && AbstractRenderer.Current?.SupportsGpuAutoExposure == true;
+            if (ExposureMode == ExposureControlMode.Physical)
+            {
+                float physicalBase = ComputePhysicalExposureMultiplier();
+                if (!AutoExposure)
+                {
+                    exposure = physicalBase;
+                    useGpuExposure = false;
+                }
+                else if (useGpuExposure)
+                {
+                    // GPU path computes the full absolute exposure; this is a fallback until the texture is ready.
+                    exposure = physicalBase;
+                }
+                else
+                {
+                    // CPU path stores the current absolute exposure in Exposure.
+                    exposure = _lastUpdateTime == float.MinValue ? physicalBase : Exposure;
+                }
+            }
+
+            program.Uniform($"{ColorGradeUniformName}.{nameof(Exposure)}", exposure);
             program.Uniform($"{ColorGradeUniformName}.{nameof(Contrast)}", _contrastUniformValue);
             program.Uniform($"{ColorGradeUniformName}.{nameof(Gamma)}", Gamma);
             program.Uniform($"{ColorGradeUniformName}.{nameof(Hue)}", Hue);
@@ -218,7 +311,6 @@ namespace XREngine.Rendering
 
             // Optional GPU-driven auto exposure path (PostProcess.fs / PostProcessStereo.fs)
             // Shader-side logic falls back to uniform exposure if the GPU texture isn't valid yet.
-            bool useGpuExposure = AutoExposure && AbstractRenderer.Current?.SupportsGpuAutoExposure == true;
             program.Uniform("UseGpuAutoExposure", useGpuExposure);
         }
 
@@ -241,7 +333,23 @@ uniform ColorGradeStruct ColorGrade;";
         }
 
         [Browsable(false)]
-        public bool RequiresAutoExposure => AutoExposure || Exposure < MinExposure || Exposure > MaxExposure;
+        public bool RequiresAutoExposure => AutoExposure;
+
+        internal float ComputePhysicalExposureMultiplier()
+        {
+            float n = MathF.Max(0.1f, PhysicalApertureFNumber);
+            float t = MathF.Max(0.000001f, PhysicalShutterSpeedSeconds);
+            float iso = MathF.Max(1.0f, PhysicalISO);
+
+            // EV100 = log2(N^2 / t * 100/ISO)
+            float ev100 = MathF.Log2((n * n / t) * (100.0f / iso));
+            float ev = ev100 + PhysicalExposureCompensationEV;
+
+            // Convert EV to a linear exposure multiplier used by the tonemapper.
+            // Higher EV => darker image.
+            float multiplier = MathF.Pow(2.0f, -ev);
+            return PhysicalExposureScale * multiplier;
+        }
 
         private float _secBetweenExposureUpdates = 1.0f;
         public float SecondsBetweenExposureUpdates
@@ -341,6 +449,8 @@ uniform ColorGradeStruct ColorGrade;";
 
             float exposure = ExposureDividend / lumDot;
             exposure = AutoExposureBias + AutoExposureScale * exposure;
+            if (ExposureMode == ExposureControlMode.Physical)
+                exposure *= ComputePhysicalExposureMultiplier();
             exposure = exposure.Clamp(MinExposure, MaxExposure);
 
             //If the current exposure is an invalid value, that means we want the exposure to be set immediately.
@@ -352,12 +462,21 @@ uniform ColorGradeStruct ColorGrade;";
 
         public void Lerp(ColorGradingSettings source, ColorGradingSettings dest, float time)
         {
+            ExposureMode = time < 0.5f ? source.ExposureMode : dest.ExposureMode;
+
             Saturation = Interp.Lerp(source.Saturation, dest.Saturation, time);
             Hue = Interp.Lerp(source.Hue, dest.Hue, time);
             Gamma = Interp.Lerp(source.Gamma, dest.Gamma, time);
             Brightness = Interp.Lerp(source.Brightness, dest.Brightness, time);
             Contrast = Interp.Lerp(source.Contrast, dest.Contrast, time);
             Tint = Interp.Lerp(source.Tint, dest.Tint, time);
+
+            PhysicalApertureFNumber = Interp.Lerp(source.PhysicalApertureFNumber, dest.PhysicalApertureFNumber, time);
+            PhysicalShutterSpeedSeconds = Interp.Lerp(source.PhysicalShutterSpeedSeconds, dest.PhysicalShutterSpeedSeconds, time);
+            PhysicalISO = Interp.Lerp(source.PhysicalISO, dest.PhysicalISO, time);
+            PhysicalExposureCompensationEV = Interp.Lerp(source.PhysicalExposureCompensationEV, dest.PhysicalExposureCompensationEV, time);
+            PhysicalExposureScale = Interp.Lerp(source.PhysicalExposureScale, dest.PhysicalExposureScale, time);
+
             MinExposure = Interp.Lerp(source.MinExposure, dest.MinExposure, time);
             MaxExposure = Interp.Lerp(source.MaxExposure, dest.MaxExposure, time);
             ExposureDividend = Interp.Lerp(source.ExposureDividend, dest.ExposureDividend, time);

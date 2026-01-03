@@ -11,12 +11,25 @@ using YamlDotNet.Serialization;
 
 namespace XREngine.Rendering
 {
+    /// <summary>
+    /// Defines the coordinate space that a projection jitter offset is expressed in.
+    /// </summary>
     public enum ProjectionJitterSpace
     {
+        /// <summary>
+        /// Offset is expressed in clip space (NDC) units.
+        /// </summary>
         ClipSpace,
+
+        /// <summary>
+        /// Offset is expressed in texel/pixel units relative to a reference resolution.
+        /// </summary>
         TexelSpace
     }
 
+    /// <summary>
+    /// A request to apply a temporary sub-pixel offset to the projection matrix.
+    /// </summary>
     public readonly struct ProjectionJitterRequest
     {
         public ProjectionJitterRequest(Vector2 offset, ProjectionJitterSpace space, Vector2 referenceResolution)
@@ -30,12 +43,21 @@ namespace XREngine.Rendering
         public ProjectionJitterSpace Space { get; }
         public Vector2 ReferenceResolution { get; }
 
+        /// <summary>
+        /// Creates a jitter request where <paramref name="offset"/> is already in clip space.
+        /// </summary>
         public static ProjectionJitterRequest ClipSpace(Vector2 offset)
             => new(offset, ProjectionJitterSpace.ClipSpace, Vector2.One);
 
+        /// <summary>
+        /// Creates a jitter request where <paramref name="offset"/> is in texel/pixel units.
+        /// </summary>
         public static ProjectionJitterRequest TexelSpace(Vector2 offset, Vector2 referenceResolution)
             => new(offset, ProjectionJitterSpace.TexelSpace, referenceResolution);
 
+        /// <summary>
+        /// Converts this request into clip space (NDC) units.
+        /// </summary>
         public Vector2 ToClipSpace()
         {
             if (Space == ProjectionJitterSpace.ClipSpace)
@@ -50,55 +72,96 @@ namespace XREngine.Rendering
                 height <= float.Epsilon ? 0.0f : Offset.Y * 2.0f / height);
         }
 
+        /// <summary>
+        /// True if the requested offset is effectively zero.
+        /// </summary>
         public bool IsZero
             => MathF.Abs(Offset.X) <= float.Epsilon && MathF.Abs(Offset.Y) <= float.Epsilon;
     }
 
+    /// <summary>
+    /// Placeholder base for specialized camera implementations.
+    /// </summary>
     public class XRCameraBase : XRBase
     {
-        
     }
+
+    /// <summary>
+    /// Placeholder VR camera type.
+    /// </summary>
     public class VRCamera : XRCameraBase
     {
 
     }
     /// <summary>
-    /// This class represents a camera in 3D space.
-    /// It calculates the model-view-projection matrix driven by a transform and projection parameters.
+    /// Camera component responsible for view/projection setup, frustum helpers, coordinate conversion,
+    /// and per-camera render pipeline/post-process state.
+    ///
+    /// Projection jitter is supported via a stack so multiple systems can apply temporary jitter
+    /// (e.g. temporal AA, temporal upscalers) without stomping one another.
     /// </summary>
     public class XRCamera : XRBase
     {
-        [YamlIgnore]
-        public EventList<XRViewport> Viewports { get; set; } = [];
+        #region Fields
 
-        public event Action<XRCamera, XRViewport>? ViewportAdded;
-        public event Action<XRCamera, XRViewport>? ViewportRemoved;
+        private TransformBase? _transform;
+        private LayerMask _cullingMask = LayerMask.Everything;
+        private float _shadowCollectMaxDistance = float.PositiveInfinity;
+        private XRCameraParameters? _parameters;
+        private CameraPostProcessStateCollection _postProcessStates = new();
+        private XRMaterial? _postProcessMaterial;
+        private RenderPipeline? _renderPipeline = null;
+        private Matrix4x4 _obliqueProjectionMatrix = Matrix4x4.Identity;
+        private Plane? _obliqueNearClippingPlane = null;
+        private readonly Stack<Vector2> _projectionJitterStack = new();
+
+        #endregion
+
+        #region Constructors
 
         public XRCamera()
         {
             Viewports.PostAnythingAdded += OnViewportAdded;
             Viewports.PostAnythingRemoved += OnViewportRemoved;
         }
+
         public XRCamera(TransformBase transform) : this()
             => Transform = transform;
+
         public XRCamera(TransformBase transform, XRCameraParameters parameters) : this(transform)
             => Parameters = parameters;
 
+        #endregion
+
+        #region Viewports
+
+        /// <summary>
+        /// Viewports that this camera renders into.
+        /// </summary>
+        [YamlIgnore]
+        public EventList<XRViewport> Viewports { get; set; } = [];
+
+        public event Action<XRCamera, XRViewport>? ViewportAdded;
+        public event Action<XRCamera, XRViewport>? ViewportRemoved;
+
         private void OnViewportRemoved(XRViewport item)
             => ViewportRemoved?.Invoke(this, item);
+
         private void OnViewportAdded(XRViewport item)
             => ViewportAdded?.Invoke(this, item);
 
-        private TransformBase? _transform;
+        #endregion
+
+        #region Transform / culling
+        /// <summary>
+        /// Transform driving this camera's view matrix.
+        /// If unset, a default <see cref="Transform"/> is created lazily.
+        /// </summary>
         public TransformBase Transform
         {
             get => _transform ?? SetFieldReturn(ref _transform, new Transform())!;
             set => SetField(ref _transform, value);
         }
-
-        private LayerMask _cullingMask = LayerMask.Everything;
-
-        private float _shadowCollectMaxDistance = float.PositiveInfinity;
 
         /// <summary>
         /// Maximum distance from this camera to consider a light for shadow-map collection.
@@ -119,6 +182,10 @@ namespace XREngine.Rendering
             get => _cullingMask;
             set => SetField(ref _cullingMask, value);
         }
+
+        #endregion
+
+        #region Post-processing state
 
         public CameraPostProcessStateCollection PostProcessStates
         {
@@ -141,62 +208,23 @@ namespace XREngine.Rendering
         public PostProcessStageState? FindPostProcessStageByParameter(string parameterName)
             => GetActivePostProcessState()?.FindStageByParameter(parameterName);
 
-        //private Matrix4x4 _modelViewProjectionMatrix = Matrix4x4.Identity;
-        //public Matrix4x4 WorldViewProjectionMatrix
-        //{
-        //    get
-        //    {
-        //        VerifyMVP();
-        //        return _modelViewProjectionMatrix;
-        //    }
-        //    set
-        //    {
-        //        SetField(ref _modelViewProjectionMatrix, value);
-        //        _inverseModelViewProjectionMatrix = null;
-        //    }
-        //}
+        #endregion
 
-        //private Matrix4x4? _inverseModelViewProjectionMatrix = Matrix4x4.Identity;
-        //public Matrix4x4 InverseWorldViewProjectionMatrix
-        //{
-        //    get
-        //    {
-        //        if (_inverseModelViewProjectionMatrix != null)
-        //            return _inverseModelViewProjectionMatrix.Value;
+        #region Parameters / projection
 
-        //        if (!Matrix4x4.Invert(WorldViewProjectionMatrix, out Matrix4x4 inverted))
-        //        {
-        //            Debug.LogWarning($"Failed to invert {nameof(WorldViewProjectionMatrix)}");
-        //            inverted = Matrix4x4.Identity;
-        //        }
-        //        _inverseModelViewProjectionMatrix = inverted;
-        //        return inverted;
-        //    }
-        //    set
-        //    {
-        //        _inverseModelViewProjectionMatrix = value;
-        //        if (!Matrix4x4.Invert(value, out Matrix4x4 inverted))
-        //        {
-        //            Debug.LogWarning($"Failed to invert value set to {nameof(InverseWorldViewProjectionMatrix)}");
-        //            inverted = Matrix4x4.Identity;
-        //        }
-        //        WorldViewProjectionMatrix = inverted;
-        //    }
-        //}
-
-        private Matrix4x4 _obliqueProjectionMatrix = Matrix4x4.Identity;
-        private XRCameraParameters? _parameters;
+        /// <summary>
+        /// Projection parameters defining FOV/aspect/near/far/etc.
+        /// If unset, defaults to a perspective camera.
+        /// </summary>
         public XRCameraParameters Parameters
         {
             get => _parameters ?? SetFieldReturn(ref _parameters, GetDefaultCameraParameters())!;
             set => SetField(ref _parameters, value);
         }
 
-        private readonly Stack<Vector2> _projectionJitterStack = new();
-        public bool HasProjectionJitter
-            => _projectionJitterStack.Count > 0 && !IsZeroVector(_projectionJitterStack.Peek());
-        public Vector2 ProjectionJitter
-            => _projectionJitterStack.TryPeek(out var jitter) ? jitter : Vector2.Zero;
+        #endregion
+
+        #region Property change handlers
 
         protected override bool OnPropertyChanging<T>(string? propName, T field, T @new)
         {
@@ -204,20 +232,19 @@ namespace XREngine.Rendering
             switch (propName)
             {
                 case nameof(Transform):
-                    if (_transform is not null)
-                        _transform.RenderMatrixChanged -= RenderMatrixChanged;
+                    _transform?.RenderMatrixChanged -= RenderMatrixChanged;
                     break;
             }
             return change;
         }
+
         protected override void OnPropertyChanged<T>(string? propName, T prev, T field)
         {
             base.OnPropertyChanged(propName, prev, field);
             switch (propName)
             {
                 case nameof(Transform):
-                    if (_transform is not null)
-                        _transform.RenderMatrixChanged += RenderMatrixChanged;
+                    _transform?.RenderMatrixChanged += RenderMatrixChanged;
                     CalculateObliqueProjectionMatrix();
                     break;
             }
@@ -226,6 +253,25 @@ namespace XREngine.Rendering
         private void RenderMatrixChanged(TransformBase @base, Matrix4x4 renderMatrix)
             => CalculateObliqueProjectionMatrix();
 
+        #endregion
+
+        #region Projection jitter
+
+        /// <summary>
+        /// True if any non-zero projection jitter is currently active.
+        /// </summary>
+        public bool HasProjectionJitter
+            => _projectionJitterStack.Count > 0 && !IsZeroVector(_projectionJitterStack.Peek());
+
+        /// <summary>
+        /// The current projection jitter offset in clip space.
+        /// </summary>
+        public Vector2 ProjectionJitter
+            => _projectionJitterStack.TryPeek(out var jitter) ? jitter : Vector2.Zero;
+
+        /// <summary>
+        /// Gets the projection matrix with any active jitter applied.
+        /// </summary>
         public Matrix4x4 ProjectionMatrix
             => ApplyProjectionJitter(GetBaseProjectionMatrix());
 
@@ -236,6 +282,10 @@ namespace XREngine.Rendering
         public Matrix4x4 ProjectionMatrixUnjittered
             => GetBaseProjectionMatrix();
 
+        /// <summary>
+        /// Pushes a jitter request onto the jitter stack.
+        /// The returned <see cref="StateObject"/> will pop when disposed.
+        /// </summary>
         public StateObject PushProjectionJitter(in ProjectionJitterRequest request)
         {
             Vector2 clipSpaceOffset = request.ToClipSpace();
@@ -285,6 +335,10 @@ namespace XREngine.Rendering
         private static bool IsZeroVector(Vector2 value)
             => MathF.Abs(value.X) <= float.Epsilon && MathF.Abs(value.Y) <= float.Epsilon;
 
+        #endregion
+
+        #region Oblique near clipping
+
         private void CalculateObliqueProjectionMatrix()
         {
             var nearPlane = _obliqueNearClippingPlane;
@@ -318,68 +372,22 @@ namespace XREngine.Rendering
         private static XRPerspectiveCameraParameters GetDefaultCameraParameters()
             => new(90.0f, null, 0.1f, 10000.0f);
 
-        //protected override bool OnPropertyChanging<T>(string? propName, T field, T @new)
-        //{
-        //    bool canChange = base.OnPropertyChanging(propName, field, @new);
-        //    if (canChange)
-        //    {
-        //        switch (propName)
-        //        {
-        //            case nameof(Transform):
-        //                UnregisterWorldMatrixChanged();
-        //                break;
-        //        }
-        //    }
-        //    return canChange;
-        //}
-        //protected override void OnPropertyChanged<T>(string? propName, T prev, T field)
-        //{
-        //    switch (propName)
-        //    {
-        //        case nameof(Transform):
-        //            RegisterWorldMatrixChanged();
-        //            break;
-        //    }
-        //    base.OnPropertyChanged(propName, prev, field);
-        //}
+        #endregion
 
-        //private void RegisterProjectionMatrixChanged(XRCameraParameters? parameters)
-        //    => parameters?.ProjectionMatrixChanged.AddListener(ProjectionMatrixChanged);
-        //private void UnregisterProjectionMatrixChanged(XRCameraParameters? parameters)
-        //    => parameters?.ProjectionMatrixChanged.RemoveListener(ProjectionMatrixChanged);
+        #region Near/far plane helpers
 
-        //private void RegisterWorldMatrixChanged()
-        //{
-        //    if (_transform is null)
-        //        return;
-
-        //    _transform.WorldMatrixChanged += WorldMatrixChanged;
-        //}
-        //private void UnregisterWorldMatrixChanged()
-        //{
-        //    if (_transform is null)
-        //        return;
-
-        //    _transform.WorldMatrixChanged -= WorldMatrixChanged;
-        //}
-
-        //private void ProjectionMatrixChanged(XRCameraParameters parameters)
-        //{
-        //    //InvalidateMVP();
-        //}
-        //private void WorldMatrixChanged(TransformBase transform)
-        //{
-        //    //InvalidateMVP();
-        //}
-
-        private CameraPostProcessStateCollection _postProcessStates = new();
-        private XRMaterial? _postProcessMaterial;
-
+        /// <summary>
+        /// Far clipping distance shortcut.
+        /// </summary>
         public float FarZ
         {
             get => Parameters.FarZ;
             set => Parameters.FarZ = value;
         }
+
+        /// <summary>
+        /// Near clipping distance shortcut.
+        /// </summary>
         public float NearZ
         {
             get => Parameters.NearZ;
@@ -506,6 +514,10 @@ namespace XREngine.Rendering
         public float DistanceScalePerspective(Vector3 worldPoint, float refDistance)
             => DistanceFromWorldPosition(worldPoint) / refDistance;
 
+        #endregion
+
+        #region Coordinate conversion
+
         /// <summary>
         /// Returns a normalized X, Y coordinate relative to the camera's origin (center for perspective, bottom-left for orthographic) 
         /// with Z being the normalized depth (0.0f - 1.0f) from NearDepth (0.0f) to FarDepth (1.0f).
@@ -593,6 +605,8 @@ namespace XREngine.Rendering
             NegativeOneToOne,
             ZeroToOne
         }
+
+        #endregion
 
         #region Lens Distortion helpers
         private readonly struct LensParams(ELensDistortionMode mode, float intensity, float paniniDistance, float paniniCrop, Vector2 paniniViewExtents)
@@ -785,6 +799,8 @@ namespace XREngine.Rendering
         }
         #endregion
 
+        #region Rays / queries
+
         public Segment GetWorldSegment(Vector2 normalizedScreenPoint)
         {
             Vector3 start = NormalizedViewportToWorldCoordinate(normalizedScreenPoint, 0.0f);
@@ -815,12 +831,16 @@ namespace XREngine.Rendering
                 ? DistanceFromNearPlane(point)
                 : DistanceFromWorldPosition(point);
 
+        #endregion
+
+        #region Rendering uniforms / pipeline
+
         public virtual void SetAmbientOcclusionUniforms(XRRenderProgram program, AmbientOcclusionSettings.EType? overrideType = null)
         {
             var stage = GetPostProcessStageState<AmbientOcclusionSettings>();
             if (stage?.TryGetBacking(out AmbientOcclusionSettings? settings) == true)
             {
-                settings.SetUniforms(program, overrideType);
+                settings?.SetUniforms(program, overrideType);
                 return;
             }
 
@@ -836,12 +856,10 @@ namespace XREngine.Rendering
             set => SetField(ref _postProcessMaterial, value);
         }
 
-        private RenderPipeline? _renderPipeline = null;
         /// <summary>
         /// This is the rendering setup this viewport will use to render the scene the camera sees.
         /// A render pipeline is a collection of render passes that will be executed in order to render the scene and post-process the result, etc.
         /// </summary>
-        [YamlIgnore]
         public RenderPipeline RenderPipeline
         {
             get => _renderPipeline ?? SetFieldReturn(ref _renderPipeline, Engine.Rendering.NewRenderPipeline())!;
@@ -894,6 +912,10 @@ namespace XREngine.Rendering
             return b;
         }
 
+        #endregion
+
+        #region Oblique projection helpers
+
         /// <summary>
         /// Calculates an oblique near plane projection matrix.
         /// Given an original projection matrix and a clipping plane in view space,
@@ -919,17 +941,34 @@ namespace XREngine.Rendering
 
             return projection;
         }
-        
-        private Plane? _obliqueNearClippingPlane = null;
 
+        /// <summary>
+        /// Sets an oblique clipping plane from a world-space position and normal.
+        /// </summary>
         public void SetObliqueClippingPlane(Vector3 planePosWorld, Vector3 planeNormalWorld)
             => _obliqueNearClippingPlane = XRMath.CreatePlaneFromPointAndNormal(planePosWorld, planeNormalWorld);
+
+        /// <summary>
+        /// Sets an oblique clipping plane from a normal and distance.
+        /// </summary>
         public void SetObliqueClippingPlane(Vector3 planeNormalWorld, float planeDistance)
             => _obliqueNearClippingPlane = new Plane(planeNormalWorld, planeDistance);
+
+        /// <summary>
+        /// Sets an oblique clipping plane directly.
+        /// </summary>
         public void SetObliqueClippingPlane(Plane plane)
             => _obliqueNearClippingPlane = plane;
+
+        /// <summary>
+        /// Clears any oblique clipping plane.
+        /// </summary>
         public void ClearObliqueClippingPlane()
             => _obliqueNearClippingPlane = null;
+
+        #endregion
+
+        #region Depth conversion
 
         /// <summary>
         /// Converts nonlinear normalized depth between 0.0f and 1.0f
@@ -955,5 +994,7 @@ namespace XREngine.Rendering
             nonLinearDepth = (nonLinearDepth + 1.0f) / 2.0f;
             return nonLinearDepth;
         }
+
+        #endregion
     }
 }
