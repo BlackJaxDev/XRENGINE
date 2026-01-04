@@ -44,6 +44,10 @@ namespace XREngine
             GameSettings = new GameStartupSettings();
             BuildSettings = new BuildSettings();
 
+            // Effective settings depend on these sources; forward changes.
+            UserSettingsChanged += _ => EffectiveSettings.NotifyEffectiveSettingsChanged();
+            Rendering.SettingsChanged += EffectiveSettings.NotifyEffectiveSettingsChanged;
+
             Time.Timer.PostUpdateFrame += Timer_PostUpdateFrame;
 
             XREvent.ProfilingHook = ExternalProfilingHook;
@@ -194,11 +198,12 @@ namespace XREngine
 
                 _gameSettings = value ?? new GameStartupSettings();
 
-                if (_gameSettings.BuildSettings is null)
-                    _gameSettings.BuildSettings = new BuildSettings();
+                _gameSettings.BuildSettings ??= new BuildSettings();
 
                 _gameSettings.BuildSettings.PropertyChanged += HandleBuildSettingsChanged;
                 BuildSettingsChanged?.Invoke(_gameSettings.BuildSettings);
+
+                EffectiveSettings.NotifyEffectiveSettingsChanged();
             }
         }
         /// <summary>

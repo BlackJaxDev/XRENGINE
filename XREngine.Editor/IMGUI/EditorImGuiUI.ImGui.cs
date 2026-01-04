@@ -894,8 +894,27 @@ public static partial class EditorImGuiUI
             else
                 label = $"Project: {Engine.CurrentProject!.ProjectName}";
 
-            ImGui.SameLine(0f, 12f);
+            // Draw centered on the menu/header bar without affecting layout for other indicators.
+            // We treat this as an overlay: move cursor, draw, then restore cursor position.
+            var originalCursor = ImGui.GetCursorPos();
+
             ImGui.AlignTextToFramePadding();
+
+            var style = ImGui.GetStyle();
+            Vector2 textSize = ImGui.CalcTextSize(label);
+            Vector2 regionMin = ImGui.GetWindowContentRegionMin();
+            Vector2 regionMax = ImGui.GetWindowContentRegionMax();
+            float regionWidth = regionMax.X - regionMin.X;
+
+            float centeredX = regionMin.X + (regionWidth - textSize.X) * 0.5f;
+            float minX = regionMin.X + style.WindowPadding.X;
+            float maxX = regionMax.X - style.WindowPadding.X - textSize.X;
+            if (centeredX < minX)
+                centeredX = minX;
+            else if (centeredX > maxX)
+                centeredX = maxX;
+
+            ImGui.SetCursorPos(new Vector2(centeredX, originalCursor.Y));
 
             if (sandboxMode)
             {
@@ -906,6 +925,8 @@ public static partial class EditorImGuiUI
             {
                 ImGui.Text(label);
             }
+
+            ImGui.SetCursorPos(originalCursor);
         }
 
 

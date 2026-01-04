@@ -1,7 +1,9 @@
+using Silk.NET.Core;
 using Silk.NET.Core.Native;
 using Silk.NET.OpenGL;
 using Silk.NET.OpenXR;
 using Silk.NET.OpenXR.Extensions.KHR;
+using Silk.NET.Windowing;
 using System.IO;
 using System.Reflection;
 using System.Runtime.InteropServices;
@@ -19,6 +21,12 @@ using XREngine.Rendering.Vulkan;
 public unsafe partial class OpenXRAPI : XRBase
 {
     private static int _nativeResolverInitialized;
+
+    [DllImport("opengl32.dll")]
+    private static extern nint wglGetCurrentContext();
+
+    [DllImport("opengl32.dll")]
+    private static extern nint wglGetCurrentDC();
 
     public OpenXRAPI()
     {
@@ -188,6 +196,7 @@ public unsafe partial class OpenXRAPI : XRBase
     private View[] _views = new View[2];
     private FrameState _frameState;
     private GL? _gl;
+    private System.Action? _deferredOpenGlInit;
 
     /// <summary>
     /// Gets the OpenXR API instance.
@@ -515,14 +524,32 @@ public unsafe partial class OpenXRAPI : XRBase
     protected void Initialize()
     {
         CreateInstance();
+        SetupDebugMessenger();
         CreateSystem();
         switch (Window?.Renderer)
         {
             case OpenGLRenderer renderer:
-                CreateOpenGLSession(renderer);
-                CreateReferenceSpace();
-                InitializeOpenGLSwapchains(renderer);
-                Window.RenderViewportsCallback += Window_RenderViewportsCallback;
+                // OpenGL session creation must happen on the same thread that owns the current GL context.
+                // Attempting to MakeCurrent here can fail if the editor render thread is already using it.
+                if (_deferredOpenGlInit is not null)
+                    Window.RenderViewportsCallback -= _deferredOpenGlInit;
+
+                _deferredOpenGlInit = () =>
+                {
+                    if (Window is null)
+                        return;
+
+                    // Run once.
+                    Window.RenderViewportsCallback -= _deferredOpenGlInit;
+                    _deferredOpenGlInit = null;
+
+                    CreateOpenGLSession(renderer);
+                    CreateReferenceSpace();
+                    InitializeOpenGLSwapchains(renderer);
+                    Window.RenderViewportsCallback += Window_RenderViewportsCallback;
+                };
+
+                Window.RenderViewportsCallback += _deferredOpenGlInit;
                 break;
             case VulkanRenderer renderer:
                 CreateVulkanSession();
@@ -535,7 +562,6 @@ public unsafe partial class OpenXRAPI : XRBase
             default:
                 throw new Exception("Unsupported renderer");
         }
-        SetupDebugMessenger();
     }
 
     private void Window_RenderViewportsCallback()
@@ -638,6 +664,33 @@ public unsafe partial class OpenXRAPI : XRBase
 
         _gl = renderer.RawGL;
 
+        // OpenXR OpenGL session creation requires the HGLRC/HDC to be current on the calling thread.
+        // This method is expected to run on the window render thread (see deferred init in Initialize()).
+        var w = Window.Window;
+
+        // Ensure the window context is current on this thread.
+        // (Calling MakeCurrent from the wrong thread can throw; here we're on the render callback thread.)
+        try
+        {
+            w.MakeCurrent();
+        }
+        catch (Exception ex)
+        {
+            Debug.Out($"OpenGL MakeCurrent failed (continuing): {ex.Message}");
+        }
+
+        try
+        {
+            string glVersion = new((sbyte*)_gl.GetString(StringName.Version));
+            string glVendor = new((sbyte*)_gl.GetString(StringName.Vendor));
+            string glRenderer = new((sbyte*)_gl.GetString(StringName.Renderer));
+            Debug.Out($"OpenGL context: {glVendor} / {glRenderer} / {glVersion}");
+        }
+        catch
+        {
+            // If the context isn't current/valid, querying strings can throw; the CreateSession call will fail anyway.
+        }
+
         var requirements = new GraphicsRequirementsOpenGLKHR
         {
             Type = StructureType.GraphicsRequirementsOpenglKhr
@@ -651,22 +704,124 @@ public unsafe partial class OpenXRAPI : XRBase
 
         Debug.Out($"OpenGL requirements: Min {requirements.MinApiVersionSupported}, Max {requirements.MaxApiVersionSupported}");
 
-        var w = Window.Window;
-        var glBinding = new GraphicsBindingOpenGLWin32KHR
+        int glMajor = 0;
+        int glMinor = 0;
+        try
         {
-            Type = StructureType.GraphicsBindingOpenglWin32Khr,
-            HDC = w.Native?.Win32?.HDC ?? 0,
-            HGlrc = w.GLContext?.Handle ?? 0
-        };
-        var createInfo = new SessionCreateInfo
+            glMajor = _gl.GetInteger(GetPName.MajorVersion);
+            glMinor = _gl.GetInteger(GetPName.MinorVersion);
+        }
+        catch
         {
-            Type = StructureType.SessionCreateInfo,
-            SystemId = _systemId,
-            Next = &glBinding
-        };
-        var result = Api.CreateSession(_instance, ref createInfo, ref _session);
-        if (result != Result.Success)
-            throw new Exception($"Failed to create session: {result}");
+            // Ignore; we'll still try to create the session and report handles.
+        }
+
+        nint hdcFromWindow = w.Native?.Win32?.HDC ?? 0;
+        nint hglrcFromWindow = w.GLContext?.Handle ?? 0;
+        nint hdcCurrent = wglGetCurrentDC();
+        nint hglrcCurrent = wglGetCurrentContext();
+
+        Debug.Out($"OpenGL binding (window): HDC=0x{(nuint)hdcFromWindow:X}, HGLRC=0x{(nuint)hglrcFromWindow:X}");
+        Debug.Out($"OpenGL binding (current): HDC=0x{(nuint)hdcCurrent:X}, HGLRC=0x{(nuint)hglrcCurrent:X}");
+
+        if ((hglrcCurrent == 0 || hdcCurrent == 0) && (hglrcFromWindow == 0 || hdcFromWindow == 0))
+            throw new Exception("Cannot create OpenXR session: no valid OpenGL handles available (both current and window handles are null). Ensure OpenXR OpenGL session creation runs on the window render thread and the GL context is created.");
+
+        // Some runtimes are picky about which exact handles they accept. We'll attempt session creation using both
+        // the current WGL handles and the window-reported handles (if different), and report both results.
+        (nint hdc, nint hglrc, string tag)[] candidates =
+        [
+            (hdcCurrent, hglrcCurrent, "current"),
+            (hdcFromWindow, hglrcFromWindow, "window"),
+        ];
+
+        var attemptResults = new List<string>(2);
+        Result lastResult = Result.Success;
+        nint selectedHdc = 0;
+        nint selectedHglrc = 0;
+        string selectedTag = string.Empty;
+
+        // Validate GL version against runtime requirements if we can decode versions.
+        try
+        {
+            static (ushort major, ushort minor, uint patch) DecodeVersion(ulong v)
+            {
+                ulong raw = v;
+                ushort major = (ushort)((raw >> 48) & 0xFFFF);
+                ushort minor = (ushort)((raw >> 32) & 0xFFFF);
+                uint patch = (uint)(raw & 0xFFFFFFFF);
+                return (major, minor, patch);
+            }
+
+            var (minMajor, minMinor, _) = DecodeVersion(requirements.MinApiVersionSupported);
+            var (maxMajor, maxMinor, _) = DecodeVersion(requirements.MaxApiVersionSupported);
+
+            bool hasGLVersion = glMajor > 0;
+            bool hasMax = maxMajor != 0 || maxMinor != 0;
+
+            if (hasGLVersion)
+            {
+                bool belowMin = glMajor < minMajor || (glMajor == minMajor && glMinor < minMinor);
+                bool aboveMax = hasMax && (glMajor > maxMajor || (glMajor == maxMajor && glMinor > maxMinor));
+                if (belowMin || aboveMax)
+                {
+                    throw new Exception(
+                        $"Cannot create OpenXR session: current OpenGL version {glMajor}.{glMinor} is outside runtime requirements " +
+                        $"[{minMajor}.{minMinor} .. {(hasMax ? $"{maxMajor}.{maxMinor}" : "(no max)")}].");
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            throw new Exception($"OpenXR OpenGL preflight failed: {ex.Message}");
+        }
+
+        foreach (var (candidateHdc, candidateHglrc, tag) in candidates)
+        {
+            if (candidateHdc == 0 || candidateHglrc == 0)
+                continue;
+
+            // Skip duplicate handle pairs.
+            if (selectedHdc == candidateHdc && selectedHglrc == candidateHglrc)
+                continue;
+
+            _session = default;
+
+            var glBinding = new GraphicsBindingOpenGLWin32KHR
+            {
+                Type = StructureType.GraphicsBindingOpenglWin32Khr,
+                HDC = candidateHdc,
+                HGlrc = candidateHglrc
+            };
+            var createInfo = new SessionCreateInfo
+            {
+                Type = StructureType.SessionCreateInfo,
+                SystemId = _systemId,
+                Next = &glBinding
+            };
+
+            var r = Api.CreateSession(_instance, ref createInfo, ref _session);
+            attemptResults.Add($"{tag}: {r} (HDC=0x{(nuint)candidateHdc:X}, HGLRC=0x{(nuint)candidateHglrc:X})");
+            lastResult = r;
+            if (r == Result.Success)
+            {
+                selectedHdc = candidateHdc;
+                selectedHglrc = candidateHglrc;
+                selectedTag = tag;
+                break;
+            }
+        }
+
+        if (_session.Handle == 0)
+        {
+            string activeRuntime = TryGetOpenXRActiveRuntime() ?? "<unknown>";
+            throw new Exception(
+                $"Failed to create OpenXR session: {lastResult}. GL={glMajor}.{glMinor}. ActiveRuntime={activeRuntime}. " +
+                $"Attempts: {string.Join("; ", attemptResults)}. " +
+                "SteamVR commonly has limited/fragile OpenGL OpenXR support; Vulkan is usually more reliable.");
+        }
+
+        Debug.Out($"OpenXR session created using {selectedTag} OpenGL handles. HDC=0x{(nuint)selectedHdc:X}, HGLRC=0x{(nuint)selectedHglrc:X}");
     }
 
     /// <summary>
@@ -719,6 +874,41 @@ public unsafe partial class OpenXRAPI : XRBase
         if (_gl is null)
             throw new Exception("OpenGL context not initialized for OpenXR");
 
+        // Query supported swapchain formats for the active OpenXR runtime (for OpenGL these are GL internal format enums).
+        uint formatCount = 0;
+        var formatResult = Api.EnumerateSwapchainFormats(_session, 0, ref formatCount, null);
+        if (formatResult != Result.Success || formatCount == 0)
+            throw new Exception($"Failed to enumerate OpenXR swapchain formats for OpenGL. Result={formatResult}, Count={formatCount}");
+
+        var formats = new long[formatCount];
+        fixed (long* formatsPtr = formats)
+        {
+            formatResult = Api.EnumerateSwapchainFormats(_session, formatCount, ref formatCount, formatsPtr);
+        }
+        if (formatResult != Result.Success || formatCount == 0)
+            throw new Exception($"Failed to enumerate OpenXR swapchain formats for OpenGL. Result={formatResult}, Count={formatCount}");
+
+        IEnumerable<long> GetPreferredFormats(long[] available)
+        {
+            // Prefer sRGB when available, fall back to linear RGBA8.
+            long[] preferred =
+            [
+                (long)GLEnum.Srgb8Alpha8,
+                (long)GLEnum.Rgba8,
+            ];
+
+            foreach (var pref in preferred)
+                if (available.Contains(pref))
+                    yield return pref;
+
+            foreach (var f in available)
+                if (!preferred.Contains(f))
+                    yield return f;
+        }
+
+        var supportedFormatsLog = string.Join(", ", formats.Select(f => $"0x{f:X}"));
+        Debug.Out($"OpenXR OpenGL supported swapchain formats: {supportedFormatsLog}");
+
         // Get view configuration
         var viewConfigType = ViewConfigurationType.PrimaryStereo;
         _viewCount = 0;
@@ -728,33 +918,80 @@ public unsafe partial class OpenXRAPI : XRBase
             throw new Exception($"Expected 2 views, got {_viewCount}");
 
         _views = new View[_viewCount];
-        
+        for (int i = 0; i < _views.Length; i++)
+            _views[i].Type = StructureType.View;
+
+        // OpenXR requires the input structs to have their Type set.
+        for (int i = 0; i < _viewConfigViews.Length; i++)
+            _viewConfigViews[i].Type = StructureType.ViewConfigurationView;
+
         fixed (ViewConfigurationView* viewConfigViewsPtr = _viewConfigViews)
         {
             Api.EnumerateViewConfigurationView(_instance, _systemId, viewConfigType, _viewCount, ref _viewCount, viewConfigViewsPtr);
         }
 
+        for (int i = 0; i < _viewCount; i++)
+        {
+            uint rw = _viewConfigViews[i].RecommendedImageRectWidth;
+            uint rh = _viewConfigViews[i].RecommendedImageRectHeight;
+            Debug.Out($"OpenXR view[{i}] recommended size: {rw}x{rh}, samples={_viewConfigViews[i].RecommendedSwapchainSampleCount}");
+
+            if (rw == 0 || rh == 0)
+                throw new Exception($"OpenXR runtime reported an invalid recommended image rect size for view {i}: {rw}x{rh}. Cannot create swapchains.");
+        }
+
         // Create swapchains for each view
         for (int i = 0; i < _viewCount; i++)
         {
-            var swapchainCreateInfo = new SwapchainCreateInfo
-            {
-                Type = StructureType.SwapchainCreateInfo,
-                UsageFlags = SwapchainUsageFlags.ColorAttachmentBit,
-                Format = (long)GLEnum.Rgba8,
-                SampleCount = 1,
-                Width = (uint)_viewConfigViews[i].RecommendedImageRectWidth,
-                Height = (uint)_viewConfigViews[i].RecommendedImageRectHeight,
-                FaceCount = 1,
-                ArraySize = 1,
-                MipCount = 1
-            };
+            uint width = (uint)_viewConfigViews[i].RecommendedImageRectWidth;
+            uint height = (uint)_viewConfigViews[i].RecommendedImageRectHeight;
+            uint recommendedSamples = _viewConfigViews[i].RecommendedSwapchainSampleCount;
 
-            fixed (Swapchain* swapchainPtr = &_swapchains[i])
+            Result lastResult = Result.Success;
+            bool created = false;
+
+            foreach (var format in GetPreferredFormats(formats))
             {
-                if (Api.CreateSwapchain(_session, in swapchainCreateInfo, swapchainPtr) != Result.Success)
-                    throw new Exception($"Failed to create swapchain for view {i}");
+                foreach (var usage in new[] { SwapchainUsageFlags.ColorAttachmentBit | SwapchainUsageFlags.SampledBit, SwapchainUsageFlags.ColorAttachmentBit })
+                {
+                    foreach (var samples in (recommendedSamples > 1 ? new[] { recommendedSamples, 1u } : new[] { 1u }))
+                    {
+                        var swapchainCreateInfo = new SwapchainCreateInfo
+                        {
+                            Type = StructureType.SwapchainCreateInfo,
+                            UsageFlags = usage,
+                            Format = format,
+                            SampleCount = samples,
+                            Width = width,
+                            Height = height,
+                            FaceCount = 1,
+                            ArraySize = 1,
+                            MipCount = 1
+                        };
+
+                        fixed (Swapchain* swapchainPtr = &_swapchains[i])
+                        {
+                            lastResult = Api.CreateSwapchain(_session, in swapchainCreateInfo, swapchainPtr);
+                        }
+
+                        if (lastResult == Result.Success)
+                        {
+                            Debug.Out($"OpenXR swapchain[{i}] created. Format=0x{format:X}, Samples={samples}, Usage={usage}, Size={width}x{height}");
+                            created = true;
+                            break;
+                        }
+                    }
+
+                    if (created)
+                        break;
+                }
+
+                if (created)
+                    break;
             }
+
+            if (!created)
+                throw new Exception($"Failed to create swapchain for view {i}. LastResult={lastResult}, RecommendedSamples={recommendedSamples}, Size={width}x{height}, SupportedFormats={supportedFormatsLog}");
 
             // Get swapchain images
             uint imageCount = 0;
@@ -778,7 +1015,7 @@ public unsafe partial class OpenXRAPI : XRBase
                 _swapchainFramebuffers[i][j] = fbo;
             }
 
-            Console.WriteLine($"Created swapchain {i} with {imageCount} images ({swapchainCreateInfo.Width}x{swapchainCreateInfo.Height})");
+            Console.WriteLine($"Created swapchain {i} with {imageCount} images ({width}x{height})");
         }
         _gl.BindFramebuffer(FramebufferTarget.Framebuffer, 0);
     }
@@ -1020,6 +1257,10 @@ public unsafe partial class OpenXRAPI : XRBase
     {
         if (Window is not null)
             Window.RenderViewportsCallback -= Window_RenderViewportsCallback;
+
+        if (Window is not null && _deferredOpenGlInit is not null)
+            Window.RenderViewportsCallback -= _deferredOpenGlInit;
+        _deferredOpenGlInit = null;
 
         // Cleanup swapchains
         for (int i = 0; i < _viewCount; i++)

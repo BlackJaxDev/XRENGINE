@@ -24,6 +24,14 @@ namespace XREngine.Data
         /// </summary>
         public bool External { get; }
         public uint Length { get; set; }
+
+        /// <summary>
+        /// Controls whether YAML serialization should store this payload compressed.
+        /// Default is true to keep YAML assets small.
+        /// </summary>
+        [YamlIgnore]
+        [MemoryPackIgnore]
+        public bool PreferCompressedYaml { get; set; } = true;
         [YamlIgnore]
         [MemoryPackIgnore]
         public VoidPtr Address { get; set; }

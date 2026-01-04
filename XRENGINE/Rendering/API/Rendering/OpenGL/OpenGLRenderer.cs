@@ -46,6 +46,14 @@ namespace XREngine.Rendering.OpenGL
         {
             get
             {
+                if (_version is not null)
+                    return _version;
+
+                // GL calls require the correct context + thread. During import/externalization we may
+                // be traversing object graphs from job threads; never query GL there.
+                if (!Engine.IsRenderThread)
+                    return null;
+
                 unsafe
                 {
                     _version ??= new((sbyte*)Api.GetString(StringName.Version));
@@ -501,7 +509,18 @@ namespace XREngine.Rendering.OpenGL
                 mask |= (uint)GLEnum.StencilBufferBit;
             if (mask == 0)
                 return;
+
+            // Some drivers emit KHR_debug spam when GL_BLEND is enabled and the currently bound
+            // framebuffer has integer color attachments. Blending does not affect glClear, so
+            // we temporarily disable it for the clear and restore the previous enable state.
+            bool blendWasEnabled = color && Api.IsEnabled(EnableCap.Blend);
+            if (blendWasEnabled)
+                Api.Disable(EnableCap.Blend);
+
             Api.Clear(mask);
+
+            if (blendWasEnabled)
+                Api.Enable(EnableCap.Blend);
         }
 
         public override void ClearColor(ColorF4 color)
@@ -1442,14 +1461,6 @@ void main()
 
             Api.DispatchCompute(1, 1, 1);
             Api.MemoryBarrier((uint)(MemoryBarrierMask.ShaderImageAccessBarrierBit | MemoryBarrierMask.TextureFetchBarrierBit));
-
-            // Debug: read back exposure value to verify compute shader is working (once per second approx)
-            if ((int)(Engine.ElapsedTime * 10) % 10 == 0)
-            {
-                float[] exposureData = new float[1];
-                Api.GetTextureImage(glExposure.BindingId, 0, PixelFormat.Red, PixelType.Float, (uint)(sizeof(float)), exposureData);
-                //Debug.Out($"[AutoExposure] SmallestMip={smallestMip}, Computed exposure={exposureData[0]:F4}, Settings: Bias={settings.AutoExposureBias:F2}, Scale={settings.AutoExposureScale:F2}, Dividend={settings.ExposureDividend:F4}");
-            }
 
             // Ensure that the compute shader write is visible to subsequent reads (by the fragment shader or the next compute dispatch)
             Api.MemoryBarrier(MemoryBarrierMask.ShaderImageAccessBarrierBit | MemoryBarrierMask.TextureFetchBarrierBit);

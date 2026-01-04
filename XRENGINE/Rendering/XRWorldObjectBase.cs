@@ -196,7 +196,13 @@ namespace XREngine
         [MemoryPackIgnore]
         public float LastTickReplicationTime { get; private set; } = 0;
         [Category("Networking")]
-        public float TimeBetweenReplications { get; set; } = 0.1f;
+        public float TimeBetweenReplications
+        {
+            get => _timeBetweenReplicationsOverride ?? Engine.EffectiveSettings.TimeBetweenReplications;
+            set => _timeBetweenReplicationsOverride = value;
+        }
+
+        private float? _timeBetweenReplicationsOverride = null;
 
         private void BroadcastTickedProperties()
         {

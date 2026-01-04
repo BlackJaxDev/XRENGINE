@@ -347,6 +347,9 @@ namespace XREngine
                 private uint _raycastBufferSize = 1024u;
                 private bool _enableGpuBvhTimingQueries = false;
 
+                private float _transformReplicationKeyframeIntervalSec = 5.0f;
+                private float _timeBetweenReplications = 0.1f;
+
                 private void BumpShaderConfigVersion()
                     => Interlocked.Increment(ref _shaderConfigVersion);
                 private bool _calculateSkinnedBoundsInComputeShader = false;
@@ -358,6 +361,30 @@ namespace XREngine
                 private bool _renderUITransformCoordinate = false;
                 private bool _renderTransformLines = false;
                 private bool _renderTransformPoints = false;
+
+                /// <summary>
+                /// The interval in seconds between full keyframes sent to the network for this transform.
+                /// All other updates are sent as deltas.
+                /// </summary>
+                [Category("Networking")]
+                [Description("The interval in seconds between full keyframes sent to the network for this transform. All other updates are sent as deltas.")]
+                public float TransformReplicationKeyframeIntervalSec
+                {
+                    get => _transformReplicationKeyframeIntervalSec;
+                    set => SetField(ref _transformReplicationKeyframeIntervalSec, value);
+                }
+
+                /// <summary>
+                /// The minimum interval in seconds between replicated tick updates for world objects.
+                /// Helps limit bandwidth usage for high-frequency properties.
+                /// </summary>
+                [Category("Networking")]
+                [Description("The minimum interval in seconds between replicated tick updates for world objects. Helps limit bandwidth usage for high-frequency properties.")]
+                public float TimeBetweenReplications
+                {
+                    get => _timeBetweenReplications;
+                    set => SetField(ref _timeBetweenReplications, value);
+                }
                 private bool _renderTransformCapsules = false;
                 private bool _visualizeDirectionalLightVolumes = false;
                 private bool _preview3DWorldOctree = false;

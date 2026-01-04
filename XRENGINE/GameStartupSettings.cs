@@ -236,6 +236,9 @@ namespace XREngine
         private OverrideableSetting<bool> _calculateSkinningInComputeShaderOverride = new();
         private OverrideableSetting<bool> _calculateBlendshapesInComputeShaderOverride = new();
 
+        private OverrideableSetting<float> _transformReplicationKeyframeIntervalSecOverride = new();
+        private OverrideableSetting<float> _timeBetweenReplicationsOverride = new();
+
         /// <summary>
         /// Project override for the number of job worker threads.
         /// Takes precedence over engine defaults when HasOverride is true.
@@ -338,6 +341,30 @@ namespace XREngine
         {
             get => _enableGpuIndirectValidationLoggingOverride;
             set => SetField(ref _enableGpuIndirectValidationLoggingOverride, value ?? new());
+        }
+
+        /// <summary>
+        /// Project override for the interval in seconds between full keyframes sent to the network for transforms.
+        /// Takes precedence over engine defaults when HasOverride is true.
+        /// </summary>
+        [Category("Networking Overrides")]
+        [Description("Project override for the interval in seconds between full keyframes sent to the network for transforms.")]
+        public OverrideableSetting<float> TransformReplicationKeyframeIntervalSecOverride
+        {
+            get => _transformReplicationKeyframeIntervalSecOverride;
+            set => SetField(ref _transformReplicationKeyframeIntervalSecOverride, value ?? new());
+        }
+
+        /// <summary>
+        /// Project override for the minimum interval in seconds between replicated tick updates for world objects.
+        /// Takes precedence over engine defaults when HasOverride is true.
+        /// </summary>
+        [Category("Networking Overrides")]
+        [Description("Project override for the minimum interval in seconds between replicated tick updates for world objects.")]
+        public OverrideableSetting<float> TimeBetweenReplicationsOverride
+        {
+            get => _timeBetweenReplicationsOverride;
+            set => SetField(ref _timeBetweenReplicationsOverride, value ?? new());
         }
 
         /// <summary>

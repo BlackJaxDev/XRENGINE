@@ -249,6 +249,7 @@ namespace XREngine.Scene.Transforms
             }
         }
 
+        [YamlIgnore]
         public int ChildCount => _children.Count;
 
         #endregion
@@ -259,6 +260,7 @@ namespace XREngine.Scene.Transforms
         /// Returns the parent world rotation, or identity if no parent.
         /// </summary>
         [Browsable(false)]
+        [YamlIgnore]
         public Quaternion ParentWorldRotation
             => Parent?.WorldRotation ?? Quaternion.Identity;
 
@@ -266,6 +268,7 @@ namespace XREngine.Scene.Transforms
         /// Returns the parent world translation, or zero if no parent.
         /// </summary>
         [Browsable(false)]
+        [YamlIgnore]
         public Vector3 ParentWorldTranslation
             => Parent?.WorldTranslation ?? Vector3.Zero;
 
@@ -273,6 +276,7 @@ namespace XREngine.Scene.Transforms
         /// Returns the parent inverse world rotation, or identity if no parent.
         /// </summary>
         [Browsable(false)]
+        [YamlIgnore]
         public Quaternion ParentInverseWorldRotation
             => Parent?.InverseWorldRotation ?? Quaternion.Identity;
 
@@ -280,6 +284,7 @@ namespace XREngine.Scene.Transforms
         /// Returns the parent inverse world translation, or zero if no parent.
         /// </summary>
         [Browsable(false)]
+        [YamlIgnore]
         public Vector3 ParentInverseWorldTranslation
             => Vector3.Transform(Vector3.Zero, ParentInverseWorldMatrix);
 
@@ -287,36 +292,42 @@ namespace XREngine.Scene.Transforms
         /// Returns the parent world matrix, or identity if no parent.
         /// </summary>
         [Browsable(false)]
+        [YamlIgnore]
         public Matrix4x4 ParentWorldMatrix => Parent?.WorldMatrix ?? Matrix4x4.Identity;
 
         /// <summary>
         /// Returns the inverse of the parent world matrix, or identity if no parent.
         /// </summary>
         [Browsable(false)]
+        [YamlIgnore]
         public Matrix4x4 ParentInverseWorldMatrix => Parent?.InverseWorldMatrix ?? Matrix4x4.Identity;
 
         /// <summary>
         /// Returns the parent bind matrix, or identity if no parent.
         /// </summary>
         [Browsable(false)]
+        [YamlIgnore]
         public Matrix4x4 ParentBindMatrix => Parent?.BindMatrix ?? Matrix4x4.Identity;
 
         /// <summary>
         /// Returns the inverse of the parent bind matrix, or identity if no parent.
         /// </summary>
         [Browsable(false)]
+        [YamlIgnore]
         public Matrix4x4 ParentInverseBindMatrix => Parent?.InverseBindMatrix ?? Matrix4x4.Identity;
 
         /// <summary>
         /// Returns the parent render matrix, or identity if no parent.
         /// </summary>
         [Browsable(false)]
+        [YamlIgnore]
         public Matrix4x4 ParentRenderMatrix => Parent?.RenderMatrix ?? Matrix4x4.Identity;
 
         /// <summary>
         /// Returns the inverse of the parent render matrix, or identity if no parent.
         /// </summary>
         [Browsable(false)]
+        [YamlIgnore]
         public Matrix4x4 ParentInverseRenderMatrix => Parent?.InverseRenderMatrix ?? Matrix4x4.Identity;
 
         #endregion
@@ -327,24 +338,28 @@ namespace XREngine.Scene.Transforms
         /// This transform's world up vector.
         /// </summary>
         [Browsable(false)]
+        [YamlIgnore]
         public Vector3 WorldUp => Vector3.TransformNormal(Globals.Up, WorldMatrix).Normalized();
 
         /// <summary>
         /// This transform's world right vector.
         /// </summary>
         [Browsable(false)]
+        [YamlIgnore]
         public Vector3 WorldRight => Vector3.TransformNormal(Globals.Right, WorldMatrix).Normalized();
 
         /// <summary>
         /// This transform's world forward vector.
         /// </summary>
         [Browsable(false)]
+        [YamlIgnore]
         public Vector3 WorldForward => Vector3.TransformNormal(Globals.Forward, WorldMatrix).Normalized();
 
         /// <summary>
         /// This transform's position in world space.
         /// </summary>
         [Browsable(false)]
+        [YamlIgnore]
         public virtual Vector3 WorldTranslation
         {
             get
@@ -358,6 +373,7 @@ namespace XREngine.Scene.Transforms
         /// This transform's rotation in world space.
         /// </summary>
         [Browsable(false)]
+        [YamlIgnore]
         public virtual Quaternion WorldRotation
         {
             get
@@ -371,6 +387,7 @@ namespace XREngine.Scene.Transforms
         /// This transform's inverse rotation in world space.
         /// </summary>
         [Browsable(false)]
+        [YamlIgnore]
         public virtual Quaternion InverseWorldRotation
         {
             get
@@ -391,24 +408,28 @@ namespace XREngine.Scene.Transforms
         /// This transform's local up vector.
         /// </summary>
         [Browsable(false)]
+        [YamlIgnore]
         public Vector3 LocalUp => Vector3.TransformNormal(Globals.Up, LocalMatrix).Normalized();
 
         /// <summary>
         /// This transform's local right vector.
         /// </summary>
         [Browsable(false)]
+        [YamlIgnore]
         public Vector3 LocalRight => Vector3.TransformNormal(Globals.Right, LocalMatrix).Normalized();
 
         /// <summary>
         /// This transform's local forward vector.
         /// </summary>
         [Browsable(false)]
+        [YamlIgnore]
         public Vector3 LocalForward => Vector3.TransformNormal(Globals.Forward, LocalMatrix).Normalized();
 
         /// <summary>
         /// This transform's position in local space relative to the parent.
         /// </summary>
         [Browsable(false)]
+        [YamlIgnore]
         public Vector3 LocalTranslation
         {
             get
@@ -422,6 +443,7 @@ namespace XREngine.Scene.Transforms
         /// This transform's rotation relative to its parent.
         /// </summary>
         [Browsable(false)]
+        [YamlIgnore]
         public virtual Quaternion LocalRotation
         {
             get
@@ -435,6 +457,7 @@ namespace XREngine.Scene.Transforms
         /// This transform's inverse rotation relative to its parent.
         /// </summary>
         [Browsable(false)]
+        [YamlIgnore]
         public virtual Quaternion InverseLocalRotation
         {
             get
@@ -449,18 +472,23 @@ namespace XREngine.Scene.Transforms
         #region Render Space Properties
 
         [Browsable(false)]
+        [YamlIgnore]
         public Vector3 RenderForward => Vector3.TransformNormal(Globals.Forward, RenderMatrix).Normalized();
 
         [Browsable(false)]
+        [YamlIgnore]
         public Vector3 RenderUp => Vector3.TransformNormal(Globals.Up, RenderMatrix).Normalized();
 
         [Browsable(false)]
+        [YamlIgnore]
         public Vector3 RenderRight => Vector3.TransformNormal(Globals.Right, RenderMatrix).Normalized();
 
         [Browsable(false)]
+        [YamlIgnore]
         public Vector3 RenderTranslation => RenderMatrix.Translation;
 
         [Browsable(false)]
+        [YamlIgnore]
         public Quaternion RenderRotation
         {
             get
@@ -471,6 +499,7 @@ namespace XREngine.Scene.Transforms
         }
 
         [Browsable(false)]
+        [YamlIgnore]
         public Quaternion InverseRenderRotation
         {
             get
@@ -492,6 +521,7 @@ namespace XREngine.Scene.Transforms
         /// Thread-safe via locking for atomic access.
         /// </summary>
         [Browsable(false)]
+        [YamlIgnore]
         public Matrix4x4 RenderMatrix
         {
             get { lock (_renderMatrixLock) return _renderMatrix; }
@@ -507,6 +537,7 @@ namespace XREngine.Scene.Transforms
         /// Thread-safe with lazy calculation and locking.
         /// </summary>
         [Browsable(false)]
+        [YamlIgnore]
         public Matrix4x4 InverseRenderMatrix
         {
             get
@@ -546,6 +577,7 @@ namespace XREngine.Scene.Transforms
         /// Thread-safe via locking for atomic access.
         /// </summary>
         [Browsable(false)]
+        [YamlIgnore]
         public Matrix4x4 LocalMatrix { get { lock (_localMatrixLock) return _localMatrix; } }
 
         #endregion
@@ -575,6 +607,7 @@ namespace XREngine.Scene.Transforms
         /// Thread-safe via locking for atomic access.
         /// </summary>
         [Browsable(false)]
+        [YamlIgnore]
         public Matrix4x4 InverseLocalMatrix { get { lock (_inverseLocalMatrixLock) return _inverseLocalMatrix; } }
 
         #endregion
@@ -589,6 +622,7 @@ namespace XREngine.Scene.Transforms
         /// Thread-safe via locking for atomic access.
         /// </summary>
         [Browsable(false)]
+        [YamlIgnore]
         public Matrix4x4 InverseWorldMatrix { get { lock (_inverseWorldMatrixLock) return _inverseWorldMatrix; } }
 
         #endregion

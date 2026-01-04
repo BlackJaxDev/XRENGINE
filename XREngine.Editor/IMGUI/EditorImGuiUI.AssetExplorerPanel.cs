@@ -36,6 +36,8 @@ public static partial class EditorImGuiUI
         private static readonly Dictionary<string, HashSet<string>> _assetExplorerYamlKeyCache = new(StringComparer.OrdinalIgnoreCase);
         // (Removed) Reflection-based AssetManager.Load lookup. Use the strongly-typed overload instead.
 
+        private static bool _assetExplorerDeletePopupRequested;
+
         private static partial void DrawAssetExplorerPanel()
         {
             using var profilerScope = Engine.Profiler.Start("UI.DrawAssetExplorerPanel");
@@ -881,8 +883,8 @@ public static partial class EditorImGuiUI
 
             if (ImGui.MenuItem("Delete..."))
             {
-                RequestAssetExplorerDelete(state, path, isDirectory);
                 ImGui.CloseCurrentPopup();
+                RequestAssetExplorerDelete(state, path, isDirectory);
             }
 
             if (!isDirectory)
@@ -1781,6 +1783,15 @@ public static partial class EditorImGuiUI
             if (_assetExplorerPendingDeletePath is null)
                 return;
 
+            // Important: OpenPopup must run in the same ImGui window context that will call BeginPopupModal.
+            // The delete request can be triggered from inside the context-menu popup window, so we defer the
+            // OpenPopup call until we're back in the main file list window.
+            if (_assetExplorerDeletePopupRequested)
+            {
+                ImGui.OpenPopup("Delete Asset?");
+                _assetExplorerDeletePopupRequested = false;
+            }
+
             bool open = true;
             if (ImGui.BeginPopupModal("Delete Asset?", ref open, ImGuiWindowFlags.AlwaysAutoResize))
             {
@@ -1797,7 +1808,7 @@ public static partial class EditorImGuiUI
                 ImGui.PopTextWrapPos();
 
                 if (isDirectory)
-                    ImGui.TextDisabled("This will delete the folder and all contents.");
+                    ImGui.TextDisabled("This will move the folder and all contents to the Recycle Bin.");
 
                 ImGui.Separator();
 
@@ -1827,7 +1838,7 @@ public static partial class EditorImGuiUI
             _assetExplorerPendingDeleteState = state;
             _assetExplorerPendingDeletePath = path;
             _assetExplorerPendingDeleteIsDirectory = isDirectory;
-            ImGui.OpenPopup("Delete Asset?");
+            _assetExplorerDeletePopupRequested = true;
         }
 
         private static void ExecuteAssetExplorerDeletion()
@@ -1839,14 +1850,22 @@ public static partial class EditorImGuiUI
             string path = _assetExplorerPendingDeletePath;
             bool isDirectory = _assetExplorerPendingDeleteIsDirectory;
 
+            string normalizedPath = NormalizeAssetExplorerPath(path);
+
             try
             {
                 if (isDirectory)
                 {
-                    Directory.Delete(path, true);
+                    DeleteAssetExplorerPathToRecycleBin(normalizedPath, isDirectory: true);
+
+                    if (!string.IsNullOrEmpty(state.SelectedPath) && IsPathWithinAssetExplorerDirectory(state.SelectedPath, normalizedPath))
+                        ClearAssetExplorerSelection(state);
+
+                    if (!string.IsNullOrEmpty(state.CurrentDirectory) && IsPathWithinAssetExplorerDirectory(state.CurrentDirectory, normalizedPath))
+                        state.CurrentDirectory = state.RootPath;
 
                     var keysToRemove = state.PreviewCache.Keys
-                        .Where(k => k.StartsWith(path, StringComparison.OrdinalIgnoreCase))
+                        .Where(k => IsPathWithinAssetExplorerDirectory(k, normalizedPath))
                         .ToList();
 
                     foreach (var key in keysToRemove)
@@ -1854,22 +1873,95 @@ public static partial class EditorImGuiUI
                 }
                 else
                 {
-                    File.Delete(path);
-                    state.PreviewCache.Remove(path);
-                    if (string.Equals(state.SelectedPath, path, StringComparison.OrdinalIgnoreCase))
+                    DeleteAssetExplorerPathToRecycleBin(normalizedPath, isDirectory: false);
+                    state.PreviewCache.Remove(normalizedPath);
+                    if (string.Equals(state.SelectedPath, normalizedPath, StringComparison.OrdinalIgnoreCase))
                         ClearAssetExplorerSelection(state);
                 }
 
-                RemoveAssetExplorerCachedData(path, isDirectory);
+                RemoveAssetExplorerCachedData(normalizedPath, isDirectory);
             }
             catch (Exception ex)
             {
-                Debug.LogException(ex, $"Failed to delete '{path}'.");
+                Debug.LogException(ex, $"Failed to delete '{normalizedPath}'.");
             }
             finally
             {
                 ClearAssetExplorerDeletionRequest();
             }
+        }
+
+        private static void DeleteAssetExplorerPathToRecycleBin(string path, bool isDirectory)
+        {
+            // SHFileOperation supports moving both files and directories to the Recycle Bin.
+            // This is generally more reliable than Microsoft.VisualBasic.FileIO in non-WinForms/WPF contexts.
+            if (!OperatingSystem.IsWindows())
+            {
+                if (isDirectory)
+                    Directory.Delete(path, recursive: true);
+                else
+                    File.Delete(path);
+
+                return;
+            }
+
+            const int FO_DELETE = 3;
+            const ushort FOF_SILENT = 0x0004;
+            const ushort FOF_NOCONFIRMATION = 0x0010;
+            const ushort FOF_ALLOWUNDO = 0x0040;
+            const ushort FOF_NOERRORUI = 0x0400;
+
+            // pFrom is a double-null-terminated list of paths.
+            string from = path + "\0\0";
+
+            var op = new SHFILEOPSTRUCT
+            {
+                wFunc = FO_DELETE,
+                pFrom = from,
+                fFlags = (ushort)(FOF_ALLOWUNDO | FOF_NOCONFIRMATION | FOF_NOERRORUI | FOF_SILENT)
+            };
+
+            int result = SHFileOperation(ref op);
+            if (result != 0 || op.fAnyOperationsAborted)
+                throw new IOException($"SHFileOperation failed (code={result}, aborted={op.fAnyOperationsAborted}) for '{path}'.");
+        }
+
+        [System.Runtime.InteropServices.StructLayout(System.Runtime.InteropServices.LayoutKind.Sequential, CharSet = System.Runtime.InteropServices.CharSet.Unicode)]
+        private struct SHFILEOPSTRUCT
+        {
+            public nint hwnd;
+            public int wFunc;
+            public string pFrom;
+            public string? pTo;
+            public ushort fFlags;
+            [System.Runtime.InteropServices.MarshalAs(System.Runtime.InteropServices.UnmanagedType.Bool)]
+            public bool fAnyOperationsAborted;
+            public nint hNameMappings;
+            public string? lpszProgressTitle;
+        }
+
+        [System.Runtime.InteropServices.DllImport("shell32.dll", CharSet = System.Runtime.InteropServices.CharSet.Unicode)]
+        private static extern int SHFileOperation(ref SHFILEOPSTRUCT lpFileOp);
+
+        private static bool IsPathWithinAssetExplorerDirectory(string candidatePath, string directoryPath)
+        {
+            if (string.IsNullOrEmpty(candidatePath) || string.IsNullOrEmpty(directoryPath))
+                return false;
+
+            string candidate = NormalizeAssetExplorerPath(candidatePath);
+            string directory = NormalizeAssetExplorerPath(directoryPath);
+
+            if (string.Equals(candidate, directory, StringComparison.OrdinalIgnoreCase))
+                return true;
+
+            if (candidate.Length <= directory.Length)
+                return false;
+
+            char nextChar = candidate[directory.Length];
+            if (nextChar != Path.DirectorySeparatorChar && nextChar != Path.AltDirectorySeparatorChar)
+                return false;
+
+            return candidate.StartsWith(directory, StringComparison.OrdinalIgnoreCase);
         }
 
         private static void ClearAssetExplorerDeletionRequest()

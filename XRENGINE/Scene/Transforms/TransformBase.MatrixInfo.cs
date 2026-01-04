@@ -4,6 +4,7 @@ using System.IO.Compression;
 using System.Numerics;
 using XREngine.Data;
 using XREngine.Data.Core;
+using YamlDotNet.Serialization;
 
 namespace XREngine.Scene.Transforms
 {
@@ -14,6 +15,7 @@ namespace XREngine.Scene.Transforms
         /// Used for model skinning. The inverse model-space bind matrix for this transform, set during model import.
         /// </summary>
         [Browsable(false)]
+        [YamlIgnore]
         public Matrix4x4 InverseBindMatrix
         {
             get => _inverseBindMatrix;
@@ -22,6 +24,7 @@ namespace XREngine.Scene.Transforms
 
         private Matrix4x4 _bindMatrix = Matrix4x4.Identity;
         [Browsable(false)]
+        [YamlIgnore]
         public Matrix4x4 BindMatrix
         {
             get => _bindMatrix;
@@ -39,19 +42,8 @@ namespace XREngine.Scene.Transforms
         public float DistanceToParent()
             => WorldTranslation.Distance(Parent?.WorldTranslation ?? Vector3.Zero);
 
-        private float _replicationKeyframeIntervalSec = 5.0f;
-        /// <summary>
-        /// The interval in seconds between full keyframes sent to the network for this transform.
-        /// All other updates are sent as deltas.
-        /// </summary>
-        [Category("Networking")]
-        public float ReplicationKeyframeIntervalSec
-        {
-            get => _replicationKeyframeIntervalSec;
-            set => SetField(ref _replicationKeyframeIntervalSec, value);
-        }
-
         [Browsable(false)]
+        [YamlIgnore]
         public float TimeSinceLastKeyframeReplicated => _timeSinceLastKeyframe;
 
         private bool _forceManualRecalc = false;
@@ -82,7 +74,7 @@ namespace XREngine.Scene.Transforms
         public byte[] EncodeToBytes()
         {
             _timeSinceLastKeyframe += Engine.Time.Timer.Update.Delta;
-            if (_timeSinceLastKeyframe > ReplicationKeyframeIntervalSec)
+            if (_timeSinceLastKeyframe > Engine.EffectiveSettings.TransformReplicationKeyframeIntervalSec)
             {
                 _timeSinceLastKeyframe = 0;
                 return EncodeToBytes(false);
