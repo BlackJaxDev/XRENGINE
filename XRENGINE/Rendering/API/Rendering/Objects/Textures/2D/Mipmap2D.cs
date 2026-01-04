@@ -1,3 +1,4 @@
+using System.ComponentModel;
 using ImageMagick;
 using MemoryPack;
 using SixLabors.ImageSharp;
@@ -79,6 +80,7 @@ namespace XREngine.Rendering
             set => SetField(ref _bytes, value);
         }
 
+        [Browsable(false)]
         [MemoryPackInclude]
         [YamlIgnore]
         public byte[]? DataBytes
@@ -194,6 +196,7 @@ namespace XREngine.Rendering
         private uint _width = 0;
         private uint _height = 0;
         [MemoryPackIgnore]
+        [YamlIgnore]
         public XRDataBuffer? _streamingPBO = null;
 
         public EPixelInternalFormat InternalFormat

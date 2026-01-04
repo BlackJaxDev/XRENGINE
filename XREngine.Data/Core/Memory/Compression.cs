@@ -259,20 +259,18 @@ namespace XREngine.Data
 
         public static unsafe string CompressToString(DataSource source)
         {
-            byte* ptr = (byte*)source.Address;
-            byte[] arr = new byte[source.Length];
-            for (int i = 0; i < source.Length; i++)
-                arr[i] = ptr[i];
-            return CompressToString(arr);
+            if (source.Length == 0)
+                return string.Empty;
+
+            int length = checked((int)source.Length);
+            ReadOnlySpan<byte> bytes = new((void*)source.Address, length);
+            return CompressToString(bytes.ToArray());
         }
 
         public static unsafe string CompressToString(byte[] arr)
         {
             byte[] compressed = Compress(arr, false);
-            StringBuilder sb = new();
-            foreach (byte b in compressed)
-                sb.Append(b.ToString("X2"));
-            return sb.ToString();
+            return Convert.ToHexString(compressed);
         }
 
         /// <summary>

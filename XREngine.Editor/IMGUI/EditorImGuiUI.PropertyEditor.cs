@@ -115,6 +115,12 @@ public static partial class EditorImGuiUI
                 ImGui.SetTooltip(description);
             if (open)
             {
+                if (obj is Mipmap2D mip)
+                {
+                    DrawMipmap2DInspector(mip);
+                    ImGui.Separator();
+                }
+
                 bool handledByAssetInspector = false;
                 if (obj is XRAsset asset)
                 {

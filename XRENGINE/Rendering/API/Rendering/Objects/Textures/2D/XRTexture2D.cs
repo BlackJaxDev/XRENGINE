@@ -41,6 +41,12 @@ namespace XREngine.Rendering
                 return AssignFillerTexture(filePath);
             }
 
+            if (!File.Exists(filePath))
+            {
+                Debug.LogWarning($"Texture file '{filePath}' does not exist. Falling back to filler texture.");
+                return AssignFillerTexture(filePath);
+            }
+
             try
             {
                 var sourceImage = new MagickImage(filePath);

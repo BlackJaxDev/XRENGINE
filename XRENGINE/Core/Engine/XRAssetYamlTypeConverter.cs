@@ -1,5 +1,7 @@
 ﻿using System;
 using System.Collections.Generic;
+using System.Diagnostics;
+using System.Diagnostics.CodeAnalysis;
 using System.IO;
 using System.Linq;
 using XREngine.Core.Files;
@@ -80,7 +82,14 @@ namespace XREngine
                 return false;
             }
 
-            // Don't intercept during replay - let normal deserializer handle it
+            // Always handle scalar XRAsset references, even during replay.
+            // This prevents ScalarNodeDeserializer from attempting invalid string->XRAsset conversions.
+            if (reader.Accept<Scalar>(out var scalarPeek))
+            {
+                return TryHandleScalarXRAsset(reader, expectedType, scalarPeek.Value, out value);
+            }
+
+            // Don't intercept mapping/sequence during replay - let normal deserializer handle it
             if (_isReplaying)
             {
                 value = null;
@@ -90,7 +99,7 @@ namespace XREngine
             _deserializeDepth++;
             try
             {
-                // At root level (depth 1), just deserialize normally
+                // At root level (depth 1), just deserialize normally.
                 if (_deserializeDepth <= 1)
                 {
                     value = nestedObjectDeserializer(reader, expectedType);
@@ -129,6 +138,121 @@ namespace XREngine
             {
                 _deserializeDepth--;
             }
+        }
+
+        /// <summary>
+        /// Handles scalar values for XRAsset types (null, GUID references, or file paths).
+        /// </summary>
+        private static bool TryHandleScalarXRAsset(IParser reader, Type expectedType, string? scalarValue, out object? value)
+        {
+            // Handle nulls: '~' or 'null'
+            if (scalarValue is null || scalarValue == "~" || string.Equals(scalarValue, "null", StringComparison.OrdinalIgnoreCase))
+            {
+                reader.Consume<Scalar>();
+                value = null;
+                return true;
+            }
+
+            // Handle GUID references
+            if (Guid.TryParse(scalarValue, out var guid))
+            {
+                reader.Consume<Scalar>();
+
+                // First prefer already-loaded assets.
+                if (Engine.Assets.TryGetAssetByID(guid, out var existing) && existing is not null)
+                {
+                    value = existing;
+                    return true;
+                }
+
+                // Otherwise, resolve the backing file via metadata and load it.
+                if (!Engine.Assets.TryResolveAssetPathById(guid, out var assetPath) || string.IsNullOrWhiteSpace(assetPath) || !File.Exists(assetPath))
+                {
+                    value = null;
+                    return true;
+                }
+
+                Type loadType = expectedType;
+                if (loadType.IsAbstract || loadType.IsInterface)
+                {
+                    if (TryResolveConcreteAssetType(assetPath, out var concreteType))
+                        loadType = concreteType;
+                    else
+                    {
+                        value = null;
+                        return true;
+                    }
+                }
+
+                value = Engine.Assets.LoadImmediate(assetPath, loadType);
+                return true;
+            }
+
+            // Best-effort: interpret scalar as a file path to an asset.
+            // This avoids ScalarNodeDeserializer attempting an invalid string->XRAsset conversion.
+            string candidate = scalarValue.Trim('"', '\'');
+            if (TryResolveAssetPathFromScalar(candidate, out var resolvedPath))
+            {
+                reader.Consume<Scalar>();
+                value = Engine.Assets.LoadImmediate(resolvedPath, expectedType);
+                return true;
+            }
+
+            // Unknown scalar format for an XRAsset reference. Consume it and return null.
+            // This is safer than falling through to ScalarNodeDeserializer (which will throw).
+            reader.Consume<Scalar>();
+            value = null;
+            return true;
+        }
+
+        private static bool TryResolveAssetPathFromScalar(string scalar, [NotNullWhen(true)] out string? resolvedPath)
+        {
+            resolvedPath = null;
+            if (string.IsNullOrWhiteSpace(scalar))
+                return false;
+
+            try
+            {
+                // Absolute path.
+                if (Path.IsPathRooted(scalar))
+                {
+                    string full = Path.GetFullPath(scalar);
+                    if (File.Exists(full))
+                    {
+                        resolvedPath = full;
+                        return true;
+                    }
+                    return false;
+                }
+
+                // Relative path under game assets.
+                if (!string.IsNullOrWhiteSpace(Engine.Assets.GameAssetsPath))
+                {
+                    string candidate = Path.GetFullPath(Path.Combine(Engine.Assets.GameAssetsPath, scalar));
+                    if (File.Exists(candidate))
+                    {
+                        resolvedPath = candidate;
+                        return true;
+                    }
+                }
+
+                // Relative path under engine assets.
+                if (!string.IsNullOrWhiteSpace(Engine.Assets.EngineAssetsPath))
+                {
+                    string candidate = Path.GetFullPath(Path.Combine(Engine.Assets.EngineAssetsPath, scalar));
+                    if (File.Exists(candidate))
+                    {
+                        resolvedPath = candidate;
+                        return true;
+                    }
+                }
+            }
+            catch
+            {
+                return false;
+            }
+
+            return false;
         }
 
         private static IReadOnlyList<ParsingEvent> CaptureNode(IParser parser)
@@ -353,10 +477,18 @@ namespace XREngine
             }
             catch (NotSupportedException ex)
             {
-                throw new YamlException(
-                    $"NotSupportedException while deserializing '{expectedType.FullName}'. Depth={DepthTrackingNodeDeserializer.CurrentDepth}.",
-                    ex);
+                throw;
             }
+            catch (YamlException)
+            {
+                throw;
+            }
+            catch (Exception ex)
+            {
+                Debug.LogWarning($"NotSupportedException while deserializing '{expectedType.FullName}'. Depth={DepthTrackingNodeDeserializer.CurrentDepth}. Exception: {ex.Message}\n{ex.StackTrace}");
+                value = null;
+            }
+            return false;
         }
     }
 

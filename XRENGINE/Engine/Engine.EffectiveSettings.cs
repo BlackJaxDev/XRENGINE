@@ -1,3 +1,4 @@
+using System.ComponentModel;
 using XREngine.Data.Core;
 
 namespace XREngine
@@ -350,6 +351,28 @@ namespace XREngine
                 => GameSettings?.CalculateBlendshapesInComputeShaderOverride is { HasOverride: true } projectOverride
                     ? projectOverride.Value
                     : Rendering.Settings.CalculateBlendshapesInComputeShader;
+
+            #endregion
+
+            #region Networking Settings (Project > Engine only)
+
+            /// <summary>
+            /// Gets the effective interval in seconds between full keyframes sent to the network for transforms.
+            /// Resolved from: Project Override > Engine Default (not user-overridable)
+            /// </summary>
+            public static float TransformReplicationKeyframeIntervalSec
+                => GameSettings?.TransformReplicationKeyframeIntervalSecOverride is { HasOverride: true } projectOverride
+                    ? projectOverride.Value
+                    : Rendering.Settings.TransformReplicationKeyframeIntervalSec;
+
+            /// <summary>
+            /// Gets the effective minimum interval in seconds between replicated tick updates for world objects.
+            /// Resolved from: Project Override > Engine Default (not user-overridable)
+            /// </summary>
+            public static float TimeBetweenReplications
+                => GameSettings?.TimeBetweenReplicationsOverride is { HasOverride: true } projectOverride
+                    ? projectOverride.Value
+                    : Rendering.Settings.TimeBetweenReplications;
 
             #endregion
 
