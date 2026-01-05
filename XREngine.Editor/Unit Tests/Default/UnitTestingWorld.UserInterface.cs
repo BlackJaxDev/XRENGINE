@@ -249,38 +249,35 @@ public static partial class UnitTestingWorld
             XRTexture? lastLeft = null;
             XRTexture? lastRight = null;
 
-            previewRoot.RegisterAnimationTick<SceneNode>(_ =>
+            // Hard gate: do not show unless VR pawn is enabled.
+            if (!Toggles.VRPawn || !Toggles.PreviewVRStereoViews)
             {
-                // Hard gate: do not show unless VR pawn is enabled.
-                if (!Toggles.VRPawn || !Toggles.PreviewVRStereoViews)
-                {
-                    previewRoot.IsActiveSelf = false;
-                    return;
-                }
+                previewRoot.IsActiveSelf = false;
+                return;
+            }
 
-                previewRoot.IsActiveSelf = true;
-                
-                // Prefer the single-pass textures when available.
-                XRTexture? leftTex;
-                XRTexture? rightTex;
-                bool isArray;
+            previewRoot.IsActiveSelf = true;
+            
+            // Prefer the single-pass textures when available.
+            XRTexture? leftTex;
+            XRTexture? rightTex;
+            bool isArray;
 
-                if (Engine.VRState.StereoLeftViewTexture is not null && Engine.VRState.StereoRightViewTexture is not null)
-                {
-                    leftTex = Engine.VRState.StereoLeftViewTexture;
-                    rightTex = Engine.VRState.StereoRightViewTexture;
-                    isArray = true;
-                }
-                else
-                {
-                    leftTex = Engine.VRState.VRLeftEyeViewTexture;
-                    rightTex = Engine.VRState.VRRightEyeViewTexture;
-                    isArray = false;
-                }
+            if (Engine.VRState.StereoLeftViewTexture is not null && Engine.VRState.StereoRightViewTexture is not null)
+            {
+                leftTex = Engine.VRState.StereoLeftViewTexture;
+                rightTex = Engine.VRState.StereoRightViewTexture;
+                isArray = true;
+            }
+            else
+            {
+                leftTex = Engine.VRState.VRLeftEyeViewTexture;
+                rightTex = Engine.VRState.VRRightEyeViewTexture;
+                isArray = false;
+            }
 
-                ApplyPreviewTexture(left, leftTex, isArray, ref leftWasArray, ref lastLeft);
-                ApplyPreviewTexture(right, rightTex, isArray, ref rightWasArray, ref lastRight);
-            });
+            ApplyPreviewTexture(left, leftTex, isArray, ref leftWasArray, ref lastLeft);
+            ApplyPreviewTexture(right, rightTex, isArray, ref rightWasArray, ref lastRight);
         }
 
         private static void ApplyPreviewTexture(
@@ -294,7 +291,7 @@ public static partial class UnitTestingWorld
                 return;
 
             // Only rebuild the material if the texture type (2D vs 2DArray) changed.
-            if (target.Material is null || wasArray != isArray)
+            if (target.Material is null || wasArray != isArray || target.Material.Textures.Count == 0)
             {
                 XRShader frag = isArray
                     ? XRShader.EngineShader(Path.Combine("Common", "UnlitTexturedArraySliceForward.fs"), EShaderType.Fragment)

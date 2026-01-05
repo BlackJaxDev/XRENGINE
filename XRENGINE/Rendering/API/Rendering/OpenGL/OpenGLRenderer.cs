@@ -266,9 +266,11 @@ namespace XREngine.Rendering.OpenGL
             api.Enable(EnableCap.DebugOutput);
             api.Enable(EnableCap.DebugOutputSynchronous);
             api.DebugMessageCallback(DebugCallback, null);
-            uint[] ids = [];
+
+            // Disable known-noisy messages at the driver level to avoid spamming logs.
+            uint[] ids = Array.ConvertAll(_ignoredMessageIds, static x => unchecked((uint)x));
             fixed (uint* ptr = ids)
-                api.DebugMessageControl(GLEnum.DontCare, GLEnum.DontCare, GLEnum.DontCare, 0, ptr, true);
+                api.DebugMessageControl(GLEnum.DontCare, GLEnum.DontCare, GLEnum.DontCare, (uint)ids.Length, ptr, false);
         }
 
         private static int[] _ignoredMessageIds =
@@ -283,6 +285,7 @@ namespace XREngine.Rendering.OpenGL
             131139, //Rasterization quality warning: A non-fullscreen clear caused a fallback from CSAA to MSAA.
             131186, //Buffer performance warning: buffer is being copied/moved from video memory to host memory.
             131188, //Buffer usage warning: Analysis of buffer object usage indicates that CPU is consuming buffer object data.  The usage hint supplied with this buffer object, GL_DYNAMIC_COPY, is inconsistent with this usage pattern.  Try using GL_STREAM_READ_ARB, GL_STATIC_READ_ARB, or GL_DYNAMIC_READ_ARB instead.
+            131220, //Program/shader state usage warning (integer framebuffer): fragment shader required (often spammy during Clear on some drivers)
             //1282,
             //0,
             //9,
@@ -296,7 +299,8 @@ namespace XREngine.Rendering.OpenGL
 
         public unsafe static void DebugCallback(GLEnum source, GLEnum type, int id, GLEnum severity, int length, nint message, nint userParam)
         {
-            if (_ignoredMessageIds.IndexOf(id) >= 0)
+            // Never suppress actual GL error messages.
+            if (type != GLEnum.DebugTypeError && _ignoredMessageIds.IndexOf(id) >= 0)
                 return;
 
             string messageStr = new((sbyte*)message);

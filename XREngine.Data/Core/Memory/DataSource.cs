@@ -27,11 +27,12 @@ namespace XREngine.Data
 
         /// <summary>
         /// Controls whether YAML serialization should store this payload compressed.
-        /// Default is true to keep YAML assets small.
+        /// Default is false.
         /// </summary>
         [YamlIgnore]
         [MemoryPackIgnore]
-        public bool PreferCompressedYaml { get; set; } = true;
+        public bool PreferCompressedYaml { get; set; } = false;
+
         [YamlIgnore]
         [MemoryPackIgnore]
         public VoidPtr Address { get; set; }
