@@ -141,6 +141,7 @@ namespace XREngine.Rendering
                 //},
                 _ => depth switch
                 {
+                    1 => signed ? EPixelType.Byte : EPixelType.UnsignedByte,
                     8 => signed ? EPixelType.Byte : EPixelType.UnsignedByte,
                     16 => signed ? EPixelType.Short : EPixelType.UnsignedShort,
                     32 => EPixelType.Float,

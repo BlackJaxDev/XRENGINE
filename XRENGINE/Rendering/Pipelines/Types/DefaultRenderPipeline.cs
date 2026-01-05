@@ -41,7 +41,7 @@ public partial class DefaultRenderPipeline : RenderPipeline
     private const float TemporalDepthDiscontinuityScale = 900.0f;
     private const float TemporalConfidencePower = 1.0f;
 
-    private EGlobalIlluminationMode _globalIlluminationMode = EGlobalIlluminationMode.SurfelGI;
+    private EGlobalIlluminationMode _globalIlluminationMode = EGlobalIlluminationMode.LightProbesAndIbl;
     public EGlobalIlluminationMode GlobalIlluminationMode
     {
         get => _globalIlluminationMode;

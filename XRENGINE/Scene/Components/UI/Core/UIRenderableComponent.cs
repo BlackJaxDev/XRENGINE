@@ -109,8 +109,7 @@ namespace XREngine.Rendering.UI
                 switch (propName)
                 {
                     case nameof(Material):
-                        if (_material is not null)
-                            _material.SettingUniforms -= OnMaterialSettingUniforms;
+                        _material?.SettingUniforms -= OnMaterialSettingUniforms;
                         break;
                 }
             }
@@ -123,10 +122,8 @@ namespace XREngine.Rendering.UI
             {
                 case nameof(Material):
                     var m = Mesh;
-                    if (m is not null)
-                        m.Material = _material;
-                    if (_material is not null)
-                        _material.SettingUniforms += OnMaterialSettingUniforms;
+                    m?.Material = _material;
+                    _material?.SettingUniforms += OnMaterialSettingUniforms;
                     break;
             }
         }

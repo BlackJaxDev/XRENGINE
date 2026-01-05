@@ -208,6 +208,7 @@ internal class Program
         TypeNameHandling = TypeNameHandling.Auto,
         ReferenceLoopHandling = ReferenceLoopHandling.Ignore,
         PreserveReferencesHandling = PreserveReferencesHandling.All,
+        ObjectCreationHandling = ObjectCreationHandling.Replace,
         NullValueHandling = NullValueHandling.Include,
         Converters = [new StringEnumConverter()]
     };
@@ -325,6 +326,10 @@ internal class Program
             settings.VRRuntime = UnitTestingWorld.Toggles.UseOpenXR
                 ? EVRRuntime.OpenXR
                 : EVRRuntime.OpenVR;
+        }
+        else
+        {
+            settings.RunVRInPlace = false;
         }
         return settings;
     }

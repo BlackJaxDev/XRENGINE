@@ -95,25 +95,7 @@ public static partial class UnitTestingWorld
 
         public List<ModelImportSettings> ModelsToImport { get; set; } =
         [
-            new()
-            {
-                Kind = UnitTestModelImportKind.Static,
-                Path = "Models\\Sponza\\sponza.obj",
-                ImportFlags =
-                    PostProcessSteps.SplitLargeMeshes |
-                    PostProcessSteps.Triangulate |
-                    PostProcessSteps.GenerateNormals |
-                    PostProcessSteps.CalculateTangentSpace |
-                    PostProcessSteps.JoinIdenticalVertices |
-                    PostProcessSteps.OptimizeGraph |
-                    PostProcessSteps.OptimizeMeshes |
-                    PostProcessSteps.SortByPrimitiveType |
-                    PostProcessSteps.ImproveCacheLocality |
-                    PostProcessSteps.GenerateBoundingBoxes |
-                    PostProcessSteps.FlipUVs,
-                Scale = 0.01f,
-                ZUp = false,
-            }
+            
         ];
 
         //Audio

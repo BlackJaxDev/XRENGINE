@@ -115,12 +115,12 @@ namespace XREngine.Rendering.Physics.Physx
                 {
                     var tfm = PhysxScene.MakeTransform(value.Value.position, value.Value.rotation);
                     _obj->SetKinematicTargetMut(&tfm);
-                    PhysxObjectLog.Modified(this, (nint)_obj, nameof(KinematicTarget), $"set pos={value.Value.position} rot={value.Value.rotation}");
+                    //PhysxObjectLog.Modified(this, (nint)_obj, nameof(KinematicTarget), $"set pos={value.Value.position} rot={value.Value.rotation}");
                 }
                 else
                 {
                     _obj->SetKinematicTargetMut(null);
-                    PhysxObjectLog.Modified(this, (nint)_obj, nameof(KinematicTarget), "cleared");
+                    //PhysxObjectLog.Modified(this, (nint)_obj, nameof(KinematicTarget), "cleared");
                 }
             }
         }

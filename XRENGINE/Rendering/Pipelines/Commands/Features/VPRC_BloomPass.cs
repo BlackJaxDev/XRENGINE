@@ -103,7 +103,10 @@ namespace XREngine.Rendering.Pipelines.Commands
                     internalFormat,
                     pixelFormat,
                     pixelType);
-                //t.Resizable = false;
+                // Bloom relies on attaching/rendering into multiple mip levels (0..4).
+                // For OpenGL, framebuffer textures must have storage allocated for those mip levels.
+                // Mark as non-resizable so the GL backend uses immutable storage (TexStorage) with mip levels.
+                t.Resizable = false;
                 t.SizedInternalFormat = sizedInternalFormat;
                 t.Name = BloomOutputTextureName;
                 t.SamplerName = BloomOutputTextureName;

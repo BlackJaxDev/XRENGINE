@@ -8,6 +8,9 @@ using System.Linq;
 using OxrExtDebugUtils = global::Silk.NET.OpenXR.Extensions.EXT.ExtDebugUtils;
 using System.Collections.Generic;
 using Microsoft.Win32;
+using System.Diagnostics;
+using System.IO;
+using System.Threading;
 
 public unsafe partial class OpenXRAPI
 {
@@ -18,6 +21,8 @@ public unsafe partial class OpenXRAPI
 
     private void CreateInstance()
     {
+        EnsureSteamVrRunningIfActiveRuntime();
+
         var appInfo = MakeAppInfo();
         var renderer = Window?.Renderer is VulkanRenderer ? ERenderer.Vulkan : ERenderer.OpenGL;
         var requiredExtensions = GetRequiredExtensions(renderer);
@@ -59,6 +64,109 @@ public unsafe partial class OpenXRAPI
         var createInfo = MakeCreateInfo(appInfo, filtered, enabledLayers, next);
         MakeInstance(createInfo);
         Free(createInfo);
+    }
+
+    private static void EnsureSteamVrRunningIfActiveRuntime()
+    {
+        if (!OperatingSystem.IsWindows())
+            return;
+
+        // Prefer XR_RUNTIME_JSON if set, otherwise registry ActiveRuntime.
+        var runtimeJson = Environment.GetEnvironmentVariable("XR_RUNTIME_JSON");
+        var activeRuntime = !string.IsNullOrWhiteSpace(runtimeJson)
+            ? runtimeJson
+            : GetActiveOpenXRRuntimePathWindows();
+
+        if (string.IsNullOrWhiteSpace(activeRuntime))
+            return;
+
+        if (!IsSteamVrRuntimePath(activeRuntime))
+            return;
+
+        if (IsSteamVrRunning())
+            return;
+
+        if (TryLaunchSteamVrFromRuntimeJson(activeRuntime))
+        {
+            // Give SteamVR a moment to spin up before instance creation.
+            WaitForSteamVrRunning(TimeSpan.FromSeconds(10));
+        }
+    }
+
+    private static bool IsSteamVrRuntimePath(string runtimePath)
+        => runtimePath.Contains("steamvr", StringComparison.OrdinalIgnoreCase) ||
+           runtimePath.Contains("steamxr", StringComparison.OrdinalIgnoreCase);
+
+    private static bool IsSteamVrRunning()
+        => Process.GetProcessesByName("vrserver").Length > 0 ||
+           Process.GetProcessesByName("vrmonitor").Length > 0;
+
+    private static void WaitForSteamVrRunning(TimeSpan timeout)
+    {
+        var start = DateTime.UtcNow;
+        while (DateTime.UtcNow - start < timeout)
+        {
+            if (IsSteamVrRunning())
+                return;
+            Thread.Sleep(200);
+        }
+    }
+
+    private static bool TryLaunchSteamVrFromRuntimeJson(string runtimeJsonPath)
+    {
+        try
+        {
+            if (!File.Exists(runtimeJsonPath))
+                return TryLaunchSteamVrViaSteamUri();
+
+            var root = Path.GetDirectoryName(runtimeJsonPath);
+            if (string.IsNullOrWhiteSpace(root))
+                return TryLaunchSteamVrViaSteamUri();
+
+            // SteamVR's OpenXR JSON typically sits in the SteamVR root folder.
+            // Prefer launching vrmonitor.exe (UI) which will start vrserver as needed.
+            var vrmonitor = Path.Combine(root, "bin", "win64", "vrmonitor.exe");
+            var vrserver = Path.Combine(root, "bin", "win64", "vrserver.exe");
+
+            string? exe = null;
+            if (File.Exists(vrmonitor))
+                exe = vrmonitor;
+            else if (File.Exists(vrserver))
+                exe = vrserver;
+
+            if (exe == null)
+                return TryLaunchSteamVrViaSteamUri();
+
+            Process.Start(new ProcessStartInfo
+            {
+                FileName = exe,
+                WorkingDirectory = Path.GetDirectoryName(exe) ?? root,
+                UseShellExecute = true
+            });
+            return true;
+        }
+        catch
+        {
+            return TryLaunchSteamVrViaSteamUri();
+        }
+    }
+
+    private static bool TryLaunchSteamVrViaSteamUri()
+    {
+        try
+        {
+            // SteamVR app id is 250820.
+            Process.Start(new ProcessStartInfo
+            {
+                FileName = "steam://rungameid/250820",
+                UseShellExecute = true
+            });
+            return true;
+        }
+        catch
+        {
+            return false;
+        }
     }
 
     private HashSet<string> GetAvailableInstanceExtensions()
