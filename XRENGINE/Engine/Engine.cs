@@ -8,6 +8,7 @@ using System.IO;
 using System.Linq;
 using System.Net;
 using System.Numerics;
+using System.Reflection;
 using System.Threading;
 using System.Threading.Tasks;
 using XREngine.Audio;
@@ -32,6 +33,8 @@ namespace XREngine
         private static int _suppressedCleanupRequests;
         private static UserSettings _userSettings = null!;
         private static GameStartupSettings _gameSettings = null!;
+        private static readonly List<IOverrideableSetting> _trackedUserOverrideableSettings = [];
+        private static readonly List<IOverrideableSetting> _trackedGameOverrideableSettings = [];
 
         public static XREvent<UserSettings>? UserSettingsChanged;
         public static event Action<BuildSettings>? BuildSettingsChanged;
@@ -47,6 +50,7 @@ namespace XREngine
             // Effective settings depend on these sources; forward changes.
             UserSettingsChanged += _ => EffectiveSettings.NotifyEffectiveSettingsChanged();
             Rendering.SettingsChanged += EffectiveSettings.NotifyEffectiveSettingsChanged;
+            EffectiveSettings.EffectiveSettingsChanged += ApplyEffectiveSettingsRuntime;
 
             Time.Timer.PostUpdateFrame += Timer_PostUpdateFrame;
 
@@ -133,6 +137,7 @@ namespace XREngine
                 _userSettings?.PropertyChanged -= HandleUserSettingsChanged;
                 _userSettings = value ?? new UserSettings();
                 _userSettings.PropertyChanged += HandleUserSettingsChanged;
+                TrackOverrideableSettings(_userSettings, _trackedUserOverrideableSettings);
                 
                 OnUserSettingsChanged();
             }
@@ -176,11 +181,86 @@ namespace XREngine
                     Rendering.ApplyGlobalIlluminationModePreference();
                     break;
             }
+
+            TrackOverrideableSettings(_userSettings, _trackedUserOverrideableSettings);
+            EffectiveSettings.NotifyEffectiveSettingsChanged();
+        }
+
+        private static void ApplyEffectiveSettingsRuntime()
+        {
+            Rendering.ApplyRenderPipelinePreference();
+            Rendering.ApplyGlobalIlluminationModePreference();
+            Rendering.ApplyGpuRenderDispatchPreference();
+            Rendering.ApplyGpuBvhPreference();
+            Rendering.ApplyNvidiaDlssPreference();
+            Rendering.ApplyIntelXessPreference();
+            ApplyTimerSettings();
+        }
+
+        private static void ApplyTimerSettings()
+        {
+            float targetRenderFrequency = UserSettings.TargetFramesPerSecond ?? 0.0f;
+            float targetUpdateFrequency = EffectiveSettings.TargetUpdatesPerSecond ?? 0.0f;
+            float fixedUpdateFrequency = EffectiveSettings.FixedFramesPerSecond;
+            EVSyncMode vSync = EffectiveSettings.VSync;
+
+            Time.UpdateTimer(
+                targetRenderFrequency,
+                targetUpdateFrequency,
+                fixedUpdateFrequency,
+                vSync);
+        }
+
+        private static void TrackOverrideableSettings(object settingsRoot, List<IOverrideableSetting> cache)
+        {
+            foreach (var tracked in cache)
+            {
+                if (tracked is IXRNotifyPropertyChanged notify)
+                    notify.PropertyChanged -= HandleOverrideableSettingChanged;
+            }
+
+            cache.Clear();
+
+            var properties = settingsRoot.GetType().GetProperties(BindingFlags.Public | BindingFlags.Instance);
+            foreach (var property in properties)
+            {
+                if (!typeof(IOverrideableSetting).IsAssignableFrom(property.PropertyType))
+                    continue;
+
+                IOverrideableSetting? overrideable = null;
+                try
+                {
+                    overrideable = property.GetValue(settingsRoot) as IOverrideableSetting;
+                }
+                catch
+                {
+                    continue;
+                }
+
+                if (overrideable is null)
+                    continue;
+
+                cache.Add(overrideable);
+
+                if (overrideable is IXRNotifyPropertyChanged notify)
+                    notify.PropertyChanged += HandleOverrideableSettingChanged;
+            }
+        }
+
+        private static void HandleOverrideableSettingChanged(object? sender, IXRPropertyChangedEventArgs e)
+        {
+            EffectiveSettings.NotifyEffectiveSettingsChanged();
         }
 
         private static void HandleBuildSettingsChanged(object? sender, IXRPropertyChangedEventArgs e)
         {
             BuildSettingsChanged?.Invoke(GameSettings.BuildSettings);
+        }
+
+        private static void HandleGameSettingsChanged(object? sender, IXRPropertyChangedEventArgs e)
+        {
+            EffectiveSettings.NotifyEffectiveSettingsChanged();
+            TrackOverrideableSettings(_gameSettings, _trackedGameOverrideableSettings);
         }
         /// <summary>
         /// Game-defined settings, such as initial world and libraries.
@@ -193,6 +273,9 @@ namespace XREngine
                 if (ReferenceEquals(_gameSettings, value) && value is not null)
                     return;
 
+                if (_gameSettings is not null)
+                    _gameSettings.PropertyChanged -= HandleGameSettingsChanged;
+
                 if (_gameSettings?.BuildSettings is not null)
                     _gameSettings.BuildSettings.PropertyChanged -= HandleBuildSettingsChanged;
 
@@ -201,6 +284,8 @@ namespace XREngine
                 _gameSettings.BuildSettings ??= new BuildSettings();
 
                 _gameSettings.BuildSettings.PropertyChanged += HandleBuildSettingsChanged;
+                _gameSettings.PropertyChanged += HandleGameSettingsChanged;
+                TrackOverrideableSettings(_gameSettings, _trackedGameOverrideableSettings);
                 BuildSettingsChanged?.Invoke(_gameSettings.BuildSettings);
 
                 EffectiveSettings.NotifyEffectiveSettingsChanged();
