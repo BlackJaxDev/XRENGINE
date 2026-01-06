@@ -27,11 +27,11 @@ namespace XREngine
 {
     public static partial class Engine
     {
-            public static class VRState
-            {
-                private static OpenXRAPI? _openXR;
-                private static VR? _api = null;
-                public static VR Api => _api ??= new VR();
+        public static class VRState
+        {
+            private static OpenXRAPI? _openXR;
+            private static VR? _api = null;
+            public static VR Api => _api ??= new VR();
 
             public enum VRMode
             {
@@ -293,8 +293,7 @@ namespace XREngine
                 if (_renderWindow == window)
                     return;
 
-                if (_renderWindow is not null)
-                    _renderWindow.RenderViewportsCallback -= Render;
+                _renderWindow?.RenderViewportsCallback -= Render;
 
                 _renderWindow = window;
                 window.RenderViewportsCallback += Render;

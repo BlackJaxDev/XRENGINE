@@ -5,6 +5,8 @@ namespace XREngine.Data.BSP
 {
     public class BSPNode
     {
+        private const float Epsilon = 0.00001f;
+
         public System.Numerics.Plane? Plane;
         public BSPNode? Front;
         public BSPNode? Back;
@@ -42,125 +44,125 @@ namespace XREngine.Data.BSP
             }
         }
 
-        private void SplitTriangle(Plane value, Triangle triangle, List<Triangle>? triangles, List<Triangle>? front, List<Triangle>? back)
+        private void SplitTriangle(System.Numerics.Plane plane, Triangle triangle, List<Triangle>? coplanar, List<Triangle>? front, List<Triangle>? back)
         {
-            int[] sides = GetSides(triangle, value);
+            float da = SignedDistanceToPlane(plane, triangle.A);
+            float db = SignedDistanceToPlane(plane, triangle.B);
+            float dc = SignedDistanceToPlane(plane, triangle.C);
 
-            if (sides[0] == 0 && sides[1] == 0 && sides[2] == 0)
+            int sa = ClassifyDistance(da);
+            int sb = ClassifyDistance(db);
+            int sc = ClassifyDistance(dc);
+
+            // Coplanar
+            if (sa == 0 && sb == 0 && sc == 0)
             {
-                triangles?.Add(triangle);
+                if (coplanar != null)
+                {
+                    coplanar.Add(triangle);
+                }
+                else
+                {
+                    // Clipping context: treat coplanar tris as front/back based on orientation.
+                    // This matches common BSP/CSG behavior (coplanars facing opposite are "inside").
+                    float alignment = Vector3.Dot(plane.Normal, triangle.GetNormal());
+                    if (alignment >= 0.0f)
+                        front?.Add(triangle);
+                    else
+                        back?.Add(triangle);
+                }
                 return;
             }
 
-            if (sides[0] == 1 && sides[1] == 1 && sides[2] == 1)
+            // Entirely on one side
+            if (sa >= 0 && sb >= 0 && sc >= 0)
             {
                 front?.Add(triangle);
                 return;
             }
-
-            if (sides[0] == -1 && sides[1] == -1 && sides[2] == -1)
+            if (sa <= 0 && sb <= 0 && sc <= 0)
             {
                 back?.Add(triangle);
                 return;
             }
 
-            Triangle[] split = Split(triangle, value);
-
-            if (sides[0] == 0)
-                triangles?.Add(split[0]);
-            else if (sides[0] == 1)
-                front?.Add(split[0]);
-            else
-                back?.Add(split[0]);
-
-            if (sides[1] == 0)
-                triangles?.Add(split[1]);
-            else if (sides[1] == 1)
-                front?.Add(split[1]);
-            else
-                back?.Add(split[1]);
-
-            if (sides[2] == 0)
-                triangles?.Add(split[2]);
-            else if (sides[2] == 1)
-                front?.Add(split[2]);
-            else
-                back?.Add(split[2]);
+            // Spanning: split triangle into front/back polygons, then triangulate
+            SpanSplitTriangle(plane, triangle, front, back);
         }
 
-        private static int[] GetSides(Triangle triangle, System.Numerics.Plane value)
+        private static float SignedDistanceToPlane(System.Numerics.Plane plane, Vector3 point)
+            => Vector3.Dot(plane.Normal, point) + plane.D;
+
+        private static int ClassifyDistance(float d)
         {
-            int[] sides = new int[3];
-
-            for (int i = 0; i < 3; i++)
-                sides[i] = GetSide(value, GetPoints(triangle)[i]);
-            
-            return sides;
-        }
-
-        private static int GetSide(System.Numerics.Plane value, Vector3 point)
-        {
-            float distance = GetDistance(value, point);
-
-            if (distance < -0.01f)
-                return -1;
-            if (distance > 0.01f)
-                return 1;
-            
+            if (d > Epsilon) return 1;
+            if (d < -Epsilon) return -1;
             return 0;
         }
 
-        private static float GetDistance(System.Numerics.Plane value, Vector3 point)
-            => Vector3.Dot(value.Normal, point) + value.D;
-
-        private static Vector3[] GetPoints(Triangle triangle)
-            => [triangle.A, triangle.B, triangle.C];
-
-        private Triangle[] Split(Triangle triangle, System.Numerics.Plane value)
+        private static void SpanSplitTriangle(System.Numerics.Plane plane, Triangle triangle, List<Triangle>? front, List<Triangle>? back)
         {
-            Vector3[] points = GetPoints(triangle);
-            Vector3[] intersections = new Vector3[3];
-            int[] sides = GetSides(triangle, value);
+            SpanSplitTriangle(plane, triangle.A, triangle.B, triangle.C, front, back);
+        }
+
+        private static void SpanSplitTriangle(System.Numerics.Plane plane, Vector3 a, Vector3 b, Vector3 c, List<Triangle>? front, List<Triangle>? back)
+        {
+            // Sutherland–Hodgman style clipping against a plane.
+            Vector3[] v = [a, b, c];
+            float[] d =
+            [
+                SignedDistanceToPlane(plane, a),
+                SignedDistanceToPlane(plane, b),
+                SignedDistanceToPlane(plane, c)
+            ];
+
+            List<Vector3> f = [];
+            List<Vector3> bk = [];
 
             for (int i = 0; i < 3; i++)
             {
-                if (sides[i] == 0)
+                int j = (i + 1) % 3;
+
+                Vector3 vi = v[i];
+                Vector3 vj = v[j];
+                float di = d[i];
+                float dj = d[j];
+
+                int si = ClassifyDistance(di);
+                int sj = ClassifyDistance(dj);
+
+                // keep vertex on front
+                if (si >= 0)
+                    f.Add(vi);
+                // keep vertex on back
+                if (si <= 0)
+                    bk.Add(vi);
+
+                // edge crosses plane?
+                if ((si > 0 && sj < 0) || (si < 0 && sj > 0))
                 {
-                    intersections[i] = points[i];
-                    continue;
+                    float t = di / (di - dj); // safe: di and dj have opposite signs
+                    Vector3 p = vi + (vj - vi) * t;
+                    f.Add(p);
+                    bk.Add(p);
                 }
-
-                int next = (i + 1) % 3;
-                int prev = (i + 2) % 3;
-
-                intersections[i] = GetIntersection(value, points[i], points[next]);
-                Triangle newTriangle = new(points[next], intersections[i], points[prev]);
-
-                if (sides[i] == 1)
-                    Front?.SplitTriangle(value, newTriangle, Triangles, Front.Triangles, Front.Triangles);
-                else
-                    Back?.SplitTriangle(value, newTriangle, Triangles, Back.Triangles, Back.Triangles);
             }
 
-            return
-            [
-                new Triangle(points[0], intersections[0], intersections[2]),
-                new Triangle(points[1], intersections[1], intersections[0]),
-                new Triangle(points[2], intersections[2], intersections[1])
-            ];
+            TriangulateFan(f, front);
+            TriangulateFan(bk, back);
         }
 
-        private static Vector3 GetIntersection(System.Numerics.Plane value, Vector3 vector31, Vector3 vector32)
+        private static void TriangulateFan(List<Vector3> polygon, List<Triangle>? output)
         {
-            Vector3 direction = vector32 - vector31;
-            float distance = GetDistance(value, vector31);
-            float dot = Vector3.Dot(value.Normal, direction);
+            if (output == null)
+                return;
 
-            if (dot == 0)
-                return vector31;
-            
-            float t = -distance / dot;
-            return vector31 + direction * t;
+            if (polygon.Count < 3)
+                return;
+
+            Vector3 p0 = polygon[0];
+            for (int i = 1; i < polygon.Count - 1; i++)
+                output.Add(new Triangle(p0, polygon[i], polygon[i + 1]));
         }
 
         public void Invert()
@@ -205,8 +207,12 @@ namespace XREngine.Data.BSP
             
             if (Front != null)
                 front = Front.ClipTriangles(front);
+
+            // If there's no back child, back-side geometry is considered "inside" and discarded.
             if (Back != null)
                 back = Back.ClipTriangles(back);
+            else
+                back.Clear();
 
             front.AddRange(back);
             return front;

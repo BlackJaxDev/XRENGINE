@@ -108,7 +108,7 @@ namespace XREngine.Data.Core
                 return;
             }
 
-            if (!(Destroying?.Invoke(this) ?? true))
+            if (!(Destroying?.InvokeAllMatch(this) ?? true))
                 return;
 
             OnDestroying();

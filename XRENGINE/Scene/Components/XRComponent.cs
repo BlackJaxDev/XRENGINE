@@ -24,10 +24,18 @@ namespace XREngine.Components
         public static event Action<XRComponent>? ComponentDestroyed;
 
         private bool _isActive = true;
+        [Browsable(false)]
         public bool IsActive
         {
             get => _isActive;
             set => SetField(ref _isActive, value);
+        }
+
+        [Browsable(false)]
+        public new string? Name
+        {
+            get => base.Name;
+            set => base.Name = value;
         }
 
         [Browsable(false)]
