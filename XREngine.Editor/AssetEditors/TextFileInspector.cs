@@ -4,6 +4,7 @@ using System.IO;
 using System.Numerics;
 using System.Runtime.CompilerServices;
 using System.Text;
+using System.Linq;
 using ImGuiNET;
 using XREngine;
 using XREngine.Core.Files;
@@ -26,13 +27,23 @@ public sealed class TextFileInspector : IXRAssetInspector
 
     private readonly ConditionalWeakTable<TextFile, EditorState> _stateCache = new();
 
-    public void DrawInspector(XRAsset asset, HashSet<object> visitedObjects)
+    public void DrawInspector(EditorImGuiUI.InspectorTargetSet targets, HashSet<object> visitedObjects)
     {
-        if (asset is not TextFile textFile)
+        var textFiles = targets.Targets.OfType<TextFile>().Cast<object>().ToList();
+        if (textFiles.Count == 0)
         {
-            EditorImGuiUI.DrawDefaultAssetInspector(asset, visitedObjects);
+            foreach (var asset in targets.Targets.OfType<XRAsset>())
+                EditorImGuiUI.DrawDefaultAssetInspector(asset, visitedObjects);
             return;
         }
+
+        if (targets.HasMultipleTargets)
+        {
+            EditorImGuiUI.DrawDefaultAssetInspector(new EditorImGuiUI.InspectorTargetSet(textFiles, targets.CommonType), visitedObjects);
+            return;
+        }
+
+        var textFile = (TextFile)textFiles[0];
 
         var state = _stateCache.GetValue(textFile, _ => new EditorState());
         SyncState(textFile, state);

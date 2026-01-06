@@ -3,6 +3,7 @@ using System.Collections;
 using System.ComponentModel;
 using System.Globalization;
 using System.Numerics;
+using System.Linq;
 using System.Reflection;
 using System.Runtime.CompilerServices;
 using System.IO;
@@ -19,6 +20,72 @@ namespace XREngine.Editor;
 
 public static partial class EditorImGuiUI
 {
+        public sealed class InspectorTargetSet
+        {
+            public InspectorTargetSet(IReadOnlyList<object> targets, Type commonType)
+            {
+                Targets = targets;
+                CommonType = commonType;
+            }
+
+            public IReadOnlyList<object> Targets { get; }
+            public Type CommonType { get; }
+            public object PrimaryTarget => Targets[0];
+            public bool HasMultipleTargets => Targets.Count > 1;
+        }
+
+        private static InspectorTargetSet CreateInspectorTargetSet(IEnumerable<object> targets)
+        {
+            var targetList = targets.Where(t => t is not null).ToList();
+            if (targetList.Count == 0)
+                throw new ArgumentException("Inspector target list must contain at least one object.", nameof(targets));
+
+            var commonType = FindCommonBaseType(targetList.Select(t => t.GetType())) ?? typeof(object);
+            return new InspectorTargetSet(targetList, commonType);
+        }
+
+        private static Type? FindCommonBaseType(IEnumerable<Type> types)
+        {
+            using var enumerator = types.GetEnumerator();
+            if (!enumerator.MoveNext())
+                return null;
+
+            Type current = enumerator.Current;
+            while (enumerator.MoveNext())
+            {
+                current = FindCommonBaseType(current, enumerator.Current);
+                if (current == typeof(object))
+                    break;
+            }
+
+            return current;
+        }
+
+        private static Type FindCommonBaseType(Type first, Type second)
+        {
+            if (first.IsAssignableFrom(second))
+                return first;
+            if (second.IsAssignableFrom(first))
+                return second;
+
+            // Interfaces have higher priority than object when both types share one.
+            foreach (var iface in first.GetInterfaces())
+            {
+                if (iface.IsAssignableFrom(second))
+                    return iface;
+            }
+
+            Type? baseType = first.BaseType;
+            while (baseType is not null)
+            {
+                if (baseType.IsAssignableFrom(second))
+                    return baseType;
+                baseType = baseType.BaseType;
+            }
+
+            return typeof(object);
+        }
+
         private static readonly NullabilityInfoContext _nullabilityContext = new();
 
         private static bool IsPropertyNullable(PropertyInfo property)
@@ -91,16 +158,18 @@ public static partial class EditorImGuiUI
         private static readonly Dictionary<string, string> _propertyTypePickerSearch = new(StringComparer.Ordinal);
 
         // Property Editor Logic will be moved here
-        private static void DrawSettingsObject(object obj, string label, string? description, HashSet<object> visited, bool defaultOpen, string? idOverride = null)
+        private static void DrawSettingsObject(InspectorTargetSet targets, string label, string? description, HashSet<object> visited, bool defaultOpen, string? idOverride = null)
         {
             using var profilerScope = Engine.Profiler.Start("UI.DrawSettingsObject");
-            if (!visited.Add(obj))
+
+            object primary = targets.PrimaryTarget;
+            if (!visited.Add(primary))
             {
                 ImGui.TextUnformatted($"{label}: <circular reference>");
                 return;
             }
 
-            if (obj is XRRenderPipelineInstance instance && instance.Pipeline is not null)
+            if (primary is XRRenderPipelineInstance instance && instance.Pipeline is not null)
             {
                 if (ImGui.SmallButton($"Open Pipeline Graph##{label}"))
                     OpenRenderPipelineGraph(instance.Pipeline);
@@ -110,42 +179,47 @@ public static partial class EditorImGuiUI
 
             string id = idOverride ?? label;
             ImGui.PushID(id);
-            string treeLabel = $"{label} ({obj.GetType().Name})";
+
+            string typeDisplay = targets.CommonType.Name;
+            string treeLabel = targets.HasMultipleTargets
+                ? $"{label} ({typeDisplay}, {targets.Targets.Count} selected)"
+                : $"{label} ({primary.GetType().Name})";
+
             bool open = ImGui.TreeNodeEx(treeLabel, defaultOpen ? ImGuiTreeNodeFlags.DefaultOpen : ImGuiTreeNodeFlags.None);
             if (!string.IsNullOrEmpty(description) && ImGui.IsItemHovered())
                 ImGui.SetTooltip(description);
             if (open)
             {
-                if (obj is Mipmap2D mip)
+                if (primary is Mipmap2D mip)
                 {
                     DrawMipmap2DInspector(mip);
                     ImGui.Separator();
                 }
 
                 bool handledByAssetInspector = false;
-                if (obj is XRAsset asset)
+                if (primary is XRAsset asset)
                 {
                     using var assetScope = new InspectorAssetContextScope(asset.SourceAsset ?? asset);
 
                     // Allow custom inspectors to draw even if this asset is already tracked in the visited set.
-                    visited.Remove(obj);
+                    visited.Remove(primary);
                     try
                     {
-                        handledByAssetInspector = TryDrawAssetInspector(asset, visited);
+                        handledByAssetInspector = TryDrawAssetInspector(targets, visited);
                     }
                     finally
                     {
-                        visited.Add(obj);
+                        visited.Add(primary);
                     }
                 }
 
                 if (!handledByAssetInspector)
-                    DrawSettingsProperties(obj, visited);
+                    DrawSettingsProperties(targets, visited);
 
                 ImGui.TreePop();
             }
             ImGui.PopID();
-            visited.Remove(obj);
+            visited.Remove(primary);
         }
 
         internal static void DrawRuntimeObjectInspector(string label, object? target, HashSet<object> visited, bool defaultOpen = true, string? description = null)
@@ -156,13 +230,25 @@ public static partial class EditorImGuiUI
                 return;
             }
 
-            DrawSettingsObject(target, label, description, visited, defaultOpen);
+            DrawRuntimeObjectInspector(label, new[] { target }, visited, defaultOpen, description);
         }
 
-        private static void DrawSettingsProperties(object obj, HashSet<object> visited)
+        internal static void DrawRuntimeObjectInspector(string label, IReadOnlyList<object> targets, HashSet<object> visited, bool defaultOpen = true, string? description = null)
+        {
+            if (targets.Count == 0)
+            {
+                ImGui.TextDisabled($"{label}: <none>");
+                return;
+            }
+
+            DrawSettingsObject(CreateInspectorTargetSet(targets), label, description, visited, defaultOpen);
+        }
+
+        private static void DrawSettingsProperties(InspectorTargetSet targets, HashSet<object> visited)
         {
             using var profilerScope = Engine.Profiler.Start("UI.DrawSettingsProperties");
-            Type type = obj.GetType();
+            object primary = targets.PrimaryTarget;
+            Type type = targets.CommonType;
             var propertyInfos = type.GetProperties(BindingFlags.Public | BindingFlags.Instance)
                 .Where(p => p.CanRead && p.GetIndexParameters().Length == 0)
                 .Select(p =>
@@ -179,15 +265,19 @@ public static partial class EditorImGuiUI
                     string? description = descAttr?.Description;
                     string? category = categoryAttr?.Category;
 
-                    object? value = null;
+                    var values = new List<object?>();
                     bool valueRetrievalFailed = false;
-                    try
+                    foreach (var target in targets.Targets)
                     {
-                        value = p.GetValue(obj);
-                    }
-                    catch
-                    {
-                        valueRetrievalFailed = true;
+                        try
+                        {
+                            values.Add(p.GetValue(target));
+                        }
+                        catch
+                        {
+                            values.Add(null);
+                            valueRetrievalFailed = true;
+                        }
                     }
 
                     bool isOverrideable = typeof(IOverrideableSetting).IsAssignableFrom(p.PropertyType);
@@ -196,7 +286,7 @@ public static partial class EditorImGuiUI
                     return new SettingPropertyDescriptor
                     {
                         Property = p,
-                        Value = value,
+                        Values = values,
                         ValueRetrievalFailed = valueRetrievalFailed,
                         IsSimple = isSimple,
                         Category = category,
@@ -284,7 +374,7 @@ public static partial class EditorImGuiUI
                         ImGui.TableSetupColumn("Property", ImGuiTableColumnFlags.WidthFixed, 280.0f);
                         ImGui.TableSetupColumn("Value", ImGuiTableColumnFlags.WidthStretch);
                         foreach (var info in simpleProps)
-                            DrawSimplePropertyRow(obj, info);
+                            DrawSimplePropertyRow(targets, info.Property, info.Values, info.DisplayName, info.Description, info.ValueRetrievalFailed);
                         ImGui.EndTable();
                     }
                 }
@@ -299,20 +389,27 @@ public static partial class EditorImGuiUI
                         continue;
                     }
 
-                    if (info.Value is null)
+                    if (targets.HasMultipleTargets)
                     {
-                        DrawNullComplexProperty(obj, info.Property, info.DisplayName, info.Description);
+                        ImGui.TextDisabled($"{info.DisplayName}: <multiple values>");
                         continue;
                     }
 
-                    if (TryDrawCollectionProperty(obj, info.Property, info.DisplayName, info.Description, info.Value, visited))
+                    object? value = info.Values.FirstOrDefault();
+                    if (value is null)
+                    {
+                        DrawNullComplexProperty(primary, info.Property, info.DisplayName, info.Description);
+                        continue;
+                    }
+
+                    if (TryDrawCollectionProperty(primary, info.Property, info.DisplayName, info.Description, value, visited))
                         continue;
 
                     // Handle GL objects with their custom ImGui editors
-                    if (TryDrawGLObjectProperty(info.Property, info.DisplayName, info.Description, info.Value))
+                    if (TryDrawGLObjectProperty(info.Property, info.DisplayName, info.Description, value))
                         continue;
 
-                    DrawComplexPropertyObject(obj, info.Property, info.Value, info.DisplayName, info.Description, visited);
+                    DrawComplexPropertyObject(primary, info.Property, value, info.DisplayName, info.Description, visited);
                 }
             }
         }
@@ -373,7 +470,7 @@ public static partial class EditorImGuiUI
                     visited.Remove(value);
                     try
                     {
-                        handledByAssetInspector = TryDrawAssetInspector(asset, visited);
+                        handledByAssetInspector = TryDrawAssetInspector(new InspectorTargetSet(new[] { asset }, asset.GetType()), visited);
                     }
                     finally
                     {
@@ -382,7 +479,7 @@ public static partial class EditorImGuiUI
                 }
 
                 if (!handledByAssetInspector)
-                    DrawSettingsProperties(value, visited);
+                    DrawSettingsProperties(new InspectorTargetSet(new[] { value }, value.GetType()), visited);
 
                 ImGui.TreePop();
             }
@@ -644,7 +741,7 @@ public static partial class EditorImGuiUI
                         }
                         else
                         {
-                            DrawSettingsObject(item, $"{label}[{i}]", description, visited, false, property.Name + i.ToString(CultureInfo.InvariantCulture));
+                            DrawSettingsObject(new InspectorTargetSet(new[] { item }, item.GetType()), $"{label}[{i}]", description, visited, false, property.Name + i.ToString(CultureInfo.InvariantCulture));
                         }
 
                         if (item is null && adapter.CanAddRemove && itemUsesTypeSelector && availableTypeCount > 0)
@@ -886,7 +983,7 @@ public static partial class EditorImGuiUI
                         else if (entryValue is not null)
                         {
                             string childLabel = $"{label}[{FormatDictionaryKey(key)}]";
-                            DrawSettingsObject(entryValue, childLabel, description, visited, false, property.Name + "_" + i.ToString(CultureInfo.InvariantCulture));
+                            DrawSettingsObject(new InspectorTargetSet(new[] { entryValue! }, entryValue!.GetType()), childLabel, description, visited, false, property.Name + "_" + i.ToString(CultureInfo.InvariantCulture));
                         }
                         else
                         {
@@ -2454,6 +2551,34 @@ public static partial class EditorImGuiUI
             }
         }
 
+        private static bool TryApplyInspectorValue(InspectorTargetSet targets, PropertyInfo property, IReadOnlyList<object?> previousValues, object? newValue)
+        {
+            bool changed = false;
+            int count = Math.Min(previousValues.Count, targets.Targets.Count);
+
+            for (int i = 0; i < targets.Targets.Count; i++)
+            {
+                object target = targets.Targets[i];
+                object? previousValue = i < count ? previousValues[i] : null;
+
+                if (Equals(previousValue, newValue))
+                    continue;
+
+                try
+                {
+                    property.SetValue(target, newValue);
+                    NotifyInspectorValueEdited(target);
+                    changed = true;
+                }
+                catch (Exception ex)
+                {
+                    Debug.LogException(ex, $"Failed to set value for property '{property.Name}' on '{target.GetType().Name}'.");
+                }
+            }
+
+            return changed;
+        }
+
         private static bool TryApplyInspectorValue(object owner, PropertyInfo property, object? previousValue, object? newValue)
         {
             if (Equals(previousValue, newValue))
@@ -2477,7 +2602,13 @@ public static partial class EditorImGuiUI
                 asset.MarkDirty();
         }
 
-        private static void DrawSimplePropertyRow(object owner, SettingPropertyDescriptor info)
+        private static void NotifyInspectorValueEdited(InspectorTargetSet targets)
+        {
+            foreach (var target in targets.Targets)
+                NotifyInspectorValueEdited(target);
+        }
+
+        private static void DrawSimplePropertyRow(InspectorTargetSet targets, PropertyInfo property, IReadOnlyList<object?> values, string displayName, string? description, bool valueRetrievalFailed)
         {
             using var profilerScope = Engine.Profiler.Start("UI.DrawSimplePropertyRow");
             ImGui.TableNextRow();
@@ -2509,13 +2640,13 @@ public static partial class EditorImGuiUI
             Type effectiveType = underlyingType ?? propertyType;
             bool canWrite = property.CanWrite && property.SetMethod?.IsPublic == true;
 
-            object? value = info.Value;
+            object? firstValue = values.Count > 0 ? values[0] : null;
+            bool hasMixedValues = values.Skip(1).Any(v => !Equals(v, firstValue));
+
             // Asset reference fields: draw as an asset picker with inline inspector.
             if (typeof(XRAsset).IsAssignableFrom(effectiveType))
             {
-                XRAsset? currentAsset = value as XRAsset;
-                // Use the declared property type (even if abstract) so the picker + Create/Replace operate
-                // over the correct base type and can create/select derived concrete assets.
+                XRAsset? currentAsset = firstValue as XRAsset;
                 Type declaredAssetType = effectiveType;
 
                 bool allowClear = canWrite && IsPropertyNullable(property);
@@ -2525,8 +2656,9 @@ public static partial class EditorImGuiUI
                 {
                     try
                     {
-                        property.SetValue(owner, selected);
-                        NotifyInspectorValueEdited(owner);
+                        foreach (var target in targets.Targets)
+                            property.SetValue(target, selected);
+                        NotifyInspectorValueEdited(targets);
                     }
                     catch (Exception ex)
                     {
@@ -2539,7 +2671,7 @@ public static partial class EditorImGuiUI
                 return;
             }
 
-            object? currentValue = value;
+            object? currentValue = firstValue;
             bool isCurrentlyNull = currentValue is null;
             bool handled = false;
 
@@ -2548,12 +2680,15 @@ public static partial class EditorImGuiUI
                 bool boolValue = currentValue is bool b && b;
                 using (new ImGuiDisabledScope(!canWrite))
                 {
+                    if (hasMixedValues)
+                        ImGui.SetItemDefaultFocus();
                     if (ImGui.Checkbox("##Value", ref boolValue) && canWrite)
                     {
-                        if (TryApplyInspectorValue(owner, property, currentValue, boolValue))
+                        if (TryApplyInspectorValue(targets, property, values, boolValue))
                         {
                             currentValue = boolValue;
                             isCurrentlyNull = false;
+                            hasMixedValues = false;
                         }
                     }
                 }
@@ -2561,7 +2696,6 @@ public static partial class EditorImGuiUI
             }
             else if (effectiveType.IsEnum)
             {
-                // Support [Flags] enums (e.g. Assimp.PostProcessSteps) as a multi-select.
                 if (effectiveType.IsDefined(typeof(FlagsAttribute), inherit: false))
                 {
                     ulong bits = 0;
@@ -2575,14 +2709,12 @@ public static partial class EditorImGuiUI
                         bits = 0;
                     }
 
-                    Array values = Enum.GetValues(effectiveType);
-                    string preview = FormatFlagsEnumPreview(effectiveType, values, bits);
+                    Array enumValues = Enum.GetValues(effectiveType);
+                    string preview = hasMixedValues ? "<multiple>" : FormatFlagsEnumPreview(effectiveType, enumValues, bits);
 
                     using (new ImGuiDisabledScope(!canWrite))
                     {
                         ImGui.SetNextItemWidth(-1f);
-                        // Combo popup inherits the combo width by default, which can be quite narrow in tables.
-                        // Give it a more usable minimum width so flag names/checkboxes are readable.
                         ImGui.SetNextWindowSizeConstraints(new Vector2(420.0f, 0.0f), new Vector2(float.MaxValue, float.MaxValue));
                         if (ImGui.BeginCombo("##Value", preview, ImGuiComboFlags.HeightLarge))
                         {
@@ -2590,19 +2722,20 @@ public static partial class EditorImGuiUI
                             {
                                 ulong newBits = 0;
                                 object newValue = Enum.ToObject(effectiveType, newBits);
-                                if (TryApplyInspectorValue(owner, property, currentValue, newValue))
+                                if (TryApplyInspectorValue(targets, property, values, newValue))
                                 {
                                     currentValue = newValue;
                                     isCurrentlyNull = false;
                                     bits = newBits;
+                                    hasMixedValues = false;
                                 }
                             }
 
                             ImGui.Separator();
 
-                            for (int i = 0; i < values.Length; i++)
+                            for (int i = 0; i < enumValues.Length; i++)
                             {
-                                object raw = values.GetValue(i)!;
+                                object raw = enumValues.GetValue(i)!;
                                 ulong flag;
                                 try
                                 {
@@ -2613,7 +2746,6 @@ public static partial class EditorImGuiUI
                                     continue;
                                 }
 
-                                // Skip 0-value in the list; use Clear instead.
                                 if (flag == 0)
                                     continue;
 
@@ -2625,11 +2757,12 @@ public static partial class EditorImGuiUI
                                 {
                                     ulong newBits = checkedNow ? (bits | flag) : (bits & ~flag);
                                     object newValue = Enum.ToObject(effectiveType, newBits);
-                                    if (TryApplyInspectorValue(owner, property, currentValue, newValue))
+                                    if (TryApplyInspectorValue(targets, property, values, newValue))
                                     {
                                         currentValue = newValue;
                                         isCurrentlyNull = false;
                                         bits = newBits;
+                                        hasMixedValues = false;
                                     }
                                 }
                             }
@@ -2650,14 +2783,25 @@ public static partial class EditorImGuiUI
                     int selectedIndex = currentIndex;
                     using (new ImGuiDisabledScope(!canWrite || enumNames.Length == 0))
                     {
-                        if (enumNames.Length > 0 && ImGui.Combo("##Value", ref selectedIndex, enumNames, enumNames.Length) && canWrite && selectedIndex >= 0 && selectedIndex < enumNames.Length)
+                        string preview = hasMixedValues ? "<multiple>" : (enumNames.Length > 0 ? enumNames[Math.Clamp(selectedIndex, 0, enumNames.Length - 1)] : string.Empty);
+                        if (enumNames.Length > 0 && ImGui.BeginCombo("##Value", preview))
                         {
-                            object newValue = Enum.Parse(effectiveType, enumNames[selectedIndex]);
-                            if (TryApplyInspectorValue(owner, property, currentValue, newValue))
+                            for (int i = 0; i < enumNames.Length; i++)
                             {
-                                currentValue = newValue;
-                                isCurrentlyNull = false;
+                                bool selected = i == selectedIndex && !hasMixedValues;
+                                if (ImGui.Selectable(enumNames[i], selected))
+                                {
+                                    object newValue = Enum.Parse(effectiveType, enumNames[i]);
+                                    if (TryApplyInspectorValue(targets, property, values, newValue))
+                                    {
+                                        currentValue = newValue;
+                                        isCurrentlyNull = false;
+                                        hasMixedValues = false;
+                                        selectedIndex = i;
+                                    }
+                                }
                             }
+                            ImGui.EndCombo();
                         }
                     }
                     handled = true;
@@ -2669,12 +2813,13 @@ public static partial class EditorImGuiUI
                 using (new ImGuiDisabledScope(!canWrite))
                 {
                     ImGui.SetNextItemWidth(-1f);
-                    if (ImGui.InputText("##Value", ref textValue, 512u, ImGuiInputTextFlags.None) && canWrite)
+                    if (ImGui.InputTextWithHint("##Value", hasMixedValues ? "<multiple values>" : string.Empty, ref textValue, 512u, ImGuiInputTextFlags.None) && canWrite)
                     {
-                        if (TryApplyInspectorValue(owner, property, currentValue, textValue))
+                        if (TryApplyInspectorValue(targets, property, values, textValue))
                         {
                             currentValue = textValue;
                             isCurrentlyNull = false;
+                            hasMixedValues = false;
                         }
                     }
                 }
@@ -2688,10 +2833,11 @@ public static partial class EditorImGuiUI
                     ImGui.SetNextItemWidth(-1f);
                     if (ImGui.DragFloat2("##Value", ref vector, 0.05f) && canWrite)
                     {
-                        if (TryApplyInspectorValue(owner, property, currentValue, vector))
+                        if (TryApplyInspectorValue(targets, property, values, vector))
                         {
                             currentValue = vector;
                             isCurrentlyNull = false;
+                            hasMixedValues = false;
                         }
                     }
                 }
@@ -2705,10 +2851,11 @@ public static partial class EditorImGuiUI
                     ImGui.SetNextItemWidth(-1f);
                     if (ImGui.DragFloat3("##Value", ref vector, 0.05f) && canWrite)
                     {
-                        if (TryApplyInspectorValue(owner, property, currentValue, vector))
+                        if (TryApplyInspectorValue(targets, property, values, vector))
                         {
                             currentValue = vector;
                             isCurrentlyNull = false;
+                            hasMixedValues = false;
                         }
                     }
                 }
@@ -2722,10 +2869,11 @@ public static partial class EditorImGuiUI
                     ImGui.SetNextItemWidth(-1f);
                     if (ImGui.DragFloat4("##Value", ref vector, 0.05f) && canWrite)
                     {
-                        if (TryApplyInspectorValue(owner, property, currentValue, vector))
+                        if (TryApplyInspectorValue(targets, property, values, vector))
                         {
                             currentValue = vector;
                             isCurrentlyNull = false;
+                            hasMixedValues = false;
                         }
                     }
                 }
@@ -2740,10 +2888,11 @@ public static partial class EditorImGuiUI
                     if (ImGui.InputInt("##Value", ref maskValue) && canWrite)
                     {
                         var newMask = new LayerMask(maskValue);
-                        if (TryApplyInspectorValue(owner, property, currentValue, newMask))
+                        if (TryApplyInspectorValue(targets, property, values, newMask))
                         {
                             currentValue = newMask;
                             isCurrentlyNull = false;
+                            hasMixedValues = false;
                         }
                     }
                     if (ImGui.IsItemHovered())
@@ -2751,11 +2900,11 @@ public static partial class EditorImGuiUI
                 }
                 handled = true;
             }
-            else if (TryDrawColorProperty(owner, property, effectiveType, canWrite, ref currentValue, ref isCurrentlyNull))
+            else if (TryDrawColorProperty(targets, property, effectiveType, canWrite, values, ref currentValue, ref isCurrentlyNull))
             {
                 handled = true;
             }
-            else if (TryDrawNumericProperty(owner, property, effectiveType, canWrite, ref currentValue, ref isCurrentlyNull))
+            else if (TryDrawNumericProperty(targets, property, effectiveType, canWrite, values, ref currentValue, ref isCurrentlyNull))
             {
                 handled = true;
             }
@@ -2777,10 +2926,11 @@ public static partial class EditorImGuiUI
                         ImGui.SameLine();
                         if (ImGui.SmallButton("Set"))
                         {
-                            if (TryApplyInspectorValue(owner, property, currentValue, defaultValue))
+                            if (TryApplyInspectorValue(targets, property, values, defaultValue))
                             {
                                 currentValue = defaultValue;
                                 isCurrentlyNull = false;
+                                hasMixedValues = false;
                             }
                         }
                     }
@@ -2790,10 +2940,11 @@ public static partial class EditorImGuiUI
                     ImGui.SameLine();
                     if (ImGui.SmallButton("Clear"))
                     {
-                        if (TryApplyInspectorValue(owner, property, currentValue, null))
+                        if (TryApplyInspectorValue(targets, property, values, null))
                         {
                             currentValue = null;
                             isCurrentlyNull = true;
+                            hasMixedValues = false;
                         }
                     }
                 }
@@ -3318,23 +3469,24 @@ public static partial class EditorImGuiUI
             return false;
         }
 
-        private static unsafe bool TryDrawNumericProperty(object owner, PropertyInfo property, Type effectiveType, bool canWrite, ref object? currentValue, ref bool isCurrentlyNull)
+        private static unsafe bool TryDrawNumericProperty(InspectorTargetSet targets, PropertyInfo property, Type effectiveType, bool canWrite, IReadOnlyList<object?> previousValues, ref object? currentValue, ref bool isCurrentlyNull)
         {
-            var previousValue = currentValue;
+            var previousValueList = new List<object?>(previousValues);
 
             bool Apply(object? newValue)
             {
-                if (!TryApplyInspectorValue(owner, property, previousValue, newValue))
+                if (!TryApplyInspectorValue(targets, property, previousValueList, newValue))
                     return false;
 
-                previousValue = newValue;
+                for (int i = 0; i < previousValueList.Count; i++)
+                    previousValueList[i] = newValue;
                 return true;
             }
 
             return TryDrawNumericEditor(effectiveType, canWrite, ref currentValue, ref isCurrentlyNull, Apply, "##Value");
         }
 
-        private static bool TryDrawColorProperty(object owner, PropertyInfo property, Type effectiveType, bool canWrite, ref object? currentValue, ref bool isCurrentlyNull)
+        private static bool TryDrawColorProperty(InspectorTargetSet targets, PropertyInfo property, Type effectiveType, bool canWrite, IReadOnlyList<object?> previousValues, ref object? currentValue, ref bool isCurrentlyNull)
         {
             const ImGuiColorEditFlags ColorPickerFlags = ImGuiColorEditFlags.Float | ImGuiColorEditFlags.HDR | ImGuiColorEditFlags.NoOptions;
 
@@ -3347,7 +3499,7 @@ public static partial class EditorImGuiUI
                     if (ImGui.ColorEdit3("##ColorValue", ref colorVec, ColorPickerFlags) && canWrite)
                     {
                         var newColor = new ColorF3(colorVec.X, colorVec.Y, colorVec.Z);
-                        if (TryApplyInspectorValue(owner, property, currentValue, newColor))
+                        if (TryApplyInspectorValue(targets, property, previousValues, newColor))
                         {
                             currentValue = newColor;
                             isCurrentlyNull = false;
@@ -3366,7 +3518,7 @@ public static partial class EditorImGuiUI
                     if (ImGui.ColorEdit4("##ColorValue", ref colorVec, ColorPickerFlags) && canWrite)
                     {
                         var newColor = new ColorF4(colorVec.X, colorVec.Y, colorVec.Z, colorVec.W);
-                        if (TryApplyInspectorValue(owner, property, currentValue, newColor))
+                        if (TryApplyInspectorValue(targets, property, previousValues, newColor))
                         {
                             currentValue = newColor;
                             isCurrentlyNull = false;
