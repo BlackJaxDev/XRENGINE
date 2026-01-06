@@ -725,15 +725,18 @@ public static partial class EditorImGuiUI
     }
 
     private static void DrawGrid(ImDrawListPtr drawList, Vector2 canvasPos, Vector2 canvasSize, RenderPipelineGraphViewState view)
+        => DrawGrid(drawList, canvasPos, canvasSize, view.Pan, view.Zoom);
+
+    private static void DrawGrid(ImDrawListPtr drawList, Vector2 canvasPos, Vector2 canvasSize, Vector2 pan, float zoom)
     {
-        float gridStep = 64.0f * view.Zoom;
+        float gridStep = 64.0f * zoom;
         if (gridStep < 10f)
             gridStep = 10f;
 
         uint gridColor = ImGui.GetColorU32(ImGuiCol.Separator);
         uint originColor = ImGui.GetColorU32(ImGuiCol.PlotLines);
 
-        Vector2 origin = canvasPos + (view.Pan * view.Zoom);
+        Vector2 origin = canvasPos + (pan * zoom);
 
         float startX = Mod(origin.X, gridStep);
         float startY = Mod(origin.Y, gridStep);
