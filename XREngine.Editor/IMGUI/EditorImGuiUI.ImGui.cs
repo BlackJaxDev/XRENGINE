@@ -59,6 +59,7 @@ public static partial class EditorImGuiUI
         private static bool _showBuildSettings;
         private static bool _showStatePanel;
         private static bool _showRenderPipelineGraph;
+        private static bool _showShaderGraphPanel;
         private static int _probePreviewLayer;
         private static bool _showHierarchy = true;
         private static bool _showInspector = true;
@@ -537,6 +538,7 @@ public static partial class EditorImGuiUI
             DrawBuildSettingsPanel();
             DrawNetworkingPanel();
             DrawRenderPipelineGraphPanel();
+            DrawShaderGraphPanel();
             DrawHierarchyPanel();
             DrawViewportPanel();
             DrawInspectorPanel();
@@ -875,6 +877,9 @@ public static partial class EditorImGuiUI
 
                 if (ImGui.MenuItem("Shader Analyzer Tool"))
                     ShaderAnalyzerWindow.Instance.Open();
+
+                if (ImGui.MenuItem("Shader Graph Builder"))
+                    _showShaderGraphPanel = true;
 
                 ImGui.EndMenu();
             }
