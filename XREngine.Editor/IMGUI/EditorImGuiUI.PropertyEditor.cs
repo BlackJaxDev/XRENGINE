@@ -8,6 +8,7 @@ using System.Runtime.CompilerServices;
 using System.IO;
 using XREngine.Core.Files;
 using XREngine.Data.Colors;
+using XREngine.Data.Core;
 using XREngine.Editor.ComponentEditors;
 using XREngine.Editor.UI;
 using XREngine.Rendering;
@@ -189,9 +190,10 @@ public static partial class EditorImGuiUI
                         valueRetrievalFailed = true;
                     }
 
-                    bool isSimple = IsSimpleSettingType(p.PropertyType);
+                    bool isOverrideable = typeof(IOverrideableSetting).IsAssignableFrom(p.PropertyType);
+                    bool isSimple = isOverrideable || IsSimpleSettingType(p.PropertyType);
 
-                    return new
+                    return new SettingPropertyDescriptor
                     {
                         Property = p,
                         Value = value,
@@ -199,12 +201,44 @@ public static partial class EditorImGuiUI
                         IsSimple = isSimple,
                         Category = category,
                         DisplayName = displayName,
-                        Description = description
+                        Description = description,
+                        IsOverrideable = isOverrideable
                     };
                 })
                 .Where(x => x != null)
                 .Select(x => x!)
                 .ToList();
+
+            // Pair overrideable settings with their base property (e.g., VSync + VSyncOverride)
+            if (propertyInfos.Count > 0)
+            {
+                var propertyMap = propertyInfos.ToDictionary(info => info.Property.Name, info => info, StringComparer.Ordinal);
+
+                foreach (SettingPropertyDescriptor info in propertyInfos)
+                {
+                    if (!info.IsOverrideable)
+                        continue;
+
+                    string propertyName = info.Property.Name;
+                    const string overrideSuffix = "Override";
+                    if (!propertyName.EndsWith(overrideSuffix, StringComparison.Ordinal))
+                        continue;
+
+                    string baseName = propertyName[..^overrideSuffix.Length];
+                    if (!propertyMap.TryGetValue(baseName, out var baseInfo))
+                        continue;
+
+                    info.PairedBaseProperty = baseInfo.Property;
+                    if (string.IsNullOrWhiteSpace(info.Description))
+                        info.Description = baseInfo.Description;
+
+                    // Hide the base property row; its editing is integrated into the override row.
+                    baseInfo.Hidden = true;
+
+                    // Prefer the base property's display name for the combined row to reduce duplication.
+                    info.DisplayName = baseInfo.DisplayName;
+                }
+            }
 
             if (propertyInfos.Count == 0)
             {
@@ -213,6 +247,7 @@ public static partial class EditorImGuiUI
             }
 
             var orderedPropertyInfos = propertyInfos
+                .Where(info => !info.Hidden)
                 .OrderBy(info => string.IsNullOrWhiteSpace(info.Category) ? 0 : 1)
                 .ThenBy(info => info.Category, StringComparer.OrdinalIgnoreCase)
                 .ThenBy(info => info.DisplayName, StringComparer.OrdinalIgnoreCase)
@@ -249,7 +284,7 @@ public static partial class EditorImGuiUI
                         ImGui.TableSetupColumn("Property", ImGuiTableColumnFlags.WidthFixed, 280.0f);
                         ImGui.TableSetupColumn("Value", ImGuiTableColumnFlags.WidthStretch);
                         foreach (var info in simpleProps)
-                            DrawSimplePropertyRow(obj, info.Property, info.Value, info.DisplayName, info.Description, info.ValueRetrievalFailed);
+                            DrawSimplePropertyRow(obj, info);
                         ImGui.EndTable();
                     }
                 }
@@ -2442,30 +2477,39 @@ public static partial class EditorImGuiUI
                 asset.MarkDirty();
         }
 
-        private static void DrawSimplePropertyRow(object owner, PropertyInfo property, object? value, string displayName, string? description, bool valueRetrievalFailed)
+        private static void DrawSimplePropertyRow(object owner, SettingPropertyDescriptor info)
         {
             using var profilerScope = Engine.Profiler.Start("UI.DrawSimplePropertyRow");
             ImGui.TableNextRow();
             ImGui.TableSetColumnIndex(0);
-            ImGui.TextUnformatted(displayName);
-            if (!string.IsNullOrEmpty(description) && ImGui.IsItemHovered())
-                ImGui.SetTooltip(description);
+            ImGui.TextUnformatted(info.DisplayName);
+            if (!string.IsNullOrEmpty(info.Description) && ImGui.IsItemHovered())
+                ImGui.SetTooltip(info.Description);
             ImGui.TableSetColumnIndex(1);
-            ImGui.PushID(property.Name);
+            ImGui.PushID(info.Property.Name);
 
-            if (valueRetrievalFailed)
+            if (info.ValueRetrievalFailed)
             {
                 ImGui.TextDisabled("<error>");
                 ImGui.PopID();
                 return;
             }
 
+            if (info.IsOverrideable && info.Value is IOverrideableSetting overrideable)
+            {
+                DrawOverrideableSettingRow(owner, info, overrideable);
+                ImGui.PopID();
+                return;
+            }
+
+            PropertyInfo property = info.Property;
             Type propertyType = property.PropertyType;
             Type? underlyingType = Nullable.GetUnderlyingType(propertyType);
             bool isNullable = underlyingType is not null;
             Type effectiveType = underlyingType ?? propertyType;
             bool canWrite = property.CanWrite && property.SetMethod?.IsPublic == true;
 
+            object? value = info.Value;
             // Asset reference fields: draw as an asset picker with inline inspector.
             if (typeof(XRAsset).IsAssignableFrom(effectiveType))
             {
@@ -2756,6 +2800,306 @@ public static partial class EditorImGuiUI
             }
 
             ImGui.PopID();
+        }
+
+        private static void DrawOverrideableSettingRow(object owner, SettingPropertyDescriptor descriptor, IOverrideableSetting setting)
+        {
+            Type overrideType = setting.ValueType;
+            Type? overrideUnderlying = Nullable.GetUnderlyingType(overrideType);
+            Type overrideEffectiveType = overrideUnderlying ?? overrideType;
+            bool overrideCanWrite = descriptor.Property.CanWrite && descriptor.Property.SetMethod?.IsPublic == true;
+
+            object? overrideValue = setting.BoxedValue;
+            bool overrideIsNull = overrideValue is null;
+            bool hasOverride = setting.HasOverride;
+
+            PropertyInfo? baseProperty = descriptor.PairedBaseProperty;
+            object? baseValue = null;
+            bool baseValueRetrievalFailed = false;
+            bool baseIsNull = false;
+            bool canWriteBase = false;
+            Type? baseEffectiveType = null;
+
+            if (baseProperty is not null)
+            {
+                try
+                {
+                    baseValue = baseProperty.GetValue(owner);
+                    baseIsNull = baseValue is null;
+                }
+                catch
+                {
+                    baseValueRetrievalFailed = true;
+                }
+
+                canWriteBase = baseProperty.CanWrite && baseProperty.SetMethod?.IsPublic == true;
+                baseEffectiveType = Nullable.GetUnderlyingType(baseProperty.PropertyType) ?? baseProperty.PropertyType;
+            }
+
+            ImGui.BeginGroup();
+
+            if (baseProperty is not null)
+            {
+                if (baseValueRetrievalFailed)
+                {
+                    ImGui.TextDisabled("<base value error>");
+                }
+                else
+                {
+                    ImGui.TextDisabled("Base");
+                    ImGui.SameLine();
+
+                    ImGui.PushID("BaseValue");
+                    if (baseEffectiveType is not null)
+                    {
+                        bool handled = DrawInlineValueEditor(baseEffectiveType, canWriteBase, ref baseValue, ref baseIsNull, newValue =>
+                        {
+                            if (baseProperty is null)
+                                return false;
+
+                            return TryApplyInspectorValue(owner, baseProperty, baseValue, newValue);
+                        }, "##BaseValue");
+
+                        if (!handled)
+                            ImGui.TextUnformatted(FormatSettingValue(baseValue));
+                    }
+                    ImGui.PopID();
+                }
+            }
+
+            ImGui.TextDisabled("Override");
+            ImGui.SameLine(0f, 6f);
+            bool checkboxValue = hasOverride;
+            if (ImGui.Checkbox("##HasOverride", ref checkboxValue) && overrideCanWrite)
+            {
+                setting.HasOverride = checkboxValue;
+                hasOverride = checkboxValue;
+                NotifyInspectorValueEdited(owner);
+            }
+
+            ImGui.SameLine(0f, 8f);
+
+            using (new ImGuiDisabledScope(!overrideCanWrite || !hasOverride))
+            {
+                ImGui.PushID("OverrideValue");
+                bool handled = DrawInlineValueEditor(overrideEffectiveType, overrideCanWrite && hasOverride, ref overrideValue, ref overrideIsNull, newValue =>
+                {
+                    if (!overrideCanWrite || !hasOverride)
+                        return false;
+
+                    setting.BoxedValue = newValue;
+                    NotifyInspectorValueEdited(owner);
+                    return true;
+                }, "##OverrideValue");
+                if (!handled)
+                    ImGui.TextUnformatted(FormatSettingValue(overrideValue));
+                ImGui.PopID();
+            }
+
+            ImGui.SameLine();
+            object? effectiveValue = hasOverride ? overrideValue : baseValue;
+            ImGui.TextDisabled($"Effective: {FormatSettingValue(effectiveValue)}");
+
+            ImGui.EndGroup();
+        }
+
+        private static bool DrawInlineValueEditor(Type effectiveType, bool canWrite, ref object? currentValue, ref bool isCurrentlyNull, Func<object?, bool> applyValue, string label)
+        {
+            if (effectiveType == typeof(bool))
+            {
+                bool boolValue = currentValue is bool b && b;
+                using (new ImGuiDisabledScope(!canWrite))
+                {
+                    if (ImGui.Checkbox(label, ref boolValue) && canWrite)
+                    {
+                        if (applyValue(boolValue))
+                        {
+                            currentValue = boolValue;
+                            isCurrentlyNull = false;
+                        }
+                    }
+                }
+                return true;
+            }
+
+            if (effectiveType.IsEnum)
+            {
+                if (effectiveType.IsDefined(typeof(FlagsAttribute), inherit: false))
+                {
+                    ulong bits = 0;
+                    try
+                    {
+                        if (currentValue is not null)
+                            bits = Convert.ToUInt64(currentValue, CultureInfo.InvariantCulture);
+                    }
+                    catch
+                    {
+                        bits = 0;
+                    }
+
+                    Array values = Enum.GetValues(effectiveType);
+                    string preview = FormatFlagsEnumPreview(effectiveType, values, bits);
+
+                    using (new ImGuiDisabledScope(!canWrite))
+                    {
+                        ImGui.SetNextItemWidth(-1f);
+                        ImGui.SetNextWindowSizeConstraints(new Vector2(420.0f, 0.0f), new Vector2(float.MaxValue, float.MaxValue));
+                        if (ImGui.BeginCombo(label, preview, ImGuiComboFlags.HeightLarge))
+                        {
+                            if (ImGui.SmallButton("Clear"))
+                            {
+                                ulong newBits = 0;
+                                object newValue = Enum.ToObject(effectiveType, newBits);
+                                if (applyValue(newValue))
+                                {
+                                    currentValue = newValue;
+                                    isCurrentlyNull = false;
+                                    bits = newBits;
+                                }
+                            }
+
+                            ImGui.Separator();
+
+                            for (int i = 0; i < values.Length; i++)
+                            {
+                                object raw = values.GetValue(i)!;
+                                ulong flag;
+                                try
+                                {
+                                    flag = Convert.ToUInt64(raw, CultureInfo.InvariantCulture);
+                                }
+                                catch
+                                {
+                                    continue;
+                                }
+
+                                if (flag == 0)
+                                    continue;
+
+                                bool isSet = (bits & flag) == flag;
+                                string name = Enum.GetName(effectiveType, raw) ?? raw.ToString() ?? $"0x{flag:X}";
+
+                                bool checkedNow = isSet;
+                                if (ImGui.Checkbox(name, ref checkedNow))
+                                {
+                                    ulong newBits = checkedNow ? (bits | flag) : (bits & ~flag);
+                                    object newValue = Enum.ToObject(effectiveType, newBits);
+                                    if (applyValue(newValue))
+                                    {
+                                        currentValue = newValue;
+                                        isCurrentlyNull = false;
+                                        bits = newBits;
+                                    }
+                                }
+                            }
+
+                            ImGui.EndCombo();
+                        }
+                    }
+
+                    return true;
+                }
+                else
+                {
+                    string[] enumNames = Enum.GetNames(effectiveType);
+                    int currentIndex = currentValue is null ? -1 : Array.IndexOf(enumNames, Enum.GetName(effectiveType, currentValue));
+                    if (currentIndex < 0)
+                        currentIndex = 0;
+
+                    int selectedIndex = currentIndex;
+                    using (new ImGuiDisabledScope(!canWrite || enumNames.Length == 0))
+                    {
+                        if (enumNames.Length > 0 && ImGui.Combo(label, ref selectedIndex, enumNames, enumNames.Length) && canWrite && selectedIndex >= 0 && selectedIndex < enumNames.Length)
+                        {
+                            object newValue = Enum.Parse(effectiveType, enumNames[selectedIndex]);
+                            if (applyValue(newValue))
+                            {
+                                currentValue = newValue;
+                                isCurrentlyNull = false;
+                            }
+                        }
+                    }
+
+                    return true;
+                }
+            }
+
+            if (effectiveType == typeof(string))
+            {
+                string textValue = currentValue as string ?? string.Empty;
+                using (new ImGuiDisabledScope(!canWrite))
+                {
+                    ImGui.SetNextItemWidth(-1f);
+                    if (ImGui.InputText(label, ref textValue, 512u, ImGuiInputTextFlags.None) && canWrite)
+                    {
+                        if (applyValue(textValue))
+                        {
+                            currentValue = textValue;
+                            isCurrentlyNull = false;
+                        }
+                    }
+                }
+                return true;
+            }
+
+            if (effectiveType == typeof(Vector2))
+            {
+                Vector2 vector = currentValue is Vector2 v ? v : Vector2.Zero;
+                using (new ImGuiDisabledScope(!canWrite))
+                {
+                    ImGui.SetNextItemWidth(-1f);
+                    if (ImGui.DragFloat2(label, ref vector, 0.05f) && canWrite)
+                    {
+                        if (applyValue(vector))
+                        {
+                            currentValue = vector;
+                            isCurrentlyNull = false;
+                        }
+                    }
+                }
+                return true;
+            }
+
+            if (effectiveType == typeof(Vector3))
+            {
+                Vector3 vector = currentValue is Vector3 v ? v : Vector3.Zero;
+                using (new ImGuiDisabledScope(!canWrite))
+                {
+                    ImGui.SetNextItemWidth(-1f);
+                    if (ImGui.DragFloat3(label, ref vector, 0.05f) && canWrite)
+                    {
+                        if (applyValue(vector))
+                        {
+                            currentValue = vector;
+                            isCurrentlyNull = false;
+                        }
+                    }
+                }
+                return true;
+            }
+
+            if (effectiveType == typeof(Vector4))
+            {
+                Vector4 vector = currentValue is Vector4 v ? v : Vector4.Zero;
+                using (new ImGuiDisabledScope(!canWrite))
+                {
+                    ImGui.SetNextItemWidth(-1f);
+                    if (ImGui.DragFloat4(label, ref vector, 0.05f) && canWrite)
+                    {
+                        if (applyValue(vector))
+                        {
+                            currentValue = vector;
+                            isCurrentlyNull = false;
+                        }
+                    }
+                }
+                return true;
+            }
+
+            if (TryDrawNumericEditor(effectiveType, canWrite, ref currentValue, ref isCurrentlyNull, applyValue, label))
+                return true;
+
+            return false;
         }
 
         private static unsafe bool TryDrawNumericEditor(Type effectiveType, bool canWrite, ref object? currentValue, ref bool isCurrentlyNull, Func<object?, bool> applyValue, string label)
@@ -3237,6 +3581,20 @@ public static partial class EditorImGuiUI
         private sealed record CollectionTypeDescriptor(Type Type, string DisplayName, string Namespace, string AssemblyName)
         {
             public string FullName => Type.FullName ?? Type.Name;
+        }
+
+        private sealed class SettingPropertyDescriptor
+        {
+            public required PropertyInfo Property { get; init; }
+            public object? Value { get; init; }
+            public bool ValueRetrievalFailed { get; init; }
+            public bool IsSimple { get; init; }
+            public string? Category { get; init; }
+            public string DisplayName { get; set; } = string.Empty;
+            public string? Description { get; set; }
+            public bool IsOverrideable { get; init; }
+            public PropertyInfo? PairedBaseProperty { get; set; }
+            public bool Hidden { get; set; }
         }
 
         private sealed class ReferenceEqualityComparer : IEqualityComparer<object>
