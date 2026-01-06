@@ -5,5 +5,5 @@ namespace XREngine.Editor.AssetEditors;
 
 public interface IXRAssetInspector
 {
-    void DrawInspector(XRAsset asset, HashSet<object> visitedObjects);
+    void DrawInspector(EditorImGuiUI.InspectorTargetSet targets, HashSet<object> visitedObjects);
 }

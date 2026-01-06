@@ -9,7 +9,7 @@ namespace XREngine.Data.Core
     /// </summary>
     /// <typeparam name="T">The type of the setting value.</typeparam>
     [Serializable]
-    public partial class OverrideableSetting<T> : XRBase, IMemoryPackable<OverrideableSetting<T>>
+    public partial class OverrideableSetting<T> : XRBase, IMemoryPackable<OverrideableSetting<T>>, IOverrideableSetting
     {
         private bool _hasOverride = false;
         private T? _value;
@@ -94,6 +94,14 @@ namespace XREngine.Data.Core
         /// </summary>
         public T? ResolveNullable(T? fallback)
             => HasOverride ? _value : fallback;
+
+        Type IOverrideableSetting.ValueType => typeof(T);
+
+        object? IOverrideableSetting.BoxedValue
+        {
+            get => _value;
+            set => Value = value is null ? default : (T?)value;
+        }
 
         /// <summary>
         /// Implicit conversion from T to OverrideableSetting{T}.
@@ -200,5 +208,12 @@ namespace XREngine.Data.Core
 
             return engineDefault;
         }
+    }
+
+    public interface IOverrideableSetting
+    {
+        bool HasOverride { get; set; }
+        Type ValueType { get; }
+        object? BoxedValue { get; set; }
     }
 }

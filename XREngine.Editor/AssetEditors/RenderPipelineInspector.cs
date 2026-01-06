@@ -33,13 +33,23 @@ public sealed class RenderPipelineInspector : IXRAssetInspector
 
     #region Public API
 
-    public void DrawInspector(XRAsset asset, HashSet<object> visitedObjects)
+    public void DrawInspector(EditorImGuiUI.InspectorTargetSet targets, HashSet<object> visitedObjects)
     {
-        if (asset is not RenderPipeline pipeline)
+        var pipelines = targets.Targets.OfType<RenderPipeline>().Cast<object>().ToList();
+        if (pipelines.Count == 0)
         {
-            EditorImGuiUI.DrawDefaultAssetInspector(asset, visitedObjects);
+            foreach (var asset in targets.Targets.OfType<XRAsset>())
+                EditorImGuiUI.DrawDefaultAssetInspector(asset, visitedObjects);
             return;
         }
+
+        if (targets.HasMultipleTargets)
+        {
+            EditorImGuiUI.DrawDefaultAssetInspector(new EditorImGuiUI.InspectorTargetSet(pipelines, targets.CommonType), visitedObjects);
+            return;
+        }
+
+        var pipeline = (RenderPipeline)pipelines[0];
 
         var state = _stateCache.GetValue(pipeline, _ => new EditorState());
 
