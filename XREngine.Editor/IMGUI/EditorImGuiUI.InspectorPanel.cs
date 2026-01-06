@@ -235,11 +235,11 @@ public static partial class EditorImGuiUI
             if (target is XRAsset asset)
             {
                 DrawThirdPartyImportSettings(asset, visited);
-                if (TryDrawAssetInspector(asset, visited))
+                if (TryDrawAssetInspector(new InspectorTargetSet(new[] { asset }, asset.GetType()), visited))
                     return;
             }
 
-            DrawInspectableObject(target, "StandaloneInspectorProperties", visited);
+            DrawInspectableObject(new InspectorTargetSet(new[] { target }, target.GetType()), "StandaloneInspectorProperties", visited);
         }
 
         private static void DrawThirdPartyImportSettings(XRAsset asset, HashSet<object> visited)
@@ -280,7 +280,7 @@ public static partial class EditorImGuiUI
 
             ImGui.Separator();
 
-            DrawInspectableObject(importOptions!, "ThirdPartyImportOptions", visited);
+            DrawInspectableObject(new InspectorTargetSet(new[] { importOptions! }, importOptions!.GetType()), "ThirdPartyImportOptions", visited);
 
             ImGui.Spacing();
             if (ImGui.Button("Save & Reimport"))
@@ -336,7 +336,7 @@ public static partial class EditorImGuiUI
 
             ImGui.Separator();
 
-            DrawInspectableObject(importOptions!, "ThirdPartyImportOptions", visited);
+            DrawInspectableObject(new InspectorTargetSet(new[] { importOptions! }, importOptions!.GetType()), "ThirdPartyImportOptions", visited);
 
             ImGui.Spacing();
             if (ImGui.Button("Save && Reimport"))
@@ -720,20 +720,21 @@ public static partial class EditorImGuiUI
                 ImGui.TextDisabled("No components attached to this scene node.");
         }
 
-        private static partial void DrawInspectableObject(object target, string id, HashSet<object> visited)
+        private static partial void DrawInspectableObject(InspectorTargetSet targets, string id, HashSet<object> visited)
         {
             using var profilerScope = Engine.Profiler.Start("UI.DrawInspectableObject");
-            if (!visited.Add(target))
+            object primary = targets.PrimaryTarget;
+            if (!visited.Add(primary))
             {
                 ImGui.TextUnformatted("<circular reference>");
                 return;
             }
 
             ImGui.PushID(id);
-            DrawSettingsProperties(target, visited);
+            DrawSettingsProperties(targets, visited);
             ImGui.PopID();
 
-            visited.Remove(target);
+            visited.Remove(primary);
         }
 
         private static partial void DrawComponentInspector(XRComponent component, HashSet<object> visited)
@@ -757,36 +758,45 @@ public static partial class EditorImGuiUI
         }
 
         public static partial void DrawDefaultComponentInspector(XRComponent component, HashSet<object> visited)
-            => DrawInspectableObject(component, "ComponentProperties", visited);
+            => DrawInspectableObject(new InspectorTargetSet(new[] { component }, component.GetType()), "ComponentProperties", visited);
 
         public static partial void DrawDefaultTransformInspector(TransformBase transform, HashSet<object> visited)
-            => DrawInspectableObject(transform, "TransformProperties", visited);
+            => DrawInspectableObject(new InspectorTargetSet(new[] { transform }, transform.GetType()), "TransformProperties", visited);
 
         public static void DrawDefaultAssetInspector(XRAsset asset, HashSet<object> visited)
-            => DrawInspectableObject(asset, "AssetProperties", visited);
+            => DrawInspectableObject(new InspectorTargetSet(new[] { asset }, asset.GetType()), "AssetProperties", visited);
+
+        public static void DrawDefaultAssetInspector(InspectorTargetSet targets, HashSet<object> visited)
+            => DrawInspectableObject(targets, "AssetProperties", visited);
 
         internal static void DrawAssetInspectorInline(XRAsset asset)
         {
             var visited = new HashSet<object>(ReferenceEqualityComparer.Instance);
-            if (!TryDrawAssetInspector(asset, visited))
+            var targets = new InspectorTargetSet(new[] { asset }, asset.GetType());
+            if (!TryDrawAssetInspector(targets, visited))
                 DrawDefaultAssetInspector(asset, visited);
         }
 
-        private static bool TryDrawAssetInspector(XRAsset asset, HashSet<object> visited)
+        private static bool TryDrawAssetInspector(InspectorTargetSet targets, HashSet<object> visited)
         {
-            var inspector = ResolveAssetInspector(asset.GetType());
+            var inspector = ResolveAssetInspector(targets.CommonType);
             if (inspector is null)
                 return false;
 
             try
             {
-                inspector.DrawInspector(asset, visited);
+                inspector.DrawInspector(targets, visited);
                 return true;
             }
             catch (Exception ex)
             {
-                Debug.LogException(ex, $"Custom asset inspector '{inspector.GetType().FullName}' failed for '{asset.GetType().FullName}'");
-                return false;
+                Debug.LogException(ex, $"Custom asset inspector '{inspector.GetType().FullName}' failed for '{targets.CommonType.FullName}'");
+                foreach (var obj in targets.Targets)
+                {
+                    if (obj is XRAsset asset)
+                        DrawDefaultAssetInspector(asset, visited);
+                }
+                return true;
             }
         }
 

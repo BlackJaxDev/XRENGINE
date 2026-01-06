@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Numerics;
+using System.Linq;
 using ImGuiNET;
 using XREngine;
 using XREngine.Core.Files;
@@ -14,13 +15,23 @@ public sealed class XRShaderInspector : IXRAssetInspector
     private static readonly TextFileInspector _textInspector = new();
     private static readonly Vector4 DirtyBadgeColor = new(0.95f, 0.65f, 0.2f, 1f);
 
-    public void DrawInspector(XRAsset asset, HashSet<object> visitedObjects)
+    public void DrawInspector(EditorImGuiUI.InspectorTargetSet targets, HashSet<object> visitedObjects)
     {
-        if (asset is not XRShader shader)
+        var shaders = targets.Targets.OfType<XRShader>().Cast<object>().ToList();
+        if (shaders.Count == 0)
         {
-            EditorImGuiUI.DrawDefaultAssetInspector(asset, visitedObjects);
+            foreach (var asset in targets.Targets.OfType<XRAsset>())
+                EditorImGuiUI.DrawDefaultAssetInspector(asset, visitedObjects);
             return;
         }
+
+        if (targets.HasMultipleTargets)
+        {
+            EditorImGuiUI.DrawDefaultAssetInspector(new EditorImGuiUI.InspectorTargetSet(shaders, targets.CommonType), visitedObjects);
+            return;
+        }
+
+        var shader = (XRShader)shaders[0];
 
         DrawHeader(shader);
         DrawCompilationSettings(shader);
@@ -109,7 +120,7 @@ public sealed class XRShaderInspector : IXRAssetInspector
 
         ImGui.Separator();
         ImGui.PushID("XRShaderSourceInspector");
-        _textInspector.DrawInspector(source, visitedObjects);
+        _textInspector.DrawInspector(new EditorImGuiUI.InspectorTargetSet(new object[] { source }, source.GetType()), visitedObjects);
         ImGui.PopID();
         ImGui.Separator();
     }
