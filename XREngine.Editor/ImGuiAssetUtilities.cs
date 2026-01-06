@@ -12,6 +12,7 @@ using System.Text;
 using ImGuiNET;
 using XREngine;
 using XREngine.Core.Files;
+using XREngine.Data;
 using XREngine.Diagnostics;
 using XREngine.Rendering;
 using XREngine.Rendering.Models;
@@ -26,6 +27,7 @@ internal static class ImGuiAssetUtilities
     private const uint AssetPickerPreviewSize = 256;
     private const float AssetPickerPreviewFallbackEdge = 96.0f;
     private static readonly Dictionary<AssetPickerKey, object> _assetPickerStates = new();
+    private static readonly ConcurrentDictionary<string, Type?> _assetTypeHintCache = new(StringComparer.Ordinal);
     private const string AssetCreateReplacePopupId = "AssetCreateReplace";
 
     [ThreadStatic]
@@ -93,6 +95,10 @@ internal static class ImGuiAssetUtilities
         options ??= AssetFieldOptions.ForType<TAsset>();
         var state = GetPickerState<TAsset>(options);
 
+        // Use an ImGui label with '###' so the popup shows the asset type in the title
+        // while keeping a stable internal ID.
+        string popupLabel = $"Pick {typeof(TAsset).Name}###{AssetPickerPopupId}";
+
         ImGui.PushID(id);
 
         var style = ImGui.GetStyle();
@@ -115,10 +121,24 @@ internal static class ImGuiAssetUtilities
         int buttonCount = 1 + (showClear ? 1 : 0) + (canCreateOrReplace ? 1 : 0);
         float fieldWidth = MathF.Max(80.0f, availableWidth - (clearWidth + createReplaceWidth + browseWidth) - style.ItemSpacing.X * buttonCount);
 
+        var storage = ImGui.GetStateStorage();
+        uint inlineInspectorKey = ImGui.GetID("InlineAssetInspectorOpen");
+        bool inlineInspectorOpen = current is not null && storage.GetInt(inlineInspectorKey, 0) != 0;
+
         bool openPopup = false;
         string preview = GetAssetDisplayName(current);
         if (ImGui.Selectable(preview, false, ImGuiSelectableFlags.AllowDoubleClick, new Vector2(fieldWidth, 0.0f)))
-            openPopup = true;
+        {
+            if (current is null)
+            {
+                openPopup = true;
+            }
+            else
+            {
+                inlineInspectorOpen = !inlineInspectorOpen;
+                storage.SetInt(inlineInspectorKey, inlineInspectorOpen ? 1 : 0);
+            }
+        }
 
         if (current is not null)
         {
@@ -177,18 +197,48 @@ internal static class ImGuiAssetUtilities
             openPopup = true;
 
         if (openPopup)
-            ImGui.OpenPopup(AssetPickerPopupId);
+            ImGui.OpenPopup(popupLabel);
 
-        if (ImGui.BeginPopup(AssetPickerPopupId))
+        if (ImGui.BeginPopup(popupLabel))
         {
             DrawAssetPickerPopup(state, current, assign);
             ImGui.EndPopup();
         }
 
-        if (current is not null)
-            DrawInlineAssetInspector(current);
+        if (current is not null && inlineInspectorOpen)
+            DrawInlineAssetInspectorContents(current);
 
         ImGui.PopID();
+    }
+
+    private static void DrawInlineAssetInspectorContents(XRAsset asset)
+    {
+        _inlineInspectorStack ??= new HashSet<XRAsset>(AssetReferenceEqualityComparer.Instance);
+        if (!_inlineInspectorStack.Add(asset))
+        {
+            ImGui.Spacing();
+            ImGui.TextDisabled("Inspect Asset: <circular reference>");
+            return;
+        }
+
+        ImGui.Spacing();
+        ImGui.PushID("InlineAssetInspector");
+        try
+        {
+            DrawAssetInspectorMetadata(asset);
+            ImGui.Separator();
+
+            using var contextScope = RequiresExternalAssetContext(asset)
+                ? EditorImGuiUI.PushInspectorAssetContext(asset.SourceAsset ?? asset)
+                : null;
+
+            EditorImGuiUI.DrawAssetInspectorInline(asset);
+        }
+        finally
+        {
+            ImGui.PopID();
+            _inlineInspectorStack.Remove(asset);
+        }
     }
 
     private static void DrawAssetPickerPopup<TAsset>(AssetPickerState<TAsset> state, TAsset? current, Action<TAsset?> assign)
@@ -366,6 +416,22 @@ internal static class ImGuiAssetUtilities
                 if (assetManager.TryGetAssetByPath(file, out XRAsset? cached) && cached is TAsset typed)
                     existing = typed;
 
+                // Only show native .asset files whose serialized concrete type matches TAsset or derives from it.
+                if (string.Equals(Path.GetExtension(file), $".{AssetManager.AssetExtension}", StringComparison.OrdinalIgnoreCase))
+                {
+                    if (!TryResolveNativeAssetConcreteType(file, out Type? concreteType))
+                    {
+                        // If we can't determine the concrete type, only allow the entry when we already
+                        // have it loaded and confirmed it matches.
+                        if (existing is null)
+                            continue;
+                        concreteType = existing.GetType();
+                    }
+
+                    if (concreteType is null || !typeof(TAsset).IsAssignableFrom(concreteType))
+                        continue;
+                }
+
                 string displayName = existing is not null && !string.IsNullOrWhiteSpace(existing.Name)
                     ? existing.Name
                     : Path.GetFileNameWithoutExtension(file);
@@ -375,6 +441,94 @@ internal static class ImGuiAssetUtilities
         }
 
         state.Candidates.Sort((a, b) => string.Compare(a.DisplayName, b.DisplayName, StringComparison.OrdinalIgnoreCase));
+    }
+
+    private static bool TryResolveNativeAssetConcreteType(string filePath, out Type? type)
+    {
+        type = null;
+
+        if (!TryPeekSerializedAssetType(filePath, out string? typeName) || string.IsNullOrWhiteSpace(typeName))
+            return false;
+
+        type = _assetTypeHintCache.GetOrAdd(typeName, static key => ResolveTypeFromHint(key));
+        return type is not null;
+    }
+
+    private static bool TryPeekSerializedAssetType(string filePath, out string? typeName)
+    {
+        typeName = null;
+
+        try
+        {
+            using var stream = new FileStream(filePath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
+            using var reader = new StreamReader(stream, detectEncodingFromByteOrderMarks: true);
+
+            // __assetType is written very early in the YAML (Order = -100), so keep this bounded.
+            for (int i = 0; i < 80 && !reader.EndOfStream; i++)
+            {
+                string? line = reader.ReadLine();
+                if (line is null)
+                    break;
+
+                string trimmed = line.TrimStart();
+                if (!trimmed.StartsWith("__assetType:", StringComparison.Ordinal))
+                    continue;
+
+                string value = trimmed["__assetType:".Length..].Trim();
+                value = value.Trim().Trim('"').Trim('\'');
+                typeName = value;
+                return !string.IsNullOrWhiteSpace(typeName);
+            }
+        }
+        catch
+        {
+            // ignore
+        }
+
+        return false;
+    }
+
+    private static Type? ResolveTypeFromHint(string typeName)
+    {
+        if (string.IsNullOrWhiteSpace(typeName))
+            return null;
+
+        Type? type = Type.GetType(typeName, throwOnError: false, ignoreCase: false);
+        if (type is not null)
+            return type;
+
+        foreach (var assembly in AppDomain.CurrentDomain.GetAssemblies())
+        {
+            type = assembly.GetType(typeName, throwOnError: false, ignoreCase: false);
+            if (type is not null)
+                return type;
+        }
+
+        // Fall back to matching by simple Name.
+        foreach (var assembly in AppDomain.CurrentDomain.GetAssemblies())
+        {
+            Type?[] types;
+            try
+            {
+                types = assembly.GetTypes();
+            }
+            catch (ReflectionTypeLoadException ex)
+            {
+                types = ex.Types ?? [];
+            }
+
+            foreach (Type? candidate in types)
+            {
+                if (candidate is null)
+                    continue;
+                if (!typeof(XRAsset).IsAssignableFrom(candidate))
+                    continue;
+                if (string.Equals(candidate.Name, typeName, StringComparison.Ordinal))
+                    return candidate;
+            }
+        }
+
+        return null;
     }
 
     private static IEnumerable<AssetCandidate<TAsset>> EnumerateFilteredCandidates<TAsset>(AssetPickerState<TAsset> state)
@@ -469,9 +623,28 @@ internal static class ImGuiAssetUtilities
     };
 
     private static string[] GetDefaultExtensions(Type assetType)
-        => DefaultExtensions.TryGetValue(assetType, out var exts)
+    {
+        IEnumerable<string> baseExts = DefaultExtensions.TryGetValue(assetType, out var exts)
             ? exts
             : [".asset"];
+
+        var thirdParty = assetType.GetCustomAttribute<XR3rdPartyExtensionsAttribute>()?.Extensions;
+        if (thirdParty is null || thirdParty.Length == 0)
+        {
+            return baseExts
+                .Select(AssetFieldOptions.NormalizeExtension)
+                .Where(static e => !string.IsNullOrEmpty(e))
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToArray();
+        }
+
+        return baseExts
+            .Concat(thirdParty.Select(x => x.ext))
+            .Select(AssetFieldOptions.NormalizeExtension)
+            .Where(static e => !string.IsNullOrEmpty(e))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+    }
 
     public sealed class AssetFieldOptions
     {
@@ -506,7 +679,7 @@ internal static class ImGuiAssetUtilities
                 ? string.Join(';', GetDefaultExtensions(assetType))
                 : string.Join(';', _customExtensions);
 
-        private static string NormalizeExtension(string ext)
+        internal static string NormalizeExtension(string ext)
         {
             if (string.IsNullOrWhiteSpace(ext))
                 return string.Empty;
@@ -769,39 +942,7 @@ internal static class ImGuiAssetUtilities
         return null;
     }
 
-    private static void DrawInlineAssetInspector(XRAsset asset)
-    {
-        _inlineInspectorStack ??= new HashSet<XRAsset>(AssetReferenceEqualityComparer.Instance);
-        if (!_inlineInspectorStack.Add(asset))
-        {
-            ImGui.Spacing();
-            ImGui.TextDisabled("Inspect Asset: <circular reference>");
-            return;
-        }
-
-        ImGui.Spacing();
-        ImGui.PushID("InlineAssetInspector");
-        const ImGuiTreeNodeFlags headerFlags = ImGuiTreeNodeFlags.DefaultOpen | ImGuiTreeNodeFlags.SpanAvailWidth;
-        try
-        {
-            if (ImGui.CollapsingHeader("Inspect Asset", headerFlags))
-            {
-                DrawAssetInspectorMetadata(asset);
-                ImGui.Separator();
-
-                using var contextScope = RequiresExternalAssetContext(asset)
-                    ? EditorImGuiUI.PushInspectorAssetContext(asset.SourceAsset ?? asset)
-                    : null;
-
-                EditorImGuiUI.DrawAssetInspectorInline(asset);
-            }
-            ImGui.PopID();
-        }
-        finally
-        {
-            _inlineInspectorStack.Remove(asset);
-        }
-    }
+    // (Inline inspector UI is now toggled by clicking the asset field itself.)
 
     private static void DrawAssetInspectorMetadata(XRAsset asset)
     {

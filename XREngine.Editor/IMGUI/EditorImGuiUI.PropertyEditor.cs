@@ -249,6 +249,9 @@ public static partial class EditorImGuiUI
             using var profilerScope = Engine.Profiler.Start("UI.DrawSettingsProperties");
             object primary = targets.PrimaryTarget;
             Type type = targets.CommonType;
+
+            string search = _inspectorPropertySearch ?? string.Empty;
+            bool hasSearch = !string.IsNullOrWhiteSpace(search);
             var propertyInfos = type.GetProperties(BindingFlags.Public | BindingFlags.Instance)
                 .Where(p => p.CanRead && p.GetIndexParameters().Length == 0)
                 .Select(p =>
@@ -338,15 +341,32 @@ public static partial class EditorImGuiUI
 
             var orderedPropertyInfos = propertyInfos
                 .Where(info => !info.Hidden)
+                .Where(info =>
+                {
+                    if (!hasSearch)
+                        return true;
+
+                    return (info.DisplayName?.Contains(search, StringComparison.OrdinalIgnoreCase) ?? false)
+                        || info.Property.Name.Contains(search, StringComparison.OrdinalIgnoreCase)
+                        || (info.Category?.Contains(search, StringComparison.OrdinalIgnoreCase) ?? false);
+                })
                 .OrderBy(info => string.IsNullOrWhiteSpace(info.Category) ? 0 : 1)
                 .ThenBy(info => info.Category, StringComparer.OrdinalIgnoreCase)
                 .ThenBy(info => info.DisplayName, StringComparer.OrdinalIgnoreCase)
                 .ToList();
 
+            if (orderedPropertyInfos.Count == 0)
+            {
+                ImGui.TextDisabled(hasSearch ? "No properties match the current search." : "No properties found.");
+                return;
+            }
+
             var grouped = orderedPropertyInfos
                 .GroupBy(info => info.Category, StringComparer.OrdinalIgnoreCase)
                 .ToList();
-            bool multipleCategories = grouped.Count > 1;
+
+            bool showCategoryHeaders = grouped.Count > 1;
+
             bool renderedCategoryHeader = false;
 
             foreach (var group in grouped)
@@ -356,17 +376,23 @@ public static partial class EditorImGuiUI
                 var simpleProps = group.Where(info => info.IsSimple).ToList();
                 var complexProps = group.Where(info => !info.IsSimple).ToList();
 
-                if (multipleCategories || !string.IsNullOrWhiteSpace(group.Key))
+                if (showCategoryHeaders)
                 {
                     if (renderedCategoryHeader)
                         ImGui.Separator();
-                    ImGui.TextUnformatted(categoryLabel);
+
+                    // Collapse categories by default, but auto-expand while searching to show matches.
+                    ImGui.SetNextItemOpen(hasSearch, hasSearch ? ImGuiCond.Always : ImGuiCond.Once);
+                    bool categoryOpen = ImGui.CollapsingHeader($"{categoryLabel}##InspectorCategory_{group.Key}", ImGuiTreeNodeFlags.SpanAvailWidth);
                     renderedCategoryHeader = true;
+
+                    if (!categoryOpen)
+                        continue;
                 }
 
                 if (simpleProps.Count > 0)
                 {
-                    string tableId = $"Properties_{obj.GetHashCode():X8}_{group.Key?.GetHashCode() ?? 0:X8}";
+                    string tableId = $"Properties_{primary.GetHashCode():X8}_{group.Key?.GetHashCode() ?? 0:X8}";
                     if (ImGui.BeginTable(tableId, 2, ImGuiTableFlags.SizingStretchProp | ImGuiTableFlags.RowBg))
                     {
                         // Prevent the name column from collapsing to a few pixels.
@@ -2613,27 +2639,38 @@ public static partial class EditorImGuiUI
             using var profilerScope = Engine.Profiler.Start("UI.DrawSimplePropertyRow");
             ImGui.TableNextRow();
             ImGui.TableSetColumnIndex(0);
-            ImGui.TextUnformatted(info.DisplayName);
-            if (!string.IsNullOrEmpty(info.Description) && ImGui.IsItemHovered())
-                ImGui.SetTooltip(info.Description);
+            ImGui.TextUnformatted(displayName);
+            if (!string.IsNullOrEmpty(description) && ImGui.IsItemHovered())
+                ImGui.SetTooltip(description);
             ImGui.TableSetColumnIndex(1);
-            ImGui.PushID(info.Property.Name);
+            ImGui.PushID(property.Name);
 
-            if (info.ValueRetrievalFailed)
+            if (valueRetrievalFailed)
             {
                 ImGui.TextDisabled("<error>");
                 ImGui.PopID();
                 return;
             }
 
-            if (info.IsOverrideable && info.Value is IOverrideableSetting overrideable)
+            if (!targets.HasMultipleTargets && typeof(IOverrideableSetting).IsAssignableFrom(property.PropertyType) && values.FirstOrDefault() is IOverrideableSetting overrideable)
             {
-                DrawOverrideableSettingRow(owner, info, overrideable);
+                var descriptor = new SettingPropertyDescriptor
+                {
+                    Property = property,
+                    Values = values,
+                    ValueRetrievalFailed = false,
+                    IsSimple = true,
+                    Category = null,
+                    DisplayName = displayName,
+                    Description = description,
+                    IsOverrideable = true
+                };
+
+                DrawOverrideableSettingRow(targets.PrimaryTarget, descriptor, overrideable);
                 ImGui.PopID();
                 return;
             }
 
-            PropertyInfo property = info.Property;
             Type propertyType = property.PropertyType;
             Type? underlyingType = Nullable.GetUnderlyingType(propertyType);
             bool isNullable = underlyingType is not null;
@@ -3738,7 +3775,7 @@ public static partial class EditorImGuiUI
         private sealed class SettingPropertyDescriptor
         {
             public required PropertyInfo Property { get; init; }
-            public object? Value { get; init; }
+            public required IReadOnlyList<object?> Values { get; init; }
             public bool ValueRetrievalFailed { get; init; }
             public bool IsSimple { get; init; }
             public string? Category { get; init; }
@@ -3747,6 +3784,8 @@ public static partial class EditorImGuiUI
             public bool IsOverrideable { get; init; }
             public PropertyInfo? PairedBaseProperty { get; set; }
             public bool Hidden { get; set; }
+
+            public object? Value => Values.Count > 0 ? Values[0] : null;
         }
 
         private sealed class ReferenceEqualityComparer : IEqualityComparer<object>

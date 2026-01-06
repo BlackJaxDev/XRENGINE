@@ -85,6 +85,8 @@ public static partial class UnitTestingWorld
         //The full editor UI - includes a toolbar, inspector, viewport and scene hierarchy.
         public static UICanvasComponent CreateEditorUI(SceneNode parent, CameraComponent? screenSpaceCamera, PawnComponent? pawnForInput = null)
         {
+            using var profilerScope = Engine.Profiler.Start("UnitTestingWorld.UserInterface.CreateEditorUI");
+
             // Create as a root/editor node (not parented under gameplay nodes).
             // Editor-only migration in the world instance only applies to root nodes.
             var rootCanvasNode = new SceneNode(parent.World, "TestUINode") { IsEditorOnly = true };
@@ -171,6 +173,7 @@ public static partial class UnitTestingWorld
             bool addDearImGui = UnitTestingWorld.Toggles.DearImGuiUI;
             if (addDearImGui)
             {
+                using var imGuiScope = Engine.Profiler.Start("UnitTestingWorld.UserInterface.CreateEditorUI.DearImGui");
                 SceneNode dearImGuiNode = new(rootCanvasNode) { Name = "Dear ImGui Node" };
                 var tfm = dearImGuiNode.SetTransform<UIBoundableTransform>();
                 tfm.MinAnchor = new Vector2(0.0f, 0.0f);
@@ -185,6 +188,7 @@ public static partial class UnitTestingWorld
             
             if (Toggles.AddEditorUI)
             {
+                using var editorUiScope = Engine.Profiler.Start("UnitTestingWorld.UserInterface.CreateEditorUI.AddEditorUI");
                 //This will take care of editor UI arrangement operations for us
                 var mainUINode = rootCanvasNode.NewChild<UIEditorComponent>(out UIEditorComponent? editorComp);
                 if (editorComp.UITransform is UIBoundableTransform tfm)
@@ -197,7 +201,8 @@ public static partial class UnitTestingWorld
                     tfm.Height = null;
                 }
                 _editorComponent = editorComp;
-                RemakeMenu();
+                using (Engine.Profiler.Start("UnitTestingWorld.UserInterface.RemakeMenu"))
+                    RemakeMenu();
 
                 GameCSProjLoader.OnAssemblyLoaded += GameCSProjLoader_OnAssemblyLoaded;
                 GameCSProjLoader.OnAssemblyUnloaded += GameCSProjLoader_OnAssemblyUnloaded;

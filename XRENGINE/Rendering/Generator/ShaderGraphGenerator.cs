@@ -7,6 +7,9 @@ namespace XREngine.Rendering.Shaders.Generator;
 
 public sealed class ShaderGraphGenerator : ShaderGeneratorBase
 {
+    private static uint? ToNullableUInt(int? value)
+        => value.HasValue ? checked((uint)value.Value) : null;
+
     public ShaderGraphGenerator(ShaderGraph graph, XRMesh? mesh = null)
         : base(mesh ?? new XRMesh())
     {
@@ -62,12 +65,12 @@ public sealed class ShaderGraphGenerator : ShaderGeneratorBase
 
         foreach (var attribute in Graph.Attributes)
         {
-            InputVars[attribute.Name] = (attribute.LayoutLocation, attribute.Type ?? EShaderVarType._float);
+            InputVars[attribute.Name] = (ToNullableUInt(attribute.LayoutLocation), attribute.Type ?? EShaderVarType._float);
         }
 
         foreach (var output in Graph.Outputs)
         {
-            OutputVars[output.Name] = (output.LayoutLocation, output.Type ?? EShaderVarType._float);
+            OutputVars[output.Name] = (ToNullableUInt(output.LayoutLocation), output.Type ?? EShaderVarType._float);
         }
     }
 

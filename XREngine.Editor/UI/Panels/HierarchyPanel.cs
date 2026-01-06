@@ -73,6 +73,7 @@ public partial class HierarchyPanel : EditorPanel
 
     public void RemakeChildren()
     {
+        using var sample = Engine.Profiler.Start("HierarchyPanel.RemakeChildren");
         SceneNode.Transform.Clear();
         //Create the root menu transform - this is a horizontal list of buttons.
         CreateTree(SceneNode, this);
@@ -97,6 +98,7 @@ public partial class HierarchyPanel : EditorPanel
 
     private void CreateTree(SceneNode parentNode, HierarchyPanel hierarchyPanel)
     {
+        using var sample = Engine.Profiler.Start("HierarchyPanel.CreateTree");
         var listNode = parentNode.NewChild<UIMaterialComponent>(out var menuMat);
         menuMat.Material = MakeBackgroundMaterial();
         var listTfm = listNode.SetTransform<UIListTransform>();
@@ -118,9 +120,11 @@ public partial class HierarchyPanel : EditorPanel
 
     private void CreateNodes(SceneNode listNode, IEnumerable<SceneNode> nodes)
     {
+        using var sample = Engine.Profiler.Start("HierarchyPanel.CreateNodes");
         var copy = nodes.Where(x => x is not null).ToList();
         foreach (SceneNode node in copy)
         {
+            using var nodeSample = Engine.Profiler.Start("HierarchyPanel.CreateNodes.Node");
             string? nodeName = node.Name;
             if (string.IsNullOrWhiteSpace(nodeName))
                 nodeName = FormatUnnamedNode(node);

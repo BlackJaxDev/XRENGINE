@@ -1456,8 +1456,9 @@ public partial class EditorFlyingCameraPawnComponent : FlyingCameraPawnComponent
                 if (ShiftPressed)
                     scrollSpeed *= ShiftSpeedModifier;
                 Vector3 worldCoord = vp.NormalizedViewportToWorldCoordinate(DepthHitNormalizedViewportPoint.Value);
-                float dist = Transform.WorldTranslation.Distance(worldCoord);
-                tfm.Translation = Segment.PointAtLineDistance(Transform.WorldTranslation, worldCoord, scrollSpeed * dist *0.1f * ScrollSpeed);
+                float dist = tfm.WorldTranslation.Distance(worldCoord);
+                Vector3 newWorldPos = Segment.PointAtLineDistance(tfm.WorldTranslation, worldCoord, scrollSpeed * dist * 0.1f * ScrollSpeed);
+                tfm.SetWorldTranslation(newWorldPos);
             }
             else
                 base.OnScrolled(scrollSpeed);

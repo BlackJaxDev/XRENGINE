@@ -57,6 +57,7 @@ public class InspectorPanel : EditorPanel
 
     private void RemakeChildren()
     {
+        using var sample = Engine.Profiler.Start("InspectorPanel.RemakeChildren");
         SceneNode.Transform.Clear();
         CreatePropertyList(SceneNode, this);
     }
@@ -67,6 +68,7 @@ public class InspectorPanel : EditorPanel
     /// <returns></returns>
     private static List<PropertyInfo> GetMatchingProperties(object?[]? objects)
     {
+        using var sample = Engine.Profiler.Start("InspectorPanel.GetMatchingProperties");
         List<PropertyInfo> matching = [];
         if (objects is null)
             return matching;
@@ -97,6 +99,7 @@ public class InspectorPanel : EditorPanel
 
     private void CreatePropertyList(SceneNode parentNode, InspectorPanel inspectorPanel)
     {
+        using var sample = Engine.Profiler.Start("InspectorPanel.CreatePropertyList");
         var listNode = parentNode.NewChild<UIMaterialComponent>(out var menuMat);
         menuMat.Material = MakeBackgroundMaterial();
         var listTfm = listNode.SetTransform<UIListTransform>();
@@ -114,6 +117,7 @@ public class InspectorPanel : EditorPanel
 
     private static List<PropertyInfo> CreateNodes(SceneNode listNode, object?[]? inspectedObjects)
     {
+        using var sample = Engine.Profiler.Start("InspectorPanel.CreateNodes");
         float fontSize = EditorUI.Styles.PropertyNameFontSize;
         float leftMargin = 5.0f;
         float rightMargin = 5.0f;
@@ -128,6 +132,7 @@ public class InspectorPanel : EditorPanel
 
     private static float MeasureTextWidth(float fontSize, List<PropertyInfo> matching)
     {
+        using var sample = Engine.Profiler.Start("InspectorPanel.MeasureTextWidth");
         float textWidth = 0.0f;
         foreach (var prop in matching)
             textWidth = Math.Max(textWidth, UITextComponent.MeasureWidth(ResolveName(prop) ?? string.Empty, FontGlyphSet.LoadDefaultFont(), fontSize));
