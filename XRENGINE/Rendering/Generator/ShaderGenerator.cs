@@ -16,6 +16,8 @@ namespace XREngine.Rendering.Shaders.Generator
         private string _shaderCode = "";
         private int _tabCount = 0;
 
+        public EGLSLVersion ShaderVersion { get; set; } = GLSLCurrentVersion;
+
         public XRMesh Mesh { get; } = mesh;
 
         public List<Action> HelperMethodWriters { get; } = [];
@@ -113,7 +115,7 @@ namespace XREngine.Rendering.Shaders.Generator
         public void WriteVersion(EGLSLVersion version)
             => Line($"#version {version.ToString()[4..]}");
         public void WriteVersion()
-            => WriteVersion(GLSLCurrentVersion);
+            => WriteVersion(ShaderVersion);
         public void WriteInVar(uint layoutLocation, EShaderVarType type, string name)
             => Line($"layout (location = {layoutLocation}) in {type.ToString()[1..]} {name};");
         public void WriteInVar(EShaderVarType type, string name)
