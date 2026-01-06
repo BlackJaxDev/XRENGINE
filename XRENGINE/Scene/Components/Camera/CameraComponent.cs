@@ -202,7 +202,7 @@ namespace XREngine.Components
             return parts.Count > 0 ? string.Join(", ", parts) : "Not in use";
         }
 
-        public UICanvasComponent? _userInterface;
+        private UICanvasComponent? _userInterface;
         /// <summary>
         /// Provides the option for the user to manually set a canvas to render on top of the camera.
         /// </summary>

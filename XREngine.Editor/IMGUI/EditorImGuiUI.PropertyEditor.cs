@@ -14,6 +14,7 @@ using XREngine.Editor.ComponentEditors;
 using XREngine.Editor.UI;
 using XREngine.Rendering;
 using XREngine.Rendering.OpenGL;
+using XREngine.Components;
 using XREngine.Scene;
 
 namespace XREngine.Editor;
@@ -302,6 +303,60 @@ public static partial class EditorImGuiUI
                 .Select(x => x!)
                 .ToList();
 
+            var fieldInfos = type.GetFields(BindingFlags.Public | BindingFlags.Instance)
+                .Where(f => !f.IsStatic && !f.IsLiteral)
+                .Select(f =>
+                {
+                    var displayAttr = f.GetCustomAttribute<DisplayNameAttribute>();
+                    var descAttr = f.GetCustomAttribute<DescriptionAttribute>();
+                    var categoryAttr = f.GetCustomAttribute<CategoryAttribute>();
+                    var browsableAttr = f.GetCustomAttribute<BrowsableAttribute>();
+
+                    if (browsableAttr != null && !browsableAttr.Browsable)
+                        return null;
+
+                    // Support the engine's Unity-style attribute even if it's not used widely yet.
+                    if (f.GetCustomAttribute<HideInInspectorAttribute>() is not null)
+                        return null;
+
+                    string displayName = displayAttr?.DisplayName ?? f.Name;
+                    string? description = descAttr?.Description;
+                    string? category = categoryAttr?.Category;
+
+                    var values = new List<object?>();
+                    bool valueRetrievalFailed = false;
+                    foreach (var target in targets.Targets)
+                    {
+                        try
+                        {
+                            values.Add(f.GetValue(target));
+                        }
+                        catch
+                        {
+                            values.Add(null);
+                            valueRetrievalFailed = true;
+                        }
+                    }
+
+                    bool isSimple = IsSimpleSettingType(f.FieldType);
+                    bool canWrite = !f.IsInitOnly;
+
+                    return new SettingFieldDescriptor
+                    {
+                        Field = f,
+                        Values = values,
+                        ValueRetrievalFailed = valueRetrievalFailed,
+                        IsSimple = isSimple,
+                        Category = category,
+                        DisplayName = displayName,
+                        Description = description,
+                        CanWrite = canWrite
+                    };
+                })
+                .Where(x => x != null)
+                .Select(x => x!)
+                .ToList();
+
             // Pair overrideable settings with their base property (e.g., VSync + VSyncOverride)
             if (propertyInfos.Count > 0)
             {
@@ -333,36 +388,40 @@ public static partial class EditorImGuiUI
                 }
             }
 
-            if (propertyInfos.Count == 0)
+            var allRows = new List<InspectorMemberRow>(propertyInfos.Count + fieldInfos.Count);
+            allRows.AddRange(propertyInfos.Select(p => new InspectorMemberRow(p)));
+            allRows.AddRange(fieldInfos.Select(f => new InspectorMemberRow(f)));
+
+            if (allRows.Count == 0)
             {
-                ImGui.TextDisabled("No properties found.");
+                ImGui.TextDisabled("No properties or fields found.");
                 return;
             }
 
-            var orderedPropertyInfos = propertyInfos
-                .Where(info => !info.Hidden)
-                .Where(info =>
+            var orderedRows = allRows
+                .Where(row => !row.Hidden)
+                .Where(row =>
                 {
                     if (!hasSearch)
                         return true;
 
-                    return (info.DisplayName?.Contains(search, StringComparison.OrdinalIgnoreCase) ?? false)
-                        || info.Property.Name.Contains(search, StringComparison.OrdinalIgnoreCase)
-                        || (info.Category?.Contains(search, StringComparison.OrdinalIgnoreCase) ?? false);
+                    return row.DisplayName.Contains(search, StringComparison.OrdinalIgnoreCase)
+                        || row.MemberName.Contains(search, StringComparison.OrdinalIgnoreCase)
+                        || (row.Category?.Contains(search, StringComparison.OrdinalIgnoreCase) ?? false);
                 })
-                .OrderBy(info => string.IsNullOrWhiteSpace(info.Category) ? 0 : 1)
-                .ThenBy(info => info.Category, StringComparer.OrdinalIgnoreCase)
-                .ThenBy(info => info.DisplayName, StringComparer.OrdinalIgnoreCase)
+                .OrderBy(row => string.IsNullOrWhiteSpace(row.Category) ? 0 : 1)
+                .ThenBy(row => row.Category, StringComparer.OrdinalIgnoreCase)
+                .ThenBy(row => row.DisplayName, StringComparer.OrdinalIgnoreCase)
                 .ToList();
 
-            if (orderedPropertyInfos.Count == 0)
+            if (orderedRows.Count == 0)
             {
                 ImGui.TextDisabled(hasSearch ? "No properties match the current search." : "No properties found.");
                 return;
             }
 
-            var grouped = orderedPropertyInfos
-                .GroupBy(info => info.Category, StringComparer.OrdinalIgnoreCase)
+            var grouped = orderedRows
+                .GroupBy(row => row.Category, StringComparer.OrdinalIgnoreCase)
                 .ToList();
 
             bool showCategoryHeaders = grouped.Count > 1;
@@ -373,8 +432,8 @@ public static partial class EditorImGuiUI
             {
                 string categoryLabel = string.IsNullOrWhiteSpace(group.Key) ? "General" : group.Key;
 
-                var simpleProps = group.Where(info => info.IsSimple).ToList();
-                var complexProps = group.Where(info => !info.IsSimple).ToList();
+                var simpleRows = group.Where(row => row.IsSimple).ToList();
+                var complexRows = group.Where(row => !row.IsSimple).ToList();
 
                 if (showCategoryHeaders)
                 {
@@ -390,7 +449,7 @@ public static partial class EditorImGuiUI
                         continue;
                 }
 
-                if (simpleProps.Count > 0)
+                if (simpleRows.Count > 0)
                 {
                     string tableId = $"Properties_{primary.GetHashCode():X8}_{group.Key?.GetHashCode() ?? 0:X8}";
                     if (ImGui.BeginTable(tableId, 2, ImGuiTableFlags.SizingStretchProp | ImGuiTableFlags.RowBg))
@@ -399,45 +458,106 @@ public static partial class EditorImGuiUI
                         // Without this, long value widgets can steal all width and labels get clipped to 1-2 chars.
                         ImGui.TableSetupColumn("Property", ImGuiTableColumnFlags.WidthFixed, 280.0f);
                         ImGui.TableSetupColumn("Value", ImGuiTableColumnFlags.WidthStretch);
-                        foreach (var info in simpleProps)
-                            DrawSimplePropertyRow(targets, info.Property, info.Values, info.DisplayName, info.Description, info.ValueRetrievalFailed);
+                        foreach (var row in simpleRows)
+                        {
+                            if (row.Property is not null)
+                                DrawSimplePropertyRow(targets, row.Property.Property, row.Property.Values, row.DisplayName, row.Description, row.Property.ValueRetrievalFailed);
+                            else if (row.Field is not null)
+                                DrawSimpleFieldRow(targets, row.Field.Field, row.Field.Values, row.DisplayName, row.Description, row.Field.ValueRetrievalFailed, row.Field.CanWrite);
+                        }
                         ImGui.EndTable();
                     }
                 }
 
-                foreach (var info in complexProps)
+                foreach (var row in complexRows)
                 {
-                    if (info.ValueRetrievalFailed)
+                    if (row.ValueRetrievalFailed)
                     {
-                        ImGui.TextUnformatted($"{info.DisplayName}: <error>");
-                        if (!string.IsNullOrEmpty(info.Description) && ImGui.IsItemHovered())
-                            ImGui.SetTooltip(info.Description);
+                        ImGui.TextUnformatted($"{row.DisplayName}: <error>");
+                        if (!string.IsNullOrEmpty(row.Description) && ImGui.IsItemHovered())
+                            ImGui.SetTooltip(row.Description);
                         continue;
                     }
 
                     if (targets.HasMultipleTargets)
                     {
-                        ImGui.TextDisabled($"{info.DisplayName}: <multiple values>");
+                        ImGui.TextDisabled($"{row.DisplayName}: <multiple values>");
                         continue;
                     }
 
-                    object? value = info.Values.FirstOrDefault();
+                    object? value = row.Values.FirstOrDefault();
+
+                    if (TryDrawXREventMember(primary, row, value, visited))
+                        continue;
+
                     if (value is null)
                     {
-                        DrawNullComplexProperty(primary, info.Property, info.DisplayName, info.Description);
+                        if (row.Property is not null)
+                            DrawNullComplexProperty(primary, row.Property.Property, row.DisplayName, row.Description);
+                        else if (row.Field is not null)
+                            DrawNullComplexField(primary, row.Field.Field, row.DisplayName, row.Description, row.Field.CanWrite);
                         continue;
                     }
 
-                    if (TryDrawCollectionProperty(primary, info.Property, info.DisplayName, info.Description, value, visited))
-                        continue;
+                    if (row.Property is not null)
+                    {
+                        if (TryDrawCollectionProperty(primary, row.Property.Property, row.DisplayName, row.Description, value, visited))
+                            continue;
 
-                    // Handle GL objects with their custom ImGui editors
-                    if (TryDrawGLObjectProperty(info.Property, info.DisplayName, info.Description, value))
-                        continue;
+                        // Handle GL objects with their custom ImGui editors
+                        if (TryDrawGLObjectProperty(row.Property.Property, row.DisplayName, row.Description, value))
+                            continue;
 
-                    DrawComplexPropertyObject(primary, info.Property, value, info.DisplayName, info.Description, visited);
+                        DrawComplexPropertyObject(primary, row.Property.Property, value, row.DisplayName, row.Description, visited);
+                    }
+                    else if (row.Field is not null)
+                    {
+                        // Field fallback: just draw the object inspector for the field value.
+                        DrawComplexFieldObject(primary, row.Field.Field, value, row.DisplayName, row.Description, visited);
+                    }
                 }
             }
+        }
+
+        private sealed class InspectorMemberRow
+        {
+            public InspectorMemberRow(SettingPropertyDescriptor property)
+            {
+                Property = property;
+                DisplayName = property.DisplayName;
+                Description = property.Description;
+                Category = property.Category;
+                IsSimple = property.IsSimple;
+                Values = property.Values;
+                ValueRetrievalFailed = property.ValueRetrievalFailed;
+                Hidden = property.Hidden;
+            }
+
+            public InspectorMemberRow(SettingFieldDescriptor field)
+            {
+                Field = field;
+                DisplayName = field.DisplayName;
+                Description = field.Description;
+                Category = field.Category;
+                IsSimple = field.IsSimple;
+                Values = field.Values;
+                ValueRetrievalFailed = field.ValueRetrievalFailed;
+                Hidden = field.Hidden;
+            }
+
+            public SettingPropertyDescriptor? Property { get; }
+            public SettingFieldDescriptor? Field { get; }
+
+            public string DisplayName { get; }
+            public string? Description { get; }
+            public string? Category { get; }
+            public bool IsSimple { get; }
+            public bool ValueRetrievalFailed { get; }
+            public IReadOnlyList<object?> Values { get; }
+            public bool Hidden { get; }
+
+            public string MemberName
+                => Property?.Property.Name ?? Field?.Field.Name ?? string.Empty;
         }
 
         /// <summary>
@@ -2615,6 +2735,34 @@ public static partial class EditorImGuiUI
             return true;
         }
 
+        private static bool TryApplyInspectorValue(InspectorTargetSet targets, FieldInfo field, IReadOnlyList<object?> previousValues, object? newValue)
+        {
+            bool changed = false;
+            int count = Math.Min(previousValues.Count, targets.Targets.Count);
+
+            for (int i = 0; i < targets.Targets.Count; i++)
+            {
+                object target = targets.Targets[i];
+                object? previousValue = i < count ? previousValues[i] : null;
+
+                if (Equals(previousValue, newValue))
+                    continue;
+
+                try
+                {
+                    field.SetValue(target, newValue);
+                    NotifyInspectorValueEdited(target);
+                    changed = true;
+                }
+                catch (Exception ex)
+                {
+                    Debug.LogException(ex, $"Failed to set value for field '{field.Name}' on '{target.GetType().Name}'.");
+                }
+            }
+
+            return changed;
+        }
+
         private static void NotifyInspectorValueEdited(object? valueOwner)
         {
             XRAsset? asset = null;
@@ -2990,6 +3138,739 @@ public static partial class EditorImGuiUI
             ImGui.PopID();
         }
 
+        private static void DrawSimpleFieldRow(InspectorTargetSet targets, FieldInfo field, IReadOnlyList<object?> values, string displayName, string? description, bool valueRetrievalFailed, bool canWrite)
+        {
+            using var profilerScope = Engine.Profiler.Start("UI.DrawSimpleFieldRow");
+            ImGui.TableNextRow();
+            ImGui.TableSetColumnIndex(0);
+            ImGui.TextUnformatted(displayName);
+            if (!string.IsNullOrEmpty(description) && ImGui.IsItemHovered())
+                ImGui.SetTooltip(description);
+            ImGui.TableSetColumnIndex(1);
+
+            ImGui.PushID(field.Name);
+
+            if (valueRetrievalFailed)
+            {
+                ImGui.TextDisabled("<error>");
+                ImGui.PopID();
+                return;
+            }
+
+            Type fieldType = field.FieldType;
+            Type? underlyingType = Nullable.GetUnderlyingType(fieldType);
+            bool isNullable = underlyingType is not null || !fieldType.IsValueType;
+            Type effectiveType = underlyingType ?? fieldType;
+
+            object? firstValue = values.Count > 0 ? values[0] : null;
+            bool hasMixedValues = values.Skip(1).Any(v => !Equals(v, firstValue));
+            object? currentValue = firstValue;
+            bool isCurrentlyNull = currentValue is null;
+
+            // Asset reference fields
+            if (typeof(XRAsset).IsAssignableFrom(effectiveType))
+            {
+                XRAsset? currentAsset = firstValue as XRAsset;
+                Type declaredAssetType = effectiveType;
+
+                bool allowClear = canWrite && isNullable;
+                bool allowCreateReplace = canWrite;
+
+                if (!DrawAssetFieldForCollection(field.Name, declaredAssetType, currentAsset, selected =>
+                {
+                    try
+                    {
+                        foreach (var target in targets.Targets)
+                            field.SetValue(target, selected);
+                        NotifyInspectorValueEdited(targets);
+                    }
+                    catch (Exception ex)
+                    {
+                        Debug.LogException(ex, $"Failed to set asset value for field '{field.Name}'.");
+                    }
+                }, allowClear: allowClear, allowCreateOrReplace: allowCreateReplace))
+                    ImGui.TextDisabled("Asset editor unavailable for this type.");
+
+                ImGui.PopID();
+                return;
+            }
+
+            bool handled = false;
+            bool Apply(object? newValue)
+            {
+                if (!TryApplyInspectorValue(targets, field, values, newValue))
+                    return false;
+                currentValue = newValue;
+                isCurrentlyNull = newValue is null;
+                hasMixedValues = false;
+                return true;
+            }
+
+            using (new ImGuiDisabledScope(!canWrite))
+            {
+                if (hasMixedValues)
+                    ImGui.SetNextItemWidth(-1f);
+
+                handled = DrawInlineValueEditor(effectiveType, canWrite, ref currentValue, ref isCurrentlyNull, Apply, "##Value");
+
+                if (!handled)
+                {
+                    if (currentValue is null)
+                        ImGui.TextDisabled("<null>");
+                    else
+                        ImGui.TextUnformatted(FormatSettingValue(currentValue));
+                }
+            }
+
+            if (isNullable && canWrite)
+            {
+                if (isCurrentlyNull)
+                {
+                    if (TryGetDefaultValue(effectiveType, out var defaultValue))
+                    {
+                        ImGui.SameLine();
+                        if (ImGui.SmallButton("Set"))
+                            Apply(defaultValue);
+                    }
+                }
+                else
+                {
+                    ImGui.SameLine();
+                    if (ImGui.SmallButton("Clear"))
+                        Apply(null);
+                }
+            }
+
+            ImGui.PopID();
+        }
+
+        private static void DrawNullComplexField(object owner, FieldInfo field, string displayName, string? description, bool canWrite)
+        {
+            Type fieldType = field.FieldType;
+            Type effectiveType = Nullable.GetUnderlyingType(fieldType) ?? fieldType;
+            bool isNullable = Nullable.GetUnderlyingType(fieldType) is not null || !fieldType.IsValueType;
+
+            ImGui.PushID(field.Name);
+
+            ImGui.TextUnformatted($"{displayName}:");
+            if (!string.IsNullOrEmpty(description) && ImGui.IsItemHovered())
+                ImGui.SetTooltip(description);
+
+            ImGui.SameLine();
+            ImGui.TextDisabled("<null>");
+
+            if (canWrite && isNullable)
+            {
+                ImGui.SameLine();
+                if (ImGui.SmallButton("Create"))
+                {
+                    try
+                    {
+                        object? instance = Activator.CreateInstance(effectiveType);
+                        if (instance is not null)
+                        {
+                            field.SetValue(owner, instance);
+                            NotifyInspectorValueEdited(owner);
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        Debug.LogException(ex, $"Failed to create and set instance of '{effectiveType.FullName}' for field '{field.Name}'.");
+                    }
+                }
+            }
+
+            ImGui.PopID();
+        }
+
+        private static void DrawComplexFieldObject(object owner, FieldInfo field, object value, string label, string? description, HashSet<object> visited)
+        {
+            using var profilerScope = Engine.Profiler.Start("UI.DrawComplexFieldObject");
+            if (!visited.Add(value))
+            {
+                ImGui.TextUnformatted($"{label}: <circular reference>");
+                return;
+            }
+
+            ImGui.PushID(field.Name);
+            string treeLabel = $"{label} ({value.GetType().Name})";
+            bool open = ImGui.TreeNodeEx(treeLabel, ImGuiTreeNodeFlags.None);
+            if (!string.IsNullOrEmpty(description) && ImGui.IsItemHovered())
+                ImGui.SetTooltip(description);
+
+            if (open)
+            {
+                DrawSettingsProperties(new InspectorTargetSet(new[] { value }, value.GetType()), visited);
+                ImGui.TreePop();
+            }
+
+            ImGui.PopID();
+            visited.Remove(value);
+        }
+
+        private static bool TryDrawXREventMember(object owner, InspectorMemberRow row, object? currentValue, HashSet<object> visited)
+        {
+            PropertyInfo? property = row.Property?.Property;
+            FieldInfo? field = row.Field?.Field;
+
+            Type declaredType = property?.PropertyType ?? field?.FieldType ?? typeof(object);
+            if (!IsXREventType(declaredType))
+                return false;
+
+            bool canWrite = property is not null
+                ? (property.CanWrite && property.SetMethod?.IsPublic == true)
+                : (row.Field?.CanWrite ?? false);
+
+            ImGui.PushID(row.MemberName);
+
+            object? value = currentValue;
+            if (value is null)
+            {
+                ImGui.TextUnformatted($"{row.DisplayName}:");
+                if (!string.IsNullOrEmpty(row.Description) && ImGui.IsItemHovered())
+                    ImGui.SetTooltip(row.Description);
+
+                ImGui.SameLine();
+                ImGui.TextDisabled("<null>");
+
+                if (canWrite)
+                {
+                    ImGui.SameLine();
+                    if (ImGui.SmallButton("Create"))
+                    {
+                        try
+                        {
+                            object? instance = Activator.CreateInstance(declaredType);
+                            if (instance is not null)
+                            {
+                                if (property is not null)
+                                    property.SetValue(owner, instance);
+                                else
+                                    field!.SetValue(owner, instance);
+
+                                NotifyInspectorValueEdited(owner);
+                                value = instance;
+                            }
+                        }
+                        catch (Exception ex)
+                        {
+                            Debug.LogException(ex, $"Failed to create XREvent instance for '{row.MemberName}'.");
+                        }
+                    }
+                }
+
+                ImGui.PopID();
+                return true;
+            }
+
+            string typeLabel = declaredType == typeof(XREvent)
+                ? "XREvent"
+                : $"XREvent<{declaredType.GetGenericArguments()[0].Name}>";
+
+            string treeLabel = $"{row.DisplayName} ({typeLabel})";
+
+            bool open;
+            if (ImGui.BeginTable("XREventHeader", 2, ImGuiTableFlags.SizingStretchProp | ImGuiTableFlags.NoSavedSettings))
+            {
+                ImGui.TableSetupColumn("Label", ImGuiTableColumnFlags.WidthStretch, 1f);
+                ImGui.TableSetupColumn("Actions", ImGuiTableColumnFlags.WidthFixed, 0f);
+                ImGui.TableNextRow();
+
+                ImGui.TableSetColumnIndex(0);
+                open = ImGui.TreeNodeEx(treeLabel, ImGuiTreeNodeFlags.SpanAvailWidth);
+                if (!string.IsNullOrEmpty(row.Description) && ImGui.IsItemHovered())
+                    ImGui.SetTooltip(row.Description);
+
+                ImGui.TableSetColumnIndex(1);
+                bool isEmpty = IsXREventEmpty(value);
+                if (canWrite)
+                {
+                    using (new ImGuiDisabledScope(!isEmpty))
+                    {
+                        if (ImGui.SmallButton("Set Null"))
+                        {
+                            if (property is not null)
+                                property.SetValue(owner, null);
+                            else
+                                field!.SetValue(owner, null);
+
+                            NotifyInspectorValueEdited(owner);
+
+                            if (open)
+                                ImGui.TreePop();
+
+                            ImGui.EndTable();
+                            ImGui.PopID();
+                            return true;
+                        }
+                    }
+                }
+
+                ImGui.EndTable();
+            }
+            else
+            {
+                open = ImGui.TreeNodeEx(treeLabel, ImGuiTreeNodeFlags.SpanAvailWidth);
+                if (!string.IsNullOrEmpty(row.Description) && ImGui.IsItemHovered())
+                    ImGui.SetTooltip(row.Description);
+            }
+
+            if (open)
+            {
+                DrawXREventInspector(owner, value, declaredType);
+                ImGui.TreePop();
+            }
+
+            ImGui.PopID();
+            return true;
+        }
+
+        private static bool IsXREventType(Type t)
+            => t == typeof(XREvent)
+            || (t.IsGenericType && t.GetGenericTypeDefinition() == typeof(XREvent<>));
+
+        private static bool IsXREventEmpty(object eventInstance)
+        {
+            try
+            {
+                Type t = eventInstance.GetType();
+
+                int count = 0;
+                var countProp = t.GetProperty("Count", BindingFlags.Public | BindingFlags.Instance);
+                if (countProp?.PropertyType == typeof(int))
+                    count = (int)(countProp.GetValue(eventInstance) ?? 0);
+                if (count != 0)
+                    return false;
+
+                bool hasPendingAdds = false;
+                var pendingAddsProp = t.GetProperty("HasPendingAdds", BindingFlags.Public | BindingFlags.Instance);
+                if (pendingAddsProp?.PropertyType == typeof(bool))
+                    hasPendingAdds = (bool)(pendingAddsProp.GetValue(eventInstance) ?? false);
+                if (hasPendingAdds)
+                    return false;
+
+                bool hasPendingRemoves = false;
+                var pendingRemovesProp = t.GetProperty("HasPendingRemoves", BindingFlags.Public | BindingFlags.Instance);
+                if (pendingRemovesProp?.PropertyType == typeof(bool))
+                    hasPendingRemoves = (bool)(pendingRemovesProp.GetValue(eventInstance) ?? false);
+                if (hasPendingRemoves)
+                    return false;
+
+                var calls = GetPersistentCallsOrNull(eventInstance);
+                return calls is null || calls.Count == 0;
+            }
+            catch
+            {
+                return false;
+            }
+        }
+
+        private readonly struct EventSignatureOption
+        {
+            public EventSignatureOption(Type[] paramTypes, bool tupleExpanded)
+            {
+                ParamTypes = paramTypes;
+                TupleExpanded = tupleExpanded;
+            }
+
+            public Type[] ParamTypes { get; }
+            public bool TupleExpanded { get; }
+        }
+
+        private sealed class EventMethodOption
+        {
+            public required XRObjectBase TargetObject { get; init; }
+            public required string GroupLabel { get; init; }
+            public required MethodInfo Method { get; init; }
+            public required EventSignatureOption Signature { get; init; }
+
+            public string DisplayLabel
+                => FormatMethodLabel(Method);
+        }
+
+        private static void DrawXREventInspector(object owner, object eventInstance, Type declaredEventType)
+        {
+            ImGui.PushID("XREventPersistentCalls");
+
+            var calls = GetPersistentCallsOrNull(eventInstance);
+            int callCount = calls?.Count ?? 0;
+
+            if (ImGui.SmallButton("Add Callback"))
+            {
+                calls = GetOrCreatePersistentCalls(eventInstance, owner);
+                calls.Add(new XRPersistentCall());
+                NotifyInspectorValueEdited(owner);
+                callCount = calls.Count;
+            }
+
+            ImGui.SameLine();
+            ImGui.TextDisabled(callCount == 1 ? "1 callback" : $"{callCount} callbacks");
+
+            if (calls is null || calls.Count == 0)
+            {
+                ImGui.PopID();
+                return;
+            }
+
+            var signatureOptions = GetEventSignatureOptions(declaredEventType);
+
+            const ImGuiTableFlags tableFlags = ImGuiTableFlags.RowBg
+                | ImGuiTableFlags.BordersInnerV
+                | ImGuiTableFlags.SizingStretchProp;
+
+            if (ImGui.BeginTable("CallbacksTable", 3, tableFlags))
+            {
+                ImGui.TableSetupColumn("Node", ImGuiTableColumnFlags.WidthStretch, 0.45f);
+                ImGui.TableSetupColumn("Method", ImGuiTableColumnFlags.WidthStretch, 0.50f);
+                ImGui.TableSetupColumn("", ImGuiTableColumnFlags.WidthFixed, 32f);
+                ImGui.TableHeadersRow();
+
+                XRWorldInstance? world = (owner as XRComponent)?.SceneNode?.World
+                    ?? (owner as SceneNode)?.World
+                    ?? Selection.LastSceneNode?.World;
+
+                for (int i = 0; i < calls.Count; i++)
+                {
+                    var call = calls[i];
+                    ImGui.PushID(i);
+
+                    ImGui.TableNextRow();
+
+                    ImGui.TableSetColumnIndex(0);
+                    DrawPersistentCallNodePickerButton(owner, call, world);
+
+                    ImGui.TableSetColumnIndex(1);
+                    DrawPersistentCallMethodCombo(owner, call, signatureOptions);
+
+                    ImGui.TableSetColumnIndex(2);
+                    float removeButtonSize = ImGui.GetFrameHeight();
+                    if (ImGui.Button("X", new Vector2(removeButtonSize, removeButtonSize)))
+                    {
+                        calls.RemoveAt(i);
+                        NotifyInspectorValueEdited(owner);
+                        ImGui.PopID();
+                        i--;
+                        continue;
+                    }
+
+                    ImGui.PopID();
+                }
+
+                ImGui.EndTable();
+            }
+
+            ImGui.PopID();
+        }
+
+        private static List<XRPersistentCall>? GetPersistentCallsOrNull(object eventInstance)
+        {
+            var prop = eventInstance.GetType().GetProperty("PersistentCalls", BindingFlags.Public | BindingFlags.Instance);
+            return prop?.GetValue(eventInstance) as List<XRPersistentCall>;
+        }
+
+        private static List<XRPersistentCall> GetOrCreatePersistentCalls(object eventInstance, object owner)
+        {
+            var prop = eventInstance.GetType().GetProperty("PersistentCalls", BindingFlags.Public | BindingFlags.Instance);
+            var calls = prop?.GetValue(eventInstance) as List<XRPersistentCall>;
+            if (calls is not null)
+                return calls;
+
+            calls = new List<XRPersistentCall>();
+            prop?.SetValue(eventInstance, calls);
+            NotifyInspectorValueEdited(owner);
+            return calls;
+        }
+
+        private static EventSignatureOption[] GetEventSignatureOptions(Type declaredEventType)
+        {
+            if (declaredEventType == typeof(XREvent))
+                return [new EventSignatureOption(Array.Empty<Type>(), tupleExpanded: false)];
+
+            Type payloadType = declaredEventType.GetGenericArguments()[0];
+            var options = new List<EventSignatureOption>
+            {
+                new EventSignatureOption([payloadType], tupleExpanded: false)
+            };
+
+            if (TryGetValueTupleElementTypes(payloadType, out var tupleTypes) && tupleTypes.Length > 0)
+                options.Add(new EventSignatureOption(tupleTypes, tupleExpanded: true));
+
+            return options.ToArray();
+        }
+
+        private static void DrawPersistentCallNodePickerButton(object owner, XRPersistentCall call, XRWorldInstance? world)
+        {
+            SceneNode? selectedNode = ResolveSceneNode(call.NodeId);
+            string nodeLabel = selectedNode?.Name ?? (call.NodeId == Guid.Empty ? "<Select Node>" : "<Missing Node>");
+
+            string nodePopup = "SelectNodePopup";
+            ImGui.SetNextItemWidth(-1f);
+            if (ImGui.Button(nodeLabel, new Vector2(-1f, 0f)))
+                ImGui.OpenPopup(nodePopup);
+
+            if (ImGui.BeginPopup(nodePopup))
+            {
+                if (world is null)
+                {
+                    ImGui.TextDisabled("No active world available.");
+                }
+                else
+                {
+                    DrawSceneNodePicker(world, node =>
+                    {
+                        call.NodeId = node.ID;
+                        call.TargetObjectId = Guid.Empty;
+                        call.MethodName = null;
+                        call.ParameterTypeNames = null;
+                        call.UseTupleExpansion = false;
+                        NotifyInspectorValueEdited(owner);
+                    });
+                }
+
+                ImGui.EndPopup();
+            }
+        }
+
+        private static void DrawPersistentCallMethodCombo(object owner, XRPersistentCall call, EventSignatureOption[] signatureOptions)
+        {
+            SceneNode? selectedNode = ResolveSceneNode(call.NodeId);
+
+            var methodOptions = selectedNode is null
+                ? new List<EventMethodOption>()
+                : BuildEventMethodOptions(selectedNode, signatureOptions);
+
+            string preview = GetPersistentCallPreview(call);
+            ImGui.SetNextItemWidth(-1f);
+            if (ImGui.BeginCombo("##Method", preview, ImGuiComboFlags.HeightLarge))
+            {
+                if (ImGui.SmallButton("Clear"))
+                {
+                    call.TargetObjectId = Guid.Empty;
+                    call.MethodName = null;
+                    call.ParameterTypeNames = null;
+                    call.UseTupleExpansion = false;
+                    NotifyInspectorValueEdited(owner);
+                }
+
+                ImGui.Separator();
+
+                if (methodOptions.Count == 0)
+                {
+                    ImGui.TextDisabled(selectedNode is null ? "Select a node to choose methods." : "No compatible methods found.");
+                }
+                else
+                {
+                    foreach (var group in methodOptions.GroupBy(m => m.GroupLabel, StringComparer.Ordinal))
+                    {
+                        ImGui.Selectable(group.Key, false, ImGuiSelectableFlags.Disabled);
+                        foreach (var opt in group)
+                        {
+                            bool selected = IsSamePersistentCall(call, opt);
+                            string uniqueId = $"{opt.TargetObject.ID}:{opt.Method.MetadataToken}:{opt.Signature.TupleExpanded}";
+                            if (ImGui.Selectable($"    {opt.DisplayLabel}##{uniqueId}", selected))
+                            {
+                                call.TargetObjectId = opt.TargetObject.ID;
+                                call.MethodName = opt.Method.Name;
+                                call.ParameterTypeNames = opt.Method.GetParameters().Select(p => p.ParameterType.AssemblyQualifiedName ?? p.ParameterType.FullName ?? p.ParameterType.Name).ToArray();
+                                call.UseTupleExpansion = opt.Signature.TupleExpanded;
+                                NotifyInspectorValueEdited(owner);
+                            }
+                        }
+
+                        ImGui.Separator();
+                    }
+                }
+
+                ImGui.EndCombo();
+            }
+        }
+
+        private static bool IsSamePersistentCall(XRPersistentCall call, EventMethodOption opt)
+        {
+            if (call.TargetObjectId != opt.TargetObject.ID)
+                return false;
+            if (!string.Equals(call.MethodName, opt.Method.Name, StringComparison.Ordinal))
+                return false;
+            if (call.UseTupleExpansion != opt.Signature.TupleExpanded)
+                return false;
+            return true;
+        }
+
+        private static string GetPersistentCallPreview(XRPersistentCall call)
+        {
+            if (call.TargetObjectId == Guid.Empty || string.IsNullOrWhiteSpace(call.MethodName))
+                return "<Not Set>";
+
+            if (!XRObjectBase.ObjectsCache.TryGetValue(call.TargetObjectId, out var target))
+                return $"<Missing Target>.{call.MethodName}";
+
+            string typeName = target.GetType().Name;
+            return $"{typeName}.{call.MethodName}";
+        }
+
+        private static SceneNode? ResolveSceneNode(Guid id)
+        {
+            if (id == Guid.Empty)
+                return null;
+            return XRObjectBase.ObjectsCache.TryGetValue(id, out var obj) ? obj as SceneNode : null;
+        }
+
+        private static void DrawSceneNodePicker(XRWorldInstance world, Action<SceneNode> onSelected)
+        {
+            ImGui.TextDisabled("Select a Scene Node:");
+            ImGui.Separator();
+
+            foreach (var root in world.RootNodes)
+            {
+                if (root is null)
+                    continue;
+                DrawSceneNodePickerTree(root, onSelected);
+            }
+        }
+
+        private static void DrawSceneNodePickerTree(SceneNode node, Action<SceneNode> onSelected)
+        {
+            ImGui.PushID(node.ID.ToString());
+
+            var children = node.Transform.Children;
+            bool hasChildren = children is not null && children.Count > 0;
+            ImGuiTreeNodeFlags flags = hasChildren ? ImGuiTreeNodeFlags.OpenOnArrow : (ImGuiTreeNodeFlags.Leaf | ImGuiTreeNodeFlags.NoTreePushOnOpen);
+
+            bool open = ImGui.TreeNodeEx("##Node", flags);
+            ImGui.SameLine();
+            if (ImGui.Selectable(node.Name ?? SceneNode.DefaultName))
+            {
+                onSelected(node);
+                ImGui.CloseCurrentPopup();
+                if (open && hasChildren)
+                    ImGui.TreePop();
+                ImGui.PopID();
+                return;
+            }
+
+            if (hasChildren && open)
+            {
+                var snapshot = children.ToArray();
+                foreach (var child in snapshot)
+                {
+                    if (child?.SceneNode is SceneNode childNode)
+                        DrawSceneNodePickerTree(childNode, onSelected);
+                }
+                ImGui.TreePop();
+            }
+
+            ImGui.PopID();
+        }
+
+        private static List<EventMethodOption> BuildEventMethodOptions(SceneNode node, EventSignatureOption[] signatureOptions)
+        {
+            var results = new List<EventMethodOption>();
+
+            // SceneNode methods
+            results.AddRange(GetCompatibleMethods(node, "SceneNode", signatureOptions));
+
+            // Component methods grouped by component
+            foreach (var comp in node.Components)
+            {
+                if (comp is null)
+                    continue;
+                results.AddRange(GetCompatibleMethods(comp, comp.GetType().Name, signatureOptions));
+            }
+
+            // Stable ordering: group then method name
+            return results
+                .OrderBy(r => r.GroupLabel, StringComparer.OrdinalIgnoreCase)
+                .ThenBy(r => r.Method.Name, StringComparer.OrdinalIgnoreCase)
+                .ToList();
+        }
+
+        private static IEnumerable<EventMethodOption> GetCompatibleMethods(XRObjectBase target, string groupLabel, EventSignatureOption[] signatureOptions)
+        {
+            const BindingFlags flags = BindingFlags.Public | BindingFlags.Instance;
+            var methods = target.GetType().GetMethods(flags)
+                .Where(m => m.ReturnType == typeof(void))
+                .Where(m => !m.IsSpecialName)
+                .Where(m => !m.ContainsGenericParameters)
+                .Where(m => m.GetParameters().All(p => !p.IsOut && !p.ParameterType.IsByRef))
+                .ToArray();
+
+            foreach (var method in methods)
+            {
+                var ps = method.GetParameters();
+                foreach (var sig in signatureOptions)
+                {
+                    if (ps.Length != sig.ParamTypes.Length)
+                        continue;
+
+                    bool match = true;
+                    for (int i = 0; i < ps.Length; i++)
+                    {
+                        if (!ps[i].ParameterType.IsAssignableFrom(sig.ParamTypes[i]))
+                        {
+                            match = false;
+                            break;
+                        }
+                    }
+
+                    if (match)
+                    {
+                        yield return new EventMethodOption
+                        {
+                            TargetObject = target,
+                            GroupLabel = groupLabel,
+                            Method = method,
+                            Signature = sig
+                        };
+                    }
+                }
+            }
+        }
+
+        private static bool TryGetValueTupleElementTypes(Type t, out Type[] elementTypes)
+        {
+            elementTypes = Array.Empty<Type>();
+            if (!IsValueTupleType(t))
+                return false;
+
+            var list = new List<Type>();
+            FlattenValueTupleTypes(t, list);
+            elementTypes = list.ToArray();
+            return elementTypes.Length > 0;
+        }
+
+        private static bool IsValueTupleType(Type t)
+            => t.IsValueType
+            && t.IsGenericType
+            && (t.FullName?.StartsWith("System.ValueTuple`", StringComparison.Ordinal) ?? false);
+
+        private static void FlattenValueTupleTypes(Type tupleType, List<Type> dest)
+        {
+            var args = tupleType.GetGenericArguments();
+            if (args.Length == 0)
+                return;
+
+            // ValueTuple can nest in the 8th parameter (TRest)
+            if (args.Length == 8 && IsValueTupleType(args[7]))
+            {
+                for (int i = 0; i < 7; i++)
+                    dest.Add(args[i]);
+                FlattenValueTupleTypes(args[7], dest);
+                return;
+            }
+
+            dest.AddRange(args);
+        }
+
+        private static string FormatMethodLabel(MethodInfo method)
+        {
+            var ps = method.GetParameters();
+            if (ps.Length == 0)
+                return method.Name + "()";
+
+            string paramText = string.Join(", ", ps.Select(p => p.ParameterType.Name));
+            return $"{method.Name}({paramText})";
+        }
+
         private static void DrawOverrideableSettingRow(object owner, SettingPropertyDescriptor descriptor, IOverrideableSetting setting)
         {
             Type overrideType = setting.ValueType;
@@ -3277,6 +4158,67 @@ public static partial class EditorImGuiUI
                         if (applyValue(vector))
                         {
                             currentValue = vector;
+                            isCurrentlyNull = false;
+                        }
+                    }
+                }
+                return true;
+            }
+
+            if (effectiveType == typeof(LayerMask))
+            {
+                int maskValue = currentValue is LayerMask mask ? mask.Value : 0;
+                using (new ImGuiDisabledScope(!canWrite))
+                {
+                    ImGui.SetNextItemWidth(-1f);
+                    if (ImGui.InputInt(label, ref maskValue) && canWrite)
+                    {
+                        var newMask = new LayerMask(maskValue);
+                        if (applyValue(newMask))
+                        {
+                            currentValue = newMask;
+                            isCurrentlyNull = false;
+                        }
+                    }
+                    if (ImGui.IsItemHovered())
+                        ImGui.SetTooltip("Layer bitmask. -1 = all layers.");
+                }
+                return true;
+            }
+
+            const ImGuiColorEditFlags ColorPickerFlags = ImGuiColorEditFlags.Float | ImGuiColorEditFlags.HDR | ImGuiColorEditFlags.NoOptions;
+
+            if (effectiveType == typeof(ColorF3))
+            {
+                Vector3 colorVec = currentValue is ColorF3 color ? new(color.R, color.G, color.B) : Vector3.Zero;
+                using (new ImGuiDisabledScope(!canWrite))
+                {
+                    ImGui.SetNextItemWidth(-1f);
+                    if (ImGui.ColorEdit3(label, ref colorVec, ColorPickerFlags) && canWrite)
+                    {
+                        var newColor = new ColorF3(colorVec.X, colorVec.Y, colorVec.Z);
+                        if (applyValue(newColor))
+                        {
+                            currentValue = newColor;
+                            isCurrentlyNull = false;
+                        }
+                    }
+                }
+                return true;
+            }
+
+            if (effectiveType == typeof(ColorF4))
+            {
+                Vector4 colorVec = currentValue is ColorF4 color ? new(color.R, color.G, color.B, color.A) : new Vector4(0f, 0f, 0f, 1f);
+                using (new ImGuiDisabledScope(!canWrite))
+                {
+                    ImGui.SetNextItemWidth(-1f);
+                    if (ImGui.ColorEdit4(label, ref colorVec, ColorPickerFlags) && canWrite)
+                    {
+                        var newColor = new ColorF4(colorVec.X, colorVec.Y, colorVec.Z, colorVec.W);
+                        if (applyValue(newColor))
+                        {
+                            currentValue = newColor;
                             isCurrentlyNull = false;
                         }
                     }
@@ -3783,6 +4725,21 @@ public static partial class EditorImGuiUI
             public string? Description { get; set; }
             public bool IsOverrideable { get; init; }
             public PropertyInfo? PairedBaseProperty { get; set; }
+            public bool Hidden { get; set; }
+
+            public object? Value => Values.Count > 0 ? Values[0] : null;
+        }
+
+        private sealed class SettingFieldDescriptor
+        {
+            public required FieldInfo Field { get; init; }
+            public required List<object?> Values { get; init; }
+            public bool ValueRetrievalFailed { get; init; }
+            public bool IsSimple { get; init; }
+            public string? Category { get; init; }
+            public string DisplayName { get; init; } = string.Empty;
+            public string? Description { get; init; }
+            public bool CanWrite { get; init; }
             public bool Hidden { get; set; }
 
             public object? Value => Values.Count > 0 ? Values[0] : null;

@@ -5,19 +5,6 @@ using XREngine.Core.Files;
 
 namespace XREngine
 {
-    public enum EBuildConfiguration
-    {
-        Debug,
-        Development,
-        Release
-    }
-
-    public enum EBuildPlatform
-    {
-        AnyCPU,
-        Windows64
-    }
-
     [Serializable]
     [MemoryPackable]
     public partial class BuildSettings : XRAsset

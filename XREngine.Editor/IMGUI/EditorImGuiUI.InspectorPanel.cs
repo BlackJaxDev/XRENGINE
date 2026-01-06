@@ -4,10 +4,12 @@ using System.ComponentModel;
 using System.Linq;
 using System.Numerics;
 using System.Reflection;
+using System.Text;
 using ImGuiNET;
 using XREngine;
 using XREngine.Animation;
 using XREngine.Components;
+using XREngine.Core.Reflection.Attributes;
 using XREngine.Core.Files;
 using XREngine.Editor.AssetEditors;
 using XREngine.Editor.ComponentEditors;
@@ -21,6 +23,71 @@ namespace XREngine.Editor;
 public static partial class EditorImGuiUI
 {
     private static string _inspectorPropertySearch = string.Empty;
+
+        private static XRComponent? _componentPendingRename;
+        private static bool _componentRenameInputFocusRequested;
+        private static readonly byte[] _componentRenameBuffer = new byte[256];
+
+        private static void BeginComponentRename(XRComponent component)
+        {
+            _componentPendingRename = component;
+            _componentRenameInputFocusRequested = true;
+            PopulateComponentRenameBuffer(component.Name ?? string.Empty);
+        }
+
+        private static void CancelComponentRename()
+        {
+            _componentPendingRename = null;
+            _componentRenameInputFocusRequested = false;
+            Array.Clear(_componentRenameBuffer, 0, _componentRenameBuffer.Length);
+        }
+
+        private static void ApplyComponentRename()
+        {
+            if (_componentPendingRename is null)
+                return;
+
+            string newName = ExtractStringFromComponentRenameBuffer();
+            newName = newName.Trim();
+            _componentPendingRename.Name = string.IsNullOrWhiteSpace(newName) ? null : newName;
+            CancelComponentRename();
+        }
+
+        private static void PopulateComponentRenameBuffer(string source)
+        {
+            Array.Clear(_componentRenameBuffer, 0, _componentRenameBuffer.Length);
+            if (string.IsNullOrEmpty(source))
+                return;
+
+            int written = Encoding.UTF8.GetBytes(source, 0, source.Length, _componentRenameBuffer, 0);
+            if (written < _componentRenameBuffer.Length)
+                _componentRenameBuffer[written] = 0;
+        }
+
+        private static string ExtractStringFromComponentRenameBuffer()
+        {
+            int length = Array.IndexOf(_componentRenameBuffer, (byte)0);
+            if (length < 0)
+                length = _componentRenameBuffer.Length;
+
+            return Encoding.UTF8.GetString(_componentRenameBuffer, 0, length);
+        }
+
+        private readonly record struct ComponentInspectorLabels(string? Header, string? Footer);
+        private static readonly Dictionary<Type, ComponentInspectorLabels> _componentInspectorLabelsCache = new();
+
+        private static ComponentInspectorLabels GetComponentInspectorLabels(Type componentType)
+        {
+            if (_componentInspectorLabelsCache.TryGetValue(componentType, out var cached))
+                return cached;
+
+            string? header = componentType.GetCustomAttribute<InspectorHeaderLabelAttribute>(true)?.Text;
+            string? footer = componentType.GetCustomAttribute<InspectorFooterLabelAttribute>(true)?.Text;
+
+            var labels = new ComponentInspectorLabels(header, footer);
+            _componentInspectorLabelsCache[componentType] = labels;
+            return labels;
+        }
 
         private static partial void BeginAddComponentForHierarchyNode(SceneNode node)
         {
@@ -666,34 +733,131 @@ public static partial class EditorImGuiUI
                 int componentHash = component.GetHashCode();
                 ImGui.PushID(componentHash);
 
-                float removeButtonWidth = ImGui.CalcTextSize("Remove").X + ImGui.GetStyle().FramePadding.X * 2f;
-                float availableWidth = ImGui.GetContentRegionAvail().X;
-                float firstColumnWidth = MathF.Max(0f, availableWidth - removeButtonWidth - ImGui.GetStyle().ItemSpacing.X);
+                string typeName = component.GetType().Name;
+                string? componentName = string.IsNullOrWhiteSpace(component.Name) ? null : component.Name;
+                string fullDisplayLabel = componentName is null ? typeName : $"{componentName} ({typeName})";
+                string renamePopupId = $"ComponentRenamePopup##{componentHash}";
 
-                ImGui.Columns(2, null, false);
-                ImGui.SetColumnWidth(0, firstColumnWidth);
-                ImGui.SetColumnWidth(1, removeButtonWidth);
+                bool renameRequested = false;
 
-                string headerLabel = $"{component.GetType().Name}##Component{componentHash}";
-                ImGuiTreeNodeFlags headerFlags = ImGuiTreeNodeFlags.DefaultOpen | ImGuiTreeNodeFlags.SpanAvailWidth;
-                bool open = ImGui.CollapsingHeader(headerLabel, headerFlags);
-
-                ImGui.NextColumn();
-                using (new ImGuiDisabledScope(component.IsDestroyed))
+                bool open = false;
+                const ImGuiTableFlags headerRowFlags = ImGuiTableFlags.SizingFixedFit | ImGuiTableFlags.NoSavedSettings;
+                if (ImGui.BeginTable("ComponentHeaderRow", 4, headerRowFlags))
                 {
-                    if (ImGui.SmallButton("Remove"))
+                    ImGui.TableSetupColumn("Header", ImGuiTableColumnFlags.WidthStretch);
+                    ImGui.TableSetupColumn("Active", ImGuiTableColumnFlags.WidthFixed);
+                    ImGui.TableSetupColumn("Rename", ImGuiTableColumnFlags.WidthFixed);
+                    ImGui.TableSetupColumn("Remove", ImGuiTableColumnFlags.WidthFixed);
+                    ImGui.TableNextRow();
+
+                    ImGui.TableSetColumnIndex(0);
+                    float headerAvail = ImGui.GetContentRegionAvail().X;
+                    string visibleLabel = fullDisplayLabel;
+                    if (componentName is not null)
                     {
-                        componentsToRemove ??= new List<XRComponent>();
-                        componentsToRemove.Add(component);
+                        float fullWidth = ImGui.CalcTextSize(fullDisplayLabel).X;
+                        if (fullWidth > headerAvail)
+                            visibleLabel = componentName;
                     }
+
+                    string headerLabel = $"{visibleLabel}##Component{componentHash}";
+                    ImGuiTreeNodeFlags headerFlags = ImGuiTreeNodeFlags.DefaultOpen;
+                    open = ImGui.CollapsingHeader(headerLabel, headerFlags);
+                    if (ImGui.IsItemHovered())
+                        ImGui.SetTooltip(fullDisplayLabel);
+
+                    ImGui.TableSetColumnIndex(1);
+                    using (new ImGuiDisabledScope(component.IsDestroyed))
+                    {
+                        bool active = component.IsActive;
+                        if (ImGui.Checkbox("##ComponentActive", ref active))
+                            component.IsActive = active;
+                        if (ImGui.IsItemHovered())
+                            ImGui.SetTooltip("Toggle component active state");
+                    }
+
+                    ImGui.TableSetColumnIndex(2);
+                    using (new ImGuiDisabledScope(component.IsDestroyed))
+                    {
+                        if (ImGui.SmallButton("Rename"))
+                        {
+                            renameRequested = true;
+                        }
+                    }
+
+                    ImGui.TableSetColumnIndex(3);
+                    using (new ImGuiDisabledScope(component.IsDestroyed))
+                    {
+                        if (ImGui.SmallButton("Remove"))
+                        {
+                            componentsToRemove ??= new List<XRComponent>();
+                            componentsToRemove.Add(component);
+                        }
+                    }
+
+                    ImGui.EndTable();
                 }
 
-                ImGui.NextColumn();
-                ImGui.Columns(1);
+                if (renameRequested)
+                {
+                    BeginComponentRename(component);
+                    ImGui.OpenPopup(renamePopupId);
+                }
+
+                if (ReferenceEquals(_componentPendingRename, component) && ImGui.BeginPopup(renamePopupId))
+                {
+                    ImGui.TextUnformatted("Rename Component");
+                    ImGui.Spacing();
+
+                    if (_componentRenameInputFocusRequested)
+                    {
+                        ImGui.SetKeyboardFocusHere();
+                        _componentRenameInputFocusRequested = false;
+                    }
+
+                    bool submitted = ImGui.InputText("##RenameComponent", _componentRenameBuffer, (uint)_componentRenameBuffer.Length,
+                        ImGuiInputTextFlags.EnterReturnsTrue | ImGuiInputTextFlags.AutoSelectAll);
+                    bool cancel = ImGui.IsKeyPressed(ImGuiKey.Escape);
+
+                    ImGui.Spacing();
+                    bool okClicked = ImGui.Button("OK");
+                    ImGui.SameLine();
+                    bool cancelClicked = ImGui.Button("Cancel");
+
+                    if (cancel || cancelClicked)
+                    {
+                        CancelComponentRename();
+                        ImGui.CloseCurrentPopup();
+                    }
+                    else if (submitted || okClicked)
+                    {
+                        ApplyComponentRename();
+                        ImGui.CloseCurrentPopup();
+                    }
+
+                    ImGui.EndPopup();
+                }
 
                 if (open)
                 {
+                    var labels = GetComponentInspectorLabels(component.GetType());
+                    ImGui.Indent();
+
+                    if (!string.IsNullOrWhiteSpace(labels.Header))
+                    {
+                        ImGui.TextWrapped(labels.Header);
+                        ImGui.Spacing();
+                    }
+
                     DrawComponentInspector(component, visited);
+
+                    if (!string.IsNullOrWhiteSpace(labels.Footer))
+                    {
+                        ImGui.Spacing();
+                        ImGui.TextWrapped(labels.Footer);
+                    }
+
+                    ImGui.Unindent();
                 }
 
                 ImGui.PopID();

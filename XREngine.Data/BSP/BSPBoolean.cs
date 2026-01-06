@@ -15,8 +15,13 @@ namespace XREngine.Data.BSP
             b.ClipTo(a);
             b.Invert();
 
-            a.GetAllTriangles(b.Triangles);
-            return a.Triangles;
+            List<Triangle> bTriangles = [];
+            b.GetAllTriangles(bTriangles);
+            a.Build(bTriangles);
+
+            List<Triangle> result = [];
+            a.GetAllTriangles(result);
+            return result;
         }
 
         public static List<Triangle> Intersect(BSPNode a, BSPNode b)
@@ -25,12 +30,18 @@ namespace XREngine.Data.BSP
             b = b.Clone();
 
             a.Invert();
+            b.ClipTo(a);
+            b.Invert();
             a.ClipTo(b);
             b.ClipTo(a);
+            List<Triangle> bTriangles = [];
+            b.GetAllTriangles(bTriangles);
+            a.Build(bTriangles);
             a.Invert();
 
-            a.GetAllTriangles(b.Triangles);
-            return a.Triangles;
+            List<Triangle> result = [];
+            a.GetAllTriangles(result);
+            return result;
         }
 
         public static List<Triangle> Subtract(BSPNode a, BSPNode b)
@@ -38,13 +49,20 @@ namespace XREngine.Data.BSP
             a = a.Clone();
             b = b.Clone();
 
+            a.Invert();
             a.ClipTo(b);
+            b.ClipTo(a);
             b.Invert();
             b.ClipTo(a);
             b.Invert();
+            List<Triangle> bTriangles = [];
+            b.GetAllTriangles(bTriangles);
+            a.Build(bTriangles);
+            a.Invert();
 
-            a.GetAllTriangles(b.Triangles);
-            return a.Triangles;
+            List<Triangle> result = [];
+            a.GetAllTriangles(result);
+            return result;
         }
 
         public static List<Triangle> XOR(BSPNode a, BSPNode b)

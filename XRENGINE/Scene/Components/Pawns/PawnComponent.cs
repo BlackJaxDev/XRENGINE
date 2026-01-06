@@ -1,4 +1,5 @@
-﻿using System.Numerics;
+﻿using System.ComponentModel;
+using System.Numerics;
 using XREngine.Core;
 using XREngine.Data.Core;
 using XREngine.Data.Geometry;
@@ -37,34 +38,42 @@ namespace XREngine.Components
             set => SetField(ref _controller, value);
         }
 
+        [Browsable(false)]
         public LocalInputInterface? LocalInput => (Controller as LocalPlayerController)?.Input;
         /// <summary>
         /// The local gamepad input device for this pawn.
         /// </summary>
+        [Browsable(false)]
         public BaseGamePad? Gamepad => LocalInput?.Gamepad;
         /// <summary>
         /// The local keyboard input device for this pawn.
         /// </summary>
+        [Browsable(false)]
         public BaseKeyboard? Keyboard => LocalInput?.Keyboard;
         /// <summary>
         /// The local mouse input device for this pawn.
         /// </summary>
+        [Browsable(false)]
         public BaseMouse? Mouse => LocalInput?.Mouse;
         /// <summary>
         /// The position of the cursor on the window in screen coordinates.
         /// </summary>
+        [Browsable(false)]
         public Vector2 CursorPositionScreen => Mouse?.CursorPosition ?? Vector2.Zero;
         /// <summary>
         /// The position of the cursor on the window in viewport-relative coordinates.
         /// </summary>
+        [Browsable(false)]
         public Vector2 CursorPositionViewport => Viewport?.ScreenToViewportCoordinate(CursorPositionScreen) ?? Vector2.Zero;
         /// <summary>
         /// The position of the cursor on the window in viewport-relative internal coordinates.
         /// </summary>
+        [Browsable(false)]
         public Vector2 CursorPositionInternalCoordinates => Viewport?.ViewportToInternalCoordinate(CursorPositionViewport) ?? Vector2.Zero;
         /// <summary>
         /// The position of the cursor in the world, represented as a ray from the camera's NearZ to FarZ.
         /// </summary>
+        [Browsable(false)]
         public Segment CursorPositionWorld => Viewport?.GetWorldSegment(CursorPositionViewport) ?? new Segment(Vector3.Zero, Vector3.Zero);
 
         protected virtual void PostPossess()
@@ -137,27 +146,32 @@ namespace XREngine.Components
         /// <summary>
         /// Casts the controller to a server player controller.
         /// </summary>
+        [Browsable(false)]
         public RemotePlayerController? ServerPlayerController => Controller as RemotePlayerController;
 
         /// <summary>
         /// Casts the controller to a local player controller.
         /// </summary>
+        [Browsable(false)]
         public LocalPlayerController? LocalPlayerController => Controller as LocalPlayerController;
 
         /// <summary>
         /// Casts the controller to a generic player controller.
         /// </summary>
+        [Browsable(false)]
         public PlayerControllerBase? PlayerController => Controller as PlayerControllerBase;
 
         /// <summary>
         /// The viewport of the local player controller that is controlling this pawn.
         /// </summary>
+        [Browsable(false)]
         public XRViewport? Viewport => LocalPlayerController?.Viewport;
 
         private CameraComponent? _camera;
         /// <summary>
         /// Dictates the component controlling the view of this pawn's controller.
         /// </summary>
+        [Description("Dictates the component controlling the view of this pawn's controller.")]
         public CameraComponent? CameraComponent
         {
             get => _camera;
@@ -165,6 +179,10 @@ namespace XREngine.Components
         }
 
         private UICanvasInputComponent? _userInterfaceInput = null;
+        /// <summary>
+        /// The UI canvas input component that is used to route input to user interface canvases.
+        /// </summary>
+        [Description("The UI canvas input component that is used to route input to user interface canvases.")]
         public UICanvasInputComponent? UserInterfaceInput
         {
             get => _userInterfaceInput;
