@@ -66,6 +66,7 @@ public partial class UIEditorComponent : UIComponent
 
     public void RemakeChildren()
     {
+        using var sample = Engine.Profiler.Start("UIEditorComponent.RemakeChildren");
         SceneNode.Transform.Clear();
 
         var splitChild = SceneNode.NewChildWithTransform(out UIDualSplitTransform splitTfm, "EditorRoot");
@@ -87,7 +88,9 @@ public partial class UIEditorComponent : UIComponent
         dockTfm.FixedSizeSecond = 300;
 
         SceneNode hierarchyNode = dockNode.NewChildWithTransform<UIBoundableTransform>(out _, "Hierarchy");
-        hierarchyNode.NewChild<HierarchyPanel>(out var hierarchy);
+        HierarchyPanel hierarchy;
+        using (Engine.Profiler.Start("UIEditorComponent.RemakeChildren.HierarchyPanel"))
+            hierarchyNode.NewChild<HierarchyPanel>(out hierarchy);
         if (World is not null)
             hierarchy.RootNodes = [.. World.RootNodes];
         _hierarchy = hierarchy;

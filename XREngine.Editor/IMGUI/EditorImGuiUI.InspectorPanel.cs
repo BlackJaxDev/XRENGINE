@@ -20,6 +20,8 @@ namespace XREngine.Editor;
 
 public static partial class EditorImGuiUI
 {
+    private static string _inspectorPropertySearch = string.Empty;
+
         private static partial void BeginAddComponentForHierarchyNode(SceneNode node)
         {
             _nodePendingAddComponent = node;
@@ -154,6 +156,10 @@ public static partial class EditorImGuiUI
                 ImGui.End();
                 return;
             }
+
+            ImGui.SetNextItemWidth(-1f);
+            ImGui.InputTextWithHint("##InspectorPropertySearch", "Search properties...", ref _inspectorPropertySearch, 256);
+            ImGui.Spacing();
 
             object? standaloneTarget = _inspectorStandaloneTarget;
             var selectedNode = Selection.SceneNode ?? Selection.LastSceneNode;

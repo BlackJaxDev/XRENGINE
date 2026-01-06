@@ -98,6 +98,8 @@ namespace XREngine.Rendering.UI
         /// </summary>
         public virtual void UpdateLayout()
         {
+            using var sample = Engine.Profiler.Start("UICanvasTransform.UpdateLayout");
+
             //If the layout is not invalidated, or a parent canvas will control its layouting, don't update it as root canvas.
             if (!IsLayoutInvalidated || IsNestedCanvas)
                 return;
@@ -109,14 +111,18 @@ namespace XREngine.Rendering.UI
             IsLayoutInvalidated = false;
             IsUpdatingLayout = true;
             LayoutingStarted?.Invoke(this);
-            
-            var bounds = GetRootCanvasBounds();
-            
+
+            BoundingRectangleF bounds;
+            using (Engine.Profiler.Start("UICanvasTransform.UpdateLayout.GetRootCanvasBounds"))
+                bounds = GetRootCanvasBounds();
+
             // Phase 1: Measure (bottom-up, can skip unchanged subtrees)
-            Measure(bounds.Extents);
-            
+            using (Engine.Profiler.Start("UICanvasTransform.UpdateLayout.Measure"))
+                Measure(bounds.Extents);
+
             // Phase 2: Arrange (top-down, can skip unchanged subtrees)
-            Arrange(bounds);
+            using (Engine.Profiler.Start("UICanvasTransform.UpdateLayout.Arrange"))
+                Arrange(bounds);
             
             IsUpdatingLayout = false;
             LayoutingFinished?.Invoke(this);

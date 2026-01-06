@@ -147,12 +147,16 @@ namespace XREngine.Components
             //If in world/camera space, no screen-space render path will be calling layout, so we do it here.
             if (CanvasTransform.DrawSpace != ECanvasDrawSpace.Screen && IsActive)
             {
-                CanvasTransform.UpdateLayout();
+                using var sample = Engine.Profiler.Start("UICanvasComponent.UpdateLayoutWorldSpace");
+
+                using (Engine.Profiler.Start("UICanvasComponent.UpdateLayoutWorldSpace.UpdateLayout"))
+                    CanvasTransform.UpdateLayout();
                 
                 // For Camera/World space, we need to force immediate render matrix updates
                 // so the octree has correct bounds before collection happens.
                 // The deferred system won't apply changes until SwapBuffers, which is too late.
-                ForceRenderMatrixUpdatesRecursive(CanvasTransform);
+                using (Engine.Profiler.Start("UICanvasComponent.UpdateLayoutWorldSpace.ForceRenderMatrixUpdatesRecursive"))
+                    ForceRenderMatrixUpdatesRecursive(CanvasTransform);
             }
         }
 
@@ -176,12 +180,18 @@ namespace XREngine.Components
             if (!IsActive)
                 return;
 
+            using var sample = Engine.Profiler.Start("UICanvasComponent.CollectVisibleItemsScreenSpace");
+
             //Update the layout if it's invalid.
-            CanvasTransform.UpdateLayout();
+            using (Engine.Profiler.Start("UICanvasComponent.CollectVisibleItemsScreenSpace.UpdateLayout"))
+                CanvasTransform.UpdateLayout();
 
             //Collect the rendered items now that the layout is updated.
             if (_renderPipeline.Pipeline is not null)
+            {
+                using var collectSample = Engine.Profiler.Start("UICanvasComponent.CollectVisibleItemsScreenSpace.CollectRenderedItems");
                 VisualScene2D.CollectRenderedItems(_renderPipeline.MeshRenderCommands, Camera2D, false, null, null, false);
+            }
         }
 
         public UIComponent? FindDeepestComponent(Vector2 normalizedViewportPosition)

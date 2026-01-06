@@ -61,6 +61,7 @@ public static partial class InspectorPropertyEditors
 
         private void UpdateTick()
         {
+            using var sample = Engine.Profiler.Start("InspectorPropertyEditors.DataTransformerBase.UpdateTick");
             if (IsFocused || DateTime.UtcNow - _lastUpdate < UpdateInterval)
                 return; // If the property editor is focused, we don't update the values so the user can edit them without interruption.
 

@@ -297,7 +297,7 @@ public static partial class EditorImGuiUI
         private static partial void DrawInspectorRow(string label, Action drawValue);
         private static partial void DrawTransformInspector(TransformBase transform, HashSet<object> visited);
         private static partial void DrawComponentInspectors(SceneNode node, HashSet<object> visited);
-        private static partial void DrawInspectableObject(object target, string id, HashSet<object> visited);
+        private static partial void DrawInspectableObject(InspectorTargetSet targets, string id, HashSet<object> visited);
         private static partial void DrawComponentInspector(XRComponent component, HashSet<object> visited);
         public static partial void DrawDefaultComponentInspector(XRComponent component, HashSet<object> visited);
         public static partial void DrawDefaultTransformInspector(TransformBase transform, HashSet<object> visited);
