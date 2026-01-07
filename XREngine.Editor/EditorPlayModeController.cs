@@ -99,6 +99,9 @@ public static class EditorPlayModeController
         // Disable transform gizmos
         // TransformTool.Disable(); // TODO: Implement
 
+        // Enable input
+        Engine.Input.SetUIInputCaptured(false);
+
         // Notify UI to update
         PlayModeUIChanged?.Invoke(true);
     }
@@ -126,6 +129,10 @@ public static class EditorPlayModeController
         {
             _editModeSnapshot.Restore();
             Debug.Out("Restored world state from snapshot");
+
+            var world = GetCurrentEditorWorld();
+            if (world is not null && XRWorldInstance.WorldInstances.TryGetValue(world, out var instance))
+                instance.Lights.RebuildCachesFromWorld();
         }
         _editModeSnapshot = null;
 

@@ -597,7 +597,7 @@ public static partial class EditorImGuiUI
                 Engine.Rendering.Settings.ViewportPresentationMode == Engine.Rendering.EngineSettings.EViewportPresentationMode.UseViewportPanel &&
                 _viewportPanelInteracting;
 
-            Engine.Input.SetUIInputCaptured(uiWantsCapture && !allowEngineInputThroughViewportPanel);
+            Engine.Input.SetUIInputCaptured(uiWantsCapture && !allowEngineInputThroughViewportPanel && Engine.PlayMode.State != EPlayModeState.EnteringPlay && !Engine.PlayMode.IsPlaying);
         }
 
         private static void SuppressUnexpectedImGuiDebugWindows()

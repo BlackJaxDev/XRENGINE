@@ -56,36 +56,36 @@ public static partial class EditorImGuiUI
 
                 // Play mode controls
                 ImGui.Spacing();
-                bool isPlaying = Engine.PlayMode.IsPlaying;
-                bool isPaused = Engine.PlayMode.IsPaused;
-                bool isEditing = Engine.PlayMode.IsEditing;
-                bool isTransitioning = Engine.PlayMode.IsTransitioning;
+                    bool isPlaying = EditorState.InPlayMode;
+                    bool isPaused = EditorState.IsPaused;
+                    bool isEditing = EditorState.InEditMode;
+                    bool isTransitioning = EditorState.IsTransitioning;
 
                 ImGui.BeginDisabled(isTransitioning);
                 
                 if (isEditing)
                 {
-                    if (ImGui.Button("▶ Play", new Vector2(80, 0)))
-                        _ = Engine.PlayMode.EnterPlayModeAsync();
+                        if (ImGui.Button("▶ Play", new Vector2(80, 0)))
+                            EditorState.EnterPlayMode();
                 }
                 else if (isPlaying)
                 {
                     if (ImGui.Button("⏸ Pause", new Vector2(80, 0)))
-                        Engine.PlayMode.Pause();
+                            EditorState.Pause();
                     ImGui.SameLine();
                     if (ImGui.Button("⏹ Stop", new Vector2(80, 0)))
-                        _ = Engine.PlayMode.ExitPlayModeAsync();
+                            EditorState.ExitPlayMode();
                 }
                 else if (isPaused)
                 {
                     if (ImGui.Button("▶ Resume", new Vector2(80, 0)))
-                        Engine.PlayMode.Resume();
+                            EditorState.Resume();
                     ImGui.SameLine();
                     if (ImGui.Button("⏹ Stop", new Vector2(80, 0)))
-                        _ = Engine.PlayMode.ExitPlayModeAsync();
+                            EditorState.ExitPlayMode();
                     ImGui.SameLine();
                     if (ImGui.Button("⏭ Step", new Vector2(80, 0)))
-                        Engine.PlayMode.StepFrame();
+                            EditorState.StepFrame();
                 }
                 
                 ImGui.EndDisabled();

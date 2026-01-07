@@ -341,8 +341,12 @@ namespace XREngine.Components
                             World.FramebufferCameras.Remove(this);
                         break;
                     case nameof(UserInterface):
-                        if (UserInterface is not null)
-                            UserInterface.CanvasTransform.CameraSpaceCamera = null;
+                            if (UserInterface is not null)
+                            {
+                                var canvasTransform = UserInterface.TransformAs<UICanvasTransform>(false);
+                                if (canvasTransform is not null)
+                                    canvasTransform.CameraSpaceCamera = null;
+                            }
                         break;
                 }
             }
@@ -374,8 +378,12 @@ namespace XREngine.Components
                 case nameof(UserInterface):
                     if (UserInterface is not null)
                     {
-                        UserInterface.CanvasTransform.SetSize(Camera.Parameters.GetFrustumSizeAtDistance(UserInterface.CanvasTransform.CameraDrawSpaceDistance));
-                        UserInterface.CanvasTransform.CameraSpaceCamera = Camera;
+                        var canvasTransform = UserInterface.TransformAs<UICanvasTransform>(false);
+                        if (canvasTransform is null)
+                            break;
+
+                        canvasTransform.SetSize(Camera.Parameters.GetFrustumSizeAtDistance(canvasTransform.CameraDrawSpaceDistance));
+                        canvasTransform.CameraSpaceCamera = Camera;
                     }
                     break;
                 case nameof(InternalResolutionMode):
@@ -425,19 +433,27 @@ namespace XREngine.Components
 
         private void ViewportResized(XRViewport viewport)
         {
-            if (UserInterface is not null && UserInterface.CanvasTransform.DrawSpace == ECanvasDrawSpace.Screen)
-                UserInterface.CanvasTransform.SetSize(viewport.Region.Size);
+            if (UserInterface is not null)
+            {
+                var canvasTransform = UserInterface.TransformAs<UICanvasTransform>(false);
+                if (canvasTransform is not null && canvasTransform.DrawSpace == ECanvasDrawSpace.Screen)
+                    canvasTransform.SetSize(viewport.Region.Size);
+            }
 
             // Reapply internal resolution settings after viewport resize
             ApplyInternalResolutionToViewport(viewport);
         }
         private void CameraResized(XRCameraParameters parameters)
         {
-            if (UserInterface is null || UserInterface.CanvasTransform.DrawSpace != ECanvasDrawSpace.Camera)
+            if (UserInterface is null)
+                return;
+
+            var canvasTransform = UserInterface.TransformAs<UICanvasTransform>(false);
+            if (canvasTransform is null || canvasTransform.DrawSpace != ECanvasDrawSpace.Camera)
                 return;
 
             //Calculate world-space size of the camera frustum at draw distance
-            UserInterface.CanvasTransform.SetSize(parameters.GetFrustumSizeAtDistance(UserInterface.CanvasTransform.CameraDrawSpaceDistance));
+            canvasTransform.SetSize(parameters.GetFrustumSizeAtDistance(canvasTransform.CameraDrawSpaceDistance));
         }
 
         private void CameraPropertyChanged(object? sender, IXRPropertyChangedEventArgs e)

@@ -47,19 +47,19 @@ namespace XREngine.Scene
         /// <summary>
         /// All spotlights that are not baked and need to be rendered.
         /// </summary>
-        public EventList<SpotLightComponent> DynamicSpotLights { get; } = [];
+        public EventList<SpotLightComponent> DynamicSpotLights { get; } = new() { ThreadSafe = true };
         /// <summary>
         /// All point lights that are not baked and need to be rendered.
         /// </summary>
-        public EventList<PointLightComponent> DynamicPointLights { get; } = [];
+        public EventList<PointLightComponent> DynamicPointLights { get; } = new() { ThreadSafe = true };
         /// <summary>
         /// All directional lights that are not baked and need to be rendered.
         /// </summary>
-        public EventList<DirectionalLightComponent> DynamicDirectionalLights { get; } = [];
+        public EventList<DirectionalLightComponent> DynamicDirectionalLights { get; } = new() { ThreadSafe = true };
         /// <summary>
         /// All light probes in the scene.
         /// </summary>
-        public EventList<LightProbeComponent> LightProbes { get; } = [];
+        public EventList<LightProbeComponent> LightProbes { get; } = new() { ThreadSafe = true };
 
         private const float ProbePositionQuantization = 0.001f;
 
@@ -589,6 +589,50 @@ namespace XREngine.Scene
             DynamicSpotLights.Clear();
             DynamicPointLights.Clear();
             DynamicDirectionalLights.Clear();
+            LightProbes.Clear();
+
+            // cached data derived from probe list
+            _cells = null;
+            LightProbeTree.Remake(new AABB());
+            IBLCaptured = false;
+        }
+
+        internal void AddLightProbe(LightProbeComponent probe)
+        {
+            if (probe is null)
+                return;
+
+            if (!LightProbes.Contains(probe))
+                LightProbes.Add(probe);
+        }
+
+        internal void RemoveLightProbe(LightProbeComponent probe)
+        {
+            if (probe is null)
+                return;
+
+            LightProbes.Remove(probe);
+        }
+
+        /// <summary>
+        /// Clears cached light/probe lists and repopulates them from the world's current scene graph.
+        /// Intended for editor edit/play transitions where the scene graph is reloaded but cached lists persist.
+        /// </summary>
+        public void RebuildCachesFromWorld()
+        {
+            Clear();
+
+            // Repopulate caches by walking current root nodes.
+            // RootNodes is a render-time cache that includes visible world roots and editor-only hidden roots.
+            for (int i = 0; i < World.RootNodes.Count; i++)
+            {
+                var root = World.RootNodes[i];
+                if (root is null)
+                    continue;
+
+                foreach (var probe in root.FindAllDescendantComponents<LightProbeComponent>())
+                    AddLightProbe(probe);
+            }
         }
 
         /// <summary>

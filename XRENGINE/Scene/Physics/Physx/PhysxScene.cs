@@ -287,6 +287,65 @@ namespace XREngine.Rendering.Physics.Physx
             LinkVisualizationSettings();
         }
 
+        public override void OnEnterPlayMode()
+        {
+            if (_scene is null)
+                return;
+
+            int ensuredInScene = 0;
+            int woken = 0;
+
+            // Collect engine-owned rigid actors that belong to this world/scene.
+            // We intentionally avoid touching unmanaged actors that have no owning component (e.g. CCT internal actors).
+            var owned = new List<PhysxRigidActor>(PhysxDynamicRigidBody.AllDynamic.Count + PhysxStaticRigidBody.AllStaticRigidBodies.Count);
+
+            foreach (var dyn in PhysxDynamicRigidBody.AllDynamic.Values)
+            {
+                if (dyn.IsReleased)
+                    continue;
+                if (dyn.OwningComponent?.World?.PhysicsScene != this)
+                    continue;
+                owned.Add(dyn);
+            }
+            foreach (var stat in PhysxStaticRigidBody.AllStaticRigidBodies.Values)
+            {
+                if (stat.IsReleased)
+                    continue;
+                if (stat.OwningComponent?.World?.PhysicsScene != this)
+                    continue;
+                owned.Add(stat);
+            }
+
+            foreach (var actor in owned)
+            {
+                // Ensure it's in *this* PxScene.
+                if (actor.ScenePtr is null)
+                {
+                    AddActor(actor);
+                    ensuredInScene++;
+                }
+                else if (actor.ScenePtr != _scene)
+                {
+                    Debug.Log(ELogCategory.Physics, "[PhysxScene] OnEnterPlayMode: actor belongs to different PxScene actorType={0} ptr=0x{1:X}", actor.GetType().Name, (nint)actor.ActorPtr);
+                    continue;
+                }
+
+                if (actor is PhysxDynamicRigidBody dynamic)
+                {
+                    dynamic.WakeUp();
+
+                    // Give it a non-zero wake counter so it appears in active actors on the first simulation step.
+                    float wakeCounter = WakeCounterResetValue;
+                    if (wakeCounter > 0.0f)
+                        dynamic.WakeCounter = wakeCounter;
+
+                    woken++;
+                }
+            }
+
+            Debug.Log(ELogCategory.Physics, "[PhysxScene] OnEnterPlayMode: owned={0} ensuredInScene={1} woken={2}", owned.Count, ensuredInScene, woken);
+        }
+
         private static bool IsUnsetFilterData(in PxFilterData fd)
             => fd.word0 == 0 && fd.word1 == 0 && fd.word2 == 0 && fd.word3 == 0;
 
@@ -402,7 +461,7 @@ namespace XREngine.Rendering.Physics.Physx
             if (controllers is not null)
                 foreach (var controller in controllers)
                     controller.ConsumeInputBuffer(dt);
-                        
+            
             Simulate(dt, null, true);
             if (!FetchResults(true, out uint error))
             {
@@ -529,6 +588,20 @@ namespace XREngine.Rendering.Physics.Physx
 
         public void AddActor(PhysxActor actor)
         {
+            if (!Engine.IsPhysicsThread)
+            {
+                Engine.EnqueuePhysicsThreadTask(() => AddActorNow(actor));
+                return;
+            }
+
+            AddActorNow(actor);
+        }
+
+        private void AddActorNow(PhysxActor actor)
+        {
+            if (_scene is null || actor is null || actor.IsReleased || actor.ActorPtr is null)
+                return;
+
             // PhysX disallows adding the same actor twice; this can happen for actors managed by other systems
             // (e.g. CCT hidden actor) where the actor is already inserted into a scene.
             if (actor.ScenePtr is not null)
@@ -549,10 +622,28 @@ namespace XREngine.Rendering.Physics.Physx
         }
         public void AddActors(PhysxActor[] actors)
         {
+            if (!Engine.IsPhysicsThread)
+            {
+                // Defer and re-run on the physics thread.
+                Engine.EnqueuePhysicsThreadTask(() => AddActorsNow(actors));
+                return;
+            }
+
+            AddActorsNow(actors);
+        }
+
+        private void AddActorsNow(PhysxActor[] actors)
+        {
+            if (_scene is null || actors is null || actors.Length == 0)
+                return;
+
             // Filter out actors already assigned to a scene to avoid PhysX invalid-operation warnings.
             var addList = new List<PhysxActor>(actors.Length);
             foreach (var a in actors)
             {
+                if (a is null || a.IsReleased || a.ActorPtr is null)
+                    continue;
+
                 if (a.ScenePtr is null)
                 {
                     addList.Add(a);
@@ -580,17 +671,57 @@ namespace XREngine.Rendering.Physics.Physx
         }
         public void RemoveActor(PhysxActor actor, bool wakeOnLostTouch = false)
         {
+            if (!Engine.IsPhysicsThread)
+            {
+                Engine.EnqueuePhysicsThreadTask(() => RemoveActorNow(actor, wakeOnLostTouch));
+                return;
+            }
+
+            RemoveActorNow(actor, wakeOnLostTouch);
+        }
+
+        private void RemoveActorNow(PhysxActor actor, bool wakeOnLostTouch)
+        {
+            if (_scene is null || actor is null || actor.IsReleased || actor.ActorPtr is null)
+                return;
+
             _scene->RemoveActorMut(actor.ActorPtr, wakeOnLostTouch);
             actor.OnRemovedFromScene(this);
             Debug.Log(ELogCategory.Physics, "[PhysxScene] Removed actorType={0} ptr=0x{1:X}", actor.GetType().Name, (nint)actor.ActorPtr);
         }
         public void RemoveActors(PhysxActor[] actors, bool wakeOnLostTouch = false)
         {
-            PxActor** ptrs = stackalloc PxActor*[actors.Length];
-            for (int i = 0; i < actors.Length; i++)
-                ptrs[i] = actors[i].ActorPtr;
-            _scene->RemoveActorsMut(ptrs, (uint)actors.Length, wakeOnLostTouch);
-            foreach (var actor in actors)
+            if (!Engine.IsPhysicsThread)
+            {
+                Engine.EnqueuePhysicsThreadTask(() => RemoveActorsNow(actors, wakeOnLostTouch));
+                return;
+            }
+
+            RemoveActorsNow(actors, wakeOnLostTouch);
+        }
+
+        private void RemoveActorsNow(PhysxActor[] actors, bool wakeOnLostTouch)
+        {
+            if (_scene is null || actors is null || actors.Length == 0)
+                return;
+
+            // Filter out released/null actors to avoid dereferencing invalid pointers.
+            var removeList = new List<PhysxActor>(actors.Length);
+            foreach (var a in actors)
+            {
+                if (a is null || a.IsReleased || a.ActorPtr is null)
+                    continue;
+                removeList.Add(a);
+            }
+
+            if (removeList.Count == 0)
+                return;
+
+            PxActor** ptrs = stackalloc PxActor*[removeList.Count];
+            for (int i = 0; i < removeList.Count; i++)
+                ptrs[i] = removeList[i].ActorPtr;
+            _scene->RemoveActorsMut(ptrs, (uint)removeList.Count, wakeOnLostTouch);
+            foreach (var actor in removeList)
             {
                 actor.OnRemovedFromScene(this);
                 Debug.Log(ELogCategory.Physics, "[PhysxScene] Removed actorType={0} ptr=0x{1:X}", actor.GetType().Name, (nint)actor.ActorPtr);

@@ -59,6 +59,7 @@ internal class Program
         RenderInfo3D.ConstructorOverride = RenderInfo3DConstructor;
         CodeManager.Instance.CompileOnChange = false;
         JsonConvert.DefaultSettings = DefaultJsonSettings;
+        EditorPlayModeController.Initialize();
 
         // Determine world mode from command line or environment variable
         EWorldMode worldMode = ResolveWorldMode(args);

@@ -203,10 +203,10 @@ public static partial class EditorImGuiUI
     /// </summary>
     private static void DrawPlayModeButtons()
     {
-        bool isPlaying = Engine.PlayMode.IsPlaying;
-        bool isPaused = Engine.PlayMode.IsPaused;
-        bool isEditing = Engine.PlayMode.IsEditing;
-        bool isTransitioning = Engine.PlayMode.IsTransitioning;
+        bool isPlaying = EditorState.InPlayMode;
+        bool isPaused = EditorState.IsPaused;
+        bool isEditing = EditorState.InEditMode;
+        bool isTransitioning = EditorState.IsTransitioning;
         
         ImGui.BeginGroup();
         
@@ -218,21 +218,21 @@ public static partial class EditorImGuiUI
             // Show Play button
             Vector4 playColor = new(0.3f, 0.8f, 0.3f, 1.0f);
             if (DrawToolbarActionButton("▶", "Play (F5)", playColor, SvgEditorIcons.IconPlay))
-                _ = Engine.PlayMode.EnterPlayModeAsync();
+                EditorState.EnterPlayMode();
         }
         else if (isPlaying)
         {
             // Show Pause button
             Vector4 pauseColor = new(0.9f, 0.7f, 0.2f, 1.0f);
             if (DrawToolbarActionButton("⏸", "Pause", pauseColor, SvgEditorIcons.IconPause))
-                Engine.PlayMode.Pause();
+                EditorState.Pause();
         }
         else if (isPaused)
         {
             // Show Resume button
             Vector4 resumeColor = new(0.3f, 0.8f, 0.3f, 1.0f);
             if (DrawToolbarActionButton("▶", "Resume", resumeColor, SvgEditorIcons.IconPlay))
-                Engine.PlayMode.Resume();
+                EditorState.Resume();
         }
         
         ImGui.SameLine(0f, 2f);
@@ -245,7 +245,7 @@ public static partial class EditorImGuiUI
                 : new Vector4(0.9f, 0.3f, 0.3f, 1.0f);
             
             if (DrawToolbarActionButton("⏹", "Stop (Shift+F5)", stopColor, SvgEditorIcons.IconStop))
-                _ = Engine.PlayMode.ExitPlayModeAsync();
+                EditorState.ExitPlayMode();
         }
         ImGui.EndDisabled();
         
@@ -259,7 +259,7 @@ public static partial class EditorImGuiUI
                 : new Vector4(0.4f, 0.4f, 0.4f, 1.0f);
             
             if (DrawToolbarActionButton("⏭", "Step Frame (F6)", stepColor, SvgEditorIcons.IconStepFrame))
-                Engine.PlayMode.StepFrame();
+                EditorState.StepFrame();
         }
         ImGui.EndDisabled();
         
