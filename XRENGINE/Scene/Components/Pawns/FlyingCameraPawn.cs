@@ -24,6 +24,20 @@ namespace XREngine.Components
             set => SetField(ref _shiftSpeedModifier, value);
         }
 
+        private float _yawIncrementModifier = 30.0f;
+        public float YawIncrementModifier
+        {
+            get => _yawIncrementModifier;
+            set => SetField(ref _yawIncrementModifier, value);
+        }
+
+        private float _pitchIncrementModifier = 30.0f;
+        public float PitchIncrementModifier
+        {
+            get => _pitchIncrementModifier;
+            set => SetField(ref _pitchIncrementModifier, value);
+        }
+
         protected override void OnScrolled(float diff)
         {
             if (ShiftPressed)
@@ -114,15 +128,38 @@ namespace XREngine.Components
 
         private void IncrementRotation()
         {
+            //Scale continuous rotation (keyboard/gamepad) by delta to be tickrate independent.
+            //Mouse rotation is already an instantaneous per-event delta.
+            float delta = Engine.UndilatedDelta;
+
             if (!_incPitch.IsZero())
             {
                 if (!_incYaw.IsZero())
-                    AddYawPitch(_incYaw, _incPitch);
+                {
+                    float yaw = _incYaw * delta * YawIncrementModifier;
+                    float pitch = _incPitch * delta * PitchIncrementModifier;
+                    if (ShiftPressed)
+                    {
+                        yaw *= ShiftSpeedModifier;
+                        pitch *= ShiftSpeedModifier;
+                    }
+                    AddYawPitch(yaw, pitch);
+                }
                 else
-                    Pitch += _incPitch;
+                {
+                    float pitch = _incPitch * delta * PitchIncrementModifier;
+                    if (ShiftPressed)
+                        pitch *= ShiftSpeedModifier;
+                    Pitch += pitch;
+                }
             }
             else if (!_incYaw.IsZero())
-                Yaw += _incYaw;
+            {
+                float yaw = _incYaw * delta * YawIncrementModifier;
+                if (ShiftPressed)
+                    yaw *= ShiftSpeedModifier;
+                Yaw += yaw;
+            }
         }
 
         protected override void YawPitchUpdated()

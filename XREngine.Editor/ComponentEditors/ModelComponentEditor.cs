@@ -145,9 +145,6 @@ public sealed class ModelComponentEditor : IXRComponentEditor
         ImGui.TextUnformatted($"Model: {displayName}");
         ImGui.TextUnformatted("Submeshes: " + model.Meshes.Count.ToString(CultureInfo.InvariantCulture));
 
-        DrawImpostorUtilities(modelComponent, model);
-        DrawBvhPreviewUtilities(modelComponent);
-
         if (model.Meshes.Count == 0)
             return;
 
@@ -162,6 +159,8 @@ public sealed class ModelComponentEditor : IXRComponentEditor
             DrawSubmeshSection(modelComponent, submeshIndex, subMesh, runtimeMesh);
             submeshIndex++;
         }
+        DrawImpostorUtilities(modelComponent, model);
+        DrawBvhPreviewUtilities(modelComponent);
     }
 
     private static void DrawBvhPreviewUtilities(ModelComponent modelComponent)
@@ -333,7 +332,7 @@ public sealed class ModelComponentEditor : IXRComponentEditor
 
     private static void DrawImpostorUtilities(ModelComponent modelComponent, Model model)
     {
-        if (!ImGui.CollapsingHeader("Impostor Utilities", ImGuiTreeNodeFlags.DefaultOpen))
+        if (!ImGui.CollapsingHeader("Impostor Utilities"))
             return;
 
         var state = s_impostorStates.GetValue(modelComponent, _ => new ImpostorState());

@@ -19,10 +19,10 @@ namespace XREngine.Components.Capture.Lights.Types
         private XRMaterialFrameBuffer? _shadowMap = null;
         private ELightType _type = ELightType.Dynamic;
         private bool _castsShadows = true;
-        private float _shadowMaxBias = 0.01f;
-        private float _shadowMinBias = 0.005f;
-        private float _shadowExponent = 1.0f;
-        private float _shadowExponentBase = 0.04f;
+        private float _shadowMaxBias = 0.003f;
+        private float _shadowMinBias = 0.000f;
+        private float _shadowExponent = 0.994f;
+        private float _shadowExponentBase = 0.037f;
         private Matrix4x4 _lightMatrix = Matrix4x4.Identity;
         private Matrix4x4 _meshCenterAdjustMatrix = Matrix4x4.Identity;
         private readonly RenderCommandMesh3D _shadowVolumeRC = new((int)EDefaultRenderPass.OpaqueForward);

@@ -36,30 +36,36 @@ public static class EditorState
     /// <summary>
     /// Enters play mode. Editor state will be saved for restoration.
     /// </summary>
-    public static void EnterPlayMode() => _ = Engine.PlayMode.EnterPlayModeAsync();
+    public static void EnterPlayMode()
+        => Engine.EnqueueUpdateThreadTask(() => _ = Engine.PlayMode.EnterPlayModeAsync());
     
     /// <summary>
     /// Exits play mode. Editor state will be restored based on configuration.
     /// </summary>
-    public static void ExitPlayMode() => _ = Engine.PlayMode.ExitPlayModeAsync();
+    public static void ExitPlayMode()
+        => Engine.EnqueueUpdateThreadTask(() => _ = Engine.PlayMode.ExitPlayModeAsync());
     
     /// <summary>
     /// Toggles between edit and play mode.
     /// </summary>
-    public static void TogglePlayMode() => Engine.PlayMode.TogglePlayMode();
+    public static void TogglePlayMode()
+        => Engine.EnqueueUpdateThreadTask(Engine.PlayMode.TogglePlayMode);
     
     /// <summary>
     /// Pauses the game while in play mode.
     /// </summary>
-    public static void Pause() => Engine.PlayMode.Pause();
+    public static void Pause()
+        => Engine.EnqueueUpdateThreadTask(Engine.PlayMode.Pause);
     
     /// <summary>
     /// Resumes the game from pause.
     /// </summary>
-    public static void Resume() => Engine.PlayMode.Resume();
+    public static void Resume()
+        => Engine.EnqueueUpdateThreadTask(Engine.PlayMode.Resume);
     
     /// <summary>
     /// Steps one frame while paused.
     /// </summary>
-    public static void StepFrame() => Engine.PlayMode.StepFrame();
+    public static void StepFrame()
+        => Engine.EnqueueUpdateThreadTask(Engine.PlayMode.StepFrame);
 }

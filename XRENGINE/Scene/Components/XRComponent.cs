@@ -39,7 +39,16 @@ namespace XREngine.Components
         }
 
         [Browsable(false)]
-        public bool IsActiveInHierarchy => IsActive && SceneNode.IsActiveInHierarchy;
+        public bool IsActiveInHierarchy
+        {
+            get
+            {
+                // During cooked-binary deserialization, components can exist before being
+                // attached to a SceneNode. Treat them as inactive-in-hierarchy until wired.
+                var node = _sceneNode;
+                return node is not null && IsActive && node.IsActiveInHierarchy;
+            }
+        }
 
         //TODO: figure out how to disallow users from constructing xrcomponents
 #pragma warning disable CS8618 // Non-nullable field must contain a non-null value when exiting constructor. Consider declaring as nullable.
@@ -143,13 +152,13 @@ namespace XREngine.Components
         public TransformBase Transform => SceneNode.Transform;
 
         public T? TransformAs<[DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicConstructors)] T>(bool forceConvert = false) where T : TransformBase, new()
-            => SceneNode.GetTransformAs<T>(forceConvert);
+            => _sceneNode?.GetTransformAs<T>(forceConvert);
 
         /// <summary>
         /// Returns the transform of the scene node this component is attached to, or null if the scene node doesn't have a default transform.
         /// </summary>
         [Browsable(false)]
-        public Transform? DefaultTransform => SceneNode.GetTransformAs<Transform>(false);
+        public Transform? DefaultTransform => _sceneNode?.GetTransformAs<Transform>(false);
 
         /// <summary>
         /// Returns the transform of the scene node this component is attached to as a default transform.
@@ -228,10 +237,14 @@ namespace XREngine.Components
                 switch (propName)
                 {
                     case nameof(SceneNode):
-                        _sceneNode.PropertyChanging -= SceneNodePropertyChanging;
-                        _sceneNode.PropertyChanged -= SceneNodePropertyChanged;
-                        if (!_sceneNode.IsTransformNull)
-                            OnTransformChanging();
+                        var oldNode = _sceneNode;
+                        if (oldNode is not null)
+                        {
+                            oldNode.PropertyChanging -= SceneNodePropertyChanging;
+                            oldNode.PropertyChanged -= SceneNodePropertyChanged;
+                            if (!oldNode.IsTransformNull)
+                                OnTransformChanging();
+                        }
                         break;
                 }
             }
@@ -255,6 +268,10 @@ namespace XREngine.Components
                     _sceneNode.PropertyChanged += SceneNodePropertyChanged;
                     if (!_sceneNode.IsTransformNull)
                         OnTransformChanged();
+
+                    // If IsActive was restored before SceneNode wiring, we may have skipped activation.
+                    if (IsActiveInHierarchy)
+                        OnComponentActivated();
                     break;
             }
         }

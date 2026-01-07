@@ -186,6 +186,8 @@ namespace XREngine.Timers
         {
             while (IsRunning)
             {
+                // Drain update-thread work even when paused.
+                Engine.ProcessUpdateThreadTasks();
                 //using (Engine.Profiler.Start("EngineTimer.UpdateThread.DispatchUpdate"))
                 //{
                     DispatchUpdate();
@@ -236,8 +238,12 @@ namespace XREngine.Timers
         /// </summary>
         private async Task FixedUpdateThread()
         {
+            Engine.SetPhysicsThreadId(Environment.CurrentManagedThreadId);
             while (IsRunning)
             {
+                // Always drain physics-thread work, even while paused.
+                Engine.ProcessPhysicsThreadTasks();
+
                 // Skip fixed updates when paused (unless stepping)
                 if (!ShouldDispatchUpdate())
                 {

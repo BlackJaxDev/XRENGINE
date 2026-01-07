@@ -132,18 +132,25 @@ namespace XREngine
             /// <summary>
             /// Enters play mode asynchronously.
             /// </summary>
-            public static async Task EnterPlayModeAsync()
+            public static Task EnterPlayModeAsync()
             {
+                // Play-mode transitions should never run on the render thread (ImGui draw callstack).
+                if (Engine.IsRenderThread)
+                {
+                    Engine.EnqueueUpdateThreadTask(() => _ = EnterPlayModeAsync());
+                    return Task.CompletedTask;
+                }
+
                 if (_forcePlayWithoutTransitions)
                 {
-                    await ForcePlayWithoutTransitionsAsync();
-                    return;
+                    ForcePlayWithoutTransitions();
+                    return Task.CompletedTask;
                 }
 
                 if (State != EPlayModeState.Edit)
                 {
                     Debug.LogWarning($"Cannot enter play mode from state: {State}");
-                    return;
+                    return Task.CompletedTask;
                 }
 
                 try
@@ -163,12 +170,16 @@ namespace XREngine
                     if (Configuration.StateRestorationMode == EStateRestorationMode.SerializeAndRestore)
                     {
                         _editModeSnapshot = WorldStateSnapshot.Capture(targetWorld);
+
+                        // IMPORTANT: play mode should run from a deserialized copy of the world state.
+                        // This forces a clean object graph and ensures physics bodies are constructed from deserialized scene data.
+                        _editModeSnapshot?.Restore();
                     }
 
                     // Step 2: Reload gameplay assemblies if configured
                     if (Configuration.ReloadGameplayAssemblies)
                     {
-                        await ReloadGameplayAssembliesAsync();
+                        ReloadGameplayAssembliesAsync().GetAwaiter().GetResult();
                     }
 
                     // Step 3: Resolve and initialize GameMode
@@ -185,7 +196,7 @@ namespace XREngine
                         _activeGameMode?.WorldInstance = worldInstance;
 
                         // Begin play
-                        await worldInstance.BeginPlay();
+                        worldInstance.BeginPlay().GetAwaiter().GetResult();
                     }
 
                     // Step 5: Call GameMode.OnBeginPlay
@@ -202,23 +213,32 @@ namespace XREngine
                     // Attempt recovery
                     State = EPlayModeState.Edit;
                 }
+
+                return Task.CompletedTask;
             }
 
             /// <summary>
             /// Exits play mode asynchronously.
             /// </summary>
-            public static async Task ExitPlayModeAsync()
+            public static Task ExitPlayModeAsync()
             {
+                // Play-mode transitions should never run on the render thread (ImGui draw callstack).
+                if (Engine.IsRenderThread)
+                {
+                    Engine.EnqueueUpdateThreadTask(() => _ = ExitPlayModeAsync());
+                    return Task.CompletedTask;
+                }
+
                 if (_forcePlayWithoutTransitions)
                 {
                     Debug.LogWarning("Play mode exit ignored: transitions are disabled and physics stays enabled.");
-                    return;
+                    return Task.CompletedTask;
                 }
 
                 if (State != EPlayModeState.Play && State != EPlayModeState.Paused)
                 {
                     Debug.LogWarning($"Cannot exit play mode from state: {State}");
-                    return;
+                    return Task.CompletedTask;
                 }
 
                 try
@@ -255,7 +275,7 @@ namespace XREngine
                     // Step 4: Unload gameplay assemblies if they were loaded
                     if (Configuration.ReloadGameplayAssemblies)
                     {
-                        await UnloadGameplayAssembliesAsync();
+                        UnloadGameplayAssembliesAsync().GetAwaiter().GetResult();
                     }
 
                     // Step 5: Restore world state based on configuration
@@ -265,7 +285,7 @@ namespace XREngine
                             _editModeSnapshot?.Restore();
                             break;
                         case EStateRestorationMode.ReloadFromAsset:
-                            await ReloadWorldsFromAssetsAsync();
+                            ReloadWorldsFromAssetsAsync().GetAwaiter().GetResult();
                             break;
                         case EStateRestorationMode.PersistChanges:
                             // Do nothing - changes persist
@@ -284,6 +304,8 @@ namespace XREngine
                     // Force back to edit mode
                     State = EPlayModeState.Edit;
                 }
+
+                return Task.CompletedTask;
             }
 
             /// <summary>
@@ -293,7 +315,7 @@ namespace XREngine
             {
                 if (_forcePlayWithoutTransitions)
                 {
-                    _ = ForcePlayWithoutTransitionsAsync();
+                    _ = EnterPlayModeAsync();
                     return;
                 }
 
@@ -467,6 +489,34 @@ namespace XREngine
                         _activeGameMode.WorldInstance = worldInstance;
 
                     await worldInstance.BeginPlay();
+                }
+
+                _activeGameMode?.OnBeginPlay();
+
+                State = EPlayModeState.Play;
+                _editModeSimulationActive = true;
+
+                Debug.LogWarning("Play mode transitions are temporarily disabled; running with physics always simulated.");
+            }
+
+            private static void ForcePlayWithoutTransitions()
+            {
+                if (_editModeSimulationActive)
+                    return;
+
+                Configuration.SimulatePhysics = true;
+
+                var targetWorld = ResolveStartupWorld();
+                _activeGameMode = ResolveGameMode(targetWorld);
+
+                foreach (var worldInstance in XRWorldInstance.WorldInstances.Values)
+                {
+                    worldInstance.PhysicsEnabled = true;
+                    worldInstance.GameMode = _activeGameMode;
+                    if (_activeGameMode is not null)
+                        _activeGameMode.WorldInstance = worldInstance;
+
+                    worldInstance.BeginPlay().GetAwaiter().GetResult();
                 }
 
                 _activeGameMode?.OnBeginPlay();

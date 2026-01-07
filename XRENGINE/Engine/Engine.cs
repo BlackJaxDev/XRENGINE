@@ -30,6 +30,8 @@ namespace XREngine
     public static partial class Engine
     {
         private static readonly EventList<XRWindow> _windows = [];
+        private static readonly ConcurrentQueue<Action> _pendingUpdateThreadWork = new();
+        private static readonly ConcurrentQueue<Action> _pendingPhysicsThreadWork = new();
         private static int _suppressedCleanupRequests;
         private static UserSettings _userSettings = null!;
         private static GameStartupSettings _gameSettings = null!;
@@ -67,6 +69,12 @@ namespace XREngine
         public static bool IsRenderThread => Environment.CurrentManagedThreadId == RenderThreadId;
         public static int RenderThreadId { get; private set; }
 
+        public static bool IsPhysicsThread => Environment.CurrentManagedThreadId == PhysicsThreadId;
+        public static int PhysicsThreadId { get; private set; }
+
+        internal static void SetPhysicsThreadId(int threadId)
+            => PhysicsThreadId = threadId;
+
         /// <summary>
         /// These tasks will be executed during the collect-visible/render swap point.
         /// </summary>
@@ -87,6 +95,29 @@ namespace XREngine
         /// <param name="task"></param>
         public static void EnqueueMainThreadTask(Action task)
             => Jobs.Schedule(new ActionJob(task), JobPriority.Normal, JobAffinity.MainThread);
+
+        /// <summary>
+        /// Enqueues a task to run on the engine update thread.
+        /// Use this for work that must not run on the render thread (e.g. play-mode transitions).
+        /// </summary>
+        public static void EnqueueUpdateThreadTask(Action task)
+        {
+            if (task is null)
+                return;
+
+            _pendingUpdateThreadWork.Enqueue(task);
+        }
+
+        /// <summary>
+        /// Enqueues a task to run on the fixed update (physics) thread.
+        /// Use this for PhysX scene mutations (add/remove/release) to avoid cross-thread access.
+        /// </summary>
+        public static void EnqueuePhysicsThreadTask(Action task)
+        {
+            if (task is null)
+                return;
+            _pendingPhysicsThreadWork.Enqueue(task);
+        }
 
         /// <summary>
         /// These tasks will be executed on the main thread, and usually are rendering tasks.
@@ -699,6 +730,40 @@ namespace XREngine
 
         internal static void ProcessMainThreadTasks()
             => ProcessPendingMainThreadWork();
+
+        internal static void ProcessUpdateThreadTasks(int maxTasks = 1024)
+        {
+            int processed = 0;
+            while (processed < maxTasks && _pendingUpdateThreadWork.TryDequeue(out var task))
+            {
+                try
+                {
+                    task();
+                }
+                catch (Exception ex)
+                {
+                    Debug.LogException(ex);
+                }
+                processed++;
+            }
+        }
+
+        internal static void ProcessPhysicsThreadTasks(int maxTasks = 4096)
+        {
+            int processed = 0;
+            while (processed < maxTasks && _pendingPhysicsThreadWork.TryDequeue(out var task))
+            {
+                try
+                {
+                    task();
+                }
+                catch (Exception ex)
+                {
+                    Debug.LogException(ex);
+                }
+                processed++;
+            }
+        }
 
         private static void ProcessPendingMainThreadWork()
         {

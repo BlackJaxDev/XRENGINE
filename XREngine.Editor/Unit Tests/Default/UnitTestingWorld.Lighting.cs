@@ -67,7 +67,7 @@ public static partial class UnitTestingWorld
             dirLightComp.DiffuseIntensity = 1.0f;
             dirLightComp.Scale = new Vector3(100.0f, 100.0f, 900.0f);
             dirLightComp.CastsShadows = true;
-            dirLightComp.SetShadowMapResolution(2048, 2048);
+            dirLightComp.SetShadowMapResolution(4096, 4096);
         }
 
         public static void AddDirLight2(SceneNode rootNode)

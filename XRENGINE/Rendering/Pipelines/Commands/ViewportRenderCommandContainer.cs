@@ -49,6 +49,11 @@ namespace XREngine.Rendering.Pipelines.Commands
             }
         }
 
+        public ViewportRenderCommandContainer()
+            : this(null)
+        {
+        }
+
         public ViewportRenderCommandContainer(RenderPipeline? parentPipeline = null)
         {
             ParentPipeline = parentPipeline;

@@ -1455,9 +1455,12 @@ public partial class EditorFlyingCameraPawnComponent : FlyingCameraPawnComponent
             {
                 if (ShiftPressed)
                     scrollSpeed *= ShiftSpeedModifier;
+
+                //Make scroll-based dolly tickrate independent.
+                float delta = Engine.UndilatedDelta;
                 Vector3 worldCoord = vp.NormalizedViewportToWorldCoordinate(DepthHitNormalizedViewportPoint.Value);
                 float dist = tfm.WorldTranslation.Distance(worldCoord);
-                Vector3 newWorldPos = Segment.PointAtLineDistance(tfm.WorldTranslation, worldCoord, scrollSpeed * dist * 0.1f * ScrollSpeed);
+                Vector3 newWorldPos = Segment.PointAtLineDistance(tfm.WorldTranslation, worldCoord, scrollSpeed * dist * 0.1f * ScrollSpeed * delta);
                 tfm.SetWorldTranslation(newWorldPos);
             }
             else

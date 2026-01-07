@@ -93,7 +93,7 @@ namespace XREngine.Input
             if (PlayerInfo.LocalIndex is not null)
                 Debug.Out($"Local player {PlayerInfo.LocalIndex} is releasing control of {_controlledPawn}");
             else
-                Debug.Out($"Server player {PlayerInfo.ServerIndex} gained control of {_controlledPawn}");
+                Debug.Out($"Server player {PlayerInfo.ServerIndex} is releasing control of {_controlledPawn}");
         }
 
         protected virtual void UnregisterInputEvents(PawnComponent c)

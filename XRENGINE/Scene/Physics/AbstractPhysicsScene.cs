@@ -45,6 +45,13 @@ namespace XREngine.Scene
         public abstract void Destroy();
         public abstract void StepSimulation();
 
+        /// <summary>
+        /// Called when the engine enters play mode and the world has finished constructing/activating its scene graph.
+        /// Physics implementations can use this to ensure all actors are registered and optionally wake actors so
+        /// simulation begins with an up-to-date active list.
+        /// </summary>
+        public virtual void OnEnterPlayMode() { }
+
         public bool RaycastAny(Segment worldSegment, LayerMask layerMask, IAbstractQueryFilter? filter)
             => RaycastAny(worldSegment, layerMask, filter, out _);
 

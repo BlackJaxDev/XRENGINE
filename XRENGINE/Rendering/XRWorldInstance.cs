@@ -500,6 +500,11 @@ namespace XREngine.Rendering
 
             PlayState = EPlayState.BeginningPlay;
             PreBeginPlay?.Invoke(this);
+
+            // Editor play-mode transitions can reload/clone scene graphs while this instance persists.
+            // Ensure cached world lists (lights/probes/capture components) are cleared and repopulated.
+            Lights.RebuildCachesFromWorld();
+
             VisualScene.Initialize();
             PhysicsScene.Initialize();
 
@@ -507,6 +512,10 @@ namespace XREngine.Rendering
             _physicsResetInitialDynamicPoses.Clear();
 
             await BeginPlayInternal();
+
+            if (PhysicsEnabled)
+                PhysicsScene.OnEnterPlayMode();
+
             LinkTimeCallbacks();
             PostBeginPlay?.Invoke(this);
             PlayState = EPlayState.Playing;
@@ -535,9 +544,16 @@ namespace XREngine.Rendering
             PlayState = EPlayState.EndingPlay;
             PreEndPlay?.Invoke(this);
             UnlinkTimeCallbacks();
+            EndPlayInternal();
+
+            // IMPORTANT: EndPlayInternal deactivates nodes/components which may unregister
+            // physics/render objects. Keep scenes alive until after that completes.
             PhysicsScene.Destroy();
             VisualScene.Destroy();
-            EndPlayInternal();
+
+            // After ending play, editor state restoration may be about to swap scene graphs back.
+            // Reset caches now to avoid stale references persisting into edit mode.
+            Lights.RebuildCachesFromWorld();
 
             _physicsResetCacheValid = false;
             _physicsResetInitialDynamicPoses.Clear();

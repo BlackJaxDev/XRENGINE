@@ -121,6 +121,8 @@ namespace XREngine.Components.Capture.Lights
         private XRMeshRenderer? _previewSphere;
         private XRTexture2D? _environmentTextureEquirect;
 
+        private XRWorldInstance? _registeredWorld;
+
         #endregion
 
         #region Constructor
@@ -441,7 +443,16 @@ namespace XREngine.Components.Capture.Lights
         protected internal override void OnComponentActivated()
         {
             base.OnComponentActivated();
-            World?.Lights.LightProbes.Add(this);
+
+            var world = World;
+            if (world is not null)
+            {
+                if (_registeredWorld is not null && _registeredWorld != world)
+                    _registeredWorld.Lights.RemoveLightProbe(this);
+
+                world.Lights.AddLightProbe(this);
+                _registeredWorld = world;
+            }
             if (!RealtimeCapture)
             {
                 ProgressiveRenderEnabled = false;
@@ -452,8 +463,17 @@ namespace XREngine.Components.Capture.Lights
         protected internal override void OnComponentDeactivated()
         {
             base.OnComponentDeactivated();
-            World?.Lights.LightProbes.Remove(this);
+
+            if (_registeredWorld is not null)
+            {
+                _registeredWorld.Lights.RemoveLightProbe(this);
+                _registeredWorld = null;
+            }
+
+            DestroyIblResources();
         }
+
+        // ...existing code...
 
         #endregion
 
