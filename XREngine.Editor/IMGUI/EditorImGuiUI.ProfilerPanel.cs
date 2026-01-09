@@ -89,6 +89,35 @@ public static partial class EditorImGuiUI
                 ImGui.Text($"Worst frame (0.5s window): {_worstFrameDisplayMs:F3} ms");
             }
 
+            ImGui.Separator();
+            if (ImGui.CollapsingHeader("Thread Allocations", ImGuiTreeNodeFlags.DefaultOpen))
+            {
+                bool enabled = Engine.Rendering.Settings.EnableThreadAllocationTracking;
+                if (ImGui.Checkbox("Enable thread allocation tracking", ref enabled))
+                    Engine.Rendering.Settings.EnableThreadAllocationTracking = enabled;
+
+                ImGui.TextDisabled("Uses GC.GetAllocatedBytesForCurrentThread() deltas per tick/frame.");
+
+                var alloc = Engine.Allocations.GetSnapshot();
+
+                if (ImGui.BeginTable("ProfilerThreadAllocations", 5, ImGuiTableFlags.Borders | ImGuiTableFlags.RowBg | ImGuiTableFlags.SizingFixedFit))
+                {
+                    ImGui.TableSetupColumn("Thread");
+                    ImGui.TableSetupColumn("Last (KB)");
+                    ImGui.TableSetupColumn("Avg (KB)");
+                    ImGui.TableSetupColumn("Max (KB)");
+                    ImGui.TableSetupColumn("Samples");
+                    ImGui.TableHeadersRow();
+
+                    DrawAllocRow("Render", alloc.Render);
+                    DrawAllocRow("Collect+Swap", alloc.CollectSwap);
+                    DrawAllocRow("Update", alloc.Update);
+                    DrawAllocRow("FixedUpdate", alloc.FixedUpdate);
+
+                    ImGui.EndTable();
+                }
+            }
+
             // Display rendering statistics
             ImGui.Separator();
             if (ImGui.CollapsingHeader("Rendering Statistics", ImGuiTreeNodeFlags.DefaultOpen))
@@ -408,6 +437,16 @@ public static partial class EditorImGuiUI
             {
                 ImGui.Text("No root methods captured.");
             }
+        }
+
+        private static void DrawAllocRow(string name, Engine.AllocationRingSnapshot snapshot)
+        {
+            ImGui.TableNextRow();
+            ImGui.TableSetColumnIndex(0); ImGui.Text(name);
+            ImGui.TableSetColumnIndex(1); ImGui.Text($"{snapshot.LastKB:F2}");
+            ImGui.TableSetColumnIndex(2); ImGui.Text($"{snapshot.AverageKB:F2}");
+            ImGui.TableSetColumnIndex(3); ImGui.Text($"{snapshot.MaxKB:F2}");
+            ImGui.TableSetColumnIndex(4); ImGui.Text($"{snapshot.Samples}/{snapshot.Capacity}");
         }
 
         private static void UpdateRootMethodCache(Engine.CodeProfiler.ProfilerFrameSnapshot frameSnapshot, Dictionary<int, float[]> history)
