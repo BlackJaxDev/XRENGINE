@@ -123,6 +123,7 @@ namespace XREngine
                 private bool _enableGpuIndirectValidationLogging = false;
                 private bool _useDebugOpaquePipeline = false;
                 private bool _visualizeTransformId = false;
+                private bool _enableThreadAllocationTracking = false;
 
                 /// <summary>
                 /// Whether to enable frame logging for performance profiling.
@@ -211,6 +212,18 @@ namespace XREngine
                 {
                     get => _visualizeTransformId;
                     set => SetField(ref _visualizeTransformId, value);
+                }
+
+                /// <summary>
+                /// Tracks GC allocations per engine thread/tick using GC.GetAllocatedBytesForCurrentThread().
+                /// Used by the Profiler panel.
+                /// </summary>
+                [Category("Profiling")]
+                [Description("Tracks GC allocations per engine thread/tick using GC.GetAllocatedBytesForCurrentThread(). Used by the Profiler panel.")]
+                public bool EnableThreadAllocationTracking
+                {
+                    get => _enableThreadAllocationTracking;
+                    set => SetField(ref _enableThreadAllocationTracking, value);
                 }
 
                 #endregion

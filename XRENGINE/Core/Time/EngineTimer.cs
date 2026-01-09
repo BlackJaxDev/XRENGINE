@@ -1,6 +1,7 @@
 ﻿using Extensions;
 using System.Diagnostics;
 using System.Threading;
+using System;
 using XREngine.Data.Core;
 
 namespace XREngine.Timers
@@ -202,6 +203,10 @@ namespace XREngine.Timers
         {
             while (IsRunning)
             {
+                long allocStart = 0;
+                if (Engine.Rendering.Settings.EnableThreadAllocationTracking)
+                    allocStart = GC.GetAllocatedBytesForCurrentThread();
+
                 using (Engine.Profiler.Start("EngineTimer.CollectVisibleThread"))
                 {
                     //Collects visible object and generates render commands for the game's current state
@@ -223,6 +228,12 @@ namespace XREngine.Timers
                         Engine.Jobs.ProcessCollectVisibleSwapJobs();
                         DispatchSwapBuffers();
                     }
+                }
+
+                if (allocStart != 0)
+                {
+                    long allocEnd = GC.GetAllocatedBytesForCurrentThread();
+                    Engine.Allocations.RecordCollectSwap(allocEnd - allocStart);
                 }
 
                 //Inform the render thread that the swap is done
@@ -258,7 +269,19 @@ namespace XREngine.Timers
                 
                 FixedUpdateManager.Delta = elapsed;
                 FixedUpdateManager.LastTimestamp = timestamp;
+
+                long allocStart = 0;
+                if (Engine.Rendering.Settings.EnableThreadAllocationTracking)
+                    allocStart = GC.GetAllocatedBytesForCurrentThread();
+
                 DispatchFixedUpdate();
+
+                if (allocStart != 0)
+                {
+                    long allocEnd = GC.GetAllocatedBytesForCurrentThread();
+                    Engine.Allocations.RecordFixedUpdateTick(allocEnd - allocStart);
+                }
+
                 timestamp = Time();
                 FixedUpdateManager.ElapsedTime = timestamp - FixedUpdateManager.LastTimestamp;
             }
@@ -342,9 +365,19 @@ namespace XREngine.Timers
                     //Debug.Out("Dispatching render.");
                     using var sample = Engine.Profiler.Start("EngineTimer.DispatchRender");
 
+                    long allocStart = 0;
+                    if (Engine.Rendering.Settings.EnableThreadAllocationTracking)
+                        allocStart = GC.GetAllocatedBytesForCurrentThread();
+
                     Render.Delta = elapsed;
                     Render.LastTimestamp = timestamp;
                     RenderFrame?.Invoke(); // This dispatch has to be synchronous to stay on the main thread
+
+                    if (allocStart != 0)
+                    {
+                        long allocEnd = GC.GetAllocatedBytesForCurrentThread();
+                        Engine.Allocations.RecordRender(allocEnd - allocStart);
+                    }
 
                     timestamp = Time();
                     Render.ElapsedTime = timestamp - Render.LastTimestamp;
@@ -414,6 +447,10 @@ namespace XREngine.Timers
                 {
                     using var updateIterationSample = Engine.Profiler.Start("EngineTimer.DispatchUpdate.Iteration");
 
+                    long allocStart = 0;
+                    if (Engine.Rendering.Settings.EnableThreadAllocationTracking)
+                        allocStart = GC.GetAllocatedBytesForCurrentThread();
+
                     Update.Delta = elapsed;
                     Update.LastTimestamp = timestamp;
 
@@ -430,6 +467,12 @@ namespace XREngine.Timers
                     using (Engine.Profiler.Start("EngineTimer.DispatchUpdate.PostUpdate"))
                     {
                         PostUpdateFrame?.Invoke();
+                    }
+
+                    if (allocStart != 0)
+                    {
+                        long allocEnd = GC.GetAllocatedBytesForCurrentThread();
+                        Engine.Allocations.RecordUpdateTick(allocEnd - allocStart);
                     }
 
                     timestamp = Time();
