@@ -460,8 +460,9 @@ public unsafe partial class OpenXRAPI : XRBase
         var waitInfo = new SwapchainImageWaitInfo
         {
             Type = StructureType.SwapchainImageWaitInfo,
-            // OpenXR timeouts are in nanoseconds.
-            Timeout = 1_000_000_000 // 1 second
+            // OpenXR timeouts are in nanoseconds. Use XR_INFINITE_DURATION (int64 max)
+            // to avoid leaking an acquired image on timeout or stalling frame submission.
+            Timeout = long.MaxValue
         };
 
         if (Api.WaitSwapchainImage(_swapchains[viewIndex], in waitInfo) != Result.Success)
@@ -476,6 +477,10 @@ public unsafe partial class OpenXRAPI : XRBase
             renderCallback(_swapchainImagesGL[viewIndex][imageIndex].Image, viewIndex);
 
             _gl.BindFramebuffer(FramebufferTarget.Framebuffer, 0);
+
+            // Ensure GPU commands touching the swapchain image are submitted before releasing it.
+            // (Tutorial's GraphicsAPI::EndRendering blocks; for GL we at least flush.)
+            _gl.Flush();
         }
 
         // Release the image
@@ -747,8 +752,8 @@ public unsafe partial class OpenXRAPI : XRBase
                 _openXrRightViewport.RenderPipeline = sourceViewport.RenderPipeline;
         }
 
-        UpdateOpenXrEyeCameraFromView(_openXrLeftEyeCamera!, 0, _openXrFrameBaseCamera);
-        UpdateOpenXrEyeCameraFromView(_openXrRightEyeCamera!, 1, _openXrFrameBaseCamera);
+        UpdateOpenXrEyeCameraFromView(_openXrLeftEyeCamera!, 0);
+        UpdateOpenXrEyeCameraFromView(_openXrRightEyeCamera!, 1);
 
         _openXrLeftViewport!.CollectVisible(
             collectMirrors: true,
@@ -1437,60 +1442,27 @@ public unsafe partial class OpenXRAPI : XRBase
         }
     }
 
-    private void UpdateOpenXrEyeCameraFromView(XRCamera camera, uint viewIndex, XRCamera baseCamera)
+    private void UpdateOpenXrEyeCameraFromView(XRCamera camera, uint viewIndex)
     {
         var pose = _views[viewIndex].Pose;
         var fov = _views[viewIndex].Fov;
 
-        // Align OpenXR tracking space to the current scene camera by applying the per-eye offset
-        // (relative to the center pose) onto the base camera's world transform.
+        // OpenXR way: render the world directly from the per-eye view pose returned by xrLocateViews
+        // in the same reference space we submit in the projection layer (layer.Space == _appSpace).
+        // This keeps the rendered images consistent with the submitted projectionViews[*].Pose and
+        // avoids timewarp/reprojection artifacts from pose-space mismatches.
         Vector3 eyePos = new(pose.Position.X, pose.Position.Y, pose.Position.Z);
-        Quaternion eyeRot = new(pose.Orientation.X, pose.Orientation.Y, pose.Orientation.Z, pose.Orientation.W);
+        Quaternion eyeRot = Quaternion.Normalize(new Quaternion(
+            pose.Orientation.X,
+            pose.Orientation.Y,
+            pose.Orientation.Z,
+            pose.Orientation.W));
 
-        Matrix4x4 finalWorldMatrix;
+        Matrix4x4 eyeWorldMatrix = Matrix4x4.CreateFromQuaternion(eyeRot);
+        eyeWorldMatrix.Translation = eyePos;
 
-        if (_viewCount >= 2)
-        {
-            var leftPose = _views[0].Pose;
-            var rightPose = _views[1].Pose;
-
-            Vector3 leftPos = new(leftPose.Position.X, leftPose.Position.Y, leftPose.Position.Z);
-            Vector3 rightPos = new(rightPose.Position.X, rightPose.Position.Y, rightPose.Position.Z);
-
-            Quaternion leftRot = new(leftPose.Orientation.X, leftPose.Orientation.Y, leftPose.Orientation.Z, leftPose.Orientation.W);
-            Quaternion rightRot = new(rightPose.Orientation.X, rightPose.Orientation.Y, rightPose.Orientation.Z, rightPose.Orientation.W);
-
-            Vector3 centerPos = (leftPos + rightPos) * 0.5f;
-            Quaternion centerRot = Quaternion.Normalize(Quaternion.Slerp(leftRot, rightRot, 0.5f));
-            Quaternion invCenterRot = Quaternion.Inverse(centerRot);
-
-            // Compute eye offset in the HMD's local space (relative to center between eyes)
-            Vector3 eyeOffsetLocal = Vector3.Transform(eyePos - centerPos, invCenterRot);
-            Quaternion eyeOffsetRotLocal = Quaternion.Normalize(Quaternion.Concatenate(invCenterRot, eyeRot));
-
-            // Use the base camera's *render* pose (render thread snapshot) to avoid world/render desync.
-            Vector3 basePos = baseCamera.Transform.RenderTranslation;
-            Quaternion baseRot = Quaternion.Normalize(baseCamera.Transform.RenderRotation);
-
-            // Apply per-eye offset to the base camera's world position/rotation
-            Vector3 finalPos = basePos + Vector3.Transform(eyeOffsetLocal, baseRot);
-            Quaternion finalRot = Quaternion.Normalize(Quaternion.Concatenate(baseRot, eyeOffsetRotLocal));
-
-            // Build the final world matrix for this eye
-            finalWorldMatrix = Matrix4x4.CreateFromQuaternion(finalRot);
-            finalWorldMatrix.Translation = finalPos;
-        }
-        else
-        {
-            // Fallback: treat tracking space as world space.
-            finalWorldMatrix = Matrix4x4.CreateFromQuaternion(Quaternion.Normalize(eyeRot));
-            finalWorldMatrix.Translation = eyePos;
-        }
-
-        // CRITICAL: Set the render matrix directly - this is what the rendering pipeline reads.
-        // This mirrors what VRDeviceTransformBase.VRState_RecalcMatrixOnDraw() does for OpenVR.
-        // The LocalMatrix is read-only in TransformBase, but RenderMatrix is what actually matters for VR.
-        camera.Transform.SetRenderMatrix(finalWorldMatrix, recalcAllChildRenderMatrices: false);
+        // Set the render matrix directly - this is what the rendering pipeline reads.
+        camera.Transform.SetRenderMatrix(eyeWorldMatrix, recalcAllChildRenderMatrices: false);
 
         if (camera.Parameters is XROpenXRFovCameraParameters openxrParams)
             openxrParams.SetAngles(fov.AngleLeft, fov.AngleRight, fov.AngleUp, fov.AngleDown);
