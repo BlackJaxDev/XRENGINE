@@ -47,10 +47,9 @@ namespace XREngine.Components.Movement
             void RequestRelease();
         }
 
-        private sealed class PhysxCharacterControllerAdapter : ICharacterController
+        private sealed class PhysxCharacterControllerAdapter(PhysxCapsuleController controller) : ICharacterController
         {
-            public PhysxCharacterControllerAdapter(PhysxCapsuleController controller) => Controller = controller;
-            public PhysxCapsuleController Controller { get; }
+            public PhysxCapsuleController Controller { get; } = controller;
 
             public Vector3 Position { get => Controller.Position; set => Controller.Position = value; }
             public Vector3 FootPosition { get => Controller.FootPosition; set => Controller.FootPosition = value; }
@@ -70,10 +69,9 @@ namespace XREngine.Components.Movement
             public void RequestRelease() => Controller.RequestRelease();
         }
 
-        private sealed class JoltCharacterControllerAdapter : ICharacterController
+        private sealed class JoltCharacterControllerAdapter(IJoltCharacterController controller) : ICharacterController
         {
-            public JoltCharacterControllerAdapter(IJoltCharacterController controller) => Controller = controller;
-            public IJoltCharacterController Controller { get; }
+            public IJoltCharacterController Controller { get; } = controller;
 
             public Vector3 Position { get => Controller.Position; set => Controller.Position = value; }
             public Vector3 FootPosition { get => Controller.FootPosition; set => Controller.FootPosition = value; }
