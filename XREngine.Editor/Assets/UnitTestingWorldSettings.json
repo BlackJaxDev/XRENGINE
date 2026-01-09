@@ -66,10 +66,15 @@
       "Path": "misc\\jax2026.fbx",
       "ImportFlags": "Triangulate, FlipUVs",
       "Scale": 1.0,
-      "ZUp": false
+      "ZUp": false,
+      "YawPitchRoll": {
+        "Yaw": 180.0,
+        "Pitch": 180.0,
+        "Roll": 0.0
+      }
     },
     {
-      "Enabled": true,
+      "Enabled": false,
       "Kind": "Static",
       "Path": "Models\\Sponza2\\Sponza.obj",
       "ImportFlags": "CalculateTangentSpace, JoinIdenticalVertices, Triangulate, GenerateNormals, SplitLargeMeshes, ImproveCacheLocality, OptimizeGraph, OptimizeMeshes, SortByPrimitiveType, FlipUVs",
@@ -87,6 +92,9 @@
   "FaceMotion3D": false,
   "FaceTracking": false,
   "AnimationClipVMD": false,
+  "AnimationClipAnim": true,
+  "AnimClipPath": "Assets\\Walks\\Basic Walk.anim",
+  "AnimLooped": true,
   "IKTest": false,
   "TestAnimation": false,
 

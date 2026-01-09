@@ -227,6 +227,21 @@ namespace XREngine.Animation
             else
                 path = _memberName ?? string.Empty;
 
+            if (MemberType == EAnimationMemberType.Method)
+            {
+                for (int i = 0; i < _methodArguments.Length; i++)
+                {
+                    path += ":";
+                    object? arg = _methodArguments[i];
+                    if (AnimatedMethodArgumentIndex == i)
+                        path += "<AnimatedValue>";
+                    else if (arg is null)
+                        path += "<null>";
+                    else
+                        path += $"{arg}";
+                }
+            }
+
             if (Animation != null)
                 animations.Add(path, Animation);
 

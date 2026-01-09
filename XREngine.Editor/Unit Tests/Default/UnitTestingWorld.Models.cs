@@ -27,6 +27,21 @@ public static partial class UnitTestingWorld
 {
     public static class Models
     {
+        private static Matrix4x4? GetOptionalRootTransformMatrix(Settings.ModelImportSettings model)
+        {
+            if (model?.YawPitchRoll is null)
+                return null;
+
+            // JSON values are degrees; Quaternion APIs expect radians.
+            var ypr = model.YawPitchRoll;
+            var rot = Quaternion.CreateFromYawPitchRoll(
+                XRMath.DegToRad(ypr.Yaw),
+                XRMath.DegToRad(ypr.Pitch),
+                XRMath.DegToRad(ypr.Roll));
+
+            return Matrix4x4.CreateFromQuaternion(rot);
+        }
+
         public static void ImportModels(string desktopDir, SceneNode rootNode, SceneNode characterParentNode)
         {
             if (Toggles.CreateUnitBox)
@@ -71,7 +86,14 @@ public static partial class UnitTestingWorld
                             using var importer = new ModelImporter(resolvedPath, null, null);
                             importer.MakeMaterialAction = ModelImporter.MakeMaterialDefault;
                             importer.MakeTextureAction = CreateHardcodedTexture;
-                            var node = importer.Import(model.ImportFlags, true, true, model.Scale, model.ZUp, true);
+                            var node = importer.Import(
+                                model.ImportFlags,
+                                preservePivots: true,
+                                removeAssimpFBXNodes: true,
+                                scaleConversion: model.Scale,
+                                zUp: model.ZUp,
+                                multiThread: true,
+                                rootTransformMatrix: GetOptionalRootTransformMatrix(model));
                             if (characterParentNode != null && node != null)
                                 characterParentNode.Transform.AddChild(node.Transform, false, true);
                             return node;
@@ -110,6 +132,7 @@ public static partial class UnitTestingWorld
                             parent: importedStaticModelsRootNode,
                             scaleConversion: model.Scale,
                             zUp: model.ZUp,
+                            rootTransformMatrix: GetOptionalRootTransformMatrix(model),
                             materialFactory: null,
                             makeMaterialAction: makeMaterialAction,
                             layer: DefaultLayers.StaticIndex);
@@ -143,6 +166,66 @@ public static partial class UnitTestingWorld
             }
 
             return candidate;
+        }
+
+        private static string ResolveUnitTestAssetPath(string desktopDir, string rawPath)
+        {
+            if (Path.IsPathRooted(rawPath))
+                return rawPath;
+
+            rawPath = rawPath.Replace('/', Path.DirectorySeparatorChar);
+            string cwd = Environment.CurrentDirectory;
+
+            // Mirrors how Rive loads assets: treat names as relative to the current working directory.
+            // The editor is usually launched with cwd = 'XREngine.Editor' (see run_editor.bat).
+            string candidate = Path.Combine(cwd, rawPath);
+            if (File.Exists(candidate))
+                return candidate;
+
+            // Support repo-relative paths like 'XREngine.Editor\\Assets\\...'
+            // when cwd already *is* 'XREngine.Editor'.
+            if (string.Equals(Path.GetFileName(cwd), "XREngine.Editor", StringComparison.OrdinalIgnoreCase))
+            {
+                const string prefix = "XREngine.Editor\\";
+                if (rawPath.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
+                {
+                    candidate = Path.Combine(cwd, rawPath[prefix.Length..]);
+                    if (File.Exists(candidate))
+                        return candidate;
+                }
+            }
+
+            // Common caller convenience: allow paths relative to the editor's Assets folder.
+            candidate = Path.Combine(cwd, "Assets", rawPath);
+            if (File.Exists(candidate))
+                return candidate;
+
+            // Also try repo root (parent of XREngine.Editor) for repo-relative paths.
+            var parent = Directory.GetParent(cwd);
+            if (parent is not null)
+            {
+                candidate = Path.Combine(parent.FullName, rawPath);
+                if (File.Exists(candidate))
+                    return candidate;
+
+                candidate = Path.Combine(parent.FullName, "XREngine.Editor", rawPath);
+                if (File.Exists(candidate))
+                    return candidate;
+            }
+
+            candidate = Path.Combine(desktopDir, rawPath);
+            if (File.Exists(candidate))
+                return candidate;
+
+            candidate = Path.Combine(Engine.Assets.GameAssetsPath, rawPath);
+            if (File.Exists(candidate))
+                return candidate;
+
+            candidate = Path.Combine(Engine.Assets.EngineAssetsPath, rawPath);
+            if (File.Exists(candidate))
+                return candidate;
+
+            return Path.GetFullPath(candidate);
         }
 
         public static void AddSkybox(SceneNode rootNode, XRTexture2D? skyEquirect)
@@ -369,6 +452,28 @@ public static partial class UnitTestingWorld
                 }
             }
 
+            if (Toggles.AnimationClipAnim)
+            {
+                var desktopDir = Environment.GetFolderPath(Environment.SpecialFolder.DesktopDirectory);
+                string resolvedPath = ResolveUnitTestAssetPath(desktopDir, Toggles.AnimClipPath);
+                if (!File.Exists(resolvedPath))
+                {
+                    Debug.LogWarning($"[UnitTestingWorld] .anim clip not found at '{resolvedPath}' (raw='{Toggles.AnimClipPath}')");
+                }
+                else
+                {
+                    var clip = Engine.Assets.Load<AnimationClip>(resolvedPath);
+                    if (clip is not null)
+                    {
+                        clip.Looped = Toggles.AnimLooped;
+
+                        var anim = rootNode.AddComponent<AnimationClipComponent>()!;
+                        anim.StartOnActivate = true;
+                        anim.Animation = clip;
+                    }
+                }
+            }
+
             OVRLipSyncComponent? lipSync = null;
             if (Toggles.AttachMicToAnimatedModel)
             {
@@ -432,7 +537,6 @@ public static partial class UnitTestingWorld
             float rawRatio = capsuleOuterHeight / modelHeight;
             if (!float.IsFinite(rawRatio) || rawRatio <= 0.0f)
                 return;
-
             float ratio = MathF.Min(1.0f, rawRatio);
 
             // Ensure the component has what it needs without letting it resize the character capsule.

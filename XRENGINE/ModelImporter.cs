@@ -59,6 +59,7 @@ namespace XREngine
             SceneNode? parent = null,
             float scaleConversion = 1.0f,
             bool zUp = false,
+            Matrix4x4? rootTransformMatrix = null,
             DelMaterialFactory? materialFactory = null,
             DelMakeMaterialAction? makeMaterialAction = null,
             int layer = DefaultLayers.DynamicIndex)
@@ -72,7 +73,7 @@ namespace XREngine
                 Debug.Out($"[ModelImporter] ImportRoutine started on thread: {Environment.CurrentManagedThreadId}");
                 // Run on the job system thread directly (no Task.Run). The job system already executes
                 // this enumerator on a worker thread.
-                var result = ImportInternal(path, options, parent, scaleConversion, zUp, onFinished, materialFactory, makeMaterialAction, onProgress, cancellationToken, layer);
+                var result = ImportInternal(path, options, parent, scaleConversion, zUp, rootTransformMatrix, onFinished, materialFactory, makeMaterialAction, onProgress, cancellationToken, layer);
                 Debug.Out($"[ModelImporter] ImportInternal completed, yielding result");
                 yield return new JobProgress(1f, result);
             }
@@ -430,6 +431,7 @@ namespace XREngine
             SceneNode? parent,
             float scaleConversion,
             bool zUp,
+            Matrix4x4? rootTransformMatrix,
             Action<ModelImporterResult>? onFinished,
             DelMaterialFactory? materialFactory,
             DelMakeMaterialAction? makeMaterialAction,
@@ -449,7 +451,7 @@ namespace XREngine
             // Process meshes synchronously within this job thread.
             // The job system already runs this on a worker thread, so we don't need nested async.
             // This ensures _materials and _meshes are populated before we return.
-            var node = importer.Import(options, true, true, scaleConversion, zUp, true, false, cancellationToken, onProgress);
+            var node = importer.Import(options, true, true, scaleConversion, zUp, true, false, cancellationToken, onProgress, rootTransformMatrix);
             Debug.Out($"[ModelImporter] Import() returned, node: {node?.Name ?? "NULL"}");
             Debug.Out($"[ModelImporter] Meshes loaded: {importer._meshes.Count}, Materials loaded: {importer._materials.Count}");
 
@@ -813,7 +815,8 @@ namespace XREngine
             bool multiThread = true,
             bool? processMeshesAsynchronously = null,
             CancellationToken cancellationToken = default,
-            Action<float>? onProgress = null)
+            Action<float>? onProgress = null,
+            Matrix4x4? rootTransformMatrix = null)
         {
             Debug.Out($"[ModelImporter.Import] Starting import of: {SourceFilePath}");
             Debug.Out($"[ModelImporter.Import] processMeshesAsynchronously param: {processMeshesAsynchronously}");
@@ -848,7 +851,7 @@ namespace XREngine
                 Debug.Out($"[ModelImporter.Import] Creating scene node hierarchy...");
                 rootNode = new(Path.GetFileNameWithoutExtension(SourceFilePath)) { Layer = _importLayer };
                 _nodeTransforms.Clear();
-                ProcessNode(true, scene.RootNode, scene, rootNode, null, Matrix4x4.Identity, removeAssimpFBXNodes, null, cancellationToken);
+                ProcessNode(true, scene.RootNode, scene, rootNode, null, rootTransformMatrix ?? Matrix4x4.Identity, removeAssimpFBXNodes, null, cancellationToken);
                 Debug.Out($"[ModelImporter.Import] ProcessNode complete, {_nodeTransforms.Count} nodes processed");
                 NormalizeNodeScales(scene, rootNode, cancellationToken, processMeshesAsync);
                 Debug.Out($"[ModelImporter.Import] NormalizeNodeScales complete, {_meshProcessRoutines.Count} mesh routines queued");

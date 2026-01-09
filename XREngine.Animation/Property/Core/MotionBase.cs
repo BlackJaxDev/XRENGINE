@@ -1,4 +1,5 @@
 ﻿using System.Numerics;
+using System.Diagnostics;
 using MemoryPack;
 using XREngine.Core.Files;
 using XREngine.Data;
@@ -90,7 +91,22 @@ namespace XREngine.Animation
             if (member is null)
                 return;
 
+            object? prevObject = parentObject;
             parentObject = member.Initialize?.Invoke(parentObject);
+
+            // If we had a parent object and initialization returns null, the animation path is broken at this segment.
+            // This commonly happens when scene node names don't match (e.g., FindDescendantByName("Body") returns null).
+            if (prevObject is not null && member.Initialize is not null && parentObject is null && member.MemberType != EAnimationMemberType.Group)
+            {
+                string brokenAt = string.IsNullOrEmpty(path) ? member.MemberName : $"{path}{member.MemberName}";
+                System.Diagnostics.Debug.WriteLine($"[Animation] Broken animation path at '{brokenAt}' (segment '{member.MemberName}') on '{prevObject.GetType().Name}'.");
+            }
+
+            if (member.MemberNotFound)
+            {
+                string brokenAt = string.IsNullOrEmpty(path) ? member.MemberName : $"{path}{member.MemberName}";
+                System.Diagnostics.Debug.WriteLine($"[Animation] Animation member not found at '{brokenAt}' (segment '{member.MemberName}').");
+            }
 
             if (member.MemberType != EAnimationMemberType.Group)
                 path += $"{member.MemberName}";

@@ -77,6 +77,9 @@
   "FaceTracking": false,
 
   "AnimationClipVMD": false,
+  "AnimationClipAnim": true,
+  "AnimClipPath": "Assets\\Walks\\Basic Walk.anim",
+  "AnimLooped": true,
   "IKTest": false,
   "TestAnimation": false,
 
