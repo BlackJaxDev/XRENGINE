@@ -91,6 +91,19 @@ public static partial class UnitTestingWorld
             public PostProcessSteps ImportFlags { get; set; } = PostProcessSteps.None;
             public float Scale { get; set; } = 1.0f;
             public bool ZUp { get; set; } = false;
+
+            /// <summary>
+            /// Optional additional local-space rotation to apply after import.
+            /// Values are degrees.
+            /// </summary>
+            public YawPitchRollDegrees? YawPitchRoll { get; set; }
+        }
+
+        public class YawPitchRollDegrees
+        {
+            public float Yaw { get; set; } = 0.0f;
+            public float Pitch { get; set; } = 0.0f;
+            public float Roll { get; set; } = 0.0f;
         }
 
         public List<ModelImportSettings> ModelsToImport { get; set; } =
@@ -111,6 +124,9 @@ public static partial class UnitTestingWorld
 
         //Animation
         public bool AnimationClipVMD = false; //Imports a VMD animation clip for testing.
+        public bool AnimationClipAnim = false; //Imports a .anim clip for testing.
+        public string AnimClipPath { get; set; } = "Assets\\Walks\\Basic Walk.anim";
+        public bool AnimLooped { get; set; } = true;
         public bool IKTest = false; //Adds an simple IK test tree to the scene.
         public bool TestAnimation = false; //Adds test animations to the character pawn.
 

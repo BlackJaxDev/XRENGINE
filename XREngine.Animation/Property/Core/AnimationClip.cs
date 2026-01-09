@@ -10,7 +10,7 @@ namespace XREngine.Animation
     /// <summary>
     /// Represents a single animation clip that can be played with an AnimationClipComponent or an AnimStateMachineComponent.
     /// </summary>
-    [XR3rdPartyExtensions(typeof(XREngine.Data.XRDefault3rdPartyImportOptions), "vmd")]
+    [XR3rdPartyExtensions(typeof(XREngine.Data.XRDefault3rdPartyImportOptions), "vmd", "anim")]
     [MemoryPackable]
     public partial class AnimationClip : MotionBase
     {
@@ -210,12 +210,21 @@ namespace XREngine.Animation
 
         public override bool Load3rdParty(string filePath)
         {
-            if (filePath.EndsWith(".vmd"))
+            string ext = System.IO.Path.GetExtension(filePath).ToLowerInvariant();
+            switch (ext)
             {
-                VMDFile vmd = new();
-                vmd.Load(filePath);
-                LoadFromVMD(vmd);
-                return true;
+                case ".vmd":
+                    VMDFile vmd = new();
+                    vmd.Load(filePath);
+                    LoadFromVMD(vmd);
+                    return true;
+                case ".anim":
+                        var imported = Importers.AnimYamlImporter.Import(filePath);
+                    Name = imported.Name;
+                    LengthInSeconds = imported.LengthInSeconds;
+                    Looped = imported.Looped;
+                    RootMember = imported.RootMember;
+                    return true;
             }
             return false;
         }

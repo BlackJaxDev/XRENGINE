@@ -205,7 +205,7 @@ public sealed class HumanoidComponentEditor : IXRComponentEditor
 
     private static void DrawBoneMappingSection(HumanoidComponent humanoid)
     {
-        DrawBoneGroup("Core", [("Hips", humanoid.Hips), ("Spine", humanoid.Spine), ("Chest", humanoid.Chest), ("Neck", humanoid.Neck), ("Head", humanoid.Head)]);
+        DrawBoneGroup("Core", [("Hips", humanoid.Hips), ("Spine", humanoid.Spine), ("Chest", humanoid.Chest), ("Neck", humanoid.Neck), ("Head", humanoid.Head), ("Jaw", humanoid.Jaw)]);
 
         if (ImGui.TreeNodeEx("Eyes", ImGuiTreeNodeFlags.DefaultOpen))
         {
