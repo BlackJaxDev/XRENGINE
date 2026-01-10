@@ -183,7 +183,7 @@ internal sealed class SkinnedMeshBoundsCalculator : IDisposable
         }
     }
 
-    public readonly struct Result
+    public readonly struct Result(Vector3[] positions, AABB bounds, Matrix4x4 basis, bool isWorldSpace)
     {
         public Result(Vector3[] positions, AABB bounds)
             : this(positions, bounds, Matrix4x4.Identity, true)
@@ -195,21 +195,13 @@ internal sealed class SkinnedMeshBoundsCalculator : IDisposable
         {
         }
 
-        public Result(Vector3[] positions, AABB bounds, Matrix4x4 basis, bool isWorldSpace)
-        {
-            Positions = positions;
-            Bounds = bounds;
-            Basis = basis;
-            IsWorldSpace = isWorldSpace;
-        }
-
-        public Vector3[] Positions { get; }
-        public AABB Bounds { get; }
+        public Vector3[] Positions { get; } = positions;
+        public AABB Bounds { get; } = bounds;
         /// <summary>
         /// Matrix that transforms the local bounds/positions back into render space when <see cref="IsWorldSpace"/> is false.
         /// </summary>
-        public Matrix4x4 Basis { get; }
-        public bool IsWorldSpace { get; }
+        public Matrix4x4 Basis { get; } = basis;
+        public bool IsWorldSpace { get; } = isWorldSpace;
     }
 
     private sealed class MeshResources : IDisposable

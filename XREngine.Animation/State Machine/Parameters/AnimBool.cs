@@ -52,6 +52,20 @@
 
             bitOffset += 1;
         }
+        public override void ReadBits(byte[]? bytes, ref int bitOffset)
+        {
+            if (bytes is null || bitOffset < 0 || bitOffset >= bytes.Length * 8)
+                return;
+
+            int byteOffset = bitOffset / 8;
+            int bitInByte = bitOffset % 8;
+            if (byteOffset >= bytes.Length)
+                return;
+
+            Value = (bytes[byteOffset] & (1 << bitInByte)) != 0;
+
+            bitOffset += 1;
+        }
 
         //protected override void OnPropertyChanged<T>(string? propName, T prev, T field)
         //{

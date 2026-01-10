@@ -352,6 +352,8 @@ namespace XREngine
                 private bool _allowBinaryProgramCaching = true;
                 private bool _calculateBlendshapesInComputeShader = false;
                 private bool _calculateSkinningInComputeShader = false;
+                private bool _useGlobalBoneMatricesBufferForComputeSkinning = false;
+                private bool _useGlobalBlendshapeWeightsBufferForComputeSkinning = false;
                 private int _shaderConfigVersion = 0;
                 private bool _useGpuBvh = false;
                 private uint _bvhLeafMaxPrims = 4u;
@@ -885,6 +887,30 @@ namespace XREngine
                 {
                     get => _calculateSkinningInComputeShader;
                     set => SetField(ref _calculateSkinningInComputeShader, value, null, _ => BumpShaderConfigVersion());
+                }
+
+                /// <summary>
+                /// If true (and compute skinning is enabled), bone matrices will be packed into a single global SSBO for all visible renderers.
+                /// This reduces per-renderer SSBO binding and upload churn at the cost of building a packed buffer each render.
+                /// </summary>
+                [Category("Performance")]
+                [Description("If true (and compute skinning is enabled), packs bone matrices into a single global SSBO for all visible renderers.")]
+                public bool UseGlobalBoneMatricesBufferForComputeSkinning
+                {
+                    get => _useGlobalBoneMatricesBufferForComputeSkinning;
+                    set => SetField(ref _useGlobalBoneMatricesBufferForComputeSkinning, value);
+                }
+
+                /// <summary>
+                /// If true (and compute blendshapes are enabled), blendshape weights will be packed into a single global SSBO for all visible renderers.
+                /// This reduces per-renderer SSBO binding and upload churn at the cost of building a packed buffer each render.
+                /// </summary>
+                [Category("Performance")]
+                [Description("If true (and compute blendshapes are enabled), packs blendshape weights into a single global SSBO for all visible renderers.")]
+                public bool UseGlobalBlendshapeWeightsBufferForComputeSkinning
+                {
+                    get => _useGlobalBlendshapeWeightsBufferForComputeSkinning;
+                    set => SetField(ref _useGlobalBlendshapeWeightsBufferForComputeSkinning, value);
                 }
 
                 internal int ShaderConfigVersion => _shaderConfigVersion;
