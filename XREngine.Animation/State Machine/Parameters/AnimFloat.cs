@@ -1,4 +1,6 @@
-﻿namespace XREngine.Animation
+﻿using System.Diagnostics;
+
+namespace XREngine.Animation
 {
     public class AnimFloat(string name, float defaultValue) : AnimVar(name)
     {
@@ -48,7 +50,12 @@
         {
             if (CompressedBitCount == 32) //Write raw float
             {
-                var bytes = BitConverter.GetBytes(Value);
+                Span<byte> bytes = stackalloc byte[4];
+                if (!BitConverter.TryWriteBytes(bytes, Value))
+                {
+                    Trace.WriteLine($"AnimFloat.WriteBits: Failed to convert float {Value} to bytes.");
+                    return;
+                }
                 int byteOffset = bitOffset / 8;
                 int bitsToWrite = Math.Min(32, data.Length * 8 - bitOffset);
                 for (int i = 0; i < bitsToWrite; i++)
@@ -59,7 +66,12 @@
             }
             else if (CompressedBitCount == 16) //Write half float
             {
-                var bytes = BitConverter.GetBytes((Half)Value);
+                Span<byte> bytes = stackalloc byte[2];
+                if (!BitConverter.TryWriteBytes(bytes, (Half)Value))
+                {
+                    Trace.WriteLine($"AnimFloat.WriteBits: Failed to convert float {Value} to half-float.");
+                    return;
+                }
                 int byteOffset = bitOffset / 8;
                 int bitsToWrite = Math.Min(16, data.Length * 8 - bitOffset);
                 for (int i = 0; i < bitsToWrite; i++)
@@ -78,6 +90,48 @@
                     data[byteOffset] |= (byte)((scaledValue >> i) & 1);
                     bitOffset++;
                 }
+            }
+        }
+        public override void ReadBits(byte[]? bytes, ref int bitOffset)
+        {
+            if (bytes is null)
+                return;
+
+            if (CompressedBitCount == 32) //Read raw float
+            {
+                Span<byte> floatBytes = stackalloc byte[4];
+                int bitsToRead = Math.Min(32, bytes.Length * 8 - bitOffset);
+                for (int i = 0; i < bitsToRead; i++)
+                {
+                    int byteOffset = bitOffset / 8;
+                    floatBytes[i / 8] |= (byte)(((bytes[byteOffset] >> (bitOffset % 8)) & 1) << (i % 8));
+                    bitOffset++;
+                }
+                Value = BitConverter.ToSingle(floatBytes);
+            }
+            else if (CompressedBitCount == 16) //Read half float
+            {
+                Span<byte> halfBytes = stackalloc byte[2];
+                int bitsToRead = Math.Min(16, bytes.Length * 8 - bitOffset);
+                for (int i = 0; i < bitsToRead; i++)
+                {
+                    int byteOffset = bitOffset / 8;
+                    halfBytes[i / 8] |= (byte)(((bytes[byteOffset] >> (bitOffset % 8)) & 1) << (i % 8));
+                    bitOffset++;
+                }
+                Value = (float)(Half)BitConverter.ToUInt16(halfBytes);
+            }
+            else //Read scaled integer value
+            {
+                int scaledValue = 0;
+                int bitsToRead = Math.Min(CompressedBitCount, bytes.Length * 8 - bitOffset);
+                for (int i = 0; i < bitsToRead; i++)
+                {
+                    int byteOffset = bitOffset / 8;
+                    scaledValue |= ((bytes[byteOffset] >> (bitOffset % 8)) & 1) << i;
+                    bitOffset++;
+                }
+                Value = (float)scaledValue / ((1 << CompressedBitCount) - 1);
             }
         }
 

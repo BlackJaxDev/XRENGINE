@@ -357,33 +357,22 @@ namespace XREngine.Components.Scene.Mesh
             if (!IsSkinned)
                 return false;
 
-            bool useGpu;
+            bool useGpu = Engine.Rendering.Settings.CalculateSkinnedBoundsInComputeShader;
+
+            // Never compute skinned bounds on CPU (too expensive for crowds).
+            // If GPU bounds are disabled (or fail), callers should fall back to bind-pose bounds.
+            if (!useGpu)
+                return false;
+
+            if (!TryComputeSkinnedBoundsOnGpu(out SkinnedMeshBoundsCalculator.Result gpuResult))
+                return false;
 
             lock (_skinnedDataLock)
             {
                 if (!_skinnedBoundsDirty && _hasSkinnedBounds)
                     return true;
 
-                useGpu = Engine.Rendering.Settings.CalculateSkinnedBoundsInComputeShader;
-
-                if (!useGpu)
-                    return TryComputeSkinnedBoundsOnCpuLocked();
-            }
-
-            if (useGpu && TryComputeSkinnedBoundsOnGpu(out SkinnedMeshBoundsCalculator.Result gpuResult))
-            {
-                lock (_skinnedDataLock)
-                {
-                    if (!_skinnedBoundsDirty && _hasSkinnedBounds)
-                        return true;
-
-                    return ApplySkinnedBoundsResult(gpuResult, markBvhDirty: true);
-                }
-            }
-
-            lock (_skinnedDataLock)
-            {
-                return TryComputeSkinnedBoundsOnCpuLocked();
+                return ApplySkinnedBoundsResult(gpuResult, markBvhDirty: true);
             }
         }
 

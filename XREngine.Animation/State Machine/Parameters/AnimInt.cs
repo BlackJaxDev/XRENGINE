@@ -104,6 +104,35 @@
 
             bitOffset += _calculatedBitCountWithoutSign;
         }
+        public override void ReadBits(byte[]? bytes, ref int bitOffset)
+        {
+            if (bytes is null || bitOffset < 0 || bitOffset >= bytes.Length * 8)
+                return;
+
+            int byteOffset = bitOffset / 8;
+            int bitInByte = bitOffset % 8;
+            if (byteOffset >= bytes.Length)
+                return;
+
+            bool isNegative = false;
+            // Read the sign bit if negative
+            if (NegativeAllowed)
+            {
+                isNegative = (bytes[byteOffset] & (1 << bitInByte)) != 0;
+                bitOffset++;
+            }
+
+            // Read the absolute value bits
+            int absValue = 0;
+            for (int i = 0; i < _calculatedBitCountWithoutSign; i++)
+            {
+                if ((bytes[byteOffset] & (1 << (bitInByte + i))) != 0)
+                    absValue |= (1 << i);
+            }
+
+            Value = isNegative ? -absValue : absValue;
+            bitOffset += _calculatedBitCountWithoutSign;
+        }
 
         //protected override void OnPropertyChanged<T>(string? propName, T prev, T field)
         //{

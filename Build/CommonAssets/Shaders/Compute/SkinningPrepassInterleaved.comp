@@ -82,6 +82,9 @@ uniform int absoluteBlendshapePositions;
 uniform int maxBlendshapeAccumulation;
 uniform int useIntegerUniforms;
 uniform int optimized4;
+uniform uint boneMatrixBase;
+uniform uint boneMatrixCount;
+uniform uint blendshapeWeightBase;
 uniform uint interleavedStride;
 uniform uint positionOffsetBytes;
 uniform uint normalOffsetBytes;
@@ -169,7 +172,9 @@ void applyBlendshapes(inout vec3 position, inout vec3 normal, inout vec3 tangent
         {
             ivec4 bs = decodeBlendshapeIndices(BlendshapeIndices[start + i]);
             int blendIndex = bs.x;
-            float weight = BlendshapeWeights[blendIndex];
+            if (blendIndex < 0)
+                continue;
+            float weight = BlendshapeWeights[blendshapeWeightBase + uint(blendIndex)];
             if (weight <= MIN_BLEND_WEIGHT)
                 continue;
 
@@ -194,7 +199,9 @@ void applyBlendshapes(inout vec3 position, inout vec3 normal, inout vec3 tangent
         {
             ivec4 bs = decodeBlendshapeIndices(BlendshapeIndices[start + i]);
             int blendIndex = bs.x;
-            float weight = BlendshapeWeights[blendIndex];
+            if (blendIndex < 0)
+                continue;
+            float weight = BlendshapeWeights[blendshapeWeightBase + uint(blendIndex)];
             if (weight <= MIN_BLEND_WEIGHT)
                 continue;
 
@@ -253,7 +260,7 @@ void applySkinningOptimized4(inout vec3 position, inout vec3 normal, inout vec3 
     vec3 skinnedTangent = vec3(0.0);
     float totalWeight = 0.0f;
 
-    uint boneCount = BoneMatrices.length();
+    uint boneCount = boneMatrixCount;
 
     for (int i = 0; i < 4; ++i)
     {
@@ -267,7 +274,8 @@ void applySkinningOptimized4(inout vec3 position, inout vec3 normal, inout vec3 
             continue;
 
         // With row_major buffers, use row-vector multiplication to match CPU/System.Numerics conventions.
-        mat4 boneMatrix = BoneInvBindMatrices[boneIndex] * BoneMatrices[boneIndex];
+        uint idx = boneMatrixBase + uint(boneIndex);
+        mat4 boneMatrix = BoneInvBindMatrices[idx] * BoneMatrices[idx];
         vec4 p = vec4(basePosition, 1.0f) * boneMatrix;
         skinnedPos += p.xyz * weight;
         totalWeight += weight;
@@ -308,7 +316,7 @@ void applySkinningVariable(inout vec3 position, inout vec3 normal, inout vec3 ta
     vec3 skinnedTangent = vec3(0.0);
     float totalWeight = 0.0f;
 
-    uint boneCount = BoneMatrices.length();
+    uint boneCount = boneMatrixCount;
 
     uint indexListSize = BoneIndexList.length();
     uint weightListSize = BoneWeightList.length();
@@ -331,7 +339,8 @@ void applySkinningVariable(inout vec3 position, inout vec3 normal, inout vec3 ta
             continue;
 
         // With row_major buffers, use row-vector multiplication to match CPU/System.Numerics conventions.
-        mat4 boneMatrix = BoneInvBindMatrices[boneIndex] * BoneMatrices[boneIndex];
+        uint idx = boneMatrixBase + uint(boneIndex);
+        mat4 boneMatrix = BoneInvBindMatrices[idx] * BoneMatrices[idx];
         vec4 p = vec4(basePosition, 1.0f) * boneMatrix;
         skinnedPos += p.xyz * weight;
         totalWeight += weight;

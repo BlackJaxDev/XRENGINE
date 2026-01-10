@@ -2,7 +2,9 @@ using System;
 using System.Collections.Generic;
 using System.Runtime.CompilerServices;
 using XREngine.Data.Rendering;
+using State = XREngine.Engine.Rendering.State;
 using XREngine.Rendering;
+using XREngine.Rendering.Commands;
 using XREngine.Rendering.Models.Materials;
 
 namespace XREngine.Rendering.Compute;
@@ -27,6 +29,8 @@ internal sealed class SkinningPrepassDispatcher : IDisposable
     private XRShader? _interleavedShader;
     private XRRenderProgram? _interleavedProgram;
 
+    private readonly GlobalAnimationInputBuffers _globalInputs = new();
+
     private SkinningPrepassDispatcher()
     {
     }
@@ -43,6 +47,8 @@ internal sealed class SkinningPrepassDispatcher : IDisposable
             _shader = null;
             _interleavedProgram = null;
             _interleavedShader = null;
+
+            _globalInputs.Dispose();
         }
     }
 
@@ -91,11 +97,19 @@ internal sealed class SkinningPrepassDispatcher : IDisposable
         if (!doSkinning && !doBlendshapes)
             return;
 
+        bool useGlobalBones = doSkinning && Engine.Rendering.Settings.UseGlobalBoneMatricesBufferForComputeSkinning;
+        bool useGlobalBlendWeights = doBlendshapes && Engine.Rendering.Settings.UseGlobalBlendshapeWeightsBufferForComputeSkinning;
+
         bool isInterleaved = mesh.Interleaved;
         bool optimizeTo4Weights = Engine.Rendering.Settings.OptimizeSkinningTo4Weights || (Engine.Rendering.Settings.OptimizeSkinningWeightsIfPossible && mesh.MaxWeightCount <= 4);
 
         lock (_syncRoot)
         {
+            // Avoid re-running the compute deformation for the same renderer more than once per global render frame.
+            ulong frameId = State.RenderFrameId;
+
+            _globalInputs.BeginFrame(frameId);
+
             XRRenderProgram? activeProgram;
             if (isInterleaved)
             {
@@ -112,11 +126,48 @@ internal sealed class SkinningPrepassDispatcher : IDisposable
                 return;
 
             RendererResources resources = _resources.GetValue(renderer, r => new RendererResources(r));
+
+            if (resources.LastComputePrepassFrameId == frameId)
+                return;
+
             if (!resources.Validate(mesh, doSkinning, doBlendshapes, optimizeTo4Weights, isInterleaved))
                 return;
 
-            resources.SyncDynamicBuffers();
-            resources.BindBlocks(doSkinning, doBlendshapes, isInterleaved);
+            resources.LastComputePrepassFrameId = frameId;
+
+            // Ensure this renderer's animation inputs are present in the global packed buffers (if enabled).
+            // This may resize and/or re-upload global buffers.
+            if (useGlobalBones || useGlobalBlendWeights)
+            {
+                bool changed = _globalInputs.EnsurePackedForRenderer(renderer, useGlobalBones, useGlobalBlendWeights);
+                _globalInputs.PushIfDirty(pushBones: useGlobalBones, pushBlendshapeWeights: useGlobalBlendWeights);
+            }
+
+            resources.SyncDynamicBuffers(
+                pushBoneMatrices: !useGlobalBones,
+                pushBlendshapeWeights: !useGlobalBlendWeights);
+
+            uint boneBase = 0u;
+            uint boneCount = (uint)(mesh.UtilizedBones?.Length ?? 0) + 1u;
+            if (useGlobalBones && _globalInputs.TryGetBoneSlice(renderer, out uint packedBase, out uint packedCount))
+            {
+                boneBase = packedBase;
+                boneCount = packedCount;
+            }
+
+            uint blendBase = 0u;
+            if (useGlobalBlendWeights && _globalInputs.TryGetBlendshapeWeightsSlice(renderer, out uint packedBlendBase, out _))
+                blendBase = packedBlendBase;
+
+            resources.BindBlocks(
+                doSkinning,
+                doBlendshapes,
+                isInterleaved,
+                useGlobalBones,
+                useGlobalBlendWeights,
+                _globalInputs.GlobalBoneMatrices,
+                _globalInputs.GlobalBoneInvBindMatrices,
+                _globalInputs.GlobalBlendshapeWeights);
 
             uint vertexCount = (uint)mesh.VertexCount;
             activeProgram.Uniform("vertexCount", vertexCount);
@@ -130,6 +181,11 @@ internal sealed class SkinningPrepassDispatcher : IDisposable
             activeProgram.Uniform("useIntegerUniforms", Engine.Rendering.Settings.UseIntegerUniformsInShaders ? 1 : 0);
             activeProgram.Uniform("optimized4", optimizeTo4Weights ? 1 : 0);
 
+            // Global-packed animation input base offsets (0 when using per-renderer buffers).
+            activeProgram.Uniform("boneMatrixBase", boneBase);
+            activeProgram.Uniform("boneMatrixCount", boneCount);
+            activeProgram.Uniform("blendshapeWeightBase", blendBase);
+
             // Set interleaved-specific uniforms
             if (isInterleaved)
             {
@@ -142,6 +198,62 @@ internal sealed class SkinningPrepassDispatcher : IDisposable
             uint groupsX = Math.Max(1u, (vertexCount + ThreadGroupSize - 1u) / ThreadGroupSize);
             activeProgram.DispatchCompute(groupsX, 1u, 1u, EMemoryBarrierMask.ShaderStorage | EMemoryBarrierMask.VertexAttribArray);
         }
+    }
+
+    public void RunVisible(RenderCommandCollection commands)
+    {
+        if (commands is null)
+            return;
+
+        if (!Engine.Rendering.Settings.CalculateSkinningInComputeShader && !Engine.Rendering.Settings.CalculateBlendshapesInComputeShader)
+            return;
+
+        var dispatched = new HashSet<XRMeshRenderer>(System.Collections.Generic.ReferenceEqualityComparer.Instance);
+        var renderers = new List<XRMeshRenderer>();
+        foreach (var meshCmd in commands.EnumerateRenderingMeshCommands())
+        {
+            if (meshCmd.Mesh is not XRMeshRenderer renderer)
+                continue;
+
+            if (!dispatched.Add(renderer))
+                continue;
+
+            renderers.Add(renderer);
+        }
+
+        if (renderers.Count == 0)
+            return;
+
+        // Optionally pre-pack all visible renderers into global buffers for this frame.
+        bool globalBones = Engine.Rendering.Settings.UseGlobalBoneMatricesBufferForComputeSkinning;
+        bool globalBlend = Engine.Rendering.Settings.UseGlobalBlendshapeWeightsBufferForComputeSkinning;
+        if (globalBones || globalBlend)
+        {
+            lock (_syncRoot)
+            {
+                _globalInputs.BeginFrame(State.RenderFrameId);
+                bool anyChanged = false;
+                foreach (var renderer in renderers)
+                {
+                    var mesh = renderer.Mesh;
+                    if (mesh is null)
+                        continue;
+
+                    bool needsBones = globalBones && Engine.Rendering.Settings.CalculateSkinningInComputeShader && mesh.HasSkinning;
+                    bool needsBlend = globalBlend && Engine.Rendering.Settings.CalculateBlendshapesInComputeShader && mesh.BlendshapeCount > 0 && Engine.Rendering.Settings.AllowBlendshapes;
+                    if (!needsBones && !needsBlend)
+                        continue;
+
+                    anyChanged |= _globalInputs.EnsurePackedForRenderer(renderer, needsBones, needsBlend);
+                }
+
+                if (anyChanged)
+                    _globalInputs.PushIfDirty(pushBones: globalBones, pushBlendshapeWeights: globalBlend);
+            }
+        }
+
+        foreach (var renderer in renderers)
+            Run(renderer);
     }
 
     private void EnsureProgram()
@@ -167,6 +279,8 @@ internal sealed class SkinningPrepassDispatcher : IDisposable
         private readonly XRMeshRenderer _renderer = renderer;
         private int _lastVertexCount;
         private bool _lastWasInterleaved;
+
+        public ulong LastComputePrepassFrameId;
 
         /// <summary>
         /// Gets the output buffer containing skinned positions.
@@ -314,13 +428,23 @@ internal sealed class SkinningPrepassDispatcher : IDisposable
             }
         }
 
-        public void SyncDynamicBuffers()
+        public void SyncDynamicBuffers(bool pushBoneMatrices, bool pushBlendshapeWeights)
         {
-            _renderer.PushBoneMatricesToGPU();
-            _renderer.PushBlendshapeWeightsToGPU();
+            if (pushBoneMatrices)
+                _renderer.PushBoneMatricesToGPU();
+            if (pushBlendshapeWeights)
+                _renderer.PushBlendshapeWeightsToGPU();
         }
 
-        public void BindBlocks(bool doSkinning, bool doBlendshapes, bool isInterleaved)
+        public void BindBlocks(
+            bool doSkinning,
+            bool doBlendshapes,
+            bool isInterleaved,
+            bool useGlobalBones,
+            bool useGlobalBlendshapeWeights,
+            XRDataBuffer? globalBoneMatrices,
+            XRDataBuffer? globalInvBindMatrices,
+            XRDataBuffer? globalBlendshapeWeights)
         {
             var mesh = _renderer.Mesh;
             if (mesh is null)
@@ -347,8 +471,16 @@ internal sealed class SkinningPrepassDispatcher : IDisposable
 
             if (doSkinning)
             {
-                _renderer.BoneMatricesBuffer?.SetBlockIndex(0);
-                _renderer.BoneInvBindMatricesBuffer?.SetBlockIndex(1);
+                if (useGlobalBones)
+                {
+                    globalBoneMatrices?.SetBlockIndex(0);
+                    globalInvBindMatrices?.SetBlockIndex(1);
+                }
+                else
+                {
+                    _renderer.BoneMatricesBuffer?.SetBlockIndex(0);
+                    _renderer.BoneInvBindMatricesBuffer?.SetBlockIndex(1);
+                }
                 mesh.BoneWeightOffsets?.SetBlockIndex(2);
                 mesh.BoneWeightCounts?.SetBlockIndex(3);
                 
@@ -372,7 +504,10 @@ internal sealed class SkinningPrepassDispatcher : IDisposable
                 mesh.BlendshapeCounts?.SetBlockIndex(4);
                 mesh.BlendshapeIndices?.SetBlockIndex(5);
                 mesh.BlendshapeDeltas?.SetBlockIndex(6);
-                _renderer.BlendshapeWeights?.SetBlockIndex(7);
+                if (useGlobalBlendshapeWeights)
+                    globalBlendshapeWeights?.SetBlockIndex(7);
+                else
+                    _renderer.BlendshapeWeights?.SetBlockIndex(7);
             }
         }
 

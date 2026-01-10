@@ -178,11 +178,14 @@ namespace XREngine.Animation.Importers
 
                 // Humanoid (muscle) curves: these typically have an empty path and classID 95,
                 // and the attribute is a human-readable muscle name like "Neck Nod Down-Up".
-                // We forward these to HumanoidComponent.SetValue(string name, float amount).
+                // We map these strings to the underlying int value of EHumanoidValue and forward to HumanoidComponent.SetValue(int, float).
                 if (IsHumanoidMuscleCurve(c))
                 {
+                    if (!TryMapUnityHumanoidAttributeToValue(c.Attribute, out int humanoidValue))
+                        continue;
+
                     var anim = BuildFloatAnim(c, length, looped, sampleRate, valueScale: 1.0f);
-                    builder.AddHumanoidValueAnimation(c.Attribute, anim);
+                    builder.AddHumanoidValueAnimation(humanoidValue, anim);
                     continue;
                 }
 
@@ -314,12 +317,12 @@ namespace XREngine.Animation.Importers
                 method.Animation = anim;
             }
 
-            public void AddHumanoidValueAnimation(string humanoidAttribute, PropAnimFloat anim)
+            public void AddHumanoidValueAnimation(int humanoidValue, PropAnimFloat anim)
             {
                 // Humanoid values are applied on the root node's HumanoidComponent.
                 // We keep this importer decoupled from the HumanoidComponent assembly by using string-based reflection.
                 var getComp = GetOrAddMethod(_sceneNode, "GetComponent", new object?[] { "HumanoidComponent" }, animatedArgIndex: 0, cacheReturnValue: true);
-                var method = GetOrAddMethod(getComp, "SetValue", new object?[] { humanoidAttribute, 0.0f }, animatedArgIndex: 1, cacheReturnValue: false);
+                var method = GetOrAddMethod(getComp, "SetValue", new object?[] { humanoidValue, 0.0f }, animatedArgIndex: 1, cacheReturnValue: false);
                 method.Animation = anim;
             }
 
@@ -386,6 +389,130 @@ namespace XREngine.Animation.Importers
                 parent.Children.Add(created);
                 return created;
             }
+        }
+
+        private static bool TryMapUnityHumanoidAttributeToValue(string attribute, out int humanoidValue)
+        {
+            // Ignore blendshape + numeric editor-curve attributes.
+            if (attribute.StartsWith("blendShape.", StringComparison.Ordinal))
+            {
+                humanoidValue = default;
+                return false;
+            }
+            if (attribute.Length > 0 && char.IsDigit(attribute[0]))
+            {
+                humanoidValue = default;
+                return false;
+            }
+
+            // IMPORTANT: These ints must match the underlying values of XREngine.Components.Animation.EHumanoidValue.
+            // Keep the enum stable or update this mapping accordingly.
+            switch (attribute)
+            {
+                case "Left Eye Down-Up": humanoidValue = 0; return true;
+                case "Left Eye In-Out": humanoidValue = 1; return true;
+                case "Right Eye Down-Up": humanoidValue = 2; return true;
+                case "Right Eye In-Out": humanoidValue = 3; return true;
+
+                case "Spine Front-Back": humanoidValue = 4; return true;
+                case "Spine Left-Right": humanoidValue = 5; return true;
+                case "Spine Twist Left-Right": humanoidValue = 6; return true;
+                case "Chest Front-Back": humanoidValue = 7; return true;
+                case "Chest Left-Right": humanoidValue = 8; return true;
+                case "Chest Twist Left-Right": humanoidValue = 9; return true;
+                case "UpperChest Front-Back": humanoidValue = 10; return true;
+                case "UpperChest Left-Right": humanoidValue = 11; return true;
+                case "UpperChest Twist Left-Right": humanoidValue = 12; return true;
+                case "Neck Nod Down-Up": humanoidValue = 13; return true;
+                case "Neck Tilt Left-Right": humanoidValue = 14; return true;
+                case "Neck Turn Left-Right": humanoidValue = 15; return true;
+                case "Head Nod Down-Up": humanoidValue = 16; return true;
+                case "Head Tilt Left-Right": humanoidValue = 17; return true;
+                case "Head Turn Left-Right": humanoidValue = 18; return true;
+                case "Jaw Close": humanoidValue = 19; return true;
+                case "Jaw Left-Right": humanoidValue = 20; return true;
+
+                case "Left Shoulder Down-Up": humanoidValue = 21; return true;
+                case "Left Shoulder Front-Back": humanoidValue = 22; return true;
+                case "Left Arm Down-Up": humanoidValue = 23; return true;
+                case "Left Arm Front-Back": humanoidValue = 24; return true;
+                case "Left Arm Twist In-Out": humanoidValue = 25; return true;
+                case "Left Forearm Stretch": humanoidValue = 26; return true;
+                case "Left Forearm Twist In-Out": humanoidValue = 27; return true;
+                case "Left Hand Down-Up": humanoidValue = 28; return true;
+                case "Left Hand In-Out": humanoidValue = 29; return true;
+                case "Left Upper Leg Front-Back": humanoidValue = 30; return true;
+                case "Left Upper Leg In-Out": humanoidValue = 31; return true;
+                case "Left Upper Leg Twist In-Out": humanoidValue = 32; return true;
+                case "Left Lower Leg Stretch": humanoidValue = 33; return true;
+                case "Left Lower Leg Twist In-Out": humanoidValue = 34; return true;
+                case "Left Foot Up-Down": humanoidValue = 35; return true;
+                case "Left Foot Twist In-Out": humanoidValue = 36; return true;
+                case "Left Toes Up-Down": humanoidValue = 37; return true;
+
+                case "Right Shoulder Down-Up": humanoidValue = 38; return true;
+                case "Right Shoulder Front-Back": humanoidValue = 39; return true;
+                case "Right Arm Down-Up": humanoidValue = 40; return true;
+                case "Right Arm Front-Back": humanoidValue = 41; return true;
+                case "Right Arm Twist In-Out": humanoidValue = 42; return true;
+                case "Right Forearm Stretch": humanoidValue = 43; return true;
+                case "Right Forearm Twist In-Out": humanoidValue = 44; return true;
+                case "Right Hand Down-Up": humanoidValue = 45; return true;
+                case "Right Hand In-Out": humanoidValue = 46; return true;
+                case "Right Upper Leg Front-Back": humanoidValue = 47; return true;
+                case "Right Upper Leg In-Out": humanoidValue = 48; return true;
+                case "Right Upper Leg Twist In-Out": humanoidValue = 49; return true;
+                case "Right Lower Leg Stretch": humanoidValue = 50; return true;
+                case "Right Lower Leg Twist In-Out": humanoidValue = 51; return true;
+                case "Right Foot Up-Down": humanoidValue = 52; return true;
+                case "Right Foot Twist In-Out": humanoidValue = 53; return true;
+                case "Right Toes Up-Down": humanoidValue = 54; return true;
+
+                case "LeftHand.Index.Spread": humanoidValue = 55; return true;
+                case "LeftHand.Index.1 Stretched": humanoidValue = 56; return true;
+                case "LeftHand.Index.2 Stretched": humanoidValue = 57; return true;
+                case "LeftHand.Index.3 Stretched": humanoidValue = 58; return true;
+                case "LeftHand.Middle.Spread": humanoidValue = 59; return true;
+                case "LeftHand.Middle.1 Stretched": humanoidValue = 60; return true;
+                case "LeftHand.Middle.2 Stretched": humanoidValue = 61; return true;
+                case "LeftHand.Middle.3 Stretched": humanoidValue = 62; return true;
+                case "LeftHand.Ring.Spread": humanoidValue = 63; return true;
+                case "LeftHand.Ring.1 Stretched": humanoidValue = 64; return true;
+                case "LeftHand.Ring.2 Stretched": humanoidValue = 65; return true;
+                case "LeftHand.Ring.3 Stretched": humanoidValue = 66; return true;
+                case "LeftHand.Little.Spread": humanoidValue = 67; return true;
+                case "LeftHand.Little.1 Stretched": humanoidValue = 68; return true;
+                case "LeftHand.Little.2 Stretched": humanoidValue = 69; return true;
+                case "LeftHand.Little.3 Stretched": humanoidValue = 70; return true;
+                case "LeftHand.Thumb.Spread": humanoidValue = 71; return true;
+                case "LeftHand.Thumb.1 Stretched": humanoidValue = 72; return true;
+                case "LeftHand.Thumb.2 Stretched": humanoidValue = 73; return true;
+                case "LeftHand.Thumb.3 Stretched": humanoidValue = 74; return true;
+
+                case "RightHand.Index.Spread": humanoidValue = 75; return true;
+                case "RightHand.Index.1 Stretched": humanoidValue = 76; return true;
+                case "RightHand.Index.2 Stretched": humanoidValue = 77; return true;
+                case "RightHand.Index.3 Stretched": humanoidValue = 78; return true;
+                case "RightHand.Middle.Spread": humanoidValue = 79; return true;
+                case "RightHand.Middle.1 Stretched": humanoidValue = 80; return true;
+                case "RightHand.Middle.2 Stretched": humanoidValue = 81; return true;
+                case "RightHand.Middle.3 Stretched": humanoidValue = 82; return true;
+                case "RightHand.Ring.Spread": humanoidValue = 83; return true;
+                case "RightHand.Ring.1 Stretched": humanoidValue = 84; return true;
+                case "RightHand.Ring.2 Stretched": humanoidValue = 85; return true;
+                case "RightHand.Ring.3 Stretched": humanoidValue = 86; return true;
+                case "RightHand.Little.Spread": humanoidValue = 87; return true;
+                case "RightHand.Little.1 Stretched": humanoidValue = 88; return true;
+                case "RightHand.Little.2 Stretched": humanoidValue = 89; return true;
+                case "RightHand.Little.3 Stretched": humanoidValue = 90; return true;
+                case "RightHand.Thumb.Spread": humanoidValue = 91; return true;
+                case "RightHand.Thumb.1 Stretched": humanoidValue = 92; return true;
+                case "RightHand.Thumb.2 Stretched": humanoidValue = 93; return true;
+                case "RightHand.Thumb.3 Stretched": humanoidValue = 94; return true;
+            }
+
+            humanoidValue = default;
+            return false;
         }
 
         private static bool IsHumanoidMuscleCurve(ScalarCurve c)

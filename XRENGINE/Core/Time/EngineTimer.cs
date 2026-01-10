@@ -371,6 +371,8 @@ namespace XREngine.Timers
 
                     Render.Delta = elapsed;
                     Render.LastTimestamp = timestamp;
+
+                    Engine.Rendering.State.BeginRenderFrame();
                     RenderFrame?.Invoke(); // This dispatch has to be synchronous to stay on the main thread
 
                     if (allocStart != 0)

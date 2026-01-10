@@ -7,6 +7,7 @@ using XREngine.Data.Rendering;
 using XREngine.Data.Vectors;
 using XREngine.Input;
 using XREngine.Rendering.Commands;
+using XREngine.Rendering.Compute;
 using XREngine.Rendering.Info;
 using XREngine.Rendering.Picking;
 using XREngine.Rendering.UI;
@@ -276,6 +277,10 @@ namespace XREngine.Rendering
 
             //using (Engine.Profiler.Start("XRViewport.Render"))
             {
+                // Visibility-driven compute deformation (skinning/blendshapes).
+                // This runs on the render thread and uses the swapped (rendering) command buffers.
+                SkinningPrepassDispatcher.Instance.RunVisible(_renderPipeline.MeshRenderCommands);
+
                 _renderPipeline.Render(
                     world.VisualScene,
                     camera,

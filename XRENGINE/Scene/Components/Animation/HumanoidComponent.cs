@@ -13,19 +13,12 @@ using static XREngine.Components.Animation.InverseKinematics;
 
 namespace XREngine.Components.Animation
 {
-    public enum EHumanoidValue
-    {
-        LeftEyeDownUp,
-        LeftEyeInOut,
-        RightEyeDownUp,
-        RightEyeInOut,
-    }
     [XRComponentEditor("XREngine.Editor.ComponentEditors.HumanoidComponentEditor")]
     public class HumanoidComponent : XRComponent, IRenderable
     {
         // Humanoid (muscle) curve state. Values are expected to be normalized in [-1, 1].
         // We store raw values and apply a full pose once per frame.
-        private readonly Dictionary<string, float> _muscleValues = new(StringComparer.Ordinal);
+        private readonly Dictionary<EHumanoidValue, float> _muscleValues = [];
 
         protected internal override void OnComponentActivated()
         {
@@ -100,170 +93,66 @@ namespace XREngine.Components.Animation
                         Right.Eye.Node?.GetTransformAs<Transform>(true)?.SetBindRelativeRotation(q);
                         break;
                     }
+                default:
+                    // Store muscle values; actual application happens once per frame in ApplyMusclePose().
+                    _muscleValues[value] = amount;
+                    break;
             }
         }
+
+        // Int overload for decoupled reflection callers (e.g. Unity animation importer).
+        public void SetValue(int value, float amount)
+            => SetValue((EHumanoidValue)value, amount);
 
         /// <summary>
-        /// String-based humanoid setter used by third-party .anim imports.
-        /// Supports muscle attribute names like "Neck Nod Down-Up".
+        /// Legacy string-based humanoid setter. String-to-enum conversion is performed by importers.
         /// Values are expected to be normalized in [-1, 1] (muscle space).
         /// </summary>
+        [Obsolete("Use SetValue(EHumanoidValue, float). String-based mapping should happen in the Unity animation importer.")]
         public void SetValue(string name, float amount)
         {
-            if (string.IsNullOrWhiteSpace(name))
-                return;
-
-            // Handle eye muscles via existing enum-based implementation.
-            // Unity naming: "Left Eye Down-Up", "Left Eye In-Out", etc.
-            if (TryMapUnityHumanoidNameToEyeValue(name, out var eye))
-            {
-                SetValue(eye, amount);
-                return;
-            }
-
-            // Store muscle values; actual application happens once per frame in ApplyMusclePose().
-            // This avoids re-applying the entire humanoid pose repeatedly as each curve updates.
-            if (!TrySetSupportedMuscleValue(name, amount))
-                return;
+            // Intentionally no-op: string->enum conversion should live in the importer.
         }
 
-        private bool TrySetSupportedMuscleValue(string name, float amount)
-        {
-            // Ignore blendshape + numeric editor-curve attributes.
-            if (name.StartsWith("blendShape.", StringComparison.Ordinal))
-                return false;
-
-            if (name.Length > 0 && char.IsDigit(name[0]))
-                return false;
-
-            // Fingers use LeftHand.* and RightHand.* names.
-            if (name.StartsWith("LeftHand.", StringComparison.Ordinal) || name.StartsWith("RightHand.", StringComparison.Ordinal))
-            {
-                _muscleValues[name] = amount;
-                return true;
-            }
-
-            switch (name)
-            {
-                case "Spine Front-Back":
-                case "Spine Left-Right":
-                case "Spine Twist Left-Right":
-                case "Chest Front-Back":
-                case "Chest Left-Right":
-                case "Chest Twist Left-Right":
-                case "UpperChest Front-Back":
-                case "UpperChest Left-Right":
-                case "UpperChest Twist Left-Right":
-                case "Neck Nod Down-Up":
-                case "Neck Tilt Left-Right":
-                case "Neck Turn Left-Right":
-                case "Head Nod Down-Up":
-                case "Head Tilt Left-Right":
-                case "Head Turn Left-Right":
-                case "Jaw Close":
-                case "Jaw Left-Right":
-                case "Left Shoulder Down-Up":
-                case "Left Shoulder Front-Back":
-                case "Left Arm Down-Up":
-                case "Left Arm Front-Back":
-                case "Left Arm Twist In-Out":
-                case "Left Forearm Stretch":
-                case "Left Forearm Twist In-Out":
-                case "Left Hand Down-Up":
-                case "Left Hand In-Out":
-                case "Left Upper Leg Front-Back":
-                case "Left Upper Leg In-Out":
-                case "Left Upper Leg Twist In-Out":
-                case "Left Lower Leg Stretch":
-                case "Left Lower Leg Twist In-Out":
-                case "Left Foot Up-Down":
-                case "Left Foot Twist In-Out":
-                case "Left Toes Up-Down":
-                case "Right Shoulder Down-Up":
-                case "Right Shoulder Front-Back":
-                case "Right Arm Down-Up":
-                case "Right Arm Front-Back":
-                case "Right Arm Twist In-Out":
-                case "Right Forearm Stretch":
-                case "Right Forearm Twist In-Out":
-                case "Right Hand Down-Up":
-                case "Right Hand In-Out":
-                case "Right Upper Leg Front-Back":
-                case "Right Upper Leg In-Out":
-                case "Right Upper Leg Twist In-Out":
-                case "Right Lower Leg Stretch":
-                case "Right Lower Leg Twist In-Out":
-                case "Right Foot Up-Down":
-                case "Right Foot Twist In-Out":
-                case "Right Toes Up-Down":
-                    _muscleValues[name] = amount;
-                    return true;
-                default:
-                    return false;
-            }
-        }
-
-        private static bool TryMapUnityHumanoidNameToEyeValue(string unityName, out EHumanoidValue value)
-        {
-            switch (unityName)
-            {
-                case "Left Eye Down-Up":
-                    value = EHumanoidValue.LeftEyeDownUp;
-                    return true;
-                case "Left Eye In-Out":
-                    value = EHumanoidValue.LeftEyeInOut;
-                    return true;
-                case "Right Eye Down-Up":
-                    value = EHumanoidValue.RightEyeDownUp;
-                    return true;
-                case "Right Eye In-Out":
-                    value = EHumanoidValue.RightEyeInOut;
-                    return true;
-                default:
-                    value = default;
-                    return false;
-            }
-        }
-
-        private float GetMuscleValue(string name)
-            => _muscleValues.TryGetValue(name, out var v) ? v : 0.0f;
+        private float GetMuscleValue(EHumanoidValue value)
+            => _muscleValues.TryGetValue(value, out var v) ? v : 0.0f;
 
         private void ApplyMusclePose()
         {
             // Torso
             ApplyBindRelativeEulerDegrees(
                 Spine.Node,
-                yawDeg: MapMuscleToDeg("Spine Twist Left-Right", GetMuscleValue("Spine Twist Left-Right"), Settings.SpineTwistLeftRightDegRange),
-                pitchDeg: MapMuscleToDeg("Spine Front-Back", GetMuscleValue("Spine Front-Back"), Settings.SpineFrontBackDegRange),
-                rollDeg: MapMuscleToDeg("Spine Left-Right", GetMuscleValue("Spine Left-Right"), Settings.SpineLeftRightDegRange));
+                yawDeg: MapMuscleToDeg(EHumanoidValue.SpineTwistLeftRight, GetMuscleValue(EHumanoidValue.SpineTwistLeftRight), Settings.SpineTwistLeftRightDegRange),
+                pitchDeg: MapMuscleToDeg(EHumanoidValue.SpineFrontBack, GetMuscleValue(EHumanoidValue.SpineFrontBack), Settings.SpineFrontBackDegRange),
+                rollDeg: MapMuscleToDeg(EHumanoidValue.SpineLeftRight, GetMuscleValue(EHumanoidValue.SpineLeftRight), Settings.SpineLeftRightDegRange));
 
             ApplyBindRelativeEulerDegrees(
                 Chest.Node,
-                yawDeg: MapMuscleToDeg("Chest Twist Left-Right", GetMuscleValue("Chest Twist Left-Right"), Settings.ChestTwistLeftRightDegRange)
-                        + MapMuscleToDeg("UpperChest Twist Left-Right", GetMuscleValue("UpperChest Twist Left-Right"), Settings.UpperChestTwistLeftRightDegRange),
-                pitchDeg: MapMuscleToDeg("Chest Front-Back", GetMuscleValue("Chest Front-Back"), Settings.ChestFrontBackDegRange)
-                          + MapMuscleToDeg("UpperChest Front-Back", GetMuscleValue("UpperChest Front-Back"), Settings.UpperChestFrontBackDegRange),
-                rollDeg: MapMuscleToDeg("Chest Left-Right", GetMuscleValue("Chest Left-Right"), Settings.ChestLeftRightDegRange)
-                         + MapMuscleToDeg("UpperChest Left-Right", GetMuscleValue("UpperChest Left-Right"), Settings.UpperChestLeftRightDegRange));
+                yawDeg: MapMuscleToDeg(EHumanoidValue.ChestTwistLeftRight, GetMuscleValue(EHumanoidValue.ChestTwistLeftRight), Settings.ChestTwistLeftRightDegRange)
+                    + MapMuscleToDeg(EHumanoidValue.UpperChestTwistLeftRight, GetMuscleValue(EHumanoidValue.UpperChestTwistLeftRight), Settings.UpperChestTwistLeftRightDegRange),
+                pitchDeg: MapMuscleToDeg(EHumanoidValue.ChestFrontBack, GetMuscleValue(EHumanoidValue.ChestFrontBack), Settings.ChestFrontBackDegRange)
+                      + MapMuscleToDeg(EHumanoidValue.UpperChestFrontBack, GetMuscleValue(EHumanoidValue.UpperChestFrontBack), Settings.UpperChestFrontBackDegRange),
+                rollDeg: MapMuscleToDeg(EHumanoidValue.ChestLeftRight, GetMuscleValue(EHumanoidValue.ChestLeftRight), Settings.ChestLeftRightDegRange)
+                     + MapMuscleToDeg(EHumanoidValue.UpperChestLeftRight, GetMuscleValue(EHumanoidValue.UpperChestLeftRight), Settings.UpperChestLeftRightDegRange));
 
             // Neck / Head
             ApplyBindRelativeEulerDegrees(
                 Neck.Node,
-                yawDeg: MapMuscleToDeg("Neck Turn Left-Right", GetMuscleValue("Neck Turn Left-Right"), new Vector2(-30.0f, 30.0f)),
-                pitchDeg: MapMuscleToDeg("Neck Nod Down-Up", GetMuscleValue("Neck Nod Down-Up"), Settings.NeckNodDownUpDegRange),
-                rollDeg: MapMuscleToDeg("Neck Tilt Left-Right", GetMuscleValue("Neck Tilt Left-Right"), new Vector2(-20.0f, 20.0f)));
+                yawDeg: MapMuscleToDeg(EHumanoidValue.NeckTurnLeftRight, GetMuscleValue(EHumanoidValue.NeckTurnLeftRight), new Vector2(-30.0f, 30.0f)),
+                pitchDeg: MapMuscleToDeg(EHumanoidValue.NeckNodDownUp, GetMuscleValue(EHumanoidValue.NeckNodDownUp), Settings.NeckNodDownUpDegRange),
+                rollDeg: MapMuscleToDeg(EHumanoidValue.NeckTiltLeftRight, GetMuscleValue(EHumanoidValue.NeckTiltLeftRight), new Vector2(-20.0f, 20.0f)));
 
             ApplyBindRelativeEulerDegrees(
                 Head.Node,
-                yawDeg: MapMuscleToDeg("Head Turn Left-Right", GetMuscleValue("Head Turn Left-Right"), new Vector2(-60.0f, 60.0f)),
-                pitchDeg: MapMuscleToDeg("Head Nod Down-Up", GetMuscleValue("Head Nod Down-Up"), Settings.HeadNodDownUpDegRange),
-                rollDeg: MapMuscleToDeg("Head Tilt Left-Right", GetMuscleValue("Head Tilt Left-Right"), new Vector2(-30.0f, 30.0f)));
+                yawDeg: MapMuscleToDeg(EHumanoidValue.HeadTurnLeftRight, GetMuscleValue(EHumanoidValue.HeadTurnLeftRight), new Vector2(-60.0f, 60.0f)),
+                pitchDeg: MapMuscleToDeg(EHumanoidValue.HeadNodDownUp, GetMuscleValue(EHumanoidValue.HeadNodDownUp), Settings.HeadNodDownUpDegRange),
+                rollDeg: MapMuscleToDeg(EHumanoidValue.HeadTiltLeftRight, GetMuscleValue(EHumanoidValue.HeadTiltLeftRight), new Vector2(-30.0f, 30.0f)));
 
             // Jaw
             ApplyBindRelativeEulerDegrees(
                 Jaw.Node,
-                yawDeg: MapMuscleToDeg("Jaw Left-Right", GetMuscleValue("Jaw Left-Right"), new Vector2(-15.0f, 15.0f)),
-                pitchDeg: MapMuscleToDeg("Jaw Close", GetMuscleValue("Jaw Close"), new Vector2(-5.0f, 25.0f)),
+                yawDeg: MapMuscleToDeg(EHumanoidValue.JawLeftRight, GetMuscleValue(EHumanoidValue.JawLeftRight), new Vector2(-15.0f, 15.0f)),
+                pitchDeg: MapMuscleToDeg(EHumanoidValue.JawClose, GetMuscleValue(EHumanoidValue.JawClose), new Vector2(-5.0f, 25.0f)),
                 rollDeg: 0.0f);
 
             // Arms / Legs / Hands / Feet
@@ -278,111 +167,150 @@ namespace XREngine.Components.Animation
         private void ApplyLimbMuscles(bool isLeft)
         {
             var side = isLeft ? Left : Right;
-            string prefix = isLeft ? "Left" : "Right";
+            EHumanoidValue shoulderDownUp = isLeft ? EHumanoidValue.LeftShoulderDownUp : EHumanoidValue.RightShoulderDownUp;
+            EHumanoidValue shoulderFrontBack = isLeft ? EHumanoidValue.LeftShoulderFrontBack : EHumanoidValue.RightShoulderFrontBack;
+            EHumanoidValue armTwist = isLeft ? EHumanoidValue.LeftArmTwistInOut : EHumanoidValue.RightArmTwistInOut;
+            EHumanoidValue armDownUp = isLeft ? EHumanoidValue.LeftArmDownUp : EHumanoidValue.RightArmDownUp;
+            EHumanoidValue armFrontBack = isLeft ? EHumanoidValue.LeftArmFrontBack : EHumanoidValue.RightArmFrontBack;
+            EHumanoidValue forearmTwist = isLeft ? EHumanoidValue.LeftForearmTwistInOut : EHumanoidValue.RightForearmTwistInOut;
+            EHumanoidValue forearmStretch = isLeft ? EHumanoidValue.LeftForearmStretch : EHumanoidValue.RightForearmStretch;
+            EHumanoidValue handDownUp = isLeft ? EHumanoidValue.LeftHandDownUp : EHumanoidValue.RightHandDownUp;
+            EHumanoidValue handInOut = isLeft ? EHumanoidValue.LeftHandInOut : EHumanoidValue.RightHandInOut;
+            EHumanoidValue upperLegTwist = isLeft ? EHumanoidValue.LeftUpperLegTwistInOut : EHumanoidValue.RightUpperLegTwistInOut;
+            EHumanoidValue upperLegFrontBack = isLeft ? EHumanoidValue.LeftUpperLegFrontBack : EHumanoidValue.RightUpperLegFrontBack;
+            EHumanoidValue upperLegInOut = isLeft ? EHumanoidValue.LeftUpperLegInOut : EHumanoidValue.RightUpperLegInOut;
+            EHumanoidValue lowerLegTwist = isLeft ? EHumanoidValue.LeftLowerLegTwistInOut : EHumanoidValue.RightLowerLegTwistInOut;
+            EHumanoidValue lowerLegStretch = isLeft ? EHumanoidValue.LeftLowerLegStretch : EHumanoidValue.RightLowerLegStretch;
+            EHumanoidValue footTwist = isLeft ? EHumanoidValue.LeftFootTwistInOut : EHumanoidValue.RightFootTwistInOut;
+            EHumanoidValue footUpDown = isLeft ? EHumanoidValue.LeftFootUpDown : EHumanoidValue.RightFootUpDown;
+            EHumanoidValue toesUpDown = isLeft ? EHumanoidValue.LeftToesUpDown : EHumanoidValue.RightToesUpDown;
 
             // Shoulder
             ApplyBindRelativeEulerDegrees(
                 side.Shoulder.Node,
                 yawDeg: 0.0f,
-                pitchDeg: MapMuscleToDeg($"{prefix} Shoulder Down-Up", GetMuscleValue($"{prefix} Shoulder Down-Up"), new Vector2(-35.0f, 35.0f)),
-                rollDeg: MapMuscleToDeg($"{prefix} Shoulder Front-Back", GetMuscleValue($"{prefix} Shoulder Front-Back"), new Vector2(-25.0f, 25.0f)));
+                pitchDeg: MapMuscleToDeg(shoulderDownUp, GetMuscleValue(shoulderDownUp), new Vector2(-35.0f, 35.0f)),
+                rollDeg: MapMuscleToDeg(shoulderFrontBack, GetMuscleValue(shoulderFrontBack), new Vector2(-25.0f, 25.0f)));
 
             // Upper arm
             ApplyBindRelativeEulerDegrees(
                 side.Arm.Node,
-                yawDeg: MapMuscleToDeg($"{prefix} Arm Twist In-Out", GetMuscleValue($"{prefix} Arm Twist In-Out"), new Vector2(-40.0f, 40.0f)),
-                pitchDeg: MapMuscleToDeg($"{prefix} Arm Down-Up", GetMuscleValue($"{prefix} Arm Down-Up"), new Vector2(-90.0f, 90.0f)),
-                rollDeg: MapMuscleToDeg($"{prefix} Arm Front-Back", GetMuscleValue($"{prefix} Arm Front-Back"), new Vector2(-60.0f, 60.0f)));
+                yawDeg: MapMuscleToDeg(armTwist, GetMuscleValue(armTwist), new Vector2(-40.0f, 40.0f)),
+                pitchDeg: MapMuscleToDeg(armDownUp, GetMuscleValue(armDownUp), new Vector2(-90.0f, 90.0f)),
+                rollDeg: MapMuscleToDeg(armFrontBack, GetMuscleValue(armFrontBack), new Vector2(-60.0f, 60.0f)));
 
             // Forearm (elbow)
             ApplyBindRelativeEulerDegrees(
                 side.Elbow.Node,
-                yawDeg: MapMuscleToDeg($"{prefix} Forearm Twist In-Out", GetMuscleValue($"{prefix} Forearm Twist In-Out"), new Vector2(-60.0f, 60.0f)),
+                yawDeg: MapMuscleToDeg(forearmTwist, GetMuscleValue(forearmTwist), new Vector2(-60.0f, 60.0f)),
                 pitchDeg: 0.0f,
                 rollDeg: 0.0f);
 
             ApplyBindRelativeStretchScale(
                 side.Elbow.Node,
-                name: $"{prefix} Forearm Stretch",
-                muscle: GetMuscleValue($"{prefix} Forearm Stretch"),
+                value: forearmStretch,
+                muscle: GetMuscleValue(forearmStretch),
                 defaultScaleRange: new Vector2(0.97f, 1.03f));
 
             // Wrist
             ApplyBindRelativeEulerDegrees(
                 side.Wrist.Node,
                 yawDeg: 0.0f,
-                pitchDeg: MapMuscleToDeg($"{prefix} Hand Down-Up", GetMuscleValue($"{prefix} Hand Down-Up"), new Vector2(-60.0f, 60.0f)),
-                rollDeg: MapMuscleToDeg($"{prefix} Hand In-Out", GetMuscleValue($"{prefix} Hand In-Out"), new Vector2(-45.0f, 45.0f)));
+                pitchDeg: MapMuscleToDeg(handDownUp, GetMuscleValue(handDownUp), new Vector2(-60.0f, 60.0f)),
+                rollDeg: MapMuscleToDeg(handInOut, GetMuscleValue(handInOut), new Vector2(-45.0f, 45.0f)));
 
             // Upper leg
             ApplyBindRelativeEulerDegrees(
                 side.Leg.Node,
-                yawDeg: MapMuscleToDeg($"{prefix} Upper Leg Twist In-Out", GetMuscleValue($"{prefix} Upper Leg Twist In-Out"), new Vector2(-45.0f, 45.0f)),
-                pitchDeg: MapMuscleToDeg($"{prefix} Upper Leg Front-Back", GetMuscleValue($"{prefix} Upper Leg Front-Back"), new Vector2(-90.0f, 90.0f)),
-                rollDeg: MapMuscleToDeg($"{prefix} Upper Leg In-Out", GetMuscleValue($"{prefix} Upper Leg In-Out"), new Vector2(-35.0f, 35.0f)));
+                yawDeg: MapMuscleToDeg(upperLegTwist, GetMuscleValue(upperLegTwist), new Vector2(-45.0f, 45.0f)),
+                pitchDeg: MapMuscleToDeg(upperLegFrontBack, GetMuscleValue(upperLegFrontBack), new Vector2(-90.0f, 90.0f)),
+                rollDeg: MapMuscleToDeg(upperLegInOut, GetMuscleValue(upperLegInOut), new Vector2(-35.0f, 35.0f)));
 
             // Lower leg (knee)
             ApplyBindRelativeEulerDegrees(
                 side.Knee.Node,
-                yawDeg: MapMuscleToDeg($"{prefix} Lower Leg Twist In-Out", GetMuscleValue($"{prefix} Lower Leg Twist In-Out"), new Vector2(-30.0f, 30.0f)),
+                yawDeg: MapMuscleToDeg(lowerLegTwist, GetMuscleValue(lowerLegTwist), new Vector2(-30.0f, 30.0f)),
                 pitchDeg: 0.0f,
                 rollDeg: 0.0f);
 
             ApplyBindRelativeStretchScale(
                 side.Knee.Node,
-                name: $"{prefix} Lower Leg Stretch",
-                muscle: GetMuscleValue($"{prefix} Lower Leg Stretch"),
+                value: lowerLegStretch,
+                muscle: GetMuscleValue(lowerLegStretch),
                 defaultScaleRange: new Vector2(0.97f, 1.03f));
 
             // Foot / Toes
             ApplyBindRelativeEulerDegrees(
                 side.Foot.Node,
-                yawDeg: MapMuscleToDeg($"{prefix} Foot Twist In-Out", GetMuscleValue($"{prefix} Foot Twist In-Out"), new Vector2(-30.0f, 30.0f)),
-                pitchDeg: MapMuscleToDeg($"{prefix} Foot Up-Down", GetMuscleValue($"{prefix} Foot Up-Down"), new Vector2(-45.0f, 45.0f)),
+                yawDeg: MapMuscleToDeg(footTwist, GetMuscleValue(footTwist), new Vector2(-30.0f, 30.0f)),
+                pitchDeg: MapMuscleToDeg(footUpDown, GetMuscleValue(footUpDown), new Vector2(-45.0f, 45.0f)),
                 rollDeg: 0.0f);
 
             ApplyBindRelativeEulerDegrees(
                 side.Toes.Node,
                 yawDeg: 0.0f,
-                pitchDeg: MapMuscleToDeg($"{prefix} Toes Up-Down", GetMuscleValue($"{prefix} Toes Up-Down"), new Vector2(-35.0f, 35.0f)),
+                pitchDeg: MapMuscleToDeg(toesUpDown, GetMuscleValue(toesUpDown), new Vector2(-35.0f, 35.0f)),
                 rollDeg: 0.0f);
         }
 
         private void ApplyFingerMuscles(bool isLeft)
         {
             var side = isLeft ? Left : Right;
-            string handPrefix = isLeft ? "LeftHand" : "RightHand";
 
-            ApplyFinger(side.Hand.Index, handPrefix, "Index");
-            ApplyFinger(side.Hand.Middle, handPrefix, "Middle");
-            ApplyFinger(side.Hand.Ring, handPrefix, "Ring");
-            ApplyFinger(side.Hand.Pinky, handPrefix, "Little");
-            ApplyFinger(side.Hand.Thumb, handPrefix, "Thumb");
+            ApplyFinger(side.Hand.Index,
+                spread: isLeft ? EHumanoidValue.LeftHandIndexSpread : EHumanoidValue.RightHandIndexSpread,
+                prox: isLeft ? EHumanoidValue.LeftHandIndex1Stretched : EHumanoidValue.RightHandIndex1Stretched,
+                mid: isLeft ? EHumanoidValue.LeftHandIndex2Stretched : EHumanoidValue.RightHandIndex2Stretched,
+                dist: isLeft ? EHumanoidValue.LeftHandIndex3Stretched : EHumanoidValue.RightHandIndex3Stretched);
+
+            ApplyFinger(side.Hand.Middle,
+                spread: isLeft ? EHumanoidValue.LeftHandMiddleSpread : EHumanoidValue.RightHandMiddleSpread,
+                prox: isLeft ? EHumanoidValue.LeftHandMiddle1Stretched : EHumanoidValue.RightHandMiddle1Stretched,
+                mid: isLeft ? EHumanoidValue.LeftHandMiddle2Stretched : EHumanoidValue.RightHandMiddle2Stretched,
+                dist: isLeft ? EHumanoidValue.LeftHandMiddle3Stretched : EHumanoidValue.RightHandMiddle3Stretched);
+
+            ApplyFinger(side.Hand.Ring,
+                spread: isLeft ? EHumanoidValue.LeftHandRingSpread : EHumanoidValue.RightHandRingSpread,
+                prox: isLeft ? EHumanoidValue.LeftHandRing1Stretched : EHumanoidValue.RightHandRing1Stretched,
+                mid: isLeft ? EHumanoidValue.LeftHandRing2Stretched : EHumanoidValue.RightHandRing2Stretched,
+                dist: isLeft ? EHumanoidValue.LeftHandRing3Stretched : EHumanoidValue.RightHandRing3Stretched);
+
+            ApplyFinger(side.Hand.Pinky,
+                spread: isLeft ? EHumanoidValue.LeftHandLittleSpread : EHumanoidValue.RightHandLittleSpread,
+                prox: isLeft ? EHumanoidValue.LeftHandLittle1Stretched : EHumanoidValue.RightHandLittle1Stretched,
+                mid: isLeft ? EHumanoidValue.LeftHandLittle2Stretched : EHumanoidValue.RightHandLittle2Stretched,
+                dist: isLeft ? EHumanoidValue.LeftHandLittle3Stretched : EHumanoidValue.RightHandLittle3Stretched);
+
+            ApplyFinger(side.Hand.Thumb,
+                spread: isLeft ? EHumanoidValue.LeftHandThumbSpread : EHumanoidValue.RightHandThumbSpread,
+                prox: isLeft ? EHumanoidValue.LeftHandThumb1Stretched : EHumanoidValue.RightHandThumb1Stretched,
+                mid: isLeft ? EHumanoidValue.LeftHandThumb2Stretched : EHumanoidValue.RightHandThumb2Stretched,
+                dist: isLeft ? EHumanoidValue.LeftHandThumb3Stretched : EHumanoidValue.RightHandThumb3Stretched);
         }
 
-        private void ApplyFinger(BodySide.Fingers.Finger finger, string handPrefix, string fingerName)
+        private void ApplyFinger(BodySide.Fingers.Finger finger, EHumanoidValue spread, EHumanoidValue prox, EHumanoidValue mid, EHumanoidValue dist)
         {
             // Stretched channels map to bending on each phalanx.
             ApplyBindRelativeEulerDegrees(
                 finger.Proximal.Node,
-                yawDeg: MapMuscleToDeg($"{handPrefix}.{fingerName}.Spread", GetMuscleValue($"{handPrefix}.{fingerName}.Spread"), new Vector2(-15.0f, 15.0f)),
-                pitchDeg: MapMuscleToDeg($"{handPrefix}.{fingerName}.1 Stretched", GetMuscleValue($"{handPrefix}.{fingerName}.1 Stretched"), new Vector2(-45.0f, 45.0f)),
+                yawDeg: MapMuscleToDeg(spread, GetMuscleValue(spread), new Vector2(-15.0f, 15.0f)),
+                pitchDeg: MapMuscleToDeg(prox, GetMuscleValue(prox), new Vector2(-45.0f, 45.0f)),
                 rollDeg: 0.0f);
 
             ApplyBindRelativeEulerDegrees(
                 finger.Intermediate.Node,
                 yawDeg: 0.0f,
-                pitchDeg: MapMuscleToDeg($"{handPrefix}.{fingerName}.2 Stretched", GetMuscleValue($"{handPrefix}.{fingerName}.2 Stretched"), new Vector2(-45.0f, 45.0f)),
+                pitchDeg: MapMuscleToDeg(mid, GetMuscleValue(mid), new Vector2(-45.0f, 45.0f)),
                 rollDeg: 0.0f);
 
             ApplyBindRelativeEulerDegrees(
                 finger.Distal.Node,
                 yawDeg: 0.0f,
-                pitchDeg: MapMuscleToDeg($"{handPrefix}.{fingerName}.3 Stretched", GetMuscleValue($"{handPrefix}.{fingerName}.3 Stretched"), new Vector2(-45.0f, 45.0f)),
+                pitchDeg: MapMuscleToDeg(dist, GetMuscleValue(dist), new Vector2(-45.0f, 45.0f)),
                 rollDeg: 0.0f);
         }
 
-        private float MapMuscleToDeg(string name, float muscle, Vector2 defaultDegreeRange)
+        private float MapMuscleToDeg(EHumanoidValue value, float muscle, Vector2 defaultDegreeRange)
         {
             // 1) Clamp muscle values to [-1, 1]
             // 2) Scale by a user multiplier ("muscle range")
@@ -393,13 +321,13 @@ namespace XREngine.Components.Animation
             m = System.Math.Clamp(m, -1.0f, 1.0f);
             float t = m * 0.5f + 0.5f;
 
-            if (Settings.TryGetMuscleRotationDegRange(name, out var configuredRange))
+            if (Settings.TryGetMuscleRotationDegRange(value, out var configuredRange))
                 return Interp.Lerp(configuredRange.X, configuredRange.Y, t);
 
             return Interp.Lerp(defaultDegreeRange.X, defaultDegreeRange.Y, t);
         }
 
-        private void ApplyBindRelativeStretchScale(SceneNode? node, string name, float muscle, Vector2 defaultScaleRange)
+        private void ApplyBindRelativeStretchScale(SceneNode? node, EHumanoidValue value, float muscle, Vector2 defaultScaleRange)
         {
             if (node?.Transform is null)
                 return;
@@ -410,7 +338,7 @@ namespace XREngine.Components.Animation
             float t = m * 0.5f + 0.5f;
 
             Vector2 range = defaultScaleRange;
-            if (Settings.TryGetMuscleScaleRange(name, out var configuredRange))
+            if (Settings.TryGetMuscleScaleRange(value, out var configuredRange))
                 range = configuredRange;
 
             float s = Interp.Lerp(range.X, range.Y, t);

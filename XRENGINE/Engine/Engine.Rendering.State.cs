@@ -22,6 +22,16 @@ namespace XREngine
             /// </summary>
             public static partial class State
             {
+                public static ulong RenderFrameId { get; private set; }
+
+                internal static void BeginRenderFrame()
+                {
+                    unchecked
+                    {
+                        RenderFrameId++;
+                    }
+                }
+
                 public static XRCamera? RenderingCameraOverride { get; set; }
 
                 public static BoundingRectangle RenderArea => RenderingPipelineState?.CurrentRenderRegion ?? BoundingRectangle.Empty;

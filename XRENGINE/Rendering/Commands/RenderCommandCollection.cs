@@ -158,6 +158,18 @@ namespace XREngine.Rendering.Commands
             _numCommandsRecentlyAddedToUpdate = 0;
         }
 
+        public IEnumerable<IRenderCommandMesh> EnumerateRenderingMeshCommands()
+        {
+            foreach (var pass in _renderingPasses.Values)
+            {
+                foreach (var cmd in pass)
+                {
+                    if (cmd is IRenderCommandMesh meshCmd)
+                        yield return meshCmd;
+                }
+            }
+        }
+
         public bool TryGetPassMetadata(int passIndex, out RenderPassMetadata metadata)
             => _passMetadata.TryGetValue(passIndex, out metadata!);
 

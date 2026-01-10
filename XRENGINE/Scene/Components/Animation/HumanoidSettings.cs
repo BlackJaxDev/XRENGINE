@@ -57,45 +57,45 @@ namespace XREngine.Components.Animation
             set => SetField(ref _muscleInputScale, value);
         }
 
-        private Dictionary<string, Vector2> _muscleRotationDegRanges = new(StringComparer.Ordinal);
+        private Dictionary<EHumanoidValue, Vector2> _muscleRotationDegRanges = [];
         /// <summary>
-        /// Optional per-channel rotation ranges in degrees (min, max). Keyed by muscle/attribute name.
+        /// Optional per-channel rotation ranges in degrees (min, max). Keyed by humanoid muscle enum.
         /// If a key is missing, the runtime falls back to built-in defaults.
         /// </summary>
-        public Dictionary<string, Vector2> MuscleRotationDegRanges
+        public Dictionary<EHumanoidValue, Vector2> MuscleRotationDegRanges
         {
             get => _muscleRotationDegRanges;
             set => SetField(ref _muscleRotationDegRanges, value);
         }
 
-        public bool TryGetMuscleRotationDegRange(string name, out Vector2 range)
-            => MuscleRotationDegRanges.TryGetValue(name, out range);
+        public bool TryGetMuscleRotationDegRange(EHumanoidValue value, out Vector2 range)
+            => MuscleRotationDegRanges.TryGetValue(value, out range);
 
-        public void SetMuscleRotationDegRange(string name, Vector2 range)
+        public void SetMuscleRotationDegRange(EHumanoidValue value, Vector2 range)
         {
-            if (!MuscleRotationDegRanges.TryAdd(name, range))
-                MuscleRotationDegRanges[name] = range;
+            if (!MuscleRotationDegRanges.TryAdd(value, range))
+                MuscleRotationDegRanges[value] = range;
         }
 
-        private Dictionary<string, Vector2> _muscleScaleRanges = new(StringComparer.Ordinal);
+        private Dictionary<EHumanoidValue, Vector2> _muscleScaleRanges = [];
         /// <summary>
-        /// Optional per-channel scale ranges (min, max). Keyed by muscle/attribute name.
-        /// Intended for channels like "Forearm Stretch".
+        /// Optional per-channel scale ranges (min, max). Keyed by humanoid muscle enum.
+        /// Intended for channels like Forearm Stretch.
         /// If a key is missing, the runtime falls back to built-in defaults.
         /// </summary>
-        public Dictionary<string, Vector2> MuscleScaleRanges
+        public Dictionary<EHumanoidValue, Vector2> MuscleScaleRanges
         {
             get => _muscleScaleRanges;
             set => SetField(ref _muscleScaleRanges, value);
         }
 
-        public bool TryGetMuscleScaleRange(string name, out Vector2 range)
-            => MuscleScaleRanges.TryGetValue(name, out range);
+        public bool TryGetMuscleScaleRange(EHumanoidValue value, out Vector2 range)
+            => MuscleScaleRanges.TryGetValue(value, out range);
 
-        public void SetMuscleScaleRange(string name, Vector2 range)
+        public void SetMuscleScaleRange(EHumanoidValue value, Vector2 range)
         {
-            if (!MuscleScaleRanges.TryAdd(name, range))
-                MuscleScaleRanges[name] = range;
+            if (!MuscleScaleRanges.TryAdd(value, range))
+                MuscleScaleRanges[value] = range;
         }
 
         // Rotation ranges are in degrees (min, max). These get converted to radians by HumanoidComponent.
