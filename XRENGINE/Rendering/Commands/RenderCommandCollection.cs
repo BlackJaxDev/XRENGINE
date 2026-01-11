@@ -105,6 +105,18 @@ namespace XREngine.Rendering.Commands
                 cmd?.Render();
             }
         }
+
+        public void RenderCPUMeshOnly(int renderPass)
+        {
+            if (!_renderingPasses.TryGetValue(renderPass, out ICollection<RenderCommand>? list))
+                return;
+
+            foreach (var cmd in list)
+            {
+                if (cmd is IRenderCommandMesh)
+                    cmd?.Render();
+            }
+        }
         public void RenderGPU( int renderPass)
         {
             if (!_gpuPasses.TryGetValue(renderPass, out GPURenderPassCollection? gpuPass))

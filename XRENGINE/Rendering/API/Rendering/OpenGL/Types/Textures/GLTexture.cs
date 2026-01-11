@@ -208,8 +208,24 @@ namespace XREngine.Rendering.OpenGL
 
         public void GenerateMipmaps()
         {
-            if (!IsMultisampleTarget)
-                Api.GenerateTextureMipmap(BindingId);
+            if (IsMultisampleTarget)
+                return;
+
+            // `glGenerateTextureMipmap` requires a valid texture object. With `glGenTextures`, the name
+            // may not become a real texture object until it has been bound at least once.
+            // Bloom (and other passes) can request mipmaps before the first bind/push in some paths (VR).
+            // Bind here to ensure initialization, then restore prior binding.
+            var previous = Renderer.BoundTexture;
+            Bind();
+
+            var id = BindingId;
+            if (id != InvalidBindingId)
+                Api.GenerateTextureMipmap(id);
+
+            if (previous is null || ReferenceEquals(previous, this))
+                Unbind();
+            else
+                previous.Bind();
         }
 
         protected override uint CreateObject()

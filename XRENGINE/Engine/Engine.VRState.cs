@@ -200,6 +200,12 @@ namespace XREngine
                 }
             }
 
+            // OpenXR rendering runs through its own render callback path, not VRState.Render().
+            // Expose the same "RecalcMatrixOnDraw" hook so OpenXR can keep locomotion/VR rigs updated
+            // at the same point in the frame as the OpenVR path.
+            internal static void InvokeRecalcMatrixOnDraw()
+                => RecalcMatrixOnDraw?.Invoke();
+
             private static void CreateActions(IActionManifest actionManifest, VR vr)
             {
                 _actions.Clear();
@@ -945,15 +951,8 @@ namespace XREngine
                 get => _viewInformation;
                 set
                 {
-                    if (_viewInformation.left is not null)
-                    {
-                        _viewInformation.left.Transform.LocalMatrixChanged -= EyeLocalMatrixChanged;
-                    }
-                    
-                    if (_viewInformation.right is not null)
-                    {
-                        _viewInformation.right.Transform.LocalMatrixChanged -= EyeLocalMatrixChanged;
-                    }
+                    _viewInformation.left?.Transform.LocalMatrixChanged -= EyeLocalMatrixChanged;
+                    _viewInformation.right?.Transform.LocalMatrixChanged -= EyeLocalMatrixChanged;
                     
                     _viewInformation = value;
 
@@ -962,11 +961,7 @@ namespace XREngine
                     {
                         leftEye.Camera = _viewInformation.left;
                         leftEye.WorldInstanceOverride = _viewInformation.world;
-
-                        if (_viewInformation.left is not null)
-                        {
-                            _viewInformation.left.Transform.LocalMatrixChanged += EyeLocalMatrixChanged;
-                        }
+                        _viewInformation.left?.Transform.LocalMatrixChanged += EyeLocalMatrixChanged;
                     }
 
                     var rightEye = RightEyeViewport;
@@ -974,11 +969,7 @@ namespace XREngine
                     {
                         rightEye.Camera = _viewInformation.right;
                         rightEye.WorldInstanceOverride = _viewInformation.world;
-
-                        if (_viewInformation.right is not null)
-                        {
-                            _viewInformation.right.Transform.LocalMatrixChanged += EyeLocalMatrixChanged;
-                        }
+                        _viewInformation.right?.Transform.LocalMatrixChanged += EyeLocalMatrixChanged;
                     }
 
                     // ViewInformation can be set before VR rendering has been initialized (e.g., during component activation).
