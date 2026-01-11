@@ -111,17 +111,22 @@ namespace XREngine.Rendering.Physics.Physx
             }
             set
             {
-                if (value.HasValue)
-                {
-                    var tfm = PhysxScene.MakeTransform(value.Value.position, value.Value.rotation);
-                    _obj->SetKinematicTargetMut(&tfm);
-                    //PhysxObjectLog.Modified(this, (nint)_obj, nameof(KinematicTarget), $"set pos={value.Value.position} rot={value.Value.rotation}");
-                }
-                else
-                {
-                    _obj->SetKinematicTargetMut(null);
-                    //PhysxObjectLog.Modified(this, (nint)_obj, nameof(KinematicTarget), "cleared");
-                }
+                Engine.EnqueuePhysicsThreadTask(() => SetKinematicTargetInternal(value));
+            }
+        }
+
+        private void SetKinematicTargetInternal((Vector3 position, Quaternion rotation)? value)
+        {
+            if (value.HasValue)
+            {
+                var tfm = PhysxScene.MakeTransform(value.Value.position, value.Value.rotation);
+                _obj->SetKinematicTargetMut(&tfm);
+                //PhysxObjectLog.Modified(this, (nint)_obj, nameof(KinematicTarget), $"set pos={value.Value.position} rot={value.Value.rotation}");
+            }
+            else
+            {
+                _obj->SetKinematicTargetMut(null);
+                //PhysxObjectLog.Modified(this, (nint)_obj, nameof(KinematicTarget), "cleared");
             }
         }
 

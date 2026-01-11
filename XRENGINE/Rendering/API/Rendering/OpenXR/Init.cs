@@ -4,10 +4,12 @@ using Silk.NET.OpenGL;
 using Silk.NET.OpenXR;
 using Silk.NET.OpenXR.Extensions.KHR;
 using Silk.NET.Windowing;
+using System.Diagnostics;
 using System.IO;
 using System.Numerics;
 using System.Reflection;
 using System.Runtime.InteropServices;
+using System.Runtime.Versioning;
 using System.Threading;
 using XREngine;
 using XREngine.Data.Core;
@@ -16,6 +18,7 @@ using XREngine.Rendering;
 using XREngine.Rendering.OpenGL;
 using XREngine.Rendering.Vulkan;
 using XREngine.Scene.Transforms;
+using Debug = XREngine.Debug;
 
 /// <summary>
 /// Provides an implementation of XR functionality using the OpenXR standard.
@@ -47,16 +50,25 @@ public unsafe partial class OpenXRAPI : XRBase
 
     private static string? TryGetOpenXRActiveRuntime()
     {
+        if (!OperatingSystem.IsWindows())
+            return null;
+
         try
         {
-            const string keyPath = @"SOFTWARE\\Khronos\\OpenXR\\1";
-            using var key = Microsoft.Win32.Registry.LocalMachine.OpenSubKey(keyPath);
-            return key?.GetValue("ActiveRuntime") as string;
+            return TryGetOpenXRActiveRuntimeWindows();
         }
         catch
         {
             return null;
         }
+    }
+
+    [SupportedOSPlatform("windows")]
+    private static string? TryGetOpenXRActiveRuntimeWindows()
+    {
+        const string keyPath = @"SOFTWARE\\Khronos\\OpenXR\\1";
+        using var key = Microsoft.Win32.Registry.LocalMachine.OpenSubKey(keyPath);
+        return key?.GetValue("ActiveRuntime") as string;
     }
 
     private static void EnsureOpenXRLoaderResolutionConfigured()
@@ -208,16 +220,88 @@ public unsafe partial class OpenXRAPI : XRBase
     private XRCamera? _openXrLeftEyeCamera;
     private XRCamera? _openXrRightEyeCamera;
 
+    private readonly object _openXrEyePoseLock = new();
+    private Matrix4x4 _openXrLeftEyeLocalPose = Matrix4x4.Identity;
+    private Matrix4x4 _openXrRightEyeLocalPose = Matrix4x4.Identity;
+    private TransformBase? _openXrLocomotionRoot;
+
+    // OpenXR currently renders each eye in a separate pipeline execution (stereoPass=false).
+    // If the source viewport is using the engine's single-pass stereo pipeline (DefaultRenderPipeline.Stereo=true),
+    // many deferred/post shaders will sample array layer 0 by default, producing a left-eye-only image.
+    // To keep per-eye OpenXR rendering correct, we force a non-stereo pipeline override in that case.
+    private RenderPipeline? _openXrNonStereoPipelineOverride;
+    private RenderPipeline? _openXrNonStereoPipelineOverrideSource;
+
+    private static void CopyPostProcessState(RenderPipeline sourcePipeline, RenderPipeline destinationPipeline, XRCamera sourceCamera, XRCamera destinationCamera)
+    {
+        try
+        {
+            var srcState = sourceCamera.PostProcessStates.GetOrCreateState(sourcePipeline);
+            var dstState = destinationCamera.PostProcessStates.GetOrCreateState(destinationPipeline);
+
+            foreach (var (stageKey, srcStage) in srcState.Stages)
+            {
+                if (dstState.GetStage(stageKey) is not { } dstStage)
+                    continue;
+
+                foreach (var (param, value) in srcStage.Values)
+                    dstStage.SetValue<object?>(param, value);
+            }
+
+            // Some cameras use an explicit post-process material override; keep it consistent.
+            destinationCamera.PostProcessMaterial = sourceCamera.PostProcessMaterial;
+        }
+        catch
+        {
+            // Best-effort only; falling back to defaults is preferable to crashing the render thread.
+        }
+    }
+
     private XRWorldInstance? _openXrFrameWorld;
     private XRCamera? _openXrFrameBaseCamera;
 
+    private RenderPipeline? SelectOpenXrRenderPipeline(RenderPipeline? sourcePipeline)
+    {
+        if (sourcePipeline is null)
+            return null;
+
+        if (sourcePipeline is DefaultRenderPipeline defaultPipeline && defaultPipeline.Stereo)
+        {
+            // Cache one override per distinct source pipeline reference.
+            if (!ReferenceEquals(_openXrNonStereoPipelineOverrideSource, sourcePipeline) || _openXrNonStereoPipelineOverride is not DefaultRenderPipeline)
+            {
+                _openXrNonStereoPipelineOverrideSource = sourcePipeline;
+                _openXrNonStereoPipelineOverride = new DefaultRenderPipeline(stereo: false);
+                Debug.Out("OpenXR: source pipeline is Stereo=true; using non-stereo pipeline override for per-eye rendering.");
+            }
+
+            return _openXrNonStereoPipelineOverride;
+        }
+
+        return sourcePipeline;
+    }
+
     // Frame lifecycle is split across the engine threads:
-    // - CollectVisible thread: PollEvents/WaitFrame/BeginFrame/LocateViews + CollectVisible
-    // - CollectVisible thread: SwapBuffers
+    // - Render thread: PollEvents + EndFrame (previous) + WaitFrame/BeginFrame/LocateViews (next)
+    // - CollectVisible thread: CollectVisible (build per-eye command buffers)
+    // - CollectVisible thread: SwapBuffers (sync point; publishes buffers to render thread)
     // - Render thread: Acquire/Wait/Render/Release swapchain images + EndFrame
-    private volatile int _framePrepared;
-    private volatile int _frameSkipRender;
+    // NOTE: Do not mark these as 'volatile' because we pass them by 'ref' to Volatile/Interlocked APIs,
+    // and C# does not treat 'ref volatile-field' as volatile (CS0420). Use Volatile.Read/Write and Interlocked instead.
+    private int _framePrepared;
+    private int _frameSkipRender;
     private bool _timerHooksInstalled;
+
+    // Pending OpenXR frame (WaitFrame/BeginFrame done; views located) awaiting engine CollectVisible+SwapBuffers.
+    private int _pendingXrFrame;
+    private int _pendingXrFrameCollected;
+
+    private int _openXrPendingFrameNumber;
+    private int _openXrLifecycleFrameIndex;
+
+    private long _openXrPrepareTimestamp;
+    private long _openXrCollectTimestamp;
+    private long _openXrSwapTimestamp;
 
     private int _openXrDebugFrameIndex;
     private const int OpenXrDebugLogEveryNFrames = 60;
@@ -225,6 +309,19 @@ public unsafe partial class OpenXRAPI : XRBase
     // Debug toggles (keep as consts so they're unmissable and zero-overhead when off)
     private const bool OpenXrDebugGl = true;
     private const bool OpenXrDebugClearOnly = false;
+    private const bool OpenXrDebugLifecycle = true;
+    private const bool OpenXrDebugRenderRightThenLeft = true;
+
+    private static bool ShouldLogLifecycle(int frameNumber)
+        => frameNumber == 1 || (frameNumber % OpenXrDebugLogEveryNFrames) == 0;
+
+    private static double MsSince(long startTimestamp)
+    {
+        if (startTimestamp == 0)
+            return -1;
+        long dt = Stopwatch.GetTimestamp() - startTimestamp;
+        return (double)dt * 1000.0 / Stopwatch.Frequency;
+    }
 
     private nint _openXrSessionHdc;
     private nint _openXrSessionHglrc;
@@ -386,6 +483,16 @@ public unsafe partial class OpenXRAPI : XRBase
         if (Interlocked.Exchange(ref _framePrepared, 0) == 0)
             return;
 
+        int frameNo = Volatile.Read(ref _openXrPendingFrameNumber);
+        if (OpenXrDebugLifecycle && frameNo != 0 && ShouldLogLifecycle(frameNo))
+        {
+            double msSinceLocate = MsSince(_openXrPrepareTimestamp);
+            double msSinceCollect = MsSince(_openXrCollectTimestamp);
+            double msSinceSwap = MsSince(_openXrSwapTimestamp);
+            Debug.Out($"OpenXR[{frameNo}] Render: begin viewCount={_viewCount} skipRender={Volatile.Read(ref _frameSkipRender)} " +
+                      $"dt(Locate={msSinceLocate:F1}ms Collect={msSinceCollect:F1}ms Swap={msSinceSwap:F1}ms)");
+        }
+
         if (Volatile.Read(ref _frameSkipRender) != 0)
         {
             var frameEndInfoNoLayers = new FrameEndInfo
@@ -396,13 +503,54 @@ public unsafe partial class OpenXRAPI : XRBase
                 LayerCount = 0,
                 Layers = null
             };
-            Api.EndFrame(_session, in frameEndInfoNoLayers);
+            var endResult = Api.EndFrame(_session, in frameEndInfoNoLayers);
+            if (OpenXrDebugLifecycle && frameNo != 0 && ShouldLogLifecycle(frameNo))
+                Debug.Out($"OpenXR[{frameNo}] Render: EndFrame(no layers) => {endResult}");
+
+            Volatile.Write(ref _pendingXrFrame, 0);
+            Volatile.Write(ref _pendingXrFrameCollected, 0);
             return;
         }
 
         var projectionViews = stackalloc CompositionLayerProjectionView[(int)_viewCount];
         for (uint i = 0; i < _viewCount; i++)
             projectionViews[i] = default;
+
+        renderCallback ??= RenderViewportsToSwapchain;
+
+        bool allEyesRendered = true;
+        // NOTE: OpenXR swapchain acquire/wait/release is safest when done serially.
+        // Parallelizing via Task.Run can break GL context ownership and runtime expectations.
+        if (OpenXrDebugRenderRightThenLeft)
+        {
+            for (int i = (int)_viewCount - 1; i >= 0; i--)
+                allEyesRendered &= RenderEye((uint)i, renderCallback, projectionViews);
+        }
+        else
+        {
+            for (uint i = 0; i < _viewCount; i++)
+                allEyesRendered &= RenderEye(i, renderCallback, projectionViews);
+        }
+
+        if (!allEyesRendered)
+        {
+            var frameEndInfoNoLayers = new FrameEndInfo
+            {
+                Type = StructureType.FrameEndInfo,
+                DisplayTime = _frameState.PredictedDisplayTime,
+                EnvironmentBlendMode = EnvironmentBlendMode.Opaque,
+                LayerCount = 0,
+                Layers = null
+            };
+            var endResult = Api.EndFrame(_session, in frameEndInfoNoLayers);
+            if (OpenXrDebugLifecycle && frameNo != 0 && ShouldLogLifecycle(frameNo))
+                Debug.Out($"OpenXR[{frameNo}] Render: EndFrame(no layers; eye failure) => {endResult}");
+
+            Volatile.Write(ref _pendingXrFrame, 0);
+            Volatile.Write(ref _pendingXrFrameCollected, 0);
+            return;
+        }
+
         var layer = new CompositionLayerProjection
         {
             Type = StructureType.CompositionLayerProjection,
@@ -424,37 +572,36 @@ public unsafe partial class OpenXRAPI : XRBase
             Layers = layers
         };
 
-        renderCallback ??= RenderViewportsToSwapchain;
+        var endFrameResult = Api.EndFrame(_session, in frameEndInfo);
+        if (OpenXrDebugLifecycle && frameNo != 0 && ShouldLogLifecycle(frameNo))
+            Debug.Out($"OpenXR[{frameNo}] Render: EndFrame(layer) => {endFrameResult}");
 
-        if (_parallelRenderingEnabled && Window?.Renderer is VulkanRenderer)
-        {
-            // Parallel rendering path for Vulkan
-            RenderEyesInParallel(renderCallback, projectionViews);
-        }
-        else
-        {
-            // Sequential rendering path
-            for (uint i = 0; i < _viewCount; i++)
-                RenderEye(i, renderCallback, projectionViews);
-        }
-
-        Api.EndFrame(_session, in frameEndInfo);
+        Volatile.Write(ref _pendingXrFrame, 0);
+        Volatile.Write(ref _pendingXrFrameCollected, 0);
     }
 
     /// <summary>
     /// Renders a single eye (view)
     /// </summary>
-    private void RenderEye(uint viewIndex, DelRenderToFBO renderCallback, CompositionLayerProjectionView* projectionViews)
+    private bool RenderEye(uint viewIndex, DelRenderToFBO renderCallback, CompositionLayerProjectionView* projectionViews)
     {
-        // Acquire swapchain image
         uint imageIndex = 0;
         var acquireInfo = new SwapchainImageAcquireInfo
         {
             Type = StructureType.SwapchainImageAcquireInfo
         };
 
-        if (Api.AcquireSwapchainImage(_swapchains[viewIndex], in acquireInfo, ref imageIndex) != Result.Success)
-            return;
+        bool acquired = false;
+        int frameNo = Volatile.Read(ref _openXrPendingFrameNumber);
+        try
+        {
+            var acquireResult = Api.AcquireSwapchainImage(_swapchains[viewIndex], in acquireInfo, ref imageIndex);
+            if (acquireResult != Result.Success)
+                return false;
+            acquired = true;
+
+            if (OpenXrDebugLifecycle && frameNo != 0 && ShouldLogLifecycle(frameNo))
+                Debug.Out($"OpenXR[{frameNo}] Eye{viewIndex}: Acquire => {acquireResult} imageIndex={imageIndex}");
 
         // Wait for image ready
         var waitInfo = new SwapchainImageWaitInfo
@@ -465,53 +612,69 @@ public unsafe partial class OpenXRAPI : XRBase
             Timeout = long.MaxValue
         };
 
-        if (Api.WaitSwapchainImage(_swapchains[viewIndex], in waitInfo) != Result.Success)
-            return;
+            var waitResult = Api.WaitSwapchainImage(_swapchains[viewIndex], in waitInfo);
+            if (waitResult != Result.Success)
+                return false;
 
-        // Render to the texture (OpenGL path only)
-        if (_gl is not null)
-        {
-            _gl.BindFramebuffer(FramebufferTarget.Framebuffer, _swapchainFramebuffers[viewIndex][imageIndex]);
-            _gl.Viewport(0, 0, _viewConfigViews[viewIndex].RecommendedImageRectWidth, _viewConfigViews[viewIndex].RecommendedImageRectHeight);
+            if (OpenXrDebugLifecycle && frameNo != 0 && ShouldLogLifecycle(frameNo))
+                Debug.Out($"OpenXR[{frameNo}] Eye{viewIndex}: Wait => {waitResult}");
 
-            renderCallback(_swapchainImagesGL[viewIndex][imageIndex].Image, viewIndex);
-
-            _gl.BindFramebuffer(FramebufferTarget.Framebuffer, 0);
-
-            // Ensure GPU commands touching the swapchain image are submitted before releasing it.
-            // (Tutorial's GraphicsAPI::EndRendering blocks; for GL we at least flush.)
-            _gl.Flush();
-        }
-
-        // Release the image
-        var releaseInfo = new SwapchainImageReleaseInfo
-        {
-            Type = StructureType.SwapchainImageReleaseInfo
-        };
-        Api.ReleaseSwapchainImage(_swapchains[viewIndex], in releaseInfo);
-
-        // Setup projection view
-        projectionViews[viewIndex] = default;
-        projectionViews[viewIndex].Type = StructureType.CompositionLayerProjectionView;
-        projectionViews[viewIndex].Next = null;
-        projectionViews[viewIndex].Fov = _views[viewIndex].Fov;
-        projectionViews[viewIndex].Pose = _views[viewIndex].Pose;
-        // Set the swapchain image
-        projectionViews[viewIndex].SubImage.Swapchain = _swapchains[viewIndex];
-        projectionViews[viewIndex].SubImage.ImageArrayIndex = 0;
-        projectionViews[viewIndex].SubImage.ImageRect = new Rect2Di
-        {
-            Offset = new Offset2Di
+            // Render to the texture (OpenGL path only)
+            if (_gl is not null)
             {
-                X = 0,
-                Y = 0
-            },
-            Extent = new Extent2Di
-            {
-                Width = (int)_viewConfigViews[viewIndex].RecommendedImageRectWidth,
-                Height = (int)_viewConfigViews[viewIndex].RecommendedImageRectHeight
+                _gl.BindFramebuffer(FramebufferTarget.Framebuffer, _swapchainFramebuffers[viewIndex][imageIndex]);
+                _gl.Viewport(0, 0, _viewConfigViews[viewIndex].RecommendedImageRectWidth, _viewConfigViews[viewIndex].RecommendedImageRectHeight);
+
+                // Guard against GL state leakage between eyes (scissor/read buffers/masks are commonly left in a bad state
+                // by some passes and can make the second eye appear fully black).
+                _gl.Disable(EnableCap.ScissorTest);
+                _gl.ColorMask(true, true, true, true);
+                _gl.DepthMask(true);
+
+                renderCallback(_swapchainImagesGL[viewIndex][imageIndex].Image, viewIndex);
+
+                _gl.BindFramebuffer(FramebufferTarget.Framebuffer, 0);
+
+                // Ensure GPU commands touching the swapchain image are submitted before releasing it.
+                _gl.Flush();
             }
-        };
+
+            // Setup projection view (only if we successfully acquired+waited the swapchain image).
+            projectionViews[viewIndex] = default;
+            projectionViews[viewIndex].Type = StructureType.CompositionLayerProjectionView;
+            projectionViews[viewIndex].Next = null;
+            projectionViews[viewIndex].Fov = _views[viewIndex].Fov;
+            projectionViews[viewIndex].Pose = _views[viewIndex].Pose;
+            projectionViews[viewIndex].SubImage.Swapchain = _swapchains[viewIndex];
+            projectionViews[viewIndex].SubImage.ImageArrayIndex = 0;
+            projectionViews[viewIndex].SubImage.ImageRect = new Rect2Di
+            {
+                Offset = new Offset2Di { X = 0, Y = 0 },
+                Extent = new Extent2Di
+                {
+                    Width = (int)_viewConfigViews[viewIndex].RecommendedImageRectWidth,
+                    Height = (int)_viewConfigViews[viewIndex].RecommendedImageRectHeight
+                }
+            };
+
+            return true;
+        }
+        catch (Exception ex)
+        {
+            Debug.LogWarning($"OpenXR RenderEye({viewIndex}) failed: {ex.Message}");
+            return false;
+        }
+        finally
+        {
+            // Always release if we acquired; otherwise the runtime can eventually stall and/or the driver can hang.
+            if (acquired)
+            {
+                var releaseInfo = new SwapchainImageReleaseInfo { Type = StructureType.SwapchainImageReleaseInfo };
+                var releaseResult = Api.ReleaseSwapchainImage(_swapchains[viewIndex], in releaseInfo);
+                if (OpenXrDebugLifecycle && frameNo != 0 && ShouldLogLifecycle(frameNo))
+                    Debug.Out($"OpenXR[{frameNo}] Eye{viewIndex}: Release => {releaseResult}");
+            }
+        }
     }
 
     /// <summary>
@@ -519,12 +682,11 @@ public unsafe partial class OpenXRAPI : XRBase
     /// </summary>
     private void RenderEyesInParallel(DelRenderToFBO renderCallback, CompositionLayerProjectionView* projectionViews)
     {
-        // For Vulkan renderer, start two parallel rendering tasks
-        Task leftEyeTask = Task.Run(() => RenderEye(0, renderCallback, projectionViews));
-        Task rightEyeTask = Task.Run(() => RenderEye(1, renderCallback, projectionViews));
-
-        // Wait for both eyes to complete rendering
-        Task.WaitAll(leftEyeTask, rightEyeTask);
+        // Disabled: OpenXR swapchain acquire/wait/release and GL rendering generally must be serialized.
+        // True parallel eye rendering should be implemented inside the graphics backend (e.g., Vulkan multi-queue)
+        // while keeping xr* calls on one thread.
+        for (uint i = 0; i < _viewCount; i++)
+            RenderEye(i, renderCallback, projectionViews);
     }
 
     /// <summary>
@@ -654,7 +816,21 @@ public unsafe partial class OpenXRAPI : XRBase
                     $"session({_openXrSessionGlBindingTag}; HDC=0x{(nuint)_openXrSessionHdc:X}, HGLRC=0x{(nuint)_openXrSessionHglrc:X})");
             }
         }
+        // Keep OpenXR event/state progression on the render thread.
+        PollEvents();
+
+        // Match OpenVR timing: allow the engine to update any VR/locomotion transforms right before rendering.
+        // (OpenXR runs its own render callback path, so we need to invoke the same hook here.)
+        Engine.VRState.InvokeRecalcMatrixOnDraw();
+
+        if (!_sessionBegun)
+            return;
+
+        // Render the frame whose visibility buffers were published by the CollectVisible thread.
         RenderFrame(null);
+
+        // After submitting the current frame (if any), prepare the next frame's timing + views.
+        PrepareNextFrameOnRenderThread();
     }
 
     private void HookEngineTimerEvents()
@@ -699,44 +875,49 @@ public unsafe partial class OpenXRAPI : XRBase
     private void OpenXrCollectVisible()
     {
         // Runs on the engine's CollectVisible thread.
-        // Keep OpenXR event/state progression responsive even when frame prep happens later.
-        PollEvents();
-    }
-
-    private void OpenXrSwapBuffers()
-    {
-        // Runs on the engine's CollectVisible thread, after the previous render completes.
-        // Prepare the next OpenXR frame now so BeginFrame/EndFrame bracket the upcoming render closely.
-        PollEvents();
-
+        // Consumes the views located on the render thread and builds per-eye visibility buffers.
         if (!_sessionBegun)
             return;
 
-        // Prevent the render thread from consuming a stale frame if we early-out.
-        Volatile.Write(ref _framePrepared, 0);
-
-        if (!WaitFrame(out _frameState))
+        if (Volatile.Read(ref _pendingXrFrame) == 0)
             return;
 
-        if (!BeginFrame())
+        // Avoid double-collecting if the engine calls this multiple times before SwapBuffers.
+        // 0 = not started, 2 = in progress, 1 = done
+        if (Interlocked.CompareExchange(ref _pendingXrFrameCollected, 2, 0) != 0)
             return;
 
-        if (_frameState.ShouldRender == 0)
+        if (Volatile.Read(ref _frameSkipRender) != 0)
+            return;
+
+        bool success = false;
+        try
         {
-            _frameSkipRender = 1;
-            Interlocked.Exchange(ref _framePrepared, 1);
-            return;
-        }
+            int frameNo = Volatile.Read(ref _openXrPendingFrameNumber);
+            if (OpenXrDebugLifecycle && frameNo != 0 && ShouldLogLifecycle(frameNo))
+            {
+                double msSinceLocate = MsSince(_openXrPrepareTimestamp);
+                Debug.Out($"OpenXR[{frameNo}] CollectVisible: begin dt(Locate={msSinceLocate:F1}ms)");
+            }
 
-        if (!LocateViews())
-            return;
+            _openXrCollectTimestamp = Stopwatch.GetTimestamp();
 
-        var sourceViewport = TryGetSourceViewport();
-        if (sourceViewport?.World is null || sourceViewport.ActiveCamera is null)
-            return;
+            var sourceViewport = TryGetSourceViewport();
+            if (sourceViewport?.World is null || sourceViewport.ActiveCamera is null)
+                return;
 
-        _openXrFrameWorld = sourceViewport.World;
-        _openXrFrameBaseCamera = sourceViewport.ActiveCamera;
+            // Prefer the VRState-driven world/cameras when available so OpenXR behaves like OpenVR (custom transforms, locomotion root, etc).
+            var vrInfo = Engine.VRState.ViewInformation;
+            _openXrFrameWorld = vrInfo.World ?? sourceViewport.World;
+            _openXrFrameBaseCamera = sourceViewport.ActiveCamera;
+
+            if (vrInfo.LeftEyeCamera is not null)
+                _openXrLeftEyeCamera = vrInfo.LeftEyeCamera;
+            if (vrInfo.RightEyeCamera is not null)
+                _openXrRightEyeCamera = vrInfo.RightEyeCamera;
+
+            // Best-effort locomotion root: HMD node's parent is typically the playspace/locomotion root.
+            _openXrLocomotionRoot = vrInfo.HMDNode?.Transform.Parent ?? _openXrFrameBaseCamera.Transform.Parent;
 
         EnsureOpenXrEyeCameras(_openXrFrameBaseCamera);
         EnsureOpenXrViewports(
@@ -744,41 +925,198 @@ public unsafe partial class OpenXRAPI : XRBase
             _viewConfigViews[0].RecommendedImageRectHeight);
 
         // Match the scene/editor pipeline so lighting/post/etc are consistent.
-        if (sourceViewport.RenderPipeline is not null)
+        // However, if the source pipeline is single-pass stereo (DefaultRenderPipeline.Stereo=true),
+        // per-eye OpenXR rendering must force a non-stereo pipeline to avoid left-eye-only deferred/post output.
+        var sourcePipeline = sourceViewport.RenderPipeline;
+        var desiredPipeline = SelectOpenXrRenderPipeline(sourcePipeline);
+        if (desiredPipeline is not null)
         {
-            if (_openXrLeftViewport!.RenderPipeline != sourceViewport.RenderPipeline)
-                _openXrLeftViewport.RenderPipeline = sourceViewport.RenderPipeline;
-            if (_openXrRightViewport!.RenderPipeline != sourceViewport.RenderPipeline)
-                _openXrRightViewport.RenderPipeline = sourceViewport.RenderPipeline;
+            if (!ReferenceEquals(_openXrLeftViewport!.RenderPipeline, desiredPipeline))
+                _openXrLeftViewport.RenderPipeline = desiredPipeline;
+            if (!ReferenceEquals(_openXrRightViewport!.RenderPipeline, desiredPipeline))
+                _openXrRightViewport.RenderPipeline = desiredPipeline;
+
+            // Keep camera post-process/pipeline state aligned with what we're actually executing.
+            _openXrLeftEyeCamera!.RenderPipeline = desiredPipeline;
+            _openXrRightEyeCamera!.RenderPipeline = desiredPipeline;
+
+            // Always inherit the base camera's post-process values/material.
+            // Otherwise the per-eye cameras keep default stage values which can easily yield black lighting
+            // and makes exposure/tonemapping behave differently from the desktop view.
+            var postSourcePipeline = sourcePipeline ?? desiredPipeline;
+            if (postSourcePipeline is not null)
+            {
+                CopyPostProcessState(postSourcePipeline, desiredPipeline, _openXrFrameBaseCamera!, _openXrLeftEyeCamera!);
+                CopyPostProcessState(postSourcePipeline, desiredPipeline, _openXrFrameBaseCamera!, _openXrRightEyeCamera!);
+            }
         }
 
         UpdateOpenXrEyeCameraFromView(_openXrLeftEyeCamera!, 0);
         UpdateOpenXrEyeCameraFromView(_openXrRightEyeCamera!, 1);
 
-        _openXrLeftViewport!.CollectVisible(
-            collectMirrors: true,
-            worldOverride: _openXrFrameWorld,
-            cameraOverride: _openXrLeftEyeCamera,
-            allowScreenSpaceUICollectVisible: false);
-        int leftAdded = _openXrLeftViewport.RenderPipelineInstance.MeshRenderCommands.GetCommandsAddedCount();
-        _openXrRightViewport!.CollectVisible(
-            collectMirrors: true,
-            worldOverride: _openXrFrameWorld,
-            cameraOverride: _openXrRightEyeCamera,
-            allowScreenSpaceUICollectVisible: false);
-        int rightAdded = _openXrRightViewport.RenderPipelineInstance.MeshRenderCommands.GetCommandsAddedCount();
+        int leftAdded = 0;
+        int rightAdded = 0;
 
-        _openXrLeftViewport.SwapBuffers(allowScreenSpaceUISwap: false);
-        _openXrRightViewport.SwapBuffers(allowScreenSpaceUISwap: false);
-
-        int dbg = Interlocked.Increment(ref _openXrDebugFrameIndex);
-        if (dbg == 1 || (dbg % OpenXrDebugLogEveryNFrames) == 0)
+        // Parallel buffer generation is only enabled on the Vulkan path.
+        if (_parallelRenderingEnabled && Window?.Renderer is VulkanRenderer)
         {
-            Debug.Out($"OpenXR CollectVisible: leftAdded={leftAdded}, rightAdded={rightAdded}, CullWithFrustum(L/R)={_openXrLeftViewport.CullWithFrustum}/{_openXrRightViewport.CullWithFrustum}");
+            Task leftTask = Task.Run(() =>
+            {
+                _openXrLeftViewport!.CollectVisible(
+                    collectMirrors: true,
+                    worldOverride: _openXrFrameWorld,
+                    cameraOverride: _openXrLeftEyeCamera,
+                    allowScreenSpaceUICollectVisible: false);
+                leftAdded = _openXrLeftViewport.RenderPipelineInstance.MeshRenderCommands.GetCommandsAddedCount();
+            });
+
+            Task rightTask = Task.Run(() =>
+            {
+                _openXrRightViewport!.CollectVisible(
+                    collectMirrors: true,
+                    worldOverride: _openXrFrameWorld,
+                    cameraOverride: _openXrRightEyeCamera,
+                    allowScreenSpaceUICollectVisible: false);
+                rightAdded = _openXrRightViewport.RenderPipelineInstance.MeshRenderCommands.GetCommandsAddedCount();
+            });
+
+            Task.WaitAll(leftTask, rightTask);
+        }
+        else
+        {
+            _openXrLeftViewport!.CollectVisible(
+                collectMirrors: true,
+                worldOverride: _openXrFrameWorld,
+                cameraOverride: _openXrLeftEyeCamera,
+                allowScreenSpaceUICollectVisible: false);
+            leftAdded = _openXrLeftViewport.RenderPipelineInstance.MeshRenderCommands.GetCommandsAddedCount();
+
+            _openXrRightViewport!.CollectVisible(
+                collectMirrors: true,
+                worldOverride: _openXrFrameWorld,
+                cameraOverride: _openXrRightEyeCamera,
+                allowScreenSpaceUICollectVisible: false);
+            rightAdded = _openXrRightViewport.RenderPipelineInstance.MeshRenderCommands.GetCommandsAddedCount();
         }
 
-        _frameSkipRender = 0;
+            int dbg = Interlocked.Increment(ref _openXrDebugFrameIndex);
+            if (dbg == 1 || (dbg % OpenXrDebugLogEveryNFrames) == 0)
+            {
+                Debug.Out($"OpenXR CollectVisible: leftAdded={leftAdded}, rightAdded={rightAdded}, CullWithFrustum(L/R)={_openXrLeftViewport!.CullWithFrustum}/{_openXrRightViewport!.CullWithFrustum}");
+            }
+
+            if (OpenXrDebugLifecycle && frameNo != 0 && ShouldLogLifecycle(frameNo))
+            {
+                double msSinceLocate = MsSince(_openXrPrepareTimestamp);
+                double msSinceCollect = MsSince(_openXrCollectTimestamp);
+                Debug.Out($"OpenXR[{frameNo}] CollectVisible: done leftAdded={leftAdded} rightAdded={rightAdded} dt(Locate={msSinceLocate:F1}ms Collect={msSinceCollect:F1}ms)");
+            }
+
+            success = true;
+        }
+        finally
+        {
+            Volatile.Write(ref _pendingXrFrameCollected, success ? 1 : 0);
+        }
+    }
+
+    private void OpenXrSwapBuffers()
+    {
+        // Runs on the engine's CollectVisible thread, after the previous render completes.
+        // Acts as the sync point between CollectVisible (buffer generation) and the render thread.
+        if (!_sessionBegun)
+            return;
+
+        if (Volatile.Read(ref _pendingXrFrame) == 0)
+            return;
+
+        // If the runtime says "do not render", just let the render thread EndFrame with no layers.
+        if (Volatile.Read(ref _frameSkipRender) != 0)
+        {
+            Interlocked.Exchange(ref _framePrepared, 1);
+            return;
+        }
+
+        // If we didn't successfully collect this frame, don't try to render stale buffers.
+        if (Volatile.Read(ref _pendingXrFrameCollected) != 1)
+            return;
+
+        int frameNo = Volatile.Read(ref _openXrPendingFrameNumber);
+        if (OpenXrDebugLifecycle && frameNo != 0 && ShouldLogLifecycle(frameNo))
+        {
+            double msSinceLocate = MsSince(_openXrPrepareTimestamp);
+            double msSinceCollect = MsSince(_openXrCollectTimestamp);
+            Debug.Out($"OpenXR[{frameNo}] SwapBuffers: publishing eye buffers dt(Locate={msSinceLocate:F1}ms Collect={msSinceCollect:F1}ms)");
+        }
+
+        _openXrSwapTimestamp = Stopwatch.GetTimestamp();
+
+        _openXrLeftViewport?.SwapBuffers(allowScreenSpaceUISwap: false);
+        _openXrRightViewport?.SwapBuffers(allowScreenSpaceUISwap: false);
+
         Interlocked.Exchange(ref _framePrepared, 1);
+
+        if (OpenXrDebugLifecycle && frameNo != 0 && ShouldLogLifecycle(frameNo))
+            Debug.Out($"OpenXR[{frameNo}] SwapBuffers: framePrepared=1");
+    }
+
+    private void PrepareNextFrameOnRenderThread()
+    {
+        // Called on the render thread. Prepares the next OpenXR frame (WaitFrame/BeginFrame/LocateViews)
+        // so the CollectVisible thread can build buffers for it.
+        if (!_sessionBegun)
+            return;
+
+        // Only one OpenXR frame can be "in flight" between BeginFrame and EndFrame.
+        if (Volatile.Read(ref _pendingXrFrame) != 0)
+            return;
+
+        // Clear any stale publish flags.
+        Volatile.Write(ref _framePrepared, 0);
+        Volatile.Write(ref _pendingXrFrameCollected, 0);
+
+        if (!WaitFrame(out _frameState))
+            return;
+
+        if (!BeginFrame())
+            return;
+
+        int frameNo = Interlocked.Increment(ref _openXrLifecycleFrameIndex);
+        Volatile.Write(ref _openXrPendingFrameNumber, frameNo);
+
+        if (OpenXrDebugLifecycle && ShouldLogLifecycle(frameNo))
+        {
+            Debug.Out($"OpenXR[{frameNo}] Prepare: Wait+Begin ok predictedDisplayTime={_frameState.PredictedDisplayTime} shouldRender={_frameState.ShouldRender}");
+        }
+
+        if (_frameState.ShouldRender == 0)
+        {
+            Volatile.Write(ref _frameSkipRender, 1);
+            Volatile.Write(ref _pendingXrFrame, 1);
+
+            if (OpenXrDebugLifecycle && ShouldLogLifecycle(frameNo))
+                Debug.Out($"OpenXR[{frameNo}] Prepare: ShouldRender=0 (will EndFrame with no layers)");
+            return;
+        }
+
+        Volatile.Write(ref _frameSkipRender, 0);
+
+        if (!LocateViews())
+            return;
+
+        _openXrPrepareTimestamp = Stopwatch.GetTimestamp();
+
+        if (OpenXrDebugLifecycle && ShouldLogLifecycle(frameNo) && _views.Length >= 2)
+        {
+            var l = _views[0];
+            var r = _views[1];
+            Debug.Out(
+                $"OpenXR[{frameNo}] Prepare: LocateViews ok " +
+                $"L(pos={l.Pose.Position.X:F3},{l.Pose.Position.Y:F3},{l.Pose.Position.Z:F3}) " +
+                $"R(pos={r.Pose.Position.X:F3},{r.Pose.Position.Y:F3},{r.Pose.Position.Z:F3})");
+        }
+
+        Volatile.Write(ref _pendingXrFrame, 1);
     }
 
     /// <summary>
@@ -1227,6 +1565,15 @@ public unsafe partial class OpenXRAPI : XRBase
                 uint fbo = _gl.GenFramebuffer();
                 _gl.BindFramebuffer(FramebufferTarget.Framebuffer, fbo);
                 _gl.FramebufferTexture2D(FramebufferTarget.Framebuffer, FramebufferAttachment.ColorAttachment0, TextureTarget.Texture2D, _swapchainImagesGL[i][j].Image, 0);
+
+                // Make the swapchain FBO robust against global ReadBuffer/DrawBuffers state changes.
+                // Some engine passes intentionally set ReadBuffer=None; if that leaks, subsequent operations can become no-ops.
+                unsafe
+                {
+                    GLEnum* drawBuffers = stackalloc GLEnum[1] { GLEnum.ColorAttachment0 };
+                    _gl.NamedFramebufferDrawBuffers(fbo, 1, drawBuffers);
+                    _gl.NamedFramebufferReadBuffer(fbo, GLEnum.ColorAttachment0);
+                }
                 _swapchainFramebuffers[i][j] = fbo;
             }
 
@@ -1261,6 +1608,28 @@ public unsafe partial class OpenXRAPI : XRBase
             if (_gl is null)
                 return;
 
+            int frameNo = Volatile.Read(ref _openXrPendingFrameNumber);
+            bool logLifecycle = OpenXrDebugLifecycle && frameNo != 0 && ShouldLogLifecycle(frameNo);
+
+            static string DetectTextureTarget(GL gl, uint tex)
+            {
+                // Heuristic: try binding the texture name to common targets and see which one succeeds.
+                // (Binding to an incompatible target yields GL_INVALID_OPERATION.)
+                gl.GetError();
+                gl.BindTexture(TextureTarget.Texture2D, tex);
+                var e2d = gl.GetError();
+                if (e2d == GLEnum.NoError)
+                    return "Texture2D";
+
+                gl.GetError();
+                gl.BindTexture(TextureTarget.Texture2DArray, tex);
+                var e2da = gl.GetError();
+                if (e2da == GLEnum.NoError)
+                    return "Texture2DArray";
+
+                return $"Unknown(err2D={e2d}, err2DA={e2da})";
+            }
+
             // Diagnostic: prove swapchain rendering/submission works (and swapchain texture names are valid in this context).
             // If this shows solid colors in the HMD, the issue is in mirror rendering or blit source, not OpenXR submission.
             if (OpenXrDebugClearOnly)
@@ -1286,12 +1655,22 @@ public unsafe partial class OpenXRAPI : XRBase
                 renderer.Active = true;
                 AbstractRenderer.Current = renderer;
 
+                // Make sure the eye pose reflects the latest locomotion-root rotation for *this* render.
+                ApplyOpenXrEyePoseForRenderThread(viewIndex);
+
                 // CollectVisible/SwapBuffers are handled on the engine's CollectVisible thread.
                 eyeViewport.Render(_viewportMirrorFbo, _openXrFrameWorld, eyeCamera, shadowPass: false, forcedMaterial: null);
 
                 var srcApiTex = renderer.GetOrCreateAPIRenderObject(_viewportMirrorColor, generateNow: true) as IGLTexture;
                 if (srcApiTex is null || srcApiTex.BindingId == 0)
                     return;
+
+                if (logLifecycle)
+                {
+                    string srcTarget = DetectTextureTarget(_gl, srcApiTex.BindingId);
+                    string dstTarget = DetectTextureTarget(_gl, textureHandle);
+                    Debug.Out($"OpenXR[{frameNo}] GLBlit: view={viewIndex} srcTex={srcApiTex.BindingId}({srcTarget}) dstTex={textureHandle}({dstTarget}) size={width}x{height}");
+                }
 
                 if (OpenXrDebugGl)
                 {
@@ -1308,6 +1687,20 @@ public unsafe partial class OpenXRAPI : XRBase
                     _blitReadFbo = _gl.GenFramebuffer();
                 if (_blitDrawFbo == 0)
                     _blitDrawFbo = _gl.GenFramebuffer();
+
+                // Explicitly force read/draw buffers for our utility FBOs.
+                // The engine can legitimately leave ReadBuffer=None for some passes; if that carries into glBlitFramebuffer
+                // the copy becomes a no-op and the next eye can go black depending on render order.
+                unsafe
+                {
+                    GLEnum* drawBuffers = stackalloc GLEnum[1] { GLEnum.ColorAttachment0 };
+                    _gl.NamedFramebufferDrawBuffers(_blitDrawFbo, 1, drawBuffers);
+                    _gl.NamedFramebufferReadBuffer(_blitReadFbo, GLEnum.ColorAttachment0);
+                }
+
+                // Blit can be clipped by scissor/masks if left enabled by previous passes.
+                _gl.Disable(EnableCap.ScissorTest);
+                _gl.ColorMask(true, true, true, true);
 
                 _gl.BindFramebuffer(FramebufferTarget.ReadFramebuffer, _blitReadFbo);
                 _gl.FramebufferTexture2D(FramebufferTarget.ReadFramebuffer, FramebufferAttachment.ColorAttachment0, TextureTarget.Texture2D, srcApiTex.BindingId, 0);
@@ -1327,11 +1720,25 @@ public unsafe partial class OpenXRAPI : XRBase
                     }
                 }
 
+                if (logLifecycle)
+                {
+                    var readStatus = _gl.CheckFramebufferStatus(FramebufferTarget.ReadFramebuffer);
+                    var drawStatus = _gl.CheckFramebufferStatus(FramebufferTarget.DrawFramebuffer);
+                    var err = _gl.GetError();
+                    Debug.Out($"OpenXR[{frameNo}] GLBlit: view={viewIndex} FBO read={readStatus} draw={drawStatus} glErr={err}");
+                }
+
                 _gl.BlitFramebuffer(
                     0, 0, (int)width, (int)height,
                     0, 0, (int)width, (int)height,
                     ClearBufferMask.ColorBufferBit,
                     BlitFramebufferFilter.Linear);
+
+                if (logLifecycle)
+                {
+                    var err = _gl.GetError();
+                    Debug.Out($"OpenXR[{frameNo}] GLBlit: view={viewIndex} post-blit glErr={err}");
+                }
 
                 if (OpenXrDebugGl)
                 {
@@ -1414,8 +1821,22 @@ public unsafe partial class OpenXRAPI : XRBase
 
     private void EnsureOpenXrEyeCameras(XRCamera baseCamera)
     {
-        _openXrLeftEyeCamera ??= new XRCamera(new Transform());
-        _openXrRightEyeCamera ??= new XRCamera(new Transform());
+        // Prefer Engine.VRState cameras if provided (OpenVR-style setup).
+        var vrInfo = Engine.VRState.ViewInformation;
+        _openXrLeftEyeCamera ??= vrInfo.LeftEyeCamera ?? new XRCamera(new Transform());
+        _openXrRightEyeCamera ??= vrInfo.RightEyeCamera ?? new XRCamera(new Transform());
+
+        // Match the OpenVR + locomotion setup: eye transforms live under the locomotion root.
+        var locomotionRoot = _openXrLocomotionRoot ?? baseCamera.Transform.Parent;
+        if (locomotionRoot is not null)
+        {
+            // Only reparent if the camera is currently unparented or parented to the base camera;
+            // preserve custom hierarchies when the app provides its own VR rig.
+            if (_openXrLeftEyeCamera.Transform.Parent is null || ReferenceEquals(_openXrLeftEyeCamera.Transform.Parent, baseCamera.Transform))
+                _openXrLeftEyeCamera.Transform.SetParent(locomotionRoot, preserveWorldTransform: false, EParentAssignmentMode.Immediate);
+            if (_openXrRightEyeCamera.Transform.Parent is null || ReferenceEquals(_openXrRightEyeCamera.Transform.Parent, baseCamera.Transform))
+                _openXrRightEyeCamera.Transform.SetParent(locomotionRoot, preserveWorldTransform: false, EParentAssignmentMode.Immediate);
+        }
 
         CopyCameraCommon(baseCamera, _openXrLeftEyeCamera);
         CopyCameraCommon(baseCamera, _openXrRightEyeCamera);
@@ -1458,14 +1879,41 @@ public unsafe partial class OpenXRAPI : XRBase
             pose.Orientation.Z,
             pose.Orientation.W));
 
-        Matrix4x4 eyeWorldMatrix = Matrix4x4.CreateFromQuaternion(eyeRot);
-        eyeWorldMatrix.Translation = eyePos;
+        Matrix4x4 eyeLocalMatrix = Matrix4x4.CreateFromQuaternion(eyeRot);
+        eyeLocalMatrix.Translation = eyePos;
 
-        // Set the render matrix directly - this is what the rendering pipeline reads.
-        camera.Transform.SetRenderMatrix(eyeWorldMatrix, recalcAllChildRenderMatrices: false);
+        // Store the local pose so the render thread can compose it with the *current* locomotion root render matrix.
+        lock (_openXrEyePoseLock)
+        {
+            if (viewIndex == 0)
+                _openXrLeftEyeLocalPose = eyeLocalMatrix;
+            else if (viewIndex == 1)
+                _openXrRightEyeLocalPose = eyeLocalMatrix;
+        }
+
+        // Keep the transform components in sync (useful for tools/debug/UI and any world-matrix consumers).
+        camera.Transform.DeriveLocalMatrix(eyeLocalMatrix, networkSmoothed: false);
 
         if (camera.Parameters is XROpenXRFovCameraParameters openxrParams)
             openxrParams.SetAngles(fov.AngleLeft, fov.AngleRight, fov.AngleUp, fov.AngleDown);
+    }
+
+    private void ApplyOpenXrEyePoseForRenderThread(uint viewIndex)
+    {
+        var camera = viewIndex == 0 ? _openXrLeftEyeCamera : _openXrRightEyeCamera;
+        if (camera is null)
+            return;
+
+        Matrix4x4 localPose;
+        lock (_openXrEyePoseLock)
+            localPose = viewIndex == 0 ? _openXrLeftEyeLocalPose : _openXrRightEyeLocalPose;
+
+        var root = _openXrLocomotionRoot;
+        Matrix4x4 rootRender = root?.RenderMatrix ?? Matrix4x4.Identity;
+        Matrix4x4 eyeRender = localPose * rootRender;
+
+        // Apply composed render matrix so rapid locomotion-root rotations can't temporarily snap the eye.
+        camera.Transform.SetRenderMatrix(eyeRender, recalcAllChildRenderMatrices: false);
     }
 
     private void EnsureViewportMirrorTargets(OpenGLRenderer renderer, uint width, uint height)

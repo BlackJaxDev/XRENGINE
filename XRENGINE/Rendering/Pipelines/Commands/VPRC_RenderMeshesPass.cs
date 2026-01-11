@@ -53,6 +53,11 @@ namespace XREngine.Rendering.Pipelines.Commands
         {
             ActivePipelineInstance.MeshRenderCommands.RenderCPU(_renderPass, true);
             ActivePipelineInstance.MeshRenderCommands.RenderGPU(_renderPass);
+
+            // Safety net: if the GPU-indirect path fails/early-outs (common during init/validation),
+            // fall back to CPU mesh rendering for this pass so viewports (e.g. VR eyes) don't go blank.
+            if (ActivePipelineInstance.MeshRenderCommands.TryGetGpuPass(_renderPass, out var gpuPass) && gpuPass.VisibleCommandCount == 0)
+                ActivePipelineInstance.MeshRenderCommands.RenderCPUMeshOnly(_renderPass);
         }
 
         private void RenderCPU()

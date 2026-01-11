@@ -3,7 +3,7 @@
   "WorldKind": "Default",
 
   "UpdateFPS": 60.0,
-  "RenderFPS": 0.0,
+  "RenderFPS": 90.0,
   "FixedFPS": 30.0,
   "TickGroupedItemsInParallel": true,
   "RecalcChildMatricesType": "Asynchronous",
@@ -47,9 +47,9 @@
   "AddCameraVRPickup": false,
   "AllowEditingInVR": false,
   "PreviewVRStereoViews": false,
-  "Locomotion": false,
-  "ThirdPersonPawn": true,
-  "VRPawn": false,
+  "Locomotion": true,
+  "ThirdPersonPawn": false,
+  "VRPawn": true,
   "UseOpenXR": true,
   "EmulatedVRPawn": false,
   "SinglePassStereoVR": false,
@@ -61,7 +61,7 @@
 
   "ModelsToImport": [
     {
-      "Enabled": true,
+      "Enabled": false,
       "Kind": "Animated",
       "Path": "misc\\jax2026.fbx",
       "ImportFlags": "Triangulate, FlipUVs",
@@ -74,7 +74,7 @@
       }
     },
     {
-      "Enabled": false,
+      "Enabled": true,
       "Kind": "Static",
       "Path": "Models\\Sponza2\\Sponza.obj",
       "ImportFlags": "CalculateTangentSpace, JoinIdenticalVertices, Triangulate, GenerateNormals, SplitLargeMeshes, ImproveCacheLocality, OptimizeGraph, OptimizeMeshes, SortByPrimitiveType, FlipUVs",
