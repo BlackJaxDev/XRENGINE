@@ -36,6 +36,7 @@ namespace XREngine.Rendering.UI
     /// <summary>
     /// Represents a UI transform in 2D space.
     /// </summary>
+    [XRTransformEditor("XREngine.Editor.TransformEditors.UITransformEditor")]
     public class UITransform : TransformBase, IRenderable
     {
         private UICanvasTransform? _parentCanvas;

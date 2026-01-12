@@ -83,7 +83,7 @@ namespace XREngine.Components
         public bool Moving => Rotating || Translating;
 
         [Category("Movement")]
-        public float ScrollSpeed { get; set; } = 0.7f;
+        public float ScrollSpeed { get; set; } = 7.0f;
 
         [Category("Movement")]
         public float MouseRotateSpeed { get; set; } = 0.75f;

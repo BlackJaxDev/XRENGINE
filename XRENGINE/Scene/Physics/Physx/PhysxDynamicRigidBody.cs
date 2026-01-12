@@ -143,10 +143,19 @@ namespace XREngine.Rendering.Physics.Physx
 
         public void WakeUp()
         {
+            Engine.EnqueuePhysicsThreadTask(() => WakeUpInternal());
+        }
+        private void WakeUpInternal()
+        {
             _obj->WakeUpMut();
             PhysxObjectLog.Modified(this, (nint)_obj, nameof(WakeUp));
         }
+
         public void PutToSleep()
+        {
+            Engine.EnqueuePhysicsThreadTask(() => PutToSleepInternal());
+        }
+        private void PutToSleepInternal()
         {
             _obj->PutToSleepMut();
             PhysxObjectLog.Modified(this, (nint)_obj, nameof(PutToSleep));

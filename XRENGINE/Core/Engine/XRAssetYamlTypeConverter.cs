@@ -4,6 +4,7 @@ using System.Diagnostics;
 using System.Diagnostics.CodeAnalysis;
 using System.IO;
 using System.Linq;
+using XREngine.Core;
 using XREngine.Core.Files;
 using YamlDotNet.Core;
 using YamlDotNet.Core.Events;
@@ -411,6 +412,9 @@ namespace XREngine
 
             if (string.IsNullOrWhiteSpace(hint))
                 return false;
+
+            // Back-compat: allow types to redirect legacy names via [XRTypeRedirect].
+            hint = XRTypeRedirectRegistry.RewriteTypeName(hint);
 
             // XRAsset.SerializedAssetType writes FullName (no assembly qualifier). Resolve via loaded assemblies.
             foreach (var assembly in AppDomain.CurrentDomain.GetAssemblies())

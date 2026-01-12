@@ -28,7 +28,7 @@ namespace XREngine.Rendering.OpenGL
             private GLRenderProgramPipeline? _pipeline;
             private GLRenderProgram? _combinedProgram;
             private GLRenderProgram? _separatedVertexProgram;
-            private int _shaderConfigVersion = -1;
+            private int _shaderConfigVersion = Engine.Rendering.Settings.ShaderConfigVersion;
 
             private GLDataBuffer? _triangleIndicesBuffer;
             private GLDataBuffer? _lineIndicesBuffer;

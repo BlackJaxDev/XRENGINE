@@ -412,6 +412,7 @@ namespace XREngine.Scene.Components.Editing
         #endregion
 
         private TransformBase? _targetSocket = null;
+        private bool _updatingDisplayTransform;
 
         private void UpdateScreenSpace()
         {
@@ -657,7 +658,33 @@ namespace XREngine.Scene.Components.Editing
         public TransformBase? TargetSocket
         {
             get => _targetSocket;
-            set => SetField(ref _targetSocket, value);
+            set
+            {
+                // Prevent feedback loops if the user selects the tool node (or any of its children)
+                // as the target socket.
+                if (value is not null && IsTransformInToolHierarchy(value))
+                    value = null;
+
+                SetField(ref _targetSocket, value);
+            }
+        }
+
+        private bool IsTransformInToolHierarchy(TransformBase? transform)
+        {
+            if (transform?.SceneNode is null)
+                return false;
+
+            SceneNode toolRoot = SceneNode;
+            SceneNode? node = transform.SceneNode;
+            while (node is not null)
+            {
+                if (ReferenceEquals(node, toolRoot))
+                    return true;
+
+                node = node.Transform?.Parent?.SceneNode;
+            }
+
+            return false;
         }
 
         /// <summary>
@@ -697,6 +724,12 @@ namespace XREngine.Scene.Components.Editing
 
         private void SocketTransformChangedCallback(TransformBase? socket, Matrix4x4 worldMatrix)
         {
+            if (_updatingDisplayTransform)
+                return;
+
+            if (socket is null || IsTransformInToolHierarchy(socket))
+                return;
+
             if (TransformSpace != ETransformSpace.Screen)
                 UpdateDisplayTransform();
         }
@@ -708,7 +741,23 @@ namespace XREngine.Scene.Components.Editing
         /// </summary>
         /// <param name="updateDragMatrix"></param>
         private void UpdateDisplayTransform()
-            => SetRootTransform(GetSocketSpacialTransform());
+        {
+            if (_updatingDisplayTransform)
+                return;
+
+            if (_targetSocket is null || IsTransformInToolHierarchy(_targetSocket))
+                return;
+
+            _updatingDisplayTransform = true;
+            try
+            {
+                SetRootTransform(GetSocketSpacialTransform());
+            }
+            finally
+            {
+                _updatingDisplayTransform = false;
+            }
+        }
 
         private BoolVector3 _hiAxis;
         private bool _hiCam, _hiSphere;

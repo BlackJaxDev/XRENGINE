@@ -465,7 +465,7 @@ namespace XREngine
                     return world.Settings.DefaultGameMode;
 
                 // Priority 4: Create default
-                return new GameMode();
+                return new CustomGameMode();
             }
 
             /// <summary>
@@ -485,8 +485,7 @@ namespace XREngine
                 {
                     worldInstance.PhysicsEnabled = true;
                     worldInstance.GameMode = _activeGameMode;
-                    if (_activeGameMode is not null)
-                        _activeGameMode.WorldInstance = worldInstance;
+                    _activeGameMode?.WorldInstance = worldInstance;
 
                     await worldInstance.BeginPlay();
                 }
@@ -513,8 +512,7 @@ namespace XREngine
                 {
                     worldInstance.PhysicsEnabled = true;
                     worldInstance.GameMode = _activeGameMode;
-                    if (_activeGameMode is not null)
-                        _activeGameMode.WorldInstance = worldInstance;
+                    _activeGameMode?.WorldInstance = worldInstance;
 
                     worldInstance.BeginPlay().GetAwaiter().GetResult();
                 }

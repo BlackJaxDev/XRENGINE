@@ -48,6 +48,24 @@ namespace XREngine
             _materialFactory = materialFactory ?? MaterialFactory;
         }
 
+        /// <summary>
+        /// Schedules an import job on the engine's job system.
+        /// </summary>
+        /// <param name="path"></param>
+        /// <param name="options"></param>
+        /// <param name="onFinished"></param>
+        /// <param name="onError"></param>
+        /// <param name="onCanceled"></param>
+        /// <param name="onProgress"></param>
+        /// <param name="cancellationToken"></param>
+        /// <param name="parent"></param>
+        /// <param name="scaleConversion"></param>
+        /// <param name="zUp"></param>
+        /// <param name="rootTransformMatrix"></param>
+        /// <param name="materialFactory"></param>
+        /// <param name="makeMaterialAction"></param>
+        /// <param name="layer"></param>
+        /// <returns></returns>
         public static EnumeratorJob ScheduleImportJob(
             string path,
             PostProcessSteps options,

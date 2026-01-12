@@ -170,7 +170,7 @@ namespace XREngine
                 }
 
                 var worldInstance = connection.WorldInstance;
-                worldInstance.GameMode ??= new GameMode { WorldInstance = worldInstance };
+                worldInstance.GameMode ??= new CustomGameMode { WorldInstance = worldInstance };
 
                 connection.Pawn = worldInstance.GameMode.CreateDefaultPawn(ELocalPlayerIndex.One)
                     ?? CreateFallbackPawn(worldInstance, connection.ServerPlayerIndex, displayName);

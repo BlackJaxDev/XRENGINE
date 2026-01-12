@@ -528,7 +528,7 @@ namespace XREngine
 
             private static PawnComponent? CreateRemotePawn(XRWorldInstance worldInstance, int serverPlayerIndex, string? displayName)
             {
-                var pawnType = worldInstance.GameMode?.DefaultPlayerPawnClass ?? typeof(FlyingCameraPawnComponent);
+                var pawnType = worldInstance.GameMode?.PlayerPawnClass ?? typeof(FlyingCameraPawnComponent);
                 if (pawnType is null)
                     return null;
 

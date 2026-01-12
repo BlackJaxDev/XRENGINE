@@ -1,10 +1,14 @@
-﻿using System;
+﻿using MemoryPack;
+using System;
+using System.ComponentModel;
 using System.Diagnostics.CodeAnalysis;
 using XREngine.Components;
+using XREngine.Core.Files;
 using XREngine.Input;
 using XREngine.Rendering;
 using XREngine.Scene;
 using XREngine.Scene.Transforms;
+using YamlDotNet.Serialization;
 
 namespace XREngine
 {
@@ -12,60 +16,44 @@ namespace XREngine
     /// GameMode defines the rules and behavior of a game session.
     /// Override this class to implement custom game logic, spawning, and player management.
     /// </summary>
-    public class GameMode
+    public abstract class GameMode : XRAsset
     {
-        private Type? _defaultPlayerControllerClass = typeof(LocalPlayerController);
-        private Type? _defaultPlayerPawnClass = typeof(FlyingCameraPawnComponent);
+        protected Type? _defaultPlayerControllerClass = typeof(LocalPlayerController);
+        protected Type? _defaultPlayerPawnClass = typeof(FlyingCameraPawnComponent);
 
-        /// <summary>
-        /// Controller type instantiated for local players when this GameMode ensures controller availability.
-        /// Defaults to <see cref="LocalPlayerController"/>.
-        /// </summary>
-        [DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicConstructors)]
-        public Type? DefaultPlayerControllerClass
-        {
-            get => _defaultPlayerControllerClass;
-            set
-            {
-                if (value is not null && !typeof(LocalPlayerController).IsAssignableFrom(value))
-                    throw new ArgumentException("Default player controller must inherit from LocalPlayerController", nameof(value));
-
-                _defaultPlayerControllerClass = value;
-            }
-        }
-
-        /// <summary>
-        /// Pawn component type spawned for local players when entering play. Defaults to <see cref="FlyingCameraPawnComponent"/>.
-        /// </summary>
-        [DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicConstructors)]
-        public Type? DefaultPlayerPawnClass
-        {
-            get => _defaultPlayerPawnClass;
-            set
-            {
-                if (value is not null && !typeof(PawnComponent).IsAssignableFrom(value))
-                    throw new ArgumentException("Default player pawn must inherit from PawnComponent", nameof(value));
-
-                _defaultPlayerPawnClass = value;
-            }
-        }
+        public Type? PlayerControllerClass => _defaultPlayerControllerClass;
+        public Type? PlayerPawnClass => _defaultPlayerPawnClass;
 
         /// <summary>
         /// The world instance this GameMode is managing.
         /// Set when entering play mode.
         /// </summary>
+        [YamlIgnore]
+        [MemoryPackIgnore]
+        [Description("The world instance this GameMode is managing.")]
         public XRWorldInstance? WorldInstance { get; internal set; }
 
         /// <summary>
         /// Queue of pending possessions per pawn.
         /// </summary>
+        [YamlIgnore]
+        [MemoryPackIgnore]
+        [Description("Queue of pending possessions per pawn.")]
         public Dictionary<PawnComponent, Queue<ELocalPlayerIndex>> PossessionQueue { get; } = [];
 
         /// <summary>
-        /// Tracks pawns that were auto-spawned by this GameMode, keyed by player index.
+        /// Tracks pawns that were auto-spawned by this GameMode.
         /// These pawns will be destroyed when play mode ends.
         /// </summary>
-        private Dictionary<ELocalPlayerIndex, PawnComponent> AutoSpawnedPawns { get; } = [];
+        private HashSet<PawnComponent> AutoSpawnedPawns { get; } = [];
+
+        protected void TrackAutoSpawnedPawn(PawnComponent pawn)
+        {
+            if (pawn is null)
+                return;
+
+            AutoSpawnedPawns.Add(pawn);
+        }
 
         /// <summary>
         /// Whether this GameMode is currently active (in play mode).
@@ -84,10 +72,8 @@ namespace XREngine
 
             // Default behavior: spawn a pawn for the default player if auto-spawn is enabled
             if (Engine.PlayMode.Configuration.AutoSpawnPlayer)
-            {
                 SpawnDefaultPlayerPawn(Engine.PlayMode.Configuration.DefaultPlayerIndex);
-            }
-
+            
             Debug.Out($"GameMode.OnBeginPlay - World: {WorldInstance?.TargetWorld?.Name ?? "null"}");
         }
 
@@ -99,26 +85,21 @@ namespace XREngine
         {
             // Clear all possession queues
             foreach (var kvp in PossessionQueue)
-            {
                 kvp.Key.PreUnpossessed -= OnPawnUnPossessing;
-            }
+            
             PossessionQueue.Clear();
 
             // Unpossess all pawns
             foreach (var player in Engine.State.LocalPlayers)
-            {
                 if (player?.ControlledPawn is not null)
-                {
                     player.ControlledPawn.Controller = null;
-                }
-            }
 
             // Destroy all auto-spawned pawns
-            foreach (var (playerIndex, pawn) in AutoSpawnedPawns)
+            foreach (var pawn in AutoSpawnedPawns)
             {
                 if (pawn is not null && !pawn.IsDestroyed && pawn.SceneNode is not null)
                 {
-                    Debug.Out($"Destroying auto-spawned pawn for player {playerIndex}: {pawn.Name}");
+                    Debug.Out($"Destroying auto-spawned pawn: {pawn.Name}");
                     pawn.SceneNode.Destroy();
                 }
             }
@@ -161,7 +142,7 @@ namespace XREngine
         /// <returns>The created pawn component, or null if no pawn should be spawned.</returns>
         public virtual PawnComponent? CreateDefaultPawn(ELocalPlayerIndex playerIndex)
         {
-            if (DefaultPlayerPawnClass is null)
+            if (_defaultPlayerPawnClass is null)
                 return null;
 
             if (WorldInstance is null)
@@ -173,9 +154,9 @@ namespace XREngine
             var pawnNodeName = $"Player{(int)playerIndex + 1}_Pawn";
             var pawnNode = new SceneNode(WorldInstance, pawnNodeName);
 
-            if (pawnNode.AddComponent(DefaultPlayerPawnClass) is not PawnComponent pawnComponent)
+            if (pawnNode.AddComponent(_defaultPlayerPawnClass) is not PawnComponent pawnComponent)
             {
-                var pawnClassName = DefaultPlayerPawnClass.FullName ?? DefaultPlayerPawnClass.Name ?? DefaultPlayerPawnClass.ToString();
+                var pawnClassName = _defaultPlayerPawnClass.FullName ?? _defaultPlayerPawnClass.Name ?? _defaultPlayerPawnClass.ToString();
                 Debug.LogWarning($"Failed to create pawn of type {pawnClassName} for player {playerIndex}.");
                 pawnNode.Destroy();
                 return null;
@@ -219,7 +200,7 @@ namespace XREngine
             if (pawn is not null)
             {
                 // Track the auto-spawned pawn for cleanup when play ends
-                AutoSpawnedPawns[playerIndex] = pawn;
+                TrackAutoSpawnedPawn(pawn);
 
                 // Apply spawn transform
                 var (position, rotation) = GetSpawnPoint(playerIndex);
@@ -300,7 +281,7 @@ namespace XREngine
         /// <param name="playerIndex">The target player index.</param>
         /// <returns>The resolved controller, or null if creation failed.</returns>
         protected virtual LocalPlayerController? EnsureLocalPlayerController(ELocalPlayerIndex playerIndex)
-            => Engine.State.GetOrCreateLocalPlayer(playerIndex, DefaultPlayerControllerClass);
+            => Engine.State.GetOrCreateLocalPlayer(playerIndex, _defaultPlayerControllerClass);
 
         #endregion
     }

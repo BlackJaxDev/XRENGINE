@@ -10,7 +10,7 @@ namespace XREngine.Rendering.Pipelines.Commands
     public class VPRC_BloomPass : ViewportRenderCommand
     {
         private string GetBloomBlurShaderName() =>
-            //Stereo ? "BloomBlurStereo.fs" : 
+            Stereo ? "BloomBlurStereo.fs" : 
             "BloomBlur.fs";
 
         public const string BloomBlur1FBOName = "BloomBlurFBO1";

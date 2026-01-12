@@ -1,5 +1,6 @@
 using System.Diagnostics.CodeAnalysis;
 using MemoryPack;
+using XREngine.Core;
 
 namespace XREngine.Core.Files
 {
@@ -60,6 +61,8 @@ namespace XREngine.Core.Files
         {
             if (string.IsNullOrWhiteSpace(typeName))
                 return null;
+
+            typeName = XRTypeRedirectRegistry.RewriteTypeName(typeName);
 
             Type? type = Type.GetType(typeName, throwOnError: false, ignoreCase: false);
             if (type is not null)

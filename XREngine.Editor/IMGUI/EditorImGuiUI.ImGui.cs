@@ -62,6 +62,7 @@ public static partial class EditorImGuiUI
         private static bool _showShaderGraphPanel;
         private static int _probePreviewLayer;
         private static bool _showHierarchy = true;
+        private static bool _showEditorSceneHierarchy;
         private static bool _showInspector = true;
         private static bool _showAssetExplorer = true;
         private static bool _showNetworking;

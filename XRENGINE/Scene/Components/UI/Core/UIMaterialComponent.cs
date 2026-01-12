@@ -1,6 +1,7 @@
 ﻿using Extensions;
 using System.Drawing;
 using System.Numerics;
+using XREngine.Components;
 using XREngine.Data.Rendering;
 using XREngine.Rendering.Models.Materials;
 
@@ -9,6 +10,7 @@ namespace XREngine.Rendering.UI
     /// <summary>
     /// A basic UI component that renders a quad with a material.
     /// </summary>
+    [XRComponentEditor("XREngine.Editor.ComponentEditors.UIMaterialComponentEditor")]
     public class UIMaterialComponent : UIRenderableComponent
     {
         public UIMaterialComponent()

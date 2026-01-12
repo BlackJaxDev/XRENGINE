@@ -87,6 +87,16 @@ public static partial class EditorImGuiUI
         }
 
         DrawWorldHeader(world);
+
+        // Editor-only content lives in a hidden scene (gizmos, tools, UI, etc.)
+        // Keep it hidden by default, but allow toggling for debugging.
+        ImGui.Spacing();
+        if (ImGui.Checkbox("Show Editor Scene##HierarchyShowEditorScene", ref _showEditorSceneHierarchy))
+        {
+            // no-op; state is stored in the static flag
+        }
+        if (ImGui.IsItemHovered())
+            ImGui.SetTooltip("Show the hidden editor scene hierarchy (editor-only gizmos/tools/UI).");
         ImGui.Separator();
 
         ImGui.Text($"GameMode: {world.GameMode?.GetType().Name ?? "<none>"}");
@@ -119,8 +129,32 @@ public static partial class EditorImGuiUI
             drewAnySection = DrawRuntimeHierarchy(world);
         }
 
+        if (_showEditorSceneHierarchy)
+        {
+            ImGui.Spacing();
+            DrawEditorSceneHierarchy(world);
+            drewAnySection = true;
+        }
+
         if (!drewAnySection)
             ImGui.Text("World has no root nodes.");
+    }
+
+    private static void DrawEditorSceneHierarchy(XRWorldInstance world)
+    {
+        var editorScene = world.EditorScene;
+        if (editorScene is null)
+            return;
+
+        ImGui.PushID("__EditorSceneHierarchy__");
+        bool open = ImGui.CollapsingHeader("Editor Scene (Hidden)##EditorScene", ImGuiTreeNodeFlags.DefaultOpen);
+        if (open)
+        {
+            ImGui.TextDisabled("Editor-only content (not saved with the world).");
+            var roots = editorScene.RootNodes.Where(r => r is not null).ToArray();
+            DrawSceneHierarchyNodes(roots, world, editorScene);
+        }
+        ImGui.PopID();
     }
 
     private static void DrawSceneNodeTree(SceneNode node, XRWorldInstance world, XRScene? owningScene)

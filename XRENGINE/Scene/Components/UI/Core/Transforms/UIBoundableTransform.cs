@@ -13,6 +13,7 @@ namespace XREngine.Rendering.UI
     /// <summary>
     /// Represents a UI component with area that can be aligned within its parent.
     /// </summary>
+    [XRTransformEditor("XREngine.Editor.TransformEditors.UIBoundableTransformEditor")]
     public class UIBoundableTransform : UITransform
     {
         public UIBoundableTransform() : base(null)
