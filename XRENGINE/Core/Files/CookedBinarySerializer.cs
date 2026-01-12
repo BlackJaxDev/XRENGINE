@@ -15,6 +15,7 @@ using XREngine.Data;
 using XREngine.Scene;
 using XREngine.Scene.Transforms;
 using YamlDotNet.Serialization;
+using XREngine.Core;
 
 namespace XREngine.Core.Files;
 
@@ -657,12 +658,156 @@ public static class CookedBinarySerializer
         for (int i = 0; i < count; i++)
         {
             string propertyName = reader.ReadString();
-            object? value = ReadValue(reader, null, callbacks);
             if (metadata.TryGetMember(propertyName, out var member))
             {
+                object? value = ReadValue(reader, null, callbacks);
                 object? converted = ConvertValue(value, member.MemberType);
                 member.SetValue(instance, converted);
             }
+            else
+            {
+                SkipValue(reader);
+            }
+        }
+    }
+
+    [RequiresUnreferencedCode(ReflectionWarningMessage)]
+    [RequiresDynamicCode(ReflectionWarningMessage)]
+    private static void SkipValue(CookedBinaryReader reader)
+    {
+        var marker = (CookedBinaryTypeMarker)reader.ReadByte();
+        switch (marker)
+        {
+            case CookedBinaryTypeMarker.Null:
+                return;
+            case CookedBinaryTypeMarker.Boolean:
+                reader.ReadBoolean();
+                return;
+            case CookedBinaryTypeMarker.Byte:
+                reader.ReadByte();
+                return;
+            case CookedBinaryTypeMarker.SByte:
+                reader.ReadSByte();
+                return;
+            case CookedBinaryTypeMarker.Int16:
+                reader.ReadInt16();
+                return;
+            case CookedBinaryTypeMarker.UInt16:
+                reader.ReadUInt16();
+                return;
+            case CookedBinaryTypeMarker.Int32:
+                reader.ReadInt32();
+                return;
+            case CookedBinaryTypeMarker.UInt32:
+                reader.ReadUInt32();
+                return;
+            case CookedBinaryTypeMarker.Int64:
+                reader.ReadInt64();
+                return;
+            case CookedBinaryTypeMarker.UInt64:
+                reader.ReadUInt64();
+                return;
+            case CookedBinaryTypeMarker.Single:
+                reader.ReadSingle();
+                return;
+            case CookedBinaryTypeMarker.Double:
+                reader.ReadDouble();
+                return;
+            case CookedBinaryTypeMarker.Decimal:
+                reader.ReadDecimal();
+                return;
+            case CookedBinaryTypeMarker.Char:
+                reader.ReadChar();
+                return;
+            case CookedBinaryTypeMarker.String:
+                reader.ReadString();
+                return;
+            case CookedBinaryTypeMarker.Guid:
+                reader.ReadBytes(16);
+                return;
+            case CookedBinaryTypeMarker.DateTime:
+                reader.ReadInt64();
+                return;
+            case CookedBinaryTypeMarker.TimeSpan:
+                reader.ReadInt64();
+                return;
+            case CookedBinaryTypeMarker.ByteArray:
+            {
+                int length = reader.ReadInt32();
+                reader.ReadBytes(length);
+                return;
+            }
+            case CookedBinaryTypeMarker.Enum:
+                reader.ReadString();
+                reader.ReadInt64();
+                return;
+            case CookedBinaryTypeMarker.Array:
+            {
+                reader.ReadString(); // element type name
+                int length = reader.ReadInt32();
+                for (int i = 0; i < length; i++)
+                    SkipValue(reader);
+                return;
+            }
+            case CookedBinaryTypeMarker.List:
+            {
+                reader.ReadString(); // list runtime type name
+                int count = reader.ReadInt32();
+                for (int i = 0; i < count; i++)
+                    SkipValue(reader);
+                return;
+            }
+            case CookedBinaryTypeMarker.Dictionary:
+            {
+                reader.ReadString(); // dict runtime type name
+                int count = reader.ReadInt32();
+                for (int i = 0; i < count; i++)
+                {
+                    SkipValue(reader);
+                    SkipValue(reader);
+                }
+                return;
+            }
+            case CookedBinaryTypeMarker.CustomObject:
+            {
+                // No length prefix; fall back to fully reading to advance the stream.
+                _ = ReadCustomObject(reader, expectedType: null, callbacks: null);
+                return;
+            }
+            case CookedBinaryTypeMarker.DataSource:
+            {
+                int length = reader.ReadInt32();
+                reader.ReadBytes(length);
+                return;
+            }
+            case CookedBinaryTypeMarker.Object:
+            {
+                reader.ReadString(); // runtime type name
+                var encoding = (CookedBinaryObjectEncoding)reader.ReadByte();
+                switch (encoding)
+                {
+                    case CookedBinaryObjectEncoding.MemoryPack:
+                    {
+                        int length = reader.ReadInt32();
+                        reader.ReadBytes(length);
+                        return;
+                    }
+                    case CookedBinaryObjectEncoding.Reflection:
+                    {
+                        int members = reader.ReadInt32();
+                        for (int i = 0; i < members; i++)
+                        {
+                            reader.ReadString(); // member name
+                            SkipValue(reader);
+                        }
+                        return;
+                    }
+                    default:
+                        throw new InvalidOperationException($"Unsupported cooked object encoding '{encoding}'.");
+                }
+            }
+            default:
+                throw new NotSupportedException($"Unknown cooked binary marker '{marker}'.");
         }
     }
 
@@ -859,6 +1004,9 @@ public static class CookedBinarySerializer
     {
         if (string.IsNullOrWhiteSpace(name))
             throw new InvalidOperationException("Cooked binary payload is missing a type hint.");
+
+        // Back-compat: allow types to redirect legacy names via [XRTypeRedirect].
+        name = XRTypeRedirectRegistry.RewriteTypeName(name);
 
         return TypeCache.GetOrAdd(name, static key =>
         {

@@ -230,7 +230,7 @@ namespace XREngine
             /// </summary>
             public static LocalPlayerController MainPlayer => GetOrCreateLocalPlayer(ELocalPlayerIndex.One);
 
-            private static LocalPlayerController AddLocalPlayer(ELocalPlayerIndex index, Type controllerType)
+            private static LocalPlayerController AddLocalPlayer(ELocalPlayerIndex index, [DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicConstructors)] Type controllerType)
             {
                 var player = InstantiateLocalPlayerController(controllerType, index);
                 LocalPlayers[(int)index] = player;
@@ -238,31 +238,25 @@ namespace XREngine
                 return player;
             }
 
-            private static Type ResolveLocalPlayerControllerType(Type? controllerTypeOverride)
-            {
-                if (controllerTypeOverride is not null)
-                    return controllerTypeOverride;
+            [return: DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicConstructors)]
+            private static Type ResolveLocalPlayerControllerType([DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicConstructors)] Type? controllerTypeOverride)
+                => controllerTypeOverride is not null
+                    ? controllerTypeOverride
+                    : Engine.PlayMode.ActiveGameMode?.PlayerControllerClass is Type gameModePreferred
+                        ? gameModePreferred
+                        : typeof(LocalPlayerController);
 
-                if (Engine.PlayMode.ActiveGameMode?.DefaultPlayerControllerClass is Type gameModePreferred)
-                    return gameModePreferred;
-
-                return typeof(LocalPlayerController);
-            }
-
-            private static LocalPlayerController InstantiateLocalPlayerController(Type controllerType, ELocalPlayerIndex index)
+            private static LocalPlayerController InstantiateLocalPlayerController([DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicConstructors)] Type controllerType, ELocalPlayerIndex index)
             {
                 if (!typeof(LocalPlayerController).IsAssignableFrom(controllerType))
                     throw new ArgumentException($"Controller type {controllerType.FullName} must inherit from LocalPlayerController", nameof(controllerType));
 
                 LocalPlayerController? player;
-                var ctorWithIndex = controllerType.GetConstructor(new[] { typeof(ELocalPlayerIndex) });
-                if (ctorWithIndex is not null)
-                    player = ctorWithIndex.Invoke(new object[] { index }) as LocalPlayerController;
-                else
-                    player = Activator.CreateInstance(controllerType) as LocalPlayerController;
-
-                if (player is null)
-                    throw new InvalidOperationException($"Failed to instantiate controller of type {controllerType.FullName}");
+                var ctorWithIndex = controllerType.GetConstructor([typeof(ELocalPlayerIndex)]);
+                player = (ctorWithIndex is not null
+                    ? ctorWithIndex.Invoke([index]) as LocalPlayerController
+                    : Activator.CreateInstance(controllerType) as LocalPlayerController)
+                    ?? throw new InvalidOperationException($"Failed to instantiate controller of type {controllerType.FullName}");
 
                 player.LocalPlayerIndex = index;
                 return player;

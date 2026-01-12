@@ -1,4 +1,4 @@
-using Extensions;
+﻿using Extensions;
 using System.Numerics;
 using System.Runtime.CompilerServices;
 using XREngine.Data;
@@ -17,11 +17,11 @@ namespace XREngine.Rendering.Pipelines.Commands
             => Debug.Out(EOutputVerbosity.Normal, false, "[AO][SSAO] {0}", message);
 
         private string SSAOBlurShaderName() => 
-            //Stereo ? "SSAOBlurStereo.fs" : 
+            Stereo ? "SSAOBlurStereo.fs" : 
             "SSAOBlur.fs";
 
         private string SSAOGenShaderName() =>
-            //Stereo ? "SSAOGenStereo.fs" : 
+            Stereo ? "SSAOGenStereo.fs" : 
             "SSAOGen.fs";
 
         public string SSAONoiseTextureName { get; set; } = "SSAONoiseTexture";

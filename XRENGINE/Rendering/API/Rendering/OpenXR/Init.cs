@@ -225,10 +225,10 @@ public unsafe partial class OpenXRAPI : XRBase
     private Matrix4x4 _openXrRightEyeLocalPose = Matrix4x4.Identity;
     private TransformBase? _openXrLocomotionRoot;
 
-    // OpenXR currently renders each eye in a separate pipeline execution (stereoPass=false).
-    // If the source viewport is using the engine's single-pass stereo pipeline (DefaultRenderPipeline.Stereo=true),
-    // many deferred/post shaders will sample array layer 0 by default, producing a left-eye-only image.
-    // To keep per-eye OpenXR rendering correct, we force a non-stereo pipeline override in that case.
+    // OpenXR renders each eye in a separate pipeline execution (stereoPass=false).
+    // IMPORTANT: The OpenXR eye viewports must NOT share the desktop viewport's RenderPipeline instance.
+    // Sharing a pipeline instance across viewports of different sizes can cause constant FBO/cache churn.
+    // We therefore create a dedicated pipeline instance for OpenXR and (when applicable) force it to be non-stereo.
     private RenderPipeline? _openXrNonStereoPipelineOverride;
     private RenderPipeline? _openXrNonStereoPipelineOverrideSource;
 
@@ -265,20 +265,47 @@ public unsafe partial class OpenXRAPI : XRBase
         if (sourcePipeline is null)
             return null;
 
-        if (sourcePipeline is DefaultRenderPipeline defaultPipeline && defaultPipeline.Stereo)
-        {
-            // Cache one override per distinct source pipeline reference.
-            if (!ReferenceEquals(_openXrNonStereoPipelineOverrideSource, sourcePipeline) || _openXrNonStereoPipelineOverride is not DefaultRenderPipeline)
-            {
-                _openXrNonStereoPipelineOverrideSource = sourcePipeline;
-                _openXrNonStereoPipelineOverride = new DefaultRenderPipeline(stereo: false);
-                Debug.Out("OpenXR: source pipeline is Stereo=true; using non-stereo pipeline override for per-eye rendering.");
-            }
-
+        // Cache one dedicated OpenXR pipeline per distinct source pipeline reference.
+        // Even if the source pipeline is already non-stereo, we still do NOT reuse it.
+        if (ReferenceEquals(_openXrNonStereoPipelineOverrideSource, sourcePipeline) && _openXrNonStereoPipelineOverride is not null)
             return _openXrNonStereoPipelineOverride;
+
+        _openXrNonStereoPipelineOverrideSource = sourcePipeline;
+
+        RenderPipeline dedicated;
+        try
+        {
+            // Most common case: mirror the default pipeline but force non-stereo for per-eye rendering.
+            if (sourcePipeline is DefaultRenderPipeline defaultPipeline)
+            {
+                dedicated = new DefaultRenderPipeline(stereo: false)
+                {
+                    IsShadowPass = defaultPipeline.IsShadowPass,
+                };
+            }
+            else
+            {
+                // Best-effort: create a separate instance of the same pipeline type.
+                // If the pipeline type has no public parameterless ctor, fall back to the engine default.
+                dedicated = (RenderPipeline?)Activator.CreateInstance(sourcePipeline.GetType())
+                           ?? new DefaultRenderPipeline(stereo: false);
+
+                dedicated.IsShadowPass = sourcePipeline.IsShadowPass;
+            }
+        }
+        catch
+        {
+            dedicated = new DefaultRenderPipeline(stereo: false);
         }
 
-        return sourcePipeline;
+        _openXrNonStereoPipelineOverride = dedicated;
+
+        if (sourcePipeline is DefaultRenderPipeline srcDp && srcDp.Stereo)
+            Debug.Out("OpenXR: source pipeline is Stereo=true; using dedicated non-stereo pipeline for per-eye rendering.");
+        else
+            Debug.Out("OpenXR: using dedicated per-eye pipeline (separate from desktop pipeline instance).");
+
+        return _openXrNonStereoPipelineOverride;
     }
 
     // Frame lifecycle is split across the engine threads:
@@ -335,6 +362,8 @@ public unsafe partial class OpenXRAPI : XRBase
 
     private uint _blitReadFbo;
     private uint _blitDrawFbo;
+
+    private nint _blitFboHglrc;
 
     /// <summary>
     /// Gets the OpenXR API instance.
@@ -1683,29 +1712,37 @@ public unsafe partial class OpenXRAPI : XRBase
                     }
                 }
 
+                // These utility FBOs must be created in (and used with) the current GL context.
+                // Some runtimes/drivers use a distinct context for OpenXR rendering; reusing cached FBO ids from a
+                // different context will trigger GL_INVALID_OPERATION and result in black output.
+                var hglrcCurrent = wglGetCurrentContext();
+                if (_blitFboHglrc != 0 && _blitFboHglrc != hglrcCurrent)
+                {
+                    _blitReadFbo = 0;
+                    _blitDrawFbo = 0;
+                }
+                _blitFboHglrc = hglrcCurrent;
+
                 if (_blitReadFbo == 0)
                     _blitReadFbo = _gl.GenFramebuffer();
                 if (_blitDrawFbo == 0)
                     _blitDrawFbo = _gl.GenFramebuffer();
-
-                // Explicitly force read/draw buffers for our utility FBOs.
-                // The engine can legitimately leave ReadBuffer=None for some passes; if that carries into glBlitFramebuffer
-                // the copy becomes a no-op and the next eye can go black depending on render order.
-                unsafe
-                {
-                    GLEnum* drawBuffers = stackalloc GLEnum[1] { GLEnum.ColorAttachment0 };
-                    _gl.NamedFramebufferDrawBuffers(_blitDrawFbo, 1, drawBuffers);
-                    _gl.NamedFramebufferReadBuffer(_blitReadFbo, GLEnum.ColorAttachment0);
-                }
 
                 // Blit can be clipped by scissor/masks if left enabled by previous passes.
                 _gl.Disable(EnableCap.ScissorTest);
                 _gl.ColorMask(true, true, true, true);
 
                 _gl.BindFramebuffer(FramebufferTarget.ReadFramebuffer, _blitReadFbo);
+                // Some engine passes intentionally set ReadBuffer=None; if that leaks, blits can become no-ops.
+                _gl.ReadBuffer(GLEnum.ColorAttachment0);
                 _gl.FramebufferTexture2D(FramebufferTarget.ReadFramebuffer, FramebufferAttachment.ColorAttachment0, TextureTarget.Texture2D, srcApiTex.BindingId, 0);
 
                 _gl.BindFramebuffer(FramebufferTarget.DrawFramebuffer, _blitDrawFbo);
+                unsafe
+                {
+                    GLEnum* drawBuffers = stackalloc GLEnum[1] { GLEnum.ColorAttachment0 };
+                    _gl.DrawBuffers(1, drawBuffers);
+                }
                 _gl.FramebufferTexture2D(FramebufferTarget.DrawFramebuffer, FramebufferAttachment.ColorAttachment0, TextureTarget.Texture2D, textureHandle, 0);
 
                 if (OpenXrDebugGl)

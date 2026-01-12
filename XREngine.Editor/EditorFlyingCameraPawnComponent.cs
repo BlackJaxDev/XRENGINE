@@ -1421,6 +1421,13 @@ public partial class EditorFlyingCameraPawnComponent : FlyingCameraPawnComponent
     private float? _lastScrollDelta = null;
     private bool _wantsScreenshot = false;
 
+    private float _distancePercentagePerScroll = 0.1f;
+    public float DistancePercentagePerScroll
+    {
+        get => _distancePercentagePerScroll;
+        set => SetField(ref _distancePercentagePerScroll, value.Clamp(0.0f, 1.0f));
+    }
+
     private void ApplyTransformations(XRViewport vp)
     {
         var tfm = TransformAs<Transform>();
@@ -1460,7 +1467,7 @@ public partial class EditorFlyingCameraPawnComponent : FlyingCameraPawnComponent
                 float delta = Engine.UndilatedDelta;
                 Vector3 worldCoord = vp.NormalizedViewportToWorldCoordinate(DepthHitNormalizedViewportPoint.Value);
                 float dist = tfm.WorldTranslation.Distance(worldCoord);
-                Vector3 newWorldPos = Segment.PointAtLineDistance(tfm.WorldTranslation, worldCoord, scrollSpeed * dist * 0.1f * ScrollSpeed * delta);
+                Vector3 newWorldPos = Segment.PointAtLineDistance(tfm.WorldTranslation, worldCoord, scrollSpeed * dist * DistancePercentagePerScroll * ScrollSpeed * delta);
                 tfm.SetWorldTranslation(newWorldPos);
             }
             else

@@ -17,6 +17,7 @@ using XREngine.Rendering.Physics.Physx;
 using XREngine.Scene;
 using XREngine.Scene.Physics.Jolt;
 using XREngine.Scene.Transforms;
+using YamlDotNet.Serialization;
 
 namespace XREngine.Components.Movement
 {
@@ -495,6 +496,7 @@ namespace XREngine.Components.Movement
         }
 
         [Browsable(false)]
+        [YamlIgnore]
         private ICharacterController? ActiveController
         {
             get => _controller;
@@ -730,7 +732,9 @@ namespace XREngine.Components.Movement
             _subscribedPhysicsScene = null;
 
             // Controller owns its internal actor via PxControllerManager; do not remove it as a normal actor.
-            RigidBodyTransform.RigidBody = null;
+            var rigidBodyTransform = SceneNode?.GetTransformAs<RigidBodyTransform>(false);
+            rigidBodyTransform?.RigidBody = null;
+
             _controllerActorProxy = null;
 
             _physxController?.RequestRelease();
