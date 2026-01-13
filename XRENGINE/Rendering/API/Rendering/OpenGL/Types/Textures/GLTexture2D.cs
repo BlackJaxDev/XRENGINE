@@ -140,9 +140,31 @@ namespace XREngine.Rendering.OpenGL
                 }
 
                 int baseLevel = 0;
-                int maxLevel = 1000;
+                int maxLevel = 0;
                 int minLOD = -1000;
                 int maxLOD = 1000;
+
+                // Keep mip parameters sane. Setting TextureMaxLevel to a huge number can make the texture
+                // appear "incomplete" on some drivers/paths (especially when the default min filter expects mipmaps).
+                // If mipmaps are actually allocated/used, clamp maxLevel to the last available level.
+                if (!Data.Resizable && StorageSet)
+                {
+                    // `levels` was computed as SmallestMipmapLevel+1 above when storage was allocated.
+                    // If we didn't allocate storage (e.g., resizable), keep maxLevel driven by actual mip data.
+                    maxLevel = Math.Max(0, Data.SmallestMipmapLevel);
+                }
+                else if (Mipmaps is not null && Mipmaps.Length > 1)
+                {
+                    maxLevel = Mipmaps.Length - 1;
+                }
+                else if (Data.AutoGenerateMipmaps)
+                {
+                    maxLevel = Math.Max(0, Data.SmallestMipmapLevel);
+                }
+                else
+                {
+                    maxLevel = 0;
+                }
 
                 Api.TextureParameterI(BindingId, GLEnum.TextureBaseLevel, in baseLevel);
                 Api.TextureParameterI(BindingId, GLEnum.TextureMaxLevel, in maxLevel);
@@ -188,11 +210,39 @@ namespace XREngine.Rendering.OpenGL
             XRDataBuffer? pbo = null;
             if (mip is null)
             {
-                internalPixelFormat = ToInternalFormat(internalFormatForce ?? EPixelInternalFormat.Rgb);
-                pixelFormat = GLEnum.Rgb;
-                pixelType = GLEnum.UnsignedByte;
+                // Allocate based on the texture's declared sized format.
+                // This matters for render targets (depth/depth-stencil) that intentionally have no CPU mip data.
+                internalPixelFormat = (InternalFormat)ToGLEnum(Data.SizedInternalFormat);
+
+                switch (Data.SizedInternalFormat)
+                {
+                    case ESizedInternalFormat.DepthComponent16:
+                    case ESizedInternalFormat.DepthComponent24:
+                    case ESizedInternalFormat.DepthComponent32f:
+                        pixelFormat = GLEnum.DepthComponent;
+                        pixelType = GLEnum.Float;
+                        break;
+
+                    case ESizedInternalFormat.Depth24Stencil8:
+                        pixelFormat = GLEnum.DepthStencil;
+                        pixelType = GLEnum.UnsignedInt248;
+                        break;
+
+                    case ESizedInternalFormat.Depth32fStencil8:
+                        pixelFormat = GLEnum.DepthStencil;
+                        pixelType = GLEnum.Float32UnsignedInt248Rev;
+                        break;
+
+                    default:
+                        pixelFormat = GLEnum.Rgba;
+                        pixelType = GLEnum.UnsignedByte;
+                        break;
+                }
                 data = null;
-                fullPush = false;
+                // Textures that act as render targets frequently have no mip data.
+                // For resizable textures, we still must allocate storage via TexImage*;
+                // otherwise FBO attachment will be incomplete.
+                fullPush = true;
             }
             else
             {
@@ -228,6 +278,10 @@ namespace XREngine.Rendering.OpenGL
         {
             if (!fullPush || !Data.Resizable)
                 return;
+
+            // Guard against 0-sized textures which cause GL_INVALID_VALUE.
+            w = Math.Max(1u, w);
+            h = Math.Max(1u, h);
             
             if (Data.MultiSample)
                 Api.TexImage2DMultisample(glTarget, Data.MultiSampleCount, internalPixelFormat, w, h, Data.FixedSampleLocations);
@@ -316,6 +370,31 @@ namespace XREngine.Rendering.OpenGL
 
             int vWrap = (int)ToGLEnum(Data.VWrap);
             Api.TextureParameterI(BindingId, GLEnum.TextureWrapT, in vWrap);
+
+            // Clamp base/max mip level to what we actually have.
+            // This is critical for render-target textures (e.g., shadow maps) that only define mip 0.
+            // Leaving maxLevel at a large default (e.g., 1000) can make the driver treat the attachment as incomplete.
+            int baseLevel = Math.Max(0, Data.LargestMipmapLevel);
+            int maxLevel;
+            if (IsMultisampleTarget)
+            {
+                maxLevel = baseLevel;
+            }
+            else if (Data.AutoGenerateMipmaps)
+            {
+                maxLevel = Math.Max(baseLevel, Data.SmallestMipmapLevel);
+            }
+            else if (Data.Mipmaps is not null && Data.Mipmaps.Length > 0)
+            {
+                maxLevel = Math.Max(baseLevel, Data.Mipmaps.Length - 1);
+            }
+            else
+            {
+                maxLevel = baseLevel;
+            }
+
+            Api.TextureParameterI(BindingId, GLEnum.TextureBaseLevel, in baseLevel);
+            Api.TextureParameterI(BindingId, GLEnum.TextureMaxLevel, in maxLevel);
 
         }
 

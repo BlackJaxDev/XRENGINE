@@ -106,6 +106,12 @@ namespace XREngine
             public static event Action? PostEnterPlay;
 
             /// <summary>
+            /// Fired after a play-mode snapshot has been restored (SerializeAndRestore), but before BeginPlay starts.
+            /// Useful for rebuilding runtime-only wiring that is not serialized (e.g. viewports, caches).
+            /// </summary>
+            public static event Action<XRWorld>? PostSnapshotRestore;
+
+            /// <summary>
             /// Fired before exiting play mode. Play is still active.
             /// </summary>
             public static event Action? PreExitPlay;
@@ -174,6 +180,7 @@ namespace XREngine
                         // IMPORTANT: play mode should run from a deserialized copy of the world state.
                         // This forces a clean object graph and ensures physics bodies are constructed from deserialized scene data.
                         _editModeSnapshot?.Restore();
+                        PostSnapshotRestore?.Invoke(targetWorld);
                     }
 
                     // Step 2: Reload gameplay assemblies if configured

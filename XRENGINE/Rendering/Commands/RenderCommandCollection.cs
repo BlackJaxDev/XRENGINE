@@ -65,6 +65,18 @@ namespace XREngine.Rendering.Commands
 
         private readonly Lock _lock = new();
 
+        public int GetUpdatingCommandCount()
+        {
+            using (_lock.EnterScope())
+                return _updatingPasses.Values.Sum(static pass => pass.Count);
+        }
+
+        public int GetRenderingCommandCount()
+        {
+            using (_lock.EnterScope())
+                return _renderingPasses.Values.Sum(static pass => pass.Count);
+        }
+
         public void AddRangeCPU(IEnumerable<RenderCommand> renderCommands)
         {
             foreach (RenderCommand renderCommand in renderCommands)

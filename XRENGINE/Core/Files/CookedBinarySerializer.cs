@@ -12,8 +12,10 @@ using System.Threading;
 using System.Text;
 using MemoryPack;
 using XREngine.Data;
+using XREngine.Data.Core;
 using XREngine.Scene;
 using XREngine.Scene.Transforms;
+using XREngine.Components;
 using YamlDotNet.Serialization;
 using XREngine.Core;
 
@@ -387,6 +389,12 @@ public static class CookedBinarySerializer
 
         Type runtimeType = value.GetType();
 
+        if (IsRuntimeOnlyType(runtimeType))
+        {
+            writer.Write((byte)CookedBinaryTypeMarker.Null);
+            return;
+        }
+
         if (runtimeType == typeof(bool))
         {
             writer.Write((byte)CookedBinaryTypeMarker.Boolean);
@@ -644,7 +652,15 @@ public static class CookedBinarySerializer
         foreach (var member in metadata.Members)
         {
             writer.Write(member.Name);
-            object? value = member.GetValue(instance);
+            object? value = null;
+            try
+            {
+                value = member.GetValue(instance);
+            }
+            catch (Exception ex)
+            {
+                LogMemberSerializationFailure(metadataType, member.Name, ex);
+            }
             WriteValue(writer, value, allowCustom, callbacks);
         }
     }
@@ -655,20 +671,52 @@ public static class CookedBinarySerializer
     {
         int count = reader.ReadInt32();
         var metadata = TypeMetadataCache.Get(metadataType);
-        for (int i = 0; i < count; i++)
+
+        using (XRBase.SuppressPropertyNotifications())
         {
-            string propertyName = reader.ReadString();
-            if (metadata.TryGetMember(propertyName, out var member))
+            for (int i = 0; i < count; i++)
             {
-                object? value = ReadValue(reader, null, callbacks);
-                object? converted = ConvertValue(value, member.MemberType);
-                member.SetValue(instance, converted);
-            }
-            else
-            {
-                SkipValue(reader);
+                string propertyName = reader.ReadString();
+                if (metadata.TryGetMember(propertyName, out var member))
+                {
+                    object? value;
+                    if (instance is SceneNode sceneNode && propertyName == nameof(SceneNode.ComponentsSerialized))
+                    {
+                        using var _ = new OwningSceneNodeScope(sceneNode);
+                        value = ReadValue(reader, null, callbacks);
+                    }
+                    else
+                    {
+                        value = ReadValue(reader, null, callbacks);
+                    }
+
+                    object? converted;
+                    try
+                    {
+                        converted = ConvertValue(value, member.MemberType);
+                    }
+                    catch
+                    {
+                        converted = null;
+                    }
+
+                    try
+                    {
+                        member.SetValue(instance, converted);
+                    }
+                    catch
+                    {
+                        // Ignore bad setters during snapshot restore.
+                    }
+                }
+                else
+                {
+                    SkipValue(reader);
+                }
             }
         }
+
+        InvokePostDeserializeHook(instance);
     }
 
     [RequiresUnreferencedCode(ReflectionWarningMessage)]
@@ -829,7 +877,7 @@ public static class CookedBinarySerializer
 
     [RequiresUnreferencedCode(ReflectionWarningMessage)]
     [RequiresDynamicCode(ReflectionWarningMessage)]
-    private static object ReadArray(CookedBinaryReader reader, CookedBinarySerializationCallbacks? callbacks)
+    private static Array ReadArray(CookedBinaryReader reader, CookedBinarySerializationCallbacks? callbacks)
     {
         string elementTypeName = reader.ReadString();
         Type elementType = ResolveType(elementTypeName) ?? typeof(object);
@@ -846,7 +894,7 @@ public static class CookedBinarySerializer
 
     [RequiresUnreferencedCode(ReflectionWarningMessage)]
     [RequiresDynamicCode(ReflectionWarningMessage)]
-    private static object ReadList(CookedBinaryReader reader, CookedBinarySerializationCallbacks? callbacks)
+    private static IList ReadList(CookedBinaryReader reader, CookedBinarySerializationCallbacks? callbacks)
     {
         string listTypeName = reader.ReadString();
         Type listType = ResolveType(listTypeName) ?? typeof(List<object?>);
@@ -863,7 +911,7 @@ public static class CookedBinarySerializer
 
     [RequiresUnreferencedCode(ReflectionWarningMessage)]
     [RequiresDynamicCode(ReflectionWarningMessage)]
-    private static object ReadDictionary(CookedBinaryReader reader, CookedBinarySerializationCallbacks? callbacks)
+    private static IDictionary ReadDictionary(CookedBinaryReader reader, CookedBinarySerializationCallbacks? callbacks)
     {
         string dictTypeName = reader.ReadString();
         Type dictType = ResolveType(dictTypeName) ?? typeof(Dictionary<object, object?>);
@@ -881,7 +929,7 @@ public static class CookedBinarySerializer
 
     [RequiresUnreferencedCode(ReflectionWarningMessage)]
     [RequiresDynamicCode(ReflectionWarningMessage)]
-    private static object? ReadCustomObject(CookedBinaryReader reader, Type? expectedType, CookedBinarySerializationCallbacks? callbacks)
+    private static ICookedBinarySerializable? ReadCustomObject(CookedBinaryReader reader, Type? expectedType, CookedBinarySerializationCallbacks? callbacks)
     {
         string typeName = reader.ReadString();
         Type targetType = ResolveType(typeName) ?? expectedType ?? throw new InvalidOperationException($"Failed to resolve cooked asset type '{typeName}'.");
@@ -911,10 +959,86 @@ public static class CookedBinarySerializer
     [RequiresDynamicCode(ReflectionWarningMessage)]
     private static object? ReadReflectionObject(CookedBinaryReader reader, Type targetType, CookedBinarySerializationCallbacks? callbacks)
     {
-        object instance = CreateInstance(targetType) ?? throw new InvalidOperationException($"Unable to create instance of '{targetType}'.");
-        ReadObjectContent(reader, instance, targetType, callbacks);
+        int count = reader.ReadInt32();
+        var metadata = TypeMetadataCache.Get(targetType);
+
+        object? instance = CreateInstance(targetType);
+        if (instance is null)
+        {
+            // If the type can't be instantiated (no public parameterless ctor), we can still
+            // safely skip its serialized content because reflection encoding is self-describing.
+            for (int i = 0; i < count; i++)
+            {
+                reader.ReadString();
+                SkipValue(reader);
+            }
+
+            LogTypeDeserializationFailure(targetType, new InvalidOperationException($"Unable to create instance of '{targetType}'."));
+            return null;
+        }
+
+        // Ensure components have their owning SceneNode before other member setters run.
+        TryAttachComponentToOwningSceneNode(instance);
+
+        using (XRBase.SuppressPropertyNotifications())
+        {
+            for (int i = 0; i < count; i++)
+            {
+                string propertyName = reader.ReadString();
+                if (metadata.TryGetMember(propertyName, out var member))
+                {
+                    object? value;
+                    if (instance is SceneNode sceneNode && propertyName == nameof(SceneNode.ComponentsSerialized))
+                    {
+                        using var _ = new OwningSceneNodeScope(sceneNode);
+                        value = ReadValue(reader, null, callbacks);
+                    }
+                    else
+                    {
+                        value = ReadValue(reader, null, callbacks);
+                    }
+                    object? converted;
+                    try
+                    {
+                        converted = ConvertValue(value, member.MemberType);
+                    }
+                    catch
+                    {
+                        converted = null;
+                    }
+
+                    try
+                    {
+                        member.SetValue(instance, converted);
+                    }
+                    catch
+                    {
+                        // Ignore bad setters during snapshot restore.
+                    }
+                }
+                else
+                {
+                    SkipValue(reader);
+                }
+            }
+        }
+
+        InvokePostDeserializeHook(instance);
         return instance;
     }
+
+    private static readonly ConcurrentDictionary<Type, byte> LoggedTypeDeserializationFailures = new();
+
+    private static void LogTypeDeserializationFailure(Type type, Exception ex)
+    {
+        if (!LoggedTypeDeserializationFailures.TryAdd(type, 0))
+            return;
+
+        Debug.LogWarning($"Cooked binary deserialization skipped type '{type}': {ex.Message}");
+    }
+
+    private static void LogMemberSerializationFailure(Type ownerType, string memberName, Exception ex)
+        => Debug.LogWarning($"Cooked binary serialization skipped member '{ownerType}.{memberName}': {ex.Message}");
 
     [RequiresUnreferencedCode(ReflectionWarningMessage)]
     [RequiresDynamicCode(ReflectionWarningMessage)]
@@ -922,21 +1046,47 @@ public static class CookedBinarySerializer
     {
         int length = reader.ReadInt32();
         byte[] payload = reader.ReadBytes(length);
-        if (typeof(XRAsset).IsAssignableFrom(targetType))
+        try
         {
-            XRAsset? asset = XRAssetMemoryPackAdapter.Deserialize(payload, targetType);
-            if (asset is null)
-                throw new InvalidOperationException($"MemoryPack deserialization returned null for asset type '{targetType}'.");
-            return asset;
-        }
+            object? instance;
+            using (XRBase.SuppressPropertyNotifications())
+            {
+                instance = typeof(XRAsset).IsAssignableFrom(targetType)
+                    ? (XRAsset?)(XRAssetMemoryPackAdapter.Deserialize(payload, targetType) ?? throw new InvalidOperationException($"MemoryPack deserialization returned null for asset type '{targetType}'."))
+                    : (object?)(MemoryPackSerializer.Deserialize(targetType, payload) ?? throw new InvalidOperationException($"MemoryPack deserialization returned null for type '{targetType}'."));
+            }
 
-        object? instance = MemoryPackSerializer.Deserialize(targetType, payload);
-        if (instance is null)
-            throw new InvalidOperationException($"MemoryPack deserialization returned null for type '{targetType}'.");
-        return instance;
+            InvokePostDeserializeHook(instance);
+            return instance;
+        }
+        catch (Exception ex)
+        {
+            // Safe to skip because the payload is length-prefixed and already consumed.
+            LogTypeDeserializationFailure(targetType, ex);
+            return null;
+        }
     }
 
-    private static object ReadDataSource(CookedBinaryReader reader)
+    private static readonly ConcurrentDictionary<Type, byte> LoggedPostDeserializeFailures = new();
+
+    private static void InvokePostDeserializeHook(object? instance)
+    {
+        if (instance is not IPostCookedBinaryDeserialize hook)
+            return;
+
+        try
+        {
+            hook.OnPostCookedBinaryDeserialize();
+        }
+        catch (Exception ex)
+        {
+            var type = instance.GetType();
+            if (LoggedPostDeserializeFailures.TryAdd(type, 0))
+                Debug.LogWarning($"Cooked post-deserialize hook failed for '{type}': {ex.Message}");
+        }
+    }
+
+    private static DataSource ReadDataSource(CookedBinaryReader reader)
     {
         int length = reader.ReadInt32();
         byte[] data = reader.ReadBytes(length);
@@ -986,7 +1136,20 @@ public static class CookedBinarySerializer
             if (type.IsValueType)
                 return Activator.CreateInstance(type);
 
+            // Prefer public parameterless ctor.
             ConstructorInfo? ctor = type.GetConstructor(Type.EmptyTypes);
+            if (ctor is not null)
+                return ctor.Invoke(null);
+
+            // Many engine/runtime types (notably XRComponent-derived) intentionally hide their
+            // parameterless ctor (internal/protected) and are normally created via factory APIs.
+            // During snapshot restore we still need to instantiate them before we can wire up
+            // owning SceneNode and replay serialized members.
+            ctor = type.GetConstructor(
+                BindingFlags.Instance | BindingFlags.NonPublic,
+                binder: null,
+                types: Type.EmptyTypes,
+                modifiers: null);
             if (ctor is not null)
                 return ctor.Invoke(null);
 
@@ -1029,6 +1192,73 @@ public static class CookedBinarySerializer
 
     private static readonly AsyncLocal<ReferenceLoopGuard?> ReflectionLoopGuard = new();
 
+    // While deserializing SceneNode.ComponentsSerialized, we want each XRComponent to have its
+    // owning SceneNode assigned *before* other member setters run.
+    private static readonly AsyncLocal<SceneNode?> CurrentOwningSceneNode = new();
+
+    private readonly struct OwningSceneNodeScope : IDisposable
+    {
+        private readonly SceneNode? _previous;
+
+        public OwningSceneNodeScope(SceneNode? node)
+        {
+            _previous = CurrentOwningSceneNode.Value;
+            CurrentOwningSceneNode.Value = node;
+        }
+
+        public void Dispose()
+            => CurrentOwningSceneNode.Value = _previous;
+    }
+
+    private static void TryAttachComponentToOwningSceneNode(object instance)
+    {
+        if (instance is not XRComponent component)
+            return;
+
+        SceneNode? owner = CurrentOwningSceneNode.Value;
+        if (owner is null)
+            return;
+
+        try
+        {
+            // Prefer a dedicated construction hook if present.
+            // NOTE: XRComponent declares this as a *private* method, so looking it up on the
+            // derived runtime type will not find it. We must query the declaring base type.
+            MethodInfo? method = typeof(XRComponent).GetMethod(
+                "ConstructionSetSceneNode",
+                BindingFlags.Instance | BindingFlags.NonPublic,
+                binder: null,
+                types: new[] { typeof(SceneNode) },
+                modifiers: null);
+
+            if (method is not null)
+            {
+                method.Invoke(component, new object?[] { owner });
+
+                // SceneNode attachment uses a private construction hook that bypasses the
+                // SceneNode property setter, so we also need to propagate World explicitly.
+                // This will trigger XRComponent's World-change handling to rebind render infos.
+                if (owner.World is not null)
+                    component.World = owner.World;
+                return;
+            }
+
+            // Fall back to setting the private SceneNode property setter.
+            PropertyInfo? prop = component.GetType().GetProperty(
+                nameof(XRComponent.SceneNode),
+                BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
+            MethodInfo? setter = prop?.GetSetMethod(nonPublic: true);
+            setter?.Invoke(component, new object?[] { owner });
+
+            if (owner.World is not null)
+                component.World = owner.World;
+        }
+        catch
+        {
+            // Best-effort only; snapshot restore should not fail because a component couldn't attach.
+        }
+    }
+
     private static ReferenceLoopScope EnterReflectionScope(object instance, out bool isCycle)
     {
         var guard = ReflectionLoopGuard.Value ??= new ReferenceLoopGuard();
@@ -1054,22 +1284,12 @@ public static class CookedBinarySerializer
         public void Exit(object instance)
             => _seen.Remove(instance);
     }
-
-    private readonly struct ReferenceLoopScope : IDisposable
+    private readonly struct ReferenceLoopScope(CookedBinarySerializer.ReferenceLoopGuard guard, object? instance) : IDisposable
     {
-        private readonly ReferenceLoopGuard _guard;
-        private readonly object? _instance;
-
-        public ReferenceLoopScope(ReferenceLoopGuard guard, object? instance)
-        {
-            _guard = guard;
-            _instance = instance;
-        }
-
         public void Dispose()
         {
-            if (_instance is not null)
-                _guard.Exit(_instance);
+            if (instance is not null)
+                guard.Exit(instance);
         }
     }
 
@@ -1153,6 +1373,9 @@ public static class CookedBinarySerializer
             AddBytes(1); // type marker
             value = _callbacks?.OnSerializingValue?.Invoke(value) ?? value;
             if (value is null)
+                return;
+
+            if (IsRuntimeOnlyType(value.GetType()))
                 return;
 
             switch (value)
@@ -1287,7 +1510,15 @@ public static class CookedBinarySerializer
             foreach (var member in metadata.Members)
             {
                 AddBytes(SizeOfString(member.Name));
-                object? value = member.GetValue(instance);
+                object? value = null;
+                try
+                {
+                    value = member.GetValue(instance);
+                }
+                catch (Exception ex)
+                {
+                    LogMemberSerializationFailure(metadataType, member.Name, ex);
+                }
                 AddValue(value, allowCustom);
             }
         }
@@ -1329,7 +1560,11 @@ public static class CookedBinarySerializer
             var properties = type.GetProperties(BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic)
                                   .Where(p => p.CanRead && p.CanWrite)
                                   .Where(p => p.GetIndexParameters().Length == 0)
-                                  .Where(p => p.GetCustomAttribute<YamlIgnoreAttribute>() is null)
+                                  .Where(p =>
+                                      p.GetCustomAttribute<YamlIgnoreAttribute>() is null &&
+                                      p.GetCustomAttribute<RuntimeOnlyAttribute>() is null &&
+                                      p.GetCustomAttribute<MemoryPackIgnoreAttribute>() is null &&
+                                      !IsRuntimeOnlyType(p.PropertyType))
                                   .Select(p => new MemberMetadata(p))
                                   .Where(m => m.IsValid)
                                   .ToArray();
@@ -1386,5 +1621,8 @@ public static class CookedBinarySerializer
         public static TypeMetadata Get(Type type)
             => Cache.GetOrAdd(type, static t => new TypeMetadata(t));
     }
+
+    private static bool IsRuntimeOnlyType(Type type)
+        => type.GetCustomAttribute<RuntimeOnlyAttribute>(inherit: true) is not null;
 
 }

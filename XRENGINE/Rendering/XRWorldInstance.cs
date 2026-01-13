@@ -22,6 +22,7 @@ using XREngine.Scene;
 using XREngine.Scene.Physics;
 using XREngine.Scene.Prefabs;
 using XREngine.Scene.Transforms;
+using YamlDotNet.Serialization;
 using static XREngine.Engine;
 
 namespace XREngine.Rendering
@@ -39,6 +40,8 @@ namespace XREngine.Rendering
 
         private readonly Dictionary<XRScene, HashSet<SceneNode>> _editorOnlyNodesByScene = [];
 
+        [RuntimeOnly]
+        [YamlIgnore]
         public EventList<ListenerContext> Listeners { get; private set; } = [];
         
         public XREventGroup<GameMode> CurrentGameModeChanged;

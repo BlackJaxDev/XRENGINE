@@ -7,9 +7,7 @@ using Silk.NET.Windowing;
 using System.Diagnostics;
 using System.IO;
 using System.Numerics;
-using System.Reflection;
 using System.Runtime.InteropServices;
-using System.Runtime.Versioning;
 using System.Threading;
 using XREngine;
 using XREngine.Data.Core;
@@ -26,13 +24,11 @@ using Debug = XREngine.Debug;
 /// </summary>
 public unsafe partial class OpenXRAPI : XRBase
 {
-    private static int _nativeResolverInitialized;
-
-    [DllImport("opengl32.dll")]
-    private static extern nint wglGetCurrentContext();
-
-    [DllImport("opengl32.dll")]
-    private static extern nint wglGetCurrentDC();
+    // NOTE: This class is split across multiple files in this folder.
+    // - Init.cs: engine integration, session creation, swapchains, frame lifecycle
+    // - Instance.cs / Extensions.cs / Validation.cs: OpenXR instance + extension plumbing
+    // - OpenXRAPI.NativeLoader.cs: OpenXR loader DLL resolution
+    // - OpenXRAPI.OpenGL.Wgl.cs: WGL helpers for OpenGL binding diagnostics
 
     public OpenXRAPI()
     {
@@ -48,144 +44,17 @@ public unsafe partial class OpenXRAPI : XRBase
         }
     }
 
-    private static string? TryGetOpenXRActiveRuntime()
-    {
-        if (!OperatingSystem.IsWindows())
-            return null;
-
-        try
-        {
-            return TryGetOpenXRActiveRuntimeWindows();
-        }
-        catch
-        {
-            return null;
-        }
-    }
-
-    [SupportedOSPlatform("windows")]
-    private static string? TryGetOpenXRActiveRuntimeWindows()
-    {
-        const string keyPath = @"SOFTWARE\\Khronos\\OpenXR\\1";
-        using var key = Microsoft.Win32.Registry.LocalMachine.OpenSubKey(keyPath);
-        return key?.GetValue("ActiveRuntime") as string;
-    }
-
-    private static void EnsureOpenXRLoaderResolutionConfigured()
-    {
-        if (Interlocked.Exchange(ref _nativeResolverInitialized, 1) != 0)
-            return;
-
-        var openXRAssembly = typeof(XR).Assembly;
-        var entryAssembly = Assembly.GetEntryAssembly();
-        var executingAssembly = Assembly.GetExecutingAssembly();
-
-        NativeLibrary.SetDllImportResolver(openXRAssembly, ResolveOpenXRNative);
-        NativeLibrary.SetDllImportResolver(executingAssembly, ResolveOpenXRNative);
-        if (entryAssembly is not null)
-            NativeLibrary.SetDllImportResolver(entryAssembly, ResolveOpenXRNative);
-    }
-
-    private static nint ResolveOpenXRNative(string libraryName, Assembly assembly, DllImportSearchPath? searchPath)
-    {
-        static bool IsOpenXRLoaderName(string name)
-        {
-            return name.Contains("openxr", StringComparison.OrdinalIgnoreCase)
-                || name.Equals("openxr_loader", StringComparison.OrdinalIgnoreCase)
-                || name.Equals("openxr_loader.dll", StringComparison.OrdinalIgnoreCase);
-        }
-
-        if (!IsOpenXRLoaderName(libraryName))
-            return IntPtr.Zero;
-
-        // Try default resolution first.
-        if (NativeLibrary.TryLoad(libraryName, assembly, searchPath, out var handle))
-            return handle;
-
-        string[] candidateNames =
-        [
-            libraryName,
-            "openxr_loader",
-            "openxr_loader.dll",
-        ];
-
-        foreach (var name in candidateNames)
-        {
-            if (TryLoadFromKnownLocations(name, out handle))
-                return handle;
-        }
-
-        return IntPtr.Zero;
-    }
-
-    private static bool TryLoadFromKnownLocations(string libraryFileName, out IntPtr handle)
-    {
-        handle = IntPtr.Zero;
-
-        var baseDir = AppContext.BaseDirectory;
-        if (TryLoadFromDirectory(baseDir, libraryFileName, out handle))
-            return true;
-
-        var runtimesDir = Path.Combine(baseDir, "runtimes", "win-x64", "native");
-        if (TryLoadFromDirectory(runtimesDir, libraryFileName, out handle))
-            return true;
-
-        var pf = Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles);
-        var pf86 = Environment.GetFolderPath(Environment.SpecialFolder.ProgramFilesX86);
-
-        string[] maybeDirs =
-        [
-            Path.Combine(pf86, "Steam", "steamapps", "common", "SteamVR", "bin", "win64"),
-            Path.Combine(pf, "Oculus", "Support", "oculus-runtime"),
-        ];
-
-        foreach (var dir in maybeDirs)
-        {
-            if (TryLoadFromDirectory(dir, libraryFileName, out handle))
-                return true;
-        }
-
-        var path = Environment.GetEnvironmentVariable("PATH");
-        if (!string.IsNullOrWhiteSpace(path))
-        {
-            foreach (var dir in path.Split(Path.PathSeparator, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
-            {
-                if (TryLoadFromDirectory(dir, libraryFileName, out handle))
-                    return true;
-            }
-        }
-
-        return false;
-    }
-
-    private static bool TryLoadFromDirectory(string directory, string libraryFileName, out IntPtr handle)
-    {
-        handle = IntPtr.Zero;
-
-        if (string.IsNullOrWhiteSpace(directory))
-            return false;
-
-        string candidatePath;
-        try
-        {
-            candidatePath = Path.Combine(directory, libraryFileName);
-        }
-        catch
-        {
-            return false;
-        }
-
-        if (!File.Exists(candidatePath))
-            return false;
-
-        return NativeLibrary.TryLoad(candidatePath, out handle);
-    }
+    #region Lifetime
 
     ~OpenXRAPI()
     {
         CleanUp();
         Api?.Dispose();
     }
+
+    #endregion
+
+    #region Core OpenXR state
 
     /// <summary>
     /// The system ID used to identify the XR system.
@@ -215,6 +84,10 @@ public unsafe partial class OpenXRAPI : XRBase
 
     private bool _sessionBegun;
 
+    #endregion
+
+    #region Engine camera + viewport integration
+
     private XRViewport? _openXrLeftViewport;
     private XRViewport? _openXrRightViewport;
     private XRCamera? _openXrLeftEyeCamera;
@@ -232,6 +105,10 @@ public unsafe partial class OpenXRAPI : XRBase
     private RenderPipeline? _openXrNonStereoPipelineOverride;
     private RenderPipeline? _openXrNonStereoPipelineOverrideSource;
 
+    /// <summary>
+    /// Copies post-process stage parameter values from <paramref name="sourceCamera"/> to <paramref name="destinationCamera"/>.
+    /// Best-effort only: failures should not crash the render thread.
+    /// </summary>
     private static void CopyPostProcessState(RenderPipeline sourcePipeline, RenderPipeline destinationPipeline, XRCamera sourceCamera, XRCamera destinationCamera)
     {
         try
@@ -260,6 +137,14 @@ public unsafe partial class OpenXRAPI : XRBase
     private XRWorldInstance? _openXrFrameWorld;
     private XRCamera? _openXrFrameBaseCamera;
 
+    #endregion
+
+    #region Frame lifecycle (thread handoff)
+
+    /// <summary>
+    /// Returns a dedicated, per-eye (non-stereo) pipeline instance for OpenXR rendering.
+    /// OpenXR viewports must not share the desktop pipeline instance to avoid FBO/cache churn.
+    /// </summary>
     private RenderPipeline? SelectOpenXrRenderPipeline(RenderPipeline? sourcePipeline)
     {
         if (sourcePipeline is null)
@@ -354,6 +239,10 @@ public unsafe partial class OpenXRAPI : XRBase
     private nint _openXrSessionHglrc;
     private string _openXrSessionGlBindingTag = string.Empty;
 
+    #endregion
+
+    #region Mirror blit (desktop viewport)
+
     private XRTexture2D? _viewportMirrorColor;
     private XRRenderBuffer? _viewportMirrorDepth;
     private XRFrameBuffer? _viewportMirrorFbo;
@@ -364,6 +253,10 @@ public unsafe partial class OpenXRAPI : XRBase
     private uint _blitDrawFbo;
 
     private nint _blitFboHglrc;
+
+    #endregion
+
+    #region Public API + window binding
 
     /// <summary>
     /// Gets the OpenXR API instance.
@@ -826,6 +719,10 @@ public unsafe partial class OpenXRAPI : XRBase
         }
     }
 
+    /// <summary>
+    /// Render-thread callback that advances OpenXR state, submits the prepared frame (if any),
+    /// then prepares the next frame's timing/views for the CollectVisible thread.
+    /// </summary>
     private void Window_RenderViewportsCallback()
     {
         // Do NOT force a context switch here.
@@ -901,6 +798,10 @@ public unsafe partial class OpenXRAPI : XRBase
         return null;
     }
 
+    /// <summary>
+    /// CollectVisible-thread callback.
+    /// Builds per-eye visibility buffers for the OpenXR views prepared on the render thread.
+    /// </summary>
     private void OpenXrCollectVisible()
     {
         // Runs on the engine's CollectVisible thread.
@@ -948,48 +849,70 @@ public unsafe partial class OpenXRAPI : XRBase
             // Best-effort locomotion root: HMD node's parent is typically the playspace/locomotion root.
             _openXrLocomotionRoot = vrInfo.HMDNode?.Transform.Parent ?? _openXrFrameBaseCamera.Transform.Parent;
 
-        EnsureOpenXrEyeCameras(_openXrFrameBaseCamera);
-        EnsureOpenXrViewports(
-            _viewConfigViews[0].RecommendedImageRectWidth,
-            _viewConfigViews[0].RecommendedImageRectHeight);
+            EnsureOpenXrEyeCameras(_openXrFrameBaseCamera);
+            EnsureOpenXrViewports(
+                _viewConfigViews[0].RecommendedImageRectWidth,
+                _viewConfigViews[0].RecommendedImageRectHeight);
 
-        // Match the scene/editor pipeline so lighting/post/etc are consistent.
-        // However, if the source pipeline is single-pass stereo (DefaultRenderPipeline.Stereo=true),
-        // per-eye OpenXR rendering must force a non-stereo pipeline to avoid left-eye-only deferred/post output.
-        var sourcePipeline = sourceViewport.RenderPipeline;
-        var desiredPipeline = SelectOpenXrRenderPipeline(sourcePipeline);
-        if (desiredPipeline is not null)
-        {
-            if (!ReferenceEquals(_openXrLeftViewport!.RenderPipeline, desiredPipeline))
-                _openXrLeftViewport.RenderPipeline = desiredPipeline;
-            if (!ReferenceEquals(_openXrRightViewport!.RenderPipeline, desiredPipeline))
-                _openXrRightViewport.RenderPipeline = desiredPipeline;
-
-            // Keep camera post-process/pipeline state aligned with what we're actually executing.
-            _openXrLeftEyeCamera!.RenderPipeline = desiredPipeline;
-            _openXrRightEyeCamera!.RenderPipeline = desiredPipeline;
-
-            // Always inherit the base camera's post-process values/material.
-            // Otherwise the per-eye cameras keep default stage values which can easily yield black lighting
-            // and makes exposure/tonemapping behave differently from the desktop view.
-            var postSourcePipeline = sourcePipeline ?? desiredPipeline;
-            if (postSourcePipeline is not null)
+            // Match the scene/editor pipeline so lighting/post/etc are consistent.
+            // However, if the source pipeline is single-pass stereo (DefaultRenderPipeline.Stereo=true),
+            // per-eye OpenXR rendering must force a non-stereo pipeline to avoid left-eye-only deferred/post output.
+            var sourcePipeline = sourceViewport.RenderPipeline;
+            var desiredPipeline = SelectOpenXrRenderPipeline(sourcePipeline);
+            if (desiredPipeline is not null)
             {
-                CopyPostProcessState(postSourcePipeline, desiredPipeline, _openXrFrameBaseCamera!, _openXrLeftEyeCamera!);
-                CopyPostProcessState(postSourcePipeline, desiredPipeline, _openXrFrameBaseCamera!, _openXrRightEyeCamera!);
+                if (!ReferenceEquals(_openXrLeftViewport!.RenderPipeline, desiredPipeline))
+                    _openXrLeftViewport.RenderPipeline = desiredPipeline;
+                if (!ReferenceEquals(_openXrRightViewport!.RenderPipeline, desiredPipeline))
+                    _openXrRightViewport.RenderPipeline = desiredPipeline;
+
+                // Keep camera post-process/pipeline state aligned with what we're actually executing.
+                _openXrLeftEyeCamera!.RenderPipeline = desiredPipeline;
+                _openXrRightEyeCamera!.RenderPipeline = desiredPipeline;
+
+                // Always inherit the base camera's post-process values/material.
+                // Otherwise the per-eye cameras keep default stage values which can easily yield black lighting
+                // and makes exposure/tonemapping behave differently from the desktop view.
+                var postSourcePipeline = sourcePipeline ?? desiredPipeline;
+                if (postSourcePipeline is not null)
+                {
+                    CopyPostProcessState(postSourcePipeline, desiredPipeline, _openXrFrameBaseCamera!, _openXrLeftEyeCamera!);
+                    CopyPostProcessState(postSourcePipeline, desiredPipeline, _openXrFrameBaseCamera!, _openXrRightEyeCamera!);
+                }
             }
-        }
 
-        UpdateOpenXrEyeCameraFromView(_openXrLeftEyeCamera!, 0);
-        UpdateOpenXrEyeCameraFromView(_openXrRightEyeCamera!, 1);
+            UpdateOpenXrEyeCameraFromView(_openXrLeftEyeCamera!, 0);
+            UpdateOpenXrEyeCameraFromView(_openXrRightEyeCamera!, 1);
 
-        int leftAdded = 0;
-        int rightAdded = 0;
+            int leftAdded = 0;
+            int rightAdded = 0;
 
-        // Parallel buffer generation is only enabled on the Vulkan path.
-        if (_parallelRenderingEnabled && Window?.Renderer is VulkanRenderer)
-        {
-            Task leftTask = Task.Run(() =>
+            // Parallel buffer generation is only enabled on the Vulkan path.
+            if (_parallelRenderingEnabled && Window?.Renderer is VulkanRenderer)
+            {
+                Task leftTask = Task.Run(() =>
+                {
+                    _openXrLeftViewport!.CollectVisible(
+                        collectMirrors: true,
+                        worldOverride: _openXrFrameWorld,
+                        cameraOverride: _openXrLeftEyeCamera,
+                        allowScreenSpaceUICollectVisible: false);
+                    leftAdded = _openXrLeftViewport.RenderPipelineInstance.MeshRenderCommands.GetCommandsAddedCount();
+                });
+
+                Task rightTask = Task.Run(() =>
+                {
+                    _openXrRightViewport!.CollectVisible(
+                        collectMirrors: true,
+                        worldOverride: _openXrFrameWorld,
+                        cameraOverride: _openXrRightEyeCamera,
+                        allowScreenSpaceUICollectVisible: false);
+                    rightAdded = _openXrRightViewport.RenderPipelineInstance.MeshRenderCommands.GetCommandsAddedCount();
+                });
+
+                Task.WaitAll(leftTask, rightTask);
+            }
+            else
             {
                 _openXrLeftViewport!.CollectVisible(
                     collectMirrors: true,
@@ -997,36 +920,14 @@ public unsafe partial class OpenXRAPI : XRBase
                     cameraOverride: _openXrLeftEyeCamera,
                     allowScreenSpaceUICollectVisible: false);
                 leftAdded = _openXrLeftViewport.RenderPipelineInstance.MeshRenderCommands.GetCommandsAddedCount();
-            });
 
-            Task rightTask = Task.Run(() =>
-            {
                 _openXrRightViewport!.CollectVisible(
                     collectMirrors: true,
                     worldOverride: _openXrFrameWorld,
                     cameraOverride: _openXrRightEyeCamera,
                     allowScreenSpaceUICollectVisible: false);
                 rightAdded = _openXrRightViewport.RenderPipelineInstance.MeshRenderCommands.GetCommandsAddedCount();
-            });
-
-            Task.WaitAll(leftTask, rightTask);
-        }
-        else
-        {
-            _openXrLeftViewport!.CollectVisible(
-                collectMirrors: true,
-                worldOverride: _openXrFrameWorld,
-                cameraOverride: _openXrLeftEyeCamera,
-                allowScreenSpaceUICollectVisible: false);
-            leftAdded = _openXrLeftViewport.RenderPipelineInstance.MeshRenderCommands.GetCommandsAddedCount();
-
-            _openXrRightViewport!.CollectVisible(
-                collectMirrors: true,
-                worldOverride: _openXrFrameWorld,
-                cameraOverride: _openXrRightEyeCamera,
-                allowScreenSpaceUICollectVisible: false);
-            rightAdded = _openXrRightViewport.RenderPipelineInstance.MeshRenderCommands.GetCommandsAddedCount();
-        }
+            }
 
             int dbg = Interlocked.Increment(ref _openXrDebugFrameIndex);
             if (dbg == 1 || (dbg % OpenXrDebugLogEveryNFrames) == 0)
@@ -1049,6 +950,10 @@ public unsafe partial class OpenXRAPI : XRBase
         }
     }
 
+    /// <summary>
+    /// CollectVisible-thread callback.
+    /// Publishes the per-eye buffers to the render thread (sync point between CollectVisible and rendering).
+    /// </summary>
     private void OpenXrSwapBuffers()
     {
         // Runs on the engine's CollectVisible thread, after the previous render completes.
@@ -1089,6 +994,10 @@ public unsafe partial class OpenXRAPI : XRBase
             Debug.Out($"OpenXR[{frameNo}] SwapBuffers: framePrepared=1");
     }
 
+    /// <summary>
+    /// Render-thread helper.
+    /// Waits/begins an OpenXR frame and locates views, making that frame available for CollectVisible.
+    /// </summary>
     private void PrepareNextFrameOnRenderThread()
     {
         // Called on the render thread. Prepares the next OpenXR frame (WaitFrame/BeginFrame/LocateViews)
@@ -1593,7 +1502,8 @@ public unsafe partial class OpenXRAPI : XRBase
             {
                 uint fbo = _gl.GenFramebuffer();
                 _gl.BindFramebuffer(FramebufferTarget.Framebuffer, fbo);
-                _gl.FramebufferTexture2D(FramebufferTarget.Framebuffer, FramebufferAttachment.ColorAttachment0, TextureTarget.Texture2D, _swapchainImagesGL[i][j].Image, 0);
+                // Attach without assuming the underlying texture target (2D vs 2DMS etc).
+                _gl.FramebufferTexture(FramebufferTarget.Framebuffer, FramebufferAttachment.ColorAttachment0, _swapchainImagesGL[i][j].Image, 0);
 
                 // Make the swapchain FBO robust against global ReadBuffer/DrawBuffers state changes.
                 // Some engine passes intentionally set ReadBuffer=None; if that leaks, subsequent operations can become no-ops.
@@ -1655,8 +1565,13 @@ public unsafe partial class OpenXRAPI : XRBase
                 var e2da = gl.GetError();
                 if (e2da == GLEnum.NoError)
                     return "Texture2DArray";
+                gl.GetError();
+                gl.BindTexture(TextureTarget.Texture2DMultisample, tex);
+                var e2dms = gl.GetError();
+                if (e2dms == GLEnum.NoError)
+                    return "Texture2DMultisample";
 
-                return $"Unknown(err2D={e2d}, err2DA={e2da})";
+                return $"Unknown(err2D={e2d}, err2DA={e2da}, err2DMS={e2dms})";
             }
 
             // Diagnostic: prove swapchain rendering/submission works (and swapchain texture names are valid in this context).
@@ -1735,7 +1650,8 @@ public unsafe partial class OpenXRAPI : XRBase
                 _gl.BindFramebuffer(FramebufferTarget.ReadFramebuffer, _blitReadFbo);
                 // Some engine passes intentionally set ReadBuffer=None; if that leaks, blits can become no-ops.
                 _gl.ReadBuffer(GLEnum.ColorAttachment0);
-                _gl.FramebufferTexture2D(FramebufferTarget.ReadFramebuffer, FramebufferAttachment.ColorAttachment0, TextureTarget.Texture2D, srcApiTex.BindingId, 0);
+                // Attach without assuming the underlying texture target (2D vs 2DMS etc).
+                _gl.FramebufferTexture(FramebufferTarget.ReadFramebuffer, FramebufferAttachment.ColorAttachment0, srcApiTex.BindingId, 0);
 
                 _gl.BindFramebuffer(FramebufferTarget.DrawFramebuffer, _blitDrawFbo);
                 unsafe
@@ -1743,7 +1659,8 @@ public unsafe partial class OpenXRAPI : XRBase
                     GLEnum* drawBuffers = stackalloc GLEnum[1] { GLEnum.ColorAttachment0 };
                     _gl.DrawBuffers(1, drawBuffers);
                 }
-                _gl.FramebufferTexture2D(FramebufferTarget.DrawFramebuffer, FramebufferAttachment.ColorAttachment0, TextureTarget.Texture2D, textureHandle, 0);
+                // Attach without assuming the underlying texture target (2D vs 2DMS etc).
+                _gl.FramebufferTexture(FramebufferTarget.DrawFramebuffer, FramebufferAttachment.ColorAttachment0, textureHandle, 0);
 
                 if (OpenXrDebugGl)
                 {
@@ -1812,14 +1729,14 @@ public unsafe partial class OpenXRAPI : XRBase
             AutomaticallyCollectVisible = false,
             AutomaticallySwapBuffers = false,
             AllowUIRender = false,
-            SetRenderPipelineFromCamera = false,
+            SetRenderPipelineFromCamera = false
         };
         _openXrRightViewport ??= new XRViewport(Window)
         {
             AutomaticallyCollectVisible = false,
             AutomaticallySwapBuffers = false,
             AllowUIRender = false,
-            SetRenderPipelineFromCamera = false,
+            SetRenderPipelineFromCamera = false
         };
 
         _openXrLeftViewport.Camera = _openXrLeftEyeCamera;
@@ -2315,4 +2232,6 @@ public unsafe partial class OpenXRAPI : XRBase
         DestroyValidationLayers();
         DestroyInstance();
     }
+
+    #endregion
 }

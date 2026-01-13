@@ -19,15 +19,19 @@ namespace XREngine.Components
         {
             using var profilerState = Engine.Profiler.Start("DebugDrawComponent.Render");
 
-            foreach (var shape in Shapes)
-                shape.Render(Transform);
+            var shapes = Shapes;
+            if (shapes is null || shapes.Count == 0)
+                return;
+
+            foreach (var shape in shapes)
+                shape?.Render(Transform);
         }
 
         private EventList<DebugShapeBase> _shapes = [];
         public EventList<DebugShapeBase> Shapes
         {
-            get => _shapes;
-            set => SetField(ref _shapes, value);
+            get => _shapes ??= [];
+            set => SetField(ref _shapes, value ?? []);
         }
 
         public RenderInfo[] RenderedObjects { get; }

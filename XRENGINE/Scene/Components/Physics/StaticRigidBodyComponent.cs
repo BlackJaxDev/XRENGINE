@@ -39,6 +39,7 @@ namespace XREngine.Components.Physics
         private Quaternion _shapeOffsetRotation = Quaternion.Identity;
 
         [Browsable(false)]
+        [RuntimeOnly]
         public IAbstractStaticRigidBody? RigidBody
         {
             get => _rigidBody;

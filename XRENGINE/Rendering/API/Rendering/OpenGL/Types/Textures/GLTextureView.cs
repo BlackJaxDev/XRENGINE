@@ -60,6 +60,19 @@ namespace XREngine.Rendering.OpenGL
             if (viewed is null)
                 return;
 
+            // `glTextureView` requires origtexture to be a valid texture object.
+            // With `glGenTextures`, the name may not become a real texture object until bound once.
+            // Bind/push the viewed texture here (and restore prior binding) to avoid invalid origtexture.
+            var previous = Renderer.BoundTexture;
+            viewed.Bind();
+            if (previous is null)
+            {
+                Renderer.BoundTexture = null;
+                Api.BindTexture(ToGLEnum(viewed.TextureTarget), 0);
+            }
+            else
+                previous.Bind();
+
             Api.TextureView(
                 BindingId,
                 ToGLEnum(Data.TextureTarget),

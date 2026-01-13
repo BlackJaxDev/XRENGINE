@@ -357,14 +357,6 @@ namespace XREngine.Components
             base.OnPropertyChanged(propName, prev, field);
             switch (propName)
             {
-                //case nameof(LocalPlayerIndex):
-                //    if (LocalPlayerIndex is not null)
-                //        Engine.State.GetLocalPlayer(LocalPlayerIndex.Value)?.Cameras.Add(this);
-                //    break;
-                //case nameof(RenderPipeline):
-                //    if (_fboRenderPipeline is not null)
-                //        _fboRenderPipeline.Pipeline = RenderPipeline;
-                //    break;
                 case nameof(DefaultRenderTarget):
                     if (DefaultRenderTarget is not null && World is not null)
                         if (!World.FramebufferCameras.Contains(this))

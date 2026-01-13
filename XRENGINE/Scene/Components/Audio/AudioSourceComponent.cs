@@ -6,6 +6,7 @@ using System.Numerics;
 using XREngine.Audio;
 using XREngine.Data;
 using XREngine.Data.Core;
+using YamlDotNet.Serialization;
 using static XREngine.Audio.AudioSource;
 
 namespace XREngine.Components
@@ -33,6 +34,8 @@ namespace XREngine.Components
         /// <summary>
         /// These are the listeners that are currently listening to this audio source because it is within their range.
         /// </summary>
+        [RuntimeOnly]
+        [YamlIgnore]
         public ConcurrentDictionary<ListenerContext, AudioSource> ActiveListeners { get; set; } = [];
 
         /// <summary>

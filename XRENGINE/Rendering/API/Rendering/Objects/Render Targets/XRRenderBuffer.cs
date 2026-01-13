@@ -3,6 +3,7 @@ using static XREngine.Rendering.XRTexture;
 
 namespace XREngine.Rendering
 {
+    [RuntimeOnly]
     public class XRRenderBuffer : GenericRenderObject, IFrameBufferAttachement
     {
         private EFrameBufferAttachment? _frameBufferAttachment;

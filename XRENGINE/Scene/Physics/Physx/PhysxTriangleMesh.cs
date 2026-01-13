@@ -7,7 +7,10 @@ namespace XREngine.Rendering.Physics.Physx
 {
     public unsafe class PhysxTriangleMesh(PhysxScene scene, PxTriangleMesh* triangleMesh) : PhysxRefCounted
     {
+        [RuntimeOnly]
         public PxTriangleMesh* TriangleMeshPtr { get; private set; } = triangleMesh;
+
+        [RuntimeOnly]
         public PhysxScene Scene { get; private set; } = scene;
         public override PxRefCounted* RefCountedPtr { get; }
 

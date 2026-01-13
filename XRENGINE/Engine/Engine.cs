@@ -9,6 +9,8 @@ using System.Linq;
 using System.Net;
 using System.Numerics;
 using System.Reflection;
+using System.Runtime.CompilerServices;
+using System.Diagnostics.CodeAnalysis;
 using System.Threading;
 using System.Threading.Tasks;
 using XREngine.Audio;
@@ -16,6 +18,7 @@ using XREngine.Data.Core;
 using XREngine.Data.Trees;
 using XREngine.Rendering;
 using XREngine.Scene;
+using XREngine.Scene.Prefabs;
 using XREngine.Scene.Transforms;
 using static XREngine.Rendering.XRWorldInstance;
 
@@ -58,6 +61,267 @@ namespace XREngine
 
             XREvent.ProfilingHook = ExternalProfilingHook;
             IRenderTree.ProfilingHook = ExternalProfilingHook;
+
+            // Snapshot restore can invalidate runtime-only bindings (viewport/world/camera).
+            // Rebind right after restore (pre-BeginPlay) and once more after play begins.
+            PlayMode.PostSnapshotRestore += OnPostSnapshotRestore_RebindRuntimeRendering;
+            PlayMode.PostEnterPlay += OnPostEnterPlay_RebindRuntimeRendering;
+        }
+
+        private static void OnPostSnapshotRestore_RebindRuntimeRendering(XRWorld? restoredWorld)
+            => RebindRuntimeRendering(restoredWorld, "PostSnapshotRestore");
+
+        private static void OnPostEnterPlay_RebindRuntimeRendering()
+            => RebindRuntimeRendering(ResolveStartupWorldForRebind(), "PostEnterPlay");
+
+        private static XRWorld? ResolveStartupWorldForRebind()
+        {
+            if (PlayMode.Configuration.StartupWorld is not null)
+                return PlayMode.Configuration.StartupWorld;
+
+            var firstWindowWorld = Windows.FirstOrDefault()?.TargetWorldInstance?.TargetWorld;
+            if (firstWindowWorld is not null)
+                return firstWindowWorld;
+
+            var firstInstanceWorld = XRWorldInstance.WorldInstances.Values.FirstOrDefault()?.TargetWorld;
+            return firstInstanceWorld;
+        }
+
+        private static void RebindRuntimeRendering(XRWorld? world, string phase)
+        {
+            if (world is null)
+                return;
+
+            try
+            {
+                XRWorldInstance? worldInstance = XRWorldInstance.GetOrInitWorld(world);
+
+                //if (Environment.GetEnvironmentVariable("XRE_DEBUG_RENDER_DUMP") == "1")
+                    DumpWorldRenderablesOncePerPhase(worldInstance, phase);
+
+                //if (Environment.GetEnvironmentVariable("XRE_DEBUG_SNAPSHOT_HIERARCHY") == "1")
+                    DumpWorldHierarchyRootsOncePerPhase(worldInstance, phase);
+
+                foreach (var window in _windows)
+                {
+                    // Ensure the window is targeting the restored world instance.
+                    if (!ReferenceEquals(window.TargetWorldInstance, worldInstance))
+                        window.TargetWorldInstance = worldInstance;
+
+                    // Ensure viewports are linked to this window and have a world override.
+                    foreach (var viewport in window.Viewports)
+                    {
+                        viewport.Window = window;
+
+                        // LocalPlayerController.Viewport is runtime-only ([YamlIgnore]) and can be lost across snapshot restore.
+                        // Without it, RefreshViewportCamera() cannot rebind the viewport's CameraComponent (resulting in black output).
+                        if (viewport.AssociatedPlayer is not null && !ReferenceEquals(viewport.AssociatedPlayer.Viewport, viewport))
+                            viewport.AssociatedPlayer.Viewport = viewport;
+
+                        if (viewport.AssociatedPlayer is not null && viewport.WorldInstanceOverride is null)
+                            viewport.WorldInstanceOverride = worldInstance;
+
+                        // Rebind camera from controlled pawn (may have changed across restore / BeginPlay).
+                        viewport.AssociatedPlayer?.RefreshViewportCamera();
+
+                        // Snapshot restore can invalidate cached GPU resources (textures/FBOs/programs).
+                        // If the pipeline keeps references to objects whose underlying API handles were destroyed,
+                        // the final blit can end up sampling black.
+                        if (phase is "PostSnapshotRestore" or "PostEnterPlay")
+                        {
+                            var capturedViewport = viewport;
+                            EnqueueSwapTask(() =>
+                            {
+                                try
+                                {
+                                    capturedViewport.RenderPipelineInstance.DestroyCache();
+                                }
+                                catch (Exception ex)
+                                {
+                                    Debug.LogException(ex, $"[{phase}] Failed to destroy render cache for viewport {capturedViewport.Index}.");
+                                }
+                            });
+                        }
+
+                        if (viewport.ActiveCamera is null)
+                            Debug.LogWarning($"[{phase}] Viewport {viewport.Index} has no ActiveCamera (player={viewport.AssociatedPlayer?.LocalPlayerIndex}).");
+                        if (viewport.World is null)
+                            Debug.LogWarning($"[{phase}] Viewport {viewport.Index} has no World (player={viewport.AssociatedPlayer?.LocalPlayerIndex}).");
+                    }
+
+                    // If viewports exist but no players are associated, keep at least player one wired.
+                    if (window.Viewports.Count > 0 && window.Viewports.All(vp => vp.AssociatedPlayer is null))
+                    {
+                        var mainPlayer = State.GetOrCreateLocalPlayer(ELocalPlayerIndex.One);
+                        window.RegisterController(mainPlayer, autoSizeAllViewports: false);
+                        mainPlayer.RefreshViewportCamera();
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                Debug.LogException(ex, $"Failed runtime rendering rebind during {phase}");
+            }
+        }
+
+        private static void DumpWorldRenderablesOncePerPhase(XRWorldInstance worldInstance, string phase)
+        {
+            Debug.RenderingEvery(
+                $"RenderDump.World.{phase}.{worldInstance.GetHashCode()}",
+                TimeSpan.FromDays(1),
+                "[RenderDiag] World dump ({0}). World={1} Roots={2} VisualScene={3} TrackedRenderables={4}",
+                phase,
+                worldInstance.TargetWorld?.Name ?? "<unknown>",
+                worldInstance.RootNodes.Count,
+                worldInstance.VisualScene?.GetType().Name ?? "<null>",
+                worldInstance.VisualScene?.Renderables?.Count ?? -1);
+
+            int nodeCount = 0;
+            int renderableComponentCount = 0;
+            int meshCount = 0;
+            int meshRenderCommandCount = 0;
+            int iRenderableCount = 0;
+            int iRenderableWithWorldCount = 0;
+            int totalRenderInfoCount = 0;
+            var componentTypes = new List<string>();
+
+            static bool TryGetRenderedObjects(object? component, out System.Collections.IEnumerable? renderedObjects)
+            {
+                renderedObjects = null;
+                if (component is null)
+                    return false;
+
+                var renderedObjectsProperty = component.GetType().GetProperty(
+                    "RenderedObjects",
+                    BindingFlags.Public | BindingFlags.Instance);
+
+                if (renderedObjectsProperty is null)
+                    return false;
+
+                renderedObjects = renderedObjectsProperty.GetValue(component) as System.Collections.IEnumerable;
+                return true;
+            }
+
+            foreach (var root in worldInstance.RootNodes)
+            {
+                foreach (var node in SceneNodePrefabUtility.EnumerateHierarchy(root))
+                {
+                    nodeCount++;
+
+                    foreach (var component in node.Components)
+                    {
+                        componentTypes.Add(component.GetType().Name);
+
+                        if (component is Components.Scene.Mesh.RenderableComponent rc)
+                        {
+                            renderableComponentCount++;
+                            meshCount += rc.Meshes.Count;
+                            foreach (var mesh in rc.Meshes)
+                                meshRenderCommandCount += mesh.RenderInfo.RenderCommands.Count;
+                        }
+
+                        if (TryGetRenderedObjects(component, out var renderedObjects))
+                        {
+                            iRenderableCount++;
+                            if (renderedObjects is not null)
+                            {
+                                foreach (var ri in renderedObjects)
+                                {
+                                    totalRenderInfoCount++;
+
+                                    if (ri is null)
+                                        continue;
+
+                                    var worldInstanceProperty = ri.GetType().GetProperty(
+                                        "WorldInstance",
+                                        BindingFlags.Public | BindingFlags.Instance);
+
+                                    if (worldInstanceProperty?.GetValue(ri) is not null)
+                                        iRenderableWithWorldCount++;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            Debug.RenderingEvery(
+                $"RenderDump.WorldCounts.{phase}.{worldInstance.GetHashCode()}",
+                TimeSpan.FromDays(1),
+                "[RenderDiag] World dump counts ({0}). Nodes={1} RenderableComponents={2} Meshes={3} MeshRenderCommands={4} IRenderables={5} WithWorld={6}/{7}",
+                phase,
+                nodeCount,
+                renderableComponentCount,
+                meshCount,
+                meshRenderCommandCount,
+                iRenderableCount,
+                iRenderableWithWorldCount,
+                totalRenderInfoCount);
+
+            Debug.RenderingEvery(
+                $"RenderDump.ComponentTypes.{phase}.{worldInstance.GetHashCode()}",
+                TimeSpan.FromDays(1),
+                "[RenderDiag] Component types ({0}): {1}",
+                phase,
+                string.Join(", ", componentTypes));
+        }
+
+        private static void DumpWorldHierarchyRootsOncePerPhase(XRWorldInstance worldInstance, string phase)
+        {
+            Debug.RenderingEvery(
+                $"SnapshotHierarchy.{phase}.{worldInstance.GetHashCode()}",
+                TimeSpan.FromDays(1),
+                "[SnapshotDiag] Hierarchy roots ({0}). World={1} RootNodes={2}",
+                phase,
+                worldInstance.TargetWorld?.Name ?? "<unknown>",
+                worldInstance.RootNodes.Count);
+
+            int totalReachableNodes = 0;
+            var visited = new HashSet<SceneNode>();
+
+            foreach (var root in worldInstance.RootNodes)
+            {
+                if (root is null)
+                    continue;
+
+                int childCount = 0;
+                foreach (var childTfm in root.Transform.Children)
+                    if (childTfm?.SceneNode is not null)
+                        childCount++;
+
+                Debug.RenderingEvery(
+                    $"SnapshotHierarchy.Root.{phase}.{worldInstance.GetHashCode()}.{root.GetHashCode()}",
+                    TimeSpan.FromDays(1),
+                    "[SnapshotDiag] Root '{0}' children={1} world={2}",
+                    root.Name ?? "<unnamed>",
+                    childCount,
+                    root.World is null ? "<null>" : "set");
+
+                totalReachableNodes += CountReachableNodes(root, visited);
+            }
+
+            Debug.RenderingEvery(
+                $"SnapshotHierarchy.Totals.{phase}.{worldInstance.GetHashCode()}",
+                TimeSpan.FromDays(1),
+                "[SnapshotDiag] Reachable nodes via Transform.Children ({0}) = {1}",
+                phase,
+                totalReachableNodes);
+
+            static int CountReachableNodes(SceneNode node, HashSet<SceneNode> visited)
+            {
+                if (node is null)
+                    return 0;
+                if (!visited.Add(node))
+                    return 0;
+
+                int count = 1;
+                foreach (var childTfm in node.Transform.Children)
+                {
+                    if (childTfm?.SceneNode is SceneNode childNode)
+                        count += CountReachableNodes(childNode, visited);
+                }
+                return count;
+            }
         }
 
         private static void Timer_PostUpdateFrame()
@@ -66,10 +330,20 @@ namespace XREngine
             TransformBase.ProcessParentReassignments();
         }
 
-        public static bool IsRenderThread => Environment.CurrentManagedThreadId == RenderThreadId;
-        public static int RenderThreadId { get; private set; }
+        public static bool IsRenderThread
+        {
+            [MethodImpl(MethodImplOptions.AggressiveInlining)]
+            get => Environment.CurrentManagedThreadId == RenderThreadId;
+        }
 
-        public static bool IsPhysicsThread => Environment.CurrentManagedThreadId == PhysicsThreadId;
+        public static int RenderThreadId { get; private set; }
+    
+        public static bool IsPhysicsThread
+        {
+            [MethodImpl(MethodImplOptions.AggressiveInlining)]
+            get => Environment.CurrentManagedThreadId == PhysicsThreadId;
+        }
+
         public static int PhysicsThreadId { get; private set; }
 
         internal static void SetPhysicsThreadId(int threadId)
@@ -242,7 +516,7 @@ namespace XREngine
                 vSync);
         }
 
-        private static void TrackOverrideableSettings(object settingsRoot, List<IOverrideableSetting> cache)
+        private static void TrackOverrideableSettings<[DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicProperties)] T>(T settingsRoot, List<IOverrideableSetting> cache)
         {
             foreach (var tracked in cache)
             {
@@ -252,7 +526,7 @@ namespace XREngine
 
             cache.Clear();
 
-            var properties = settingsRoot.GetType().GetProperties(BindingFlags.Public | BindingFlags.Instance);
+            var properties = typeof(T).GetProperties(BindingFlags.Public | BindingFlags.Instance);
             foreach (var property in properties)
             {
                 if (!typeof(IOverrideableSetting).IsAssignableFrom(property.PropertyType))

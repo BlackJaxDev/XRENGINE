@@ -83,6 +83,13 @@ namespace XREngine.Input
                 Input.UpdateDevices(null, Engine.VRState.Actions);
         }
 
+        /// <summary>
+        /// Forces viewport/camera/input rebinding.
+        /// Useful after snapshot restore when runtime-only wiring must be rebuilt.
+        /// </summary>
+        internal void RefreshViewportCamera()
+            => UpdateViewportCamera();
+
         protected override void RegisterInput(InputInterface input)
         {
             //input.RegisterButtonEvent(EKey.Escape, ButtonInputType.Pressed, OnTogglePause);

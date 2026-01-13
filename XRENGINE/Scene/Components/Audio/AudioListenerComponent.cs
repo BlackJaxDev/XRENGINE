@@ -2,6 +2,7 @@
 using System.ComponentModel;
 using System.Numerics;
 using XREngine.Audio;
+using YamlDotNet.Serialization;
 
 namespace XREngine.Components
 {
@@ -11,6 +12,8 @@ namespace XREngine.Components
     public class AudioListenerComponent : XRComponent
     {
         [Browsable(false)]
+        [RuntimeOnly]
+        [YamlIgnore]
         public ListenerContext? Listener { get; private set; }
 
         /// <summary>

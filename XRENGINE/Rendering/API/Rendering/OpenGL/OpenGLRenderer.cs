@@ -650,9 +650,165 @@ namespace XREngine.Rendering.OpenGL
             string debug = GetFBODebugInfo(fbo, Environment.NewLine);
             string name = fbo.GetDescribingName();
             if (result != GLEnum.FramebufferComplete)
-                Debug.LogWarning($"FBO {name} is not complete. Status: {result}{debug}", 0, 20);
+            {
+                string details = string.Empty;
+                if (TryGetOneTimeFBODetailDump(fbo, out var dump))
+                    details = dump;
+
+                Debug.LogWarning($"FBO {name} is not complete. Status: {result}{debug}{details}", 0, 20);
+            }
             //else
             //    Debug.Out($"FBO {name} is complete.{debug}");
+        }
+
+        private readonly HashSet<uint> _fboDetailedDumped = new();
+        private bool TryGetOneTimeFBODetailDump(GLFrameBuffer fbo, out string dump)
+        {
+            dump = string.Empty;
+            if (!fbo.TryGetBindingId(out uint fboId) || fboId == 0)
+                return false;
+
+            // Avoid log spam: only dump details once per FBO binding id.
+            if (_fboDetailedDumped.Contains(fboId))
+                return false;
+            _fboDetailedDumped.Add(fboId);
+
+            dump = GetFBODetailDump(fbo, Environment.NewLine);
+            return !string.IsNullOrWhiteSpace(dump);
+        }
+
+        private string GetFBODetailDump(GLFrameBuffer fbo, string splitter)
+        {
+            try
+            {
+                if (!fbo.TryGetBindingId(out uint fboId) || fboId == 0)
+                    return string.Empty;
+
+                if (fbo.Data.Targets is null || fbo.Data.Targets.Length == 0)
+                    return $"{splitter}[FBO Detail] No targets.";
+
+                string s = $"{splitter}[FBO Detail] NamedFramebuffer={fboId}";
+
+                foreach (var (Target, Attachment, MipLevel, LayerIndex) in fbo.Data.Targets)
+                {
+                    var glAttachment = (GLEnum)ToGLEnum(Attachment);
+
+                    Api.GetNamedFramebufferAttachmentParameter(fboId, glAttachment, GLEnum.FramebufferAttachmentObjectType, out int objType);
+                    Api.GetNamedFramebufferAttachmentParameter(fboId, glAttachment, GLEnum.FramebufferAttachmentObjectName, out int objName);
+                    Api.GetNamedFramebufferAttachmentParameter(fboId, glAttachment, GLEnum.FramebufferAttachmentTextureLevel, out int attachedLevel);
+                    Api.GetNamedFramebufferAttachmentParameter(fboId, glAttachment, GLEnum.FramebufferAttachmentTextureLayer, out int attachedLayer);
+
+                    s += $"{splitter}[FBO Detail] {Attachment}: GL objType={(GLEnum)objType} objName={objName} texLevel={attachedLevel} texLayer={attachedLayer}";
+
+                    // If we can resolve the GL texture wrapper, also dump texture params/level info.
+                    if (Target is XRTexture xrTex)
+                    {
+                        IGLTexture? glTex = xrTex switch
+                        {
+                            XRTexture1D t => GenericToAPI<GLTexture1D>(t),
+                            XRTexture1DArray t => GenericToAPI<GLTexture1DArray>(t),
+                            XRTexture2D t => GenericToAPI<GLTexture2D>(t),
+                            XRTexture2DArray t => GenericToAPI<GLTexture2DArray>(t),
+                            XRTextureRectangle t => GenericToAPI<GLTextureRectangle>(t),
+                            XRTexture3D t => GenericToAPI<GLTexture3D>(t),
+                            XRTextureCube t => GenericToAPI<GLTextureCube>(t),
+                            XRTextureCubeArray t => GenericToAPI<GLTextureCubeArray>(t),
+                            XRTextureBuffer t => GenericToAPI<GLTextureBuffer>(t),
+                            XRTextureViewBase t => GenericToAPI<GLTextureView>(t),
+                            _ => null
+                        };
+
+                        uint texId = 0;
+                        if (glTex is GLObjectBase glObj && glObj.TryGetBindingId(out texId) && texId != 0)
+                        {
+                            bool isTex = Api.IsTexture(texId);
+                            s += $"{splitter}[FBO Detail]   XR={xrTex.GetDescribingName()} -> GL texId={texId} glIsTexture={isTex} xrResizable={xrTex.IsResizeable} xrWHD={xrTex.WidthHeightDepth}";
+
+                            // DSA queries (works regardless of current binding).
+                            Api.GetTextureParameter(texId, GLEnum.TextureBaseLevel, out int baseLevel);
+                            Api.GetTextureParameter(texId, GLEnum.TextureMaxLevel, out int maxLevel);
+                            Api.GetTextureParameter(texId, GLEnum.TextureImmutableFormat, out int immutable);
+                            Api.GetTextureLevelParameter(texId, attachedLevel, GLEnum.TextureWidth, out int levelW);
+                            Api.GetTextureLevelParameter(texId, attachedLevel, GLEnum.TextureHeight, out int levelH);
+                            Api.GetTextureLevelParameter(texId, attachedLevel, GLEnum.TextureInternalFormat, out int levelInternal);
+
+                            s += $"{splitter}[FBO Detail]   GL baseLevel={baseLevel} maxLevel={maxLevel} immutable={(immutable != 0)} levelW={levelW} levelH={levelH} levelInternal=0x{levelInternal:X}";
+                        }
+                        else
+                        {
+                            s += $"{splitter}[FBO Detail]   XR={xrTex.GetDescribingName()} -> (no GL texture wrapper id)";
+                        }
+                    }
+                }
+
+                // Also scan actual GL attachment points in case something is still attached but not represented
+                // in `Data.Targets` (stale color attachments are a common cause of INCOMPLETE_ATTACHMENT).
+                static bool IsInterestingAttachment(GLEnum att)
+                    => att == GLEnum.DepthAttachment || att == GLEnum.StencilAttachment ||
+                       att == GLEnum.ColorAttachment0 || att == GLEnum.ColorAttachment1 || att == GLEnum.ColorAttachment2 || att == GLEnum.ColorAttachment3 ||
+                       att == GLEnum.ColorAttachment4 || att == GLEnum.ColorAttachment5 || att == GLEnum.ColorAttachment6 || att == GLEnum.ColorAttachment7;
+
+                s += $"{splitter}[FBO Detail] Attached objects (GL query):";
+                foreach (var att in new[]
+                {
+                    GLEnum.DepthAttachment,
+                    GLEnum.StencilAttachment,
+                    GLEnum.ColorAttachment0,
+                    GLEnum.ColorAttachment1,
+                    GLEnum.ColorAttachment2,
+                    GLEnum.ColorAttachment3,
+                    GLEnum.ColorAttachment4,
+                    GLEnum.ColorAttachment5,
+                    GLEnum.ColorAttachment6,
+                    GLEnum.ColorAttachment7,
+                })
+                {
+                    if (!IsInterestingAttachment(att))
+                        continue;
+
+                    Api.GetNamedFramebufferAttachmentParameter(fboId, att, GLEnum.FramebufferAttachmentObjectType, out int objType);
+                    Api.GetNamedFramebufferAttachmentParameter(fboId, att, GLEnum.FramebufferAttachmentObjectName, out int objName);
+                    if ((GLEnum)objType == GLEnum.None || objName == 0)
+                        continue;
+
+                    Api.GetNamedFramebufferAttachmentParameter(fboId, att, GLEnum.FramebufferAttachmentTextureLevel, out int level);
+                    Api.GetNamedFramebufferAttachmentParameter(fboId, att, GLEnum.FramebufferAttachmentTextureLayer, out int layer);
+                    s += $"{splitter}[FBO Detail]   {att}: objType={(GLEnum)objType} objName={objName} texLevel={level} texLayer={layer}";
+                }
+
+                return s;
+            }
+            catch (Exception ex)
+            {
+                return $"{splitter}[FBO Detail] Failed to query details: {ex.GetType().Name}: {ex.Message}";
+            }
+        }
+
+        private GLEnum ToGLEnum(EFrameBufferAttachment attachment)
+        {
+            return attachment switch
+            {
+                EFrameBufferAttachment.ColorAttachment0 => GLEnum.ColorAttachment0,
+                EFrameBufferAttachment.ColorAttachment1 => GLEnum.ColorAttachment1,
+                EFrameBufferAttachment.ColorAttachment2 => GLEnum.ColorAttachment2,
+                EFrameBufferAttachment.ColorAttachment3 => GLEnum.ColorAttachment3,
+                EFrameBufferAttachment.ColorAttachment4 => GLEnum.ColorAttachment4,
+                EFrameBufferAttachment.ColorAttachment5 => GLEnum.ColorAttachment5,
+                EFrameBufferAttachment.ColorAttachment6 => GLEnum.ColorAttachment6,
+                EFrameBufferAttachment.ColorAttachment7 => GLEnum.ColorAttachment7,
+                EFrameBufferAttachment.ColorAttachment8 => GLEnum.ColorAttachment8,
+                EFrameBufferAttachment.ColorAttachment9 => GLEnum.ColorAttachment9,
+                EFrameBufferAttachment.ColorAttachment10 => GLEnum.ColorAttachment10,
+                EFrameBufferAttachment.ColorAttachment11 => GLEnum.ColorAttachment11,
+                EFrameBufferAttachment.ColorAttachment12 => GLEnum.ColorAttachment12,
+                EFrameBufferAttachment.ColorAttachment13 => GLEnum.ColorAttachment13,
+                EFrameBufferAttachment.ColorAttachment14 => GLEnum.ColorAttachment14,
+                EFrameBufferAttachment.ColorAttachment15 => GLEnum.ColorAttachment15,
+                EFrameBufferAttachment.DepthAttachment => GLEnum.DepthAttachment,
+                EFrameBufferAttachment.StencilAttachment => GLEnum.StencilAttachment,
+                EFrameBufferAttachment.DepthStencilAttachment => GLEnum.DepthStencilAttachment,
+                _ => throw new ArgumentOutOfRangeException(nameof(attachment), attachment, null),
+            };
         }
 
         private static string GetFBODebugInfo(GLFrameBuffer fbo, string splitter)
