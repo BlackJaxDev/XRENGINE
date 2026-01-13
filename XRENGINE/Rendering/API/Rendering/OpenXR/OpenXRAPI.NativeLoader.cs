@@ -6,6 +6,8 @@ using System.Runtime.InteropServices;
 using System.Runtime.Versioning;
 using System.Threading;
 
+namespace XREngine.Rendering.API.Rendering.OpenXR;
+
 public unsafe partial class OpenXRAPI
 {
     // OpenXR loader resolution

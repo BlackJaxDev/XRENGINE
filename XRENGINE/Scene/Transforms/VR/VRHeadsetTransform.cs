@@ -12,6 +12,6 @@ namespace XREngine.Scene.Transforms
         public VRHeadsetTransform() { }
         public VRHeadsetTransform(TransformBase parent) : base(parent) { }
 
-        public override VrDevice? Device => Engine.VRState.Api.Headset;
+        public override VrDevice? Device => Engine.VRState.OpenVRApi.Headset;
     }
 }

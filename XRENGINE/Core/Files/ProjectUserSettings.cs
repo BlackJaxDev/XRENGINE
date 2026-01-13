@@ -1,4 +1,5 @@
 using MemoryPack;
+using System.ComponentModel;
 using XREngine.Core.Files;
 using XREngine.Data.Core;
 
@@ -51,6 +52,8 @@ namespace XREngine
         /// <summary>
         /// The wrapped user settings.
         /// </summary>
+        [Category("User")]
+        [Description("Per-project user settings saved alongside the project (stored as an asset wrapper around UserSettings).")]
         public UserSettings Settings
         {
             get => _settings;

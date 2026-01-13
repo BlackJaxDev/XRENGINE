@@ -20,13 +20,19 @@ namespace XREngine.Data.Components.Scene
 
         public override VrDevice? Device => Tracker;
 
+        /// <summary>
+        /// OpenXR tracker user path (e.g. "/user/vive_tracker_htcx/role/waist").
+        /// When OpenXR is the active runtime, this is used to resolve tracker poses.
+        /// </summary>
+        public string? OpenXrTrackerUserPath { get; set; }
+
         public void SetTrackerByDeviceIndex(uint deviceIndex)
         {
-            var d = Engine.VRState.Api.TrackedDevices.FirstOrDefault(x => x.DeviceIndex == deviceIndex);
+            var d = Engine.VRState.OpenVRApi.TrackedDevices.FirstOrDefault(x => x.DeviceIndex == deviceIndex);
             if (d is null)
                 return;
 
-            if (Engine.VRState.Api.CVR.GetTrackedDeviceClass(d.DeviceIndex) != Valve.VR.ETrackedDeviceClass.GenericTracker)
+            if (Engine.VRState.OpenVRApi.CVR.GetTrackedDeviceClass(d.DeviceIndex) != Valve.VR.ETrackedDeviceClass.GenericTracker)
                 return;
 
             Tracker = d;

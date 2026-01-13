@@ -12,6 +12,8 @@ using System.Diagnostics;
 using System.IO;
 using System.Threading;
 
+namespace XREngine.Rendering.API.Rendering.OpenXR;
+
 public unsafe partial class OpenXRAPI
 {
     private Instance _instance;

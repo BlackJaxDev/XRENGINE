@@ -99,6 +99,9 @@ public static partial class UnitTestingWorld
             var movementComp = vrPlayspaceNode.AddComponent<CharacterMovement3DComponent>()!;
             InitMovement(movementComp);
 
+            float spawnY = Toggles.CharacterControllerCapsuleTranslationY ?? (movementComp.HalfHeight + 0.01f);
+            characterTfm.SetPositionAndRotation(new Vector3(0.0f, spawnY, 0.0f), Quaternion.Identity);
+
             //TODO: divert VR input from player 1 to this pawn instead of the flying editor pawn when AllowEditingInVR is true.
             if (!Toggles.AllowEditingInVR)
                 characterComp.EnqueuePossessionByLocalPlayer(ELocalPlayerIndex.One);
@@ -359,6 +362,9 @@ public static partial class UnitTestingWorld
 
             var movementComp = characterNode.AddComponent<CharacterMovement3DComponent>()!;
             InitMovement(movementComp);
+
+            float spawnY = Toggles.CharacterControllerCapsuleTranslationY ?? (movementComp.HalfHeight + 0.01f);
+            characterTfm.SetPositionAndRotation(new Vector3(0.0f, spawnY, 0.0f), Quaternion.Identity);
 
             var footNode = characterNode.NewChild("Foot Position Node");
             var footTfm = footNode.SetTransform<Transform>();

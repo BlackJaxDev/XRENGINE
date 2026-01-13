@@ -2,6 +2,8 @@ using Silk.NET.OpenXR;
 using Silk.NET.OpenXR.Extensions.EXT;
 using System.Runtime.InteropServices;
 
+namespace XREngine.Rendering.API.Rendering.OpenXR;
+
 public unsafe partial class OpenXRAPI
 {
     private ExtDebugUtils? _debugUtils;

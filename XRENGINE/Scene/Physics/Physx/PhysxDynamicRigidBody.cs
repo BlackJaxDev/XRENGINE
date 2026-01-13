@@ -119,14 +119,19 @@ namespace XREngine.Rendering.Physics.Physx
         {
             if (value.HasValue)
             {
+                // Ensure body is kinematic.
+                if (!Flags.HasFlag(PxRigidBodyFlags.Kinematic))
+                    Flags |= PxRigidBodyFlags.Kinematic;
+
                 var tfm = PhysxScene.MakeTransform(value.Value.position, value.Value.rotation);
                 _obj->SetKinematicTargetMut(&tfm);
                 //PhysxObjectLog.Modified(this, (nint)_obj, nameof(KinematicTarget), $"set pos={value.Value.position} rot={value.Value.rotation}");
             }
             else
             {
-                _obj->SetKinematicTargetMut(null);
-                //PhysxObjectLog.Modified(this, (nint)_obj, nameof(KinematicTarget), "cleared");
+                // Clear kinematic target by making body non-kinematic.
+                if (Flags.HasFlag(PxRigidBodyFlags.Kinematic))
+                    Flags &= ~PxRigidBodyFlags.Kinematic;
             }
         }
 

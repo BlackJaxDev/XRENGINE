@@ -1,5 +1,7 @@
 using System.Runtime.InteropServices;
 
+namespace XREngine.Rendering.API.Rendering.OpenXR;
+
 public unsafe partial class OpenXRAPI
 {
     [DllImport("opengl32.dll")]

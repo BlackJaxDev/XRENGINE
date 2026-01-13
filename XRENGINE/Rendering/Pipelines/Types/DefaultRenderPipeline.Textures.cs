@@ -721,6 +721,9 @@ public partial class DefaultRenderPipeline
             t.MagFilter = ETexMagFilter.Nearest;
             t.UWrap = ETexWrapMode.ClampToEdge;
             t.VWrap = ETexWrapMode.ClampToEdge;
+            // Auto exposure samples the smallest mip of the HDR scene texture.
+            // Recent GL texture parameter clamping requires this flag so mip levels are generated/accessible.
+            t.AutoGenerateMipmaps = true;
             t.SamplerName = HDRSceneTextureName;
             t.Name = HDRSceneTextureName;
             return t;
@@ -736,6 +739,9 @@ public partial class DefaultRenderPipeline
             t.MagFilter = ETexMagFilter.Nearest;
             t.UWrap = ETexWrapMode.ClampToEdge;
             t.VWrap = ETexWrapMode.ClampToEdge;
+            // Auto exposure samples the smallest mip of the HDR scene texture.
+            // Recent GL texture parameter clamping requires this flag so mip levels are generated/accessible.
+            t.AutoGenerateMipmaps = true;
             t.SamplerName = HDRSceneTextureName;
             t.Name = HDRSceneTextureName;
             return t;

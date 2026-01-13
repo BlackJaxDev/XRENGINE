@@ -3,6 +3,8 @@ using Silk.NET.OpenXR.Extensions.HTCX;
 using Silk.NET.OpenXR.Extensions.KHR;
 using OxrExtDebugUtils = global::Silk.NET.OpenXR.Extensions.EXT.ExtDebugUtils;
 
+namespace XREngine.Rendering.API.Rendering.OpenXR;
+
 public unsafe partial class OpenXRAPI
 {
     private readonly string[] HTC_Extensions =

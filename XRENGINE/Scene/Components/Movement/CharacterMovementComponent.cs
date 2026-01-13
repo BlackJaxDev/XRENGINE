@@ -128,13 +128,11 @@ namespace XREngine.Components.Movement
         //public Transform ControllerTransform
         //    => SceneNode.GetTransformAs<Transform>(true)!;
 
-        private float _airMovementAcceleration = 10f;
         private float _maxJumpHeight = 10.0f;
         private Func<Vector3, Vector3>? _subUpdateTick;
         private ECrouchState _crouchState = ECrouchState.Standing;
         private EMovementMode _movementMode = EMovementMode.Falling;
         private float _invisibleWallHeight = 0.0f;
-        private float _density = 0.5f;
         private float _scaleCoeff = 0.8f;
         private float _volumeGrowth = 1.5f;
         private PhysxMaterial _material = new(0.9f, 0.9f, 0.1f);
@@ -759,7 +757,6 @@ namespace XREngine.Components.Movement
             RigidBodyTransform.OnPhysicsStepped();
         }
 
-        private int _inputLogCount = 0;
         private unsafe void MainUpdateTick()
         {
             if (Controller is null)

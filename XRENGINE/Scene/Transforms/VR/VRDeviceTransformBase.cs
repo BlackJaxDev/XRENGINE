@@ -1,5 +1,6 @@
 ﻿using OpenVR.NET.Devices;
 using System.Numerics;
+using XREngine.Rendering.API.Rendering.OpenXR;
 using XREngine.Scene.Transforms;
 
 namespace XREngine.Data.Components.Scene
@@ -68,16 +69,55 @@ namespace XREngine.Data.Components.Scene
         /// </summary>
         private void VRState_RecalcMatrixOnDraw()
         {
-            var device = Device;
+            // IMPORTANT: This is the high-frequency "right before render" update path.
+            // Each VR transform is responsible for picking the correct runtime pose source.
 
             Matrix4x4 mtx;
-            if (device is null)
+
+            if (Engine.VRState.IsOpenXRActive)
             {
-                if (LocalMatrixOffset.HasValue)
-                    mtx = LocalMatrixOffset.Value;
+                var oxr = Engine.VRState.OpenXRApi;
+                if (oxr is null)
+                    return;
+
+                var timing = oxr.PoseTimingForRecalc;
+
+                if (this is XREngine.Scene.Transforms.VRHeadsetTransform)
+                {
+                    if (!oxr.TryGetHeadLocalPose(timing, out var headLocal))
+                        return;
+                    mtx = headLocal;
+                }
+                else if (this is XREngine.Data.Components.Scene.VRControllerTransform ctrl)
+                {
+                    if (!oxr.TryGetControllerLocalPose(ctrl.LeftHand, timing, out var handLocal))
+                        return;
+                    mtx = handLocal;
+                }
+                else if (this is XREngine.Data.Components.Scene.VRTrackerTransform tracker)
+                {
+                    if (string.IsNullOrWhiteSpace(tracker.OpenXrTrackerUserPath))
+                        return;
+                    if (!oxr.TryGetTrackerLocalPose(tracker.OpenXrTrackerUserPath, timing, out var trackerLocal))
+                        return;
+                    mtx = trackerLocal;
+                }
                 else
-                    mtx = Matrix4x4.Identity;
+                {
+                    return;
+                }
+
+                if (LocalMatrixOffset.HasValue)
+                    mtx *= LocalMatrixOffset.Value;
+
+                SetRenderMatrix(mtx * ParentRenderMatrix, true);
+                return;
             }
+
+            // OpenVR path (controllers/trackers/headset) uses device matrices.
+            var device = Device;
+            if (device is null)
+                mtx = LocalMatrixOffset ?? Matrix4x4.Identity;
             else
             {
                 mtx = device.RenderDeviceToAbsoluteTrackingMatrix;
@@ -95,18 +135,42 @@ namespace XREngine.Data.Components.Scene
         /// <returns></returns>
         protected override Matrix4x4 CreateLocalMatrix()
         {
-            var device = Device;
+            // Best-effort local-matrix update (used by non-render-thread consumers).
+            // RenderMatrix is refreshed via RecalcMatrixOnDraw for minimal latency.
 
-            Matrix4x4 mtx;
-            if (device is null)
-                mtx = LocalMatrixOffset ?? Matrix4x4.Identity;
-            else
+            if (Engine.VRState.IsOpenXRActive)
             {
-                mtx = device.DeviceToAbsoluteTrackingMatrix;
-                if (LocalMatrixOffset.HasValue)
-                    mtx *= LocalMatrixOffset.Value;
+                var oxr = Engine.VRState.OpenXRApi;
+                if (oxr is not null)
+                {
+                    Matrix4x4 local = Matrix4x4.Identity;
+                    bool ok = false;
+
+                    if (this is XREngine.Scene.Transforms.VRHeadsetTransform)
+                        ok = oxr.TryGetHeadLocalPose(OpenXRAPI.OpenXrPoseTiming.Predicted, out local);
+                    else if (this is XREngine.Data.Components.Scene.VRControllerTransform ctrl)
+                        ok = oxr.TryGetControllerLocalPose(ctrl.LeftHand, OpenXRAPI.OpenXrPoseTiming.Predicted, out local);
+                    else if (this is XREngine.Data.Components.Scene.VRTrackerTransform tracker && !string.IsNullOrWhiteSpace(tracker.OpenXrTrackerUserPath))
+                        ok = oxr.TryGetTrackerLocalPose(tracker.OpenXrTrackerUserPath, OpenXRAPI.OpenXrPoseTiming.Predicted, out local);
+                    else
+                        ok = false;
+
+                    if (ok)
+                    {
+                        if (LocalMatrixOffset.HasValue)
+                            return local * LocalMatrixOffset.Value;
+                        return local;
+                    }
+                }
             }
 
+            var device = Device;
+            if (device is null)
+                return LocalMatrixOffset ?? Matrix4x4.Identity;
+
+            Matrix4x4 mtx = device.DeviceToAbsoluteTrackingMatrix;
+            if (LocalMatrixOffset.HasValue)
+                mtx *= LocalMatrixOffset.Value;
             return mtx;
         }
 

@@ -722,7 +722,10 @@ public partial class DefaultRenderPipeline : RenderPipeline
         c.Add<VPRC_CacheOrCreateTexture>().SetOptions(
             VelocityTextureName,
             CreateVelocityTexture,
-            NeedsRecreateTextureInternalSize,
+            t =>
+                NeedsRecreateTextureInternalSize(t) ||
+                t is not IFrameBufferAttachement ||
+                (Stereo ? t is not XRTexture2DArray : t is not XRTexture2D),
             ResizeTextureInternalSize);
 
         c.Add<VPRC_CacheOrCreateTexture>().SetOptions(

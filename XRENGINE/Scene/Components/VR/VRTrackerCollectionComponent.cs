@@ -15,12 +15,12 @@ namespace XREngine.Data.Components.Scene
         {
             base.OnComponentActivated();
             ReverifyTrackedDevices();
-            Engine.VRState.Api.DeviceDetected += OnDeviceDetected;
+            Engine.VRState.OpenVRApi.DeviceDetected += OnDeviceDetected;
         }
 
         protected internal override void OnComponentDeactivated()
         {
-            Engine.VRState.Api.DeviceDetected -= OnDeviceDetected;
+            Engine.VRState.OpenVRApi.DeviceDetected -= OnDeviceDetected;
             Trackers.Clear();
             base.OnComponentDeactivated();
         }
@@ -32,8 +32,8 @@ namespace XREngine.Data.Components.Scene
 
         private void ReverifyTrackedDevices()
         {
-            foreach (var dev in Engine.VRState.Api.TrackedDevices)
-                if (!Trackers.ContainsKey(dev.DeviceIndex) && Engine.VRState.Api.CVR.GetTrackedDeviceClass(dev.DeviceIndex) == ETrackedDeviceClass.GenericTracker)
+            foreach (var dev in Engine.VRState.OpenVRApi.TrackedDevices)
+                if (!Trackers.ContainsKey(dev.DeviceIndex) && Engine.VRState.OpenVRApi.CVR.GetTrackedDeviceClass(dev.DeviceIndex) == ETrackedDeviceClass.GenericTracker)
                     AddRealTracker(dev);
         }
 

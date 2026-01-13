@@ -62,10 +62,20 @@ namespace XREngine.Scene.Transforms
         private Matrix4x4? _headToEyeMatrix = null;
         private Matrix4x4 _ipdOffset = Matrix4x4.Identity;
         private Matrix4x4 _lastLocalMatrix = Matrix4x4.Identity;
+        private XREngine.Engine.VRState.VRRuntime _lastRuntime = XREngine.Engine.VRState.VRRuntime.None;
 
         protected override Matrix4x4 CreateLocalMatrix()
         {
             bool matrixChanged = false;
+
+            // If the active VR runtime changed, recompute runtime-derived components.
+            var runtime = Engine.VRState.ActiveRuntime;
+            if (_lastRuntime != runtime)
+            {
+                _lastRuntime = runtime;
+                _headToEyeMatrix = null;
+                matrixChanged = true;
+            }
 
             float scaledIpd = Engine.VRState.ScaledIPD * 0.5f;
             if (!XRMath.Approx(_lastScaledIPD, scaledIpd))
@@ -79,13 +89,32 @@ namespace XREngine.Scene.Transforms
 
             if (_headToEyeMatrix is null)
             {
-                var eyeEnum = IsLeftEye
-                    ? EVREye.Eye_Left
-                    : EVREye.Eye_Right;
+                if (Engine.VRState.IsOpenXRActive)
+                {
+                    var oxr = Engine.VRState.OpenXRApi;
+                    if (oxr is not null &&
+                        oxr.TryGetHeadLocalPose(out Matrix4x4 headLocal) &&
+                        oxr.TryGetEyeLocalPose(IsLeftEye, out Matrix4x4 eyeLocal) &&
+                        Matrix4x4.Invert(headLocal, out Matrix4x4 invHead))
+                    {
+                        // head->eye = inverse(head) * eye
+                        _headToEyeMatrix = invHead * eyeLocal;
+                    }
+                    else
+                    {
+                        _headToEyeMatrix = Matrix4x4.Identity;
+                    }
+                }
+                else
+                {
+                    var eyeEnum = IsLeftEye
+                        ? EVREye.Eye_Left
+                        : EVREye.Eye_Right;
 
-                _headToEyeMatrix = Engine.VRState.IsInVR && Engine.VRState.Api.CVR is not null
-                    ? Engine.VRState.Api.CVR.GetEyeToHeadTransform(eyeEnum).ToNumerics().Transposed().Inverted()
-                    : Matrix4x4.Identity;
+                    _headToEyeMatrix = Engine.VRState.IsInVR && Engine.VRState.OpenVRApi.CVR is not null
+                        ? Engine.VRState.OpenVRApi.CVR.GetEyeToHeadTransform(eyeEnum).ToNumerics().Transposed().Inverted()
+                        : Matrix4x4.Identity;
+                }
 
                 matrixChanged = true;
             }

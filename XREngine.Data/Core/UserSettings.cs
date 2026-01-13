@@ -32,71 +32,99 @@ namespace XREngine
         private float? _unfocusedTargetFramesPerSecond = null;
         private EGlobalIlluminationMode _globalIlluminationMode = EGlobalIlluminationMode.LightProbesAndIbl;
 
+        [Category("Display")]
+        [Description("Vertical sync mode preference. This may be overridden by project/user override settings in the cascade.")]
         public EVSyncMode VSync
         {
             get => _vSyncMode;
             set => SetField(ref _vSyncMode, value);
         }
+        [Category("Quality")]
+        [Description("Overall texture quality preference.")]
         public EEngineQuality TextureQuality
         {
             get => _textureQuality;
             set => SetField(ref _textureQuality, value);
         }
+        [Category("Quality")]
+        [Description("Overall model/mesh quality preference.")]
         public EEngineQuality ModelQuality
         {
             get => _modelQuality;
             set => SetField(ref _modelQuality, value);
         }
+        [Category("Audio")]
+        [Description("Overall audio quality preference.")]
         public EEngineQuality SoundQuality
         {
             get => _soundQuality;
             set => SetField(ref _soundQuality, value);
         }
+        [Category("Libraries")]
+        [Description("Preferred rendering backend. The engine may fall back if unavailable.")]
         public ERenderLibrary RenderLibrary
         {
             get => _renderLibrary;
             set => SetField(ref _renderLibrary, value);
         }
+        [Category("Libraries")]
+        [Description("Preferred audio backend. The engine may fall back if unavailable.")]
         public EAudioLibrary AudioLibrary
         {
             get => _audioLibrary;
             set => SetField(ref _audioLibrary, value);
         }
+        [Category("Libraries")]
+        [Description("Preferred physics backend. The engine may fall back if unavailable.")]
         public EPhysicsLibrary PhysicsLibrary
         {
             get => _physicsLibrary;
             set => SetField(ref _physicsLibrary, value);
         }
+        [Category("Performance")]
+        [Description("Target render frames per second when the app is focused. Null disables the cap (engine default applies).")]
         public float? TargetFramesPerSecond
         {
             get => _targetFramesPerSecond;
             set => SetField(ref _targetFramesPerSecond, value);
         }
+        [Category("Audio")]
+        [Description("When enabled, fades audio out while the app is unfocused.")]
         public bool DisableAudioOnDefocus
         {
             get => _disableAudioOnDefocus;
             set => SetField(ref _disableAudioOnDefocus, value);
         }
+        [Category("Audio")]
+        [Description("Fade duration (seconds) used when disabling/enabling audio due to focus changes.")]
         public float AudioDisableFadeSeconds
         {
             get => _audioDisableFadeSeconds;
             set => SetField(ref _audioDisableFadeSeconds, value);
         }
+        [Category("Performance")]
+        [Description("Optional target FPS while unfocused (e.g. background throttling). Null inherits TargetFramesPerSecond.")]
         public float? UnfocusedTargetFramesPerSecond
         {
             get => _unfocusedTargetFramesPerSecond;
             set => SetField(ref _unfocusedTargetFramesPerSecond, value);
         }
+        [Category("Quality")]
+        [Description("Preferred global illumination mode.")]
         public EGlobalIlluminationMode GlobalIlluminationMode
         {
             get => _globalIlluminationMode;
             set => SetField(ref _globalIlluminationMode, value);
         }
+        [Category("Display")]
+        [Description("Default windowed-mode resolution in pixels.")]
         public IVector2 WindowedResolution
         {
             get => _windowedResolution;
             set => SetField(ref _windowedResolution, value);
         }
+        [Category("Display")]
+        [Description("Default window state at startup (windowed/fullscreen).")]
         public EWindowState WindowState
         {
             get => _windowState;
